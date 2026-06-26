@@ -72,6 +72,16 @@ void rustynes_ios_audio_push(RustyNesAudioSink *handle, const float *samples, si
 /* The negotiated device sample rate (request it from NesController::new). 0 if NULL. */
 uint32_t rustynes_ios_audio_sample_rate(RustyNesAudioSink *handle);
 
+/* Publish the live audio-depth DSP config (v1.9.9): EQ / pan / reverb / crossfeed,
+ * applied host-side after drain_audio. `eq` is up to 5 band gains (dB), `pan` up to
+ * 6 per-channel positions (-1..=1); extra entries ignored, missing ones neutral.
+ * `enabled == 0` (or a flat / centered config) is a bit-exact passthrough. The
+ * `eq` / `pan` pointers may be NULL (treated as neutral). No-op on a NULL handle. */
+void rustynes_ios_audio_set_depth(RustyNesAudioSink *handle, uint8_t enabled,
+                                  const float *eq, size_t eq_len,
+                                  const float *pan, size_t pan_len,
+                                  float reverb_mix, float reverb_room, float crossfeed);
+
 /* Pause / resume the output stream (scene background / audio interruption). */
 void rustynes_ios_audio_pause(RustyNesAudioSink *handle);
 void rustynes_ios_audio_resume(RustyNesAudioSink *handle);

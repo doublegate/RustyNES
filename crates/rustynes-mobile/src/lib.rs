@@ -115,6 +115,14 @@ pub enum MobileError {
         /// What went wrong (parse / bind / connect / disconnect detail).
         reason: String,
     },
+    /// A cheat operation failed (v1.9.9) — a malformed Game Genie code (bad
+    /// length / character). Raw-RAM pokes/peeks cannot fail, so this only ever
+    /// covers Game Genie code parsing.
+    #[error("cheat error: {reason}")]
+    Cheat {
+        /// What was wrong with the cheat code.
+        reason: String,
+    },
 }
 
 /// A single NES controller button, used by [`NesController::set_button`] for
@@ -445,6 +453,60 @@ enum NetplaySession {
     InGame(Box<RollbackSession<UdpTransport>>, bool),
 }
 
+// --- Creator / power tools (v1.9.9 "Workshop") -------------------------------
+
+/// One active Game Genie cheat code, marshalled across the FFI (v1.9.9). A flat
+/// projection of [`rustynes_core::GenieCode`].
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct GenieCodeInfo {
+    /// The canonical upper-case Game Genie code (6 or 8 characters).
+    pub code: String,
+    /// The PRG address (`$8000..=$FFFF`) the code substitutes.
+    pub addr: u16,
+    /// The substitute data byte.
+    pub data: u8,
+    /// The compare byte (8-character codes only), or `None` for a 6-character
+    /// code (which substitutes unconditionally).
+    pub compare: Option<u8>,
+}
+
+/// A read-only snapshot of the CPU register file for the debugger inspector
+/// (v1.9.9). A flat projection of [`rustynes_core::CpuDebugView`]; purely
+/// observational (it never advances or mutates the core).
+#[derive(Debug, Clone, Copy, uniffi::Record)]
+pub struct CpuRegs {
+    /// Accumulator.
+    pub a: u8,
+    /// X index register.
+    pub x: u8,
+    /// Y index register.
+    pub y: u8,
+    /// Stack pointer.
+    pub s: u8,
+    /// Program counter.
+    pub pc: u16,
+    /// Raw processor-status flags (the P register bits).
+    pub p: u8,
+    /// `true` when the CPU is jammed on an illegal halt opcode.
+    pub jammed: bool,
+    /// Cumulative CPU cycle count since power-on.
+    pub cycles: u64,
+}
+
+/// One disassembled 6502 instruction for the debugger inspector (v1.9.9). A flat
+/// projection of `rustynes_cpu`'s `DisasmLine`.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DisasmRow {
+    /// The address the instruction starts at.
+    pub addr: u16,
+    /// The raw opcode bytes (1..=3).
+    pub bytes: Vec<u8>,
+    /// The mnemonic (`"LDA"`, `"JMP"`, ...).
+    pub mnemonic: String,
+    /// The formatted operand (`"#$42"`, `"$1234,X"`, or empty).
+    pub operand: String,
+}
+
 /// Mutable state behind the controller's lock.
 struct Inner {
     nes: Nes,
@@ -505,6 +567,16 @@ impl NesController {
     /// panic on one call can never wedge the whole FFI surface.
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The loaded ROM's SHA-256 (the foreign-movie-import stamp / netplay
+    /// handshake key). Not part of the FFI surface — a private helper for the
+    /// `movie_import_*` methods.
+    fn rom_sha256(&self) -> [u8; 32] {
+        let g = self.lock();
+        let sha = *g.nes.rom_sha256();
+        drop(g);
+        sha
     }
 }
 
@@ -1494,6 +1566,248 @@ impl NesController {
         drop(g);
         status
     }
+
+    // --- Cheats (v1.9.9 "Workshop") --------------------------------------
+    //
+    // Game Genie codes forward straight into the core's own cheat engine (which
+    // applies them on every PRG read), so they persist across frames exactly as
+    // on the desktop. Raw-RAM editing exposes the existing `poke_ram` / `peek`
+    // core paths (one-shot writes / side-effect-free reads) — the bridge adds NO
+    // new per-frame mutation, so with no cheats set the build stays byte-identical.
+
+    /// Add a Game Genie code (6 or 8 characters, case-insensitive). The core
+    /// applies it on every PRG read until removed. Idempotent on the canonical
+    /// form.
+    ///
+    /// # Errors
+    /// [`MobileError::Cheat`] if the code is not a valid Game Genie code.
+    pub fn cheat_add_genie(&self, code: String) -> Result<(), MobileError> {
+        let mut g = self.lock();
+        let r = g.nes.add_genie_code(&code).map_err(|e| MobileError::Cheat {
+            reason: e.to_string(),
+        });
+        drop(g);
+        r
+    }
+
+    /// Remove a previously-added Game Genie code (no-op if not present).
+    pub fn cheat_remove_genie(&self, code: String) {
+        let mut g = self.lock();
+        g.nes.remove_genie_code(&code);
+        drop(g);
+    }
+
+    /// Remove every active Game Genie code.
+    pub fn cheat_clear_genie(&self) {
+        let mut g = self.lock();
+        g.nes.clear_genie_codes();
+        drop(g);
+    }
+
+    /// The currently-active Game Genie codes.
+    pub fn cheat_genie_codes(&self) -> Vec<GenieCodeInfo> {
+        let g = self.lock();
+        let codes = g
+            .nes
+            .genie_codes()
+            .map(|c| GenieCodeInfo {
+                code: c.code().to_string(),
+                addr: c.addr(),
+                data: c.data(),
+                compare: c.compare(),
+            })
+            .collect();
+        drop(g);
+        codes
+    }
+
+    /// Write one byte into CPU RAM (`$0000..=$1FFF`, the 2 KiB internal RAM and
+    /// its mirrors) via the core's existing `poke_ram` path — the raw-RAM editor
+    /// affordance. A one-shot write (the game may overwrite it next frame); it
+    /// adds no per-frame mutation surface.
+    ///
+    /// Defense-in-depth: the address is masked to the documented `$0000..=$1FFF`
+    /// internal-RAM mirror region here at the bridge boundary, so the bound is
+    /// enforced by the bridge itself rather than relying on the core.
+    pub fn poke_ram(&self, addr: u16, value: u8) {
+        let addr = addr & 0x1FFF;
+        let mut g = self.lock();
+        g.nes.poke_ram(addr, value);
+        drop(g);
+    }
+
+    /// Read one byte from the CPU bus at `addr`, side-effect-free (the core's
+    /// `peek`). The single-address convenience over [`Self::debug_read_memory`].
+    pub fn peek_byte(&self, addr: u16) -> u8 {
+        let mut g = self.lock();
+        let v = g.nes.peek(addr);
+        drop(g);
+        v
+    }
+
+    // --- Read-only debugger inspector (v1.9.9 "Workshop") ----------------
+    //
+    // Purely observational: every method snapshots core state without advancing
+    // or mutating emulation, so the determinism contract is untouched. The host
+    // gates the debugger UI off the App-Store build.
+
+    /// A read-only snapshot of the CPU registers (`rustynes_core::CpuDebugView`).
+    pub fn debug_cpu_state(&self) -> CpuRegs {
+        let g = self.lock();
+        let v = g.nes.cpu_snapshot();
+        drop(g);
+        CpuRegs {
+            a: v.a,
+            x: v.x,
+            y: v.y,
+            s: v.s,
+            pc: v.pc,
+            p: v.p,
+            jammed: v.jammed,
+            cycles: v.cycles,
+        }
+    }
+
+    /// Read `len` bytes from the CPU bus starting at `start` (wrapping at the
+    /// 64 KiB boundary), side-effect-free. `len` is capped at 64 KiB so a
+    /// malformed request can never over-allocate. Feeds the debugger hex view.
+    pub fn debug_read_memory(&self, start: u16, len: u32) -> Vec<u8> {
+        let len = (len as usize).min(0x1_0000);
+        let mut g = self.lock();
+        let mut out = Vec::with_capacity(len);
+        let mut addr = start;
+        for _ in 0..len {
+            out.push(g.nes.peek(addr));
+            addr = addr.wrapping_add(1);
+        }
+        drop(g);
+        out
+    }
+
+    /// Disassemble `count` 6502 instructions starting at `pc` (the debugger code
+    /// view). `count` is capped at 256. Reads a bounded byte window with the
+    /// side-effect-free `peek`, so the disassembler runs over an owned buffer and
+    /// never re-enters the core.
+    pub fn debug_disassemble(&self, pc: u16, count: u32) -> Vec<DisasmRow> {
+        let count = (count as usize).min(256);
+        // Up to 3 bytes per instruction, plus a small tail so the final
+        // instruction's operand is fully readable; capped at the address space.
+        let window = count.saturating_mul(3).saturating_add(3).min(0x1_0000);
+        let mut g = self.lock();
+        let mut buf = vec![0u8; window];
+        let mut addr = pc;
+        for slot in &mut buf {
+            *slot = g.nes.peek(addr);
+            addr = addr.wrapping_add(1);
+        }
+        drop(g);
+        let lines = rustynes_core::rustynes_cpu::disasm::disassemble_at(
+            |a| {
+                let off = a.wrapping_sub(pc) as usize;
+                buf.get(off).copied().unwrap_or(0)
+            },
+            pc,
+            count,
+        );
+        lines
+            .into_iter()
+            .map(|l| DisasmRow {
+                addr: l.addr,
+                bytes: l.bytes,
+                mnemonic: l.mnemonic.to_string(),
+                operand: l.operand,
+            })
+            .collect()
+    }
+
+    // --- Foreign movie import (v1.9.9 "Workshop") ------------------------
+    //
+    // Each importer transcodes a foreign movie into the native `.rnm` byte
+    // stream stamped with the CURRENTLY-loaded ROM's hash, then returns those
+    // bytes — the host plays them via the existing [`Self::movie_play`] and/or
+    // saves them as a `.rnm`. The core importers validate their input and return
+    // a `Result` (they never panic on a malformed file); the only parsing the
+    // bridge itself does is the `.bk2` ZIP member extraction below, which caps
+    // member sizes. The produced movie is for the loaded ROM regardless of which
+    // game the foreign file was authored against (it transcodes the input log).
+
+    /// Import an `FCEUX` `.fm2` movie (UTF-8 text) and return the native `.rnm`
+    /// bytes for the loaded ROM.
+    ///
+    /// # Errors
+    /// [`MobileError::Movie`] if the bytes are not valid UTF-8 or not a parseable
+    /// `.fm2`.
+    pub fn movie_import_fm2(&self, bytes: Vec<u8>) -> Result<Vec<u8>, MobileError> {
+        let text = String::from_utf8(bytes).map_err(|e| MobileError::Movie {
+            reason: format!("fm2 is not valid UTF-8: {e}"),
+        })?;
+        let rom_sha = self.rom_sha256();
+        let (movie, _meta) =
+            rustynes_core::movie_interop::import_fm2(&text, rom_sha).map_err(|e| {
+                MobileError::Movie {
+                    reason: e.to_string(),
+                }
+            })?;
+        Ok(movie.serialize())
+    }
+
+    /// Import a `BizHawk` `.bk2` movie (a ZIP archive containing `Header.txt` and
+    /// `Input Log.txt`) and return the native `.rnm` bytes for the loaded ROM.
+    ///
+    /// # Errors
+    /// [`MobileError::Movie`] if the archive is malformed, is missing either
+    /// member, or the input log does not parse.
+    pub fn movie_import_bk2(&self, bytes: Vec<u8>) -> Result<Vec<u8>, MobileError> {
+        let (header, input_log) = read_bk2_members(&bytes)?;
+        let rom_sha = self.rom_sha256();
+        let (movie, _meta) = rustynes_core::bk2_interop::import_bk2(&header, &input_log, rom_sha)
+            .map_err(|e| MobileError::Movie {
+            reason: e.to_string(),
+        })?;
+        Ok(movie.serialize())
+    }
+
+    /// Import a Nestopia `.fcm` movie and return the native `.rnm` bytes for the
+    /// loaded ROM.
+    ///
+    /// # Errors
+    /// [`MobileError::Movie`] if the bytes are not a parseable `.fcm`.
+    pub fn movie_import_fcm(&self, bytes: Vec<u8>) -> Result<Vec<u8>, MobileError> {
+        let rom_sha = self.rom_sha256();
+        let (movie, _meta) =
+            rustynes_core::import_fcm(&bytes, rom_sha).map_err(|e| MobileError::Movie {
+                reason: e.to_string(),
+            })?;
+        Ok(movie.serialize())
+    }
+
+    /// Import a Famtasia `.fmv` movie and return the native `.rnm` bytes for the
+    /// loaded ROM.
+    ///
+    /// # Errors
+    /// [`MobileError::Movie`] if the bytes are not a parseable `.fmv`.
+    pub fn movie_import_fmv(&self, bytes: Vec<u8>) -> Result<Vec<u8>, MobileError> {
+        let rom_sha = self.rom_sha256();
+        let (movie, _meta) =
+            rustynes_core::import_fmv(&bytes, rom_sha).map_err(|e| MobileError::Movie {
+                reason: e.to_string(),
+            })?;
+        Ok(movie.serialize())
+    }
+
+    /// Import a `VirtuaNES` `.vmv` movie and return the native `.rnm` bytes for the
+    /// loaded ROM.
+    ///
+    /// # Errors
+    /// [`MobileError::Movie`] if the bytes are not a parseable `.vmv`.
+    pub fn movie_import_vmv(&self, bytes: Vec<u8>) -> Result<Vec<u8>, MobileError> {
+        let rom_sha = self.rom_sha256();
+        let (movie, _meta) =
+            rustynes_core::import_vmv(&bytes, rom_sha).map_err(|e| MobileError::Movie {
+                reason: e.to_string(),
+            })?;
+        Ok(movie.serialize())
+    }
 }
 
 /// If `bytes` is a ZIP archive (PK magic), extract the first NES-format entry
@@ -1534,6 +1848,55 @@ fn decompress_rom(bytes: Vec<u8>) -> Vec<u8> {
         (!out.is_empty()).then_some(out)
     })();
     extracted.unwrap_or(bytes)
+}
+
+/// Extract a `.bk2`'s `Header.txt` + `Input Log.txt` members (v1.9.9). A `.bk2`
+/// is a ZIP archive; this opens it, finds the two members by name
+/// (case-insensitive), and reads each with a hard size cap so a malformed /
+/// hostile archive can never OOM the app. Returns `(header, input_log)` text.
+///
+/// # Errors
+/// [`MobileError::Movie`] if the bytes are not a ZIP, either member is missing /
+/// oversized, or a member is not valid UTF-8.
+fn read_bk2_members(bytes: &[u8]) -> Result<(String, String), MobileError> {
+    use std::io::Read;
+    // A `.bk2` text log is small; cap each member generously so a zip bomb can't
+    // blow up. 16 MiB is far beyond any real movie's Header/Input Log.
+    const MAX_MEMBER_BYTES: u64 = 16 * 1024 * 1024;
+    let err = |reason: String| MobileError::Movie { reason };
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| err(format!("not a valid .bk2 (zip) archive: {e}")))?;
+
+    let mut read_member = |wanted: &str| -> Result<String, MobileError> {
+        // Match the member name case-insensitively on its final path component so
+        // a `Header.txt` / `header.txt` / nested entry all resolve.
+        let idx = (0..archive.len())
+            .find(|&i| {
+                archive.by_index(i).is_ok_and(|e| {
+                    std::path::Path::new(e.name())
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
+                })
+            })
+            .ok_or_else(|| err(format!(".bk2 is missing '{wanted}'")))?;
+        let entry = archive
+            .by_index(idx)
+            .map_err(|e| err(format!("cannot read '{wanted}': {e}")))?;
+        if entry.size() > MAX_MEMBER_BYTES {
+            return Err(err(format!("'{wanted}' is implausibly large")));
+        }
+        let mut buf = Vec::new();
+        entry
+            .take(MAX_MEMBER_BYTES)
+            .read_to_end(&mut buf)
+            .map_err(|e| err(format!("cannot read '{wanted}': {e}")))?;
+        String::from_utf8(buf).map_err(|e| err(format!("'{wanted}' is not valid UTF-8: {e}")))
+    };
+
+    let header = read_member("Header.txt")?;
+    let input_log = read_member("Input Log.txt")?;
+    Ok((header, input_log))
 }
 
 /// Apply movie playback (drive input from the loaded movie) and recording (capture
@@ -1908,6 +2271,122 @@ mod tests {
         let info = ctrl.info();
         assert_eq!(info.mapper_id, 0);
         assert_eq!(info.region, NesRegion::Ntsc);
+    }
+
+    // --- Creator / power tools (v1.9.9 "Workshop") -----------------------
+
+    #[test]
+    fn genie_codes_round_trip() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        assert!(ctrl.cheat_genie_codes().is_empty());
+        // "GOSSIP" is a canonical valid 6-character Game Genie code.
+        ctrl.cheat_add_genie("GOSSIP".to_string())
+            .expect("valid genie code");
+        let codes = ctrl.cheat_genie_codes();
+        assert_eq!(codes.len(), 1);
+        assert_eq!(codes[0].code, "GOSSIP");
+        assert!((0x8000..=0xFFFF).contains(&codes[0].addr));
+        ctrl.cheat_remove_genie("GOSSIP".to_string());
+        assert!(ctrl.cheat_genie_codes().is_empty());
+    }
+
+    #[test]
+    fn genie_rejects_bad_code() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        match ctrl.cheat_add_genie("NOPE".to_string()) {
+            Err(MobileError::Cheat { .. }) => {}
+            other => panic!("expected Cheat error, got {other:?}"),
+        }
+        assert!(ctrl.cheat_genie_codes().is_empty());
+    }
+
+    #[test]
+    fn raw_ram_poke_peek_round_trips() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.poke_ram(0x0010, 0x42);
+        assert_eq!(ctrl.peek_byte(0x0010), 0x42);
+    }
+
+    #[test]
+    fn debug_cpu_state_is_observational() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.step_frame();
+        let before = ctrl.frame();
+        let regs = ctrl.debug_cpu_state();
+        // The tight `JMP $8000` loop keeps the PC parked in the reset window.
+        assert!(!regs.jammed);
+        assert!((0x8000..=0x8002).contains(&regs.pc));
+        // Reading debug state must NOT advance the core.
+        assert_eq!(ctrl.frame(), before);
+    }
+
+    #[test]
+    fn debug_read_memory_caps_length_and_reads_prg() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        let win = ctrl.debug_read_memory(0x8000, 16);
+        assert_eq!(win.len(), 16);
+        assert_eq!(win[0], 0x4C, "PRG at $8000 is the JMP opcode");
+        // An over-large request is capped at the 64 KiB address space.
+        assert_eq!(ctrl.debug_read_memory(0, u32::MAX).len(), 0x1_0000);
+    }
+
+    #[test]
+    fn debug_disassemble_decodes_reset_loop() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        let rows = ctrl.debug_disassemble(0x8000, 4);
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].addr, 0x8000);
+        assert_eq!(rows[0].mnemonic, "JMP");
+        // The count is capped so a hostile request can't allocate unbounded.
+        assert_eq!(ctrl.debug_disassemble(0x8000, u32::MAX).len(), 256);
+    }
+
+    #[test]
+    fn foreign_movie_import_errors_gracefully() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        // Malformed input must surface a clean Movie error, never panic / OOB.
+        assert!(matches!(
+            ctrl.movie_import_fm2(vec![0xFF, 0xFE, 0xFF]),
+            Err(MobileError::Movie { .. })
+        ));
+        assert!(matches!(
+            ctrl.movie_import_bk2(b"not a zip".to_vec()),
+            Err(MobileError::Movie { .. })
+        ));
+        assert!(matches!(
+            ctrl.movie_import_fcm(b"garbage".to_vec()),
+            Err(MobileError::Movie { .. })
+        ));
+        assert!(matches!(
+            ctrl.movie_import_fmv(b"garbage".to_vec()),
+            Err(MobileError::Movie { .. })
+        ));
+        assert!(matches!(
+            ctrl.movie_import_vmv(b"garbage".to_vec()),
+            Err(MobileError::Movie { .. })
+        ));
+    }
+
+    // The happy path: a minimal but valid `.fm2` transcodes to non-empty native
+    // `.rnm` bytes that `movie_play` accepts. The header needs only a leading
+    // `version 3` line (per `import_fm2`'s required-first-key contract); the
+    // ROM's SHA-256 is supplied internally by the bridge (not carried in the
+    // `.fm2`), so any loaded ROM works. Two input-log lines (`|c|p0|p1|port2|`,
+    // each pad an 8-char `RLDUTSBA` field) exercise the frame path: line 1 is
+    // all-released, line 2 presses A (last column).
+    #[test]
+    fn fm2_import_happy_path_transcodes_and_plays() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        let fm2 = "version 3\n\
+                   |0|........|........||\n\
+                   |0|.......A|........||\n";
+        let rnm = ctrl
+            .movie_import_fm2(fm2.as_bytes().to_vec())
+            .expect("minimal valid .fm2 must transcode");
+        assert!(!rnm.is_empty(), "transcode must yield native .rnm bytes");
+        // The produced movie is power-on anchored against the loaded ROM, so
+        // playback must accept it.
+        ctrl.movie_play(rnm).expect("native .rnm must replay");
     }
 
     // v1.8.6 — the RA bridge surfaces the lazy session + the login lifecycle.

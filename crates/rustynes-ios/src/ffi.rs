@@ -13,6 +13,7 @@
 use core::ffi::c_void;
 
 use crate::audio::AudioSink;
+use crate::audio_dsp::DepthConfig;
 use crate::gfx_metal::MetalGfx;
 
 // ---- Graphics (Workstream B) ----------------------------------------------
@@ -214,6 +215,58 @@ pub unsafe extern "C" fn rustynes_ios_audio_sample_rate(handle: *mut AudioSink) 
     // SAFETY: live handle (caller contract).
     let sink = unsafe { &*handle };
     sink.sample_rate()
+}
+
+/// `rustynes_ios_audio_set_depth(handle, enabled, eq, eq_len, pan, pan_len,
+/// reverb_mix, reverb_room, crossfeed)` — publish the live audio-depth (EQ / pan
+/// / reverb / crossfeed) config (v1.9.9). `eq` is up to 5 band gains (dB); `pan`
+/// is up to 6 per-channel pans (`-1..=1`). Extra entries are ignored; missing
+/// ones default to neutral. `enabled == 0` (or a flat / centered config) is a
+/// bit-exact passthrough. No-op on a null handle.
+///
+/// # Safety
+/// `handle` must be live; `eq` / `pan` must each point to at least their stated
+/// length of readable `f32`s (or be null, treated as neutral).
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn rustynes_ios_audio_set_depth(
+    handle: *mut AudioSink,
+    enabled: u8,
+    eq: *const f32,
+    eq_len: usize,
+    pan: *const f32,
+    pan_len: usize,
+    reverb_mix: f32,
+    reverb_room: f32,
+    crossfeed: f32,
+) {
+    if handle.is_null() {
+        return;
+    }
+    // SAFETY: live handle (caller contract).
+    let sink = unsafe { &*handle };
+    let mut cfg = DepthConfig {
+        enabled: enabled != 0,
+        reverb_mix,
+        reverb_room,
+        crossfeed,
+        ..DepthConfig::BYPASS
+    };
+    if !eq.is_null() {
+        // SAFETY: `eq` points to `eq_len` readable `f32`s (caller contract).
+        let src = unsafe { core::slice::from_raw_parts(eq, eq_len) };
+        for (dst, &s) in cfg.eq_db.iter_mut().zip(src.iter()) {
+            *dst = s;
+        }
+    }
+    if !pan.is_null() {
+        // SAFETY: `pan` points to `pan_len` readable `f32`s (caller contract).
+        let src = unsafe { core::slice::from_raw_parts(pan, pan_len) };
+        for (dst, &s) in cfg.pan.iter_mut().zip(src.iter()) {
+            *dst = s;
+        }
+    }
+    sink.set_depth(&cfg);
 }
 
 /// `rustynes_ios_audio_pause(handle)` — pause output (scene background / audio

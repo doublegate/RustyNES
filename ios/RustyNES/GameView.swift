@@ -17,6 +17,10 @@ struct GameView: View {
     @State private var showingNetplay = false
     @State private var showingAchievements = false
     @State private var showingLua = false
+    // Creator / power tools (v1.9.9 "Workshop").
+    @State private var showingCheats = false
+    @State private var showingTAStudio = false
+    @State private var showingDebugger = false
     // The top bar + pill menu visibility, toggled by the on-screen MENU pill (mirrors
     // the Android MENU pill toggling `controlsVisible`).
     @State private var menuVisible = true
@@ -72,6 +76,9 @@ struct GameView: View {
                         onNetplay: { showingNetplay = true },
                         onAchievements: { showingAchievements = true },
                         onLua: { showingLua = true },
+                        onCheats: { showingCheats = true },
+                        onTAStudio: { showingTAStudio = true },
+                        onDebugger: { showingDebugger = true },
                         onRecord: { model.recorder.toggle() },
                         onSettings: { showingSettings = true },
                         onReset: { model.emulator?.reset() },
@@ -121,13 +128,31 @@ struct GameView: View {
         .sheet(isPresented: $showingLua) {
             LuaConsoleView()
         }
+        .sheet(isPresented: $showingCheats) {
+            CheatsView()
+        }
+        .sheet(isPresented: $showingTAStudio) {
+            TAStudioView()
+        }
+        .sheet(isPresented: $showingDebugger) {
+            DebuggerView()
+        }
         // Pause the emulator while a menu/sheet is open so the player doesn't lose
         // progress or hear audio behind it; resume once all are dismissed. The TAS /
-        // Movies panel is the exception: recording / playback must keep the core
-        // running, so it does NOT pause emulation.
-        .onChange(of: showingStates) { _ in model.setMenuPaused(showingStates || showingSettings) }
-        .onChange(of: showingSettings) { _ in model.setMenuPaused(showingStates || showingSettings) }
+        // Movies + Cheats panels are exceptions: recording / playback / live cheats
+        // must keep the core running, so they do NOT pause emulation. The read-only
+        // debugger DOES pause (its "Step" button advances exactly one frame).
+        .onChange(of: showingStates) { _ in updateMenuPaused() }
+        .onChange(of: showingSettings) { _ in updateMenuPaused() }
+        .onChange(of: showingDebugger) { _ in updateMenuPaused() }
         .statusBarHidden(true)
+    }
+
+    /// Recompute whether a modal that must pause emulation is open (Save States,
+    /// Settings, or the read-only Debugger). Cheats / TAStudio / Movies keep the
+    /// core running by design.
+    private func updateMenuPaused() {
+        model.setMenuPaused(showingStates || showingSettings || showingDebugger)
     }
 
     private var topBar: some View {

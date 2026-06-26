@@ -78,20 +78,28 @@ final class ROMLibrary: ObservableObject {
     /// - Throws: if the URL cannot be read or the bytes cannot be written to the
     ///   sandbox.
     @discardableResult
-    func importROM(from url: URL) throws -> LibraryEntry {
-        // Files-app URLs are security-scoped; bracket the read.
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+    func importROM(from url: URL) async throws -> LibraryEntry {
+        // The (potentially large) read + hash + write run off the main actor so
+        // the UI doesn't block; the index mutation hops back to the actor. Mirror
+        // HDPackStore.importPack: capture the main-actor-derived destination dir
+        // as a value before the detached task.
+        let romsDir = self.romsDir
+        let sha = try await Task.detached(priority: .userInitiated) {
+            // Files-app URLs are security-scoped; bracket the read.
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
 
-        let data = try Data(contentsOf: url)
-        let sha = RomIdentity.sha256Hex(data)
-        let dest = romURL(for: sha)
+            let data = try Data(contentsOf: url)
+            let sha = RomIdentity.sha256Hex(data)
+            let dest = romsDir.appendingPathComponent("\(sha).nes")
 
-        // Copy into the sandbox (idempotent: a re-import of the same ROM just
-        // updates the index entry's last-played, not the bytes).
-        if !fileManager.fileExists(atPath: dest.path) {
-            try data.write(to: dest, options: .atomic)
-        }
+            // Copy into the sandbox (idempotent: a re-import of the same ROM just
+            // updates the index entry's last-played, not the bytes).
+            if !FileManager.default.fileExists(atPath: dest.path) {
+                try data.write(to: dest, options: .atomic)
+            }
+            return sha
+        }.value
 
         let displayName = url.deletingPathExtension().lastPathComponent
         if let idx = entries.firstIndex(where: { $0.sha == sha }) {
@@ -112,9 +120,13 @@ final class ROMLibrary: ObservableObject {
         return entry
     }
 
-    /// Load a library entry's ROM bytes from the sandbox.
-    func romData(for entry: LibraryEntry) throws -> Data {
-        try Data(contentsOf: romURL(for: entry.sha))
+    /// Load a library entry's ROM bytes from the sandbox. The read runs off the
+    /// main actor so a large ROM doesn't block the UI.
+    func romData(for entry: LibraryEntry) async throws -> Data {
+        let url = romURL(for: entry.sha)
+        return try await Task.detached(priority: .userInitiated) {
+            try Data(contentsOf: url)
+        }.value
     }
 
     // MARK: - Mutations

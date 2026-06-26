@@ -21,10 +21,10 @@ struct RustyNESApp: App {
             ContentView()
                 .environmentObject(model)
                 .environmentObject(entitlements)
-                // Open a ROM dragged onto the app / shared from Files (.nes/.fds/
-                // .nsf are registered in Info.plist).
+                // Open a ROM dragged onto the app / shared from Files (.nes/.zip
+                // are registered in Info.plist; the bridge is iNES/NES 2.0-only).
                 .onOpenURL { url in
-                    model.importAndOpen(url)
+                    Task { await model.importAndOpen(url) }
                 }
                 // `onAppear` runs on the main actor with a synchronous closure, so
                 // it can call the `@MainActor` `refresh()` directly (no `await`

@@ -46,14 +46,18 @@ final class PaletteManager: ObservableObject {
     /// bytes into the sandbox keyed by the file's name stem and returns the id.
     /// - Throws: if the URL cannot be read or the bytes cannot be written.
     @discardableResult
-    func importPalette(from url: URL) throws -> String {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-
-        let data = try Data(contentsOf: url)
+    func importPalette(from url: URL) async throws -> String {
         let id = url.deletingPathExtension().lastPathComponent
+        let dest = self.url(for: id)
         ensureDirectory()
-        try data.write(to: self.url(for: id), options: .atomic)
+        // The read + write run off the main actor for consistency with the other
+        // importers; the `palettes` list refreshes back on the main actor.
+        try await Task.detached(priority: .userInitiated) {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let data = try Data(contentsOf: url)
+            try data.write(to: dest, options: .atomic)
+        }.value
         reload()
         return id
     }

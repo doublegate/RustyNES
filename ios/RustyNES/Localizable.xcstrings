@@ -2,6 +2,346 @@
   "sourceLanguage" : "en",
   "version" : "1.0",
   "strings" : {
+    "Frame" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cuadro" } }
+      }
+    },
+    "Pan" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Balance" } }
+      }
+    },
+    "Reverb mix" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Mezcla de reverberación" } }
+      }
+    },
+    "Reverb room" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Tamaño de sala" } }
+      }
+    },
+    "Crossfeed" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Mezcla de canales" } }
+      }
+    },
+    "Scanline intensity" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Intensidad de líneas de escaneo" } }
+      }
+    },
+    "Aperture mask" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Máscara de apertura" } }
+      }
+    },
+    "Saturation" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Saturación" } }
+      }
+    },
+    "Sharpness" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Nitidez" } }
+      }
+    },
+    "Tint" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Tono" } }
+      }
+    },
+    "Phase" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Fase" } }
+      }
+    },
+    "Base address" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Dirección base" } }
+      }
+    },
+    "Saving restarts the game to record from power-on." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Guardar reinicia el juego para grabar desde el encendido." } }
+      }
+    },
+    "Cheats" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Trucos" } }
+      }
+    },
+    "Add Game Genie codes or edit memory" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Añade códigos Game Genie o edita la memoria" } }
+      }
+    },
+    "TAStudio" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "TAStudio" } }
+      }
+    },
+    "Author a frame-by-frame input movie" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Crea una película de entrada cuadro a cuadro" } }
+      }
+    },
+    "Debugger" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Depurador" } }
+      }
+    },
+    "Inspect CPU, memory, and disassembly" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Inspecciona la CPU, la memoria y el desensamblado" } }
+      }
+    },
+    "Add" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Añadir" } }
+      }
+    },
+    "No active codes." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No hay códigos activos." } }
+      }
+    },
+    "Clear all codes" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Borrar todos los códigos" } }
+      }
+    },
+    "Game Genie" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Game Genie" } }
+      }
+    },
+    "6- or 8-character codes are applied live to PRG reads. Enter codes for the game you own." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Los códigos de 6 u 8 caracteres se aplican en vivo a las lecturas de PRG. Introduce códigos del juego que posees." } }
+      }
+    },
+    "Address" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Dirección" } }
+      }
+    },
+    "Value" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Valor" } }
+      }
+    },
+    "Peek" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Leer" } }
+      }
+    },
+    "Poke" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Escribir" } }
+      }
+    },
+    "Current" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Actual" } }
+      }
+    },
+    "Memory editor" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Editor de memoria" } }
+      }
+    },
+    "Read or write one byte of CPU RAM ($0000-$1FFF). A poke is one-shot — the game may overwrite it next frame." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Lee o escribe un byte de la RAM de la CPU ($0000-$1FFF). La escritura es única: el juego puede sobrescribirla en el siguiente cuadro." } }
+      }
+    },
+    "Step" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Paso" } }
+      }
+    },
+    "No game running." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ningún juego en ejecución." } }
+      }
+    },
+    "Cycles" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ciclos" } }
+      }
+    },
+    "CPU jammed (illegal halt)" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "CPU bloqueada (parada ilegal)" } }
+      }
+    },
+    "Refresh" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Actualizar" } }
+      }
+    },
+    "CPU" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "CPU" } }
+      }
+    },
+    "Read-only. “Step” advances exactly one frame while paused." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Solo lectura. «Paso» avanza exactamente un cuadro mientras está en pausa." } }
+      }
+    },
+    "Disassembly" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Desensamblado" } }
+      }
+    },
+    "Base $" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Base $" } }
+      }
+    },
+    "Read" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Leer" } }
+      }
+    },
+    "Memory" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Memoria" } }
+      }
+    },
+    "%d bytes from the base address, side-effect-free." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "%d bytes desde la dirección base, sin efectos secundarios." } }
+      }
+    },
+    "Load symbol file (.sym / .mlb / .nl)" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cargar archivo de símbolos (.sym / .mlb / .nl)" } }
+      }
+    },
+    "Loaded labels" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Etiquetas cargadas" } }
+      }
+    },
+    "Clear symbols" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Borrar símbolos" } }
+      }
+    },
+    "Symbols" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Símbolos" } }
+      }
+    },
+    "Annotates the disassembly with labels. Parsed on-device; read-only." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Anota el desensamblado con etiquetas. Se analiza en el dispositivo; solo lectura." } }
+      }
+    },
+    "Enable audio depth" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Activar profundidad de audio" } }
+      }
+    },
+    "Reset to flat" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Restablecer a plano" } }
+      }
+    },
+    "Audio depth" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Profundidad de audio" } }
+      }
+    },
+    "Output-only EQ, stereo pan, reverb, and headphone crossfeed. Off by default; flat = unchanged sound." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Ecualizador, paneo estéreo, reverberación y crossfeed para auriculares, solo en la salida. Desactivado por defecto; plano = sonido sin cambios." } }
+      }
+    },
+    "Import a foreign movie" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Importar una película externa" } }
+      }
+    },
+    "Import" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Importar" } }
+      }
+    },
+    "Convert an FCEUX .fm2, BizHawk .bk2, Nestopia .fcm, Famtasia .fmv, or VirtuaNES .vmv into a native .rnm for this game." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Convierte un .fm2 de FCEUX, .bk2 de BizHawk, .fcm de Nestopia, .fmv de Famtasia o .vmv de VirtuaNES en un .rnm nativo para este juego." } }
+      }
+    },
+    "Could not read movie file: %@" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo leer el archivo de película: %@" } }
+      }
+    },
+    "Movie import failed: %@" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Falló la importación de la película: %@" } }
+      }
+    },
+    "Unsupported movie format: %@" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Formato de película no compatible: %@" } }
+      }
+    },
+    "Recording the playback to a movie…" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Grabando la reproducción en una película…" } }
+      }
+    },
+    "Add 30" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Añadir 30" } }
+      }
+    },
+    "Clear" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Borrar" } }
+      }
+    },
+    "Play" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Reproducir" } }
+      }
+    },
+    "Stop" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Detener" } }
+      }
+    },
+    "Save .rnm" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Guardar .rnm" } }
+      }
+    },
+    "Frame %lld, %@" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cuadro %lld, %@" } }
+      }
+    },
+    "%lld frames" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "%lld cuadros" } }
+      }
+    },
+    "Off" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Desactivado" } }
+      }
+    },
+    "Code (e.g. GOSSIP)" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Código (p. ej. GOSSIP)" } }
+      }
+    },
     "A cycle-accurate NES emulator for iPhone and iPad. RustyNES plays only the ROM files you supply from your own device. No games are bundled or downloaded — you must own the games you play." : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Un emulador de NES de precisión de ciclo para iPhone y iPad. RustyNES solo reproduce los archivos ROM que tú proporcionas desde tu propio dispositivo. No se incluyen ni descargan juegos: debes ser propietario de los juegos que utilizas." } }

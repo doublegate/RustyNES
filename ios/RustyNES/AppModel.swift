@@ -41,6 +41,10 @@ final class AppModel: ObservableObject {
     let ra = RetroAchievementsModel()
     let netplay = NetplayModel()
 
+    // Creator / power tools (v1.9.9 "Workshop"). Host output-only audio DSP;
+    // off by default (a flat / disabled config is a bit-exact passthrough).
+    let audioDepth = AudioDepthModel()
+
     // Store-readiness additions (v1.9.8). Gameplay capture (ReplayKit) + opt-in Game
     // Center sign-in; both no-op gracefully when unavailable.
     let recorder = ScreenRecorder()
@@ -228,6 +232,10 @@ final class AppModel: ObservableObject {
         }
         gamepads.start()
 
+        // Re-apply the host audio-depth DSP to the running core whenever a setting
+        // changes (no-op when no game is running). v1.9.9.
+        audioDepth.onChange = { [weak self] in self?.applyAudioDepth() }
+
         // Check the iCloud account status at launch so the save-state sync indicator
         // and reconciliation are ready by the time a game opens (a no-op when the
         // sync toggle is off / iCloud is unavailable).
@@ -241,10 +249,11 @@ final class AppModel: ObservableObject {
     // MARK: - Session lifecycle
 
     /// Open a library entry: read its bytes, build a fresh EmulatorCore, and start.
-    func openGame(_ entry: LibraryEntry) {
+    /// The ROM read runs off the main actor (see `ROMLibrary.romData`).
+    func openGame(_ entry: LibraryEntry) async {
         do {
             audioSession.configure()
-            let data = try library.romData(for: entry)
+            let data = try await library.romData(for: entry)
             let core = try EmulatorCore(romData: data)
             core.isMuted = muted
             // Tear any prior session's connectivity state down before freeing its core
@@ -258,6 +267,7 @@ final class AppModel: ObservableObject {
             // Apply this game's per-game overrides if any, else the global defaults
             // (filter + shader params + palette + HD-pack).
             applyDisplaySettings()
+            applyAudioDepth()
             syncMovieState()
             // Wire connectivity & scripting into the fresh core (no-ops when disabled).
             ra.attach(core: core, romData: data, sha: entry.sha)
@@ -269,11 +279,12 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Import a ROM from a picked URL and immediately open it.
-    func importAndOpen(_ url: URL) {
+    /// Import a ROM from a picked URL and immediately open it. The import read +
+    /// the subsequent ROM read both run off the main actor.
+    func importAndOpen(_ url: URL) async {
         do {
-            let entry = try library.importROM(from: url)
-            openGame(entry)
+            let entry = try await library.importROM(from: url)
+            await openGame(entry)
         } catch {
             errorMessage = "Import failed: \(error.localizedDescription)"
         }
@@ -315,6 +326,69 @@ final class AppModel: ObservableObject {
     func unloadLuaScript() { emulator?.unloadScript() }
     var luaIsLoaded: Bool { emulator?.scriptIsLoaded ?? false }
     func drainLuaLog() -> [String] { emulator?.drainScriptLog() ?? [] }
+
+    // MARK: - Audio depth (v1.9.9)
+
+    /// Apply the current host audio-depth (EQ / pan / reverb / crossfeed) config to
+    /// the running core (no-op when no game is running).
+    func applyAudioDepth() { audioDepth.apply(to: emulator) }
+
+    // MARK: - Foreign movie import (v1.9.9)
+
+    /// Import a foreign movie (`.fm2` / `.bk2` / `.fcm` / `.fmv` / `.vmv`) at `url`,
+    /// transcode it to a native `.rnm` for the running game, save it under the game's
+    /// name, and start playback. The file read runs off the main actor; the core call
+    /// + state update hop back. A malformed file surfaces a clean error (never a crash).
+    func importForeignMovie(at url: URL) {
+        guard let emulator else { errorMessage = String(localized: "No game is running."); return }
+        let ext = url.pathExtension.lowercased()
+        // Reject unsupported extensions synchronously on the main actor.
+        guard ["fm2", "bk2", "fcm", "fmv", "vmv"].contains(ext) else {
+            errorMessage = String(
+                format: String(localized: "Unsupported movie format: %@"), ext
+            )
+            return
+        }
+        Task {
+            let rnm: Data
+            do {
+                // Read AND transcode off the main actor: the bridge needs no
+                // main-actor state (it computes rom_sha256 internally and locks
+                // the core), so a large file read + the transcode both stay off
+                // the UI thread.
+                rnm = try await Task.detached(priority: .userInitiated) {
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    let data = try Data(contentsOf: url)
+                    switch ext {
+                    case "fm2": return try emulator.movieImportFm2(data)
+                    case "bk2": return try emulator.movieImportBk2(data)
+                    case "fcm": return try emulator.movieImportFcm(data)
+                    case "fmv": return try emulator.movieImportFmv(data)
+                    default: return try emulator.movieImportVmv(data)
+                    }
+                }.value
+            } catch {
+                self.errorMessage = String(
+                    format: String(localized: "Movie import failed: %@"),
+                    error.localizedDescription
+                )
+                return
+            }
+            // Back on the main actor: save, play, sync.
+            let name = (self.currentEntry?.name ?? "movie") + "-" + ext
+            try? self.movies.save(rnm, gameName: name)
+            do {
+                try emulator.moviePlay(rnm)
+                self.syncMovieState()
+            } catch {
+                self.errorMessage = String(
+                    format: String(localized: "Movie import failed: %@"),
+                    error.localizedDescription
+                )
+            }
+        }
+    }
 
     // MARK: - Input fan-in
 

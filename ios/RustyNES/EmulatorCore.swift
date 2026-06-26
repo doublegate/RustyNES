@@ -203,9 +203,17 @@ final class EmulatorCore {
             return
         }
 
+        // TAStudio (v1.9.9): when a scripted playback is active, inject this
+        // frame's P1 mask before advancing. No-op otherwise (live input path).
+        tasAdvanceIfActive()
+
         // Run a frame and hand the RGBA framebuffer straight to wgpu (which
         // presents). UniFFI marshals `run_frame()` as a Swift `Data`.
         let frame = controller.runFrame()
+
+        // TAStudio export (v1.9.9): if this frame exhausted the authored table,
+        // stop the recorder NOW (before any idle frames are recorded).
+        tasFinalizeExportIfPending()
 
         // HD-pack path (v1.9.5): when a pack is loaded, present the composited HD
         // frame (which can exceed 256x240) instead of the stock framebuffer. The
@@ -574,6 +582,207 @@ final class EmulatorCore {
     func npIsActive() -> Bool { controller.npIsActive() }
     /// A status snapshot for the netplay panel/HUD.
     func npStatus() -> NpStatus { controller.npStatus() }
+
+    // MARK: - Cheats (v1.9.9 "Workshop")
+
+    /// Add a Game Genie code (6 or 8 characters). The core applies it on every
+    /// PRG read until removed.
+    /// - Throws: `MobileError.cheat` if the code is malformed.
+    func cheatAddGenie(_ code: String) throws { try controller.cheatAddGenie(code: code) }
+    /// Remove a Game Genie code (no-op if not present).
+    func cheatRemoveGenie(_ code: String) { controller.cheatRemoveGenie(code: code) }
+    /// Remove every active Game Genie code.
+    func cheatClearGenie() { controller.cheatClearGenie() }
+    /// The currently-active Game Genie codes.
+    func cheatGenieCodes() -> [GenieCodeInfo] { controller.cheatGenieCodes() }
+    /// Write one byte into CPU RAM ($0000..=$1FFF) via the core's `poke_ram`.
+    func pokeRam(addr: UInt16, value: UInt8) { controller.pokeRam(addr: addr, value: value) }
+    /// Read one byte from the CPU bus, side-effect-free.
+    func peekByte(addr: UInt16) -> UInt8 { controller.peekByte(addr: addr) }
+
+    // MARK: - Read-only debugger inspector (v1.9.9 "Workshop")
+
+    /// A read-only snapshot of the CPU registers (does not advance the core).
+    func debugCpuState() -> CpuRegs { controller.debugCpuState() }
+    /// Read `len` bytes from the CPU bus starting at `start` (side-effect-free).
+    func debugReadMemory(start: UInt16, len: UInt32) -> Data {
+        controller.debugReadMemory(start: start, len: len)
+    }
+    /// Disassemble `count` instructions starting at `pc`.
+    func debugDisassemble(pc: UInt16, count: UInt32) -> [DisasmRow] {
+        controller.debugDisassemble(pc: pc, count: count)
+    }
+
+    /// Advance one frame WITHOUT presenting, for the debugger's single-step while
+    /// the emulator is paused behind the inspector sheet. Drains + discards the
+    /// frame's audio so a paused step doesn't leak sound. Only meaningful while
+    /// paused (no display-link tick); calling it while running double-advances.
+    func debugStep() {
+        controller.stepFrame()
+        _ = controller.drainAudio()
+    }
+
+    // MARK: - Foreign movie import (v1.9.9 "Workshop")
+    //
+    // Each importer transcodes a foreign movie into native `.rnm` bytes stamped
+    // with THIS game's ROM hash; the caller plays them via `moviePlay` and/or
+    // saves them as a `.rnm`.
+
+    /// Import an FCEUX `.fm2` movie and return native `.rnm` bytes.
+    /// - Throws: `MobileError.movie` if the bytes are not a parseable `.fm2`.
+    func movieImportFm2(_ data: Data) throws -> Data { try controller.movieImportFm2(bytes: data) }
+    /// Import a BizHawk `.bk2` movie and return native `.rnm` bytes.
+    /// - Throws: `MobileError.movie` if the archive / input log is malformed.
+    func movieImportBk2(_ data: Data) throws -> Data { try controller.movieImportBk2(bytes: data) }
+    /// Import a Nestopia `.fcm` movie and return native `.rnm` bytes.
+    /// - Throws: `MobileError.movie` if the bytes are not a parseable `.fcm`.
+    func movieImportFcm(_ data: Data) throws -> Data { try controller.movieImportFcm(bytes: data) }
+    /// Import a Famtasia `.fmv` movie and return native `.rnm` bytes.
+    /// - Throws: `MobileError.movie` if the bytes are not a parseable `.fmv`.
+    func movieImportFmv(_ data: Data) throws -> Data { try controller.movieImportFmv(bytes: data) }
+    /// Import a VirtuaNES `.vmv` movie and return native `.rnm` bytes.
+    /// - Throws: `MobileError.movie` if the bytes are not a parseable `.vmv`.
+    func movieImportVmv(_ data: Data) throws -> Data { try controller.movieImportVmv(bytes: data) }
+
+    // MARK: - Audio-depth DSP (v1.9.9 "Workshop")
+
+    /// Publish the live host audio-depth (EQ / pan / reverb / crossfeed) config to
+    /// the CoreAudio sink. Off / flat = bit-exact passthrough. No-op if the sink
+    /// failed to open.
+    func setAudioDepth(_ config: AudioDepthConfig) {
+        guard let audio else { return }
+        config.eqDb.withUnsafeBufferPointer { eqBuf in
+            config.pan.withUnsafeBufferPointer { panBuf in
+                rustynes_ios_audio_set_depth(
+                    audio,
+                    config.enabled ? 1 : 0,
+                    eqBuf.baseAddress, eqBuf.count,
+                    panBuf.baseAddress, panBuf.count,
+                    config.reverbMix, config.reverbRoom, config.crossfeed
+                )
+            }
+        }
+    }
+
+    // MARK: - TAStudio scripted input (v1.9.9 "Workshop")
+    //
+    // A pragmatic touch piano-roll authors a host-side table of per-frame P1
+    // masks. Playback injects one mask per frame through the EXISTING bridge
+    // (`setButtons` + `runFrame`), so it is deterministic; with a recording armed
+    // (`movieRecordFromPowerOn`) the core's recorder captures the same input,
+    // yielding a real `.rnm`. Off by default — the normal input path is untouched
+    // unless a playback is active.
+
+    /// Per-frame P1 masks to inject, the read cursor, and the active flag. Written
+    /// on the main thread (`tasStartPlayback`/`tasStop`) and read on the
+    /// CADisplayLink thread (`tasAdvanceLocked`), so all access goes through
+    /// `frameLock`.
+    private var _tasFrames: [UInt8] = []
+    private var _tasCursor = 0
+    private var _tasActive = false
+    /// While true, the active playback is being captured to a `.rnm`; the recorder
+    /// is stopped at the exact frame the authored table is exhausted (no trailing
+    /// idle frames). Guarded by `frameLock`.
+    private var _tasExporting = false
+    /// Set on the emu thread when the last authored frame has just been injected, so
+    /// `tick()` stops the recorder immediately after running that frame.
+    private var _tasFinalizeExport = false
+    /// The finished export bytes, captured on the emu thread and taken by the host.
+    private var _tasExportedMovie: Data?
+
+    /// Whether a scripted TAStudio playback is currently running.
+    var tasIsActive: Bool {
+        frameLock.lock()
+        defer { frameLock.unlock() }
+        return _tasActive
+    }
+
+    /// Begin injecting `p1Masks` one-per-frame (from the current state). Pair with
+    /// `movieRecordFromPowerOn()` first to capture the run as a `.rnm`.
+    func tasStartPlayback(p1Masks: [UInt8]) {
+        frameLock.lock()
+        _tasFrames = p1Masks
+        _tasCursor = 0
+        _tasActive = !p1Masks.isEmpty
+        _tasExporting = false
+        frameLock.unlock()
+    }
+
+    /// Arm a power-on recording AND begin scripted playback of `p1Masks` as a single
+    /// export: the recorder is stopped at the exact last authored frame (rather than
+    /// on the next host poll tick), so the saved `.rnm` carries no trailing idle
+    /// frames. The finished bytes are retrieved via `tasTakeExportedMovie()`.
+    func tasStartExport(p1Masks: [UInt8]) {
+        controller.movieRecordFromPowerOn()
+        frameLock.lock()
+        _tasFrames = p1Masks
+        _tasCursor = 0
+        _tasActive = !p1Masks.isEmpty
+        _tasExporting = !p1Masks.isEmpty
+        _tasFinalizeExport = false
+        _tasExportedMovie = nil
+        frameLock.unlock()
+    }
+
+    /// Take (and clear) the finished export movie bytes, or nil if an export is
+    /// still running / none is pending. Polled by the host after `tasStartExport`.
+    func tasTakeExportedMovie() -> Data? {
+        frameLock.lock()
+        defer { frameLock.unlock() }
+        let bytes = _tasExportedMovie
+        _tasExportedMovie = nil
+        return bytes
+    }
+
+    /// Stop scripted playback (returns to live input). If an export was in flight,
+    /// finalize it on the next tick so the partial recording is still captured.
+    func tasStop() {
+        frameLock.lock()
+        let wasExporting = _tasExporting && _tasActive
+        _tasActive = false
+        if wasExporting { _tasFinalizeExport = true }
+        frameLock.unlock()
+    }
+
+    /// If a scripted playback is active, take the next P1 mask (advancing the
+    /// cursor, deactivating at the end) and feed it to port 0 before the frame.
+    /// Snapshots under `frameLock`, then calls `setButtons` OUTSIDE the lock
+    /// (`setButtons` re-locks; NSLock is not reentrant).
+    private func tasAdvanceIfActive() {
+        frameLock.lock()
+        guard _tasActive else {
+            frameLock.unlock()
+            return
+        }
+        let mask = _tasCursor < _tasFrames.count ? _tasFrames[_tasCursor] : 0
+        _tasCursor += 1
+        if _tasCursor >= _tasFrames.count {
+            _tasActive = false
+            // This is the last authored frame; finalize the export right after the
+            // frame is run (in `tick`) so no idle frames are recorded past it.
+            if _tasExporting { _tasFinalizeExport = true }
+        }
+        frameLock.unlock()
+        setButtons(port: 0, mask: mask)
+    }
+
+    /// Stop the export recorder immediately if the authored table was just
+    /// exhausted (called from `tick` right after the last authored frame ran).
+    private func tasFinalizeExportIfPending() {
+        frameLock.lock()
+        guard _tasFinalizeExport else {
+            frameLock.unlock()
+            return
+        }
+        _tasFinalizeExport = false
+        _tasExporting = false
+        frameLock.unlock()
+        // `movieStopRecording` re-locks the bridge; call it outside `frameLock`.
+        let bytes = controller.movieStopRecording()
+        frameLock.lock()
+        _tasExportedMovie = bytes
+        frameLock.unlock()
+    }
 
     // MARK: - Teardown
 

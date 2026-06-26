@@ -23,6 +23,10 @@ struct PillMenu: View {
     var onNetplay: () -> Void
     var onAchievements: () -> Void
     var onLua: () -> Void
+    // Creator / power tools (v1.9.9 "Workshop").
+    var onCheats: () -> Void
+    var onTAStudio: () -> Void
+    var onDebugger: () -> Void
     var onRecord: () -> Void
     var onSettings: () -> Void
     var onReset: () -> Void
@@ -42,6 +46,17 @@ struct PillMenu: View {
                        hint: "View RetroAchievements progress", action: onAchievements)
             pillButton("curlybraces", "Lua console",
                        hint: "Run a script against the game", action: onLua)
+            // Creator / power tools (v1.9.9 "Workshop").
+            pillButton("wand.and.stars", "Cheats",
+                       hint: "Add Game Genie codes or edit memory", action: onCheats)
+            pillButton("pianokeys", "TAStudio",
+                       hint: "Author a frame-by-frame input movie", action: onTAStudio)
+            // The debugger is a developer surface gated OFF the App-Store build
+            // (ADR 0027): it appears only on the FOSS / TestFlight channel.
+            if BuildChannel.isFoss {
+                pillButton("ladybug", "Debugger",
+                           hint: "Inspect CPU, memory, and disassembly", action: onDebugger)
+            }
             // Record-screen pill: a red dot + "Stop recording" while active.
             pillButton(
                 recorder.isRecording ? "stop.circle" : "record.circle",

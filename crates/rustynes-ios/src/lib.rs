@@ -53,6 +53,16 @@ pub fn core_version() -> String {
     rustynes_mobile::core_version()
 }
 
+/// The host audio-depth DSP (v1.9.9 "Workshop").
+///
+/// A host, output-only stereo EQ / pan / reverb / crossfeed stage applied in the
+/// CoreAudio callback after the core's mono master is drained. Host-safe (pure
+/// `f32` math), so it compiles and is unit-tested on the workspace host build
+/// and lints under the host CI; `audio.rs` (iOS-only) wires it into the
+/// real-time sink. Bypassable: a default / disabled config is a bit-exact
+/// passthrough, so the determinism contract is untouched.
+pub mod audio_dsp;
+
 /// The iOS wgpu->Metal render path (Workstream B). iOS-only; pulls in wgpu + the
 /// `CAMetalLayer` handoff, so it never touches the host shell build.
 #[cfg(target_os = "ios")]

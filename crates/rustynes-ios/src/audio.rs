@@ -24,6 +24,8 @@ use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+use crate::audio_dsp::{AudioDepth, DepthConfig, DepthParams};
+
 /// A single-producer / single-consumer lock-free ring of mono `f32` samples.
 ///
 /// The producer ([`AudioSink::push`], called on the emu thread) only advances
@@ -122,6 +124,12 @@ pub struct AudioSink {
     ring: Arc<Ring>,
     stream: cpal::Stream,
     sample_rate: u32,
+    /// The live audio-depth (EQ / pan / reverb / crossfeed) configuration mailbox
+    /// (v1.9.9). The Swift Settings UI publishes a [`DepthConfig`] via
+    /// [`AudioSink::set_depth`]; the real-time callback snapshots it once per
+    /// buffer. Default / disabled = bit-exact passthrough, so the determinism
+    /// contract is untouched.
+    depth_params: Arc<DepthParams>,
 }
 
 impl AudioSink {
@@ -148,16 +156,46 @@ impl AudioSink {
         let ring = Arc::new(Ring::new((sample_rate as usize) / 4));
         let ring_cb = Arc::clone(&ring);
 
+        // The audio-depth DSP (v1.9.9): the callback owns a stateful processor
+        // (EQ biquad history + reverb delay lines, allocated once) and reads the
+        // live config from the shared `DepthParams` mailbox once per buffer.
+        let depth_params = Arc::new(DepthParams::new());
+        let depth_params_cb = Arc::clone(&depth_params);
+        let mut depth = AudioDepth::new(sample_rate);
+
         let stream = device
             .build_output_stream(
                 config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    // Expand the mono ring to the device's interleaved channels:
-                    // one queued sample fans out to every channel of a frame.
+                    // Mirror the live config in once per buffer (cheap; re-voices
+                    // only on an actual change), then check bypass once.
+                    depth.apply(&depth_params_cb.snapshot());
+                    let bypass = depth.is_bypass();
                     for frame in data.chunks_mut(channels) {
-                        let s = ring_cb.pop();
-                        for ch in frame.iter_mut() {
-                            *ch = s;
+                        // Exactly one queued mono sample is consumed per output
+                        // frame regardless of bypass, so toggling the DSP never
+                        // changes the drain rate.
+                        let mono = ring_cb.pop();
+                        if bypass {
+                            // Fan the mono value out to every channel (the
+                            // byte-identical pre-v1.9.9 behaviour).
+                            for ch in frame.iter_mut() {
+                                *ch = mono;
+                            }
+                        } else {
+                            let (l, r) = depth.process(mono);
+                            match frame {
+                                [] => {}
+                                [c0] => *c0 = 0.5 * (l + r),
+                                [c0, c1, rest @ ..] => {
+                                    *c0 = l;
+                                    *c1 = r;
+                                    // Any surround channels get the left image.
+                                    for ch in rest {
+                                        *ch = l;
+                                    }
+                                }
+                            }
                         }
                     }
                 },
@@ -171,6 +209,7 @@ impl AudioSink {
             ring,
             stream,
             sample_rate,
+            depth_params,
         })
     }
 
@@ -194,5 +233,12 @@ impl AudioSink {
     #[must_use]
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    /// Publish a new audio-depth (EQ / pan / reverb / crossfeed) configuration
+    /// (v1.9.9). Lock-free: the real-time callback picks it up on its next buffer.
+    /// A default / disabled config is a bit-exact passthrough.
+    pub fn set_depth(&self, cfg: &DepthConfig) {
+        self.depth_params.store(cfg);
     }
 }
