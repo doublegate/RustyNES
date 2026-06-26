@@ -9,13 +9,28 @@
 //  Slots are keyed by the ROM's SHA-256 under the sandbox (see SaveStateManager);
 //  the `.rns` blob format is shared with desktop / Android.
 //
+//  v1.9.7: each slot shows a small iCloud sync indicator (synced / uploading /
+//  local-only) when CloudKit save-state sync is enabled, observing CloudSaveStateSync
+//  directly so it updates live as uploads / reconciliation complete.
+//
 
 import SwiftUI
 import UIKit
 
 struct SaveStatesView: View {
     @EnvironmentObject private var model: AppModel
+
+    // Observe the cloud-sync model directly (AppModel doesn't republish nested
+    // ObservableObject changes), so the per-slot indicators refresh live.
+    var body: some View {
+        SaveStatesContent(cloud: model.cloudSaveStates)
+    }
+}
+
+private struct SaveStatesContent: View {
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject var cloud: CloudSaveStateSync
 
     // A local snapshot of the slot state, reloaded after every mutation (the slots
     // are file-backed, not @Published, so the view refreshes them explicitly).
@@ -32,6 +47,7 @@ struct SaveStatesView: View {
                     ForEach(slots) { slot in
                         SlotCard(
                             slot: slot,
+                            syncState: cloud.state(for: slot.index),
                             onSave: { save(slot.index) },
                             onLoad: { load(slot.index) },
                             onDelete: { slotToDelete = slot.index }
@@ -48,6 +64,9 @@ struct SaveStatesView: View {
                 }
             }
             .onAppear(perform: reload)
+            // A cloud reconcile can overwrite a local slot (newer-remote pull); refresh
+            // the file-backed snapshot so its thumbnail / timestamp update too.
+            .onChange(of: cloud.states) { _ in reload() }
             .confirmationDialog(
                 "Delete this save state?",
                 isPresented: Binding(
@@ -86,26 +105,39 @@ struct SaveStatesView: View {
 /// One slot card: thumbnail (or an empty placeholder), metadata, and actions.
 private struct SlotCard: View {
     let slot: SaveSlot
+    let syncState: CloudSaveStateSync.SlotSyncState
     let onSave: () -> Void
     let onLoad: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.secondary.opacity(0.18))
-                    .aspectRatio(256.0 / 240.0, contentMode: .fit)
-                if let image = slot.thumbnail {
-                    Image(uiImage: image)
-                        .resizable()
-                        .interpolation(.none)
+            ZStack(alignment: .topTrailing) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.secondary.opacity(0.18))
                         .aspectRatio(256.0 / 240.0, contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                } else {
-                    Image(systemName: slot.isEmpty ? "square.dashed" : "photo")
-                        .font(.system(size: 30))
-                        .foregroundStyle(.secondary)
+                    if let image = slot.thumbnail {
+                        Image(uiImage: image)
+                            .resizable()
+                            .interpolation(.none)
+                            .aspectRatio(256.0 / 240.0, contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    } else {
+                        Image(systemName: slot.isEmpty ? "square.dashed" : "photo")
+                            .font(.system(size: 30))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                // iCloud sync indicator (only for non-empty slots while sync is on).
+                if !slot.isEmpty, let badge = syncBadge {
+                    Image(systemName: badge.symbol)
+                        .font(.caption)
+                        .foregroundStyle(badge.color)
+                        .padding(5)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .padding(6)
+                        .accessibilityLabel(badge.label)
                 }
             }
 
@@ -143,5 +175,16 @@ private struct SlotCard: View {
             return "\(when)\nFrame \(frame)"
         }
         return when
+    }
+
+    /// The iCloud indicator (symbol + colour + label) for this slot, or nil to hide it
+    /// (sync disabled / iCloud unavailable).
+    private var syncBadge: (symbol: String, color: Color, label: String)? {
+        switch syncState {
+        case .unavailable: return nil
+        case .uploading: return ("arrow.up.circle", .secondary, "Uploading to iCloud")
+        case .synced: return ("icloud.fill", .accentColor, "Synced to iCloud")
+        case .localOnly: return ("icloud.slash", .secondary, "On this device only")
+        }
     }
 }

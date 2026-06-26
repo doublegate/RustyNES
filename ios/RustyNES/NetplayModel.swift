@@ -10,8 +10,14 @@
 //  Determinism / cross-play: the same rollback core + input protocol as desktop and
 //  Android, so an iOS peer can play a desktop / Android peer on the same LAN.
 //
-//  Scope: direct-IP / LAN ONLY this release. CGNAT / room-code / STUN / TURN netplay
-//  (the bridge's `npHostRoom` / `npJoinRoom`) is deferred to v1.9.7 and not wired here.
+//  v1.9.7 adds a ROOM-CODE (CGNAT / internet) path alongside direct-IP: `hostRoom`
+//  registers with a signaling relay and publishes a room code to share; `joinRoom`
+//  dials that code. Both build an `NpNetConfig` from the persisted netplay settings
+//  (a required `wss://` signaling URL, optional STUN list, optional TURN trio) and
+//  then run the SAME `npAdvanceFrame` loop as the LAN path -- only the connection
+//  establishment differs. The maintainer must deploy/host the signaling relay (+ a
+//  TURN server for symmetric NAT); this is a documented carryover mirroring the
+//  Android `deploy/` bundle.
 //
 
 import Combine
@@ -24,8 +30,49 @@ final class NetplayModel: ObservableObject {
     @Published private(set) var status: NpStatus?
     /// The bound local port to share with the joiner (host only).
     @Published private(set) var hostedPort: UInt16?
+    /// The room code to share with the joiner (room-code host only, v1.9.7).
+    @Published private(set) var hostedRoomCode: String?
     /// A transient error surfaced to the netplay UI.
     @Published var lastError: String?
+
+    // MARK: - Room-code config (v1.9.7), persisted in UserDefaults; edited in Settings
+
+    /// The signaling relay URL (`wss://` / `ws://`). REQUIRED for room-code play. The
+    /// default is a placeholder the maintainer replaces with their deployed relay.
+    @Published var signalingURL: String = UserDefaults.standard.string(forKey: Keys.signaling)
+        ?? "wss://relay.example.com" {
+        didSet { UserDefaults.standard.set(signalingURL, forKey: Keys.signaling) }
+    }
+    /// Optional STUN servers, one per line (`host:port`). Empty -> the bridge defaults.
+    @Published var stunServers: String = UserDefaults.standard.string(forKey: Keys.stun) ?? "" {
+        didSet { UserDefaults.standard.set(stunServers, forKey: Keys.stun) }
+    }
+    /// Optional TURN relay `host:port` (symmetric-NAT fallback). Empty -> no relay.
+    @Published var turnURL: String = UserDefaults.standard.string(forKey: Keys.turnURL) ?? "" {
+        didSet { UserDefaults.standard.set(turnURL, forKey: Keys.turnURL) }
+    }
+    /// The TURN username (required alongside `turnURL`).
+    @Published var turnUser: String = UserDefaults.standard.string(forKey: Keys.turnUser) ?? "" {
+        didSet { UserDefaults.standard.set(turnUser, forKey: Keys.turnUser) }
+    }
+    /// The TURN shared secret / password (required alongside `turnURL`).
+    @Published var turnSecret: String = UserDefaults.standard.string(forKey: Keys.turnSecret) ?? "" {
+        didSet { UserDefaults.standard.set(turnSecret, forKey: Keys.turnSecret) }
+    }
+
+    private enum Keys {
+        static let signaling = "netplay.signalingURL"
+        static let stun = "netplay.stunServers"
+        static let turnURL = "netplay.turnURL"
+        static let turnUser = "netplay.turnUser"
+        static let turnSecret = "netplay.turnSecret"
+    }
+
+    /// Whether the signaling URL is configured well enough to attempt room-code play.
+    var signalingConfigured: Bool {
+        let u = signalingURL.trimmingCharacters(in: .whitespaces)
+        return u.hasPrefix("wss://") || u.hasPrefix("ws://")
+    }
 
     private weak var core: EmulatorCore?
     private var pollTimer: Timer?
@@ -48,6 +95,7 @@ final class NetplayModel: ObservableObject {
         core = nil
         status = nil
         hostedPort = nil
+        hostedRoomCode = nil
     }
 
     // MARK: - Host / Join / Leave
@@ -80,10 +128,73 @@ final class NetplayModel: ObservableObject {
         }
     }
 
+    // MARK: - Host / Join by room code (CGNAT / internet, v1.9.7)
+
+    /// Host a room-code session: register with the signaling relay, begin NAT
+    /// traversal, and publish the returned room code in `hostedRoomCode` for the peer
+    /// to enter. The frame loop then advances via `npAdvanceFrame` like the LAN path.
+    func hostRoom() {
+        guard let core else { lastError = "Open a game first to host netplay."; return }
+        guard signalingConfigured else { lastError = signalingHint; return }
+        do {
+            hostedRoomCode = try core.npHostRoom(numPlayers: 2, cfg: makeNetConfig())
+            hostedPort = nil
+            lastError = nil
+            startPolling()
+        } catch {
+            lastError = "Could not host room: \(error.localizedDescription)"
+        }
+    }
+
+    /// Join a room-code session by its `code`.
+    func joinRoom(code: String) {
+        guard let core else { lastError = "Open a game first to join netplay."; return }
+        guard signalingConfigured else { lastError = signalingHint; return }
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { lastError = "Enter the room code."; return }
+        do {
+            try core.npJoinRoom(roomCode: trimmed, cfg: makeNetConfig())
+            hostedPort = nil
+            hostedRoomCode = nil
+            lastError = nil
+            startPolling()
+        } catch {
+            lastError = "Could not join room: \(error.localizedDescription)"
+        }
+    }
+
+    private var signalingHint: String {
+        "Set a signaling relay URL (wss://...) in Settings > Netplay before using room codes."
+    }
+
+    /// Build the bridge `NpNetConfig` from the persisted settings: a required signaling
+    /// URL, an optional newline-separated STUN list (empty -> bridge defaults), and the
+    /// optional TURN trio (all three required together, else the relay path is off).
+    private func makeNetConfig() -> NpNetConfig {
+        let stun = stunServers
+            .split(whereSeparator: { $0 == "\n" || $0 == "," })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let url = turnURL.trimmingCharacters(in: .whitespaces)
+        let user = turnUser.trimmingCharacters(in: .whitespaces)
+        let secret = turnSecret.trimmingCharacters(in: .whitespaces)
+        // Only configure TURN when the full trio is present; otherwise leave it nil so
+        // the bridge runs punch-or-fail (cone-NAT only).
+        let turnComplete = !url.isEmpty && !user.isEmpty && !secret.isEmpty
+        return NpNetConfig(
+            stunServers: stun,
+            turnUrl: turnComplete ? url : nil,
+            turnUser: turnComplete ? user : nil,
+            turnSecret: turnComplete ? secret : nil,
+            signalingUrl: signalingURL.trimmingCharacters(in: .whitespaces)
+        )
+    }
+
     /// Leave the session and return to single-player.
     func leave() {
         core?.npLeave()
         hostedPort = nil
+        hostedRoomCode = nil
         status = nil
         stopPolling()
     }

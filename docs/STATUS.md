@@ -1,12 +1,16 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.9.6 "Link"** (2026-06-25) — the iOS connectivity release: a
-> **Lua** console (load/log), **RetroAchievements** (Keychain login + hardcore +
-> unlock-toast HUD + achievements list), and **direct-IP / LAN netplay** (Host/Join +
-> the rollback `npAdvanceFrame` loop), all surfacing the shared bridge's already-Send
-> Lua/RA/netplay surface. All SwiftUI-shell work; the core / chip crates / bridge are
-> untouched (only `CARGO_PKG_VERSION` moves 1.9.5 → 1.9.6), so byte-identity +
-> AccuracyCoin 139/139 hold. The preceding **v1.9.5 "Curator"** — TAS `.rnm`, `.pal`
+> **Current release: v1.9.7 "Relay"** (2026-06-25) — the iOS connectivity-completion
+> release: **room-code (CGNAT/TURN) netplay** (`npHostRoom`/`npJoinRoom` + an
+> `NpNetConfig` signaling/STUN/TURN, reusing the `npAdvanceFrame` loop), **robust
+> GameController hot-plug** (graceful port re-assignment on connect/disconnect), and
+> opt-in **iCloud save-state sync** (CloudKit — the `.rns` slots as `CKAsset`s, keyed
+> by ROM-SHA + slot, last-writer-wins). All SwiftUI-shell work; the core is untouched
+> (only `CARGO_PKG_VERSION` moves 1.9.6 → 1.9.7), so byte-identity + AccuracyCoin
+> 139/139 hold. The preceding **v1.9.6 "Link"** — a **Lua** console,
+> **RetroAchievements** (Keychain login + hardcore + unlock-toast HUD + list), and
+> **direct-IP / LAN netplay** (the rollback `npAdvanceFrame` loop). The preceding
+> **v1.9.5 "Curator"** — TAS `.rnm`, `.pal`
 > palettes, `.zip` ROMs, a per-game overrides DB, **HD-pack** load + composited-HD
 > rendering (a `cfg(ios)` `rustynes-ios` HD path), and iCloud config sync. The
 > preceding **v1.9.4 "Lens"** — the full **`wgpu→Metal` shader stack**
@@ -127,9 +131,11 @@
 > output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
 > 0023 (i18n string-catalog).
 
-**Current release: v1.9.6 "Link"** (the iOS connectivity release — Lua console,
-RetroAchievements, direct-IP / LAN netplay, framed in the blockquote above), on the
-cycle-accurate v1.0.0 production core; the preceding **v1.9.5 "Curator"** was the
+**Current release: v1.9.7 "Relay"** (the iOS connectivity-completion release —
+room-code CGNAT/TURN netplay, controller hot-plug robustness, iCloud save-state sync
+via CloudKit, framed in the blockquote above), on the cycle-accurate v1.0.0 production
+core; the preceding **v1.9.6 "Link"** was the iOS connectivity release (Lua console,
+RetroAchievements, direct-IP / LAN netplay); the preceding **v1.9.5 "Curator"** was the
 iOS power-user / library release (TAS `.rnm`, `.pal` palettes, `.zip` ROMs, a per-game
 overrides DB, HD-pack, iCloud config sync), **v1.9.4 "Lens"** the renderer-completion
 release (full wgpu->Metal shader stack + ProMotion pacing + hardened surface

@@ -82,6 +82,25 @@ struct SettingsView: View {
                     Text("Opt-in achievement tracking. Off by default.")
                 }
 
+                // Netplay endpoints (room-code / CGNAT play, v1.9.7).
+                Section {
+                    NavigationLink {
+                        NetplaySettingsView(netplay: model.netplay)
+                    } label: {
+                        LabeledContent(
+                            "Netplay",
+                            value: model.netplay.signalingConfigured ? "Configured" : "Setup needed"
+                        )
+                    }
+                } header: {
+                    Text("Netplay")
+                } footer: {
+                    Text("Same-Wi-Fi play works out of the box. Room-code (internet) play needs a signaling relay (and optional TURN server) the maintainer hosts.")
+                }
+
+                // iCloud save-state sync (v1.9.7).
+                CloudSyncSection(cloud: model.cloudSaveStates)
+
                 Section {
                     Button {
                         showingLua = true
@@ -232,6 +251,85 @@ private struct ControllersSection: View {
             get: { controller.port },
             set: { manager.assign(controllerID: controller.id, toPort: $0) }
         )
+    }
+}
+
+// MARK: - Netplay endpoints (v1.9.7)
+
+/// Edits the room-code netplay endpoints: a REQUIRED signaling relay URL, an optional
+/// STUN list, and an optional TURN trio. Persisted by NetplayModel into UserDefaults.
+private struct NetplaySettingsView: View {
+    @ObservedObject var netplay: NetplayModel
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("wss://relay.example.com", text: $netplay.signalingURL)
+                    .keyboardType(.URL)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                if !netplay.signalingConfigured {
+                    Label("Enter a wss:// or ws:// relay URL.", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            } header: {
+                Text("Signaling relay (required)")
+            } footer: {
+                Text("Room-code play relays the initial handshake through this server. The maintainer must deploy and host it (a documented carryover mirroring the Android deploy bundle). Same-Wi-Fi play does not use it.")
+            }
+
+            Section {
+                TextField("stun:stun.example.com:3478", text: $netplay.stunServers, axis: .vertical)
+                    .lineLimit(1...4)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            } header: {
+                Text("STUN servers (optional)")
+            } footer: {
+                Text("One host:port per line. Leave empty to use the built-in defaults.")
+            }
+
+            Section {
+                TextField("turn:turn.example.com:3478", text: $netplay.turnURL)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                TextField("TURN username", text: $netplay.turnUser)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                SecureField("TURN secret", text: $netplay.turnSecret)
+            } header: {
+                Text("TURN relay (optional)")
+            } footer: {
+                Text("A TURN server lets strict (symmetric) NATs fall back to a relay. All three fields are needed together; otherwise room-code play is punch-or-fail.")
+            }
+        }
+        .navigationTitle("Netplay")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - iCloud save-state sync (v1.9.7)
+
+/// The opt-in CloudKit save-state sync toggle + status. Observes the sync model so the
+/// availability line updates after the account check.
+private struct CloudSyncSection: View {
+    @ObservedObject var cloud: CloudSaveStateSync
+
+    var body: some View {
+        Section {
+            Toggle("Sync save states via iCloud", isOn: $cloud.enabled)
+            if cloud.enabled {
+                LabeledContent("iCloud account", value: cloud.accountAvailable ? "Available" : "Unavailable")
+                    .foregroundStyle(cloud.accountAvailable ? .primary : .secondary)
+            }
+        } header: {
+            Text("Save-state sync")
+        } footer: {
+            Text(cloud.enabled && !cloud.accountAvailable
+                ? "Sign in to iCloud (Settings > Apple ID) to sync. Save states still work locally."
+                : "Mirror your four per-game save slots across your devices through your private iCloud. Off by default; local save/load always works.")
+        }
     }
 }
 

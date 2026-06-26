@@ -15,6 +15,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.7] - 2026-06-25 - "Relay" (iOS connectivity completion)
+
+The iOS connectivity-completion release — the analogue of Android v1.8.7. Adds
+room-code (CGNAT/TURN) netplay, controller hot-plug robustness, and iCloud
+save-state sync (CloudKit). All SwiftUI-shell work; the Rust core / chip crates /
+bridge are untouched (only `CARGO_PKG_VERSION` moves 1.9.6 → 1.9.7), so the shipped /
+native / `no_std` / wasm core stays **byte-identical** and **AccuracyCoin holds
+100% (139/139)**. Interim TestFlight.
+
+### Added
+
+- **Room-code netplay (CGNAT / TURN)** — Host-room (`npHostRoom` → a shareable room
+  code) / Join-room (`npJoinRoom`) alongside the v1.9.6 direct-IP path, building an
+  `NpNetConfig` from a Settings-configured **signaling URL** (`wss://`) + optional
+  STUN/TURN; the connection-phase (signaling → hole-punch → relay) shows from
+  `npStatus`, then the SAME `npAdvanceFrame` rollback loop drives the session. The
+  signaling-relay + TURN deployment is a documented maintainer carryover (mirrors the
+  Android `deploy/` bundle).
+- **Robust GameController** — mid-session connect/disconnect (`GCControllerDidConnect`/
+  `DidDisconnect`) handled with main-actor hops: ports re-assign gracefully on a pad
+  drop, a reconnecting controller reclaims its port where possible, and the
+  controller-aware UI updates live. A hot-plugged pad just starts driving its port.
+- **iCloud save-state sync (CloudKit)** — opt-in sync of the `.rns` slots across
+  devices: a private-DB record per ROM-SHA + slot (the `.rns` blob as a `CKAsset` +
+  metadata), uploaded on save and reconciled (last-writer-wins by timestamp) on
+  launch / library open, with a per-slot sync indicator. Graceful when iCloud /
+  CloudKit is unavailable; the CloudKit container entitlement added (the maintainer
+  enables the capability + container).
+
 ## [1.9.6] - 2026-06-25 - "Link" (iOS connectivity & scripting)
 
 The iOS connectivity release — the analogue of Android v1.8.6. Surfaces the shared

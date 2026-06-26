@@ -6,20 +6,37 @@
 
   v1.9.5 adds the iCloud key-value-store entitlement so the small app config (the
   global Settings scalars: filter, shader params, palette selection, mute, haptics)
-  syncs across a user's devices via NSUbiquitousKeyValueStore. NOT save-states or
-  ROMs (those stay local in this release).
+  syncs across a user's devices via NSUbiquitousKeyValueStore.
 
-  MAINTAINER CARRYOVER (cannot be set from Linux / checked-in project alone): the
-  iCloud capability + a key-value container must be enabled for the App ID in the
-  Apple Developer account and the Xcode target's Signing & Capabilities. Until then
-  CloudConfigSync gracefully no-ops (writes stay local). The container id below
-  follows the default $(TeamIdentifierPrefix)$(CFBundleIdentifier) convention.
+  v1.9.7 adds the CloudKit service + container entitlement so the per-game `.rns`
+  save-state slots sync across devices via the user's PRIVATE CloudKit database (see
+  CloudSaveStateSync). This is opt-in (off by default) and never blocks local
+  save/load. ROMs still stay local / user-provided.
+
+  MAINTAINER CARRYOVER (cannot be set from Linux / checked-in project alone): in the
+  Apple Developer account + the Xcode target's Signing & Capabilities, enable BOTH
+  the iCloud key-value store AND CloudKit, and create the CloudKit container
+  "iCloud.$(CFBundleIdentifier)". The "SaveState" record type is created on first
+  upload in the CloudKit development environment; promote the schema to production
+  before release. Until provisioned, CloudConfigSync / CloudSaveStateSync gracefully
+  no-op (everything stays local). The ids below follow the default
+  $(TeamIdentifierPrefix)$(CFBundleIdentifier) / iCloud.$(CFBundleIdentifier)
+  conventions, so CKContainer.default() resolves the same container.
 
   ROMs remain user-provided through the document picker (no broad file access), and
-  the app still collects no data and does no networking beyond this KV sync.
+  the app collects no data and does no networking beyond this iCloud sync + opt-in
+  netplay / RetroAchievements.
 -->
 <dict>
 	<key>com.apple.developer.ubiquity-kvstore-identifier</key>
 	<string>$(TeamIdentifierPrefix)$(CFBundleIdentifier)</string>
+	<key>com.apple.developer.icloud-services</key>
+	<array>
+		<string>CloudKit</string>
+	</array>
+	<key>com.apple.developer.icloud-container-identifiers</key>
+	<array>
+		<string>iCloud.$(CFBundleIdentifier)</string>
+	</array>
 </dict>
 </plist>
