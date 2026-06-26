@@ -51,6 +51,17 @@ final class RetroAchievementsModel: ObservableObject {
 
     private weak var core: EmulatorCore?
     private var currentSha: String?
+    /// The current ROM's bytes, retained so a mid-session login can load its
+    /// achievement set (`loadGame`) without reopening the game. Cleared on detach.
+    private var currentRomData: Data?
+    /// True once `raLoadGame` has succeeded for the current ROM. Drives teardown so
+    /// `detachFromGame` unloads + persists regardless of the live `enabled` toggle
+    /// (RA disabled mid-game must still flush + unload the loaded set).
+    private var isGameLoaded = false
+    /// The token currently persisted to the Keychain / UserDefaults. The 4 Hz poll
+    /// only re-persists when the token actually changes, avoiding a per-tick Keychain
+    /// write storm (delete+add = disk I/O + security-daemon IPC).
+    private var activeToken: String?
     private var pollTimer: Timer?
 
     private let tokenAccount = "retroachievements.token"
@@ -75,9 +86,13 @@ final class RetroAchievementsModel: ObservableObject {
     func attach(core: EmulatorCore, romData: Data, sha: String) {
         self.core = core
         currentSha = sha
+        currentRomData = romData
         guard enabled else { stopPolling(); return }
         core.raInit(hardcore: hardcore)
         if let token = Keychain.get(account: tokenAccount), !username.isEmpty {
+            // Already in the Keychain — record it as the active token so the poll
+            // doesn't re-persist it every tick.
+            activeToken = token
             core.raLoginToken(user: username, token: token)
         }
         loadGame(romData: romData, sha: sha)
@@ -91,6 +106,7 @@ final class RetroAchievementsModel: ObservableObject {
         let sidecar = readSidecar(sha: sha) ?? Data()
         do {
             try core.raLoadGame(rom: romData, sha256: digest, sidecar: sidecar)
+            isGameLoaded = true
         } catch {
             lastError = "RetroAchievements could not load this game: \(error.localizedDescription)"
         }
@@ -98,14 +114,18 @@ final class RetroAchievementsModel: ObservableObject {
 
     /// Persist progress + unload the game's set before the core is torn down.
     func detachFromGame() {
-        if enabled, let core, let sha = currentSha {
+        // Persist + unload whenever a set was actually loaded, regardless of the live
+        // `enabled` toggle — disabling RA mid-game must still flush progress + unload.
+        if isGameLoaded, let core, let sha = currentSha {
             let blob = core.raSerializeProgress()
             if !blob.isEmpty { writeSidecar(blob, sha: sha) }
             core.raUnloadGame()
         }
+        isGameLoaded = false
         stopPolling()
         core = nil
         currentSha = nil
+        currentRomData = nil
         // Clear per-game live views (login state stays as-is for the next game).
         toasts = []
         achievements = []
@@ -128,6 +148,12 @@ final class RetroAchievementsModel: ObservableObject {
         UserDefaults.standard.set(user, forKey: "raUsername")
         core.raInit(hardcore: hardcore)
         core.raLoginPassword(user: user, password: password)
+        // Load the current ROM's achievement set if it wasn't loaded at attach time
+        // (RA was disabled / not signed in then). The unlock state reconciles once the
+        // login lands inside `post_frame_ra`; reuse the same `raLoadGame` as `attach`.
+        if !isGameLoaded, let romData = currentRomData, let sha = currentSha {
+            loadGame(romData: romData, sha: sha)
+        }
         startPolling()
     }
 
@@ -135,6 +161,7 @@ final class RetroAchievementsModel: ObservableObject {
     func logout() {
         core?.raLogout()
         Keychain.delete(account: tokenAccount)
+        activeToken = nil
         UserDefaults.standard.removeObject(forKey: "raUsername")
         username = ""
         user = nil
@@ -178,11 +205,14 @@ final class RetroAchievementsModel: ObservableObject {
             core.pumpForLogin()
         }
 
-        // On a completed login, persist the returned token for token re-login next game.
-        if status == .loggedIn, let token = core.raToken() {
+        // On a completed login, persist the returned token for token re-login next
+        // game — but ONLY when it changes, not every poll tick (a Keychain delete+add
+        // each tick is disk I/O + security-daemon IPC).
+        if status == .loggedIn, let token = core.raToken(), token != activeToken {
             Keychain.set(token, account: tokenAccount)
             if let u = user { username = u.username }
             UserDefaults.standard.set(username, forKey: "raUsername")
+            activeToken = token
         }
     }
 

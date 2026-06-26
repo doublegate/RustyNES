@@ -283,8 +283,11 @@ final class AppModel: ObservableObject {
     /// - Throws: `MobileError.script` if it fails to compile / load.
     func loadLuaScript(_ src: String) throws {
         guard let emulator else { throw AppError.noGame }
-        try emulator.loadScript(src)
+        // Persist the text BEFORE attempting the load so a failed compile (syntax
+        // error) still keeps the user's edit; the load error is rethrown so the
+        // caller can surface it.
         lastLuaScript = src
+        try emulator.loadScript(src)
     }
 
     func unloadLuaScript() { emulator?.unloadScript() }

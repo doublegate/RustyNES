@@ -75,13 +75,18 @@ final class EmulatorCore {
     /// The live P1 (port 0) controller mask, cached from `setButtons` so the netplay
     /// frame loop can feed it to `npAdvanceFrame(localMask:)` (v1.9.6). The bridge
     /// maps this peer's local mask onto its own player slot internally (host = P1,
-    /// joiner = P2); the remote player's input arrives over the wire.
-    private(set) var localMask: UInt8 = 0
+    /// joiner = P2); the remote player's input arrives over the wire. Written on the
+    /// main thread (`setButtons`) and read on the CADisplayLink/emulation thread
+    /// (`tickNetplay`), so all access goes through `frameLock`.
+    private var _localMask: UInt8 = 0
 
     /// The active custom palette's RGB bytes (the same `.pal` fed to the core via
     /// `loadPalette`), cached so the netplay index->RGBA path (`NesPalette.expand`)
-    /// matches the single-player look. `nil` => the built-in master palette.
-    private var customPaletteRGB: Data?
+    /// matches the single-player look. `nil` => the built-in master palette. Written
+    /// on the main thread (`loadPalette`/`clearPalette`) and read on the emulation
+    /// thread (`tickNetplay`), so all access goes through `frameLock` — `Data` is
+    /// copy-on-write and not safe for concurrent read/write.
+    private var _customPaletteRGB: Data?
 
     /// Reused RGBA staging buffer for the netplay present path (filled by
     /// `NesPalette.expand`), kept off the per-frame allocation hot path.
@@ -103,6 +108,33 @@ final class EmulatorCore {
         frameLock.lock()
         defer { frameLock.unlock() }
         return _lastFrame
+    }
+
+    /// Thread-safe accessors for the cross-thread netplay inputs (`_localMask`,
+    /// `_customPaletteRGB`). Each holds `frameLock` only for the field access, so the
+    /// critical section stays tiny — the caller snapshots into a local before use.
+    private func loadLocalMask() -> UInt8 {
+        frameLock.lock()
+        defer { frameLock.unlock() }
+        return _localMask
+    }
+
+    private func storeLocalMask(_ mask: UInt8) {
+        frameLock.lock()
+        _localMask = mask
+        frameLock.unlock()
+    }
+
+    private func loadCustomPaletteRGB() -> Data? {
+        frameLock.lock()
+        defer { frameLock.unlock() }
+        return _customPaletteRGB
+    }
+
+    private func storeCustomPaletteRGB(_ rgb: Data?) {
+        frameLock.lock()
+        _customPaletteRGB = rgb
+        frameLock.unlock()
     }
 
     /// Metadata for the loaded cartridge.
@@ -263,6 +295,10 @@ final class EmulatorCore {
     /// NON-advancing index path and expand it to RGBA (see `NesPalette`), since
     /// `npAdvanceFrame` does not return pixels and re-running `runFrame` would desync.
     private func tickNetplay(gfx: OpaquePointer) {
+        // Snapshot the cross-thread inputs under `frameLock` (they are mutated on the
+        // main thread); use the locals for the rest of the tick.
+        let localMask = loadLocalMask()
+        let customPaletteRGB = loadCustomPaletteRGB()
         let result = controller.npAdvanceFrame(localMask: localMask)
         guard result.producedFrame else {
             // Stall / connecting / error: keep the audio ring from backing up, no present.
@@ -318,7 +354,7 @@ final class EmulatorCore {
     /// Set the full 8-bit controller mask for a port (0-3). Caches the P1 (port 0)
     /// mask so the netplay loop can feed it to `npAdvanceFrame`.
     func setButtons(port: UInt32, mask: UInt8) {
-        if port == 0 { localMask = mask }
+        if port == 0 { storeLocalMask(mask) }
         try? controller.setButtons(port: port, mask: mask)
     }
 
@@ -413,13 +449,14 @@ final class EmulatorCore {
     func loadPalette(_ data: Data) throws {
         try controller.loadPalette(bytes: data)
         // Cache for the netplay index->RGBA path so it matches the single-player look.
-        customPaletteRGB = data
+        // Locked: read on the emulation thread in `tickNetplay`.
+        storeCustomPaletteRGB(data)
     }
 
     /// Restore the built-in NES palette.
     func clearPalette() {
         controller.clearPalette()
-        customPaletteRGB = nil
+        storeCustomPaletteRGB(nil)
     }
 
     // MARK: - HD-pack (v1.9.5)

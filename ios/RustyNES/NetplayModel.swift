@@ -42,6 +42,9 @@ final class NetplayModel: ObservableObject {
 
     func detach() {
         stopPolling()
+        // End any live session before dropping the core ref, so teardown is
+        // deterministic and the peer is notified (a game close/swap mid-session).
+        if let core, core.npIsActive() { core.npLeave() }
         core = nil
         status = nil
         hostedPort = nil
@@ -125,15 +128,18 @@ enum NetworkInfo {
         var ptr: UnsafeMutablePointer<ifaddrs>? = first
         while let current = ptr {
             let interface = current.pointee
-            let family = interface.ifa_addr.pointee.sa_family
+            // `ifa_addr` is nil for interfaces that are down / have no address; skip
+            // them rather than force-dereferencing (which would crash).
+            guard let addr = interface.ifa_addr else { ptr = interface.ifa_next; continue }
+            let family = addr.pointee.sa_family
             if family == UInt8(AF_INET) {
                 let name = String(cString: interface.ifa_name)
                 // `en0` is the Wi-Fi interface on iPhone/iPad; LAN netplay rides Wi-Fi.
                 if name == "en0" {
                     var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                     if getnameinfo(
-                        interface.ifa_addr,
-                        socklen_t(interface.ifa_addr.pointee.sa_len),
+                        addr,
+                        socklen_t(addr.pointee.sa_len),
                         &host, socklen_t(host.count),
                         nil, 0, NI_NUMERICHOST
                     ) == 0 {
