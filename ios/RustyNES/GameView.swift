@@ -14,6 +14,9 @@ struct GameView: View {
     @State private var showingStates = false
     @State private var showingSettings = false
     @State private var showingMovies = false
+    @State private var showingNetplay = false
+    @State private var showingAchievements = false
+    @State private var showingLua = false
     // The top bar + pill menu visibility, toggled by the on-screen MENU pill (mirrors
     // the Android MENU pill toggling `controlsVisible`).
     @State private var menuVisible = true
@@ -65,6 +68,9 @@ struct GameView: View {
                         onLibrary: { model.closeGame() },
                         onStates: { showingStates = true },
                         onMovies: { showingMovies = true },
+                        onNetplay: { showingNetplay = true },
+                        onAchievements: { showingAchievements = true },
+                        onLua: { showingLua = true },
                         onSettings: { showingSettings = true },
                         onReset: { model.emulator?.reset() },
                         onPower: { model.emulator?.powerCycle() }
@@ -73,6 +79,13 @@ struct GameView: View {
                 }
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             }
+
+            // RetroAchievements unlock / login toasts (v1.9.6) + the netplay status
+            // chip. These observe their nested ObservableObjects directly so they
+            // re-render when the poll timers update them (AppModel doesn't republish
+            // nested-model changes).
+            AchievementToastOverlay(ra: model.ra, topInset: menuVisible ? 56 : 12)
+            NetplayOverlay(netplay: model.netplay)
         }
         .animation(.easeInOut(duration: 0.2), value: menuVisible)
         .sheet(isPresented: $showingStates) {
@@ -83,6 +96,22 @@ struct GameView: View {
         }
         .sheet(isPresented: $showingMovies) {
             MoviePanelView()
+        }
+        .sheet(isPresented: $showingNetplay) {
+            NetplayView(netplay: model.netplay)
+        }
+        .sheet(isPresented: $showingAchievements) {
+            NavigationStack {
+                AchievementsView(ra: model.ra)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showingAchievements = false }
+                        }
+                    }
+            }
+        }
+        .sheet(isPresented: $showingLua) {
+            LuaConsoleView()
         }
         // Pause the emulator while a menu/sheet is open so the player doesn't lose
         // progress or hear audio behind it; resume once all are dismissed. The TAS /
@@ -127,5 +156,148 @@ struct GameView: View {
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(Color.black.opacity(0.35))
+    }
+}
+
+/// Observes the RA model and renders its live toast banners at the top of the screen.
+private struct AchievementToastOverlay: View {
+    @ObservedObject var ra: RetroAchievementsModel
+    let topInset: CGFloat
+
+    var body: some View {
+        if !ra.toasts.isEmpty {
+            VStack(spacing: 6) {
+                ForEach(Array(ra.toasts.enumerated()), id: \.offset) { _, toast in
+                    AchievementToast(toast: toast)
+                }
+                Spacer()
+            }
+            .padding(.top, topInset)
+            .padding(.horizontal)
+            .allowsHitTesting(false)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .animation(.easeInOut(duration: 0.2), value: ra.toasts.count)
+        }
+    }
+}
+
+/// Observes the netplay model and shows the connection / desync chip while active.
+private struct NetplayOverlay: View {
+    @ObservedObject var netplay: NetplayModel
+
+    var body: some View {
+        if let status = netplay.status, netplay.isActive {
+            VStack {
+                Spacer()
+                HStack {
+                    NetplayStatusChip(status: status)
+                    Spacer()
+                }
+            }
+            .padding(.leading)
+            .padding(.bottom, 90)
+            .allowsHitTesting(false)
+        }
+    }
+}
+
+/// A transient RetroAchievements toast banner (unlock / login / server message).
+private struct AchievementToast: View {
+    let toast: RaToast
+
+    var body: some View {
+        HStack(spacing: 10) {
+            badge
+            VStack(alignment: .leading, spacing: 1) {
+                Text(toast.title)
+                    .font(.subheadline.bold())
+                    .lineLimit(1)
+                if !toast.detail.isEmpty {
+                    Text(toast.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(toast.isError ? Color.red.opacity(0.5) : Color.yellow.opacity(0.4))
+        )
+        .shadow(radius: 6, y: 2)
+    }
+
+    @ViewBuilder
+    private var badge: some View {
+        if toast.isError {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+                .frame(width: 36, height: 36)
+        } else if let url = URL(string: toast.badgeUrl), !toast.badgeUrl.isEmpty {
+            AsyncImage(url: url) { image in
+                image.resizable().scaledToFit()
+            } placeholder: {
+                Image(systemName: "trophy.fill").foregroundStyle(.yellow)
+            }
+            .frame(width: 36, height: 36)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        } else {
+            Image(systemName: "trophy.fill")
+                .foregroundStyle(.yellow)
+                .frame(width: 36, height: 36)
+        }
+    }
+}
+
+/// A small netplay status chip (connection phase / desync) shown in-game.
+private struct NetplayStatusChip: View {
+    let status: NpStatus
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .foregroundStyle(tint)
+            Text(label)
+                .font(.caption.bold())
+            if let ping = status.pingMs {
+                Text("\(ping)ms")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(tint.opacity(0.4)))
+    }
+
+    private var icon: String {
+        if status.desync { return "exclamationmark.triangle.fill" }
+        switch status.phase {
+        case .inGame: return status.stalled ? "clock.arrow.circlepath" : "wifi"
+        case .connecting, .negotiating: return "wifi.exclamationmark"
+        case .error: return "wifi.slash"
+        case .idle: return "wifi"
+        }
+    }
+
+    private var tint: Color {
+        if status.desync || status.phase == .error { return .red }
+        if status.stalled || status.phase != .inGame { return .orange }
+        return .green
+    }
+
+    private var label: String {
+        if status.desync { return "Desync" }
+        switch status.phase {
+        case .inGame: return status.stalled ? "Re-syncing" : "Netplay"
+        case .connecting: return "Connecting"
+        case .negotiating: return "Negotiating"
+        case .error: return "Disconnected"
+        case .idle: return "Idle"
+        }
     }
 }

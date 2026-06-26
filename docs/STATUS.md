@@ -1,13 +1,15 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.9.5 "Curator"** (2026-06-25) — the iOS power-user / library
-> release: **TAS `.rnm`** record/play, **`.pal`** palette import, **`.zip`** ROMs, a
-> **per-game overrides DB** (SHA-256-keyed display settings), **HD-pack** load +
-> composited-HD rendering (a new `cfg(ios)` HD path in `rustynes-ios`), and **iCloud**
-> config sync (`NSUbiquitousKeyValueStore`). All SwiftUI-shell + additive
-> `rustynes-ios` host work; the core / chip crates / bridge are untouched (only
-> `CARGO_PKG_VERSION` moves 1.9.4 → 1.9.5), so byte-identity + AccuracyCoin 139/139
-> hold. The preceding **v1.9.4 "Lens"** — the full **`wgpu→Metal` shader stack**
+> **Current release: v1.9.6 "Link"** (2026-06-25) — the iOS connectivity release: a
+> **Lua** console (load/log), **RetroAchievements** (Keychain login + hardcore +
+> unlock-toast HUD + achievements list), and **direct-IP / LAN netplay** (Host/Join +
+> the rollback `npAdvanceFrame` loop), all surfacing the shared bridge's already-Send
+> Lua/RA/netplay surface. All SwiftUI-shell work; the core / chip crates / bridge are
+> untouched (only `CARGO_PKG_VERSION` moves 1.9.5 → 1.9.6), so byte-identity +
+> AccuracyCoin 139/139 hold. The preceding **v1.9.5 "Curator"** — TAS `.rnm`, `.pal`
+> palettes, `.zip` ROMs, a per-game overrides DB, **HD-pack** load + composited-HD
+> rendering (a `cfg(ios)` `rustynes-ios` HD path), and iCloud config sync. The
+> preceding **v1.9.4 "Lens"** — the full **`wgpu→Metal` shader stack**
 > (None/Scanlines/CRT/NTSC/**Bisqwit**) with per-filter **shader-param controls**,
 > **ProMotion** pacing, and a hardened surface lifecycle. The preceding
 > **v1.9.3 "Workshop-lite"** — an organized
@@ -125,12 +127,14 @@
 > output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
 > 0023 (i18n string-catalog).
 
-**Current release: v1.9.5 "Curator"** (the iOS power-user / library release — TAS
-`.rnm`, `.pal` palettes, `.zip` ROMs, a per-game overrides DB, HD-pack, iCloud config
-sync, framed in the blockquote above), on the cycle-accurate v1.0.0 production core;
-the preceding **v1.9.4 "Lens"** was the iOS renderer-completion release (full
-wgpu->Metal shader stack + ProMotion pacing + hardened surface lifecycle), **v1.9.3
-"Workshop-lite"** the settings / save-state-slots / onboarding release, **v1.9.2
+**Current release: v1.9.6 "Link"** (the iOS connectivity release — Lua console,
+RetroAchievements, direct-IP / LAN netplay, framed in the blockquote above), on the
+cycle-accurate v1.0.0 production core; the preceding **v1.9.5 "Curator"** was the
+iOS power-user / library release (TAS `.rnm`, `.pal` palettes, `.zip` ROMs, a per-game
+overrides DB, HD-pack, iCloud config sync), **v1.9.4 "Lens"** the renderer-completion
+release (full wgpu->Metal shader stack + ProMotion pacing + hardened surface
+lifecycle), **v1.9.3 "Workshop-lite"** the settings / save-state-slots / onboarding
+release, **v1.9.2
 "Input"** the input release (multi-touch pad, Android-parity NES-001 render +
 glyph-identical fonts, GameController P1–P4 + remap, haptics), **v1.9.1 "Patch"** an
 iOS-line patch (TestFlight build-refresh cron + a dormant freemium-gate scaffold), and

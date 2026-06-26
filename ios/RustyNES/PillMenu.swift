@@ -17,6 +17,9 @@ struct PillMenu: View {
     var onLibrary: () -> Void
     var onStates: () -> Void
     var onMovies: () -> Void
+    var onNetplay: () -> Void
+    var onAchievements: () -> Void
+    var onLua: () -> Void
     var onSettings: () -> Void
     var onReset: () -> Void
     var onPower: () -> Void
@@ -26,6 +29,9 @@ struct PillMenu: View {
             pillButton("rectangle.stack", "Library", action: onLibrary)
             pillButton("tray.full", "Save states", action: onStates)
             pillButton("film", "TAS / Movies", action: onMovies)
+            pillButton("wifi", "Netplay", action: onNetplay)
+            pillButton("trophy", "Achievements", action: onAchievements)
+            pillButton("curlybraces", "Lua console", action: onLua)
             pillButton("gearshape", "Settings", action: onSettings)
             pillButton("arrow.counterclockwise", "Reset", action: onReset)
             pillButton("power", "Power cycle", action: onPower)

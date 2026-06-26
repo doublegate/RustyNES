@@ -15,6 +15,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.6] - 2026-06-25 - "Link" (iOS connectivity & scripting)
+
+The iOS connectivity release — the analogue of Android v1.8.6. Surfaces the shared
+bridge's **Lua**, **RetroAchievements**, and **direct-IP / LAN netplay** (all already
+Send-safe from the Android v1.8.6 work) in the SwiftUI shell. All SwiftUI-shell work;
+the Rust core / chip crates / bridge are untouched (only `CARGO_PKG_VERSION` moves
+1.9.5 → 1.9.6), so the shipped / native / `no_std` / wasm core stays **byte-identical**
+and **AccuracyCoin holds 100% (139/139)**. Interim TestFlight.
+
+### Added
+
+- **Lua console** — a "Developer" sheet: a `TextEditor` to load (`loadScript`) /
+  unload a Lua 5.4 script, a loaded indicator, and a live log view
+  (`drainScriptLog`); the last script persists.
+- **RetroAchievements** (opt-in) — a username/password login (`raLoginPassword`)
+  with the token stored in the **Keychain** (auto-login via `raLoginToken` on
+  relaunch), a hardcore toggle (with the save-state caveat), per-game session
+  (`raLoadGame`/`raUnloadGame`), an unlock-toast HUD (`raPollToasts`), rich presence
+  (`raRichPresence`), and an achievements list (`raAchievementList` /
+  `raGameSummary`). RA is a third-party account login — the privacy manifest
+  disclosure is a documented maintainer carryover.
+- **Direct-IP / LAN netplay** — Host (`npHost`) / Join (`npJoin`, "ip:port") with a
+  status + Leave UI; when a session is active the frame loop advances via
+  **`npAdvanceFrame(localMask:)`** (rollback) instead of `runFrame`, feeding the same
+  late-latched input bitmask, so cross-play with desktop / Android stays valid.
+  CGNAT/TURN room-code netplay is deferred to v1.9.7.
+
 ## [1.9.5] - 2026-06-25 - "Curator" (iOS power-user feature port)
 
 The iOS power-user / library release — the analogue of Android v1.8.5. Surfaces the
