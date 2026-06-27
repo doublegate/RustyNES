@@ -15,6 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **iOS release workflow no longer fails on every `v*` tag push.** `.github/workflows/ios.yml`
+  built the xcframework (which succeeds and validates that the iOS host compiles) and then
+  unconditionally ran `fastlane ios beta`, which aborted at `app_store_connect_api_key` with
+  `OpenSSL::PKey::EC: invalid curve name` because the App Store Connect API key / fastlane
+  `match` secrets are an un-provisioned maintainer carryover (an empty `ASC_KEY_CONTENT` is
+  base64-decoded into an invalid EC key). A new "Detect iOS signing secrets" step now gates
+  the fastlane install + TestFlight upload: when the secrets are absent the upload is **skipped
+  with a notice (green)** instead of painting every release tag push red; when they are
+  provisioned the upload runs automatically. Build validation is unchanged. CI / accuracy gates
+  untouched, core byte-identical.
+
 ## [1.9.9] - 2026-06-26 - "Workshop" (iOS creator / power tools + readiness gate)
 
 The final iOS TestFlight release before the v2.0.0 "Timebase" core rewrite — the

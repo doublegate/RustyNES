@@ -195,9 +195,14 @@ CI (`.github/workflows/ios.yml`) runs this on `macos-latest`, **gated to tag
 pushes (`v*`) + manual dispatch** because macOS minutes bill ~10x — the host
 `ci.yml` remains the accuracy / determinism authority and is never gated on a
 device toolchain. `fastlane` (`match` read-only signing + `gym` + `pilot`) uploads
-to TestFlight via an App Store Connect API key. **(v1.9.1)** a `schedule:` cron
-(the 1st of every other month, ~60-day cadence) re-builds + re-uploads so external
-testers don't lapse — TestFlight builds expire 90 days after upload.
+to TestFlight via an App Store Connect API key. The upload is **gated on the
+signing secrets being present** (a "Detect iOS signing secrets" step): until they
+are provisioned, the xcframework build still runs (proving the iOS host compiles)
+but the TestFlight upload is **skipped with a notice (green)** rather than failing
+every release tag push at fastlane's `app_store_connect_api_key` step. **(v1.9.1)**
+a `schedule:` cron (the 1st of every other month, ~60-day cadence) re-builds +
+re-uploads so external testers don't lapse — TestFlight builds expire 90 days
+after upload.
 
 A **dormant freemium gate** (`ios/RustyNES/Entitlements.swift`, v1.9.1) is wired
 app-wide but fully unlocked through the v1.9.x train; it is the present-but-inert

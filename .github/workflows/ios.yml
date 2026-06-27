@@ -33,10 +33,13 @@ jobs:
     # The unattended SCHEDULED refresh is a clean no-op until signing is
     # provisioned: the maintainer sets the `IOS_SIGNING_READY` repo variable to
     # "true" once the App Store Connect key + fastlane match secrets exist, so a
-    # cron run without secrets is SKIPPED (green) rather than failing the upload
-    # step every other month. Tag pushes and manual `workflow_dispatch` always run
-    # (so the build can be exercised on demand); they fail loudly at the upload
-    # step without secrets, which is the desired signal for an explicit trigger.
+    # cron run without secrets is SKIPPED (green) rather than spinning up a runner
+    # every other month. Tag pushes and manual `workflow_dispatch` always run so
+    # the xcframework build is exercised on demand; the TestFlight upload itself is
+    # gated on the signing secrets being present (see the "Detect iOS signing
+    # secrets" step below) and is SKIPPED — not failed — when they are absent. The
+    # signing secrets are a documented maintainer-manual carryover (docs/ios.md),
+    # so an un-provisioned repo must not paint every release tag push red.
     if: ${{ github.event_name != 'schedule' || vars.IOS_SIGNING_READY == 'true' }}
     steps:
       - uses: actions/checkout@v7
@@ -61,14 +64,44 @@ jobs:
       - name: Build xcframework + generate project
         run: ./scripts/build-ios-xcframework.sh
 
+      # Detect whether the maintainer-provisioned signing secrets exist. They are a
+      # documented manual carryover (docs/ios.md "Maintainer-manual carryovers"):
+      # the App Store Connect API key (ASC_*) + the fastlane match repo (MATCH_*).
+      # Until they are set, an unattended `fastlane ios beta` aborts at
+      # `app_store_connect_api_key` with `OpenSSL::PKey::EC: invalid curve name`
+      # (it base64-decodes an EMPTY key), failing the whole job. The xcframework
+      # build above is this job's real CI value (it proves the iOS host compiles),
+      # so when signing is absent we SKIP the upload (green) instead of failing the
+      # tag push. Provision the secrets to enable real uploads automatically.
+      - name: Detect iOS signing secrets
+        id: signing
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_CONTENT" ] \
+             && [ -n "$MATCH_GIT_URL" ] && [ -n "$MATCH_PASSWORD" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "App Store Connect + fastlane match secrets present - will build, sign, and upload to TestFlight."
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=iOS signing not provisioned::Skipping TestFlight upload - the App Store Connect API key / fastlane match secrets are not set (a documented maintainer carryover). The xcframework build above already validated that the iOS host compiles. Provision ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_CONTENT + MATCH_GIT_URL / MATCH_PASSWORD to enable uploads."
+          fi
+
       - name: Install fastlane
+        if: steps.signing.outputs.ready == 'true'
         run: gem install fastlane --no-document
 
       # Build + sign + upload to TestFlight. All credentials come from repo
       # secrets (the App Store Connect API key + the fastlane match signing repo);
-      # nothing secret is checked in. These are maintainer-provisioned — until
-      # they are set this job is the documented on-device / signing carryover.
+      # nothing secret is checked in. Gated on the detection step above so a repo
+      # without provisioned signing skips (rather than fails) this step.
       - name: Build and upload to TestFlight
+        if: steps.signing.outputs.ready == 'true'
         run: fastlane ios beta
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
