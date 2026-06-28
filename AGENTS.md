@@ -46,7 +46,11 @@ when touching harness code or fixtures.
 Use Conventional Commits, matching the existing history:
 `fix(ppu): handle OAMDATA writes during rendering` or
 `docs(changelog): record release notes`. Keep subjects imperative, under 72
-characters, and without trailing periods. Before opening a PR, run fmt, clippy,
+characters, and without trailing periods.
+
+**CRITICAL COMMIT RULE:** Commit message bodies should ALWAYS be robust, comprehensive, and technically detailed. Go beyond a summary to explain architectural impacts, mathematical implementations, memory constraints, and deep technical specifics.
+
+Before opening a PR, run fmt, clippy,
 and tests; link the relevant ticket from `to-dos/`; update `CHANGELOG.md` for
 user-visible behavior; and update `docs/` when architecture, mapper support, or
 frontend behavior changes.
