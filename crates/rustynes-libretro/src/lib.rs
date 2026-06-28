@@ -77,6 +77,21 @@ impl Default for RustyNesLibretro {
 
 impl CoreOptions for RustyNesLibretro {}
 
+#[repr(C)]
+struct RetroGameInfoExt {
+    full_path: *const std::os::raw::c_char,
+    archive_path: *const std::os::raw::c_char,
+    archive_file: *const std::os::raw::c_char,
+    dir: *const std::os::raw::c_char,
+    name: *const std::os::raw::c_char,
+    ext: *const std::os::raw::c_char,
+    meta_data: *const std::os::raw::c_char,
+    data: *const std::os::raw::c_void,
+    size: usize,
+    file_in_archive: bool,
+    persistent_data: bool,
+}
+
 impl Core for RustyNesLibretro {
     fn get_info(&self) -> SystemInfo {
         SystemInfo {
@@ -137,30 +152,44 @@ impl Core for RustyNesLibretro {
         _game: Option<retro_game_info>,
         ctx: &mut LoadGameContext,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Due to bindgen opaque struct limitations in rust-libretro causing UB when
-        // casting manually, we explicitly request the `retro_game_info_ext` structure
-        // utilizing the environment callback interface.
-        // SAFETY: We construct a GenericContext pointer natively provided by the LoadGameContext.
-        // The `get_game_info_ext` macro safely queries the environment callback.
+        // We use `GET_GAME_INFO_EXT` (66) directly via the raw environment callback.
+        // `rust-libretro-sys` unfortunately generated `retro_game_info_ext` as an opaque
+        // 1-byte struct, causing value-copy truncations when using the safe wrappers.
         let ext_info = unsafe {
             let generic_ctx: GenericContext = (&*ctx).into();
-            let cb = *generic_ctx.environment_callback();
-            rust_libretro::environment::get_game_info_ext(cb)
+            let cb = generic_ctx.environment_callback().unwrap();
+            let mut ptr: *const RetroGameInfoExt = std::ptr::null();
+
+            if cb(66, (&raw mut ptr) as *mut std::os::raw::c_void) && !ptr.is_null() {
+                Some(&*ptr)
+            } else {
+                None
+            }
         }
         .ok_or("Frontend does not support get_game_info_ext")?;
 
-        if ext_info.data.is_null() {
-            return Err(
-                "Game data is null (need_fullpath might be true, but we expect pre-loaded data)"
-                    .into(),
-            );
-        }
+        let rom_data = if ext_info.data.is_null() {
+            eprintln!("[RustyNES] ext_info data pointer is NULL. Falling back to full_path.");
+            if ext_info.full_path.is_null() {
+                return Err("Both data and full_path are null".into());
+            }
+            let path = unsafe { std::ffi::CStr::from_ptr(ext_info.full_path) }.to_string_lossy();
+            eprintln!("[RustyNES] Reading ROM from path: {path}");
+            std::fs::read(path.as_ref()).map_err(|e| format!("FS read error: {e}"))?
+        } else {
+            eprintln!("[RustyNES] ext_info data is valid. Size: {}", ext_info.size);
+            let slice =
+                unsafe { std::slice::from_raw_parts(ext_info.data as *const u8, ext_info.size) };
+            slice.to_vec()
+        };
 
-        // SAFETY: The frontend guarantees that `ext_info.data` points to a valid, contiguous
-        // buffer of length `ext_info.size` containing the loaded ROM bytes for the duration
-        // of this core initialization phase. We copy from this slice internally immediately.
-        let data = unsafe { std::slice::from_raw_parts(ext_info.data as *const u8, ext_info.size) };
-        let nes = Nes::from_rom(data).map_err(|e| format!("Failed to load ROM: {e:?}"))?;
+        let nes = match Nes::from_rom(&rom_data) {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("[RustyNES] Failed to parse ROM: {e:?}");
+                return Err(format!("Failed to load ROM: {e:?}").into());
+            }
+        };
 
         // Save state sizes in RustyNES are strictly deterministic for a given ROM image.
         // We evaluate the snapshot footprint once during initialization to satisfy
