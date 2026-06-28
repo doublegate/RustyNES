@@ -204,9 +204,8 @@ impl Core for RustyNesLibretro {
             // SAFETY: `data` is non-null (checked above). The libretro spec guarantees
             // the pointer references a valid, contiguous byte slice of exactly `size`
             // bytes, owned by the frontend for the duration of this call.
-            let slice = unsafe {
-                std::slice::from_raw_parts(ext_info.data.cast::<u8>(), ext_info.size)
-            };
+            let slice =
+                unsafe { std::slice::from_raw_parts(ext_info.data.cast::<u8>(), ext_info.size) };
             slice.to_vec()
         };
 
