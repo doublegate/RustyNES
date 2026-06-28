@@ -56,6 +56,11 @@ pub struct RustyNesLibretro {
     /// the hot `on_run` loop avoids any heap allocations.
     audio_buffer: Vec<i16>,
 
+    /// Intermediate buffer for raw floating-point audio samples from the core.
+    ///
+    /// Pre-allocated to avoid heap allocations when draining audio batches.
+    audio_float_buffer: Vec<f32>,
+
     /// Intermediate buffer for the video framebuffer.
     ///
     /// Pre-allocated to hold 256x240 RGBA8 pixels. Used to swap R and B channels
@@ -67,6 +72,9 @@ pub struct RustyNesLibretro {
     /// Stored upon ROM loading to satisfy libretro's `get_serialize_size` contract,
     /// guaranteeing the frontend allocates a precisely sized buffer.
     serialize_size: usize,
+
+    /// Pre-allocated buffer for snapshot serialization.
+    serialize_buffer: Vec<u8>,
 }
 
 impl Default for RustyNesLibretro {
@@ -76,8 +84,10 @@ impl Default for RustyNesLibretro {
             // 4096 samples comfortably holds ~85ms of audio at 48kHz,
             // well beyond the 16.6ms standard 60Hz frame delivery.
             audio_buffer: Vec::with_capacity(4096),
+            audio_float_buffer: Vec::with_capacity(4096),
             video_buffer: Vec::with_capacity(256 * 240 * 4),
             serialize_size: 0,
+            serialize_buffer: Vec::new(),
         }
     }
 }
@@ -167,7 +177,11 @@ impl Core for RustyNesLibretro {
             let cb = generic_ctx.environment_callback().unwrap();
             let mut ptr: *const RetroGameInfoExt = std::ptr::null();
 
-            if cb(66, (&raw mut ptr) as *mut std::os::raw::c_void) && !ptr.is_null() {
+            if cb(
+                66,
+                std::ptr::addr_of_mut!(ptr).cast::<std::os::raw::c_void>(),
+            ) && !ptr.is_null()
+            {
                 Some(&*ptr)
             } else {
                 None
@@ -263,10 +277,12 @@ impl Core for RustyNesLibretro {
 
             // Drain synthesized audio. RustyNES produces `f32` floats which we scale
             // to the standard signed 16-bit integer expected by the frontend.
-            // The audio buffer is pre-allocated; `.clear()` and `.push()` will not
+            // The audio buffers are pre-allocated; draining and converting will not
             // trigger heap allocations on this critical hot path.
             self.audio_buffer.clear();
-            for sample in nes.drain_audio() {
+            self.audio_float_buffer.resize(4096, 0.0);
+            let produced = nes.drain_audio_into(&mut self.audio_float_buffer);
+            for &sample in &self.audio_float_buffer[..produced] {
                 let s16 = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
                 // Duplicate the sample for stereo interleaving (Left, Right)
                 self.audio_buffer.push(s16);
@@ -288,7 +304,14 @@ impl Core for RustyNesLibretro {
         self.nes
             .as_mut()
             .map_or(std::ptr::null_mut(), |nes| match id {
-                RETRO_MEMORY_SAVE_RAM => nes.sram_mut().as_mut_ptr().cast::<std::os::raw::c_void>(),
+                RETRO_MEMORY_SAVE_RAM => {
+                    let sram = nes.sram_mut();
+                    if sram.is_empty() {
+                        std::ptr::null_mut()
+                    } else {
+                        sram.as_mut_ptr().cast::<std::os::raw::c_void>()
+                    }
+                }
                 RETRO_MEMORY_SYSTEM_RAM => {
                     nes.wram_mut().as_mut_ptr().cast::<std::os::raw::c_void>()
                 }
@@ -319,10 +342,10 @@ impl Core for RustyNesLibretro {
     fn on_serialize(&mut self, slice: &mut [u8], _ctx: &mut SerializeContext) -> bool {
         // Generates the deterministic binary blob representing the console hardware state.
         if let Some(nes) = self.nes.as_ref() {
-            let mut tmp = Vec::new();
-            nes.snapshot_core_into(&mut tmp);
-            if slice.len() >= tmp.len() {
-                slice[..tmp.len()].copy_from_slice(&tmp);
+            self.serialize_buffer.clear();
+            nes.snapshot_core_into(&mut self.serialize_buffer);
+            if slice.len() >= self.serialize_buffer.len() {
+                slice[..self.serialize_buffer.len()].copy_from_slice(&self.serialize_buffer);
                 return true;
             }
         }
@@ -340,7 +363,9 @@ impl Core for RustyNesLibretro {
 
 retro_core!(RustyNesLibretro {
     nes: None,
-    audio_buffer: Vec::new(),
-    video_buffer: Vec::new(),
+    audio_buffer: Vec::with_capacity(4096),
+    audio_float_buffer: Vec::with_capacity(4096),
+    video_buffer: Vec::with_capacity(256 * 240 * 4),
     serialize_size: 0,
+    serialize_buffer: Vec::new(),
 });
