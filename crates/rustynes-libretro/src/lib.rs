@@ -56,6 +56,12 @@ pub struct RustyNesLibretro {
     /// the hot `on_run` loop avoids any heap allocations.
     audio_buffer: Vec<i16>,
 
+    /// Intermediate buffer for the video framebuffer.
+    ///
+    /// Pre-allocated to hold 256x240 RGBA8 pixels. Used to swap R and B channels
+    /// to match the XRGB8888 libretro pixel format.
+    video_buffer: Vec<u8>,
+
     /// Pre-computed save state size (constant for a given ROM and mapper).
     ///
     /// Stored upon ROM loading to satisfy libretro's `get_serialize_size` contract,
@@ -70,6 +76,7 @@ impl Default for RustyNesLibretro {
             // 4096 samples comfortably holds ~85ms of audio at 48kHz,
             // well beyond the 16.6ms standard 60Hz frame delivery.
             audio_buffer: Vec::with_capacity(4096),
+            video_buffer: Vec::with_capacity(256 * 240 * 4),
             serialize_size: 0,
         }
     }
@@ -245,8 +252,14 @@ impl Core for RustyNesLibretro {
             // This is the core lockstep routine triggering CPU/APU progression.
             let framebuffer = nes.run_frame();
 
+            self.video_buffer.clear();
+            self.video_buffer.extend_from_slice(framebuffer);
+            for chunk in self.video_buffer.chunks_exact_mut(4) {
+                chunk.swap(0, 2); // Swap R and B to convert RGBA8 to XRGB8888 (in-memory B G R X)
+            }
+
             // The generated framebuffer is exactly 256x240 and formatted as XRGB8888.
-            ctx.draw_frame(framebuffer, 256, 240, 256 * 4);
+            ctx.draw_frame(&self.video_buffer, 256, 240, 256 * 4);
 
             // Drain synthesized audio. RustyNES produces `f32` floats which we scale
             // to the standard signed 16-bit integer expected by the frontend.
@@ -254,7 +267,7 @@ impl Core for RustyNesLibretro {
             // trigger heap allocations on this critical hot path.
             self.audio_buffer.clear();
             for sample in nes.drain_audio() {
-                let s16 = sample.mul_add(65535.0, -32768.0) as i16;
+                let s16 = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
                 // Duplicate the sample for stereo interleaving (Left, Right)
                 self.audio_buffer.push(s16);
                 self.audio_buffer.push(s16);
@@ -328,5 +341,6 @@ impl Core for RustyNesLibretro {
 retro_core!(RustyNesLibretro {
     nes: None,
     audio_buffer: Vec::new(),
+    video_buffer: Vec::new(),
     serialize_size: 0,
 });
