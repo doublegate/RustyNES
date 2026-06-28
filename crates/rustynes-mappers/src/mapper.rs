@@ -441,6 +441,18 @@ pub trait Mapper: Send {
     /// non-FDS mappers; an out-of-range index is ignored by the FDS device.
     fn set_disk_side(&mut self, _side: Option<usize>) {}
 
+    /// Returns a reference to the mapper's internal SRAM/PRG-RAM.
+    /// By default, returns an empty slice if unsupported.
+    fn sram(&self) -> &[u8] {
+        &[]
+    }
+
+    /// Returns a mutable reference to the mapper's internal SRAM/PRG-RAM.
+    /// By default, returns an empty mutable slice if unsupported.
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut []
+    }
+
     /// Start recording the diagnostic FDS read-stream trace (off by default;
     /// observation-only). No-op for non-FDS mappers. See [`crate::FdsTraceRec`].
     fn enable_fds_trace(&mut self) {}

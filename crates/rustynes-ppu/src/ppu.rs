@@ -970,7 +970,17 @@ impl Ppu {
         }
     }
 
-    /// Reset (warm boot). Per `docs/ppu-2c02.md`:
+    /// Returns a reference to the internal CIRAM (nametables).
+    pub fn vram_ref(&self) -> &[u8] {
+        &self.ciram
+    }
+
+    /// Returns a mutable reference to the internal CIRAM (nametables).
+    pub fn vram_mut(&mut self) -> &mut [u8] {
+        &mut self.ciram
+    }
+
+    /// Performs a soft-reset of the PPU (warm boot). Per `docs/ppu-2c02.md`:
     ///   - PPUCTRL := 0
     ///   - PPUMASK := 0
     ///   - w toggle := 0

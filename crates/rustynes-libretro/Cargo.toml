@@ -1,0 +1,25 @@
+[package]
+name = "rustynes-libretro"
+description = "Cycle-accurate NES emulator libretro core wrapper"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords = ["nes", "emulator", "famicom", "libretro", "retroarch"]
+categories = ["emulators"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+libc = "0.2.186"
+rust-libretro = "0.3.2"
+
+[dependencies.rustynes-core]
+path = "../rustynes-core"
+default-features = false
