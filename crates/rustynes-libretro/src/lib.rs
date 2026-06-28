@@ -177,12 +177,18 @@ impl Core for RustyNesLibretro {
             let cb = generic_ctx.environment_callback().unwrap();
             let mut ptr: *const RetroGameInfoExt = std::ptr::null();
 
+            // SAFETY: `cb` is a valid function pointer supplied by the libretro frontend
+            // via the environment context. If the callback returns true, the spec guarantees
+            // `ptr` is set to a valid, aligned, frontend-owned `RetroGameInfoExt` whose
+            // lifetime is at least as long as this `on_load_game` invocation.
+            // `as_ref()` returns `None` if `ptr` remains null (a spec-violating frontend
+            // that returns `true` without setting the pointer), ensuring we never produce
+            // a reference from an invalid address.
             if cb(
                 66,
                 std::ptr::addr_of_mut!(ptr).cast::<std::os::raw::c_void>(),
-            ) && !ptr.is_null()
-            {
-                Some(&*ptr)
+            ) {
+                ptr.as_ref()
             } else {
                 None
             }
@@ -194,13 +200,21 @@ impl Core for RustyNesLibretro {
             if ext_info.full_path.is_null() {
                 return Err("Both data and full_path are null".into());
             }
-            let path = unsafe { std::ffi::CStr::from_ptr(ext_info.full_path) }.to_string_lossy();
+            // SAFETY: `full_path` is non-null (checked above) and points to a
+            // valid, null-terminated C string owned by the frontend for the
+            // duration of this call, as required by the libretro GET_GAME_INFO_EXT spec.
+            let path =
+                unsafe { std::ffi::CStr::from_ptr(ext_info.full_path) }.to_string_lossy();
             eprintln!("[RustyNES] Reading ROM from path: {path}");
             std::fs::read(path.as_ref()).map_err(|e| format!("FS read error: {e}"))?
         } else {
             eprintln!("[RustyNES] ext_info data is valid. Size: {}", ext_info.size);
-            let slice =
-                unsafe { std::slice::from_raw_parts(ext_info.data as *const u8, ext_info.size) };
+            // SAFETY: `data` is non-null (checked above). The libretro spec guarantees
+            // the pointer references a valid, contiguous byte slice of exactly `size`
+            // bytes, owned by the frontend for the duration of this call.
+            let slice = unsafe {
+                std::slice::from_raw_parts(ext_info.data.cast::<u8>(), ext_info.size)
+            };
             slice.to_vec()
         };
 
