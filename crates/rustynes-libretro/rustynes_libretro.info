@@ -1,0 +1,31 @@
+# Software Information
+display_name = "Nintendo - NES / Famicom (RustyNES)"
+authors = "DoubleGate"
+supported_extensions = "nes|fds"
+corename = "RustyNES"
+license = "MIT OR Apache-2.0"
+permissions = ""
+display_version = "v1.0.0"
+categories = "Emulator"
+
+# Hardware Information
+manufacturer = "Nintendo"
+systemname = "Nintendo Entertainment System"
+systemid = "nes"
+
+# Libretro Features
+supports_no_game = "false"
+savestate = "true"
+savestate_features = "deterministic"
+cheats = "true"
+input_descriptors = "true"
+memory_descriptors = "true"
+libretro_saves = "true"
+core_options = "false"
+load_subsystem = "false"
+hw_render = "false"
+needs_fullpath = "false"
+disk_control = "false"
+database = "Nintendo - Nintendo Entertainment System|Nintendo - Family Computer Disk System"
+
+description = "RustyNES is a cycle-accurate Nintendo Entertainment System emulator written in pure Rust, targeting the higan / ares accuracy bar via tight lockstep scheduling at PPU-dot resolution."
