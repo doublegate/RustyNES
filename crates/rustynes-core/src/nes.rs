@@ -133,6 +133,36 @@ pub struct Nes {
 }
 
 impl Nes {
+    /// Returns a reference to the internal WRAM.
+    pub fn wram(&self) -> &[u8] {
+        self.bus.ram.as_ref()
+    }
+
+    /// Returns a mutable reference to the internal WRAM.
+    pub fn wram_mut(&mut self) -> &mut [u8] {
+        self.bus.ram.as_mut()
+    }
+
+    /// Returns a reference to the cartridge SRAM (if any).
+    pub fn sram(&self) -> &[u8] {
+        self.bus.mapper.sram()
+    }
+
+    /// Returns a mutable reference to the cartridge SRAM (if any).
+    pub fn sram_mut(&mut self) -> &mut [u8] {
+        self.bus.mapper.sram_mut()
+    }
+
+    /// Returns a reference to the internal VRAM (nametables).
+    pub fn vram(&self) -> &[u8] {
+        self.bus.ppu.vram_ref()
+    }
+
+    /// Returns a mutable reference to the internal VRAM (nametables).
+    pub fn vram_mut(&mut self) -> &mut [u8] {
+        self.bus.ppu.vram_mut()
+    }
+
     /// Build a new emulator from raw ROM bytes (iNES 1.0 or NES 2.0).
     ///
     /// # Errors

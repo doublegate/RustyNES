@@ -150,6 +150,12 @@ impl Namco175 {
 }
 
 impl Mapper for Namco175 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     // v2.8.0 Phase 4 — no per-cycle hooks (no IRQ, no audio): the bus
     // skips all four per-CPU-cycle dispatches for this board.
     fn caps(&self) -> MapperCaps {

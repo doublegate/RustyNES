@@ -1170,6 +1170,12 @@ impl WaixingFs304M162 {
 }
 
 impl Mapper for WaixingFs304M162 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -1338,6 +1344,12 @@ impl Waixing178 {
 }
 
 impl Mapper for Waixing178 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }

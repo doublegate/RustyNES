@@ -1973,6 +1973,12 @@ impl Waixing242 {
 }
 
 impl Mapper for Waixing242 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -2164,6 +2170,12 @@ impl FongShenBang246 {
 }
 
 impl Mapper for FongShenBang246 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }

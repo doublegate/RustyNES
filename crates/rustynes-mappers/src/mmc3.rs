@@ -404,6 +404,12 @@ impl Mmc3 {
 }
 
 impl Mapper for Mmc3 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     // v2.8.0 Phase 4 — CPU-cycle hook + IRQ source; no on-cart audio.
     fn caps(&self) -> MapperCaps {
         MapperCaps::CYCLE_IRQ

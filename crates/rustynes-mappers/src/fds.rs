@@ -1822,6 +1822,12 @@ impl Fds {
 const FDS_SAVE_VERSION: u8 = 3;
 
 impl Mapper for Fds {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     // v2.8.0 Phase 4 — CPU-cycle hook + IRQ source + expansion audio
     // (the audio hook only exists under the `mapper-audio` feature).
     fn caps(&self) -> MapperCaps {

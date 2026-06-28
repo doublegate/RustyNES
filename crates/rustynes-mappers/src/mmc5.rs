@@ -862,6 +862,12 @@ impl Mmc5 {
 }
 
 impl Mapper for Mmc5 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     // v2.8.0 Phase 4 — MMC5: CPU-cycle hook + IRQ + frame-counter-
     // cadenced audio envelopes (+ expansion audio under `mapper-audio`).
     fn caps(&self) -> MapperCaps {
