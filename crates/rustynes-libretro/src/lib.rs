@@ -112,7 +112,7 @@ impl Core for RustyNesLibretro {
 
     fn on_get_av_info(&mut self, _ctx: &mut GetAvInfoContext) -> retro_system_av_info {
         // Return standard NTSC geometries. The core runs internally at ~60.0988 FPS
-        // for NTSC standard. We match the internal audio mixing rate of 48kHz.
+        // for NTSC standard. We match the internal audio mixing rate of 44.1kHz.
         retro_system_av_info {
             geometry: retro_game_geometry {
                 base_width: 256,
@@ -123,7 +123,7 @@ impl Core for RustyNesLibretro {
             },
             timing: retro_system_timing {
                 fps: 60.0988,
-                sample_rate: 48000.0,
+                sample_rate: 44100.0,
             },
         }
     }
