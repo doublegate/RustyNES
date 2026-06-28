@@ -146,8 +146,12 @@ impl Core for RustyNesLibretro {
             let generic_ctx: GenericContext = (&*ctx).into();
             let cb = *generic_ctx.environment_callback();
 
-            // RustyNES core renders standard XRGB8888 32-bit pixel buffers natively.
-            rust_libretro::environment::set_pixel_format(cb, PixelFormat::XRGB8888);
+            // XRGB8888 is preferred by RustyNES because it maps well to standard 32-bit GPU textures.
+            if !rust_libretro::environment::set_pixel_format(cb, PixelFormat::XRGB8888) {
+                eprintln!(
+                    "[RustyNES] Error: Frontend rejected XRGB8888 pixel format. Colors will be broken."
+                );
+            }
 
             // Register standardized controller layouts for the frontend to bind against.
             let descriptors = rust_libretro::input_descriptors!(
@@ -169,9 +173,7 @@ impl Core for RustyNesLibretro {
         _game: Option<retro_game_info>,
         ctx: &mut LoadGameContext,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // We use `GET_GAME_INFO_EXT` (66) directly via the raw environment callback.
-        // `rust-libretro-sys` unfortunately generated `retro_game_info_ext` as an opaque
-        // 1-byte struct, causing value-copy truncations when using the safe wrappers.
+        // We use `GET_GAME_INFO_EXT` directly via the raw environment callback.
         let ext_info = unsafe {
             let generic_ctx: GenericContext = (&*ctx).into();
             let cb = generic_ctx.environment_callback().unwrap();
@@ -185,7 +187,7 @@ impl Core for RustyNesLibretro {
             // that returns `true` without setting the pointer), ensuring we never produce
             // a reference from an invalid address.
             if cb(
-                66,
+                rust_libretro::sys::RETRO_ENVIRONMENT_GET_GAME_INFO_EXT,
                 std::ptr::addr_of_mut!(ptr).cast::<std::os::raw::c_void>(),
             ) {
                 ptr.as_ref()
@@ -196,17 +198,7 @@ impl Core for RustyNesLibretro {
         .ok_or("Frontend does not support get_game_info_ext")?;
 
         let rom_data = if ext_info.data.is_null() {
-            eprintln!("[RustyNES] ext_info data pointer is NULL. Falling back to full_path.");
-            if ext_info.full_path.is_null() {
-                return Err("Both data and full_path are null".into());
-            }
-            // SAFETY: `full_path` is non-null (checked above) and points to a
-            // valid, null-terminated C string owned by the frontend for the
-            // duration of this call, as required by the libretro GET_GAME_INFO_EXT spec.
-            let path =
-                unsafe { std::ffi::CStr::from_ptr(ext_info.full_path) }.to_string_lossy();
-            eprintln!("[RustyNES] Reading ROM from path: {path}");
-            std::fs::read(path.as_ref()).map_err(|e| format!("FS read error: {e}"))?
+            return Err("ext_info data pointer is NULL. The frontend did not load the ROM into memory (need_fullpath is false).".into());
         } else {
             eprintln!("[RustyNES] ext_info data is valid. Size: {}", ext_info.size);
             // SAFETY: `data` is non-null (checked above). The libretro spec guarantees
@@ -297,7 +289,8 @@ impl Core for RustyNesLibretro {
             self.audio_float_buffer.resize(4096, 0.0);
             let produced = nes.drain_audio_into(&mut self.audio_float_buffer);
             for &sample in &self.audio_float_buffer[..produced] {
-                let s16 = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                // RustyNES APU outputs bipolar ~[-0.5, 0.5], so we scale by 65535.0
+                let s16 = (sample * 65535.0).clamp(-32768.0, 32767.0) as i16;
                 // Duplicate the sample for stereo interleaving (Left, Right)
                 self.audio_buffer.push(s16);
                 self.audio_buffer.push(s16);

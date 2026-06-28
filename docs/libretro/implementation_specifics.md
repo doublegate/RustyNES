@@ -13,8 +13,10 @@ Before execution, RetroArch extracts core metadata via `retro_get_system_info`.
 
 The core must configure specific frontend states during initialization:
 
-1. **32-Bit XRGB8888 Pixel Format:** `rustynes-core` produces a 256x240 RGBA8 buffer. The environment hook `RETRO_ENVIRONMENT_SET_PIXEL_FORMAT` must request `XRGB8888` (which is functionally memory-compatible with RGBA8, ignoring the alpha channel). If the frontend forces `0RGB1555` (legacy 15-bit), the wrapper must instantiate a dynamic color-space conversion loop during `on_run`—though `XRGB8888` is ubiquitous today.
-2. **Input Descriptors:** `RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS` maps underlying Libretro `JOYPAD` constants to human-readable strings (e.g., "NES A Button") to populate the RetroArch control remapping menu.
+- **Format Negotiated:** XRGB8888 (32-bit).
+- **Format Emitted:** The `rustynes-core` native PPU rendering produces RGBA8. To satisfy the Libretro XRGB8888 standard, the `rustynes-libretro` bridge explicitly swizzles the red and blue channels (`chunk.swap(0, 2)`) on a per-pixel basis during the framebuffer copy before dispatching to `retro_video_refresh_t`.
+- **Framebuffer Size:** Strictly 256x240 pixels. No dynamic overscan cropping is exposed at the libretro API boundary, ensuring uniform frame cadence.
+* **Input Descriptors:** `RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS` maps underlying Libretro `JOYPAD` constants to human-readable strings (e.g., "NES A Button") to populate the RetroArch control remapping menu.
 
 ## Game Loading (`retro_load_game`)
 

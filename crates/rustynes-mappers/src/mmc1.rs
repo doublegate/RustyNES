@@ -229,6 +229,12 @@ impl Mmc1 {
 }
 
 impl Mapper for Mmc1 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     // v2.8.0 Phase 4 — MMC1 overrides ONLY notify_cpu_cycle (the
     // consecutive-write throttle); it has no IRQ and no audio.
     fn caps(&self) -> MapperCaps {

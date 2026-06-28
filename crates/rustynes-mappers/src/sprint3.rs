@@ -205,6 +205,12 @@ impl Vrc2 {
 }
 
 impl Mapper for Vrc2 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     // v2.8.0 Phase 4 — no per-cycle hooks (no IRQ, no audio): the bus
     // skips all four per-CPU-cycle dispatches for this board.
     fn caps(&self) -> MapperCaps {
@@ -477,6 +483,12 @@ impl Vrc4 {
 }
 
 impl Mapper for Vrc4 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     // v2.8.0 Phase 4 — CPU-cycle hook + IRQ source; no on-cart audio.
     fn caps(&self) -> MapperCaps {
         MapperCaps::CYCLE_IRQ
@@ -997,6 +1009,12 @@ impl Vrc6 {
 }
 
 impl Mapper for Vrc6 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     // v2.8.0 Phase 4 — CPU-cycle hook + IRQ source + expansion audio
     // (the audio hook only exists under the `mapper-audio` feature).
     fn caps(&self) -> MapperCaps {
@@ -1606,6 +1624,12 @@ impl Vrc7 {
 }
 
 impl Mapper for Vrc7 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     // v2.8.0 Phase 4 — CPU-cycle hook + IRQ source + expansion audio
     // (the audio hook only exists under the `mapper-audio` feature).
     fn caps(&self) -> MapperCaps {
@@ -2517,6 +2541,12 @@ impl Fme7 {
 }
 
 impl Mapper for Fme7 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     // v2.8.0 Phase 4 — CPU-cycle hook + IRQ source + expansion audio
     // (the audio hook only exists under the `mapper-audio` feature).
     fn caps(&self) -> MapperCaps {
@@ -3208,6 +3238,12 @@ impl Namco163 {
 }
 
 impl Mapper for Namco163 {
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
     // v2.8.0 Phase 4 — CPU-cycle hook + IRQ source + expansion audio
     // (the audio hook only exists under the `mapper-audio` feature).
     fn caps(&self) -> MapperCaps {
