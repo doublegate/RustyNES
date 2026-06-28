@@ -205,7 +205,7 @@ Desktop.ini
 # Gradle wrapper (gradlew[.bat] + gradle-wrapper.jar) and keystore.properties.example
 # are intentionally tracked.
 android/**/build/
-android/.gradle/
+**/.gradle/
 android/local.properties
 android/keystore.properties
 *.jks
