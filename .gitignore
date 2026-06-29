@@ -99,12 +99,16 @@ artifacts/
 *.bps
 
 # --- TAS movie files (may contain copyrighted content) ---
+*.rnm
+*.rnmproj
+*.rnmb
 *.fm2
 *.fm3
 *.bk2
 *.tasproj
 
 # --- Save / state / input / dumps / cheats ---
+*.rns
 *.sav
 *.srm
 *.state
@@ -118,6 +122,11 @@ artifacts/
 *.cht
 
 # --- Game database files ---
+*.db
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 *.dat
 *.xml
 !assets/**/*.xml
