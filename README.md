@@ -10,7 +10,7 @@
 
 [![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Version](https://img.shields.io/badge/version-v1.8.8-blue.svg)](https://github.com/doublegate/RustyNES/releases)
+[![Version](https://img.shields.io/badge/version-v1.9.9-blue.svg)](https://github.com/doublegate/RustyNES/releases)
 [![Rust: 1.96](https://img.shields.io/badge/rust-1.96-orange.svg)](rust-toolchain.toml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android-lightgrey.svg)](#platform-support)
 [![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy)
@@ -30,7 +30,7 @@ Beyond reference accuracy, RustyNES is a complete, modern emulation platform:
 UNIF `.unf` cartridge loader), the full **Famicom Disk System** (real-BIOS boot with a
 timed disk-head model), **Vs. System / PlayChoice-10** arcade games in true RGB,
 **GGPO-style rollback netplay** (native UDP and browser WebRTC, 2-4 players),
-**RetroAchievements**, a **scriptable TAStudio piano-roll TAS editor** with `.fm2` /
+**RetroAchievements**, a **native Libretro core** for RetroArch, a **scriptable TAStudio piano-roll TAS editor** with `.fm2` /
 `.bk2` / `.fcm` / `.fmv` / `.vmv` movie interop, editing-capable debug tools
 (palette / nametable / CHR / OAM writeback, an iNES / NES 2.0 header editor, an inline
 6502 assembler), save states with rewind, run-ahead latency reduction, a **Mesen2-class
@@ -529,6 +529,7 @@ in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs
 | `rustynes-netplay`       | GGPO-style rollback netcode (UDP + WebRTC)                  |
 | `rustynes-cheevos`       | RetroAchievements `rcheevos` FFI (opt-in, native-only)      |
 | `rustynes-ra`            | Shared RetroAchievements session state (`RaClient`, native-only) |
+| `rustynes-libretro`      | Native Libretro API core wrapper (RetroArch)                |
 | `rustynes-gfx-shaders`   | Shared WGSL presentation shaders (desktop + Android renderers) |
 | `rustynes-hdpack`        | HD-pack loader + compositor + HD audio (shared desktop + mobile) |
 | `rustynes-mobile`        | UniFFI bridge for the mobile platforms (Android, and v1.9.0 iOS) |
@@ -635,6 +636,7 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | **WebAssembly**     | Primary (hosted demo + build) |
 | **Android (arm64)** | Supported (v1.8.x; GitHub-Releases / sideload — see [`docs/android.md`](docs/android.md)) |
 | **Linux ARM64**     | Supported (cross-compile) |
+| **Libretro Core**   | Supported (RetroArch via `rustynes-libretro`) |
 | **iOS / iPadOS**    | Planned (v1.9.0 TestFlight foundation; App Store at v2.1.0) |
 
 ### System requirements
@@ -684,14 +686,13 @@ workspace API docs (rustdoc) at
 
 ## Version History
 
-RustyNES's current release is **v1.8.8 "Atlas"** — the latest increment in the
-**v1.8.0 "Android"** platform line, built on the writable-and-programmable **v1.7.0
+RustyNES's current release is **v1.9.9 "Workshop"** — the latest increment in the
+**v1.9.0 "Sunrise"** iOS platform line, built on the writable-and-programmable **v1.7.0
 "Forge"** desktop core and the cycle-accurate **v1.0.0** production engine. Every
 release since v1.0.0 has been additive and off-by-default, so the shipped / native /
 `no_std` / wasm builds stay byte-identical and **AccuracyCoin holds 100% (139/139)**
-throughout. **v1.8.9** is in development (`[Unreleased]`: a consolidated 13-PR Dependabot
-maintenance pass + a dormant mobile-monetization build-out). The forward path — through
-**v2.0.0 "Timebase"** to the joint **v2.1.0** mobile store launch — is in
+throughout. **v2.0.0 "Timebase"** is in development. The forward path — through
+**v2.0.0** to the joint **v2.1.0** mobile store launch — is in
 [Roadmap](#roadmap) below; see [`CHANGELOG.md`](CHANGELOG.md) for the full per-version
 detail behind every line in the table.
 
@@ -699,6 +700,17 @@ The road so far:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
+| **v1.9.9** | "Workshop" — iOS creator/power-tools (TAStudio, Cheats, foreign movie import, audio depth, read-only debugger) + Libretro Core integration. |
+| **v1.9.8** | "Horizon" — iOS store-readiness: accessibility, EN/ES i18n, ReplayKit capture, Game Center, and the dormant StoreKit `foss`/App-Store seam. |
+| **v1.9.7** | "Relay" — iOS connectivity completion: room-code (CGNAT/TURN) netplay, controller hot-plug, and iCloud save-state sync (CloudKit). |
+| **v1.9.6** | "Link" — iOS connectivity & scripting: Lua console, RetroAchievements, and direct-IP / LAN netplay in the SwiftUI shell. |
+| **v1.9.5** | "Curator" — iOS power-user feature port: TAS `.rnm` movies, `.pal` palettes, `.zip` ROMs, per-game overrides DB, and HD-pack loading. |
+| **v1.9.4** | "Lens" — iOS Metal renderer + shader stack: full WGSL pipelines (CRT, NTSC, Bisqwit), ProMotion pacing, and CoreAudio hot path. |
+| **v1.9.3** | "Workshop-lite" — iOS settings, 4-slot save-state manager, in-game pill menu, and first-run onboarding. |
+| **v1.9.2** | "Input" — iOS multi-touch on-screen pad (NES-001 style), responsive sizing, GameController P1–P4, and Core Haptics. |
+| **v1.9.1** | "Patch" — iOS TestFlight cadence + dormant freemium gate scaffolding. |
+| **v1.9.0** | "Sunrise" — The first iOS / iPadOS platform foundation, native SwiftUI shell over the byte-identical Rust core via the `rustynes-mobile` UniFFI bridge. |
+| **v1.8.9** | "Backlog" — Creator tooling, deeper debugger, full HD-pack parity, mappers 168→172, and a dormant mobile monetization core (`rustynes-monetization`). |
 | **v1.8.8** | "Atlas" — Google-Play launch readiness: the Android 16 / API 36 toolchain (AGP 9.2.1 / compileSdk 37), adaptive / foldable / TV layouts, Material You + EN/ES i18n, a box-art library, capture / PiP / widgets, accessibility, and default-off Play-services integration. |
 | **v1.8.7** | "Android" — connectivity completion: CGNAT / TURN room-code netplay, robust hardware controllers (P1–P4), and a controller-aware UI. |
 | **v1.8.6** | "Android" — Lua, RetroAchievements (the new shared `rustynes-ra` crate), and direct-IP / LAN netplay on mobile. |

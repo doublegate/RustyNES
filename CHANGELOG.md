@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Libretro Core (`rustynes-libretro`)** — a complete, native, cycle-accurate Libretro core implementation integrating RustyNES seamlessly into RetroArch.
+  - Native `cdylib` API bindings mapping directly to `RETRO_ENVIRONMENT_GET_GAME_INFO_EXT` without 1-byte struct opaque limitations.
+  - Dynamic 44.1kHz dual-channel audio sync (perfect pitch fidelity) and allocation-free byte-swapped `XRGB8888` video buffers mapped directly from the core's `RGBA8` output.
+  - Full RetroAchievements compatibility via mapped `wram()` and `sram()` accessors.
+  - Deterministic snapshotting integration via `get_serialize_size`, `on_serialize`, and `on_unserialize`.
+  - Cross-compilation support via `Makefile` translation layer to map `platform` and `ARCH` to Cargo targets, staged into upstream `libretro-super`.
+
 ### Fixed
 
 - **iOS release workflow no longer fails on every `v*` tag push.** `.github/workflows/ios.yml`
