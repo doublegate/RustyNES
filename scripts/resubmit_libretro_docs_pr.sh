@@ -14,16 +14,17 @@ cd /tmp/docs
 # Wait a second for github's backend to process
 sleep 2
 
-# The fork 'myfork' should already exist from the previous script, but we ensure it's there
+USER_LOGIN=$(gh api user -q .login)
 echo "Pushing new 'feat/add-rustynes-core-v2' branch to your fork..."
-git remote add myfork "https://github.com/$(gh api user -q .login)/docs.git" 2>/dev/null || true
+git remote remove myfork 2>/dev/null || true
+git remote add myfork "https://github.com/${USER_LOGIN}/docs.git"
 git push -u myfork feat/add-rustynes-core-v2 --force
 
 echo "Opening new Pull Request against libretro/docs..."
 gh pr create \
     --repo libretro/docs \
-    --head "$(gh api user -q .login):feat/add-rustynes-core-v2" \
-    --base master \
+    --head "${USER_LOGIN}:feat/add-rustynes-core-v2" \
+    --base master
     --title "docs: Add RustyNES core documentation page" \
     --body "This PR adds the standard documentation page for the new RustyNES core and hooks it into the \`mkdocs.yml\` navigation tree under the Nintendo Entertainment System section.
 
