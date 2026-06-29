@@ -2,11 +2,11 @@
 
 <img src="images/RustyNES_Logo-Icon.png" alt="RustyNES Logo Icon" width="150">
 
+> **Precise. Pure. Powerful.**
+
 <p align="center">
   <img src="images/RustyNES_Banner-Logo.png" alt="RustyNES Banner Logo" width="800">
 </p>
-
-> **Precise. Pure. Powerful.**
 
 <p align="center">
   <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v1.9.9-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
