@@ -124,6 +124,9 @@ artifacts/
 # --- Game database files ---
 *.db
 *.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 *.dat
 *.xml
 !assets/**/*.xml
