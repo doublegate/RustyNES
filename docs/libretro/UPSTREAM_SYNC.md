@@ -1,6 +1,6 @@
 # Libretro Upstream Sync Guide
 
-This document outlines the standard operating procedure for pushing future updates from RustyNES to the upstream Libretro organization (specifically the `libretro-super` and `libretro-core-info` repositories).
+This document outlines the standard operating procedure for pushing future updates from RustyNES to the upstream Libretro organization (specifically the `libretro-super`, `libretro-core-info`, and `docs` repositories).
 
 It uses the **"Re-fork"** method, which is ideal for infrequent, atomic updates where you prefer to delete your forks between contributions to keep your GitHub workspace clean.
 
@@ -10,6 +10,7 @@ When RustyNES introduces new capabilities that require upstream awareness (like 
 
 1. **[libretro-super](https://github.com/libretro/libretro-super)**: Contains the build recipes used by the Libretro buildbot network.
 2. **[libretro-core-info](https://github.com/libretro/libretro-core-info)**: Contains the `.info` files that RetroArch uses to identify the core's metadata, supported extensions, and capabilities.
+3. **[docs](https://github.com/libretro/docs)**: Contains the official Libretro documentation. You will need to update this repo when introducing the core, changing usage instructions, or adding new supported features.
 
 ## Step-by-Step "Re-fork" Workflow
 
@@ -33,7 +34,7 @@ Make the necessary changes.
 
 **Critical Lessons Learned for Libretro PRs:**
 
-- **Strict Alphabetical Ordering:** When modifying recipe lists (e.g., `recipes/apple/crates.conf`), ensure that the `rustynes_libretro` entry is placed in strict alphabetical order relative to the other cores.
+- **Strict Alphabetical Ordering:** When modifying recipe lists (e.g., `recipes/apple/crates.conf`) or the `docs` repository menus/sidebars, ensure that the `rustynes_libretro` entry is placed in strict alphabetical order relative to the other cores.
 - **Professionalism:** Maintain a professional, direct, and concise "core submission style" when drafting your PR descriptions.
 - **Info File Validation:** When updating the `rustynes_libretro.info` file, verify that `supported_extensions` matches the exact list supported by the `rustynes-libretro` crate.
 
