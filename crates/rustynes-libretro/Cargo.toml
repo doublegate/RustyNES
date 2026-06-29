@@ -11,7 +11,7 @@ keywords = ["nes", "emulator", "famicom", "libretro", "retroarch"]
 categories = ["emulators"]
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "staticlib"]
 
 [lints]
 workspace = true

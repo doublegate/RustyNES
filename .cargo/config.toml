@@ -61,3 +61,13 @@ retry = 10
 
 [http]
 multiplexing = false
+
+# Libretro Cross-Compilation:
+# The `crates/rustynes-libretro/Makefile` automatically intercepts the buildbot's
+# cross-compiler `CC` and passes it to Cargo via the `CARGO_TARGET_<TRIPLE>_LINKER`
+# environment variable.
+# If you are compiling cross-targets natively outside of the Makefile, define
+# them below (ensure the target is installed via `rustup target add <target>`):
+#
+# [target.aarch64-linux-android]
+# linker = "/path/to/android/ndk/.../bin/aarch64-linux-android-clang"
