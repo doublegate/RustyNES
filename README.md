@@ -26,7 +26,7 @@ scheduling at PPU-dot resolution on a master-clock-precise timebase — clearing
 `nestest` with **zero diff**.
 
 Beyond reference accuracy, RustyNES is a complete, modern emulation platform:
-**168 mapper families** covering the vast majority of the commercial library (plus a
+**172 mapper families** covering the vast majority of the commercial library (plus a
 UNIF `.unf` cartridge loader), the full **Famicom Disk System** (real-BIOS boot with a
 timed disk-head model), **Vs. System / PlayChoice-10** arcade games in true RGB,
 **GGPO-style rollback netplay** (native UDP and browser WebRTC, 2-4 players),
@@ -75,7 +75,7 @@ platform for NES emulation.
 | Feature                | Description                                                                                  |
 | ---------------------- | -------------------------------------------------------------------------------------------- |
 | **Cycle-Accurate**     | Master-clock-precise CPU / PPU / APU — AccuracyCoin 100% (139/139), nestest 0-diff           |
-| **168 Mapper Families** | NROM through MMC5, the full VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company ASIC, reusable-ASIC multicarts (FK23C / COOLBOY / MINDKIDS / Sachen / Waixing / Kaiser), and Vs.-System boards — classified Core / Curated / BestEffort behind a CI accuracy-honesty gate — plus a UNIF (`.unf`) cartridge loader |
+| **172 Mapper Families** | NROM through MMC5, the full VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company ASIC, reusable-ASIC multicarts (FK23C / COOLBOY / MINDKIDS / Sachen / Waixing / Kaiser), and Vs.-System boards — classified Core / Curated / BestEffort behind a CI accuracy-honesty gate — plus a UNIF (`.unf`) cartridge loader |
 | **Famicom Disk System**| `.fds` games with real-BIOS boot, writable disks, side-swapping, and 2C33 wavetable audio    |
 | **Vs. / PlayChoice-10**| Arcade ROMs in true 2C03 / 2C04 / 2C05 RGB with per-game DIP presets                          |
 | **RetroAchievements**  | Native `rcheevos` integration: achievements, leaderboards, rich presence, hardcore mode      |
@@ -117,7 +117,7 @@ FME-7, and the full VRC line, plus Vs.-arcade RGB.
 The full per-mapper visual corpus lives in
 [`screenshots/external/`](screenshots/external/) (Core / Curated) and
 [`screenshots/besteffort/`](screenshots/besteffort/) (BestEffort) — boot / title /
-gameplay frames spanning the bulk of the 168 mapper families.
+gameplay frames spanning the bulk of the 172 mapper families.
 
 ---
 
@@ -144,7 +144,7 @@ gameplay frames spanning the bulk of the 168 mapper families.
 
 ### Cartridges and platforms
 
-- **168 mapper families** covering the bulk of the licensed library — NROM, all
+- **172 mapper families** covering the bulk of the licensed library — NROM, all
   MMC1-5, the full VRC1/2/4/6/7 line (incl. VRC6 and VRC7 expansion audio), Sunsoft
   FME-7/1/2/3/4 (+ 5B audio), Namco 163 (+ wavetable), the Taito
   TC0190/TC0690/X1-005/X1-017, J.Y. Company ASIC boards, and the
@@ -522,7 +522,7 @@ in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs
 | `rustynes-cpu`           | Cycle-accurate 6502 / 2A03 CPU core                         |
 | `rustynes-ppu`           | Dot-level 2C02 PPU                                          |
 | `rustynes-apu`           | Hardware-accurate 2A03 APU with band-limited synthesis      |
-| `rustynes-mappers`       | 168 mapper families + expansion audio + UNIF loader         |
+| `rustynes-mappers`       | 172 mapper families + expansion audio + UNIF loader         |
 | `rustynes-core`          | Integration layer: Bus, scheduler, console, save states     |
 | `rustynes-script`        | Sandboxed Lua 5.4 scripting engine (native `mlua`, wasm `piccolo`) |
 | `rustynes-frontend`      | `winit` + `wgpu` + `cpal` + `egui` app (binary: `rustynes`) |
@@ -751,7 +751,7 @@ line (through **v1.8.8 "Atlas"**) shipped, the non-architectural backlog is esse
 consumed: emulation accuracy is at or beyond the Mesen2 / GeraNES bar, the TAS-authoring
 and debugger surfaces are now both *writable* and *programmable* (editing-capable tools +
 a scriptable TAStudio + host IPC), the off-axis accuracy cluster is verified and documented,
-mapper / format breadth reaches **168 families** plus the UNIF loader and FDS-proper, and
+mapper / format breadth reaches **172 families** plus the UNIF loader and FDS-proper, and
 the emulator now runs as a complete Android app on the byte-identical core.
 
 The forward arc (a 2026-06-23 maintainer replan) is:
@@ -868,7 +868,7 @@ If you use RustyNES in academic research, please cite:
   version = {1.8.8},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
-             AccuracyCoin 100\% (139/139), nestest 0-diff; 168 mapper families,
+             AccuracyCoin 100\% (139/139), nestest 0-diff; 172 mapper families,
              Famicom Disk System, Vs./PlayChoice-10 RGB, rollback netplay,
              RetroAchievements, a TAStudio piano-roll TAS editor with .fm2/.bk2
              movie interop, and a Mesen2-class debugger; pure-Rust
