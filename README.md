@@ -8,9 +8,11 @@
 
 > **Precise. Pure. Powerful.**
 
-[![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions) [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license) [![Version](https://img.shields.io/badge/version-v1.9.9-blue.svg)](https://github.com/doublegate/RustyNES/releases) [![Rust: 1.96](https://img.shields.io/badge/rust-1.96-orange.svg)](rust-toolchain.toml)<br>
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android-lightgrey.svg)](#platform-support)<br>
-[![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy) [![nestest](https://img.shields.io/badge/nestest-0--diff-brightgreen.svg)](#compatibility-and-accuracy) [![Try in browser](https://img.shields.io/badge/play-in%20browser-success.svg)](https://doublegate.github.io/RustyNES/)
+<p align="center">
+  [![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions) [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license) [![Version](https://img.shields.io/badge/version-v1.9.9-blue.svg)](https://github.com/doublegate/RustyNES/releases) [![Rust: 1.96](https://img.shields.io/badge/rust-1.96-orange.svg)](rust-toolchain.toml)<br>
+  [![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy) [![nestest](https://img.shields.io/badge/nestest-0--diff-brightgreen.svg)](#compatibility-and-accuracy) [![Try in browser](https://img.shields.io/badge/play-in%20browser-success.svg)](https://doublegate.github.io/RustyNES/)<br>
+  [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android-lightgrey.svg)](#platform-support)
+</p>
 
 ## Overview
 
@@ -868,7 +870,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {1.8.8},
+  version = {1.9.9},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (139/139), nestest 0-diff; 172 mapper families,
