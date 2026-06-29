@@ -8,14 +8,9 @@
 
 > **Precise. Pure. Powerful.**
 
-[![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Version](https://img.shields.io/badge/version-v1.9.9-blue.svg)](https://github.com/doublegate/RustyNES/releases)
-[![Rust: 1.96](https://img.shields.io/badge/rust-1.96-orange.svg)](rust-toolchain.toml)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android-lightgrey.svg)](#platform-support)
-[![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy)
-[![nestest](https://img.shields.io/badge/nestest-0--diff-brightgreen.svg)](#compatibility-and-accuracy)
-[![Try in browser](https://img.shields.io/badge/play-in%20browser-success.svg)](https://doublegate.github.io/RustyNES/)
+[![Build Status](https://github.com/doublegate/RustyNES/workflows/CI/badge.svg)](https://github.com/doublegate/RustyNES/actions) [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license) [![Version](https://img.shields.io/badge/version-v1.9.9-blue.svg)](https://github.com/doublegate/RustyNES/releases) [![Rust: 1.96](https://img.shields.io/badge/rust-1.96-orange.svg)](rust-toolchain.toml)<br>
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android-lightgrey.svg)](#platform-support)<br>
+[![AccuracyCoin](<https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg>)](#compatibility-and-accuracy) [![nestest](https://img.shields.io/badge/nestest-0--diff-brightgreen.svg)](#compatibility-and-accuracy) [![Try in browser](https://img.shields.io/badge/play-in%20browser-success.svg)](https://doublegate.github.io/RustyNES/)
 
 ## Overview
 
@@ -94,6 +89,8 @@ platform for NES emulation.
 | **Shader Ecosystem** *(v1.6.0)* | LMP88959 NTSC/PAL, hqNx / xBRZ upscalers, and a constrained `.slangp` / `.cgp` preset import on the composable ShaderStack |
 | **Writable + Programmable** *(v1.7.0)* | Editing-capable debug tools (palette / nametable / CHR / OAM writeback, an iNES / NES 2.0 header editor, an inline 6502 assembler), a scriptable `tastudio.*` Lua API, host IPC automation (`script-ipc`), `.dbg` source maps, Zwinder tiered rewind, audio depth (stereo / reverb / 20-band EQ), web parity, and an i18n framework |
 | **Android App** *(v1.8.x)* | A complete native Android app on the byte-identical core — a multi-touch + hardware-controller (P1–P4) UI, wgpu `SurfaceView` rendering, save-states, Lua, RetroAchievements, direct-IP / CGNAT-TURN netplay, and a box-art ROM library (GitHub-sideload now; Google Play at v2.1.0) |
+| **iOS / iPadOS App** *(v1.9.x)* | A complete native iOS app on the byte-identical core — a native SwiftUI shell over Metal (`wgpu`), multi-touch + GameController support, iCloud save-state sync, room-code rollback netplay, RetroAchievements, and the full TAStudio power-user suite (TestFlight now; App Store at v2.1.0) |
+| **Libretro Core** *(v1.9.9)* | A complete, cycle-accurate Libretro core (`rustynes_libretro.so`) integrating RustyNES seamlessly into RetroArch with RetroAchievements, dynamic audio sync, and deterministic rollback/save-state support |
 | **Pure Rust**          | `winit` + `wgpu` + `cpal` + `egui` frontend; safe `no_std + alloc` chip stack                 |
 
 <p align="center">
@@ -330,6 +327,17 @@ The apps ship now as **GitHub-Releases / sideload**, full-featured; the Google P
 production launch — with an ad-supported-freemium model and the `foss` / `play` flavor
 split — is **deferred to v2.1.0** (see [Roadmap](#roadmap)). Details in
 [`docs/android.md`](docs/android.md).
+
+### iOS / iPadOS *(v1.9.x)*
+
+RustyNES runs as a native **iOS / iPadOS app** on the byte-identical core (maintaining the 100% AccuracyCoin bar), built on the shared **`rustynes-mobile`** UniFFI bridge and a native SwiftUI shell:
+
+- **Rendering + audio** — Metal via `wgpu` with the same full WGSL shader pipelines (CRT, NTSC, Bisqwit) and ProMotion pacing, plus a low-latency CoreAudio hot path.
+- **Input** — multi-touch on-screen pad (NES-001 style), responsive sizing, GameController framework for P1–P4 (hot-plug), and Core Haptics.
+- **Connectivity & Tooling** — room-code netplay (CGNAT/TURN) and LAN rollback, RetroAchievements, iCloud save-state sync (CloudKit), Lua console, and power-user tooling (TAS `.rnm` movies, `.pal` palettes, `.zip` ROMs, HD-pack loading).
+- **Platform polish** — ReplayKit capture, Game Center, accessibility, EN/ES i18n, 4-slot save-state manager, and the dormant StoreKit `foss`/App-Store seam.
+
+The apps are currently distributed via **TestFlight**; the App Store launch is deferred to **v2.1.0** (see [Roadmap](#roadmap)). Details in [`docs/ios.md`](docs/ios.md).
 
 ---
 
@@ -637,7 +645,7 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | **Android (arm64)** | Supported (v1.8.x; GitHub-Releases / sideload — see [`docs/android.md`](docs/android.md)) |
 | **Linux ARM64**     | Supported (cross-compile) |
 | **Libretro Core**   | Supported (RetroArch via `rustynes-libretro`) |
-| **iOS / iPadOS**    | Planned (v1.9.0 TestFlight foundation; App Store at v2.1.0) |
+| **iOS / iPadOS**    | Supported (v1.9.x TestFlight; App Store at v2.1.0) |
 
 ### System requirements
 
@@ -660,6 +668,8 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | [CHANGELOG.md](CHANGELOG.md)            | Version history and release notes                                 |
 | [Roadmap](to-dos/ROADMAP.md)            | The forward roadmap — the path to v2.0.0 and beyond               |
 | [Release plans](to-dos/plans/README.md) | Per-release design plans (v1.0.0 → the v1.7.0–v2.0.0 forward set) + the reference-emulator research dives that fed them |
+| [iOS / iPadOS App](docs/ios.md)         | Native SwiftUI shell over Metal (wgpu) — v1.9.x TestFlight        |
+| [Libretro Core](docs/libretro/WALKTHROUGH.md) | Libretro core architecture, snapshot determinism, and RetroArch setup |
 
 ### Hardware and subsystem specs
 
@@ -746,26 +756,19 @@ The road so far:
 
 ### Roadmap
 
-With the **v1.7.0 "Forge"** creator-tooling line and the **v1.8.0 "Android"** platform
-line (through **v1.8.8 "Atlas"**) shipped, the non-architectural backlog is essentially
-consumed: emulation accuracy is at or beyond the Mesen2 / GeraNES bar, the TAS-authoring
-and debugger surfaces are now both *writable* and *programmable* (editing-capable tools +
-a scriptable TAStudio + host IPC), the off-axis accuracy cluster is verified and documented,
-mapper / format breadth reaches **172 families** plus the UNIF loader and FDS-proper, and
-the emulator now runs as a complete Android app on the byte-identical core.
+With the **v1.7.0 "Forge"** creator-tooling line, the **v1.8.x "Android"** platform line,
+and the **v1.9.x "Sunrise"** iOS platform line completed (through **v1.9.9 "Workshop"**),
+the non-architectural backlog is fully consumed: emulation accuracy is at or beyond the
+Mesen2 / GeraNES bar, the TAS-authoring and debugger surfaces are now both *writable*
+and *programmable*, mapper breadth reaches **172 families**, and the emulator now runs as
+native Android, iOS, WebAssembly, and Libretro apps on the byte-identical core.
 
-The forward arc (a 2026-06-23 maintainer replan) is:
+The forward arc is:
 
-- **v1.8.9** *(current dev, `[Unreleased]`)* — a consolidated 13-PR Dependabot maintenance
-  pass, the dormant `rustynes-monetization` crate + Android wiring, and a held foldable /
-  side-pane UX fix. Byte-identical core; AccuracyCoin holds 100% (139/139).
-- **v2.0.0 "Timebase"** — the master-clock (one-clock + every-cycle-bus-access)
+- **v2.0.0 "Timebase"** *(current dev)* — the master-clock (one-clock + every-cycle-bus-access)
   fractional-timebase refactor (ADR 0002) that closes the documented hard-tier accuracy
   residuals and adds Vs. DualSystem. The one release expected to break byte-identity and
   save-state compatibility.
-- **v2.0.1–v2.0.4 / v2.0.5–v2.0.8 / v2.0.9** — Android finalization, then iOS finalization
-  (the v1.9.0 SwiftUI + Metal TestFlight foundation, sharing the `rustynes-mobile` bridge),
-  then a ready-for-release verification of both apps on the v2.0.0 core.
 - **v2.1.0** — the **joint mobile store launch** (Google Play + Apple App Store + F-Droid),
   with the ad-supported-freemium monetization (AppLovin MAX + RevenueCat, a one-time
   **$3.99** unlock) and the `foss` / `play` flavor split (ADR 0025) going live. Both
