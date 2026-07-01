@@ -241,7 +241,6 @@ fastlane/test_output/
 .pre-commit-cache/
 
 # --- AI assistant local files ---
-GEMINI.md
 CLAUDE.local.md
 /.claude/
 WARP.md
@@ -255,3 +254,10 @@ WARP.md
 # a separate tree — they live under the already-ignored tests/roms/external/
 # alongside every other staged dump (the coverage harness discovers ONE external/
 # ROM tree; only the *screenshots* are tier-split, into screenshots/besteffort/).
+
+# --- Wiki (Separate Repo) ---
+# RustyNES.wiki/ is a standalone clone of the GitHub Wiki repo
+# (github.com/doublegate/RustyNES.wiki.git) checked out inside this tree to
+# author/build the wiki; it carries its own .git and must never be committed
+# into the main repository.
+/RustyNES.wiki/
