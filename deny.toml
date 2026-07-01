@@ -6,11 +6,24 @@ version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
-# No advisory ignores: the prior RUSTSEC-2024-0436 (`paste`, via the old wgpu
-# Metal backend) entry was dropped once the wgpu 29 / naga 29 bump removed
-# `metal` (and thus `paste`) from the tree. Keep this list empty unless a real
-# transitive advisory with no safe upgrade reappears.
-ignore = []
+# The prior RUSTSEC-2024-0436 (`paste`, via the old wgpu Metal backend) entry was
+# dropped once the wgpu 29 / naga 29 bump removed `metal` (and thus `paste`) from
+# the tree. Keep this list minimal — only "unmaintained"/"unsound" informational
+# advisories on transitive deps with no safe upgrade; never suppress a real
+# exploitable vulnerability.
+ignore = [
+    # `ttf-parser` unmaintained. NOT a vulnerability — an informational
+    # "unmaintained" advisory. It is a pure transitive dep of `winit` (which the
+    # workspace pins at 0.30.13) via its Wayland client-side-decoration font
+    # stack: winit -> sctk-adwaita -> ab_glyph -> owned_ttf_parser -> ttf-parser
+    # 0.25.1 (already the latest release). There is no safe upgrade until winit's
+    # decoration stack moves off ab_glyph, so this cannot be resolved from our
+    # manifest. Surfaced first by the egui-0.35 PR only because it is the first
+    # PR to re-run the security workflow after the advisory was published; `main`
+    # carries the identical `ttf-parser 0.25.1` and is affected equally. Revisit
+    # when a future winit bump drops the ab_glyph/ttf-parser chain.
+    "RUSTSEC-2026-0192",
+]
 
 [licenses]
 version = 2

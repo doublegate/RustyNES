@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Deterministic snapshotting integration via `get_serialize_size`, `on_serialize`, and `on_unserialize`.
   - Cross-compilation support via `Makefile` translation layer to map `platform` and `ARCH` to Cargo targets, staged into upstream `libretro-super`.
 
+### Changed
+
+- **Dependencies: egui GUI stack 0.34.3 → 0.35.0** (consolidates Dependabot #211 / #212 / #213). Bumped `egui`, `egui-wgpu`, and `egui-winit` to 0.35.0 as one coordinated set — the three crates ship in lockstep and cannot move independently. egui 0.35 ("Inspection, egui_mcp, classes, improved IME") lands entirely within the project's existing render / windowing tier: `egui-wgpu 0.35` requires `wgpu ^29.0`, `egui-winit 0.35` requires `winit ^0.30.13`, and `egui 0.35` requires `accesskit ^0.24.1` — all three already resolved in the lock — so there is **no `wgpu` / `winit` / `accesskit` / `naga` change** and the shipped / native / `no_std` / wasm builds stay behavior-equivalent. Migrated the single API break: `egui::Panel::show_inside` was deprecated in favour of the renamed `Panel::show(ui, ..)` (three shell/debugger call sites + the surrounding docs). AccuracyCoin holds 100% (139/139); the `#![no_std]` chip stack is untouched and byte-identical.
+- **Dependencies: in-constraint refresh of the transitive graph** (SemVer-compatible patch/minor only, no manifest constraint changes beyond egui): `anyhow 1.0.103`, `clap_complete 4.6.7`, `time 0.3.53`, `uuid 1.23.4`, `js-sys` / `web-sys 0.3.103`, `wasm-bindgen 0.2.126`, and ~15 others. The `wasm-bindgen` 0.2.125 → 0.2.126 bump is mirrored in the pinned `crates/rustynes-frontend/web/Trunk.toml` CLI version (the library and CLI version-check each other in lockstep, so the Pages deploy requires them to match). Deliberately **excluded** as out-of-tier or breaking: `wgpu 30` / `naga 30` (would break the `egui-wgpu 0.35` render tier), `getrandom 0.4` (breaking wasm API + obsolete `js` feature), and `uniffi 0.32` (mobile UniFFI bridge — needs its own Kotlin/Swift regeneration + on-device verification pass).
+
 ### Fixed
 
 - **iOS release workflow no longer fails on every `v*` tag push.** `.github/workflows/ios.yml`

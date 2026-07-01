@@ -34,4 +34,4 @@ port = 8081
 # LIBRARY version resolved in Cargo.lock exactly — the CLI and the
 # library are released in lockstep and version-check each other.
 # Check with `grep -A1 'name = "wasm-bindgen"' Cargo.lock`.
-wasm_bindgen = "0.2.125"
+wasm_bindgen = "0.2.126"
