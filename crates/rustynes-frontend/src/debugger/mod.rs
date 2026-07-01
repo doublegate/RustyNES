@@ -1756,9 +1756,10 @@ impl DebuggerOverlay {
         let ctx = self.state.egui_ctx().clone();
         // egui 0.34 deprecated the `|ctx|` form of `Context::run` (and
         // context-level `Panel::show`) in favour of `run_ui`, which hands the
-        // body a root `&mut Ui` to host the panels via `show_inside`. The
-        // floating windows reached through `ui.ctx()` are unchanged, so the
-        // single-pass behaviour is identical.
+        // body a root `&mut Ui` to host the panels via `Panel::show(ui, ..)`
+        // (renamed from `show_inside` in egui 0.35). The floating windows
+        // reached through `ui.ctx()` are unchanged, so the single-pass
+        // behaviour is identical.
         // `run_ui` takes an `FnMut`; `extra_ui` is `FnOnce`. The closure runs
         // exactly once, so move it through an `Option::take`.
         let mut extra_ui = Some(extra_ui);
@@ -1856,7 +1857,8 @@ impl DebuggerOverlay {
         let theme_now = config.ui.theme;
         // egui 0.34 deprecated the `|ctx|` form of `Context::run` (and
         // context-level `Panel::show`) in favour of `run_ui`, which hands the
-        // body a root `&mut Ui` to host the top/bottom panels via `show_inside`.
+        // body a root `&mut Ui` to host the top/bottom panels via
+        // `Panel::show(ui, ..)` (renamed from `show_inside` in egui 0.35).
         // The shell's floating windows + the debugger panels reached through
         // `ui.ctx()` are unchanged, so the single-pass behaviour is identical.
         let output = ctx.run_ui(raw_input, |ui| {

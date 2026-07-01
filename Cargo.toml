@@ -105,12 +105,12 @@ winit = "0.30"
 # No effect on native builds. WebGPU-primary is on by default.
 wgpu = { version = "29", features = ["webgl"] }
 cpal = "0.18"
-egui = "0.34"
-egui-wgpu = "0.34"
+egui = "0.35"
+egui-wgpu = "0.35"
 # `links` enables egui-winit's URL opener (webbrowser) so hyperlinks (e.g. the
 # About window's GitHub link) actually launch the default browser; without it
 # (default-features = false drops it) hyperlink_to is inert.
-egui-winit = { version = "0.34", default-features = false, features = ["links", "wayland", "x11"] }
+egui-winit = { version = "0.35", default-features = false, features = ["links", "wayland", "x11"] }
 gilrs = "0.11"
 rfd = "0.17"
 directories = "5"

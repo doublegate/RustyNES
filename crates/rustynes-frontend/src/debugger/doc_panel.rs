@@ -276,7 +276,7 @@ fn body(ui: &mut egui::Ui, state: &mut DocPanelState) {
     egui::Panel::left("doc_topics")
         .resizable(true)
         .default_size(230.0)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("\u{1F50D}"); // magnifier
                 ui.add(

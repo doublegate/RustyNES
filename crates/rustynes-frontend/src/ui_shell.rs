@@ -466,9 +466,10 @@ impl UiShell {
         self.clear_expired_status();
         let mut out = ShellOutput::default();
 
-        // egui 0.34 — the top/bottom panels are shown inside the root `Ui`
-        // (`show_inside`); the floating windows + modals still take the
-        // `&Context`, reachable via `ui.ctx()`.
+        // egui 0.35 — the top/bottom panels are shown inside the root `Ui`
+        // (`Panel::show(ui, ..)`, renamed from `show_inside` in 0.35); the
+        // floating windows + modals still take the `&Context`, reachable via
+        // `ui.ctx()`.
         let ctx = root_ui.ctx().clone();
         if self.menu_visible {
             self.menu_bar(root_ui, config, frame, &mut out);
@@ -552,7 +553,7 @@ impl UiShell {
         // report (BUG-3) needs an on-device repro (which menu, click-vs-hover,
         // what finally dismisses it) to pin the exact `MenuState` trigger; we do
         // NOT hack the interaction blind here.
-        egui::Panel::top("shell_menu_bar").show_inside(root_ui, |ui| {
+        egui::Panel::top("shell_menu_bar").show(root_ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 // ----- File -----
                 ui.menu_button(ic(glyph::FILE, crate::t!(MenuFile)), |ui| {
@@ -1489,7 +1490,7 @@ impl UiShell {
         let style = root_ui.ctx().global_style();
         egui::Panel::bottom("shell_status_bar")
             .frame(egui::Frame::side_top_panel(&style).inner_margin(egui::Margin::symmetric(8, 4)))
-            .show_inside(root_ui, |ui| {
+            .show(root_ui, |ui| {
                 ui.horizontal(|ui| {
                     if frame.rom_loaded {
                         ui.label(format!("ROM: {}", frame.rom_label));
