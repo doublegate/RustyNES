@@ -37,7 +37,7 @@ Establish the C ABI FFI boundary.
 
 ### Phase 3: ROM Loading, Input, Video, and Audio Math
 
-#### [MODIFY]- **Core Lifecycle & Architecture Definition:** ([IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md))
+#### [MODIFY] [rustynes-libretro/src/lib.rs](crates/rustynes-libretro/src/lib.rs)
 
 - **Platform Agnostic Build Recipes:** Ensure Makefiles use standard environment variables.
 - **Save State Size Guarantee:** Enforce single, static `retro_serialize_size()` on load.
