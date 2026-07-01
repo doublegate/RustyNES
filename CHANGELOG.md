@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+*Nothing yet — the next planned milestone is **v2.0.0 "Timebase"** (the fractional
+master-clock timebase refactor, ADR 0002).*
+
+## [1.10.0] - 2026-07-01 - "Arcade" (Libretro core + dependency refresh)
+
 ### Added
 
 - **Libretro Core (`rustynes-libretro`)** — a complete, native, cycle-accurate Libretro core implementation integrating RustyNES seamlessly into RetroArch.

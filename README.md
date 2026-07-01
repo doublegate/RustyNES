@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v1.9.9-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v1.10.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -92,7 +92,7 @@ platform for NES emulation.
 | **Writable + Programmable** *(v1.7.0)* | Editing-capable debug tools (palette / nametable / CHR / OAM writeback, an iNES / NES 2.0 header editor, an inline 6502 assembler), a scriptable `tastudio.*` Lua API, host IPC automation (`script-ipc`), `.dbg` source maps, Zwinder tiered rewind, audio depth (stereo / reverb / 20-band EQ), web parity, and an i18n framework |
 | **Android App** *(v1.8.x)* | A complete native Android app on the byte-identical core — a multi-touch + hardware-controller (P1–P4) UI, wgpu `SurfaceView` rendering, save-states, Lua, RetroAchievements, direct-IP / CGNAT-TURN netplay, and a box-art ROM library (GitHub-sideload now; Google Play at v2.1.0) |
 | **iOS / iPadOS App** *(v1.9.x)* | A complete native iOS app on the byte-identical core — a native SwiftUI shell over Metal (`wgpu`), multi-touch + GameController support, iCloud save-state sync, room-code rollback netplay, RetroAchievements, and the full TAStudio power-user suite (TestFlight now; App Store at v2.1.0) |
-| **Libretro Core** *(v1.9.9)* | A complete, cycle-accurate Libretro core (`rustynes_libretro.so`) integrating RustyNES seamlessly into RetroArch with RetroAchievements, dynamic audio sync, and deterministic rollback/save-state support |
+| **Libretro Core** *(v1.10.0)* | A complete, cycle-accurate Libretro core (the `rustynes_libretro` shared library — `.so` / `.dylib` / `.dll` by platform) integrating RustyNES seamlessly into RetroArch with RetroAchievements, dynamic audio sync, and deterministic rollback/save-state support |
 | **Pure Rust**          | `winit` + `wgpu` + `cpal` + `egui` frontend; safe `no_std + alloc` chip stack                 |
 
 <p align="center">
@@ -698,21 +698,23 @@ workspace API docs (rustdoc) at
 
 ## Version History
 
-RustyNES's current release is **v1.9.9 "Workshop"** — the latest increment in the
-**v1.9.0 "Sunrise"** iOS platform line, built on the writable-and-programmable **v1.7.0
-"Forge"** desktop core and the cycle-accurate **v1.0.0** production engine. Every
-release since v1.0.0 has been additive and off-by-default, so the shipped / native /
-`no_std` / wasm builds stay byte-identical and **AccuracyCoin holds 100% (139/139)**
-throughout. **v2.0.0 "Timebase"** is in development. The forward path — through
-**v2.0.0** to the joint **v2.1.0** mobile store launch — is in
-[Roadmap](#roadmap) below; see [`CHANGELOG.md`](CHANGELOG.md) for the full per-version
-detail behind every line in the table.
+RustyNES's current release is **v1.10.0 "Arcade"** — the native **Libretro core**
+(`rustynes-libretro`) that plugs the byte-identical cycle-accurate engine into
+RetroArch, capping the **v1.9.0 "Sunrise"** iOS platform line, the
+writable-and-programmable **v1.7.0 "Forge"** desktop core, and the cycle-accurate
+**v1.0.0** production engine. Every release since v1.0.0 has been additive and
+off-by-default, so the shipped / native / `no_std` / wasm builds stay byte-identical
+and **AccuracyCoin holds 100% (139/139)** throughout. **v2.0.0 "Timebase"** is in
+development. The forward path — through **v2.0.0** to the joint **v2.1.0** mobile
+store launch — is in [Roadmap](#roadmap) below; see [`CHANGELOG.md`](CHANGELOG.md)
+for the full per-version detail behind every line in the table.
 
 The road so far:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
-| **v1.9.9** | "Workshop" — iOS creator/power-tools (TAStudio, Cheats, foreign movie import, audio depth, read-only debugger) + Libretro Core integration. |
+| **v1.10.0** | "Arcade" — Native Libretro core (`rustynes_libretro` for RetroArch: RetroAchievements memory maps, dynamic audio sync, deterministic rollback save-states) + the egui 0.35 dependency tier refresh. |
+| **v1.9.9** | "Workshop" — iOS creator/power-tools (TAStudio, Cheats, foreign movie import, audio depth, read-only debugger). |
 | **v1.9.8** | "Horizon" — iOS store-readiness: accessibility, EN/ES i18n, ReplayKit capture, Game Center, and the dormant StoreKit `foss`/App-Store seam. |
 | **v1.9.7** | "Relay" — iOS connectivity completion: room-code (CGNAT/TURN) netplay, controller hot-plug, and iCloud save-state sync (CloudKit). |
 | **v1.9.6** | "Link" — iOS connectivity & scripting: Lua console, RetroAchievements, and direct-IP / LAN netplay in the SwiftUI shell. |
@@ -759,8 +761,8 @@ The road so far:
 ### Roadmap
 
 With the **v1.7.0 "Forge"** creator-tooling line, the **v1.8.x "Android"** platform line,
-and the **v1.9.x "Sunrise"** iOS platform line completed (through **v1.9.9 "Workshop"**),
-the non-architectural backlog is fully consumed: emulation accuracy is at or beyond the
+the **v1.9.x "Sunrise"** iOS platform line (through **v1.9.9 "Workshop"**), and the
+**v1.10.0 "Arcade"** Libretro core completed, the non-architectural backlog is fully consumed: emulation accuracy is at or beyond the
 Mesen2 / GeraNES bar, the TAS-authoring and debugger surfaces are now both *writable*
 and *programmable*, mapper breadth reaches **172 families**, and the emulator now runs as
 native Android, iOS, WebAssembly, and Libretro apps on the byte-identical core.
@@ -870,7 +872,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {1.9.9},
+  version = {1.10.0},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (139/139), nestest 0-diff; 172 mapper families,
