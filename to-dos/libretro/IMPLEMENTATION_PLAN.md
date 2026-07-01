@@ -2,8 +2,6 @@
 
 This document outlines the exact execution sequence to build out the `rustynes-libretro` core integration, strictly adhering to the architectural constraints established in `to-dos/libretro/SPRINT_PLAN.md` and `docs/libretro/*`.
 
-
-
 ## Proposed Changes
 
 ---
@@ -11,12 +9,15 @@ This document outlines the exact execution sequence to build out the `rustynes-l
 ### Phase 1: Build System & Dependency Wiring
 
 #### [NEW] [rustynes-libretro/Cargo.toml](crates/rustynes-libretro/Cargo.toml)
+
 Initialize the workspace member crate as a dynamic library.
+
 - Set `crate-type = ["cdylib"]`.
 - Link `rustynes-core` via path with `default-features = false`.
 - Add `rust-libretro` as the FFI wrapper.
 
 #### [MODIFY] [Cargo.toml](Cargo.toml) (Root)
+
 - Add `"crates/rustynes-libretro"` to the `[workspace.members]` array.
 
 ---
@@ -24,7 +25,9 @@ Initialize the workspace member crate as a dynamic library.
 ### Phase 2: Core Lifecycle & Dummy Initialization
 
 #### [NEW] [rustynes-libretro/src/lib.rs](crates/rustynes-libretro/src/lib.rs)
+
 Establish the C ABI FFI boundary.
+
 - Import `rust_libretro::core::{Core, CoreEnvironment, GameInfo}`.
 - Define `struct RustyNesLibretro { nes: Option<rustynes_core::Nes>, audio_buffer: Vec<i16> }`.
 - Implement `Core` for `RustyNesLibretro`.
@@ -35,6 +38,7 @@ Establish the C ABI FFI boundary.
 ### Phase 3: ROM Loading, Input, Video, and Audio Math
 
 #### [MODIFY]- **Core Lifecycle & Architecture Definition:** ([IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md))
+
 - **Platform Agnostic Build Recipes:** Ensure Makefiles use standard environment variables.
 - **Save State Size Guarantee:** Enforce single, static `retro_serialize_size()` on load.
 - **`on_run`:**
@@ -47,14 +51,17 @@ Establish the C ABI FFI boundary.
 ### Phase 4: Advanced Subsystems (Memory Maps & SRAM)
 
 #### [MODIFY] [rustynes-libretro/src/lib.rs](crates/rustynes-libretro/src/lib.rs)
+
 - **Direct Memory Maps:** Expose WRAM (`$0000-$07FF`), SRAM (`$6000-$7FFF`), and VRAM (`$2000-$2FFF`) using RetroArch's environment hooks for RetroAchievements zero-cost scanning.
 - **Save State Hooks:** Connect `save_state::BinWriter` to `on_serialize` to enable GGPO rollback netplay.
 
 ## Verification Plan
 
 ### Automated Compilation
+
 - I will run `cargo build -p rustynes-libretro --release` to ensure the `cdylib` compiles successfully.
 - I will run `cargo test --workspace` to ensure none of the dependencies injected broken `std` references back into the `no_std` core.
 
 ### Manual Verification
+
 - I will ask you (the user) to load the compiled `.so`/`.dll` core in RetroArch along with a test ROM to verify visual output, input polling, and audio synthesis.
