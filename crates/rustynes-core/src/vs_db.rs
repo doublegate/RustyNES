@@ -66,11 +66,12 @@ pub struct VsDbEntry {
     /// the right colour LUT for iNES-1.0 dumps that default to the 2C03.
     pub vs_ppu_type: VsPpuType,
     /// `true` for a Vs. **`DualSystem`** cart (two CPUs + two PPUs sharing an
-    /// inter-CPU latch — Tennis / Mahjong / Wrecking Crew / Balloon Fight). This
-    /// single-system core cannot boot them past the attract screen; the flag
-    /// lets the frontend show a clear "needs dual-system support" note instead of
-    /// a black screen. The full two-system emulation is a documented future
-    /// feature (see `docs/audit/vs-dualsystem-design-2026-06-11.md`).
+    /// inter-CPU latch — Tennis / Mahjong / Wrecking Crew / Balloon Fight).
+    /// v2.0.0 beta.5: [`crate::Emu::from_rom`] routes these to the full
+    /// two-console [`crate::VsDualSystem`] wrapper. This flag is the
+    /// load-bearing detection source for the circulating iNES-1.0 dumps,
+    /// whose headers carry no NES 2.0 byte-13 Vs. hardware type (see
+    /// `docs/audit/vs-dualsystem-design-2026-06-11.md`).
     pub dual_system: bool,
 }
 

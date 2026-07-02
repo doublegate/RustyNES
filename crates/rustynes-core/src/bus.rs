@@ -383,6 +383,25 @@ pub struct LockstepBus {
     vs_coin: u8,
     /// Vs. System service button ($4016 bit 2). Vs.-System carts only.
     vs_service: bool,
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): `true` when this console is the SUB
+    /// half of a `DualSystem` pair — `$4016` reads then return bit 7 = `0x80`
+    /// (the main/sub identity bit the ROM polls; hard-pinned `0` on a single
+    /// console, byte-identically). Set only by the `VsDualSystem` wrapper.
+    vs_is_sub: bool,
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): the external `/IRQ` line driven by the
+    /// PARTNER console's `$4016` bit-1 signal (Mesen2 `IRQSource::External`
+    /// via `UpdateMainSubBit`). OR'd into [`Bus::irq_level`]; always `false`
+    /// on a single console, so the default IRQ path is byte-identical.
+    vs_external_irq: bool,
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): the last `$4016`-write bit-1 value
+    /// (the main/sub comms signal) + a dirty latch the wrapper polls after
+    /// each step batch. The bus only RECORDS the edge; the cross-console
+    /// wiring (asserting the partner's `/IRQ`, the shared-WRAM swap) lives in
+    /// the wrapper — no bus ever references the other console.
+    vs_4016_bit1: bool,
+    /// See [`Self::vs_4016_bit1`] — set on every `$4016` write whose bit 1
+    /// CHANGED; cleared by [`Self::take_vs_mainsub_edge`].
+    vs_4016_bit1_dirty: bool,
     /// Optional non-standard input-device overlay per port (`$4016`/`$4017`).
     /// When a port has `Some(device)`, [`Self::read_port`] returns that
     /// device's byte instead of the standard controller / Four Score serial
@@ -773,6 +792,10 @@ impl LockstepBus {
             vs_dip: 0,
             vs_coin: 0,
             vs_service: false,
+            vs_is_sub: false,
+            vs_external_irq: false,
+            vs_4016_bit1: false,
+            vs_4016_bit1_dirty: false,
             expansion_device: [None, None],
             nt_mirroring_override: None,
             #[cfg(feature = "debug-hooks")]
@@ -984,6 +1007,12 @@ impl LockstepBus {
         // hardware config and persist across a power-cycle, like the panel).
         self.vs_coin = 0;
         self.vs_service = false;
+        // v2.0.0 beta.5 (Vs. DualSystem): the comms latch + external IRQ are
+        // transient signals; the sub identity is cabinet wiring and persists
+        // (re-applied by the wrapper anyway).
+        self.vs_external_irq = false;
+        self.vs_4016_bit1 = false;
+        self.vs_4016_bit1_dirty = false;
         // Non-standard input devices are unplugged on power-cycle (they are
         // re-attached explicitly by the frontend, like the controllers above).
         self.expansion_device = [None, None];
@@ -1893,6 +1922,71 @@ impl LockstepBus {
         self.vs_service = pressed;
     }
 
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): mark this console as the SUB half of a
+    /// `DualSystem` pair (`$4016` reads return bit 7 = `0x80`). Wrapper-only.
+    pub const fn set_vs_sub(&mut self, is_sub: bool) {
+        self.vs_is_sub = is_sub;
+    }
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): drive this console's external `/IRQ`
+    /// line (the partner console's `$4016` bit-1 signal, Mesen2
+    /// `IRQSource::External`). Wrapper-only; OR'd into the IRQ level.
+    pub const fn set_vs_external_irq(&mut self, asserted: bool) {
+        self.vs_external_irq = asserted;
+    }
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): poll-and-clear the latched `$4016`
+    /// bit-1 (main/sub comms signal) edge. Returns `Some(level)` when a
+    /// `$4016` write changed bit 1 since the last poll; the wrapper turns the
+    /// level into the partner's external-IRQ assert (LOW asserts, HIGH
+    /// clears) and — on the MAIN console — the shared-WRAM swap.
+    pub const fn take_vs_mainsub_edge(&mut self) -> Option<bool> {
+        if self.vs_4016_bit1_dirty {
+            self.vs_4016_bit1_dirty = false;
+            Some(self.vs_4016_bit1)
+        } else {
+            None
+        }
+    }
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): provision the mapper-99 shared 2 KiB
+    /// WRAM window (`$6000-$7FFF`). Wrapper-only; no-op on other boards.
+    pub fn enable_vs_dual_wram(&mut self) {
+        self.mapper.enable_vs_dual_wram();
+    }
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): mark the mapper as the SUB
+    /// console's instance (banks the second PRG half + upper CHR pages —
+    /// the two CPUs run different programs). Wrapper-only cabinet wiring.
+    pub fn set_vs_dual_sub(&mut self) {
+        self.mapper.set_vs_dual_sub();
+    }
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): drain this console's shared-WRAM
+    /// write log for the wrapper to replay into the partner console (the
+    /// fully-shared MAME model). Empty off-board.
+    pub fn take_vs_dual_wram_writes(&mut self) -> alloc::vec::Vec<(u16, u8)> {
+        self.mapper.take_vs_dual_wram_writes()
+    }
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): replay one partner-console write
+    /// into this console's shared-WRAM copy (no re-log).
+    pub fn apply_vs_dual_wram_write(&mut self, offset: u16, value: u8) {
+        self.mapper.apply_vs_dual_wram_write(offset, value);
+    }
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): take the shared-WRAM copy (wrapper
+    /// snapshot-restore normalization). `None` off-board.
+    pub fn take_vs_dual_wram(&mut self) -> Option<alloc::boxed::Box<[u8]>> {
+        self.mapper.take_vs_dual_wram()
+    }
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): install a shared-WRAM copy (the
+    /// other half of the restore normalization).
+    pub fn set_vs_dual_wram(&mut self, wram: alloc::boxed::Box<[u8]>) {
+        self.mapper.set_vs_dual_wram(wram);
+    }
+
     /// True when the running cart is Vs. System hardware (NES 2.0 console type).
     #[must_use]
     pub fn is_vs_system(&self) -> bool {
@@ -1914,8 +2008,10 @@ impl LockstepBus {
     ///
     /// Layout (nesdev "Vs. System" §`$4016` read): `PCCD DS0B` — bit 0 = right
     /// stick (already in `base`), bit 2 = service, bit 3 = DIP switch 1, bit 4 =
-    /// DIP switch 2, bit 5 = coin #1, bit 6 = coin #2, bit 7 = primary CPU (we
-    /// model a single CPU, so leave it 0).
+    /// DIP switch 2, bit 5 = coin #1, bit 6 = coin #2, bit 7 = primary CPU.
+    /// Bit 7 is `0` on a single console / the `DualSystem` MAIN half and `0x80`
+    /// on the `DualSystem` SUB half (Mesen2 `IsVsMainConsole() ? 0 : 0x80` —
+    /// the identity bit the `DualSystem` ROM polls; v2.0.0 beta.5).
     fn vs_overlay_4016(&self, base: u8) -> u8 {
         if !self.is_vs_system() {
             return base;
@@ -1931,6 +2027,10 @@ impl LockstepBus {
         v |= ((self.vs_dip >> 1) & 0x01) << 4;
         // Coin acceptors -> bits 5/6.
         v |= (self.vs_coin & 0x03) << 5;
+        // v2.0.0 beta.5: the DualSystem main/sub identity bit.
+        if self.vs_is_sub {
+            v |= 0x80;
+        }
         v
     }
 
@@ -3973,6 +4073,21 @@ impl Bus for LockstepBus {
                 // $4020-$7FFF), so this is byte-for-byte a no-op on all
                 // non-Vs. carts.
                 self.mapper.cpu_write(0x4016, value);
+                // v2.0.0 beta.5 (Vs. DualSystem): report the bit-1 (main/sub
+                // comms signal) LEVEL on EVERY $4016 write for the wrapper
+                // to poll. Deliberately not edge-filtered: the wrapper seeds
+                // the reset-time levels itself (Mesen2's
+                // `UpdateMainSubBit(main ? 0x00 : 0x02)`), so a bus-side
+                // edge filter starting from a `false` latch would swallow a
+                // genuine seeded-HIGH → written-LOW transition (Balloon
+                // Fight's reset writes `$4016 = $00` on both consoles) and
+                // deadlock the boot handshake. Applying an unchanged level
+                // is idempotent in the wrapper. The latch is only consulted
+                // by the DualSystem wrapper; single-console behavior is
+                // untouched (two dead field writes on non-Vs carts, no
+                // reads).
+                self.vs_4016_bit1 = (value & 0x02) != 0;
+                self.vs_4016_bit1_dirty = true;
             }
             0x4018..=0x401F => {}
             0x4020..=0xFFFF => self.mapper.cpu_write(addr, value),
@@ -4224,7 +4339,12 @@ impl Bus for LockstepBus {
     fn irq_level(&self) -> bool {
         // v2.8.0 Phase 4 — boards without an IRQ source have the default
         // `irq_pending() == false`; skip the per-cycle virtual call.
-        (self.mapper_caps.irq_source && self.mapper.irq_pending()) || self.apu.irq_line()
+        // v2.0.0 beta.5 — `vs_external_irq` is the DualSystem partner
+        // console's `$4016` bit-1 signal (always `false` on a single
+        // console, so the default path is unchanged).
+        (self.mapper_caps.irq_source && self.mapper.irq_pending())
+            || self.apu.irq_line()
+            || self.vs_external_irq
     }
 
     fn nmi_level(&self) -> bool {

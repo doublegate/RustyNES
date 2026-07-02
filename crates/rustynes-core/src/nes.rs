@@ -883,6 +883,16 @@ impl Nes {
         self.bus.cycle()
     }
 
+    /// `true` when the CPU has executed a JAM/KIL/STP and is halted.
+    ///
+    /// (v2.0.0 beta.5: the `VsDualSystem` soft-lockstep driver guards its
+    /// per-instruction stepping — the pre-existing debugger
+    /// [`Self::step_instruction`] — on this.)
+    #[must_use]
+    pub const fn is_jammed(&self) -> bool {
+        self.cpu.is_jammed()
+    }
+
     /// Cartridge region (NTSC / PAL / Dendy / Multi). Drives wall-clock
     /// frame pacing in the frontend and clock dividers in the chip cores.
     #[must_use]
