@@ -1194,14 +1194,19 @@ impl Cpu {
     fn addr_ind_y_rmw<B: Bus>(&mut self, bus: &mut B) -> u16 {
         #[cfg(feature = "mc-one-clock-v2")]
         {
-            let ptr = self.fetch_pc(bus);
-            let lo = self.read1(bus, u16::from(ptr));
-            let hi = self.read1(bus, u16::from(ptr.wrapping_add(1)));
-            let base = u16::from(lo) | (u16::from(hi) << 8);
-            let addr = base.wrapping_add(u16::from(self.y));
-            let dummy = (base & 0xFF00) | (addr & 0x00FF);
-            let _ = self.read1(bus, dummy);
-            addr
+            // Delegate to the plain resolver (which already emits the
+            // unfixed-address dummy read on a page cross), then emit the
+            // RMW's unconditional cycle-5 dummy for the non-crossing case.
+            // On a non-crossing access the canonical unfixed address
+            // `(base & 0xFF00) | (addr & 0xFF)` EQUALS the final address
+            // (the high byte needed no fix-up), so reading `o.addr` here is
+            // the silicon-exact target — do not "fix" this to a separate
+            // unfixed computation, they are identical by construction.
+            let o = self.addr_ind_y(bus);
+            if !o.page_crossed {
+                let _ = self.read1(bus, o.addr);
+            }
+            o.addr
         }
         #[cfg(not(feature = "mc-one-clock-v2"))]
         {
