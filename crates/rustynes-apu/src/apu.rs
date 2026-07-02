@@ -350,6 +350,17 @@ pub struct Apu {
     /// raise another DMA request. The DMC DMA unit cannot issue a second
     /// request within two CPU cycles of the previous get.
     pub(crate) dmc_dma_cooldown: u8,
+    /// v2.0.0 beta.3 (A4 cycle-accurate reset): countdown to the scheduled
+    /// warm-reset `$4017` re-write (blargg `apu_reset` spec: reset behaves
+    /// as if the last `$4017` value were written again). Armed by
+    /// [`Apu::reset`] with the calibrated in-sequence placement; consumed in
+    /// `tick_with_external` during the CPU's clocked reset cycles. `0` = no
+    /// re-write pending.
+    #[cfg(feature = "mc-one-clock-v2")]
+    pub(crate) reset_4017_delay: u8,
+    /// The retained `$4017` value the scheduled reset re-write will issue.
+    #[cfg(feature = "mc-one-clock-v2")]
+    pub(crate) reset_4017_value: u8,
     /// v2.0 Phase 2 (`mc-r1-dmc-reenable-phase`): TriCNES's
     /// `CannotRunDMCDMARightNow` (`Emulator.cs:823`). Set to 2 after every DMC
     /// GET (`:4168`), decremented by 2 on each get cycle (`:1186`), and gating
@@ -545,6 +556,10 @@ impl Apu {
             pending_dmc_abort: false,
             dmc_abort_delay: 0,
             dmc_dma_cooldown: 0,
+            #[cfg(feature = "mc-one-clock-v2")]
+            reset_4017_delay: 0,
+            #[cfg(feature = "mc-one-clock-v2")]
+            reset_4017_value: 0,
             cannot_run_dmc_dma: 0,
             dmc_reenable_period_block: false,
             subpos_arm_countdown: 0,
@@ -568,8 +583,36 @@ impl Apu {
 
     /// Reset (warm).  Per nesdev: most APU state is preserved across reset
     /// except `$4015` is cleared (channels disabled, DMC silenced).
+    ///
+    /// v2.0.0 beta.3 (A4 cycle-accurate reset, `mc-one-clock-v2`): the 2A03
+    /// reset sequence behaves as if the LAST value written to `$4017` were
+    /// written again (blargg `apu_reset` spec) — the retained value is
+    /// re-issued through the normal `$4017` write path (pending mode + the
+    /// 3/4-cycle aligned delay + the mode-1 immediate quarter/half clock),
+    /// and the CPU's 8 clocked reset cycles then age the re-armed counter
+    /// so execution resumes ~9-12 cycles after the effective write (the
+    /// `4017_timing` window). The flag-off path keeps the legacy
+    /// zero-the-counter reset byte-identically.
     pub fn reset(&mut self) {
-        self.frame_counter.reset();
+        #[cfg(feature = "mc-one-clock-v2")]
+        {
+            // Zero the sequencer + IRQ flags now; SCHEDULE the hardware
+            // `$4017` re-write to land 2 clocked cycles into the CPU's
+            // 8-cycle reset sequence (consumed in `tick_with_external`).
+            // Empirically calibrated against blargg `4017_timing`'s printed
+            // "delay after effective $4017 write" (accept window 6..=12,
+            // hardware-usual 9; the ROM quantizes in 2-cycle APU units): an
+            // immediate reset-start re-write measures 12 (the upper edge),
+            // a +3-cycle placement measures 6 (the lower edge), and +2
+            // lands mid-window at 8.
+            let last = self.frame_counter.reset_rewrite_4017();
+            self.reset_4017_value = last;
+            self.reset_4017_delay = 2;
+        }
+        #[cfg(not(feature = "mc-one-clock-v2"))]
+        {
+            self.frame_counter.reset();
+        }
         self.write_register(0x4015, 0x00);
         self.pending_dmc_dma = false;
         self.dmc_dma_is_load = false;
@@ -1133,6 +1176,21 @@ impl Apu {
         // sequence exactly when `parity_seed == 0` (the floor config).
         {
             self.apu_phase = (self.cpu_cycle.wrapping_add(self.parity_seed) & 1) == 1;
+        }
+        // v2.0.0 beta.3 (A4 cycle-accurate reset): consume the scheduled
+        // warm-reset `$4017` re-write N clocked cycles into the CPU's reset
+        // sequence (see `Apu::reset` for the calibration). Runs after the
+        // `apu_phase` derivation so the write's 3/4-cycle alignment delay
+        // reads the current cycle's parity, exactly like a CPU-issued write.
+        #[cfg(feature = "mc-one-clock-v2")]
+        {
+            if self.reset_4017_delay > 0 {
+                self.reset_4017_delay -= 1;
+                if self.reset_4017_delay == 0 {
+                    let aligned = self.apu_phase;
+                    self.frame_counter.write(self.reset_4017_value, aligned);
+                }
+            }
         }
         if self.apu_phase {
             self.pulse1.clock_timer();

@@ -103,6 +103,13 @@ pub struct FrameCounter {
     /// (Session-25, 2026-05-23). See
     /// `docs/audit/session-25-sprint2-iter3-frame-counter-irq-2026-05-23.md`.
     pub(crate) irq_flag_clear_cycle: u64,
+    /// v2.0.0 beta.3 (A4 cycle-accurate reset): the last value written to
+    /// `$4017`, retained across warm reset. Per blargg's `apu_reset` spec
+    /// ("At reset ... the last value written to `$4017` is written AGAIN,
+    /// rather than `$00`") the 2A03's internal reset sequence re-issues the
+    /// `$4017` write with this value before execution resumes from the
+    /// reset vector. Power-on value `$00` (the power path "writes `$00`").
+    pub(crate) last_4017: u8,
 }
 
 impl Default for FrameCounter {
@@ -126,6 +133,7 @@ impl FrameCounter {
             pending_inhibit: false,
             apu_aligned: true,
             irq_flag_clear_cycle: 0,
+            last_4017: 0x00,
         }
     }
 
@@ -140,10 +148,41 @@ impl FrameCounter {
         self.irq_flag_clear_cycle = 0;
     }
 
+    /// v2.0.0 beta.3 (A4 cycle-accurate reset): warm-reset with the
+    /// hardware `$4017` re-write. Per blargg's `apu_reset` spec, the 2A03
+    /// reset sequence behaves as if the LAST value written to `$4017` were
+    /// written again: the retained `last_4017` is re-issued through
+    /// the normal write path (pending mode + the 3/4-cycle aligned delay,
+    /// and — for a mode-1 value — the immediate quarter+half clock), then
+    /// the sequencer restarts. The CPU's subsequent 8-cycle reset delay
+    /// (real clocked cycles on the master clock since Workstream A2) ages
+    /// the re-armed counter so execution resumes ~9-12 cycles after the
+    /// effective write — the window blargg's `4017_timing` brackets.
+    ///
+    /// Two prior frame-granular re-arm attempts (see
+    /// `tests/apu_reset.rs`'s history preamble) failed precisely because the
+    /// reset was a function call with no clocked delay; this variant exists
+    /// only on the one-clock sequence path (`mc-one-clock-v2`).
+    pub fn reset_rewrite_4017(&mut self) -> u8 {
+        // Mode bit (7) is retained; the IRQ-inhibit bit (6) is CLEARED —
+        // per nesdev ("At reset, $4017 mode is unchanged, but IRQ inhibit
+        // flag is sometimes cleared") and Mesen2's frame-counter reset.
+        // Retaining bit 6 wedges blargg `4017_timing`'s second pass: with
+        // inhibit re-applied the frame IRQ flag never sets and the ROM's
+        // 14-probe measurement never terminates in-window.
+        let value = self.last_4017 & 0x80;
+        self.irq_flag = false;
+        self.irq_line_active = false;
+        self.cycle = 0;
+        self.irq_flag_clear_cycle = 0;
+        value
+    }
+
     /// `$4017` write.  `apu_aligned` is true if the *current* CPU cycle
     /// is also an APU cycle (i.e., even CPU-cycle alignment).  The reset
     /// happens 3 or 4 CPU cycles later depending on alignment.
     pub fn write(&mut self, value: u8, apu_aligned: bool) {
+        self.last_4017 = value;
         self.pending_mode = if (value & 0x80) != 0 {
             Mode::FiveStep
         } else {

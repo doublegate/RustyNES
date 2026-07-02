@@ -179,6 +179,17 @@ pub fn run_nes_blargg_reset(rom_bytes: &[u8], max_frames: u64) -> Result<NesTest
     let mut started = false;
     let mut resets = 0u32;
     let mut frames = 0u64;
+    // Stale-status guard (v2.0.0 beta.3): the `$6000` status byte and the
+    // `$6001-$6003` magic live in WRAM, which SURVIVES a soft reset — so for
+    // the first frames after `nes.reset()` they still read the PRE-reset
+    // `$81` until the ROM's post-reset path reaches `std_reset` and rewrites
+    // them. Re-detecting that stale `$81` immediately re-resets the ROM
+    // mid-measurement every ~7 frames (observed wedging `4017_timing` at
+    // MAX_RESETS once the A4 reset sequence lengthened the second-pass
+    // measurement window). After a reset, ignore `$81` until the status has
+    // read something else at least once — a genuine new prompt always
+    // rewrites a fresh `$81` after a `$80` running phase.
+    let mut stale_after_reset = false;
     while frames < max_frames {
         nes.run_frame();
         frames += 1;
@@ -198,6 +209,12 @@ pub fn run_nes_blargg_reset(rom_bytes: &[u8], max_frames: u64) -> Result<NesTest
             }
         }
         let status = nes.bus_mut().peek_cpu(0x6000);
+        if stale_after_reset {
+            if status == 0x81 {
+                continue;
+            }
+            stale_after_reset = false;
+        }
         match status {
             0x80 => {}
             0x81 => {
@@ -210,6 +227,7 @@ pub fn run_nes_blargg_reset(rom_bytes: &[u8], max_frames: u64) -> Result<NesTest
                 }
                 nes.reset();
                 started = false; // re-detect magic after the reset re-inits it
+                stale_after_reset = true;
                 resets += 1;
                 if resets > MAX_RESETS {
                     break;
