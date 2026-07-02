@@ -16,16 +16,6 @@ workspace = true
 [features]
 # v2.0 R1c-1 diagnostic: per-instruction (PC, cumulative cpu_cycle) trace hook.
 cpu-instr-cycle-trace = []
-# v2.0.0 "Timebase" beta.1 (Workstream A1, ADR 0002): the one-clock counter
-# collapse. When ON, `Cpu::cycles` stops being an independently-incremented
-# counter and is ASSIGNED from the bus's canonical cycle counter at the single
-# per-cycle site (`start_cycle`), and the bus-side `dma_mc_consumed` coherence
-# fold in `end_cycle` is retired (asserted structurally zero on the live
-# unified-DMA path). Default OFF: the shipped build stays byte-identical; the
-# flag-on build is gated by the full accuracy suite (AccuracyCoin 139/139 +
-# nestest 0-diff + save-state byte-identity) before beta.4 promotes it to the
-# only path. See `to-dos/plans/v2.0.0-master-clock-plan.md`.
-mc-one-clock-v2 = []
 default = []
 
 [dependencies]

@@ -3759,9 +3759,8 @@ impl LockstepBus {
         };
         // v2.0.0 beta.1 (A1 one-clock collapse): hand the APU the canonical
         // bus cycle counter (incremented earlier in this same `cpu_clock`)
-        // instead of letting it keep an independent `+= 1` mirror. See the
-        // `mc-one-clock-v2` feature docs in the crate Cargo.tomls.
-        #[cfg(feature = "mc-one-clock-v2")]
+        // instead of letting it keep an independent `+= 1` mirror (the
+        // one-clock collapse, promoted to the only path in v2.0.0 beta.4).
         self.apu.set_canonical_cycle(self.cycle);
         self.apu.tick_with_external(mapper_sample);
         if self.mapper_caps.frame_event_hook {

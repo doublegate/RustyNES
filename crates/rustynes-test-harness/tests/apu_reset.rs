@@ -108,8 +108,8 @@ fn apu_reset_4017_timing() {
 // not a core residual. `run_nes_blargg_reset` re-detected the STALE `$81`
 // status byte (WRAM survives a soft reset) immediately after issuing the
 // reset, re-resetting the ROM mid-measurement and corrupting its second-pass
-// log. With the stale-status guard the ROM passes strictly on BOTH the
-// default and `mc-one-clock-v2` builds. Plan-residual R3 reclassified.
+// log. With the stale-status guard the ROM passes strictly. Plan-residual R3
+// reclassified.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -120,39 +120,17 @@ fn apu_reset_len_ctrs_enabled() {
 }
 
 // ---------------------------------------------------------------------------
-// Known-failing: APU $4017 frame-counter re-write on soft reset.
-// FAIL #3 — "At reset, $4017 should should be rewritten with last value".
-// Suspected subsystem: rustynes-apu frame-counter ($4017) reset behaviour.
+// CLOSED (v2.0.0 beta.3, Workstream A4; shipped as the default in beta.4):
+// the cycle-accurate reset sequence retains the last `$4017` value and
+// re-issues it (mode bit kept, IRQ-inhibit cleared) 2 clocked cycles into
+// the CPU's 8-cycle reset delay — plan-residual R4. (The quoted "should
+// should" below is blargg's own string in `4017_written.s`, kept verbatim
+// so the exact ROM output greps here.)
 // ---------------------------------------------------------------------------
 
-// CLOSED flag-on (v2.0.0 beta.3, Workstream A4): the cycle-accurate reset
-// sequence retains the last `$4017` value and re-issues it (mode bit kept,
-// IRQ-inhibit cleared) 2 clocked cycles into the CPU's 8-cycle reset delay —
-// plan-residual R4. The strict test runs under `mc-one-clock-v2`; the
-// default build keeps the legacy function-call reset (byte-identity until
-// the beta.4 promote), so the fail-loud companion pins its failing status
-// there.
 #[test]
-#[cfg_attr(
-    not(feature = "mc-one-clock-v2"),
-    ignore = "R4 closed by the A4 cycle-accurate reset — flag-on only until the beta.4 promote"
-)]
 fn apu_reset_4017_written() {
     let (s, m, f) = run("4017_written.nes", 1500);
     eprintln!("4017_written: status={s:#x} frames={f} msg={m:?}");
     assert_eq!(s, 0, "4017_written failed: {m}");
-}
-
-#[test]
-#[cfg(not(feature = "mc-one-clock-v2"))]
-fn apu_reset_4017_written_currently_fails() {
-    let (s, _m, _f) = run("4017_written.nes", 1500);
-    // The default build's function-call reset does not re-apply the last
-    // `$4017` value (closed on the A4 sequence path only). If this ever
-    // passes here, the legacy path gained the behavior — un-gate the strict
-    // test above and delete this companion.
-    assert_ne!(
-        s, 0,
-        "4017_written now PASSES on the default build — un-gate apu_reset_4017_written"
-    );
 }

@@ -137,17 +137,6 @@ impl FrameCounter {
         }
     }
 
-    /// Reset.
-    pub fn reset(&mut self) {
-        self.mode = Mode::FourStep;
-        self.irq_inhibit = false;
-        self.irq_flag = false;
-        self.irq_line_active = false;
-        self.cycle = 0;
-        self.reset_in = 0;
-        self.irq_flag_clear_cycle = 0;
-    }
-
     /// v2.0.0 beta.3 (A4 cycle-accurate reset): warm-reset with the
     /// hardware `$4017` re-write. Per blargg's `apu_reset` spec, the 2A03
     /// reset sequence behaves as if the LAST value written to `$4017` were
@@ -162,7 +151,7 @@ impl FrameCounter {
     /// Two prior frame-granular re-arm attempts (see
     /// `tests/apu_reset.rs`'s history preamble) failed precisely because the
     /// reset was a function call with no clocked delay; this variant exists
-    /// only on the one-clock sequence path (`mc-one-clock-v2`).
+    /// on the one-clock sequence path (promoted to the only path in beta.4).
     pub fn reset_rewrite_4017(&mut self) -> u8 {
         // Mode bit (7) is retained; the IRQ-inhibit bit (6) is CLEARED —
         // per nesdev ("At reset, $4017 mode is unchanged, but IRQ inhibit

@@ -48,13 +48,6 @@ cpu-instr-cycle-trace = ["rustynes-core/cpu-instr-cycle-trace"]
 # (`cargo test --features test-roms,cpu-boot-trace
 # --test cpu_boot_trace_fixture`).
 cpu-boot-trace = ["rustynes-core/cpu-boot-trace"]
-# v2.0.0 "Timebase" beta.1 — forward to `rustynes-core/mc-one-clock-v2` (the
-# one-clock counter collapse, Workstream A1). Off by default; the flag-on gate
-# is `cargo test -p rustynes-test-harness --features test-roms,mc-one-clock-v2`
-# which must be byte-identical to the default (AccuracyCoin 139/139, nestest
-# 0-diff, the `one_clock_invariants` residue pins). See
-# `to-dos/plans/v2.0.0-master-clock-plan.md`.
-mc-one-clock-v2 = ["rustynes-core/mc-one-clock-v2"]
 
 [dependencies]
 rustynes-core.workspace = true
