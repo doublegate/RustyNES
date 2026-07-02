@@ -17,8 +17,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 *The **v2.0.0 "Timebase"** development line (the one-clock + every-cycle-bus-access
 timebase refactor, ADR 0002 + `to-dos/plans/v2.0.0-master-clock-plan.md`) is in
-progress. Everything below is **default-off / instrumentation-only**: the shipped
-build is byte-identical to v1.10.0 and AccuracyCoin holds 100% (139/139).*
+progress. Through beta.3 everything was default-off; **as of beta.4 (the promote,
+below) the one-clock timebase IS the shipped default** — the designated breaking
+behavior change of the v2.0.0 major. AccuracyCoin holds 100% (139/139) throughout.*
+
+### Changed
+
+- **v2.0.0 beta.4 — THE PROMOTE: the one-clock timebase is now the only
+  path** (BREAKING by design; the release's designated behavior change per
+  ADR 0002 / the ADR-0003 MAJOR-boundary tier). The `mc-one-clock-v2`
+  feature is deleted and the beta.1–beta.3 substrate ships as the default:
+  ONE canonical cycle counter (residues pinned (12, 0, 0)), every
+  instruction cycle a real bus access (busless surface 9,795 → 0), and the
+  cycle-accurate warm reset — **residual R4 (`apu_reset/4017_written`) is
+  now closed on the shipped build** (blargg `apu_reset` 6/6, zero ignores,
+  `4017_timing` delay 8 mid-window). Deleted with the promote: the six
+  caller-side `cycles += 1` mirrors, the APU `cpu_cycle += 1` mirror, the
+  legacy `FrameCounter::reset()`, the busless interrupt filler ticks, the
+  `dma_mc_consumed` fold, and the four feature definitions (net −151
+  lines).
+- **60-ROM commercial-oracle re-baseline** (visual-verified per the
+  re-baseline discipline): 11 snapshots re-blessed — 10 are
+  **audio-hash-only** diffs with byte-identical framebuffers (DMC-game
+  sample streams shift because a DMA halt now re-reads the held address of
+  a real bus cycle, matching the references; the APU-synthesis oracles all
+  still pass), and 1 (Ganbare Goemon) differs by 99 px (0.2%) — a
+  timing-shifted projectile sprite, visually inspected before/after.
+  Provenance: 5 of the 11 were pre-existing drift on `main` (bisected to
+  pre-beta.3); 6 are substrate-attributable. Post-bless: oracle **60/60**,
+  `visual_regression` 9/9 on the promoted default.
 
 ### Added
 

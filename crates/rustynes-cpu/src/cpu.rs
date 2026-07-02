@@ -458,7 +458,7 @@ impl Cpu {
                     self.burn_histogram[opcode as usize].saturating_add(u64::from(burned));
             }
         }
-        // v2.0.0 beta.2 (A2): with the one-clock feature ON, every
+        // v2.0.0 beta.2 (A2, promoted to the only path in beta.4): every
         // instruction cycle is a bus access — the resolvers + RMW arms emit
         // the canonical dummy reads, so the burn-loop must never fire.
         // Proven empirically at zero across AccuracyCoin, nestest, both
@@ -466,7 +466,6 @@ impl Cpu {
         // official + unofficial opcode space); this assert makes any future
         // under-emitting dispatch arm fail loud in dev-profile runs instead
         // of silently reintroducing a busless cycle.
-        #[cfg(feature = "mc-one-clock-v2")]
         debug_assert!(
             self.cycles_emitted >= cycles,
             "opcode ${opcode:02X} under-emitted: declared {cycles} cycles but emitted \
@@ -597,17 +596,15 @@ impl Cpu {
         self.master_clock = self.master_clock.wrapping_add(pre);
         bus.run_ppu_to(self.master_clock.saturating_sub(ppu_sample_offset()));
         bus.cpu_clock();
-        // v2.0.0 beta.1 (A1 one-clock collapse): `cycles` is ASSIGNED from the
-        // canonical bus cycle counter at this single per-cycle site instead of
-        // being independently incremented by every `read1`/`write1`/
-        // `idle_tick`/DMA-loop caller. `bus.cpu_clock()` above advanced the
-        // canonical counter for THIS cycle, so the assignment lands on the
-        // same post-increment value the caller-side `+= 1` produced (the
-        // `one_clock_invariants` harness test pins the residue at zero).
-        #[cfg(feature = "mc-one-clock-v2")]
-        {
-            self.cycles = bus.cycle_count();
-        }
+        // v2.0.0 beta.1 (A1 one-clock collapse, promoted to the only path in
+        // beta.4): `cycles` is ASSIGNED from the canonical bus cycle counter
+        // at this single per-cycle site instead of being independently
+        // incremented by every `read1`/`write1`/`idle_tick`/DMA-loop caller.
+        // `bus.cpu_clock()` above advanced the canonical counter for THIS
+        // cycle, so the assignment lands on the same post-increment value the
+        // legacy caller-side `+= 1` produced (the `one_clock_invariants`
+        // harness test pins the residue at zero).
+        self.cycles = bus.cycle_count();
     }
 
     /// End half of one CPU cycle: fold any bus-side DMA span into
@@ -615,32 +612,25 @@ impl Cpu {
     /// DMA), advance by the POST split, catch the PPU up again (the double
     /// catch-up), then sample interrupts (φ2, the T_last-1 rule).
     fn end_cycle<B: Bus>(&mut self, bus: &mut B, for_read: bool) {
-        // v2.0.0 beta.1 (A1 one-clock collapse): the `dma_mc_consumed`
-        // coherence fold is RETIRED. On the live unified-DMA path every DMA
-        // cycle is a first-class `start_cycle`/`end_cycle` (advancing
-        // `master_clock` directly), so the bus-side accumulator is
-        // structurally zero — the fold only ever mattered for the legacy
-        // bus-side burst engine, which is dead code. The accumulator is
-        // drained UNCONDITIONALLY (identical dev/release behavior — clippy's
-        // `debug_assert_with_mut_call` rightly forbids the take inside the
-        // assertion) and the structural-zero claim is asserted in dev
-        // profiles; the flag-on byte-identity gate (AccuracyCoin 139/139 +
-        // nestest 0-diff) proves it for release.
-        #[cfg(feature = "mc-one-clock-v2")]
-        {
-            let folded = bus.take_dma_mc_consumed();
-            debug_assert_eq!(
-                folded, 0,
-                "dma_mc_consumed accumulated on the live path — a legacy \
-                 bus-side DMA cycle ran outside the unified engine (see the \
-                 v2.0.0 plan A1)"
-            );
-            let _ = folded;
-        }
-        #[cfg(not(feature = "mc-one-clock-v2"))]
-        {
-            self.master_clock = self.master_clock.wrapping_add(bus.take_dma_mc_consumed());
-        }
+        // v2.0.0 beta.1 (A1 one-clock collapse, promoted to the only path in
+        // beta.4): the `dma_mc_consumed` coherence fold is RETIRED. On the
+        // live unified-DMA path every DMA cycle is a first-class
+        // `start_cycle`/`end_cycle` (advancing `master_clock` directly), so
+        // the bus-side accumulator is structurally zero — the fold only ever
+        // mattered for the legacy bus-side burst engine, which is dead code.
+        // The accumulator is drained UNCONDITIONALLY (identical dev/release
+        // behavior — clippy's `debug_assert_with_mut_call` rightly forbids
+        // the take inside the assertion) and the structural-zero claim is
+        // asserted in dev profiles; the byte-identity gate (AccuracyCoin
+        // 139/139 + nestest 0-diff) proves it for release.
+        let folded = bus.take_dma_mc_consumed();
+        debug_assert_eq!(
+            folded, 0,
+            "dma_mc_consumed accumulated on the live path — a legacy \
+             bus-side DMA cycle ran outside the unified engine (see the \
+             v2.0.0 plan A1)"
+        );
+        let _ = folded;
         let div = bus.cpu_divider();
         let post = if for_read {
             read_split(div).1
@@ -712,20 +702,12 @@ impl Cpu {
             // address bus. Same budget accounting as the loop it replaces.
             while bus.unified_dma_pending() {
                 self.cycles_emitted = self.cycles_emitted.saturating_add(1);
-                #[cfg(not(feature = "mc-one-clock-v2"))]
-                {
-                    self.cycles = self.cycles.wrapping_add(1);
-                }
                 self.start_cycle(bus, true);
                 bus.unified_dma_cycle_idle();
                 self.end_cycle(bus, true);
             }
             // R1: a pure internal cycle — busless (idle_tick stays busless).
             self.cycles_emitted = self.cycles_emitted.saturating_add(1);
-            #[cfg(not(feature = "mc-one-clock-v2"))]
-            {
-                self.cycles = self.cycles.wrapping_add(1);
-            }
             self.start_cycle(bus, true);
             self.end_cycle(bus, true);
         }
@@ -786,10 +768,6 @@ impl Cpu {
             if bus.dmc_abort_pending() {
                 if bus.dmc_abort_is_get_cycle() {
                     self.cycles_emitted = self.cycles_emitted.saturating_add(1);
-                    #[cfg(not(feature = "mc-one-clock-v2"))]
-                    {
-                        self.cycles = self.cycles.wrapping_add(1);
-                    }
                     self.start_cycle(bus, true);
                     bus.dmc_abort_halt_step(addr);
                     self.end_cycle(bus, true);
@@ -811,10 +789,6 @@ impl Cpu {
             while bus.unified_dma_pending() {
                 // DMA halt cycles count against `cycles_emitted`.
                 self.cycles_emitted = self.cycles_emitted.saturating_add(1);
-                #[cfg(not(feature = "mc-one-clock-v2"))]
-                {
-                    self.cycles = self.cycles.wrapping_add(1);
-                }
                 self.start_cycle(bus, true);
                 bus.unified_dma_cycle(addr);
                 self.end_cycle(bus, true);
@@ -859,10 +833,6 @@ impl Cpu {
             // access's exact mc + bus cpu_clock) → bus.read → end_cycle
             // (double catch-up + φ2 interrupt sample). Mesen `MemoryRead`.
             self.cycles_emitted = self.cycles_emitted.saturating_add(1);
-            #[cfg(not(feature = "mc-one-clock-v2"))]
-            {
-                self.cycles = self.cycles.wrapping_add(1);
-            }
             self.start_cycle(bus, true);
             let v = bus.read(addr);
             self.end_cycle(bus, true);
@@ -886,10 +856,6 @@ impl Cpu {
             // later than reads). No interrupt sample latches here; end_cycle's
             // handle_interrupts does the φ2 sample.
             self.cycles_emitted = self.cycles_emitted.saturating_add(1);
-            #[cfg(not(feature = "mc-one-clock-v2"))]
-            {
-                self.cycles = self.cycles.wrapping_add(1);
-            }
             self.start_cycle(bus, false);
             bus.write(addr, value);
             self.end_cycle(bus, false);
@@ -996,34 +962,22 @@ impl Cpu {
         // reads under `cpu-stack-dummy-reads`; BRK was the one gap — with
         // it the whole test PASSES, one sub-check beyond Mesen2's error
         // 34). The dispatch arm has already advanced PC past the padding
-        // byte, so it sits at `pc - 1`. IRQ/NMI keep their filler idle
-        // ticks (the C1 trio canary is on that path). Own flag (NOT
-        // `cpu-stack-dummy-reads`, which sits inside the `mc-r1-full-cpu`
-        // floor) so the floor stays byte-identical.
+        // byte, so it sits at `pc - 1`.
         if brk {
             let _ = self.read1(bus, self.pc.wrapping_sub(1));
         } else {
-            // v2.0.0 beta.2 (A2 every-cycle-bus-access): canonical hardware
-            // IRQ/NMI cycles 1-2 are DUMMY READS of the interrupted PC (the
-            // suppressed opcode fetch + suppressed operand fetch — nesdev
-            // `6502_cpu.txt`; Mesen2 `NesCpu::IRQ` issues two `DummyRead`s).
-            // This is the C1-trio canary path: the conversion keeps the exact
-            // same two-cycle start/end structure (φ2 samples unchanged) and
-            // only adds the bus access + held-address update; the
-            // cpu_interrupts_v2 5/5 strict gate + AccuracyCoin 139/139 must
-            // hold with the flag on (verified at the beta.2 gate).
-            #[cfg(feature = "mc-one-clock-v2")]
-            {
-                let _ = self.read1(bus, self.pc);
-                let _ = self.read1(bus, self.pc);
-            }
-            // Flag-off: the shipped build keeps the busless filler ticks
-            // byte-identically.
-            #[cfg(not(feature = "mc-one-clock-v2"))]
-            {
-                self.idle_tick(bus);
-                self.idle_tick(bus);
-            }
+            // v2.0.0 beta.2 (A2 every-cycle-bus-access, promoted to the only
+            // path in beta.4): canonical hardware IRQ/NMI cycles 1-2 are
+            // DUMMY READS of the interrupted PC (the suppressed opcode fetch
+            // + suppressed operand fetch — nesdev `6502_cpu.txt`; Mesen2
+            // `NesCpu::IRQ` issues two `DummyRead`s). This is the C1-trio
+            // canary path: the conversion keeps the exact same two-cycle
+            // start/end structure (φ2 samples unchanged) and only adds the
+            // bus access + held-address update; the cpu_interrupts_v2 5/5
+            // strict gate + AccuracyCoin 139/139 hold (verified at the
+            // beta.2 gate).
+            let _ = self.read1(bus, self.pc);
+            let _ = self.read1(bus, self.pc);
         }
         self.push_u16(bus, self.pc);
         let mut p = self.p | Status::UNUSED;
@@ -1089,12 +1043,9 @@ impl Cpu {
         // re-reads) instead of leaving the cycle busless in the burn-loop.
         // The burn-probe histogram pinned this family as 99% of the
         // remaining busless surface ($95 STA zp,X alone = 8,955 of 9,795
-        // burned cycles over the AccuracyCoin battery). Default-off: the
-        // shipped build keeps the busless burn-loop fill byte-identically.
-        #[cfg(feature = "mc-one-clock-v2")]
-        {
-            let _ = self.read1(bus, u16::from(base));
-        }
+        // burned cycles over the AccuracyCoin battery). Promoted to the only
+        // path in v2.0.0 beta.4.
+        let _ = self.read1(bus, u16::from(base));
         Operand {
             addr: u16::from(base.wrapping_add(self.x)),
             page_crossed: false,
@@ -1105,10 +1056,7 @@ impl Cpu {
         let base = self.fetch_pc(bus);
         // A2: same canonical un-indexed dummy read as `addr_zp_x` (cycle 3
         // of LDX/STX zp,Y and the unofficial LAX/SAX zp,Y arms).
-        #[cfg(feature = "mc-one-clock-v2")]
-        {
-            let _ = self.read1(bus, u16::from(base));
-        }
+        let _ = self.read1(bus, u16::from(base));
         Operand {
             addr: u16::from(base.wrapping_add(self.y)),
             page_crossed: false,
@@ -1182,36 +1130,27 @@ impl Cpu {
     /// (zp),Y operand for the unofficial read-modify-write opcodes
     /// (SLO/RLA/SRE/RRA/DCP/ISB `(zp),Y` — `$13/$33/$53/$73/$D3/$F3`).
     ///
-    /// v2.0.0 beta.2 (A2 every-cycle-bus-access): canonical 6502 8-cycle
-    /// (zp),Y RMW performs the unfixed-address dummy read UNCONDITIONALLY at
-    /// cycle 5 (like RMW ABS,X/Y above — the CPU cannot know the fixed
-    /// address until the high-byte add completes), not only on page cross.
-    /// The burn-probe histogram pinned these six arms as the last
-    /// instruction-dispatch busless cycles (25 of the original 9,795).
-    /// Flag-off delegates to the plain [`Self::addr_ind_y`] (dummy read on
-    /// page cross only; the burn-loop fills the non-crossing cycle) so the
-    /// shipped build stays byte-identical.
+    /// v2.0.0 beta.2 (A2 every-cycle-bus-access, promoted to the only path
+    /// in beta.4): canonical 6502 8-cycle (zp),Y RMW performs the
+    /// unfixed-address dummy read UNCONDITIONALLY at cycle 5 (like RMW
+    /// ABS,X/Y above — the CPU cannot know the fixed address until the
+    /// high-byte add completes), not only on page cross. The burn-probe
+    /// histogram pinned these six arms as the last instruction-dispatch
+    /// busless cycles (25 of the original 9,795).
     fn addr_ind_y_rmw<B: Bus>(&mut self, bus: &mut B) -> u16 {
-        #[cfg(feature = "mc-one-clock-v2")]
-        {
-            // Delegate to the plain resolver (which already emits the
-            // unfixed-address dummy read on a page cross), then emit the
-            // RMW's unconditional cycle-5 dummy for the non-crossing case.
-            // On a non-crossing access the canonical unfixed address
-            // `(base & 0xFF00) | (addr & 0xFF)` EQUALS the final address
-            // (the high byte needed no fix-up), so reading `o.addr` here is
-            // the silicon-exact target — do not "fix" this to a separate
-            // unfixed computation, they are identical by construction.
-            let o = self.addr_ind_y(bus);
-            if !o.page_crossed {
-                let _ = self.read1(bus, o.addr);
-            }
-            o.addr
+        // Delegate to the plain resolver (which already emits the
+        // unfixed-address dummy read on a page cross), then emit the
+        // RMW's unconditional cycle-5 dummy for the non-crossing case.
+        // On a non-crossing access the canonical unfixed address
+        // `(base & 0xFF00) | (addr & 0xFF)` EQUALS the final address
+        // (the high byte needed no fix-up), so reading `o.addr` here is
+        // the silicon-exact target — do not "fix" this to a separate
+        // unfixed computation, they are identical by construction.
+        let o = self.addr_ind_y(bus);
+        if !o.page_crossed {
+            let _ = self.read1(bus, o.addr);
         }
-        #[cfg(not(feature = "mc-one-clock-v2"))]
-        {
-            self.addr_ind_y(bus).addr
-        }
+        o.addr
     }
 
     fn addr_ind_x<B: Bus>(&mut self, bus: &mut B) -> Operand {
@@ -1219,10 +1158,7 @@ impl Cpu {
         // A2: canonical (zp,X) cycle 3 — dummy read of the UN-indexed
         // pointer address while the X add completes (same silicon behavior
         // as `addr_zp_x`; zero-page, so register-side-effect-free).
-        #[cfg(feature = "mc-one-clock-v2")]
-        {
-            let _ = self.read1(bus, u16::from(base));
-        }
+        let _ = self.read1(bus, u16::from(base));
         let ptr = base.wrapping_add(self.x);
         let lo = self.read1(bus, u16::from(ptr));
         let hi = self.read1(bus, u16::from(ptr.wrapping_add(1)));
@@ -2640,6 +2576,14 @@ impl Cpu {
 
             // === JAM / KIL / STP ===
             0x02 | 0x12 | 0x22 | 0x32 | 0x42 | 0x52 | 0x62 | 0x72 | 0x92 | 0xB2 | 0xD2 | 0xF2 => {
+                // v2.0.0 (every-cycle-bus-access): cycle 2 is a real dummy
+                // read of the byte after the opcode before the CPU wedges —
+                // the same silicon shape as the implied-opcode cycle-2 dummy
+                // read. Caught post-promote by the burn-loop fail-loud
+                // assert (this arm declared 2 cycles but emitted only the
+                // opcode fetch — invisible to every probe workload, since no
+                // test ROM executes a JAM).
+                let _ = self.read1(bus, self.pc);
                 self.jammed = true;
                 *cycles = 2;
             }

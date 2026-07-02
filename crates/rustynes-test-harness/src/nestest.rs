@@ -111,10 +111,10 @@ pub struct NestestBus {
     pub ppu_total: u64,
     /// Canonical CPU-cycle counter (`Bus::cycle_count`). Seeded to 7 to match
     /// the Nintendulator CYC:7 convention (`cpu_for_nestest` seeds
-    /// `cpu.cycles = 7` the same way). Required by the v2.0.0
-    /// `mc-one-clock-v2` collapse, where `Cpu::cycles` is ASSIGNED from the
-    /// bus's canonical counter instead of self-incremented — a bus stub that
-    /// leaves the trait's default (`0`) freezes CYC at 0 under the flag.
+    /// `cpu.cycles = 7` the same way). Required by the v2.0.0 one-clock
+    /// collapse (the only path since beta.4), where `Cpu::cycles` is
+    /// ASSIGNED from the bus's canonical counter instead of self-incremented
+    /// — a bus stub that leaves the trait's default (`0`) freezes CYC at 0.
     pub cycle: u64,
 }
 

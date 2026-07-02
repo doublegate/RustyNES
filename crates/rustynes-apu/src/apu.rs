@@ -356,10 +356,8 @@ pub struct Apu {
     /// [`Apu::reset`] with the calibrated in-sequence placement; consumed in
     /// `tick_with_external` during the CPU's clocked reset cycles. `0` = no
     /// re-write pending.
-    #[cfg(feature = "mc-one-clock-v2")]
     pub(crate) reset_4017_delay: u8,
     /// The retained `$4017` value the scheduled reset re-write will issue.
-    #[cfg(feature = "mc-one-clock-v2")]
     pub(crate) reset_4017_value: u8,
     /// v2.0 Phase 2 (`mc-r1-dmc-reenable-phase`): TriCNES's
     /// `CannotRunDMCDMARightNow` (`Emulator.cs:823`). Set to 2 after every DMC
@@ -556,9 +554,7 @@ impl Apu {
             pending_dmc_abort: false,
             dmc_abort_delay: 0,
             dmc_dma_cooldown: 0,
-            #[cfg(feature = "mc-one-clock-v2")]
             reset_4017_delay: 0,
-            #[cfg(feature = "mc-one-clock-v2")]
             reset_4017_value: 0,
             cannot_run_dmc_dma: 0,
             dmc_reenable_period_block: false,
@@ -584,35 +580,28 @@ impl Apu {
     /// Reset (warm).  Per nesdev: most APU state is preserved across reset
     /// except `$4015` is cleared (channels disabled, DMC silenced).
     ///
-    /// v2.0.0 beta.3 (A4 cycle-accurate reset, `mc-one-clock-v2`): the 2A03
+    /// v2.0.0 beta.3 (A4 cycle-accurate reset, promoted to the only path in
+    /// beta.4): the 2A03
     /// reset sequence behaves as if the LAST value written to `$4017` were
     /// written again (blargg `apu_reset` spec) — the retained value is
     /// re-issued through the normal `$4017` write path (pending mode + the
     /// 3/4-cycle aligned delay + the mode-1 immediate quarter/half clock),
     /// and the CPU's 8 clocked reset cycles then age the re-armed counter
     /// so execution resumes ~9-12 cycles after the effective write (the
-    /// `4017_timing` window). The flag-off path keeps the legacy
-    /// zero-the-counter reset byte-identically.
+    /// `4017_timing` window).
     pub fn reset(&mut self) {
-        #[cfg(feature = "mc-one-clock-v2")]
-        {
-            // Zero the sequencer + IRQ flags now; SCHEDULE the hardware
-            // `$4017` re-write to land 2 clocked cycles into the CPU's
-            // 8-cycle reset sequence (consumed in `tick_with_external`).
-            // Empirically calibrated against blargg `4017_timing`'s printed
-            // "delay after effective $4017 write" (accept window 6..=12,
-            // hardware-usual 9; the ROM quantizes in 2-cycle APU units): an
-            // immediate reset-start re-write measures 12 (the upper edge),
-            // a +3-cycle placement measures 6 (the lower edge), and +2
-            // lands mid-window at 8.
-            let last = self.frame_counter.reset_rewrite_4017();
-            self.reset_4017_value = last;
-            self.reset_4017_delay = 2;
-        }
-        #[cfg(not(feature = "mc-one-clock-v2"))]
-        {
-            self.frame_counter.reset();
-        }
+        // Zero the sequencer + IRQ flags now; SCHEDULE the hardware
+        // `$4017` re-write to land 2 clocked cycles into the CPU's
+        // 8-cycle reset sequence (consumed in `tick_with_external`).
+        // Empirically calibrated against blargg `4017_timing`'s printed
+        // "delay after effective $4017 write" (accept window 6..=12,
+        // hardware-usual 9; the ROM quantizes in 2-cycle APU units): an
+        // immediate reset-start re-write measures 12 (the upper edge),
+        // a +3-cycle placement measures 6 (the lower edge), and +2
+        // lands mid-window at 8.
+        let last = self.frame_counter.reset_rewrite_4017();
+        self.reset_4017_value = last;
+        self.reset_4017_delay = 2;
         self.write_register(0x4015, 0x00);
         self.pending_dmc_dma = false;
         self.dmc_dma_is_load = false;
@@ -870,8 +859,8 @@ impl Apu {
     /// `cpu_cycle += 1` mirror. The bus increments its canonical counter
     /// earlier in the same per-cycle hook, so the value assigned here equals
     /// the post-increment value the legacy mirror produced — the
-    /// `one_clock_invariants` harness test pins the residue.
-    #[cfg(feature = "mc-one-clock-v2")]
+    /// `one_clock_invariants` harness test pins the residue. Promoted to the
+    /// only path in v2.0.0 beta.4.
     pub const fn set_canonical_cycle(&mut self, cycle: u64) {
         self.cpu_cycle = cycle;
     }
@@ -1115,7 +1104,15 @@ impl Apu {
     /// One CPU clock.  Bus must NOT have halted the CPU for DMC DMA when
     /// calling this (the bus is responsible for performing the DMA fetch
     /// before resuming `tick()` calls).
+    ///
+    /// Standalone/test convenience: production (`LockstepBus`) drives the
+    /// canonical cycle counter via [`Self::set_canonical_cycle`] before each
+    /// [`Self::tick_with_external`] (the v2.0.0 one-clock contract — the APU
+    /// never self-increments). This helper self-advances the counter so
+    /// standalone APU stepping (unit tests, the snapshot fixtures) keeps the
+    /// one-cycle-per-tick behavior.
     pub fn tick(&mut self) {
+        self.cpu_cycle = self.cpu_cycle.wrapping_add(1);
         self.tick_with_external(0.0);
     }
 
@@ -1129,16 +1126,13 @@ impl Apu {
     /// the mapper returns (currently `i16` from `Mapper::mix_audio`) into
     /// that range.
     pub fn tick_with_external(&mut self, external: f32) {
-        // v2.0.0 beta.1 (A1 one-clock collapse): under `mc-one-clock-v2` the
-        // APU's cycle counter is ASSIGNED from the canonical bus counter (see
-        // `set_canonical_cycle`, called by the bus immediately before this
-        // tick) instead of being an independently-incremented lockstep
-        // mirror. The RW-1 `apu_phase`/`put_cycle` parity derivation below
-        // then reads from the ONE counter.
-        #[cfg(not(feature = "mc-one-clock-v2"))]
-        {
-            self.cpu_cycle = self.cpu_cycle.wrapping_add(1);
-        }
+        // v2.0.0 beta.1 (A1 one-clock collapse, promoted to the only path in
+        // beta.4): the APU's cycle counter is ASSIGNED from the canonical
+        // bus counter (see `set_canonical_cycle`, called by the bus
+        // immediately before this tick) instead of being an
+        // independently-incremented lockstep mirror. The RW-1
+        // `apu_phase`/`put_cycle` parity derivation below then reads from
+        // the ONE counter.
 
         // v2.0 RA-1: the DMC byte-timer + arms could clock HERE at cycle START
         // (on `apu_phase`), unified with the rest of the APU — Mesen
@@ -1182,14 +1176,11 @@ impl Apu {
         // sequence (see `Apu::reset` for the calibration). Runs after the
         // `apu_phase` derivation so the write's 3/4-cycle alignment delay
         // reads the current cycle's parity, exactly like a CPU-issued write.
-        #[cfg(feature = "mc-one-clock-v2")]
-        {
-            if self.reset_4017_delay > 0 {
-                self.reset_4017_delay -= 1;
-                if self.reset_4017_delay == 0 {
-                    let aligned = self.apu_phase;
-                    self.frame_counter.write(self.reset_4017_value, aligned);
-                }
+        if self.reset_4017_delay > 0 {
+            self.reset_4017_delay -= 1;
+            if self.reset_4017_delay == 0 {
+                let aligned = self.apu_phase;
+                self.frame_counter.write(self.reset_4017_value, aligned);
             }
         }
         if self.apu_phase {

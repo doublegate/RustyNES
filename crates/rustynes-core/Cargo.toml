@@ -46,17 +46,6 @@ cpu-boot-trace = ["std"]
 mc-r1-dmc-abort-probe = ["rustynes-apu/mc-r1-dmc-abort-probe"]
 # v2.0 R1c-1 diagnostic — per-instruction (PC, cpu_cycle) trace. Forward to rustynes-cpu.
 cpu-instr-cycle-trace = ["rustynes-cpu/cpu-instr-cycle-trace"]
-# v2.0.0 "Timebase" beta.1 (Workstream A1, ADR 0002) — the one-clock counter
-# collapse, aggregated across the chip stack: `LockstepBus::cycle` becomes the
-# ONE canonical per-cycle counter (already incremented at the single live site,
-# `cpu_clock`), `Cpu::cycles` and `Apu::cpu_cycle` are ASSIGNED from it instead
-# of independently incremented, and the `dma_mc_consumed` coherence fold is
-# retired (asserted structurally zero on the live unified-DMA path). Default
-# OFF: the shipped build is byte-identical; the flag-on build must hold the
-# full accuracy gate (AccuracyCoin 139/139, nestest 0-diff, save-state
-# byte-identity, the `one_clock_invariants` residue pins) before beta.4
-# promotes it to the only path. See `to-dos/plans/v2.0.0-master-clock-plan.md`.
-mc-one-clock-v2 = ["rustynes-cpu/mc-one-clock-v2", "rustynes-apu/mc-one-clock-v2"]
 # v1.1.0 beta.2 (Workstream C) — debugger devtools hooks: PC/exec breakpoints (and,
 # later, the trace logger + event viewer) checked in the `run_frame` loop. Off by
 # default so the headless test/bench builds keep a byte-identical hot path + the
