@@ -1,0 +1,19 @@
+# cargo-audit configuration (the "Dependency Audit" CI job).
+#
+# Keep this ignore list IN SYNC with `deny.toml [advisories].ignore` — the two
+# tools scan the same RUSTSEC database and gate the same workflow. Every entry
+# must carry the full justification in deny.toml; this file only mirrors the
+# IDs. Never suppress an advisory that is reachable from a runtime code path.
+
+[advisories]
+ignore = [
+    # ttf-parser unmaintained (informational) — transitive via winit's Wayland
+    # CSD font stack; no upgrade path. Full rationale in deny.toml.
+    "RUSTSEC-2026-0192",
+    # quick-xml 0.39.4 (two advisories) — consumed ONLY by the wayland-scanner
+    # PROC-MACRO parsing vendored protocol XML at COMPILE TIME (trusted input,
+    # no runtime XML parsing anywhere in the tree); no upgrade path until
+    # wayland-scanner moves to quick-xml >= 0.40. Full rationale in deny.toml.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]

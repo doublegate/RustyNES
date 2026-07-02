@@ -119,6 +119,24 @@ The DMC IRQ flag is not cleared by reading `$4015`.
 PAL has separate frame-counter step positions. Do not derive PAL frame-counter
 timing by scaling NTSC sample rates; use region tables.
 
+### Reset behavior (v2.0.0 "Timebase", promoted in beta.4)
+
+Per the blargg `apu_reset` spec and nesdev ("At reset, `$4017` mode is
+unchanged, but IRQ inhibit flag is sometimes cleared"): the frame counter
+retains the last value written to `$4017` (`FrameCounter::last_4017`), and a
+warm reset behaves as if that value were written AGAIN — the reset zeroes the
+sequencer + IRQ flags, cancels any in-flight pre-reset `$4017` write still in
+its 3/4-cycle maturation window, and SCHEDULES a re-write of
+`last_4017 & 0x80` (mode bit retained, IRQ-inhibit bit cleared) landing 2
+clocked cycles into the CPU's 8-cycle reset sequence. The re-write flows
+through the normal `$4017` write path (the 3/4-cycle aligned delay + the
+mode-1 immediate quarter/half clock), so execution resumes ~9–12 cycles after
+the effective write — blargg `4017_timing` measures 8 (its accept window is
+6..=12; hardware-typical is 9). `$4015` is cleared at reset (channels
+disabled); the channel registers — including the halt/duty bits — survive.
+This closes plan-residual R4 (`apu_reset/4017_written`): all six blargg
+`apu_reset` ROMs pass strictly.
+
 ### DMC channel
 
 - **Memory reader**: when sample buffer is empty and bytes-remaining > 0, request DMA. Bus halts CPU and reads 1 byte from `$C000-$FFFF`. Halt cost: 3 or 4 CPU cycles per `ref-docs/research-report.md` §DMA. Read advances address (wraps `$8000` after `$FFFF`) and decrements bytes-remaining.

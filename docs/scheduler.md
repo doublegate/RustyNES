@@ -10,6 +10,21 @@
 
 The scheduler is the heart of the cycle-accurate emulator: it advances the PPU, CPU, APU, mapper IRQ counters, and DMA controller in tight lockstep at PPU-dot resolution. It lives in `crates/rustynes-core` and is the single owner of the `Nes` run loop.
 
+> **v2.0.0 "Timebase" (promoted in beta.4):** the shipped scheduler is the
+> **one-clock, every-cycle-bus-access** model — `Cpu::master_clock` advances
+> by the region divider per CPU cycle (asymmetric read 5/7, write 7/5 φ1/φ2
+> split on NTSC; PAL 16, Dendy 15) with the PPU pulled to
+> `master_clock − PPU_OFFSET` at both half-cycles (`run_ppu_to` double
+> catch-up); `LockstepBus::cycle` is the ONE canonical per-cycle counter
+> (`Cpu::cycles` / `Apu::cpu_cycle` are assigned from it, never independently
+> incremented); every instruction cycle is a real bus access (no busless
+> cycles); DMA is the per-cycle interleaved unified engine; and the warm
+> reset is a clocked sequence with the `$4017` re-write (see
+> `docs/cpu-6502.md` + `docs/apu-2a03.md`). The `tick_one_dot` primer below
+> describes the original dot-lockstep model and the DMA controller's rules,
+> which the unified engine preserves semantically; the full doc re-baseline
+> lands with the v2.0.0 rc (ADR 0017).
+
 ## Design
 
 ### One tick = one PPU dot
