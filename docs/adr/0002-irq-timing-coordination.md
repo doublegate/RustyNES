@@ -1,8 +1,14 @@
 # ADR 0002 — Coordinated CPU/Bus/PPU IRQ-Sample-Timing Rework
 
-**Status:** Proposed; **retargeted to the v2.0 master-clock refactor** (Track C1
-closure deferred there after 17 documented rollbacks — see
-`docs/audit/gap-analysis-remediation-plan-2026-05-25.md` §3).
+**Status:** By-design-deferred beyond v2.0.0 "Timebase" (21+ documented
+rollbacks as of 2026-07-02 — the v2.0.0 one-clock/every-cycle-bus-access
+promote landed the R1 substrate itself, and a dedicated two-session
+bounded-effort campaign on the promoted core added 4 more falsified levers
+without closing the residual — see §"Decision update (2026-07-02..." below).
+The residual (`mmc3_test_2/4` sub-test #3 + siblings) ships `#[ignore]`'d
+with zero production-ROM impact; re-open only with a genuinely new,
+falsifiable single-axis hypothesis, not a re-derivation of anything on the
+DO-NOT-RETRY list.
 **Date:** 2026-05-10
 **Author:** RustyNES maintainers
 **Numbering:** 0002. ADR 0001 (mapper dispatch) will be written after
@@ -1407,3 +1413,162 @@ Both are independent and can land in separate attempts.
 
 Full per-ROM diff outputs + validation gauntlet at
 `docs/audit/session-18-c1-attempt16-ppu-axis-rollback-2026-05-22.md`.
+
+### Decision update (2026-07-02, v2.0.0 beta.5) — R1/R2 bounded-effort campaign: two sessions, four new falsified levers, axis by-design-deferred beyond v2.0.0
+
+The v2.0.0 "Timebase" beta.1→beta.4 promote (the one-clock, every-cycle-
+bus-access substrate — see `docs/scheduler.md`) landed the **R1 access-
+interleaving axis** Session-18 (above) diagnosed as the load-bearing gap:
+every CPU cycle now runs `Cpu::start_cycle` (PPU catch-up to the PRE
+split) → the actual bus access → `Cpu::end_cycle` (PPU catch-up to the
+POST split), with `Bus::run_ppu_to` ticking the PPU one whole dot per
+iteration rather than in a coarse batch — structurally the Mesen2
+`StartCpuCycle → Read → EndCpuCycle` split this ADR's Session-18 called
+for. This closed R4 (`apu_reset/4017_written`) and R3 (reclassified as a
+harness bug) by beta.3/beta.4, but did **not**, on its own, close R1/R2
+(`mmc3_test_2/4-scanline_timing` sub-test #3 and its `mmc3_test_v1/{4,5,6}`
+siblings) — the beta.3 plan escape hatch (Risks #3) deferred a dedicated
+closure attempt to a bounded post-promote campaign, which the maintainer
+authorized explicitly for beta.5. Two independent sessions ran that
+campaign on 2026-07-02, on the fully-promoted core. Both are clean
+falsifications — no regression, no partial flip, all sacred gates held —
+and both are now added to the DO-NOT-RETRY list alongside the prior 17.
+
+#### Session A — batch-boundary re-phasing (`docs/audit/r1r2-closure-campaign-2026-07-02.md`)
+
+**Ground truth** (fresh `irq_trace` on the promoted core; the previously-
+committed goldens were stale pre-promote and were regenerated as part of
+this session — see `crates/rustynes-test-harness/golden/irq_trace/
+mmc3_test_2_4_scanline_timing.{csv,dmc.csv,svc.csv}`): the mapper's
+`irq_pending` asserts at (frame 43, scanline 0, dot 260) and (frame 71,
+scanline 0, dot 261); service happens at dots 279/280 (the 7-cycle
+sequence + `T_last-1` recognition — the *service* leg is exact).
+Sub-test #2 passes ("not yet" at window 6975); sub-test #3 fails ("taken"
+at 6976) — the implementation fires ≥1 dot later than real silicon,
+end-to-end.
+
+- **Hypothesis 1 (falsified) — sprite-fetch A12 emission dot.** Mesen2's
+  `LoadSpriteTileInfo` code computes `(cycle-257)%8==4` → dot 261, despite
+  its own comment claiming 260 (a labeling fencepost in the reference
+  implementation itself). Shifting RustyNES's emission window 260..=316 →
+  259..=315 left sub-test #3's failure shape unchanged — the 1-dot shift
+  is absorbed by CPU-cycle batch quantization (dots 259/260 land in the
+  same `run_ppu_to` call in nearly all phases).
+- **Hypothesis 2 (falsified) — the catch-up boundary fencepost.** Mesen2's
+  `NesPpu::Run` is a `do`-`while` (always ticks at least once — the exact-
+  boundary dot executes in the *current* half-cycle); RustyNES's
+  `run_ppu_to` was check-first (the boundary dot waits for the *next*
+  call). Converting to execute-then-check held AccuracyCoin 139/139,
+  `cpu_interrupts_v2` 5/5, nestest 0-diff, and every previously-passing
+  `mmc3` test — but left all four target brackets **unchanged**. Reverted
+  (gratuitous divergence from the calibrated model, zero benefit).
+- **The mechanism finding**: the ROM measures a *differential* interval
+  between two same-timeline observations — the `$2002` VBL-flag read (its
+  sync reference) and the IRQ-taken window. Any *consistent* re-phasing of
+  the PPU-vs-CPU batch boundary shifts BOTH observations together, so the
+  measured bracket is invariant to it. This retroactively explains why
+  15+ prior sample-point/order/phase levers (Attempts 1-16 above) were all
+  absorbed without effect. The residual is **differential**, not
+  positional: something delays the mapper-IRQ observation path relative
+  to the `$2002` path *specifically*. The two candidates that survive this
+  analysis both require sub-batch (per-dot) visibility within the 3-dot
+  window — which Session B (below) discovered had *already shipped*.
+
+#### Session B — real M2-phase-conditional MMC3 visibility (`docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md`)
+
+This session was chartered to implement "a genuine per-dot interleaved
+CPU/PPU scheduler" as the logical next attempt. **Its first finding was
+that the charter's premise was stale**: the beta.4 promote had already
+shipped exactly that model (see above) — there was no coarse-batch
+scheduler left to replace. The session redirected to the one concrete,
+still-untested consequence: can MMC3 react *differently* to a qualifying
+A12 rise depending on which of `run_ppu_to`'s two per-cycle calls
+(pre-access / M2-low vs post-access / M2-high) produced it?
+
+- **A previously-undocumented dead-plumbing bug, found and fixed
+  (default-off).** This ADR's 2026-05-14 "Sub-dot plumbing landed" entry
+  describes `Mapper::notify_a12_at_sub_dot(level, sub_dot)` as carrying a
+  real 0/1/2 M2-phase value. On the *live* R1 per-instruction path it did
+  not: `LockstepBus::run_ppu_to`'s `sub_dot` counter was local to each
+  call and almost always read `0` on both the pre- and post-access calls,
+  carrying no phase information at all (the genuinely-valued sub-dot
+  counter only existed on the DMA-burst-only legacy path). This was fixed
+  under a new default-off `mmc3-m2-phase-irq` feature (`rustynes-core` +
+  `rustynes-mappers`, forwarded through `rustynes-test-harness`):
+  `run_ppu_to` now seeds `sub_dot` from the real call-site phase, and
+  `Mmc3::notify_a12_at_sub_dot` defers a post-access (M2-high) qualifying
+  rise's `irq_pending_line` assertion by exactly one `notify_cpu_cycle`
+  boundary (a pre-access/M2-low rise still asserts synchronously, matching
+  today's unconditional behavior). 3 new unit tests confirm the deferral
+  mechanism fires correctly in isolation (21/21 `rustynes-mappers` unit
+  suite green under the feature). The default build is confirmed
+  byte-for-byte unaffected (feature-gated, `sub_dot` starts at `0`
+  unconditionally when off, identical source and behavior to before this
+  session).
+- **Result: mechanism-verified, zero effect on the target bracket.** With
+  the feature ON, `mmc3_test_2_4_scanline_timing_currently_fails` and
+  `mmc3_test_v1_4_scanline_timing_currently_fails` (the fail-loud probes)
+  both still correctly detect the unflipped bracket, and regenerating the
+  `irq_trace_fixture` with the feature ON vs OFF produces a byte-for-byte
+  **identical** run (`kept=2203768` records, final `$6000=$03`, both
+  configurations). This is a stronger result than "didn't flip" — it
+  means **no qualifying A12 rise this ROM's actual execution produces
+  ever lands in the post-access half of a CPU cycle**, so the
+  phase-conditional lever never engages at all for this bracket, not just
+  fails to help it.
+- **This is not a re-derivation of a prior attempt.** It differs from
+  Attempts 2/3 (a constant N-cycle pipeline applied uniformly — this is
+  conditional and exactly one boundary) and from the Phase-B4 sub-dot
+  *filter-threshold* attempt (which gated *acceptance*, not
+  *visibility*-after-acceptance). It also isn't dismissible by Session A's
+  "shifts both observations together" argument, since it is local to
+  MMC3's own IRQ line, not a global batch re-phasing — it was tested on
+  its own distinct merits and falsified on its own distinct grounds.
+- **Disposition: the code is kept on the branch, default-off.** Unlike
+  Session A's two reverted experiments (which had zero remaining value
+  once falsified), this session's code fixes a genuine, previously-
+  undocumented bug (the dead M2-phase plumbing) and leaves real,
+  unit-tested infrastructure behind for whoever pursues the open question
+  in the next section — matching the precedent Sessions 13-16 set by
+  landing oracle/plumbing infrastructure on inconclusive attempts rather
+  than reverting to nothing.
+
+#### Consolidated disposition and the next candidate axis
+
+Four new levers join the DO-NOT-RETRY list from 2026-07-02 (on top of the
+17 already documented above): the sprite-fetch A12 emission-dot shift, the
+`run_ppu_to` do-while catch-up-boundary conversion, and — from Session
+B — both directions of the M2-phase-conditional MMC3 visibility deferral
+(the mechanism works but never engages for this ROM). **Do not re-attempt
+any of these four**, or any constant-pipeline / global-rephasing variant
+of them, without new evidence that specifically distinguishes it from
+what was already tested here.
+
+**One genuinely new, untested axis remains, explicitly flagged for a
+future dedicated session (not squeezed into v2.0.0):** the MMC3 filter's
+`gap >= 3` low-time acceptance test currently operates at CPU-cycle
+(integer) granularity. Real silicon's three-falling-edges-of-M2 rule is a
+*falling*-edge, elapsed-low-time question — a different axis from the
+*rising*-edge phase-conditional visibility Session B tested. Session B's
+own finding (no qualifying rise ever lands post-access for this ROM) may
+mean this axis is also moot for this specific bracket, or may not — it
+concerns a structurally distinct property of the same A12 line and was
+not tested by either 2026-07-02 session. Also open: whether "no
+qualifying rise ever lands post-access" is specific to this ROM's phase
+alignment or a structural property of NTSC MMC3 A12 timing generally (if
+the latter, the entire phase-conditional branch of the search space is
+dead, not just this session's specific lever — see
+`docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md` §5.2 for the
+falsifiable framing).
+
+Per the stop-condition discipline this ADR has followed since 2026-05-13:
+21+ rollbacks (17 historical + 4 from 2026-07-02, across two dedicated
+same-day bounded-effort sessions run specifically to attempt closure) is
+the empirical signal to stop spending v2.0.0 release budget on this axis.
+The four target brackets (`mmc3_test_2/4` sub-test #3, `mmc3_test_v1/4`
+sub-test #3, `mmc3_test_v1/{5,6}` sub-test #2) ship `#[ignore]`'d with
+zero production-ROM impact, unchanged from the beta.3 escape hatch. Full
+evidence trails: `docs/audit/r1r2-closure-campaign-2026-07-02.md` and
+`docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md` (both local/
+gitignored per this project's `docs/audit/` convention, matching every
+prior session audit doc this ADR cites).

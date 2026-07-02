@@ -19,7 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 timebase refactor, ADR 0002 + `to-dos/plans/v2.0.0-master-clock-plan.md`) is in
 progress. Through beta.3 everything was default-off; **as of beta.4 (the promote,
 below) the one-clock timebase IS the shipped default** — the designated breaking
-behavior change of the v2.0.0 major. AccuracyCoin holds 100% (139/139) throughout.*
+behavior change of the v2.0.0 major. beta.5 adds the Vs. `DualSystem` dual-console
+feature (also shipped default-on — a new capability, not a behavior change to any
+existing single-console cart) plus a bounded-effort R1/R2 closure campaign whose
+disposition is recorded in the ADR-0002 update. AccuracyCoin holds 100% (139/139)
+throughout.*
 
 ### Changed
 
@@ -49,6 +53,70 @@ behavior change of the v2.0.0 major. AccuracyCoin holds 100% (139/139) throughou
 
 ### Added
 
+- **v2.0.0 beta.5 — Vs. `DualSystem` dual-console support**: the four
+  `DualSystem` cabinet boards (Vs. Tennis, Vs. Mahjong, Vs. Wrecking Crew,
+  Vs. Balloon Fight — two complete NES consoles sharing a 2 KiB WRAM
+  mailbox and a cross-wired `$4016` bit-1 /IRQ line) now construct and run
+  as a genuine two-console pair via the new `Emu` enum front door
+  (`Emu::Single` for every other cart, `Emu::Dual` for these four,
+  detected by the SHA-256-keyed `vs_db` OR the NES 2.0 byte-13 hardware
+  type). `VsDualSystem` (`rustynes-core`) owns both `Nes` instances, drains
+  each console's `$4016` comms level and shared-WRAM write log after every
+  stepped instruction, and applies the MAME `.share("nvram")`-style
+  level-driven (not edge-toggled) convergence model — chosen over the
+  nesdev/Mesen2-documented exclusive-access mux after disassembly proved
+  the mux model deadlocks Balloon Fight's real boot handshake. Mapper 99
+  gained sub-console second-PRG-half banking + `$4016` bit-7 identity
+  (main reads `0`, sub reads `$80`). Proven end-to-end by a synthetic NES
+  2.0 dual cart (`vs_dualsystem_synth`, 3/3: banking, identity, WRAM
+  convergence, bidirectional cross-IRQ, snapshot round-trip all verified
+  independent of any commercial ROM).
+  - **Two of the four titles now boot for real** on combined 64 KiB dumps
+    assembled from the maintainer's own legitimately-owned MAME arcade
+    romset (never committed — `tests/roms/external/` stays gitignored; the
+    circulating 32 KiB "GVS" dumps are the MAME `maincpu` region only and
+    cannot complete the boot handshake on any emulator, confirmed by CRC32
+    cross-reference against MAME's `balonfgt`/`wrecking` romsets). **Vs.
+    Balloon Fight boots to a legible, correct attract-mode screen** on both
+    consoles (`gvs_balloon_fight_dual_combined_boots`, insta-snapshot
+    pinned). **Vs. Wrecking Crew is inconclusive**: the cross-wiring is
+    demonstrably active (bidirectional IRQ toggling, shared-WRAM traffic,
+    neither console jams) but the framebuffer never exceeds 3 colours over
+    a full simulated minute — documented as an honest `#[ignore]`'d
+    diagnostic rather than a forced false-positive pass. Vs. Tennis and Vs.
+    Mahjong remain infrastructure-only (no local sub-CPU dump available);
+    all four titles' incomplete-dump probes stay `#[ignore]`'d with the
+    dump-completeness reason recorded inline.
+- **R1/R2 bounded-effort closure campaign (two sessions, 2026-07-02) —
+  axis by-design-deferred beyond v2.0.0, four new falsified levers.** Per
+  the beta.3 escape hatch (plan Risks #3), the maintainer authorized one
+  dedicated attempt at the MMC3 IRQ-timing bracket
+  (`mmc3_test_2/4-scanline_timing` sub-test #3 + siblings) on the fully
+  promoted core. Both sessions are clean falsifications — zero regression,
+  all sacred gates (AccuracyCoin 139/139, `cpu_interrupts_v2` 5/5, nestest
+  0-diff, the R5 pin, the full `mmc3` suite) held throughout both:
+  - Session A falsified the sprite-fetch A12 emission-dot shift and the
+    `run_ppu_to` do-while catch-up-boundary conversion, and established the
+    mechanism finding that the ROM measures a *differential* interval
+    ($2002 VBL read vs. the IRQ-taken window) invariant to any consistent
+    batch re-phasing — explaining why 15+ prior phase/order levers were
+    all absorbed. Kept: the re-baselined `irq_trace` goldens (the committed
+    set was stale pre-promote).
+  - Session B found the charter's premise (build a "genuine per-dot
+    interleaved scheduler") was already moot — the beta.1–beta.4 promote
+    had already shipped exactly that model — and redirected to test real
+    M2-phase-conditional MMC3 IRQ visibility. It found and fixed a
+    previously-undocumented dead-plumbing bug (the M2-phase sub-dot value
+    threaded to `Mapper::notify_a12_at_sub_dot` never carried real phase
+    data on the live path) under a new default-off `mmc3-m2-phase-irq`
+    feature (`rustynes-core` + `rustynes-mappers`), then proved the
+    resulting phase-conditional lever never engages for this ROM's actual
+    execution (byte-for-byte identical trace with the feature on vs. off).
+    Kept default-off as tested infrastructure for the one remaining
+    untested axis (falling-edge `gap >= 3` low-time accounting).
+  - Full disposition, evidence, and the DO-NOT-RETRY additions: ADR 0002.
+    The four target brackets remain `#[ignore]`'d, zero production-ROM
+    impact.
 - **v2.0.0 beta.3 (Workstream A4 + residual closure) — the cycle-accurate
   reset sequence closes R4 and reclassifies R3:**
   - **R4 (`apu_reset/4017_written`) CLOSED flag-on**: under `mc-one-clock-v2`
