@@ -27,6 +27,24 @@ test-roms = []
 # register decoders are still active (so save states from audio-enabled
 # builds still load cleanly) but the channel oscillators are not advanced.
 mapper-audio = []
+# v2.0.0 R1/R2 closure attempt (2026-07-02) — MMC3 M2-phase-aware IRQ-pending-
+# line visibility. When a qualifying (gap >= 3) A12 rising edge is seen during
+# the POST-access (M2-high, φ2) half of the host CPU cycle, defer asserting
+# `irq_pending_line` until the NEXT `notify_cpu_cycle` boundary instead of
+# synchronously — modeling a 1-M2-cycle propagation delay for A12 rises that
+# latch late in the cycle. Rises seen during the PRE-access (M2-low, φ1) half
+# still assert immediately (today's unconditional behavior). This is
+# STRUCTURALLY DISTINCT from the four rolled-back Attempts 1-4 and the
+# Phase-B4 sub-dot filter-threshold attempt in
+# `docs/adr/0002-irq-timing-coordination.md`: those applied a CONSTANT delay
+# (or a gap-THRESHOLD adjustment) regardless of phase; this is a
+# phase-CONDITIONAL deferral of the assertion's VISIBILITY, and it targets the
+# promoted v2.0.0 "one-clock, every-cycle-bus-access" scheduler, which did not
+# exist when the prior attempts were tried. Off by default — MMC3's IRQ
+# pipeline is byte-identical to today when this feature (or the paired
+# `rustynes-core/mmc3-m2-phase-irq`, which supplies the real phase data) is
+# not enabled. See `docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md`.
+mmc3-m2-phase-irq = []
 
 [dependencies]
 bitflags.workspace = true

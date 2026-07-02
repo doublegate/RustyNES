@@ -594,7 +594,7 @@ impl Cpu {
             write_split(div).0
         };
         self.master_clock = self.master_clock.wrapping_add(pre);
-        bus.run_ppu_to(self.master_clock.saturating_sub(ppu_sample_offset()));
+        bus.run_ppu_to(self.master_clock.saturating_sub(ppu_sample_offset()), false);
         bus.cpu_clock();
         // v2.0.0 beta.1 (A1 one-clock collapse, promoted to the only path in
         // beta.4): `cycles` is ASSIGNED from the canonical bus cycle counter
@@ -638,7 +638,7 @@ impl Cpu {
             write_split(div).1
         };
         self.master_clock = self.master_clock.wrapping_add(post);
-        bus.run_ppu_to(self.master_clock.saturating_sub(ppu_sample_offset()));
+        bus.run_ppu_to(self.master_clock.saturating_sub(ppu_sample_offset()), true);
         // F-2: tick the DMC byte-timer at END of cycle (after the access),
         // matching main's DMC fire-phase for DMASync, BEFORE the φ2 interrupt
         // sample so handle_interrupts sees the post-tick DMC IRQ line.

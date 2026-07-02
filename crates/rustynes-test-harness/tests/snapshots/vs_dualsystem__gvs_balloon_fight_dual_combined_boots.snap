@@ -1,0 +1,14 @@
+---
+source: crates/rustynes-test-harness/tests/vs_dualsystem.rs
+expression: snap
+---
+rom=vs-system/GVS Balloon Fight (Dual).nes
+frames=1200
+main_jammed=false
+sub_jammed=false
+main_cycle=35736606
+sub_cycle=35736601
+main_distinct_colors=2
+sub_distinct_colors=2
+main_fb_fnv1a64=7e6edc6a0386a662
+sub_fb_fnv1a64=7e6edc6a0386a662

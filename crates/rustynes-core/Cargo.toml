@@ -60,6 +60,17 @@ debug-hooks = ["std", "rustynes-ppu/debug-hooks"]
 # (it observes already-computed tile identity and writes a side buffer), so even
 # with the feature ON the framebuffer and determinism contract are unchanged.
 hd-pack = ["rustynes-ppu/hd-pack"]
+# v2.0.0 R1/R2 closure attempt (2026-07-02) — forward to
+# `rustynes-mappers/mmc3-m2-phase-irq`. Threads the REAL M2-phase
+# (pre-access/M2-low vs post-access/M2-high) of `LockstepBus::run_ppu_to`'s
+# two per-cycle catch-up calls into `PpuBusAdapter`'s `sub_dot` field so
+# MMC3's (also feature-gated) phase-aware IRQ-pending-line deferral can be
+# evaluated against real per-dot phase data on the promoted v2.0.0 core.
+# Off by default: `sub_dot` stays the pre-existing call-local counter
+# (always `0` in the steady state), byte-identical to today. See
+# `docs/adr/0002-irq-timing-coordination.md` and
+# `docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md`.
+mmc3-m2-phase-irq = ["rustynes-mappers/mmc3-m2-phase-irq"]
 
 [dependencies]
 rustynes-cpu.workspace = true

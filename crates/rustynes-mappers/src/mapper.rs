@@ -380,6 +380,85 @@ pub trait Mapper: Send {
     /// Default no-op.
     fn notify_vblank(&mut self) {}
 
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): provision the board's shared 2 KiB
+    /// work RAM at `$6000-$7FFF` (mirrored across the 8 KiB window — MAME
+    /// `vsnes.cpp`: `map(0x6000, 0x67ff).mirror(0x1800).ram()`). Only the
+    /// Vs. System board (mapper 99) implements this — the `DualSystem`
+    /// cabinets carry a 2 KiB RAM shared between the two consoles, absent
+    /// on `UniSystem` carts (whose `$6000` window stays open bus,
+    /// byte-identically). Called by the `VsDualSystem` wrapper at
+    /// construction on both consoles: each console holds its own COPY, and
+    /// the wrapper converges the copies by draining the write log (below)
+    /// after every stepped instruction — MAME's fully-shared
+    /// `.share("nvram")` model at soft-lockstep granularity. Default no-op.
+    fn enable_vs_dual_wram(&mut self) {}
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): mark this mapper instance as the
+    /// cabinet's SUB console — it banks the second 32 KiB PRG half and the
+    /// upper CHR pages (the two CPUs run DIFFERENT programs; MAME
+    /// `balonfgt` loads distinct `sub`-region ROMs, Mesen2 uses
+    /// `prgOuter = IsVsMainConsole() ? 0 : 4`). Applied by the
+    /// `VsDualSystem` wrapper at construction, like the bus's sub
+    /// identity. Default no-op.
+    fn set_vs_dual_sub(&mut self) {}
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): drain this console's shared-WRAM
+    /// write log — every `(offset, value)` the CPU wrote to the window
+    /// since the last drain, in order — by APPENDING into `dst` (never
+    /// clearing it first). The wrapper replays them into the partner's
+    /// copy ([`Self::apply_vs_dual_wram_write`]), which is what makes the
+    /// RAM behave as ONE simultaneously-shared memory (MAME's model;
+    /// nesdev also documents a `$4016`-bit-1 access mux, but MAME — where
+    /// the four `DualSystem` games verifiably run — shares the RAM
+    /// unconditionally, and Balloon Fight's boot handshake requires the
+    /// partner to see writes made while the mux would deny it access).
+    ///
+    /// Implementations MUST drain their internal log via `Vec::drain`
+    /// (or equivalent) rather than replacing it, so the log's own
+    /// allocated capacity is retained across calls — `pump_comms` calls
+    /// this after EVERY stepped instruction on a `DualSystem` cart, so a
+    /// reallocating drain here is a real hot-path allocation, not a
+    /// theoretical one. Default: no-op (boards without the dual WRAM).
+    fn drain_vs_dual_wram_writes(&mut self, dst: &mut Vec<(u16, u8)>) {
+        let _ = dst;
+    }
+
+    /// Convenience wrapper around [`Self::drain_vs_dual_wram_writes`] for
+    /// callers that don't already hold a reusable buffer (diagnostics,
+    /// tests) — NOT used by the hot `pump_comms` path, which owns and
+    /// reuses its own scratch buffer instead.
+    fn take_vs_dual_wram_writes(&mut self) -> Vec<(u16, u8)> {
+        let mut writes = Vec::new();
+        self.drain_vs_dual_wram_writes(&mut writes);
+        writes
+    }
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): replay one partner-console write
+    /// into this console's copy of the shared WRAM (see
+    /// [`Self::take_vs_dual_wram_writes`]). Does NOT re-log the write (no
+    /// echo loop). Default no-op.
+    fn apply_vs_dual_wram_write(&mut self, offset: u16, value: u8) {
+        let _ = (offset, value);
+    }
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): take the console's shared-WRAM copy
+    /// (used by the wrapper's snapshot-restore normalization — the two
+    /// copies are re-converged from one buffer after a restore). Returns
+    /// `None` on boards without the dual WRAM. Default `None`.
+    fn take_vs_dual_wram(&mut self) -> Option<alloc::boxed::Box<[u8]>> {
+        None
+    }
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): install a shared-WRAM copy (the
+    /// other half of the restore normalization). Default no-op.
+    // The `Box` is the interface contract (ownership of the one buffer
+    // moves between the two consoles' mappers without copying) — the
+    // default impl merely drops it, which trips `boxed_local` spuriously.
+    #[allow(clippy::boxed_local)]
+    fn set_vs_dual_wram(&mut self, wram: alloc::boxed::Box<[u8]>) {
+        let _ = wram;
+    }
+
     /// Returns `true` if the mapper is currently asserting an IRQ.
     fn irq_pending(&self) -> bool {
         false

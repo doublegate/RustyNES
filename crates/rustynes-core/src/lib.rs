@@ -46,6 +46,11 @@ mod rewind;
 pub mod save_state;
 pub mod scheduler;
 pub mod vs_db;
+// v2.0.0 beta.5 (Workstream C) — the Vs. DualSystem dual-core wrapper: two
+// complete Nes instances + the cabinet's $4016-bit-1 comms protocol, the
+// shared 2 KiB WRAM swap, and the 5-CPU-cycle soft-lockstep. See
+// `docs/audit/vs-dualsystem-design-2026-06-11.md`.
+pub mod vs_dualsystem;
 // v1.7.0 "Forge" Workstream D2 — the Zwinder-class compressed, density-tiered
 // state manager (XOR-delta + LZ4 over the v1.6.0 uncompressed greenzone, with
 // reserved anchors), scaling the TAStudio greenzone to feature-length TASes.
@@ -83,6 +88,7 @@ pub use save_state::{
 };
 pub use scheduler::M2Phase;
 pub use vs_db::{VsDbEntry, lookup as vs_db_lookup};
+pub use vs_dualsystem::{Emu, VsDualSystem};
 pub use zwinder::{
     ZWINDER_DEFAULT_BUDGET_BYTES, ZWINDER_DEFAULT_KEYFRAME_INTERVAL, ZwinderError,
     ZwinderStateManager,
