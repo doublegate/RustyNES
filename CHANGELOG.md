@@ -22,6 +22,38 @@ build is byte-identical to v1.10.0 and AccuracyCoin holds 100% (139/139).*
 
 ### Added
 
+- **v2.0.0 beta.2 (Workstream A2) — every-cycle-bus-access**, under the same
+  default-off `mc-one-clock-v2` feature, **passing the plan's STOP-OR-GO gate**
+  (AccuracyCoin 100% (139/139) AND the C1 trio (`cpu_interrupts_v2` 5/5 strict)
+  AND the R5 DMC-span pin all hold flag-on — including on the 11-rollback
+  interrupt-sample axis). With the flag ON, every instruction cycle is a real
+  bus access; the busless burn-loop surface was measured at **9,795 cycles →
+  0** across AccuracyCoin, nestest, both `blargg_nes_cpu_test5` suites, and
+  `cpu_timing_test6` (the full official + unofficial opcode space):
+  - the zp,X / zp,Y / (zp,X) addressing resolvers emit the canonical cycle-3
+    dummy read of the UN-indexed zero-page address ($95 `STA zp,X` alone was
+    8,955 of the 9,795 burned cycles);
+  - the six unofficial (zp),Y read-modify-write arms
+    (SLO/RLA/SRE/RRA/DCP/ISB, `$13/$33/$53/$73/$D3/$F3`) use a new
+    `addr_ind_y_rmw` resolver performing the canonical UNCONDITIONAL
+    unfixed-address dummy read at cycle 5 (the RMW rule, matching the existing
+    ABS,X/Y RMW resolvers);
+  - the hardware IRQ/NMI service sequence emits its canonical cycles 1–2 dummy
+    reads of the interrupted PC (the suppressed opcode + operand fetches)
+    instead of two busless filler ticks — the historical C1-trio canary path,
+    proven green at the gate;
+  - a flag-on fail-loud `debug_assert` makes any future under-emitting
+    dispatch arm fail immediately instead of silently reintroducing a busless
+    cycle.
+  Workstream A3 (the reload-arm-invisible-to-its-own-cycle DMC visibility
+  delay) and the per-cycle interleaved-DMA engine were verified already live
+  as shipping defaults and are pinned by the beta.1 R5 guard. The reset-path
+  filler ticks are deliberately deferred to beta.3 (Workstream A4 replaces the
+  reset sequence wholesale).
+- **Burn-loop histogram diagnostic** (`Cpu::burn_histogram` under
+  `cpu-instr-cycle-trace` + the new `burn_probe` harness bin): per-opcode
+  counts of cycles the trailing burn-loop fills — the empirical work list that
+  drove (and now audits) the every-cycle conversion.
 - **v2.0.0 beta.1 (Workstream A1) — the one-clock counter collapse**, behind the
   new default-off `mc-one-clock-v2` feature (`rustynes-cpu` / `rustynes-apu` /
   `rustynes-core` / `rustynes-test-harness`). With the flag ON, the five-counter

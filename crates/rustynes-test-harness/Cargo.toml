@@ -109,6 +109,15 @@ name = "dump_battery_ram"
 path = "src/bin/dump_battery_ram.rs"
 required-features = ["test-roms"]
 
+# v2.0.0 beta.2 (A2 scoping) — burn-loop histogram probe: prints the
+# per-opcode busless-cycle counts (`Cpu::burn_histogram`) that the
+# every-cycle-bus-access conversion must turn into dummy reads. See
+# `to-dos/plans/v2.0.0-master-clock-plan.md` Workstream A2.
+[[bin]]
+name = "burn_probe"
+path = "src/bin/burn_probe.rs"
+required-features = ["cpu-instr-cycle-trace"]
+
 # v1.3.x left-edge sprite-tint / stutter regression capture + timing tool.
 # Diagnostic only; reuses gitignored external ROM dumps. See
 # `docs/audit/v1.3.x-video-stutter-regression-*.md`.
