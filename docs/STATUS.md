@@ -1,6 +1,18 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.9.9 "Workshop"** (2026-06-26) — the iOS creator / power-tools
+> **Current release: v1.10.0 "Arcade"** (2026-07-01) — the native **Libretro core**:
+> `crates/rustynes-libretro` builds the `rustynes_libretro` shared library (`.so` /
+> `.dylib` / `.dll` by platform, per the crate `Makefile`) that plugs the
+> byte-identical cycle-accurate engine into **RetroArch** — allocation-free
+> XRGB8888 (RGBA8-swizzled) video, batched interleaved-stereo `i16` audio with the
+> frontend's dynamic-rate sync, WRAM/SRAM memory maps for zero-cost
+> **RetroAchievements** scanning, deterministic `retro_serialize` save-states (GGPO
+> rollback-ready), and a `Makefile` cross-compile translation layer staged for
+> upstream `libretro-super`. Plus the **egui 0.34.3 → 0.35.0** dependency-tier
+> refresh (no wgpu/winit movement) and the iOS release-workflow signing-secret gate
+> fix. Additive / host-only: the deterministic core / chip crates are untouched, so
+> byte-identity + **AccuracyCoin 139/139** hold. The
+> preceding **v1.9.9 "Workshop"** (2026-06-26) — the iOS creator / power-tools
 > release + the final pre-Timebase readiness gate: a **Cheats** editor (Game Genie +
 > raw-RAM peek/poke), a FOSS-build-gated **read-only debugger inspector** (CPU regs /
 > disassembly / hex / frame-step), a touch **TAStudio piano-roll**, **foreign movie
@@ -143,12 +155,19 @@
 > output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
 > 0023 (i18n string-catalog).
 
-**Current release: v1.9.9 "Workshop"** (the iOS creator / power-tools release + the
+**Current release: v1.10.0 "Arcade"** (the native **Libretro core** —
+`crates/rustynes-libretro` builds the `rustynes_libretro` shared library (`.so` /
+`.dylib` / `.dll` by platform) that plugs the byte-identical engine into RetroArch:
+XRGB8888 swizzled video, batched `i16` stereo audio with dynamic sync, WRAM/SRAM
+memory maps for RetroAchievements, deterministic `retro_serialize` save-states /
+rollback, and a `Makefile` cross-compile layer staged for upstream `libretro-super` —
+plus the egui 0.34.3→0.35.0 dependency-tier refresh; additive/host-only, core
+byte-identical, AccuracyCoin 139/139), on the cycle-accurate v1.0.0 production core.
+The preceding **v1.9.9 "Workshop"** was the iOS creator / power-tools release + the
 final pre-Timebase readiness gate — a Cheats editor, a FOSS-gated read-only debugger
 inspector, a touch TAStudio piano-roll, foreign movie import, host-side audio depth,
-and symbol maps, framed in the blockquote above; additive bridge forwarding fns only,
-core byte-identical, AccuracyCoin 139/139), on the cycle-accurate v1.0.0 production
-core; the preceding **v1.9.8 "Horizon"** was the iOS store-readiness pass
+and symbol maps, framed in the blockquote above (additive bridge forwarding fns only);
+the preceding **v1.9.8 "Horizon"** was the iOS store-readiness pass
 (accessibility, EN/ES i18n, ReplayKit, Game Center, the §4.7 + privacy-manifest pass,
 and the dormant StoreKit / foss-seam); the preceding **v1.9.7 "Relay"** was the connectivity-completion
 release (room-code CGNAT/TURN netplay, controller hot-plug robustness, iCloud
@@ -1010,7 +1029,7 @@ v1.3.0 "Bedrock" → v1.4.0 "Fidelity" (+ the v1.4.1 patch) → v1.5.0 "Lens" �
 v1.6.0 "Studio" → v1.7.0 "Forge" → v1.7.1 (patch)** on top, then the **v1.8.x
 "Android"** platform line (v1.8.0 → … → v1.8.7 "Android" (Connectivity completion) →
 **v1.8.8 "Atlas" (Google Play launch readiness)** → **v1.8.9 "Backlog"** (the
-carryover beta train, the current release). **v1.8.9** added the creator-tooling /
+carryover beta train that closed the Android line). **v1.8.9** added the creator-tooling /
 debugger-depth / full-Mesen2-HD-pack-parity / mapper-breadth (168 → 172) work — see
 the blockquote at the top + `CHANGELOG.md` `[1.8.9]` — plus the 13-PR Dependabot
 consolidation (jni 0.21 → 0.22, zip 2 → 8.6, naga 25 → 29, sha1 / md-5 0.10 → 0.11,
@@ -1035,12 +1054,13 @@ own semantic-version line starting at **v1.0.0**.
 > DualSystem emulation, and the breaking save-state / cross-version changes that it
 > entails (ADR 0002). The full forward path is tracked in `to-dos/ROADMAP.md` +
 > `to-dos/plans/`: v1.7.0 "Forge" shipped → the **v1.8.x "Android"** sideload line
-> (through **v1.8.9 "Backlog"**, the current release) → the **v1.9.0 → v1.9.9**
+> (through **v1.8.9 "Backlog"**) → the **v1.9.0 → v1.9.9**
 > interim-TestFlight iOS train (mirroring the Android v1.8.0–v1.8.9 arc:
 > **v1.9.0 "Sunrise"** foundation → the wgpu→Metal renderer → connectivity +
 > scripting → **v1.9.8 "Horizon"** store-readiness + the §4.7 compliance pass →
 > **v1.9.9 "Workshop"** creator tools; ADRs 0026 + 0027; plan
 > `to-dos/plans/v1.9.x-ios-train-plan.md`) →
+> **v1.10.0 "Arcade"** (the native Libretro / RetroArch core, the current release) →
 > **v2.0.0 "Timebase"** → then the
 > **mobile-finalization train** (maintainer replan 2026-06-23: both app-store
 > launches held to post-2.0.0) — **v2.0.1–v2.0.4** final Android, **v2.0.5–v2.0.8**

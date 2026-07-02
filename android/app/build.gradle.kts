@@ -39,8 +39,8 @@ android {
         applicationId = "com.doublegate.rustynes"
         minSdk = 26 // AAudio floor.
         targetSdk = 36 // Play mandate (Android 16) from 2026-08-31.
-        versionCode = 10909 // 1.9.9
-        versionName = "1.9.9"
+        versionCode = 11000 // 1.10.0
+        versionName = "1.10.0"
         // No abiFilters here — set per buildType so release ships arm64 only
         // while debug keeps x86_64 for the emulator.
         // PLAY_BUILD gates the freemium (demo timer + persistence locks + Billing).
