@@ -46,10 +46,18 @@
 //! ## Caveats
 //!
 //! - The dual-system games (Balloon Fight / Tennis / Mahjong / Wrecking Crew)
-//!   run two CPUs/PPUs; this single-CPU model does not boot them past the attract
-//!   screen regardless of the DIP. Their entries are kept for palette correctness
-//!   and for forward use once dual-system is modelled. Their `DSW0` defaults are
+//!   run two CPUs/PPUs, modelled since v2.0.0 beta.5 by
+//!   [`crate::VsDualSystem`] (routed via [`crate::Emu::from_rom`], which
+//!   consults this table's `dual_system` flag). Their `DSW0` defaults are
 //!   `0x00` (Balloon Fight / Tennis / Mahjong) per MAME.
+//! - Two titles (Balloon Fight, Wrecking Crew) additionally carry a
+//!   **second, COMBINED-dump entry** with a different SHA-256: the
+//!   pre-existing 32 KiB-PRG entry (main-CPU program only -- boot cannot
+//!   complete, the sub-CPU program is absent) coexists with a new 64 KiB-PRG
+//!   entry (main half + sub half concatenated) once the sub-CPU program was
+//!   located. See `docs/audit/vs-dualsystem-combined-dumps-2026-07-02.md`. Tennis and
+//!   Mahjong remain 32 KiB-only -- no sub-CPU dump has been located for
+//!   either.
 //!
 //! The table is `&'static`, sorted by SHA-256, and binary-searched. It is
 //! `no_std`-safe (const data only).
@@ -166,6 +174,23 @@ static DB: &[Record] = &[
         0x01,
         VsPpuType::Rp2C04_0001,
     ),
+    // Vs. Wrecking Crew (DualSystem, COMBINED 64 KiB dump: main PRG half +
+    // sub-CPU PRG half, MAME `.6d/.6c/.6b/.6a`) -- MAME wrecking DSW0=0xF8.
+    // PPU RP2C04-0002: vsnes.cpp ROM_START(wrecking) ppu1 -> PALETTE_2C04_0002.
+    // Distinct SHA-256 from the pre-existing 32 KiB-only "GVS Wrecking
+    // Crew.nes" entry below (same game, same DIP/PPU -- the dump
+    // completeness is what differs). See
+    // `docs/audit/vs-dualsystem-combined-dumps-2026-07-02.md` for how this dump was
+    // assembled and verified.
+    entry_dual(
+        [
+            0x4c, 0xde, 0x98, 0x3b, 0x9d, 0x03, 0x40, 0x2b, 0x32, 0x4e, 0x28, 0x15, 0x18, 0x92,
+            0x68, 0x04, 0x1b, 0x31, 0x3a, 0x93, 0x77, 0xd7, 0xf0, 0x85, 0x6c, 0xf8, 0xd3, 0xa9,
+            0x79, 0x07, 0x08, 0xfe,
+        ],
+        0xF8,
+        VsPpuType::Rp2C04_0002,
+    ),
     // Vs. Stroke & Match Golf -- MAME smgolf DSW0=0x21
     // PPU RP2C04-0002: vsnes.cpp ROM_START(smgolf) -> PALETTE_2C04_0002.
     entry(
@@ -209,6 +234,23 @@ static DB: &[Record] = &[
         ],
         0xF8,
         VsPpuType::Rp2C04_0002,
+    ),
+    // Vs. Balloon Fight (DualSystem, COMBINED 64 KiB dump: main PRG half +
+    // sub-CPU PRG half, MAME `.6d/.6c/.6b/.6a`) -- MAME balonfgt DSW0=0x00.
+    // PPU RP2C04-0003: vsnes.cpp ROM_START(balonfgt) ppu1 -> PALETTE_2C04_0003.
+    // Distinct SHA-256 from the pre-existing 32 KiB-only "GVS Balloon
+    // Fight.nes" entry above (same game, same DIP/PPU -- the dump
+    // completeness is what differs). See
+    // `docs/audit/vs-dualsystem-combined-dumps-2026-07-02.md` for how this dump was
+    // assembled and verified.
+    entry_dual(
+        [
+            0x8b, 0x32, 0x80, 0xe6, 0x51, 0xf3, 0xf8, 0xd9, 0x9d, 0xe0, 0x46, 0xcd, 0xd2, 0x71,
+            0x0e, 0x2f, 0xf5, 0xf9, 0x4b, 0x5d, 0xd4, 0x22, 0x49, 0x82, 0xcc, 0xa4, 0xa9, 0xa7,
+            0x26, 0x44, 0x41, 0xcb,
+        ],
+        0x00,
+        VsPpuType::Rp2C04_0003,
     ),
     // Vs. The Goonies (hack) -- MAME goonies DSW0=0x80
     // PPU RP2C04-0003: vsnes.cpp ROM_START(goonies) -> PALETTE_2C04_0003.
@@ -337,12 +379,29 @@ mod tests {
     }
 
     #[test]
-    fn exactly_the_four_dualsystem_carts_are_flagged() {
-        // Tennis / Mahjong / Wrecking Crew / Balloon Fight are flagged
-        // dual_system; every other entry (single-system) is not. The flag lets
-        // the frontend warn instead of black-screening on a two-CPU cart.
+    fn exactly_six_dualsystem_rows_across_the_four_carts_are_flagged() {
+        // Tennis / Mahjong / Wrecking Crew / Balloon Fight are the four
+        // DualSystem *games*; every other entry (single-system) is not
+        // flagged. The flag lets the frontend warn instead of
+        // black-screening on a two-CPU cart -- and lets `Emu::from_rom`
+        // route to the two-console wrapper.
+        //
+        // The row COUNT is 6, not 4: Tennis and Mahjong have only the
+        // original 32 KiB-PRG (main-CPU-only) dump staged (no sub-CPU
+        // program has been located for either), while Balloon Fight and
+        // Wrecking Crew each additionally have a 64 KiB-PRG COMBINED dump
+        // (main half + sub half) once the sub-CPU program was located --
+        // see the "Caveats" doc section above and
+        // `docs/audit/vs-dualsystem-combined-dumps-2026-07-02.md`. The 32 KiB-only
+        // entries for those two titles are kept: loading that specific
+        // (incomplete) dump still correctly flags `dual_system` (and thus
+        // still routes to the wrapper), it just can't complete the boot
+        // handshake -- which is expected/harmless, not a bug.
         let dual = DB.iter().filter(|r| r.entry.dual_system).count();
-        assert_eq!(dual, 4, "expected exactly 4 DualSystem entries");
+        assert_eq!(
+            dual, 6,
+            "expected exactly 6 DualSystem rows (4 games, 2 of which have both an incomplete and a complete dump entry)"
+        );
         // And the flag survives a lookup round-trip for every flagged record.
         for rec in DB.iter().filter(|r| r.entry.dual_system) {
             assert!(lookup(&rec.sha256).is_some_and(|e| e.dual_system));
