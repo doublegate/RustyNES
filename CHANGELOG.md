@@ -49,6 +49,15 @@ build is byte-identical to v1.10.0 and AccuracyCoin holds 100% (139/139).*
     `$81` prompt, issues `Nes::reset()`, and dumps per-frame PC/status/text —
     the diagnostic that separated the harness artifact from the core
     residual.
+  - **R1/R2 (the MMC3 1-cycle bracket + reload-to-0 cadence): the plan's
+    escape hatch invoked** (Risks #3, maintainer-pre-authorized). The
+    bounded-effort check ran both residual families on the completed
+    one-clock / every-cycle / cycle-accurate-reset substrate: neither moved,
+    confirming they need the dedicated M2-phase sample-point campaign — the
+    17-rollback axis the hatch exists to defer. Kept by-design `#[ignore]`'d
+    (zero production-ROM impact) with the disposition recorded in each pin;
+    the rc.1 ADR-0002 update will mark the axis by-design-deferred per the
+    plan.
 - **v2.0.0 beta.2 (Workstream A2) — every-cycle-bus-access**, under the same
   default-off `mc-one-clock-v2` feature, **passing the plan's STOP-OR-GO gate**
   (AccuracyCoin 100% (139/139) AND the C1 trio (`cpu_interrupts_v2` 5/5 strict)
