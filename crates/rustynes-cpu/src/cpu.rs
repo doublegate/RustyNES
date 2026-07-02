@@ -2576,6 +2576,14 @@ impl Cpu {
 
             // === JAM / KIL / STP ===
             0x02 | 0x12 | 0x22 | 0x32 | 0x42 | 0x52 | 0x62 | 0x72 | 0x92 | 0xB2 | 0xD2 | 0xF2 => {
+                // v2.0.0 (every-cycle-bus-access): cycle 2 is a real dummy
+                // read of the byte after the opcode before the CPU wedges —
+                // the same silicon shape as the implied-opcode cycle-2 dummy
+                // read. Caught post-promote by the burn-loop fail-loud
+                // assert (this arm declared 2 cycles but emitted only the
+                // opcode fetch — invisible to every probe workload, since no
+                // test ROM executes a JAM).
+                let _ = self.read1(bus, self.pc);
                 self.jammed = true;
                 *cycles = 2;
             }

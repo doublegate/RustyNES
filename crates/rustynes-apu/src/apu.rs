@@ -1104,7 +1104,15 @@ impl Apu {
     /// One CPU clock.  Bus must NOT have halted the CPU for DMC DMA when
     /// calling this (the bus is responsible for performing the DMA fetch
     /// before resuming `tick()` calls).
+    ///
+    /// Standalone/test convenience: production (`LockstepBus`) drives the
+    /// canonical cycle counter via [`Self::set_canonical_cycle`] before each
+    /// [`Self::tick_with_external`] (the v2.0.0 one-clock contract — the APU
+    /// never self-increments). This helper self-advances the counter so
+    /// standalone APU stepping (unit tests, the snapshot fixtures) keeps the
+    /// one-cycle-per-tick behavior.
     pub fn tick(&mut self) {
+        self.cpu_cycle = self.cpu_cycle.wrapping_add(1);
         self.tick_with_external(0.0);
     }
 
