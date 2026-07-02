@@ -1947,9 +1947,9 @@ impl LockstepBus {
     /// v2.0.0 beta.5 (Vs. `DualSystem`): poll-and-clear the latched `$4016`
     /// bit-1 (main/sub comms signal) LEVEL. Returns `Some(level)` whenever
     /// this console wrote `$4016` since the last poll — deliberately
-    /// level-driven, not edge-filtered (see [`Self::vs_4016_bit1_dirty`]);
-    /// the wrapper turns the level into the partner's external-IRQ assert
-    /// (LOW asserts, HIGH clears). The shared-WRAM convergence
+    /// level-driven, not edge-filtered (see the `vs_4016_bit1_dirty` field
+    /// doc); the wrapper turns the level into the partner's external-IRQ
+    /// assert (LOW asserts, HIGH clears). The shared-WRAM convergence
     /// (`pump_comms`'s separate `drain_vs_dual_wram_writes` step) runs on
     /// BOTH consoles every poll, independent of this bit-1 signal.
     pub const fn take_vs_mainsub_edge(&mut self) -> Option<bool> {
