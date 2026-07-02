@@ -22,6 +22,42 @@ build is byte-identical to v1.10.0 and AccuracyCoin holds 100% (139/139).*
 
 ### Added
 
+- **v2.0.0 beta.3 (Workstream A4 + residual closure) — the cycle-accurate
+  reset sequence closes R4 and reclassifies R3:**
+  - **R4 (`apu_reset/4017_written`) CLOSED flag-on**: under `mc-one-clock-v2`
+    the warm reset behaves per the blargg spec — the APU retains the last
+    `$4017` value (`FrameCounter::last_4017`) and the reset SCHEDULES a
+    re-write of it (mode bit retained, IRQ-inhibit bit cleared, per nesdev
+    "mode is unchanged, but IRQ inhibit flag is sometimes cleared" and
+    Mesen2) landing 2 clocked cycles into the CPU's 8-cycle reset delay.
+    Calibrated against `4017_timing`'s printed delay (accept window 6..=12,
+    2-cycle quantization): reset-start placement reads 12, +3 reads 6, +2
+    lands the mid-window 8. Two earlier frame-granular re-arm attempts (see
+    the test file's history preamble) failed exactly for want of the clocked
+    reset delay this sequence provides.
+  - **R3 (`apu_reset/len_ctrs_enabled`) CLOSED — reclassified as a HARNESS
+    artifact**, not a core residual: `run_nes_blargg_reset` re-detected the
+    STALE `$81` status byte (WRAM survives a soft reset) immediately after
+    issuing a reset, re-resetting the ROM mid-measurement and corrupting its
+    second-pass log. With the new stale-status guard the ROM passes strictly
+    on BOTH the default and flag-on builds; the strict test is un-ignored.
+  - All six blargg `apu_reset` ROMs now pass flag-on (zero ignored); the
+    default build keeps its legacy function-call reset byte-identically
+    (`4017_written` stays pinned there by a fail-loud companion until the
+    beta.4 promote).
+  - NEW `reset_trace` harness bin: runs a blargg reset-protocol ROM to its
+    `$81` prompt, issues `Nes::reset()`, and dumps per-frame PC/status/text —
+    the diagnostic that separated the harness artifact from the core
+    residual.
+  - **R1/R2 (the MMC3 1-cycle bracket + reload-to-0 cadence): the plan's
+    escape hatch invoked** (Risks #3, maintainer-pre-authorized). The
+    bounded-effort check ran both residual families on the completed
+    one-clock / every-cycle / cycle-accurate-reset substrate: neither moved,
+    confirming they need the dedicated M2-phase sample-point campaign — the
+    17-rollback axis the hatch exists to defer. Kept by-design `#[ignore]`'d
+    (zero production-ROM impact) with the disposition recorded in each pin;
+    the rc.1 ADR-0002 update will mark the axis by-design-deferred per the
+    plan.
 - **v2.0.0 beta.2 (Workstream A2) — every-cycle-bus-access**, under the same
   default-off `mc-one-clock-v2` feature, **passing the plan's STOP-OR-GO gate**
   (AccuracyCoin 100% (139/139) AND the C1 trio (`cpu_interrupts_v2` 5/5 strict)

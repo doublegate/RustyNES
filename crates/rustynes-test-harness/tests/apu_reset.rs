@@ -104,28 +104,19 @@ fn apu_reset_4017_timing() {
 }
 
 // ---------------------------------------------------------------------------
-// Known-failing: APU length-counter state across soft reset.
-// FAIL #3 — "At reset, length counters should be enabled, triangle unaffected".
-// Suspected subsystem: rustynes-apu length-counter / triangle reset path.
+// CLOSED (v2.0.0 beta.3): `len_ctrs_enabled` FAIL #3 was a HARNESS artifact,
+// not a core residual. `run_nes_blargg_reset` re-detected the STALE `$81`
+// status byte (WRAM survives a soft reset) immediately after issuing the
+// reset, re-resetting the ROM mid-measurement and corrupting its second-pass
+// log. With the stale-status guard the ROM passes strictly on BOTH the
+// default and `mc-one-clock-v2` builds. Plan-residual R3 reclassified.
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "APU length counters not re-enabled / triangle altered across reset (FAIL #3)"]
 fn apu_reset_len_ctrs_enabled() {
     let (s, m, f) = run("len_ctrs_enabled.nes", 1500);
     eprintln!("len_ctrs_enabled: status={s:#x} frames={f} msg={m:?}");
     assert_eq!(s, 0, "len_ctrs_enabled failed: {m}");
-}
-
-#[test]
-fn apu_reset_len_ctrs_enabled_currently_fails() {
-    let (s, _m, _f) = run("len_ctrs_enabled.nes", 1500);
-    // Currently reports FAIL #3 (status 0x03). If this ever passes (status 0),
-    // the strict `apu_reset_len_ctrs_enabled` test should be un-ignored.
-    assert_ne!(
-        s, 0,
-        "len_ctrs_enabled now PASSES — un-ignore apu_reset_len_ctrs_enabled"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -134,8 +125,18 @@ fn apu_reset_len_ctrs_enabled_currently_fails() {
 // Suspected subsystem: rustynes-apu frame-counter ($4017) reset behaviour.
 // ---------------------------------------------------------------------------
 
+// CLOSED flag-on (v2.0.0 beta.3, Workstream A4): the cycle-accurate reset
+// sequence retains the last `$4017` value and re-issues it (mode bit kept,
+// IRQ-inhibit cleared) 2 clocked cycles into the CPU's 8-cycle reset delay —
+// plan-residual R4. The strict test runs under `mc-one-clock-v2`; the
+// default build keeps the legacy function-call reset (byte-identity until
+// the beta.4 promote), so the fail-loud companion pins its failing status
+// there.
 #[test]
-#[ignore = "APU $4017 last value not re-applied on reset (FAIL #3)"]
+#[cfg_attr(
+    not(feature = "mc-one-clock-v2"),
+    ignore = "R4 closed by the A4 cycle-accurate reset — flag-on only until the beta.4 promote"
+)]
 fn apu_reset_4017_written() {
     let (s, m, f) = run("4017_written.nes", 1500);
     eprintln!("4017_written: status={s:#x} frames={f} msg={m:?}");
@@ -143,12 +144,15 @@ fn apu_reset_4017_written() {
 }
 
 #[test]
+#[cfg(not(feature = "mc-one-clock-v2"))]
 fn apu_reset_4017_written_currently_fails() {
     let (s, _m, _f) = run("4017_written.nes", 1500);
-    // Currently reports FAIL #3 (status 0x03). If this ever passes (status 0),
-    // the strict `apu_reset_4017_written` test should be un-ignored.
+    // The default build's function-call reset does not re-apply the last
+    // `$4017` value (closed on the A4 sequence path only). If this ever
+    // passes here, the legacy path gained the behavior — un-gate the strict
+    // test above and delete this companion.
     assert_ne!(
         s, 0,
-        "4017_written now PASSES — un-ignore apu_reset_4017_written"
+        "4017_written now PASSES on the default build — un-gate apu_reset_4017_written"
     );
 }

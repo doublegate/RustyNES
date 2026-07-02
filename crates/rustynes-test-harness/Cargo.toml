@@ -118,6 +118,14 @@ name = "burn_probe"
 path = "src/bin/burn_probe.rs"
 required-features = ["cpu-instr-cycle-trace"]
 
+# v2.0.0 beta.3 (A4 scoping) — warm-reset second-pass tracer: runs a blargg
+# reset-protocol ROM to its $81 prompt, issues Nes::reset(), then dumps
+# per-frame PC/status/text so a wedged second pass is directly observable.
+[[bin]]
+name = "reset_trace"
+path = "src/bin/reset_trace.rs"
+required-features = ["test-roms"]
+
 # v1.3.x left-edge sprite-tint / stutter regression capture + timing tool.
 # Diagnostic only; reuses gitignored external ROM dumps. See
 # `docs/audit/v1.3.x-video-stutter-regression-*.md`.
