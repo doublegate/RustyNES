@@ -174,6 +174,11 @@ impl FrameCounter {
         self.irq_flag = false;
         self.irq_line_active = false;
         self.cycle = 0;
+        // Cancel any in-flight pre-reset `$4017` write still inside its
+        // 3/4-cycle maturation window: letting it mature during the reset
+        // sequence would race the scheduled reset re-write (adopted from
+        // PR #219 review — both bots flagged the same gap).
+        self.reset_in = 0;
         self.irq_flag_clear_cycle = 0;
         value
     }
