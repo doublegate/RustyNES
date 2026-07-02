@@ -109,6 +109,13 @@ pub struct NestestBus {
     pub mapper: Box<dyn Mapper>,
     /// Per-cycle PPU dot accumulator (cycles * 3, NTSC).
     pub ppu_total: u64,
+    /// Canonical CPU-cycle counter (`Bus::cycle_count`). Seeded to 7 to match
+    /// the Nintendulator CYC:7 convention (`cpu_for_nestest` seeds
+    /// `cpu.cycles = 7` the same way). Required by the v2.0.0
+    /// `mc-one-clock-v2` collapse, where `Cpu::cycles` is ASSIGNED from the
+    /// bus's canonical counter instead of self-incremented — a bus stub that
+    /// leaves the trait's default (`0`) freezes CYC at 0 under the flag.
+    pub cycle: u64,
 }
 
 impl NestestBus {
@@ -126,6 +133,7 @@ impl NestestBus {
             ram: Box::new([0u8; 0x0800]),
             mapper,
             ppu_total: 21, // Nintendulator's first log line shows PPU dot 21 (cycles=7 * 3).
+            cycle: 7,      // Matches `cpu_for_nestest`'s CYC:7 seed.
         }
     }
 
@@ -160,6 +168,11 @@ impl Bus for NestestBus {
 
     fn on_cpu_cycle(&mut self) {
         self.ppu_total = self.ppu_total.wrapping_add(3);
+        self.cycle = self.cycle.wrapping_add(1);
+    }
+
+    fn cycle_count(&self) -> u64 {
+        self.cycle
     }
 }
 

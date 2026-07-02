@@ -820,6 +820,37 @@ impl Apu {
         self.apu_phase
     }
 
+    /// v2.0.0 beta.1 (A1 one-clock collapse): assign the APU's cycle counter
+    /// from the CANONICAL bus cycle counter. Called by the bus's per-cycle
+    /// hook (`cpu_clock` → `apu_advance_one`) immediately before
+    /// [`Self::tick_with_external`], replacing the legacy independent
+    /// `cpu_cycle += 1` mirror. The bus increments its canonical counter
+    /// earlier in the same per-cycle hook, so the value assigned here equals
+    /// the post-increment value the legacy mirror produced — the
+    /// `one_clock_invariants` harness test pins the residue.
+    #[cfg(feature = "mc-one-clock-v2")]
+    pub const fn set_canonical_cycle(&mut self, cycle: u64) {
+        self.cpu_cycle = cycle;
+    }
+
+    /// Read-only accessor for the APU-side cumulative CPU-cycle counter
+    /// (v2.0.0-beta.1 one-clock instrumentation).
+    ///
+    /// This is one of the five counters of the timebase substrate the
+    /// v2.0.0 "Timebase" rewrite collapses (ADR 0002 + the v2.0.0
+    /// master-clock plan): `Cpu::master_clock`, `Cpu::cycles`,
+    /// `LockstepBus::cycle`, `LockstepBus::ppu_clock`, and this field are
+    /// each advanced exactly once (or by one region divider) per CPU cycle
+    /// at different points *within* the cycle, and must never drift. The
+    /// RW-1 parity collapse already derives `apu_phase` / `put_cycle` from
+    /// `(cpu_cycle + parity_seed) & 1`; exposing the raw counter lets the
+    /// test harness assert the cross-chip affine invariants
+    /// (`one_clock_invariants.rs`) that gate the beta.1 counter collapse.
+    #[must_use]
+    pub const fn cpu_cycle(&self) -> u64 {
+        self.cpu_cycle
+    }
+
     /// CM-1: seed the absolute `apu_phase` alignment (the parity of the CPU
     /// cycles on which the APU — incl. the DMC byte-timer — clocks). RustyNES
     /// starts `apu_phase = false`, so the DMC always arms on one CPU-cycle
@@ -1055,7 +1086,16 @@ impl Apu {
     /// the mapper returns (currently `i16` from `Mapper::mix_audio`) into
     /// that range.
     pub fn tick_with_external(&mut self, external: f32) {
-        self.cpu_cycle = self.cpu_cycle.wrapping_add(1);
+        // v2.0.0 beta.1 (A1 one-clock collapse): under `mc-one-clock-v2` the
+        // APU's cycle counter is ASSIGNED from the canonical bus counter (see
+        // `set_canonical_cycle`, called by the bus immediately before this
+        // tick) instead of being an independently-incremented lockstep
+        // mirror. The RW-1 `apu_phase`/`put_cycle` parity derivation below
+        // then reads from the ONE counter.
+        #[cfg(not(feature = "mc-one-clock-v2"))]
+        {
+            self.cpu_cycle = self.cpu_cycle.wrapping_add(1);
+        }
 
         // v2.0 RA-1: the DMC byte-timer + arms could clock HERE at cycle START
         // (on `apu_phase`), unified with the rest of the APU — Mesen

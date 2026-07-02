@@ -15,8 +15,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-*Nothing yet — the next planned milestone is **v2.0.0 "Timebase"** (the fractional
-master-clock timebase refactor, ADR 0002).*
+*The **v2.0.0 "Timebase"** development line (the one-clock + every-cycle-bus-access
+timebase refactor, ADR 0002 + `to-dos/plans/v2.0.0-master-clock-plan.md`) is in
+progress. Everything below is **default-off / instrumentation-only**: the shipped
+build is byte-identical to v1.10.0 and AccuracyCoin holds 100% (139/139).*
+
+### Added
+
+- **v2.0.0 beta.1 (Workstream A1) — the one-clock counter collapse**, behind the
+  new default-off `mc-one-clock-v2` feature (`rustynes-cpu` / `rustynes-apu` /
+  `rustynes-core` / `rustynes-test-harness`). With the flag ON, the five-counter
+  timebase substrate collapses to ONE canonical per-cycle counter
+  (`LockstepBus::cycle`, already incremented at the single live site,
+  `cpu_clock`): `Cpu::cycles` is assigned from it at the single `start_cycle`
+  site (its six caller-side `+= 1` mirrors are compiled out), `Apu::cpu_cycle`
+  is assigned via the new `Apu::set_canonical_cycle` immediately before the APU
+  tick (the RW-1 `apu_phase`/`put_cycle` parity derivation then reads from the
+  ONE counter), and the `dma_mc_consumed` master-clock coherence fold in
+  `Cpu::end_cycle` is retired (debug-asserted structurally zero — on the live
+  unified-DMA path every DMA cycle is a first-class `start_cycle`/`end_cycle`).
+  Flag-on gate proven green: AccuracyCoin **100% (139/139)**, nestest 0-diff,
+  the save-state continuation byte-identical suite (9/9, DMC/OAM-hot), and the
+  new counter-residue pins.
+- **Five-counter coherence invariants pin**
+  (`crates/rustynes-test-harness/tests/one_clock_invariants.rs`, `test-roms`):
+  asserts at every frame boundary that `master_clock - cpu_divider * cycles`,
+  `bus.cycle - cpu.cycles`, and `apu.cpu_cycle - cpu.cycles` are frame-over-frame
+  constant across nestest (CPU/branch-heavy) and the AccuracyCoin DMC+OAM DMA
+  window (the historical 17-rollback drift surface). Measured residues on the
+  shipping default: `(12, 0, 0)` — the three cycle counters are in exact
+  zero-offset lockstep, the precondition evidence for the collapse.
+- **R5 DMC-DMA span regression pin**
+  (`crates/rustynes-test-harness/tests/dma_timing_pin.rs`, `test-roms`): pins
+  `CheckDMATiming` Y = **4** (halt + dummy + alignment + get, the reload arm
+  invisible to its own cycle) and the DMC-during-OAM landing-offset sweep
+  (`$50-$5F`) exactly on the hardware KEY. Ground-truth measurement
+  (2026-07-01) established that residual **R5 of the v2.0.0 plan is already
+  closed on the shipping core** (the promoted unified interleaved-DMA engine +
+  the `pending_dmc_dma_next` reload-visibility latch + the END-of-cycle DMC
+  byte-timer); this pin makes any timebase-rewrite regression of that closure
+  fail loud.
+- **One-clock instrumentation accessors**: `Cpu::master_clock()` and
+  `Apu::cpu_cycle()` (read-only), backing the invariants pin.
+
+### Fixed
+
+- **`NestestBus` (test harness) now implements `Bus::cycle_count`** with a
+  CYC:7-seeded canonical counter instead of inheriting the trait's `0` stub —
+  required by the `mc-one-clock-v2` assignment path (under the flag the stub
+  froze the nestest CYC column at 0), and behavior-neutral on the default build
+  (nestest golden-log compare stays 0-diff in both configs).
 
 ## [1.10.0] - 2026-07-01 - "Arcade" (Libretro core + dependency refresh)
 

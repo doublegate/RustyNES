@@ -82,7 +82,7 @@ fn synth_battery_nrom() -> Vec<u8> {
 }
 
 /// The expected SRAM byte at `$6000 + i`.
-fn expected_sram(i: u8) -> u8 {
+const fn expected_sram(i: u8) -> u8 {
     i ^ 0xA5
 }
 

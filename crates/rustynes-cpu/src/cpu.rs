@@ -276,6 +276,24 @@ impl Cpu {
         self.jammed
     }
 
+    /// Read-only accessor for the CPU's authoritative master clock
+    /// (v2.0.0-beta.1 one-clock instrumentation).
+    ///
+    /// `master_clock` counts master-clock units (NTSC: 12 per CPU cycle,
+    /// PAL: 16, Dendy: 15) and is advanced only by `start_cycle` /
+    /// `end_cycle` (the asymmetric read 5/7 vs write 7/5 φ1/φ2 split on
+    /// NTSC) plus the bus-side DMA coherence fold
+    /// (`Bus::take_dma_mc_consumed`). It is the counter the v2.0.0
+    /// "Timebase" rewrite (ADR 0002) promotes to the ONE canonical
+    /// timebase; the test harness asserts the affine relation
+    /// `master_clock == seed + cpu_divider * cycles` against the other
+    /// cycle counters (`one_clock_invariants.rs`) as the gate for the
+    /// beta.1 counter collapse.
+    #[must_use]
+    pub const fn master_clock(&self) -> u64 {
+        self.master_clock
+    }
+
     /// Reset (warm boot).
     ///
     /// Real hardware: 8-cycle sequence with suppressed pushes, then PC loads
@@ -540,6 +558,17 @@ impl Cpu {
         self.master_clock = self.master_clock.wrapping_add(pre);
         bus.run_ppu_to(self.master_clock.saturating_sub(ppu_sample_offset()));
         bus.cpu_clock();
+        // v2.0.0 beta.1 (A1 one-clock collapse): `cycles` is ASSIGNED from the
+        // canonical bus cycle counter at this single per-cycle site instead of
+        // being independently incremented by every `read1`/`write1`/
+        // `idle_tick`/DMA-loop caller. `bus.cpu_clock()` above advanced the
+        // canonical counter for THIS cycle, so the assignment lands on the
+        // same post-increment value the caller-side `+= 1` produced (the
+        // `one_clock_invariants` harness test pins the residue at zero).
+        #[cfg(feature = "mc-one-clock-v2")]
+        {
+            self.cycles = bus.cycle_count();
+        }
     }
 
     /// End half of one CPU cycle: fold any bus-side DMA span into
@@ -547,7 +576,32 @@ impl Cpu {
     /// DMA), advance by the POST split, catch the PPU up again (the double
     /// catch-up), then sample interrupts (φ2, the T_last-1 rule).
     fn end_cycle<B: Bus>(&mut self, bus: &mut B, for_read: bool) {
-        self.master_clock = self.master_clock.wrapping_add(bus.take_dma_mc_consumed());
+        // v2.0.0 beta.1 (A1 one-clock collapse): the `dma_mc_consumed`
+        // coherence fold is RETIRED. On the live unified-DMA path every DMA
+        // cycle is a first-class `start_cycle`/`end_cycle` (advancing
+        // `master_clock` directly), so the bus-side accumulator is
+        // structurally zero — the fold only ever mattered for the legacy
+        // bus-side burst engine, which is dead code. The accumulator is
+        // drained UNCONDITIONALLY (identical dev/release behavior — clippy's
+        // `debug_assert_with_mut_call` rightly forbids the take inside the
+        // assertion) and the structural-zero claim is asserted in dev
+        // profiles; the flag-on byte-identity gate (AccuracyCoin 139/139 +
+        // nestest 0-diff) proves it for release.
+        #[cfg(feature = "mc-one-clock-v2")]
+        {
+            let folded = bus.take_dma_mc_consumed();
+            debug_assert_eq!(
+                folded, 0,
+                "dma_mc_consumed accumulated on the live path — a legacy \
+                 bus-side DMA cycle ran outside the unified engine (see the \
+                 v2.0.0 plan A1)"
+            );
+            let _ = folded;
+        }
+        #[cfg(not(feature = "mc-one-clock-v2"))]
+        {
+            self.master_clock = self.master_clock.wrapping_add(bus.take_dma_mc_consumed());
+        }
         let div = bus.cpu_divider();
         let post = if for_read {
             read_split(div).1
@@ -619,14 +673,20 @@ impl Cpu {
             // address bus. Same budget accounting as the loop it replaces.
             while bus.unified_dma_pending() {
                 self.cycles_emitted = self.cycles_emitted.saturating_add(1);
-                self.cycles = self.cycles.wrapping_add(1);
+                #[cfg(not(feature = "mc-one-clock-v2"))]
+                {
+                    self.cycles = self.cycles.wrapping_add(1);
+                }
                 self.start_cycle(bus, true);
                 bus.unified_dma_cycle_idle();
                 self.end_cycle(bus, true);
             }
             // R1: a pure internal cycle — busless (idle_tick stays busless).
             self.cycles_emitted = self.cycles_emitted.saturating_add(1);
-            self.cycles = self.cycles.wrapping_add(1);
+            #[cfg(not(feature = "mc-one-clock-v2"))]
+            {
+                self.cycles = self.cycles.wrapping_add(1);
+            }
             self.start_cycle(bus, true);
             self.end_cycle(bus, true);
         }
@@ -687,7 +747,10 @@ impl Cpu {
             if bus.dmc_abort_pending() {
                 if bus.dmc_abort_is_get_cycle() {
                     self.cycles_emitted = self.cycles_emitted.saturating_add(1);
-                    self.cycles = self.cycles.wrapping_add(1);
+                    #[cfg(not(feature = "mc-one-clock-v2"))]
+                    {
+                        self.cycles = self.cycles.wrapping_add(1);
+                    }
                     self.start_cycle(bus, true);
                     bus.dmc_abort_halt_step(addr);
                     self.end_cycle(bus, true);
@@ -709,7 +772,10 @@ impl Cpu {
             while bus.unified_dma_pending() {
                 // DMA halt cycles count against `cycles_emitted`.
                 self.cycles_emitted = self.cycles_emitted.saturating_add(1);
-                self.cycles = self.cycles.wrapping_add(1);
+                #[cfg(not(feature = "mc-one-clock-v2"))]
+                {
+                    self.cycles = self.cycles.wrapping_add(1);
+                }
                 self.start_cycle(bus, true);
                 bus.unified_dma_cycle(addr);
                 self.end_cycle(bus, true);
@@ -754,7 +820,10 @@ impl Cpu {
             // access's exact mc + bus cpu_clock) → bus.read → end_cycle
             // (double catch-up + φ2 interrupt sample). Mesen `MemoryRead`.
             self.cycles_emitted = self.cycles_emitted.saturating_add(1);
-            self.cycles = self.cycles.wrapping_add(1);
+            #[cfg(not(feature = "mc-one-clock-v2"))]
+            {
+                self.cycles = self.cycles.wrapping_add(1);
+            }
             self.start_cycle(bus, true);
             let v = bus.read(addr);
             self.end_cycle(bus, true);
@@ -778,7 +847,10 @@ impl Cpu {
             // later than reads). No interrupt sample latches here; end_cycle's
             // handle_interrupts does the φ2 sample.
             self.cycles_emitted = self.cycles_emitted.saturating_add(1);
-            self.cycles = self.cycles.wrapping_add(1);
+            #[cfg(not(feature = "mc-one-clock-v2"))]
+            {
+                self.cycles = self.cycles.wrapping_add(1);
+            }
             self.start_cycle(bus, false);
             bus.write(addr, value);
             self.end_cycle(bus, false);
