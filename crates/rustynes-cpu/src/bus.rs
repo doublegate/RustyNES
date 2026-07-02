@@ -202,8 +202,22 @@ pub trait Bus {
     /// `TetaNES` `clock_to`). Ticks whole PPU dots while
     /// `ppu_clock + ppu_divider <= target`. Called by the R1 CPU loop in
     /// BOTH halves of each access (the double catch-up). Default no-op.
-    fn run_ppu_to(&mut self, target: u64) {
-        let _ = target;
+    ///
+    /// `is_post_access` distinguishes WHICH half of the CPU cycle this
+    /// catch-up belongs to: `false` for the pre-access half (called from
+    /// `Cpu::start_cycle`, before the bus access — mirrors Mesen's
+    /// `StartCpuCycle`), `true` for the post-access half (called from
+    /// `Cpu::end_cycle`, after the bus access — mirrors `EndCpuCycle`).
+    /// R1c-3 (`mmc3-m2-phase-irq`, default-off experiment): `LockstepBus`
+    /// forwards this as the real M2-phase label on the `PpuBusAdapter` it
+    /// constructs, replacing the previously call-local (and therefore
+    /// almost-always-zero) `sub_dot` counter with a value that actually
+    /// distinguishes the pre-access (M2-low, φ1) and post-access
+    /// (M2-high, φ2) halves for any A12 transition ticked during this
+    /// catch-up. See `docs/adr/0002-irq-timing-coordination.md` and
+    /// `docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md`.
+    fn run_ppu_to(&mut self, target: u64, is_post_access: bool) {
+        let _ = (target, is_post_access);
     }
 
     /// One CPU cycle of bus-side work (Mesen `ProcessCpuClock`): APU +

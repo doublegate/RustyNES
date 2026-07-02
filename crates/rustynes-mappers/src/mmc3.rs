@@ -148,6 +148,18 @@ pub struct Mmc3 {
     cpu_cycle: u64,
 
     revision: Mmc3Revision,
+
+    // R1/R2 closure attempt (2026-07-02, `mmc3-m2-phase-irq`, default-off):
+    // a qualifying A12 rise observed during the POST-access (M2-high, φ2)
+    // half of a CPU cycle sets this instead of asserting `irq_pending_line`
+    // synchronously. `notify_cpu_cycle` (called once per CPU cycle, at the
+    // START of the NEXT cycle) promotes it — modeling a 1-M2-cycle
+    // propagation delay for the IRQ output latching late in the cycle. Rises
+    // seen during the PRE-access (M2-low, φ1) half assert immediately, same
+    // as the unconditional (feature-off) behavior. Compiled out entirely
+    // when the feature is off (zero footprint on the default build).
+    #[cfg(feature = "mmc3-m2-phase-irq")]
+    irq_assert_pending_next_cycle: bool,
 }
 
 impl Mmc3 {
@@ -222,6 +234,8 @@ impl Mmc3 {
             a12_low_cycle: 0,
             cpu_cycle: 0,
             revision,
+            #[cfg(feature = "mmc3-m2-phase-irq")]
+            irq_assert_pending_next_cycle: false,
         })
     }
 
@@ -489,6 +503,13 @@ impl Mapper for Mmc3 {
                 if addr & 1 == 0 {
                     self.irq_enabled = false;
                     self.irq_pending_line = false;
+                    // R1/R2 closure attempt: an ack/disable write cancels an
+                    // in-flight deferred assertion too — it models the same
+                    // physical IRQ line the synchronous path clears.
+                    #[cfg(feature = "mmc3-m2-phase-irq")]
+                    {
+                        self.irq_assert_pending_next_cycle = false;
+                    }
                 } else {
                     self.irq_enabled = true;
                 }
@@ -559,18 +580,43 @@ impl Mapper for Mmc3 {
         self.notify_a12_at_sub_dot(level, 1);
     }
 
-    fn notify_a12_at_sub_dot(&mut self, level: bool, _sub_dot: u8) {
+    fn notify_a12_at_sub_dot(&mut self, level: bool, sub_dot: u8) {
         // Track the M2-cycles-since-last-fall filter.  A rising edge that
         // arrives < 3 CPU cycles after the prior fall is filtered.
-        // The sub-dot parameter is currently unused: the M2-phase-aware
-        // deferral pipeline is documented in ADR-0002 but not yet
-        // implemented in MMC3 (the open work item for the next
-        // iteration of C1).
+        //
+        // R1/R2 closure attempt (2026-07-02, `mmc3-m2-phase-irq`,
+        // default-off): with the feature OFF, `sub_dot` stays unused (see
+        // the `let _ = sub_dot;` below) and this is byte-identical to the
+        // pre-attempt behavior (synchronous assertion regardless of
+        // phase). With the feature ON — and paired with
+        // `rustynes-core/mmc3-m2-phase-irq`, which is what actually makes
+        // `sub_dot` carry real M2-phase data on the live R1 scheduler path
+        // instead of an almost-always-zero call-local counter — a
+        // qualifying rise seen during the POST-access (M2-high, φ2,
+        // `sub_dot >= 2`) half of the cycle defers the `irq_pending_line`
+        // assertion to the NEXT `notify_cpu_cycle` boundary; a rise during
+        // the PRE-access (M2-low, φ1, `sub_dot < 2`) half asserts
+        // immediately, matching the unconditional behavior. See the field
+        // doc on `irq_assert_pending_next_cycle` and
+        // `docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md`.
+        #[cfg(not(feature = "mmc3-m2-phase-irq"))]
+        let _ = sub_dot;
         if !self.last_a12 && level {
             // Rising edge.
             let gap = self.cpu_cycle.saturating_sub(self.a12_low_cycle);
             if gap >= 3 && self.clock_irq() {
-                self.irq_pending_line = true;
+                #[cfg(feature = "mmc3-m2-phase-irq")]
+                {
+                    if sub_dot >= 2 {
+                        self.irq_assert_pending_next_cycle = true;
+                    } else {
+                        self.irq_pending_line = true;
+                    }
+                }
+                #[cfg(not(feature = "mmc3-m2-phase-irq"))]
+                {
+                    self.irq_pending_line = true;
+                }
             }
         } else if self.last_a12 && !level {
             // Falling edge.
@@ -581,6 +627,11 @@ impl Mapper for Mmc3 {
 
     fn notify_cpu_cycle(&mut self) {
         self.cpu_cycle = self.cpu_cycle.wrapping_add(1);
+        #[cfg(feature = "mmc3-m2-phase-irq")]
+        if self.irq_assert_pending_next_cycle {
+            self.irq_assert_pending_next_cycle = false;
+            self.irq_pending_line = true;
+        }
     }
 
     fn irq_pending(&self) -> bool {
@@ -1260,5 +1311,108 @@ mod tests {
         assert_eq!(other.bank_select, m.bank_select);
         assert_eq!(other.irq_reload_value, m.irq_reload_value);
         assert_eq!(other.irq_enabled, m.irq_enabled);
+    }
+
+    // R1/R2 closure attempt (2026-07-02, `mmc3-m2-phase-irq`): direct
+    // mechanism-level unit tests for the phase-conditional IRQ-visibility
+    // deferral, independent of the full ROM run. These prove the plumbing
+    // actually fires (a qualifying M2-high rise is genuinely deferred one
+    // `notify_cpu_cycle`, an M2-low rise is not) — the ROM-level probes in
+    // `crates/rustynes-test-harness/tests/mmc3.rs` only prove whether the
+    // deferral moves the target bracket, not whether it engaged at all.
+    #[cfg(feature = "mmc3-m2-phase-irq")]
+    #[test]
+    fn m2_high_rise_defers_irq_pending_one_cycle() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0xC000, 1); // reload = 1
+        m.cpu_write(0xC001, 0); // reload pending
+        m.cpu_write(0xE001, 0); // IRQ enabled
+        // First (silent) reload via a low-sub-dot (M2-low) rise so the
+        // counter is primed to 1 before the edge under test.
+        m.notify_a12_at_sub_dot(false, 0);
+        for _ in 0..4 {
+            m.notify_cpu_cycle();
+        }
+        m.notify_a12_at_sub_dot(true, 0);
+        assert_eq!(m.irq_counter, 1, "first filtered rise reloads to 1");
+        assert!(!m.irq_pending(), "reload-to-1 must not assert");
+
+        // Second filtered rise, decrementing 1 -> 0 (asserts), delivered at
+        // sub_dot 2 (M2-high / post-access). The assertion must NOT be
+        // visible synchronously...
+        m.notify_a12_at_sub_dot(false, 0);
+        for _ in 0..4 {
+            m.notify_cpu_cycle();
+        }
+        m.notify_a12_at_sub_dot(true, 2);
+        assert_eq!(m.irq_counter, 0, "decrement to 0 happens synchronously");
+        assert!(
+            !m.irq_pending(),
+            "M2-high rise must defer irq_pending visibility by one cycle"
+        );
+
+        // ...until the NEXT notify_cpu_cycle boundary promotes it.
+        m.notify_cpu_cycle();
+        assert!(
+            m.irq_pending(),
+            "deferred M2-high assertion must become visible after one \
+             notify_cpu_cycle"
+        );
+    }
+
+    #[cfg(feature = "mmc3-m2-phase-irq")]
+    #[test]
+    fn m2_low_rise_asserts_irq_pending_synchronously() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0xC000, 1);
+        m.cpu_write(0xC001, 0);
+        m.cpu_write(0xE001, 0);
+        m.notify_a12_at_sub_dot(false, 0);
+        for _ in 0..4 {
+            m.notify_cpu_cycle();
+        }
+        m.notify_a12_at_sub_dot(true, 0);
+        assert_eq!(m.irq_counter, 1);
+        assert!(!m.irq_pending());
+
+        // Decrement 1 -> 0 delivered at sub_dot 0 (M2-low / pre-access):
+        // asserts SYNCHRONOUSLY, matching the unconditional (feature-off)
+        // behavior — no notify_cpu_cycle needed.
+        m.notify_a12_at_sub_dot(false, 0);
+        for _ in 0..4 {
+            m.notify_cpu_cycle();
+        }
+        m.notify_a12_at_sub_dot(true, 0);
+        assert_eq!(m.irq_counter, 0);
+        assert!(
+            m.irq_pending(),
+            "M2-low rise must assert irq_pending synchronously"
+        );
+    }
+
+    #[cfg(feature = "mmc3-m2-phase-irq")]
+    #[test]
+    fn e000_ack_cancels_deferred_m2_high_assertion() {
+        let mut m = fresh(8, 8);
+        m.cpu_write(0xC000, 1);
+        m.cpu_write(0xC001, 0);
+        m.cpu_write(0xE001, 0);
+        m.notify_a12_at_sub_dot(false, 0);
+        for _ in 0..4 {
+            m.notify_cpu_cycle();
+        }
+        m.notify_a12_at_sub_dot(true, 0);
+        m.notify_a12_at_sub_dot(false, 0);
+        for _ in 0..4 {
+            m.notify_cpu_cycle();
+        }
+        m.notify_a12_at_sub_dot(true, 2); // deferred assertion queued
+        assert!(!m.irq_pending());
+        m.cpu_write(0xE000, 0); // ack/disable before the deferred cycle lands
+        m.notify_cpu_cycle();
+        assert!(
+            !m.irq_pending(),
+            "an ack write must cancel an in-flight deferred assertion"
+        );
     }
 }

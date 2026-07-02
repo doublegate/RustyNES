@@ -48,6 +48,10 @@ cpu-instr-cycle-trace = ["rustynes-core/cpu-instr-cycle-trace"]
 # (`cargo test --features test-roms,cpu-boot-trace
 # --test cpu_boot_trace_fixture`).
 cpu-boot-trace = ["rustynes-core/cpu-boot-trace"]
+# v2.0.0 R1/R2 closure attempt (2026-07-02) — forward to
+# `rustynes-core/mmc3-m2-phase-irq`. Off by default; see
+# `docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md`.
+mmc3-m2-phase-irq = ["rustynes-core/mmc3-m2-phase-irq"]
 
 [dependencies]
 rustynes-core.workspace = true

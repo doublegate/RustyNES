@@ -4249,9 +4249,38 @@ impl Bus for LockstepBus {
 
     /// R1 double catch-up: tick whole PPU dots while
     /// `ppu_clock + ppu_divider <= target`.
-    fn run_ppu_to(&mut self, target: u64) {
+    ///
+    /// R1c-3 (`mmc3-m2-phase-irq`, default-off): when the feature is
+    /// enabled, `sub_dot` is seeded from the REAL M2-phase of this catch-up
+    /// call (`0` = pre-access / M2-low, called from `Cpu::start_cycle`
+    /// before the bus access; `2` = post-access / M2-high, called from
+    /// `Cpu::end_cycle` after it) instead of always restarting at `0`. Prior
+    /// to this experiment `sub_dot` was a call-LOCAL counter that reset to
+    /// zero on every invocation of this function — since `run_ppu_to` is
+    /// called twice per CPU cycle (once per half) and each half typically
+    /// ticks at most one PPU dot, the value threaded to
+    /// `Mapper::notify_a12_at_sub_dot` was almost always `0` regardless of
+    /// which half of the cycle actually produced the A12 transition. That
+    /// meant the M2-phase plumbing ADR-0002 describes ("sub-dot 0/1 is
+    /// M2-low, 2 is M2-high") was never actually true on the live R1
+    /// (non-DMA) scheduler path — only on the legacy `tick_one_cpu_cycle`
+    /// DMA-burst path, which genuinely walks all 3 dots of a cycle in one
+    /// call with a persistent counter. This experiment closes that gap so
+    /// MMC3's (default-off) M2-phase-aware IRQ-visibility pipeline can be
+    /// evaluated against real phase data on the promoted core. See
+    /// `docs/adr/0002-irq-timing-coordination.md` and
+    /// `docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md`.
+    ///
+    /// When the feature is OFF this compiles to the exact prior
+    /// call-local-counter behavior (`sub_dot` always starts at `0`) —
+    /// byte-identical default build, per the project's additive/off-by-
+    /// default convention.
+    fn run_ppu_to(&mut self, target: u64, is_post_access: bool) {
         let ppu_div = u64::from(self.ppu_div_cached);
-        let mut sub_dot = 0u8;
+        #[cfg(feature = "mmc3-m2-phase-irq")]
+        let mut sub_dot = if is_post_access { 2u8 } else { 0u8 };
+        #[cfg(not(feature = "mmc3-m2-phase-irq"))]
+        let (mut sub_dot, _) = (0u8, is_post_access);
         while self.ppu_clock + ppu_div <= target {
             let mut adapter = PpuBusAdapter {
                 mapper: self.mapper.as_mut(),
