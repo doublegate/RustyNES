@@ -17,8 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 *The **v2.0.0 "Timebase"** development line (the one-clock + every-cycle-bus-access
 timebase refactor, ADR 0002 + `to-dos/plans/v2.0.0-master-clock-plan.md`) is in
-progress. Everything below is **default-off / instrumentation-only**: the shipped
-build is byte-identical to v1.10.0 and AccuracyCoin holds 100% (139/139).*
+progress. Through beta.3 everything was default-off; **as of beta.4 (the promote,
+below) the one-clock timebase IS the shipped default** — the designated breaking
+behavior change of the v2.0.0 major. AccuracyCoin holds 100% (139/139) throughout.*
 
 ### Changed
 
