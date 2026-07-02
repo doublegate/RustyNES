@@ -395,12 +395,21 @@ pub struct LockstepBus {
     vs_external_irq: bool,
     /// v2.0.0 beta.5 (Vs. `DualSystem`): the last `$4016`-write bit-1 value
     /// (the main/sub comms signal) + a dirty latch the wrapper polls after
-    /// each step batch. The bus only RECORDS the edge; the cross-console
+    /// each step batch. The bus only RECORDS the LEVEL (deliberately not
+    /// edge-filtered — see [`Self::vs_4016_bit1_dirty`]); the cross-console
     /// wiring (asserting the partner's `/IRQ`, the shared-WRAM swap) lives in
     /// the wrapper — no bus ever references the other console.
     vs_4016_bit1: bool,
-    /// See [`Self::vs_4016_bit1`] — set on every `$4016` write whose bit 1
-    /// CHANGED; cleared by [`Self::take_vs_mainsub_edge`].
+    /// See [`Self::vs_4016_bit1`] — set on EVERY `$4016` write, regardless
+    /// of whether bit 1 changed; cleared by [`Self::take_vs_mainsub_edge`].
+    /// Deliberately level-driven, not edge-filtered: at reset both consoles
+    /// write `$4016 = $00` to establish the wrapper's seeded main/sub
+    /// levels, and an edge filter starting from a `false` latch would
+    /// swallow that seeded-HIGH -> written-LOW transition and deadlock the
+    /// boot handshake (see the `cpu_write` `$4016` arm for the full
+    /// rationale). Re-applying an unchanged level is idempotent in the
+    /// wrapper, so marking every write dirty (not just changed ones) is
+    /// correct, if conservatively named.
     vs_4016_bit1_dirty: bool,
     /// Optional non-standard input-device overlay per port (`$4016`/`$4017`).
     /// When a port has `Some(device)`, [`Self::read_port`] returns that
@@ -1936,10 +1945,13 @@ impl LockstepBus {
     }
 
     /// v2.0.0 beta.5 (Vs. `DualSystem`): poll-and-clear the latched `$4016`
-    /// bit-1 (main/sub comms signal) edge. Returns `Some(level)` when a
-    /// `$4016` write changed bit 1 since the last poll; the wrapper turns the
-    /// level into the partner's external-IRQ assert (LOW asserts, HIGH
-    /// clears) and — on the MAIN console — the shared-WRAM swap.
+    /// bit-1 (main/sub comms signal) LEVEL. Returns `Some(level)` whenever
+    /// this console wrote `$4016` since the last poll — deliberately
+    /// level-driven, not edge-filtered (see [`Self::vs_4016_bit1_dirty`]);
+    /// the wrapper turns the level into the partner's external-IRQ assert
+    /// (LOW asserts, HIGH clears). The shared-WRAM convergence
+    /// (`pump_comms`'s separate `drain_vs_dual_wram_writes` step) runs on
+    /// BOTH consoles every poll, independent of this bit-1 signal.
     pub const fn take_vs_mainsub_edge(&mut self) -> Option<bool> {
         if self.vs_4016_bit1_dirty {
             self.vs_4016_bit1_dirty = false;
@@ -1964,9 +1976,20 @@ impl LockstepBus {
 
     /// v2.0.0 beta.5 (Vs. `DualSystem`): drain this console's shared-WRAM
     /// write log for the wrapper to replay into the partner console (the
-    /// fully-shared MAME model). Empty off-board.
+    /// fully-shared MAME model). Empty off-board. Allocates a fresh `Vec`
+    /// each call — fine for diagnostics/tests, NOT used by the hot
+    /// `pump_comms` path (see [`Self::drain_vs_dual_wram_writes`]).
     pub fn take_vs_dual_wram_writes(&mut self) -> alloc::vec::Vec<(u16, u8)> {
         self.mapper.take_vs_dual_wram_writes()
+    }
+
+    /// v2.0.0 beta.5 (Vs. `DualSystem`): drain this console's shared-WRAM
+    /// write log into a caller-owned, reusable `dst` buffer — the
+    /// hot-path counterpart of [`Self::take_vs_dual_wram_writes`], used by
+    /// `VsDualSystem::pump_comms` (called after every stepped instruction)
+    /// to avoid allocating a fresh `Vec` on every call.
+    pub fn drain_vs_dual_wram_writes(&mut self, dst: &mut alloc::vec::Vec<(u16, u8)>) {
+        self.mapper.drain_vs_dual_wram_writes(dst);
     }
 
     /// v2.0.0 beta.5 (Vs. `DualSystem`): replay one partner-console write

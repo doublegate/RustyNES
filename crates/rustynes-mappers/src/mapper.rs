@@ -404,16 +404,33 @@ pub trait Mapper: Send {
 
     /// v2.0.0 beta.5 (Vs. `DualSystem`): drain this console's shared-WRAM
     /// write log — every `(offset, value)` the CPU wrote to the window
-    /// since the last drain, in order. The wrapper replays them into the
-    /// partner's copy ([`Self::apply_vs_dual_wram_write`]), which is what
-    /// makes the RAM behave as ONE simultaneously-shared memory (MAME's
-    /// model; nesdev also documents a `$4016`-bit-1 access mux, but MAME —
-    /// where the four `DualSystem` games verifiably run — shares the RAM
+    /// since the last drain, in order — by APPENDING into `dst` (never
+    /// clearing it first). The wrapper replays them into the partner's
+    /// copy ([`Self::apply_vs_dual_wram_write`]), which is what makes the
+    /// RAM behave as ONE simultaneously-shared memory (MAME's model;
+    /// nesdev also documents a `$4016`-bit-1 access mux, but MAME — where
+    /// the four `DualSystem` games verifiably run — shares the RAM
     /// unconditionally, and Balloon Fight's boot handshake requires the
     /// partner to see writes made while the mux would deny it access).
-    /// Default: empty (boards without the dual WRAM).
+    ///
+    /// Implementations MUST drain their internal log via `Vec::drain`
+    /// (or equivalent) rather than replacing it, so the log's own
+    /// allocated capacity is retained across calls — `pump_comms` calls
+    /// this after EVERY stepped instruction on a `DualSystem` cart, so a
+    /// reallocating drain here is a real hot-path allocation, not a
+    /// theoretical one. Default: no-op (boards without the dual WRAM).
+    fn drain_vs_dual_wram_writes(&mut self, dst: &mut Vec<(u16, u8)>) {
+        let _ = dst;
+    }
+
+    /// Convenience wrapper around [`Self::drain_vs_dual_wram_writes`] for
+    /// callers that don't already hold a reusable buffer (diagnostics,
+    /// tests) — NOT used by the hot `pump_comms` path, which owns and
+    /// reuses its own scratch buffer instead.
     fn take_vs_dual_wram_writes(&mut self) -> Vec<(u16, u8)> {
-        Vec::new()
+        let mut writes = Vec::new();
+        self.drain_vs_dual_wram_writes(&mut writes);
+        writes
     }
 
     /// v2.0.0 beta.5 (Vs. `DualSystem`): replay one partner-console write

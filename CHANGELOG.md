@@ -60,7 +60,12 @@ throughout.*
   as a genuine two-console pair via the new `Emu` enum front door
   (`Emu::Single` for every other cart, `Emu::Dual` for these four,
   detected by the SHA-256-keyed `vs_db` OR the NES 2.0 byte-13 hardware
-  type). `VsDualSystem` (`rustynes-core`) owns both `Nes` instances, drains
+  type) — **core-and-test-harness-only in this release**: `rustynes-frontend`
+  still constructs `Nes` directly and does not yet consume `Emu`, so the
+  `DualSystem` path is unreachable from the shipped desktop/mobile UI;
+  wiring the frontend (dual-console rendering + 4-port input routing) is
+  explicitly deferred to a follow-up release. `VsDualSystem` (`rustynes-core`)
+  owns both `Nes` instances, drains
   each console's `$4016` comms level and shared-WRAM write log after every
   stepped instruction, and applies the MAME `.share("nvram")`-style
   level-driven (not edge-toggled) convergence model — chosen over the

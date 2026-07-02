@@ -80,6 +80,13 @@ pub struct VsDualSystem {
     /// The SUB console's last-applied `$4016` bit-1 level (the main's
     /// `/IRQ` driver).
     sub_bit1: bool,
+    /// Reusable scratch buffer for `pump_comms`'s shared-WRAM drain, in
+    /// both directions. `Vec::drain` on the mapper side keeps the log's
+    /// OWN capacity; this buffer keeps the WRAPPER side allocation-free
+    /// too, once warmed up — `pump_comms` runs after every stepped
+    /// instruction on a `DualSystem` cart, so a per-call heap allocation
+    /// here would be a real hot-path cost, not a theoretical one.
+    comms_scratch: Vec<(u16, u8)>,
 }
 
 impl VsDualSystem {
@@ -104,6 +111,7 @@ impl VsDualSystem {
             sub,
             main_bit1: false,
             sub_bit1: false,
+            comms_scratch: Vec::new(),
         };
         // Cabinet wiring: mark the sub half (its $4016 bit 7 reads 0x80;
         // its mapper banks the second PRG half + upper CHR pages — the two
@@ -152,11 +160,21 @@ impl VsDualSystem {
         }
         // Converge the shared-WRAM copies (both directions). The logs are
         // usually empty; a handful of entries during the boot handshake and
-        // per-frame gameplay exchange.
-        for (off, val) in self.main.bus_mut().take_vs_dual_wram_writes() {
+        // per-frame gameplay exchange. `comms_scratch` is drained (not
+        // replaced) each round, so its allocated capacity — and the
+        // mapper-side log's own capacity, via `drain_vs_dual_wram_writes`'s
+        // `Vec::drain` — survives across calls: steady-state, this loop is
+        // allocation-free.
+        self.main
+            .bus_mut()
+            .drain_vs_dual_wram_writes(&mut self.comms_scratch);
+        for (off, val) in self.comms_scratch.drain(..) {
             self.sub.bus_mut().apply_vs_dual_wram_write(off, val);
         }
-        for (off, val) in self.sub.bus_mut().take_vs_dual_wram_writes() {
+        self.sub
+            .bus_mut()
+            .drain_vs_dual_wram_writes(&mut self.comms_scratch);
+        for (off, val) in self.comms_scratch.drain(..) {
             self.main.bus_mut().apply_vs_dual_wram_write(off, val);
         }
     }
@@ -376,9 +394,16 @@ impl VsDualSystem {
 /// The top-level emulator: one standard console, or a Vs. `DualSystem` pair.
 ///
 /// v2.0.0 beta.5 — the API reshape scoped to the major (the plan's
-/// Workstream C/D): frontends construct via [`Emu::from_rom`] and match on
-/// the variant; every existing single-console surface lives unchanged on
-/// [`Nes`].
+/// Workstream C/D): a NEW `rustynes-core` consumer would construct via
+/// [`Emu::from_rom`] and match on the variant; every existing single-console
+/// surface lives unchanged on [`Nes`]. **`rustynes-frontend` does NOT yet
+/// consume this type** — it still constructs `Nes` directly
+/// (`Nes::from_rom`/`from_rom_with_sample_rate`), so the `DualSystem` path
+/// is core-and-test-harness-only in this release; wiring the desktop/mobile
+/// UI onto `Emu` (dual-console rendering + 4-port input routing) is
+/// explicitly deferred, tracked as a beta.5 known gap (see the beta.5
+/// CHANGELOG entry and `docs/audit/vs-dualsystem-combined-dumps-2026-07-02.md`
+/// for the current disposition).
 pub enum Emu {
     /// A standard single-console system (every cart except the four
     /// `DualSystem` boards).

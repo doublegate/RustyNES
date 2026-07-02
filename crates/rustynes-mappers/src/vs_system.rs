@@ -59,7 +59,7 @@ pub struct VsSystem {
     /// behavior byte-identically. Provisioned by
     /// [`Mapper::enable_vs_dual_wram`] from the `VsDualSystem` wrapper on
     /// BOTH consoles; the wrapper converges the two copies by draining
-    /// [`Mapper::take_vs_dual_wram_writes`] into the partner's
+    /// [`Mapper::drain_vs_dual_wram_writes`] into the partner's
     /// [`Mapper::apply_vs_dual_wram_write`] after every stepped instruction
     /// (MAME's fully-shared `.share("nvram")` at soft-lockstep granularity).
     dual_wram: Option<Box<[u8]>>,
@@ -209,8 +209,15 @@ impl Mapper for VsSystem {
         self.dual_sub = true;
     }
 
-    fn take_vs_dual_wram_writes(&mut self) -> Vec<(u16, u8)> {
-        core::mem::take(&mut self.dual_wram_log)
+    fn drain_vs_dual_wram_writes(&mut self, dst: &mut Vec<(u16, u8)>) {
+        // `Vec::append` moves every element into `dst` but leaves
+        // `dual_wram_log` at length 0 WITH its allocated capacity intact
+        // for the next batch of writes (unlike `mem::take`, which would
+        // hand the caller the backing allocation and leave this log at
+        // capacity 0 -- forcing a fresh heap allocation on the very next
+        // write). Called after every stepped instruction on a
+        // `DualSystem` cart via `pump_comms`.
+        dst.append(&mut self.dual_wram_log);
     }
 
     fn apply_vs_dual_wram_write(&mut self, offset: u16, value: u8) {
@@ -328,6 +335,13 @@ impl Mapper for VsSystem {
                 .copy_from_slice(&data[cursor..cursor + self.chr.len()]);
             cursor += self.chr.len();
         }
+        // `dual_wram_log` is transient (never serialized — see its field
+        // doc) and MUST be dropped on restore regardless of layout version:
+        // any writes logged before the restore point are now stale relative
+        // to the just-loaded `dual_wram` contents, and replaying them into
+        // the partner console afterward would silently corrupt its copy of
+        // the shared RAM with pre-restore data.
+        self.dual_wram_log.clear();
         if need_wram > 0 {
             // Re-provision on restore even if the live instance had not been
             // through `enable_vs_dual_wram` yet (a fresh Nes restored from a
@@ -335,6 +349,12 @@ impl Mapper for VsSystem {
             let mut w = vec![0u8; need_wram].into_boxed_slice();
             w.copy_from_slice(&data[cursor..cursor + need_wram]);
             self.dual_wram = Some(w);
+        } else {
+            // v1 (UniSystem) layout: drop any dual WRAM the live instance
+            // may have been carrying so in-memory state matches the
+            // versioned layout just loaded (a v1 snapshot never described
+            // dual-WRAM state, so none should survive the restore).
+            self.dual_wram = None;
         }
         Ok(())
     }

@@ -82,7 +82,7 @@
 mod common;
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use common::external::external_rom_path;
 use common::write_png;
@@ -131,8 +131,8 @@ fn colour_count(fb: &[u8]) -> usize {
 
 /// Best-effort PNG dump of both consoles' final frames for eyeballing.
 fn dump_pngs(label: &str, dual: &VsDualSystem) {
-    let dir = Path::new("/tmp/RustyNES/vs-dualsystem");
-    if std::fs::create_dir_all(dir).is_err() {
+    let dir = std::env::temp_dir().join("RustyNES/vs-dualsystem");
+    if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
     let safe: String = label
