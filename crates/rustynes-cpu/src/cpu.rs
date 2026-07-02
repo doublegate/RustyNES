@@ -178,6 +178,13 @@ pub struct Cpu {
     /// Previous /NMI line level, for the φ2 rising-edge detector in
     /// `handle_interrupts`. Mesen `_prevNmiFlag`.
     pub(crate) mc_prev_nmi_line: bool,
+    /// v2.0.0 beta.2 (A2 scoping diagnostic): per-opcode count of cycles the
+    /// trailing burn-loop had to fill (`cycles - cycles_emitted`) — the exact
+    /// remaining busless-cycle surface the every-cycle-bus-access conversion
+    /// must turn into dummy reads of the held address. Read by the harness
+    /// `burn_probe` bin; never consulted by emulation.
+    #[cfg(feature = "cpu-instr-cycle-trace")]
+    pub burn_histogram: [u64; 256],
 }
 
 impl Default for Cpu {
@@ -235,6 +242,8 @@ impl Cpu {
             mc_run_irq: false,
             mc_prev_run_irq: false,
             mc_prev_nmi_line: false,
+            #[cfg(feature = "cpu-instr-cycle-trace")]
+            burn_histogram: [0; 256],
         }
     }
 
@@ -435,6 +444,36 @@ impl Cpu {
         // Burn whichever cycles the dispatch did NOT emit through helpers.
         // As opcodes migrate to fully per-cycle emission, this loop runs
         // for fewer iterations; eventually it can be removed entirely.
+        //
+        // v2.0.0 beta.2 (A2 scoping): the diagnostic histogram below records,
+        // per opcode, how many cycles the burn-loop had to fill — the exact
+        // empirical work list for the every-cycle-bus-access conversion (the
+        // remaining busless cycles that must become dummy reads of the held
+        // address). Default-off; the `burn_probe` harness bin prints it.
+        #[cfg(feature = "cpu-instr-cycle-trace")]
+        {
+            let burned = cycles.saturating_sub(self.cycles_emitted);
+            if burned > 0 {
+                self.burn_histogram[opcode as usize] =
+                    self.burn_histogram[opcode as usize].saturating_add(u64::from(burned));
+            }
+        }
+        // v2.0.0 beta.2 (A2): with the one-clock feature ON, every
+        // instruction cycle is a bus access — the resolvers + RMW arms emit
+        // the canonical dummy reads, so the burn-loop must never fire.
+        // Proven empirically at zero across AccuracyCoin, nestest, both
+        // blargg_nes_cpu_test5 suites, and cpu_timing_test6 (the full
+        // official + unofficial opcode space); this assert makes any future
+        // under-emitting dispatch arm fail loud in dev-profile runs instead
+        // of silently reintroducing a busless cycle.
+        #[cfg(feature = "mc-one-clock-v2")]
+        debug_assert!(
+            self.cycles_emitted >= cycles,
+            "opcode ${opcode:02X} under-emitted: declared {cycles} cycles but emitted \
+             only {} — a busless burn-loop cycle would fill the gap (A2 regression; \
+             see the v2.0.0 plan Workstream A2)",
+            self.cycles_emitted
+        );
         while self.cycles_emitted < cycles {
             self.idle_tick(bus);
         }
@@ -964,8 +1003,27 @@ impl Cpu {
         if brk {
             let _ = self.read1(bus, self.pc.wrapping_sub(1));
         } else {
-            self.idle_tick(bus);
-            self.idle_tick(bus);
+            // v2.0.0 beta.2 (A2 every-cycle-bus-access): canonical hardware
+            // IRQ/NMI cycles 1-2 are DUMMY READS of the interrupted PC (the
+            // suppressed opcode fetch + suppressed operand fetch — nesdev
+            // `6502_cpu.txt`; Mesen2 `NesCpu::IRQ` issues two `DummyRead`s).
+            // This is the C1-trio canary path: the conversion keeps the exact
+            // same two-cycle start/end structure (φ2 samples unchanged) and
+            // only adds the bus access + held-address update; the
+            // cpu_interrupts_v2 5/5 strict gate + AccuracyCoin 139/139 must
+            // hold with the flag on (verified at the beta.2 gate).
+            #[cfg(feature = "mc-one-clock-v2")]
+            {
+                let _ = self.read1(bus, self.pc);
+                let _ = self.read1(bus, self.pc);
+            }
+            // Flag-off: the shipped build keeps the busless filler ticks
+            // byte-identically.
+            #[cfg(not(feature = "mc-one-clock-v2"))]
+            {
+                self.idle_tick(bus);
+                self.idle_tick(bus);
+            }
         }
         self.push_u16(bus, self.pc);
         let mut p = self.p | Status::UNUSED;
@@ -1022,6 +1080,21 @@ impl Cpu {
 
     fn addr_zp_x<B: Bus>(&mut self, bus: &mut B) -> Operand {
         let base = self.fetch_pc(bus);
+        // v2.0.0 beta.2 (A2 every-cycle-bus-access): canonical 6502 cycle 3
+        // reads the UN-indexed zero-page address while the index add
+        // completes, then discards it (nesdev `6502_cpu.txt`; Mesen2 models
+        // it as a real `MemoryRead`). Zero-page addresses are always RAM
+        // ($0000-$00FF), so the read is register-side-effect-free — but it
+        // parks a real address on the bus (the held address a DMA halt
+        // re-reads) instead of leaving the cycle busless in the burn-loop.
+        // The burn-probe histogram pinned this family as 99% of the
+        // remaining busless surface ($95 STA zp,X alone = 8,955 of 9,795
+        // burned cycles over the AccuracyCoin battery). Default-off: the
+        // shipped build keeps the busless burn-loop fill byte-identically.
+        #[cfg(feature = "mc-one-clock-v2")]
+        {
+            let _ = self.read1(bus, u16::from(base));
+        }
         Operand {
             addr: u16::from(base.wrapping_add(self.x)),
             page_crossed: false,
@@ -1030,6 +1103,12 @@ impl Cpu {
 
     fn addr_zp_y<B: Bus>(&mut self, bus: &mut B) -> Operand {
         let base = self.fetch_pc(bus);
+        // A2: same canonical un-indexed dummy read as `addr_zp_x` (cycle 3
+        // of LDX/STX zp,Y and the unofficial LAX/SAX zp,Y arms).
+        #[cfg(feature = "mc-one-clock-v2")]
+        {
+            let _ = self.read1(bus, u16::from(base));
+        }
         Operand {
             addr: u16::from(base.wrapping_add(self.y)),
             page_crossed: false,
@@ -1100,8 +1179,50 @@ impl Cpu {
         addr
     }
 
+    /// (zp),Y operand for the unofficial read-modify-write opcodes
+    /// (SLO/RLA/SRE/RRA/DCP/ISB `(zp),Y` — `$13/$33/$53/$73/$D3/$F3`).
+    ///
+    /// v2.0.0 beta.2 (A2 every-cycle-bus-access): canonical 6502 8-cycle
+    /// (zp),Y RMW performs the unfixed-address dummy read UNCONDITIONALLY at
+    /// cycle 5 (like RMW ABS,X/Y above — the CPU cannot know the fixed
+    /// address until the high-byte add completes), not only on page cross.
+    /// The burn-probe histogram pinned these six arms as the last
+    /// instruction-dispatch busless cycles (25 of the original 9,795).
+    /// Flag-off delegates to the plain [`Self::addr_ind_y`] (dummy read on
+    /// page cross only; the burn-loop fills the non-crossing cycle) so the
+    /// shipped build stays byte-identical.
+    fn addr_ind_y_rmw<B: Bus>(&mut self, bus: &mut B) -> u16 {
+        #[cfg(feature = "mc-one-clock-v2")]
+        {
+            // Delegate to the plain resolver (which already emits the
+            // unfixed-address dummy read on a page cross), then emit the
+            // RMW's unconditional cycle-5 dummy for the non-crossing case.
+            // On a non-crossing access the canonical unfixed address
+            // `(base & 0xFF00) | (addr & 0xFF)` EQUALS the final address
+            // (the high byte needed no fix-up), so reading `o.addr` here is
+            // the silicon-exact target — do not "fix" this to a separate
+            // unfixed computation, they are identical by construction.
+            let o = self.addr_ind_y(bus);
+            if !o.page_crossed {
+                let _ = self.read1(bus, o.addr);
+            }
+            o.addr
+        }
+        #[cfg(not(feature = "mc-one-clock-v2"))]
+        {
+            self.addr_ind_y(bus).addr
+        }
+    }
+
     fn addr_ind_x<B: Bus>(&mut self, bus: &mut B) -> Operand {
         let base = self.fetch_pc(bus);
+        // A2: canonical (zp,X) cycle 3 — dummy read of the UN-indexed
+        // pointer address while the X add completes (same silicon behavior
+        // as `addr_zp_x`; zero-page, so register-side-effect-free).
+        #[cfg(feature = "mc-one-clock-v2")]
+        {
+            let _ = self.read1(bus, u16::from(base));
+        }
         let ptr = base.wrapping_add(self.x);
         let lo = self.read1(bus, u16::from(ptr));
         let hi = self.read1(bus, u16::from(ptr.wrapping_add(1)));
@@ -2233,8 +2354,8 @@ impl Cpu {
                 *cycles = 8;
             }
             0xD3 => {
-                let o = self.addr_ind_y(bus);
-                self.dcp_addr(bus, o.addr);
+                let addr = self.addr_ind_y_rmw(bus);
+                self.dcp_addr(bus, addr);
                 *cycles = 8;
             }
 
@@ -2270,8 +2391,8 @@ impl Cpu {
                 *cycles = 8;
             }
             0xF3 => {
-                let o = self.addr_ind_y(bus);
-                self.isc_addr(bus, o.addr);
+                let addr = self.addr_ind_y_rmw(bus);
+                self.isc_addr(bus, addr);
                 *cycles = 8;
             }
 
@@ -2307,8 +2428,8 @@ impl Cpu {
                 *cycles = 8;
             }
             0x13 => {
-                let o = self.addr_ind_y(bus);
-                self.slo_addr(bus, o.addr);
+                let addr = self.addr_ind_y_rmw(bus);
+                self.slo_addr(bus, addr);
                 *cycles = 8;
             }
 
@@ -2344,8 +2465,8 @@ impl Cpu {
                 *cycles = 8;
             }
             0x33 => {
-                let o = self.addr_ind_y(bus);
-                self.rla_addr(bus, o.addr);
+                let addr = self.addr_ind_y_rmw(bus);
+                self.rla_addr(bus, addr);
                 *cycles = 8;
             }
 
@@ -2381,8 +2502,8 @@ impl Cpu {
                 *cycles = 8;
             }
             0x53 => {
-                let o = self.addr_ind_y(bus);
-                self.sre_addr(bus, o.addr);
+                let addr = self.addr_ind_y_rmw(bus);
+                self.sre_addr(bus, addr);
                 *cycles = 8;
             }
 
@@ -2418,8 +2539,8 @@ impl Cpu {
                 *cycles = 8;
             }
             0x73 => {
-                let o = self.addr_ind_y(bus);
-                self.rra_addr(bus, o.addr);
+                let addr = self.addr_ind_y_rmw(bus);
+                self.rra_addr(bus, addr);
                 *cycles = 8;
             }
 
