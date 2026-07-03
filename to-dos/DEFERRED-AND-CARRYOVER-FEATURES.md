@@ -508,6 +508,40 @@ account, or a hosted deploy (all also listed under their theme above).
   feature in `crates/rustynes-frontend/Cargo.toml` + the `full-run`/`full-build` aliases in
   `.cargo/config.toml`.)* an umbrella feature for the maximal native build. Source: v1.7.0
   beta.5 carryover. Files: `crates/rustynes-frontend/Cargo.toml`, `.cargo/config.toml`.
+- `[ ]` **Re-sync the vendored `100thCoin/AccuracyCoin` test-ROM oracle** — the
+  vendored copy (`tests/roms/AccuracyCoin/{README.md,SOURCE_CATALOG.tsv}` +
+  `tests/roms/accuracycoin/AccuracyCoin.nes`) is pinned to a **2026-05-17**
+  upstream snapshot (144 active test-table rows), carried forward unchanged
+  through the v1.0.0 synthesis transplant. Upstream `main` has since added
+  **two new active tests** not yet in RustyNES's catalog: `"ALE + Read"`
+  (added 2026-06-04 — a simultaneous Address-Latch-Enable + PPU-Read analog
+  feedback loop that corrupts a nametable fetch and can trigger a spurious
+  sprite-zero hit) and `"Hybrid Addresses"` (added 2026-06-11, alignment-2 fix
+  landed 2026-06-26 — whether a well-timed `STA $2006` can corrupt a nametable
+  fetch), plus a bugfix moving `"$2002 Flag Timing"` off a page boundary
+  (2026-06-26) that was itself causing a false failure, and an error-code
+  cleanup in `"Sprites On Scanline 0"` (2026-05-26). Re-syncing means:
+  re-extracting `SOURCE_CATALOG.tsv` from the current `AccuracyCoin.asm` by
+  walking each `Suite_*`/`table` block and emitting `(suite, test-name,
+  ram-addr)` triples (`docs/testing-strategy.md` does NOT currently document
+  this recipe — the `tests/roms/AccuracyCoin/README.md` pointer to it is
+  itself stale and should be corrected in the same pass, e.g. to point at the
+  original extraction session's methodology), re-building
+  the `.nes` ROM, adding harness coverage for the 2 new tests, and
+  re-verifying RustyNES's pass rate against the corrected `$2002 Flag Timing`
+  placement (a prior false failure upstream may have been silently
+  compensated for, or may newly surface). **Explicitly non-blocking for
+  v2.0.0** (the release is gated on the currently-pinned 139/139 oracle, which
+  passed clean); this is opportunistic core/test-harness housekeeping, not a
+  mobile-specific item, but the natural anchor point is v2.0.1's "re-verify
+  determinism (AccuracyCoin + the SMB/Zelda on-device smoke)" re-port step
+  (see `to-dos/plans/v2.0.x-mobile-finalization-plan.md`) since that's the
+  next point RustyNES touches the AccuracyCoin oracle anyway. Source:
+  maintainer request, 2026-07-02 (session live-checked upstream via `gh api
+  repos/100thCoin/AccuracyCoin`; no formal GitHub Releases exist upstream — it
+  is a rolling `main`-branch repo). Target: **v2.0.1+ housekeeping pass**.
+  Files: `tests/roms/AccuracyCoin/`, `tests/roms/accuracycoin/`,
+  `crates/rustynes-test-harness/src/accuracy_coin{,_catalog}.rs`.
 
 ---
 
