@@ -386,10 +386,11 @@ v1.0.0 core baseline:
   Vs. Mahjong remain infrastructure-only (no local sub-CPU dump). **This is
   core-and-test-harness-only** — `rustynes-frontend` still constructs `Nes`
   directly and does not yet consume `Emu::Dual`, so the feature is unreachable
-  from the shipped desktop/mobile UI pending a follow-up release that wires dual
-  -console rendering + 4-port input routing (see `docs/audit/vs-dualsystem-design-2026-06-11.md`
-  for the original design and `docs/audit/vs-dualsystem-combined-dumps-2026-07-02.md`
-  for the boot-verification campaign).
+  from the shipped desktop/mobile UI pending a follow-up release that wires
+  dual-console rendering + 4-port input routing (see
+  `docs/audit/vs-dualsystem-design-2026-06-11.md` for the original design and
+  `docs/audit/vs-dualsystem-combined-dumps-2026-07-02.md` for the
+  boot-verification campaign).
 - **Rollback netplay** — GGPO-style 2-4 player over UDP (native) and WebRTC
   (browser), live-verified two-instance sessions. As of v1.3.0 (Workstream G1)
   the netplay panel surfaces a read-only **desync-diagnostics** section (a
