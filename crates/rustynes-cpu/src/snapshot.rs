@@ -120,10 +120,15 @@ impl Cpu {
     /// Returns [`CpuSnapshotError`] if the blob is the wrong length or
     /// carries an unrecognized version.
     pub fn restore(&mut self, data: &[u8]) -> Result<(), CpuSnapshotError> {
-        if data.is_empty() {
+        // Check the full expected length FIRST: a short-and-garbled blob
+        // (e.g. truncated mid-write) is a truncation error, not a version
+        // error, even if the one byte that happens to be present doesn't
+        // match CPU_SNAPSHOT_VERSION -- checking length first makes that
+        // the error callers see, which is the more useful diagnosis.
+        if data.len() != ENCODED_LEN {
             return Err(CpuSnapshotError::Truncated {
                 expected: ENCODED_LEN,
-                got: 0,
+                got: data.len(),
             });
         }
         let version = data[0];
@@ -138,12 +143,6 @@ impl Cpu {
         // rejection, not a data transform).
         if version != CPU_SNAPSHOT_VERSION {
             return Err(CpuSnapshotError::UnsupportedVersion(version));
-        }
-        if data.len() != ENCODED_LEN {
-            return Err(CpuSnapshotError::Truncated {
-                expected: ENCODED_LEN,
-                got: data.len(),
-            });
         }
         let mut p = 1;
         self.a = data[p];
