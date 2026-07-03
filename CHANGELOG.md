@@ -15,17 +15,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-*The **v2.0.0 "Timebase"** development line (the one-clock + every-cycle-bus-access
-timebase refactor, ADR 0002 + `to-dos/plans/v2.0.0-master-clock-plan.md`) is in
-progress. Through beta.3 everything was default-off; **as of beta.4 (the promote,
-below) the one-clock timebase IS the shipped default** — the designated breaking
-behavior change of the v2.0.0 major. beta.5 adds the Vs. `DualSystem` dual-console
-feature (also shipped default-on — a new capability, not a behavior change to any
-existing single-console cart) plus a bounded-effort R1/R2 closure campaign whose
-disposition is recorded in the ADR-0002 update. **rc.1 lands the save-state/movie
-format break the MAJOR boundary requires (ADR 0028) plus the canonical timebase
-architecture ADR (0029)** — see below. AccuracyCoin holds 100% (139/139)
-throughout.*
+*Nothing yet — the next planned milestone is **v2.0.1** (the first release of the
+Android mobile-finalization re-port train onto the v2.0.0 core; see
+`to-dos/ROADMAP.md`).*
+
+## [2.0.0] - 2026-07-03 - "Timebase" (one-clock master-clock rewrite + Vs. DualSystem)
+
+**The headline: RustyNES's scheduler substrate has been rewritten from a five-counter,
+dot-lockstep model to a single canonical cycle counter with every-cycle bus access
+and a split-around-the-access (`start_cycle`/`end_cycle`) PPU catch-up** — the
+one-clock, every-cycle-bus-access timebase (ADR 0002,
+`to-dos/plans/v2.0.0-master-clock-plan.md`), now the sole scheduler path (ADR 0029).
+This is RustyNES's designated MAJOR-boundary release (ADR 0003): the save-state and
+TAS movie container formats bump their version epochs (ADR 0028), and a pre-v2.0.0
+`.rns` slot file now fails to load with a clear error instead of silently
+misinterpreting stale data. Landed across five betas + one release candidate
+(PRs #217-223): beta.1 the counter collapse, beta.2 every-cycle-bus-access (closing
+the historical 9,795-cycle busless surface), beta.3 the cycle-accurate reset
+(closing residual R4), beta.4 the promote (deleting the feature flag — one-clock
+becomes the only path), beta.5 full Vs. `DualSystem` dual-console support (a new
+capability, not a behavior change to any single-console cart), and rc.1 the format
+break + the canonical architecture ADR. **AccuracyCoin holds 100% (139/139)
+throughout every beta and on the final cut**; the every-cycle-bus-access model was
+verified to cost a sub-1%-of-frame-cost dummy read on formerly-busless cycles, well
+within the project's 16.639 ms NTSC frame budget. The R1/R2 MMC3 IRQ-timing residual
+was investigated under a maintainer-authorized bounded-effort campaign (four new
+falsified levers across two sessions) and is by-design-deferred beyond v2.0.0 with a
+mechanism-level finding recorded in ADR 0002 — not silently dropped, not falsely
+claimed closed.
 
 ### Changed
 
