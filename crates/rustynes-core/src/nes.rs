@@ -2656,6 +2656,48 @@ mod tests {
     }
 
     #[test]
+    fn restore_rejects_pre_v3_cpu_section_version() {
+        // ADR 0028 (v2.0.0 rc.1): a slot file whose CPU section predates the
+        // one-clock promote (schema version < CPU_SNAPSHOT_VERSION) must be
+        // cleanly rejected via SnapshotError::VersionMismatch, not silently
+        // accepted or upconverted. Simulate an old slot by taking a
+        // freshly-emitted (current-version) snapshot and patching only the
+        // CPU section's version byte down to a stale value -- everything
+        // else (the body bytes, every other section) is untouched, so this
+        // isolates the version-gate behavior from any layout difference.
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).expect("parse + boot");
+        for _ in 0..3 {
+            nes.run_frame();
+        }
+        let current = nes.snapshot();
+        let (_h, body_off) = save_state::parse_header(&current).unwrap();
+        let mut stale = current[..body_off].to_vec();
+        for s in save_state::SectionIter::new(&current[body_off..]) {
+            let s = s.unwrap();
+            let version = if s.tag == save_state::tag::CPU {
+                assert_eq!(
+                    s.version,
+                    rustynes_cpu::CPU_SNAPSHOT_VERSION,
+                    "fixture assumption: current build writes the current CPU version"
+                );
+                s.version - 1
+            } else {
+                s.version
+            };
+            save_state::write_section(&mut stale, s.tag, version, s.body);
+        }
+        let err = nes.restore(&stale).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                SnapshotError::VersionMismatch { ref tag, .. } if tag == "CPU "
+            ),
+            "expected a CPU-tagged VersionMismatch, got {err:?}"
+        );
+    }
+
+    #[test]
     fn rewind_step_back_restores_prior_frame() {
         let rom = synth_nrom(16, 8);
         let mut nes = Nes::from_rom(&rom).unwrap();

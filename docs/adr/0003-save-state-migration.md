@@ -1,6 +1,11 @@
 # ADR 0003 — Save-state Cross-version Migration Policy
 
-**Status:** Accepted (in force since save-states shipped; ADR 0008 `.rnm` builds on it).
+**Status:** Accepted (in force since save-states shipped; ADR 0008 `.rnm`
+builds on it). The MAJOR-boundary event this ADR's §Policy anticipated
+("If a v2.x line introduces format breaks, ADR 0004+ will define explicit
+migration") arrived with v2.0.0 "Timebase" — see
+`docs/adr/0028-v2-0-0-save-state-and-movie-format-break.md` for that
+concrete decision.
 **Date:** 2026-05-11
 **Author:** RustyNES maintainers
 **Supersedes:** None.
