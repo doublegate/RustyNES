@@ -9,7 +9,7 @@
 //! ```text
 //! HEADER (16 bytes):
 //!     magic       : "RUSTYNES"  (8 bytes)
-//!     format ver  : u16 little-endian  (currently 1)
+//!     format ver  : u16 little-endian  (currently 2 -- see [`FORMAT_VERSION`])
 //!     rom sha-256 : truncated to 6 bytes (sanity tag, not authoritative)
 //!
 //! BODY (sections in any order, each):
@@ -29,7 +29,19 @@ use thiserror::Error;
 pub const MAGIC: &[u8; 8] = b"RUSTYNES";
 
 /// Current container-format version.
-pub const FORMAT_VERSION: u16 = 1;
+///
+/// - v1 (v0.9.0 ..): the tagged-section container as documented above.
+/// - **v2 (v2.0.0 "Timebase" rc.1, ADR 0028)**: marks the MAJOR-boundary
+///   line. The container's own on-wire layout is unchanged (this field
+///   only guards forward-compat -- a reader rejects any blob whose
+///   `format_version` exceeds its own [`FORMAT_VERSION`]); the real
+///   v2.0.0-line rejection happens per-section, via the strict version
+///   equality checks each chip's snapshot module already enforces (see
+///   `rustynes_cpu::CPU_SNAPSHOT_VERSION`'s v3 bump for the concrete
+///   example). This bump exists so a `.rns` file's header alone signals
+///   which release line produced it, without needing to inspect every
+///   section.
+pub const FORMAT_VERSION: u16 = 2;
 
 /// Length of the truncated ROM SHA-256 we embed in the header (sanity tag).
 pub const ROM_HASH_TAG_LEN: usize = 6;

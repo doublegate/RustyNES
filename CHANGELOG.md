@@ -22,11 +22,54 @@ below) the one-clock timebase IS the shipped default** — the designated breaki
 behavior change of the v2.0.0 major. beta.5 adds the Vs. `DualSystem` dual-console
 feature (also shipped default-on — a new capability, not a behavior change to any
 existing single-console cart) plus a bounded-effort R1/R2 closure campaign whose
-disposition is recorded in the ADR-0002 update. AccuracyCoin holds 100% (139/139)
+disposition is recorded in the ADR-0002 update. **rc.1 lands the save-state/movie
+format break the MAJOR boundary requires (ADR 0028) plus the canonical timebase
+architecture ADR (0029)** — see below. AccuracyCoin holds 100% (139/139)
 throughout.*
 
 ### Changed
 
+- **v2.0.0 rc.1 — the save-state and movie format break (ADR 0028), BREAKING
+  by design.** Makes the MAJOR-boundary decision ADR 0003 reserved for
+  exactly this moment:
+  - `rustynes_cpu::CPU_SNAPSHOT_VERSION` **2 → 3**. Byte layout unchanged;
+    the version bump marks that `cycles`/`master_clock` are now
+    consistent-by-construction (derived, per the one-clock promote) rather
+    than consistent-by-convention (parallel increments, pre-promote). The
+    v1-upconvert branch in `Cpu::restore` is deleted — it was dead code,
+    unreachable through the only real caller (`Nes::restore_inner` already
+    enforces strict per-section version equality). A pre-v2.0.0 `.rns` slot
+    file now fails to load with a clear `SnapshotError::VersionMismatch`,
+    not a silent reinterpretation.
+  - `save_state::FORMAT_VERSION` **1 → 2** — a documentary container-header
+    epoch marker (on-wire layout unchanged; the real per-format-line
+    rejection is the per-section version checks above).
+  - `MOVIE_FORMAT_VERSION` **1 → 2** (`.rnm` TAS movies), but **warn, don't
+    reject**: a movie's input stream remains fully replayable across the
+    boundary (button semantics and frame timing are unaffected), so
+    `Movie::deserialize` still accepts and plays any
+    `format_version <= MOVIE_FORMAT_VERSION` movie. What's unverified is
+    the format's bit-identical reproduction guarantee specifically — new
+    `rustynes_core::recorded_before_v2_timebase(bytes)` lets a caller check
+    the epoch before/after loading; wired into both frontend movie-load
+    paths (desktop + wasm), which now log a warning rather than silently
+    proceeding. No timeline transcoding is attempted (out of scope, by
+    design).
+  - New regression tests pin the rejection/warn behavior:
+    `snapshot_rejects_pre_v3_versions`,
+    `restore_rejects_pre_v3_cpu_section_version`,
+    `recorded_before_v2_timebase_flags_pre_promote_movies`.
+- **v2.0.0 rc.1 — ADR 0029, the one-clock every-cycle timebase as the
+  canonical architecture.** Formalizes beta.1–beta.4's shipped scheduler
+  model as the architecture-of-record, superseding the dot-lockstep
+  (`tick_one_dot`) framing. `docs/architecture.md`'s "Scheduling model"
+  section gets the same banner-plus-historical-primer treatment
+  `docs/scheduler.md`/`docs/cpu-6502.md`/`docs/apu-2a03.md` already
+  received during beta.2/beta.4 (the rest of `docs/architecture.md` — the
+  crate list and the public-API sketch, both stale well beyond scheduling —
+  is flagged as a known gap for a broader doc refresh, not addressed in
+  this pass). Mapper breadth stays frozen at **172 families** for the
+  v2.0.0 cut (no mapper work landed in the v2.0.0 line).
 - **v2.0.0 beta.4 — THE PROMOTE: the one-clock timebase is now the only
   path** (BREAKING by design; the release's designated behavior change per
   ADR 0002 / the ADR-0003 MAJOR-boundary tier). The `mc-one-clock-v2`

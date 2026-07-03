@@ -4,6 +4,16 @@
 §Architecture options, §Principal engineering challenges;
 `ref-docs/nesdev-wiki-technical-report.md`; `docs/nesdev-hardware-emulation-checklist.md`.
 
+> **Known gap (v2.0.0 rc.1):** this document's "Scheduling model" section
+> received the v2.0.0 banner treatment below (ADR 0029). The "Workspace
+> shape" crate list and "Public API surface" sketch further down predate
+> the whole v1.x feature-release line (they still describe a 16-crate
+> workspace and a `save_state()`/`load_state()`/`SaveState` API that
+> doesn't match the shipping `snapshot()`/`restore()` blob-based API) and
+> are tracked as a broader doc-refresh item, not addressed in this pass —
+> see `docs/STATUS.md` and the per-subsystem docs for the current ground
+> truth on workspace shape and public API surface in the meantime.
+
 ## Purpose
 
 This document fixes the high-level architectural decisions for RustyNES. Subsystem docs (`cpu-6502.md`, `ppu-2c02.md`, `apu-2a03.md`, `mappers.md`) take these as given and elaborate one chip each. The reader should leave this doc knowing the workspace shape, the scheduling model, the public boundaries, and the rejected alternatives.
@@ -72,11 +82,30 @@ Per the TetaNES postmortem (`ref-docs/research-report.md` §State of the art), s
 
 ## Scheduling model
 
-### The master clock is the PPU dot
+> **v2.0.0 "Timebase" (promoted in beta.4 — the shipped model, ADR 0029):**
+> the sections below describe the ORIGINAL v0.9.0 → v1.10.0 dot-lockstep
+> design (`tick_one_dot`, five independently-incremented counters). That
+> model is historical — kept for context, not deleted, per this project's
+> documentation convention — but is no longer what the shipping scheduler
+> does. The current model is **one-clock, every-cycle-bus-access**:
+> `Cpu::start_cycle`/`end_cycle` advance `master_clock` by the region's
+> φ1/φ2 split and pull the PPU to `master_clock - PPU_OFFSET` at BOTH
+> halves via `Bus::run_ppu_to` (one dot per iteration, not a coarse
+> batch) — the CPU access itself lands BETWEEN the two PPU catch-ups,
+> mirroring Mesen2's `StartCpuCycle → Read → EndCpuCycle` split. Every
+> instruction cycle is a real bus access (no busless filler cycles); DMA
+> is a unified, per-cycle-interleaved engine, not a separate stepping
+> mode; `LockstepBus::cycle` is the ONE canonical per-cycle counter that
+> `Cpu::cycles`/`Apu::cpu_cycle` are assigned from, never independently
+> incremented. See `docs/adr/0029-one-clock-every-cycle-timebase.md` for
+> the full architectural decision and rationale, and `docs/scheduler.md`
+> for the primer-level walkthrough (also banner-updated).
+
+### The master clock is the PPU dot (historical — see the banner above)
 
 NTSC: 5.369318 MHz. PAL: 5.320342 MHz. Dendy: 5.320342 MHz (PAL pixel clock). The CPU advances 1/3 of the time on NTSC and Dendy, 1/3.2 on PAL. The APU clocks every other CPU cycle (i.e., once per 6 PPU dots NTSC).
 
-### Tick structure
+### Tick structure (historical — see the banner above)
 
 ```rust
 Nes::run_frame() {

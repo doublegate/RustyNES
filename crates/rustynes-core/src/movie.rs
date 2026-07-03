@@ -43,7 +43,59 @@ use thiserror::Error;
 pub const MOVIE_MAGIC: &[u8; 8] = b"RNESMOV1";
 
 /// Current movie container-format version.
-pub const MOVIE_FORMAT_VERSION: u16 = 1;
+///
+/// - v1 (v1.1.0 ..): the format documented above.
+/// - **v2 (v2.0.0 "Timebase" rc.1, ADR 0028)**: on-wire layout unchanged —
+///   this is purely an epoch marker. A `.rnm` with `format_version < 2` was
+///   necessarily recorded on a pre-promote (pre-beta.4) build; per the
+///   determinism contract, its INPUT STREAM still replays fine (nothing
+///   about frame timing or button semantics changed), but the
+///   frame-for-frame bit-identical reproduction guarantee the movie format
+///   depends on is only proven within a single engine timebase — the
+///   one-clock promote changed how master-clock/PPU/CPU phase advances
+///   internally, so a v1-recorded movie's *exact* framebuffer/audio replay
+///   on the v2.0.0-line engine is unverified, not guaranteed. Do NOT
+///   attempt timeline transcoding (re-deriving a v2-native recording from
+///   a v1 one) — that is out of scope; the honest move is surfacing the
+///   epoch, not silently promising equivalence. See
+///   [`recorded_before_v2_timebase`] for the check callers (TAS tooling,
+///   frontend movie-load UI) should use before relying on verify-replay.
+pub const MOVIE_FORMAT_VERSION: u16 = 2;
+
+/// Peek a `.rnm` blob's header to learn its recording epoch.
+///
+/// Checks whether it was recorded on a pre-v2.0.0-timebase build
+/// (`format_version < 2`), WITHOUT fully parsing the movie. Intended for
+/// tooling/UI that wants to warn before relying on the determinism
+/// (verify-replay) guarantee across the v2.0.0 engine-timebase boundary —
+/// see [`MOVIE_FORMAT_VERSION`]'s v2 doc.
+///
+/// Playback itself is unaffected: [`Movie::deserialize`] still accepts and
+/// plays any `format_version <= MOVIE_FORMAT_VERSION` movie as pure input
+/// replay; this function exists only to let a caller decide whether to
+/// additionally warn that the bit-identical guarantee is unverified for a
+/// movie recorded across the boundary.
+///
+/// # Errors
+///
+/// Returns [`MovieError::HeaderTruncated`] or [`MovieError::BadMagic`] if
+/// the blob doesn't even have a valid movie header.
+pub fn recorded_before_v2_timebase(bytes: &[u8]) -> Result<bool, MovieError> {
+    const MIN_LEN: usize = 8 + 2;
+    if bytes.len() < MIN_LEN {
+        return Err(MovieError::HeaderTruncated {
+            expected: MIN_LEN,
+            got: bytes.len(),
+        });
+    }
+    let mut magic = [0u8; 8];
+    magic.copy_from_slice(&bytes[..8]);
+    if &magic != MOVIE_MAGIC {
+        return Err(MovieError::BadMagic { got: magic });
+    }
+    let format_version = u16::from_le_bytes([bytes[8], bytes[9]]);
+    Ok(format_version < 2)
+}
 
 /// Bytes stored per recorded frame: player 1, player 2, and a reserved
 /// expansion-port byte (always `0` in v1).
@@ -872,5 +924,40 @@ mod tests {
         assert_eq!(p1, (Buttons::A | Buttons::RIGHT).bits());
         assert_eq!(p2, (Buttons::B | Buttons::START).bits());
         assert_eq!(bytes[51], 0, "expansion byte reserved/zero");
+    }
+
+    #[test]
+    fn recorded_before_v2_timebase_flags_pre_promote_movies() {
+        // ADR 0028: a freshly-serialized movie carries the current
+        // MOVIE_FORMAT_VERSION (>= 2) and must NOT be flagged.
+        let movie = Movie {
+            region: Region::Ntsc,
+            rom_sha256: [0; 32],
+            start: StartPoint::PowerOn,
+            frames: vec![],
+            rerecord_count: 0,
+        };
+        let bytes = movie.serialize();
+        assert!(matches!(recorded_before_v2_timebase(&bytes), Ok(false)));
+
+        // A v1-tagged blob (format_version = 1, the only value that existed
+        // pre-v2.0.0) must be flagged, even though it still parses fine.
+        let mut v1_bytes = bytes;
+        v1_bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
+        assert!(matches!(recorded_before_v2_timebase(&v1_bytes), Ok(true)));
+        assert!(
+            Movie::deserialize(&v1_bytes).is_ok(),
+            "a v1-tagged movie must still parse and play as input"
+        );
+
+        // Malformed input still surfaces the normal header errors.
+        assert!(matches!(
+            recorded_before_v2_timebase(&[0u8; 4]),
+            Err(MovieError::HeaderTruncated { .. })
+        ));
+        assert!(matches!(
+            recorded_before_v2_timebase(&[0xFFu8; 10]),
+            Err(MovieError::BadMagic { .. })
+        ));
     }
 }

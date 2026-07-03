@@ -2316,6 +2316,18 @@ impl App {
                 return;
             }
         };
+        // ADR 0028: a movie recorded before the v2.0.0 one-clock timebase
+        // promote still plays as pure input replay, but its bit-identical
+        // reproduction guarantee is unverified across the engine boundary.
+        if rustynes_core::recorded_before_v2_timebase(&bytes).is_ok_and(|v| v) {
+            eprintln!(
+                "rustynes: warning: {} was recorded on a pre-v2.0.0 build \
+                 -- input replay proceeds, but exact framebuffer/audio \
+                 reproduction is not guaranteed across the engine-timebase \
+                 boundary (see ADR 0028)",
+                path.display()
+            );
+        }
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
         let Some(nes) = emu.nes.as_mut() else {
@@ -3162,6 +3174,15 @@ impl App {
                 return;
             }
         };
+        // ADR 0028: see the desktop movie-load path's identical warning.
+        if rustynes_core::recorded_before_v2_timebase(bytes).is_ok_and(|v| v) {
+            crate::wasm_io::log(
+                "warning: this movie was recorded on a pre-v2.0.0 build -- \
+                 input replay proceeds, but exact framebuffer/audio \
+                 reproduction is not guaranteed across the engine-timebase \
+                 boundary (see ADR 0028)",
+            );
+        }
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
         let Some(nes) = emu.nes.as_mut() else {

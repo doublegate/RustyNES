@@ -2,7 +2,9 @@
 //!
 //! Per `CLAUDE.md` §Open questions: tagged-section per chip, version byte
 //! up front, best-effort cross-version compatibility. This module owns the
-//! version-1 schema for the CPU section.
+//! CPU section's schema, currently version 3 (ADR 0028) — see
+//! [`CPU_SNAPSHOT_VERSION`] for the full version history and the v2.0.0
+//! MAJOR-boundary rejection policy.
 //!
 //! The encoding is hand-rolled little-endian binary so this crate stays
 //! free of `serde` / `bincode` (and so `bitflags` doesn't need its
@@ -18,16 +20,28 @@ use crate::status::Status;
 /// Schema version for the CPU snapshot blob.
 ///
 /// - v1 (v0.9.0 ..): registers + interrupt latches + cycle bookkeeping.
-/// - v2 (W3-Stage-4 promotion, 2026-06-10): appends the R1 master-clock
+/// - v2 (W3-Stage-4 promotion, 2026-06-10): appends the master-clock
 ///   substrate pipeline — `master_clock` (u64) + the `mc_need_nmi` /
 ///   `mc_prev_need_nmi` / `mc_run_irq` / `mc_prev_run_irq` /
-///   `mc_prev_nmi_line` latches (1 byte each). Written unconditionally
-///   (zeros when `mc-r1-substrate` is off) so the layout is identical
-///   across feature builds. v1 blobs upconvert best-effort: under
-///   `mc-r1-substrate`, `master_clock` is re-derived as `cycles * 12`
-///   (the NTSC master-clock rate; preserves the load-bearing phase
-///   parity) and the pipeline latches default to quiescent `false`.
-pub const CPU_SNAPSHOT_VERSION: u8 = 2;
+///   `mc_prev_nmi_line` latches (1 byte each).
+/// - **v3 (v2.0.0 "Timebase" rc.1, ADR 0028)**: the byte layout is
+///   IDENTICAL to v2 — `cycles` and `master_clock` are both still
+///   written, unchanged. What changes is the *guarantee*: as of the
+///   beta.1–beta.4 one-clock promote, `cycles` is no longer an
+///   independently-tracked counter (it is assigned from
+///   `Bus::cycle_count()` at every `start_cycle`, see `cpu.rs`), so a v3
+///   blob's `cycles`/`master_clock` pair is guaranteed internally
+///   consistent by construction in a way a pre-promote v1/v2 blob was
+///   only *coincidentally* consistent (kept in sync by parallel
+///   increments, not derivation). The version bump exists to make that
+///   distinction an explicit, checked contract rather than an implicit
+///   assumption — see ADR 0028 for the full MAJOR-boundary decision.
+///   v1/v2 blobs are no longer upconverted; [`Cpu::restore`] rejects any
+///   version other than [`CPU_SNAPSHOT_VERSION`] (the caller-side
+///   `Nes::restore_inner` already enforced this via a strict per-section
+///   equality check before this bump — the upconvert path removed here
+///   was dead code, unreachable through the only real caller).
+pub const CPU_SNAPSHOT_VERSION: u8 = 3;
 
 /// Encoded byte length of the version-1 CPU snapshot.
 ///
@@ -106,26 +120,29 @@ impl Cpu {
     /// Returns [`CpuSnapshotError`] if the blob is the wrong length or
     /// carries an unrecognized version.
     pub fn restore(&mut self, data: &[u8]) -> Result<(), CpuSnapshotError> {
-        if data.is_empty() {
+        // Check the full expected length FIRST: a short-and-garbled blob
+        // (e.g. truncated mid-write) is a truncation error, not a version
+        // error, even if the one byte that happens to be present doesn't
+        // match CPU_SNAPSHOT_VERSION -- checking length first makes that
+        // the error callers see, which is the more useful diagnosis.
+        if data.len() != ENCODED_LEN {
             return Err(CpuSnapshotError::Truncated {
                 expected: ENCODED_LEN,
-                got: 0,
+                got: data.len(),
             });
         }
         let version = data[0];
-        if version != CPU_SNAPSHOT_VERSION && version != 1 {
+        // ADR 0028 (v2.0.0 rc.1): the v1/v2 upconvert path is retired. The
+        // ONLY real caller, `Nes::restore_inner`, already rejects a
+        // non-matching CPU section version via a strict equality check
+        // before this function is ever reached — so accepting v1 here was
+        // dead code. `Cpu::restore` now enforces the same strict-equality
+        // contract directly, matching ADR 0003's MAJOR-boundary policy
+        // ("no migration code paths are required... a v2.x line ... will
+        // define explicit migration" — the explicit decision here IS
+        // rejection, not a data transform).
+        if version != CPU_SNAPSHOT_VERSION {
             return Err(CpuSnapshotError::UnsupportedVersion(version));
-        }
-        let expected = if version >= 2 {
-            ENCODED_LEN
-        } else {
-            ENCODED_LEN_V1
-        };
-        if data.len() != expected {
-            return Err(CpuSnapshotError::Truncated {
-                expected,
-                got: data.len(),
-            });
         }
         let mut p = 1;
         self.a = data[p];
@@ -164,32 +181,16 @@ impl Cpu {
         p += 1;
         self.skip_irq_sample = data[p] != 0;
         p += 1;
-        // v2 (W3-Stage-4): the R1 master-clock substrate pipeline; v1 blobs
-        // upconvert best-effort (master_clock re-derived from `cycles`, the
-        // pipeline latches quiescent). When `mc-r1-substrate` is off the v2
-        // bytes are consumed and discarded.
-        if version >= 2 {
-            {
-                let mut mc = [0u8; 8];
-                mc.copy_from_slice(&data[p..p + 8]);
-                self.master_clock = u64::from_le_bytes(mc);
-                self.mc_need_nmi = data[p + 8] != 0;
-                self.mc_prev_need_nmi = data[p + 9] != 0;
-                self.mc_run_irq = data[p + 10] != 0;
-                self.mc_prev_run_irq = data[p + 11] != 0;
-                self.mc_prev_nmi_line = data[p + 12] != 0;
-            }
-        } else {
-            {
-                self.master_clock = self.cycles.wrapping_mul(12);
-                self.mc_need_nmi = false;
-                self.mc_prev_need_nmi = false;
-                self.mc_run_irq = false;
-                self.mc_prev_run_irq = false;
-                self.mc_prev_nmi_line = false;
-            }
-        }
-        let _ = p;
+        // The master-clock substrate pipeline (unchanged layout since v2 —
+        // see the CPU_SNAPSHOT_VERSION doc for what v3 actually changes).
+        let mut mc = [0u8; 8];
+        mc.copy_from_slice(&data[p..p + 8]);
+        self.master_clock = u64::from_le_bytes(mc);
+        self.mc_need_nmi = data[p + 8] != 0;
+        self.mc_prev_need_nmi = data[p + 9] != 0;
+        self.mc_run_irq = data[p + 10] != 0;
+        self.mc_prev_run_irq = data[p + 11] != 0;
+        self.mc_prev_nmi_line = data[p + 12] != 0;
         Ok(())
     }
 }
@@ -197,6 +198,7 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn snapshot_round_trip() {
@@ -236,6 +238,24 @@ mod tests {
         let mut cpu = Cpu::new();
         let err = cpu.restore(&[0xFF; ENCODED_LEN]).unwrap_err();
         assert!(matches!(err, CpuSnapshotError::UnsupportedVersion(0xFF)));
+    }
+
+    #[test]
+    fn snapshot_rejects_pre_v3_versions() {
+        // ADR 0028: the v2.0.0 MAJOR-boundary decision is clean rejection,
+        // not an upconvert. A same-length blob tagged v1 or v2 (the two
+        // schema versions that predate the one-clock promote) must be
+        // rejected, not silently accepted as if it were v3.
+        let mut cpu = Cpu::new();
+        for old_version in [1u8, 2u8] {
+            let mut blob = vec![old_version; ENCODED_LEN];
+            blob[0] = old_version;
+            let err = cpu.restore(&blob).unwrap_err();
+            assert!(
+                matches!(err, CpuSnapshotError::UnsupportedVersion(v) if v == old_version),
+                "version {old_version} must be rejected, not upconverted"
+            );
+        }
     }
 
     #[test]
