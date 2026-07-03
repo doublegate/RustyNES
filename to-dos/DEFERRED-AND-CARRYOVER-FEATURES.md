@@ -521,8 +521,12 @@ account, or a hosted deploy (all also listed under their theme above).
   fetch), plus a bugfix moving `"$2002 Flag Timing"` off a page boundary
   (2026-06-26) that was itself causing a false failure, and an error-code
   cleanup in `"Sprites On Scanline 0"` (2026-05-26). Re-syncing means:
-  re-extracting `SOURCE_CATALOG.tsv` from the current `AccuracyCoin.asm`
-  `Suite_*`/`table` blocks (recipe in `docs/testing-strategy.md`), re-building
+  re-extracting `SOURCE_CATALOG.tsv` from the current `AccuracyCoin.asm` by
+  walking each `Suite_*`/`table` block and emitting `(suite, test-name,
+  ram-addr)` triples (`docs/testing-strategy.md` does NOT currently document
+  this recipe — the `tests/roms/AccuracyCoin/README.md` pointer to it is
+  itself stale and should be corrected in the same pass, e.g. to point at the
+  original extraction session's methodology), re-building
   the `.nes` ROM, adding harness coverage for the 2 new tests, and
   re-verifying RustyNES's pass rate against the corrected `$2002 Flag Timing`
   placement (a prior false failure upstream may have been silently
