@@ -1,6 +1,27 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v1.10.0 "Arcade"** (2026-07-01) — the native **Libretro core**:
+> **Current release: v2.0.0 "Timebase"** (2026-07-03) — the **one-clock,
+> every-cycle-bus-access scheduler rewrite** (ADR 0002 / ADR 0029): the old
+> five-counter, dot-lockstep model (`tick_one_dot`) is replaced by a single
+> canonical cycle counter, every CPU cycle a real bus access (the historical
+> 9,795-cycle busless surface → 0), and a split-around-the-access
+> `start_cycle`/`end_cycle` PPU catch-up mirroring Mesen2's structure. This is
+> RustyNES's designated **MAJOR-boundary release** (ADR 0003): `.rns` save-state
+> and `.rnm` TAS-movie format epochs bump (ADR 0028) — a pre-v2.0.0 slot file now
+> fails to load with a clear error instead of silently misinterpreting stale
+> bytes. Landed across five betas + rc.1 (PRs #217-223): beta.1 the counter
+> collapse, beta.2 every-cycle-bus-access (the STOP-OR-GO gate), beta.3 the
+> cycle-accurate reset (closing residual R4), beta.4 THE PROMOTE (the feature
+> flag deleted — one-clock is now the only path), beta.5 full Vs. `DualSystem`
+> dual-console support (core-and-harness-only; the frontend does not yet consume
+> it), and rc.1 the format break + the canonical architecture ADR. The R1/R2 MMC3
+> IRQ-timing residual was investigated under a maintainer-authorized
+> bounded-effort campaign and is **by-design-deferred beyond v2.0.0** with a
+> mechanism-level finding recorded in ADR 0002 (differential-interval invariance
+> to batch re-phasing) — not silently dropped. **AccuracyCoin holds 100%
+> (139/139)** throughout every beta and on the final cut; mapper breadth stays
+> frozen at **172 families** for this cut. The
+> preceding **v1.10.0 "Arcade"** (2026-07-01) — the native **Libretro core**:
 > `crates/rustynes-libretro` builds the `rustynes_libretro` shared library (`.so` /
 > `.dylib` / `.dll` by platform, per the crate `Makefile`) that plugs the
 > byte-identical cycle-accurate engine into **RetroArch** — allocation-free
@@ -155,15 +176,24 @@
 > output widening) · 0021 (File System Access fallback) · 0022 (settings share-link) ·
 > 0023 (i18n string-catalog).
 
-**Current release: v1.10.0 "Arcade"** (the native **Libretro core** —
+**Current release: v2.0.0 "Timebase"** (the one-clock, every-cycle-bus-access
+scheduler rewrite — ADR 0002 / ADR 0029: a single canonical cycle counter, every
+CPU cycle a real bus access, split-around-the-access PPU catch-up, replacing the
+old five-counter dot-lockstep model; RustyNES's designated MAJOR-boundary release,
+so `.rns` save-state and `.rnm` movie format epochs bump per ADR 0028; landed
+across five betas + rc.1, PRs #217-223, with Vs. `DualSystem` dual-console support
+added in beta.5; the R1/R2 MMC3 IRQ-timing residual is by-design-deferred beyond
+this release per ADR 0002's mechanism-level finding; AccuracyCoin 139/139 held
+throughout, mapper breadth frozen at 172 families), on the cycle-accurate v1.0.0
+production core. The preceding **v1.10.0 "Arcade"** was the native **Libretro
+core** release —
 `crates/rustynes-libretro` builds the `rustynes_libretro` shared library (`.so` /
 `.dylib` / `.dll` by platform) that plugs the byte-identical engine into RetroArch:
 XRGB8888 swizzled video, batched `i16` stereo audio with dynamic sync, WRAM/SRAM
 memory maps for RetroAchievements, deterministic `retro_serialize` save-states /
 rollback, and a `Makefile` cross-compile layer staged for upstream `libretro-super` —
 plus the egui 0.34.3→0.35.0 dependency-tier refresh; additive/host-only, core
-byte-identical, AccuracyCoin 139/139), on the cycle-accurate v1.0.0 production core.
-The preceding **v1.9.9 "Workshop"** was the iOS creator / power-tools release + the
+byte-identical, AccuracyCoin 139/139; the preceding **v1.9.9 "Workshop"** was the iOS creator / power-tools release + the
 final pre-Timebase readiness gate — a Cheats editor, a FOSS-gated read-only debugger
 inspector, a touch TAStudio piano-roll, foreign movie import, host-side audio depth,
 and symbol maps, framed in the blockquote above (additive bridge forwarding fns only);
@@ -345,11 +375,21 @@ v1.0.0 core baseline:
 - **Vs. System / PlayChoice-10** — 2C03/2C04/2C05 hardware RGB palettes, DIP
   switches, coin/service inputs. **Vs. DualSystem** (two-CPU/two-PPU arcade
   boards) is *detected* — from both the SHA-256 game DB and, as of v1.3.0 (D2),
-  the NES 2.0 byte-13 high nibble (Vs. hardware type 5/6) — and surfaces a clear
-  "DualSystem not yet emulated" note instead of a black screen. The dual-console
-  *emulation* (5-cycle soft-lockstep + dual framebuffer) is a **documented v2.0
-  deferral**: there is no committable DualSystem test-ROM oracle, so correctness
-  can't be regression-gated (see `docs/audit/vs-dualsystem-design-2026-06-11.md`).
+  the NES 2.0 byte-13 high nibble (Vs. hardware type 5/6) — and, as of **v2.0.0
+  beta.5**, genuinely *emulated* at the core level: a new `Emu::Dual` front door
+  (`VsDualSystem`, `rustynes-core`) owns two complete `Nes` instances sharing a
+  2 KiB WRAM mailbox and a cross-wired `$4016` bit-1/IRQ line, using a MAME
+  `.share("nvram")`-style level-driven convergence model. **Vs. Balloon Fight
+  boots to a correct attract-mode screen** on both consoles against the
+  maintainer's own legitimately-owned MAME romset; Vs. Wrecking Crew is
+  inconclusive (cross-wiring active, no confirmed title screen); Vs. Tennis and
+  Vs. Mahjong remain infrastructure-only (no local sub-CPU dump). **This is
+  core-and-test-harness-only** — `rustynes-frontend` still constructs `Nes`
+  directly and does not yet consume `Emu::Dual`, so the feature is unreachable
+  from the shipped desktop/mobile UI pending a follow-up release that wires dual
+  -console rendering + 4-port input routing (see `docs/audit/vs-dualsystem-design-2026-06-11.md`
+  for the original design and `docs/audit/vs-dualsystem-combined-dumps-2026-07-02.md`
+  for the boot-verification campaign).
 - **Rollback netplay** — GGPO-style 2-4 player over UDP (native) and WebRTC
   (browser), live-verified two-instance sessions. As of v1.3.0 (Workstream G1)
   the netplay panel surfaces a read-only **desync-diagnostics** section (a
@@ -1044,26 +1084,33 @@ historical anchors documenting *how* each capability was built; they are **not**
 RustyNES releases of their own. When RustyNES makes a release it does so under its
 own semantic-version line starting at **v1.0.0**.
 
-> **Two distinct "v2.0"s — do not conflate them.** The **engine-lineage v2.0**
+> **Two distinct "v2.0"s — do not conflate them (both now shipped, but at
+> different times, for different reasons).** The **engine-lineage v2.0**
 > master-clock work (which took AccuracyCoin to **100.00%**) is *upstream engine
-> history* and **already shipped, as the v1.0.0 production core** — it is today's
-> only scheduler. The forward **RustyNES v2.0.0 "Timebase"** in the roadmap is a
-> *different, still-future* milestone: NOT "add a master clock" but the
-> **one-clock + every-cycle-bus-access collapse** (Mesen2-style fractional master
-> clock with a φ1/φ2 access split), the hard-tier accuracy-residual closure, Vs.
-> DualSystem emulation, and the breaking save-state / cross-version changes that it
-> entails (ADR 0002). The full forward path is tracked in `to-dos/ROADMAP.md` +
-> `to-dos/plans/`: v1.7.0 "Forge" shipped → the **v1.8.x "Android"** sideload line
+> history* that shipped as the **v1.0.0 production core** (2026-06-13) — the
+> dot-lockstep scheduler that was the *only* scheduler through v1.10.0. The
+> **RustyNES v2.0.0 "Timebase"** release (2026-07-03, the current release) is a
+> *different* milestone that *replaces* that dot-lockstep scheduler outright: the
+> **one-clock + every-cycle-bus-access collapse** (a single canonical cycle
+> counter + a split-around-the-access `start_cycle`/`end_cycle` PPU catch-up,
+> mirroring Mesen2's structure), full Vs. `DualSystem` dual-console emulation, and
+> the breaking save-state / cross-version format changes that it entailed
+> (ADR 0002 / ADR 0028 / ADR 0029). The R1/R2 hard-tier IRQ-timing residual was
+> investigated under a bounded-effort campaign and is by-design-deferred beyond
+> this release, not closed. The full path that got here is tracked in
+> `to-dos/ROADMAP.md` + `to-dos/plans/`: v1.7.0 "Forge" shipped → the
+> **v1.8.x "Android"** sideload line
 > (through **v1.8.9 "Backlog"**) → the **v1.9.0 → v1.9.9**
 > interim-TestFlight iOS train (mirroring the Android v1.8.0–v1.8.9 arc:
 > **v1.9.0 "Sunrise"** foundation → the wgpu→Metal renderer → connectivity +
 > scripting → **v1.9.8 "Horizon"** store-readiness + the §4.7 compliance pass →
 > **v1.9.9 "Workshop"** creator tools; ADRs 0026 + 0027; plan
 > `to-dos/plans/v1.9.x-ios-train-plan.md`) →
-> **v1.10.0 "Arcade"** (the native Libretro / RetroArch core, the current release) →
-> **v2.0.0 "Timebase"** → then the
+> **v1.10.0 "Arcade"** (the native Libretro / RetroArch core) →
+> **v2.0.0 "Timebase"** (the current release) → now the
 > **mobile-finalization train** (maintainer replan 2026-06-23: both app-store
-> launches held to post-2.0.0) — **v2.0.1–v2.0.4** final Android, **v2.0.5–v2.0.8**
+> launches held to post-2.0.0, now unblocked) — **v2.0.1–v2.0.4** final Android,
+> **v2.0.5–v2.0.8**
 > iOS finalization, **v2.0.9** ready-for-release checks for both apps, and **v2.1.0**
 > the **JOINT mobile launch** (Google Play + Apple App Store + F-Droid). The
 > monetization model is ad-supported with a **$3.99** premium unlock (AppLovin MAX +

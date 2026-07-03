@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v1.10.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.0.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(139%2F139)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -93,6 +93,8 @@ platform for NES emulation.
 | **Android App** *(v1.8.x)* | A complete native Android app on the byte-identical core — a multi-touch + hardware-controller (P1–P4) UI, wgpu `SurfaceView` rendering, save-states, Lua, RetroAchievements, direct-IP / CGNAT-TURN netplay, and a box-art ROM library (GitHub-sideload now; Google Play at v2.1.0) |
 | **iOS / iPadOS App** *(v1.9.x)* | A complete native iOS app on the byte-identical core — a native SwiftUI shell over Metal (`wgpu`), multi-touch + GameController support, iCloud save-state sync, room-code rollback netplay, RetroAchievements, and the full TAStudio power-user suite (TestFlight now; App Store at v2.1.0) |
 | **Libretro Core** *(v1.10.0)* | A complete, cycle-accurate Libretro core (the `rustynes_libretro` shared library — `.so` / `.dylib` / `.dll` by platform) integrating RustyNES seamlessly into RetroArch with RetroAchievements, dynamic audio sync, and deterministic rollback/save-state support |
+| **One-Clock Timebase** *(v2.0.0)* | A single canonical cycle counter with every CPU cycle a real bus access and a split-around-the-access PPU catch-up, replacing the five-counter dot-lockstep scheduler; the release's designated breaking-behavior change (ADR 0002 / ADR 0029) |
+| **Vs. DualSystem** *(v2.0.0)* | Core-level emulation of the two-CPU/two-PPU Vs. arcade cabinet boards (Tennis, Mahjong, Wrecking Crew, Balloon Fight) via a shared-WRAM + cross-wired `$4016`/IRQ convergence model; core-and-harness-only, frontend wiring deferred |
 | **Pure Rust**          | `winit` + `wgpu` + `cpal` + `egui` frontend; safe `no_std + alloc` chip stack                 |
 
 <p align="center">
@@ -698,21 +700,28 @@ workspace API docs (rustdoc) at
 
 ## Version History
 
-RustyNES's current release is **v1.10.0 "Arcade"** — the native **Libretro core**
-(`rustynes-libretro`) that plugs the byte-identical cycle-accurate engine into
-RetroArch, capping the **v1.9.0 "Sunrise"** iOS platform line, the
-writable-and-programmable **v1.7.0 "Forge"** desktop core, and the cycle-accurate
-**v1.0.0** production engine. Every release since v1.0.0 has been additive and
-off-by-default, so the shipped / native / `no_std` / wasm builds stay byte-identical
-and **AccuracyCoin holds 100% (139/139)** throughout. **v2.0.0 "Timebase"** is in
-development. The forward path — through **v2.0.0** to the joint **v2.1.0** mobile
-store launch — is in [Roadmap](#roadmap) below; see [`CHANGELOG.md`](CHANGELOG.md)
-for the full per-version detail behind every line in the table.
+RustyNES's current release is **v2.0.0 "Timebase"** — a rewrite of the
+scheduler substrate to a single canonical cycle counter with every-cycle bus
+access and a split-around-the-access PPU catch-up, replacing the five-counter
+dot-lockstep model that powered every release from v1.0.0 through v1.10.0. This
+is RustyNES's designated MAJOR-boundary release: save-state and TAS-movie
+format epochs bump (a pre-v2.0.0 `.rns` slot now fails to load cleanly rather
+than silently misreading stale bytes), and full Vs. `DualSystem` dual-console
+support lands at the core level. **AccuracyCoin holds 100% (139/139)**
+throughout every beta and on the final cut; mapper breadth stays at 172
+families. It caps the native **Libretro core** (**v1.10.0 "Arcade"**), the
+**v1.9.0 "Sunrise"** iOS platform line, the writable-and-programmable
+**v1.7.0 "Forge"** desktop core, and the cycle-accurate **v1.0.0** production
+engine. The forward path — the **v2.0.1 → v2.1.0** mobile-finalization train
+that launches Android + iOS jointly — is in [Roadmap](#roadmap) below; see
+[`CHANGELOG.md`](CHANGELOG.md) for the full per-version detail behind every
+line in the table.
 
 The road so far:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
+| **v2.0.0** | "Timebase" — One-clock, every-cycle-bus-access scheduler rewrite (replaces the five-counter dot-lockstep model); Vs. `DualSystem` dual-console support; breaking save-state/movie format bump (ADR 0028); AccuracyCoin 139/139. |
 | **v1.10.0** | "Arcade" — Native Libretro core (`rustynes_libretro` for RetroArch: RetroAchievements memory maps, dynamic audio sync, deterministic rollback save-states) + the egui 0.35 dependency tier refresh. |
 | **v1.9.9** | "Workshop" — iOS creator/power-tools (TAStudio, Cheats, foreign movie import, audio depth, read-only debugger). |
 | **v1.9.8** | "Horizon" — iOS store-readiness: accessibility, EN/ES i18n, ReplayKit capture, Game Center, and the dormant StoreKit `foss`/App-Store seam. |
@@ -761,23 +770,30 @@ The road so far:
 ### Roadmap
 
 With the **v1.7.0 "Forge"** creator-tooling line, the **v1.8.x "Android"** platform line,
-the **v1.9.x "Sunrise"** iOS platform line (through **v1.9.9 "Workshop"**), and the
-**v1.10.0 "Arcade"** Libretro core completed, the non-architectural backlog is fully consumed: emulation accuracy is at or beyond the
-Mesen2 / GeraNES bar, the TAS-authoring and debugger surfaces are now both *writable*
-and *programmable*, mapper breadth reaches **172 families**, and the emulator now runs as
-native Android, iOS, WebAssembly, and Libretro apps on the byte-identical core.
+the **v1.9.x "Sunrise"** iOS platform line (through **v1.9.9 "Workshop"**), the
+**v1.10.0 "Arcade"** Libretro core, and now **v2.0.0 "Timebase"** all completed, the
+scheduler substrate has been rewritten to the one-clock, every-cycle-bus-access model
+(ADR 0002 / ADR 0029) — the release's designated breaking-behavior change, with the
+`.rns` save-state and `.rnm` movie format epochs bumped accordingly (ADR 0028). Emulation
+accuracy is at or beyond the Mesen2 / GeraNES bar, the TAS-authoring and debugger
+surfaces are both *writable* and *programmable*, mapper breadth holds at **172 families**,
+Vs. `DualSystem` dual-console arcade boards are emulated at the core level, and the
+emulator runs as native Android, iOS, WebAssembly, and Libretro apps on the byte-identical
+core.
 
 The forward arc is:
 
-- **v2.0.0 "Timebase"** *(current dev)* — the master-clock (one-clock + every-cycle-bus-access)
-  fractional-timebase refactor (ADR 0002) that closes the documented hard-tier accuracy
-  residuals and adds Vs. DualSystem. The one release expected to break byte-identity and
-  save-state compatibility.
-- **v2.1.0** — the **joint mobile store launch** (Google Play + Apple App Store + F-Droid),
-  with the ad-supported-freemium monetization (AppLovin MAX + RevenueCat, a one-time
-  **$3.99** unlock) and the `foss` / `play` flavor split (ADR 0025) going live. Both
-  app-store launches are deferred to here so the apps ship on the post-timebase v2.0.0 core
-  rather than re-releasing after the breaking change.
+- **v2.0.1 → v2.0.9** — the mobile-finalization train: final Android additions re-ported
+  onto the v2.0.0 core (**v2.0.1–v2.0.4**), the same for iOS (**v2.0.5–v2.0.8**), then a
+  joint ready-for-release verification pass (**v2.0.9**). Both apps were deliberately held
+  on the pre-Timebase core until v2.0.0 landed, so they can finalize and launch together.
+- **v2.1.0** — the **joint mobile store launch** (Google Play + Apple App Store + F-Droid +
+  AltStore PAL), with the ad-supported-freemium monetization (AppLovin MAX + RevenueCat, a
+  one-time **$3.99** unlock) and the `foss` / `play` flavor split (ADR 0025) going live.
+- **Beyond v2.1.0** — wiring `rustynes-frontend` to consume the new `Emu::Dual` front door
+  (dual-console rendering + 4-port input routing) so Vs. DualSystem is reachable from the
+  shipped UI, plus the falling-edge `gap >= 3` axis left open by the R1/R2 bounded-effort
+  campaign (ADR 0002).
 
 Browser RetroAchievements has its buildable scaffolding in v1.5.0 (ADR 0015); finishing it
 (deploy the auth proxy, live-browser verify) is a near-term carryover. The longer forward
@@ -872,7 +888,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {1.10.0},
+  version = {2.0.0},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (139/139), nestest 0-diff; 172 mapper families,
