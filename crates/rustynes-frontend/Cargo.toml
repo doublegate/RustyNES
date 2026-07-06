@@ -450,4 +450,4 @@ tempfile = "3"
 # a `let` array) fails CI instead of aborting the app when the user toggles the
 # NTSC filter. Pinned to wgpu 29's naga (29.x) so the validation matches what
 # ships AND the two don't duplicate in the lock.
-naga = { version = "29", features = ["wgsl-in"] }
+naga = { version = "30", features = ["wgsl-in"] }
