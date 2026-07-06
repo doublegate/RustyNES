@@ -43,7 +43,7 @@ android_logger = "0.15"
 # `ANativeWindow` with an 8:7-PAR letterbox blit, off the UI/Bitmap thread. Same
 # wgpu major the desktop frontend uses (29); raw-window-handle 0.6 builds the
 # `AndroidNdk` window handle wgpu needs.
-wgpu = "29"
+wgpu = "30"
 raw-window-handle = "0.6"
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }

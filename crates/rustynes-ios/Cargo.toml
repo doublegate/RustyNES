@@ -42,7 +42,7 @@ log = "0.4"
 # by a lock-free ring. Same wgpu major (29) + cpal (0.18) the desktop frontend
 # uses; `raw-window-handle` 0.6 builds the `UiKit` handle wgpu needs.
 [target.'cfg(target_os = "ios")'.dependencies]
-wgpu = "29"
+wgpu = "30"
 raw-window-handle = "0.6"
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }

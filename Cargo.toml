@@ -103,7 +103,7 @@ winit = "0.30"
 # v1.3.0 Sprint 1.4 — `webgl` feature enables the WebGL2 fallback on
 # wasm32 (for browsers without WebGPU: Linux Firefox, pre-A12 iOS).
 # No effect on native builds. WebGPU-primary is on by default.
-wgpu = { version = "29", features = ["webgl"] }
+wgpu = { version = "30", features = ["webgl"] }
 cpal = "0.18"
 egui = "0.35"
 egui-wgpu = "0.35"
