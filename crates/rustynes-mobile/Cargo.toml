@@ -63,7 +63,7 @@ thiserror.workspace = true
 # UniFFI generates the foreign-language bindings from the `#[uniffi::export]`
 # surface (proc-macro mode — no UDL file). The `cli` feature backs the
 # `uniffi-bindgen` binary used by the Gradle/Xcode build to emit Kotlin/Swift.
-uniffi = { version = "0.31", features = ["cli"] }
+uniffi = { version = "0.32", features = ["cli"] }
 # v1.8.5 — accept still-compressed `.zip` ROMs (extract the first NES entry), the
 # same convenience the desktop has. `deflate` is the only codec real NES zips use;
 # default features off keeps bzip2/zstd/aes out of the mobile binary.
