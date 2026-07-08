@@ -4248,7 +4248,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-android"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "android-activity",
  "android_logger",
@@ -4266,7 +4266,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-apu"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4279,7 +4279,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cheevos"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "cc",
  "ureq",
@@ -4287,7 +4287,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4304,7 +4304,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cpu"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4315,7 +4315,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-frontend"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anstyle",
  "arboard",
@@ -4367,11 +4367,11 @@ dependencies = [
 
 [[package]]
 name = "rustynes-gfx-shaders"
-version = "2.0.0"
+version = "2.0.1"
 
 [[package]]
 name = "rustynes-hdpack"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "lewton",
  "png",
@@ -4382,7 +4382,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-ios"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bytemuck",
  "cpal",
@@ -4396,7 +4396,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-libretro"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "libc",
  "rust-libretro",
@@ -4405,7 +4405,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mappers"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4417,7 +4417,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mobile"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "rustynes-core",
  "rustynes-hdpack",
@@ -4432,14 +4432,14 @@ dependencies = [
 
 [[package]]
 name = "rustynes-monetization"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "uniffi",
 ]
 
 [[package]]
 name = "rustynes-netplay"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "futures-util",
  "js-sys",
@@ -4455,7 +4455,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-ppu"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -4466,14 +4466,14 @@ dependencies = [
 
 [[package]]
 name = "rustynes-ra"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "rustynes-cheevos",
 ]
 
 [[package]]
 name = "rustynes-script"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "mlua",
  "piccolo",
@@ -4484,7 +4484,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-test-harness"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "insta",
  "png",

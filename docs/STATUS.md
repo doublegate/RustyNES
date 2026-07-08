@@ -1,9 +1,15 @@
 # RustyNES — Project Status Matrix
 
-> **In progress (unreleased): v2.0.1 — Android core re-port + `foss`/`play` split start.**
-> The first release of the Android mobile-finalization re-port train onto the v2.0.0
-> "Timebase" core (`to-dos/ROADMAP.md`). Host-shell-only, so the deterministic core is
-> byte-identical and host CI accuracy is unchanged (**AccuracyCoin 139/141**). Landed:
+> **Current release: v2.0.1 "Harbor"** (2026-07-08) — the first release of the v2.0.x
+> mobile-finalization train onto the v2.0.0 "Timebase" core (`to-dos/ROADMAP.md`),
+> bundling the Android core re-port + `foss`/`play` split scaffolding, the **AccuracyCoin
+> oracle re-sync** (catalog 144→146 rows / 139→141 assigned; measured honestly at
+> **139/141, 98.58%**), the **CI cost optimization** (heavy suite gated to `release/*` +
+> a weekly cron), the **dependency sweep** (uniffi 0.32 / mlua 0.12 / wgpu-naga 29.0.4 /
+> cc 1.2.66; wgpu 30 deferred on the egui 0.35 pin), and the **`mc-r1-dmc-abort-probe`
+> housekeeping removal**. Every core change is behaviour-neutral, so the deterministic
+> core is byte-identical to v2.0.0 and host CI accuracy is unchanged. The Android re-port
+> is host-shell-only. Landed:
 > the Android `versionCode`/`versionName` → `20001`/`2.0.1`; a **movie-epoch warning on
 > the mobile bridge** (`NesController::movie_play` peeks `recorded_before_v2_timebase`
 > and queues a drainable warning via the new `drain_warnings`, mirroring desktop/wasm —
@@ -18,7 +24,7 @@
 > See `docs/android.md` + `to-dos/v1.8.x-on-device-verification.md`. android.yml CI (the
 > NDK cross-build + both-flavor Gradle package) is the compile gate for this change.
 >
-> **Current release: v2.0.0 "Timebase"** (2026-07-03) — the **one-clock,
+> **The preceding release: v2.0.0 "Timebase"** (2026-07-03) — the **one-clock,
 > every-cycle-bus-access scheduler rewrite** (ADR 0002 / ADR 0029): the old
 > five-counter, dot-lockstep model (`tick_one_dot`) is replaced by a single
 > canonical cycle counter, every CPU cycle a real bus access (the historical

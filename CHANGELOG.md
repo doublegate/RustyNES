@@ -15,71 +15,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Android — v2.0.1 core re-port onto Timebase + the start of the `foss`/`play` split
+*Nothing yet — the next planned milestone is **v2.0.2**, continuing the v2.0.x
+"Harbor" mobile-finalization train (see `to-dos/ROADMAP.md`).*
 
-- **Android re-ported onto the v2.0.0 "Timebase" core.** The `versionCode`/`versionName`
-  bump to `20001` / `2.0.1` cuts the first release of the Android mobile-finalization
-  re-port train (see `to-dos/ROADMAP.md`). The deterministic chip stack is byte-identical,
-  so host CI accuracy is unchanged (**AccuracyCoin 139/141**).
-- **Movie-epoch warning on the mobile bridge (ADR 0028).** `rustynes-mobile`'s
-  `NesController::movie_play` now peeks `rustynes_core::recorded_before_v2_timebase` and, for
-  a pre-v2.0.0 `.rnm`, queues a drainable host warning (new `NesController::drain_warnings`)
-  — mirroring the desktop + wasm frontends. Input replay still proceeds, but the host can now
-  tell the user that exact framebuffer/audio reproduction is not guaranteed across the
-  engine-timebase boundary. A pre-v2.0.0 `.rns` restore already maps to a clean
-  `MobileError::SaveState` (no crash). Host-shell wiring only; the core is untouched.
-- **Structural start of the `foss` / `play` Android product-flavor split (ADR 0025).** Added a
-  `distribution` flavor dimension — `foss` (default, `isDefault = true`) + `play` — with
-  `PLAY_BUILD` set per-flavor. Every proprietary Google-Play SDK (Play Billing, the Cast
-  Application Framework, Play Games v2, Play Integrity, in-app update/review) moved from
-  unconditional `implementation(…)` to **`playImplementation(…)`**, so the `foss` variant links
-  **none** of them. The glue that touches those SDKs (`LicenseManager`, `PlayGamesManager`,
-  `CloudSaveManager`, `IntegrityManager`, `PlayUpdatesManager`, `ChromecastSender`) moved to
-  `src/play/` with byte-compatible **no-op façades in `src/foss/`**; shared pure types
-  (`PgsIds`, `IntegrityVerdict`, `DEMO_SESSION_SECONDS`) moved to `src/main`; `MainActivity`
-  now reads a flavor-neutral `LicenseManager.priceLabel` instead of the Google `ProductDetails`
-  type, so `src/main` links no Play SDK. The Cast-framework OPTIONS_PROVIDER + Play-Games APP_ID
-  manifest meta-data moved to `src/play/AndroidManifest.xml` so they never merge into the
-  `foss` manifest. An `installDebug` alias forwards to `installFossDebug` so the dev/CI command
-  is unchanged; `android.yml` now bundles both flavors. The monetization / ad glue stays dormant
-  (the AppLovin/RevenueCat wiring is the v2.1.0 step). The AOSP Presentation-API `CastManager`
-  is not a proprietary SDK and stays shared in `src/main`.
-- **Docs:** added the previously-dangling `to-dos/v1.8.x-on-device-verification.md` (the manual
-  on-device checklist the mobile plan cites).
+## [2.0.1] - 2026-07-08 - "Harbor" (first Android re-port onto Timebase + AccuracyCoin re-sync + housekeeping)
+
+The first release of the **v2.0.x "Harbor" mobile-finalization train** — the
+Android app re-ported onto the v2.0.0 "Timebase" core, the AccuracyCoin oracle
+re-synced to upstream, and the housekeeping #225 deferred to "v2.0.1+". All core
+changes are behaviour-neutral: the deterministic chip stack is byte-identical to
+v2.0.0 and AccuracyCoin holds its honest **139/141 (98.58%)** (the two new upstream
+PPU tests are known, documented gaps — see below). No store submission (that is
+the future v2.1.0 joint launch); Android continues as GitHub-sideload.
+
+### Added
+
+- **Android core re-port onto the v2.0.0 Timebase core (ADR 0028, PR #235).** The
+  `rustynes-android` host + Jetpack Compose app rebuild against the one-clock
+  `rustynes-mobile` UniFFI bridge (regenerated against uniffi 0.32);
+  `versionCode 20000 → 20001`, `versionName "2.0.0" → "2.0.1"`. The `.rnm` movie
+  epoch warning is wired into the mobile `movie_play` path
+  (`recorded_before_v2_timebase` → a drainable host warning via
+  `NesController::drain_warnings` citing ADR 0028), reaching desktop/wasm parity: a
+  pre-v2.0.0 movie replays its input faithfully but surfaces the cross-timebase
+  reproduction caveat, and a pre-v2.0.0 `.rns` restore maps to a clean
+  `MobileError::SaveState`. Host-shell wiring only; the core is untouched.
+- **`foss` / `play` Android flavor split — structural scaffolding (ADR 0025, PR
+  #235).** A new `distribution` flavor dimension with a default **`foss`** flavor
+  (no Google SDKs, no ads, no tracking — the F-Droid/sideload artifact) and a
+  **`play`** flavor. The five proprietary subsystems (Billing, Cast/Chromecast,
+  Play Games v2, Integrity, in-app update/review) move to `playImplementation`
+  behind `src/main` façades with **no-op `src/foss/`** twins and real `src/play/`
+  implementations — including the CAF `MediaRouteButton` (routed through the
+  `ChromecastSender` façade so `src/main` links no `androidx.mediarouter` /
+  `com.google.android.gms.cast`). CI builds both `assembleFoss*`/`assemblePlay*`
+  (the foss+play Gradle bundle is green). Monetization stays dormant; on-device
+  flavor verification is deferred to v2.0.9. Also added the previously-dangling
+  `to-dos/v1.8.x-on-device-verification.md`.
+
+### Changed
+
+- **AccuracyCoin oracle re-synced to upstream `100thCoin/AccuracyCoin` (PR #232).**
+  The catalog grows **144 → 146 rows / 139 → 141 assigned tests** — the two new
+  upstream PPU tests, **"ALE + Read"** and **"Hybrid Addresses"**, plus the
+  upstream "$2002 Flag Timing" + "Sprites On Scanline 0" fixes folded into the
+  existing rows. The drift-guards in
+  `crates/rustynes-test-harness/src/accuracy_coin_catalog.rs` move to `== 146` /
+  last-index 145. **Measured honestly: 139/141 (98.58%)** — the two new tests are
+  known gaps (deep sub-instruction PPU octal-latch address-corruption timing)
+  tracked for a dedicated future accuracy campaign (ADR 0030), not blocked on here.
+- **CI cost/time optimization — full suite gated to release branches (PR #233).**
+  The heavy legs (`test-roms`, `bench`, and the full macOS/Windows matrix) now run
+  only on `release/*` PRs + a weekly `schedule` drift-net, not on every
+  intermediate PR; the required correctness gates still run on all PRs.
+- **`docs/performance.md`** gains a v2.0.1 `full_frame` measure-first entry
+  (`nes_run_frame_nestest` 3.77 ms / 4.42× realtime; `flowing_palette` 2.26 ms /
+  7.37×), confirmed far under the 16.639 ms NTSC budget. Per the
+  >3%-Criterion-stable + byte-identical bar (v1.7.0 H7 precedent), **no
+  optimization was adopted**.
+- **`docs/adr/0030`** (new) records the octal-latch roadmap: both bounded v2.0.1
+  attempts — Option 2 (`mc-ppu-bus-addr-hybrid`, PR #234) and Option 1 (the
+  2-cycle-ALE draft, PR #236) — reach only 139/141 flag-on, empirically confirming
+  the ALE+Read / Hybrid Addresses fix needs a dedicated Timebase-scale campaign.
+  **139/141 is the honest v2.0.1 baseline.**
+- **`docs/STATUS.md`** feature-flags section: the DMC-abort-probe removal recorded
+  as done; the new default-off v2.0.1 experiments (`mc-ppu-bus-addr-hybrid`,
+  ADR 0030; `mmc3-m2-phase-irq`, ADR 0002) listed among the remaining flags.
+
 ### Removed
 
-- **Dead `mc-r1-dmc-abort-probe` diagnostic feature (v2.0.1 housekeeping).** The
-  default-off DMC-DMA-abort scheduling probe left over from the v2.0.0 Timebase
-  R-1 work is removed in full: the `[features]` declarations in `rustynes-apu`,
-  `rustynes-core`, and `rustynes-test-harness`; the gated `abort_probe` pub-static
-  atomic-counter module and its `lib.rs` re-export; every `#[cfg(feature =
-  "mc-r1-dmc-abort-probe")]` increment/dump site in `rustynes-apu/src/apu.rs` and
-  `rustynes-core/src/bus.rs`; and the probe-only reporting block in the
-  `scan_dma_abort` diagnostic bin (the bin itself is retained — its no-features
-  RAM-scan fast-path has standalone value). The flag gated **only** diagnostic
-  counters and CSV dumps, never shipped behaviour, so the default build is
-  byte-identical — **AccuracyCoin holds 139/141, nestest 0-diff**. The
-  `mmc3-m2-phase-irq` experiment was evaluated for the same treatment and
+- **Dead `mc-r1-dmc-abort-probe` diagnostic feature (v2.0.1 housekeeping, PR
+  #237).** The default-off DMC-DMA-abort scheduling probe left over from the
+  v2.0.0 Timebase R-1 work is removed in full: the `[features]` declarations in
+  `rustynes-apu`, `rustynes-core`, and `rustynes-test-harness`; the gated
+  `abort_probe` pub-static atomic-counter module and its `lib.rs` re-export; every
+  `#[cfg(feature = "mc-r1-dmc-abort-probe")]` increment/dump site in
+  `rustynes-apu/src/apu.rs` and `rustynes-core/src/bus.rs`; and the probe-only
+  reporting block in the `scan_dma_abort` diagnostic bin (the bin itself is
+  retained — its no-features RAM-scan fast-path has standalone value). The flag
+  gated **only** diagnostic counters and CSV dumps, never shipped behaviour, so the
+  default build is byte-identical — **AccuracyCoin holds 139/141, nestest 0-diff**.
+  The `mmc3-m2-phase-irq` experiment was evaluated for the same treatment and
   deliberately **kept**: it gates real alternate MMC3-IRQ-timing behaviour (with
   `#[cfg(not)]` shipped-path counterparts) and remains tied to the still-open
   R1/R2 residual investigation (ADR 0002, by-design-deferred, not closed).
 
-### Changed
+### Dependencies
 
-- **`docs/performance.md`** gains a v2.0.1 `full_frame` measure-first entry:
-  the end-to-end headless frame cost is re-measured and confirmed far under the
-  16.639 ms NTSC budget and against the ≤2 ms/frame target; per the standing
-  >3%-Criterion-stable + byte-identical bar (v1.7.0 H7 precedent), **no
-  optimization was adopted**.
-- **`docs/adr/0030`** records that both bounded v2.0.1 AccuracyCoin ALE/hybrid
-  attempts — Option 2 (`mc-ppu-bus-addr-hybrid`, PR #234) and Option 1 (the
-  2-cycle-ALE draft, PR #236) — reached only 139/141 flag-on, empirically
-  confirming the fix needs a dedicated Timebase-scale campaign, not a bounded
-  fork. **139/141 is the honest v2.0.1 baseline.**
-- **`docs/STATUS.md`** feature-flags section updated: the DMC-abort-probe removal
-  is now recorded as done, and the new default-off v2.0.1 experiments
-  (`mc-ppu-bus-addr-hybrid`, ADR 0030; `mmc3-m2-phase-irq`, ADR 0002) are listed
-  among the genuinely-remaining flags.
+- **uniffi 0.31 → 0.32** (`rustynes-mobile` + `rustynes-monetization`, lockstep),
+  **mlua 0.11 → 0.12** (`rustynes-script`), **wgpu/naga 29.0.3 → 29.0.4** (the
+  in-tier patch), **cc 1.2.65 → 1.2.66**; security-advisory surface re-verified
+  (cargo-deny + cargo-audit). Consolidates and closes Dependabot #226–#230.
+  **wgpu/naga 30.0.0 deferred**: `egui-wgpu 0.35` pins `wgpu ^29` and egui 0.35 is
+  the newest release, so the 30 majors cannot resolve until an egui 0.36+ targets
+  wgpu 30 (tracked follow-up).
+
+### Notes
+
+- The `mc-ppu-bus-addr-hybrid` (Option 2, PR #234) octal-latch scaffold ships
+  **default-off** and does **not** yet pass the two new AccuracyCoin tests; with
+  the flag off the build is byte-identical at 139/141. The full fix (Option 1,
+  2-cycle-ALE) is carried forward to the v2.0.2–v2.0.4 "Harbor" cycle (draft PR
+  #236, ADR 0030).
 
 ## [2.0.0] - 2026-07-03 - "Timebase" (one-clock master-clock rewrite + Vs. DualSystem)
 
