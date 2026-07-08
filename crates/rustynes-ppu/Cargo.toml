@@ -43,6 +43,14 @@ hd-pack = []
 # are reached only through the gated post-frame poke path (never the run loop),
 # so determinism + the AccuracyCoin contract are unaffected.
 debug-hooks = []
+# v2.0.1 (ADR 0030) — EXPERIMENTAL persistent-PPU-bus-address model (Option 2 /
+# Mesen2's `_ppuBusAddress` + 3-dot-delayed `v`), the attempt to pass the two
+# newest AccuracyCoin PPU tests ("Hybrid Addresses" $0492, "ALE + Read" $0491).
+# Off by default so the SHIPPED build is byte-identical and stays at its measured
+# AccuracyCoin value; only the address-tracking (`bus_addr`/`octal_latch`) is
+# always-on and inert. The behaviour-changing delayed-`v` + hybrid-fetch +
+# ALE+Read corruption is gated on this feature. See ADR 0030.
+mc-ppu-bus-addr-hybrid = []
 
 [dependencies]
 bitflags.workspace = true

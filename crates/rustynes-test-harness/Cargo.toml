@@ -41,6 +41,9 @@ ppu-state-trace = ["rustynes-core/ppu-state-trace"]
 hd-pack = ["rustynes-core/hd-pack"]
 # v2.0 R-1 core C-1 diagnostic — forward to rustynes-core. Default-off.
 mc-r1-dmc-abort-probe = ["rustynes-core/mc-r1-dmc-abort-probe"]
+# v2.0.1 (ADR 0030) — EXPERIMENTAL persistent-PPU-bus-address model (Option 2). Forward
+# to rustynes-core so the AccuracyCoin battery can run with the flag on.
+mc-ppu-bus-addr-hybrid = ["rustynes-core/mc-ppu-bus-addr-hybrid"]
 # v2.0 R1c-1 diagnostic — per-instruction (PC, cpu_cycle) trace. Forward to rustynes-core.
 cpu-instr-cycle-trace = ["rustynes-core/cpu-instr-cycle-trace"]
 # Forward to `rustynes-core/cpu-boot-trace`. Off by default; enabled only by
