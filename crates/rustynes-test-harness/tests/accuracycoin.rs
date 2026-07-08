@@ -74,9 +74,9 @@ fn accuracycoin_pass_rate_meets_floor() {
     // v2.0.2 (ADR 0030) octal-latch calibration tracer — opt-in via env var,
     // only under the campaign feature. Captures the corruption-relevant events
     // so the run can be cross-diffed against the TriCNES per-dot bus sequence.
-    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+    #[cfg(any(feature = "mc-ppu-bus-addr-hybrid", feature = "mc-ppu-2cycle-ale"))]
     let octal_trace_on = std::env::var("RUSTYNES_OCTAL_TRACE").is_ok();
-    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+    #[cfg(any(feature = "mc-ppu-bus-addr-hybrid", feature = "mc-ppu-2cycle-ale"))]
     if octal_trace_on {
         use rustynes_core::rustynes_ppu::octal_trace as ot;
         // Reset the ring index so a fresh run's trace never inherits stale slots
@@ -88,7 +88,7 @@ fn accuracycoin_pass_rate_meets_floor() {
     let (fb_result, ram): (BatteryResult, Vec<u8>) =
         accuracy_coin::run_battery_capturing_ram(72_000);
 
-    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+    #[cfg(any(feature = "mc-ppu-bus-addr-hybrid", feature = "mc-ppu-2cycle-ale"))]
     if octal_trace_on {
         use rustynes_core::rustynes_ppu::octal_trace as ot;
         let n = (ot::IDX.load(std::sync::atomic::Ordering::Relaxed) as usize).min(ot::LOG.len());

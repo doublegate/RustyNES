@@ -173,7 +173,12 @@ pub mod read2007_diag {
 /// corruption-relevant events
 /// (`$2006`/`$2007` during render, hybrid/stale splices) on scanlines 2-5 so
 /// a run can be cross-diffed against the `TriCNES` per-dot bus sequence.
-#[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+///
+/// Shared by BOTH octal-latch models (the v2.0.2 whole-dot stand-in
+/// `mc-ppu-bus-addr-hybrid` and the v2.0.3 genuine 2-cycle-ALE fetch split
+/// `mc-ppu-2cycle-ale`) so either campaign build can cross-diff against
+/// `TriCNES`.
+#[cfg(any(feature = "mc-ppu-bus-addr-hybrid", feature = "mc-ppu-2cycle-ale"))]
 pub mod octal_trace {
     use core::sync::atomic::{AtomicU32, AtomicU64};
     /// 1 = capture enabled. Off by default; an untraced flag-on run pays only a
@@ -221,6 +226,18 @@ pub mod octal_trace {
         LOG[i].store(packed, core::sync::atomic::Ordering::Relaxed);
     }
 }
+
+/// v2.0.3 (ADR 0030, Option 1) — the delayed-`CopyV` countdown length in PPU
+/// dots (`TriCNES` `PPU_Update2006Delay`, `Emulator.cs:9837-9843`, which is 4
+/// for three of the four CPU/PPU sub-cycle alignments and 5 for the fourth).
+/// `RustyNES`'s lockstep bus applies the `$2006` write at the start of a CPU
+/// cycle; the corrupted nametable read is the phase-1 dot of the fetch group one
+/// coarse-X past the write. Empirically calibrated against the `TriCNES` per-dot
+/// bus trace so the countdown lands on that read after exactly one `inc_hori_v`
+/// and one phase-0 NT ALE (which loads the one-tile-ahead `$19` low byte). See
+/// the v2.0.3 campaign plan.
+#[cfg(feature = "mc-ppu-2cycle-ale")]
+const COPY_V_DELAY: u8 = 4;
 
 /// v2.0.2 (ADR 0030) — which background fetch of the 8-dot group is driving the
 /// multiplexed PPU bus, so [`Ppu::octal_effective`] applies the correct octal-
@@ -416,8 +433,26 @@ pub struct Ppu {
     /// DATA byte, so the next background PATTERN fetch reads
     /// `(PAR-high 6):(stale low 8)` (`$0F03` -> `$0FFF`) — the "ALE + Read"
     /// corruption. Consumed by the next pattern (BG-lo/BG-hi) fetch.
-    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+    ///
+    /// Shared by both octal-latch models: the v2.0.2 whole-dot stand-in and the
+    /// v2.0.3 2-cycle-ALE split both freeze the latch on the `$2007`-read DATA
+    /// byte at the PPUDATA state-machine landing dot; the difference is only in
+    /// HOW the frozen byte reaches the next pattern read (an explicit splice vs.
+    /// the natural ALE/read multiplex).
+    #[cfg(any(feature = "mc-ppu-bus-addr-hybrid", feature = "mc-ppu-2cycle-ale"))]
     pub(crate) pattern_latch_stale: bool,
+    /// v2.0.3 (ADR 0030, Option 1) — the delayed-`CopyV` countdown (`TriCNES`
+    /// `PPU_Update2006Delay`, `Emulator.cs:1684-1704`). A `$2006` second write
+    /// that lands DURING rendering does NOT copy `t -> v` immediately; it stages
+    /// this PPU-dot countdown instead. While it runs, the background fetch
+    /// cadence keeps advancing coarse-X (via `inc_hori_v` at phase 7) and the
+    /// per-group phase-0 nametable ALE keeps loading `octal_latch` with the
+    /// CURRENT (pre-copy) `v`'s NT-low byte — so by the time the countdown lands
+    /// the latch NATURALLY holds the one-tile-ahead low byte (`$19`), and the
+    /// landing's `address_bus = v` splice yields the hybrid address (`$2F19`)
+    /// with no `+1 coarse-X` reconstruction. 0 = inactive.
+    #[cfg(feature = "mc-ppu-2cycle-ale")]
+    pub(crate) copy_v_delay: u8,
 
     // === Internal scroll/address registers (loopy v/t/x/w) ===
     /// 15-bit "current VRAM address".
@@ -889,8 +924,10 @@ impl Ppu {
             ale_armed: false,
             #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
             copy_v: false,
-            #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+            #[cfg(any(feature = "mc-ppu-bus-addr-hybrid", feature = "mc-ppu-2cycle-ale"))]
             pattern_latch_stale: false,
+            #[cfg(feature = "mc-ppu-2cycle-ale")]
+            copy_v_delay: 0,
             v: 0,
             t: 0,
             x: 0,
@@ -1768,7 +1805,10 @@ impl Ppu {
                     // (the priming-read contract). Delay 0 = immediate latch
                     // of the current bus value.
                     if self.mask.rendering_enabled() && self.is_render_scanline() {
-                        #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+                        #[cfg(any(
+                            feature = "mc-ppu-bus-addr-hybrid",
+                            feature = "mc-ppu-2cycle-ale"
+                        ))]
                         octal_trace::push(
                             octal_trace::K_R2007,
                             self.frame,
@@ -1998,10 +2038,62 @@ impl Ppu {
                             u32::from(self.t & 0x3FFF),
                         );
                     }
-                    self.v = self.t;
+                    // v2.0.3 (ADR 0030, Option 1) — "Hybrid Addresses" the natural
+                    // way. During rendering, a `$2006` second write does NOT copy
+                    // `t -> v` immediately; it stages the delayed-`CopyV` countdown
+                    // (`TriCNES` `PPU_Update2006Delay`). The `v = t` and the
+                    // `address_bus = v` splice happen when the countdown lands
+                    // (`Self::tick`), by which point the fetch cadence has advanced
+                    // coarse-X and the per-group phase-0 nametable ALE has NATURALLY
+                    // loaded `octal_latch` with the one-tile-ahead NT-low (`$19`),
+                    // so the landing read splices `$2F00 | $19 = $2F19` with no
+                    // reconstruction. Outside rendering the copy is immediate (the
+                    // delay is unobservable there and would only risk shifting
+                    // tightly-timed non-render code), so the shipped/flag-off build
+                    // and non-render behavior are unchanged.
+                    #[cfg(feature = "mc-ppu-2cycle-ale")]
+                    let deferred_copy_v = self.mask.rendering_enabled()
+                        && self.is_render_scanline()
+                        // Only within the active BG-fetch window (visible dots
+                        // 1..=256 + the dots-321..=336 prefetch). The "Hybrid
+                        // Addresses" corruption can ONLY manifest when a background
+                        // fetch is in flight to consume the stale octal latch; a
+                        // `$2006` write during the sprite/HBlank interval
+                        // (257..=320) has no BG-fetch consumer, so deferring `v = t`
+                        // there would serve no accuracy purpose and only risk
+                        // shifting the many commercial mid-frame scroll splits
+                        // (SMB3's status-bar `$2006`/`$2005`, MMC5 titles) that
+                        // write during HBlank. Narrowing to the fetch window keeps
+                        // the delayed-`CopyV` surgical to the modeled artifact.
+                        && ((1..=256).contains(&self.dot) || (321..=336).contains(&self.dot))
+                        && {
+                            // Alignment-dependent delay (TriCNES uses 4 for three of
+                            // four CPU/PPU phases, 5 for one). The `$2006` write is
+                            // applied at the START of a CPU cycle in RustyNES's
+                            // lockstep bus (before that cycle's 3 PPU ticks); the
+                            // corrupted NT read is the phase-1 dot of the fetch group
+                            // one coarse-X past the write. Empirically calibrated
+                            // against the TriCNES per-dot trace (see the campaign
+                            // plan); the AccuracyCoin test also retries across
+                            // frames/alignments so at least one alignment lands.
+                            self.copy_v_delay = COPY_V_DELAY;
+                            octal_trace::push(
+                                octal_trace::K_W2006,
+                                self.frame,
+                                self.scanline,
+                                self.dot,
+                                u32::from(self.t & 0x3FFF),
+                            );
+                            true
+                        };
+                    #[cfg(not(feature = "mc-ppu-2cycle-ale"))]
+                    let deferred_copy_v = false;
+                    if !deferred_copy_v {
+                        self.v = self.t;
+                        // PPUADDR write can flip A12.
+                        self.observe_a12(bus);
+                    }
                     self.w = false;
-                    // PPUADDR write can flip A12.
-                    self.observe_a12(bus);
                 } else {
                     // First write — high byte (clears bit 14 of t).
                     self.t = (self.t & 0x00FF) | ((u16::from(value) & 0x3F) << 8);
@@ -2225,6 +2317,28 @@ impl Ppu {
         // Advance the dot/scanline FSM first, then handle per-dot events at
         // the post-advance position.
         self.advance_dot();
+
+        // v2.0.3 (ADR 0030, Option 1) — the delayed-`CopyV` landing (`TriCNES`
+        // `Emulator.cs:1684-1704`). Ticked at the TOP of the dot, BEFORE the fetch
+        // dispatch, so the `address_bus = v` splice is in place for THIS dot's
+        // nametable read (the corrupted "Hybrid Addresses" fetch). The phase-0 NT
+        // ALE of the corrupt group ran on the PREVIOUS dot and already loaded
+        // `octal_latch` with the one-tile-ahead NT-low, so the armed splice at the
+        // read below yields `(v & 0x3F00) | octal_latch = $2F19` naturally.
+        #[cfg(feature = "mc-ppu-2cycle-ale")]
+        if self.copy_v_delay > 0 {
+            self.copy_v_delay -= 1;
+            if self.copy_v_delay == 0 {
+                self.v = self.t;
+                self.address_bus = self.v;
+                // Preserve the `$2006`-write A12 edge (MMC3 timing). It is delayed
+                // by the countdown vs the flag-off immediate copy, but `$2006`
+                // writes during active render are rare and A12 during render is
+                // dominated by the dot-260 sprite fetch, so this stays inside the
+                // fetch-address-derived-timing budget (verified by the battery).
+                self.observe_a12(bus);
+            }
+        }
 
         // v2.0 Phase 6 (mc-ppu-subpos): track the BG-reload gate. It follows the
         // live `self.mask` rendering bit EXCEPT during the analog `$2001`
@@ -2493,10 +2607,17 @@ impl Ppu {
                 // (and the read dispatch below) is byte-identical.
                 #[cfg(feature = "mc-ppu-2cycle-ale")]
                 match phase {
-                    // Phase 0 (NT ALE) is intentionally absent: the NT fetch's
-                    // MMC5-split query must fire at the read dot (phase 1), so the
-                    // NT octal-latch load co-locates there via `ale_splice`'s
-                    // not-armed path. AT / pattern fetches are true two-dot ALEs.
+                    // Phase 0 (NT ALE): drive the PLAIN nametable address
+                    // (`0x2000 | (v & 0x0FFF)`) and load `octal_latch` with its low
+                    // byte. This is a TRUE two-dot ALE for the common (non-MMC5-
+                    // split) case, so the latch naturally carries the NT-low the
+                    // "Hybrid Addresses" corruption needs. The MMC5 vertical-split
+                    // query stays at the read dot (phase 1, `fetch_nt`) because its
+                    // `split_chr_bank_latch` side effect is mapper-observable; when
+                    // that query turns out to be split-active, `fetch_nt` disarms
+                    // this ALE and reads `split.nt_addr` co-located instead, so
+                    // split rendering is byte-identical (no phase-0 mapper query).
+                    0 => self.ale_drive_nt(),
                     2 => self.ale_drive_at(),
                     4 => self.ale_drive_bg_lo(),
                     6 => self.ale_drive_bg_hi(),
@@ -2603,8 +2724,14 @@ impl Ppu {
                 // read's DATA byte (`render_data_bus`) instead of the next
                 // Pattern-Address-Register low byte. The next pattern fetch then
                 // reads `{PAR high 6}:{stale data low}` (`$0F03` -> `$0FFF`).
-                #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+                #[cfg(any(feature = "mc-ppu-bus-addr-hybrid", feature = "mc-ppu-2cycle-ale"))]
                 if self.mask.rendering_enabled() && self.is_render_scanline() {
+                    // Both octal-latch models freeze the latch on the read's DATA
+                    // byte here. Under `mc-ppu-2cycle-ale` the frozen byte is then
+                    // carried by `drive_bus` (which suppresses the next pattern
+                    // ALE's latch reload) and consumed by the pattern read's
+                    // natural `ale_splice`, so the next pattern fetch reads
+                    // `(PAR high 6):(stale $FF) = $0FFF` with no explicit splice.
                     self.octal_latch = self.render_data_bus;
                     self.pattern_latch_stale = true;
                     octal_trace::push(
@@ -2734,13 +2861,22 @@ impl Ppu {
         // Flag-gated so the shipped build is byte-identical.
         #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
         let nt_addr = self.octal_effective(nt_addr, OctalFetch::Nt);
-        // v2.0.3 (ADR 0030, Option 1) — 2-cycle-ALE read half. There is no phase-0
-        // NT ALE (the split query must live here), so `ale_armed` is false and
-        // `ale_splice` takes its not-armed path: it drives `nt_addr` onto the bus,
-        // latches the low byte, and returns `nt_addr` — the co-located NT
-        // octal-latch load, transparent for this coherent fetch.
+        // v2.0.3 (ADR 0030, Option 1) — 2-cycle-ALE read half. For the common
+        // (non-split) case the phase-0 NT ALE already drove the plain address and
+        // loaded `octal_latch`, so `ale_splice` takes its armed path and the read
+        // address is the true multiplexed splice `(address_bus & 0x3F00) |
+        // octal_latch` — transparent for a coherent fetch, and the divergence
+        // point for the delayed-`CopyV` "Hybrid Addresses" corruption. For an
+        // MMC5-split fetch the phase-0 ALE drove the PLAIN address (the split
+        // query lives HERE for its mapper-observable side effect), so disarm and
+        // read `split.nt_addr` co-located instead — byte-identical to Phase 1.
         #[cfg(all(feature = "mc-ppu-2cycle-ale", not(feature = "mc-ppu-bus-addr-hybrid")))]
-        let nt_addr = self.ale_splice(nt_addr);
+        let nt_addr = {
+            if self.bg_split_latch.is_some() {
+                self.ale_armed = false;
+            }
+            self.ale_splice(nt_addr)
+        };
         self.nt_latch = self.read_vram(bus, nt_addr);
         // Data phase: drive the byte just read back onto the multiplexed bus's low
         // 8 bits (AD7-0). Behavior-neutral (the next fetch's ALE overwrites it).
@@ -2895,6 +3031,19 @@ impl Ppu {
     // Phase 3 will introduce alongside the `$2006`/`$2007` corruptions. Phase 1
     // introduces ONLY the split structure; everything here is feature-gated.
 
+    /// ALE half of the nametable fetch (phase 0). Drives the PLAIN nametable
+    /// address `0x2000 | (v & 0x0FFF)` and loads the octal latch with its low
+    /// byte — a true two-dot ALE for the common (non-split) case, which is what
+    /// lets `octal_latch` naturally carry the one-tile-ahead NT-low the "Hybrid
+    /// Addresses" corruption needs. The MMC5-split query is deferred to the read
+    /// dot (phase 1, `fetch_nt`); when it turns out split-active, `fetch_nt`
+    /// disarms this ALE and reads the synthesized `split.nt_addr` co-located.
+    #[cfg(feature = "mc-ppu-2cycle-ale")]
+    const fn ale_drive_nt(&mut self) {
+        let nt_addr = 0x2000 | (self.v & 0x0FFF);
+        self.drive_bus(nt_addr, false);
+    }
+
     /// ALE half of the attribute fetch (phase 2). Uses the `bg_split_latch`
     /// already set by the nametable read at phase 1.
     #[cfg(feature = "mc-ppu-2cycle-ale")]
@@ -2905,7 +3054,7 @@ impl Ppu {
             let v = self.v;
             0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07)
         };
-        self.drive_bus(at_addr);
+        self.drive_bus(at_addr, false);
     }
 
     /// ALE half of the BG pattern-low fetch (phase 4). Uses `nt_latch` (set at
@@ -2917,7 +3066,7 @@ impl Ppu {
             .bg_split_latch
             .map_or((self.v >> 12) & 0x07, |s| u16::from(s.fine_y) & 0x07);
         let addr = bg_table | (u16::from(self.nt_latch) << 4) | fine_y;
-        self.drive_bus(addr);
+        self.drive_bus(addr, true);
     }
 
     /// ALE half of the BG pattern-high fetch (phase 6). Same as the low plane
@@ -2929,16 +3078,29 @@ impl Ppu {
             .bg_split_latch
             .map_or((self.v >> 12) & 0x07, |s| u16::from(s.fine_y) & 0x07);
         let addr = bg_table | (u16::from(self.nt_latch) << 4) | 0x08 | fine_y;
-        self.drive_bus(addr);
+        self.drive_bus(addr, true);
     }
 
     /// Drive a full 14-bit fetch address onto the multiplexed bus (the ALE
     /// half): `address_bus` takes the whole address and the 74LS373 octal latch
     /// captures A7-A0. Arms `ale_armed` for the matching read half.
+    ///
+    /// `is_pattern` marks the two BG-pattern ALEs (phases 4/6). While the "ALE +
+    /// Read" freeze (`pattern_latch_stale`) is pending — a `$2007`-read ALE
+    /// overlapped the fetch cadence and froze `octal_latch` on the read's DATA
+    /// byte — the latch is NOT reloaded (the frozen DATA byte survives across any
+    /// intervening ALE); the first pattern ALE afterwards consumes the flag, so
+    /// its read splices `(PAR high 6):(stale DATA low 8)` = `$0FFF`.
     #[cfg(feature = "mc-ppu-2cycle-ale")]
-    const fn drive_bus(&mut self, addr: u16) {
+    const fn drive_bus(&mut self, addr: u16, is_pattern: bool) {
         self.address_bus = addr;
-        self.octal_latch = (addr & 0xFF) as u8;
+        if self.pattern_latch_stale {
+            if is_pattern {
+                self.pattern_latch_stale = false;
+            }
+        } else {
+            self.octal_latch = (addr & 0xFF) as u8;
+        }
         self.ale_armed = true;
     }
 
@@ -2954,7 +3116,24 @@ impl Ppu {
     fn ale_splice(&mut self, intended: u16) -> u16 {
         if self.ale_armed {
             self.ale_armed = false;
-            (self.address_bus & 0x3F00) | u16::from(self.octal_latch)
+            let effective = (self.address_bus & 0x3F00) | u16::from(self.octal_latch);
+            // Diagnostic: record any read whose spliced effective address diverges
+            // from the intended one (the two corruptions) for the TriCNES per-dot
+            // cross-diff. `push` self-filters to scanlines 2-5, so this is cheap.
+            if effective != intended {
+                octal_trace::push(
+                    if intended >= 0x2000 {
+                        octal_trace::K_HYBRID
+                    } else {
+                        octal_trace::K_STALE
+                    },
+                    self.frame,
+                    self.scanline,
+                    self.dot,
+                    u32::from(effective),
+                );
+            }
+            effective
         } else {
             self.address_bus = intended;
             self.octal_latch = (intended & 0xFF) as u8;

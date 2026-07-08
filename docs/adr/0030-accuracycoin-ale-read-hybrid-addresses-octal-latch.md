@@ -304,3 +304,68 @@ on the full battery (141 AccuracyCoin + nestest 0-diff + blargg/kevtris + mmc3_t
 sprite-zero + 60-ROM byte-identity + ≤2 ms/frame) — then promote to default (shipped 141/141).
 This mirrors the
 v2.0.0 "Timebase" beta-train ceremony; plan in `to-dos/plans/v2.0.3-2cycle-ale-plan.md`.
+
+## Update — 2026-07-08 (v2.0.3 Phases 2+3 CONVERGED — 141/141 flag-on, fully natural, no reconstruction)
+
+The 2-cycle-ALE campaign's Phase 2 (NT true two-dot fetch) + Phase 3 (both corruptions arising
+naturally) landed on branch `feat/v2.0.3-2cycle-ale-campaign` behind the default-off
+`mc-ppu-2cycle-ale` flag, and **both AccuracyCoin PPU tests now pass flag-on with NO
+reconstruction: AccuracyCoin 141/141 (100.00%)**, flag-**off** still byte-identical at 139/141.
+The `+1 coarse-X` stand-in is gone — the octal latch carries the stale bytes on its own.
+
+**How the natural model works (all `#[cfg(feature = "mc-ppu-2cycle-ale")]`-gated):**
+
+- **NT true two-dot fetch (Phase 2).** A new phase-0 nametable ALE (`ale_drive_nt`) drives the
+  PLAIN `0x2000 | (v & 0x0FFF)` address and loads `octal_latch` with its low byte one dot before
+  the phase-1 read; the read (`fetch_nt`) resolves through the armed `ale_splice`
+  `(address_bus & 0x3F00) | octal_latch`. The MMC5 vertical-split query stays at the read dot
+  (its `split_chr_bank_latch` side effect is mapper-observable); when it turns out split-active,
+  `fetch_nt` disarms the phase-0 ALE and reads the synthesized `split.nt_addr` co-located, so
+  split rendering is byte-identical (no non-mutating peek was needed — deferring the *correction*
+  to the read dot achieves the same end without a new trait method).
+- **Hybrid Addresses (Phase 3) — the delayed-`CopyV` countdown** (`copy_v_delay`, `TriCNES`
+  `PPU_Update2006Delay`). A `$2006` second write during the active BG-fetch window does NOT copy
+  `t -> v` immediately; it stages a `COPY_V_DELAY = 4`-dot countdown (RustyNES's fixed CPU/PPU
+  alignment corresponds to TriCNES's delay-4 case; the AccuracyCoin ROM's `.word` retries cover
+  its two answer-key alignments and RustyNES's fixed one hits). While the countdown runs, the
+  fetch cadence advances coarse-X (`inc_hori_v` at phase 7) and the per-group phase-0 NT ALE keeps
+  loading the CURRENT (pre-copy) `v`'s NT-low, so by the landing `octal_latch` NATURALLY holds the
+  one-tile-ahead `$19`; the landing sets `address_bus = v` (= new `t`, high `$2F00`) and the next
+  NT read splices `$2F00 | $19 = $2F19`. **Verified natural** by the octal trace:
+  `W2006 @ sl4 dot182 → HYBRID $2F19 @ dot186` (delay exactly 4). The deferral is gated to the
+  active-fetch window (visible dots 1..=256 + the 321..=336 prefetch) — the only region where a
+  BG fetch can consume the stale latch — so HBlank-window scroll writes are unaffected.
+- **ALE + Read (Phase 3)** reuses the existing `render_data_bus`/`ppudata_sm_countdown` machinery:
+  at the PPUDATA state-machine landing during render the latch freezes on the read's DATA byte
+  (`pattern_latch_stale`), and `drive_bus` suppresses the next pattern ALE's latch reload so the
+  pattern read splices `(PAR high 6):(stale $FF) = $0FFF` — no explicit reconstruction, just the
+  natural multiplexed-bus splice. **Verified:** `SMLAND $FF @ sl3 dot228 → STALE $0FFF @ dot230`.
+
+A12/mapper notification stays on the INTENDED (un-spliced) address at every call site; the only
+A12 timing change is the `$2006`-write edge itself, which the delayed copy shifts by 4 dots during
+render (rare; verified inert on the MMC3/MMC1 A12 suites). No snapshot-format bump (`address_bus`
+/`ale_armed`/`octal_latch`/`copy_v_delay`/`pattern_latch_stale` all self-heal within a scanline;
+`PPU_SNAPSHOT_VERSION` stays at 4).
+
+**Regression battery (flag-on):** nestest 0-diff; mmc3 A12-IRQ suite 18/18; ppu_sprites (sprite-
+zero) all pass; mmc1_a12 pass; nes_blargg all pass; `cargo fmt` + `clippy -D warnings` clean for
+the default, `mc-ppu-bus-addr-hybrid`, and `mc-ppu-2cycle-ale` configs; `no_std` cross-compile
+clean. **Flag-off:** byte-identical (AccuracyCoin 139/141, nestest 0-diff).
+
+**60-ROM commercial byte-identity oracle (flag-on): 58/60 byte-identical.** Exactly two titles
+change, and BOTH legitimately perform `$2006`-during-active-render and differ ONLY in the
+framebuffer (audio FNV + CPU-cycle count byte-identical — a pure PPU-internal timing shift, not a
+divergent code path):
+
+- **Super Mario Bros. 3 (MMC3):** 8 pixels, all on scanline 194 columns 0-7 (a single leftmost
+  tile).
+- **Uchuu Keibitai SDF (MMC5):** 7 pixels on scanline 15 columns 152-158 (one tile at the split
+  boundary).
+
+Each is a single-tile sub-scanline shift at the exact scanline of a mid-render `$2006` scroll
+write — the precise artifact the 2-cycle-ALE model is designed to reproduce, and MORE
+TriCNES-faithful than the flag-off immediate-`v=t` approximation (TriCNES delays `v=t` by 4-5 dots
+unconditionally). The committed `insta` snapshots are LEFT at the flag-off values so the shipped
+build stays byte-identical; the two flag-on diffs are documented exceptions to be re-blessed (or
+made feature-conditional) by the maintainer at the **Phase-4 promotion** gate alongside the perf
+check and a CI job asserting flag-on 141/141. This ADR is updated (not superseded) at promotion.
