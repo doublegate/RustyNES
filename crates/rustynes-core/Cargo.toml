@@ -45,6 +45,9 @@ cpu-boot-trace = ["std"]
 # v2.0.1 (ADR 0030) — EXPERIMENTAL persistent-PPU-bus-address model (Option 2). Forward
 # to rustynes-ppu. Default-off; the shipped build is byte-identical without it.
 mc-ppu-bus-addr-hybrid = ["rustynes-ppu/mc-ppu-bus-addr-hybrid"]
+# v2.0.3 (ADR 0030, Option 1) — EXPERIMENTAL 2-cycle-ALE PPU-fetch refactor. Forward
+# to rustynes-ppu. Default-off; the shipped build is byte-identical without it.
+mc-ppu-2cycle-ale = ["rustynes-ppu/mc-ppu-2cycle-ale"]
 # v2.0 R1c-1 diagnostic — per-instruction (PC, cpu_cycle) trace. Forward to rustynes-cpu.
 cpu-instr-cycle-trace = ["rustynes-cpu/cpu-instr-cycle-trace"]
 # v1.1.0 beta.2 (Workstream C) — debugger devtools hooks: PC/exec breakpoints (and,

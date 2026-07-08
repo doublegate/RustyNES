@@ -52,6 +52,18 @@ debug-hooks = []
 # corruption — is `#[cfg(feature = "mc-ppu-bus-addr-hybrid")]`-gated, so the
 # default build compiles NONE of it (the fields do not even exist). See ADR 0030.
 mc-ppu-bus-addr-hybrid = []
+# v2.0.3 (ADR 0030, Option 1) — EXPERIMENTAL 2-cycle-ALE PPU-fetch refactor. Models
+# each background VRAM access as a genuine two-dot transaction: the even (ALE) dot
+# drives the full 14-bit fetch address onto an `address_bus` register and captures
+# its low byte into a first-class `octal_latch`; the odd (read) dot reads via the
+# multiplexed-bus splice `(address_bus & 0x3F00) | octal_latch` and writes the DATA
+# byte back onto the low bus. Phase 1 introduces ONLY this structural split — for a
+# coherent fetch the splice returns the intended address, so observable behavior is
+# UNCHANGED; the `$2006`/`$2007` octal-latch corruptions are deferred to Phase 3.
+# Off by default so the SHIPPED build is byte-identical (every field, its init, and
+# every read/write is `#[cfg(feature = "mc-ppu-2cycle-ale")]`-gated). See ADR 0030
+# and `to-dos/plans/v2.0.3-2cycle-ale-plan.md`.
+mc-ppu-2cycle-ale = []
 
 [dependencies]
 bitflags.workspace = true
