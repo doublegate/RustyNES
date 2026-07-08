@@ -954,7 +954,7 @@ impl MluaBackend {
         let locked = self.writes_locked.clone();
         comm.set(
             "socketServerSend",
-            self.lua.create_function(move |_, data: mlua::String| {
+            self.lua.create_function(move |_, data: mlua::LuaString| {
                 if !locked.get() {
                     push_capped(&out, CommCmd::SocketSend(data.as_bytes().to_vec()));
                 }
@@ -1031,7 +1031,7 @@ impl MluaBackend {
         comm.set(
             "mmfWrite",
             self.lua
-                .create_function(move |_, (name, data): (String, mlua::String)| {
+                .create_function(move |_, (name, data): (String, mlua::LuaString)| {
                     if !locked.get() {
                         push_capped(
                             &out,
@@ -1756,7 +1756,9 @@ impl VmBackend for MluaBackend {
                 match step {
                     Ok(()) => {
                         // Still resumable? keep it; finished? drop it.
-                        if thread.status() != mlua::ThreadStatus::Resumable {
+                        // mlua 0.12 moved `ThreadStatus` from the crate root into the
+                        // `thread` submodule (only essential types stay root re-exported).
+                        if thread.status() != mlua::thread::ThreadStatus::Resumable {
                             drop_driver(lua, &driver)?;
                         }
                     }

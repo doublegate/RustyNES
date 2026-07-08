@@ -12,7 +12,7 @@
 #
 # Harvested + customized (2026-06-23) from the standalone `rustynes-monetization/`
 # scaffold: aligned to the workspace toolchain (edition 2024 / Rust 1.96) and bumped to
-# UniFFI 0.31 to match `rustynes-mobile` (one UniFFI version across the workspace).
+# UniFFI 0.32 to match `rustynes-mobile` (one UniFFI version across the workspace).
 #
 # Built to three artifact kinds:
 #   * cdylib    -> the .so the Android app loads via UniFFI's Kotlin loader
@@ -44,8 +44,8 @@ path = "uniffi-bindgen.rs"
 doc = false
 
 [dependencies]
-# Pinned to 0.31 to match `rustynes-mobile` so the workspace resolves a single UniFFI.
-uniffi = { version = "0.31" }
+# Pinned to 0.32 to match `rustynes-mobile` so the workspace resolves a single UniFFI.
+uniffi = { version = "0.32" }
 
 [features]
 # Enables the bindgen CLI entry point only when requested, keeping the default build
