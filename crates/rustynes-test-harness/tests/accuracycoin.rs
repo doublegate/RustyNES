@@ -78,8 +78,11 @@ fn accuracycoin_pass_rate_meets_floor() {
     let octal_trace_on = std::env::var("RUSTYNES_OCTAL_TRACE").is_ok();
     #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
     if octal_trace_on {
-        rustynes_core::rustynes_ppu::octal_trace::ENABLE
-            .store(1, std::sync::atomic::Ordering::Relaxed);
+        use rustynes_core::rustynes_ppu::octal_trace as ot;
+        // Reset the ring index so a fresh run's trace never inherits stale slots
+        // from an earlier pass in the same process (cross-diff reproducibility).
+        ot::IDX.store(0, std::sync::atomic::Ordering::Relaxed);
+        ot::ENABLE.store(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     let (fb_result, ram): (BatteryResult, Vec<u8>) =
@@ -107,6 +110,10 @@ fn accuracycoin_pass_rate_meets_floor() {
             };
             println!("OT frame={frame} sl={sl} dot={dot} {kname} val=0x{val:04X}");
         }
+        // Scope the tracer strictly to this opt-in run: turn it back off so any
+        // later test in the same process pays no tracing overhead and can't
+        // saturate/overwrite the ring.
+        ot::ENABLE.store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     // Headline framebuffer counts (legacy — for back-compat / cross-check).
