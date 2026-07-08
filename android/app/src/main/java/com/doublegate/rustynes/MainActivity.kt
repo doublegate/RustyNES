@@ -210,8 +210,9 @@ class MainActivity : AppCompatActivity() {
         gamepad = GamepadManager(applicationContext, emulator)
         // v2.0.3 "Harbor" (ADR 0025): construct the monetization façade and open an app
         // session (drives the core's first-session budget / interstitial suppression). The
-        // SDK init (AppLovin / RevenueCat) is deferred to onActivityCreated so it stays off
-        // the cold-start path, mirroring the deferred Billing connect. All inert in FOSS.
+        // SDK init (AppLovin / RevenueCat) runs once, guarded, inside the first
+        // onActivityCreated call below — so it is on the launch path here; posting it off the
+        // first-frame critical path is a tracked v2.0.9 refinement. All inert in FOSS.
         monetization = MonetizationGate(applicationContext)
         monetization.beginSession()
         monetization.onActivityCreated(this)

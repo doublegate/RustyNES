@@ -54,9 +54,11 @@ import kotlinx.coroutines.delay
 /**
  * The `play`-flavor monetization gate.
  *
- * Construction is cheap (it builds only the Rust [AdPolicy] core, which does no I/O); the
- * heavy SDK initialization (AppLovin, RevenueCat) is deferred to [onActivityCreated] so it
- * stays off the cold-start critical path, mirroring how `MainActivity` defers Play Billing.
+ * Construction is cheap (it builds only the Rust [AdPolicy] core, which does no I/O). The
+ * heavy SDK initialization (AppLovin, RevenueCat) runs once, guarded by [sdksInitialized],
+ * on the first [onActivityCreated] call — which `MainActivity` invokes from `onCreate`, so
+ * it is on the launch path; posting it off the first-frame critical path is a v2.0.9
+ * refinement (like the already-deferred Play Billing connect).
  *
  * The core is anchored to `SystemClock.elapsedRealtime()` — the monotonic millisecond clock
  * the [AdGate] / [RewardedGate] also read — so the launch-grace window and ad cooldown share
@@ -80,6 +82,14 @@ class MonetizationGate(private val appContext: Context) {
 
     /** Guards one-time SDK init (AppLovin + RevenueCat configure). */
     private var sdksInitialized = false
+
+    /**
+     * Bridges the asynchronous rewarded-ad completion back to the paused emulator:
+     * [RunOutOverlay] stores its Compose `onResume` lambda here, and the [RewardedGate]'s
+     * reward callback invokes it. The gate's `show()` is non-blocking (it returns before the
+     * ad finishes), so the resume action cannot be run inline at the call site.
+     */
+    private var onResumeCallback: (() -> Unit)? = null
 
     private val prefs = appContext.getSharedPreferences("monetization", Context.MODE_PRIVATE)
 
@@ -118,9 +128,11 @@ class MonetizationGate(private val appContext: Context) {
             }
             sdksInitialized = true
         }
-        // (Re)create the ad gates bound to this Activity and warm their caches.
+        // (Re)create the ad gates bound to this Activity and warm their caches. The rewarded
+        // gate's reward callback fires asynchronously (after the ad is watched), so it routes
+        // through `onResumeCallback` — set by RunOutOverlay — to unpause the emulator.
         adGate = AdGate(activity, core).also { it.preload() }
-        rewardedGate = RewardedGate(activity, core) { /* resume handled by the caller */ }
+        rewardedGate = RewardedGate(activity, core) { onResumeCallback?.invoke() }
             .also { it.preload() }
     }
 
@@ -130,9 +142,16 @@ class MonetizationGate(private val appContext: Context) {
         billing?.bindEntitlement()
     }
 
-    /** Drop the held Activity so a destroyed Activity is never touched. */
+    /**
+     * Drop the held Activity and detach the ad listeners, so a destroyed Activity (e.g. on a
+     * rotation) is neither touched nor retained by the long-lived AppLovin ad instances.
+     */
     fun onDestroy() {
         activityRef = null
+        adGate?.destroy()
+        adGate = null
+        rewardedGate?.destroy()
+        rewardedGate = null
     }
 
     /** Whether [feature] is unlocked for the current entitlement (delegates to the core). */
@@ -192,9 +211,14 @@ class MonetizationGate(private val appContext: Context) {
      */
     @Composable
     fun RunOutOverlay(onResume: () -> Unit) {
+        // Bridge the async rewarded-ad / purchase / grace resume back to the caller.
+        onResumeCallback = onResume
         var remainingMs by remember { mutableLongStateOf(0L) }
         var premium by remember { mutableStateOf(core.isPremium()) }
-        LaunchedEffect(Unit) {
+        // Keyed on `premium`: a premium (or newly-upgraded) user needs no ticking countdown,
+        // so short-circuit immediately — no 1 Hz wakeups / battery drain when nothing is gated.
+        LaunchedEffect(premium) {
+            if (premium) return@LaunchedEffect
             while (true) {
                 premium = core.isPremium()
                 remainingMs = core.playTimeRemainingMs()?.toLong() ?: Long.MAX_VALUE
@@ -274,7 +298,10 @@ class MonetizationGate(private val appContext: Context) {
     /** Format a non-negative millisecond duration as `m:ss` for the countdown chip. */
     private fun formatMmSs(ms: Long): String {
         val totalSeconds = (ms.coerceAtLeast(0L)) / 1000L
-        return "%d:%02d".format(totalSeconds / 60L, totalSeconds % 60L)
+        // Force Locale.US so the countdown always uses ASCII digits — a device in a
+        // locale with non-ASCII numerals (Arabic/Persian) would otherwise render digits
+        // the label font may not support.
+        return "%d:%02d".format(java.util.Locale.US, totalSeconds / 60L, totalSeconds % 60L)
     }
 
     companion object {

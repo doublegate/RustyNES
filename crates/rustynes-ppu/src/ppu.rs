@@ -391,10 +391,12 @@ pub struct Ppu {
 
     // === v2.0.3 (ADR 0030) octal-latch / 2-cycle-ALE multiplexed-bus model ===
     // Now the ONLY PPU fetch path (promoted from the experimental flag in
-    // v2.0.3; the superseded v2.0.2 whole-dot stand-in was retired). These fields
-    // are NOT snapshotted — they reload on the next fetch ALE and self-heal within
-    // a scanline, so `PPU_SNAPSHOT_VERSION` is unchanged (ADR 0028: no save-state
-    // format break).
+    // v2.0.3; the superseded v2.0.2 whole-dot stand-in was retired). In continuous
+    // play these fields self-heal within a scanline (they reload on the next fetch
+    // ALE), but a mid-render rollback/save-state checkpoint can capture them live —
+    // so they ARE serialized in the `PPU_SNAPSHOT_VERSION` v5 tail (added in v2.0.3)
+    // for netplay-rollback determinism. That bump is ADDITIVE (pre-v5 blobs upconvert
+    // to the inactive rest defaults), NOT an ADR-0028 save-state format-epoch break.
     //
     // Ported from TriCNES (`ref-proj/TriCNES/Emulator.cs`, MIT, commit 9199870),
     // the AccuracyCoin author's own transistor-level emulator, which is the
@@ -413,15 +415,17 @@ pub struct Ppu {
     // never coherently drove.
     /// 74LS373 low-address octal latch (A7-A0). Loaded on each fetch's ALE
     /// with the driven address's low byte; frozen (goes stale) across a
-    /// `$2007`-read/background-fetch ALE overlap. Not snapshotted (it reloads
-    /// on the next in-blanking fetch ALE, self-healing within a scanline).
+    /// `$2007`-read/background-fetch ALE overlap. Serialized in the PPU snapshot
+    /// v5 tail (v2.0.3): it self-heals within a scanline in continuous play, but a
+    /// mid-render rollback checkpoint needs it restored for determinism.
     pub(crate) octal_latch: u8,
     /// The multiplexed PPU address/data bus. On a fetch's ALE (even) dot the full
     /// driven 14-bit address is written here; on the read (odd) dot the DATA byte
     /// is written back into the low 8 bits (the AD7-0 pins), so the register always
     /// reflects the true multiplexed bus value. The effective read address is the
-    /// splice `(address_bus & 0x3F00) | octal_latch`. Not snapshotted (reloads on
-    /// the next fetch ALE; self-heals).
+    /// splice `(address_bus & 0x3F00) | octal_latch`. Serialized in the PPU snapshot
+    /// v5 tail (v2.0.3) for mid-render rollback determinism (self-heals on the next
+    /// fetch ALE in continuous play).
     pub(crate) address_bus: u16,
     /// Set on a fetch's ALE (even) dot after the address is driven onto
     /// [`Self::address_bus`]; consumed (cleared) by the matching read (odd) dot's

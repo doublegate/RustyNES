@@ -92,4 +92,12 @@ class AdGate(
         // Display failed; reload so the next break point can try again.
         if (!core.isPremium()) interstitial.loadAd()
     }
+
+    /**
+     * Detach the listener so this gate (and the Activity it holds) is not retained by the
+     * long-lived `MaxInterstitialAd`. Call from the owner's `onDestroy` (e.g. a rotation).
+     */
+    fun destroy() {
+        interstitial.setListener(null)
+    }
 }

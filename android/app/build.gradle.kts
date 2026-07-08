@@ -39,8 +39,10 @@ android {
         applicationId = "com.doublegate.rustynes"
         minSdk = 26 // AAudio floor.
         targetSdk = 36 // Play mandate (Android 16) from 2026-08-31.
-        versionCode = 20003 // 2.0.3 (v2.0.2 was a desktop-only PPU/AccuracyCoin cut; the
-        versionName = "2.0.3" // Android host stayed at 20001/"2.0.1", so 2.0.3 is the next bump)
+        // v2.0.2 was a desktop-only PPU/AccuracyCoin cut, so the Android host stayed at
+        // 20001/"2.0.1" — 2.0.3 is therefore its next bump (20001 -> 20003).
+        versionCode = 20003
+        versionName = "2.0.3"
         // No abiFilters here — set per buildType so release ships arm64 only
         // while debug keeps x86_64 for the emulator.
         // PLAY_BUILD moved to the `distribution` product flavors below (v2.0.1, ADR

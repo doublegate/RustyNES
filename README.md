@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.0.3-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
-  <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-98.58%25%20(139%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
+  <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
 
@@ -20,9 +20,9 @@
 pure Rust.** It targets the Mesen2 / higan / ares accuracy bar — tight, lockstep
 scheduling at PPU-dot resolution on a master-clock-precise timebase — clearing
 **AccuracyCoin 100% (141/141)** and matching the Nintendulator golden log on
-`nestest` with **zero diff**. (The two remaining failures are the newest upstream
-PPU tests, "ALE + Read" and "Hybrid Addresses" — known gaps deferred to a future
-accuracy session.)
+`nestest` with **zero diff**. (As of v2.0.3 every assigned test passes, including the
+two newest upstream PPU tests, "ALE + Read" and "Hybrid Addresses", via the promoted
+2-cycle-ALE fetch model — ADR 0030.)
 
 Beyond reference accuracy, RustyNES is a complete, modern emulation platform:
 **172 mapper families** covering the vast majority of the commercial library (plus a

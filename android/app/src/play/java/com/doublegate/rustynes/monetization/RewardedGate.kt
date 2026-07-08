@@ -87,4 +87,12 @@ class RewardedGate(
     override fun onAdDisplayFailed(ad: MaxAd, error: MaxError) {
         if (!core.isPremium()) rewarded.loadAd()
     }
+
+    /**
+     * Detach the listener so this gate (and the Activity it holds) is not retained by the
+     * shared `MaxRewardedAd` singleton. Call from the owner's `onDestroy`.
+     */
+    fun destroy() {
+        rewarded.setListener(null)
+    }
 }
