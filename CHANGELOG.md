@@ -71,7 +71,7 @@ the future v2.1.0 joint launch); Android continues as GitHub-sideload.
 - **`docs/performance.md`** gains a v2.0.1 `full_frame` measure-first entry
   (`nes_run_frame_nestest` 3.77 ms / 4.42× realtime; `flowing_palette` 2.26 ms /
   7.37×), confirmed far under the 16.639 ms NTSC budget. Per the
-  >3%-Criterion-stable + byte-identical bar (v1.7.0 H7 precedent), **no
+  3%-plus Criterion-stable + byte-identical bar (v1.7.0 H7 precedent), **no
   optimization was adopted**.
 - **`docs/adr/0030`** (new) records the octal-latch roadmap: both bounded v2.0.1
   attempts — Option 2 (`mc-ppu-bus-addr-hybrid`, PR #234) and Option 1 (the
