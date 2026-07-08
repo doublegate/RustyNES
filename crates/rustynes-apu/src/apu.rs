@@ -776,9 +776,7 @@ impl Apu {
         // cycle in `tick_with_external` and blocks the looping-reload arm while
         // `== 2` — the canonical "a DMA cannot occur within 2 cycles of a
         // previous DMC DMA" rule the Implicit-DMA-Abort `$540` plateau brackets.
-        {
-            self.cannot_run_dmc_dma = 2;
-        }
+        self.cannot_run_dmc_dma = 2;
         // Abort-context fix: the LOAD just emptied the buffer into the shifter
         // (boundary race), so the next reload must arm promptly — don't let the
         // post-LOAD cooldown suppress it for 4 cycles (which would re-introduce

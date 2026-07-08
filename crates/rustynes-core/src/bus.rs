@@ -4013,9 +4013,7 @@ impl Bus for LockstepBus {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize] = value,
             0x2000..=0x3FFF => self.ppu_register_write(addr, value),
             REG_OAM_DMA => self.dma_pending = Some(value),
-            0x4000..=0x4013 | 0x4015 | 0x4017 => {
-                self.apu.write_register(addr, value);
-            }
+            0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.write_register(addr, value),
             0x4016 => {
                 // Session-24 / Phase 3 (Controller Strobing): the
                 // controllers' OUT pins are only updated at the start
