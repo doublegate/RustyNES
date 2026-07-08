@@ -296,6 +296,18 @@ pub struct Ppu {
     /// A one-shot override address for the next background nametable fetch, set
     /// when a `$2006` second write lands during a rendering fetch (the
     /// hybrid-address case).
+    ///
+    /// KNOWN LIMITATION (flag-on only): unlike `bus_addr`, this is NOT
+    /// self-healing — it is transient one-shot state that lives from the `$2006`
+    /// write until the next background nametable fetch (a few PPU dots), and it
+    /// is deliberately NOT serialized in the snapshot (the scaffold avoids a
+    /// format-version bump for an experiment that does not yet pass). So a
+    /// save-state captured inside that narrow window, under this experimental
+    /// feature, would drop the pending override on restore. This is harmless in
+    /// the SHIPPED build (the feature is off, so the field is compiled out
+    /// entirely) and must be resolved — by snapshotting it or making the fetch
+    /// model self-consistent — when the Option 1 (2-cycle-ALE) work promotes
+    /// this path. Tracked in ADR 0030.
     #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
     pub(crate) hybrid_pending: Option<u16>,
 
