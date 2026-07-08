@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.0.1-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.0.2-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-98.58%25%20(139%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -703,17 +703,26 @@ workspace API docs (rustdoc) at
 
 ## Version History
 
-RustyNES's current release is **v2.0.1 "Harbor"** — the first release of the
-**v2.0.x mobile-finalization train**, opening the runway to the v2.1.0 joint
-store launch. Harbor re-ports the Android app onto the v2.0.0 one-clock core,
-re-syncs the AccuracyCoin oracle to upstream (the catalog grows to 146 rows /
-141 assigned tests, measured honestly at **139/141 (98.58%)** — the two new
-upstream PPU tests are documented gaps), scaffolds the `foss`/`play` Android
-flavor split (ADR 0025), and completes the housekeeping v2.0.0 deferred. Every
-core change is behaviour-neutral: the deterministic chip stack stays
-byte-identical to v2.0.0 and `nestest` is 0-diff.
+RustyNES's current release is **v2.0.2 "Harbor"** — the second release of the
+**v2.0.x mobile-finalization train** and Harbor's headline accuracy release. It
+solves the two new upstream AccuracyCoin PPU tests v2.0.1 documented as honest
+gaps — **"ALE + Read"** and **"Hybrid Addresses"** — **flag-on**, via a whole-dot
+port of TriCNES's **octal-latch multiplexed-bus PPU model** (ADR 0030) behind the
+default-off `mc-ppu-bus-addr-hybrid` flag. The shipped default build stays
+**byte-identical to v2.0.1** and holds its honest **139/141 (98.58%)**; flag-on,
+the same build is verified at **141/141 (100.00%)**. Per the maintainer's
+refine-then-promote decision, promotion of that flag to default (shipped 141/141)
+is the deliberate **v2.0.3** step — after the Hybrid path is reworked to a
+first-principles latch-carry model and gated on the 60-ROM commercial byte-identity
+oracle. `nestest` stays 0-diff.
 
-It builds directly on **v2.0.0 "Timebase"** — the rewrite of the scheduler
+It builds on **v2.0.1 "Harbor"** — the first release of the train, which re-ported
+the Android app onto the v2.0.0 one-clock core, re-synced the AccuracyCoin oracle to
+upstream (the catalog grew to 146 rows / 141 assigned tests, measured honestly at
+139/141), scaffolded the `foss`/`play` Android flavor split (ADR 0025), and
+completed the housekeeping v2.0.0 deferred — all behaviour-neutral.
+
+Both build directly on **v2.0.0 "Timebase"** — the rewrite of the scheduler
 substrate to a single canonical cycle counter with every-cycle bus access and a
 split-around-the-access PPU catch-up, replacing the five-counter dot-lockstep
 model that powered every release from v1.0.0 through v1.10.0. Timebase is
@@ -732,6 +741,7 @@ The road so far:
 
 | Version    | Highlights                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------- |
+| **v2.0.2** | "Harbor" — Octal-latch multiplexed-bus PPU model (ADR 0030, whole-dot TriCNES `FetchPPU` port) behind the default-off `mc-ppu-bus-addr-hybrid` flag: solves "ALE + Read" + "Hybrid Addresses" at **AccuracyCoin 141/141 (100.00%) flag-on**; shipped default stays byte-identical at **139/141 (98.58%)**. Mesen2 ruled out as oracle (TriCNES is definitive). Refine-then-promote — flag promoted to default in v2.0.3. |
 | **v2.0.1** | "Harbor" — First Android re-port onto the Timebase core (uniffi 0.32); AccuracyCoin oracle re-sync (146 rows / 141 assigned, honest 139/141); `foss`/`play` Android flavor split scaffolding (ADR 0025); `mc-r1-dmc-abort-probe` removal; CI cost optimization. Opens the v2.0.x mobile-finalization train. |
 | **v2.0.0** | "Timebase" — One-clock, every-cycle-bus-access scheduler rewrite (replaces the five-counter dot-lockstep model); Vs. `DualSystem` dual-console support; breaking save-state/movie format bump (ADR 0028); AccuracyCoin 139/139. |
 | **v1.10.0** | "Arcade" — Native Libretro core (`rustynes_libretro` for RetroArch: RetroAchievements memory maps, dynamic audio sync, deterministic rollback save-states) + the egui 0.35 dependency tier refresh. |
@@ -783,8 +793,8 @@ The road so far:
 
 With the **v1.7.0 "Forge"** creator-tooling line, the **v1.8.x "Android"** platform line,
 the **v1.9.x "Sunrise"** iOS platform line (through **v1.9.9 "Workshop"**), the
-**v1.10.0 "Arcade"** Libretro core, **v2.0.0 "Timebase"**, and now the first
-**v2.0.1 "Harbor"** mobile-finalization release all completed, the
+**v1.10.0 "Arcade"** Libretro core, **v2.0.0 "Timebase"**, and now the first two
+**v2.0.1 / v2.0.2 "Harbor"** mobile-finalization releases all completed, the
 scheduler substrate has been rewritten to the one-clock, every-cycle-bus-access model
 (ADR 0002 / ADR 0029) — the release's designated breaking-behavior change, with the
 `.rns` save-state and `.rnm` movie format epochs bumped accordingly (ADR 0028). Emulation
@@ -797,8 +807,10 @@ core.
 The forward arc is:
 
 - **v2.0.1 → v2.0.9** — the mobile-finalization train: final Android additions re-ported
-  onto the v2.0.0 core (**v2.0.1–v2.0.4**; **v2.0.1 "Harbor" is shipped** — first re-port +
-  `foss`/`play` split scaffolding), the same for iOS (**v2.0.5–v2.0.8**), then a joint
+  onto the v2.0.0 core (**v2.0.1–v2.0.4**; **v2.0.1 "Harbor"** — first re-port +
+  `foss`/`play` split scaffolding — and **v2.0.2 "Harbor"** — the octal-latch PPU model at
+  AccuracyCoin 141/141 flag-on, ADR 0030 — **are both shipped**; v2.0.3 promotes that flag
+  to default at shipped 141/141), the same for iOS (**v2.0.5–v2.0.8**), then a joint
   ready-for-release verification pass (**v2.0.9**). Both apps were deliberately held on the
   pre-Timebase core until v2.0.0 landed, so they can finalize and launch together.
 - **v2.1.0** — the **joint mobile store launch** (Google Play + Apple App Store + F-Droid +

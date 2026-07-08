@@ -1,6 +1,43 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.0.1 "Harbor"** (2026-07-08) — the first release of the v2.0.x
+> **Current release: v2.0.2 "Harbor"** (2026-07-08) — the second release of the v2.0.x
+> mobile-finalization train, and Harbor's **headline accuracy release**: the two new
+> upstream AccuracyCoin PPU tests v2.0.1 documented as honest gaps — **"ALE + Read"**
+> (`$0491`) and **"Hybrid Addresses"** (`$0492`) — are now **solved flag-on** by a
+> whole-dot port of TriCNES's **octal-latch multiplexed-bus PPU model** (ADR 0030,
+> commit `27c103c`), behind the pre-existing default-off `mc-ppu-bus-addr-hybrid`
+> feature flag. The NES 2C02 multiplexes its low eight VRAM address pins with the
+> eight data pins (PA0-7 = AD7-0), so an external octal latch holds A7-A0 across the
+> ALE transition; when the halves desync, a fetch reads a hybrid address it never
+> coherently output. The model adds an 8-bit `octal_latch` + 14-bit `address_bus` +
+> a `copy_v`/`pattern_latch_stale` one-shot pair (all `#[cfg]`-gated) and resolves
+> every background fetch through `octal_effective` — the TriCNES `FetchPPU` splice
+> `(address_bus & 0x3F00) | octal_latch` — transparent except on the two modeled
+> corruption events (`$2007`R freezing the latch on its DATA byte → pattern read
+> `$0FFF`; `$2006`W2 capturing the stale low byte → NT read `$2F19`). A12/MMC3
+> notification stays on the intended (un-spliced) fetch address, so IRQ timing is
+> unchanged, and no snapshot-format bump is needed (`PPU_SNAPSHOT_VERSION` stays 4).
+>
+> **Shipped default stays honest 139/141; the flag-on model is verified 141/141.**
+> Per the *Feature-Flag Additive Change* + "bake, then promote" guardrails and the
+> maintainer's **refine-then-promote** decision (ADR 0030), v2.0.2 ships the model
+> **default-off**: the shipped default build is **byte-identical to v2.0.1** —
+> AccuracyCoin **139/141 (98.58%)**, nestest 0-diff — while flag-on it reaches
+> **141/141 (100.00%)** with a clean battery (framebuffer 100%, nestest 0-diff, mmc3
+> A12 clocking + IRQ all pass, `ppu_sprites` 19/19, `mmc1_a12` pass). The campaign
+> (`docs/audit/v2.0.2-octal-latch-campaign-2026-07-08.md`) corrected two ADR 0030
+> premises: **Mesen2 does NOT pass these tests** (both bytes read `0x0A` = corruption
+> not reproduced — the correct oracle is TriCNES, the AccuracyCoin author's own MIT
+> emulator, `ref-proj/TriCNES`, commit `9199870`), and **a whole-dot port suffices**
+> (the full 2-cycle-ALE refactor was not required). **Promotion to default (shipped
+> 141/141) is the deliberate v2.0.3 step** — after the Hybrid path's `+1 coarse-X`
+> approximation is reworked to a first-principles latch-carry model and gated on the
+> 60-ROM commercial byte-identity oracle + a CI job asserting flag-on 141/141. **This
+> release does not claim the shipped build is 141/141, nor that the flag is promoted.**
+> No store submission (that is the future v2.1.0 joint launch); Android continues as
+> GitHub-sideload. See `CHANGELOG.md` `[2.0.2]` + `to-dos/plans/v2.0.2-harbor-plan.md`.
+>
+> **The preceding release: v2.0.1 "Harbor"** (2026-07-08) — the first release of the v2.0.x
 > mobile-finalization train onto the v2.0.0 "Timebase" core (`to-dos/ROADMAP.md`),
 > bundling the Android core re-port + `foss`/`play` split scaffolding, the **AccuracyCoin
 > oracle re-sync** (catalog 144→146 rows / 139→141 assigned; measured honestly at
@@ -927,6 +964,17 @@ pirate carts, niche boards) is documented in `docs/compatibility.md`.
 
 ## Feature flags
 
+> **v2.0.2 update:** the `mc-ppu-bus-addr-hybrid` experiment — the octal-latch
+> multiplexed-bus PPU model (ADR 0030, commit `27c103c`) — is now **verified at
+> AccuracyCoin 141/141 (100.00%) flag-on** (a whole-dot port of TriCNES's `FetchPPU`
+> octal-latch splice; the two new PPU tests "ALE + Read" / "Hybrid Addresses" pass,
+> framebuffer 100%, no regression). It stays **default-off** in v2.0.2 so the shipped
+> default build is byte-identical to v2.0.1 at 139/141; per the maintainer's
+> refine-then-promote decision (ADR 0030) it is **promoted to default in v2.0.3**
+> after the Hybrid `+1 coarse-X` approximation is reworked to a first-principles
+> latch-carry model and gated on the 60-ROM commercial byte-identity oracle. No
+> snapshot-format bump — `PPU_SNAPSHOT_VERSION` stays 4.
+>
 > **v2.0.1 update:** the last diagnostic hold-over from the v2.0.0 Timebase work —
 > the DMC-DMA-abort probe `mc-r1-dmc-abort-probe` — has now been **removed** (it
 > gated only default-off pub-static atomic counters and a diagnostic bin block, no
@@ -944,9 +992,10 @@ pirate carts, niche boards) is documented in `docs/compatibility.md`.
 > flags that REMAIN: `std`, `serde`, `test-roms`, `commercial-roms`, `mapper-audio`,
 > `wasm-winit`/`wasm-canvas`, the diagnostics `irq-timing-trace`, `ppu-state-trace`,
 > `cpu-boot-trace`, `cpu-instr-cycle-trace`, and two default-off v2.0.1 experiments:
-> `mc-ppu-bus-addr-hybrid` (v2.0.1, ADR 0030 — the EXPERIMENTAL persistent-PPU-bus-
-> address model for the AccuracyCoin ALE-read pair; shipped build byte-identical
-> without it) and `mmc3-m2-phase-irq` (the still-open R1/R2 MMC3-IRQ-timing residual
+> `mc-ppu-bus-addr-hybrid` (ADR 0030 — the EXPERIMENTAL octal-latch multiplexed-bus
+> PPU model, reworked in v2.0.2 to a whole-dot TriCNES `FetchPPU` port **verified at
+> AccuracyCoin 141/141 flag-on**; shipped build byte-identical at 139/141 without it;
+> promoted to default in v2.0.3) and `mmc3-m2-phase-irq` (the still-open R1/R2 MMC3-IRQ-timing residual
 > experiment per ADR 0002 — retained because it gates real alternate behaviour and
 > the residual is by-design-deferred, not closed).
 
