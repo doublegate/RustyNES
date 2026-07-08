@@ -3350,12 +3350,6 @@ impl LockstepBus {
     /// where 6502 core address bits 15..=5 remain from the halted CPU read
     /// while DMA supplies address bits 4..=0.
     fn dmc_dma_read(&mut self, addr: u16, halted_addr: u16) -> u8 {
-        #[cfg(feature = "mc-r1-dmc-abort-probe")]
-        {
-            #[allow(clippy::cast_possible_truncation)]
-            let c = self.cycle as u32;
-            rustynes_apu::abort_probe::log_get(c, addr);
-        }
         let sample = self.raw_cpu_read(addr);
         if matches!(self.apu_region(), ApuRegion::Pal) || (halted_addr & 0xFFE0) != 0x4000 {
             return sample;
@@ -3704,12 +3698,6 @@ impl LockstepBus {
         };
         self.last_read_addr = addr;
         self.open_bus = v;
-        #[cfg(feature = "mc-r1-dmc-abort-probe")]
-        if addr == 0x4000 && (48_000_000..=48_700_000).contains(&self.cycle) {
-            #[allow(clippy::cast_possible_truncation)]
-            let c = self.cycle as u32;
-            rustynes_apu::abort_probe::log_4000_read(c, v);
-        }
         // Mirror the read onto the internal data bus, but ONLY when
         // this is a CPU-initiated access.  DMC DMA fetches drive
         // only the EXTERNAL (`open_bus`) bus per nesdev's two-bus
@@ -4026,12 +4014,6 @@ impl Bus for LockstepBus {
             0x2000..=0x3FFF => self.ppu_register_write(addr, value),
             REG_OAM_DMA => self.dma_pending = Some(value),
             0x4000..=0x4013 | 0x4015 | 0x4017 => {
-                #[cfg(feature = "mc-r1-dmc-abort-probe")]
-                if addr == 0x4010 {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let c = self.cycle as u32;
-                    rustynes_apu::abort_probe::log_4010(c, value);
-                }
                 self.apu.write_register(addr, value);
             }
             0x4016 => {

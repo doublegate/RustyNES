@@ -42,8 +42,6 @@ ppu-state-trace = ["std", "rustynes-ppu/ppu-state-trace"]
 # `scripts/mesen2_cpu_boot_trace.lua` for the Mesen2 reference
 # generator.
 cpu-boot-trace = ["std"]
-# v2.0 R-1 core C-1 diagnostic — forward to rustynes-apu. Default-off.
-mc-r1-dmc-abort-probe = ["rustynes-apu/mc-r1-dmc-abort-probe"]
 # v2.0.1 (ADR 0030) — EXPERIMENTAL persistent-PPU-bus-address model (Option 2). Forward
 # to rustynes-ppu. Default-off; the shipped build is byte-identical without it.
 mc-ppu-bus-addr-hybrid = ["rustynes-ppu/mc-ppu-bus-addr-hybrid"]

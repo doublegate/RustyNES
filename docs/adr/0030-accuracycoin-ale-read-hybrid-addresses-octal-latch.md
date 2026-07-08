@@ -181,3 +181,31 @@ long-term branch — regardless of whether Option 2 succeeds** (per the maintain
   AccuracyCoin PPU tests"). Sequencing: **Option 2 (PR B3) first** — Hybrid Addresses before
   ALE+Read — then the **Option 1 branch** as the enduring physically-correct model. This ADR
   is updated (or superseded) when either track lands and the figure returns to 141/141.
+
+## Update — 2026-07-08 (both bounded v2.0.1 attempts made; neither converged)
+
+Both v2.0.1 tracks laid out in the Decision were attempted under a bounded effort, and
+**neither converged** — the honest **139/141 (98.58%)** figure stands as the v2.0.1 baseline:
+
+- **Option 2 — Mesen2 persistent-bus-address model.** Landed as **PR #234** behind the
+  default-off feature flag `mc-ppu-bus-addr-hybrid` (`rustynes-ppu` → forwarded through
+  `rustynes-core` and `rustynes-test-harness`). It adds the persistent `bus_addr` register
+  and the render-time `$2006`/`$2007` reroute, but flag-**on** it still reaches only **139/141**
+  (both "ALE + Read" `$0491` and "Hybrid Addresses" `$0492` continue to fail): the implicit
+  bus-address retention does not reproduce the sub-cycle octal-latch sequence the two tests
+  require without also disturbing the currently-passing `$2007 Stress` path.
+- **Option 1 — 2-cycle-ALE fetch refactor.** Attempted as **draft PR #236** on branch
+  `feat/v2.0.1-option1-2cycle-ale`. The physically-correct two-dot bus model likewise reaches
+  only **139/141** flag-on within the bounded attempt — the fetch-cadence recalibration needed
+  to light exactly the right pixels without shifting sprite-zero / A12 / MMC3 timing is not
+  achievable as a bounded fork.
+
+In **both** cases the flag-**OFF** (shipped) build is **byte-identical** to the v2.0.1
+AccuracyCoin re-sync baseline — **139/141, nestest 0-diff, AccuracyCoin otherwise 100%** —
+so the non-converging experiments never touch the shipped core. This empirically **confirms
+this ADR's central thesis**: the fix is not reachable by a bounded fork of either shape; it
+needs a **dedicated Timebase-scale campaign** that models the per-cycle PPU bus *inside* the
+one-clock scheduler (ADR 0029), calibrated against the vendored `ref-proj/Mesen2` per-cycle
+bus-stream cross-diff oracle and gated on the full regression battery. Until that campaign is
+scheduled, **139/141 is the honest v2.0.1 baseline** and both flags remain default-off
+experiments. The two draft branches are retained as the starting point for that campaign.

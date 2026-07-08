@@ -903,7 +903,12 @@ pirate carts, niche boards) is documented in `docs/compatibility.md`.
 
 ## Feature flags
 
-> **v2.0.1 update:** the entire `mc-r1-*` / `mc-ppu-*` family + `cpu-{stack,implied}-dummy-reads`
+> **v2.0.1 update:** the last diagnostic hold-over from the v2.0.0 Timebase work —
+> the DMC-DMA-abort probe `mc-r1-dmc-abort-probe` — has now been **removed** (it
+> gated only default-off pub-static atomic counters and a diagnostic bin block, no
+> shipped behaviour; the default build is byte-identical, AccuracyCoin unchanged).
+> Earlier in the v2.0.0 collapse, most of the `mc-r1-*` / `mc-ppu-*` family +
+> `cpu-{stack,implied}-dummy-reads` were already retired or unconditionalised:
 >
 > - the PPU-accuracy trio (`ppu-oam-data-bus`, `ppu-sprite-shifter-counter`,
 > `ppu-2002-read-end-flags`) + `accuracycoin-sprite-eval-base-from-oamaddr` are
@@ -913,8 +918,13 @@ pirate carts, niche boards) is documented in `docs/compatibility.md`.
 > `mc-r1-coldboot-ppuoffset`, `mc-r1-bp-ppu-offset`, `dmc-get-put-scheduler`) were
 > deleted. The rows below for any removed flag are **historical** (v2.0.0-era). The
 > flags that REMAIN: `std`, `serde`, `test-roms`, `commercial-roms`, `mapper-audio`,
-> `wasm-winit`/`wasm-canvas`, and the diagnostics `irq-timing-trace`,
-> `ppu-state-trace`, `cpu-boot-trace`, `cpu-instr-cycle-trace`, `mc-r1-dmc-abort-probe`.
+> `wasm-winit`/`wasm-canvas`, the diagnostics `irq-timing-trace`, `ppu-state-trace`,
+> `cpu-boot-trace`, `cpu-instr-cycle-trace`, and two default-off v2.0.1 experiments:
+> `mc-ppu-bus-addr-hybrid` (v2.0.1, ADR 0030 — the EXPERIMENTAL persistent-PPU-bus-
+> address model for the AccuracyCoin ALE-read pair; shipped build byte-identical
+> without it) and `mmc3-m2-phase-irq` (the still-open R1/R2 MMC3-IRQ-timing residual
+> experiment per ADR 0002 — retained because it gates real alternate behaviour and
+> the residual is by-design-deferred, not closed).
 
 | Flag | Crate(s) | Default | Purpose |
 |------|----------|---------|---------|

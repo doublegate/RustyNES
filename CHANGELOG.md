@@ -15,9 +15,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-*Nothing yet — the next planned milestone is **v2.0.1** (the first release of the
-Android mobile-finalization re-port train onto the v2.0.0 core; see
-`to-dos/ROADMAP.md`).*
+### Removed
+
+- **Dead `mc-r1-dmc-abort-probe` diagnostic feature (v2.0.1 housekeeping).** The
+  default-off DMC-DMA-abort scheduling probe left over from the v2.0.0 Timebase
+  R-1 work is removed in full: the `[features]` declarations in `rustynes-apu`,
+  `rustynes-core`, and `rustynes-test-harness`; the gated `abort_probe` pub-static
+  atomic-counter module and its `lib.rs` re-export; every `#[cfg(feature =
+  "mc-r1-dmc-abort-probe")]` increment/dump site in `rustynes-apu/src/apu.rs` and
+  `rustynes-core/src/bus.rs`; and the probe-only reporting block in the
+  `scan_dma_abort` diagnostic bin (the bin itself is retained — its no-features
+  RAM-scan fast-path has standalone value). The flag gated **only** diagnostic
+  counters and CSV dumps, never shipped behaviour, so the default build is
+  byte-identical — **AccuracyCoin holds 139/141, nestest 0-diff**. The
+  `mmc3-m2-phase-irq` experiment was evaluated for the same treatment and
+  deliberately **kept**: it gates real alternate MMC3-IRQ-timing behaviour (with
+  `#[cfg(not)]` shipped-path counterparts) and remains tied to the still-open
+  R1/R2 residual investigation (ADR 0002, by-design-deferred, not closed).
+
+### Changed
+
+- **`docs/performance.md`** gains a v2.0.1 `full_frame` measure-first entry:
+  the end-to-end headless frame cost is re-measured and confirmed far under the
+  16.639 ms NTSC budget and against the ≤2 ms/frame target; per the standing
+  >3%-Criterion-stable + byte-identical bar (v1.7.0 H7 precedent), **no
+  optimization was adopted**.
+- **`docs/adr/0030`** records that both bounded v2.0.1 AccuracyCoin ALE/hybrid
+  attempts — Option 2 (`mc-ppu-bus-addr-hybrid`, PR #234) and Option 1 (the
+  2-cycle-ALE draft, PR #236) — reached only 139/141 flag-on, empirically
+  confirming the fix needs a dedicated Timebase-scale campaign, not a bounded
+  fork. **139/141 is the honest v2.0.1 baseline.**
+- **`docs/STATUS.md`** feature-flags section updated: the DMC-abort-probe removal
+  is now recorded as done, and the new default-off v2.0.1 experiments
+  (`mc-ppu-bus-addr-hybrid`, ADR 0030; `mmc3-m2-phase-irq`, ADR 0002) are listed
+  among the genuinely-remaining flags.
 
 ## [2.0.0] - 2026-07-03 - "Timebase" (one-clock master-clock rewrite + Vs. DualSystem)
 
