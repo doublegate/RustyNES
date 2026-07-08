@@ -1,12 +1,12 @@
 # ADR 0030 — AccuracyCoin "ALE + Read" / "Hybrid Addresses": the octal-latch gap and the 2-cycle-ALE-fetch prerequisite
 
-- Status: Accepted (records a deferred-with-roadmap decision)
-- Date: 2026-07-08
-- Deciders: DoubleGate
-- Supersedes / Superseded-by: —
-- Related: [ADR 0002 (IRQ-timing coordination)](0002-irq-timing-coordination.md),
-  [ADR 0029 (one-clock / every-cycle timebase)](0029-one-clock-every-cycle-timebase.md),
-  the v2.0.1 AccuracyCoin re-sync, `to-dos/DEFERRED-AND-CARRYOVER-FEATURES.md`.
+**Status:** Accepted — records a deferred-with-roadmap decision (keep the honest
+139/141 baseline; attempt Option 2 as PR B3, and Option 1 as a separate enduring branch).
+**Date:** 2026-07-08
+**Author:** DoubleGate
+**Related:** [ADR 0002 (IRQ-timing coordination)](0002-irq-timing-coordination.md),
+[ADR 0029 (one-clock / every-cycle timebase)](0029-one-clock-every-cycle-timebase.md),
+the v2.0.1 AccuracyCoin re-sync, and `to-dos/DEFERRED-AND-CARRYOVER-FEATURES.md`.
 
 ## Context
 

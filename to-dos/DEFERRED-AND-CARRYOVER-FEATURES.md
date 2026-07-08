@@ -541,7 +541,7 @@ account, or a hosted deploy (all also listed under their theme above).
   the two register-path hooks. Reference: **Mesen2** models both via a single
   `_ppuBusAddress` (+ 3-dot-delayed `v`, bus not re-synced during render); **ares**
   models only the `$2007` side (`io.busAddress`); **higan** blocks `$2007` during
-  render. **ATTEMPTED in v2.0.1 and deferred — see [ADR 0030](adr/0030-accuracycoin-ale-read-hybrid-addresses-octal-latch.md).**
+  render. **ATTEMPTED in v2.0.1 and deferred — see [ADR 0030](../docs/adr/0030-accuracycoin-ale-read-hybrid-addresses-octal-latch.md).**
   The bounded attempt added the `octal_latch` + one-shot hybrid-fetch hook and confirmed
   the tracking is inert (still 139/141), but RustyNES's single-step fetch model does not
   hold the per-cycle multiplexed-bus low byte the tests probe, so the corruption lands on
