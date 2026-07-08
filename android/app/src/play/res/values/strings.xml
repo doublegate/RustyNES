@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    v2.0.3 "Harbor" (ADR 0025): PLAY-FLAVOR-ONLY string catalog for the freemium /
+    ad-supported run-out paywall + countdown UI (MonetizationGate.RunOutOverlay).
+
+    These strings live in `src/play/res` (NOT `src/main/res`) so they merge into the
+    `play` variant only: the `foss` (F-Droid / GitHub-Releases) artifact — which links no
+    ads / store SDK and ships every feature free — never carries the paywall copy, keeping
+    its resource table clean and free of unused-resource lint. English (default) catalog;
+    the Spanish counterpart is `src/play/res/values-es/strings.xml`.
+-->
+<resources>
+    <!-- Live countdown chip shown while a free session still has budget. %1$s is m:ss. -->
+    <string name="paywall_countdown">Free play: %1$s left</string>
+    <!-- Run-out modal. -->
+    <string name="paywall_runout_title">Free session ended</string>
+    <string name="paywall_runout_body">Your free play time is up. Watch a short ad for more time, unlock the Full Version to remove ads and limits, or continue offline.</string>
+    <string name="paywall_watch_ad">Watch ad for more time</string>
+    <string name="paywall_offline_grace">Continue offline</string>
+    <string name="paywall_full_version">Get the Full Version</string>
+</resources>

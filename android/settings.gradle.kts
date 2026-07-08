@@ -25,6 +25,16 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // v2.0.3 "Harbor" (ADR 0025): AppLovin MAX (the `play`-flavor ad mediation SDK,
+        // AdGate / RewardedGate) is published on AppLovin's own Maven repository, not
+        // Maven Central. `content { includeGroup(...) }` scopes it to the AppLovin group
+        // only, so every other artifact still resolves from google()/mavenCentral() and
+        // the clean `foss` variant — which never references `com.applovin.*` — pulls
+        // nothing from here. RevenueCat (com.revenuecat.purchases) is on Maven Central.
+        maven {
+            url = uri("https://artifacts.applovin.com/android")
+            content { includeGroup("com.applovin") }
+        }
     }
 }
 
