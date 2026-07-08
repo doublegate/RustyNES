@@ -15,6 +15,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-07-08 - "Harbor" (2-cycle-ALE promoted to default — shipped AccuracyCoin 141/141)
+
+### Added
+
+- **Android foss/play monetization glue (ADR 0025 flavor split, step 5).** The
+  `play` flavor gains its full monetization surface — a real `MonetizationGate`
+  (AppLovin MAX interstitial/rewarded ad glue via `AdGate`/`RewardedGate` +
+  RevenueCat entitlement wrapper `RcBilling`, on the RevenueCat 8.10.0 API), the
+  `feature_enabled` gating hook, the run-out paywall + `mm:ss` countdown Compose
+  overlay, `begin_session`-at-launch, `export_progress`/`restore_progress`
+  persistence, and the offline-grace path — all owning the Rust `AdPolicy` core from
+  `rustynes-monetization`. The **`foss` flavor keeps a no-op `MonetizationGate` twin**
+  (every feature free, no ads, never touches the FFI ad core), so the default F-Droid
+  artifact stays behaviour-identical. Ad SDKs, the `AD_ID`/AdMob manifest entries, and
+  the paywall strings (en/es) live in `src/play/` only; the R8 full-mode keep rules
+  cover the monetization UniFFI package + AppLovin + RevenueCat. Monetization remains
+  behaviourally **dormant** pending on-device runtime verification (v2.0.9); the glue
+  is structurally complete and both flavors assemble. Android `versionCode 20001 ->
+  20003`, `versionName -> "2.0.3"`.
+- **Host-localizable mobile bridge warnings.** `rustynes-mobile` gains a
+  UniFFI-exported `HostWarning` enum (first variant: `PreTimebaseMovie`, the ADR 0028
+  `.rnm` pre-Timebase movie warning) plus an additive `drain_warning_codes() ->
+  Vec<HostWarning>` and an exported `host_warning_message()`, so Kotlin/Swift hosts can
+  render localized strings instead of the baked-in English. The existing
+  `drain_warnings() -> Vec<String>` is preserved verbatim (it now maps each code to its
+  English `message()`), so current hosts are unbroken; desktop/wasm parity is unchanged.
+
 ### Changed
 
 - **PPU: the 2-cycle-ALE fetch model is now the shipped default and the only PPU
@@ -54,7 +81,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **`PPU_SNAPSHOT_VERSION` v5 tail** — an ADDITIVE change (pre-v5 `.rns` still load,
   upconverting the fields to their inactive rest defaults), the same pattern the v3
   (`$2007` state machine) and v4 (overclock countdown) tails already used. All 16
-  `rustynes-netplay` rollback-determinism tests pass.
+  `rustynes-netplay` rollback-determinism tests pass. **Upgrade note:** a v2.0.3
+  save-state (PPU sub-version v5) is forward-incompatible — it will not load on
+  <= v2.0.2 — but this is an in-train additive sub-version bump, *not* an ADR-0028
+  `.rns` format-epoch break; older save-states continue to load on v2.0.3.
 
 ## [2.0.2] - 2026-07-08 - "Harbor" (octal-latch PPU model — AccuracyCoin 141/141 flag-on)
 

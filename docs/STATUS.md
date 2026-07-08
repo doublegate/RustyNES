@@ -1,6 +1,41 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.0.2 "Harbor"** (2026-07-08) — the second release of the v2.0.x
+> **Current release: v2.0.3 "Harbor"** (2026-07-08) — the third release of the v2.0.x
+> mobile-finalization train, and the one that makes the octal-latch accuracy work
+> real at the shipped default. The **2-cycle-ALE PPU fetch model is promoted from the
+> experimental `mc-ppu-2cycle-ale` flag to the unconditional, only PPU fetch path**
+> (ADR 0030), so the shipped default now scores **AccuracyCoin 141/141 (100.00%,
+> RAM-authoritative)** — both **"ALE + Read"** (`$0491`) and **"Hybrid Addresses"**
+> (`$0492`) pass out of the box (previously an honest 139/141). This replaces v2.0.2's
+> whole-dot `+1 coarse-X` stand-in with a genuine two-dot fetch (even-dot ALE-drive +
+> `octal_latch` load; odd-dot `(address & 0x3F00) | octal_latch` splice + read),
+> where the latch *naturally* carries the stale byte: the delayed `CopyV`
+> (`copy_v_delay = 4`) makes the NT read splice `$2F19` for Hybrid Addresses, and the
+> `$2007`-ALE overlap freezes the latch on `$FF` → `$0FFF` for ALE + Read. **Both
+> experimental flags are retired** (`mc-ppu-2cycle-ale` + the superseded
+> `mc-ppu-bus-addr-hybrid`), and the v2.0.2 stand-in code (`octal_effective`, the
+> `OctalFetch` enum, `copy_v`, the coarse-X reconstruction) is deleted; the
+> `octal_trace` calibration ring survives behind a new default-off dev feature
+> `ppu-octal-trace`. Verified: **60-ROM commercial oracle 60/60** with exactly two
+> documented re-blesses (SMB3, Uchuu Keibitai SDF — single-tile `$2006`-during-render
+> shifts, *more* TriCNES-faithful, audio/cycle byte-identical), nestest 0-diff, mmc3
+> A12-IRQ 18/18, `ppu_sprites` 19/19; ~10% headless frame-cost rise (~4.15 ms/frame,
+> ~4x realtime). **Save-state:** promotion made the model the netplay-rollback
+> substrate, which exposed a determinism gap in the five in-flight fetch fields; they
+> are now serialized in an additive **`PPU_SNAPSHOT_VERSION` v5 tail** (pre-v5 `.rns`
+> still load; a v2.0.3 state is forward-incompatible with <= v2.0.2 but this is an
+> in-train sub-version bump, not an ADR-0028 epoch break). Also this release: the
+> **Harbor Android foss/play monetization glue** (step 5 — the `play`
+> `MonetizationGate` with AppLovin MAX + RevenueCat 8.10.0, `feature_enabled` gating,
+> run-out paywall + countdown, session/progress/offline-grace; a no-op `foss` twin so
+> the F-Droid artifact stays behaviour-identical; both flavors assemble, monetization
+> behaviourally dormant pending v2.0.9 on-device verify) and a **host-localizable
+> mobile bridge-warning** API (`rustynes-mobile` `HostWarning` enum +
+> `drain_warning_codes()`; `drain_warnings()` preserved). No store submission (that is
+> the future v2.1.0 joint launch); Android continues as GitHub-sideload. See
+> `CHANGELOG.md` `[2.0.3]` + `to-dos/plans/v2.0.3-2cycle-ale-plan.md`.
+>
+> **The preceding release: v2.0.2 "Harbor"** (2026-07-08) — the second release of the v2.0.x
 > mobile-finalization train, and Harbor's **headline accuracy release**: the two new
 > upstream AccuracyCoin PPU tests v2.0.1 documented as honest gaps — **"ALE + Read"**
 > (`$0491`) and **"Hybrid Addresses"** (`$0492`) — are now **solved flag-on** by a
@@ -664,17 +699,17 @@ behavioral fixtures exist for the new boards). Documented expected-fails:
 legacy integer-lockstep path was removed; the `mc-r1-*` flags no longer exist).
 One validated configuration:
 
-- **R1 master clock — AccuracyCoin 98.58% (139/141)**: built
+- **R1 master clock — AccuracyCoin 100% (141/141)**: built
   unconditionally (the `mc-r1-full-cpu` umbrella + its closure are now permanent
-  code, not feature flags). The two failing tests are the new upstream PPU
-  "ALE + Read" and "Hybrid Addresses" tests added by the v2.0.1 catalog re-sync
-  (deep sub-instruction PPU-fetch-corruption timing — known gaps, deferred);
-  the 139 previously assigned tests all still pass. nestest 0-diff; blargg cpu_interrupts_v2 **5/5 strict**;
+  code, not feature flags). As of **v2.0.3**, all 141 assigned tests pass — the two
+  upstream PPU tests "ALE + Read" and "Hybrid Addresses" added by the v2.0.1 catalog
+  re-sync now pass via the promoted genuine two-dot 2-cycle-ALE fetch model (ADR 0030;
+  previously honest 139/141 gaps). nestest 0-diff; blargg cpu_interrupts_v2 **5/5 strict**;
   SH\* 6/6; ppu_vbl_nmi 10/10; visual_regression 7/7; **region-exact CPU:PPU** (3:1
   NTSC/Dendy, 3.2:1 PAL — region_timing 4/4); 60-ROM oracle 60/60 (byte-identical
   across the v2.0.1 refactor); save-state determinism round-trips green (CPU snapshot
   v2 + the `ppu_clock`/`dma_mc_consumed` pair, APU/BUS trailing tails, PPU snapshot
-  v3). R1 audio coverage: AccuracyCoin APU 100% + apu_test 8/8 + dmc_dma 5/5 + the
+  v5 as of v2.0.3). R1 audio coverage: AccuracyCoin APU 100% + apu_test 8/8 + dmc_dma 5/5 + the
   60-ROM oracle `audio_fnv1a64`. (The bbbradsmith `audio_tests` framebuffer corpus
   was legacy-only — it asserted pre-R1 DMC audio hashes — and was removed with the
   legacy path.) See `docs/audit/v2.0-phase7f-r1-default-promotion-2026-06-10.md`
@@ -964,6 +999,19 @@ pirate carts, niche boards) is documented in `docs/compatibility.md`.
 
 ## Feature flags
 
+> **v2.0.3 update:** BOTH octal-latch experiment flags are now **retired**. The
+> genuine two-dot `mc-ppu-2cycle-ale` model (the v2.0.3 first-principles rework of the
+> v2.0.2 whole-dot stand-in) is **promoted to the unconditional, only PPU fetch path**
+> (shipped AccuracyCoin **141/141**, 60-ROM oracle 60/60), so `mc-ppu-2cycle-ale` and
+> the superseded `mc-ppu-bus-addr-hybrid` are both deleted from `rustynes-ppu` /
+> `rustynes-core` / `rustynes-test-harness`, along with the v2.0.2 stand-in code
+> (`octal_effective`, `OctalFetch`, `copy_v`, the coarse-X reconstruction). A new
+> default-off dev feature **`ppu-octal-trace`** keeps the `octal_trace` calibration
+> ring (no-op stub when off; does not gate emulation behaviour, keeps the `no_std`
+> chip stack building). Promotion required an ADDITIVE **`PPU_SNAPSHOT_VERSION` 4 -> 5**
+> tail (the five in-flight fetch fields, for netplay-rollback determinism; pre-v5
+> `.rns` still load — see the top-of-file current-release block).
+>
 > **v2.0.2 update:** the `mc-ppu-bus-addr-hybrid` experiment — the octal-latch
 > multiplexed-bus PPU model (ADR 0030, commit `27c103c`) — is now **verified at
 > AccuracyCoin 141/141 (100.00%) flag-on** (a whole-dot port of TriCNES's `FetchPPU`
@@ -991,13 +1039,13 @@ pirate carts, niche boards) is documented in `docs/compatibility.md`.
 > deleted. The rows below for any removed flag are **historical** (v2.0.0-era). The
 > flags that REMAIN: `std`, `serde`, `test-roms`, `commercial-roms`, `mapper-audio`,
 > `wasm-winit`/`wasm-canvas`, the diagnostics `irq-timing-trace`, `ppu-state-trace`,
-> `cpu-boot-trace`, `cpu-instr-cycle-trace`, and two default-off v2.0.1 experiments:
-> `mc-ppu-bus-addr-hybrid` (ADR 0030 — the EXPERIMENTAL octal-latch multiplexed-bus
-> PPU model, reworked in v2.0.2 to a whole-dot TriCNES `FetchPPU` port **verified at
-> AccuracyCoin 141/141 flag-on**; shipped build byte-identical at 139/141 without it;
-> promoted to default in v2.0.3) and `mmc3-m2-phase-irq` (the still-open R1/R2 MMC3-IRQ-timing residual
-> experiment per ADR 0002 — retained because it gates real alternate behaviour and
-> the residual is by-design-deferred, not closed).
+> `cpu-boot-trace`, `cpu-instr-cycle-trace`, the new default-off dev-diagnostic
+> `ppu-octal-trace` (the `octal_trace` calibration ring; no-op when off), and
+> `mmc3-m2-phase-irq` (the still-open R1/R2 MMC3-IRQ-timing residual experiment per
+> ADR 0002 — retained because it gates real alternate behaviour and the residual is
+> by-design-deferred, not closed). **The two octal-latch experiment flags
+> `mc-ppu-2cycle-ale` and `mc-ppu-bus-addr-hybrid` were both retired in v2.0.3** when
+> the 2-cycle-ALE model was promoted to the default (see the v2.0.3 update above).
 
 | Flag | Crate(s) | Default | Purpose |
 |------|----------|---------|---------|
