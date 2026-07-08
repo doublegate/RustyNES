@@ -15,11 +15,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-*Nothing yet — the next planned milestone is **v2.0.3**, continuing the v2.0.x
-"Harbor" mobile-finalization train: it reworks the octal-latch Hybrid path from
-the `+1 coarse-X` approximation to a first-principles latch-carry model, runs the
-60-ROM commercial byte-identity oracle, and **promotes `mc-ppu-bus-addr-hybrid` to
-default** (shipped AccuracyCoin 141/141) — see `to-dos/ROADMAP.md` and ADR 0030.*
+### Changed
+
+- **PPU: the 2-cycle-ALE fetch model is now the shipped default and the only PPU
+  fetch path (ADR 0030).** The first-principles latch-carry model (ALE-drive +
+  first-class octal latch + multiplexed-bus splice + delayed-`CopyV` "Hybrid
+  Addresses" + `$2007`-ALE-overlap "ALE + Read") is promoted from the experimental
+  `mc-ppu-2cycle-ale` flag to unconditional, following the v2.0.0 precedent of
+  promoting the one-clock scheduler by deleting its flag. **Shipped AccuracyCoin is
+  now 141/141 (100%)** — both the "ALE + Read" (`$0491`) and "Hybrid Addresses"
+  (`$0492`) PPU tests pass on the default build (previously 139/141). Two commercial
+  titles now render more TriCNES-faithfully at a mid-render `$2006` scroll write —
+  **Super Mario Bros. 3** (a single leftmost tile on scanline 194) and **Uchuu
+  Keibitai SDF** (one tile at the MMC5 split boundary on scanline 15); no other
+  title's output changed. Headless frame cost rises ~10% (nestest ~4.15 ms/frame,
+  still ~4× realtime); accepted for the accuracy gain.
+
+### Removed
+
+- **Both experimental octal-latch flags are retired:** `mc-ppu-2cycle-ale` (the now-
+  default model) and `mc-ppu-bus-addr-hybrid` (the superseded v2.0.2 whole-dot
+  `+1 coarse-X` stand-in), across `rustynes-ppu`/`rustynes-core`/
+  `rustynes-test-harness`. The v2.0.2 stand-in code (the `octal_effective` splice
+  function, `OctalFetch` enum, the `copy_v` one-shot, and the coarse-X
+  reconstruction) is deleted. The `octal_trace` calibration ring is kept behind a
+  new default-off dev feature `ppu-octal-trace` (it does not gate emulation
+  behavior; off, `push` is a no-op stub with no 64-bit-atomic storage, keeping the
+  `no_std` chip stack building).
+
+### Fixed
+
+- **Netplay rollback determinism on the new fetch model.** Promoting 2-cycle-ALE to
+  the default path made it the substrate for netplay rollback, whose save/restore
+  round-trip exposed a determinism gap: a mid-render checkpoint could land with the
+  in-flight fetch state (`octal_latch`, `address_bus`, `ale_armed`,
+  `pattern_latch_stale`, `copy_v_delay`) live, and those fields were not serialized,
+  desyncing the re-simulated frame. They are now serialized in a new
+  **`PPU_SNAPSHOT_VERSION` v5 tail** — an ADDITIVE change (pre-v5 `.rns` still load,
+  upconverting the fields to their inactive rest defaults), the same pattern the v3
+  (`$2007` state machine) and v4 (overclock countdown) tails already used. All 16
+  `rustynes-netplay` rollback-determinism tests pass.
 
 ## [2.0.2] - 2026-07-08 - "Harbor" (octal-latch PPU model — AccuracyCoin 141/141 flag-on)
 

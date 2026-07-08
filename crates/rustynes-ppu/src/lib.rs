@@ -37,7 +37,6 @@ pub mod state_trace;
 pub use bus::{BgSplitState, ExAttribute, PpuBus};
 pub use palette::{NES_PALETTE, PpuPalette, nes_color_to_rgba, palette_color_to_rgba};
 pub use ppu::MASK_WRITE_DELAY;
-#[cfg(any(feature = "mc-ppu-bus-addr-hybrid", feature = "mc-ppu-2cycle-ale"))]
 pub use ppu::octal_trace;
 pub use ppu::read2007_diag;
 pub use ppu::{FRAMEBUFFER_LEN, Ppu, PpuRegion};

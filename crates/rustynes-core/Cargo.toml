@@ -42,12 +42,6 @@ ppu-state-trace = ["std", "rustynes-ppu/ppu-state-trace"]
 # `scripts/mesen2_cpu_boot_trace.lua` for the Mesen2 reference
 # generator.
 cpu-boot-trace = ["std"]
-# v2.0.1 (ADR 0030) — EXPERIMENTAL persistent-PPU-bus-address model (Option 2). Forward
-# to rustynes-ppu. Default-off; the shipped build is byte-identical without it.
-mc-ppu-bus-addr-hybrid = ["rustynes-ppu/mc-ppu-bus-addr-hybrid"]
-# v2.0.3 (ADR 0030, Option 1) — EXPERIMENTAL 2-cycle-ALE PPU-fetch refactor. Forward
-# to rustynes-ppu. Default-off; the shipped build is byte-identical without it.
-mc-ppu-2cycle-ale = ["rustynes-ppu/mc-ppu-2cycle-ale"]
 # v2.0 R1c-1 diagnostic — per-instruction (PC, cpu_cycle) trace. Forward to rustynes-cpu.
 cpu-instr-cycle-trace = ["rustynes-cpu/cpu-instr-cycle-trace"]
 # v1.1.0 beta.2 (Workstream C) — debugger devtools hooks: PC/exec breakpoints (and,
@@ -64,6 +58,10 @@ debug-hooks = ["std", "rustynes-ppu/debug-hooks"]
 # (it observes already-computed tile identity and writes a side buffer), so even
 # with the feature ON the framebuffer and determinism contract are unchanged.
 hd-pack = ["rustynes-ppu/hd-pack"]
+# v2.0.3 (ADR 0030) — forward to `rustynes-ppu/ppu-octal-trace` (the diagnostic
+# octal-latch ring). Off by default; the shipped / no_std build gets the no-op
+# stub, so the 2-cycle-ALE fetch model is byte-identical. See ADR 0030.
+ppu-octal-trace = ["rustynes-ppu/ppu-octal-trace"]
 # v2.0.0 R1/R2 closure attempt (2026-07-02) — forward to
 # `rustynes-mappers/mmc3-m2-phase-irq`. Threads the REAL M2-phase
 # (pre-access/M2-low vs post-access/M2-high) of `LockstepBus::run_ppu_to`'s

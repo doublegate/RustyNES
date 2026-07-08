@@ -55,7 +55,20 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///   to v3; a non-default countdown taken mid-insertion now round-trips
 ///   instead of restoring as `0` (which desynced). v1/v2/v3 blobs upconvert
 ///   with `extra_lines_remaining = 0` (no insertion in flight).
-pub const PPU_SNAPSHOT_VERSION: u8 = 4;
+/// - v5 (v2.0.3, ADR 0030): appends the 2-cycle-ALE fetch model's in-flight
+///   multiplexed-bus / octal-latch state — `octal_latch`, `address_bus`,
+///   `ale_armed`, `pattern_latch_stale`, and the delayed-`CopyV` `copy_v_delay`
+///   countdown. These fields carry a background fetch's ALE→read state and the
+///   two modeled `$2006`/`$2007` corruption one-shots; a mid-render save/restore
+///   (netplay rollback checkpoints, TAS/save-states) that landed with any of
+///   them live restored them to the wrong value and desynced the re-simulated
+///   framebuffer — exactly the class of bug the v3/v4 tails already fixed for
+///   the `$2007` state machine and the overclock countdown. This is an ADDITIVE
+///   save-state format change (a `.rns` gains the tail): v1..=4 blobs upconvert
+///   with all five at their inactive defaults (`0`/`false`), i.e. the
+///   "no fetch in flight" rest state, which is correct for any pre-v5 save taken
+///   at rest. Not a *load-break* — a pre-v5 `.rns` still restores.
+pub const PPU_SNAPSHOT_VERSION: u8 = 5;
 
 const CIRAM_LEN: usize = 0x800;
 const OAM_LEN: usize = 0x100;
@@ -290,6 +303,20 @@ impl Ppu {
         // re-applied on restore, like `region` / `active_palette`.
         w.u16(self.extra_lines_remaining);
 
+        // v5 (v2.0.3, ADR 0030): the 2-cycle-ALE fetch model's in-flight
+        // multiplexed-bus / octal-latch state. All at rest (`0`/`false`) at a
+        // clean fetch boundary, but a mid-render checkpoint (netplay rollback)
+        // can land with `copy_v_delay`/`pattern_latch_stale`/`ale_armed` live —
+        // serialize them (plus the latch + bus they splice through) so the
+        // re-simulated frame is byte-identical to the forward run.
+        {
+            w.u8(self.octal_latch);
+            w.u16(self.address_bus);
+            w.u8(u8::from(self.ale_armed));
+            w.u8(u8::from(self.pattern_latch_stale));
+            w.u8(self.copy_v_delay);
+        }
+
         w.buf
     }
 
@@ -301,7 +328,7 @@ impl Ppu {
     pub fn restore(&mut self, data: &[u8]) -> Result<(), PpuSnapshotError> {
         let mut r = R { src: data, pos: 0 };
         let version = r.u8()?;
-        if !matches!(version, 1..=4) {
+        if !matches!(version, 1..=5) {
             return Err(PpuSnapshotError::UnsupportedVersion(version));
         }
         self.region = region_from_u8(r.u8()?)?;
@@ -407,6 +434,25 @@ impl Ppu {
         // v1/v2/v3 blobs lack it; upconvert to `0` (no insertion in flight),
         // which is exactly the state a pre-v4 restore left it in.
         self.extra_lines_remaining = if version >= 4 { r.u16()? } else { 0 };
+
+        // v5 (v2.0.3, ADR 0030): the 2-cycle-ALE in-flight fetch state. v1..=4
+        // blobs lack it; upconvert to the inactive rest defaults (`0`/`false`) —
+        // the state a fetch boundary leaves it in, and exactly what a pre-v5
+        // restore imposed. A v5 blob taken mid-render round-trips the live values
+        // so the re-simulated frame stays byte-identical (netplay rollback).
+        if version >= 5 {
+            self.octal_latch = r.u8()?;
+            self.address_bus = r.u16()?;
+            self.ale_armed = r.u8()? != 0;
+            self.pattern_latch_stale = r.u8()? != 0;
+            self.copy_v_delay = r.u8()?;
+        } else {
+            self.octal_latch = 0;
+            self.address_bus = 0;
+            self.ale_armed = false;
+            self.pattern_latch_stale = false;
+            self.copy_v_delay = 0;
+        }
 
         // sanity: the schema-fixed sizes mean we should be at end of input now.
         if r.pos != data.len() {
@@ -571,10 +617,12 @@ mod tests {
         v1.push(0x00); // v1 at_feed_hi (u8)
         // Tail from ex_attr_latch onward, MINUS the v3 W3-Stage-4 tail
         // (23 bytes: u8*3 + [u8;8]*2 + u16 PPUDATA state machine, then
-        // u8*2 BG-reload freeze) AND the v4 extra-scanlines countdown (2
-        // bytes: u16 `extra_lines_remaining`), neither of which a v1 blob
-        // carried.
-        v1.extend_from_slice(&v2[at + 4..v2.len() - 25]);
+        // u8*2 BG-reload freeze), the v4 extra-scanlines countdown (2 bytes:
+        // u16 `extra_lines_remaining`), AND the v5 2-cycle-ALE fetch-state tail
+        // (6 bytes: u8 `octal_latch` + u16 `address_bus` + u8 `ale_armed` + u8
+        // `pattern_latch_stale` + u8 `copy_v_delay`) — 31 bytes total, none of
+        // which a v1 blob carried.
+        v1.extend_from_slice(&v2[at + 4..v2.len() - 31]);
         v1[0] = 1; // version byte -> v1
 
         let mut q = Ppu::new(PpuRegion::Ntsc);
@@ -611,11 +659,39 @@ mod tests {
         p.set_extra_scanlines(8);
         p.extra_lines_remaining = 5;
         let blob = p.snapshot();
-        assert_eq!(blob[0], PPU_SNAPSHOT_VERSION, "blob carries v4");
+        assert_eq!(
+            blob[0], PPU_SNAPSHOT_VERSION,
+            "blob carries current version"
+        );
 
         let mut q = Ppu::new(PpuRegion::Ntsc);
         q.restore(&blob).unwrap();
         assert_eq!(q.extra_lines_remaining, 5);
+    }
+
+    #[test]
+    fn snapshot_round_trips_2cycle_ale_fetch_state() {
+        // v2.0.3 (ADR 0030): a checkpoint taken mid-render (netplay rollback)
+        // can land with the 2-cycle-ALE fetch model's in-flight state live —
+        // the octal latch / multiplexed bus, the ALE arm, and the two corruption
+        // one-shots (`pattern_latch_stale`, the delayed-`CopyV` `copy_v_delay`).
+        // They must round-trip so the re-simulated frame is byte-identical to the
+        // forward run (else the peers desync). Regression pin for the promotion.
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.octal_latch = 0x19;
+        p.address_bus = 0x2F19;
+        p.ale_armed = true;
+        p.pattern_latch_stale = true;
+        p.copy_v_delay = 3;
+        let blob = p.snapshot();
+
+        let mut q = Ppu::new(PpuRegion::Ntsc);
+        q.restore(&blob).unwrap();
+        assert_eq!(q.octal_latch, 0x19);
+        assert_eq!(q.address_bus, 0x2F19);
+        assert!(q.ale_armed);
+        assert!(q.pattern_latch_stale);
+        assert_eq!(q.copy_v_delay, 3);
     }
 
     #[test]

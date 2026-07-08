@@ -1,7 +1,9 @@
 # ADR 0030 — AccuracyCoin "ALE + Read" / "Hybrid Addresses": the octal-latch gap and the 2-cycle-ALE-fetch prerequisite
 
-**Status:** Accepted — records a deferred-with-roadmap decision (keep the honest
-139/141 baseline; attempt Option 2 as PR B3, and Option 1 as a separate enduring branch).
+**Status:** Accepted, then **Promoted (v2.0.3)** — the 2-cycle-ALE fetch model
+(Option 1) converged, was verified, and is now the shipped default and the only PPU
+fetch path; both experimental flags are retired. See the "Promoted (v2.0.3)" section
+at the end.
 **Date:** 2026-07-08
 **Author:** DoubleGate
 **Related:** [ADR 0002 (IRQ-timing coordination)](0002-irq-timing-coordination.md),
@@ -369,3 +371,70 @@ unconditionally). The committed `insta` snapshots are LEFT at the flag-off value
 build stays byte-identical; the two flag-on diffs are documented exceptions to be re-blessed (or
 made feature-conditional) by the maintainer at the **Phase-4 promotion** gate alongside the perf
 check and a CI job asserting flag-on 141/141. This ADR is updated (not superseded) at promotion.
+
+## Promoted (v2.0.3)
+
+The 2-cycle-ALE fetch model (Option 1) is now the **shipped default and the only PPU
+fetch path.** It follows the v2.0.0 precedent (which promoted the one-clock scheduler by
+deleting its flag): the model is made unconditional and BOTH experimental flags are
+retired.
+
+- **Unconditional model.** The ALE-drive + first-class `octal_latch` + `ale_splice`
+  multiplexed-bus splice + delayed-`CopyV` Hybrid (`copy_v_delay`) + `$2007`-ALE-overlap
+  "ALE + Read" (`pattern_latch_stale`) machinery in `crates/rustynes-ppu/src/ppu.rs` is
+  no longer feature-gated — it is always compiled and active.
+- **Both flags retired.** `mc-ppu-2cycle-ale` (the converged model) and
+  `mc-ppu-bus-addr-hybrid` (the superseded v2.0.2 whole-dot `+1 coarse-X` stand-in) are
+  deleted from `rustynes-ppu`/`rustynes-core`/`rustynes-test-harness` `Cargo.toml`, and the
+  v2.0.2 stand-in code (the `copy_v` one-shot, the `octal_effective` splice function, the
+  `OctalFetch` enum, and the `(v & 0xE0)|(coarse_x+1)` reconstruction) is removed. Zero
+  references to either flag remain in `crates/`.
+- **Diagnostic tracer kept.** The `octal_trace` calibration ring is retained behind a
+  new default-off dev feature `ppu-octal-trace` (it does NOT gate emulation behavior): with
+  the feature off, `push` is a zero-cost no-op stub and the ring's 64-bit-atomic storage is
+  absent, so the shipped hot path is untouched and the `#![no_std]` chip stack (whose
+  `thumbv7em` target lacks 64-bit atomics) still builds. This is why the module could not be
+  made unconditional.
+
+**Shipped-default verification (no feature flags):**
+
+- **AccuracyCoin 141/141 (100.00%)**, RAM-authoritative, zero failing tests — both `$0491`
+  "ALE + Read" and `$0492` "Hybrid Addresses" pass on the default build.
+- Full accuracy battery green: nestest 0-diff; mmc3 A12-IRQ 18/18 (+ the 5 pre-existing
+  by-design R1/R2/rev-B `#[ignore]`s, unchanged); ppu_sprites 19/19; mmc1_a12; nes_blargg
+  8/8. `cargo test --workspace`, `cargo fmt --all --check`,
+  `cargo clippy --workspace --all-targets -D warnings`, `RUSTDOCFLAGS=-D warnings cargo doc`,
+  and the `thumbv7em-none-eabihf` `no_std` cross-compile all clean.
+- **60-ROM commercial oracle: 60/60**, with exactly the two documented titles re-blessed —
+  **Super Mario Bros. 3 (MMC3)** and **Uchuu Keibitai SDF (MMC5)** — each changing ONLY its
+  `checkpoint f600 fb_fnv1a64` line (a pure PPU-internal framebuffer shift; cycle count and
+  audio hash byte-identical). No other title's snapshot moved. This is the intentional,
+  more-TriCNES-faithful output the model produces at a mid-render `$2006` scroll write.
+
+**Performance trade (accepted).** The 2-cycle-ALE split makes each background VRAM access a
+genuine two-dot transaction (an ALE-drive dot plus a splice on the read dot), which costs
+~10% over the R1 baseline: nestest headless is **~4.15 ms/frame (~4x realtime)** vs the
+~3.77 ms R1 baseline. Well inside the real-time budget; accepted as the cost of the accuracy
+gain. Recorded in `docs/performance.md`.
+
+**Save-state format — correction to the pre-promotion note above.** The "Regression
+battery (flag-on)" note claimed "no snapshot-format bump (`PPU_SNAPSHOT_VERSION` stays at
+4)" because the octal-latch fields "self-heal within a scanline." That reasoning holds for a
+single continuous run, but promoting the model to the default path made it the substrate for
+**netplay rollback**, which save/restores emulator state and re-simulates. The rollback
+checkpoints exposed a genuine determinism gap: `snapshot_restore_replay` fidelity requires the
+in-flight fetch state to round-trip (a mid-render checkpoint can land with `copy_v_delay` /
+`pattern_latch_stale` / `ale_armed` / `octal_latch` / `address_bus` live), exactly the class
+of bug the v3 (`$2007` state machine) and v4 (overclock countdown) snapshot tails already
+fixed. Three `rustynes-netplay` rollback-determinism tests (`rollback_matches_reference`,
+`n_player_rollback_matches_reference`, `rollback_stress_high_latency`) regressed on
+promotion and were fixed by serializing these five fields in a new **`PPU_SNAPSHOT_VERSION`
+v5 tail**.
+
+This IS a save-state addition (`PPU_SNAPSHOT_VERSION` 4 → 5), and it revises the earlier
+"stays at 4" expectation. It is **additive and NOT a load-break**: the six-byte tail is
+appended, and pre-v5 `.rns` blobs upconvert with the five fields at their inactive rest
+defaults (`0`/`false`) — the state a save taken at a fetch boundary always holds — so old
+save-states still load (per the ADR 0028 spirit; the rendered output for the two titles above
+is the only user-visible change, an intentional accuracy improvement, not a format break).
+The netplay determinism battery (all 16 tests) passes with the v5 tail.
