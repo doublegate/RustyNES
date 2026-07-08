@@ -2045,13 +2045,12 @@ private fun EmulatorScreen(
                     if (chromecast.isCasting) "Casting…" else "Cast to TV (spectator ~20-30fps):",
                     color = Color.Gray,
                 )
+                // v2.0.1 (ADR 0025): build the CAF MediaRouteButton via the flavor
+                // `ChromecastSender` façade (real button in `play`, a blank inert View
+                // in `foss`) so this shared src/main file links no `androidx.mediarouter`
+                // / `com.google.android.gms.cast.*` and compiles in the FOSS flavor.
                 androidx.compose.ui.viewinterop.AndroidView(
-                    factory = { ctx ->
-                        androidx.mediarouter.app.MediaRouteButton(ctx).also { btn ->
-                            com.google.android.gms.cast.framework.CastButtonFactory
-                                .setUpMediaRouteButton(ctx.applicationContext, btn)
-                        }
-                    },
+                    factory = { ctx -> chromecast.mediaRouteButton(ctx) },
                 )
             }
             // Demo: an always-visible unlock affordance + the session countdown.

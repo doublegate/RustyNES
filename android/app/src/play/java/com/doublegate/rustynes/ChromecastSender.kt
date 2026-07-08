@@ -8,6 +8,9 @@ package com.doublegate.rustynes
 import android.content.Context
 import android.os.SystemClock
 import android.util.Base64
+import android.view.View
+import androidx.mediarouter.app.MediaRouteButton
+import com.google.android.gms.cast.framework.CastButtonFactory
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastOptions
 import com.google.android.gms.cast.framework.CastSession
@@ -154,6 +157,20 @@ class ChromecastSender(context: Context) {
         }
         session = null
     }
+
+    /**
+     * Build the CAF [MediaRouteButton] wired to the Cast SDK's device discovery +
+     * chooser/controller dialog (via [CastButtonFactory]). Returned as a plain [View]
+     * so the shared `AndroidView` factory in `src/main` can host it without importing
+     * any proprietary Cast type — the `foss` twin returns a blank `View` from the same
+     * signature. The only caller is gated behind the default-off
+     * `BuildConfig.CHROMECAST_ENABLED`, so the button appears only in a Cast-enabled
+     * `play` build.
+     */
+    fun mediaRouteButton(context: Context): View =
+        MediaRouteButton(context).also { btn ->
+            CastButtonFactory.setUpMediaRouteButton(context.applicationContext, btn)
+        }
 
     /**
      * Send one palette-index frame to the Web Receiver, throttled to the spectator
