@@ -1,3 +1,7 @@
+// PLAY-FLAVOR SOURCE SET (v2.0.1, ADR 0025). This is the real, Google-Play-Billing-
+// backed `LicenseManager`. The `foss` variant supplies a byte-compatible no-op twin in
+// `src/foss/.../Billing.kt` (no `com.android.billingclient.*` import), so the FOSS /
+// F-Droid artifact links no Billing SDK and the demo/freemium is simply absent there.
 package com.doublegate.rustynes
 
 import android.app.Activity
@@ -20,8 +24,8 @@ import com.android.billingclient.api.QueryPurchasesParams
 /** The one-time, non-consumable "Full Unlock" product id (set up in Play Console). */
 const val FULL_UNLOCK_PRODUCT = "full_unlock"
 
-/** Free-tier demo session length: 8 minutes (shortened in debug for testing). */
-val DEMO_SESSION_SECONDS: Int = if (BuildConfig.DEBUG) 60 else 480
+// DEMO_SESSION_SECONDS moved to `src/main/.../PlayFacadeShared.kt` (v2.0.1) so the
+// value is visible to both flavors; the freemium demo it feeds is `play`-only.
 
 /**
  * Owns the freemium entitlement (Workstream M).
@@ -45,6 +49,17 @@ class LicenseManager(private val appContext: Context) {
     /** The fetched product (for its localized price + the purchase flow). */
     var product by mutableStateOf<ProductDetails?>(null)
         private set
+
+    /**
+     * The localized "Full Unlock" price to show in the UI, or the `$2.99` fallback
+     * before the product loads (v2.0.1 façade). Exposed as a plain `String` — NOT the
+     * Google `ProductDetails` — so `MainActivity` (a `src/main` file) never touches a
+     * `com.android.billingclient.*` type; that is what lets the `foss` twin present
+     * the identical `priceLabel` surface while linking no Billing SDK. Reading the
+     * `product` state inside the getter keeps the label reactive under Compose.
+     */
+    val priceLabel: String
+        get() = product?.oneTimePurchaseOfferDetails?.formattedPrice ?: "$2.99"
 
     private val prefs = appContext.getSharedPreferences("license", Context.MODE_PRIVATE)
 

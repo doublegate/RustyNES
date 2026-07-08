@@ -2045,19 +2045,20 @@ private fun EmulatorScreen(
                     if (chromecast.isCasting) "Casting…" else "Cast to TV (spectator ~20-30fps):",
                     color = Color.Gray,
                 )
+                // v2.0.1 (ADR 0025): build the CAF MediaRouteButton via the flavor
+                // `ChromecastSender` façade (real button in `play`, a blank inert View
+                // in `foss`) so this shared src/main file links no `androidx.mediarouter`
+                // / `com.google.android.gms.cast.*` and compiles in the FOSS flavor.
                 androidx.compose.ui.viewinterop.AndroidView(
-                    factory = { ctx ->
-                        androidx.mediarouter.app.MediaRouteButton(ctx).also { btn ->
-                            com.google.android.gms.cast.framework.CastButtonFactory
-                                .setUpMediaRouteButton(ctx.applicationContext, btn)
-                        }
-                    },
+                    factory = { ctx -> chromecast.mediaRouteButton(ctx) },
                 )
             }
             // Demo: an always-visible unlock affordance + the session countdown.
             if (!unlocked) {
-                val price = license.product
-                    ?.oneTimePurchaseOfferDetails?.formattedPrice ?: "$2.99"
+                // v2.0.1 (ADR 0025): read the flavor-neutral `priceLabel` façade rather
+                // than the Google `ProductDetails` directly, so this src/main file links
+                // no `com.android.billingclient.*` and compiles in the FOSS flavor.
+                val price = license.priceLabel
                 Button(onClick = { activity?.let { license.purchase(it) } }) {
                     Text(stringResource(R.string.action_unlock, price))
                 }
@@ -2368,7 +2369,8 @@ private fun EmulatorScreen(
     // Demo-expired gate: a blocking sheet over everything with Unlock + Restore.
     if (!unlocked && demoExpired) {
         DemoExpiredOverlay(
-            price = license.product?.oneTimePurchaseOfferDetails?.formattedPrice ?: "$2.99",
+            // v2.0.1 (ADR 0025): flavor-neutral price façade (see the demo unlock button).
+            price = license.priceLabel,
             onUnlock = { activity?.let { license.purchase(it) } },
             onRestore = { license.refreshEntitlement() },
         )

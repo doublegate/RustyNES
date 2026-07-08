@@ -1,3 +1,7 @@
+// PLAY-FLAVOR SOURCE SET (v2.0.1, ADR 0025). The real in-app-update + in-app-review
+// manager (`com.google.android.play:app-update` / `review`). The `foss` twin in
+// `src/foss/.../PlayUpdates.kt` is a no-op with the same public surface — a sideload /
+// F-Droid build self-updates through its store, so there is nothing to do there.
 package com.doublegate.rustynes
 
 import android.app.Activity

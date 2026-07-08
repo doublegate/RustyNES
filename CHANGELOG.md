@@ -15,6 +15,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Android — v2.0.1 core re-port onto Timebase + the start of the `foss`/`play` split
+
+- **Android re-ported onto the v2.0.0 "Timebase" core.** The `versionCode`/`versionName`
+  bump to `20001` / `2.0.1` cuts the first release of the Android mobile-finalization
+  re-port train (see `to-dos/ROADMAP.md`). The deterministic chip stack is byte-identical,
+  so host CI accuracy is unchanged (**AccuracyCoin 139/141**).
+- **Movie-epoch warning on the mobile bridge (ADR 0028).** `rustynes-mobile`'s
+  `NesController::movie_play` now peeks `rustynes_core::recorded_before_v2_timebase` and, for
+  a pre-v2.0.0 `.rnm`, queues a drainable host warning (new `NesController::drain_warnings`)
+  — mirroring the desktop + wasm frontends. Input replay still proceeds, but the host can now
+  tell the user that exact framebuffer/audio reproduction is not guaranteed across the
+  engine-timebase boundary. A pre-v2.0.0 `.rns` restore already maps to a clean
+  `MobileError::SaveState` (no crash). Host-shell wiring only; the core is untouched.
+- **Structural start of the `foss` / `play` Android product-flavor split (ADR 0025).** Added a
+  `distribution` flavor dimension — `foss` (default, `isDefault = true`) + `play` — with
+  `PLAY_BUILD` set per-flavor. Every proprietary Google-Play SDK (Play Billing, the Cast
+  Application Framework, Play Games v2, Play Integrity, in-app update/review) moved from
+  unconditional `implementation(…)` to **`playImplementation(…)`**, so the `foss` variant links
+  **none** of them. The glue that touches those SDKs (`LicenseManager`, `PlayGamesManager`,
+  `CloudSaveManager`, `IntegrityManager`, `PlayUpdatesManager`, `ChromecastSender`) moved to
+  `src/play/` with byte-compatible **no-op façades in `src/foss/`**; shared pure types
+  (`PgsIds`, `IntegrityVerdict`, `DEMO_SESSION_SECONDS`) moved to `src/main`; `MainActivity`
+  now reads a flavor-neutral `LicenseManager.priceLabel` instead of the Google `ProductDetails`
+  type, so `src/main` links no Play SDK. The Cast-framework OPTIONS_PROVIDER + Play-Games APP_ID
+  manifest meta-data moved to `src/play/AndroidManifest.xml` so they never merge into the
+  `foss` manifest. An `installDebug` alias forwards to `installFossDebug` so the dev/CI command
+  is unchanged; `android.yml` now bundles both flavors. The monetization / ad glue stays dormant
+  (the AppLovin/RevenueCat wiring is the v2.1.0 step). The AOSP Presentation-API `CastManager`
+  is not a proprietary SDK and stays shared in `src/main`.
+- **Docs:** added the previously-dangling `to-dos/v1.8.x-on-device-verification.md` (the manual
+  on-device checklist the mobile plan cites).
 ### Removed
 
 - **Dead `mc-r1-dmc-abort-probe` diagnostic feature (v2.0.1 housekeeping).** The
