@@ -8,7 +8,7 @@ diagnostic decoder needs at compile time.
 
 | File | Purpose |
 |------|---------|
-| `SOURCE_CATALOG.tsv` | 144-row TSV mapping `(suite, name) -> result-byte address`, extracted from upstream `AccuracyCoin.asm`'s `Suite_*` blocks. `include_str!`'d by `nes-test-harness::accuracy_coin_catalog`. |
+| `SOURCE_CATALOG.tsv` | 146-row TSV mapping `(suite, name) -> result-byte address`, extracted from upstream `AccuracyCoin.asm`'s `Suite_*` blocks. `include_str!`'d by `nes-test-harness::accuracy_coin_catalog`. |
 | `sub-tests/*.nes` | Custom-built sub-test ROMs that boot directly into one target test (bypass menu + full-battery loop). Built by `scripts/accuracycoin-build/build_sub_test_rom.py`. Used to unblock the Session-22 Mesen2 wall-time oracle blocker. Inherits upstream MIT license. See `docs/audit/session-23-custom-accuracycoin-sub-test-roms-2026-05-22.md`. |
 
 The runtime `.nes` ROM lives at [`../accuracycoin/AccuracyCoin.nes`](../accuracycoin/AccuracyCoin.nes)
@@ -32,10 +32,15 @@ pass / fail breakdowns.
 
 ## Source
 
-`https://github.com/100thCoin/AccuracyCoin` (main branch). The TSV was
-extracted from `AccuracyCoin.asm` by walking each `Suite_*` block and
-emitting `(suite, test-name, ram-addr)` triples. See
-`docs/testing-strategy.md` for the extraction recipe.
+`https://github.com/100thCoin/AccuracyCoin` (main branch; re-synced to
+upstream commit `71f57fb` in v2.0.1). Extraction recipe (inline — the
+authoritative source is `AccuracyCoin.asm` itself, not a prose doc): walk
+each `Suite_*` block, and for every `table "name", $FF, result_symbol,
+TEST_addr` macro entry emit a `(suite, test-name, ram-addr)` triple,
+resolving `result_symbol` to its `result_X = $ADDR` definition. The v2.0.1
+re-sync added the two newest PPU tests ("ALE + Read" `$0491`, "Hybrid
+Addresses" `$0492`), growing the catalog 144 -> 146 rows / 139 -> 141
+assigned tests.
 
 ## License
 

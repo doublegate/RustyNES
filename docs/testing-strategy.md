@@ -67,7 +67,7 @@ are a documented corpus carryover). F2 confirmed the length-counter halt/reload
 race and the DMC load-DMA even/odd defer are already implemented and added named
 regression pins. F3 added the determinism-gated PPU extra-scanlines overclock
 (off by default, byte-identical at zero). None of these alter the default build's
-behavior, so AccuracyCoin holds 100% (139/139).
+behavior, so AccuracyCoin holds 139/141 — the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") added by the v2.0.1 catalog re-sync are known gaps; the 139 previously assigned tests all pass.
 
 ## Layer 4 — golden framebuffer / audio comparison
 

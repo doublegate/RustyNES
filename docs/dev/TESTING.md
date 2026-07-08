@@ -19,7 +19,7 @@ RustyNES employs a comprehensive testing strategy combining unit tests, integrat
 
 ### Testing Goals
 
-- **AccuracyCoin 100% (139/139)** — held byte-identically across every release
+- **AccuracyCoin 139/141 (98.58%)** — the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") are known gaps; the core held 139/139 byte-identically across every release before the v2.0.1 catalog re-sync grew it to 141 assigned tests
 - **Unit test coverage** for all components
 - **Integration tests** for component interactions
 - **Regression tests** for mapper edge cases (168 mapper families)

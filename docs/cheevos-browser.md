@@ -122,7 +122,7 @@ bridge methods (`begin_login` / `load_game` / `do_frame`) over it. The side-modu
 build script now also exports `set_event_handler` and the `getValue` / `setValue`
 / `HEAPU8` runtime methods the marshalling reads/writes the rcheevos structs with.
 Off by default, so the shipped native + wasm builds are byte-identical and
-AccuracyCoin holds 100% (139/139).
+AccuracyCoin holds 139/141 (the two newest upstream PPU tests are known gaps).
 
 **Maintainer-manual (no headless path — ADR 0015) — the only remaining carryovers:**
 

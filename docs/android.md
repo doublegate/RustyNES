@@ -31,7 +31,7 @@
 RustyNES ports to Android the same way it ports to the browser: the pure-Rust,
 byte-identical core is unchanged, and only a new *host* is written. Nothing here
 touches the chip stack or the emitted-frame/sample contract, so **AccuracyCoin
-100% (139/139)** and the oracles stay green on host CI; the Android CI only proves
+139/141** (the two newest upstream PPU tests are known gaps) and the oracles stay green on host CI; the Android CI only proves
 the build links + (eventually) an instrumented smoke boot.
 
 ```text

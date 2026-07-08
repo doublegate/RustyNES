@@ -26,7 +26,7 @@ code change. The authoritative per-release status lives in `docs/STATUS.md`.
 
 - **The chip stack + the emitted-frame/sample contract are never touched.** All
   iOS work is platform shell. The desktop / native / `no_std` / wasm builds stay
-  **byte-identical**, **AccuracyCoin 100% (139/139)** holds on host CI, and the
+  **byte-identical**, **AccuracyCoin 139/141** (the two newest upstream PPU tests are known gaps) holds on host CI, and the
   determinism contract (same seed+ROM+input => bit-identical framebuffer+audio on
   ARM) is preserved — so desktop <-> Android <-> iOS save portability (and, once
   it lands, netplay cross-play) stays valid. The iOS app consumes the same `Nes`
@@ -144,8 +144,8 @@ AVFoundation / UIKit, and includes the generated `Generated/RustyNESCore.swift`
 The final iOS TestFlight release before the v2.0.0 core rewrite adds a
 creator/power-tools set. Every piece is **additive / opt-in** and forwards to
 existing core APIs through additive `rustynes-mobile` bridge functions, so with
-the tools unused the app behaves as v1.9.8 and AccuracyCoin holds 139/139 (the
-determinism contract is untouched).
+the tools unused the app behaves as v1.9.8 and AccuracyCoin holds 139/141 (the
+determinism contract is untouched; the two newest upstream PPU tests are known gaps).
 
 - **Cheats (`CheatsView`, in-game pill menu):** add / remove / clear / list Game
   Genie codes (the core's own cheat engine applies them live to PRG reads,
@@ -240,7 +240,7 @@ the creator / power-tools release (read-only debugger inspector, raw-RAM editor,
 Game Genie codes, foreign-movie import `.fm2`/`.bk2`/`.fcm`/`.fmv`/`.vmv`, the
 TAStudio piano-roll, custom palettes, HD-packs, and the audio-depth controls). The
 host gates (fmt / clippy `-D warnings` / rustdoc / `no_std` / wasm) stay green and
-AccuracyCoin holds 139/139, because the crate is a host shell off-device.
+AccuracyCoin holds 139/141 (the two newest upstream PPU tests are known gaps), because the crate is a host shell off-device.
 
 **Explicitly NOT on the iOS bridge (post-v2.0.0 carryovers).** The mobile bridge is
 iNES / NES 2.0-only, so **FDS disk images (`.fds`) and NSF music files (`.nsf`)

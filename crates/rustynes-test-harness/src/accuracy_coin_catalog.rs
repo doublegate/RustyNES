@@ -3,13 +3,13 @@
 //! Vendored from upstream `100thCoin/AccuracyCoin` (MIT licensed). The
 //! list mirrors `AccuracyCoin.asm`'s 20 `Suite_*` pages: each page
 //! contributes a header string + a sequence of `table "name", $FF,
-//! result_addr, run_addr` macro entries. Total: 144 entries across 20
+//! result_addr, run_addr` macro entries. Total: 146 entries across 20
 //! suites.
 //!
 //! ## Source of truth
 //!
 //! The authoritative list lives next to the ROM at
-//! `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv` as a 144-line
+//! `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv` as a 146-line
 //! `(suite<TAB>name<TAB>result_addr)` file extracted from upstream
 //! `AccuracyCoin.asm` via the script in `docs/testing-strategy.md`.
 //! This module embeds that file via `include_str!` and parses it
@@ -126,7 +126,7 @@ impl TestStatus {
     }
 }
 
-/// Return the catalog of all 144 AccuracyCoin tests, in `TableTable`
+/// Return the catalog of all 146 AccuracyCoin tests, in `TableTable`
 /// order.
 ///
 /// The result is built once (on first call) and cached for the
@@ -170,7 +170,7 @@ pub fn catalog() -> &'static [CatalogEntry] {
 
 /// Look up a catalog entry by zero-based `TableTable` index.
 ///
-/// Returns `None` if `index >= 144`.
+/// Returns `None` if `index >= 146`.
 #[must_use]
 pub fn entry(index: usize) -> Option<&'static CatalogEntry> {
     catalog().get(index)
@@ -192,7 +192,7 @@ pub fn suite_size(suite: &str) -> usize {
     catalog().iter().filter(|e| e.suite == suite).count()
 }
 
-/// Decode the 144-entry result vector by reading each catalog entry's
+/// Decode the 146-entry result vector by reading each catalog entry's
 /// [`CatalogEntry::result_addr`] from `ram` (which must be the NES's
 /// 2 KiB CPU RAM borrowed via `Nes::bus().ram_bytes()`).
 ///
@@ -215,7 +215,7 @@ pub fn decode_results(ram: &[u8]) -> Option<Vec<TestStatus>> {
 /// Aggregated counts derived from a decoded results vector.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RamResultSummary {
-    /// Total number of catalog entries (always 144 if the catalog is
+    /// Total number of catalog entries (always 146 if the catalog is
     /// fully loaded).
     pub total: u32,
     /// Tests that wrote `$01` (clean pass).
@@ -304,8 +304,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_exactly_144_entries() {
-        assert_eq!(catalog().len(), 144, "AccuracyCoin catalog size drifted");
+    fn catalog_has_exactly_146_entries() {
+        assert_eq!(catalog().len(), 146, "AccuracyCoin catalog size drifted");
     }
 
     #[test]
@@ -369,9 +369,9 @@ mod tests {
     fn entry_by_index_is_zero_based() {
         let first = entry(0).expect("index 0 present");
         assert_eq!(first.name, "ROM is not writable");
-        let last = entry(143).expect("index 143 present");
+        let last = entry(145).expect("index 145 present");
         assert_eq!(last.name, "Internal Data Bus");
-        assert!(entry(144).is_none());
+        assert!(entry(146).is_none());
     }
 
     #[test]
@@ -399,7 +399,7 @@ mod tests {
         ram[e0.result_addr as usize] = 0x01;
         ram[e1.result_addr as usize] = (3 << 2) | 0x02; // fail code 3
         let statuses = decode_results(&ram).expect("decode");
-        assert_eq!(statuses.len(), 144);
+        assert_eq!(statuses.len(), 146);
         assert_eq!(statuses[0], TestStatus::Pass);
         assert_eq!(statuses[1], TestStatus::Fail(3));
         // The five Power On State tests share $03FF (left at 0x00).

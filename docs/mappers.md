@@ -324,7 +324,7 @@ to a blank/few-colour frame. Cross-checking each against puNES / Mesen2 / the
 NESdev wiki corrected real decode bugs in **m143, m147, m150, m156, m162, m177,
 m178, m185, m227, m233, m244, m250** (details in `CHANGELOG.md`); each now renders a
 real screen for the staged dumps. All are BestEffort (off the AccuracyCoin
-oracle), so AccuracyCoin holds 100% (139/139) and the `mapper_tier_honesty`
+oracle), so AccuracyCoin holds 139/141 (the two newest upstream PPU tests are known gaps) and the `mapper_tier_honesty`
 gate stays green. A handful of titles remain blank and are documented
 follow-ups: 4 of the 5 m162 FS304 RPGs need the `$5000.7` CHR auto-switch (the
 core decode is proven by *The Mummy* rendering); m036 TXC needs a proper TXC-

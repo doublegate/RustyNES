@@ -92,8 +92,9 @@ for how the region is determined.
 
 ## Accuracy
 
-RustyNES clears the headline accuracy bar in full: the kevtris
-**AccuracyCoin** suite at **100% (139/139)**, **nestest** with zero
+RustyNES clears the headline accuracy bar all but exhaustively: the kevtris
+**AccuracyCoin** suite at **98.58% (139/141)** — only the two newest upstream PPU
+tests ("ALE + Read", "Hybrid Addresses") are known gaps — **nestest** with zero
 golden-log diff over 8,991 instructions, and the entire blargg
 `instr_test_v5`, `instr_misc`, `instr_timing`, `cpu_timing_test6`,
 `cpu_interrupts_v2`, `ppu_open_bus`, `ppu_vbl_nmi`, `apu_test`,

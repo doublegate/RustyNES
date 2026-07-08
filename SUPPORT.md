@@ -98,7 +98,7 @@ A: Yes. RustyNES is at its first stable release, **v1.0.0** — a complete, play
 
 **Q: How accurate is RustyNES?**
 
-A: AccuracyCoin 100.00% (139/139), `nestest` 0-diff, and the blargg / kevtris suites green, validated by a byte-identical commercial-ROM regression oracle. See [docs/STATUS.md](docs/STATUS.md) for the authoritative pass-count matrix.
+A: AccuracyCoin 98.58% (139/141) — the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") are known gaps — `nestest` 0-diff, and the blargg / kevtris suites green, validated by a byte-identical commercial-ROM regression oracle. See [docs/STATUS.md](docs/STATUS.md) for the authoritative pass-count matrix.
 
 **Q: How can I contribute?**
 

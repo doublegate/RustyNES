@@ -305,7 +305,7 @@ Feature highlights
 ==================
 
 Accuracy
-  Cycle-accurate PPU-dot lockstep scheduler; AccuracyCoin 100% (139/139),
+  Cycle-accurate PPU-dot lockstep scheduler; AccuracyCoin 98.58% (139/141),
   nestest 0-diff, blargg / kevtris suites green.
 
 Cartridges & platforms
