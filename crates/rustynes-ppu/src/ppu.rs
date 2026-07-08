@@ -283,6 +283,34 @@ pub struct Ppu {
     /// v3 tail (refreshed every rendered scanline).
     pub(crate) ppudata_spr0_nt_addr: u16,
 
+    // === v2.0.1 (ADR 0030) persistent PPU bus-address model (Option 2) ===
+    // ENTIRELY `mc-ppu-bus-addr-hybrid`-gated — these fields, their init, and
+    // every read/write of them are compiled out of the default build, so the
+    // shipped binary is byte-identical (the feature is off by design; ADR 0030).
+    /// The last 14-bit address the PPU drove onto its multiplexed AD/A pins —
+    /// Mesen2's `_ppuBusAddress`. Fed by every `read_vram`. Its low 8 bits are
+    /// the external octal-latch value the hybrid-address corruption reads. Not
+    /// snapshotted (it self-heals on the next fetch).
+    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+    pub(crate) bus_addr: u16,
+    /// A one-shot override address for the next background nametable fetch, set
+    /// when a `$2006` second write lands during a rendering fetch (the
+    /// hybrid-address case).
+    ///
+    /// KNOWN LIMITATION (flag-on only): unlike `bus_addr`, this is NOT
+    /// self-healing — it is transient one-shot state that lives from the `$2006`
+    /// write until the next background nametable fetch (a few PPU dots), and it
+    /// is deliberately NOT serialized in the snapshot (the scaffold avoids a
+    /// format-version bump for an experiment that does not yet pass). So a
+    /// save-state captured inside that narrow window, under this experimental
+    /// feature, would drop the pending override on restore. This is harmless in
+    /// the SHIPPED build (the feature is off, so the field is compiled out
+    /// entirely) and must be resolved — by snapshotting it or making the fetch
+    /// model self-consistent — when the Option 1 (2-cycle-ALE) work promotes
+    /// this path. Tracked in ADR 0030.
+    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+    pub(crate) hybrid_pending: Option<u16>,
+
     // === Internal scroll/address registers (loopy v/t/x/w) ===
     /// 15-bit "current VRAM address".
     pub(crate) v: u16,
@@ -745,6 +773,10 @@ impl Ppu {
             spr_fetch_lo_raw: [0; 8],
             spr_fetch_hi_raw: [0; 8],
             ppudata_spr0_nt_addr: 0x2000,
+            #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+            bus_addr: 0,
+            #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+            hybrid_pending: None,
             v: 0,
             t: 0,
             x: 0,
@@ -1810,6 +1842,16 @@ impl Ppu {
                     self.t = (self.t & 0xFF00) | u16::from(value);
                     self.v = self.t;
                     self.w = false;
+                    // v2.0.1 (ADR 0030) — "Hybrid Addresses": a `$2006` second
+                    // write during a rendering fetch composes the in-flight
+                    // nametable fetch from {new v high 6}:{octal-latch low 8}
+                    // (e.g. v -> $2F00 with the latch holding $19 from the prior
+                    // $2C19 fetch => $2F19). The next `fetch_nt` consumes this.
+                    // Flag-gated so the shipped build is byte-identical.
+                    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+                    if self.mask.rendering_enabled() && self.is_render_scanline() {
+                        self.hybrid_pending = Some((self.v & 0x3F00) | (self.bus_addr & 0xFF));
+                    }
                     // PPUADDR write can flip A12.
                     self.observe_a12(bus);
                 } else {
@@ -1882,6 +1924,13 @@ impl Ppu {
     #[allow(clippy::needless_pass_by_ref_mut)]
     fn read_vram<B: PpuBus>(&mut self, bus: &mut B, addr: u16) -> u8 {
         let a = addr & 0x3FFF;
+        // v2.0.1 (ADR 0030) — latch the address just driven onto the multiplexed
+        // PPU bus (Mesen2's `_ppuBusAddress`); the octal latch is its low byte.
+        // Entirely feature-gated (compiled out of the shipped build).
+        #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+        {
+            self.bus_addr = a;
+        }
         let val = if a < 0x2000 {
             bus.ppu_read(a)
         } else {
@@ -2433,6 +2482,11 @@ impl Ppu {
         } else {
             0x2000 | (self.v & 0x0FFF)
         };
+        // v2.0.1 (ADR 0030) — a pending `$2006` hybrid address overrides this
+        // fetch's nametable address exactly once. Flag-gated + `take()`s so the
+        // shipped build is byte-identical (the field is always `None` there).
+        #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+        let nt_addr = self.hybrid_pending.take().unwrap_or(nt_addr);
         self.nt_latch = self.read_vram(bus, nt_addr);
         // Latch any per-tile extended-attribute info (MMC5 ExGrafix). Skip
         // when split is active: the alt region uses standard 4-bit AT

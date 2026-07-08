@@ -32,217 +32,6 @@ fn roundf(x: f32) -> f32 {
     }
 }
 
-/// v2.0 R-1 core C-1 DIAGNOSTIC (gated `mc-r1-dmc-abort-probe`).
-///
-/// Pub-static atomic counters that pin WHERE the explicit-DMC-abort scheduling
-/// diverges under R1 (the abort tests fail because the truncation never
-/// engages). Read from the harness via `rustynes_core::rustynes_apu::abort_probe`.
-/// Default-off; the counters and all increment sites compile out entirely
-/// without the feature.
-#[cfg(feature = "mc-r1-dmc-abort-probe")]
-pub mod abort_probe {
-    use core::sync::atomic::{AtomicU32, AtomicU64};
-    /// `$4015` writes that DISABLE the DMC (`bit4 == 0`).
-    pub static DISABLE_WRITES: AtomicU32 = AtomicU32::new(0);
-    /// ...of those, the ones where the DMC `was_active` (so the abort
-    /// scheduler is invoked).
-    pub static DISABLE_WAS_ACTIVE: AtomicU32 = AtomicU32::new(0);
-    /// `schedule_explicit_dmc_abort_if_needed` entries.
-    pub static SCHED_CALLS: AtomicU32 = AtomicU32::new(0);
-    /// Early-returns because `bits_remaining != 1`.
-    pub static FAIL_BITS: AtomicU32 = AtomicU32::new(0);
-    /// Early-returns because `sample_buffer.is_none()` (bits_remaining == 1).
-    pub static FAIL_BUF: AtomicU32 = AtomicU32::new(0);
-    /// Reached the `cycles_until_output` computation (precond passed).
-    pub static REACHED_CUO: AtomicU32 = AtomicU32::new(0);
-    /// `cycles_until_output` landed in the engaging window {1,2,3}.
-    pub static CUO_IN_WINDOW: AtomicU32 = AtomicU32::new(0);
-    /// The abort actually armed (`pending_dmc_abort` or `dmc_abort_delay`).
-    pub static ARMED: AtomicU32 = AtomicU32::new(0);
-    /// Phase 1A diagnostic: total DMC `$4015` enables seen by the
-    /// arm-at-enable hook (regardless of timer match).
-    pub static IMPL_ARM_ENABLE: AtomicU32 = AtomicU32::new(0);
-    /// Phase 1A diagnostic: arm-at-enable matched the TriCNES timer window
-    /// (timer==10 get / ==8 put) and set `pending_dmc_abort`.
-    pub static IMPL_ARM_FIRED: AtomicU32 = AtomicU32::new(0);
-    /// W3-Stage-4 diagnostic: the consume-edge-quantization latch count.
-    ///
-    /// Incremented when a consume edge ON the GET-delivery cycle is
-    /// arm-blocked by `cannot_run == 2` with the level need still held.
-    /// Expected to fire ONLY at the Implicit `$540` X=8/9 restart races.
-    pub static EDGE_SUPPRESS_SET: AtomicU32 = AtomicU32::new(0);
-
-    /// Φ-1 cross-diff: the cycle of the most recent `$4010=$4E` write (0 = none
-    /// pending / already paired). Set by `log_4010`, consumed by `log_get`.
-    pub static LAST_4E_CYC: AtomicU32 = AtomicU32::new(0);
-    /// final lever #1 diag: per-block packed DMC-state captures.
-    ///
-    /// At each `$540` X=10/11 boundary block the two preceding cycles + the
-    /// current cycle are stored (packed via [`pack_dmc`]).
-    pub static SUBPOS_DIAG: [AtomicU64; 64] = [const { AtomicU64::new(0) }; 64];
-    /// final lever #1 diag: write index into `SUBPOS_DIAG`.
-    pub static SUBPOS_DIAG_IDX: AtomicU32 = AtomicU32::new(0);
-    /// final lever #1 diag: packed state of cycle N-1 (rotating history).
-    pub static SUBPOS_P1: AtomicU64 = AtomicU64::new(0);
-    /// final lever #1 diag: packed state of cycle N-2 (rotating history).
-    pub static SUBPOS_P2: AtomicU64 = AtomicU64::new(0);
-    /// final lever #1 diag: pack DMC state into a u64 for history/dump.
-    /// `apu_phase | needs_dma<<1 | buf<<2 | cannot_run<<4 | bytes<<12 | bits<<24 | timer<<32`.
-    #[must_use]
-    pub fn pack_dmc(
-        apu_phase: bool,
-        needs_dma: bool,
-        buf: bool,
-        cannot_run: u8,
-        bytes: u16,
-        bits: u8,
-        timer: u16,
-    ) -> u64 {
-        u64::from(apu_phase)
-            | (u64::from(needs_dma) << 1)
-            | (u64::from(buf) << 2)
-            | (u64::from(cannot_run) << 4)
-            | (u64::from(bytes) << 12)
-            | (u64::from(bits) << 24)
-            | (u64::from(timer) << 32)
-    }
-    /// Φ-1 cross-diff: per-`$4E`→first-`$FFC0`-GET offsets (TriCNES = 48).
-    pub static FFC0_OFF: [AtomicU32; 64] = [const { AtomicU32::new(0) }; 64];
-    /// Φ-1 cross-diff: write index into `FFC0_OFF`.
-    pub static FFC0_OFF_IDX: AtomicU32 = AtomicU32::new(0);
-    /// Φ-1 period: cycle of the previous `$FFC0` GET (for the reload period).
-    pub static LAST_FFC0_GET: AtomicU32 = AtomicU32::new(0);
-    /// Φ-1 period: GET-to-GET deltas (reload period; TriCNES CheckDMATiming = 576).
-    pub static FFC0_PERIOD: [AtomicU32; 128] = [const { AtomicU32::new(0) }; 128];
-    /// Φ-1 period: write index into `FFC0_PERIOD`.
-    pub static FFC0_PERIOD_IDX: AtomicU32 = AtomicU32::new(0);
-    /// Φ-2 setup-window `$4000`-read log (packed `value<<32 | cycle`).
-    ///
-    /// Isolates CalculateDMADuration's 575-spaced `LDA $4000` from the DMASync
-    /// 7-cycle spin so the `$40`-iters-before-`$00` (the Y) can be counted.
-    pub static R4000_LOG: [AtomicU64; 4096] = [const { AtomicU64::new(0) }; 4096];
-    /// Φ-2: write index into `R4000_LOG`.
-    pub static R4000_IDX: AtomicU32 = AtomicU32::new(0);
-    /// Φ-2 hang diagnostic: consecutive `dmc_dma_step` calls within one DMA.
-    pub static HANG_GUARD: AtomicU32 = AtomicU32::new(0);
-    /// Φ-2 hang diagnostic: `put_cycle` parity captured at the hang-escape.
-    pub static HANG_PUT: AtomicU32 = AtomicU32::new(99);
-    /// Φ-2 hang diagnostic: how many DMAs hit the hang-escape (GET never fired).
-    pub static HANG_COUNT: AtomicU32 = AtomicU32::new(0);
-    /// Φ-2 chain diagnostic: successful DMC reload-arms (pending set).
-    pub static ARM_COUNT: AtomicU32 = AtomicU32::new(0);
-    /// Φ-2 chain diagnostic: total `dmc_dma_read` calls (any address = a GET fired).
-    pub static GET_TOTAL: AtomicU32 = AtomicU32::new(0);
-    /// Phase 2 (`mc-r1-dmc-reenable-phase`): times `cannot_run_dmc_dma` was set to 2.
-    pub static CANNOT_RUN_SET: AtomicU32 = AtomicU32::new(0);
-    /// Phase 2: times a reload arm was BLOCKED by the `cannot_run == 2` gate.
-    pub static CANNOT_RUN_BLOCK: AtomicU32 = AtomicU32::new(0);
-    /// Phase 2: times `needs_dma() && !already && delay==0` reload-arm was reached
-    /// (denominator for the block rate).
-    pub static RELOAD_ARM_REACHED: AtomicU32 = AtomicU32::new(0);
-    /// final lever #1 (`mc-r1-dmc-halt-subpos`): times the boundary-local
-    /// 1-CPU-cycle early reload pre-arm fired (should be 6 — exactly the
-    /// X=10/11 entries of the three Implicit-abort loops).
-    pub static SUBPOS_EARLY_ARM: AtomicU32 = AtomicU32::new(0);
-
-    /// Φ-2: log a `$4000` read (cycle + returned value) for the setup-window diff.
-    pub fn log_4000_read(cycle: u32, val: u8) {
-        use core::sync::atomic::Ordering::Relaxed;
-        let i = R4000_IDX.fetch_add(1, Relaxed) as usize;
-        if i < 4096 {
-            R4000_LOG[i].store((u64::from(val) << 32) | u64::from(cycle), Relaxed);
-        }
-    }
-
-    /// Φ-1: record a `$4010` write; arm the offset capture on `$4E` (rate 14 +
-    /// loop), the CheckDMATiming setup value.
-    pub fn log_4010(cycle: u32, value: u8) {
-        use core::sync::atomic::Ordering::Relaxed;
-        if value == 0x4E {
-            LAST_4E_CYC.store(cycle, Relaxed);
-        }
-    }
-
-    /// Φ-1: record a DMC GET; if it is the FIRST `$FFC0` GET after a `$4E` write
-    /// (within a plausible 200-cycle setup window), capture the cycle offset
-    /// (the RustyNES analog of TriCNES's 48) and disarm.
-    pub fn log_get(cycle: u32, addr: u16) {
-        use core::sync::atomic::Ordering::Relaxed;
-        if addr != 0xFFC0 {
-            return;
-        }
-        // Reload period: delta from the previous $FFC0 GET.
-        let prev = LAST_FFC0_GET.swap(cycle, Relaxed);
-        if prev != 0 && cycle > prev {
-            let d = cycle - prev;
-            // Only the CheckDMATiming-region cadence (~576), skip basic playback.
-            if (560..=590).contains(&d) {
-                let pi = FFC0_PERIOD_IDX.fetch_add(1, Relaxed) as usize;
-                if pi < 128 {
-                    FFC0_PERIOD[pi].store(d, Relaxed);
-                }
-            }
-        }
-        let last = LAST_4E_CYC.load(Relaxed);
-        if last != 0 && cycle > last && cycle - last < 200 {
-            let i = FFC0_OFF_IDX.fetch_add(1, Relaxed) as usize;
-            if i < 64 {
-                FFC0_OFF[i].store(cycle - last, Relaxed);
-            }
-            LAST_4E_CYC.store(0, Relaxed);
-        }
-    }
-
-    /// Per-`$4015`-write event-log capacity (first `CAP` events kept).
-    pub const EVLOG_CAP: usize = 4096;
-    /// Per-event CPU cycle (low 32 bits).
-    pub static EVLOG_CYCLE: [AtomicU32; EVLOG_CAP] = [const { AtomicU32::new(0) }; EVLOG_CAP];
-    /// Per-event packed `enable<<31 | bytes_remaining<<16 | (timer & 0xFFFF)`.
-    pub static EVLOG_META: [AtomicU32; EVLOG_CAP] = [const { AtomicU32::new(0) }; EVLOG_CAP];
-    /// Monotonic write index into the event log.
-    pub static EVLOG_IDX: AtomicU32 = AtomicU32::new(0);
-
-    /// Record a `$4015` write into the event log (ring, first `CAP` kept).
-    ///
-    /// Lets the harness reconstruct the per-iteration playback trajectory
-    /// (enable→disable gap, exhaustion point) default-vs-R1. `cycle` is
-    /// truncated to its low 32 bits (the battery stays under 2^32 cycles).
-    #[allow(clippy::cast_possible_truncation)]
-    pub fn log_4015(cycle: u64, enable: bool, bytes_remaining: u16, timer: u16) {
-        use core::sync::atomic::Ordering::Relaxed;
-        let i = EVLOG_IDX.fetch_add(1, Relaxed) as usize;
-        if i < EVLOG_CAP {
-            EVLOG_CYCLE[i].store(cycle as u32, Relaxed);
-            let meta = (u32::from(enable) << 31)
-                | ((u32::from(bytes_remaining) & 0x7FFF) << 16)
-                | u32::from(timer);
-            EVLOG_META[i].store(meta, Relaxed);
-        }
-    }
-
-    /// Snapshot all counters as a labelled array (for the harness probe).
-    #[must_use]
-    pub fn snapshot() -> [(&'static str, u32); 14] {
-        use core::sync::atomic::Ordering::Relaxed;
-        [
-            ("disable_writes", DISABLE_WRITES.load(Relaxed)),
-            ("disable_was_active", DISABLE_WAS_ACTIVE.load(Relaxed)),
-            ("sched_calls", SCHED_CALLS.load(Relaxed)),
-            ("fail_bits_remaining!=1", FAIL_BITS.load(Relaxed)),
-            ("fail_sample_buffer_none", FAIL_BUF.load(Relaxed)),
-            ("reached_cuo", REACHED_CUO.load(Relaxed)),
-            ("cuo_in_window{1,2,3}", CUO_IN_WINDOW.load(Relaxed)),
-            ("armed", ARMED.load(Relaxed)),
-            ("impl_arm_enable_seen", IMPL_ARM_ENABLE.load(Relaxed)),
-            ("impl_arm_fired", IMPL_ARM_FIRED.load(Relaxed)),
-            ("cannot_run_set", CANNOT_RUN_SET.load(Relaxed)),
-            ("reload_arm_reached", RELOAD_ARM_REACHED.load(Relaxed)),
-            ("cannot_run_block", CANNOT_RUN_BLOCK.load(Relaxed)),
-            ("subpos_early_arm", SUBPOS_EARLY_ARM.load(Relaxed)),
-        ]
-    }
-}
-
 /// Bus surface seen by the APU.  A small subset of the full CPU bus for the
 /// DMC's sample-fetch DMA.
 pub trait ApuBus {
@@ -987,11 +776,7 @@ impl Apu {
         // cycle in `tick_with_external` and blocks the looping-reload arm while
         // `== 2` — the canonical "a DMA cannot occur within 2 cycles of a
         // previous DMC DMA" rule the Implicit-DMA-Abort `$540` plateau brackets.
-        {
-            self.cannot_run_dmc_dma = 2;
-            #[cfg(feature = "mc-r1-dmc-abort-probe")]
-            abort_probe::CANNOT_RUN_SET.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        }
+        self.cannot_run_dmc_dma = 2;
         // Abort-context fix: the LOAD just emptied the buffer into the shifter
         // (boundary race), so the next reload must arm promptly — don't let the
         // post-LOAD cooldown suppress it for 4 cycles (which would re-introduce
@@ -1281,24 +1066,6 @@ impl Apu {
         // one parity position later than the floor's `!apu_phase_N`. `apu_phase`
         // itself (the APU IRQ line / C1 phi2 sample source) still flips at start
         // (line ~927), so C1 is invariant.
-
-        // final lever #1 diag: rotate the 2-cycle DMC-state history at end of
-        // cycle so the block site can dump the two preceding cycles.
-        #[cfg(feature = "mc-r1-dmc-abort-probe")]
-        {
-            use core::sync::atomic::Ordering::Relaxed;
-            let cur = abort_probe::pack_dmc(
-                self.apu_phase,
-                self.dmc.needs_dma(),
-                self.dmc.buffer_full(),
-                self.cannot_run_dmc_dma,
-                self.dmc.bytes_remaining,
-                self.dmc.bits_remaining(),
-                self.dmc.timer(),
-            );
-            abort_probe::SUBPOS_P2.store(abort_probe::SUBPOS_P1.load(Relaxed), Relaxed);
-            abort_probe::SUBPOS_P1.store(cur, Relaxed);
-        }
     }
 
     fn handle_frame_events(&mut self, ev: FrameEvents) {
@@ -1425,8 +1192,6 @@ impl Apu {
             } else if self.cannot_run_dmc_dma == 2 && self.dmc.needs_dma() && !self.pending_dmc_dma
             {
                 self.dmc_edge_arm_suppress = true;
-                #[cfg(feature = "mc-r1-dmc-abort-probe")]
-                abort_probe::EDGE_SUPPRESS_SET.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             }
         }
         self.dmc_step_reload_arm();
@@ -1515,30 +1280,6 @@ impl Apu {
         // `cannot_run_dmc_dma == 2` exclusion (post-LOAD-GET window) — fires 6x,
         // nowhere else — so steady-state GETs + SH* are untouched (context-local,
         // distinct from a global byte-timer phase shift that shatters SH*).
-        // DIAGNOSTIC: at the actual BLOCK (needs_dma && cannot_run==2 — the 6
-        // X=10/11 entries), dump the 2 preceding cycles' DMC state + the current
-        // so the pre-wrap detector can be calibrated against the real per-cycle
-        // evolution (dumped by scan_dma_abort).
-        #[cfg(feature = "mc-r1-dmc-abort-probe")]
-        if self.dmc.needs_dma() && self.cannot_run_dmc_dma == 2 && !self.pending_dmc_dma {
-            use core::sync::atomic::Ordering::Relaxed;
-            let base = abort_probe::SUBPOS_DIAG_IDX.fetch_add(3, Relaxed) as usize;
-            let cur = abort_probe::pack_dmc(
-                self.apu_phase,
-                self.dmc.needs_dma(),
-                self.dmc.buffer_full(),
-                self.cannot_run_dmc_dma,
-                self.dmc.bytes_remaining,
-                self.dmc.bits_remaining(),
-                self.dmc.timer(),
-            );
-            if base + 2 < 64 {
-                abort_probe::SUBPOS_DIAG[base].store(abort_probe::SUBPOS_P2.load(Relaxed), Relaxed);
-                abort_probe::SUBPOS_DIAG[base + 1]
-                    .store(abort_probe::SUBPOS_P1.load(Relaxed), Relaxed);
-                abort_probe::SUBPOS_DIAG[base + 2].store(cur, Relaxed);
-            }
-        }
         // The pre-wrap `!apu_phase` cycle that uniquely marks the `$540` X=10/11
         // boundary: the reload byte-timer is at `timer==0 && bits_remaining==1`
         // (one apu-clock from emptying the byte), the LOAD has just FILLED the
@@ -1572,14 +1313,6 @@ impl Apu {
         // realigns the looping-reload chain like TriCNES's re-enable, while the
         // bare `cannot_run == 2` gate still defers this cycle's arm.
         let cannot_run_now = self.cannot_run_dmc_dma == 2;
-        #[cfg(feature = "mc-r1-dmc-abort-probe")]
-        if self.dmc.needs_dma() && !already && self.dmc_dma_delay == 0 {
-            use core::sync::atomic::Ordering::Relaxed;
-            abort_probe::RELOAD_ARM_REACHED.fetch_add(1, Relaxed);
-            if cannot_run_now {
-                abort_probe::CANNOT_RUN_BLOCK.fetch_add(1, Relaxed);
-            }
-        }
         // One-shot byte-timer realignment at the exclusion boundary. `period_block`
         // is the one-shot guard (set here, cleared at the next consume edge in
         // `tick_with_external`) so the bump is applied exactly once per boundary.
@@ -1770,22 +1503,6 @@ impl Apu {
         self.noise.length.set_enabled((value & 0x08) != 0);
         let enable_dmc = (value & 0x10) != 0;
         let was_active = self.dmc.active();
-        #[cfg(feature = "mc-r1-dmc-abort-probe")]
-        {
-            use core::sync::atomic::Ordering::Relaxed;
-            abort_probe::log_4015(
-                self.cpu_cycle,
-                enable_dmc,
-                self.dmc.bytes_remaining,
-                self.dmc.timer,
-            );
-            if !enable_dmc {
-                abort_probe::DISABLE_WRITES.fetch_add(1, Relaxed);
-                if was_active {
-                    abort_probe::DISABLE_WAS_ACTIVE.fetch_add(1, Relaxed);
-                }
-            }
-        }
         let implicit_stop_edge = enable_dmc
             && !was_active
             && !self.dmc.loop_flag
@@ -1911,41 +1628,13 @@ impl Apu {
     // compensation has no caller (superseded, retained for the flag-off path).
     #[allow(dead_code)]
     fn schedule_explicit_dmc_abort_if_needed(&mut self) {
-        #[cfg(feature = "mc-r1-dmc-abort-probe")]
-        {
-            use core::sync::atomic::Ordering::Relaxed;
-            abort_probe::SCHED_CALLS.fetch_add(1, Relaxed);
-        }
         if self.dmc.bits_remaining != 1 || self.dmc.sample_buffer.is_none() {
-            #[cfg(feature = "mc-r1-dmc-abort-probe")]
-            {
-                use core::sync::atomic::Ordering::Relaxed;
-                // We are in the early-return block (`bits_remaining != 1 ||
-                // sample_buffer.is_none()`). `bits_remaining == 1` here implies
-                // the `sample_buffer.is_none()` arm fired; otherwise it was the
-                // `bits_remaining` arm.
-                if self.dmc.bits_remaining == 1 {
-                    abort_probe::FAIL_BUF.fetch_add(1, Relaxed);
-                } else {
-                    abort_probe::FAIL_BITS.fetch_add(1, Relaxed);
-                }
-            }
             return;
-        }
-        #[cfg(feature = "mc-r1-dmc-abort-probe")]
-        {
-            use core::sync::atomic::Ordering::Relaxed;
-            abort_probe::REACHED_CUO.fetch_add(1, Relaxed);
         }
         // `first_apu_clock` is "CPU cycles until the next APU (DMC) clock". The
         // DMC clocks on `apu_phase`-true, so `apu_phase ? 2 : 1` is correct.
         let first_apu_clock = if self.apu_phase { 2 } else { 1 };
         let cycles_until_output = first_apu_clock + self.dmc.timer.saturating_mul(2);
-        #[cfg(feature = "mc-r1-dmc-abort-probe")]
-        if (1..=3).contains(&cycles_until_output) {
-            use core::sync::atomic::Ordering::Relaxed;
-            abort_probe::CUO_IN_WINDOW.fetch_add(1, Relaxed);
-        }
         if cycles_until_output == 1 {
             self.pending_dmc_dma = true;
             self.dmc_dma_is_load = false;
@@ -1954,20 +1643,10 @@ impl Apu {
             self.dmc_need_halt = true;
             self.dmc_need_dummy_read = true;
             self.pending_dmc_abort = true;
-            #[cfg(feature = "mc-r1-dmc-abort-probe")]
-            {
-                use core::sync::atomic::Ordering::Relaxed;
-                abort_probe::ARMED.fetch_add(1, Relaxed);
-            }
             return;
         }
         if let Some(delay) = Self::dmc_abort_delay_for(cycles_until_output) {
             self.dmc_abort_delay = delay;
-            #[cfg(feature = "mc-r1-dmc-abort-probe")]
-            {
-                use core::sync::atomic::Ordering::Relaxed;
-                abort_probe::ARMED.fetch_add(1, Relaxed);
-            }
         }
     }
 

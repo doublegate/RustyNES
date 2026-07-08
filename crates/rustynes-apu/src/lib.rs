@@ -49,10 +49,6 @@ mod snapshot;
 mod triangle;
 
 pub use apu::{Apu, ApuBus, CHANNEL_GAIN_UNITY, CHANNEL_MASK_ALL};
-// v2.0 R-1 core C-1 diagnostic — re-export the gated abort-scheduling probe
-// counters so the harness can read `rustynes_core::rustynes_apu::abort_probe`.
-#[cfg(feature = "mc-r1-dmc-abort-probe")]
-pub use apu::abort_probe;
 pub use blip::{BlipBuf, CPU_HZ_NTSC, CPU_HZ_PAL};
 pub use dmc::Dmc;
 pub use dmc::REENABLE_BUMP;
