@@ -507,6 +507,79 @@ pub struct DisasmRow {
     pub operand: String,
 }
 
+/// A machine-readable code for a drainable host-facing warning (v2.0.3 host-i18n
+/// follow-up to PR #235).
+///
+/// Prior to v2.0.3 the bridge queued warnings as pre-baked English `String`s, which
+/// left non-English hosts (the Kotlin / Swift shells and any downstream localizer)
+/// unable to translate them: the wire carried presentation, not meaning. This enum
+/// makes the *meaning* the contract. Hosts drain the codes via
+/// [`NesController::drain_warning_codes`] and are free to render their own localized
+/// copy per variant; hosts that don't localize keep calling
+/// [`NesController::drain_warnings`] (or [`host_warning_message`]) and get the exact,
+/// byte-identical English they got before.
+///
+/// The enum is **additive and non-breaking**: the legacy `Vec<String>` drain still
+/// works (it maps each code through [`HostWarning::message`]), and every existing
+/// English string is preserved verbatim by [`HostWarning::message`], so the desktop /
+/// wasm frontends — which carry their own identical warning text and are deliberately
+/// untouched here — stay at exact parity.
+///
+/// Grow it by adding variants (each with its own `message` arm); do **not** repurpose
+/// an existing variant, so a host's per-code localization table never silently shifts
+/// meaning under it.
+///
+/// Generated binding names:
+///   * Kotlin: `enum class HostWarning { PRE_TIMEBASE_MOVIE }`
+///   * Swift:  `enum HostWarning { case preTimebaseMovie }`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum HostWarning {
+    /// A `.rnm` recorded on a pre-v2.0.0 "Timebase" build was loaded: its recorded
+    /// *input* replays faithfully, but exact framebuffer/audio reproduction is not
+    /// guaranteed across the engine-timebase boundary (ADR 0028). The sole producer is
+    /// [`NesController::movie_play`].
+    PreTimebaseMovie,
+}
+
+impl HostWarning {
+    /// The default (English) presentation string for this warning code.
+    ///
+    /// This is the single source of the legacy `Vec<String>` drain: it returns the
+    /// *exact* text the bridge queued before v2.0.3, so a legacy host observes no
+    /// change. A localizing host ignores this and renders its own copy keyed on the
+    /// variant.
+    #[must_use]
+    pub fn message(&self) -> String {
+        match self {
+            // Kept byte-for-byte identical to the pre-v2.0.3 literal (and to the
+            // desktop / wasm frontends' notice) so the default drain is unchanged.
+            Self::PreTimebaseMovie => "this movie was recorded on a pre-v2.0.0 build -- \
+                 input replay proceeds, but exact framebuffer/audio reproduction is not \
+                 guaranteed across the engine-timebase boundary (see ADR 0028)"
+                .to_string(),
+        }
+    }
+}
+
+impl core::fmt::Display for HostWarning {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(&self.message())
+    }
+}
+
+/// The default (English) presentation string for a [`HostWarning`] code (v2.0.3).
+///
+/// An additive `UniFFI` free function so a host that drains codes via
+/// [`NesController::drain_warning_codes`] can still obtain the canonical English text
+/// for any variant (e.g. as a fallback when it has no localized copy) without
+/// duplicating the string on its side. Byte-identical to what
+/// [`NesController::drain_warnings`] returns for the same code.
+#[uniffi::export]
+#[must_use]
+pub fn host_warning_message(kind: HostWarning) -> String {
+    kind.message()
+}
+
 /// Mutable state behind the controller's lock.
 struct Inner {
     nes: Nes,
@@ -557,7 +630,11 @@ struct Inner {
     /// [`NesController::drain_warnings`] and surfaces it (a toast / log line),
     /// mirroring the desktop + wasm frontends' identical movie-load warning. This is
     /// pure host-shell wiring — the deterministic core never reads it.
-    warnings: Vec<String>,
+    ///
+    /// v2.0.3: stores machine-readable [`HostWarning`] codes rather than pre-baked
+    /// English so hosts can localize; the legacy [`NesController::drain_warnings`] maps
+    /// each code back through [`HostWarning::message`] for byte-identical output.
+    warnings: Vec<HostWarning>,
 }
 
 /// The handle the mobile shells drive the emulator through.
@@ -932,12 +1009,11 @@ impl NesController {
                 reason: e.to_string(),
             })?;
         if pre_timebase {
-            g.warnings.push(
-                "this movie was recorded on a pre-v2.0.0 build -- input replay \
-                 proceeds, but exact framebuffer/audio reproduction is not \
-                 guaranteed across the engine-timebase boundary (see ADR 0028)"
-                    .to_string(),
-            );
+            // v2.0.3: queue the machine-readable code, not the pre-baked English.
+            // The default drain ([`Self::drain_warnings`]) maps it straight back to the
+            // identical string via [`HostWarning::message`], so legacy hosts see no
+            // change; a localizing host drains [`Self::drain_warning_codes`] instead.
+            g.warnings.push(HostWarning::PreTimebaseMovie);
         }
         g.recorder = None;
         g.playback = Some((movie, 0));
@@ -945,12 +1021,34 @@ impl NesController {
         Ok(())
     }
 
-    /// Drain host-facing warnings accumulated since the last call (v2.0.1 Timebase
-    /// re-port). Currently the sole producer is [`Self::movie_play`], which queues a
-    /// pre-v2.0.0-Timebase `.rnm` notice (ADR 0028). The host surfaces these as a
-    /// toast / log line, mirroring the desktop + wasm frontends. Empty when there is
-    /// nothing to report; draining clears the queue.
+    /// Drain host-facing warnings accumulated since the last call, as pre-baked English
+    /// strings (v2.0.1 Timebase re-port). Currently the sole producer is
+    /// [`Self::movie_play`], which queues a pre-v2.0.0-Timebase `.rnm` notice (ADR 0028).
+    /// The host surfaces these as a toast / log line, mirroring the desktop + wasm
+    /// frontends. Empty when there is nothing to report; draining clears the queue.
+    ///
+    /// This is the **legacy, English-only** drain, kept working unchanged so existing
+    /// Kotlin / Swift hosts are unbroken: as of v2.0.3 it delegates to the queued
+    /// [`HostWarning`] codes' [`HostWarning::message`], so the returned strings are
+    /// byte-identical to before. Localizing hosts should prefer
+    /// [`Self::drain_warning_codes`]. Both drain the same underlying queue, so call
+    /// exactly one of them per batch.
     pub fn drain_warnings(&self) -> Vec<String> {
+        std::mem::take(&mut self.lock().warnings)
+            .iter()
+            .map(HostWarning::message)
+            .collect()
+    }
+
+    /// Drain host-facing warnings accumulated since the last call, as machine-readable
+    /// [`HostWarning`] codes (v2.0.3 host-i18n follow-up to PR #235).
+    ///
+    /// The additive, localization-friendly counterpart to [`Self::drain_warnings`]: a
+    /// host renders its own translated copy per code (falling back to
+    /// [`host_warning_message`] for the canonical English when it has none). Both
+    /// methods drain the *same* queue and clear it, so call exactly one per batch;
+    /// neither re-emits after draining. Empty when there is nothing to report.
+    pub fn drain_warning_codes(&self) -> Vec<HostWarning> {
         std::mem::take(&mut self.lock().warnings)
     }
 
@@ -2480,6 +2578,55 @@ mod tests {
         assert!(
             ctrl.drain_warnings().is_empty(),
             "drain_warnings must empty the queue after the first drain",
+        );
+    }
+
+    // v2.0.3 host-i18n (PR #235 follow-up): the machine-readable `HostWarning` code
+    // must (a) map to the EXACT legacy English string via `message()` /
+    // `host_warning_message` — so the default `drain_warnings` stays byte-identical and
+    // the desktop/wasm parity is unchanged — and (b) be drainable as codes via the new
+    // additive `drain_warning_codes`, which shares (and clears) the same queue.
+    #[test]
+    fn host_warning_code_maps_to_exact_legacy_english() {
+        // The canonical pre-v2.0.3 string, reconstructed independently of the enum so a
+        // drift in `HostWarning::message` is caught. This is the concatenation of the
+        // original multi-line literal `movie_play` used to push verbatim.
+        let expected = "this movie was recorded on a pre-v2.0.0 build -- input replay \
+             proceeds, but exact framebuffer/audio reproduction is not guaranteed across \
+             the engine-timebase boundary (see ADR 0028)";
+        assert_eq!(
+            HostWarning::PreTimebaseMovie.message(),
+            expected,
+            "the code must render the exact legacy English (byte-identical default drain)",
+        );
+        // The exported free function is the host-facing accessor for the same text.
+        assert_eq!(
+            host_warning_message(HostWarning::PreTimebaseMovie),
+            expected
+        );
+        // Display delegates to the same message.
+        assert_eq!(format!("{}", HostWarning::PreTimebaseMovie), expected);
+
+        // The code-drain path: a pre-v2 movie queues exactly the PreTimebaseMovie code,
+        // and draining codes clears the shared queue (so a following string-drain is
+        // empty — proving both drains hit the same backing store).
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        let mut rnm = ctrl
+            .movie_import_fm2(b"version 3\n|0|........|........||\n".to_vec())
+            .expect("minimal valid .fm2 must transcode");
+        rnm[8] = 1; // rewrite MOVIE_FORMAT_VERSION 2 -> 1 (present as pre-Timebase)
+        rnm[9] = 0;
+        ctrl.movie_play(rnm)
+            .expect("a pre-v2 .rnm must still replay");
+        let codes = ctrl.drain_warning_codes();
+        assert_eq!(
+            codes,
+            vec![HostWarning::PreTimebaseMovie],
+            "exactly the PreTimebaseMovie code must be queued, got {codes:?}",
+        );
+        assert!(
+            ctrl.drain_warnings().is_empty(),
+            "draining codes must clear the same queue the string drain reads",
         );
     }
 
