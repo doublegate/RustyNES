@@ -24,6 +24,15 @@ on:
   # nothing merges without macOS+Windows green, even though per-PR runs are
   # ubuntu-only. Inert until the queue is enabled (no `merge_group` events fire).
   merge_group:
+  # Weekly drift safety-net. The cost optimisation below runs the FULL suite
+  # (release-mode `test-roms`, the macOS/Windows matrix, `bench`) only on
+  # release-class events — not on every intermediate feature PR — so a
+  # regression merged between releases could otherwise sit on `main` unproven.
+  # This Monday 07:00 UTC cron re-runs the full suite on `main` so any drift is
+  # caught within a week regardless of release cadence. `workflow_dispatch`
+  # covers an on-demand full run.
+  schedule:
+    - cron: "0 7 * * 1"
 
 # Cancel superseded runs on a PR branch (rapid pushes), but let every `main`
 # commit + merge-queue run finish so the default branch's history (and the
@@ -107,15 +116,22 @@ jobs:
   # local compiler to 1.96 too) — the stable-vs-1.96 mismatch previously let a
   # broken-intra-doc-link slip past local and only fail in CI.
   #
-  # Select the OS test matrix by event: a `pull_request` runs the two FREE Linux
-  # runners — `ubuntu-latest` (x86-64) + `ubuntu-24.04-arm` (arm64, free on public
-  # repos, runs in parallel) — for cheap, cross-arch fast feedback; push-to-`main`,
-  # the merge queue, and manual dispatch add macOS + Windows for the full matrix.
-  # macOS bills 10x + Windows 2x, so keeping them off every PR push is the bulk of
-  # the runner-minute savings, while the free arm64 leg catches aarch64-specific
-  # breakage (alignment, intrinsics/SIMD, atomics, fp edge cases) on every PR, and
-  # push + the merge queue still give full cross-platform coverage before a
-  # regression can stick on `main`.
+  # Compute ONE "full-run" flag that gates both the OS matrix and the expensive
+  # jobs, then reuse it everywhere. The cost model: a regular (non-release) PR is
+  # a LIGHT run — fast, essential feedback only (fmt/clippy/rustdoc, the ubuntu
+  # `test`, no_std, wasm-clippy); every other event is a FULL run that adds the
+  # macOS/Windows matrix legs, the release-mode `test-roms` accuracy battery, and
+  # the `bench` gate.
+  #
+  # FULL when: push-to-`main` (validates every merge), the merge queue, manual
+  # dispatch, the weekly `schedule` drift-net, OR a `release/*` PR (so a release
+  # is fully proven before it is cut). LIGHT only on a regular feature PR — that
+  # is where the iteration (and thus the runner-minute burn) happens: each PR gets
+  # many pushes, so keeping the ~20-min release `test-roms` + the 10x-billed macOS
+  # / 2x Windows legs off every PR push is the bulk of the savings. The free arm64
+  # leg still runs on every PR (aarch64 alignment/SIMD/atomics/fp coverage), and
+  # the post-merge push + release PR + weekly cron still give full cross-platform
+  # + accuracy coverage before anything ships.
   setup:
     name: select matrix
     needs: changes
@@ -123,13 +139,23 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       os: ${{ steps.pick.outputs.os }}
+      full: ${{ steps.pick.outputs.full }}
     steps:
       - id: pick
         shell: bash
+        # Pass the event/ref through `env` (NOT direct `${{ }}` interpolation into
+        # the script) so an attacker-chosen branch name can't inject shell — the
+        # `actions/script-injection` pattern CodeQL flags.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # LIGHT only for a regular PR (head branch not release/*); FULL otherwise.
+          if [ "$EVENT_NAME" = "pull_request" ] && [[ "$HEAD_REF" != release/* ]]; then
+            echo 'full=false' >> "$GITHUB_OUTPUT"
             echo 'os=["ubuntu-latest", "ubuntu-24.04-arm"]' >> "$GITHUB_OUTPUT"
           else
+            echo 'full=true' >> "$GITHUB_OUTPUT"
             echo 'os=["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest", "windows-latest"]' >> "$GITHUB_OUTPUT"
           fi
 
@@ -208,11 +234,15 @@ jobs:
 
   test-roms:
     name: test (test-roms feature)
-    # Gate the slowest job (release-mode compile + the heavy CPU/AccuracyCoin
-    # ROM batteries) on the fast lint job — don't pay the ~release compile when
-    # fmt/clippy already failed.
-    needs: [changes, lint]
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    # The SLOWEST job (release-mode compile + the heavy CPU / AccuracyCoin ROM
+    # batteries, ~20 min). FULL-run only: it is skipped on a regular feature PR
+    # and runs on push-to-`main` (every merge is accuracy-validated), the merge
+    # queue, dispatch, the weekly cron, and `release/*` PRs (so a release is
+    # proven before it is cut). This is the single biggest per-PR time/cost
+    # saving. Also gated on the fast lint job — don't pay the release compile
+    # when fmt/clippy already failed.
+    needs: [changes, lint, setup]
+    if: ${{ needs.changes.outputs.code == 'true' && needs.setup.outputs.full == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -282,8 +312,11 @@ jobs:
 
   bench:
     name: frame-time regression gate
-    needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    # FULL-run only (like `test-roms`): a release-mode criterion build + run is
+    # too costly for every PR push, and the frame-time gate is an absolute
+    # ceiling that only needs to hold at merge / release, not on every iteration.
+    needs: [changes, setup]
+    if: ${{ needs.changes.outputs.code == 'true' && needs.setup.outputs.full == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
