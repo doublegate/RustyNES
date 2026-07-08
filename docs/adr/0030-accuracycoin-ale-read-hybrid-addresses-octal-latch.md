@@ -269,3 +269,38 @@ alignments and generalizes; then, gated on the **60-ROM commercial oracle** (fla
 **promoted to default** (shipped AccuracyCoin 141/141), weighing the ADR 0028 save-state /
 byte-identity implication at that point. This ADR is updated (not superseded) when promotion
 lands.
+
+## Update — 2026-07-08 (first-principles refine proven infeasible at whole-dot resolution → 2-cycle-ALE campaign)
+
+The bounded v2.0.3 first-principles attempt (make `octal_latch` *naturally* carry the stale byte,
+deleting the `+1 coarse-X` reconstruction) was made and **instrumented against the TriCNES oracle
+— it does not converge at RustyNES's whole-dot (single-step) fetch cadence.** The measured barrier:
+
+- On the Hybrid test at the `$2006` second write (frame 5110, **scanline 4, dot 182**),
+  `v & 0xFF = $18` (coarse-X 24). The corruption needs the latch to hold **`$19`** (coarse-X **25**,
+  the NT low of `$2C19`) so the next fetch splices `$2F00 | $19 = $2F19`.
+- Two first-principles variants both fail: latch loaded at every fetch ALE → holds a pattern byte
+  `$44` → `$2F44` (140/141); latch loaded only at NT ALE → holds `$18` → `$2F18`, off by one
+  coarse-X (140/141). RustyNES collapses each access into ONE dot and runs `inc_hori` at phase 7,
+  so the latch can **never** naturally reflect coarse-X > the current `v`'s (24) — it cannot carry
+  the one-tile-ahead `$19`.
+- **TriCNES gets `$19` naturally because it models each fetch as a 2-DOT access**: the even-dot ALE
+  drives the PAR and loads `PPU_OctalLatch = (byte)PPU_AddressBus`, the odd-dot read uses
+  `(PAR & 0xFF00) | OctalLatch` (`Emulator.cs:153`), and the delayed-`CopyV` countdown
+  (`Emulator.cs:1684-1704`) lets the coarse-X-25 NT ALE fire (with `IncrementScrollX` ordering)
+  *before* the `$2006` update lands. That even-ALE/odd-read split **is** the full 2-cycle-ALE fetch
+  refactor.
+
+So the v2.0.2 `+1 coarse-X` reconstruction is a **faithful whole-dot stand-in** for exactly this
+2-cycle-ALE artifact — it is not reachable "more correctly" without the refactor itself.
+
+**Decision (maintainer, 2026-07-08): do the full 2-cycle-ALE fetch refactor** as a dedicated
+Timebase-scale campaign spanning **v2.0.3 → v2.0.4** — model each background/`$2007`/`$2006` VRAM
+access as a 2-dot transaction (even-dot ALE drives the address + loads the octal latch; odd-dot
+read splices `(bus_high) | octal_latch` + writes the DATA back to the low bus) with the
+delayed-`CopyV` countdown, behind a default-off flag, recalibrating every fetch-cadence-derived
+timing (sprite-zero-hit dots, MMC3 A12 IRQ, MMC5 scanline, BG shift reload), gated at each phase
+on the full battery (141 AccuracyCoin + nestest 0-diff + blargg/kevtris + mmc3_test_2 +
+sprite-zero + 60-ROM byte-identity + ≤2 ms/frame) — then promote to default (shipped 141/141).
+This mirrors the
+v2.0.0 "Timebase" beta-train ceremony; plan in `to-dos/plans/v2.0.3-2cycle-ale-plan.md`.
