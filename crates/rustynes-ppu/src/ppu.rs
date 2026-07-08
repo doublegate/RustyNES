@@ -293,11 +293,24 @@ pub struct Ppu {
     /// snapshotted (it self-heals on the next fetch).
     #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
     pub(crate) bus_addr: u16,
-    /// A one-shot override address for the next background nametable fetch, set
-    /// when a `$2006` second write lands during a rendering fetch (the
-    /// hybrid-address case).
+    /// Option 1 (ADR 0030) — the external 74LS373 octal latch: the low 8 bits
+    /// of the address driven on the PRIOR (ALE) PPU cycle. Each even/ALE dot of
+    /// the 8-cycle BG fetch group latches the upcoming fetch's low byte here;
+    /// the odd/read dot then reads from `{current-v high 6}:{octal_latch low 8}`.
+    /// When `v` changes between ALE and read (a mid-fetch `$2006`) this composes
+    /// the hybrid address (`$2F00 | $19 = $2F19`); a `$2007` ALE+Read overlap
+    /// leaves it stale, corrupting the next pattern fetch. Feature-gated; when
+    /// nothing interferes the latch equals the read's own low byte, so the read
+    /// address is unchanged and the flag-off build is byte-identical.
     #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
-    pub(crate) hybrid_pending: Option<u16>,
+    pub(crate) octal_latch: u8,
+    /// Option 1 (ADR 0030) — set by a `$2006` second write during a render
+    /// fetch. Only THIS makes the next NT read apply the octal latch (the
+    /// hybrid), so the `$2007`-read coarse-increment — a different v-change that
+    /// the existing `$2007` machinery already handles — does NOT spuriously
+    /// corrupt the fetch and regress `$2007 Stress`. Cleared once consumed.
+    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+    pub(crate) hybrid_arm: bool,
 
     // === Internal scroll/address registers (loopy v/t/x/w) ===
     /// 15-bit "current VRAM address".
@@ -764,7 +777,9 @@ impl Ppu {
             #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
             bus_addr: 0,
             #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
-            hybrid_pending: None,
+            octal_latch: 0,
+            #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+            hybrid_arm: false,
             v: 0,
             t: 0,
             x: 0,
@@ -1830,15 +1845,16 @@ impl Ppu {
                     self.t = (self.t & 0xFF00) | u16::from(value);
                     self.v = self.t;
                     self.w = false;
-                    // v2.0.1 (ADR 0030) — "Hybrid Addresses": a `$2006` second
-                    // write during a rendering fetch composes the in-flight
-                    // nametable fetch from {new v high 6}:{octal-latch low 8}
-                    // (e.g. v -> $2F00 with the latch holding $19 from the prior
-                    // $2C19 fetch => $2F19). The next `fetch_nt` consumes this.
-                    // Flag-gated so the shipped build is byte-identical.
+                    // v2.0.1 (ADR 0030) — "Hybrid Addresses": `v` updates
+                    // immediately (high 6 bits), but a render fetch mid-flight
+                    // already latched the OLD low byte into `octal_latch` on its
+                    // ALE cycle. Arm the next NT read to compose the hybrid
+                    // {new v high}:{stale latch low} (=> $2F19). Scoped to a
+                    // `$2006` write during a render fetch so the `$2007`-read
+                    // increment (handled elsewhere) is untouched. Flag-gated.
                     #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
                     if self.mask.rendering_enabled() && self.is_render_scanline() {
-                        self.hybrid_pending = Some((self.v & 0x3F00) | (self.bus_addr & 0xFF));
+                        self.hybrid_arm = true;
                     }
                     // PPUADDR write can flip A12.
                     self.observe_a12(bus);
@@ -2271,6 +2287,30 @@ impl Ppu {
                     }
                 }
 
+                // Option 1 (ADR 0030) — the ALE cycle of each 2-cycle fetch runs
+                // on the EVEN phase preceding the read: it drives the full
+                // address and the external octal latch captures its low 8 bits.
+                // The matching read (next odd phase) then supplies A7-A0 from the
+                // latch. When nothing changes v in between, the latch equals the
+                // read's own low byte => byte-identical; a mid-fetch `$2006`
+                // makes them diverge (the hybrid address). Feature-gated.
+                #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+                {
+                    let v = self.v;
+                    let bg_table = u16::from(self.ctrl.contains(PpuCtrl::BG_PATTERN_HIGH)) << 12;
+                    let fine_y = (v >> 12) & 0x07;
+                    let ale_addr = match phase {
+                        0 => Some(0x2000 | (v & 0x0FFF)), // NT (read @ phase 1)
+                        2 => Some(0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07)), // AT (read @ phase 3)
+                        4 => Some(bg_table | (u16::from(self.nt_latch) << 4) | fine_y), // BG-lo @5
+                        6 => Some(bg_table | (u16::from(self.nt_latch) << 4) | 0x08 | fine_y), // BG-hi @7
+                        _ => None,
+                    };
+                    if let Some(a) = ale_addr {
+                        self.octal_latch = (a & 0xFF) as u8;
+                    }
+                }
+
                 // 8-cycle fetch group: dot phase = (dot - 1) & 7
                 //   1 -> NT byte fetch     (cycle 2 of group)
                 //   3 -> AT byte fetch     (cycle 4 of group)
@@ -2470,11 +2510,18 @@ impl Ppu {
         } else {
             0x2000 | (self.v & 0x0FFF)
         };
-        // v2.0.1 (ADR 0030) — a pending `$2006` hybrid address overrides this
-        // fetch's nametable address exactly once. Flag-gated + `take()`s so the
-        // shipped build is byte-identical (the field is always `None` there).
+        // Option 1 (ADR 0030) — the 2-cycle read cycle: A7-A0 come from the
+        // octal latch (loaded on this fetch's ALE dot from the THEN-current v),
+        // A13-A8 from the CURRENT v. Byte-identical unless v changed since the
+        // ALE (a mid-fetch `$2006`), which composes the hybrid `$2F19`. Only in
+        // the non-split path (splits reroute the whole address via the mapper).
         #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
-        let nt_addr = self.hybrid_pending.take().unwrap_or(nt_addr);
+        let nt_addr = if self.hybrid_arm && self.bg_split_latch.is_none() {
+            self.hybrid_arm = false;
+            (nt_addr & 0x3F00) | u16::from(self.octal_latch)
+        } else {
+            nt_addr
+        };
         self.nt_latch = self.read_vram(bus, nt_addr);
         // Latch any per-tile extended-attribute info (MMC5 ExGrafix). Skip
         // when split is active: the alt region uses standard 4-bit AT
