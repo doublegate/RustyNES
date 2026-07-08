@@ -175,6 +175,35 @@ of frame cost; a profile must contradict that first (ADR 0001).
   the per-cycle dispatch population ADR-0001's `cpu_read` benches never
   measured, without monomorphizing anything.
 
+### v2.0.1 legacy-flag-cleanup PR — measure-first `full_frame` re-check: no change adopted
+
+Re-measured `cargo bench -p rustynes-core` (`full_frame`, the end-to-end
+`Nes::run_frame` scheduler bench) after the `mc-r1-dmc-abort-probe` diagnostic
+removal, to confirm the removal is neutral and to satisfy the standing
+measure-first gate before any micro-opt. Development host (Intel Core i9-10850K),
+release profile, criterion medians:
+
+| Workload | v2.0.1 `full_frame` median | vs. 16.639 ms NTSC budget | vs. ≤ 2 ms core target |
+|---|---|---|---|
+| `nes_run_frame_nestest`         | **3.77 ms** | 4.42× realtime (~23% of budget) | above (as documented for the R1 master clock) |
+| `nes_run_frame_flowing_palette` | **2.26 ms** | 7.37× realtime (~14% of budget) | ~13% over |
+
+Both clear the hard 16.639 ms NTSC real-time deadline by 4.4–7.4× and are within
+noise of the documented R1 baseline (3.92 / 2.49 ms) — the probe removal changed
+nothing measurable (as expected: the flag was default-off, so the shipped build
+never compiled it in). The `nestest` figure sits above the aspirational ≤ 2 ms
+core stretch target, unchanged from and consistent with the R1 master-clock trade
+already recorded in "Measured baselines" above (R1 buys +5.76 AccuracyCoin points
+for ~6–8% frame time; ADR 0001 / ADR 0029).
+
+**No optimization was adopted.** Per the standing contract (v1.7.0 H7, above):
+adopt a micro-opt only on a **> 3% Criterion-stable + byte-identical** bar, and
+the core has already had multiple measure-first passes (v1.4.0 F, v1.5.0 H,
+v1.7.0 H7) that exhausted the neutral-win candidates. This PR is a flag-cleanup,
+not a perf pass; the number is recorded as the honest current baseline and to
+prove the removal is neutral, not to justify a speculative change that would risk
+byte-identity for a marginal gain.
+
 ### v1.4.0 Workstream F — measure-first micro-opt pass (core)
 
 All changes are zero-behavior / zero-synthesis: bit-identical framebuffer +
