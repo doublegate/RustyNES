@@ -253,3 +253,19 @@ The dedicated campaign this ADR called for landed on branch
    stays at 4. The `+1 coarse-X` latch capture is a documented approximation of the whole-dot
    cadence (the corrupted NT fetch is one tile past the write's in-flight tile); it is exact
    for the tested alignment and gated entirely behind the default-off flag.
+
+**Decision — land flag-off in v2.0.2, refine-then-promote in v2.0.3 (maintainer, 2026-07-08).**
+The 60-ROM commercial byte-identity oracle (this ADR's mandated promote-safety gate) is
+maintainer-run and could not be exercised at implementation time (no local dumps), and the
+Hybrid path carries the `+1 coarse-X` approximation above. Per the *Feature-Flag Additive
+Change* + "bake, then promote" guardrails, the model **ships behind the default-off flag in
+v2.0.2** — the shipped default stays the honest **139/141**, with the experimental
+`mc-ppu-bus-addr-hybrid` model verified at **141/141 flag-on**. **v2.0.3** reworks the Hybrid
+path from the `+1 coarse-X` reconstruction to a **first-principles latch-carry model** (the
+`octal_latch` naturally holding the stale low byte across dots, per TriCNES's ALE-driven latch,
+rather than reconstructing it from `v` at the `$2006` write) so it is exact across BOTH test
+alignments and generalizes; then, gated on the **60-ROM commercial oracle** (flag-on) + broader
+`$2007`/`$2006`-during-render title validation + a CI job asserting flag-on 141/141, the flag is
+**promoted to default** (shipped AccuracyCoin 141/141), weighing the ADR 0028 save-state /
+byte-identity implication at that point. This ADR is updated (not superseded) when promotion
+lands.
