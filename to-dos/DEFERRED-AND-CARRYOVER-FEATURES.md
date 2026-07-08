@@ -541,10 +541,15 @@ account, or a hosted deploy (all also listed under their theme above).
   the two register-path hooks. Reference: **Mesen2** models both via a single
   `_ppuBusAddress` (+ 3-dot-delayed `v`, bus not re-synced during render); **ares**
   models only the `$2007` side (`io.busAddress`); **higan** blocks `$2007` during
-  render. **Being ATTEMPTED in the v2.0.1 `feat/v2.0.1-ale-read-hybrid` PR** (the
-  Hybrid-Addresses / `$2006` side is the more tractable half; ALE+Read / `$2007`
-  feedback is harder — a partial 140/141 is still an honest improvement). Target:
-  v2.0.1 (attempt), else a dedicated future accuracy session. Files:
+  render. **ATTEMPTED in v2.0.1 and deferred — see [ADR 0030](adr/0030-accuracycoin-ale-read-hybrid-addresses-octal-latch.md).**
+  The bounded attempt added the `octal_latch` + one-shot hybrid-fetch hook and confirmed
+  the tracking is inert (still 139/141), but RustyNES's single-step fetch model does not
+  hold the per-cycle multiplexed-bus low byte the tests probe, so the corruption lands on
+  the wrong tile; the attempt was reverted in full (no format churn). Reproducing it needs
+  either a **2-cycle-ALE fetch refactor** or **Mesen2's persistent-`_ppuBusAddress` +
+  3-dot-delayed-`v` model** — both invasive, high-regression-risk fetch-path rewrites,
+  deferred to a dedicated accuracy session (land Hybrid Addresses first via the Mesen2
+  model, then ALE+Read). Target: a future accuracy session. Files:
   `crates/rustynes-ppu/src/{ppu.rs,snapshot.rs}`.
 
 ---
