@@ -456,6 +456,17 @@ mobile point release.
 - `[ ]` **iCloud / cross-device save-state sync** — a future note in the iOS plan
   (the format is platform-independent; the sync layer is not built). Source:
   [v1.9.0 plan](plans/v1.9.0-ios-plan.md). Target: **TBD**.
+- `[ ]` **Host-localizable bridge warnings (warning-code enum)** — the
+  `rustynes-mobile` bridge currently hands the host a pre-composed *English*
+  advisory string for the pre-v2.0.0 movie/epoch notice (`movie_play` →
+  `drain_warnings`), mirroring the desktop/wasm frontends' identical English text.
+  The correct end state is for the bridge to return a stable, host-localizable
+  warning **code/enum** that Android (string resources) and iOS (`Localizable`)
+  resolve, keeping all three frontends in parity without embedding locale text in
+  the deterministic-adjacent core bridge. Cross-frontend refactor; out of scope for
+  the v2.0.1 Android re-port (raised in PR C review). Files:
+  `crates/rustynes-mobile/src/lib.rs` (+ the desktop/wasm warning sites). Target:
+  **v2.0.2–v2.0.4** (mobile-finalization train).
 
 ---
 

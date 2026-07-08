@@ -358,11 +358,11 @@ dependencies {
     // proprietary Google-Play SDKs out of the `foss` (F-Droid/sideload) artifact
     // entirely — the `foss` variant links none of them (its `src/foss/` no-op
     // façades stand in), so the clean channel has no Play Services / Billing / ads.
-    playImplementation("com.android.billingclient:billing-ktx:8.0.0")
+    "playImplementation"("com.android.billingclient:billing-ktx:8.0.0")
     // Cast Application Framework sender (v1.8.7, #38). Linked but DORMANT: it does
     // nothing until CastContext is initialized, which only happens behind the
     // default-off BuildConfig.CHROMECAST_ENABLED flag (see ChromecastSender.kt).
-    playImplementation("com.google.android.gms:play-services-cast-framework:22.1.0")
+    "playImplementation"("com.google.android.gms:play-services-cast-framework:22.1.0")
     // v1.8.8 "Atlas" (Workstreams D+E): Play Games Services v2 — the cloud-save
     // Snapshots client (D), the PGS achievements + leaderboards clients (E), and the
     // PGS v2 auto-sign-in (GamesSignInClient). 21.0.0 is the current v2 SDK (the v1
@@ -371,19 +371,19 @@ dependencies {
     // PlayGames.kt). DISTINCT from RetroAchievements (rustynes-ra). The PGS sign-in
     // also reads the manifest <meta-data app_id>, which is a maintainer-supplied
     // placeholder (@string/game_services_project_id) until the Play Games project lands.
-    playImplementation("com.google.android.gms:play-services-games-v2:21.0.0")
+    "playImplementation"("com.google.android.gms:play-services-games-v2:21.0.0")
     // v1.8.8 "Atlas" (Workstream L): Play Integrity API — the anti-tamper layer over
     // Billing. 1.6.0 (SafetyNet Attestation was turned down Jan 2025; this is the modern
     // replacement). Linked but DORMANT: no token is requested until behind the default-
     // off BuildConfig.PLAY_INTEGRITY_ENABLED flag (see Integrity.kt). Verdict decryption
     // needs the maintainer's linked Cloud project + server endpoint.
-    playImplementation("com.google.android.play:integrity:1.6.0")
+    "playImplementation"("com.google.android.play:integrity:1.6.0")
     // v1.8.8 "Atlas" (Workstream L): in-app updates (flexible) + in-app review. 2.1.0
     // is the in-app-update floor for targeting Android 14+; review 2.0.2 is current.
     // These need NO Cloud project — they no-op gracefully on a sideloaded (non-Play)
     // install, so they are safe to call unconditionally (still flavor-gated for clarity).
-    playImplementation("com.google.android.play:app-update-ktx:2.1.0")
-    playImplementation("com.google.android.play:review-ktx:2.0.2")
+    "playImplementation"("com.google.android.play:app-update-ktx:2.1.0")
+    "playImplementation"("com.google.android.play:review-ktx:2.0.2")
     // v1.8.8 "Atlas" (Workstream J): pull the generated Baseline + Startup Profiles
     // from the Macrobenchmark module. The baselineprofile plugin wires the produced
     // `baseline-prof.txt` / `startup-prof.txt` into this variant's merged assets.

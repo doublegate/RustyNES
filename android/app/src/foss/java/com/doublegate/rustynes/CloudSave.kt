@@ -24,12 +24,29 @@ data class SaveConflict(
     /** The server copy's bytes — always empty in FOSS (no cloud). */
     val cloudBytes: ByteArray,
 ) {
-    // ByteArray members need structural equals/hashCode; generated component equality is
-    // reference-based otherwise. FOSS never compares SaveConflicts, but define them so the
-    // data class matches the play twin's contract and the compiler stays quiet.
-    override fun equals(other: Any?): Boolean = this === other
+    // A `data class` with `ByteArray` members needs a hand-written equals/hashCode:
+    // the auto-generated ones compare arrays by reference, which is both surprising and
+    // divergent. We implement genuine structural equality (contentEquals/contentHashCode
+    // on the byte fields) so two SaveConflicts carrying equal values compare equal — the
+    // sane contract the shared conflict-picker UI can rely on regardless of flavor.
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is SaveConflict) return false
+        return conflictId == other.conflictId &&
+            sha == other.sha &&
+            slot == other.slot &&
+            localBytes.contentEquals(other.localBytes) &&
+            cloudBytes.contentEquals(other.cloudBytes)
+    }
 
-    override fun hashCode(): Int = System.identityHashCode(this)
+    override fun hashCode(): Int {
+        var result = conflictId.hashCode()
+        result = 31 * result + sha.hashCode()
+        result = 31 * result + slot.hashCode()
+        result = 31 * result + localBytes.contentHashCode()
+        result = 31 * result + cloudBytes.contentHashCode()
+        return result
+    }
 }
 
 /** No-op FOSS cloud-save manager: never active; every push/pull/resolve reports failure. */

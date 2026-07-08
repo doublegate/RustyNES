@@ -924,7 +924,7 @@ impl NesController {
         // A malformed/short header (the `Err` arm) is treated as "not pre-v2": the
         // deserialize above already succeeded, so it is a current-epoch movie. The
         // check never blocks playback and never touches the deterministic core.
-        let pre_timebase = rustynes_core::recorded_before_v2_timebase(&bytes).unwrap_or(false);
+        let pre_timebase = rustynes_core::recorded_before_v2_timebase(&bytes).is_ok_and(|v| v);
         let mut g = self.lock();
         movie
             .seek_to_start(&mut g.nes)
@@ -2433,6 +2433,53 @@ mod tests {
         assert!(
             ctrl.drain_warnings().is_empty(),
             "a current-epoch .rnm must not raise the pre-Timebase movie warning",
+        );
+    }
+
+    // ADR 0028 (the epoch-marker half of `fm2_import_happy_path...`): a movie whose
+    // header `format_version` is < 2 (a pre-v2.0.0 "Timebase" recording) must, on
+    // `movie_play`, still deserialize (the reader accepts `<= MOVIE_FORMAT_VERSION`)
+    // AND queue exactly one drainable host warning citing ADR 0028 — parity with the
+    // desktop/wasm frontends. We synthesize the pre-v2 blob by taking a valid
+    // current-epoch `.rnm` and rewriting only its 2-byte little-endian version field
+    // (offset 8..10) from 2 to 1; the post-version layout is byte-identical across the
+    // epochs (the v2 bump is purely a marker), so the patched blob deserializes cleanly.
+    #[test]
+    fn pre_v2_timebase_movie_raises_one_drainable_warning() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        let fm2 = "version 3\n\
+                   |0|........|........||\n\
+                   |0|.......A|........||\n";
+        let mut rnm = ctrl
+            .movie_import_fm2(fm2.as_bytes().to_vec())
+            .expect("minimal valid .fm2 must transcode");
+        // Sanity: the freshly transcoded movie is tagged with the current epoch.
+        assert_eq!(
+            u16::from_le_bytes([rnm[8], rnm[9]]),
+            2,
+            "transcoded movie must carry the current MOVIE_FORMAT_VERSION",
+        );
+        // Rewrite the version field 2 -> 1 (LE u16): the only mutation needed to
+        // present this as a pre-Timebase recording.
+        rnm[8] = 1;
+        rnm[9] = 0;
+        ctrl.movie_play(rnm)
+            .expect("a pre-v2 (version 1) .rnm must still replay its input stream");
+        let warnings = ctrl.drain_warnings();
+        assert_eq!(
+            warnings.len(),
+            1,
+            "exactly one pre-Timebase warning must be queued, got {warnings:?}",
+        );
+        assert!(
+            warnings[0].contains("ADR 0028"),
+            "the queued warning must cite ADR 0028: {}",
+            warnings[0],
+        );
+        // The warning drains: a second call is empty (no re-emit, no leak).
+        assert!(
+            ctrl.drain_warnings().is_empty(),
+            "drain_warnings must empty the queue after the first drain",
         );
     }
 
