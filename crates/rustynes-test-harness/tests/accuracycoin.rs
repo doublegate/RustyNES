@@ -71,8 +71,43 @@ fn accuracycoin_pass_rate_meets_floor() {
         println!("[reenable-phase] REENABLE_BUMP set to {n}");
     }
 
+    // v2.0.2 (ADR 0030) octal-latch calibration tracer — opt-in via env var,
+    // only under the campaign feature. Captures the corruption-relevant events
+    // so the run can be cross-diffed against the TriCNES per-dot bus sequence.
+    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+    let octal_trace_on = std::env::var("RUSTYNES_OCTAL_TRACE").is_ok();
+    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+    if octal_trace_on {
+        rustynes_core::rustynes_ppu::octal_trace::ENABLE
+            .store(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     let (fb_result, ram): (BatteryResult, Vec<u8>) =
         accuracy_coin::run_battery_capturing_ram(72_000);
+
+    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+    if octal_trace_on {
+        use rustynes_core::rustynes_ppu::octal_trace as ot;
+        let n = (ot::IDX.load(std::sync::atomic::Ordering::Relaxed) as usize).min(ot::LOG.len());
+        println!("OCTAL_TRACE: {n} events");
+        for slot in ot::LOG.iter().take(n) {
+            let p = slot.load(std::sync::atomic::Ordering::Relaxed);
+            let kind = (p >> 58) & 0x3F;
+            let frame = (p >> 44) & 0x3FFF;
+            let sl = ((p >> 32) & 0x0FFF) as u16;
+            let dot = ((p >> 20) & 0xFFF) as u16;
+            let val = (p & 0xF_FFFF) as u32;
+            let kname = match kind {
+                1 => "W2006",
+                2 => "R2007",
+                3 => "HYBRID",
+                4 => "STALE",
+                5 => "SMLAND",
+                _ => "?",
+            };
+            println!("OT frame={frame} sl={sl} dot={dot} {kname} val=0x{val:04X}");
+        }
+    }
 
     // Headline framebuffer counts (legacy — for back-compat / cross-check).
     let fb_pct = fb_result.pass_rate();

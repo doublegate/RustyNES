@@ -163,6 +163,78 @@ pub mod read2007_diag {
     pub static RENDER_BUFFER_DEFER_V_INC: AtomicU32 = AtomicU32::new(1);
 }
 
+/// v2.0.2 (ADR 0030) octal-latch calibration tracer.
+///
+/// Entirely a diagnostic: a lock-free ring of packed per-event records captured
+/// only when the `mc-ppu-bus-addr-hybrid` feature is on AND `ENABLE` is set (via
+/// the env knob wired in the test harness), so it costs nothing in the shipped
+/// build or in an untraced flag-on run. Records the corruption-relevant events
+/// (`$2006`/`$2007` during render, hybrid/stale splices) on scanlines 2-5 so
+/// a run can be cross-diffed against the `TriCNES` per-dot bus sequence.
+#[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+pub mod octal_trace {
+    use core::sync::atomic::{AtomicU32, AtomicU64};
+    /// 1 = capture enabled. Off by default (zero cost on a normal flag-on run).
+    pub static ENABLE: AtomicU32 = AtomicU32::new(0);
+    /// Next free slot (saturating; stops at `LOG.len()`).
+    pub static IDX: AtomicU32 = AtomicU32::new(0);
+    /// Packed record: `(kind<<58) | (frame<<44) | (scanline<<32) | (dot<<20) | value`
+    /// where `value` is event-specific (a 20-bit address / latch payload).
+    pub static LOG: [AtomicU64; 4096] = [const { AtomicU64::new(0) }; 4096];
+
+    /// Event kind: `$2006` second write during rendering (value = new `v`).
+    pub const K_W2006: u64 = 1;
+    /// Event kind: `$2007` read during rendering (value = `v`).
+    pub const K_R2007: u64 = 2;
+    /// Event kind: hybrid nametable splice fired (value = effective address).
+    pub const K_HYBRID: u64 = 3;
+    /// Event kind: stale-latch pattern splice fired (value = effective address).
+    pub const K_STALE: u64 = 4;
+    /// Event kind: `$2007` state-machine countdown landed (value = data byte).
+    pub const K_SMLAND: u64 = 5;
+
+    /// Push one record (no-op unless `ENABLE` and slots remain).
+    #[allow(clippy::cast_sign_loss)] // scanline filtered to 2..=5 (always >= 0)
+    pub fn push(kind: u64, frame: u64, scanline: i16, dot: u16, value: u32) {
+        if ENABLE.load(core::sync::atomic::Ordering::Relaxed) == 0 {
+            return;
+        }
+        // Restrict to the corruption-relevant visible scanlines (ALE+Read is
+        // scanline 3, Hybrid scanline 4) to keep the ring from overflowing on
+        // the many unrelated `$2006`/`$2007`-during-render writes elsewhere.
+        if !(2..=5).contains(&scanline) {
+            return;
+        }
+        let i = IDX.fetch_add(1, core::sync::atomic::Ordering::Relaxed) as usize;
+        if i >= LOG.len() {
+            return;
+        }
+        let sl = (u64::from((scanline & 0x0FFF) as u16)) << 32;
+        let packed = (kind << 58)
+            | ((frame & 0x3FFF) << 44)
+            | sl
+            | ((u64::from(dot) & 0xFFF) << 20)
+            | u64::from(value & 0xF_FFFF);
+        LOG[i].store(packed, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// v2.0.2 (ADR 0030) — which background fetch of the 8-dot group is driving the
+/// multiplexed PPU bus, so [`Ppu::octal_effective`] applies the correct octal-
+/// latch corruption (hybrid on NT, stale-latch on the pattern fetches).
+#[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+#[derive(Clone, Copy)]
+enum OctalFetch {
+    /// Nametable byte fetch (phase 1).
+    Nt,
+    /// Attribute byte fetch (phase 3).
+    At,
+    /// Pattern low-plane fetch (phase 5).
+    PatLo,
+    /// Pattern high-plane fetch (phase 7).
+    PatHi,
+}
+
 /// Region governs the size of the post-render-to-pre-render scanline span.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum PpuRegion {
@@ -283,33 +355,49 @@ pub struct Ppu {
     /// v3 tail (refreshed every rendered scanline).
     pub(crate) ppudata_spr0_nt_addr: u16,
 
-    // === v2.0.1 (ADR 0030) persistent PPU bus-address model (Option 2) ===
+    // === v2.0.2 (ADR 0030) octal-latch / multiplexed-bus model ===
     // ENTIRELY `mc-ppu-bus-addr-hybrid`-gated — these fields, their init, and
     // every read/write of them are compiled out of the default build, so the
     // shipped binary is byte-identical (the feature is off by design; ADR 0030).
-    /// The last 14-bit address the PPU drove onto its multiplexed AD/A pins —
-    /// Mesen2's `_ppuBusAddress`. Fed by every `read_vram`. Its low 8 bits are
-    /// the external octal-latch value the hybrid-address corruption reads. Not
-    /// snapshotted (it self-heals on the next fetch).
+    //
+    // Ported from TriCNES (`ref-proj/TriCNES/Emulator.cs`, MIT, commit 9199870),
+    // the AccuracyCoin author's own transistor-level emulator, which is the
+    // ground-truth oracle for the "ALE + Read" / "Hybrid Addresses" tests (the
+    // vendored Mesen2 build does NOT pass them — see the v2.0.2 campaign audit).
+    //
+    // The PPU multiplexes its low 8 VRAM address pins (PA0-7) with the 8 data
+    // pins (AD7-0). A 74LS373-class external octal latch (`octal_latch`) captures
+    // A7-A0 on the address-latch-enable (ALE) half of each 2-cycle VRAM access;
+    // on the read half the PPU drives only A13-A8 (`address_bus & 0x3F00`) and
+    // the latch supplies A7-A0. The *effective* read address is therefore the
+    // splice `(address_bus & 0x3F00) | octal_latch` (TriCNES `FetchPPU`:153).
+    // When those halves desync — a mid-fetch `$2006` high-byte update, or a
+    // `$2007`-read ALE that overlaps the fetch cadence and freezes the latch on
+    // a stale DATA byte — the PPU reads a "hybrid" address it never coherently
+    // drove.
+    /// 74LS373 low-address octal latch (A7-A0). Loaded on each fetch's ALE
+    /// with the driven address's low byte; frozen (goes stale) across a
+    /// `$2007`-read/background-fetch ALE overlap. Not snapshotted (it reloads
+    /// on the next in-blanking fetch ALE, self-healing within a scanline).
     #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
-    pub(crate) bus_addr: u16,
-    /// A one-shot override address for the next background nametable fetch, set
-    /// when a `$2006` second write lands during a rendering fetch (the
-    /// hybrid-address case).
-    ///
-    /// KNOWN LIMITATION (flag-on only): unlike `bus_addr`, this is NOT
-    /// self-healing — it is transient one-shot state that lives from the `$2006`
-    /// write until the next background nametable fetch (a few PPU dots), and it
-    /// is deliberately NOT serialized in the snapshot (the scaffold avoids a
-    /// format-version bump for an experiment that does not yet pass). So a
-    /// save-state captured inside that narrow window, under this experimental
-    /// feature, would drop the pending override on restore. This is harmless in
-    /// the SHIPPED build (the feature is off, so the field is compiled out
-    /// entirely) and must be resolved — by snapshotting it or making the fetch
-    /// model self-consistent — when the Option 1 (2-cycle-ALE) work promotes
-    /// this path. Tracked in ADR 0030.
+    pub(crate) octal_latch: u8,
+    /// The 14-bit address the PPU last drove onto its multiplexed AD/A pins
+    /// (`TriCNES` `PPU_AddressBus`). High 6 bits (`& 0x3F00`) are the un-latched
+    /// A13-A8; the low 8 hold the ADDRESS during ALE and the DATA after a read.
     #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
-    pub(crate) hybrid_pending: Option<u16>,
+    pub(crate) address_bus: u16,
+    /// Set by a `$2006` second write that lands during rendering (`TriCNES`
+    /// `CopyV`): the next in-flight background fetch splices the new `v` high
+    /// bits with the STALE `octal_latch` low byte, yielding the hybrid address.
+    /// One-shot, consumed by the next background fetch read.
+    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+    pub(crate) copy_v: bool,
+    /// One-shot: the `$2007`-read ALE overlap froze `octal_latch` on the read's
+    /// DATA byte, so the next background PATTERN fetch reads
+    /// `(PAR-high 6):(stale low 8)` (`$0F03` -> `$0FFF`) — the "ALE + Read"
+    /// corruption. Consumed by the next pattern (BG-lo/BG-hi) fetch.
+    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+    pub(crate) pattern_latch_stale: bool,
 
     // === Internal scroll/address registers (loopy v/t/x/w) ===
     /// 15-bit "current VRAM address".
@@ -774,9 +862,13 @@ impl Ppu {
             spr_fetch_hi_raw: [0; 8],
             ppudata_spr0_nt_addr: 0x2000,
             #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
-            bus_addr: 0,
+            octal_latch: 0,
             #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
-            hybrid_pending: None,
+            address_bus: 0,
+            #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+            copy_v: false,
+            #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+            pattern_latch_stale: false,
             v: 0,
             t: 0,
             x: 0,
@@ -1654,6 +1746,14 @@ impl Ppu {
                     // (the priming-read contract). Delay 0 = immediate latch
                     // of the current bus value.
                     if self.mask.rendering_enabled() && self.is_render_scanline() {
+                        #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+                        octal_trace::push(
+                            octal_trace::K_R2007,
+                            self.frame,
+                            self.scanline,
+                            self.dot,
+                            u32::from(self.v & 0x3FFF),
+                        );
                         let n = read2007_diag::RENDER_BUFFER_DOT_DELAY
                             .load(core::sync::atomic::Ordering::Relaxed)
                             as u8;
@@ -1724,6 +1824,10 @@ impl Ppu {
     }
 
     /// CPU register write.
+    // Large by nature: an 8-way `$2000-$2007` register-dispatch match, each arm
+    // carrying its own hardware-quirk handling (the v2.0.2 octal-latch `$2006`
+    // hook nudged it past the 100-line lint threshold).
+    #[allow(clippy::too_many_lines)]
     pub fn cpu_write_register<B: PpuBus>(&mut self, reg: u8, value: u8, bus: &mut B) {
         // Open-bus latch always picks up the written value.
         self.touch_open_bus(value);
@@ -1840,18 +1944,40 @@ impl Ppu {
                 if self.w {
                     // Second write — low byte; copy t to v.
                     self.t = (self.t & 0xFF00) | u16::from(value);
-                    self.v = self.t;
-                    self.w = false;
-                    // v2.0.1 (ADR 0030) — "Hybrid Addresses": a `$2006` second
-                    // write during a rendering fetch composes the in-flight
-                    // nametable fetch from {new v high 6}:{octal-latch low 8}
-                    // (e.g. v -> $2F00 with the latch holding $19 from the prior
-                    // $2C19 fetch => $2F19). The next `fetch_nt` consumes this.
+                    // v2.0.2 (ADR 0030) — "Hybrid Addresses": a `$2006` second
+                    // write DURING rendering updates the PPU address bus's high 6
+                    // bits (A13-A8) to the new `v` immediately (TriCNES `CopyV`),
+                    // but A7-A0 still come from the octal latch loaded on the
+                    // in-flight fetch's ALE — from the OLD `v`, BEFORE this write.
+                    // Capture that stale low byte here (the NT-fetch low of the
+                    // pre-write `v`, e.g. `$2C19 & 0xFF = $19`) and flag the copy
+                    // so the next in-flight background nametable fetch splices
+                    // `{new v high}:{stale low}` (`$2F00 | $19 = $2F19`).
                     // Flag-gated so the shipped build is byte-identical.
                     #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
                     if self.mask.rendering_enabled() && self.is_render_scanline() {
-                        self.hybrid_pending = Some((self.v & 0x3F00) | (self.bus_addr & 0xFF));
+                        // The octal latch must hold the low byte of the NT address
+                        // driven at the corrupted fetch's ALE — from the OLD `v`,
+                        // before this write. In RustyNES's whole-dot cadence the
+                        // in-flight NT fetch that consumes the `copy_v` is one
+                        // coarse-X past the tile in progress at the write dot (the
+                        // current tile's NT was already fetched), so advance
+                        // coarse-X by one on the OLD `v` for the latch low byte
+                        // (`$2C18` -> `$19`). Low-byte only: `inc_hori`'s coarse-X
+                        // wrap flips bit 10, which is outside A7-A0.
+                        let ncx = ((self.v & 0x1F) + 1) & 0x1F;
+                        self.octal_latch = ((self.v & 0xE0) | ncx) as u8;
+                        self.copy_v = true;
+                        octal_trace::push(
+                            octal_trace::K_W2006,
+                            self.frame,
+                            self.scanline,
+                            self.dot,
+                            u32::from(self.t & 0x3FFF),
+                        );
                     }
+                    self.v = self.t;
+                    self.w = false;
                     // PPUADDR write can flip A12.
                     self.observe_a12(bus);
                 } else {
@@ -1924,12 +2050,13 @@ impl Ppu {
     #[allow(clippy::needless_pass_by_ref_mut)]
     fn read_vram<B: PpuBus>(&mut self, bus: &mut B, addr: u16) -> u8 {
         let a = addr & 0x3FFF;
-        // v2.0.1 (ADR 0030) — latch the address just driven onto the multiplexed
-        // PPU bus (Mesen2's `_ppuBusAddress`); the octal latch is its low byte.
+        // v2.0.2 (ADR 0030) — mirror the multiplexed AD/A bus's high 6 bits with
+        // the address just driven; the low 8 are supplied by the octal latch and
+        // are overwritten with the DATA byte below (TriCNES `FetchPPU` writeback).
         // Entirely feature-gated (compiled out of the shipped build).
         #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
         {
-            self.bus_addr = a;
+            self.address_bus = (self.address_bus & 0x00FF) | (a & 0x3F00);
         }
         let val = if a < 0x2000 {
             bus.ppu_read(a)
@@ -1948,7 +2075,68 @@ impl Ppu {
         {
             self.render_data_bus = val;
         }
+        // v2.0.2 (ADR 0030) — TriCNES `FetchPPU`: after the read, the multiplexed
+        // bus's low 8 bits hold the DATA (AD7-0), not the address. The octal latch
+        // retains the ADDRESS low it was loaded with at ALE — it is NOT refreshed
+        // here — so a following ALE-overlap freezes it on this data byte.
+        #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+        {
+            self.address_bus = (self.address_bus & 0x3F00) | u16::from(val);
+        }
         val
+    }
+
+    /// v2.0.2 (ADR 0030) — resolve a background fetch's EFFECTIVE VRAM address
+    /// through the octal-latch / multiplexed-bus model (`TriCNES` `FetchPPU`).
+    ///
+    /// In the common case this returns `intended` unchanged and merely reloads
+    /// the octal latch with `intended`'s low byte (the ALE), so it is behaviorally
+    /// transparent. It diverges ONLY on the two modeled corruption events:
+    ///
+    /// - `copy_v` (a `$2006` second write landed during rendering): the next
+    ///   nametable fetch splices the new `v` high 6 bits with the stale latch low
+    ///   byte captured at the write — the "Hybrid Addresses" corruption.
+    /// - `pattern_latch_stale` (a `$2007` read's ALE overlapped the fetch cadence
+    ///   and froze the latch on the read's DATA byte): the next pattern fetch
+    ///   reads `{PAR high 6}:{stale low 8}` — the "ALE + Read" corruption.
+    ///
+    /// A12/mapper notification (`observe_a12_addr`) deliberately stays on the
+    /// INTENDED address at each call site, so this cannot move MMC3 IRQ timing.
+    #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+    fn octal_effective(&mut self, intended: u16, kind: OctalFetch) -> u16 {
+        let eff = if self.copy_v && matches!(kind, OctalFetch::Nt) {
+            self.copy_v = false;
+            let e = (self.v & 0x3F00) | u16::from(self.octal_latch);
+            octal_trace::push(
+                octal_trace::K_HYBRID,
+                self.frame,
+                self.scanline,
+                self.dot,
+                u32::from(e),
+            );
+            e
+        } else if self.pattern_latch_stale && matches!(kind, OctalFetch::PatLo | OctalFetch::PatHi)
+        {
+            self.pattern_latch_stale = false;
+            let e = (intended & 0x3F00) | u16::from(self.octal_latch);
+            octal_trace::push(
+                octal_trace::K_STALE,
+                self.frame,
+                self.scanline,
+                self.dot,
+                u32::from(e),
+            );
+            e
+        } else {
+            // Normal ALE: latch this fetch's own low byte — but do NOT clobber a
+            // stale byte that a still-pending corruption event captured.
+            if !self.copy_v && !self.pattern_latch_stale {
+                self.octal_latch = (intended & 0xFF) as u8;
+            }
+            intended
+        };
+        self.address_bus = (self.address_bus & 0x00FF) | (eff & 0x3F00);
+        eff
     }
 
     /// W2 ($2007 Stress) — per-dot sprite-tile fetch read cadence (dots
@@ -2376,6 +2564,25 @@ impl Ppu {
             self.ppudata_sm_countdown -= 1;
             if self.ppudata_sm_countdown == 0 {
                 self.data_buffer = self.render_data_bus;
+                // v2.0.2 (ADR 0030) — "ALE + Read": the $2007 read's PPUDATA
+                // state machine takes 3 PPU cycles to the background cadence's 2,
+                // so on the reload dot its ALE overlaps a fetch's read. Both ALE
+                // and READ are asserted, so the octal latch is frozen on the
+                // read's DATA byte (`render_data_bus`) instead of the next
+                // Pattern-Address-Register low byte. The next pattern fetch then
+                // reads `{PAR high 6}:{stale data low}` (`$0F03` -> `$0FFF`).
+                #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+                if self.mask.rendering_enabled() && self.is_render_scanline() {
+                    self.octal_latch = self.render_data_bus;
+                    self.pattern_latch_stale = true;
+                    octal_trace::push(
+                        octal_trace::K_SMLAND,
+                        self.frame,
+                        self.scanline,
+                        self.dot,
+                        u32::from(self.render_data_bus),
+                    );
+                }
                 if self.ppudata_v_inc_pending {
                     self.ppudata_v_inc_pending = false;
                     if self.mask.rendering_enabled() && self.is_render_scanline() {
@@ -2482,11 +2689,12 @@ impl Ppu {
         } else {
             0x2000 | (self.v & 0x0FFF)
         };
-        // v2.0.1 (ADR 0030) — a pending `$2006` hybrid address overrides this
-        // fetch's nametable address exactly once. Flag-gated + `take()`s so the
-        // shipped build is byte-identical (the field is always `None` there).
+        // v2.0.2 (ADR 0030) — resolve through the octal latch: normally a no-op
+        // (returns `nt_addr`, reloads the latch), but applies the "Hybrid
+        // Addresses" splice when a `$2006`-during-render `copy_v` is pending.
+        // Flag-gated so the shipped build is byte-identical.
         #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
-        let nt_addr = self.hybrid_pending.take().unwrap_or(nt_addr);
+        let nt_addr = self.octal_effective(nt_addr, OctalFetch::Nt);
         self.nt_latch = self.read_vram(bus, nt_addr);
         // Latch any per-tile extended-attribute info (MMC5 ExGrafix). Skip
         // when split is active: the alt region uses standard 4-bit AT
@@ -2515,6 +2723,9 @@ impl Ppu {
         }
         let v = self.v;
         let at_addr = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
+        // v2.0.2 (ADR 0030) — octal-latch ALE (transparent unless corrupted).
+        #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+        let at_addr = self.octal_effective(at_addr, OctalFetch::At);
         let byte = self.read_vram(bus, at_addr);
         // Pick the 2-bit attribute based on coarse-X[1] and coarse-Y[1].
         let coarse_x = (v & 0x1F) as u8;
@@ -2546,7 +2757,14 @@ impl Ppu {
             .map_or((self.v >> 12) & 0x07, |s| u16::from(s.fine_y) & 0x07);
         let addr = bg_table | (u16::from(self.nt_latch) << 4) | fine_y;
         self.observe_a12_addr(bus, addr);
-        self.bg_lo_latch = self.read_vram(bus, addr);
+        // v2.0.2 (ADR 0030) — octal-latch ALE. A12 stays on the INTENDED `addr`
+        // above; only the DATA read address is spliced (stale-latch "ALE + Read").
+        // `addr` itself is preserved for the hd-pack tile-base latch below.
+        #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+        let read_addr = self.octal_effective(addr, OctalFetch::PatLo);
+        #[cfg(not(feature = "mc-ppu-bus-addr-hybrid"))]
+        let read_addr = addr;
+        self.bg_lo_latch = self.read_vram(bus, read_addr);
         // v1.2.0 C3 (hd-pack): latch the 16-byte tile base (fine-Y masked off)
         // for this fetch group. Promoted into the `hd_bg_addr_*` queue at the
         // next shifter reload so it tracks the BG pattern shifters tile-for-tile.
@@ -2568,7 +2786,12 @@ impl Ppu {
             .map_or((self.v >> 12) & 0x07, |s| u16::from(s.fine_y) & 0x07);
         let addr = bg_table | (u16::from(self.nt_latch) << 4) | 0x08 | fine_y;
         self.observe_a12_addr(bus, addr);
-        self.bg_hi_latch = self.read_vram(bus, addr);
+        // v2.0.2 (ADR 0030) — octal-latch ALE (stale-latch "ALE + Read" splice).
+        #[cfg(feature = "mc-ppu-bus-addr-hybrid")]
+        let read_addr = self.octal_effective(addr, OctalFetch::PatHi);
+        #[cfg(not(feature = "mc-ppu-bus-addr-hybrid"))]
+        let read_addr = addr;
+        self.bg_hi_latch = self.read_vram(bus, read_addr);
     }
 
     /// Shift the BG pattern and attribute shift registers by one bit.
