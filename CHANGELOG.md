@@ -55,8 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   titles now render more TriCNES-faithfully at a mid-render `$2006` scroll write —
   **Super Mario Bros. 3** (a single leftmost tile on scanline 194) and **Uchuu
   Keibitai SDF** (one tile at the MMC5 split boundary on scanline 15); no other
-  title's output changed. Headless frame cost rises ~10% (nestest ~4.15 ms/frame,
-  still ~4× realtime); accepted for the accuracy gain.
+  commercial title's output changed. The `scanline.nes` visual-regression golden was
+  likewise re-blessed for the same mid-render `$2006` reason (it is the one public
+  test ROM in the suite that drives mid-scanline scroll/timing; the other eight visual
+  goldens — including the NMI-drift-sensitive `nmi_sync` demo — stayed byte-identical,
+  confirming the change is surgical to the `$2006`-mid-render path). Headless frame cost
+  rises ~10% (nestest ~4.15 ms/frame, still ~4× realtime); accepted for the accuracy gain.
 
 ### Removed
 
