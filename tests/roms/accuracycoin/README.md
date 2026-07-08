@@ -28,10 +28,11 @@ navigates with D-Pad / A / Start), but our harness uses a fixed
 button-press script that triggers "run all" and then reads the result
 addresses out of CPU RAM directly.
 
-Current pass rate (measured via the Phase D2 RAM-direct decoder):
-**67.63%** (94 pass + 1 pass-with-code of 139 assigned tests).
-Floor: 0.60. v1.0.0 gate: 0.90. See `docs/STATUS.md` for the
-breakdown.
+Current pass rate (measured via the RAM-direct decoder), after the
+v2.0.1 upstream re-sync grew the catalog to 146 rows / 141 assigned tests:
+**98.58%** (139 of 141 assigned tests). The two new upstream PPU tests
+("ALE + Read", "Hybrid Addresses") are known gaps. Floor: 0.60. See
+`docs/STATUS.md` for the authoritative breakdown.
 
 ## Harness
 

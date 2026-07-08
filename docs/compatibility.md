@@ -132,7 +132,7 @@ boot and render with their correct 2C04 palette.
 **PlayChoice-10's second-screen instruction menu and its Z80 coprocessor are out
 of scope** — only the NES-game half runs (with the 2C03 palette). All of the above
 is gated on `ConsoleType::VsSystem`/`Playchoice10`; a stock `Nes` cart is byte-for-
-byte unchanged (AccuracyCoin 100.00% (139/139) + both ROM oracles byte-identical).
+byte unchanged (AccuracyCoin 139/141 — the two newest upstream PPU tests are known gaps — + both ROM oracles byte-identical).
 Region timing (PAL/Dendy)
 is validated by automated gates (`ppu_region_constants_match_hardware` in
 `rustynes-ppu`; `region_timing.rs` in `rustynes-test-harness`). The R1
@@ -190,7 +190,7 @@ unfinished); the fix is a faithful port of TriCNES's eval-pointer model — the
 corrupted index is the live secondary-OAM evaluation pointer (`OAM2Address`),
 captured at the disable edge during dots 1-64 and committed on re-enable. Default
 builds stay byte-identical for games without such a split; AccuracyCoin
-OAM-Corruption (0x047B) + 139/139, nestest 0-diff, and blargg/kevtris remain
+OAM-Corruption (0x047B) + 139/141 (the two newest upstream PPU tests are known gaps), nestest 0-diff, and blargg/kevtris remain
 green; `repro_smb3 --movie` idle drop count went 63-80/240 → 0. See `ppu-2c02.md`
 edge-case 2 and `crates/rustynes-test-harness/src/bin/{repro_smb3,smb3_dma_trace}.rs`.
 

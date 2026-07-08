@@ -508,40 +508,44 @@ account, or a hosted deploy (all also listed under their theme above).
   feature in `crates/rustynes-frontend/Cargo.toml` + the `full-run`/`full-build` aliases in
   `.cargo/config.toml`.)* an umbrella feature for the maximal native build. Source: v1.7.0
   beta.5 carryover. Files: `crates/rustynes-frontend/Cargo.toml`, `.cargo/config.toml`.
-- `[ ]` **Re-sync the vendored `100thCoin/AccuracyCoin` test-ROM oracle** — the
-  vendored copy (`tests/roms/AccuracyCoin/{README.md,SOURCE_CATALOG.tsv}` +
-  `tests/roms/accuracycoin/AccuracyCoin.nes`) is pinned to a **2026-05-17**
-  upstream snapshot (144 active test-table rows), carried forward unchanged
-  through the v1.0.0 synthesis transplant. Upstream `main` has since added
-  **two new active tests** not yet in RustyNES's catalog: `"ALE + Read"`
-  (added 2026-06-04 — a simultaneous Address-Latch-Enable + PPU-Read analog
-  feedback loop that corrupts a nametable fetch and can trigger a spurious
-  sprite-zero hit) and `"Hybrid Addresses"` (added 2026-06-11, alignment-2 fix
-  landed 2026-06-26 — whether a well-timed `STA $2006` can corrupt a nametable
-  fetch), plus a bugfix moving `"$2002 Flag Timing"` off a page boundary
-  (2026-06-26) that was itself causing a false failure, and an error-code
-  cleanup in `"Sprites On Scanline 0"` (2026-05-26). Re-syncing means:
-  re-extracting `SOURCE_CATALOG.tsv` from the current `AccuracyCoin.asm` by
-  walking each `Suite_*`/`table` block and emitting `(suite, test-name,
-  ram-addr)` triples (`docs/testing-strategy.md` does NOT currently document
-  this recipe — the `tests/roms/AccuracyCoin/README.md` pointer to it is
-  itself stale and should be corrected in the same pass, e.g. to point at the
-  original extraction session's methodology), re-building
-  the `.nes` ROM, adding harness coverage for the 2 new tests, and
-  re-verifying RustyNES's pass rate against the corrected `$2002 Flag Timing`
-  placement (a prior false failure upstream may have been silently
-  compensated for, or may newly surface). **Explicitly non-blocking for
-  v2.0.0** (the release is gated on the currently-pinned 139/139 oracle, which
-  passed clean); this is opportunistic core/test-harness housekeeping, not a
-  mobile-specific item, but the natural anchor point is v2.0.1's "re-verify
-  determinism (AccuracyCoin + the SMB/Zelda on-device smoke)" re-port step
-  (see `to-dos/plans/v2.0.x-mobile-finalization-plan.md`) since that's the
-  next point RustyNES touches the AccuracyCoin oracle anyway. Source:
-  maintainer request, 2026-07-02 (session live-checked upstream via `gh api
-  repos/100thCoin/AccuracyCoin`; no formal GitHub Releases exist upstream — it
-  is a rolling `main`-branch repo). Target: **v2.0.1+ housekeeping pass**.
+- `[x]` **Re-sync the vendored `100thCoin/AccuracyCoin` test-ROM oracle** — DONE in
+  the **v2.0.1 AccuracyCoin re-sync PR**. Re-synced to upstream `main` commit
+  `71f57fb` (2026-06-26): re-extracted `SOURCE_CATALOG.tsv` (**144 -> 146 rows /
+  139 -> 141 assigned tests**), replaced the runtime `.nes` with the upstream build
+  (ca65 toolchain present but the upstream ships a prebuilt ROM), bumped the
+  `catalog_has_exactly_146_entries` + `entry_by_index_is_zero_based` drift-guards +
+  the rustdoc, corrected the stale `README.md` extraction-recipe pointer (now an
+  inline recipe: walk `Suite_*`/`table` blocks, resolve each `result_symbol` to its
+  `result_X = $ADDR`), and re-verified the pass rate. The two existing-test upstream
+  fixes (`"$2002 Flag Timing"` page-boundary, `"Sprites On Scanline 0"` error code)
+  folded in cleanly with no change to RustyNES's result. The two new PPU tests were
+  added: `"ALE + Read"` (`$0491`) and `"Hybrid Addresses"` (`$0492`). **Outcome: the
+  v2.0.0 core PASSES 139 of the 141 assigned tests — it FAILS the two new ones** (the
+  8 pre-existing PPU-Misc tests still pass, so nothing regressed); honest headline is
+  now **139/141 (98.58%)**, down from 139/139 only because the denominator grew.
   Files: `tests/roms/AccuracyCoin/`, `tests/roms/accuracycoin/`,
-  `crates/rustynes-test-harness/src/accuracy_coin{,_catalog}.rs`.
+  `crates/rustynes-test-harness/src/accuracy_coin_catalog.rs`.
+
+- `[ ]` **Pass the two new AccuracyCoin PPU tests — `"ALE + Read"` + `"Hybrid Addresses"`** —
+  the accuracy gap opened by the v2.0.1 re-sync above. Both hinge on the PPU **octal
+  latch** (the 74LS373 that multiplexes PA0-7 with the CHR data bus via the ALE
+  signal; `AccuracyCoin.asm:2541-2614` is the authoritative cycle-level spec, nesdev
+  `PPU_rendering.xhtml:65,116,195-201`): a mid-render `LDA $2007` leaves a **stale
+  octal-latch value** that corrupts the next background pattern fetch address
+  (`{new PAR high 6}:{stale low 8}`), and a mid-fetch `STA $2006` composes a **hybrid
+  address** (`{new v high 6}:{octal-latch low 8}`, e.g. `$2F19`). RustyNES's
+  single-step fetch model already has the `$2007`-during-render machinery
+  (`render_data_bus` + `ppudata_sm_countdown`, passes `$2007 Stress`) but **no
+  persistent PPU-bus-address register** and **no `$2006` render-time hook** — so the
+  fix needs an `octal_latch`/`bus_addr` pair fed from every fetch (snapshot v5) plus
+  the two register-path hooks. Reference: **Mesen2** models both via a single
+  `_ppuBusAddress` (+ 3-dot-delayed `v`, bus not re-synced during render); **ares**
+  models only the `$2007` side (`io.busAddress`); **higan** blocks `$2007` during
+  render. **Being ATTEMPTED in the v2.0.1 `feat/v2.0.1-ale-read-hybrid` PR** (the
+  Hybrid-Addresses / `$2006` side is the more tractable half; ALE+Read / `$2007`
+  feedback is harder — a partial 140/141 is still an honest improvement). Target:
+  v2.0.1 (attempt), else a dedicated future accuracy session. Files:
+  `crates/rustynes-ppu/src/{ppu.rs,snapshot.rs}`.
 
 ---
 

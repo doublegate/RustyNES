@@ -137,6 +137,8 @@ PPU Misc.	BG Serial In	0x0487
 PPU Misc.	Sprites On Scanline 0	0x0484
 PPU Misc.	$2004 Stress Test	0x048C
 PPU Misc.	$2007 Stress Test	0x048E
+PPU Misc.	ALE + Read	0x0491
+PPU Misc.	Hybrid Addresses	0x0492
 CPU Behavior 2	Instruction Timing	0x0460
 CPU Behavior 2	Implied Dummy Reads	0x046D
 CPU Behavior 2	Branch Dummy Reads	0x048B

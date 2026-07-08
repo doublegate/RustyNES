@@ -14,7 +14,8 @@
 //! [`crate::emu::EmuCore::produce_one_frame`] has already produced — the same
 //! data the renderer presents and the audio sink consumes. So the determinism
 //! contract (same seed + ROM + input ⇒ bit-identical framebuffer + audio) is
-//! unaffected, `AccuracyCoin` stays 139/139, and with the `av-record` feature off
+//! unaffected, `AccuracyCoin` stays 139/141 (the two newest upstream PPU tests are
+//! known gaps), and with the `av-record` feature off
 //! (the default) this module is not compiled at all — the shipped / wasm /
 //! `no_std` builds are byte-identical.
 //!

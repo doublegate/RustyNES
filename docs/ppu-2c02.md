@@ -283,7 +283,8 @@ cell, hash the referenced CHR bytes (Mesen CRC32), and substitute hi-res replace
 tiles at blit time. Like the index framebuffer it is **output-only**: it reads no new
 VRAM, issues no new A12 / mapper events, mutates no emulation state, and is not part of
 the save-state — so the framebuffer is **byte-identical with the feature on or off**
-(proven against the full ROM corpus: AccuracyCoin 139/139, `nestest` 0-diff, blargg /
+(proven against the full ROM corpus: AccuracyCoin 139/141 — the two newest upstream
+PPU tests are known gaps — `nestest` 0-diff, blargg /
 kevtris green, identically with `hd-pack` on and off). The whole export is
 `#[cfg(feature = "hd-pack")]`-gated, so the default and `no_std` builds carry no memory
 or codegen cost.

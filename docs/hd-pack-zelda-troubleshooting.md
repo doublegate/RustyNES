@@ -227,7 +227,7 @@ Pack metadata:
 
 - HD-pack is **output-only** and `hd-pack`-gated. Any fix must keep the core
   byte-identical (default / `no_std` / wasm builds unchanged) and **AccuracyCoin
-  139/139**. The PPU telemetry must not perturb the deterministic framebuffer or
+  139/141** (the two newest upstream PPU tests are known gaps). The PPU telemetry must not perturb the deterministic framebuffer or
   audio — prove on/off byte-identity for PPU-side changes.
 - Touch the chip docs in the same change as chip code (`docs/ppu-2c02.md` for PPU
   telemetry, `docs/adr/0014` for compositor/condition changes).

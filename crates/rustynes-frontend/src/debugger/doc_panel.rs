@@ -925,7 +925,7 @@ the Debug menu opens its window on the spot; the tool windows are
 independent of one another.
 
 The devtools are output-only and never perturb emulation, so the
-determinism contract and AccuracyCoin (100%, 139/139) are unaffected.
+determinism contract and AccuracyCoin (98.58%, 139/141) are unaffected.
 
 Sub-pages (also in the sidebar tree):
   - [[CPU & disassembly|dt-cpu]]
@@ -1180,7 +1180,7 @@ written in pure Rust (winit + wgpu + cpal + egui).
 
   License ...... MIT OR Apache-2.0
   Author ....... DoubleGate
-  Accuracy ..... AccuracyCoin 100% (139/139); nestest 0-diff;
+  Accuracy ..... AccuracyCoin 98.58% (139/141); nestest 0-diff;
                  blargg / kevtris suites green.
   Frontend ..... always-on egui shell, dedicated emulation thread,
                  display-sync pacing, lock-free audio ring.

@@ -388,8 +388,8 @@ panel's pacing field reads `raf-display` or `raf` accordingly.
 Five additive, web-only browser-platform features bring the wasm build closer
 to native parity. All are wasm-only (`#[cfg(target_arch = "wasm32")]`) or behind
 the existing off-by-default `script-wasm` feature, so the native build is
-byte-identical and the deterministic core is untouched (AccuracyCoin 100%,
-139/139).
+byte-identical and the deterministic core is untouched (AccuracyCoin 139/141;
+the two newest upstream PPU tests are known gaps).
 
 - **Lua in the browser.** The unified winit path runs the experimental piccolo
   Lua engine (`script-wasm` feature, ADR 0012) end-to-end: a `.lua` file picker
@@ -661,7 +661,7 @@ reorganized the order and regrouped several items — see the per-menu notes):
   sub-pages, and intra-doc links), Keyboard Shortcuts, About.
 
 **v1.7.0 "Forge" beta.5 — UI overhaul (#51/#52/#53/#55).** Frontend-only,
-determinism-neutral (the core stays byte-identical; AccuracyCoin 100%, 139/139).
+determinism-neutral (the core stays byte-identical; AccuracyCoin 139/141 — the two newest upstream PPU tests are known gaps).
 (#51) The two input HUDs were **consolidated into one "Input Display" panel** —
 the superset miniatures panel (standard pads + Zapper / Vaus / SNES mouse /
 Power Pad / Family Trainer / Family BASIC / Subor keyboard / Konami + Bandai
@@ -717,7 +717,7 @@ egui menu and is unaffected).
 ### Accessibility (v1.5.0 "Lens" Workstream E)
 
 Frontend-only, additive, off-by-default — the shipped / native / `no_std` / wasm
-builds stay byte-identical and AccuracyCoin holds 100% (139/139). Three features:
+builds stay byte-identical and AccuracyCoin holds 139/141 (the two newest upstream PPU tests are known gaps). Three features:
 
 - **UI scaling (`[ui] zoom_factor`, default `1.0`).** Scales the entire egui
   shell (menu bar, Settings, debugger panels, fonts) by calling
@@ -749,7 +749,7 @@ builds stay byte-identical and AccuracyCoin holds 100% (139/139). Three features
 ### Internationalization (i18n, v1.7.0 "Forge" Workstream H5)
 
 Frontend-only, additive, English-by-default — with the default locale every
-label is byte-identical to v1.6.0 and AccuracyCoin holds 100% (139/139). See
+label is byte-identical to v1.6.0 and AccuracyCoin holds 139/141 (the two newest upstream PPU tests are known gaps). See
 ADR 0023 for the rationale (why a hand-rolled catalog over Fluent/ICU/`rust-i18n`
 and the wasm size budget).
 
@@ -1199,7 +1199,7 @@ gains an **inline 6502 assembler**. Every writeback is `debug-hooks`-gated and
 routes through the **same gated post-frame poke path** the raw RAM cheats use —
 so it is a **no-op under netplay / TAS replay or record / RA-hardcore** and
 **byte-identical with the feature off** (the no-edit queue is empty). The chip
-stack stays `#![no_std]`; AccuracyCoin holds 139/139.
+stack stays `#![no_std]`; AccuracyCoin holds 139/141 (the two newest upstream PPU tests are known gaps).
 
 - **The gated post-frame poke path.** A new `EmuCore::debug_pokes:
   Vec<DebugPoke>` queue (CPU-RAM / PPU-bus / OAM variants) is drained inside
@@ -1299,7 +1299,7 @@ session-history machinery: a scrubbable full-session **HistoryViewer** with
 clip export (D1, frontend), and a **Zwinder-class compressed greenzone** that
 the TAStudio editor now stores its save-states through (D2, core-adjacent). Both
 ride the current PPU-dot scheduler — **no timebase change** — so AccuracyCoin
-(139/139) holds and the shipped / native / `no_std` / wasm builds stay
+(139/141; the two newest upstream PPU tests are known gaps) holds and the shipped / native / `no_std` / wasm builds stay
 byte-identical (the HistoryViewer only *observes*; compression is lossless).
 
 - **HistoryViewer (D1)** — `src/history_viewer.rs`. A bookkeeping layer over the
@@ -1350,7 +1350,7 @@ compiled). Implemented in `src/av_record.rs`.
   source the screenshot path reads) and the same audio samples the audio sink
   received that frame (`audio_buf[..n]`, mono `f32`). It **never** advances the
   emulator, mutates the core, or alters the per-frame framebuffer / audio, so the
-  **determinism contract is untouched** and **AccuracyCoin holds 139/139**. With
+  **determinism contract is untouched** and **AccuracyCoin holds 139/141** (the two newest upstream PPU tests are known gaps). With
   the feature off the produce path is byte-identical.
 - **Encoder = external `ffmpeg` pipe.** The recorder spawns `ffmpeg`, streams
   **rawvideo** (`rgba`, 256x240, at the region frame rate as an exact rational
