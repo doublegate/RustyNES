@@ -45,7 +45,7 @@ doc = false
 
 [dependencies]
 # Pinned to 0.31 to match `rustynes-mobile` so the workspace resolves a single UniFFI.
-uniffi = { version = "0.31" }
+uniffi = { version = "0.32" }
 
 [features]
 # Enables the bindgen CLI entry point only when requested, keeping the default build

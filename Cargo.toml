@@ -61,7 +61,7 @@ rustynes-ra = { path = "crates/rustynes-ra", version = "2.0.0" }
 # from source (no system Lua needed); native-only (the wasm/no_std builds never
 # pull this in, since `rustynes-script` is gated behind the frontend's optional
 # `scripting` feature).
-mlua = { version = "0.11", features = ["lua54", "vendored", "send"] }
+mlua = { version = "0.12", features = ["lua54", "vendored", "send"] }
 
 # v1.2.0 Workstream F4 — EXPERIMENTAL pure-Rust Lua VM for the wasm backend of
 # `rustynes-script` (behind the default-OFF `script-wasm` feature). piccolo has
