@@ -1,5 +1,23 @@
 # RustyNES — Project Status Matrix
 
+> **In progress (unreleased): v2.0.1 — Android core re-port + `foss`/`play` split start.**
+> The first release of the Android mobile-finalization re-port train onto the v2.0.0
+> "Timebase" core (`to-dos/ROADMAP.md`). Host-shell-only, so the deterministic core is
+> byte-identical and host CI accuracy is unchanged (**AccuracyCoin 139/141**). Landed:
+> the Android `versionCode`/`versionName` → `20001`/`2.0.1`; a **movie-epoch warning on
+> the mobile bridge** (`NesController::movie_play` peeks `recorded_before_v2_timebase`
+> and queues a drainable warning via the new `drain_warnings`, mirroring desktop/wasm —
+> ADR 0028; a pre-v2.0.0 `.rns` restore already maps cleanly to `MobileError::SaveState`);
+> and the **structural start of the `foss`/`play` product-flavor split** (ADR 0025) — a
+> `distribution` flavor dimension (`foss` default + `play`), every proprietary Google SDK
+> moved to `playImplementation`, the six Google-touching glue classes moved to `src/play/`
+> with **no-op façades in `src/foss/`** (so `foss` links zero Google SDKs), the Play
+> manifest meta-data moved to `src/play/AndroidManifest.xml`, and the
+> `installDebug`→`installFossDebug` alias. Ad / RevenueCat glue stays dormant; the ad
+> wiring, on-device dual-flavor verification, and F-Droid submission are the v2.1.0 step.
+> See `docs/android.md` + `to-dos/v1.8.x-on-device-verification.md`. android.yml CI (the
+> NDK cross-build + both-flavor Gradle package) is the compile gate for this change.
+>
 > **Current release: v2.0.0 "Timebase"** (2026-07-03) — the **one-clock,
 > every-cycle-bus-access scheduler rewrite** (ADR 0002 / ADR 0029): the old
 > five-counter, dot-lockstep model (`tick_one_dot`) is replaced by a single

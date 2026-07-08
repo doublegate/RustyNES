@@ -125,9 +125,19 @@ Gradle invocation rebuilds the native libraries and bindings as needed:
 ```bash
 cd android
 gradle wrapper --gradle-version 8.11.1   # first time, materialises ./gradlew
-./gradlew :app:assembleDebug             # debug APK
-./gradlew :app:bundleRelease             # release AAB (unsigned unless keystore.properties present)
+./gradlew :app:installDebug              # alias -> installFossDebug (the default foss flavor)
+./gradlew :app:assembleFossDebug         # foss (F-Droid/sideload) debug APK — no Google SDKs
+./gradlew :app:assemblePlayDebug         # play (Google Play) debug APK
+./gradlew :app:bundleFossRelease         # foss release AAB (unsigned unless keystore.properties)
+./gradlew :app:bundlePlayRelease         # play release AAB
 ```
+
+> **v2.0.1 (ADR 0025): the `distribution` flavor dimension.** The build now splits into a
+> **`foss`** flavor (default) and a **`play`** flavor, so AGP names the variant tasks
+> per-flavor (`assembleFossDebug`, `bundlePlayRelease`, …). The bare `installDebug` is kept as
+> an alias to `installFossDebug` so the existing dev/CI command is undisturbed; the aggregate
+> `assembleDebug` / `bundleRelease` anchors still fan out to both flavors. See "Distribution
+> flavors" under Monetization below.
 
 `minSdk 26` (AAudio floor), `targetSdk 35` (Play mandate), `compileSdk 35`. Ship
 ABI is `arm64-v8a`; `x86_64` is included for the emulator. The release build runs
@@ -159,12 +169,19 @@ power-user build).
 > launch. The free-tier persistence gates (save-states / resume / SRAM) are **identical**
 > across both models; the change is ads + the $3.99 price + the RevenueCat provider.
 >
-> **v2.1.0 `foss` / `play` flavor split (ADR 0025).** At launch the build splits into a
-> **`foss`** flavor (default — no Google SDKs, no ads, no tracking; the **F-Droid** +
-> GitHub-sideload artifact) and a **`play`** flavor (all the proprietary SDKs — Billing,
-> Cast, Play Games, Integrity, update/review **+ AppLovin + RevenueCat** — for **Google
-> Play**). F-Droid requires a Google-/ad-free build, so this is the only way to reach that
-> channel. Already wired in v1.8.9 (dormant): the `rustynes-monetization` crate's `.so` +
+> **`foss` / `play` flavor split (ADR 0025) — structural start landed in v2.0.1.** The build
+> splits into a **`foss`** flavor (default — no Google SDKs, no ads, no tracking; the
+> **F-Droid** + GitHub-sideload artifact) and a **`play`** flavor (all the proprietary SDKs —
+> Billing, Cast, Play Games, Integrity, update/review **+ AppLovin + RevenueCat** at v2.1.0 —
+> for **Google Play**). F-Droid requires a Google-/ad-free build, so this is the only way to
+> reach that channel. **v2.0.1 landed the structural split:** the `distribution` flavor
+> dimension, per-flavor `PLAY_BUILD`, every proprietary SDK moved to `playImplementation`, the
+> six Google-touching glue classes moved to `src/play/` with **no-op façades in `src/foss/`**
+> (so `foss` links zero Google SDKs and `MainActivity` calls a flavor-neutral façade), the
+> Cast/Play-Games manifest meta-data moved to `src/play/AndroidManifest.xml`, and the
+> `installDebug`→`installFossDebug` alias. The **ad / RevenueCat glue stays dormant** — that
+> wiring, plus the on-device verification of both flavors and the F-Droid submission, is the
+> v2.1.0 step. Already wired in v1.8.9 (dormant): the `rustynes-monetization` crate's `.so` +
 > UniFFI bindings (our own clean Rust core). See
 > [`../to-dos/plans/v2.0.x-mobile-finalization-plan.md`](../to-dos/plans/v2.0.x-mobile-finalization-plan.md).
 

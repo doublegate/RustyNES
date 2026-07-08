@@ -39,15 +39,14 @@ android {
         applicationId = "com.doublegate.rustynes"
         minSdk = 26 // AAudio floor.
         targetSdk = 36 // Play mandate (Android 16) from 2026-08-31.
-        versionCode = 20000 // 2.0.0
-        versionName = "2.0.0"
+        versionCode = 20001 // 2.0.1
+        versionName = "2.0.1"
         // No abiFilters here — set per buildType so release ships arm64 only
         // while debug keeps x86_64 for the emulator.
-        // PLAY_BUILD gates the freemium (demo timer + persistence locks + Billing).
-        // Default false → sideload/GitHub/dev builds are full-featured; the Google
-        // Play AAB sets it true (v1.8.8 "Atlas" launch — postponed from v1.8.6). See
-        // the v1.8.0 plan's monetization timing.
-        buildConfigField("boolean", "PLAY_BUILD", "false")
+        // PLAY_BUILD moved to the `distribution` product flavors below (v2.0.1, ADR
+        // 0025): it is now `false` for `foss` and `true` for `play`, so the flag is
+        // a compile-time property of the channel rather than a defaultConfig default.
+        // It still gates the freemium (demo timer + persistence locks + Billing).
         // CHROMECAST_ENABLED gates the experimental Cast Application Framework
         // (CAF) sender path (v1.8.7, #38) — a ~20-30fps SPECTATOR mirror to a
         // custom Web Receiver, distinct from the primary low-latency Presentation
@@ -76,6 +75,34 @@ android {
         // NUMBER for Play Integrity's PrepareIntegrityTokenRequest. 0L = unset (the
         // Integrity client no-ops even if PLAY_INTEGRITY_ENABLED were on without it).
         buildConfigField("long", "INTEGRITY_CLOUD_PROJECT_NUMBER", "0L")
+    }
+
+    // v2.0.1 (ADR 0025): the `distribution` product-flavor split. Two channels off
+    // the one byte-identical Timebase core:
+    //   - `foss` (default) — the pure-Rust emulator ONLY: no Google Play SDKs, no
+    //     ads, no tracking. This is the F-Droid + GitHub-Releases sideload artifact.
+    //     Its `src/foss/` source set supplies no-op façades for every proprietary
+    //     subsystem so `MainActivity` links without any `com.google.*` /
+    //     `com.android.billingclient.*` dependency (moved to `playImplementation`).
+    //   - `play` — everything proprietary (Billing, Cast framework, Play Games v2,
+    //     Play Integrity, in-app update/review; AppLovin/RevenueCat ads land here at
+    //     v2.1.0). Google Play only.
+    // PLAY_BUILD is set per-flavor; the per-feature runtime gates (PGS_ENABLED, …)
+    // stay in defaultConfig as the in-`play` toggles the maintainer flips at launch.
+    // NOTE: this is the STRUCTURAL start of the split (v2.0.1). The monetization ad
+    // glue is still dormant (ADR 0025); only the existing proprietary SDK groups are
+    // flavor-scoped here.
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("foss") {
+            dimension = "distribution"
+            isDefault = true
+            buildConfigField("boolean", "PLAY_BUILD", "false")
+        }
+        create("play") {
+            dimension = "distribution"
+            buildConfigField("boolean", "PLAY_BUILD", "true")
+        }
     }
 
     // Release signing reads `keystore.properties` (gitignored) or env vars; when
@@ -327,11 +354,15 @@ dependencies {
     // Pinned at 8.0.0 here: Billing 9.x is an API-breaking major (the v1.8.8 Play
     // launch / Workstream P revisits the entitlement code), and this Atlas-foundation
     // pass is presentation/Gradle only — bumping it would touch Billing.kt/LicenseManager.
-    implementation("com.android.billingclient:billing-ktx:8.0.0")
+    // v2.0.1 (ADR 0025): PLAY-FLAVOR ONLY. `playImplementation` keeps these
+    // proprietary Google-Play SDKs out of the `foss` (F-Droid/sideload) artifact
+    // entirely — the `foss` variant links none of them (its `src/foss/` no-op
+    // façades stand in), so the clean channel has no Play Services / Billing / ads.
+    playImplementation("com.android.billingclient:billing-ktx:8.0.0")
     // Cast Application Framework sender (v1.8.7, #38). Linked but DORMANT: it does
     // nothing until CastContext is initialized, which only happens behind the
     // default-off BuildConfig.CHROMECAST_ENABLED flag (see ChromecastSender.kt).
-    implementation("com.google.android.gms:play-services-cast-framework:22.1.0")
+    playImplementation("com.google.android.gms:play-services-cast-framework:22.1.0")
     // v1.8.8 "Atlas" (Workstreams D+E): Play Games Services v2 — the cloud-save
     // Snapshots client (D), the PGS achievements + leaderboards clients (E), and the
     // PGS v2 auto-sign-in (GamesSignInClient). 21.0.0 is the current v2 SDK (the v1
@@ -340,19 +371,19 @@ dependencies {
     // PlayGames.kt). DISTINCT from RetroAchievements (rustynes-ra). The PGS sign-in
     // also reads the manifest <meta-data app_id>, which is a maintainer-supplied
     // placeholder (@string/game_services_project_id) until the Play Games project lands.
-    implementation("com.google.android.gms:play-services-games-v2:21.0.0")
+    playImplementation("com.google.android.gms:play-services-games-v2:21.0.0")
     // v1.8.8 "Atlas" (Workstream L): Play Integrity API — the anti-tamper layer over
     // Billing. 1.6.0 (SafetyNet Attestation was turned down Jan 2025; this is the modern
     // replacement). Linked but DORMANT: no token is requested until behind the default-
     // off BuildConfig.PLAY_INTEGRITY_ENABLED flag (see Integrity.kt). Verdict decryption
     // needs the maintainer's linked Cloud project + server endpoint.
-    implementation("com.google.android.play:integrity:1.6.0")
+    playImplementation("com.google.android.play:integrity:1.6.0")
     // v1.8.8 "Atlas" (Workstream L): in-app updates (flexible) + in-app review. 2.1.0
     // is the in-app-update floor for targeting Android 14+; review 2.0.2 is current.
     // These need NO Cloud project — they no-op gracefully on a sideloaded (non-Play)
     // install, so they are safe to call unconditionally (still flavor-gated for clarity).
-    implementation("com.google.android.play:app-update-ktx:2.1.0")
-    implementation("com.google.android.play:review-ktx:2.0.2")
+    playImplementation("com.google.android.play:app-update-ktx:2.1.0")
+    playImplementation("com.google.android.play:review-ktx:2.0.2")
     // v1.8.8 "Atlas" (Workstream J): pull the generated Baseline + Startup Profiles
     // from the Macrobenchmark module. The baselineprofile plugin wires the produced
     // `baseline-prof.txt` / `startup-prof.txt` into this variant's merged assets.
@@ -369,4 +400,28 @@ dependencies {
 baselineProfile {
     automaticGenerationDuringBuild = false
     dexLayoutOptimization = true
+}
+
+// v2.0.1 (ADR 0025): an unflavored `installDebug` convenience alias so the pre-split
+// dev/on-device command keeps working after the `distribution` flavor dimension was
+// added. Adding a flavor removes the bare `installDebug` task (AGP now names install
+// tasks per-variant: `installFossDebug`, `installPlayDebug`, …) — and, unlike
+// `assembleDebug` / `bundleRelease`, AGP does NOT create an aggregate `install*`
+// anchor. `foss` is the default (`isDefault = true`), so this alias forwards the old
+// `installDebug` name to the `foss` variant, leaving the on-device test workflow (and
+// any script invoking `installDebug`) undisturbed. The aggregate `assembleDebug` /
+// `bundleRelease` anchors AGP still creates (each fans out to every flavor) are left
+// as-is — registering our own would collide with them. `afterEvaluate` is required
+// because the flavored tasks are created during AGP's variant configuration, which
+// runs after this build script's body.
+afterEvaluate {
+    if (tasks.findByName("installDebug") == null) {
+        tasks.findByName("installFossDebug")?.let { fossInstall ->
+            tasks.register("installDebug") {
+                group = "install"
+                description = "Alias for installFossDebug (the default `foss` flavor)."
+                dependsOn(fossInstall)
+            }
+        }
+    }
 }

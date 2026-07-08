@@ -2056,8 +2056,10 @@ private fun EmulatorScreen(
             }
             // Demo: an always-visible unlock affordance + the session countdown.
             if (!unlocked) {
-                val price = license.product
-                    ?.oneTimePurchaseOfferDetails?.formattedPrice ?: "$2.99"
+                // v2.0.1 (ADR 0025): read the flavor-neutral `priceLabel` façade rather
+                // than the Google `ProductDetails` directly, so this src/main file links
+                // no `com.android.billingclient.*` and compiles in the FOSS flavor.
+                val price = license.priceLabel
                 Button(onClick = { activity?.let { license.purchase(it) } }) {
                     Text(stringResource(R.string.action_unlock, price))
                 }
@@ -2368,7 +2370,8 @@ private fun EmulatorScreen(
     // Demo-expired gate: a blocking sheet over everything with Unlock + Restore.
     if (!unlocked && demoExpired) {
         DemoExpiredOverlay(
-            price = license.product?.oneTimePurchaseOfferDetails?.formattedPrice ?: "$2.99",
+            // v2.0.1 (ADR 0025): flavor-neutral price façade (see the demo unlock button).
+            price = license.priceLabel,
             onUnlock = { activity?.let { license.purchase(it) } },
             onRestore = { license.refreshEntitlement() },
         )

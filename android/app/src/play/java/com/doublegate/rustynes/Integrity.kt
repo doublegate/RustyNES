@@ -1,3 +1,7 @@
+// PLAY-FLAVOR SOURCE SET (v2.0.1, ADR 0025). The real Play-Integrity-backed
+// `IntegrityManager`. The `foss` twin in `src/foss/.../Integrity.kt` is a no-op with the
+// same public surface (no `com.google.*` import). The shared `IntegrityVerdict` enum
+// moved to `src/main/.../PlayFacadeShared.kt` so it resolves in both flavors.
 package com.doublegate.rustynes
 
 import android.content.Context
@@ -39,18 +43,8 @@ import com.google.android.play.core.integrity.StandardIntegrityManager.StandardI
  * ms) per the Play Integrity guidance, not the deprecated Classic request.
  */
 
-/** The (server-side, decrypted) integrity verdict outcome, as the app reasons about it.
- *  On-device this is always [UNKNOWN] until the maintainer's decryption endpoint lands. */
-enum class IntegrityVerdict {
-    /** Verdict not yet available (flag off, no cloud project, or no server endpoint). */
-    UNKNOWN,
-
-    /** Server confirmed a genuine, Play-recognized, licensed binary. */
-    GENUINE,
-
-    /** Server flagged a tampered / unrecognized / unlicensed binary. */
-    TAMPERED,
-}
+// The `IntegrityVerdict` enum moved to `src/main/.../PlayFacadeShared.kt` (v2.0.1, ADR
+// 0025) — a pure enum, shared by both flavors' `IntegrityManager`.
 
 class IntegrityManager(context: Context) {
     private val appContext = context.applicationContext

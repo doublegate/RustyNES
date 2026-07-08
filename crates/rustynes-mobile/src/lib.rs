@@ -549,6 +549,15 @@ struct Inner {
     /// `np_leave` (it outlives the `NatConnect` object, which is consumed at
     /// hand-off, so it cannot be re-derived from the live session later).
     netplay_relayed: bool,
+    /// Drainable host-facing warnings (v2.0.1 Timebase re-port). Currently the sole
+    /// producer is [`NesController::movie_play`]: a `.rnm` recorded on a pre-v2.0.0
+    /// "Timebase" build replays its recorded *input* faithfully, but exact
+    /// framebuffer/audio reproduction is not guaranteed across the engine-timebase
+    /// boundary (ADR 0028). The host drains this via
+    /// [`NesController::drain_warnings`] and surfaces it (a toast / log line),
+    /// mirroring the desktop + wasm frontends' identical movie-load warning. This is
+    /// pure host-shell wiring — the deterministic core never reads it.
+    warnings: Vec<String>,
 }
 
 /// The handle the mobile shells drive the emulator through.
@@ -612,6 +621,7 @@ impl NesController {
                 netplay_desync: false,
                 netplay_last_stalled: false,
                 netplay_relayed: false,
+                warnings: Vec::new(),
             }),
         }))
     }
@@ -643,6 +653,9 @@ impl NesController {
         g.netplay_desync = false;
         g.netplay_last_stalled = false;
         g.netplay_relayed = false;
+        // Drop any undrained warnings from the previous cartridge (they refer to a
+        // movie that is no longer loaded).
+        g.warnings.clear();
         // The RA session is deliberately preserved across ROM swaps (the login
         // outlives a single game) — just unload the previous game's achievement
         // set; a fresh `ra_load_game` from the host re-identifies the new ROM.
@@ -901,16 +914,44 @@ impl NesController {
         let movie = rustynes_core::Movie::deserialize(&bytes).map_err(|e| MobileError::Movie {
             reason: e.to_string(),
         })?;
+        // ADR 0028: a `.rnm` recorded on a pre-v2.0.0 "Timebase" build replays its
+        // recorded *input* faithfully, but exact framebuffer/audio reproduction is
+        // not guaranteed across the engine-timebase boundary (the one-clock /
+        // every-cycle-bus-access scheduler rewrite changed the sub-frame timing the
+        // old movie was captured against). Peek the epoch and, for a pre-v2 movie,
+        // queue a drainable host warning — mirroring the desktop + wasm frontends'
+        // identical notice — rather than silently presenting the replay as byte-exact.
+        // A malformed/short header (the `Err` arm) is treated as "not pre-v2": the
+        // deserialize above already succeeded, so it is a current-epoch movie. The
+        // check never blocks playback and never touches the deterministic core.
+        let pre_timebase = rustynes_core::recorded_before_v2_timebase(&bytes).unwrap_or(false);
         let mut g = self.lock();
         movie
             .seek_to_start(&mut g.nes)
             .map_err(|e| MobileError::Movie {
                 reason: e.to_string(),
             })?;
+        if pre_timebase {
+            g.warnings.push(
+                "this movie was recorded on a pre-v2.0.0 build -- input replay \
+                 proceeds, but exact framebuffer/audio reproduction is not \
+                 guaranteed across the engine-timebase boundary (see ADR 0028)"
+                    .to_string(),
+            );
+        }
         g.recorder = None;
         g.playback = Some((movie, 0));
         drop(g);
         Ok(())
+    }
+
+    /// Drain host-facing warnings accumulated since the last call (v2.0.1 Timebase
+    /// re-port). Currently the sole producer is [`Self::movie_play`], which queues a
+    /// pre-v2.0.0-Timebase `.rnm` notice (ADR 0028). The host surfaces these as a
+    /// toast / log line, mirroring the desktop + wasm frontends. Empty when there is
+    /// nothing to report; draining clears the queue.
+    pub fn drain_warnings(&self) -> Vec<String> {
+        std::mem::take(&mut self.lock().warnings)
     }
 
     /// Stop any active movie recording or playback.
@@ -2387,6 +2428,12 @@ mod tests {
         // The produced movie is power-on anchored against the loaded ROM, so
         // playback must accept it.
         ctrl.movie_play(rnm).expect("native .rnm must replay");
+        // ADR 0028: a freshly-transcoded (current-epoch) movie is NOT pre-v2.0.0,
+        // so no host warning is queued and `drain_warnings` stays empty.
+        assert!(
+            ctrl.drain_warnings().is_empty(),
+            "a current-epoch .rnm must not raise the pre-Timebase movie warning",
+        );
     }
 
     // v1.8.6 — the RA bridge surfaces the lazy session + the login lifecycle.

@@ -1,3 +1,7 @@
+// PLAY-FLAVOR SOURCE SET (v2.0.1, ADR 0025). The real Play-Games-Services-v2-backed
+// `PlayGamesManager`. The `foss` twin in `src/foss/.../PlayGames.kt` is a no-op with
+// the same public surface (and no `com.google.*` import). The shared `PgsIds` object
+// moved to `src/main/.../PlayFacadeShared.kt` so `MainActivity` sees it in both flavors.
 package com.doublegate.rustynes
 
 import android.app.Activity
@@ -32,42 +36,9 @@ import java.lang.ref.WeakReference
  * different UIs, and different triggers.
  */
 
-/**
- * PGS achievement + leaderboard IDs (Workstream E).
- *
- * These are **PLACEHOLDERS**. The maintainer creates the achievements + leaderboard in
- * the Play Console (Play Games Services -> Achievements / Leaderboards), which mints
- * the real opaque IDs (e.g. "CgkI...EAIQAQ"), then replaces the strings below. The
- * placeholders are intentionally NOT valid PGS IDs, so even if the flag were flipped
- * on without the Console setup, the SDK would just reject the call (belt-and-suspenders
- * on top of the default-off PGS_ENABLED flag).
- *
- * Kept deliberately small + app-flavored (NOT per-game). Each maps to a natural
- * trigger point wired in MainActivity / the emulation loop.
- */
-object PgsIds {
-    /** Unlocked the first time any ROM boots. */
-    const val ACH_FIRST_ROM: String = "achievement_first_rom_loaded"
-
-    /** Unlocked the first time the user writes a save-state slot. */
-    const val ACH_FIRST_SAVE_STATE: String = "achievement_first_save_state"
-
-    /** Unlocked the first time a netplay session connects. */
-    const val ACH_FIRST_NETPLAY: String = "achievement_first_netplay"
-
-    /** Incremental: accumulated frames run with fast-forward (turbo) engaged. The
-     *  Console-side step target is 100 (so this fires at ~100 turbo frames ≈ a few
-     *  seconds of fast-forward). We post deltas via [PlayGamesManager.increment]. */
-    const val ACH_TURBO_100: String = "achievement_turbo_100_frames"
-
-    /** Unlocked the first time a cloud save syncs (Workstream D ties in here). */
-    const val ACH_FIRST_CLOUD_SYNC: String = "achievement_first_cloud_sync"
-
-    /** A single, minimal leaderboard: total play time in seconds. (Leaderboards are
-     *  thin for an emulator; this one is enough to exercise the LeaderboardsClient and
-     *  is harmless if the maintainer chooses not to publish it.) */
-    const val LB_TOTAL_PLAY_SECONDS: String = "leaderboard_total_play_seconds"
-}
+// The `PgsIds` achievement/leaderboard-id object moved to
+// `src/main/.../PlayFacadeShared.kt` (v2.0.1, ADR 0025) so `MainActivity` resolves the
+// ids in both flavors; the real posting of them stays here in the `play` manager.
 
 /**
  * Owns PGS sign-in + the achievement/leaderboard surface. Created once (application

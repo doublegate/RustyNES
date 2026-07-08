@@ -96,7 +96,7 @@ jobs:
             target/x86_64-linux-android/release/librustynes_*.so
 
   gradle-bundle:
-    name: Gradle bundleRelease (best-effort packaging)
+    name: Gradle bundle foss+play release (best-effort packaging)
     runs-on: ubuntu-latest
     # Packaging is informational: the cross-build job above is the real link
     # gate. R8/Compose packaging pulls the full Android SDK, so a transient
@@ -131,12 +131,18 @@ jobs:
           build-scan-publish: true
           build-scan-terms-of-use-url: "https://gradle.com/terms-of-service"
           build-scan-terms-of-use-agree: "yes"
-      - name: Bundle release AAB (unsigned)
+      # v2.0.1 (ADR 0025): the `distribution` flavor split builds BOTH channel AABs.
+      # `bundleFossRelease` is the F-Droid / sideload artifact (no Google SDKs);
+      # `bundlePlayRelease` is the Google Play artifact. Building both here proves the
+      # split compiles + packages for each flavor. The aggregate `bundleRelease` anchor
+      # would also fan out to both, but the explicit tasks make the intent legible.
+      - name: Bundle release AABs (foss + play, unsigned)
         working-directory: android
-        run: ./gradlew :app:bundleRelease --no-daemon
-      - name: Upload AAB
+        run: ./gradlew :app:bundleFossRelease :app:bundlePlayRelease --no-daemon
+      - name: Upload AABs
         uses: actions/upload-artifact@v7
         with:
           name: rustynes-aab
-          path: android/app/build/outputs/bundle/release/*.aab
+          # Flavored output dirs: outputs/bundle/fossRelease/*.aab + .../playRelease/*.aab
+          path: android/app/build/outputs/bundle/*/*.aab
           if-no-files-found: warn

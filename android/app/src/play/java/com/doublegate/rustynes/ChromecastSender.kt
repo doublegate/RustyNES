@@ -1,3 +1,8 @@
+// PLAY-FLAVOR SOURCE SET (v2.0.1, ADR 0025). The real Cast-Application-Framework
+// sender (+ `RustyNesCastOptionsProvider`, referenced by the `play` manifest). The
+// `foss` twin in `src/foss/.../ChromecastSender.kt` is a no-op with the same public
+// surface (no `com.google.android.gms.cast.*`). NOTE: the AOSP Presentation-API
+// `CastManager` (Cast.kt) is NOT proprietary and stays in `src/main` for both flavors.
 package com.doublegate.rustynes
 
 import android.content.Context

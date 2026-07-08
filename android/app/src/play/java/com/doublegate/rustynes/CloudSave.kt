@@ -1,3 +1,8 @@
+// PLAY-FLAVOR SOURCE SET (v2.0.1, ADR 0025). The real Play-Games-Snapshots-backed
+// `CloudSaveManager` (+ the `play` `SaveConflict`, which carries the SDK resolution
+// Snapshot). The `foss` twin in `src/foss/.../CloudSave.kt` is a no-op with the same
+// public surface and a Snapshot-free `SaveConflict`, so the FOSS artifact links no
+// `com.google.android.gms.games.*`.
 package com.doublegate.rustynes
 
 import android.content.Context

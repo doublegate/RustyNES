@@ -40,6 +40,14 @@ android {
         minSdk = 28 // Macrobenchmark floor (needs ART profile + dumpsys timing).
         targetSdk = 36
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // v2.0.1 (ADR 0025): :app grew a `distribution` flavor dimension (foss/play).
+        // This `com.android.test` module targets :app but declares no flavors of its
+        // own, so AGP variant-matching needs to know which app flavor to profile —
+        // pin it to `foss` (the default, isDefault = true) so `generateBaselineProfile`
+        // (and Gradle sync) resolve unambiguously. The generated profile is
+        // flavor-independent (launch/scroll classes are identical across flavors), so
+        // profiling the foss variant is correct for both.
+        missingDimensionStrategy("distribution", "foss")
     }
 
     // The app being profiled / benchmarked.

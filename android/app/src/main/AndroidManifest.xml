@@ -50,26 +50,10 @@
              no longer called under targetSdk 36 on Android 16). -->
 
 
-        <!-- Cast Application Framework OptionsProvider (v1.8.7, #38). REQUIRED by
-             the SDK to be declared, but only instantiated when CastContext is
-             initialized — and that init is gated behind the default-off
-             BuildConfig.CHROMECAST_ENABLED flag (see ChromecastSender.kt +
-             MainActivity). With the flag off the provider is never touched, so the
-             placeholder Receiver App ID inside it is harmless and the app launches
-             unchanged. The maintainer registers a real App ID before enabling. -->
-        <meta-data
-            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
-            android:value="com.doublegate.rustynes.RustyNesCastOptionsProvider" />
-
-        <!-- v1.8.8 "Atlas" (Workstreams D+E): Play Games Services v2 app id. REQUIRED
-             by the PGS SDK to be declared, but only read when PlayGames is initialized,
-             which happens exclusively behind the default-off BuildConfig.PGS_ENABLED
-             flag (see PlayGames.kt + CloudSave.kt). The value is a maintainer-supplied
-             placeholder (@string/game_services_project_id = "0") until the Play Games
-             project lands, so PGS sign-in fails closed and the app launches unchanged. -->
-        <meta-data
-            android:name="com.google.android.gms.games.APP_ID"
-            android:value="@string/game_services_project_id" />
+        <!-- v2.0.1 (ADR 0025): the Cast-framework OPTIONS_PROVIDER meta-data and the
+             Play Games Services APP_ID meta-data moved to `src/play/AndroidManifest.xml`
+             so they merge into the `play` flavor ONLY. The `foss` (F-Droid / sideload)
+             merged manifest carries no Play-Services declarations. -->
 
         <!-- Foldable / large-screen support: the activity is resizeable and
              absorbs the fold/unfold + posture config changes itself (so the
