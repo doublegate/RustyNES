@@ -94,7 +94,7 @@ A: RustyNES is a cycle-accurate NES emulator written in pure Rust, clearing the 
 
 **Q: Can I use RustyNES now?**
 
-A: Yes. RustyNES is at its first stable release, **v1.0.0** — a complete, playable desktop application plus a browser build. See [ROADMAP.md](ROADMAP.md) for what shipped and the post-1.0 directions.
+A: Yes. RustyNES is well past its first stable release — the current release is **v2.0.0 "Timebase"** (the one-clock scheduler rewrite), a complete, playable desktop application plus native Android / iOS / Libretro builds and a browser build. See [ROADMAP.md](ROADMAP.md) for what shipped and the forward directions.
 
 **Q: How accurate is RustyNES?**
 
@@ -120,7 +120,7 @@ A: iNES and NES 2.0 ROM formats across **51 mapper families** (including expansi
 
 **Q: Does RustyNES support [feature]?**
 
-A: The v1.0.0 feature set includes rollback netplay (2–4 players), RetroAchievements (opt-in), TAS movie record/playback, save-states, rewind, run-ahead, Game Genie + raw-RAM cheats, an egui debugger, and an optional NTSC filter. Check the [ROADMAP.md](ROADMAP.md) for delivered milestones and post-1.0 directions (mobile, Lua scripting, a TAS editor, additional video filters).
+A: The feature set includes rollback netplay (2–4 players), RetroAchievements (opt-in), TAS movie record/playback, save-states, rewind, run-ahead, Game Genie + raw-RAM cheats, an egui debugger, Lua scripting, a TAS editor, HD packs, and shader/NTSC filters — plus native Android / iOS / Libretro builds. Check the [ROADMAP.md](ROADMAP.md) for delivered milestones and forward directions.
 
 **Q: Can I embed RustyNES in my project?**
 

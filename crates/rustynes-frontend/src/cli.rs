@@ -305,8 +305,8 @@ Feature highlights
 ==================
 
 Accuracy
-  Cycle-accurate PPU-dot lockstep scheduler; AccuracyCoin 98.58% (139/141),
-  nestest 0-diff, blargg / kevtris suites green.
+  Cycle-accurate one-clock, every-cycle-bus-access scheduler (v2.0.0 Timebase);
+  AccuracyCoin 98.58% (139/141), nestest 0-diff, blargg / kevtris suites green.
 
 Cartridges & platforms
   101+ mapper families, Famicom Disk System, Vs. System / PlayChoice-10,

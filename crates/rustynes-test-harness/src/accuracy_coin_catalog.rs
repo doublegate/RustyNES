@@ -11,7 +11,9 @@
 //! The authoritative list lives next to the ROM at
 //! `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv` as a 146-line
 //! `(suite<TAB>name<TAB>result_addr)` file extracted from upstream
-//! `AccuracyCoin.asm` via the script in `docs/testing-strategy.md`.
+//! `AccuracyCoin.asm` by the recipe documented inline in
+//! `tests/roms/AccuracyCoin/README.md` (walk each `Suite_*`/`table` block,
+//! resolving `result_symbol` to its `result_X = $ADDR` definition).
 //! This module embeds that file via `include_str!` and parses it
 //! lazily so the in-code catalog cannot drift from the on-disk source.
 //!
