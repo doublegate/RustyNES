@@ -68,7 +68,7 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///   with all five at their inactive defaults (`0`/`false`), i.e. the
 ///   "no fetch in flight" rest state, which is correct for any pre-v5 save taken
 ///   at rest. Not a *load-break* — a pre-v5 `.rns` still restores.
-pub const PPU_SNAPSHOT_VERSION: u8 = 5;
+pub const PPU_SNAPSHOT_VERSION: u8 = 6;
 
 const CIRAM_LEN: usize = 0x800;
 const OAM_LEN: usize = 0x100;
@@ -317,6 +317,26 @@ impl Ppu {
             w.u8(self.copy_v_delay);
         }
 
+        // v6 (W&W run-ahead fix): the per-sprite shifter HALT state. Set by the
+        // v2.0 sprite-shifter-counter model (a loaded-but-halted slot draws
+        // immediately on re-enable), it persists across the frame boundary and
+        // governs whether each of the 8 loaded sprites emits — so it is genuine
+        // rendering state. It was previously unserialized, so a per-frame
+        // save/restore (run-ahead, netplay rollback) drifted it: for a game that
+        // toggles rendering mid-frame (Wizards & Warriors' sprite-0 status-bar
+        // split), the drift accumulated into dropped/blinking sprites and a
+        // half-rendered playfield. `true` (halted) is the power-on default.
+        for h in &self.spr_halted {
+            w.u8(u8::from(*h));
+        }
+        // v6 (cont.) — remaining unserialized cross-frame render state.
+        w.u8(u8::from(self.prev_rendering_enabled));
+        w.u8(u8::from(self.rendering_enabled_delayed));
+        w.u8(u8::from(self.oam_corruption_pending));
+        w.u8(self.oam_corruption_index);
+        w.u8(u8::from(self.oam_corruption_disabled));
+        w.u8(u8::from(self.oam_corruption_disabled_instant));
+
         w.buf
     }
 
@@ -325,10 +345,14 @@ impl Ppu {
     /// # Errors
     ///
     /// Returns [`PpuSnapshotError`] on a malformed blob.
+    // A flat, linear field-by-field decoder with per-version tail branches (v1
+    // through v6); splitting it would only scatter the schema that is clearest
+    // read top-to-bottom against the matching `snapshot` writer.
+    #[allow(clippy::too_many_lines)]
     pub fn restore(&mut self, data: &[u8]) -> Result<(), PpuSnapshotError> {
         let mut r = R { src: data, pos: 0 };
         let version = r.u8()?;
-        if !matches!(version, 1..=5) {
+        if !matches!(version, 1..=6) {
             return Err(PpuSnapshotError::UnsupportedVersion(version));
         }
         self.region = region_from_u8(r.u8()?)?;
@@ -452,6 +476,29 @@ impl Ppu {
             self.ale_armed = false;
             self.pattern_latch_stale = false;
             self.copy_v_delay = 0;
+        }
+
+        // v6: per-sprite shifter halt state (see the write side). Pre-v6 blobs
+        // lack it; upconvert to the power-on default (`true` = halted), which is
+        // what a pre-v6 restore left it at (the field kept its constructor value).
+        if version >= 6 {
+            for h in &mut self.spr_halted {
+                *h = r.u8()? != 0;
+            }
+            self.prev_rendering_enabled = r.u8()? != 0;
+            self.rendering_enabled_delayed = r.u8()? != 0;
+            self.oam_corruption_pending = r.u8()? != 0;
+            self.oam_corruption_index = r.u8()?;
+            self.oam_corruption_disabled = r.u8()? != 0;
+            self.oam_corruption_disabled_instant = r.u8()? != 0;
+        } else {
+            self.spr_halted = [true; 8];
+            self.prev_rendering_enabled = false;
+            self.rendering_enabled_delayed = false;
+            self.oam_corruption_pending = false;
+            self.oam_corruption_index = 0;
+            self.oam_corruption_disabled = false;
+            self.oam_corruption_disabled_instant = false;
         }
 
         // sanity: the schema-fixed sizes mean we should be at end of input now.
@@ -618,11 +665,13 @@ mod tests {
         // Tail from ex_attr_latch onward, MINUS the v3 W3-Stage-4 tail
         // (23 bytes: u8*3 + [u8;8]*2 + u16 PPUDATA state machine, then
         // u8*2 BG-reload freeze), the v4 extra-scanlines countdown (2 bytes:
-        // u16 `extra_lines_remaining`), AND the v5 2-cycle-ALE fetch-state tail
+        // u16 `extra_lines_remaining`), the v5 2-cycle-ALE fetch-state tail
         // (6 bytes: u8 `octal_latch` + u16 `address_bus` + u8 `ale_armed` + u8
-        // `pattern_latch_stale` + u8 `copy_v_delay`) — 31 bytes total, none of
-        // which a v1 blob carried.
-        v1.extend_from_slice(&v2[at + 4..v2.len() - 31]);
+        // `pattern_latch_stale` + u8 `copy_v_delay`), AND the v6 render-state
+        // tail (14 bytes: [u8;8] `spr_halted` + u8 `prev_rendering_enabled` + u8
+        // `rendering_enabled_delayed` + u8*4 `oam_corruption_*`) — 45 bytes
+        // total, none of which a v1 blob carried.
+        v1.extend_from_slice(&v2[at + 4..v2.len() - 45]);
         v1[0] = 1; // version byte -> v1
 
         let mut q = Ppu::new(PpuRegion::Ntsc);

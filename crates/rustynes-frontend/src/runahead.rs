@@ -211,6 +211,63 @@ mod tests {
         }
     }
 
+    /// Regression: run-ahead must stay byte-identical to a plain run on a game
+    /// that toggles rendering MID-FRAME (Wizards & Warriors' sprite-0-hit
+    /// status-bar split). That path exercises the per-sprite shifter-halt state,
+    /// the 1-dot-delayed rendering gate, and the OAM-row-corruption arming state
+    /// — all of which were unserialized before the PPU snapshot v6 tail, so the
+    /// per-frame run-ahead snapshot/restore drifted them and corrupted the
+    /// playfield + sprites (the desktop W&W bug). Uses a commercial dump staged
+    /// under the gitignored `tests/roms/external/`; skips cleanly when absent so
+    /// CI (which has no commercial ROMs) still passes. See ADR 0030 / the PPU
+    /// snapshot v6 note.
+    #[test]
+    fn ww_runahead_matches_plain_across_a_mid_frame_split() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest.parent().and_then(|p| p.parent()).unwrap();
+        let path = root.join("tests/roms/external/mapper-007-AxROM/Wizards & Warriors.nes");
+        let Ok(bytes) = std::fs::read(&path) else {
+            eprintln!("skipping: {} absent (no commercial dump)", path.display());
+            return;
+        };
+        let mut ahead = Nes::from_rom(&bytes).expect("rom parses");
+        let mut plain = Nes::from_rom(&bytes).expect("rom parses");
+        ahead.enable_rewind();
+        plain.enable_rewind();
+        let mut ra = RunAhead::default();
+        let mut discard = vec![0.0f32; 8192];
+        // Warm both identically into real gameplay (repeated START past title).
+        for f in 0..420u32 {
+            let b = if f >= 120 && f % 60 < 2 {
+                Buttons::START
+            } else {
+                Buttons::empty()
+            };
+            ahead.set_buttons(0, b);
+            plain.set_buttons(0, b);
+            ahead.run_frame();
+            plain.run_frame();
+            let _ = ahead.drain_audio_into(&mut discard);
+            let _ = plain.drain_audio_into(&mut discard);
+        }
+        // Run-ahead (N=1) vs plain — the persistent timeline must not drift.
+        for f in 420..600u32 {
+            ahead.set_buttons(0, Buttons::empty());
+            ra.run_frame_ahead(&mut ahead, 1);
+            let _ = ahead.drain_audio_into(&mut discard);
+            ra.finish(&mut ahead);
+            plain.set_buttons(0, Buttons::empty());
+            plain.run_frame();
+            let _ = plain.drain_audio_into(&mut discard);
+            assert_eq!(ahead.cycle(), plain.cycle(), "cycle diverged at f{f}");
+            assert_eq!(
+                ahead.framebuffer(),
+                plain.framebuffer(),
+                "run-ahead framebuffer diverged from plain at f{f}"
+            );
+        }
+    }
+
     /// Rewind-ring contents: run-ahead must push exactly one (persistent)
     /// frame per cycle — the hidden + visible frames never land in the
     /// ring, and the rollback must not clear it.

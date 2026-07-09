@@ -14,6 +14,31 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-07-09 - "Fathom" (patch — Wizards & Warriors run-ahead save-state fix)
+
+- **Fixed a run-ahead save-state gap** that corrupted gameplay in games with a
+  mid-frame sprite-0-hit rendering split (reported on **Wizards & Warriors**,
+  AxROM): on the desktop app the playfield rendered only its top half, sprites
+  (the character, the tree door) dropped/blinked, and audio + input stalled a
+  few seconds into a level. The deterministic core rendered the game correctly —
+  the defect was in the **frontend's default-on run-ahead**, whose per-frame
+  `snapshot`/`restore` round-trip drifted **PPU render state that was never
+  serialized**: the per-sprite shifter-halt state (`spr_halted`), the
+  1-dot-delayed rendering gate (`prev_rendering_enabled` /
+  `rendering_enabled_delayed`) that a mid-frame `$2001` toggle depends on, and
+  the OAM-row-corruption arming state. W&W's status-bar split exercises exactly
+  this state, so the drift accumulated into the broken frame.
+- **PPU save-state format `PPU_SNAPSHOT_VERSION` 5 → 6:** an **additive** tail
+  serializing those fields. Pre-v6 `.rns` states still load (upconverting to the
+  power-on defaults, matching what a pre-v6 restore left them at) — not an
+  ADR-0028 epoch break. The fix also hardens netplay rollback and manual
+  save/load for any game using those behaviors, not just run-ahead.
+- Added a GitHub-safe regression test (`ww_runahead_matches_plain_across_a_mid_frame_split`)
+  that asserts run-ahead stays byte-identical to a plain run across the split;
+  it skips cleanly when the commercial dump is absent (CI has none). The core /
+  accuracy path is unchanged — AccuracyCoin stays **141/141**, no oracle moves.
+- Version bump: workspace `2.1.0 → 2.1.1`.
+
 ## [2.1.0] - 2026-07-09 - "Fathom" (accuracy remediation — PPU display quirks, mapper completion, MMC3 residual closed)
 
 - The **accuracy-remediation** release — a core/desktop cut that lands **ahead of**
