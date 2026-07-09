@@ -449,6 +449,31 @@ final class EmulatorCore {
     /// Whether a movie is playing back.
     var movieIsPlaying: Bool { controller.movieIsPlaying() }
 
+    /// Drain the host-facing warning codes the core queued during the last
+    /// operation — currently a pre-v2.0.0 `.rnm` movie whose input stream still
+    /// replays on the v2.0.0 "Timebase" core, but whose byte-exact framebuffer/audio
+    /// reproduction is not guaranteed across the ADR-0028 timebase change — each
+    /// mapped to a device-locale string. v2.0.5 "Landfall": the iOS analogue of the
+    /// Android v2.0.4 `drainWarningCodes()` surfacing. The bridge stores
+    /// machine-readable `HostWarning` codes (v2.0.3) rather than pre-baked English, so
+    /// the host owns the localization; draining is idempotent (the queue empties on
+    /// read), so a caller surfaces each warning exactly once.
+    func drainWarnings() -> [String] {
+        controller.drainWarningCodes().map(Self.warningText)
+    }
+
+    /// Map one `HostWarning` code to its localized presentation string. The English
+    /// key is byte-identical to the Android `host_warning_pre_timebase_movie`
+    /// resource so both platforms surface the same wording and share the ES copy.
+    private static func warningText(_ warning: HostWarning) -> String {
+        switch warning {
+        case .preTimebaseMovie:
+            return String(
+                localized: "This movie was recorded on a pre-v2.0.0 build. Input replay proceeds, but exact framebuffer/audio reproduction is not guaranteed across the engine-timebase change (ADR 0028)."
+            )
+        }
+    }
+
     // MARK: - Custom palette (.pal) (v1.9.5)
 
     /// Apply a custom 64-colour palette from `.pal` bytes (>= 192 bytes).

@@ -58,14 +58,29 @@ struct ContentView: View {
                 // Completion is via Skip / Get Started, not an accidental swipe.
                 .interactiveDismissDisabled()
         }
+        // One alert multiplexes the error channel and the v2.0.5 non-blocking notice
+        // channel (a succeeded op the host wants to caveat — currently a pre-Timebase
+        // `.rnm` load warning). Two chained `.alert` modifiers on one view race —
+        // SwiftUI presents only one and drops the loser — so we present a single alert
+        // that prefers the error when both are queued, and on dismissal clears ONLY the
+        // visible channel, so a still-queued warning re-presents on the next pass after
+        // an error is dismissed (and a warning never reads as a failure).
         .alert(
             "RustyNES",
             isPresented: Binding(
-                get: { model.errorMessage != nil },
-                set: { if !$0 { model.errorMessage = nil } }
+                get: { model.errorMessage != nil || model.warningMessage != nil },
+                set: { presented in
+                    if !presented {
+                        if model.errorMessage != nil {
+                            model.errorMessage = nil
+                        } else {
+                            model.warningMessage = nil
+                        }
+                    }
+                }
             ),
             actions: { Button("OK", role: .cancel) {} },
-            message: { Text(model.errorMessage ?? "") }
+            message: { Text(model.errorMessage ?? model.warningMessage ?? "") }
         )
     }
 

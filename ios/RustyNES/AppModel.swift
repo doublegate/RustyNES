@@ -58,6 +58,11 @@ final class AppModel: ObservableObject {
     @Published var currentEntry: LibraryEntry?
     /// A transient error to surface to the user (load/import failures).
     @Published var errorMessage: String?
+    /// A transient, non-blocking *notice* to surface to the user — distinct from
+    /// `errorMessage` (an operation succeeded, but the host wants to caveat it).
+    /// v2.0.5 "Landfall": carries the drained `HostWarning` text (e.g. a pre-Timebase
+    /// `.rnm` load), the iOS analogue of the Android warning toast.
+    @Published var warningMessage: String?
 
     // Settings (persisted lightly via UserDefaults + mirrored to iCloud, v1.9.5).
     @Published var filter: VideoFilter = .none {
@@ -403,6 +408,7 @@ final class AppModel: ObservableObject {
             do {
                 try emulator.moviePlay(rnm)
                 self.syncMovieState()
+                self.surfaceWarnings()
             } catch {
                 self.errorMessage = String(
                     format: String(localized: "Movie import failed: %@"),
@@ -617,6 +623,7 @@ final class AppModel: ObservableObject {
             do {
                 try self.emulator?.moviePlay(data)
                 self.syncMovieState()
+                self.surfaceWarnings()
             } catch {
                 self.errorMessage = "Movie playback failed: \(error.localizedDescription)"
             }
@@ -632,6 +639,17 @@ final class AppModel: ObservableObject {
     private func syncMovieState() {
         movieRecording = emulator?.movieIsRecording ?? false
         moviePlaying = emulator?.movieIsPlaying ?? false
+    }
+
+    /// Drain any host warnings the core queued during the last movie load and surface
+    /// them once (v2.0.5 "Landfall"). Called after a successful `moviePlay`: a
+    /// pre-v2.0.0 `.rnm` still plays back, but the core queues a `HostWarning` so the
+    /// user learns byte-exact reproduction isn't guaranteed across the ADR-0028
+    /// timebase change. Non-blocking — routed through `warningMessage`, not
+    /// `errorMessage`, since the operation succeeded.
+    private func surfaceWarnings() {
+        guard let warnings = emulator?.drainWarnings(), !warnings.isEmpty else { return }
+        warningMessage = warnings.joined(separator: "\n")
     }
 
     // MARK: - iCloud config sync (v1.9.5)

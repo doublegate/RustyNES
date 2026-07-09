@@ -2,6 +2,11 @@
   "sourceLanguage" : "en",
   "version" : "1.0",
   "strings" : {
+    "This movie was recorded on a pre-v2.0.0 build. Input replay proceeds, but exact framebuffer/audio reproduction is not guaranteed across the engine-timebase change (ADR 0028)." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Esta repetición se grabó en una versión anterior a la v2.0.0. La reproducción de entradas continúa, pero no se garantiza la reproducción exacta del fotograma o del audio a través del cambio de base de tiempo del motor (ADR 0028)." } }
+      }
+    },
     "Could not access the selected file." : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo acceder al archivo seleccionado." } }
