@@ -374,7 +374,7 @@ enum NtSource {
     CiramB,
     /// On-cart ExRAM (only meaningful when `$5104` is mode 0 or 1).
     ExRam,
-    /// Fill-mode (deferred — currently returns 0).
+    /// Fill-mode: returns the `$5106` fill tile with the `$5107` attribute.
     Fill,
 }
 
@@ -436,25 +436,24 @@ pub struct Mmc5 {
     exram_mode: u8,
     /// `$5105` raw byte (4 fields of 2 bits, low->high = NT0..NT3).
     nametable_map: u8,
-    /// `$5106` fill-mode tile (deferred).
+    /// `$5106` fill-mode tile.
     fill_tile: u8,
-    /// `$5107` fill-mode attribute (deferred — bottom 2 bits replicated).
+    /// `$5107` fill-mode attribute (bottom 2 bits replicated).
     fill_attr: u8,
     /// `$5113` PRG-RAM bank (low 7 bits used; only one 8 KiB PRG-RAM bank
     /// supported in v0 — high bits ignored).
     prg_ram_bank: u8,
     /// `$5114-$5117` PRG bank registers.
     prg_banks: [PrgSlot; 4],
-    /// `$5128-$512B` BG CHR bank registers (also serve sprites in v0).
-    /// 10-bit values: low 8 bits from the register, high 2 bits from `$5130`
-    /// (deferred — currently always 0).
+    /// `$5128-$512B` BG CHR bank registers. 10-bit values: low 8 bits from the
+    /// register, high 2 bits from `$5130`.
     bg_chr_banks: [u16; 4],
-    /// `$5120-$5127` sprite CHR bank registers — stored for save-state
-    /// symmetry but not used in v0 (deferred). Eight registers because
-    /// the sprite CHR layout is up to 8x1 KiB in CHR mode 3.
+    /// `$5120-$5127` sprite CHR bank registers — used for 8x16 sprite pattern
+    /// fetches (CHR mode 3). Eight registers because the sprite CHR layout is up
+    /// to 8x1 KiB.
     sprite_chr_banks: [u16; 8],
-    /// `$5130` upper 2 bits for CHR bank registers (deferred — value
-    /// preserved but high bits not applied to the bank index).
+    /// `$5130` upper 2 bits applied to the CHR bank registers (high bits of the
+    /// bank index).
     chr_upper: u8,
     /// Last register set written to (BG `$5128-$512B` or sprite
     /// `$5120-$5127`). Per nesdev, in 8x16 sprite mode the most-recent of
@@ -1044,7 +1043,7 @@ impl Mapper for Mmc5 {
                 // Update mirroring summary for `current_mirroring`.
                 self.current_mirroring_summary = nt_summary(value);
             }
-            // Fill mode (deferred but stored).
+            // Fill-mode tile.
             0x5106 => {
                 self.fill_tile = value;
             }
@@ -1073,7 +1072,7 @@ impl Mapper for Mmc5 {
                 self.bg_chr_banks[idx] = u16::from(value) | (u16::from(self.chr_upper) << 8);
                 self.last_chr_write_was_sprite = false;
             }
-            // Upper CHR bank bits (deferred — stored only).
+            // Upper CHR bank bits (applied to the $5120-$512B bank indices).
             0x5130 => {
                 self.chr_upper = value & 0x03;
             }

@@ -36,12 +36,13 @@ cycle-accurate core later replaced.
   each is now locked by a fast unit regression test. The `OAMADDR & 0xF8`
   render-start copy stays unmodeled by design — Mesen2, ares, and TriCNES all omit
   this revision-dependent corner.
-- **Mapper completion (F3): 88 families promoted BestEffort → Curated** with a
-  commercial-ROM boot-snapshot oracle (58 already-staged + 30 sourced from GoodNES
-  v3.23b). The tier split is now **51 Core + 97 Curated + 24 BestEffort = 172**,
-  taking oracle-gated coverage from **60 → 148** of 172 families. The 24 still
-  BestEffort have no obtainable dump anywhere (16 NES 2.0 high-id boards + 8 with no
-  matching cart) and stay register-decode + save-state unit-tested only.
+- **Mapper completion (F3): 86 families promoted BestEffort → Curated** with a
+  commercial-ROM boot-snapshot oracle (57 already-staged + 29 sourced from GoodNES
+  v3.23b). The tier split is now **51 Core + 95 Curated + 26 BestEffort = 172**,
+  taking oracle-gated coverage from **60 → 146** of 172 families. The 26 still
+  BestEffort have no cleanly-booting dump (16 NES 2.0 high-id boards + 8 with no
+  matching cart + 2 whose only dump jams at boot) and stay register-decode +
+  save-state unit-tested only.
 - **MMC3 R1/R2 scanline-IRQ residual CLOSED (ADR 0002 F5.0).** The instrumentation-
   first review confirmed the residual is a differential 1-dot deficit that is
   structurally unreachable on the one-clock batched-catch-up model (21+ falsified

@@ -367,19 +367,21 @@ boards with no redistributable fixture, register-decode unit-tested only) is
 oracle ROM — is enforced at the classifier level (`BestEffort` is structurally
 never accuracy-gated; the three tier id-sets are disjoint) and by the curated
 construction of the byte-oracle corpus. See `docs/adr/0011-mapper-tiering.md`.
-Current split: **172 families** — 51 Core + 97 Curated (**148 accuracy-gated**) +
-24 BestEffort. The **v2.1.0 "Fathom" F3** batch promoted **88** previously-
-BestEffort families to Curated: each has a staged commercial-ROM dump (58 already
-in `tests/roms/external/` + 30 sourced from GoodNES v3.23b) wired into a
-byte-identity boot-snapshot oracle in `external_extended.rs` (ADR 0011), taking
-accuracy-gated coverage from 60 → 148. The remaining **24** BestEffort families
-have no redistributable dump anywhere — the 16 NES 2.0 high-id boards
+Current split: **172 families** — 51 Core + 95 Curated (**146 accuracy-gated**) +
+26 BestEffort. The **v2.1.0 "Fathom" F3** batch promoted **86** previously-
+BestEffort families to Curated: each has a **cleanly-booting** staged
+commercial-ROM dump (57 already in `tests/roms/external/` + 29 sourced from
+GoodNES v3.23b) wired into a byte-identity boot-snapshot oracle in
+`external_extended.rs` (ADR 0011), taking accuracy-gated coverage from 60 → 146.
+The remaining **26** BestEffort families have no cleanly-booting redistributable
+dump — the 16 NES 2.0 high-id boards
 (268/286/289/290/299/301/303/305/306/312/320/336/348/349/366/513, which GoodNES
-v3.23b's iNES-1.0 headers cannot encode) + 8 boards with no matching cart
-(29/39/81/104/174/179/238/261) — and stay register-decode + save-state
-unit-tested only. The mapper *implementations* described below (reference-ported
-across v1.2.0-v1.8.9) are unchanged by the promotion — only the tier marker
-moved. The
+v3.23b's iNES-1.0 headers cannot encode); 8 boards with no matching cart
+(29/39/81/104/174/179/238/261); and 2 boards whose only dump jams at boot
+(50 SMB2j FDS-conversion, 111 GTROM "Ninja Ryukenden") — and stay register-decode
+and save-state unit-tested only. The mapper *implementations* described below
+(reference-ported across v1.2.0-v1.8.9) are unchanged by the promotion — only the
+tier marker moved. The
 v1.6.0 `sprint11` batch ports MMC3-clone variants
 (44/49/52/115/134/189/205/238/245/348/366, on a shared MMC3-style core with an
 A12 falling-edge IRQ + per-board outer-bank transform), the Sachen 8259 A/B/C

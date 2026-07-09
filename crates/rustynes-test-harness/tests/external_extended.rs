@@ -828,14 +828,9 @@ fn extended_m107_magic_dragon() {
     );
 }
 
-#[test]
-fn extended_m111_ninja_ryukenden() {
-    check(
-        "mapper-111-GTROM-Cheapocabra/Ninja Ryukenden (Ch).nes",
-        DEFAULT_IDLE,
-        "extended_m111_ninja_ryukenden",
-    );
-}
+// NOTE: mapper 111 (GTROM/Cheapocabra) is deliberately NOT oracle-promoted — the
+// only available dump ("Ninja Ryukenden (Ch)") jams at boot (cycles=26), so it is
+// not honest Curated-tier evidence. Mapper 111 stays BestEffort (see tier.rs).
 
 #[test]
 fn extended_m112_chik_bik_ji_jin_saam_gwok_ji() {
@@ -1212,14 +1207,10 @@ fn extended_m49_super_hik_4_in_1() {
     );
 }
 
-#[test]
-fn extended_m50_super_mario_bros() {
-    check(
-        "mapper-050-SMB2j-FDS/Super Mario Bros. (Alt Levels) [p1][!].zip",
-        DEFAULT_IDLE,
-        "extended_m50_super_mario_bros",
-    );
-}
+// NOTE: mapper 50 (Alibaba/SMB2j FDS-conversion) is deliberately NOT oracle-
+// promoted — the only available dump ("Super Mario Bros. (Alt Levels)") halts
+// after ~18 frames (cycles=551855), so it is not honest Curated-tier evidence.
+// Mapper 50 stays BestEffort (see tier.rs).
 
 #[test]
 fn extended_m51_11_in_1_ball_games() {

@@ -33,8 +33,8 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
 | Vs. `DualSystem` second screen | Core modeled + `sub_framebuffer()` exposed; no frontend presents it | Boot of the 4 DualSystem titles | **Deferred** (F2.1 frontend) |
 | NSF non-60 Hz playback + NSFe | Speed word unparsed; hardwired 60 Hz vblank; NSFe unparsed | Audio-capture regression | **Deferred** (F4.1/F4.2) |
 | FDS medium model | No CRC/gaps-on-write, fixed-cycle seek (no analog seek) | Real-BIOS write-verify (copyright-gated, out of CI) | **Deferred** stretch (F4.3) |
-| BestEffort mapper tier (24 families, was 112) | Register-decode + save-state round-trip only; off the oracle gate | `mapper_tier_honesty.rs` invariant | **Mostly remediated** (F3): 88 promoted to Curated with commercial-ROM oracle; the 24 left have no obtainable dump (16 NES 2.0 high-id + 8 no-cart) |
-| MMC3 R1/R2 scanline-IRQ (ADR 0002) | ≤1-CPU-cycle differential on 4 `#[ignore]`'d sub-tests; zero game impact | `mmc3_test_2/4` #3 + siblings | **Deferred** — 21+ falsified levers; F5.0 instrumentation-first, likely formal close |
+| BestEffort mapper tier (26 families, was 112) | Register-decode + save-state round-trip only; off the oracle gate | `mapper_tier_honesty.rs` invariant | **Mostly remediated** (F3): 86 promoted to Curated with commercial-ROM oracle; the 26 left have no cleanly-booting dump (16 NES 2.0 high-id + 8 no-cart + 2 jam-at-boot) |
+| MMC3 R1/R2 scanline-IRQ (ADR 0002) | ≤1-CPU-cycle differential on 4 `#[ignore]`'d sub-tests; zero game impact | `mmc3_test_2/4` #3 + siblings | **CLOSED by-design-permanent** (F5.0, ADR 0002) — differential 1-dot deficit, structurally unreachable; 21+ falsified levers |
 | APU non-linear mixer | Lookup-table matches within the `apu_mixer` band | `apu_mixer` (analog-cancellation, tolerance) | **No stricter oracle** — the LUT already passes; ±4% is honest |
 | APU analog HPF/LPF chain | Fixed-coefficient 3-pole | No pass/fail ROM | **No stricter oracle** (optional measured-RC future work) |
 | PlayChoice-10 Z80 second-screen menu | Not modeled | — | **Out of scope** |

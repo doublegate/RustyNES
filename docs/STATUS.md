@@ -12,11 +12,11 @@
 > `full_palette` / `flowing_palette` demos (9 snapshots re-blessed: 2 demos + 7
 > commercial games, all converging with the TriCNES oracle; `external_real_games`
 > 60/60 byte-identical); **(F1.2/F1.3)** OAM + open-bus audits regression-locked;
-> **(F3)** the **mapper completion** — **88** families promoted BestEffort → Curated
-> with a commercial-ROM boot-snapshot oracle (58 already-staged + 30 from GoodNES
-> v3.23b), so the tier split is **51 Core + 97 Curated + 24 BestEffort** and
-> oracle-gated coverage rises **60 → 148** of 172 (the 24 left have no obtainable
-> dump); **(F5)** the **MMC3 R1/R2 scanline-IRQ residual CLOSED** by-design-permanent
+> **(F3)** the **mapper completion** — **86** families promoted BestEffort → Curated
+> with a commercial-ROM boot-snapshot oracle (57 already-staged + 29 from GoodNES
+> v3.23b), so the tier split is **51 Core + 95 Curated + 26 BestEffort** and
+> oracle-gated coverage rises **60 → 146** of 172 (the 26 left have no
+> cleanly-booting dump); **(F5)** the **MMC3 R1/R2 scanline-IRQ residual CLOSED** by-design-permanent
 > (ADR 0002 F5.0 — differential 1-dot deficit, structurally unreachable, zero game
 > impact), with all **20** `#[ignore]`'d tests catalogued in the new
 > `docs/accuracy-ledger.md` (none an accuracy gap); and **(F0)** doc reconciliation.
@@ -1116,13 +1116,13 @@ tiered for accuracy honesty:
 | Tier | Families | Accuracy-gated? | Evidence |
 |------|----------|-----------------|----------|
 | **Core** | 51 | Yes (AccuracyCoin + commercial oracle) | spec-implemented, oracle-locked |
-| **Curated** (v1.2.0 + **v2.1.0 "Fathom" F3**) | 97 | Yes | notable games + decode spec; register-decode unit tests **+ byte-identity boot-snapshot oracle** (`external_extended.rs`) |
-| **BestEffort** | 24 | **No** | reference-ported long-tail with **no available ROM dump** (16 NES 2.0 high-id boards + 8 with no matching cart); register-decode + save-state unit tests only |
+| **Curated** (v1.2.0 + **v2.1.0 "Fathom" F3**) | 95 | Yes | notable games + decode spec; register-decode unit tests **+ byte-identity boot-snapshot oracle** (`external_extended.rs`) |
+| **BestEffort** | 26 | **No** | reference-ported long-tail with **no cleanly-booting ROM dump** (16 NES 2.0 high-id boards + 8 with no matching cart + 2 whose only dump jams at boot); register-decode + save-state unit tests only |
 
-The **v2.1.0 "Fathom" F3** sweep promoted **88** families BestEffort → Curated
-(58 already-staged + 30 sourced from GoodNES v3.23b), taking accuracy-gated
-coverage from **60 → 148** of the 172 families. The 24 that remain BestEffort are
-genuinely uncoverable (no redistributable dump anywhere).
+The **v2.1.0 "Fathom" F3** sweep promoted **86** families BestEffort → Curated
+(57 already-staged + 29 sourced from GoodNES v3.23b), taking accuracy-gated
+coverage from **60 → 146** of the 172 families. The 26 that remain BestEffort are
+uncoverable (no cleanly-booting redistributable dump).
 
 A CI-checkable invariant forbids any `BestEffort` mapper from backing an oracle
 ROM (`rustynes-mappers::mapper_tier`; ADR 0011). The remaining tail (unlicensed
