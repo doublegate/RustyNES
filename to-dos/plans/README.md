@@ -44,6 +44,8 @@ decisions locked by the maintainer. Not yet started.
 | [`v1.9.0-ios-plan.md`](v1.9.0-ios-plan.md) | v1.9.0 — iOS / iPadOS app | **SwiftUI + wgpu→Metal** reusing the shared bridge; same focused MVP. **Now the *interim* iOS foundation (sideload / TestFlight); release finalization moves to v2.0.5–v2.0.8.** |
 | [`v2.0.0-master-clock-plan.md`](v2.0.0-master-clock-plan.md) | v2.0.0 "Timebase" — one-clock + every-cycle-bus-access rewrite | **Full rewrite + aggressive residual closure**; the mobile-finalization train (v2.0.1 → v2.1.0) follows it |
 | [`v2.0.x-mobile-finalization-plan.md`](v2.0.x-mobile-finalization-plan.md) | v2.0.1 → v2.1.0 — mobile finalization + joint store launch | **Deferred mobile launch (maintainer, 2026-06-23):** Android final v2.0.1–v2.0.4, iOS final v2.0.5–v2.0.8, both-apps readiness v2.0.9, **joint Google Play + App Store launch v2.1.0** |
+| [`v2.0.4-android-rc-plan.md`](v2.0.4-android-rc-plan.md) | v2.0.4 "Harbor" — Android release candidate | **Shipped** — host-scaffolding RC on the byte-identical v2.0.3 core |
+| [`v2.0.5-v2.0.8-ios-finalization-plan.md`](v2.0.5-v2.0.8-ios-finalization-plan.md) | v2.0.5 → v2.0.8 — iOS finalization onto the v2.0.0 core | **In design** — host-scaffolding window mirroring the v2.0.4 Android RC pattern; on-device gates flagged for v2.0.9 |
 
 > **Versioning note:** v2.0.0 is *not* "add a master clock" — that already
 > shipped (it is today's only scheduler). v2.0.0 collapses the five-counter
