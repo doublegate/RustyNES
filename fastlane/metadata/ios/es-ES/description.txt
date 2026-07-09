@@ -6,7 +6,7 @@ PRECISIÓN ANTE TODO
 - 172 familias de mappers, así que una enorme biblioteca de títulos funciona sin más.
 - Determinista por diseño: la misma entrada produce siempre el mismo resultado.
 
-DISEÑADO PARA iOS Y iPADOS
+DISEÑADO PARA iOS Y iPadOS
 - Una app nativa en SwiftUI con renderizado Metal y ritmo ProMotion.
 - Controles multitáctiles en pantalla y mandos MFi / de hardware para hasta cuatro jugadores.
 - Estados de guardado y guardado de cartucho con batería.

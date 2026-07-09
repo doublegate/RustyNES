@@ -6,7 +6,7 @@ ACCURACY FIRST
 - 172 mapper families, so a huge library of titles just works.
 - Deterministic by design: the same input always produces the same result.
 
-BUILT FOR iOS AND iPADOS
+BUILT FOR iOS AND iPadOS
 - A native SwiftUI app with a Metal renderer and ProMotion pacing.
 - On-screen multi-touch controls plus MFi / hardware controllers for up to four players.
 - Save states and battery-backed cartridge saves.
