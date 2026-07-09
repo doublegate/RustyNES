@@ -1,0 +1,1 @@
+Un emulador de NES rapido y ciclo-exacto escrito en Rust puro.

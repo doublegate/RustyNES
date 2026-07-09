@@ -15,6 +15,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.4] - 2026-07-08 - "Harbor" (Android release candidate)
+
+The fourth release of the v2.0.x "Harbor" mobile-finalization train, and the
+**Android release-candidate** milestone. The cycle-accurate emulation core is
+**unchanged and byte-identical** to v2.0.3 — AccuracyCoin still **141/141
+(100.00%)**, nestest 0-diff, the deterministic `#![no_std]` chip stack untouched —
+so this is a **host / Android-only** cut that stages the release-candidate
+scaffolding a maintainer needs to upload the app to a Play Console testing track.
+The `foss` (F-Droid / GitHub-sideload) flavor stays **behaviour-identical**. No
+store submission yet (that is the future v2.1.0 joint launch); the on-device
+closeout (real-keystore signing, internal/closed testing track, crash-free-rate +
+ANR gate on hardware, live monetization runtime) is a maintainer / v2.0.9 step.
+
+### Added
+
+- **Fastlane / Play Console listing metadata (version-controlled).** A
+  `fastlane/metadata/android/{en-US,es-ES}/` tree carrying `title.txt`,
+  `short_description.txt`, `full_description.txt`, and `changelogs/20004.txt` — the
+  store listing as tracked source a maintainer uploads via fastlane / the Play
+  Console (no upload is performed by this release). Copy is accurate to the app (a
+  cycle-accurate NES emulator, bring-your-own-ROMs, open source) and flags the
+  RC / testing-track status. Respects Play's field limits (title <= 30, short
+  <= 80, full <= 4000, changelog <= 500).
+- **Debug-only StrictMode diagnostics (`DebugStrictMode`, `src/main`).** The
+  host-side complement to the on-device crash-free-rate / ANR gate: thread-policy
+  (main-thread disk / network I/O, custom slow calls) + VM-policy (leaked
+  `Closeable`s / SQLite cursors / registered receivers) detection, **log-only**
+  (never `penaltyDeath`) and **guarded on `BuildConfig.DEBUG`** so a release / RC /
+  store build constructs no policy and carries zero runtime cost or behavioural
+  change. Installed as the first statement of `MainActivity.onCreate` so
+  launch-path violations are caught too. Shared by `foss` + `play`.
+
+### Changed
+
+- **Android release signing wired with a graceful debug-signing fallback.** The
+  `release` build type now always resolves a signing config: the real **upload
+  keystore** (a gitignored `keystore.properties` file or the `RUSTYNES_UPLOAD_*`
+  env vars — a maintainer secret injected in CI / locally, never committed) when
+  present, else a **fallback to the debug signing config** instead of leaving the
+  release APK unsigned. This keeps a keyless CI / local `assemble{Foss,Play}Release`
+  producing an installable (debug-signed, never shippable) RC artifact for smoke
+  testing, while a real store upload uses the upload key. (`keystore.properties`,
+  `*.jks`, `*.keystore` were already gitignored since v2.0.3.)
+- **Version bump.** Workspace `2.0.3 -> 2.0.4`; Android `versionCode 20003 ->
+  20004`, `versionName "2.0.3" -> "2.0.4"`. The core is unchanged, so this cascades
+  only the version through `Cargo.lock` and the Android manifest.
+- **R8 / ProGuard final hardening review.** Audited the release keep set for the RC
+  and confirmed it **complete** — the UniFFI (`rustynes_mobile` + monetization) +
+  JNA surface, the `NativeRenderer` JNI seam, and the play-flavor Google / AppLovin
+  / RevenueCat SDKs (added in v2.0.3) are all covered; the v2.0.4 host additions
+  need no new keeps (`DebugStrictMode` is stripped from release, `CrashReporter` is
+  a direct call, the widget receiver / tile service are manifest-kept). No existing
+  keep was loosened; the audit outcome is recorded in `proguard-rules.pro`.
+
 ## [2.0.3] - 2026-07-08 - "Harbor" (2-cycle-ALE promoted to default — shipped AccuracyCoin 141/141)
 
 ### Added

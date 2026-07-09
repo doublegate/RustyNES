@@ -1,0 +1,26 @@
+RustyNES is a cycle-accurate Nintendo Entertainment System emulator written in pure Rust. It targets the accuracy bar set by Mesen2, higan, and ares: tight lockstep scheduling at PPU-dot resolution, sub-instruction PPU events visible to subsequent CPU code, and a non-linear audio mixer with band-limited synthesis. The same deterministic core runs on desktop, in the browser, on RetroArch, and here on Android.
+
+ACCURACY FIRST
+- The emulation core scores 100% on the AccuracyCoin hardware-accuracy suite.
+- Passes the blargg, kevtris, and MMC3 test-ROM batteries.
+- 172 mapper families, so a huge library of titles just works.
+- Deterministic by design: the same input always produces the same result.
+
+FEATURES
+- Smooth, low-latency emulation with hardware-quality video and audio.
+- On-screen multi-touch controls plus full support for up to four hardware gamepads.
+- Save states and battery-backed cartridge saves.
+- Rewind and fast-forward.
+- CRT, scanline, and NTSC-composite video filters.
+- A box-art game library to organize your collection.
+- Lua scripting and RetroAchievements support.
+- Local and online (room-code) netplay.
+- Adaptive layouts for phones, tablets, foldables, and Android TV, with Material You theming.
+
+BRING YOUR OWN GAMES
+RustyNES ships with no copyrighted game data. Load your own legally obtained .nes / NES 2.0 ROM files from device storage.
+
+OPEN SOURCE
+RustyNES is free and open source (MIT OR Apache-2.0). Source, issue tracker, and documentation are on GitHub at github.com/doublegate/RustyNES.
+
+This is a release-candidate build on an internal/closed testing track while we validate on-device stability ahead of the public launch.

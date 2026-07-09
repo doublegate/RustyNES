@@ -189,6 +189,11 @@ class MainActivity : AppCompatActivity() {
     var romRunningForPip: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // v2.0.4 "Harbor" (Android RC): install the debug-only StrictMode policies as
+        // the very first thing, so main-thread I/O / leaked handles on the launch path
+        // are caught too. Inert in release (guarded on BuildConfig.DEBUG), foss+play
+        // shared — the host-side complement to the on-device crash-free/ANR gate.
+        DebugStrictMode.install()
         // Install the Android-12+ system splash BEFORE super.onCreate(); keep it up
         // until the first Compose frame is ready (the bridge/ROM-DB load is brief).
         val splash = installSplashScreen()

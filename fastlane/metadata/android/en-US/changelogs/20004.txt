@@ -1,0 +1,8 @@
+v2.0.4 "Harbor" - Android release candidate.
+
+The cycle-accurate emulation core is unchanged from v2.0.3 (AccuracyCoin 141/141, 100%). This build focuses on release readiness:
+- Release upload-signing configuration for the store track.
+- Crash and ANR hardening (debug-time StrictMode diagnostics; opt-in local crash logs).
+- Version-controlled store listing metadata.
+
+This is a testing-track candidate while we verify on-device stability before the public launch.
