@@ -199,4 +199,5 @@
     <string name="onboarding_legal_title">Play responsibly</string>
     <string name="onboarding_legal_body">Only play game ROMs for which you own a physical copy. RustyNES distributes no commercial ROMs of any kind — supplying game files is your responsibility, and yours alone.</string>
     <string name="onboarding_dont_show_again">Do not show again</string>
+    <string name="host_warning_pre_timebase_movie">This movie was recorded on a pre-v2.0.0 build. Input replay proceeds, but exact framebuffer/audio reproduction is not guaranteed across the engine-timebase change (ADR 0028).</string>
 </resources>

@@ -456,17 +456,19 @@ mobile point release.
 - `[ ]` **iCloud / cross-device save-state sync** — a future note in the iOS plan
   (the format is platform-independent; the sync layer is not built). Source:
   [v1.9.0 plan](plans/v1.9.0-ios-plan.md). Target: **TBD**.
-- `[ ]` **Host-localizable bridge warnings (warning-code enum)** — the
-  `rustynes-mobile` bridge currently hands the host a pre-composed *English*
+- `[~]` **Host-localizable bridge warnings (warning-code enum)** — the
+  `rustynes-mobile` bridge previously handed the host a pre-composed *English*
   advisory string for the pre-v2.0.0 movie/epoch notice (`movie_play` →
-  `drain_warnings`), mirroring the desktop/wasm frontends' identical English text.
-  The correct end state is for the bridge to return a stable, host-localizable
-  warning **code/enum** that Android (string resources) and iOS (`Localizable`)
-  resolve, keeping all three frontends in parity without embedding locale text in
-  the deterministic-adjacent core bridge. Cross-frontend refactor; out of scope for
-  the v2.0.1 Android re-port (raised in PR C review). Files:
-  `crates/rustynes-mobile/src/lib.rs` (+ the desktop/wasm warning sites). Target:
-  **v2.0.2–v2.0.4** (mobile-finalization train).
+  `drain_warnings`). **Bridge + Android DONE (v2.0.3 + v2.0.4):** v2.0.3 added the
+  stable `HostWarning` code/enum + `drain_warning_codes()` (with `drain_warnings()`
+  preserved verbatim so existing hosts are unbroken); v2.0.4 wired the **Android**
+  host to drain the codes and resolve each through a device-locale string resource
+  (`host_warning_pre_timebase_movie`, en + es) after a `.rnm` load. **Remaining:** the
+  **iOS** half (`Localizable`) — v2.0.5–v2.0.8 iOS train — and, optionally, migrating
+  the desktop/wasm frontends off their own English literals onto the same code (they
+  stay in parity today because `HostWarning::message()` is byte-identical). Files:
+  `crates/rustynes-mobile/src/lib.rs`, `android/app/src/main/.../MainActivity.kt`,
+  `android/app/src/main/res/values{,-es}/strings.xml`. Target: **iOS half v2.0.5–v2.0.8**.
 
 ---
 

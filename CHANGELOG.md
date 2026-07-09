@@ -30,6 +30,16 @@ ANR gate on hardware, live monetization runtime) is a maintainer / v2.0.9 step.
 
 ### Added
 
+- **Android now localizes host bridge warnings (completes the v2.0.2–v2.0.4
+  carryover).** v2.0.3 added the `HostWarning` enum + `drain_warning_codes()` to the
+  `rustynes-mobile` bridge; this wires the Android host to consume it — after a `.rnm`
+  `moviePlay`, `MainActivity` drains the warning *codes* and resolves each through a
+  device-locale Android string resource (`host_warning_pre_timebase_movie`, en + es)
+  rather than surfacing the bridge's baked-in English. The `when` over `HostWarning`
+  is exhaustive, so a future bridge warning is a compile error until it is localized.
+  This is the intended end state for the pre-Timebase (`ADR 0028`) movie notice on
+  Android — previously the queued warning was never drained on-device, so it was
+  silently dropped. (The iOS half lands in the v2.0.5–v2.0.8 iOS train.)
 - **Fastlane / Play Console listing metadata (version-controlled).** A
   `fastlane/metadata/android/{en-US,es-ES}/` tree carrying `title.txt`,
   `short_description.txt`, `full_description.txt`, and `changelogs/20004.txt` — the
