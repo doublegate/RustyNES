@@ -285,6 +285,21 @@ new data type / required-reason API — it is local-only, backup-excluded, off b
 and `UserDefaults` is already declared). On-device Metal/ProMotion profiling + the Xcode-26
 archive are the v2.0.9 carryover. See `docs/ios-v2.0.7-readiness.md`.
 
+**v2.0.8 "Harborlight" — the iOS release candidate.** The final release of the iOS
+finalization window stages the App Store scaffolding for v2.1.0: version-controlled **App
+Store Connect listing metadata** under `fastlane/metadata/ios/{en-US,es-ES}/` (name /
+subtitle / promotional text / keywords / description / release notes / URLs + copyright),
+mirroring the Android `fastlane/metadata/android/` tree but namespaced under `ios/` so
+`deliver` (iOS) and `supply` (Android) never collide; a **dormant App Store `release`
+lane** in `fastlane/Fastfile` that stages the build + listing and **does not submit**
+(`submit_for_review: false`, `automatic_release: false`) and is **not** wired into
+`ios.yml` — the interim channel stays **TestFlight** (the `beta` lane) until v2.1.0; and an
+**App-Review §4.7 self-audit** (`docs/ios-v2.0.8-readiness.md`). Screenshots + the app
+preview, real-cert signing, the listing upload, and the App-Review submission are the
+maintainer / v2.0.9 / v2.1.0 closeout. This closes the v2.0.5→v2.0.8 iOS finalization
+window; **v2.0.9** is the joint (Android + iOS) on-device readiness pass, and **v2.1.0**
+the joint store launch.
+
 **Explicitly NOT on the iOS bridge (post-v2.0.0 carryovers).** The mobile bridge is
 iNES / NES 2.0-only, so **FDS disk images (`.fds`) and NSF music files (`.nsf`)
 cannot be loaded** — the picker + Info.plist advertise only `.nes` (+ `.zip`), and

@@ -1,0 +1,27 @@
+RustyNES es un emulador de la Nintendo Entertainment System de ciclo exacto escrito en Rust puro. Apunta al nivel de precisión de Mesen2, higan y ares: planificación en paso bloqueado a resolución de punto de PPU, eventos de PPU dentro de la instrucción visibles para el código de CPU posterior y un mezclador de audio no lineal con síntesis de banda limitada. El mismo núcleo determinista funciona en el escritorio, en el navegador, en RetroArch y aquí de forma nativa en iPhone y iPad.
+
+PRECISIÓN ANTE TODO
+- El núcleo obtiene el 100% en la prueba de precisión de hardware AccuracyCoin.
+- Supera las baterías de ROMs de prueba blargg, kevtris y MMC3.
+- 172 familias de mappers, así que una enorme biblioteca de títulos funciona sin más.
+- Determinista por diseño: la misma entrada produce siempre el mismo resultado.
+
+DISEÑADO PARA iOS Y iPADOS
+- Una app nativa en SwiftUI con renderizado Metal y ritmo ProMotion.
+- Controles multitáctiles en pantalla y mandos MFi / de hardware para hasta cuatro jugadores.
+- Estados de guardado y guardado de cartucho con batería.
+- Rebobinado y avance rápido.
+- Filtros de vídeo CRT, líneas de escaneo y NTSC compuesto.
+- Sincronización de estados y ajustes con iCloud entre tus dispositivos.
+- Compatible con Game Center, scripts Lua y RetroAchievements.
+- Juego en red local y en línea (por código de sala).
+- Completo en iPhone y iPad, con multitarea y Stage Manager en iPad.
+- VoiceOver, texto dinámico y paletas para daltonismo; inglés y español.
+
+USA TUS PROPIOS JUEGOS
+RustyNES no incluye datos de juegos con derechos de autor. Carga tus propios archivos ROM .nes / NES 2.0 obtenidos legalmente desde Archivos, iCloud Drive o la hoja para compartir; permanecen en tu dispositivo.
+
+CÓDIGO ABIERTO
+RustyNES es libre y de código abierto (MIT OR Apache-2.0). El código, el seguimiento de incidencias y la documentación están en GitHub, en github.com/doublegate/RustyNES.
+
+Esta es una versión candidata distribuida a través de TestFlight mientras validamos la estabilidad en dispositivo antes del lanzamiento público en la App Store.

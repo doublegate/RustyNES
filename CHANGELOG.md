@@ -14,6 +14,35 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.0.8] - 2026-07-09 - "Harbor" (iOS release candidate — "Harborlight")
+
+- The **iOS release candidate** and the final release of the iOS finalization window
+  (v2.0.5–v2.0.8), on the byte-identical v2.0.0 "Timebase" core: **AccuracyCoin
+  141/141**, nestest 0-diff, the `#![no_std]` chip stack untouched. Host / iOS-only.
+- **App Store Connect listing metadata staged** (files only, no upload):
+  `fastlane/metadata/ios/{en-US,es-ES}/` — name, subtitle, promotional text,
+  keywords, description, release notes, support / marketing URLs, plus a copyright
+  line — mirroring the Android `fastlane/metadata/android/` tree, namespaced under
+  `ios/` so `deliver` (iOS) and `supply` (Android) never collide.
+- **Dormant App Store `release` lane** added to `fastlane/Fastfile`: it stages the
+  build + listing and **does not submit** (`submit_for_review: false`,
+  `automatic_release: false`). It is **not** wired into CI — the interim iOS channel
+  stays **TestFlight** (the `beta` lane) until the v2.1.0 joint launch, when a
+  maintainer runs it with signing provisioned.
+- **App-Review §4.7 self-audit** recorded (no bundled / downloadable ROMs, no in-app
+  ROM links, no Nintendo branding, in-app ownership notice, searchable library,
+  4+ age rating) in `docs/ios-v2.0.8-readiness.md`.
+- **Release-automation fix:** the `release-auto` workflow's global `concurrency`
+  group let GitHub cancel an older *pending* release run when a newer one queued
+  behind the (slow) binary build — which silently skipped a middle version during a
+  rapid train (v2.0.6 was dropped between v2.0.5 and v2.0.7; both have since been
+  published manually). The group is now keyed per-commit, so distinct versions
+  release independently and none is ever superseded.
+- Version bump: workspace `2.0.7 → 2.0.8`; iOS `MARKETING_VERSION → 2.0.8`.
+- Still **TestFlight-only**; the App Store + AltStore PAL launch is the future
+  **v2.1.0**. Screenshots, real signing, the listing upload, and the App-Review
+  submission are the maintainer / v2.0.9 / v2.1.0 closeout.
+
 ## [2.0.7] - 2026-07-09 - "Harbor" (iOS polish + App Store submission floor — "Trim")
 
 - The third iOS finalization release (the v2.0.5–v2.0.8 window), on the

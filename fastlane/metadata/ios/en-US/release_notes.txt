@@ -1,0 +1,9 @@
+v2.0.8 "Harborlight" — the iOS release candidate.
+
+This build runs on the v2.0.0 "Timebase" emulation core (AccuracyCoin 100%). It stages the App Store listing and review materials ahead of the public launch; distribution stays on TestFlight for now.
+
+- Re-ported onto the new cycle-accurate core with save-state and movie compatibility re-verified.
+- Opt-in, privacy-first local crash reporting (off by default).
+- Built against the iOS 26 SDK.
+
+Bring your own legally obtained ROM files. Free and open source.

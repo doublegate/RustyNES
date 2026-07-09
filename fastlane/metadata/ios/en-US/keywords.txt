@@ -1,0 +1,1 @@
+NES,emulator,famicom,retro,8-bit,cycle-accurate,ROM,save state,netplay,gamepad,TAS,homebrew
