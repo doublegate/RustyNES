@@ -86,7 +86,7 @@
 > determinism smoke on Apple silicon. See `CHANGELOG.md` `[2.0.5]` +
 > `docs/ios-v2.0.5-readiness.md` + `to-dos/plans/v2.0.5-v2.0.8-ios-finalization-plan.md`.
 >
-> **Earlier in the train: v2.0.4 "Harbor"** (2026-07-08) — the fourth release of the v2.0.x
+> **Earlier in the train: v2.0.4 "Harbor" ("Slipway")** (2026-07-08) — the fourth release of the v2.0.x
 > mobile-finalization train, and the **Android release-candidate** milestone. This is a
 > **host / Android-only** cut: the cycle-accurate emulation core is **unchanged and
 > byte-identical to v2.0.3** — AccuracyCoin still **141/141 (100.00%, RAM-authoritative)**,
@@ -114,7 +114,7 @@
 > them to the monetization `feature_enabled` façade without on-device validation). See
 > `CHANGELOG.md` `[2.0.4]` + `to-dos/plans/v2.0.4-android-rc-plan.md`.
 >
-> **Earlier in the train: v2.0.3 "Harbor"** (2026-07-08) — the third release of the v2.0.x
+> **Earlier in the train: v2.0.3 "Harbor" ("Keel")** (2026-07-08) — the third release of the v2.0.x
 > mobile-finalization train, and the one that makes the octal-latch accuracy work
 > real at the shipped default. The **2-cycle-ALE PPU fetch model is promoted from the
 > experimental `mc-ppu-2cycle-ale` flag to the unconditional, only PPU fetch path**
@@ -149,7 +149,7 @@
 > the future v2.1.0 joint launch); Android continues as GitHub-sideload. See
 > `CHANGELOG.md` `[2.0.3]` + `to-dos/plans/v2.0.3-2cycle-ale-plan.md`.
 >
-> **The preceding release: v2.0.2 "Harbor"** (2026-07-08) — the second release of the v2.0.x
+> **The preceding release: v2.0.2 "Harbor" ("Soundings")** (2026-07-08) — the second release of the v2.0.x
 > mobile-finalization train, and Harbor's **headline accuracy release**: the two new
 > upstream AccuracyCoin PPU tests v2.0.1 documented as honest gaps — **"ALE + Read"**
 > (`$0491`) and **"Hybrid Addresses"** (`$0492`) — are now **solved flag-on** by a
@@ -186,7 +186,7 @@
 > No store submission (that is the future v2.1.0 joint launch); Android continues as
 > GitHub-sideload. See `CHANGELOG.md` `[2.0.2]` + `to-dos/plans/v2.0.2-harbor-plan.md`.
 >
-> **The preceding release: v2.0.1 "Harbor"** (2026-07-08) — the first release of the v2.0.x
+> **The preceding release: v2.0.1 "Harbor" ("Mooring")** (2026-07-08) — the first release of the v2.0.x
 > mobile-finalization train onto the v2.0.0 "Timebase" core (`to-dos/ROADMAP.md`),
 > bundling the Android core re-port + `foss`/`play` split scaffolding, the **AccuracyCoin
 > oracle re-sync** (catalog 144→146 rows / 139→141 assigned; measured honestly at
