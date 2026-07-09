@@ -24,9 +24,11 @@ v2.0.4** and **AccuracyCoin holds 141/141 (100.00%, RAM-authoritative)**, nestes
   - `AppModel.surfaceWarnings()` is called after every successful `moviePlay` (both the
     saved-`.rnm` `playMovie(at:)` path and the foreign-movie `importForeignMovie(at:)`
     path) and routes the text to a new `@Published var warningMessage`.
-  - `ContentView` presents `warningMessage` via a **distinct, non-blocking alert** —
-    separate from the existing `errorMessage` alert, so a warning never reads as a
-    failure.
+  - `ContentView` presents `warningMessage` through a **single alert that multiplexes
+    the error + warning channels** — it prefers the error when both are queued and
+    clears only the visible channel on dismissal, so neither is dropped (two chained
+    `.alert` modifiers on one view would race — SwiftUI presents only one) and a
+    warning still never reads as a failure.
   - `Localizable.xcstrings` gains the EN source string + its ES translation; the English
     key and the ES copy are **byte-identical to the Android `host_warning_pre_timebase_movie`
     resource**, so both platforms surface the same wording.

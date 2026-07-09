@@ -8,7 +8,7 @@
 > nestest 0-diff, the deterministic `#![no_std]` chip stack untouched — so no accuracy /
 > save-state / determinism number moves. It re-ports the frozen v1.9.9 SwiftUI / Metal app
 > onto the v2.0.0 "Timebase" core: **(1)** the pre-Timebase movie warning is surfaced +
-> localized on iOS (a non-blocking notice distinct from the error alert, **EN + ES**,
+> localized on iOS (a non-blocking notice on its own channel — not an error, **EN + ES**,
 > drained via `EmulatorCore.drainWarnings()` → `NesController.drainWarningCodes()`, wording
 > byte-identical to the Android v2.0.4 string) so loading a pre-v2.0.0 `.rnm` tells the user
 > byte-exact framebuffer/audio reproduction isn't guaranteed across the ADR-0028 timebase
