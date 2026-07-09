@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-044-SuperBig7in1/Super Big 7-in-1 [p1][!].zip
+rom_sha256=7c5eb227c0fc4b654b6966fabc4a5373700cb1963defb11ba3add14c391cfe18
+frames=600
+fb_bytes=245760
+cycles=17838520
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=6efffc7b0790fbe9

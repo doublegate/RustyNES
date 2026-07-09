@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-209-JYCompany209/Mike Tyson's Punch-Out!! (Unl) [!].zip
+rom_sha256=f023e8f22ae9aa2dc447dd48f5dcc0f3840aa316e8ba3be01c87c77b1d86e359
+frames=600
+fb_bytes=245760
+cycles=17838554
+audio_samples=439524
+audio_fnv1a64=480b0b40c539c1c4
+checkpoint f600 fb_fnv1a64=616737e63a1d19ea

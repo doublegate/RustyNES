@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-242-Waixing43in1/Dragon Quest VIII (ES-1077) (Ch) [!].nes
+rom_sha256=fc7eec26cba95ec83fafb8c004871027c96f9cc3837fce26a4b15b09f6996a7e
+frames=600
+fb_bytes=245760
+cycles=17838530
+audio_samples=439524
+audio_fnv1a64=f068b8a28eae2916
+checkpoint f600 fb_fnv1a64=be8024bb5d98169b

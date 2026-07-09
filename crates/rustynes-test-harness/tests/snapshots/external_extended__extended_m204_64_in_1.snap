@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-204-BMC-64in1/64-in-1 [p1][!].zip
+rom_sha256=2800e3d04e8f9b4d244df9fa737c94a55a5eb187f01f811d431adffd98d29234
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=147f6f733b3e9ce4

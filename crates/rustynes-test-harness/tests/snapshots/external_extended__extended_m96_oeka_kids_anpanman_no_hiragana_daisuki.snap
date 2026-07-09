@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-096-Multicart96/Oeka Kids - Anpanman no Hiragana Daisuki (J).nes
+rom_sha256=d2e4fd6ca16c065d933bd4c25566de8f78b7760a8079f9917030ff2ce8ced7b4
+frames=600
+fb_bytes=245760
+cycles=17838530
+audio_samples=439524
+audio_fnv1a64=9e356753c53d438a
+checkpoint f600 fb_fnv1a64=d8141b5f4da75bbc

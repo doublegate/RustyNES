@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-145-SachenSA72007/Sidewinder (Sachen) [!].nes
+rom_sha256=5fa377e10a14c04d159b0c82fd42bb8e89e16682d668d31e4b06b10b040f863a
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=12c2e2f7160e480f
+checkpoint f600 fb_fnv1a64=790c91e2697f514f

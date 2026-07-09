@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-030-UNROM512/Chu Liu Xiang (Ch) (Wxn).nes
+rom_sha256=89f5967e51425b96fd5a3f8cc30ceb137f5ad65c8690885af964ac5dd5fe372c
+frames=600
+fb_bytes=245760
+cycles=17838621
+audio_samples=439526
+audio_fnv1a64=7f2d3a68e80a2efe
+checkpoint f600 fb_fnv1a64=1719dca5cef7a325

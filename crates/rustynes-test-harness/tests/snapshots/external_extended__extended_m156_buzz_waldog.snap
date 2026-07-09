@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-156-DIS23C01-DAOU/Buzz & Waldog (USA) (Unl) (Beta).nes
+rom_sha256=ba63d5ec8d6012bf44aa932b19f32ece50cb7f70113adca35191281278a4c6be
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=f75dedb3e8b0039a
+checkpoint f600 fb_fnv1a64=b3a62d6ed7c92bd5

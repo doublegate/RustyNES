@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-090-JYCompany90/1997 Super HIK 4-in-1 (JY-052) [p1][!].zip
+rom_sha256=78a1c64a565c37670d6886813f0727849bb5df3b68da778a81c8d4a42b435788
+frames=600
+fb_bytes=245760
+cycles=17838622
+audio_samples=439526
+audio_fnv1a64=7f2d3a68e80a2efe
+checkpoint f600 fb_fnv1a64=89ee4c476c97a325

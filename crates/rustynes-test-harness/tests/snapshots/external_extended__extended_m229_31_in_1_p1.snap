@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-229-BMC-31in1/31-in-1 [p1].nes
+rom_sha256=6ded192ce45d4347629d70d92ae751ada8d58c21bd5d723100578bce12d1f687
+frames=600
+fb_bytes=245760
+cycles=17838525
+audio_samples=439524
+audio_fnv1a64=921ab400f17e14ff
+checkpoint f600 fb_fnv1a64=53fb1909fb52a233

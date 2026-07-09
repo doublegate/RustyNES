@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-137-Sachen8259D/Great Wall, The (Sachen) [!].nes
+rom_sha256=2655d96ac4625c54687806e231bc8027cb4d292d2e99eae7c8ebd461021824b4
+frames=600
+fb_bytes=245760
+cycles=17838526
+audio_samples=439524
+audio_fnv1a64=ffe6f6dd43e064c2
+checkpoint f600 fb_fnv1a64=7351c20eb69118b9

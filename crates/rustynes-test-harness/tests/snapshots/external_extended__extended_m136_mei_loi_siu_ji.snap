@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-136-SachenTCU02/Mei Loi Siu Ji (Metal Fighter) (Sachen) [!].zip
+rom_sha256=c5895c35b0e21936ab823aab8d5abea9c3b499422eff529cef644cb13af77006
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=bf79110abea15cb3
+checkpoint f600 fb_fnv1a64=101d206b74acc109

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-051-BallGames11in1/11-in-1 Ball Games [p1][!].zip
+rom_sha256=e96a7fbbae622191c0243e1ec6f2b76b0c7f80d1f2275ab00b9d95a3c2cb13c5
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=b9336a13dcf7a325

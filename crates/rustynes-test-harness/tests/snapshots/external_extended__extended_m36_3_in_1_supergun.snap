@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-036-TXC36/3 in 1 Supergun (Asia) (Ja) (Unl).nes
+rom_sha256=db521c28884645a00ef4a4efabe9940734447ab6534b9652810589f867e2f52a
+frames=600
+fb_bytes=245760
+cycles=17838520
+audio_samples=439524
+audio_fnv1a64=776c4e6140c89deb
+checkpoint f600 fb_fnv1a64=c56cb4d8a67e71e0

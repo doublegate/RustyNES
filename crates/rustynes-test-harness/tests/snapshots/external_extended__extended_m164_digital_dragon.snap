@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-164-WaixingFinalFantasy/Digital Dragon (Ch) [!].zip
+rom_sha256=feb75b86cda5a76195107f9e6224df27cb485179ae0c0fc28480659dfc3bfb5f
+frames=600
+fb_bytes=245760
+cycles=17838621
+audio_samples=439526
+audio_fnv1a64=9f850930dbe46dec
+checkpoint f600 fb_fnv1a64=89ee4c476c97a325

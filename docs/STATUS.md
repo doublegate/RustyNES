@@ -1,6 +1,31 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.0.8 "Harbor"** (2026-07-09) — the eighth release of the v2.0.x
+> **Current release: v2.1.0 "Fathom"** (2026-07-09) — the **accuracy-remediation**
+> release, and the first of the new "Fathom" line. A core / desktop cut that lands
+> **ahead of** the joint mobile store launch (which moved from v2.1.0 to **v2.2.0**,
+> so the Android + iOS apps re-release on this improved core). The deterministic core
+> is unchanged except one **display-only** PPU fix, so AccuracyCoin stays **141/141
+> (100.00%, RAM-authoritative)**, nestest 0-diff, the `#![no_std]` chip stack
+> untouched; no save-state/format bump. It lands: **(F1.1)** the **PPU palette
+> backdrop-override** — rendering-disabled + `v` in `$3F00-$3FFF` outputs
+> `palette[v & 0x1F]` not the backdrop, **byte-exact with TriCNES**, fixing the
+> `full_palette` / `flowing_palette` demos (9 snapshots re-blessed: 2 demos + 7
+> commercial games, all converging with the TriCNES oracle; `external_real_games`
+> 60/60 byte-identical); **(F1.2/F1.3)** OAM + open-bus audits regression-locked;
+> **(F3)** the **mapper completion** — **86** families promoted BestEffort → Curated
+> with a commercial-ROM boot-snapshot oracle (57 already-staged + 29 from GoodNES
+> v3.23b), so the tier split is **51 Core + 95 Curated + 26 BestEffort** and
+> oracle-gated coverage rises **60 → 146** of 172 (the 26 left have no
+> cleanly-booting dump); **(F5)** the **MMC3 R1/R2 scanline-IRQ residual CLOSED** by-design-permanent
+> (ADR 0002 F5.0 — differential 1-dot deficit, structurally unreachable, zero game
+> impact), with all **20** `#[ignore]`'d tests catalogued in the new
+> `docs/accuracy-ledger.md` (none an accuracy gap); and **(F0)** doc reconciliation.
+> Version bump (workspace `2.0.8 → 2.1.0`; mobile `MARKETING_VERSION`s unchanged —
+> the apps re-release at v2.2.0). See `CHANGELOG.md` `[2.1.0]` +
+> `docs/accuracy-ledger.md` + `docs/adr/0002-irq-timing-coordination.md` +
+> `to-dos/plans/v2.1.0-fathom-accuracy-remediation-plan.md`.
+>
+> **The preceding release: v2.0.8 "Harbor"** (2026-07-09) — the eighth release of the v2.0.x
 > mobile-finalization train, and the **iOS release candidate** ("Harborlight"), the final
 > release of the iOS finalization window (v2.0.5–v2.0.8). A **host / iOS-only** cut: the
 > cycle-accurate emulation core is **unchanged and byte-identical to v2.0.7** —
@@ -21,7 +46,7 @@
 > v2.0.9 / v2.1.0** closeout. See `CHANGELOG.md` `[2.0.8]` + `docs/ios-v2.0.8-readiness.md` +
 > `to-dos/plans/v2.0.5-v2.0.8-ios-finalization-plan.md`.
 >
-> **The preceding release: v2.0.7 "Harbor"** (2026-07-09) — the seventh release of the v2.0.x
+> **Earlier in the train: v2.0.7 "Harbor"** (2026-07-09) — the seventh release of the v2.0.x
 > mobile-finalization train, and the **third iOS finalization release** ("Trim"),
 > continuing the iOS window (v2.0.5–v2.0.8). A **host / iOS-only** cut: the
 > cycle-accurate emulation core is **unchanged and byte-identical to v2.0.6** —
@@ -1091,8 +1116,13 @@ tiered for accuracy honesty:
 | Tier | Families | Accuracy-gated? | Evidence |
 |------|----------|-----------------|----------|
 | **Core** | 51 | Yes (AccuracyCoin + commercial oracle) | spec-implemented, oracle-locked |
-| **Curated** (v1.2.0) | 9 | Yes | notable games + decode spec; register-decode unit tests |
-| **BestEffort** (v1.2.0 + v1.3.0 + v1.4.0 + v1.5.0 + v1.6.0 + v1.7.0 G1 + v1.8.9 beta.6) | 112 | **No** | reference-ported long-tail; register-decode + save-state unit tests only |
+| **Curated** (v1.2.0 + **v2.1.0 "Fathom" F3**) | 95 | Yes | notable games + decode spec; register-decode unit tests **+ byte-identity boot-snapshot oracle** (`external_extended.rs`) |
+| **BestEffort** | 26 | **No** | reference-ported long-tail with **no cleanly-booting ROM dump** (16 NES 2.0 high-id boards + 8 with no matching cart + 2 whose only dump jams at boot); register-decode + save-state unit tests only |
+
+The **v2.1.0 "Fathom" F3** sweep promoted **86** families BestEffort → Curated
+(57 already-staged + 29 sourced from GoodNES v3.23b), taking accuracy-gated
+coverage from **60 → 146** of the 172 families. The 26 that remain BestEffort are
+uncoverable (no cleanly-booting redistributable dump).
 
 A CI-checkable invariant forbids any `BestEffort` mapper from backing an oracle
 ROM (`rustynes-mappers::mapper_tier`; ADR 0011). The remaining tail (unlicensed

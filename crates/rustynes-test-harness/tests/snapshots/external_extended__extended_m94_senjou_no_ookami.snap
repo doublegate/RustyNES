@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-094-UN1ROM/Senjou no Ookami (J) [!].nes
+rom_sha256=56a72cd018e7fffbc556789b6e170ae062f5e3792c322b912d7ab5615bcaa863
+frames=600
+fb_bytes=245760
+cycles=17838523
+audio_samples=439524
+audio_fnv1a64=7d0efbc1ce6f514b
+checkpoint f600 fb_fnv1a64=b0d9420df0a024fa

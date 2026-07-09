@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-077-Irem77/Napoleon Senki (J) [!].nes
+rom_sha256=0a45b46c226cdf4f7b6ad5c50327d09a1370e7ef3390ed9da9ac8b5ee7e72753
+frames=600
+fb_bytes=245760
+cycles=17838526
+audio_samples=439524
+audio_fnv1a64=6490220f57d78390
+checkpoint f600 fb_fnv1a64=698b628f8e8b00dd

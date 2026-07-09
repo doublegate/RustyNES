@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-211-JYCompany211/2-in-1 - Donkey Kong Country 4 + Jungle Book 2 (Unl) [!].zip
+rom_sha256=8b1c5e0bb9b9e6535d3b3b9e216277e75db65332883f508edf665c3bb0cc0a30
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=384527e3d0b39074

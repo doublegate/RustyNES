@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-092-JalecoJF19/Moero!! Pro Soccer (J).nes
+rom_sha256=69d41a1250e0731404877db321de5fe3e4cf744fbe580e933f365c917d6cf7bb
+frames=600
+fb_bytes=245760
+cycles=17838523
+audio_samples=439524
+audio_fnv1a64=aefd5bca4e209d38
+checkpoint f600 fb_fnv1a64=4661f52e024e0d03

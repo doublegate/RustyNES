@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-189-TXC-MMC3/Mario Fighter III (Unl) [!].zip
+rom_sha256=55d27912a9e338ac9210088a34a74db6fffbfb7664387881d592de394290a20c
+frames=600
+fb_bytes=245760
+cycles=17838527
+audio_samples=439524
+audio_fnv1a64=4d409732a2e3a05a
+checkpoint f600 fb_fnv1a64=36df6f1b743ccbe7

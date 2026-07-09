@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-244-Decathlon/Asmik-kun Land (J) [t1].nes
+rom_sha256=039ccc715be6e7944aa3616b15633c380758e5d8cb77926f1ff3d24e91028a2d
+frames=600
+fb_bytes=245760
+cycles=17838619
+audio_samples=439526
+audio_fnv1a64=7f2d3a68e80a2efe
+checkpoint f600 fb_fnv1a64=89ee4c476c97a325

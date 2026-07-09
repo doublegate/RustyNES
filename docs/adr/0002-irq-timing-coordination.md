@@ -1,14 +1,19 @@
 # ADR 0002 — Coordinated CPU/Bus/PPU IRQ-Sample-Timing Rework
 
-**Status:** By-design-deferred beyond v2.0.0 "Timebase" (21+ documented
-rollbacks as of 2026-07-02 — the v2.0.0 one-clock/every-cycle-bus-access
-promote landed the R1 substrate itself, and a dedicated two-session
-bounded-effort campaign on the promoted core added 4 more falsified levers
-without closing the residual — see §"Decision update (2026-07-02..." below).
-The residual (`mmc3_test_2/4` sub-test #3 + siblings) ships `#[ignore]`'d
-with zero production-ROM impact; re-open only with a genuinely new,
-falsifiable single-axis hypothesis, not a re-derivation of anything on the
-DO-NOT-RETRY list.
+**Status:** **CLOSED — by-design-permanent** (v2.1.0 "Fathom" F5.0, 2026-07-09).
+Formerly "by-design-deferred beyond v2.0.0"; the v2.1.0 instrumentation-first
+review (F5.0) closed it. 21+ documented rollbacks (the v2.0.0
+one-clock/every-cycle-bus-access promote landed the R1 substrate itself, and a
+dedicated two-session bounded-effort campaign on the promoted core added 4 more
+falsified levers) plus the F5.0 review of the campaign ground-truth establish
+that the residual is a **differential 1-dot deficit that is structurally
+invariant to every global phase lever** and that no single-axis lever exists
+that shifts the mapper-IRQ observation path relative to the `$2002` path without
+a scheduler-substrate change — which would risk the sacred AccuracyCoin 141/141
+for a bracket with **zero production-ROM impact**. The residual
+(`mmc3_test_2/4` sub-test #3 + siblings) therefore stays `#[ignore]`'d
+**permanently by design** (not as an open TODO). See §"Decision update
+(2026-07-09, v2.1.0 Fathom F5.0)" at the end for the full closing argument.
 **Date:** 2026-05-10
 **Author:** RustyNES maintainers
 **Numbering:** 0002. ADR 0001 (mapper dispatch) will be written after
@@ -1572,3 +1577,51 @@ evidence trails: `docs/audit/r1r2-closure-campaign-2026-07-02.md` and
 `docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md` (both local/
 gitignored per this project's `docs/audit/` convention, matching every
 prior session audit doc this ADR cites).
+
+---
+
+## Decision update (2026-07-09, v2.1.0 "Fathom" F5.0) — CLOSED
+
+The v2.1.0 "Fathom" accuracy-remediation line put this residual through the
+maintainer-agreed **instrumentation-first (F5.0)** gate: run the study *first*,
+and attempt the flagged M2-half-cycle axis-B fix *only if* the study proves that
+axis live. The study reviewed the two dedicated 2026-07-02 campaign audits'
+ground-truth traces rather than re-deriving them (the re-open bar explicitly
+forbids a re-derivation of anything on the DO-NOT-RETRY list).
+
+**The falsifiable question F5.0 had to answer:** is there any single-axis lever
+that shifts the *mapper-IRQ observation path* relative to the *`$2002` sync
+path* — the residual is a **differential** 1-dot deficit, so only a
+differential change can move it — without a scheduler-substrate rewrite?
+
+**Finding — the axis is NOT live:**
+
+1. **The deficit is differential and structurally invariant to global
+   re-phasings.** The ROM measures the interval between two observations on one
+   CPU timeline (`$2002` VBL read vs the IRQ-taken window); any consistent
+   PPU-vs-CPU batch re-phasing shifts *both* together. This is why 15+ historical
+   sample-point/order/phase levers **and** the two 2026-07-02 experiments (the
+   sprite-fetch A12 emission-dot shift, and the `run_ppu_to`
+   check-first→do-while catch-up-boundary fencepost) were all absorbed with the
+   failure shape unchanged.
+2. **The `gap >= 3` filter threshold is provably not the discriminator.** The
+   qualifying sprite-fetch A12 rise's gap from the prior A12 fall is ~900k
+   cycles, so any threshold (3/4/5/100) accepts it identically — tightening or
+   M2-edge-refining the *threshold* cannot move the bracket.
+3. **The two surviving candidates both require sub-batch (per-dot) CPU
+   visibility of the A12→pending edge** — i.e. a genuine per-dot interleaved
+   scheduler change, not a filter or sample-point tweak. Pursuing that risks a
+   22nd rollback of the sacred **AccuracyCoin 141/141** (and the 540+ strict
+   suite) for a bracket with **zero production-ROM impact** — precisely the
+   trade the v2.0.0 plan's Risks #3 escape hatch names as the one place
+   "aggressive yields to sacred."
+
+**Decision:** the residual is **CLOSED as by-design-permanent**, not deferred.
+The four pins (`mmc3_test_2/4` sub-test #3, `mmc3_test_v1/4` sub-test #3,
+`mmc3_test_v1/5` sub-test #2, `mmc3_test_v1/6` sub-test #2) stay `#[ignore]`'d
+permanently with their fail-loud `*_currently_fails` companions intact. This is
+a well-understood architectural boundary of the one-clock batched-catch-up
+model, fully explained by the differential-mechanism finding — it is **not an
+accuracy gap** and not an open TODO. Re-opening would require a genuinely new,
+falsifiable single-axis hypothesis that specifically distinguishes itself from
+everything on the DO-NOT-RETRY list — none survived F5.0.

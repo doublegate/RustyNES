@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-101-JalecoJF10/Urusei Yatsura - Lum no Wedding Bell (J) [a1][T+Fre].nes
+rom_sha256=c2724e518502f1f75110b3e051aa65d83e7884b389e8e43896247a534f4f7e28
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=a8d5336e8602b27c
+checkpoint f600 fb_fnv1a64=e5aa06b39bb8b70e

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-097-Irem-TamSan/Kaiketsu Yanchamaru (J) [!].nes
+rom_sha256=238cb4c247187cf0ca1b77462a574b2495981307c9701725d8a111cb401d94d1
+frames=600
+fb_bytes=245760
+cycles=17838525
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=a0d03e7d7decfc23

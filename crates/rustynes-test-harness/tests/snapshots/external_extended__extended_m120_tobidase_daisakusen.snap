@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-120-TobidaseFDS/Tobidase Daisakusen (FDS Conversion).zip
+rom_sha256=bc52a8461a773e76d75c03c761a4741434fcc0e59050118a3e1964372ca8944c
+frames=600
+fb_bytes=245760
+cycles=17838520
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=8072a7289a024eb2

@@ -298,6 +298,7 @@ or codegen cost.
 5. **Scanline-241 dot-0 race.** Reading PPUSTATUS at scanline 241 dot 0 returns 0 *and* suppresses NMI for that frame. Test ROM coverage required.
 6. **Palette read top 2 bits = open bus.** Palette is only 6-bit; the high 2 bits come from the open-bus latch.
 7. **8×16 sprites use bit 0 of tile index for pattern table.** PPUCTRL bit 3 is *ignored* for 8×16 mode.
+8. **Palette backdrop-override (rendering disabled, `v` in `$3F00-$3FFF`).** When rendering is disabled and the VRAM address `v` points into palette space (`$3F00-$3FFF`), palette RAM is addressed by `v`, so the PPU outputs the color at `v & 0x1F` — with the `$10/$14/$18/$1C → $00` universal-backdrop mirroring — **instead of** the universal backdrop (`$3F00`). This is a **display artifact only**: palette RAM is not mutated, and it cannot occur while rendering is enabled (the fetch pipeline owns `v`). Implemented in `Ppu::emit_pixel` as `!rendering_enabled() && (v & 0x3F00) == 0x3F00 → read_palette(0x3F00 | (v & 0x1F))`, **byte-exact with TriCNES** (`Emulator.cs`, the rendering-disabled `PaletteRAMAddress = PPU_v & 0x1F` path). This is what makes the `full_palette` / `flowing_palette` demos display all 64 colors at once (physically impossible through normal rendering). Distinct from the palette-RAM *corruption* in item 2 above (that mutates RAM and is not yet modeled; this is a read-through display effect).
 
 ## Test plan
 

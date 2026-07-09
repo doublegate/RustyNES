@@ -112,7 +112,7 @@ Sorted by number of commercial titles using each mapper.
 | 2 | 0-2 | UxROM | 2 | — | — | landed (Phase 2) | UNROM, UOROM, etc. CHR-RAM only. |
 | 3 | 0-2 | CNROM | 2 | — | — | landed (Phase 2) | Bus conflict required. |
 | 4 | 0-3 | MMC3 (and MMC6, sub 1) | 4 | — | A12 | landed (Phase 4 / S1) | Sharp vs NEC IRQ revision; default Sharp. mmc3_test_2/5-MMC3 passes; sub-tests 1-4 partial. |
-| 5 | — | MMC5 | 4 | yes (deferred) | scanline | v0+v1 landed (Phase 4 / S4) | Banking + scanline IRQ + ExRAM modes 10/11 + multiplier (v0). Fill mode (`$5106`/`$5107`), dual sprite/BG CHR registers used for sprite tile fetches, ExGrafix per-tile attribute + CHR override (mode 01) (v1). Deferred: vertical split-screen (`$5200-$5202`), audio extension (`mmc5-audio`). |
+| 5 | — | MMC5 | 4 | yes (landed) | scanline | v0+v1 landed (Phase 4 / S4) | Banking + scanline IRQ + ExRAM modes 10/11 + multiplier (v0). Fill mode (`$5106`/`$5107`), dual sprite/BG CHR registers used for sprite tile fetches, ExGrafix per-tile attribute + CHR override (mode 01) (v1). Vertical split-screen (`$5200-$5202`) via `bg_split_state` (Castlevania III J status bar) and the MMC5 audio extension (two pulse + 7-bit PCM, `$5000-$5015`, behind the default-on `mapper-audio` feature) landed. |
 | 7 | 0-2 | AxROM | 2 | — | — | landed (Phase 2) | Single-screen mirroring control. |
 | 9 | — | MMC2 | 4 | — | — | landed (Phase 4 / S2) | Punch-Out; latched CHR per fetch ($FD/$FE). |
 | 10 | — | MMC4 | 4 | — | — | landed (Phase 4 / S2) | Like MMC2 with full PRG banking. |
@@ -367,12 +367,21 @@ boards with no redistributable fixture, register-decode unit-tested only) is
 oracle ROM — is enforced at the classifier level (`BestEffort` is structurally
 never accuracy-gated; the three tier id-sets are disjoint) and by the curated
 construction of the byte-oracle corpus. See `docs/adr/0011-mapper-tiering.md`.
-Current split: **172 families** — 51 Core + 9 Curated (60 accuracy-gated) + 112
-BestEffort (27 from v1.2.0 `sprint6`/`sprint7` + 14 from v1.3.0 `sprint8` + 12
-from v1.4.0 `sprint9` + 10 from v1.5.0 `sprint10` + the v1.6.0 "Studio"
-J.Y. Company ASIC `jy_asic` family 35/90/209/211 + 23 from v1.6.0 "Studio"
-Workstream E `sprint11` + 18 from v1.7.0 "Forge" Workstream G1 `sprint12` + 4
-from v1.8.9 "Backlog" beta.6 `sprint13`). The
+Current split: **172 families** — 51 Core + 95 Curated (**146 accuracy-gated**) +
+26 BestEffort. The **v2.1.0 "Fathom" F3** batch promoted **86** previously-
+BestEffort families to Curated: each has a **cleanly-booting** staged
+commercial-ROM dump (57 already in `tests/roms/external/` + 29 sourced from
+GoodNES v3.23b) wired into a byte-identity boot-snapshot oracle in
+`external_extended.rs` (ADR 0011), taking accuracy-gated coverage from 60 → 146.
+The remaining **26** BestEffort families have no cleanly-booting redistributable
+dump — the 16 NES 2.0 high-id boards
+(268/286/289/290/299/301/303/305/306/312/320/336/348/349/366/513, which GoodNES
+v3.23b's iNES-1.0 headers cannot encode); 8 boards with no matching cart
+(29/39/81/104/174/179/238/261); and 2 boards whose only dump jams at boot
+(50 SMB2j FDS-conversion, 111 GTROM "Ninja Ryukenden") — and stay register-decode
+and save-state unit-tested only. The mapper *implementations* described below
+(reference-ported across v1.2.0-v1.8.9) are unchanged by the promotion — only the
+tier marker moved. The
 v1.6.0 `sprint11` batch ports MMC3-clone variants
 (44/49/52/115/134/189/205/238/245/348/366, on a shared MMC3-style core with an
 A12 falling-edge IRQ + per-board outer-bank transform), the Sachen 8259 A/B/C
