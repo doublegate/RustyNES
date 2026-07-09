@@ -14,6 +14,25 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.0.5] - 2026-07-09 - "Harbor" (iOS re-port onto Timebase — "Landfall")
+
+- Opens the iOS finalization window (v2.0.5–v2.0.8) of the v2.0.x "Harbor" train:
+  the iOS/iPadOS app is re-ported onto the v2.0.0 "Timebase" core — the iOS
+  analogue of the Android v2.0.1 re-port. Host/iOS-only; the emulation core is
+  unchanged and byte-identical to v2.0.4 (AccuracyCoin 141/141, nestest 0-diff).
+- The iOS host now localizes bridge warnings (device-locale strings, EN + ES) for
+  the pre-Timebase movie notice: loading a pre-v2.0.0 `.rnm` still replays its
+  input, but surfaces a non-blocking notice that byte-exact framebuffer/audio
+  reproduction is not guaranteed across the ADR-0028 timebase change — the iOS
+  analogue of the Android v2.0.4 warning, verbatim wording and shared ES copy.
+- The UniFFI-Swift binding surface is re-confirmed against the v2.0.0 bridge
+  (`drainWarningCodes` / `HostWarning.preTimebaseMovie`); the iOS
+  `MARKETING_VERSION` is realigned from the frozen v1.9.x default to `2.0.5`.
+- TestFlight-only; the App Store + AltStore PAL launch stays deferred to the
+  v2.1.0 joint milestone. On-device re-port verification (save-state migration +
+  the AccuracyCoin / SMB / Zelda determinism smoke on Apple silicon) is flagged
+  for the v2.0.9 dual-app readiness pass.
+
 ## [2.0.4] - 2026-07-08 - "Harbor" (Android release candidate)
 
 - Android release-candidate milestone; the emulation core is unchanged and

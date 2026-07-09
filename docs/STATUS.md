@@ -1,6 +1,30 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.0.4 "Harbor"** (2026-07-08) — the fourth release of the v2.0.x
+> **Current release: v2.0.5 "Harbor"** (2026-07-09) — the fifth release of the v2.0.x
+> mobile-finalization train, and the **first iOS finalization release** ("Landfall"),
+> opening the iOS window (v2.0.5–v2.0.8) that mirrors the Android v2.0.1–v2.0.4 window.
+> This is a **host / iOS-only** cut: the cycle-accurate emulation core is **unchanged and
+> byte-identical to v2.0.4** — AccuracyCoin still **141/141 (100.00%, RAM-authoritative)**,
+> nestest 0-diff, the deterministic `#![no_std]` chip stack untouched — so no accuracy /
+> save-state / determinism number moves. It re-ports the frozen v1.9.9 SwiftUI / Metal app
+> onto the v2.0.0 "Timebase" core: **(1)** the pre-Timebase movie warning is surfaced +
+> localized on iOS (a non-blocking notice distinct from the error alert, **EN + ES**,
+> drained via `EmulatorCore.drainWarnings()` → `NesController.drainWarningCodes()`, wording
+> byte-identical to the Android v2.0.4 string) so loading a pre-v2.0.0 `.rnm` tells the user
+> byte-exact framebuffer/audio reproduction isn't guaranteed across the ADR-0028 timebase
+> change; **(2)** the UniFFI-Swift binding surface (`drainWarningCodes` /
+> `HostWarning.preTimebaseMovie` / `moviePlay`) is re-confirmed against the v2.0.0 bridge
+> (host-verified Swift emit); and the **version bump** (workspace `2.0.4 -> 2.0.5`; iOS
+> `MARKETING_VERSION 1.9.1 -> 2.0.5`, realigned from the frozen v1.9.x default). The core is
+> untouched, so the chip stack / `no_std` / AccuracyCoin contract is unaffected.
+> **TestFlight-only**; App Store + AltStore PAL stay deferred to the v2.1.0 joint launch.
+> The **on-device closeout is a maintainer / v2.0.9 step** — the xcframework build on macOS
+> (**Xcode 26 / iOS 26 SDK**, the App Store submission floor that lands as a hard gate at
+> v2.0.7), save-state migration from a v1.9.x install, and the AccuracyCoin / SMB / Zelda
+> determinism smoke on Apple silicon. See `CHANGELOG.md` `[2.0.5]` +
+> `docs/ios-v2.0.5-readiness.md` + `to-dos/plans/v2.0.5-v2.0.8-ios-finalization-plan.md`.
+>
+> **The preceding release: v2.0.4 "Harbor"** (2026-07-08) — the fourth release of the v2.0.x
 > mobile-finalization train, and the **Android release-candidate** milestone. This is a
 > **host / Android-only** cut: the cycle-accurate emulation core is **unchanged and
 > byte-identical to v2.0.3** — AccuracyCoin still **141/141 (100.00%, RAM-authoritative)**,
@@ -28,7 +52,7 @@
 > them to the monetization `feature_enabled` façade without on-device validation). See
 > `CHANGELOG.md` `[2.0.4]` + `to-dos/plans/v2.0.4-android-rc-plan.md`.
 >
-> **The preceding release: v2.0.3 "Harbor"** (2026-07-08) — the third release of the v2.0.x
+> **The release before that: v2.0.3 "Harbor"** (2026-07-08) — the third release of the v2.0.x
 > mobile-finalization train, and the one that makes the octal-latch accuracy work
 > real at the shipped default. The **2-cycle-ALE PPU fetch model is promoted from the
 > experimental `mc-ppu-2cycle-ale` flag to the unconditional, only PPU fetch path**

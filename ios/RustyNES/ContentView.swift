@@ -67,6 +67,18 @@ struct ContentView: View {
             actions: { Button("OK", role: .cancel) {} },
             message: { Text(model.errorMessage ?? "") }
         )
+        // A distinct, non-blocking notice channel (v2.0.5): a succeeded operation
+        // the host wants to caveat — currently a pre-Timebase `.rnm` load warning.
+        // Separate from the error alert so a warning never reads as a failure.
+        .alert(
+            "RustyNES",
+            isPresented: Binding(
+                get: { model.warningMessage != nil },
+                set: { if !$0 { model.warningMessage = nil } }
+            ),
+            actions: { Button("OK", role: .cancel) {} },
+            message: { Text(model.warningMessage ?? "") }
+        )
     }
 
     /// The importable UTTypes — ONLY the ROM / archive types, never `.data`

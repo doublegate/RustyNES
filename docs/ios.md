@@ -226,7 +226,7 @@ with Android, after the v2.0.0 "Timebase" core rewrite) live in
 `docs/adr/0027-ios-distribution-and-app-store-compliance.md` and
 `to-dos/plans/v2.0.x-mobile-finalization-plan.md`.
 
-## v1.9.x status + carryovers
+## v1.9.x → v2.0.x status + carryovers
 
 v1.9.0 "Sunrise" landed the **foundation**: the `rustynes-ios` shim, the SwiftUI
 app, the xcframework build + tag-gated macOS CI + fastlane, and the MVP feature
@@ -240,7 +240,24 @@ the creator / power-tools release (read-only debugger inspector, raw-RAM editor,
 Game Genie codes, foreign-movie import `.fm2`/`.bk2`/`.fcm`/`.fmv`/`.vmv`, the
 TAStudio piano-roll, custom palettes, HD-packs, and the audio-depth controls). The
 host gates (fmt / clippy `-D warnings` / rustdoc / `no_std` / wasm) stay green and
-AccuracyCoin holds 139/141 (the two newest upstream PPU tests are known gaps), because the crate is a host shell off-device.
+AccuracyCoin held 139/141 across the v1.9.x line (measured on the v2.0.1 oracle
+re-sync, where the two newest upstream PPU tests were known gaps), because the crate
+is a host shell off-device.
+
+**v2.0.5 "Landfall" — the iOS re-port onto Timebase.** The v2.0.x "Harbor" train
+re-ports the frozen v1.9.9 line onto the **v2.0.0 "Timebase"** core (the iOS analogue
+of the Android v2.0.1 re-port), so the current line is now **v2.0.5** and AccuracyCoin
+is back to **141/141** (the shipped v2.0.3 default, unchanged by this host-only cut).
+v2.0.5 surfaces + localizes (**EN + ES**) the **pre-Timebase movie warning**: loading a
+pre-v2.0.0 `.rnm` still replays its input, but a non-blocking notice — drained via
+`EmulatorCore.drainWarnings()` → `NesController.drainWarningCodes()`, mapping
+`HostWarning.preTimebaseMovie` — tells the user byte-exact framebuffer / audio
+reproduction is not guaranteed across the ADR-0028 epoch change (the iOS analogue of the
+Android v2.0.4 warning; the notice uses a distinct channel from the error alert). The
+iOS `MARKETING_VERSION` is realigned from the frozen v1.9.x default to `2.0.5`. iOS
+finalization continues **v2.0.6 → v2.0.8** (feature parity → polish + the **Xcode 26 /
+iOS 26 SDK** App Store submission floor → the iOS RC); full phasing in
+`to-dos/plans/v2.0.5-v2.0.8-ios-finalization-plan.md`.
 
 **Explicitly NOT on the iOS bridge (post-v2.0.0 carryovers).** The mobile bridge is
 iNES / NES 2.0-only, so **FDS disk images (`.fds`) and NSF music files (`.nsf`)
