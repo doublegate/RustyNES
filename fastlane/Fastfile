@@ -53,4 +53,50 @@ platform :ios do
       skip_waiting_for_build_processing: true
     )
   end
+
+  # v2.0.8 "Harborlight" — the App Store submission lane (DORMANT until v2.1.0).
+  #
+  # This lane is the iOS RC scaffold: it uploads the signed build + the
+  # version-controlled App Store Connect listing metadata
+  # (fastlane/metadata/ios/{en-US,es-ES}) and STAGES it for review — it does NOT
+  # auto-submit (`submit_for_review: false`). It is intentionally NOT wired into
+  # .github/workflows/ios.yml; the interim iOS channel stays TestFlight (the `beta`
+  # lane) until the v2.1.0 joint launch, when a maintainer runs this lane (with the
+  # signing secrets provisioned) and completes submission from App Store Connect.
+  # Screenshots + the app preview are a maintainer on-device capture step (deliver
+  # `skip_screenshots: true` here so the metadata push does not require them).
+  desc "Stage the App Store listing + build (DORMANT — v2.1.0 launch; does not submit)"
+  lane :release do
+    setup_ci
+
+    api_key = app_store_connect_api_key(
+      key_id: ENV["ASC_KEY_ID"],
+      issuer_id: ENV["ASC_ISSUER_ID"],
+      key_content: ENV["ASC_KEY_CONTENT"],
+      is_key_content_base64: true
+    )
+
+    match(type: "appstore", readonly: true)
+
+    build_number = ENV["GITHUB_RUN_NUMBER"] || Time.now.to_i.to_s
+    build_app(
+      project: "ios/RustyNES.xcodeproj",
+      scheme: "RustyNES",
+      export_method: "app-store",
+      xcargs: "CURRENT_PROJECT_VERSION=#{build_number}"
+    )
+
+    # Push the build + the staged listing metadata, but do NOT submit for review
+    # and do NOT auto-release — a maintainer reviews + submits from App Store
+    # Connect at v2.1.0. Screenshots are captured on-device separately.
+    upload_to_app_store(
+      api_key: api_key,
+      metadata_path: "./fastlane/metadata/ios",
+      submit_for_review: false,
+      automatic_release: false,
+      skip_screenshots: true,
+      precheck_include_in_app_purchases: false,
+      force: true
+    )
+  end
 end

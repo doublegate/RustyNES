@@ -1,0 +1,1 @@
+A fast, cycle-accurate NES emulator in pure Rust. Bring your own ROMs. Free and open source. A release-candidate build on TestFlight before the App Store launch.

@@ -49,7 +49,7 @@ settings:
     # Realigned to the workspace version at v2.0.5 "Landfall" (the frozen v1.9.x train
     # never bumped past the v1.9.1 checked-in default, since fastlane injected the real
     # number); advanced per release through the iOS finalization window (v2.0.5→v2.0.8).
-    MARKETING_VERSION: "2.0.7"
+    MARKETING_VERSION: "2.0.8"
     # The build (not marketing) number. Each TestFlight upload needs a UNIQUE one;
     # the fastlane `beta` lane overrides this with the CI run number at build time
     # (xcargs CURRENT_PROJECT_VERSION), so this checked-in "1" is only the local /

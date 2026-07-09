@@ -1,6 +1,27 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.0.7 "Harbor"** (2026-07-09) — the seventh release of the v2.0.x
+> **Current release: v2.0.8 "Harbor"** (2026-07-09) — the eighth release of the v2.0.x
+> mobile-finalization train, and the **iOS release candidate** ("Harborlight"), the final
+> release of the iOS finalization window (v2.0.5–v2.0.8). A **host / iOS-only** cut: the
+> cycle-accurate emulation core is **unchanged and byte-identical to v2.0.7** —
+> AccuracyCoin still **141/141 (100.00%, RAM-authoritative)**, nestest 0-diff, the
+> `#![no_std]` chip stack untouched. It stages the App Store scaffolding a maintainer
+> needs for the v2.1.0 launch: **(1)** version-controlled **App Store Connect listing
+> metadata** (`fastlane/metadata/ios/{en-US,es-ES}/` — name / subtitle / promotional text
+> / keywords / description / release notes / URLs + copyright), mirroring the Android
+> tree, files-only, no upload; **(2)** a **dormant App Store `release` lane** in
+> `fastlane/Fastfile` that stages the build + listing and **does not submit**
+> (`submit_for_review: false`), **not** wired into CI — the interim channel stays
+> **TestFlight** (the `beta` lane); and **(3)** an **App-Review §4.7 self-audit** (no
+> bundled / downloadable ROMs, no in-app ROM links, no Nintendo branding, in-app
+> ownership notice, searchable library, 4+ age rating) recorded in
+> `docs/ios-v2.0.8-readiness.md`. Version bump (workspace `2.0.7 -> 2.0.8`; iOS
+> `MARKETING_VERSION -> 2.0.8`). **No store submission** (that is v2.1.0); screenshots,
+> real signing, the listing upload, and the App-Review submission are the **maintainer /
+> v2.0.9 / v2.1.0** closeout. See `CHANGELOG.md` `[2.0.8]` + `docs/ios-v2.0.8-readiness.md` +
+> `to-dos/plans/v2.0.5-v2.0.8-ios-finalization-plan.md`.
+>
+> **The preceding release: v2.0.7 "Harbor"** (2026-07-09) — the seventh release of the v2.0.x
 > mobile-finalization train, and the **third iOS finalization release** ("Trim"),
 > continuing the iOS window (v2.0.5–v2.0.8). A **host / iOS-only** cut: the
 > cycle-accurate emulation core is **unchanged and byte-identical to v2.0.6** —
@@ -20,7 +41,7 @@
 > See `CHANGELOG.md` `[2.0.7]` + `docs/ios-v2.0.7-readiness.md` +
 > `to-dos/plans/v2.0.5-v2.0.8-ios-finalization-plan.md`.
 >
-> **The preceding release: v2.0.6 "Harbor"** (2026-07-09) — the sixth release of the v2.0.x
+> **The release before that: v2.0.6 "Harbor"** (2026-07-09) — the sixth release of the v2.0.x
 > mobile-finalization train, and the **second iOS finalization release** ("Parity"),
 > continuing the iOS window (v2.0.5–v2.0.8). A **host / iOS-only** cut: the
 > cycle-accurate emulation core is **unchanged and byte-identical to v2.0.5** —
@@ -41,7 +62,7 @@
 > `[2.0.6]` + `docs/ios-v2.0.6-readiness.md` +
 > `to-dos/plans/v2.0.5-v2.0.8-ios-finalization-plan.md`.
 >
-> **The release before that: v2.0.5 "Harbor"** (2026-07-09) — the fifth release of the v2.0.x
+> **Earlier in the train: v2.0.5 "Harbor"** (2026-07-09) — the fifth release of the v2.0.x
 > mobile-finalization train, and the **first iOS finalization release** ("Landfall"),
 > opening the iOS window (v2.0.5–v2.0.8) that mirrors the Android v2.0.1–v2.0.4 window.
 > This is a **host / iOS-only** cut: the cycle-accurate emulation core is **unchanged and

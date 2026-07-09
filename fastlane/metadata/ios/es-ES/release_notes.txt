@@ -1,0 +1,9 @@
+v2.0.8 "Harborlight" — la versión candidata para iOS.
+
+Esta versión funciona sobre el núcleo de emulación v2.0.0 "Timebase" (AccuracyCoin 100%). Prepara la ficha de la App Store y los materiales de revisión antes del lanzamiento público; por ahora la distribución sigue en TestFlight.
+
+- Portado de nuevo al núcleo de ciclo exacto, con la compatibilidad de estados y repeticiones verificada de nuevo.
+- Informe de fallos local opcional y respetuoso con la privacidad (desactivado por defecto).
+- Compilado con el SDK de iOS 26.
+
+Usa tus propios archivos ROM obtenidos legalmente. Libre y de código abierto.

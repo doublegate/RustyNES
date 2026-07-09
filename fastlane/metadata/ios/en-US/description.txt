@@ -1,0 +1,27 @@
+RustyNES is a cycle-accurate Nintendo Entertainment System emulator written in pure Rust. It targets the accuracy bar set by Mesen2, higan, and ares: tight lockstep scheduling at PPU-dot resolution, sub-instruction PPU events visible to subsequent CPU code, and a non-linear audio mixer with band-limited synthesis. The same deterministic core runs on desktop, in the browser, on RetroArch, and here natively on iPhone and iPad.
+
+ACCURACY FIRST
+- The emulation core scores 100% on the AccuracyCoin hardware-accuracy suite.
+- Passes the blargg, kevtris, and MMC3 test-ROM batteries.
+- 172 mapper families, so a huge library of titles just works.
+- Deterministic by design: the same input always produces the same result.
+
+BUILT FOR iOS AND iPadOS
+- A native SwiftUI app with a Metal renderer and ProMotion pacing.
+- On-screen multi-touch controls plus MFi / hardware controllers for up to four players.
+- Save states and battery-backed cartridge saves.
+- Rewind and fast-forward.
+- CRT, scanline, and NTSC-composite video filters.
+- iCloud save-state and settings sync across your devices.
+- Game Center, Lua scripting, and RetroAchievements support.
+- Local and online (room-code) netplay.
+- Full-featured on iPhone and iPad, with multitasking and Stage Manager on iPad.
+- VoiceOver, Dynamic Type, and colorblind palettes; English and Spanish.
+
+BRING YOUR OWN GAMES
+RustyNES ships with no copyrighted game data. Load your own legally obtained .nes / NES 2.0 ROM files from Files, iCloud Drive, or the share sheet — they stay on your device.
+
+OPEN SOURCE
+RustyNES is free and open source (MIT OR Apache-2.0). Source, issue tracker, and documentation are on GitHub at github.com/doublegate/RustyNES.
+
+This is a release-candidate build distributed through TestFlight while we validate on-device stability ahead of the public App Store launch.

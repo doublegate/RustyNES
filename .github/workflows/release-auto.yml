@@ -40,7 +40,16 @@ permissions:
   contents: write
 
 concurrency:
-  group: auto-release
+  # Per-commit group so releases for DIFFERENT versions never supersede each other.
+  # A single global group let GitHub cancel the older PENDING run whenever a newer
+  # one queued behind an in-progress release (the slow binary build serializes the
+  # group) — which silently dropped a middle version's release during a rapid train
+  # (v2.0.6 was skipped between v2.0.5 and v2.0.7 this way). Keying the group on the
+  # head SHA serializes each commit only with itself (still de-duping re-runs of the
+  # same commit) while letting distinct versions release independently; the
+  # tag-existence check + idempotent `gh release create` already make cross-version
+  # concurrency safe.
+  group: auto-release-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
