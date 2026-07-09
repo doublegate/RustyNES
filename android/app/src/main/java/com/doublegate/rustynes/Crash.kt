@@ -1,6 +1,7 @@
 package com.doublegate.rustynes
 
 import android.content.Context
+import android.os.StrictMode
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -98,5 +99,63 @@ object CrashReporter {
     /** Delete all saved crash logs (the Settings "clear" action). */
     fun clear(ctx: Context) {
         dir(ctx).listFiles()?.forEach { it.delete() }
+    }
+}
+
+/**
+ * Debug-only StrictMode policy installer (v2.0.4 "Harbor", Android release candidate).
+ *
+ * StrictMode is the host-side complement to the on-device crash-free-rate / ANR gate:
+ * it surfaces the two most common sources of an ANR or a jank regression *during
+ * development*, long before a real device measures them in Android vitals —
+ *
+ *  - **Thread policy** flags accidental disk / network I/O on the main (UI) thread. The
+ *    single most dangerous ANR class for an emulator is blocking the UI thread on the
+ *    native bridge (ROM load, save-state serialization, UniFFI marshalling); a
+ *    main-thread disk read that slips into the render or input path shows up here as a
+ *    logged violation the moment it runs.
+ *  - **VM policy** flags leaked `Closeable`s / SQLite cursors / registered receivers and
+ *    (on API 28+) leaked JNI global refs — relevant because the wgpu `SurfaceView` +
+ *    UniFFI object graph spans the JNI boundary and a leaked native handle is a slow
+ *    memory / stability regression that a vitals gate would only catch statistically.
+ *
+ * **Log-only, and inert in release.** Every violation is routed to Logcat (never
+ * `penaltyDeath`), so a false positive can never crash a developer build, and the whole
+ * installer is guarded by [BuildConfig.DEBUG] — a release / RC / store build never
+ * constructs a policy, so there is **zero** runtime cost or behavioural change in the
+ * shipped artifact. It lives in `src/main`, so `foss` and `play` share it verbatim and
+ * the `foss` flavor stays behaviour-identical.
+ *
+ * The *authoritative* crash-free-rate + ANR measurement is an ON-DEVICE gate (real
+ * hardware, the Play vitals dashboard on the internal/closed testing track) and is a
+ * maintainer / v2.0.9 step — this installer only makes the host build fail loud on the
+ * developer's own machine so those numbers start clean.
+ */
+object DebugStrictMode {
+    /**
+     * Install the thread + VM StrictMode policies. A no-op in any non-debug build
+     * (release / RC / store), so it is safe to call unconditionally at the very top of
+     * [MainActivity.onCreate] — call it as early as possible so violations on the
+     * launch path are caught too.
+     */
+    fun install() {
+        if (!BuildConfig.DEBUG) return
+        StrictMode.setThreadPolicy(
+            StrictMode.ThreadPolicy.Builder()
+                .detectDiskReads()
+                .detectDiskWrites()
+                .detectNetwork()
+                .detectCustomSlowCalls()
+                .penaltyLog()
+                .build(),
+        )
+        StrictMode.setVmPolicy(
+            StrictMode.VmPolicy.Builder()
+                .detectLeakedClosableObjects()
+                .detectLeakedSqlLiteObjects()
+                .detectLeakedRegistrationObjects()
+                .penaltyLog()
+                .build(),
+        )
     }
 }

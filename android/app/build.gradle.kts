@@ -40,9 +40,13 @@ android {
         minSdk = 26 // AAudio floor.
         targetSdk = 36 // Play mandate (Android 16) from 2026-08-31.
         // v2.0.2 was a desktop-only PPU/AccuracyCoin cut, so the Android host stayed at
-        // 20001/"2.0.1" — 2.0.3 is therefore its next bump (20001 -> 20003).
-        versionCode = 20003
-        versionName = "2.0.3"
+        // 20001/"2.0.1"; v2.0.3 bumped it to 20003. v2.0.4 "Harbor" is the Android
+        // release-candidate cut (release signing scaffold + crash/ANR hardening +
+        // fastlane listing metadata + version bump) on the byte-identical v2.0.3 core,
+        // so the host advances 20003 -> 20004. The monotonic versionCode is the Play
+        // upload ordinal; the internal/closed testing (RC) track uploads this AAB.
+        versionCode = 20004
+        versionName = "2.0.4"
         // No abiFilters here — set per buildType so release ships arm64 only
         // while debug keeps x86_64 for the emulator.
         // PLAY_BUILD moved to the `distribution` product flavors below (v2.0.1, ADR
@@ -171,8 +175,24 @@ android {
                 abiFilters += shipAbi
                 debugSymbolLevel = "SYMBOL_TABLE"
             }
-            if (keystorePropsFile.exists() || keystoreEnvFile != null) {
-                signingConfig = signingConfigs.getByName("upload")
+            // v2.0.4 "Harbor" (Android RC): wire the release signing config with a
+            // graceful debug-signing fallback. When the upload keystore is present
+            // (maintainer secret — a `keystore.properties` file or the
+            // `RUSTYNES_UPLOAD_*` env vars, both gitignored / injected in CI), sign the
+            // release with the real upload key so the produced AAB is store-uploadable.
+            // When ABSENT (a keyless CI or local RC build, which is the state on this
+            // host), fall back to the debug signing config instead of leaving the build
+            // UNSIGNED — an unsigned release APK cannot be `adb install`-ed, so a
+            // maintainer smoke-testing `assembleFossRelease` without the secret would be
+            // blocked. Debug-signed is never shippable (Play App Signing rejects the
+            // debug key), so this fallback only ever produces a locally-installable RC
+            // artifact; the real keystore path is what a store upload uses. See the
+            // `signingConfigs { create("upload") }` block above for the credential
+            // resolution order.
+            signingConfig = if (keystorePropsFile.exists() || keystoreEnvFile != null) {
+                signingConfigs.getByName("upload")
+            } else {
+                signingConfigs.getByName("debug")
             }
             // v2.0.3 (ADR 0025): the RevenueCat local-QA tester unlock is compiled OUT of
             // every release build (including the closed-test track, which is a release

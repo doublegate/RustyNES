@@ -98,6 +98,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import uniffi.rustynes_mobile.HostWarning
 import uniffi.rustynes_mobile.NesController
 import uniffi.rustynes_mobile.RaLoginStatus
 import uniffi.rustynes_mobile.RaToast
@@ -189,6 +190,11 @@ class MainActivity : AppCompatActivity() {
     var romRunningForPip: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // v2.0.4 "Harbor" (Android RC): install the debug-only StrictMode policies as
+        // the very first thing, so main-thread I/O / leaked handles on the launch path
+        // are caught too. Inert in release (guarded on BuildConfig.DEBUG), foss+play
+        // shared — the host-side complement to the on-device crash-free/ANR gate.
+        DebugStrictMode.install()
         // Install the Android-12+ system splash BEFORE super.onCreate(); keep it up
         // until the first Compose frame is ready (the bridge/ROM-DB load is brief).
         val splash = installSplashScreen()
@@ -758,6 +764,18 @@ private fun displayName(context: Context, uri: Uri): String {
     return uri.lastPathSegment ?: "ROM"
 }
 
+/**
+ * Resolve a host-facing bridge [HostWarning] code to a device-locale string (v2.0.4,
+ * the Android half of the host-localizable-warnings carryover). The Rust bridge returns
+ * a stable code rather than baked-in English, so Android maps it through its own string
+ * resources — keeping the frontends in parity while honoring the device locale. The
+ * `when` is exhaustive, so a new bridge warning is a compile error here until localized.
+ */
+private fun hostWarningText(context: Context, warning: HostWarning): String = when (warning) {
+    HostWarning.PRE_TIMEBASE_MOVIE ->
+        context.getString(R.string.host_warning_pre_timebase_movie)
+}
+
 private const val NES_WIDTH = 256
 private const val NES_HEIGHT = 240
 
@@ -1160,6 +1178,14 @@ private fun EmulatorScreen(
                     ?: throw java.io.IOException("can't open movie stream")).use { it.readBytes() }
                 emulator.controller?.moviePlay(bytes)
                 status = "Playing movie: ${displayName(context, uri)}"
+                // v2.0.4: surface any host-localizable bridge warnings queued by the
+                // load (e.g. a pre-Timebase .rnm — ADR 0028) as a device-locale string
+                // resource, resolving the HostWarning code rather than the bridge's
+                // baked-in English, keeping Android in parity with desktop/wasm.
+                emulator.controller?.drainWarningCodes().orEmpty()
+                    .map { hostWarningText(context, it) }
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { status = it.joinToString("\n") }
             }.onFailure { status = "Failed to play movie: ${it.message}" }
         }
     }

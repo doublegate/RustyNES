@@ -177,4 +177,5 @@
     <string name="onboarding_legal_title">Juega con responsabilidad</string>
     <string name="onboarding_legal_body">Juega únicamente con ROMs de las que poseas una copia física. RustyNES no distribuye ROMs comerciales de ningún tipo: proporcionar los archivos de juego es tu responsabilidad, y solo tuya.</string>
     <string name="onboarding_dont_show_again">No volver a mostrar</string>
+    <string name="host_warning_pre_timebase_movie">Esta repetición se grabó en una versión anterior a la v2.0.0. La reproducción de entradas continúa, pero no se garantiza la reproducción exacta del fotograma o del audio a través del cambio de base de tiempo del motor (ADR 0028).</string>
 </resources>

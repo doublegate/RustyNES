@@ -105,3 +105,22 @@
 # strict pass can't strip a model or the entitlement listener types RcBilling chains.
 -keep class com.revenuecat.purchases.** { *; }
 -dontwarn com.revenuecat.purchases.**
+
+# --- v2.0.4 "Harbor" RC final hardening review (Android release candidate) ------
+# The R8 full-mode keep set was re-audited for the release candidate. Every runtime
+# reflection / native-boundary surface the minified `assemble{Foss,Play}Release`
+# exercises is covered by the rules above:
+#   - UniFFI FFI (rustynes_mobile + monetization) + the JNA dispatcher — kept WITH
+#     members + <init> (strict-full-mode requirement).
+#   - the rustynes-android JNI seam (NativeRenderer `native` methods) — kept by member
+#     name so RegisterNatives/by-signature resolution survives.
+#   - the play-flavor proprietary SDKs (Billing, Cast OptionsProvider, Play Games v2,
+#     Play Integrity, app-update/review, AppLovin MAX mediation adapters, RevenueCat) —
+#     all kept; harmless no-ops in the `foss` release, which links none of them.
+#   - ProfileInstaller's manifest ContentProvider/receiver.
+# The v2.0.4 host-side additions carry NO new keeps by construction: `DebugStrictMode`
+# is stripped from release entirely (guarded on BuildConfig.DEBUG), the opt-in
+# `CrashReporter` is reached by a direct Kotlin call (no reflection), and the
+# home-screen `ResumeWidgetReceiver` / `ResumeTileService` are manifest-declared
+# components R8 keeps automatically from the merged manifest. No existing keep is
+# loosened. Audit outcome: the release keep set is COMPLETE for the RC.

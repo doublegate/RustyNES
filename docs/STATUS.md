@@ -1,6 +1,34 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.0.3 "Harbor"** (2026-07-08) — the third release of the v2.0.x
+> **Current release: v2.0.4 "Harbor"** (2026-07-08) — the fourth release of the v2.0.x
+> mobile-finalization train, and the **Android release-candidate** milestone. This is a
+> **host / Android-only** cut: the cycle-accurate emulation core is **unchanged and
+> byte-identical to v2.0.3** — AccuracyCoin still **141/141 (100.00%, RAM-authoritative)**,
+> nestest 0-diff, the deterministic `#![no_std]` chip stack untouched — so no accuracy /
+> save-state / determinism number moves. What v2.0.4 adds is the release-candidate
+> scaffolding a maintainer needs to stage the Android app onto a Play Console testing
+> track: **(1)** the `release` build type wired to the upload keystore with a **graceful
+> debug-signing fallback** (a keyless CI / local `assemble{Foss,Play}Release` still
+> produces an installable — debug-signed, never shippable — RC artifact; a real store
+> upload uses the `keystore.properties` / `RUSTYNES_UPLOAD_*` maintainer secret);
+> **(2)** debug-only **StrictMode** diagnostics (`DebugStrictMode`, thread + VM
+> log-only, `BuildConfig.DEBUG`-guarded, inert in release) as the host-side complement
+> to the on-device crash-free-rate / ANR gate, alongside the existing opt-in
+> `CrashReporter`; **(3)** version-controlled **fastlane Play Console listing metadata**
+> (`fastlane/metadata/android/{en-US,es-ES}/` — title / short + full description /
+> `changelogs/20004.txt`); **(4)** an **R8 / ProGuard final hardening review** confirming
+> the release keep set complete (no keep loosened); and the **version bump** (workspace
+> `2.0.3 -> 2.0.4`, Android `versionCode 20003 -> 20004` / `versionName -> 2.0.4`). The
+> `foss` (F-Droid / GitHub-sideload) flavor stays **behaviour-identical**. **No store
+> submission** (that is the future v2.1.0 joint launch); the **on-device closeout is a
+> maintainer / v2.0.9 step** — the actual Play Console listing upload, signing with the
+> real keystore, the internal/closed testing track, the crash-free-rate + ANR gate on
+> real hardware, live monetization runtime verification, and the deferred per-feature
+> gate migration (keep the existing `LicenseManager` freemium gates — do **not** rewire
+> them to the monetization `feature_enabled` façade without on-device validation). See
+> `CHANGELOG.md` `[2.0.4]` + `to-dos/plans/v2.0.4-android-rc-plan.md`.
+>
+> **The preceding release: v2.0.3 "Harbor"** (2026-07-08) — the third release of the v2.0.x
 > mobile-finalization train, and the one that makes the octal-latch accuracy work
 > real at the shipped default. The **2-cycle-ALE PPU fetch model is promoted from the
 > experimental `mc-ppu-2cycle-ale` flag to the unconditional, only PPU fetch path**
