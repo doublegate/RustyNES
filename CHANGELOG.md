@@ -106,7 +106,7 @@ cycle-accurate core later replaced.
   the AccuracyCoin / SMB / Zelda determinism smoke on Apple silicon) is flagged
   for the v2.0.9 dual-app readiness pass.
 
-## [2.0.4] - 2026-07-08 - "Harbor" (Android release candidate)
+## [2.0.4] - 2026-07-08 - "Harbor" (Android release candidate — "Slipway")
 
 - Android release-candidate milestone; the emulation core is unchanged and
   byte-identical to v2.0.3 (AccuracyCoin 141/141, nestest 0-diff) — a
@@ -119,7 +119,7 @@ cycle-accurate core later replaced.
 - No store submission yet (that is the future v2.1.0 joint launch); the `foss`
   flavor stays behaviour-identical.
 
-## [2.0.3] - 2026-07-08 - "Harbor" (2-cycle-ALE promoted to default — shipped AccuracyCoin 141/141)
+## [2.0.3] - 2026-07-08 - "Harbor" (2-cycle-ALE promoted to default — shipped AccuracyCoin 141/141 — "Keel")
 
 - The 2-cycle-ALE octal-latch PPU fetch model is promoted to the shipped default
   (ADR 0030) — **shipped AccuracyCoin is now 141/141 (100%)**; both the "ALE +
@@ -131,7 +131,7 @@ cycle-accurate core later replaced.
 - Netplay rollback-determinism fix (new PPU snapshot v5 tail); headless frame
   cost rises ~10% (still ~4x realtime), accepted for the accuracy gain.
 
-## [2.0.2] - 2026-07-08 - "Harbor" (octal-latch PPU model — AccuracyCoin 141/141 flag-on)
+## [2.0.2] - 2026-07-08 - "Harbor" (octal-latch PPU model — AccuracyCoin 141/141 flag-on — "Soundings")
 
 - A new octal-latch multiplexed-bus PPU model (ADR 0030) ships **default-off**:
   flag-on it reaches AccuracyCoin 141/141, while the shipped default stays
@@ -142,7 +142,7 @@ cycle-accurate core later replaced.
 - The correct oracle was identified as TriCNES (the AccuracyCoin author's own
   emulator), not Mesen2; promotion to the default is the deliberate v2.0.3 step.
 
-## [2.0.1] - 2026-07-08 - "Harbor" (first Android re-port onto Timebase + AccuracyCoin re-sync + housekeeping)
+## [2.0.1] - 2026-07-08 - "Harbor" (first Android re-port onto Timebase + AccuracyCoin re-sync + housekeeping — "Mooring")
 
 - First release of the v2.0.x "Harbor" mobile-finalization train: the Android app
   is re-ported onto the v2.0.0 "Timebase" core.
