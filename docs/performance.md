@@ -60,6 +60,15 @@ AccuracyCoin** (the +5.76-point accuracy gain). Both configs clear the 16.639 ms
 NTSC wall by 4.25–7.1× even on this 2020 desktop. The realtime/fps figures are
 against the NTSC deadline; legacy is reachable via `--no-default-features`.
 
+> **v2.0.3 — 2-cycle-ALE PPU-fetch model promoted to default (ADR 0030).** Making
+> each background VRAM access a genuine two-dot transaction (an ALE-drive dot + a
+> multiplexed-bus splice on the read dot, replacing the whole-dot fetch) is now the
+> only PPU fetch path. It costs **~10% over the R1 baseline**: `nes_run_frame_nestest`
+> is now **~4.15 ms/frame (~4× realtime)** vs the ~3.77 ms R1 figure above. Accepted
+> as the cost of AccuracyCoin **141/141** (both the "ALE + Read" `$0491` and "Hybrid
+> Addresses" `$0492` PPU tests now pass on the shipped default). Still ~4× under the
+> NTSC wall. This is the current headless-frame baseline for the default build.
+
 The +6–8% is **bus-side, not the CPU core** — in isolation the R1 CPU cycle
 loop is *faster*:
 

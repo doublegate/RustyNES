@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    v2.0.3 "Harbor" (ADR 0025): PLAY-FLAVOR-ONLY Spanish (es) catalog for the run-out
+    paywall + countdown UI. Counterpart to `src/play/res/values/strings.xml`; merges into
+    the `play` variant only (the `foss` artifact has no paywall).
+-->
+<resources>
+    <string name="paywall_countdown">Juego gratis: %1$s restante</string>
+    <string name="paywall_runout_title">Sesión gratuita finalizada</string>
+    <string name="paywall_runout_body">Se acabó tu tiempo de juego gratuito. Mira un breve anuncio para conseguir más tiempo, desbloquea la Versión completa para eliminar anuncios y límites, o continúa sin conexión.</string>
+    <string name="paywall_watch_ad">Ver anuncio para más tiempo</string>
+    <string name="paywall_offline_grace">Continuar sin conexión</string>
+    <string name="paywall_full_version">Obtener la Versión completa</string>
+</resources>

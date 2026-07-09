@@ -1,7 +1,9 @@
 # ADR 0030 — AccuracyCoin "ALE + Read" / "Hybrid Addresses": the octal-latch gap and the 2-cycle-ALE-fetch prerequisite
 
-**Status:** Accepted — records a deferred-with-roadmap decision (keep the honest
-139/141 baseline; attempt Option 2 as PR B3, and Option 1 as a separate enduring branch).
+**Status:** Accepted, then **Promoted (v2.0.3)** — the 2-cycle-ALE fetch model
+(Option 1) converged, was verified, and is now the shipped default and the only PPU
+fetch path; both experimental flags are retired. See the "Promoted (v2.0.3)" section
+at the end.
 **Date:** 2026-07-08
 **Author:** DoubleGate
 **Related:** [ADR 0002 (IRQ-timing coordination)](0002-irq-timing-coordination.md),
@@ -269,3 +271,170 @@ alignments and generalizes; then, gated on the **60-ROM commercial oracle** (fla
 **promoted to default** (shipped AccuracyCoin 141/141), weighing the ADR 0028 save-state /
 byte-identity implication at that point. This ADR is updated (not superseded) when promotion
 lands.
+
+## Update — 2026-07-08 (first-principles refine proven infeasible at whole-dot resolution → 2-cycle-ALE campaign)
+
+The bounded v2.0.3 first-principles attempt (make `octal_latch` *naturally* carry the stale byte,
+deleting the `+1 coarse-X` reconstruction) was made and **instrumented against the TriCNES oracle
+— it does not converge at RustyNES's whole-dot (single-step) fetch cadence.** The measured barrier:
+
+- On the Hybrid test at the `$2006` second write (frame 5110, **scanline 4, dot 182**),
+  `v & 0xFF = $18` (coarse-X 24). The corruption needs the latch to hold **`$19`** (coarse-X **25**,
+  the NT low of `$2C19`) so the next fetch splices `$2F00 | $19 = $2F19`.
+- Two first-principles variants both fail: latch loaded at every fetch ALE → holds a pattern byte
+  `$44` → `$2F44` (140/141); latch loaded only at NT ALE → holds `$18` → `$2F18`, off by one
+  coarse-X (140/141). RustyNES collapses each access into ONE dot and runs `inc_hori` at phase 7,
+  so the latch can **never** naturally reflect coarse-X > the current `v`'s (24) — it cannot carry
+  the one-tile-ahead `$19`.
+- **TriCNES gets `$19` naturally because it models each fetch as a 2-DOT access**: the even-dot ALE
+  drives the PAR and loads `PPU_OctalLatch = (byte)PPU_AddressBus`, the odd-dot read uses
+  `(PAR & 0xFF00) | OctalLatch` (`Emulator.cs:153`), and the delayed-`CopyV` countdown
+  (`Emulator.cs:1684-1704`) lets the coarse-X-25 NT ALE fire (with `IncrementScrollX` ordering)
+  *before* the `$2006` update lands. That even-ALE/odd-read split **is** the full 2-cycle-ALE fetch
+  refactor.
+
+So the v2.0.2 `+1 coarse-X` reconstruction is a **faithful whole-dot stand-in** for exactly this
+2-cycle-ALE artifact — it is not reachable "more correctly" without the refactor itself.
+
+**Decision (maintainer, 2026-07-08): do the full 2-cycle-ALE fetch refactor** as a dedicated
+Timebase-scale campaign spanning **v2.0.3 → v2.0.4** — model each background/`$2007`/`$2006` VRAM
+access as a 2-dot transaction (even-dot ALE drives the address + loads the octal latch; odd-dot
+read splices `(bus_high) | octal_latch` + writes the DATA back to the low bus) with the
+delayed-`CopyV` countdown, behind a default-off flag, recalibrating every fetch-cadence-derived
+timing (sprite-zero-hit dots, MMC3 A12 IRQ, MMC5 scanline, BG shift reload), gated at each phase
+on the full battery (141 AccuracyCoin + nestest 0-diff + blargg/kevtris + mmc3_test_2 +
+sprite-zero + 60-ROM byte-identity + ≤2 ms/frame) — then promote to default (shipped 141/141).
+This mirrors the
+v2.0.0 "Timebase" beta-train ceremony; plan in `to-dos/plans/v2.0.3-2cycle-ale-plan.md`.
+
+## Update — 2026-07-08 (v2.0.3 Phases 2+3 CONVERGED — 141/141 flag-on, fully natural, no reconstruction)
+
+The 2-cycle-ALE campaign's Phase 2 (NT true two-dot fetch) + Phase 3 (both corruptions arising
+naturally) landed on branch `feat/v2.0.3-2cycle-ale-campaign` behind the default-off
+`mc-ppu-2cycle-ale` flag, and **both AccuracyCoin PPU tests now pass flag-on with NO
+reconstruction: AccuracyCoin 141/141 (100.00%)**, flag-**off** still byte-identical at 139/141.
+The `+1 coarse-X` stand-in is gone — the octal latch carries the stale bytes on its own.
+
+**How the natural model works (all `#[cfg(feature = "mc-ppu-2cycle-ale")]`-gated):**
+
+- **NT true two-dot fetch (Phase 2).** A new phase-0 nametable ALE (`ale_drive_nt`) drives the
+  PLAIN `0x2000 | (v & 0x0FFF)` address and loads `octal_latch` with its low byte one dot before
+  the phase-1 read; the read (`fetch_nt`) resolves through the armed `ale_splice`
+  `(address_bus & 0x3F00) | octal_latch`. The MMC5 vertical-split query stays at the read dot
+  (its `split_chr_bank_latch` side effect is mapper-observable); when it turns out split-active,
+  `fetch_nt` disarms the phase-0 ALE and reads the synthesized `split.nt_addr` co-located, so
+  split rendering is byte-identical (no non-mutating peek was needed — deferring the *correction*
+  to the read dot achieves the same end without a new trait method).
+- **Hybrid Addresses (Phase 3) — the delayed-`CopyV` countdown** (`copy_v_delay`, `TriCNES`
+  `PPU_Update2006Delay`). A `$2006` second write during the active BG-fetch window does NOT copy
+  `t -> v` immediately; it stages a `COPY_V_DELAY = 4`-dot countdown (RustyNES's fixed CPU/PPU
+  alignment corresponds to TriCNES's delay-4 case; the AccuracyCoin ROM's `.word` retries cover
+  its two answer-key alignments and RustyNES's fixed one hits). While the countdown runs, the
+  fetch cadence advances coarse-X (`inc_hori_v` at phase 7) and the per-group phase-0 NT ALE keeps
+  loading the CURRENT (pre-copy) `v`'s NT-low, so by the landing `octal_latch` NATURALLY holds the
+  one-tile-ahead `$19`; the landing sets `address_bus = v` (= new `t`, high `$2F00`) and the next
+  NT read splices `$2F00 | $19 = $2F19`. **Verified natural** by the octal trace:
+  `W2006 @ sl4 dot182 → HYBRID $2F19 @ dot186` (delay exactly 4). The deferral is gated to the
+  active-fetch window (visible dots 1..=256 + the 321..=336 prefetch) — the only region where a
+  BG fetch can consume the stale latch — so HBlank-window scroll writes are unaffected.
+- **ALE + Read (Phase 3)** reuses the existing `render_data_bus`/`ppudata_sm_countdown` machinery:
+  at the PPUDATA state-machine landing during render the latch freezes on the read's DATA byte
+  (`pattern_latch_stale`), and `drive_bus` suppresses the next pattern ALE's latch reload so the
+  pattern read splices `(PAR high 6):(stale $FF) = $0FFF` — no explicit reconstruction, just the
+  natural multiplexed-bus splice. **Verified:** `SMLAND $FF @ sl3 dot228 → STALE $0FFF @ dot230`.
+
+A12/mapper notification stays on the INTENDED (un-spliced) address at every call site; the only
+A12 timing change is the `$2006`-write edge itself, which the delayed copy shifts by 4 dots during
+render (rare; verified inert on the MMC3/MMC1 A12 suites). No snapshot-format bump (`address_bus`
+/`ale_armed`/`octal_latch`/`copy_v_delay`/`pattern_latch_stale` all self-heal within a scanline;
+`PPU_SNAPSHOT_VERSION` stays at 4).
+
+**Regression battery (flag-on):** nestest 0-diff; mmc3 A12-IRQ suite 18/18; ppu_sprites (sprite-
+zero) all pass; mmc1_a12 pass; nes_blargg all pass; `cargo fmt` + `clippy -D warnings` clean for
+the default, `mc-ppu-bus-addr-hybrid`, and `mc-ppu-2cycle-ale` configs; `no_std` cross-compile
+clean. **Flag-off:** byte-identical (AccuracyCoin 139/141, nestest 0-diff).
+
+**60-ROM commercial byte-identity oracle (flag-on): 58/60 byte-identical.** Exactly two titles
+change, and BOTH legitimately perform `$2006`-during-active-render and differ ONLY in the
+framebuffer (audio FNV + CPU-cycle count byte-identical — a pure PPU-internal timing shift, not a
+divergent code path):
+
+- **Super Mario Bros. 3 (MMC3):** 8 pixels, all on scanline 194 columns 0-7 (a single leftmost
+  tile).
+- **Uchuu Keibitai SDF (MMC5):** 7 pixels on scanline 15 columns 152-158 (one tile at the split
+  boundary).
+
+Each is a single-tile sub-scanline shift at the exact scanline of a mid-render `$2006` scroll
+write — the precise artifact the 2-cycle-ALE model is designed to reproduce, and MORE
+TriCNES-faithful than the flag-off immediate-`v=t` approximation (TriCNES delays `v=t` by 4-5 dots
+unconditionally). The committed `insta` snapshots are LEFT at the flag-off values so the shipped
+build stays byte-identical; the two flag-on diffs are documented exceptions to be re-blessed (or
+made feature-conditional) by the maintainer at the **Phase-4 promotion** gate alongside the perf
+check and a CI job asserting flag-on 141/141. This ADR is updated (not superseded) at promotion.
+
+## Promoted (v2.0.3)
+
+The 2-cycle-ALE fetch model (Option 1) is now the **shipped default and the only PPU
+fetch path.** It follows the v2.0.0 precedent (which promoted the one-clock scheduler by
+deleting its flag): the model is made unconditional and BOTH experimental flags are
+retired.
+
+- **Unconditional model.** The ALE-drive + first-class `octal_latch` + `ale_splice`
+  multiplexed-bus splice + delayed-`CopyV` Hybrid (`copy_v_delay`) + `$2007`-ALE-overlap
+  "ALE + Read" (`pattern_latch_stale`) machinery in `crates/rustynes-ppu/src/ppu.rs` is
+  no longer feature-gated — it is always compiled and active.
+- **Both flags retired.** `mc-ppu-2cycle-ale` (the converged model) and
+  `mc-ppu-bus-addr-hybrid` (the superseded v2.0.2 whole-dot `+1 coarse-X` stand-in) are
+  deleted from `rustynes-ppu`/`rustynes-core`/`rustynes-test-harness` `Cargo.toml`, and the
+  v2.0.2 stand-in code (the `copy_v` one-shot, the `octal_effective` splice function, the
+  `OctalFetch` enum, and the `(v & 0xE0)|(coarse_x+1)` reconstruction) is removed. Zero
+  references to either flag remain in `crates/`.
+- **Diagnostic tracer kept.** The `octal_trace` calibration ring is retained behind a
+  new default-off dev feature `ppu-octal-trace` (it does NOT gate emulation behavior): with
+  the feature off, `push` is a zero-cost no-op stub and the ring's 64-bit-atomic storage is
+  absent, so the shipped hot path is untouched and the `#![no_std]` chip stack (whose
+  `thumbv7em` target lacks 64-bit atomics) still builds. This is why the module could not be
+  made unconditional.
+
+**Shipped-default verification (no feature flags):**
+
+- **AccuracyCoin 141/141 (100.00%)**, RAM-authoritative, zero failing tests — both `$0491`
+  "ALE + Read" and `$0492` "Hybrid Addresses" pass on the default build.
+- Full accuracy battery green: nestest 0-diff; mmc3 A12-IRQ 18/18 (+ the 5 pre-existing
+  by-design R1/R2/rev-B `#[ignore]`s, unchanged); ppu_sprites 19/19; mmc1_a12; nes_blargg
+  8/8. `cargo test --workspace`, `cargo fmt --all --check`,
+  `cargo clippy --workspace --all-targets -D warnings`, `RUSTDOCFLAGS=-D warnings cargo doc`,
+  and the `thumbv7em-none-eabihf` `no_std` cross-compile all clean.
+- **60-ROM commercial oracle: 60/60**, with exactly the two documented titles re-blessed —
+  **Super Mario Bros. 3 (MMC3)** and **Uchuu Keibitai SDF (MMC5)** — each changing ONLY its
+  `checkpoint f600 fb_fnv1a64` line (a pure PPU-internal framebuffer shift; cycle count and
+  audio hash byte-identical). No other title's snapshot moved. This is the intentional,
+  more-TriCNES-faithful output the model produces at a mid-render `$2006` scroll write.
+
+**Performance trade (accepted).** The 2-cycle-ALE split makes each background VRAM access a
+genuine two-dot transaction (an ALE-drive dot plus a splice on the read dot), which costs
+~10% over the R1 baseline: nestest headless is **~4.15 ms/frame (~4x realtime)** vs the
+~3.77 ms R1 baseline. Well inside the real-time budget; accepted as the cost of the accuracy
+gain. Recorded in `docs/performance.md`.
+
+**Save-state format — correction to the pre-promotion note above.** The "Regression
+battery (flag-on)" note claimed "no snapshot-format bump (`PPU_SNAPSHOT_VERSION` stays at
+4)" because the octal-latch fields "self-heal within a scanline." That reasoning holds for a
+single continuous run, but promoting the model to the default path made it the substrate for
+**netplay rollback**, which save/restores emulator state and re-simulates. The rollback
+checkpoints exposed a genuine determinism gap: `snapshot_restore_replay` fidelity requires the
+in-flight fetch state to round-trip (a mid-render checkpoint can land with `copy_v_delay` /
+`pattern_latch_stale` / `ale_armed` / `octal_latch` / `address_bus` live), exactly the class
+of bug the v3 (`$2007` state machine) and v4 (overclock countdown) snapshot tails already
+fixed. Three `rustynes-netplay` rollback-determinism tests (`rollback_matches_reference`,
+`n_player_rollback_matches_reference`, `rollback_stress_high_latency`) regressed on
+promotion and were fixed by serializing these five fields in a new **`PPU_SNAPSHOT_VERSION`
+v5 tail**.
+
+This IS a save-state addition (`PPU_SNAPSHOT_VERSION` 4 → 5), and it revises the earlier
+"stays at 4" expectation. It is **additive and NOT a load-break**: the six-byte tail is
+appended, and pre-v5 `.rns` blobs upconvert with the five fields at their inactive rest
+defaults (`0`/`false`) — the state a save taken at a fetch boundary always holds — so old
+save-states still load (per the ADR 0028 spirit; the rendered output for the two titles above
+is the only user-visible change, an intentional accuracy improvement, not a format break).
+The netplay determinism battery (all 16 tests) passes with the v5 tail.

@@ -43,15 +43,14 @@ hd-pack = []
 # are reached only through the gated post-frame poke path (never the run loop),
 # so determinism + the AccuracyCoin contract are unaffected.
 debug-hooks = []
-# v2.0.1 (ADR 0030) — EXPERIMENTAL persistent-PPU-bus-address model (Option 2 /
-# Mesen2's `_ppuBusAddress` + 3-dot-delayed `v`), the attempt to pass the two
-# newest AccuracyCoin PPU tests ("Hybrid Addresses" $0492, "ALE + Read" $0491).
-# Off by default so the SHIPPED build is byte-identical and stays at its measured
-# AccuracyCoin value: EVERYTHING this feature adds — the `bus_addr` address
-# tracking AND the behaviour-changing `$2006` hybrid-fetch / `$2007` ALE+Read
-# corruption — is `#[cfg(feature = "mc-ppu-bus-addr-hybrid")]`-gated, so the
-# default build compiles NONE of it (the fields do not even exist). See ADR 0030.
-mc-ppu-bus-addr-hybrid = []
+# v2.0.3 (ADR 0030) — diagnostic octal-latch calibration tracer (the `octal_trace`
+# ring buffer used to cross-diff the 2-cycle-ALE fetch cadence against the TriCNES
+# per-dot bus sequence). Off by default: the shipped / `#![no_std]` build gets a
+# zero-cost no-op `push` stub with NO 64-bit-atomic ring storage (unavailable on
+# the `thumbv7em` target), so the 2-cycle-ALE model's behavior is IDENTICAL with
+# the feature on or off — it only gates whether the diagnostic ring is captured.
+# See ADR 0030.
+ppu-octal-trace = []
 
 [dependencies]
 bitflags.workspace = true

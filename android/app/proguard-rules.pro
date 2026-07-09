@@ -74,3 +74,34 @@
 # resolves reflectively; AGP usually keeps these, but pin them so a strict-full
 # pass can't strip the on-device profile installation path.
 -keep class androidx.profileinstaller.** { *; }
+
+# --- Monetization UniFFI bindings (rustynes-monetization AdPolicy core) --------
+# v2.0.3 "Harbor" (ADR 0025). The SECOND UniFFI crate's Kotlin bindings land in
+# `com.doublegate.rustynes.monetization.ffi.*` (its own package via the crate's
+# uniffi.toml, distinct from `uniffi.rustynes_mobile.*` above). Like the mobile
+# bindings they are reached through JNA reflection, so keep the package WITH
+# constructors + members — R8 strict-full-mode strips members otherwise and the
+# minified `assemblePlayRelease` crashes at the first FFI call (AdPolicy / PlayProgress
+# / the enums). Present only in the `play` variant; harmless (no-op keep) in `foss`.
+-keep class com.doublegate.rustynes.monetization.ffi.** { <init>(...); *; }
+-keep interface com.doublegate.rustynes.monetization.ffi.** { *; }
+
+# --- AppLovin MAX (play-flavor ad mediation) ----------------------------------
+# v2.0.3 "Harbor" (ADR 0025). AppLovin ships its own consumer rules in the AAR, but
+# under AGP 9.x strict-full-mode pin the SDK + every mediation adapter (loaded by
+# name/reflection from the MAX waterfall) WITH members so R8 can't rename/strip an
+# adapter entry point or an ad listener the SDK calls back reflectively. `-dontwarn`
+# covers the optional networks not on the classpath. `play`-only classes; the keeps
+# are no-ops in the `foss` release (nothing under com.applovin is linked there).
+-keep class com.applovin.** { *; }
+-keep public class com.applovin.mediation.adapters.** { *; }
+-keep public class * extends com.applovin.mediation.adapter.MaxAdapter { *; }
+-dontwarn com.applovin.**
+
+# --- RevenueCat (play-flavor entitlement source of truth) ---------------------
+# v2.0.3 "Harbor" (ADR 0025). RevenueCat's Purchases SDK (RcBilling) uses reflection /
+# serialization (kotlinx-serialization models, the BillingClient bridge, the
+# UpdatedCustomerInfoListener). It ships consumer rules, but pin the public surface so a
+# strict pass can't strip a model or the entitlement listener types RcBilling chains.
+-keep class com.revenuecat.purchases.** { *; }
+-dontwarn com.revenuecat.purchases.**

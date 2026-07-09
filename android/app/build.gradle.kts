@@ -39,8 +39,10 @@ android {
         applicationId = "com.doublegate.rustynes"
         minSdk = 26 // AAudio floor.
         targetSdk = 36 // Play mandate (Android 16) from 2026-08-31.
-        versionCode = 20001 // 2.0.1
-        versionName = "2.0.1"
+        // v2.0.2 was a desktop-only PPU/AccuracyCoin cut, so the Android host stayed at
+        // 20001/"2.0.1" — 2.0.3 is therefore its next bump (20001 -> 20003).
+        versionCode = 20003
+        versionName = "2.0.3"
         // No abiFilters here — set per buildType so release ships arm64 only
         // while debug keeps x86_64 for the emulator.
         // PLAY_BUILD moved to the `distribution` product flavors below (v2.0.1, ADR
@@ -102,6 +104,29 @@ android {
         create("play") {
             dimension = "distribution"
             buildConfigField("boolean", "PLAY_BUILD", "true")
+            // v2.0.3 (ADR 0025): the monetization SDK identifiers, PLAY-FLAVOR ONLY so the
+            // `foss` artifact carries no ad-unit / SDK keys at all. Sourced from gradle
+            // properties (keep real keys out of source control — inject via
+            // `~/.gradle/gradle.properties` or CI secrets); each defaults to "" so a keyless
+            // build still compiles + links (the AppLovin / RevenueCat SDKs simply no-op /
+            // fail-soft with an empty key, which is correct for a dormant build). Consumed by
+            // MonetizationGate / AdGate / RewardedGate / RcBilling via BuildConfig.*.
+            buildConfigField(
+                "String", "APPLOVIN_SDK_KEY",
+                "\"${providers.gradleProperty("applovinSdkKey").orNull ?: ""}\"",
+            )
+            buildConfigField(
+                "String", "REVENUECAT_API_KEY",
+                "\"${providers.gradleProperty("revenueCatGoogleKey").orNull ?: ""}\"",
+            )
+            buildConfigField(
+                "String", "MAX_INTERSTITIAL_AD_UNIT_ID",
+                "\"${providers.gradleProperty("maxInterstitialAdUnitId").orNull ?: ""}\"",
+            )
+            buildConfigField(
+                "String", "MAX_REWARDED_AD_UNIT_ID",
+                "\"${providers.gradleProperty("maxRewardedAdUnitId").orNull ?: ""}\"",
+            )
         }
     }
 
@@ -149,11 +174,20 @@ android {
             if (keystorePropsFile.exists() || keystoreEnvFile != null) {
                 signingConfig = signingConfigs.getByName("upload")
             }
+            // v2.0.3 (ADR 0025): the RevenueCat local-QA tester unlock is compiled OUT of
+            // every release build (including the closed-test track, which is a release
+            // build) — RcBilling.testerUnlockEnabled() is `DEBUG && TESTER_UNLOCK`, so this
+            // false makes it a constant `false` and no unlock can leak to a store build.
+            buildConfigField("boolean", "TESTER_UNLOCK", "false")
         }
         debug {
             applicationIdSuffix = ".debug"
             // Debug keeps x86_64 too so it installs on the emulator / CI.
             ndk { abiFilters += builtAbis }
+            // v2.0.3 (ADR 0025): allow the debug-only RevenueCat tester unlock (still
+            // additionally gated on BuildConfig.DEBUG inside RcBilling). Play-flavor only in
+            // effect; the foss build never reads it.
+            buildConfigField("boolean", "TESTER_UNLOCK", "true")
         }
     }
 
@@ -384,6 +418,19 @@ dependencies {
     // install, so they are safe to call unconditionally (still flavor-gated for clarity).
     "playImplementation"("com.google.android.play:app-update-ktx:2.1.0")
     "playImplementation"("com.google.android.play:review-ktx:2.0.2")
+    // v2.0.3 "Harbor" (ADR 0025, Workstream step 5): the monetization SDKs — PLAY-FLAVOR
+    // ONLY, so the `foss` (F-Droid / GitHub-Releases) artifact links neither the ad
+    // mediation SDK nor the store SDK and stays clean / ad-free / tracking-free.
+    //   - AppLovin MAX 13 — the interstitial + rewarded mediation used by AdGate /
+    //     RewardedGate. Hosted on AppLovin's own Maven repo (added in settings.gradle.kts).
+    //   - RevenueCat 8 — the "premium / remove-ads" entitlement source of truth (RcBilling),
+    //     pushed into the shared Rust AdPolicy core. On Maven Central.
+    // Both are DORMANT behaviourally in the shipped default (no live keys, no ad units, and
+    // MonetizationGate's paywall only ever draws once a free budget is exhausted, which the
+    // core never reports without a configured session). The glue is structural (ADR 0025):
+    // the maintainer flips it live at v2.1.0 with real keys + Play Console products.
+    "playImplementation"("com.applovin:applovin-sdk:13.0.1")
+    "playImplementation"("com.revenuecat.purchases:purchases:8.10.0")
     // v1.8.8 "Atlas" (Workstream J): pull the generated Baseline + Startup Profiles
     // from the Macrobenchmark module. The baselineprofile plugin wires the produced
     // `baseline-prof.txt` / `startup-prof.txt` into this variant's merged assets.
@@ -397,6 +444,15 @@ dependencies {
 //     on demand with `./gradlew :app:generateReleaseBaselineProfile` on a device/AVD.
 //   - dexLayoutOptimization = true: Startup Profiles reorder the launch classes into
 //     the first classes.dex (the AGP 8.3+ DEX-layout win, on top of the AOT profile).
+// MAINTAINER (v2.0.9): the committed Baseline / Startup Profile must be REGENERATED
+// on-device against the v2.0.0 "Timebase" core before the Android release candidate. The
+// one-clock scheduler rewrite changed the hot launch + UniFFI-marshalling class set, so a
+// stale profile (or the absence of one — none is committed yet) under-optimizes cold start.
+// Regeneration needs a device / AVD and CANNOT run on this host CI path:
+//   ANDROID_HOME=... ./gradlew :app:generateReleaseBaselineProfile
+// then commit the produced baseline-prof.txt under
+// :app/src/.../generated/baselineProfiles/. Config/plumbing here targets the v2.0.0 core
+// (versionCode/name bumped to 2.0.3 above); only the on-device capture is deferred.
 baselineProfile {
     automaticGenerationDuringBuild = false
     dexLayoutOptimization = true

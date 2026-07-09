@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    PLAY-FLAVOR MANIFEST OVERLAY (v2.0.3 "Harbor", ADR 0025).
+
+    Everything here is proprietary / ad-related and MUST NOT reach the `foss`
+    (F-Droid / GitHub-Releases) artifact. Placing it in `src/play/AndroidManifest.xml`
+    (rather than `src/main`) means the manifest merger folds these nodes into the `play`
+    merged manifest ONLY — the clean `foss` manifest declares no AD_ID permission, no
+    AdMob application id, and no ads SDK component. F-Droid's inclusion policy requires
+    exactly this: a build with no ads / tracking declarations.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- AppLovin MAX (and its AdMob adapter, if enabled in the waterfall) read the
+         advertising id; targetSdk 33+ requires this normal permission to access it. It is
+         a `play`-only declaration by design (ADR 0025). -->
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
+
+    <application>
+        <!-- Google Mobile Ads (AdMob) requires its APPLICATION_ID in the manifest or the
+             SDK throws at init. This is the OFFICIAL GOOGLE TEST app id — it serves only
+             test ads and cannot generate revenue, so it is safe to commit and keeps a
+             keyless/dormant build from crashing. MAINTAINER (v2.1.0): replace with the
+             real AdMob app id before the Google Play launch (paired with the real
+             applovinSdkKey / ad-unit gradle properties). -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3940256099942544~3347511713" />
+    </application>
+</manifest>

@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.0.2-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
-  <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-98.58%25%20(139%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.0.3-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
 
@@ -19,10 +19,10 @@
 **RustyNES is a cycle-accurate Nintendo Entertainment System emulator written in
 pure Rust.** It targets the Mesen2 / higan / ares accuracy bar — tight, lockstep
 scheduling at PPU-dot resolution on a master-clock-precise timebase — clearing
-**AccuracyCoin 98.58% (139/141)** and matching the Nintendulator golden log on
-`nestest` with **zero diff**. (The two remaining failures are the newest upstream
-PPU tests, "ALE + Read" and "Hybrid Addresses" — known gaps deferred to a future
-accuracy session.)
+**AccuracyCoin 100% (141/141)** and matching the Nintendulator golden log on
+`nestest` with **zero diff**. (As of v2.0.3 every assigned test passes, including the
+two newest upstream PPU tests, "ALE + Read" and "Hybrid Addresses", via the promoted
+2-cycle-ALE fetch model — ADR 0030.)
 
 Beyond reference accuracy, RustyNES is a complete, modern emulation platform:
 **172 mapper families** covering the vast majority of the commercial library (plus a
@@ -73,7 +73,7 @@ platform for NES emulation.
 
 | Feature                | Description                                                                                  |
 | ---------------------- | -------------------------------------------------------------------------------------------- |
-| **Cycle-Accurate**     | Master-clock-precise CPU / PPU / APU — AccuracyCoin 98.58% (139/141), nestest 0-diff         |
+| **Cycle-Accurate**     | Master-clock-precise CPU / PPU / APU — AccuracyCoin 100% (141/141), nestest 0-diff           |
 | **172 Mapper Families** | NROM through MMC5, the full VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company ASIC, reusable-ASIC multicarts (FK23C / COOLBOY / MINDKIDS / Sachen / Waixing / Kaiser), and Vs.-System boards — classified Core / Curated / BestEffort behind a CI accuracy-honesty gate — plus a UNIF (`.unf`) cartridge loader |
 | **Famicom Disk System**| `.fds` games with real-BIOS boot, writable disks, side-swapping, and 2C33 wavetable audio    |
 | **Vs. / PlayChoice-10**| Arcade ROMs in true 2C03 / 2C04 / 2C05 RGB with per-game DIP presets                          |
@@ -312,7 +312,7 @@ The browser build closes several desktop-parity gaps with web-specific implement
 ### Android *(v1.8.x)*
 
 RustyNES runs as a complete native **Android app** on the byte-identical core (so
-AccuracyCoin holds 139/141 unchanged), built on a shared **`rustynes-mobile`**
+AccuracyCoin holds 141/141 as on desktop), built on a shared **`rustynes-mobile`**
 UniFFI bridge, a **`rustynes-android`** JNI layer, and a Jetpack **Compose** shell:
 
 - **Rendering + audio** — wgpu on a `SurfaceView`, reusing the desktop WGSL CRT /
@@ -336,7 +336,7 @@ split — is **deferred to v2.1.0** (see [Roadmap](#roadmap)). Details in
 
 ### iOS / iPadOS *(v1.9.x)*
 
-RustyNES runs as a native **iOS / iPadOS app** on the byte-identical core (maintaining the same 139/141 AccuracyCoin bar as desktop), built on the shared **`rustynes-mobile`** UniFFI bridge and a native SwiftUI shell:
+RustyNES runs as a native **iOS / iPadOS app** on the byte-identical core (maintaining the same 141/141 AccuracyCoin bar as desktop), built on the shared **`rustynes-mobile`** UniFFI bridge and a native SwiftUI shell:
 
 - **Rendering + audio** — Metal via `wgpu` with the same full WGSL shader pipelines (CRT, NTSC, Bisqwit) and ProMotion pacing, plus a low-latency CoreAudio hot path.
 - **Input** — multi-touch on-screen pad (NES-001 style), responsive sizing, GameController framework for P1–P4 (hot-plug), and Core Haptics.
@@ -575,7 +575,7 @@ assigned tests is the authoritative source.
 
 | Suite                       | Result                                                                |
 | --------------------------- | --------------------------------------------------------------------- |
-| **AccuracyCoin**            | **98.58% (139/141, 2 fail)** — the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") are known gaps |
+| **AccuracyCoin**            | **100% (141/141)** — every assigned test passes, including the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses"), via the promoted 2-cycle-ALE fetch model (v2.0.3, ADR 0030) |
 | nestest                     | 0-diff vs the Nintendulator golden log                                |
 | blargg `cpu_interrupts_v2`  | 5/5 strict · SH\* 6/6                                                  |
 | `region_timing`             | 4/4 (PAL **3.2:1**) · `$2007` Stress 170/170                          |
@@ -599,11 +599,13 @@ oracles with no engine change. The few remaining residuals (a Test 5/6 active-wi
 mirror refinement and the `$2002` NMI-suppression race) converge on the future v2.0
 fractional-master-clock refactor (ADR 0002).
 
-**Everything added since the v1.0.0 core is additive and off-by-default.** Each new
+**Everything added since the v1.0.0 core is additive and off-by-default** — each new
 workstream is a frontend tap or an opt-in feature flag, so the shipped / native /
-`no_std` / wasm builds stay **byte-identical** and **AccuracyCoin holds 139/141**
-(the two newest upstream PPU tests, "ALE + Read" and "Hybrid Addresses", are known
-gaps deferred to a future accuracy session).
+`no_std` / wasm builds stay **byte-identical** — with two deliberate exceptions to
+that byte-identity guarantee: the **v2.0.0** one-clock "Timebase" scheduler and the
+**v2.0.3** promotion of the 2-cycle-ALE PPU fetch model (ADR 0030), which together
+bring **AccuracyCoin to 100% (141/141)** — both newest upstream PPU tests, "ALE +
+Read" and "Hybrid Addresses", now pass on the shipped default.
 
 > A note on test counts: RustyNES is validated by closed-form test ROMs (AccuracyCoin,
 > nestest, blargg, mmc3_test, Holy Mapperel) and a commercial-ROM oracle, not by a

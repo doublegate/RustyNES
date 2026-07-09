@@ -128,6 +128,12 @@ class MainActivity : AppCompatActivity() {
     /** Freemium entitlement (Workstream M); created in onCreate. */
     private lateinit var license: LicenseManager
 
+    /** v2.0.3 "Harbor" (ADR 0025): the ad-supported / freemium monetization façade. Real in
+     *  the `play` flavor (AppLovin MAX + RevenueCat over the shared Rust AdPolicy core), a
+     *  no-op twin in `foss` (every feature free, no ads, no gate) — so this construction and
+     *  every call below is behaviourally inert in the byte-identical FOSS build. */
+    private lateinit var monetization: MonetizationGate
+
     /** Play Games Services v2 (Workstreams D+E): sign-in + achievements + leaderboards.
      *  Created in onCreate; all calls no-op behind the default-off PGS_ENABLED flag.
      *  DISTINCT from RetroAchievements (rustynes-ra, v1.8.6). */
@@ -202,6 +208,14 @@ class MainActivity : AppCompatActivity() {
         // designed to init lazily). The local entitlement cache is read synchronously
         // in the LicenseManager ctor, so the demo gate is already correct before connect.
         gamepad = GamepadManager(applicationContext, emulator)
+        // v2.0.3 "Harbor" (ADR 0025): construct the monetization façade and open an app
+        // session (drives the core's first-session budget / interstitial suppression). The
+        // SDK init (AppLovin / RevenueCat) runs once, guarded, inside the first
+        // onActivityCreated call below — so it is on the launch path here; posting it off the
+        // first-frame critical path is a tracked v2.0.9 refinement. All inert in FOSS.
+        monetization = MonetizationGate(applicationContext)
+        monetization.beginSession()
+        monetization.onActivityCreated(this)
         registerThermalBackoff()
         // v1.8.8 "Atlas" (Workstreams D+E+L): Play services managers. All are cheap
         // no-op shells when their gates (PGS_ENABLED / PLAY_INTEGRITY_ENABLED /
@@ -248,7 +262,15 @@ class MainActivity : AppCompatActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    EmulatorScreen(emulator, gamepad, license, settings)
+                    // v2.0.3 "Harbor" (ADR 0025): layer the monetization run-out paywall +
+                    // countdown over the emulator. `RunOutOverlay` draws NOTHING in the FOSS
+                    // twin (no paywall, no ads), so this Box is visually/behaviourally inert
+                    // in the byte-identical FOSS build; in `play` it surfaces the countdown
+                    // and, at run-out, the rewarded-ad / Full-Version / offline-grace modal.
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        EmulatorScreen(emulator, gamepad, license, settings)
+                        monetization.RunOutOverlay(onResume = { emulator.paused = false })
+                    }
                 }
             }
             // The first composition has been laid out — let the splash dismiss.
@@ -274,6 +296,9 @@ class MainActivity : AppCompatActivity() {
         }
         // Start listening for controller hot-plug + enumerate connected pads.
         if (::gamepad.isInitialized) gamepad.register()
+        // v2.0.3 "Harbor" (ADR 0025): re-verify the monetization entitlement on foreground
+        // (a purchase/refund made elsewhere reflects here). No-op in the FOSS twin.
+        if (::monetization.isInitialized) monetization.onResume(this)
         // v1.8.8 "Atlas" (Workstream L): Play-services foreground work, all off the
         // cold-start path (first/each resume). Each no-ops on sideload / behind its flag.
         if (::playUpdates.isInitialized && !updateChecked) {
@@ -326,6 +351,9 @@ class MainActivity : AppCompatActivity() {
         // v1.8.8 "Atlas" (Workstreams D+E): clear the weakly-held Activity so PGS can't
         // touch a destroyed Activity.
         if (::playGames.isInitialized) playGames.attachActivity(null)
+        // v2.0.3 "Harbor" (ADR 0025): drop the monetization gate's Activity reference. No-op
+        // in the FOSS twin.
+        if (::monetization.isInitialized) monetization.onDestroy()
     }
 
     /** v1.8.8 "Atlas" (Workstream L): finish a downloaded flexible update (restarts the

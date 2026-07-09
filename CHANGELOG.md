@@ -15,11 +15,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-*Nothing yet — the next planned milestone is **v2.0.3**, continuing the v2.0.x
-"Harbor" mobile-finalization train: it reworks the octal-latch Hybrid path from
-the `+1 coarse-X` approximation to a first-principles latch-carry model, runs the
-60-ROM commercial byte-identity oracle, and **promotes `mc-ppu-bus-addr-hybrid` to
-default** (shipped AccuracyCoin 141/141) — see `to-dos/ROADMAP.md` and ADR 0030.*
+## [2.0.3] - 2026-07-08 - "Harbor" (2-cycle-ALE promoted to default — shipped AccuracyCoin 141/141)
+
+### Added
+
+- **Android foss/play monetization glue (ADR 0025 flavor split, step 5).** The
+  `play` flavor gains its full monetization surface — a real `MonetizationGate`
+  (AppLovin MAX interstitial/rewarded ad glue via `AdGate`/`RewardedGate` +
+  RevenueCat entitlement wrapper `RcBilling`, on the RevenueCat 8.10.0 API), the
+  `feature_enabled` gating hook, the run-out paywall + `mm:ss` countdown Compose
+  overlay, `begin_session`-at-launch, `export_progress`/`restore_progress`
+  persistence, and the offline-grace path — all owning the Rust `AdPolicy` core from
+  `rustynes-monetization`. The **`foss` flavor keeps a no-op `MonetizationGate` twin**
+  (every feature free, no ads, never touches the FFI ad core), so the default F-Droid
+  artifact stays behaviour-identical. Ad SDKs, the `AD_ID`/AdMob manifest entries, and
+  the paywall strings (en/es) live in `src/play/` only; the R8 full-mode keep rules
+  cover the monetization UniFFI package + AppLovin + RevenueCat. Monetization remains
+  behaviourally **dormant** pending on-device runtime verification (v2.0.9); the glue
+  is structurally complete and both flavors assemble. Android `versionCode 20001 ->
+  20003`, `versionName -> "2.0.3"`.
+- **Host-localizable mobile bridge warnings.** `rustynes-mobile` gains a
+  UniFFI-exported `HostWarning` enum (first variant: `PreTimebaseMovie`, the ADR 0028
+  `.rnm` pre-Timebase movie warning) plus an additive `drain_warning_codes() ->
+  Vec<HostWarning>` and an exported `host_warning_message()`, so Kotlin/Swift hosts can
+  render localized strings instead of the baked-in English. The existing
+  `drain_warnings() -> Vec<String>` is preserved verbatim (it now maps each code to its
+  English `message()`), so current hosts are unbroken; desktop/wasm parity is unchanged.
+
+### Changed
+
+- **PPU: the 2-cycle-ALE fetch model is now the shipped default and the only PPU
+  fetch path (ADR 0030).** The first-principles latch-carry model (ALE-drive +
+  first-class octal latch + multiplexed-bus splice + delayed-`CopyV` "Hybrid
+  Addresses" + `$2007`-ALE-overlap "ALE + Read") is promoted from the experimental
+  `mc-ppu-2cycle-ale` flag to unconditional, following the v2.0.0 precedent of
+  promoting the one-clock scheduler by deleting its flag. **Shipped AccuracyCoin is
+  now 141/141 (100%)** — both the "ALE + Read" (`$0491`) and "Hybrid Addresses"
+  (`$0492`) PPU tests pass on the default build (previously 139/141). Two commercial
+  titles now render more TriCNES-faithfully at a mid-render `$2006` scroll write —
+  **Super Mario Bros. 3** (a single leftmost tile on scanline 194) and **Uchuu
+  Keibitai SDF** (one tile at the MMC5 split boundary on scanline 15); no other
+  commercial title's output changed. The `scanline.nes` visual-regression golden was
+  likewise re-blessed for the same mid-render `$2006` reason (it is the one public
+  test ROM in the suite that drives mid-scanline scroll/timing; the other eight visual
+  goldens — including the NMI-drift-sensitive `nmi_sync` demo — stayed byte-identical,
+  confirming the change is surgical to the `$2006`-mid-render path). Headless frame cost
+  rises ~10% (nestest ~4.15 ms/frame, still ~4× realtime); accepted for the accuracy gain.
+
+### Removed
+
+- **Both experimental octal-latch flags are retired:** `mc-ppu-2cycle-ale` (the now-
+  default model) and `mc-ppu-bus-addr-hybrid` (the superseded v2.0.2 whole-dot
+  `+1 coarse-X` stand-in), across `rustynes-ppu`/`rustynes-core`/
+  `rustynes-test-harness`. The v2.0.2 stand-in code (the `octal_effective` splice
+  function, `OctalFetch` enum, the `copy_v` one-shot, and the coarse-X
+  reconstruction) is deleted. The `octal_trace` calibration ring is kept behind a
+  new default-off dev feature `ppu-octal-trace` (it does not gate emulation
+  behavior; off, `push` is a no-op stub with no 64-bit-atomic storage, keeping the
+  `no_std` chip stack building).
+
+### Fixed
+
+- **Netplay rollback determinism on the new fetch model.** Promoting 2-cycle-ALE to
+  the default path made it the substrate for netplay rollback, whose save/restore
+  round-trip exposed a determinism gap: a mid-render checkpoint could land with the
+  in-flight fetch state (`octal_latch`, `address_bus`, `ale_armed`,
+  `pattern_latch_stale`, `copy_v_delay`) live, and those fields were not serialized,
+  desyncing the re-simulated frame. They are now serialized in a new
+  **`PPU_SNAPSHOT_VERSION` v5 tail** — an ADDITIVE change (pre-v5 `.rns` still load,
+  upconverting the fields to their inactive rest defaults), the same pattern the v3
+  (`$2007` state machine) and v4 (overclock countdown) tails already used. All 16
+  `rustynes-netplay` rollback-determinism tests pass. **Upgrade note:** a v2.0.3
+  save-state (PPU sub-version v5) is forward-incompatible — it will not load on
+  <= v2.0.2 — but this is an in-train additive sub-version bump, *not* an ADR-0028
+  `.rns` format-epoch break; older save-states continue to load on v2.0.3.
 
 ## [2.0.2] - 2026-07-08 - "Harbor" (octal-latch PPU model — AccuracyCoin 141/141 flag-on)
 

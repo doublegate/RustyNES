@@ -21,6 +21,13 @@ import org.junit.runner.RunWith
  *   ./gradlew :app:generateReleaseBaselineProfile
  * Commit the produced `baseline-prof.txt` under `:app/src/.../generated/baselineProfiles/`
  * so a normal release build ships the profile without a device in the loop.
+ *
+ * MAINTAINER (v2.0.9): regenerate against the v2.0.0 "Timebase" core before the Android
+ * RC. The one-clock scheduler rewrite reshaped the launch + UniFFI-marshalling hot class
+ * set, so the profile must be recaptured on-device (no profile is committed yet). The
+ * v2.0.3 pass touches only the profile PLUMBING (this collector, the app's consumption
+ * config, the version bump); the on-device capture itself is a device/AVD step and is
+ * out of scope for the host CI path.
  */
 @RunWith(AndroidJUnit4::class)
 class BaselineProfileGenerator {
