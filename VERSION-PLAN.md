@@ -1,6 +1,6 @@
 # RustyNES Version Plan
 
-**Current release: v1.0.0** — the first stable, production cut.
+**Current release: v2.0.4 "Harbor"** — the head of the v2.0.x "Harbor" mobile-finalization train, atop the **v2.0.0 "Timebase"** MAJOR cut (the one-clock / every-cycle-bus-access scheduler rewrite). **v1.0.0** was the first stable, production cut. `docs/STATUS.md` is the authoritative current-state record; `CHANGELOG.md` carries the full per-release history.
 
 RustyNES follows [Semantic Versioning 2.0.0](https://semver.org/).
 
@@ -19,7 +19,7 @@ v1.0.0 is the **production cut that integrates the cycle-accurate emulation engi
 MAJOR.MINOR.PATCH[-PRERELEASE]
 ```
 
-- **MAJOR** — incompatible public-API or save-state-format breaks (now at `1`).
+- **MAJOR** — incompatible public-API or save-state-format breaks (now at `2`, since **v2.0.0 "Timebase"** broke the `.rns` save-state / `.rnm` movie epochs per ADR 0028).
 - **MINOR** — backwards-compatible features (new mappers, new frontend features, new platforms).
 - **PATCH** — backwards-compatible bug fixes and accuracy refinements.
 - **PRERELEASE** — `-alpha.N` / `-beta.N` / `-rc.N` when stabilizing a future minor/major.
@@ -55,13 +55,30 @@ The cycle-accurate engine was integrated as the core in a sequence of documentar
 | **v0.9.7** | Performance pass (display-sync pacing, dedicated emu thread, audio DRC, run-ahead) |
 | **v1.0.0** | Production cut — engine + ported desktop UX shell + documentation synthesis |
 
-> **Engine lineage note.** The deep technical history under `docs/` (the `v2.0` master-clock refactor, ADRs, audit logs, the long accuracy program) describes the **upstream engine lineage**. Those old "v1.x"/"v2.x" anchors are engineering history, **not** RustyNES release versions. RustyNES's own release line is v0.1.0 → v0.8.6 → (documentary v0.9.0–v0.9.7) → **v1.0.0**.
+> **Engine lineage note.** The deep technical history under `docs/` (the `v2.0` master-clock refactor, ADRs, audit logs, the long accuracy program) describes the **upstream engine lineage**. Those old "v1.x"/"v2.x" anchors are engineering history, **not** RustyNES release versions. RustyNES's own release line is v0.1.0 → v0.8.6 → (documentary v0.9.0–v0.9.7) → **v1.0.0** → the v1.1.0–v1.10.0 additive feature line → **v2.0.0 "Timebase"** (the designated MAJOR break) → the v2.0.x "Harbor" line (current: **v2.0.4**).
+
+### Post-1.0 release line (v1.1.0 → current)
+
+The 1.x line was **additive / off-by-default** — every release stayed byte-identical to v1.0.0 with new features off. It grew desktop tooling (Lua, HD-packs, a Mesen2-class debugger, TAStudio, A/V recording) and, in the v1.8.0–v1.10.0 minors, whole new platforms — a native Android app, an iOS / iPadOS TestFlight train, and a Libretro / RetroArch core — while the mapper catalog grew to 172 families. See `CHANGELOG.md` for the per-release detail.
+
+| Version | Milestone |
+|---------|-----------|
+| **v1.1.0 – v1.7.1** | Additive desktop-feature line (scripting, HD-packs, debugger, TAStudio, shaders, mapper breadth) |
+| **v1.8.0 – v1.8.9** | Native Android app (UniFFI bridge + JNI host + Compose), GitHub-Releases sideload |
+| **v1.9.0 – v1.9.9** | Native iOS / iPadOS app (Metal + SwiftUI), interim TestFlight |
+| **v1.10.0 "Arcade"** | Native Libretro / RetroArch core |
+| **v2.0.0 "Timebase"** | **Designated MAJOR break** — one-clock / every-cycle-bus-access scheduler rewrite; `.rns`/`.rnm` epochs bump (ADR 0028); core-level Vs. `DualSystem` support. AccuracyCoin 100% (139/139) |
+| **v2.0.1 "Harbor"** | First Android re-port onto Timebase + AccuracyCoin oracle re-sync (catalog → 146 rows / 141 assigned tests; briefly 139/141) |
+| **v2.0.2 – v2.0.3 "Harbor"** | 2-cycle-ALE PPU fetch model promoted to the unconditional default → **AccuracyCoin 100.00% (141/141)** ("ALE + Read" + "Hybrid Addresses" now pass) |
+| **v2.0.4 "Harbor"** (current) | Android release candidate — host-only RC scaffolding; core byte-identical to v2.0.3 |
+
+> **Forward path.** The remaining v2.0.x "Harbor" steps — **v2.0.5 → v2.0.8** iOS finalization → **v2.0.9** both-apps readiness — lead to **v2.1.0**, the joint Google Play + Apple App Store + AltStore PAL + F-Droid launch. `to-dos/ROADMAP.md` is the authoritative forward roadmap.
 
 ## Versioning guidelines
 
 - **Bump MINOR (v1.x.0)** for: new mapper families, new frontend features, new platforms (e.g. mobile), new input devices — anything backwards-compatible that adds capability.
 - **Bump PATCH (v1.0.x)** for: bug fixes, accuracy refinements, dependency bumps, and documentation that does not change behavior.
-- **Bump MAJOR (v2.0.0)** only for: an incompatible public-API break or a save-state-format break that cannot migrate.
+- **Bump MAJOR (vN.0.0)** only for: an incompatible public-API break or a save-state-format break that cannot migrate — exactly what **v2.0.0 "Timebase"** did (ADR 0028 bumped the `.rns`/`.rnm` epochs).
 
 ### Breaking-change policy
 
@@ -70,7 +87,7 @@ The cycle-accurate engine was integrated as the core in a sequence of documentar
 
 ## Accuracy milestones (met)
 
-- `nestest` 0-diff, blargg / kevtris suites green, **AccuracyCoin 100.00% (139/139)**, and a byte-identical 60-ROM commercial regression oracle. `docs/STATUS.md` is the authoritative pass-count source.
+- `nestest` 0-diff, blargg / kevtris suites green, **AccuracyCoin 100.00% (141/141)** on the current v2.0.x line (139/139 at the v1.0.0 cut, before the v2.0.1 oracle re-sync grew the catalog to 141 assigned tests), and a byte-identical 60-ROM commercial regression oracle. `docs/STATUS.md` is the authoritative pass-count source.
 
 ## Git tagging
 

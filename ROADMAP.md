@@ -1,14 +1,16 @@
 # RustyNES Development Roadmap
 
-**Document Version:** 1.0.0
-**Last Updated:** 2026-06-13
-**Project Status:** v1.0.0 released — first stable, production cut.
+**Document Version:** 2.0.4
+**Last Updated:** 2026-07-09
+**Project Status:** v2.0.4 "Harbor" released — the v2.0.x "Harbor" mobile-finalization train atop the v2.0.0 "Timebase" MAJOR cut.
 
 ---
 
 ## Where we are
 
-RustyNES **v1.0.0** is shipped. It is a cycle-accurate NES emulator clearing the Mesen2 / higan / ares accuracy bar, with a complete desktop UX shell, browser build, and the platform feature set (netplay, achievements, TAS, debugger). The roadmap below records what is **done** at v1.0.0 and the honest, non-committal list of **post-1.0 directions**.
+RustyNES is well past v1.0.0. The current release is **v2.0.4 "Harbor"** (2026-07-09) — the head of the v2.0.x "Harbor" mobile-finalization train, sitting atop **v2.0.0 "Timebase"** (2026-07-03), the designated MAJOR cut that replaced the PPU-dot lockstep scheduler with the one-clock / every-cycle-bus-access model. Between v1.0.0 and v2.0.0 the additive v1.x line delivered deep desktop tooling and three whole new platforms (native Android, iOS / iPadOS, and a Libretro / RetroArch core); the v2.0.x train then re-ported mobile onto the new core and, at **v2.0.3**, promoted the 2-cycle-ALE PPU fetch model to the default to reach **AccuracyCoin 100% (141/141)**.
+
+**This root ROADMAP is a historical snapshot of the v1.0.0 cut.** For the authoritative, current forward roadmap see **[`to-dos/ROADMAP.md`](to-dos/ROADMAP.md)**; for the authoritative current-state pass counts and platform matrix see **[`docs/STATUS.md`](docs/STATUS.md)**; for the full per-release history see **[`CHANGELOG.md`](CHANGELOG.md)**. Many of the "post-1.0 directions" listed further down (mobile, Lua scripting, TAS editor, Vs. DualSystem, HD packs, hosted netplay) have since shipped — the tables below record what was **done at v1.0.0**, not the current feature set.
 
 > **Note on versioning.** v1.0.0 is the production cut that integrates the cycle-accurate emulation engine with the ported desktop UX shell and documentation synthesis. Deep technical narrative under `docs/` (the master-clock refactor, ADRs, audit logs) references the upstream engine lineage — read those as engineering history, not RustyNES release numbers.
 

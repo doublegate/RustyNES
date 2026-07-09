@@ -94,11 +94,11 @@ A: RustyNES is a cycle-accurate NES emulator written in pure Rust, clearing the 
 
 **Q: Can I use RustyNES now?**
 
-A: Yes. RustyNES is well past its first stable release — the current release is **v2.0.0 "Timebase"** (the one-clock scheduler rewrite), a complete, playable desktop application plus native Android / iOS / Libretro builds and a browser build. See [ROADMAP.md](ROADMAP.md) for what shipped and the forward directions.
+A: Yes. RustyNES is well past its first stable release — the current release is **v2.0.4 "Harbor"** (the head of the v2.0.x mobile-finalization train atop the v2.0.0 "Timebase" one-clock scheduler rewrite), a complete, playable desktop application plus native Android / iOS / Libretro builds and a browser build. See [ROADMAP.md](ROADMAP.md) for what shipped and the forward directions.
 
 **Q: How accurate is RustyNES?**
 
-A: AccuracyCoin 98.58% (139/141) — the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") are known gaps — `nestest` 0-diff, and the blargg / kevtris suites green, validated by a byte-identical commercial-ROM regression oracle. See [docs/STATUS.md](docs/STATUS.md) for the authoritative pass-count matrix.
+A: AccuracyCoin 100% (141/141) — every assigned test passes, including the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses"), which the v2.0.3 2-cycle-ALE PPU-fetch promotion closed — `nestest` 0-diff, and the blargg / kevtris suites green, validated by a byte-identical commercial-ROM regression oracle. See [docs/STATUS.md](docs/STATUS.md) for the authoritative pass-count matrix.
 
 **Q: How can I contribute?**
 
