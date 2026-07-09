@@ -44,6 +44,25 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # v2.0.7 "Trim" — App Store submission floor. From 2026-04-28 every App Store
+      # Connect upload must be built with the iOS 26 SDK (Xcode 26). Select the newest
+      # Xcode 26.x present on the runner so the xcframework + archive build against
+      # that SDK; if the runner image predates it, fall back to the default toolchain
+      # (which still exercises the compile — this job's real CI value) and warn rather
+      # than fail. This pins the BUILD SDK only; the minimum OS stays at the
+      # ios/project.yml deployment target.
+      - name: Select Xcode 26 (iOS 26 SDK submission floor)
+        run: |
+          set -euo pipefail
+          xc=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$xc" ]; then
+            sudo xcode-select -s "$xc/Contents/Developer"
+            echo "Selected $xc"
+            xcodebuild -version
+          else
+            echo "::warning title=Xcode 26 not on runner::Building with $(xcodebuild -version | head -1). App Store uploads require Xcode 26 / the iOS 26 SDK from 2026-04-28 (App Store submission floor); ensure the release runner image has Xcode 26 before the v2.1.0 store launch."
+          fi
+
       # The project toolchain (rust-toolchain.toml = 1.96) plus the iOS targets:
       # the device ABI + both simulator ABIs (the sim slice is lipo'd from the
       # Apple-silicon + Intel sim builds).

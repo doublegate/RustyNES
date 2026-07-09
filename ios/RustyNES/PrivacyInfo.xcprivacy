@@ -28,6 +28,15 @@
   ATT / ads: NONE in any v1.9.x build. App Tracking Transparency + the ad SDK are a
   v2.1.0 App-Store-flavor (appstore channel, ADR 0027) addition; NSPrivacyTracking
   stays false and the tracking-domains array stays empty here.
+
+  v2.0.7 "Trim" re-audit (against the v2.0.6 crash-reporting addition): the opt-in
+  crash reporter (CrashReporter.swift) collects NO new data type and adds NO new
+  required-reason API. It is off by default; when on it writes LOCAL files only
+  (excluded from iCloud / device backups via isExcludedFromBackup) and uploads
+  nothing, so no NSPrivacyCollectedDataType entry applies. Its only required-reason
+  API is UserDefaults (the opt-in flag), already declared below as CA92.1. It does
+  NOT read file timestamps, disk space, system-boot-time, or active-keyboards. This
+  manifest therefore needs no change for v2.0.6/v2.0.7 — it remains accurate.
 -->
 <dict>
 	<key>NSPrivacyTracking</key>

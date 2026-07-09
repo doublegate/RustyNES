@@ -272,6 +272,19 @@ at once. v2.0.6 also re-verifies the v1.9.x host features (Game Center, CloudKit
 MFi controllers, capture / PiP, accessibility) against the **unchanged v2.0.0 bridge
 surface** — recorded in `docs/ios-v2.0.6-readiness.md`.
 
+**v2.0.7 "Trim" — polish + the App Store submission floor.** From **2026-04-28** Apple
+requires every App Store Connect upload to be built with the **iOS 26 SDK (Xcode 26)** —
+the *build* SDK, not the minimum OS. The tag-gated `ios.yml` now selects the newest
+`Xcode_26*.app` on the runner before building the xcframework (non-breaking: it warns and
+falls back on an older image, so the compile job still runs). v2.0.7 also **reconciles the
+deployment target `iOS 15.0 → 17.0`**: the shell already uses `NavigationStack` (iOS 16) +
+`.topBarTrailing` (iOS 17, unguarded at 12+ sites), so the prior 15.0 was never buildable —
+17.0 matches the real API floor (guard those APIs first to target lower). `PrivacyInfo`
+`.xcprivacy` was **re-audited** against the v2.0.6 crash reporter and needs no change (no
+new data type / required-reason API — it is local-only, backup-excluded, off by default,
+and `UserDefaults` is already declared). On-device Metal/ProMotion profiling + the Xcode-26
+archive are the v2.0.9 carryover. See `docs/ios-v2.0.7-readiness.md`.
+
 **Explicitly NOT on the iOS bridge (post-v2.0.0 carryovers).** The mobile bridge is
 iNES / NES 2.0-only, so **FDS disk images (`.fds`) and NSF music files (`.nsf`)
 cannot be loaded** — the picker + Info.plist advertise only `.nes` (+ `.zip`), and
