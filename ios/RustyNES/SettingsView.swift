@@ -800,10 +800,9 @@ private struct CrashLogsView: View {
 /// The full text of one crash log, with a copy-to-clipboard action.
 private struct CrashLogDetailView: View {
     let url: URL
-
-    private var text: String {
-        (try? String(contentsOf: url, encoding: .utf8)) ?? "(unreadable)"
-    }
+    // Loaded once off the main thread in `.task` (below) rather than read
+    // synchronously in `body`, so re-rendering never blocks the main thread on disk.
+    @State private var text = ""
 
     var body: some View {
         ScrollView {
@@ -823,6 +822,12 @@ private struct CrashLogDetailView: View {
                     Label("Copy", systemImage: "doc.on.doc")
                 }
             }
+        }
+        .task {
+            let target = url
+            text = await Task.detached {
+                (try? String(contentsOf: target, encoding: .utf8)) ?? "(unreadable)"
+            }.value
         }
     }
 }

@@ -22,9 +22,18 @@ The iOS analogue of the Android v1.8.8 `CrashReporter`, closing the v1.9.9 readi
 - **Local-only.** On opt-in, `CrashReporter.install(enabled:)` chains an
   `NSSetUncaughtExceptionHandler` that writes a timestamped report (app version, device,
   OS, exception name / reason, `callStackSymbols`) to
-  `Application Support/RustyNES/crash-logs/`, pruned to the newest 10. **Nothing is
+  `Application Support/RustyNES/crash-logs/`, kept to the newest 10. **Nothing is
   uploaded**; a `CrashLogsView` (list → detail → **Copy** to clipboard / **Clear**) lets
-  the user read and share manually. New UI strings are localized **EN + ES**.
+  the user read and share manually (the detail view reads the log off-main via `.task` +
+  `Task.detached`). New UI strings are localized **EN + ES**.
+- **Crash-handler discipline.** The handler runs on an arbitrary thread in an unstable
+  post-crash process, so it does the bare minimum: all metadata (device / OS / app
+  version) and the log-directory URL are **pre-resolved and cached at `install()` on the
+  main thread** (`install` is `@MainActor`, since `UIDevice.current` is main-actor
+  isolated — reading it from the C callback would be an isolation violation), and log
+  **pruning** (directory enumeration + deletion) is done at launch, not in the handler.
+  The handler only formats one string and writes one file — no `UIDevice.current`, no
+  `Bundle.main.infoDictionary`, no directory creation, no enumeration.
 - **Idempotent + runtime-honouring.** The handler installs once and re-checks the live
   `crashReportingEnabled` flag at crash time, so opting back out stops new logs
   immediately without needing to uninstall. It is installed at launch from
