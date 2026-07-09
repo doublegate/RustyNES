@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RustyNES
+GenericName=NES Emulator
+Comment=Cycle-accurate Nintendo Entertainment System emulator
+Exec=rustynes %f
+Icon=rustynes
+Terminal=false
+Categories=Game;Emulator;
+Keywords=NES;Nintendo;emulator;retro;
+MimeType=application/x-nes-rom;

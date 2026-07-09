@@ -216,6 +216,11 @@ Desktop.ini
 android/**/build/
 **/.gradle/
 android/local.properties
+# Release upload-signing secrets (v2.0.4 signing config: `rootProject.file(
+# "keystore.properties")` or the `RUSTYNES_UPLOAD_*` env vars). Ignore the props
+# file anywhere, plus any keystore blob — a maintainer secret, NEVER committed.
+# The tracked `keystore.properties.example` template is intentionally kept.
+keystore.properties
 android/keystore.properties
 *.jks
 *.keystore
@@ -232,7 +237,10 @@ ios/Generated/RustyNESCore.swift
 ios/RustyNES.xcodeproj/
 ios/build/
 *.ipa
-# fastlane local output (the generated docs + the last-run report).
+# fastlane local output (the generated docs + the last-run report). The Play
+# Console listing under `fastlane/metadata/` (v2.0.4 — title / descriptions /
+# changelogs, en-US + es-ES) is version-controlled source and IS tracked; only the
+# generated report / README / test output below are ignored.
 fastlane/report.xml
 fastlane/README.md
 fastlane/test_output/

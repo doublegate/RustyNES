@@ -56,7 +56,7 @@ A one-directional crate graph keeps each chip (`rustynes-cpu`, `rustynes-ppu`, `
 
 | Test | Result |
 |------|--------|
-| **AccuracyCoin** | **98.58% (139/141)** (RAM-direct decoder) — the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") are known gaps |
+| **AccuracyCoin** | **100.00% (141/141)** (RAM-direct decoder) — every assigned test passes; the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") were closed by the v2.0.3 2-cycle-ALE promotion |
 | **`nestest`** | **0-diff** against the Nintendulator golden log |
 | **blargg / kevtris / `mmc3_test_2`** | Green |
 | **Commercial-ROM oracle** | 60-ROM byte-identical regression gate + extended visual survey |
