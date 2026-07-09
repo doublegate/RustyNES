@@ -1,8 +1,8 @@
-v2.0.4 "Harbor" - candidata a version para Android.
+v2.0.4 "Harbor" - versión candidata para Android.
 
-El nucleo de emulacion ciclo-exacto no cambia respecto a v2.0.3 (AccuracyCoin 141/141, 100%). Esta version se centra en la preparacion para publicar:
-- Configuracion de firma para el canal de la tienda.
-- Refuerzo frente a fallos y ANR (diagnostico StrictMode en depuracion; registros de fallos locales opcionales).
+El núcleo de emulación de ciclo exacto no cambia respecto a v2.0.3 (AccuracyCoin 141/141, 100%). Esta versión se centra en la preparación para publicar:
+- Configuración de firma para el canal de la tienda.
+- Refuerzo frente a fallos y ANR (diagnóstico StrictMode en depuración; registros de fallos locales opcionales).
 - Metadatos de la ficha de la tienda bajo control de versiones.
 
-Es una candidata en el canal de pruebas mientras verificamos la estabilidad en dispositivos antes del lanzamiento publico.
+Es una versión candidata en el canal de pruebas mientras verificamos la estabilidad en dispositivos antes del lanzamiento público.
