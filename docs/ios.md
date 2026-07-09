@@ -259,6 +259,19 @@ finalization continues **v2.0.6 → v2.0.8** (feature parity → polish + the **
 iOS 26 SDK** App Store submission floor → the iOS RC); full phasing in
 `to-dos/plans/v2.0.5-v2.0.8-ios-finalization-plan.md`.
 
+**v2.0.6 "Parity" — feature parity + opt-in crash reporting.** v2.0.6 closes the v1.9.9
+iOS-applicable deferral for an **opt-in crash-reporting surface** (`CrashReporter.swift`,
+the iOS analogue of the Android v1.8.8 `CrashReporter`): **off by default**, **Settings →
+Diagnostics** installs an uncaught-`NSException` handler that writes **local** crash logs
+(app version / device / OS / exception / call stack, newest 10 kept) the user can view +
+copy in-app — **nothing is uploaded**, so the "Data Not Collected" label + the
+`PrivacyInfo.xcprivacy` are unchanged (EN + ES). Pure-Swift signal-based traps stay a
+documented maintainer / third-party-SDK option (the same posture as Android's Crashlytics
+note), and the handler re-checks the live opt-in at crash time so opting out stops new logs
+at once. v2.0.6 also re-verifies the v1.9.x host features (Game Center, CloudKit save sync,
+MFi controllers, capture / PiP, accessibility) against the **unchanged v2.0.0 bridge
+surface** — recorded in `docs/ios-v2.0.6-readiness.md`.
+
 **Explicitly NOT on the iOS bridge (post-v2.0.0 carryovers).** The mobile bridge is
 iNES / NES 2.0-only, so **FDS disk images (`.fds`) and NSF music files (`.nsf`)
 cannot be loaded** — the picker + Info.plist advertise only `.nes` (+ `.zip`), and

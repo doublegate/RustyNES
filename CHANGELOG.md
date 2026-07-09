@@ -14,6 +14,26 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.0.6] - 2026-07-09 - "Harbor" (iOS feature parity — "Parity")
+
+- The second iOS finalization release (the v2.0.5–v2.0.8 window), on the
+  byte-identical v2.0.0 "Timebase" core: **AccuracyCoin 141/141**, nestest 0-diff,
+  the `#![no_std]` chip stack untouched. Host / iOS-only — no accuracy / save-state /
+  determinism number moves.
+- **New opt-in crash-reporting surface** (privacy-first, **off by default**) — the
+  iOS analogue of the Android v1.8.8 `CrashReporter`, closing the v1.9.9 readiness
+  gap. Enabled from **Settings → Diagnostics**, an uncaught-`NSException` handler
+  writes **local** crash logs (viewable + copyable in-app; **nothing is uploaded**,
+  so the "Data Not Collected" privacy label is unchanged). The handler re-checks the
+  live opt-in at crash time, so opting out stops new logs immediately. EN + ES.
+- **Feature-parity re-verification** of the v1.9.x host features against the v2.0.0
+  bridge (Game Center, CloudKit save sync, MFi controllers, capture / PiP,
+  accessibility) — all route through the unchanged bridge surface; recorded in
+  `docs/ios-v2.0.6-readiness.md`.
+- Version bump: workspace `2.0.5 → 2.0.6`; iOS `MARKETING_VERSION → 2.0.6`.
+- TestFlight-only; the App Store + AltStore PAL launch stays deferred to v2.1.0.
+  On-device crash-capture verification is flagged for the v2.0.9 readiness pass.
+
 ## [2.0.5] - 2026-07-09 - "Harbor" (iOS re-port onto Timebase — "Landfall")
 
 - Opens the iOS finalization window (v2.0.5–v2.0.8) of the v2.0.x "Harbor" train:

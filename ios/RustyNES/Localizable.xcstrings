@@ -2,6 +2,41 @@
   "sourceLanguage" : "en",
   "version" : "1.0",
   "strings" : {
+    "(unreadable)" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "(ilegible)" } }
+      }
+    },
+    "Copy" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Copiar" } }
+      }
+    },
+    "Crash logs" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Registros de fallos" } }
+      }
+    },
+    "Crash reporting" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Informes de fallos" } }
+      }
+    },
+    "Diagnostics" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Diagnósticos" } }
+      }
+    },
+    "No crash logs." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No hay registros de fallos." } }
+      }
+    },
+    "Off by default. When on, uncaught-exception reports are written to a local file you can read and copy — nothing is uploaded." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Desactivado de forma predeterminada. Cuando está activado, los informes de excepciones no detectadas se escriben en un archivo local que puedes leer y copiar; no se sube nada." } }
+      }
+    },
     "This movie was recorded on a pre-v2.0.0 build. Input replay proceeds, but exact framebuffer/audio reproduction is not guaranteed across the engine-timebase change (ADR 0028)." : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Esta repetición se grabó en una versión anterior a la v2.0.0. La reproducción de entradas continúa, pero no se garantiza la reproducción exacta del fotograma o del audio a través del cambio de base de tiempo del motor (ADR 0028)." } }
