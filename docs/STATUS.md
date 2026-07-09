@@ -1,6 +1,26 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.0.6 "Harbor"** (2026-07-09) — the sixth release of the v2.0.x
+> **Current release: v2.0.7 "Harbor"** (2026-07-09) — the seventh release of the v2.0.x
+> mobile-finalization train, and the **third iOS finalization release** ("Trim"),
+> continuing the iOS window (v2.0.5–v2.0.8). A **host / iOS-only** cut: the
+> cycle-accurate emulation core is **unchanged and byte-identical to v2.0.6** —
+> AccuracyCoin still **141/141 (100.00%, RAM-authoritative)**, nestest 0-diff, the
+> `#![no_std]` chip stack untouched. It wires the **App Store submission floor**: Apple
+> mandates the **iOS 26 SDK / Xcode 26** for every App Store Connect upload from
+> **2026-04-28**, so the tag-gated iOS CI now selects the newest Xcode 26.x on the runner
+> (a build-SDK pin, separate from the minimum OS; non-breaking fallback + warning on older
+> images). It **reconciles the deployment target `iOS 15.0 → 17.0`** to match the code's
+> real API floor (`NavigationStack` iOS 16 + `.topBarTrailing` iOS 17, unguarded at 12+
+> sites — the prior 15.0 was never actually buildable), and **re-audits
+> `PrivacyInfo.xcprivacy`** against the v2.0.6 crash reporter (no new data type, no new
+> required-reason API — it is local-only / backup-excluded / off by default, and
+> `UserDefaults` is already declared `CA92.1`). Version bump (workspace `2.0.6 -> 2.0.7`;
+> iOS `MARKETING_VERSION -> 2.0.7`). **TestFlight-only**; App Store + AltStore PAL deferred
+> to v2.1.0; on-device profiling + the Xcode-26 archive are a **maintainer / v2.0.9** step.
+> See `CHANGELOG.md` `[2.0.7]` + `docs/ios-v2.0.7-readiness.md` +
+> `to-dos/plans/v2.0.5-v2.0.8-ios-finalization-plan.md`.
+>
+> **The preceding release: v2.0.6 "Harbor"** (2026-07-09) — the sixth release of the v2.0.x
 > mobile-finalization train, and the **second iOS finalization release** ("Parity"),
 > continuing the iOS window (v2.0.5–v2.0.8). A **host / iOS-only** cut: the
 > cycle-accurate emulation core is **unchanged and byte-identical to v2.0.5** —
@@ -21,7 +41,7 @@
 > `[2.0.6]` + `docs/ios-v2.0.6-readiness.md` +
 > `to-dos/plans/v2.0.5-v2.0.8-ios-finalization-plan.md`.
 >
-> **The preceding release: v2.0.5 "Harbor"** (2026-07-09) — the fifth release of the v2.0.x
+> **The release before that: v2.0.5 "Harbor"** (2026-07-09) — the fifth release of the v2.0.x
 > mobile-finalization train, and the **first iOS finalization release** ("Landfall"),
 > opening the iOS window (v2.0.5–v2.0.8) that mirrors the Android v2.0.1–v2.0.4 window.
 > This is a **host / iOS-only** cut: the cycle-accurate emulation core is **unchanged and
@@ -45,7 +65,7 @@
 > determinism smoke on Apple silicon. See `CHANGELOG.md` `[2.0.5]` +
 > `docs/ios-v2.0.5-readiness.md` + `to-dos/plans/v2.0.5-v2.0.8-ios-finalization-plan.md`.
 >
-> **The release before that: v2.0.4 "Harbor"** (2026-07-08) — the fourth release of the v2.0.x
+> **Earlier in the train: v2.0.4 "Harbor"** (2026-07-08) — the fourth release of the v2.0.x
 > mobile-finalization train, and the **Android release-candidate** milestone. This is a
 > **host / Android-only** cut: the cycle-accurate emulation core is **unchanged and
 > byte-identical to v2.0.3** — AccuracyCoin still **141/141 (100.00%, RAM-authoritative)**,

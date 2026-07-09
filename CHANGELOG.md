@@ -14,6 +14,30 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.0.7] - 2026-07-09 - "Harbor" (iOS polish + App Store submission floor — "Trim")
+
+- The third iOS finalization release (the v2.0.5–v2.0.8 window), on the
+  byte-identical v2.0.0 "Timebase" core: **AccuracyCoin 141/141**, nestest 0-diff,
+  the `#![no_std]` chip stack untouched. Host / iOS-only.
+- **App Store submission floor wired.** Apple mandates the **iOS 26 SDK / Xcode 26**
+  for every App Store Connect upload from **2026-04-28**; the tag-gated iOS CI now
+  selects the newest Xcode 26.x on the runner (falling back with a warning on older
+  images, so the xcframework build still runs). This pins the **build SDK**, separate
+  from the minimum OS.
+- **Deployment target reconciled `iOS 15.0 → 17.0`.** The SwiftUI shell already uses
+  `NavigationStack` (iOS 16) and `.topBarTrailing` (iOS 17, unguarded, 12+ sites), so
+  the prior 15.0 declaration was never actually buildable; 17.0 matches the real API
+  floor. (Product note: this is the minimum OS; guard those APIs to target lower.)
+- **Privacy manifest re-audited** against the v2.0.6 crash reporter: it collects no
+  new data type and adds no new required-reason API (UserDefaults is already
+  declared; local-only, backup-excluded, off by default), so `PrivacyInfo.xcprivacy`
+  needs no change — documented in-manifest.
+- Performance / energy review notes (Metal / ProMotion, app thinning) captured for
+  the on-device pass. Version bump: workspace `2.0.6 → 2.0.7`; iOS
+  `MARKETING_VERSION → 2.0.7`.
+- TestFlight-only; App Store + AltStore PAL deferred to v2.1.0. On-device profiling +
+  the Xcode-26 archive are flagged for the v2.0.9 readiness pass.
+
 ## [2.0.6] - 2026-07-09 - "Harbor" (iOS feature parity — "Parity")
 
 - The second iOS finalization release (the v2.0.5–v2.0.8 window), on the
