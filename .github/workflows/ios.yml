@@ -54,7 +54,11 @@ jobs:
       - name: Select Xcode 26 (iOS 26 SDK submission floor)
         run: |
           set -euo pipefail
-          xc=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          # macOS's BSD `sort` has no `-V` (a GNU extension), so pick the Xcode 26
+          # toolchain with a POSIX-safe pipeline: prefer the canonical `Xcode_26.app`,
+          # else the lexically-highest `Xcode_26.x.app` (26.0–26.9 order correctly under
+          # plain `sort`). Using `sort -V` here would wrongly fall back on a real runner.
+          xc=$(ls -d /Applications/Xcode_26.app /Applications/Xcode_26.*.app 2>/dev/null | sort | tail -1 || true)
           if [ -n "$xc" ]; then
             sudo xcode-select -s "$xc/Contents/Developer"
             echo "Selected $xc"
