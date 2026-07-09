@@ -58,8 +58,16 @@ def key_background(path: Path, thresh: int, feather: float) -> Image.Image:
 
     # Fill the region 4-connected to each corner, within `thresh` of the corner
     # colour, to the sentinel. Internal dark pixels (inside the emblem) are not
-    # border-connected, so they are preserved.
+    # border-connected, so they are preserved. Skip a corner already painted
+    # SENTINEL by an earlier pass: it is part of a connected background region a
+    # prior corner already filled, so re-seeding from it would sample SENTINEL as
+    # the seed colour (filling nothing new, and risking a bleed if the art holds
+    # near-magenta pixels within `thresh`). A genuinely separate, differently
+    # coloured background corner is never reached by another corner's fill, so it
+    # still keeps its original colour here and gets filled correctly.
     for corner in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]:
+        if rgb.getpixel(corner) == SENTINEL:
+            continue
         ImageDraw.floodfill(rgb, corner, SENTINEL, thresh=thresh)
 
     alpha = bytes(0 if p == SENTINEL else 255 for p in rgb.getdata())

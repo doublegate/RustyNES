@@ -235,8 +235,15 @@ def build_macos(out: Path, primary: Image.Image, favicon: Image.Image) -> None:
             icns.add_media(file=str(iconset / name))
         icns.write(str(icns_path))
     except Exception:
-        # Native Pillow fallback: it derives the required sizes from the base image.
-        render_square(primary, 1024).save(icns_path, format="ICNS")
+        # Native Pillow fallback (no icnsutil): build the same per-size,
+        # source-selected frames the .iconset uses — `pick_source` returns the
+        # simplified emblem for small sizes so the dense circuit traces don't turn
+        # to mush — and hand them to Pillow's ICNS saver via `append_images` (base =
+        # the largest frame) instead of letting it downscale the 1024 primary for
+        # every embedded size.
+        sizes = sorted({size for _, size in MACOS_ICONSET}, reverse=True)
+        frames = [render_square(pick_source(sz, primary, favicon), sz) for sz in sizes]
+        frames[0].save(icns_path, format="ICNS", append_images=frames[1:])
 
 
 def build_linux(out: Path, primary: Image.Image, favicon: Image.Image) -> None:

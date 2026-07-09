@@ -76,9 +76,9 @@ The 1.x line was **additive / off-by-default** — every release stayed byte-ide
 
 ## Versioning guidelines
 
-- **Bump MINOR (v1.x.0)** for: new mapper families, new frontend features, new platforms (e.g. mobile), new input devices — anything backwards-compatible that adds capability.
-- **Bump PATCH (v1.0.x)** for: bug fixes, accuracy refinements, dependency bumps, and documentation that does not change behavior.
-- **Bump MAJOR (vN.0.0)** only for: an incompatible public-API break or a save-state-format break that cannot migrate — exactly what **v2.0.0 "Timebase"** did (ADR 0028 bumped the `.rns`/`.rnm` epochs).
+- **Bump MINOR** (the middle digit — e.g. `vMAJOR.MINOR.0`) for: new mapper families, new frontend features, new platforms (e.g. mobile), new input devices — anything backwards-compatible that adds capability.
+- **Bump PATCH** (the last digit — e.g. `vMAJOR.MINOR.PATCH`) for: bug fixes, accuracy refinements, dependency bumps, and documentation that does not change behavior.
+- **Bump MAJOR** (`vMAJOR.0.0`) only for: an incompatible public-API break or a save-state-format break that cannot migrate — exactly what **v2.0.0 "Timebase"** did (ADR 0028 bumped the `.rns`/`.rnm` epochs).
 
 ### Breaking-change policy
 
