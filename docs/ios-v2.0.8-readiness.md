@@ -50,7 +50,7 @@ notarization-only) is the secondary channel for any feature App Review might rej
 | `no_std` thumbv7em cross-compile | PASS |
 | both wasm32 clippy gates | PASS |
 | `markdownlint` (pinned v0.39.0, changed docs) | PASS |
-| Listing metadata within App Store field limits | PASS (name/subtitle ≤30, keywords ≤100) |
+| Listing metadata within App Store field limits | PASS (name/subtitle ≤30, promotional_text ≤170, keywords ≤100, description ≤4000 — verified per-locale by character count, not bytes) |
 
 The `Fastfile` `release` lane is dormant (not CI-invoked); the metadata is plain text. The
 Swift/Xcode build + on-device validation remain the documented macOS / TestFlight

@@ -1,1 +1,1 @@
-Un emulador de NES rápido y de ciclo exacto escrito en Rust puro. Usa tus propias ROMs. Libre y de código abierto. Una versión candidata en TestFlight mientras la validamos antes del lanzamiento en la App Store.
+Emulador de NES rápido y de ciclo exacto en Rust puro. Trae tus propias ROMs. Libre y de código abierto. Versión candidata en TestFlight antes del lanzamiento.
