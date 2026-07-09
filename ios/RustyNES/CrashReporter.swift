@@ -107,10 +107,16 @@ enum CrashReporter {
     /// creating it. Called at install time and from the (main-thread) Settings viewer;
     /// **never** from the crash handler, which uses the pre-resolved `cachedLogDir`.
     private static func resolveLogDir() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        var base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("RustyNES", isDirectory: true)
             .appendingPathComponent(dirName, isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        // Keep the crash logs out of iCloud / device backups — they are ephemeral local
+        // diagnostics, so excluding them preserves the "nothing leaves the device"
+        // posture even through a full device backup / restore.
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? base.setResourceValues(values)
         return base
     }
 

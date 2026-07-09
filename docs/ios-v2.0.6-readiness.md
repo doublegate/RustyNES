@@ -25,7 +25,10 @@ The iOS analogue of the Android v1.8.8 `CrashReporter`, closing the v1.9.9 readi
   `Application Support/RustyNES/crash-logs/`, kept to the newest 10. **Nothing is
   uploaded**; a `CrashLogsView` (list → detail → **Copy** to clipboard / **Clear**) lets
   the user read and share manually (the detail view reads the log off-main via `.task` +
-  `Task.detached`). New UI strings are localized **EN + ES**.
+  `Task.detached`). The crash-log directory is marked **excluded from iCloud / device
+  backups** (`isExcludedFromBackup`), so the logs never leave the device even through a
+  backup / restore — reinforcing "nothing is uploaded". New UI strings (including the
+  `(unreadable)` fallback) are localized **EN + ES**.
 - **Crash-handler discipline.** The handler runs on an arbitrary thread in an unstable
   post-crash process, so it does the bare minimum: all metadata (device / OS / app
   version) and the log-directory URL are **pre-resolved and cached at `install()` on the

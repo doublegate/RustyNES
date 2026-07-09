@@ -2,6 +2,11 @@
   "sourceLanguage" : "en",
   "version" : "1.0",
   "strings" : {
+    "(unreadable)" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "(ilegible)" } }
+      }
+    },
     "Copy" : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Copiar" } }

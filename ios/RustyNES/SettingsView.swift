@@ -826,7 +826,7 @@ private struct CrashLogDetailView: View {
         .task {
             let target = url
             text = await Task.detached {
-                (try? String(contentsOf: target, encoding: .utf8)) ?? "(unreadable)"
+                (try? String(contentsOf: target, encoding: .utf8)) ?? String(localized: "(unreadable)")
             }.value
         }
     }
