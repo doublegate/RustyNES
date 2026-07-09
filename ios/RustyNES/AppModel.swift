@@ -128,6 +128,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Opt-in crash reporting (v2.0.6 "Parity"): **off by default**, privacy-first.
+    /// When on, an uncaught-`NSException` handler writes local crash logs the user can
+    /// view / copy from Settings; RustyNES uploads nothing, so the "Data Not Collected"
+    /// privacy label holds. Not cloud-synced — a device-local diagnostic preference.
+    @Published var crashReportingEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(crashReportingEnabled, forKey: CrashReporter.enabledKey)
+            // Install lazily on opt-in; the handler re-checks the live flag at crash
+            // time, so opting back out stops new logs without needing to uninstall.
+            if crashReportingEnabled { CrashReporter.install(enabled: true) }
+        }
+    }
+
     /// Persist one shader param: re-apply to the renderer, write UserDefaults, and
     /// mirror to iCloud (unless we are currently applying a remote change).
     private func persistParam(_ value: Float, key: String) {
@@ -186,6 +199,7 @@ final class AppModel: ObservableObject {
         }
         muted = UserDefaults.standard.bool(forKey: "muted")
         hapticsEnabled = UserDefaults.standard.bool(forKey: "hapticsEnabled")
+        crashReportingEnabled = UserDefaults.standard.bool(forKey: CrashReporter.enabledKey)
         globalPaletteId = UserDefaults.standard.string(forKey: "paletteId") ?? ""
         // Restore the persisted shader params, falling back to the defaults above when
         // a key was never written (UserDefaults.float returns 0 for a missing key, so
@@ -204,6 +218,9 @@ final class AppModel: ObservableObject {
         // haptics engine to the persisted value explicitly (otherwise a stored
         // `true` would leave the generator unprepared until the user re-toggles).
         haptics.isEnabled = hapticsEnabled
+        // Install the opt-in crash handler at launch if the user previously enabled it
+        // (a property `didSet` does NOT run for in-init assignment, so install here).
+        CrashReporter.install(enabled: crashReportingEnabled)
         isApplyingCloud = false
 
         // Reconcile with iCloud at launch: pull any values another device wrote

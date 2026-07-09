@@ -9,6 +9,7 @@
 //
 
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct SettingsView: View {
@@ -139,6 +140,20 @@ struct SettingsView: View {
                     } footer: {
                         Text("Give this game its own filter, palette, and HD-pack.")
                     }
+                }
+
+                // Opt-in crash reporting (v2.0.6 "Parity"). Off by default; local-only.
+                Section {
+                    Toggle("Crash reporting", isOn: $model.crashReportingEnabled)
+                    NavigationLink {
+                        CrashLogsView()
+                    } label: {
+                        Label("Crash logs", systemImage: "ladybug")
+                    }
+                } header: {
+                    Text("Diagnostics")
+                } footer: {
+                    Text("Off by default. When on, uncaught-exception reports are written to a local file you can read and copy — nothing is uploaded.")
                 }
 
                 Section {
@@ -741,5 +756,73 @@ struct GameSettingsView: View {
             get: { override.hdpackId },
             set: { var copy = override; copy.hdpackId = $0; model.updateCurrentGameOverride(copy) }
         )
+    }
+}
+
+// MARK: - Crash logs (v2.0.6 "Parity")
+
+/// A read-only viewer for the opt-in crash logs: list newest-first, tap to read the
+/// full trace and copy it, or clear them all. Local-only — nothing is uploaded (the
+/// logs are written by `CrashReporter` only when the user has opted in).
+private struct CrashLogsView: View {
+    @State private var logs: [URL] = CrashReporter.savedLogs()
+
+    var body: some View {
+        List {
+            if logs.isEmpty {
+                Text("No crash logs.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(logs, id: \.self) { url in
+                    NavigationLink {
+                        CrashLogDetailView(url: url)
+                    } label: {
+                        Text(url.deletingPathExtension().lastPathComponent)
+                            .font(.system(.body, design: .monospaced))
+                    }
+                }
+            }
+        }
+        .navigationTitle("Crash logs")
+        .toolbar {
+            if !logs.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Clear", role: .destructive) {
+                        CrashReporter.clear()
+                        logs = []
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The full text of one crash log, with a copy-to-clipboard action.
+private struct CrashLogDetailView: View {
+    let url: URL
+
+    private var text: String {
+        (try? String(contentsOf: url, encoding: .utf8)) ?? "(unreadable)"
+    }
+
+    var body: some View {
+        ScrollView {
+            Text(text)
+                .font(.system(.footnote, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+        }
+        .navigationTitle(url.deletingPathExtension().lastPathComponent)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    UIPasteboard.general.string = text
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+            }
+        }
     }
 }

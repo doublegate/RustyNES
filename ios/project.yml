@@ -38,10 +38,10 @@ settings:
     # The app is iPhone + iPad (device family 1,2 = Universal).
     TARGETED_DEVICE_FAMILY: "1,2"
     # Keep in step with the workspace version (CHANGELOG / Cargo `[workspace.package]`).
-    # v2.0.5 "Landfall" — the first iOS finalization release onto the v2.0.0
-    # "Timebase" core; realigned from the frozen v1.9.x train (it was never bumped
-    # past the v1.9.1 checked-in default, since fastlane injected the real number).
-    MARKETING_VERSION: "2.0.5"
+    # Realigned to the workspace version at v2.0.5 "Landfall" (the frozen v1.9.x train
+    # never bumped past the v1.9.1 checked-in default, since fastlane injected the real
+    # number); advanced to 2.0.6 "Parity" for the iOS feature-parity finalization.
+    MARKETING_VERSION: "2.0.6"
     # The build (not marketing) number. Each TestFlight upload needs a UNIQUE one;
     # the fastlane `beta` lane overrides this with the CI run number at build time
     # (xcargs CURRENT_PROJECT_VERSION), so this checked-in "1" is only the local /

@@ -1,6 +1,27 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.0.5 "Harbor"** (2026-07-09) — the fifth release of the v2.0.x
+> **Current release: v2.0.6 "Harbor"** (2026-07-09) — the sixth release of the v2.0.x
+> mobile-finalization train, and the **second iOS finalization release** ("Parity"),
+> continuing the iOS window (v2.0.5–v2.0.8). A **host / iOS-only** cut: the
+> cycle-accurate emulation core is **unchanged and byte-identical to v2.0.5** —
+> AccuracyCoin still **141/141 (100.00%, RAM-authoritative)**, nestest 0-diff, the
+> `#![no_std]` chip stack untouched — so no accuracy / save-state / determinism number
+> moves. It adds a **new opt-in, privacy-first crash-reporting surface** (off by
+> default, the iOS analogue of the Android v1.8.8 `CrashReporter`, closing the v1.9.9
+> iOS-applicable deferral): **Settings → Diagnostics** installs an
+> uncaught-`NSException` handler that writes **local** crash logs the user can view +
+> copy in-app — **nothing is uploaded**, so the "Data Not Collected" privacy label is
+> unchanged (EN + ES); the handler re-checks the live opt-in at crash time so opting
+> out stops new logs immediately. It also records the **feature-parity
+> re-verification** of the v1.9.x host features (Game Center, CloudKit save sync, MFi
+> controllers, capture / PiP, accessibility) against the unchanged v2.0.0 bridge
+> surface. Version bump (workspace `2.0.5 -> 2.0.6`; iOS `MARKETING_VERSION -> 2.0.6`).
+> **TestFlight-only**; App Store + AltStore PAL deferred to v2.1.0; on-device
+> crash-capture verification is a **maintainer / v2.0.9** step. See `CHANGELOG.md`
+> `[2.0.6]` + `docs/ios-v2.0.6-readiness.md` +
+> `to-dos/plans/v2.0.5-v2.0.8-ios-finalization-plan.md`.
+>
+> **The preceding release: v2.0.5 "Harbor"** (2026-07-09) — the fifth release of the v2.0.x
 > mobile-finalization train, and the **first iOS finalization release** ("Landfall"),
 > opening the iOS window (v2.0.5–v2.0.8) that mirrors the Android v2.0.1–v2.0.4 window.
 > This is a **host / iOS-only** cut: the cycle-accurate emulation core is **unchanged and
@@ -24,7 +45,7 @@
 > determinism smoke on Apple silicon. See `CHANGELOG.md` `[2.0.5]` +
 > `docs/ios-v2.0.5-readiness.md` + `to-dos/plans/v2.0.5-v2.0.8-ios-finalization-plan.md`.
 >
-> **The preceding release: v2.0.4 "Harbor"** (2026-07-08) — the fourth release of the v2.0.x
+> **The release before that: v2.0.4 "Harbor"** (2026-07-08) — the fourth release of the v2.0.x
 > mobile-finalization train, and the **Android release-candidate** milestone. This is a
 > **host / Android-only** cut: the cycle-accurate emulation core is **unchanged and
 > byte-identical to v2.0.3** — AccuracyCoin still **141/141 (100.00%, RAM-authoritative)**,
@@ -52,7 +73,7 @@
 > them to the monetization `feature_enabled` façade without on-device validation). See
 > `CHANGELOG.md` `[2.0.4]` + `to-dos/plans/v2.0.4-android-rc-plan.md`.
 >
-> **The release before that: v2.0.3 "Harbor"** (2026-07-08) — the third release of the v2.0.x
+> **Earlier in the train: v2.0.3 "Harbor"** (2026-07-08) — the third release of the v2.0.x
 > mobile-finalization train, and the one that makes the octal-latch accuracy work
 > real at the shipped default. The **2-cycle-ALE PPU fetch model is promoted from the
 > experimental `mc-ppu-2cycle-ale` flag to the unconditional, only PPU fetch path**
