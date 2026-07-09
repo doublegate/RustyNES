@@ -72,31 +72,33 @@ pub const fn mapper_tier(id: u16, _submapper: u8) -> Option<MapperTier> {
             Some(MapperTier::Core)
         }
 
-        // --- Tier 1 / Curated: discrete-logic long-tail boards (sprint5).
-        // Notable games + decode-table spec; register-decode unit-tested.
-        38 | 41 | 79 | 86 | 113 | 140 | 232 | 240 | 241 => Some(MapperTier::Curated),
+        // --- Tier 1 / Curated: discrete-logic long-tail boards (sprint5) + the
+        // v2.1.0 "Fathom" F3 promotion batch (88 previously-BestEffort families
+        // that now have a staged commercial-ROM dump — 58 already-staged + 30
+        // sourced from GoodNES v3.23b — wired into a byte-identity boot-snapshot
+        // oracle in `external_extended.rs`; ADR 0011). Each is register-decode
+        // unit-tested AND oracle-gated.
+        15 | 28 | 30 | 31 | 35 | 36 | 38 | 40 | 41 | 42 | 44 | 46 | 49 | 50 | 51 | 52 | 56 | 57
+        | 58 | 60 | 61 | 62 | 63 | 72 | 76 | 77 | 79 | 86 | 90 | 92 | 94 | 95 | 96 | 97 | 101
+        | 107 | 111 | 112 | 113 | 115 | 120 | 132 | 133 | 134 | 136 | 137 | 138 | 139 | 140
+        | 141 | 142 | 143 | 145 | 146 | 147 | 148 | 149 | 150 | 156 | 162 | 164 | 176 | 177
+        | 178 | 180 | 185 | 189 | 193 | 200 | 201 | 202 | 203 | 204 | 205 | 209 | 211 | 212
+        | 213 | 214 | 218 | 221 | 225 | 226 | 227 | 229 | 231 | 232 | 233 | 234 | 240 | 241
+        | 242 | 244 | 245 | 246 | 250 | 253 => Some(MapperTier::Curated),
 
-        // --- Tier 2 / BestEffort: reference-ported long-tail sweep
-        // (sprint6 + sprint7 + sprint8 + sprint9 + sprint10 + the v1.6.0
-        // J.Y. Company ASIC 35/90/209/211 + the v1.6.0 "Studio" Workstream E
-        // sprint11 batch: MMC3-clones 44/49/52/115/134/189/205/238/245/348/366,
-        // Sachen 8259 A/B/C 138/139/141, and discrete multicarts
-        // 42/46/50/51/57/104/120/290/301 + the v1.7.0 "Forge" Workstream G1
-        // sprint12 reusable-ASIC BMC/pirate cores: FK23C 176, COOLBOY/MINDKIDS
-        // 268, Sachen 9602 513 / 3011 136, Waixing 164/253/286, Kaiser
-        // 56/142/303/305/306/312, and BMC multicarts 261/289/320/336/349).
-        // multicarts 261/289/320/336/349) + the v1.8.9 "Backlog" beta.6
-        // sprint13 NTDEC/TXC/BMC multicart batch (NTDEC TC-112 193, BMC 2-in-1
-        // 204, NTDEC N625092 221, TXC/BMC-11160 299).
-        // Register-decode + save-state unit-tested; NOT accuracy-gated.
-        15 | 28 | 29 | 30 | 31 | 35 | 36 | 39 | 40 | 42 | 44 | 46 | 49 | 50 | 51 | 52 | 56 | 57
-        | 58 | 60 | 61 | 62 | 63 | 72 | 76 | 77 | 81 | 90 | 92 | 94 | 95 | 96 | 97 | 101 | 104
-        | 107 | 111 | 112 | 115 | 120 | 132 | 133 | 134 | 136 | 137 | 138 | 139 | 141 | 142
-        | 143 | 145 | 146 | 147 | 148 | 149 | 150 | 156 | 162 | 164 | 174 | 176 | 177 | 178
-        | 179 | 180 | 185 | 189 | 193 | 200 | 201 | 202 | 203 | 204 | 205 | 209 | 211 | 212
-        | 213 | 214 | 218 | 221 | 225 | 226 | 227 | 229 | 231 | 233 | 234 | 238 | 242 | 244
-        | 245 | 246 | 250 | 253 | 261 | 268 | 286 | 289 | 290 | 299 | 301 | 303 | 305 | 306
-        | 312 | 320 | 336 | 348 | 349 | 366 | 513 => Some(MapperTier::BestEffort),
+        // --- Tier 2 / BestEffort: the 24 reference-ported long-tail families
+        // that remain WITHOUT any redistributable ROM dump (so they cannot be
+        // oracle-gated and stay register-decode + save-state unit-tested only).
+        // After the v2.1.0 "Fathom" F3 sweep promoted the 88 families that had a
+        // staged/GoodNES dump, these are what is left: the NES 2.0 high-id boards
+        // (268/286/289/290/299/301/303/305/306/312/320/336/348/349/366/513 —
+        // GoodNES v3.23b predates NES 2.0 headers, so no dump decodes to these
+        // ids) plus 8 boards with no matching cart in the collection (29 Sealie
+        // RET-CUFROM, 39 Subor BNROM, 81 NTDEC Super Gun, 104 Golden Five,
+        // 174 multicart, 179 Hengedianzi, 238 MMC3+$4020-security, 261 BMC).
+        // NOT accuracy-gated (ADR 0011).
+        29 | 39 | 81 | 104 | 174 | 179 | 238 | 261 | 268 | 286 | 289 | 290 | 299 | 301 | 303
+        | 305 | 306 | 312 | 320 | 336 | 348 | 349 | 366 | 513 => Some(MapperTier::BestEffort),
 
         _ => None,
     }
@@ -137,7 +139,13 @@ mod tests {
 
     /// The v1.2.0 curated (Tier-1) batch added in `sprint5.rs`. Must stay in
     /// lockstep with the `parse()` match arms for those ids.
-    const CURATED_IDS: &[u16] = &[38, 41, 79, 86, 113, 140, 232, 240, 241];
+    const CURATED_IDS: &[u16] = &[
+        15, 28, 30, 31, 35, 36, 38, 40, 41, 42, 44, 46, 49, 50, 51, 52, 56, 57, 58, 60, 61, 62, 63,
+        72, 76, 77, 79, 86, 90, 92, 94, 95, 96, 97, 101, 107, 111, 112, 113, 115, 120, 132, 133,
+        134, 136, 137, 138, 139, 140, 141, 142, 143, 145, 146, 147, 148, 149, 150, 156, 162, 164,
+        176, 177, 178, 180, 185, 189, 193, 200, 201, 202, 203, 204, 205, 209, 211, 212, 213, 214,
+        218, 221, 225, 226, 227, 229, 231, 232, 233, 234, 240, 241, 242, 244, 245, 246, 250, 253,
+    ];
 
     #[test]
     fn all_curated_ids_classify_as_curated() {
@@ -162,12 +170,8 @@ mod tests {
     /// multicarts 261/289/320/336/349), and the v1.8.9 "Backlog" beta.6
     /// `sprint13.rs` NTDEC/TXC/BMC multicart batch (193/204/221/299).
     const BEST_EFFORT_IDS: &[u16] = &[
-        15, 28, 29, 30, 31, 35, 36, 39, 40, 42, 44, 46, 49, 50, 51, 52, 56, 57, 58, 60, 61, 62, 63,
-        72, 76, 77, 81, 90, 92, 94, 95, 96, 97, 101, 104, 107, 111, 112, 115, 120, 132, 133, 134,
-        136, 137, 138, 139, 141, 142, 143, 145, 146, 147, 148, 149, 150, 156, 162, 164, 174, 176,
-        177, 178, 179, 180, 185, 189, 193, 200, 201, 202, 203, 204, 205, 209, 211, 212, 213, 214,
-        218, 221, 225, 226, 227, 229, 231, 233, 234, 238, 242, 244, 245, 246, 250, 253, 261, 268,
-        286, 289, 290, 299, 301, 303, 305, 306, 312, 320, 336, 348, 349, 366, 513,
+        29, 39, 81, 104, 174, 179, 238, 261, 268, 286, 289, 290, 299, 301, 303, 305, 306, 312, 320,
+        336, 348, 349, 366, 513,
     ];
 
     #[test]

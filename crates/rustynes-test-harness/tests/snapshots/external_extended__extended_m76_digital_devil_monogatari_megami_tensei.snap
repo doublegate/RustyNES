@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-076-Namcot3446/Digital Devil Monogatari - Megami Tensei (J) [!].nes
+rom_sha256=89f2aa8aad69ff8551e5addc85ba67dd061141f37e8e3224adc2787c1a85a9a5
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=b9a06a262f256f9f
+checkpoint f600 fb_fnv1a64=793af956920f0242

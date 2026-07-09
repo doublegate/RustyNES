@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-141-Sachen8259A/Po Po Team (Sachen) [!].zip
+rom_sha256=8b40eabe4bdb4a1e9486ae04208b62bbe27036d468ea48935dbfc2540bd1a17e
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=2a34629c2c3cb996
+checkpoint f600 fb_fnv1a64=cc30aaf668c31872

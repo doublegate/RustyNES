@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-234-Maxi15/Maxi 15 (AVE) [!].nes
+rom_sha256=2bb0dc76a75fd917cdbf5e5f93bcd8bc88991ed0c3a913b2f35678c6daae8a83
+frames=600
+fb_bytes=245760
+cycles=17838528
+audio_samples=439524
+audio_fnv1a64=42c82885ddbbca9d
+checkpoint f600 fb_fnv1a64=c367c730d32c2089

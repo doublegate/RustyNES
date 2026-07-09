@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-149-SachenSA0036/Taiwan Mahjong - Tai Wan Ma Que 16 (Asia) (Ja) (Unl).nes
+rom_sha256=a20f4b7a558912c89cdfb7d2f88c5c4f260a43dc92cf3dbd69733e276a19184e
+frames=600
+fb_bytes=245760
+cycles=17838520
+audio_samples=439524
+audio_fnv1a64=760c0223151a39dd
+checkpoint f600 fb_fnv1a64=cd799008c28db0a1

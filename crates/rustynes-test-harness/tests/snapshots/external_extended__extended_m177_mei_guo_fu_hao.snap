@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-177-Hengedianzi/Mei Guo Fu Hao (Ch).nes
+rom_sha256=5e9242fb68da57f83bd23537222b73ff5f90d0d70e714631c8e8439fa6c0c430
+frames=600
+fb_bytes=245760
+cycles=17838525
+audio_samples=439524
+audio_fnv1a64=3524e0acf013c20c
+checkpoint f600 fb_fnv1a64=ffb62c2ba343fb56

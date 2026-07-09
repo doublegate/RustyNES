@@ -121,18 +121,21 @@ suprmrio/iceclimb/cluclu -> 2C04-0004; duckhunt/vstennis/vsmahjng ->
 RC2C03B (standard). Note the Japanese sets differ (excitebkj -> 2C04-0004,
 vspinbalj -> standard) but those ROMs are not staged.
 
-**Known limitation — Vs. DualSystem games** (Balloon Fight / Tennis / Mahjong /
-Wrecking Crew): these run two CPUs/PPUs. This single-CPU model does not boot them
-past the attract screen regardless of the DIP (an empirical DIP sweep confirmed
-no DIP value unblocks them — the black screen is the missing sub-CPU, not the
-DIP). Their entries are kept for palette correctness and forward use once
-DualSystem is modelled. The non-DualSystem games (Excitebike, Clu Clu Land,
-Castlevania, Pinball, Gradius, Goonies, Ice Climber, Golf, Super Mario Bros.)
-boot and render with their correct 2C04 palette.
+**Vs. DualSystem games** (Balloon Fight / Tennis / Mahjong / Wrecking Crew):
+these run two CPUs/PPUs. As of v2.0.0 "Timebase" (beta.5) the **DualSystem core
+is modelled** — `crates/rustynes-core/src/vs_dualsystem.rs` runs two cross-wired
+`Nes` instances (`Emu::Dual`: inter-CPU `$4016`-bit-1 IRQ signalling, shared
+`$6000-$67FF` WRAM, coin/DIP routing, soft-lockstep step) and exposes **both**
+screens via `main_framebuffer()` and `sub_framebuffer()`. The remaining gap is
+**frontend presentation of the second screen** — the desktop/libretro hosts do
+not yet consume `sub_framebuffer()` (tracked as Fathom F2.1); netplay + RA on the
+dual path are out of scope by design. The non-DualSystem games (Excitebike, Clu
+Clu Land, Castlevania, Pinball, Gradius, Goonies, Ice Climber, Golf, Super Mario
+Bros.) boot and render with their correct 2C04 palette.
 **PlayChoice-10's second-screen instruction menu and its Z80 coprocessor are out
 of scope** — only the NES-game half runs (with the 2C03 palette). All of the above
 is gated on `ConsoleType::VsSystem`/`Playchoice10`; a stock `Nes` cart is byte-for-
-byte unchanged (AccuracyCoin 139/141 — the two newest upstream PPU tests are known gaps — + both ROM oracles byte-identical).
+byte unchanged (AccuracyCoin 141/141 (100.00%) + both ROM oracles byte-identical).
 Region timing (PAL/Dendy)
 is validated by automated gates (`ppu_region_constants_match_hardware` in
 `rustynes-ppu`; `region_timing.rs` in `rustynes-test-harness`). The R1

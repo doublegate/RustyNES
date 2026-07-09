@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-095-Namcot3425/Dragon Buster (J) [!].nes
+rom_sha256=2097623b1949604f0753e42075ccfd00516f2fb793354a939e456299abdd9ab6
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=e09f80ee25a07b2c
+checkpoint f600 fb_fnv1a64=e20da06c633e6194

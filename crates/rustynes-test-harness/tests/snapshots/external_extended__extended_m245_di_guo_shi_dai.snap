@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-245-WaixingMMC3/Di Guo Shi Dai (Age of Empires) (ES-1070) (Ch).zip
+rom_sha256=d21052d50c990c56f2484331870082df96a1130892c42f2a55d8715458434044
+frames=600
+fb_bytes=245760
+cycles=17838534
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=8b3190e4dac4b3f0

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-063-NTDEC0324/255-in-1 (As) [!].nes
+rom_sha256=4db2cc54471a97f3a091fe5820d97ae86f1a72c4ead38b235370da9897f4f49e
+frames=600
+fb_bytes=245760
+cycles=17838621
+audio_samples=439526
+audio_fnv1a64=7f2d3a68e80a2efe
+checkpoint f600 fb_fnv1a64=89ee4c476c97a325

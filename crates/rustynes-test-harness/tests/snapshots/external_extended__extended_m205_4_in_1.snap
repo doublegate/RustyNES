@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-205-BMC-JC016/4-in-1 (K-3131GS, GN-45) [p1][!].zip
+rom_sha256=b21d51c84078ebeaf810c1dc06543961cce1edde795f5f2a23889fd2dca46e06
+frames=600
+fb_bytes=245760
+cycles=17838621
+audio_samples=439526
+audio_fnv1a64=7f2d3a68e80a2efe
+checkpoint f600 fb_fnv1a64=89ee4c476c97a325

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-050-SMB2j-FDS/Super Mario Bros. (Alt Levels) [p1][!].zip
+rom_sha256=a05118c0750a86c8a7156dcec8ca845402c664a810b0129da18025d97e509f55
+frames=600
+fb_bytes=245760
+cycles=551855
+audio_samples=13580
+audio_fnv1a64=010b082c6590e1a2
+checkpoint f600 fb_fnv1a64=1719dca5cef7a325

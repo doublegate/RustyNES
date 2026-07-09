@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-146-Sachen-NINA/Galactic Crusader (Sachen) [!].zip
+rom_sha256=ecd488e0af14fe0384e24bde137679b1fa15ad0d8e66e00aedeb561d85e69424
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=895dd3501c38e7dc
+checkpoint f600 fb_fnv1a64=b9fd0415e51fb2b4

@@ -14,6 +14,47 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-07-09 - "Fathom" (accuracy remediation — PPU display quirks, mapper completion, MMC3 residual closed)
+
+- The **accuracy-remediation** release — a core/desktop cut that lands **ahead of**
+  the joint mobile store launch (which moved from v2.1.0 to **v2.2.0**, so the
+  Android + iOS apps ship on this improved core). AccuracyCoin stays **141/141**,
+  nestest 0-diff, the `#![no_std]` chip stack untouched; the deterministic core is
+  unchanged except the display-only PPU fix below. No save-state/format bump.
+- **PPU palette backdrop-override (F1.1).** When rendering is disabled and the VRAM
+  address `v` points into palette space (`$3F00-$3FFF`), the PPU now outputs the
+  color at `v & 0x1F` instead of the universal backdrop — the documented 2C02
+  display behavior, **byte-exact with TriCNES** (`Emulator.cs`). This makes the
+  `full_palette` / `flowing_palette` demos render correctly (all 64 colors) and is
+  a display-only change (palette RAM is never mutated). Nine snapshots re-blessed —
+  the 2 palette demos + 7 commercial games (Micro Machines-style palette tricks) —
+  all converging RustyNES **with** its TriCNES oracle; `external_real_games` 60/60
+  stays byte-identical.
+- **PPU OAM + open-bus audits (F1.2 / F1.3).** The OAMADDR-forced-to-0 (dots
+  257-320), `$2004` `$E3` attribute mask, and open-bus refresh map were audited
+  against the Blargg `ppu_open_bus` table + AccuracyCoin and found already correct;
+  each is now locked by a fast unit regression test. The `OAMADDR & 0xF8`
+  render-start copy stays unmodeled by design — Mesen2, ares, and TriCNES all omit
+  this revision-dependent corner.
+- **Mapper completion (F3): 88 families promoted BestEffort → Curated** with a
+  commercial-ROM boot-snapshot oracle (58 already-staged + 30 sourced from GoodNES
+  v3.23b). The tier split is now **51 Core + 97 Curated + 24 BestEffort = 172**,
+  taking oracle-gated coverage from **60 → 148** of 172 families. The 24 still
+  BestEffort have no obtainable dump anywhere (16 NES 2.0 high-id boards + 8 with no
+  matching cart) and stay register-decode + save-state unit-tested only.
+- **MMC3 R1/R2 scanline-IRQ residual CLOSED (ADR 0002 F5.0).** The instrumentation-
+  first review confirmed the residual is a differential 1-dot deficit that is
+  structurally unreachable on the one-clock batched-catch-up model (21+ falsified
+  levers; zero production-ROM impact), so it is now closed by-design-permanent, not
+  deferred. All **20** `#[ignore]`'d tests are catalogued with dispositions in the
+  new `docs/accuracy-ledger.md` — none is an accuracy gap.
+- **Doc reconciliation (F0).** `docs/mappers.md` + `docs/compatibility.md` corrected
+  (MMC5 vertical split-screen + audio and the Vs. `DualSystem` core are implemented,
+  not deferred); new `docs/accuracy-ledger.md` maps every approximation to its
+  disposition (remediated / no-stricter-oracle / deferred / out-of-scope).
+- Version bump: workspace `2.0.8 → 2.1.0`. Mobile `MARKETING_VERSION`s are unchanged
+  (the apps re-release at v2.2.0).
+
 ## [2.0.8] - 2026-07-09 - "Harbor" (iOS release candidate — "Harborlight")
 
 - The **iOS release candidate** and the final release of the iOS finalization window

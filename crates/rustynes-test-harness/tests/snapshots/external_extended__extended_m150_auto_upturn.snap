@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-150-Sachen74LS374N/Auto-Upturn (Asia) (Ja) (PAL) (Unl).zip
+rom_sha256=7628699245925ef49a118028a58a97f971505976d5a7dcdf4799395dbb14113d
+frames=600
+fb_bytes=245760
+cycles=17838525
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=0d6395f1aca859d5

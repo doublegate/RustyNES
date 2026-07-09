@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-056-KaiserKS202/Super Mario Bros. 3 (J) (PRG1) [p2][!].zip
+rom_sha256=7c8742b996688be255e8286d08b7b70fbcea930bec0b50a496ad049712b2aca3
+frames=600
+fb_bytes=245760
+cycles=17838618
+audio_samples=439526
+audio_fnv1a64=7f2d3a68e80a2efe
+checkpoint f600 fb_fnv1a64=1719dca5cef7a325

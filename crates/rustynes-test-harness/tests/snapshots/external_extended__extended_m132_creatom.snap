@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-132-TXC132/Creatom (Spain) (Gluk Video) (Unl).zip
+rom_sha256=463962ad672ffa7c5bdf5ab59a8e93999ae3217c9662157bd7f31e69e814cdef
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=463af1b31685dc38
+checkpoint f600 fb_fnv1a64=d7fbb8b9121df6cc

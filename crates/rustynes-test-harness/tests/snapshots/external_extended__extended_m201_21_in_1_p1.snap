@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-201-Multicart201/21-in-1 (2006-CA) [p1][!].nes
+rom_sha256=66703b3a0158b8367500ffac82585565ccd6c185f51bf395a68d04190b8c2d80
+frames=600
+fb_bytes=245760
+cycles=17838520
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=f2e6cea01cfa8617

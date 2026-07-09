@@ -70,13 +70,13 @@
 //! | `$5103`          | PRG-RAM protect 2: must equal `0b10`                   |
 //! | `$5104`          | ExRAM mode (low 2 bits)                                |
 //! | `$5105`          | Nametable mapping (4 x 2 bits)                         |
-//! | `$5106`          | Fill-mode tile (deferred)                              |
-//! | `$5107`          | Fill-mode attribute (deferred)                         |
+//! | `$5106`          | Fill-mode tile (active)                                |
+//! | `$5107`          | Fill-mode attribute (active)                           |
 //! | `$5113`          | PRG-RAM bank select @ `$6000-$7FFF`                    |
 //! | `$5114-$5117`    | PRG bank select 0..3 @ `$8000-$FFFF`                   |
-//! | `$5120-$5127`    | Sprite CHR banks (deferred — same registers as BG)     |
+//! | `$5120-$5127`    | Sprite CHR banks (active — used for 8x16 sprite fetch)  |
 //! | `$5128-$512B`    | BG CHR banks (active)                                  |
-//! | `$5130`          | CHR-bank upper bits (deferred — high banks rare)       |
+//! | `$5130`          | CHR-bank upper bits (active)                            |
 //! | `$5200-$5202`    | Vertical split-screen mode / scroll / CHR bank         |
 //! | `$5203`          | Scanline IRQ compare value                             |
 //! | `$5204`          | Scanline IRQ status (read) / enable (write bit 7)      |

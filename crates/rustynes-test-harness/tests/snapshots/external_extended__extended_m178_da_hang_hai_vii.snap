@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-178-WaixingEdu/Da Hang Hai VII (Ch).nes
+rom_sha256=5ebb0ffa1bcf60668e1d87b0ec4dffc8091c890744251a2ad03f0605a7a3ee27
+frames=600
+fb_bytes=245760
+cycles=17838524
+audio_samples=439524
+audio_fnv1a64=08acb622c9bc3b7c
+checkpoint f600 fb_fnv1a64=615541fe3907f89d

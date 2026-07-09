@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-115-KashengSFC03/AV Jiu Ji Ma Jiang 2 (Unl) [!].zip
+rom_sha256=8e43ffa13e7ba0ced7ac25ecdb8aa85bf87766c0c6430dd64b126da7899f5928
+frames=600
+fb_bytes=245760
+cycles=17838523
+audio_samples=439524
+audio_fnv1a64=f656a42666abcd1e
+checkpoint f600 fb_fnv1a64=e3254353bce382ed

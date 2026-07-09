@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-253-WaixingVRC4-DBZ/Dragon Ball Z - Kyoushuu! Saiya Jin Qi Long Zhu (ES-1064) (Ch).zip
+rom_sha256=c8e70f8140de978c09cae127997ec42009e017e48553d88d71332602e1bc244f
+frames=600
+fb_bytes=245760
+cycles=17838550
+audio_samples=439524
+audio_fnv1a64=516ed83b4c77aad8
+checkpoint f600 fb_fnv1a64=7ff85973606ffcfd

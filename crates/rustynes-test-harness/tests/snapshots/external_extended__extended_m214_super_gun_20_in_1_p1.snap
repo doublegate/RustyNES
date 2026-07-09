@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-214-Multicart214/Super Gun 20-in-1 [p1][!].nes
+rom_sha256=ad32af817fcb829536cdc6d3103b065318a07c0b6128d317be87bc4baca620aa
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=6c833a71c9a48475
+checkpoint f600 fb_fnv1a64=b926ec864d602099

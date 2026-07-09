@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-049-SuperHIK4in1/Super HIK 4-in-1 [p1][!].zip
+rom_sha256=b571ab8c732fc9f29e523b172160bbda0957dca58e11ae8ef9108bfb70a62816
+frames=600
+fb_bytes=245760
+cycles=17838521
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=4d28c5c497252468

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-225-ColorDreams72in1/110 in 1 (Asia) (En) (Unl) (Pirate).nes
+rom_sha256=991e79bbde0c6f4fe7fdf67e83f36ea8bcb4094e6e27452740ee37cde974ddf3
+frames=600
+fb_bytes=245760
+cycles=17838520
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=f3538b11dd82e145

@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-185-CNROM-Lock/B-Wings (J) [!].nes
+rom_sha256=40ab99e6c8aec2741503b7e69d2597fbff518ece062f78a1b028b5fac3b6b9ae
+frames=600
+fb_bytes=245760
+cycles=17838523
+audio_samples=439524
+audio_fnv1a64=79b12f1553ae793b
+checkpoint f600 fb_fnv1a64=df4b6a35f159caa5

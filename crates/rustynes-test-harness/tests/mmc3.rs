@@ -61,7 +61,7 @@ fn mmc3_test_2_3_a12_clocking() {
 }
 
 #[test]
-#[ignore = "R1 escape-hatched (v2.0.0 beta.3, plan Risks #3): the 1-CPU-cycle bracket did not flip on the one-clock/every-cycle substrate alone; the M2-phase sample-point campaign is by-design-deferred (zero production-ROM impact). See ADR 0002 + the v2.0.0 plan."]
+#[ignore = "R1 escape-hatched (v2.0.0 beta.3, plan Risks #3): the 1-CPU-cycle bracket did not flip on the one-clock/every-cycle substrate alone; the M2-phase sample-point campaign is CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) (zero production-ROM impact). See ADR 0002 + the v2.0.0 plan."]
 fn mmc3_test_2_4_scanline_timing_strict() {
     let (s, m, _) = run("blargg/mmc3_test_2/4-scanline_timing.nes", 600);
     assert_eq!(s, 0, "mmc3_test_2 4-scanline_timing: {m}");
@@ -164,7 +164,7 @@ fn mmc3_test_v1_3_a12_clocking() {
 }
 
 #[test]
-#[ignore = "R1 escape-hatched (v2.0.0 beta.3, plan Risks #3): unmoved on the one-clock/every-cycle substrate; M2-phase sample-point campaign by-design-deferred (zero production-ROM impact). See ADR 0002."]
+#[ignore = "R1 escape-hatched (v2.0.0 beta.3, plan Risks #3): unmoved on the one-clock/every-cycle substrate; M2-phase sample-point campaign CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) (zero production-ROM impact). See ADR 0002."]
 fn mmc3_test_v1_4_scanline_timing_strict() {
     let (s, m, _) = run("blargg/mmc3_test/4-scanline_timing.nes", 600);
     assert_eq!(s, 0, "mmc3_test v1 4-scanline_timing: {m}");
@@ -184,7 +184,7 @@ fn mmc3_test_v1_4_scanline_timing_currently_fails() {
 }
 
 #[test]
-#[ignore = "R2 escape-hatched (v2.0.0 beta.3, plan Risks #3): unmoved on the one-clock/every-cycle substrate; by-design-deferred with R1 (zero production-ROM impact). See ADR 0002."]
+#[ignore = "R2 escape-hatched (v2.0.0 beta.3, plan Risks #3): unmoved on the one-clock/every-cycle substrate; CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) with R1 (zero production-ROM impact). See ADR 0002."]
 fn mmc3_test_v1_5_mmc3_strict() {
     let (s, m, _) = run("blargg/mmc3_test/5-MMC3.nes", 600);
     assert_eq!(s, 0, "mmc3_test v1 5-MMC3: {m}");
@@ -204,7 +204,7 @@ fn mmc3_test_v1_5_mmc3_currently_fails() {
 }
 
 #[test]
-#[ignore = "R2 escape-hatched (v2.0.0 beta.3, plan Risks #3): unmoved on the one-clock/every-cycle substrate; by-design-deferred with R1 (zero production-ROM impact). See ADR 0002."]
+#[ignore = "R2 escape-hatched (v2.0.0 beta.3, plan Risks #3): unmoved on the one-clock/every-cycle substrate; CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) with R1 (zero production-ROM impact). See ADR 0002."]
 fn mmc3_test_v1_6_mmc6_strict() {
     let (s, m, _) = run("blargg/mmc3_test/6-MMC6.nes", 600);
     assert_eq!(s, 0, "mmc3_test v1 6-MMC6: {m}");

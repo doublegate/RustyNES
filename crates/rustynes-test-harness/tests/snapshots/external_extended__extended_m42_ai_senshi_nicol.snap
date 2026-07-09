@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_extended.rs
+expression: text
+---
+rom=mapper-042-BioMiracleFDS/Ai Senshi Nicol (FDS Conversion) [p1][!].zip
+rom_sha256=1a93ef6f7c1543a754f9dfccc40a8468ef2a9621f83f228437f1ff8fdbe43378
+frames=600
+fb_bytes=245760
+cycles=17838522
+audio_samples=439524
+audio_fnv1a64=dda9e74ae2696052
+checkpoint f600 fb_fnv1a64=265329eb1ba61839

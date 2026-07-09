@@ -3238,8 +3238,22 @@ impl Ppu {
 
         // Combine BG + sprite per priority.
         let final_idx = if bg_idx == 0 && spr_idx == 0 {
-            // Universal background.
-            self.read_palette(0x3F00) & 0x3F
+            // Universal background ($3F00) — EXCEPT the palette backdrop-override
+            // (F1.1): with rendering DISABLED and the VRAM address `v` pointing
+            // into palette space ($3F00-$3FFF), the palette's shared address line
+            // is driven by `v`, so hardware outputs the color at `v & 0x1F`
+            // INSTEAD of the backdrop (NESdev "PPU palettes"; Mesen2 `NesPpu.cpp`
+            // / ares output stage). This is a DISPLAY artifact only — palette RAM
+            // is not mutated. It cannot fire while rendering is enabled: there
+            // the fetch pipeline owns `v` and this branch means a transparent
+            // pixel, which is the genuine backdrop. `read_palette` applies the
+            // $10/$14/$18/$1C mirror + greyscale, so the override is mirror- and
+            // greyscale-correct with no extra handling.
+            if !self.mask.rendering_enabled() && (self.v & 0x3F00) == 0x3F00 {
+                self.read_palette(0x3F00 | (self.v & 0x1F)) & 0x3F
+            } else {
+                self.read_palette(0x3F00) & 0x3F
+            }
         } else if bg_idx == 0 {
             self.read_palette(0x3F10 | (u16::from(spr_pal) << 2) | u16::from(spr_idx)) & 0x3F
         } else if spr_idx == 0 {
@@ -4324,6 +4338,129 @@ mod tests {
         // Drive past the post-reset masking window.
         ppu.post_reset_mask_remaining = 0;
         (ppu, TestBus::new())
+    }
+
+    // F1.1 (Fathom accuracy remediation) — palette backdrop-override.
+    // When rendering is disabled and the VRAM address `v` points into palette
+    // space ($3F00-$3FFF), the palette's shared address input is driven by `v`,
+    // so the PPU outputs the color at `v & 0x1F` INSTEAD of the universal
+    // backdrop ($3F00). This is a display artifact only — palette RAM is never
+    // mutated, and rendering-enabled output is unchanged. See NESdev "PPU
+    // palettes"; mirrors Mesen2 `NesPpu.cpp` / ares output-stage behavior.
+    #[test]
+    fn palette_backdrop_override_when_rendering_disabled() {
+        let (mut p, _b) = fresh_ppu();
+        p.mask = PpuMask::empty(); // rendering disabled
+        p.palette_ram[palette_index(0x3F00)] = 0x0F; // backdrop
+        p.palette_ram[palette_index(0x3F05)] = 0x16; // override target (red)
+        p.scanline = 10;
+        p.dot = 20; // pixel_x = 19 (visible)
+        let off = (10usize * 256 + 19) * 4;
+        let red = crate::palette::nes_color_to_rgba(0x16);
+        let backdrop = crate::palette::nes_color_to_rgba(0x0F);
+
+        // v in palette range, rendering off -> output palette[v & 0x1F].
+        p.v = 0x3F05;
+        p.emit_pixel();
+        assert_eq!(&p.framebuffer[off..off + 4], &red, "override -> palette[5]");
+
+        // v NOT in palette range, rendering off -> universal backdrop.
+        p.v = 0x2000;
+        p.emit_pixel();
+        assert_eq!(&p.framebuffer[off..off + 4], &backdrop, "non-palette v");
+
+        // Rendering ENABLED with transparent BG -> backdrop, never overridden
+        // (the fetch pipeline owns `v` while rendering).
+        p.mask = PpuMask::SHOW_BG | PpuMask::SHOW_BG_LEFT;
+        p.v = 0x3F05;
+        p.emit_pixel();
+        assert_eq!(
+            &p.framebuffer[off..off + 4],
+            &backdrop,
+            "enabled -> no override"
+        );
+
+        // $3F10 mirrors to $3F00 (universal backdrop), not a distinct entry.
+        p.mask = PpuMask::empty();
+        p.v = 0x3F10;
+        p.emit_pixel();
+        assert_eq!(
+            &p.framebuffer[off..off + 4],
+            &backdrop,
+            "$3F10 mirrors backdrop"
+        );
+
+        // The override is display-only: palette RAM is unmodified.
+        assert_eq!(p.palette_ram[palette_index(0x3F05)], 0x16);
+    }
+
+    // F1.2 (Fathom) — OAM / $2004 quirks. Both behaviors below are already
+    // implemented and covered by the AccuracyCoin `$2004`/`Sprite0Hit` ROMs;
+    // this is a FAST regression guard so an edit trips a unit test instead of
+    // only the ~57s ROM battery. (The `OAMADDR & 0xF8` render-start copy is
+    // deliberately NOT modeled — Mesen2, ares, and TriCNES all omit it as a
+    // revision-dependent, oracle-less corner; see `docs/accuracy-ledger.md`.)
+    #[test]
+    fn oam_2004_attribute_mask_and_oamaddr_257_320_forcing() {
+        // (1) $2004 read of a sprite ATTRIBUTE byte (OAM offset & 3 == 2) masks
+        // bits 4-2 with $E3 (they don't exist in OAM); other bytes are unmasked.
+        // Read outside the rendering windows so the plain OAM path is taken.
+        let (mut p, mut b) = fresh_ppu();
+        p.mask = PpuMask::empty(); // rendering disabled
+        p.scanline = 250; // vblank -> not a render scanline
+        p.oam[2] = 0xFF; // attribute byte
+        p.oam[1] = 0xFF; // tile byte (no mask)
+        p.oam_addr = 2;
+        assert_eq!(p.cpu_read_register(4, &mut b), 0xE3, "attr byte $E3-masked");
+        p.oam_addr = 1;
+        assert_eq!(
+            p.cpu_read_register(4, &mut b),
+            0xFF,
+            "non-attr byte unmasked"
+        );
+
+        // (2) OAMADDR is forced to 0 across dots 257-320 of a rendered scanline
+        // (the sprite-tile-load interval), washing away a perturbed value.
+        let (mut p, mut b) = fresh_ppu();
+        p.mask = PpuMask::SHOW_BG | PpuMask::SHOW_SPRITE;
+        p.scanline = 10; // visible render line
+        p.dot = 256;
+        p.oam_addr = 0x40; // perturbed; nothing but the 257-320 wash zeroes it
+        for _ in 0..70 {
+            p.tick(&mut b); // dot 256 -> 326, through the whole window
+        }
+        assert_eq!(p.oam_addr, 0, "OAMADDR washed to 0 across dots 257-320");
+    }
+
+    // F1.3 (Fathom) — PPU open-bus refresh map. The Blargg `ppu_open_bus` table
+    // is: a read DRIVES (and refreshes) some bits and passes others through from
+    // the decay latch. $2000-$2003/$2005/$2006 = all decay; $2004 + $2007
+    // (non-palette) = all driven; $2002 = `---D DDDD` (bits 7-5 driven); $2007
+    // palette = `DD-- ----` (bits 7-6 decay). The $2002 low-5 case is covered by
+    // `ppustatus_*` above; this locks the $2007-palette and write-only cases.
+    #[test]
+    fn open_bus_refresh_map_2007_palette_and_write_only() {
+        // Reading a WRITE-ONLY register drives no bits -> the full decay latch.
+        let (mut p, mut b) = fresh_ppu();
+        p.open_bus = 0xA5;
+        assert_eq!(
+            p.cpu_read_register(0, &mut b),
+            0xA5,
+            "$2000 read = pure open bus"
+        );
+
+        // $2007 PALETTE read drives bits 5-0 (palette) and passes bits 7-6 from
+        // open bus (Blargg map: palette = `DD-- ----`).
+        let (mut p, mut b) = fresh_ppu();
+        p.open_bus = 0xFF; // bits 7-6 set
+        p.mask = PpuMask::empty(); // no render-window $FF path
+        p.v = 0x3F00;
+        p.palette_ram[palette_index(0x3F00)] = 0x15;
+        assert_eq!(
+            p.cpu_read_register(7, &mut b),
+            0x15 | 0xC0,
+            "$2007 palette: bits 5-0 palette, 7-6 open bus"
+        );
     }
 
     #[test]
