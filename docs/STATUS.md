@@ -1032,15 +1032,19 @@ without panicking (no `$6000` status protocol).
 
 - Strict pass (not `#[ignore]`'d): **545** as of 2026-05-23 Session-26 (unchanged from iter 4; Session-26 Sprint 2 iter 5 lands the `FrameCounter::irq_flag` vs `irq_line_active` split, an internal-refactor with no new dedicated unit tests — the 4 MMC3 commercial canary ROMs + the custom Frame Counter IRQ ROM are the load-bearing assertions). Session-26 iter 4 (OAM-DMA chip-select gate) is unchanged from Session-25 baseline 545 too. Was 541 pre-Session-25; +4 then from the lazy-clear contract unit tests in `crates/rustynes-apu/src/frame_counter.rs` and `crates/rustynes-apu/src/snapshot.rs` that landed alongside the Frame Counter IRQ Test 7 architectural fix. Was 540 pre-Session-18; +1 then from the `vbl_race_window_2002_read_sweep` PPU-unit test; was 537 pre-Session-13; +3 then from the `Cpu::power_on`-path unit tests for the cold-boot SP fix; was 510 pre-Cascade-B; +35 net since the v1.0.0-rc1 tag. The C1 Phase 3 (2026-05-15) OAM-DMA alignment audit flipped `cpu_interrupts_v2/4-irq_and_dma` from `#[ignore]` (was paired with `_currently_fails` probe) to strict-pass + deleted the probe. **With `--features test-roms,commercial-roms`**: + 60 strict commercial-ROM tests (= **605 total**); audio FNV-1a + cumulative cycle-count invariants preserved across the session-8 BG re-baseline (only framebuffer FNV-1a hashes shifted there, all 60 visually verified) and PRESERVED byte-identical across Session-13 (SP delta not observable at the framebuffer / audio / cycle invariant layer), Session-18 (no chip-stack code change), Session-24 Phase 3 ($4016 strobe defer doesn't affect game ROMs that strobe with multi-cycle STA), and Session-25 (the Frame Counter IRQ lazy-clear surfaces only when ROMs do back-to-back $4015 reads at sub-3-cycle gaps — vanishingly rare in production game code).
 - `#[ignore]` expected-fail (run via `-- --ignored`): **20**, fully catalogued in
-  `docs/accuracy-ledger.md` — **none is an open accuracy gap.** They group as:
-  **9 permanent-by-design** (4 MMC3 scanline-IRQ brackets closed by-design-permanent
-  per ADR 0002 / v2.1.0 F5.0 + the NEC-rev-B `mmc3_test_2/6` + 4 pre-master-clock
-  mock-bus interrupt/BG-shifter pins), **4 permanent historical pins** (`apu_reset` /
-  `$4015` / reload-arm / `put_cycle` mock-bus unit assertions superseded by
-  AccuracyCoin 100% + `cpu_interrupts_v2` 5/5), **5 external-fixture-blocked** (the
-  Vs. `DualSystem` GVS boots — need a combined dual-CPU dump; the staged dumps are the
-  MAME `maincpu` half only), and **2 CI-hermetic / fixture** (`stun`/`turn` live-network
-  probes + the `hdpack` copyrighted-pack test — run manually with `--ignored`). Each
+  `docs/accuracy-ledger.md` — **none is an open accuracy gap.** They group (matching
+  that ledger's "Ignored-test dispositions" table exactly) as:
+  **7 permanent historical pins** — the APU `$4015`-load / reload-arm / `put_cycle`
+  assertions (`apu.rs`), the three CPU interrupt-dispatch pins (`opcodes.rs`), and the
+  PPU BG-shifter pin (`ppu.rs`), all superseded pre-master-clock mock-bus unit
+  assertions (real coverage: AccuracyCoin 100%, `cpu_interrupts_v2` 5/5,
+  `visual_regression` 7/7); **5 by-design** — the 4 MMC3 R1/R2 scanline-IRQ brackets
+  closed by-design-permanent per ADR 0002 / v2.1.0 F5.0 plus the NEC-rev-B
+  `mmc3_test_2/6-MMC3_alt` (only one of the two opposite silicon revisions can pass;
+  the project defaults to Sharp rev A); **5 Vs. `DualSystem` fixture-blocked** — the GVS
+  boots need a combined dual-CPU dump (the staged dumps are the MAME `maincpu` half
+  only); and **3 CI/fixture** — the `stun`/`turn` live-network probes (kept hermetic)
+  plus the `hdpack` copyrighted-pack test (run manually with `--ignored`). Each
   by-design/historical `#[ignore]` carries a fail-loud `*_currently_fails` companion so
   a surprise pass or a failure-shape change fails CI loudly.
 
