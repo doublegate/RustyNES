@@ -1,20 +1,24 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.1.1 "Fathom"** (2026-07-09) — a **bug-fix patch** on
+> **Current release: v2.1.1 "Fathom"** (2026-07-10) — a **bug-fix patch** on
 > v2.1.0. The cycle-accurate core is unchanged (**AccuracyCoin 141/141**, nestest
-> 0-diff, no oracle move). It fixes a **run-ahead save-state gap**: the frontend's
-> default-on run-ahead does a per-frame `snapshot`/`restore`, which drifted PPU
-> render state that was never serialized — the per-sprite shifter-halt
-> (`spr_halted`), the 1-dot-delayed rendering gate
-> (`prev_rendering_enabled`/`rendering_enabled_delayed`), and the OAM-corruption
-> arming state — corrupting games with a mid-frame sprite-0 split (reported on
-> **Wizards & Warriors**, AxROM: half-rendered playfield, dropped/blinking
-> sprites, stalled audio + input). Fix: **`PPU_SNAPSHOT_VERSION` 5 → 6**, an
-> additive tail serializing those fields (pre-v6 `.rns` still load, upconverting
-> to power-on defaults — not an ADR-0028 epoch break); it also hardens netplay
-> rollback + manual save/load. GitHub-safe regression test (skips when the
-> commercial dump is absent). Version bump `2.1.0 → 2.1.1`. See `CHANGELOG.md`
-> `[2.1.1]` + `.github/release-notes/v2.1.1.md`.
+> 0-diff, no oracle move). The **root-cause fix** is a **game-database mirroring
+> gate**: `game_database.txt` (vendored TetaNES) was force-applying its `mirroring`
+> column to every matched ROM via `Nes::set_mirroring_override`, including mappers
+> that control their own mirroring at runtime. Wizards & Warriors (AxROM/mapper 7)
+> flips single-screen A↔B mid-frame to draw its status bar; the DB's spurious
+> `Horizontal` pinned it, killed the sprite-0 split, and hung the game — a hard,
+> deterministic freeze on desktop and WASM while a headless core played it perfectly.
+> Fix: **`Mapper::has_hardwired_mirroring()`** (default `false` = mapper controls
+> its own mirroring → override declined; `true` only on NROM/UxROM/CNROM/GxROM),
+> gating both `App::apply_game_db` and the per-game overlay. **Additionally
+> hardened**: **`PPU_SNAPSHOT_VERSION` 5 → 6**, an additive tail serializing
+> per-sprite shifter-halt flags, the 1-dot-delayed rendering gate, and OAM-corruption
+> arming state that were previously missing from the run-ahead `snapshot`/`restore`
+> path (pre-v6 `.rns` still load, upconverting to power-on defaults — not an
+> ADR-0028 epoch break); also hardens netplay rollback + manual save/load. GitHub-safe
+> regression test (skips when the commercial dump is absent). Version bump
+> `2.1.0 → 2.1.1`. See `CHANGELOG.md` `[2.1.1]` + `.github/release-notes/v2.1.1.md`.
 >
 > **The preceding release: v2.1.0 "Fathom"** (2026-07-09) — the **accuracy-remediation**
 > release, and the first of the new "Fathom" line. A core / desktop cut that lands

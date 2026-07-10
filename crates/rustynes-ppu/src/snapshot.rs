@@ -68,6 +68,19 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///   with all five at their inactive defaults (`0`/`false`), i.e. the
 ///   "no fetch in flight" rest state, which is correct for any pre-v5 save taken
 ///   at rest. Not a *load-break* — a pre-v5 `.rns` still restores.
+/// - v6 (v2.1.1, "Fathom"): appends the per-sprite shifter-halt flags
+///   (`spr_halted[8]`), the 1-dot-delayed rendering gate
+///   (`prev_rendering_enabled` / `rendering_enabled_delayed`), and the
+///   OAM-corruption arming state (`oam_corruption_pending`,
+///   `oam_corruption_index`, `oam_corruption_disabled`,
+///   `oam_corruption_disabled_instant`). These fields were previously not
+///   serialized; a frontend run-ahead `snapshot`/`restore` round-trip
+///   landing with any of them live (mid-frame sprite-0 split, OAM
+///   corruption arming) would restore stale constructor values and corrupt
+///   rendering — the Wizards & Warriors half-blank playfield / stalled
+///   audio class. v1..=5 blobs upconvert with `spr_halted = [true; 8]`
+///   (halted = power-on default) and all others at `false`/`0`. Not a
+///   *load-break* — a pre-v6 `.rns` still restores.
 pub const PPU_SNAPSHOT_VERSION: u8 = 6;
 
 const CIRAM_LEN: usize = 0x800;
@@ -350,6 +363,10 @@ impl Ppu {
     // read top-to-bottom against the matching `snapshot` writer.
     #[allow(clippy::too_many_lines)]
     pub fn restore(&mut self, data: &[u8]) -> Result<(), PpuSnapshotError> {
+        const MIN_SNAPSHOT_SIZE: usize = 2300;
+        if data.len() < MIN_SNAPSHOT_SIZE {
+            return Err(PpuSnapshotError::Truncated(data.len()));
+        }
         let mut r = R { src: data, pos: 0 };
         let version = r.u8()?;
         if !matches!(version, 1..=6) {
