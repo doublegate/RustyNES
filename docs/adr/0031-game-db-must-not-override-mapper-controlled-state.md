@@ -1,9 +1,10 @@
-# 0031 — The game database must never override hardware/mapper-controlled state
+# ADR 0031 — The game database must never override hardware/mapper-controlled state
 
-- Status: Accepted
-- Date: 2026-07-10
-- Supersedes: none
-- Related: the per-game database (T-110-B4), ADR 0015 (browser-RA scaffolding is unrelated)
+**Status:** Accepted
+**Date:** 2026-07-10
+**Author:** RustyNES maintainers
+**Supersedes:** none
+**Related:** the per-game database (T-110-B4), ADR 0015 (browser-RA scaffolding is unrelated)
 
 ## Context
 
