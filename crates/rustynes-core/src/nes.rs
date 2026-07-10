@@ -1397,6 +1397,20 @@ impl Nes {
         self.bus.set_mirroring_override(m);
     }
 
+    /// Whether the loaded mapper's nametable mirroring is **hardwired** by the
+    /// cartridge (solder pads / header bit) rather than controlled by the
+    /// mapper's own registers at runtime.
+    ///
+    /// The frontend consults this before honoring a game-database mirroring
+    /// correction: a static override is only valid for a hardwired board, and
+    /// force-applying one to a mapper that switches mirroring itself (MMC1/3/5,
+    /// `AxROM`, VRC, …) corrupts its rendering. See
+    /// [`rustynes_mappers::Mapper::has_hardwired_mirroring`].
+    #[must_use]
+    pub fn mapper_has_hardwired_mirroring(&self) -> bool {
+        self.bus.mapper_has_hardwired_mirroring()
+    }
+
     /// Write a byte directly into CPU work RAM (`$0000-$1FFF`). Used by the
     /// frontend's raw RAM cheats (GameShark-style); applied *after*
     /// [`Self::run_frame`], so the deterministic core run loop is unchanged

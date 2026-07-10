@@ -1118,6 +1118,12 @@ impl App {
     fn apply_game_db(nes: &mut Nes, bytes: &[u8]) {
         if let Some(crc) = crate::game_db::rom_crc32(bytes)
             && let Some(m) = crate::game_db::mirroring_for_crc(crc)
+            // A game-DB mirroring correction is only valid for a hardwired-
+            // mirroring board. Force-applying it to a mapper that controls its
+            // own mirroring (MMC1/3/5, AxROM, VRC, …) corrupts rendering — e.g.
+            // Wizards & Warriors (AxROM), whose DB row's spurious `Horizontal`
+            // blanked the status-bar split and hung the game. Skip it there.
+            && nes.mapper_has_hardwired_mirroring()
         {
             nes.set_mirroring_override(Some(m));
         }
@@ -1355,7 +1361,19 @@ impl App {
                 .as_deref()
                 .and_then(crate::per_game::mirroring_from_token)
             {
-                nes.set_mirroring_override(Some(m));
+                // Same hazard as the game-DB path: a static mirroring override is
+                // only valid for a hardwired-mirroring board. Honor an explicit
+                // per-game override there; on a mapper-controlled board, decline
+                // it (with a note) so a stray value can't corrupt rendering.
+                if nes.mapper_has_hardwired_mirroring() {
+                    nes.set_mirroring_override(Some(m));
+                } else {
+                    eprintln!(
+                        "rustynes: ignoring per-game mirroring override ({m:?}) — this \
+                         mapper controls its own mirroring; a static override would \
+                         corrupt rendering"
+                    );
+                }
             }
             if let Some(dip) = cfg.dip_switches {
                 nes.set_vs_dip(dip);

@@ -141,6 +141,11 @@ impl Mapper for CnRom {
         self.mirroring
     }
 
+    // CNROM has fixed solder-pad mirroring — a game-DB header correction is valid.
+    fn has_hardwired_mirroring(&self) -> bool {
+        true
+    }
+
     fn save_state(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(2 + self.vram.len());
         out.push(SAVE_STATE_VERSION);

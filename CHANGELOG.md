@@ -14,30 +14,44 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [2.1.1] - 2026-07-09 - "Fathom" (patch — Wizards & Warriors run-ahead save-state fix)
+## [2.1.1] - 2026-07-10 - "Fathom" (patch — Wizards & Warriors freeze fixed at the root: game-DB mirroring override + a run-ahead PPU-snapshot gap)
 
-- **Fixed a run-ahead save-state gap** that corrupted gameplay in games with a
-  mid-frame sprite-0-hit rendering split (reported on **Wizards & Warriors**,
-  AxROM): on the desktop app the playfield rendered only its top half, sprites
-  (the character, the tree door) dropped/blinked, and audio + input stalled a
-  few seconds into a level. The deterministic core rendered the game correctly —
-  the defect was in the **frontend's default-on run-ahead**, whose per-frame
-  `snapshot`/`restore` round-trip drifted **PPU render state that was never
-  serialized**: the per-sprite shifter-halt state (`spr_halted`), the
-  1-dot-delayed rendering gate (`prev_rendering_enabled` /
-  `rendering_enabled_delayed`) that a mid-frame `$2001` toggle depends on, and
-  the OAM-row-corruption arming state. W&W's status-bar split exercises exactly
-  this state, so the drift accumulated into the broken frame.
-- **PPU save-state format `PPU_SNAPSHOT_VERSION` 5 → 6:** an **additive** tail
-  serializing those fields. Pre-v6 `.rns` states still load (upconverting to the
-  power-on defaults, matching what a pre-v6 restore left them at) — not an
-  ADR-0028 epoch break. The fix also hardens netplay rollback and manual
-  save/load for any game using those behaviors, not just run-ahead.
-- Added a GitHub-safe regression test (`ww_runahead_matches_plain_across_a_mid_frame_split`)
-  that asserts run-ahead stays byte-identical to a plain run across the split;
-  it skips cleanly when the commercial dump is absent (CI has none). The core /
-  accuracy path is unchanged — AccuracyCoin stays **141/141**, no oracle moves.
-- Version bump: workspace `2.1.0 → 2.1.1`.
+### Fixed
+
+- **Wizards & Warriors (and ~1900 other games) no longer freeze at level load —
+  the actual root cause.** The per-game database (`game_database.txt`, vendored
+  from TetaNES) force-applied its `mirroring` column to *every* matched ROM,
+  including mappers that control their own nametable mirroring at runtime.
+  Wizards & Warriors is AxROM (mapper 7), which flips single-screen A↔B mid-frame
+  to draw its status bar; the DB's spurious `Horizontal` pinned the mirroring,
+  blanked the bottom half of the screen, killed the sprite-0 split, and hung the
+  game (on desktop **and** WASM; a headless core, which never consults the DB, was
+  always unaffected). The game-database mirroring override is now honored **only**
+  for hardwired-mirroring boards (NROM/UxROM/CNROM/GxROM) via the new
+  `Mapper::has_hardwired_mirroring()` capability (default `false` — the safe
+  direction, so a mapper that controls its own mirroring can never be corrupted),
+  gated in `App::apply_game_db` and the per-game overlay through
+  `Nes::mapper_has_hardwired_mirroring()`. This protects **1914** mapper-controlled
+  database rows from the same class of corruption. Regression-tested
+  (`hardwired_mirroring_gate_matches_board_type`) and verified **byte-identical**
+  to a clean headless replay through the real game-DB path. See ADR 0031.
+- **Run-ahead PPU save-state gap hardened** (`PPU_SNAPSHOT_VERSION` 5 → 6). Run-ahead's
+  per-frame `snapshot`/`restore` round-trip did not serialize some PPU render
+  state — the per-sprite shifter-halt state (`spr_halted`), the 1-dot-delayed
+  rendering gate (`prev_rendering_enabled` / `rendering_enabled_delayed`), and the
+  OAM-row-corruption arming state — so a snapshot/restore could drift them. This is
+  a genuine save-state-completeness fix that also hardens netplay rollback and
+  manual save/load. **Note:** this was originally believed to be the Wizards &
+  Warriors freeze cause; deeper full-core-state diffing later proved run-ahead was
+  byte-identical and the freeze was the game-DB mirroring override above — this
+  change remains a valid correctness improvement on its own. The additive v6 tail
+  keeps pre-v6 `.rns` states loadable (upconverting to power-on defaults) — not an
+  ADR-0028 epoch break.
+- Regression tests: `hardwired_mirroring_gate_matches_board_type` (mirroring gate)
+  and the GitHub-safe `ww_runahead_matches_plain_across_a_mid_frame_split` (skips
+  cleanly when the commercial dump is absent). The core / accuracy path is
+  unchanged — AccuracyCoin stays **141/141**, no oracle moves, determinism holds.
+- Version: workspace `2.1.0 → 2.1.1`.
 
 ## [2.1.0] - 2026-07-09 - "Fathom" (accuracy remediation — PPU display quirks, mapper completion, MMC3 residual closed)
 
