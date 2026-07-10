@@ -1637,6 +1637,14 @@ impl LockstepBus {
         self.nt_mirroring_override
     }
 
+    /// Whether the loaded mapper hardwires its nametable mirroring (so an
+    /// external mirroring correction is safe to honor). See
+    /// [`rustynes_mappers::Mapper::has_hardwired_mirroring`].
+    #[must_use]
+    pub fn mapper_has_hardwired_mirroring(&self) -> bool {
+        self.mapper.has_hardwired_mirroring()
+    }
+
     /// v1.1.0 beta.2 (T-110-C3) — start/stop event-viewer recording.
     #[cfg(feature = "debug-hooks")]
     pub const fn set_event_logging(&mut self, enabled: bool) {

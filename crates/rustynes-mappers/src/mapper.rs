@@ -498,6 +498,29 @@ pub trait Mapper: Send {
     /// the live state.
     fn current_mirroring(&self) -> Mirroring;
 
+    /// Whether this mapper's nametable mirroring is **hardwired by the
+    /// cartridge** (solder pads / the iNES header bit) rather than controlled
+    /// by the mapper's own registers at runtime.
+    ///
+    /// This gates whether an *external* mirroring correction (e.g. a per-game
+    /// database entry, applied via `Nes::set_mirroring_override`) may
+    /// be honored. A static override is only meaningful for a hardwired board
+    /// whose header bit can be *wrong*; forcing a static mirroring onto a mapper
+    /// that switches mirroring itself (MMC1/3/5, `AxROM`, VRC, Sunsoft FME-7,
+    /// Namco 163, …) **corrupts** its rendering — e.g. `AxROM`'s mid-frame
+    /// single-screen A↔B flip that draws Wizards & Warriors' status bar, whose
+    /// GoodNES-derived game-DB row lists a spurious `Horizontal` that, when
+    /// force-applied, blanks the bottom of the screen and hangs the game.
+    ///
+    /// Default: `false` (assume the mapper controls its own mirroring). This is
+    /// the **safe** default — a mapper that omits an annotation merely declines
+    /// a rarely-needed, cosmetic header correction; it can never break a working
+    /// game. Only the classic fixed-mirroring discrete boards (`NROM`, `UxROM`,
+    /// `CNROM`, `GxROM`, …) override this to `true`.
+    fn has_hardwired_mirroring(&self) -> bool {
+        false
+    }
+
     // --- Optional Famicom Disk System (FDS) disk interface ---
     //
     // Only the FDS device (`fds::Fds`) overrides these; every other mapper uses
@@ -683,5 +706,32 @@ mod caps_tests {
         let m24 = caps_of(24);
         assert!(m24.cpu_cycle_hook && m24.irq_source && !m24.frame_event_hook);
         assert_eq!(m24.audio, cfg!(feature = "mapper-audio"));
+    }
+
+    fn hardwired_of(mapper_id: u8) -> bool {
+        let (_cart, mapper): (_, Box<dyn Mapper>) =
+            parse(&synth_rom(mapper_id)).expect("synth rom parses");
+        mapper.has_hardwired_mirroring()
+    }
+
+    /// Regression guard for the Wizards & Warriors freeze (game-DB `Horizontal`
+    /// force-applied onto `AxROM`'s mapper-controlled single-screen split): a
+    /// mapper that controls its OWN mirroring MUST report
+    /// `has_hardwired_mirroring() == false` so the frontend declines an external
+    /// mirroring override; a fixed-mirroring discrete board MUST report `true`.
+    #[test]
+    fn hardwired_mirroring_gate_matches_board_type() {
+        // Fixed solder-pad mirroring — an external correction is valid.
+        for id in [0u8, 2, 3, 66] {
+            assert!(hardwired_of(id), "mapper {id} must be hardwired-mirroring");
+        }
+        // Mapper-controlled mirroring — an external override would corrupt them.
+        // 7 = AxROM (the W&W bug), 1 = MMC1, 4 = MMC3, 5 = MMC5, 9 = MMC2.
+        for id in [7u8, 1, 4, 5, 9] {
+            assert!(
+                !hardwired_of(id),
+                "mapper {id} controls its own mirroring — must NOT be hardwired"
+            );
+        }
     }
 }

@@ -14,6 +14,45 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-07-10 - "Fathom" (patch — Wizards & Warriors freeze fixed at the root: game-DB mirroring override + a run-ahead PPU-snapshot gap)
+
+### Fixed
+
+- **Wizards & Warriors (and ~1900 other games) no longer freeze at level load —
+  the actual root cause.** The per-game database (`game_database.txt`, vendored
+  from TetaNES) force-applied its `mirroring` column to *every* matched ROM,
+  including mappers that control their own nametable mirroring at runtime.
+  Wizards & Warriors is AxROM (mapper 7), which flips single-screen A↔B mid-frame
+  to draw its status bar; the DB's spurious `Horizontal` pinned the mirroring,
+  blanked the bottom half of the screen, killed the sprite-0 split, and hung the
+  game (on desktop **and** WASM; a headless core, which never consults the DB, was
+  always unaffected). The game-database mirroring override is now honored **only**
+  for hardwired-mirroring boards (NROM/UxROM/CNROM/GxROM) via the new
+  `Mapper::has_hardwired_mirroring()` capability (default `false` — the safe
+  direction, so a mapper that controls its own mirroring can never be corrupted),
+  gated in `App::apply_game_db` and the per-game overlay through
+  `Nes::mapper_has_hardwired_mirroring()`. This protects **1914** mapper-controlled
+  database rows from the same class of corruption. Regression-tested
+  (`hardwired_mirroring_gate_matches_board_type`) and verified **byte-identical**
+  to a clean headless replay through the real game-DB path. See ADR 0031.
+- **Run-ahead PPU save-state gap hardened** (`PPU_SNAPSHOT_VERSION` 5 → 6). Run-ahead's
+  per-frame `snapshot`/`restore` round-trip did not serialize some PPU render
+  state — the per-sprite shifter-halt state (`spr_halted`), the 1-dot-delayed
+  rendering gate (`prev_rendering_enabled` / `rendering_enabled_delayed`), and the
+  OAM-row-corruption arming state — so a snapshot/restore could drift them. This is
+  a genuine save-state-completeness fix that also hardens netplay rollback and
+  manual save/load. **Note:** this was originally believed to be the Wizards &
+  Warriors freeze cause; deeper full-core-state diffing later proved run-ahead was
+  byte-identical and the freeze was the game-DB mirroring override above — this
+  change remains a valid correctness improvement on its own. The additive v6 tail
+  keeps pre-v6 `.rns` states loadable (upconverting to power-on defaults) — not an
+  ADR-0028 epoch break.
+- Regression tests: `hardwired_mirroring_gate_matches_board_type` (mirroring gate)
+  and the GitHub-safe `ww_runahead_matches_plain_across_a_mid_frame_split` (skips
+  cleanly when the commercial dump is absent). The core / accuracy path is
+  unchanged — AccuracyCoin stays **141/141**, no oracle moves, determinism holds.
+- Version: workspace `2.1.0 → 2.1.1`.
+
 ## [2.1.0] - 2026-07-09 - "Fathom" (accuracy remediation — PPU display quirks, mapper completion, MMC3 residual closed)
 
 - The **accuracy-remediation** release — a core/desktop cut that lands **ahead of**

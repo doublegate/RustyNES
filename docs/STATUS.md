@@ -1,6 +1,22 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.1.0 "Fathom"** (2026-07-09) — the **accuracy-remediation**
+> **Current release: v2.1.1 "Fathom"** (2026-07-09) — a **bug-fix patch** on
+> v2.1.0. The cycle-accurate core is unchanged (**AccuracyCoin 141/141**, nestest
+> 0-diff, no oracle move). It fixes a **run-ahead save-state gap**: the frontend's
+> default-on run-ahead does a per-frame `snapshot`/`restore`, which drifted PPU
+> render state that was never serialized — the per-sprite shifter-halt
+> (`spr_halted`), the 1-dot-delayed rendering gate
+> (`prev_rendering_enabled`/`rendering_enabled_delayed`), and the OAM-corruption
+> arming state — corrupting games with a mid-frame sprite-0 split (reported on
+> **Wizards & Warriors**, AxROM: half-rendered playfield, dropped/blinking
+> sprites, stalled audio + input). Fix: **`PPU_SNAPSHOT_VERSION` 5 → 6**, an
+> additive tail serializing those fields (pre-v6 `.rns` still load, upconverting
+> to power-on defaults — not an ADR-0028 epoch break); it also hardens netplay
+> rollback + manual save/load. GitHub-safe regression test (skips when the
+> commercial dump is absent). Version bump `2.1.0 → 2.1.1`. See `CHANGELOG.md`
+> `[2.1.1]` + `.github/release-notes/v2.1.1.md`.
+>
+> **The preceding release: v2.1.0 "Fathom"** (2026-07-09) — the **accuracy-remediation**
 > release, and the first of the new "Fathom" line. A core / desktop cut that lands
 > **ahead of** the joint mobile store launch (which moved from v2.1.0 to **v2.2.0**,
 > so the Android + iOS apps re-release on this improved core). The deterministic core
@@ -25,7 +41,7 @@
 > `docs/accuracy-ledger.md` + `docs/adr/0002-irq-timing-coordination.md` +
 > `to-dos/plans/v2.1.0-fathom-accuracy-remediation-plan.md`.
 >
-> **The preceding release: v2.0.8 "Harbor"** (2026-07-09) — the eighth release of the v2.0.x
+> **Earlier: v2.0.8 "Harbor"** (2026-07-09) — the eighth release of the v2.0.x
 > mobile-finalization train, and the **iOS release candidate** ("Harborlight"), the final
 > release of the iOS finalization window (v2.0.5–v2.0.8). A **host / iOS-only** cut: the
 > cycle-accurate emulation core is **unchanged and byte-identical to v2.0.7** —

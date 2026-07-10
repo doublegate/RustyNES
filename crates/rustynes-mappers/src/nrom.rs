@@ -205,6 +205,11 @@ impl Mapper for Nrom {
         self.mirroring
     }
 
+    // NROM has fixed solder-pad mirroring — a game-DB header correction is valid.
+    fn has_hardwired_mirroring(&self) -> bool {
+        true
+    }
+
     fn save_state(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(1 + self.prg_ram.len() + self.vram.len() + self.chr.len());
         out.push(SAVE_STATE_VERSION);
