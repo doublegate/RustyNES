@@ -363,9 +363,20 @@ impl Ppu {
     // read top-to-bottom against the matching `snapshot` writer.
     #[allow(clippy::too_many_lines)]
     pub fn restore(&mut self, data: &[u8]) -> Result<(), PpuSnapshotError> {
-        const MIN_SNAPSHOT_SIZE: usize = 2300;
+        // A valid v1..=6 snapshot always contains these fixed-size blocks (the
+        // framebuffer, read unconditionally below at every version, dominates);
+        // the version-specific tails only add to this. This is a *conservative
+        // lower bound* — it deliberately omits the ~40 scalar register/latch
+        // bytes and the spr shift arrays, so it can never reject a valid blob,
+        // yet it rejects a clearly-truncated one BEFORE the version byte is read
+        // (so short/garbled input reports `Truncated`, not a misleading
+        // `UnsupportedVersion` on whatever byte sits at offset 0). `Truncated(0)`
+        // matches the offset semantics `R::need` uses elsewhere (the position at
+        // which a read ran out) — here, nothing valid was read.
+        const MIN_SNAPSHOT_SIZE: usize =
+            1 + CIRAM_LEN + OAM_LEN + SEC_OAM_LEN + PAL_LEN + FRAMEBUFFER_LEN;
         if data.len() < MIN_SNAPSHOT_SIZE {
-            return Err(PpuSnapshotError::Truncated(data.len()));
+            return Err(PpuSnapshotError::Truncated(0));
         }
         let mut r = R { src: data, pos: 0 };
         let version = r.u8()?;
@@ -522,7 +533,6 @@ impl Ppu {
         if r.pos != data.len() {
             return Err(PpuSnapshotError::Truncated(r.pos));
         }
-        let _ = (CIRAM_LEN, OAM_LEN, SEC_OAM_LEN, PAL_LEN);
         Ok(())
     }
 }
@@ -700,8 +710,17 @@ mod tests {
     #[test]
     fn snapshot_rejects_short_blob() {
         let mut p = Ppu::new(PpuRegion::Ntsc);
-        let err = p.restore(&[]).unwrap_err();
-        assert!(matches!(err, PpuSnapshotError::Truncated(_)));
+        assert!(matches!(
+            p.restore(&[]).unwrap_err(),
+            PpuSnapshotError::Truncated(_)
+        ));
+        // The regression this size guard prevents: a SHORT blob whose first byte
+        // is an unknown version must be classified `Truncated` (the guard runs
+        // before the version check), NOT `UnsupportedVersion(0xFF)`.
+        assert!(matches!(
+            p.restore(&[0xFF; 4]).unwrap_err(),
+            PpuSnapshotError::Truncated(_)
+        ));
     }
 
     #[test]
