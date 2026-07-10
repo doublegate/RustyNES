@@ -1,7 +1,9 @@
-//! NSF (classic `NESM`) music-file player (v1.1.0 beta.2, Workstream D, T-110-D1).
+//! NSF music-file player (v1.1.0 beta.2, Workstream D, T-110-D1; non-60-Hz +
+//! `NSFE` support added in the v2.1.x "Fathom" line).
 //!
-//! Only the classic `NESM\x1a` container is parsed here; `NSFe` is a
-//! documented deferral. Expansion-chip audio (VRC6/7, FDS, MMC5, N163,
+//! Both containers are parsed: the classic `NESM\x1a` header and the extended
+//! chunked `NSFE` (see [`parse_nsfe`]), dispatched by [`parse_nsf`] on the magic.
+//! Expansion-chip audio (VRC6/7, FDS, MMC5, N163,
 //! Sunsoft 5B) declared in the `$07B` bitfield IS synthesized — the NSF
 //! mapper routes the expansion register windows into the existing cartridge
 //! synth cores via [`crate::nsf_expansion`] (v1.7.0 "Forge" G2/G3).
@@ -16,17 +18,21 @@
 //! Mesen2 / FCEUX / rustico approach: a synthetic 6502 **driver** ("BIOS") is
 //! mapped into otherwise-unused address space, and the standard reset / NMI
 //! vectors are pointed at it. The driver calls `init` once (with the selected
-//! song in A and the NTSC/PAL flag in X), enables vblank NMI, then spins; the
-//! PPU's ordinary 60 Hz vblank NMI calls `play` once per frame. The whole thing
-//! then runs through the unchanged `Nes::run_frame` lockstep loop, so the APU
-//! produces audio exactly as it does for a cartridge and the determinism
-//! contract is untouched.
+//! song in A and the NTSC/PAL flag in X), then spins. **Play rate:** at the
+//! standard 60 Hz the driver enables vblank NMI and the PPU's ordinary 60 Hz
+//! vblank NMI calls `play` once per frame (the original, byte-identical path).
+//! At a **non-standard rate** (a PAL 50 Hz tune, or any custom µs divider, on
+//! the NTSC console — see [`Nsf::nonstandard_play_period_cycles`]) the driver
+//! instead disables the APU frame IRQ and arms a mapper **cycle-timer** that
+//! raises a (level-triggered, `$5FF1`-acked) IRQ every `period` CPU cycles; the
+//! IRQ handler calls `play`. Either way it runs through the unchanged
+//! `Nes::run_frame` lockstep loop, so the APU produces audio exactly as it does
+//! for a cartridge and the determinism contract is untouched.
 //!
 //! Scope: the base 2A03 APU, standard `$5FF8-$5FFF` `$8000-$FFFF` 4 KiB
-//! bank-switching, NTSC 60 Hz playback, and expansion-chip audio (VRC6/7,
-//! MMC5, N163, Sunsoft 5B, FDS) routed into the existing synth cores. The
-//! FDS-style `$5FF6/$5FF7` RAM banking and exact non-60 Hz play rates are
-//! deferred (documented).
+//! bank-switching, NTSC / PAL / custom play rates, and expansion-chip audio
+//! (VRC6/7, MMC5, N163, Sunsoft 5B, FDS) routed into the existing synth cores.
+//! The FDS-style `$5FF6/$5FF7` RAM banking is deferred (documented).
 
 use crate::cartridge::Mirroring;
 use crate::mapper::{Mapper, MapperCaps, MapperError, MapperFrameEvents};
@@ -75,6 +81,13 @@ pub struct Nsf {
     pub expansion: u8,
     /// `true` when the file declares a PAL or dual-region timing preference.
     pub pal: bool,
+    /// NTSC play-speed divider (header `$6E-$6F`), in microseconds per `play`
+    /// call. `0` means "use the hardware default" (≈16639 µs ≈ 60.0988 Hz).
+    /// Classic `NESM` only; `NSFe` has no µs word and derives the rate from region.
+    pub play_speed_ntsc: u16,
+    /// PAL play-speed divider (header `$78-$79`), in microseconds per `play`
+    /// call. `0` means the PAL hardware default (≈19997 µs ≈ 50.007 Hz).
+    pub play_speed_pal: u16,
     /// The program image, padded + 4 KiB-aligned when bank-switched.
     pub prg: Vec<u8>,
     /// UTF-8-lossy song / artist / copyright strings (trimmed at the first NUL).
@@ -97,19 +110,42 @@ fn read_string(bytes: &[u8], off: usize) -> Box<str> {
         .into_boxed_str()
 }
 
-/// Detect the NSF magic at the start of `bytes`.
+/// `NSFE` magic (the extended chunked container).
+const NSFE_MAGIC: &[u8; 4] = b"NSFE";
+
+/// Detect the classic `NESM` magic at the start of `bytes`.
 #[must_use]
-pub fn is_nsf(bytes: &[u8]) -> bool {
+pub fn is_nesm(bytes: &[u8]) -> bool {
     bytes.len() >= NSF_MAGIC.len() && &bytes[0..NSF_MAGIC.len()] == NSF_MAGIC
 }
 
-/// Parse an `.nsf` (classic `NESM`) file.
+/// Detect the extended `NSFE` magic at the start of `bytes`.
+#[must_use]
+pub fn is_nsfe(bytes: &[u8]) -> bool {
+    bytes.len() >= NSFE_MAGIC.len() && &bytes[0..NSFE_MAGIC.len()] == NSFE_MAGIC
+}
+
+/// Detect an NSF-family music file (classic `NESM` **or** extended `NSFE`).
+#[must_use]
+pub fn is_nsf(bytes: &[u8]) -> bool {
+    is_nesm(bytes) || is_nsfe(bytes)
+}
+
+/// Parse an NSF-family music file — classic `NESM` **or** extended `NSFE`.
+///
+/// Dispatches on the container magic; both fill the same [`Nsf`]. `NSFe` carries
+/// its play rate through the region flags (no µs divider), so its
+/// [`Nsf::play_speed_ntsc`]/[`Nsf::play_speed_pal`] stay `0` and
+/// [`Nsf::effective_speed_us`] resolves them to the region default.
 ///
 /// # Errors
 ///
 /// Returns a [`MapperError::Invalid`] when the magic is wrong, the file is
-/// shorter than the 128-byte header, or the header is internally inconsistent.
+/// truncated/short, or the header/chunks are internally inconsistent.
 pub fn parse_nsf(bytes: &[u8]) -> Result<Nsf, MapperError> {
+    if is_nsfe(bytes) {
+        return parse_nsfe(bytes);
+    }
     if bytes.len() < NSF_HEADER_LEN {
         return Err(MapperError::Invalid(format!(
             "NSF file is shorter than the {NSF_HEADER_LEN}-byte header ({} bytes)",
@@ -132,8 +168,12 @@ pub fn parse_nsf(bytes: &[u8]) -> Result<Nsf, MapperError> {
     let bankswitched = initial_banks.iter().any(|&b| b != 0);
     let expansion = bytes[0x7B];
     // PAL/NTSC selection byte ($07A): bit0 = PAL, bit1 = dual. Treat either as
-    // "not strictly NTSC" for the init-register flag; playback is 60 Hz NTSC.
+    // "not strictly NTSC" for the init-register flag AND for picking which
+    // play-speed divider drives the (now non-60-Hz-capable) player.
     let pal = bytes[0x7A] & 0b11 != 0;
+    // Play-speed dividers ($6E-$6F NTSC, $78-$79 PAL), microseconds per `play`.
+    let play_speed_ntsc = read_u16(bytes, 0x6E);
+    let play_speed_pal = read_u16(bytes, 0x78);
 
     if total_songs == 0 {
         return Err(MapperError::Invalid("NSF declares zero songs".into()));
@@ -168,6 +208,8 @@ pub fn parse_nsf(bytes: &[u8]) -> Result<Nsf, MapperError> {
         initial_banks,
         expansion,
         pal,
+        play_speed_ntsc,
+        play_speed_pal,
         prg,
         song_name: read_string(bytes, 0x0E),
         artist: read_string(bytes, 0x2E),
@@ -175,8 +217,171 @@ pub fn parse_nsf(bytes: &[u8]) -> Result<Nsf, MapperError> {
     })
 }
 
+/// NTSC CPU clock (Hz) — the console NSF playback runs on. Used to convert a
+/// play-speed divider (µs) into a CPU-cycle period for the non-60-Hz timer.
+const NTSC_CPU_HZ: u32 = 1_789_773;
+/// CPU cycles in one NTSC PPU frame (89342 dots / 3). The vblank-NMI path calls
+/// `play` once per frame; a divider that resolves to this period IS 60 Hz.
+const NTSC_FRAME_CYCLES: u32 = 29781;
+/// Default NTSC divider when the header word is 0 (`1_000_000 / 60.0988`).
+const NTSC_STD_SPEED_US: u16 = 16639;
+/// Default PAL divider when the header word is 0 (`1_000_000 / 50.007`).
+const PAL_STD_SPEED_US: u16 = 19997;
+
+impl Nsf {
+    /// The effective play-speed divider (µs) this file wants, resolving a `0`
+    /// header word to the region hardware default and picking NTSC vs PAL by the
+    /// region flag.
+    #[must_use]
+    pub const fn effective_speed_us(&self) -> u16 {
+        if self.pal {
+            if self.play_speed_pal == 0 {
+                PAL_STD_SPEED_US
+            } else {
+                self.play_speed_pal
+            }
+        } else if self.play_speed_ntsc == 0 {
+            NTSC_STD_SPEED_US
+        } else {
+            self.play_speed_ntsc
+        }
+    }
+
+    /// The `play` period in NTSC CPU cycles, or `None` when the file plays at
+    /// the standard once-per-NTSC-frame 60 Hz rate (the fast, vblank-NMI-driven
+    /// path). `Some(cycles)` selects the cycle-timer IRQ driver — a PAL tune
+    /// (50 Hz) or any custom divider on the NTSC console.
+    #[must_use]
+    pub fn nonstandard_play_period_cycles(&self) -> Option<u32> {
+        let us = u64::from(self.effective_speed_us());
+        // Max divider (65535 µs) → ~117k cycles, always fits u32.
+        let cycles = u32::try_from(us * u64::from(NTSC_CPU_HZ) / 1_000_000).unwrap_or(u32::MAX);
+        // Within a cycle or two of a full NTSC frame ⇒ treat as plain 60 Hz.
+        (cycles.abs_diff(NTSC_FRAME_CYCLES) > 2).then_some(cycles.max(1))
+    }
+}
+
+/// Parse an extended `NSFE` (chunked) music file into the shared [`Nsf`].
+///
+/// Layout: the 4-byte `NSFE` magic, then a sequence of chunks each prefixed by
+/// a little-endian `u32` size + a 4-byte `FourCC` tag, terminated by the zero-length
+/// `NEND` chunk (or EOF). We consume `INFO` (required, first), `DATA` (the
+/// program image, required), and the optional `BANK` (initial 4 KiB banks) and
+/// `auth` (game / artist / copyright / ripper NUL-separated strings). Unknown
+/// chunks are skipped — including mandatory (uppercase-initial) ones we do not
+/// model, which is the tolerant behaviour real players use for base-2A03 tunes.
+///
+/// # Errors
+///
+/// Returns [`MapperError::Invalid`] on a truncated file, a chunk that runs past
+/// EOF, a missing/short `INFO`, or a missing `DATA`.
+fn parse_nsfe(bytes: &[u8]) -> Result<Nsf, MapperError> {
+    let inval = |m: &str| MapperError::Invalid(alloc::format!("NSFE: {m}"));
+    if !is_nsfe(bytes) {
+        return Err(inval("magic bytes do not match \"NSFE\""));
+    }
+    let mut pos = NSFE_MAGIC.len();
+    let mut info: Option<&[u8]> = None;
+    let mut data: Option<&[u8]> = None;
+    let mut banks = [0u8; 8];
+    let (mut song_name, mut artist, mut copyright) = (
+        Box::<str>::default(),
+        Box::<str>::default(),
+        Box::<str>::default(),
+    );
+
+    while pos + 8 <= bytes.len() {
+        let size = u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]])
+            as usize;
+        let tag = &bytes[pos + 4..pos + 8];
+        let body_start = pos + 8;
+        let body_end = body_start
+            .checked_add(size)
+            .filter(|&e| e <= bytes.len())
+            .ok_or_else(|| inval("chunk size runs past end of file"))?;
+        let body = &bytes[body_start..body_end];
+        match tag {
+            b"NEND" => break,
+            b"INFO" => info = Some(body),
+            b"DATA" => data = Some(body),
+            b"BANK" => {
+                let n = body.len().min(8);
+                banks[..n].copy_from_slice(&body[..n]);
+            }
+            b"auth" => {
+                // Four NUL-terminated UTF-8 strings: game, artist, copyright, ripper.
+                let mut parts = body.split(|&b| b == 0);
+                let take = |p: Option<&[u8]>| -> Box<str> {
+                    alloc::string::String::from_utf8_lossy(p.unwrap_or(&[]))
+                        .into_owned()
+                        .into_boxed_str()
+                };
+                song_name = take(parts.next());
+                artist = take(parts.next());
+                copyright = take(parts.next());
+            }
+            _ => { /* skip unknown / unmodelled chunk */ }
+        }
+        pos = body_end;
+    }
+
+    let info = info.ok_or_else(|| inval("missing required INFO chunk"))?;
+    if info.len() < 8 {
+        return Err(inval("INFO chunk shorter than 8 bytes"));
+    }
+    let prg = data
+        .ok_or_else(|| inval("missing required DATA chunk"))?
+        .to_vec();
+
+    let load_addr = read_u16(info, 0);
+    let init_addr = read_u16(info, 2);
+    let play_addr = read_u16(info, 4);
+    let pal = info[6] & 0b11 != 0;
+    let expansion = info[7];
+    let total_songs = info.get(8).copied().unwrap_or(1).max(1);
+    // NSFe starting track is 0-based; the shared struct stores 1-based.
+    let starting_song = info.get(9).copied().unwrap_or(0).saturating_add(1);
+
+    if load_addr < 0x6000 {
+        return Err(inval("INFO load address is below $6000"));
+    }
+
+    let bankswitched = banks.iter().any(|&b| b != 0);
+    let mut prg = prg;
+    if bankswitched {
+        let pad = (load_addr & 0x0FFF) as usize;
+        let mut image = vec![0u8; pad];
+        image.extend_from_slice(&prg);
+        if !image.len().is_multiple_of(0x1000) {
+            image.resize(image.len() + (0x1000 - image.len() % 0x1000), 0);
+        }
+        prg = image;
+    }
+
+    Ok(Nsf {
+        total_songs,
+        starting_song,
+        load_addr,
+        init_addr,
+        play_addr,
+        bankswitched,
+        initial_banks: banks,
+        expansion,
+        pal,
+        // NSFe has no µs divider — the region flag drives the rate via
+        // `effective_speed_us` (NTSC 60 Hz vs PAL 50 Hz).
+        play_speed_ntsc: 0,
+        play_speed_pal: 0,
+        prg,
+        song_name,
+        artist,
+        copyright,
+    })
+}
+
 /// A synthetic "mapper" that plays an [`Nsf`] through the standard lockstep
 /// engine. See the module docs for the driver mechanism.
+#[allow(clippy::struct_excessive_bools)] // independent state flags, not an FSM
 pub struct NsfMapper {
     prg: Box<[u8]>,
     /// 8 KiB of work RAM at `$6000-$7FFF`.
@@ -193,7 +398,21 @@ pub struct NsfMapper {
     /// Currently-selected song (0-based; what `init` receives in A).
     current_song: u8,
     /// The synthetic 6502 driver image served at [`DRIVER_BASE`].
-    driver: [u8; 0x40],
+    driver: [u8; 0x50],
+    /// `Some(period)` selects the **non-60-Hz cycle-timer IRQ** driver: `play`
+    /// is called every `period` CPU cycles (a PAL 50-Hz tune, or any custom
+    /// divider, on the NTSC console). `None` is the standard once-per-vblank
+    /// 60-Hz path (byte-identical to the pre-feature player).
+    play_period_cycles: Option<u32>,
+    /// Free-running CPU-cycle counter toward the next `play` (timer mode only).
+    play_cycle_counter: u32,
+    /// Whether the driver has finished `init` and armed the play-timer (set by
+    /// the `$5FF0` write the timer-mode driver issues after `JSR init`). Gates
+    /// the IRQ so no `play` fires mid-init.
+    timer_enabled: bool,
+    /// Level-triggered play-timer IRQ line (timer mode only), cleared by the
+    /// driver's `$5FF1` acknowledge write.
+    irq_pending: bool,
     /// Raw `$07B` expansion bitfield (kept for save-state reconstruction).
     expansion: u8,
     /// Expansion-audio synth cores, present only when the bitfield requests
@@ -224,7 +443,11 @@ impl NsfMapper {
             pal: nsf.pal,
             total_songs: nsf.total_songs,
             current_song: start,
-            driver: [0u8; 0x40],
+            driver: [0u8; 0x50],
+            play_period_cycles: nsf.nonstandard_play_period_cycles(),
+            play_cycle_counter: 0,
+            timer_enabled: false,
+            irq_pending: false,
             expansion: nsf.expansion,
             exp_audio: NsfExpansion::from_bits(nsf.expansion),
         };
@@ -309,6 +532,75 @@ impl NsfMapper {
             0x40, // 5023 RTI  (IRQ stub)
         ];
         self.driver[..code.len()].copy_from_slice(&code);
+        // Non-60-Hz files replace the standard vblank-NMI image with the
+        // cycle-timer IRQ driver (below).
+        if self.play_period_cycles.is_some() {
+            self.build_timer_driver(il, ih, pl, ph, region);
+        }
+    }
+
+    /// Assemble the **non-60-Hz** driver: instead of enabling vblank NMI, `INIT`
+    /// arms the mapper play-timer (`STA $5FF0`) after `JSR init`, and the `IRQ`
+    /// handler acknowledges the timer (`STA $5FF1`) then calls `play`. The NMI
+    /// entry becomes an `RTI` stub. Vector layout (`DRIVER_NMI_ENTRY` /
+    /// `DRIVER_IRQ_ENTRY`) is unchanged, so `cpu_read` of `$FFFA-$FFFF` and the
+    /// `DRIVER_SONG_OPERAND` (@ +6) stay valid.
+    fn build_timer_driver(&mut self, il: u8, ih: u8, pl: u8, ph: u8, region: u8) {
+        self.driver = [0u8; 0x50];
+        // INIT @ $5000: run the tune's `init`, then jump PAST the fixed NMI
+        // ($5015) / IRQ ($5023) entries to the continuation @ $5034 — which
+        // MUST disable the APU frame-counter IRQ before arming, or that IRQ
+        // shares this handler and drives `play` continuously.
+        let init_block: [u8; 0x0F] = [
+            0x78, // SEI
+            0xD8, // CLD
+            0xA2,
+            0xFF, // LDX #$FF
+            0x9A, // TXS
+            0xA9,
+            self.current_song, // LDA #song   (operand @ 0x06)
+            0xA2,
+            region, // LDX #region
+            0x20,
+            il,
+            ih, // JSR init
+            0x4C,
+            0x34,
+            0x50, // JMP $5034 (continuation)
+        ];
+        self.driver[..init_block.len()].copy_from_slice(&init_block);
+        // NMI stub @ $5015 (never enabled in timer mode; the vector still points
+        // here, so keep a safe RTI).
+        self.driver[0x15] = 0x40; // RTI
+        // IRQ play handler @ $5023: ack the timer ($5FF1), then `play`.
+        let irq_block: [u8; 0x11] = [
+            0x48, // PHA
+            0x8A, // TXA
+            0x48, // PHA
+            0x98, // TYA
+            0x48, // PHA
+            0x8D, 0xF1, 0x5F, // STA $5FF1  (ack timer IRQ)
+            0x20, pl, ph,   // JSR play
+            0x68, // PLA
+            0xA8, // TAY
+            0x68, // PLA
+            0xAA, // TAX
+            0x68, // PLA
+            0x40, // RTI
+        ];
+        self.driver[0x23..0x23 + irq_block.len()].copy_from_slice(&irq_block);
+        // Continuation @ $5034: disable the APU frame-counter IRQ ($4017 = $40,
+        // bit6 inhibit) ONCE (not per-`play`, so the APU frame sequencer isn't
+        // disturbed), arm the play-timer ($5FF0), enable IRQ, spin.
+        let cont_block: [u8; 0x0E] = [
+            0xA9, 0x40, // LDA #$40
+            0x8D, 0x17, 0x40, // STA $4017  (frame IRQ inhibit, 4-step)
+            0xA9, 0x01, // LDA #$01
+            0x8D, 0xF0, 0x5F, // STA $5FF0  (arm play-timer)
+            0x58, // CLI
+            0x4C, 0x3F, 0x50, // JMP $503F (spin: self)
+        ];
+        self.driver[0x34..0x34 + cont_block.len()].copy_from_slice(&cont_block);
     }
 
     /// Resolve a `$8000-$FFFF` CPU address to a PRG offset.
@@ -331,19 +623,18 @@ impl NsfMapper {
 
 impl Mapper for NsfMapper {
     fn caps(&self) -> MapperCaps {
-        // Base NSF (no expansion audio): no per-cycle hooks, no IRQ, no
-        // synthesis — same as before. When the `$07B` bitfield requests
-        // expansion audio, enable the CPU-cycle clock (oscillators), the
-        // frame-event hook (MMC5 envelope/length cadence), and audio mixing.
-        if self.exp_audio.is_some() {
-            MapperCaps {
-                cpu_cycle_hook: true,
-                audio: true,
-                frame_event_hook: true,
-                irq_source: false,
-            }
-        } else {
-            MapperCaps::NONE
+        // Base 60-Hz NSF (no expansion audio): no per-cycle hooks, no IRQ, no
+        // synthesis — same as before (`MapperCaps::NONE`). Expansion audio adds
+        // the CPU-cycle clock (oscillators), the frame-event hook (MMC5
+        // envelope/length cadence), and audio mixing. A non-60-Hz file adds the
+        // CPU-cycle clock (to advance the play-timer) + the IRQ source.
+        let timer = self.play_period_cycles.is_some();
+        let exp = self.exp_audio.is_some();
+        MapperCaps {
+            cpu_cycle_hook: exp || timer,
+            audio: exp,
+            frame_event_hook: exp,
+            irq_source: timer,
         }
     }
 
@@ -357,7 +648,7 @@ impl Mapper for NsfMapper {
         }
         match addr {
             // Synthetic driver image.
-            a if (DRIVER_BASE..DRIVER_BASE + 0x40).contains(&a) => {
+            a if (DRIVER_BASE..DRIVER_BASE + 0x50).contains(&a) => {
                 self.driver[(a - DRIVER_BASE) as usize]
             }
             // A non-bankswitched NSF may load its program into `$6000-$7FFF`
@@ -390,6 +681,16 @@ impl Mapper for NsfMapper {
             0x5FF8..=0x5FFF if self.bankswitched => {
                 self.banks[(addr - 0x5FF8) as usize] = value;
             }
+            // Non-60-Hz play-timer control (the timer-mode driver writes these;
+            // the standard driver never does, and they collide with no
+            // expansion-audio register). `$5FF0` = arm (init finished, start
+            // counting); `$5FF1` = acknowledge the level-triggered timer IRQ.
+            0x5FF0 => {
+                self.timer_enabled = true;
+                self.play_cycle_counter = 0;
+                self.irq_pending = false;
+            }
+            0x5FF1 => self.irq_pending = false,
             0x6000..=0x7FFF => self.wram[(addr - 0x6000) as usize] = value,
             _ => {
                 // Route everything else to the expansion-audio chips. For a
@@ -410,7 +711,7 @@ impl Mapper for NsfMapper {
             return false;
         }
         // Driver image and bank registers are always mapped.
-        if (DRIVER_BASE..DRIVER_BASE + 0x40).contains(&addr) || (0x5FF8..=0x5FFF).contains(&addr) {
+        if (DRIVER_BASE..DRIVER_BASE + 0x50).contains(&addr) || (0x5FF8..=0x5FFF).contains(&addr) {
             return false;
         }
         // Expansion-audio read ports (N163 `$4800-$4FFF`, MMC5 `$5015`) are
@@ -425,6 +726,23 @@ impl Mapper for NsfMapper {
         if let Some(exp) = self.exp_audio.as_mut() {
             exp.clock();
         }
+        // Non-60-Hz play-timer: once armed by the driver's `$5FF0` write, count
+        // CPU cycles and raise the (level-triggered) IRQ line every `period`
+        // cycles. It stays asserted until the driver's `$5FF1` ack, mirroring
+        // the MMC3/FME-7 mapper-IRQ discipline the bus already polls.
+        if let Some(period) = self.play_period_cycles
+            && self.timer_enabled
+        {
+            self.play_cycle_counter += 1;
+            if self.play_cycle_counter >= period {
+                self.play_cycle_counter = 0;
+                self.irq_pending = true;
+            }
+        }
+    }
+
+    fn irq_pending(&self) -> bool {
+        self.irq_pending
     }
 
     fn notify_frame_event(&mut self, events: MapperFrameEvents) {
@@ -522,6 +840,14 @@ impl Mapper for NsfMapper {
                 )));
             }
         }
+        // Non-60-Hz play-timer runtime is not serialized (the sub-period counter
+        // phase is inaudible across a restore, so the save-state format is
+        // unchanged for both standard and timer files). A restored timer file
+        // was already past `init`, so re-arm it; a standard file leaves these
+        // inert (`play_period_cycles` is `None`).
+        self.timer_enabled = self.play_period_cycles.is_some();
+        self.play_cycle_counter = 0;
+        self.irq_pending = false;
         self.build_driver();
         Ok(())
     }
@@ -645,5 +971,175 @@ mod tests {
         let mut blob = m.save_state();
         *blob.last_mut().expect("tail byte") ^= 0x80; // flip a presence bit
         assert!(matches!(m.load_state(&blob), Err(MapperError::Invalid(_))));
+    }
+
+    // ---- non-60-Hz playback (speed-word / cycle-timer IRQ) ----
+
+    fn synth_nsf_speed(ntsc_us: u16) -> Vec<u8> {
+        let mut f = synth_nsf();
+        f[0x6E] = (ntsc_us & 0xFF) as u8;
+        f[0x6F] = (ntsc_us >> 8) as u8;
+        f
+    }
+
+    #[test]
+    fn parses_and_resolves_speed_words() {
+        // Explicit NTSC divider is parsed and used.
+        let nsf = parse_nsf(&synth_nsf_speed(20000)).expect("valid");
+        assert_eq!(nsf.play_speed_ntsc, 20000);
+        assert_eq!(nsf.effective_speed_us(), 20000);
+        // A 0 divider resolves to the NTSC hardware default (60 Hz standard).
+        let nsf0 = parse_nsf(&synth_nsf_speed(0)).expect("valid");
+        assert_eq!(nsf0.effective_speed_us(), NTSC_STD_SPEED_US);
+    }
+
+    #[test]
+    fn standard_rate_is_vblank_driven_timer_none() {
+        // 0 (default) and the exact NTSC divider both classify as plain 60 Hz.
+        for us in [0u16, NTSC_STD_SPEED_US] {
+            let nsf = parse_nsf(&synth_nsf_speed(us)).expect("valid");
+            assert_eq!(nsf.nonstandard_play_period_cycles(), None, "us={us}");
+            let m = NsfMapper::new(&nsf);
+            assert!(m.play_period_cycles.is_none());
+            // Base 60-Hz NSF keeps the no-hooks capability set (byte-identical).
+            assert_eq!(m.caps(), MapperCaps::NONE);
+        }
+    }
+
+    #[test]
+    fn nonstandard_rate_selects_cycle_timer_driver() {
+        // A PAL-ish 50-Hz divider (20000 µs) resolves to a non-frame period and
+        // selects the timer driver (CPU-cycle hook + IRQ source).
+        let nsf = parse_nsf(&synth_nsf_speed(20000)).expect("valid");
+        let period = nsf.nonstandard_play_period_cycles().expect("timer mode");
+        assert!(
+            period > NTSC_FRAME_CYCLES,
+            "slower than 60 Hz -> longer period"
+        );
+        let mut m = NsfMapper::new(&nsf);
+        let caps = m.caps();
+        assert!(caps.irq_source && caps.cpu_cycle_hook);
+        // NMI vector -> RTI stub; IRQ vector -> play handler (starts with PHA).
+        assert_eq!(m.cpu_read(DRIVER_NMI_ENTRY), 0x40); // RTI
+        assert_eq!(m.cpu_read(DRIVER_IRQ_ENTRY), 0x48); // PHA
+        // INIT jumps past the fixed NMI/IRQ entries to the continuation @ $5034.
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x0C), 0x4C); // JMP
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x0D), 0x34);
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x0E), 0x50);
+        // The continuation disables the APU frame IRQ (`STA $4017`) BEFORE it
+        // arms the play-timer (`STA $5FF0`) — the ordering that stops the frame
+        // IRQ from co-driving `play`.
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x36), 0x8D); // STA $4017
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x37), 0x17);
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x38), 0x40);
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x3B), 0x8D); // STA $5FF0 (arm)
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x3C), 0xF0);
+        assert_eq!(m.cpu_read(DRIVER_BASE + 0x3D), 0x5F);
+    }
+
+    #[test]
+    fn timer_raises_and_acks_irq_only_after_arming() {
+        let nsf = parse_nsf(&synth_nsf_speed(20000)).expect("valid");
+        let mut m = NsfMapper::new(&nsf);
+        let period = m.play_period_cycles.expect("timer mode");
+        // Before arming: cycles must NOT raise the IRQ (init still running).
+        for _ in 0..(period + 10) {
+            m.notify_cpu_cycle();
+        }
+        assert!(
+            !m.irq_pending(),
+            "timer must stay quiet until $5FF0 arms it"
+        );
+        // Arm (the driver's post-init `STA $5FF0`).
+        m.cpu_write(0x5FF0, 1);
+        for _ in 0..(period - 1) {
+            m.notify_cpu_cycle();
+        }
+        assert!(!m.irq_pending(), "no IRQ one cycle early");
+        m.notify_cpu_cycle(); // period-th cycle
+        assert!(m.irq_pending(), "IRQ fires exactly at the period");
+        // Level-triggered: the driver's `$5FF1` ack clears it.
+        m.cpu_write(0x5FF1, 0);
+        assert!(!m.irq_pending(), "ack clears the level-triggered line");
+    }
+
+    #[test]
+    fn timer_mode_save_state_round_trips_and_rearms() {
+        let nsf = parse_nsf(&synth_nsf_speed(20000)).expect("valid");
+        let mut m = NsfMapper::new(&nsf);
+        m.cpu_write(0x5FF0, 1); // arm
+        m.set_song(2);
+        let blob = m.save_state();
+        let mut m2 = NsfMapper::new(&nsf);
+        m2.load_state(&blob).expect("round trip");
+        assert_eq!(m2.current_song(), 2);
+        // A restored timer file is re-armed (was past init) and fires again.
+        let period = m2.play_period_cycles.expect("timer mode");
+        for _ in 0..period {
+            m2.notify_cpu_cycle();
+        }
+        assert!(m2.irq_pending(), "restored timer re-arms and fires");
+    }
+
+    // ---- NSFe (extended chunked container) ----
+
+    /// Build a minimal `NSFe`: INFO (load/init/play $8000/$8000/$8003, 2 songs,
+    /// optional PAL flag) + a short DATA + an `auth` metadata chunk + NEND.
+    fn synth_nsfe(pal: bool) -> Vec<u8> {
+        let mut f = Vec::new();
+        f.extend_from_slice(b"NSFE");
+        let chunk = |tag: &[u8; 4], body: &[u8], out: &mut Vec<u8>| {
+            out.extend_from_slice(&u32::try_from(body.len()).unwrap().to_le_bytes());
+            out.extend_from_slice(tag);
+            out.extend_from_slice(body);
+        };
+        // INFO: load, init, play, region, expansion, tracks, start(0-based)
+        let region = u8::from(pal);
+        chunk(
+            b"INFO",
+            &[0x00, 0x80, 0x00, 0x80, 0x03, 0x80, region, 0x00, 2, 1],
+            &mut f,
+        );
+        chunk(b"DATA", &[0x60, 0xEA, 0xEA, 0x60], &mut f);
+        chunk(b"auth", b"Game Title\0Artist\0(c) 2026\0Ripper", &mut f);
+        chunk(b"NEND", &[], &mut f);
+        f
+    }
+
+    #[test]
+    fn parses_nsfe_info_data_and_auth() {
+        assert!(is_nsfe(&synth_nsfe(false)));
+        assert!(is_nsf(&synth_nsfe(false))); // combined detector accepts NSFE
+        let nsf = parse_nsf(&synth_nsfe(false)).expect("valid nsfe");
+        assert_eq!(nsf.load_addr, 0x8000);
+        assert_eq!(nsf.init_addr, 0x8000);
+        assert_eq!(nsf.play_addr, 0x8003);
+        assert_eq!(nsf.total_songs, 2);
+        assert_eq!(nsf.starting_song, 2); // 0-based start 1 -> 1-based 2
+        assert_eq!(&*nsf.song_name, "Game Title");
+        assert_eq!(&*nsf.artist, "Artist");
+        assert_eq!(&*nsf.copyright, "(c) 2026");
+        assert!(!nsf.pal);
+        // NTSC NSFe plays at the standard 60 Hz (vblank path).
+        assert_eq!(nsf.nonstandard_play_period_cycles(), None);
+    }
+
+    #[test]
+    fn nsfe_pal_region_selects_nonstandard_rate() {
+        let nsf = parse_nsf(&synth_nsfe(true)).expect("valid pal nsfe");
+        assert!(nsf.pal);
+        // PAL on the NTSC console -> 50 Hz -> the cycle-timer driver.
+        assert_eq!(nsf.effective_speed_us(), PAL_STD_SPEED_US);
+        assert!(nsf.nonstandard_play_period_cycles().is_some());
+        assert!(NsfMapper::new(&nsf).caps().irq_source);
+    }
+
+    #[test]
+    fn nsfe_rejects_missing_info_or_data() {
+        // NSFE magic + immediate NEND: no INFO, no DATA.
+        let mut f = Vec::from(*b"NSFE");
+        f.extend_from_slice(&0u32.to_le_bytes());
+        f.extend_from_slice(b"NEND");
+        assert!(matches!(parse_nsf(&f), Err(MapperError::Invalid(_))));
     }
 }

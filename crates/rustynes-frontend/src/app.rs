@@ -290,26 +290,33 @@ fn load_and_preprocess_rom(rom_path: &Path) -> std::io::Result<(Vec<u8>, String)
     Ok((bytes, label))
 }
 
-/// `true` when `bytes` is an NSF music file (classic `NESM\x1A` form).
+/// `true` when `bytes` is an NSF music file — classic `NESM\x1A` or the
+/// extended chunked `NSFE` container (both play through `Nes::from_nsf`).
 #[cfg(not(target_arch = "wasm32"))]
 fn is_nsf_image(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"NESM\x1A")
+    bytes.starts_with(b"NESM\x1A") || bytes.starts_with(b"NSFE")
 }
 
-/// Parse the (title, artist, copyright) strings from an NSF header (32-byte
-/// NUL-terminated fields at `$0E` / `$2E` / `$4E`). Returns empty strings when
-/// the file is too short. Used only for display in the NSF player panel.
+/// Parse the (title, artist, copyright) strings from an NSF file for display in
+/// the NSF player panel. Delegates to [`rustynes_core::rustynes_mappers::parse_nsf`],
+/// which reads the classic `NESM\x1A` header's 32-byte NUL-terminated fields at
+/// `$0E` / `$2E` / `$4E` **and** decodes the extended `NSFE` container's `auth`
+/// chunk. Using the shared parser (rather than a fixed-offset read here) keeps
+/// this correct for both containers: an `NSFE` file's chunk stream is *not*
+/// classic-header-shaped, so a raw `$0E`/`$2E`/`$4E` read would surface arbitrary
+/// chunk bytes as text. Returns empty strings when the file fails to parse or a
+/// field is absent/truncated (`parse_nsf` already trims each field at its first
+/// NUL and defaults missing `auth` strings to empty).
 #[cfg(not(target_arch = "wasm32"))]
 fn nsf_header_strings(bytes: &[u8]) -> (String, String, String) {
-    let field = |off: usize| -> String {
-        if bytes.len() < off + 32 {
-            return String::new();
-        }
-        let raw = &bytes[off..off + 32];
-        let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-        String::from_utf8_lossy(&raw[..end]).into_owned()
-    };
-    (field(0x0E), field(0x2E), field(0x4E))
+    match rustynes_core::rustynes_mappers::parse_nsf(bytes) {
+        Ok(nsf) => (
+            nsf.song_name.to_string(),
+            nsf.artist.to_string(),
+            nsf.copyright.to_string(),
+        ),
+        Err(_) => (String::new(), String::new(), String::new()),
+    }
 }
 
 /// CRC-32 (IEEE) over a byte slice (PNG chunk CRC). Used by [`encode_png_rgba`].
@@ -9132,10 +9139,83 @@ pub fn run_wasm() -> winit::event_loop::EventLoopProxy<AppEvent> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_rom_from_zip, is_fds_image, load_and_preprocess_rom, resolve_vs_dip};
+    use super::{
+        extract_rom_from_zip, is_fds_image, is_nsf_image, load_and_preprocess_rom,
+        nsf_header_strings, resolve_vs_dip,
+    };
     use crate::config::VsConfig;
     use rustynes_core::VsDbEntry;
     use rustynes_core::rustynes_mappers::VsPpuType;
+
+    /// Build a minimal classic `NESM` file with known title/artist/copyright
+    /// fields for the header-string display test.
+    fn synth_nesm(title: &[u8], artist: &[u8], copyright: &[u8]) -> Vec<u8> {
+        let mut f = vec![0u8; 0x80];
+        f[0..5].copy_from_slice(b"NESM\x1A");
+        f[0x05] = 0x01; // version
+        f[0x06] = 1; // total songs
+        f[0x07] = 1; // starting song
+        f[0x08..0x0A].copy_from_slice(&0x8000u16.to_le_bytes()); // load
+        f[0x0A..0x0C].copy_from_slice(&0x8000u16.to_le_bytes()); // init
+        f[0x0C..0x0E].copy_from_slice(&0x8003u16.to_le_bytes()); // play
+        f[0x0E..0x0E + title.len()].copy_from_slice(title);
+        f[0x2E..0x2E + artist.len()].copy_from_slice(artist);
+        f[0x4E..0x4E + copyright.len()].copy_from_slice(copyright);
+        f.extend_from_slice(&[0x60, 0xEA, 0xEA, 0x60]); // trivial program image
+        f
+    }
+
+    /// Build a minimal extended `NSFE` file whose title/artist/copyright live in
+    /// the `auth` chunk — deliberately NOT at the classic `$0E`/`$2E`/`$4E`
+    /// offsets, so a fixed-offset reader would surface chunk garbage.
+    fn synth_nsfe(title: &str, artist: &str, copyright: &str) -> Vec<u8> {
+        let mut f = Vec::new();
+        f.extend_from_slice(b"NSFE");
+        let mut chunk = |tag: &[u8; 4], body: &[u8]| {
+            f.extend_from_slice(&u32::try_from(body.len()).unwrap().to_le_bytes());
+            f.extend_from_slice(tag);
+            f.extend_from_slice(body);
+        };
+        chunk(
+            b"INFO",
+            &[0x00, 0x80, 0x00, 0x80, 0x03, 0x80, 0, 0x00, 1, 1],
+        );
+        chunk(b"DATA", &[0x60, 0xEA, 0xEA, 0x60]);
+        let auth = format!("{title}\0{artist}\0{copyright}\0Ripper");
+        chunk(b"auth", auth.as_bytes());
+        chunk(b"NEND", &[]);
+        f
+    }
+
+    #[test]
+    fn nsf_header_strings_reads_classic_nesm_fields() {
+        let f = synth_nesm(b"Song A", b"Composer B", b"(c) 2026 C");
+        assert!(is_nsf_image(&f));
+        let (title, artist, copyright) = nsf_header_strings(&f);
+        assert_eq!(title, "Song A");
+        assert_eq!(artist, "Composer B");
+        assert_eq!(copyright, "(c) 2026 C");
+    }
+
+    #[test]
+    fn nsf_header_strings_reads_nsfe_auth_chunk_not_fixed_offset() {
+        // Regression for PR #254: is_nsf_image now routes NSFE through the NSF
+        // UI, so the header-string reader must decode the NSFE `auth` chunk
+        // rather than reading classic-header offsets (which would yield garbage).
+        let f = synth_nsfe("NSFE Title", "NSFE Artist", "NSFE (c)");
+        assert!(is_nsf_image(&f));
+        let (title, artist, copyright) = nsf_header_strings(&f);
+        assert_eq!(title, "NSFE Title");
+        assert_eq!(artist, "NSFE Artist");
+        assert_eq!(copyright, "NSFE (c)");
+    }
+
+    #[test]
+    fn nsf_header_strings_empty_on_garbage() {
+        // A non-NSF / truncated buffer must not panic and yields empty fields.
+        let (t, a, c) = nsf_header_strings(b"not an nsf file at all");
+        assert!(t.is_empty() && a.is_empty() && c.is_empty());
+    }
 
     #[test]
     fn zip_extracts_first_rom_entry() {

@@ -426,12 +426,17 @@ dedicated `Nes::from_nsf` path (not `parse`). The mapper serves the program imag
 (`$8000-$FFFF`, with `$5FF8-$5FFF` 4 KiB bank-switching), 8 KiB WRAM at `$6000`,
 and a tiny hand-assembled 6502 **driver** at `$5000`; the reset/NMI/IRQ vectors
 (`$FFFA-$FFFF`) are overridden to point at the driver. Reset runs `init` for the
-selected song and enables vblank NMI; the ordinary 60 Hz NMI then calls `play`
-each frame. Because this reuses the normal lockstep `run_frame`, the APU produces
-audio identically to a cartridge and the determinism contract is untouched. The
-`Mapper` trait carries three default-no-op `nsf_*` hooks (song count / current /
-set) so the bus + `Nes` can drive track selection without downcasting. Scope: base
-2A03, NTSC 60 Hz; expansion-chip audio + non-60 Hz rates + NSFe are deferred.
+selected song. At the standard 60 Hz it enables vblank NMI and the ordinary 60 Hz
+NMI calls `play` each frame; at a **non-standard rate** (a PAL 50 Hz tune or any
+custom µs divider from the header speed word, on the NTSC console) it instead
+disables the APU frame IRQ and arms a mapper **cycle-timer** that raises a
+`$5FF1`-acked IRQ every `period` CPU cycles, whose handler calls `play`. Because
+this reuses the normal lockstep `run_frame`, the APU produces audio identically to
+a cartridge and the determinism contract is untouched. The `Mapper` trait carries
+three default-no-op `nsf_*` hooks (song count / current / set) so the bus + `Nes`
+can drive track selection without downcasting. Scope: base 2A03 + expansion-chip
+audio, NTSC / PAL / custom play rates, and both the classic `NESM` and the extended
+chunked `NSFE` containers; the FDS-style `$5FF6/$5FF7` RAM banking remains deferred.
 
 ## Edge cases and gotchas
 
