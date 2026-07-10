@@ -14,6 +14,21 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **NSF non-60 Hz playback + NSFe support** (Fathom F4.1/F4.2). The NSF player now
+  parses the header **play-speed divider** (`$6E-$6F` NTSC / `$78-$79` PAL, µs per
+  `play`) and drives non-standard rates correctly: a PAL 50 Hz tune — or any custom
+  divider — on the NTSC console runs `play` from a mapper **cycle-timer IRQ** (the
+  driver disables the APU frame-counter IRQ once in `init`, then arms a
+  level-triggered, `$5FF1`-acked timer that fires every `period` CPU cycles). The
+  standard 60 Hz path is unchanged and **byte-identical** (vblank-NMI). The extended
+  chunked **`NSFE`** container is now parsed as well (INFO / DATA / BANK / auth
+  chunks; rate derived from the region flag), routed through the same
+  `Nes::from_nsf` path and frontend file detection. Covered by new `nsf` unit tests
+  plus a core integration test asserting the timer IRQ drives `play` at a sub-60 Hz
+  rate. Determinism / AccuracyCoin unaffected (NSF is not on the oracle path).
+
 ## [2.1.1] - 2026-07-10 - "Fathom" (patch — Wizards & Warriors freeze fixed at the root: game-DB mirroring override + a run-ahead PPU-snapshot gap)
 
 ### Fixed

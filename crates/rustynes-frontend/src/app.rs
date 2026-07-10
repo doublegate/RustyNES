@@ -290,10 +290,11 @@ fn load_and_preprocess_rom(rom_path: &Path) -> std::io::Result<(Vec<u8>, String)
     Ok((bytes, label))
 }
 
-/// `true` when `bytes` is an NSF music file (classic `NESM\x1A` form).
+/// `true` when `bytes` is an NSF music file — classic `NESM\x1A` or the
+/// extended chunked `NSFE` container (both play through `Nes::from_nsf`).
 #[cfg(not(target_arch = "wasm32"))]
 fn is_nsf_image(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"NESM\x1A")
+    bytes.starts_with(b"NESM\x1A") || bytes.starts_with(b"NSFE")
 }
 
 /// Parse the (title, artist, copyright) strings from an NSF header (32-byte

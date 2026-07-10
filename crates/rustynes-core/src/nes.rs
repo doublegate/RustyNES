@@ -3177,6 +3177,54 @@ mod tests {
         assert_eq!(nes.nsf_current_song(), 2, "clamped to last song");
     }
 
+    /// A minimal non-60-Hz NSF whose `play` routine increments zero-page `$00`,
+    /// so a test can count how many times the cycle-timer IRQ drove `play`.
+    fn synth_counting_nsf_50hz() -> Vec<u8> {
+        let mut f = vec![0u8; 0x80];
+        f[0..5].copy_from_slice(b"NESM\x1A");
+        f[0x05] = 1; // version
+        f[0x06] = 1; // 1 song
+        f[0x07] = 1; // starting song
+        f[0x08] = 0x00;
+        f[0x09] = 0x80; // load $8000
+        f[0x0A] = 0x00;
+        f[0x0B] = 0x80; // init $8000
+        f[0x0C] = 0x06;
+        f[0x0D] = 0x80; // play $8006
+        // NTSC play-speed divider $6E-$6F = 20000 µs (~50 Hz) — a non-standard
+        // rate that selects the cycle-timer IRQ driver instead of vblank-NMI.
+        f[0x6E] = 0x20;
+        f[0x6F] = 0x4E; // 0x4E20 = 20000
+        let program: &[u8] = &[
+            // init ($8000): enable APU channels, RTS. (6 bytes)
+            0xA9, 0x0F, 0x8D, 0x15, 0x40, 0x60, // play ($8006): INC $00; RTS
+            0xE6, 0x00, 0x60,
+        ];
+        f.extend_from_slice(program);
+        f
+    }
+
+    #[test]
+    fn nsf_nonstandard_rate_drives_play_via_timer_irq() {
+        let mut nes = Nes::from_nsf(&synth_counting_nsf_50hz()).expect("valid nsf");
+        // 12 NTSC frames ≈ 0.2 s. A ~50 Hz play-timer IRQ must fire `play`
+        // (INC $00) several times — proving the cycle-timer IRQ path works
+        // end-to-end through `run_frame` — but FEWER than the 12 frames, since
+        // 50 Hz is slower than the 60 Hz once-per-vblank rate.
+        for _ in 0..12 {
+            nes.run_frame();
+        }
+        let calls = nes.cpu_bus_peek(0x0000);
+        assert!(
+            calls > 0,
+            "timer IRQ must drive `play` at the non-standard rate"
+        );
+        assert!(
+            calls < 12,
+            "50 Hz must call `play` fewer times than 60 Hz frames (got {calls})"
+        );
+    }
+
     #[test]
     fn nsf_song_apis_are_inert_on_a_cartridge() {
         let mut nes = Nes::from_rom(&synth_nrom(16, 8)).expect("nrom builds");
