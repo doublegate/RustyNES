@@ -707,7 +707,13 @@ mod tests {
     #[test]
     fn snapshot_rejects_bad_version() {
         let mut p = Ppu::new(PpuRegion::Ntsc);
-        let err = p.restore(&[0xFF; 4]).unwrap_err();
+        // A full-size blob (past the truncation guard) whose version byte is
+        // unknown must be rejected at the version check — not mistaken for a
+        // truncated blob. (A short bad-version blob is a Truncated case,
+        // covered by `snapshot_rejects_short_blob`.)
+        let mut blob = p.snapshot();
+        blob[0] = 0xFF;
+        let err = p.restore(&blob).unwrap_err();
         assert!(matches!(err, PpuSnapshotError::UnsupportedVersion(0xFF)));
     }
 
