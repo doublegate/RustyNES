@@ -108,18 +108,29 @@ jobs:
         # HTML and must not fail the deploy on a doc nit.
         run: cargo doc --workspace --no-deps
 
-      # The MkDocs handbook only needs Python + mkdocs-material (a single pip
-      # package that pulls MkDocs + the theme + pymdown-extensions). No cargo /
-      # native deps here, so it is deliberately kept off the rustdoc toolchain
-      # path. We build to a temp dir (`mkdocs-site`) rather than straight into
-      # `_site/docs`, because the assemble step below clears + recreates `_site`.
+      # The MkDocs handbook needs Python + mkdocs-material. We pull the
+      # `[imaging]` extra (cairosvg + Pillow) because the `social` plugin renders
+      # per-page preview-card PNGs at build time; that in turn needs the Cairo +
+      # Pango system libraries, installed below. The `privacy` plugin self-hosts
+      # the theme/social web-fonts into the build (one build-time fetch, then a
+      # network-free served site). We build to a temp dir (`mkdocs-site`) rather
+      # than straight into `_site/docs`, because the assemble step below clears +
+      # recreates `_site`.
       - name: Set up Python for MkDocs
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install Material for MkDocs
-        run: pip install "mkdocs-material==9.*"
+      - name: Install the social-card image libraries (Cairo + Pango)
+        # Required by the mkdocs-material `social` plugin's PNG renderer.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libcairo2-dev libpango1.0-dev libfreetype6-dev \
+            libffi-dev libjpeg-dev libpng-dev
+
+      - name: Install Material for MkDocs (with imaging extra)
+        run: pip install "mkdocs-material[imaging]==9.*"
 
       - name: Build the MkDocs documentation handbook
         # NOT --strict: several source specs (STATUS.md, android.md, frontend.md)

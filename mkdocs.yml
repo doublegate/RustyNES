@@ -86,6 +86,17 @@ markdown_extensions:
 
 plugins:
   - search
+  # Per-page social preview cards (the Open Graph / Twitter image rendered when
+  # a /docs/ link is shared on GitHub / Slack / Discord / X). Built into
+  # mkdocs-material, but it renders PNGs at build time via Cairo + Pillow, so
+  # web.yml installs the `mkdocs-material[imaging]` extra + the Cairo/Pango
+  # system libraries. Colors default from the theme palette (indigo/red).
+  - social
+  # Self-host the theme's external assets (the web-font files the social plugin
+  # and the theme would otherwise fetch from Google Fonts at render time),
+  # bundling them into the build for a network-free, GDPR-clean served site.
+  # Listed after `social` so it also localizes the assets social pulls in.
+  - privacy
 
 extra:
   social:
