@@ -421,8 +421,10 @@ their `$8000`-`$FFFF` register space — including the IRQ ports
 A12-clocked scanline IRQ is board-independent by construction.
 `crates/rustynes-test-harness/tests/mmc3_clone_a12.rs` is a chip-level oracle
 (no ROM files, deterministic, runs in the default `cargo test`) that pins that
-timing as **additive evidence** behind the cluster's existing `Curated`
-classification — it does **not** move any tier. The centerpiece drives every
+timing as **additive evidence** — behind the existing `Curated` classification of
+the eight Curated members (44/49/52/115/134/189/205/245) and, since the three
+high-id boards 238/348/366 are `BestEffort`, giving those real IRQ-timing
+evidence too. It does **not** move any tier. The centerpiece drives every
 clone board and a reference plain `Mmc3` (Sharp / rev A) through the identical
 canonical rendering-scanline A12 sequence and asserts the clone reproduces the
 reference's per-scanline IRQ-assert bitmap **bit-for-bit**: the first assertion

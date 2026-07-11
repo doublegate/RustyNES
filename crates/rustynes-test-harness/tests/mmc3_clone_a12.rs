@@ -7,9 +7,12 @@
 //! one of those boards routes its `$8000`-`$FFFF` register space (and thus
 //! the IRQ ports `$C000`/`$C001`/`$E000`/`$E001`) into the *same* shared
 //! counter, so the A12-clocked scanline IRQ is board-independent by
-//! construction. The cluster is classified `Curated` in
-//! `crates/rustynes-mappers/src/tier.rs`; this suite is **additive test
-//! evidence** deepening that classification — it does not move any tier.
+//! construction. Most of the cluster is classified `Curated` in
+//! `crates/rustynes-mappers/src/tier.rs` (44/49/52/115/134/189/205/245); the
+//! three high-id boards 238/348/366 are `BestEffort`. This suite is **additive
+//! test evidence** — it deepens the `Curated` members' classification and gives
+//! the `BestEffort` members real IRQ-timing evidence, but it does **not** move
+//! any tier (the shared `Mmc3Clone` core means all eleven share this timing).
 //!
 //! ## What the MMC3 scanline counter does
 //!
@@ -29,8 +32,8 @@
 //! With a non-zero latch `L`, an initial `$C001` reload consumes the first
 //! rising edge (counter ← `L`), then `L` decrements bring it to zero — so
 //! the IRQ first asserts on rising edge **`L + 1`** and, once acknowledged
-//! each scanline, re-asserts every `L` edges thereafter. That is the exact
-//! edge/scanline arithmetic this oracle pins.
+//! each scanline, re-asserts every **`L + 1`** edges thereafter. That is the
+//! exact edge/scanline arithmetic this oracle pins.
 //!
 //! ## The A12 edge filter
 //!
