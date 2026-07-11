@@ -1,21 +1,22 @@
 name: Deploy Pages (demo + docs)
 
-# Builds the wasm32 frontend with trunk AND the workspace rustdoc, then
-# publishes BOTH to GitHub Pages in a single deployment
-# (https://doublegate.github.io/RustyNES/):
+# Builds the wasm32 frontend with trunk, the workspace rustdoc, AND the
+# Material for MkDocs documentation handbook, then publishes ALL THREE to
+# GitHub Pages in a single deployment (https://doublegate.github.io/RustyNES/):
 #
 #   /        the playable wasm demo (the full winit + wgpu + egui build)
 #   /api/    the workspace API documentation (rustdoc)
+#   /docs/   the Material for MkDocs handbook (subsystem specs + user guide)
 #
-# GitHub Pages allows only one deployment source per repo, so the demo and
-# the docs are assembled into one artifact and deployed together (the Pages
-# source must be "GitHub Actions", build_type: workflow — NOT a branch). This
-# replaces the legacy gh-pages-branch docs deploy.
+# GitHub Pages allows only one deployment source per repo, so the demo, the
+# rustdoc, and the MkDocs handbook are assembled into one artifact and deployed
+# together (the Pages source must be "GitHub Actions", build_type: workflow —
+# NOT a branch). This replaces the legacy gh-pages-branch docs deploy.
 #
-# Two jobs: `build` produces + size-gates the demo, builds the docs, assembles
-# the combined `_site/`, and uploads it as a Pages artifact; `deploy` publishes
-# it. The build also runs on pull requests (deploy does NOT) so the size budget
-# gates PRs without publishing a preview.
+# Two jobs: `build` produces + size-gates the demo, builds the rustdoc + the
+# MkDocs handbook, assembles the combined `_site/`, and uploads it as a Pages
+# artifact; `deploy` publishes it. The build also runs on pull requests (deploy
+# does NOT) so the size budget gates PRs without publishing a preview.
 #
 # trunk auto-downloads the wasm-bindgen CLI + wasm-opt versions pinned in
 # crates/rustynes-frontend/web/Trunk.toml.
@@ -31,6 +32,8 @@ on:
       - "rust-toolchain.toml"
       - "scripts/wasm_size_budget.sh"
       - ".github/workflows/web.yml"
+      - "docs/**"
+      - "mkdocs.yml"
   pull_request:
     branches: [main]
     paths:
@@ -41,6 +44,8 @@ on:
       - "rust-toolchain.toml"
       - "scripts/wasm_size_budget.sh"
       - ".github/workflows/web.yml"
+      - "docs/**"
+      - "mkdocs.yml"
   workflow_dispatch:
 
 # Pages deploy needs these; everything else is read-only.
@@ -103,13 +108,47 @@ jobs:
         # HTML and must not fail the deploy on a doc nit.
         run: cargo doc --workspace --no-deps
 
-      - name: Assemble the Pages site (demo at /, rustdoc at /api/)
+      # The MkDocs handbook needs Python + mkdocs-material. We pull the
+      # `[imaging]` extra (cairosvg + Pillow) because the `social` plugin renders
+      # per-page preview-card PNGs at build time; that in turn needs the Cairo +
+      # Pango system libraries, installed below. The `privacy` plugin self-hosts
+      # the theme/social web-fonts into the build (one build-time fetch, then a
+      # network-free served site). We build to a temp dir (`mkdocs-site`) rather
+      # than straight into `_site/docs`, because the assemble step below clears +
+      # recreates `_site`.
+      - name: Set up Python for MkDocs
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the social-card image libraries (Cairo + Pango)
+        # Required by the mkdocs-material `social` plugin's PNG renderer.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libcairo2-dev libpango1.0-dev libfreetype6-dev \
+            libffi-dev libjpeg-dev libpng-dev
+
+      - name: Install Material for MkDocs (with imaging extra)
+        run: pip install "mkdocs-material[imaging]==9.*"
+
+      - name: Build the MkDocs documentation handbook
+        # NOT --strict: several source specs (STATUS.md, android.md, frontend.md)
+        # carry legitimate relative cross-links into sibling repo trees
+        # (../to-dos/**, ../crates/**) that are outside docs_dir and therefore
+        # unresolvable as in-site links. Those are pre-existing links we do not
+        # rewrite (the docs are the source-of-truth spec), so --strict would
+        # abort the deploy on links that render fine. The build itself is clean.
+        run: mkdocs build --site-dir mkdocs-site
+
+      - name: Assemble the Pages site (demo at /, rustdoc at /api/, handbook at /docs/)
         run: |
           set -euo pipefail
           rm -rf _site
-          mkdir -p _site/api
+          mkdir -p _site/api _site/docs
           cp -r crates/rustynes-frontend/web/dist/. _site/
           cp -r target/doc/. _site/api/
+          cp -r mkdocs-site/. _site/docs/
           # rustdoc emits no root index for a multi-crate workspace; add a
           # redirect to the main library facade so /api/ lands somewhere useful.
           cat > _site/api/index.html <<'HTML'
