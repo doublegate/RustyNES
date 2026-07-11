@@ -456,9 +456,11 @@ impl Emu {
         // iNES 1.0 (no byte 13), so the header alone can never flag them.
         let db_dual = crate::vs_db::lookup(nes.rom_sha256()).is_some_and(|e| e.dual_system);
         if nes.is_vs_dual_system() || db_dual {
-            // Re-construct as a dual pair (the probe Nes is discarded; the
-            // dual constructor builds both halves from the same bytes).
-            Ok(Self::Dual(Box::new(VsDualSystem::from_rom(bytes)?)))
+            // Reuse the probe as the MAIN console; parse once more for the SUB
+            // (two parses total, not three). `from_pair` applies the cabinet
+            // wiring to the pair.
+            let sub = Nes::from_rom(bytes)?;
+            Ok(Self::Dual(Box::new(VsDualSystem::from_pair(nes, sub))))
         } else {
             Ok(Self::Single(Box::new(nes)))
         }
@@ -475,9 +477,10 @@ impl Emu {
         let nes = Nes::from_rom_with_sample_rate(bytes, sample_rate)?;
         let db_dual = crate::vs_db::lookup(nes.rom_sha256()).is_some_and(|e| e.dual_system);
         if nes.is_vs_dual_system() || db_dual {
-            Ok(Self::Dual(Box::new(
-                VsDualSystem::from_rom_with_sample_rate(bytes, sample_rate)?,
-            )))
+            // Reuse the probe as MAIN; parse once more for SUB (two parses, not
+            // three).
+            let sub = Nes::from_rom_with_sample_rate(bytes, sample_rate)?;
+            Ok(Self::Dual(Box::new(VsDualSystem::from_pair(nes, sub))))
         } else {
             Ok(Self::Single(Box::new(nes)))
         }

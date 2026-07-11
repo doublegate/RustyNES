@@ -1446,9 +1446,9 @@ impl Gfx {
     /// v2.1.2 F2.1 — present a composed Vs. `DualSystem` two-screen image
     /// (`dual_rgba`, `dual_w` x `dual_h` — e.g. 512x240 side-by-side or 256x480
     /// stacked). Reuses the nearest-sampling blit pipeline through a lazily-sized
-    /// [`DynBlit`], with an aspect-correct letterbox for the wide/tall combined
+    /// `DynBlit`, with an aspect-correct letterbox for the wide/tall combined
     /// frame (no overscan / PAR — the source is already two composed screens).
-    /// Native only. Structurally identical to [`Self::render_hd_with_overlay`],
+    /// Native only. Structurally identical to `render_hd_with_overlay`,
     /// including the release-safe size guard that skips a mismatched upload
     /// rather than aborting the process.
     #[cfg(not(target_arch = "wasm32"))]
@@ -1745,30 +1745,43 @@ pub fn compose_dual_into(
     let w = NES_W as usize;
     let h = NES_H as usize;
     let row = w * 4;
+    let plane = w * h * 4;
     match layout {
         DualLayout::SideBySide => {
             let cw = w * 2;
-            out.clear();
-            out.resize(cw * h * 4, 0);
+            let target = cw * h * 4;
+            // Only (re)allocate + zero on a size change; in steady state (both
+            // screens full-size) every byte below is overwritten, so no per-frame
+            // ~0.5 MB zero-fill. A short input zeros only its own (missing) region.
+            if out.len() != target {
+                out.resize(target, 0);
+            }
             for y in 0..h {
                 let dst = y * cw * 4;
                 if main.len() >= (y + 1) * row {
                     out[dst..dst + row].copy_from_slice(&main[y * row..(y + 1) * row]);
+                } else {
+                    out[dst..dst + row].fill(0);
                 }
                 if sub.len() >= (y + 1) * row {
                     out[dst + row..dst + 2 * row].copy_from_slice(&sub[y * row..(y + 1) * row]);
+                } else {
+                    out[dst + row..dst + 2 * row].fill(0);
                 }
             }
-            (u32::try_from(cw).unwrap_or(NES_W * 2), NES_H)
+            (NES_W * 2, NES_H)
         }
         DualLayout::Stacked => {
-            let plane = w * h * 4;
-            out.clear();
-            out.resize(plane * 2, 0);
+            let target = plane * 2;
+            if out.len() != target {
+                out.resize(target, 0);
+            }
             let m = main.len().min(plane);
             out[..m].copy_from_slice(&main[..m]);
+            out[m..plane].fill(0);
             let s = sub.len().min(plane);
             out[plane..plane + s].copy_from_slice(&sub[..s]);
+            out[plane + s..].fill(0);
             (NES_W, NES_H * 2)
         }
     }
