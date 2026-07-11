@@ -46,6 +46,23 @@ cycle-accurate core later replaced.
   The bulk catalog ships on every target including the wasm browser demo — at
   ~777 KB raw it gzips to ~128 KiB, well inside the wasm bundle's 5 MiB budget —
   so the browser build carries the full game coverage too.
+- **Material for MkDocs documentation site** at `/docs/` on GitHub Pages
+  (<https://doublegate.github.io/RustyNES/docs/>). The existing Pages deployment
+  now serves three sections from one artifact: the playable wasm demo at the
+  site root (`/`), the workspace rustdoc at `/api/`, and this new
+  Material-themed handbook at `/docs/`. The handbook renders the existing `docs/`
+  subsystem specs and user guide directly (no duplicated content — `docs_dir`
+  points at the source-of-truth tree) with a curated, grouped navigation
+  (Overview, Emulation Core, Frontend & Features, Testing & Accuracy, Platforms,
+  User Guide), a light/dark palette toggle, instant navigation, search, and
+  copy-to-clipboard code blocks. Per-page **social preview cards** (the `social`
+  plugin) render an Open Graph / Twitter image for each page so shared `/docs/`
+  links unfurl richly, and the `privacy` plugin self-hosts the theme's web-fonts
+  into the build for a network-free, GDPR-clean served site.
+  `.github/workflows/web.yml` gains a Python + `mkdocs-material[imaging]` build
+  step (with the Cairo/Pango system libraries the card renderer needs) that emits
+  the handbook into `_site/docs/` alongside the demo and rustdoc copies, and now
+  also triggers on `docs/**` / `mkdocs.yml` changes.
 
 ## [2.1.2] - 2026-07-11 - "Fathom" (display-fidelity — generated NTSC palette + composite-shader ladder + Vs. `DualSystem` second screen + NSF non-60 Hz/NSFe; "Prism")
 

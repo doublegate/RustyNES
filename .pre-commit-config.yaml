@@ -12,6 +12,10 @@ repos:
         args: [--markdown-linebreak-ext=md]
       - id: end-of-file-fixer
       - id: check-yaml
+        # mkdocs.yml uses Material for MkDocs' documented `!!python/name:` YAML
+        # tags (pymdownx.emoji icon rendering), which check-yaml's safe_load
+        # rejects; the mkdocs build itself validates the file in CI.
+        exclude: ^mkdocs\.yml$
       - id: check-toml
       - id: check-merge-conflict
       - id: mixed-line-ending
