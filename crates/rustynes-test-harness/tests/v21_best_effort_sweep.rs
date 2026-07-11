@@ -44,11 +44,12 @@ use rustynes_core::Nes;
 use rustynes_core::rustynes_mappers::{MapperTier, mapper_tier};
 
 /// Upper bound (inclusive) of the iNES / NES 2.0 mapper-number space we probe
-/// when enumerating the `BestEffort` set. The NES 2.0 mapper field is 12 bits
-/// (0..=4095); the highest currently-classified `BestEffort` id is 513, so
-/// 1024 leaves generous headroom for future high-id BMC / pirate boards while
-/// keeping the classifier scan trivially cheap (a `const fn` match per id).
-const MAX_MAPPER_ID: u16 = 1024;
+/// when enumerating the `BestEffort` set. The NES 2.0 mapper field is 12 bits,
+/// so we scan the FULL space (0..=4095) — a future high-id BestEffort board is
+/// then swept automatically with no silent gap, and the classifier scan stays
+/// trivially cheap (a `const fn` match per id, ~4096 iterations in well under a
+/// microsecond).
+const MAX_MAPPER_ID: u16 = 4095;
 
 /// Framebuffer geometry: RGBA8, 256x240 (see `Nes::framebuffer`).
 const FRAMEBUFFER_LEN: usize = 256 * 240 * 4;
@@ -98,9 +99,21 @@ fn synth_rom(mapper: u16, submapper: u8, prg_banks_16k: usize, chr_banks_8k: usi
     // plain iNES 1.0 image.
     bytes.push((submapper << 4) | m_hi);
     // byte 9: PRG/CHR size MSB nibbles — 0 here (all our sizes fit the LSB).
-    // bytes 10-15: PRG-RAM/CHR-RAM shift, region, etc. — all left at 0 (NTSC,
-    // mapper-allocated RAM).
-    bytes.extend_from_slice(&[0u8; 7]);
+    // byte 10: PRG-RAM shift — 0.
+    // byte 11: CHR-RAM shift (NES 2.0). A CHR-RAM cart (`chr_banks_8k == 0`) with
+    // a NES 2.0 header must declare its CHR-RAM size in the low nibble here —
+    // size = 64 << shift — or `parse_header` reads 0 bytes of CHR-RAM and the
+    // header is internally inconsistent. Declare 8 KiB (shift 7 -> 64 << 7 =
+    // 8192) so the high-id CHR-RAM boards get a coherent cart. iNES 1.0 CHR-RAM
+    // (no NES 2.0 marker) keeps the implicit 8 KiB, so leave byte 11 at 0 there.
+    let chr_ram_shift: u8 = if needs_nes2 && chr_banks_8k == 0 {
+        7
+    } else {
+        0
+    };
+    // bytes 9-15: MSB nibbles / PRG-RAM shift / region / etc. — 0 except the
+    // CHR-RAM shift in byte 11 (index 2 of this seven-byte tail: 9,10,[11],…).
+    bytes.extend_from_slice(&[0, 0, chr_ram_shift, 0, 0, 0, 0]);
 
     // PRG payload: JMP $C000 at every bank base; vectors in the last bank.
     let mut prg = vec![0u8; prg_size];
