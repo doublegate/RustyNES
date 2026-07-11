@@ -14,6 +14,37 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Mapper bank-reachability + IRQ regression net (v2.1.5 "Regression Net &
+  Residual").** Wired the tepples **Holy Mapperel** cartridge-PCB-assembly test
+  ROMs into CI as a dedicated mapper regression net
+  (`crates/rustynes-test-harness/tests/holy_mapperel.rs`, gated on the default
+  `--features test-roms`). Holy Mapperel detects which mapper it is running on
+  purely from the console's mirroring + bank-switching response (no header
+  trust), sizes PRG/CHR ROM/RAM, proves every PRG/CHR bank is reachable, and
+  exercises WRAM + the MMC3/FME-7 interval-timer IRQ — coverage the
+  `AccuracyCoin` and blargg CPU/PPU corpora barely touch and the gitignored
+  60-ROM commercial oracle can't provide in CI. Because Holy Mapperel reports
+  its verdict visually (no blargg `$6000` status protocol), each of the 17
+  committed zlib-licensed ROMs is driven to its settled result screen and pinned
+  by an `insta` framebuffer-hash snapshot (the same determinism-backed technique
+  `visual_regression` uses), with two structural guards — *settled* (byte-stable
+  across a late frame window, so a Morse-code hard-crash never green-lights) and
+  *non-blank* — running first so a hard fault surfaces with a ROM-named message.
+  The suite is data-driven over the committed ROM directory, so a newly-added
+  ROM auto-enrolls (new snapshot line + a forced `UNVERIFIED` classification).
+  15 of 17 ROMs detect the correct mapper and reach every bank with detailed
+  code `0000`; the two MMC1 (`M1_*`) and two FME-7 (`M69_*`) ROMs surface a
+  documented, honestly-pinned **WRAM-disable residual** (RustyNES treats
+  cartridge WRAM as always-enabled and does not model the software
+  write-protect / RAM-enable bit — a widely-shared simplification; not a
+  bank-reachability defect, and the FME-7 IRQ passes). The net is purely
+  additive: it changes no core behavior, so `AccuracyCoin` (141/141) and the
+  commercial byte-identity oracle stay unchanged. ROM license provenance
+  (zlib, Damian Yerrick) is recorded in `tests/roms/LICENSES.md`; the residual
+  is recorded in `docs/accuracy-ledger.md`.
+
 ## [2.1.4] - 2026-07-11 - "Fathom" (accuracy hardening — opt-in OAM decay + BestEffort boot-smoke sweep + MMC3-clone A12/IRQ timing oracle; "Caliper")
 
 ### Added

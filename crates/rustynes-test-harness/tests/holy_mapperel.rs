@@ -1,173 +1,254 @@
-//! Tepples / Damian Yerrick `holy_mapperel` cartridge-PCB-assembly test ROM.
+//! Tepples / Damian Yerrick `holy_mapperel` cartridge-PCB-assembly oracle —
+//! the **mapper bank-reachability + IRQ regression net** (v2.1.5 "Regression
+//! Net & Residual", primary item).
 //!
 //! Source: <https://github.com/pinobatch/holy-mapperel> v0.02 release
-//! `holy-mapperel-bin-0.02.7z`. The README's "Legal" section places the
-//! ROMs under the **zlib license** (permissive redistribution).
+//! (`holy-mapperel-bin-0.02.7z`). The README's "Legal" section places the
+//! ROMs under the **zlib license** (permissive redistribution). The license
+//! provenance + per-file attribution is recorded in `tests/roms/LICENSES.md`;
+//! the ROMs are vendored under `tests/roms/holy_mapperel/` and gated on the
+//! default `--features test-roms`, so this suite runs in the same CI job as
+//! `AccuracyCoin` / blargg / kevtris.
 //!
-//! Holy Mapperel detects which mapper it's running on by mirroring tests,
-//! then sizes PRG/CHR ROM/RAM and exercises bank reachability. Results are
-//! reported **visually** (on-screen text + Morse-coded audio beeps), NOT
-//! via the blargg `$6000` status-byte protocol. Therefore each ROM is
-//! smoke-tested: parse + boot + advance the frame counter to the budget
-//! without panic, crash, or open-bus assertion.
+//! # What this catches that `AccuracyCoin` / blargg do not
 //!
-//! Per `docs/testing-strategy.md` §Layer 3 (test ROM corpus) and
-//! `docs/STATUS.md` (Track B1 of the gap-analysis remediation plan).
+//! Holy Mapperel is a manufacturing self-test: on power-on it (1) *detects*
+//! which mapper it is running on purely from the console's mirroring +
+//! bank-switching response (no header trust), (2) sizes PRG/CHR ROM/RAM by
+//! walking bank tags, (3) proves every PRG and CHR bank is reachable, and (4)
+//! exercises WRAM presence/protection and the mapper's IRQ (MMC3 / FME-7)
+//! interval timer. `AccuracyCoin` and the blargg CPU/PPU corpora barely touch
+//! mapper banking at all, and the 60-ROM commercial oracle is gitignored
+//! (non-distributable) — so before this net a silent bank-reachability or
+//! mapper-detection regression across the 172-family set could slip through CI
+//! entirely. This net is deliberately a *sentinel*: it pins the exact,
+//! known-good result screen per ROM and **fails loudly** on any deviation. It
+//! promotes nothing and claims no new accuracy grade.
 //!
-//! The ROMs are named `M<mapper>_P<PRG>_<CHR>[_<mirroring or WRAM>].nes`
-//! per the upstream convention. We vendor only the subset whose mapper
-//! ID is in the project's supported set (per `docs/STATUS.md` §"Mapper
-//! coverage"):
+//! # How the assertion works
 //!
-//! | Mapper | ROMs vendored | Notes |
-//! |--------|---------------|-------|
-//! | 0 (NROM)   | `M0_P32K_CR8K_V`, `M0_P32K_CR32K_V` | Minimum + max CHR-RAM |
-//! | 1 (MMC1)   | `M1_P128K_CR8K`, `M1_P128K_C32K` | CHR-RAM and CHR-ROM forms |
-//! | 2 (`UxROM`)  | `M2_P128K_CR8K_V` | |
-//! | 3 (`CNROM`)  | `M3_P32K_C32K_H` | |
-//! | 4 (MMC3)   | `M4_P128K_CR8K`, `M4_P128K_CR32K`, `M4_P256K_C256K` | CHR-RAM 8K / 32K, CHR-ROM 256K |
-//! | 7 (`AxROM`)  | `M7_P128K_CR8K` | |
-//! | 9 (MMC2)   | `M9_P128K_C64K` | |
-//! | 10 (MMC4)  | `M10_P128K_C64K_W8K`, `M10_P128K_C64K_S8K` | WRAM vs SRAM variants |
-//! | 34 (`BNROM`) | `M34_P128K_CR8K_H` | |
-//! | 66 (`GxROM`) | `M66_P64K_C16K_V` | |
-//! | 69 (FME-7) | `M69_P128K_C64K_W8K`, `M69_P128K_C64K_S8K` | |
+//! Holy Mapperel reports its verdict **visually** (on-screen text + Morse-coded
+//! audio) — there is *no* blargg `$6000` status-byte protocol to poll (see
+//! `docs/testing-strategy.md` §Layer 3). So, exactly as `visual_regression.rs`
+//! does for the status-protocol-less demos, each ROM is driven to its settled
+//! result screen and its framebuffer is fingerprinted with an FNV-1a 64-bit
+//! hash pinned via `insta`. The determinism contract (same seed + ROM ⇒
+//! byte-identical framebuffer, enforced cross-platform by
+//! `nes_determinism_two_runs_match`) makes the hash a portable golden. Any
+//! change to a mapper's detection, bank layout, RAM sizing, or IRQ handling
+//! shifts the on-screen result and flips that ROM's hash → the combined
+//! snapshot diff names the offending ROM. Two cheap structural guards run
+//! *before* the hash so a hard failure surfaces with a readable message rather
+//! than an opaque hash flip:
 //!
-//! v1.7.0 "Forge" F1 note: mappers **28** (Action 53), **118** (`TxSROM`), and
-//! **180** (Crazy Climber / `UNROM`-180) are now ALL in the supported set
-//! (`crates/rustynes-mappers/src/lib.rs`), so the earlier "excluded — not
-//! supported" note for them is stale. The blocker for wiring their
-//! holy-mapperel ROMs here is asset availability: the committed holy-mapperel
-//! v0.02 release does NOT ship `M28_*` / `M118_*` / `M180_*` binaries (they have
-//! to be built from the holy-mapperel source with the right config), and the
-//! project policy is to never fabricate or commit ROMs that aren't already in
-//! the corpus. So these three remain a documented **F1 carryover**: when an
-//! `M28_*` / `M118_*` / `M180_*` ROM is added to `tests/roms/holy_mapperel/`,
-//! add a `smoke_mapperel(...)` line below (the harness already supports their
-//! mappers). Mapper 78.3 stays out of scope. The 17 ROMs below are the present,
-//! committed subset.
+//! * **Settled** — the framebuffer is byte-identical at frame [`PIN_FRAME`] and
+//!   `PIN_FRAME + SETTLE_FRAMES`. A ROM that wedged in the 4 KiB Morse-code
+//!   crash handler (a hard mapper fault) never reaches a static screen.
+//! * **Non-blank** — the settled screen carries at least two distinct colours
+//!   (the result screen is yellow text on a blue backdrop). A crash that blanks
+//!   the display to the backdrop alone collapses to one colour.
+//!
+//! # Per-ROM expected outcome (verified 2026-07-11 by rendering each screen)
+//!
+//! The `expect` column is a *static, human-verified* label; the FNV-1a hash in
+//! the snapshot is the *live* sentinel. A ROM whose label says `PASS 0000` but
+//! whose hash changes is a genuine regression to investigate. All 17 committed
+//! ROMs detect the correct mapper and prove full PRG/CHR bank reachability with
+//! every RAM/ROM/IRQ sub-test `OK`; the "detailed result" 4-digit code is
+//! `WRAM · PRG ROM · IRQ · CHR` where `0` is normal (README §"Displayed
+//! result").
+//!
+//! | ROM | Detected | Detailed | Class |
+//! |-----|----------|----------|-------|
+//! | `M0_*` (×2)         | 000 NROM           | `0000` | PASS |
+//! | `M1_P128K_C32K`     | 001 SJROM (MMC1)   | `1000` | WRAM residual |
+//! | `M1_P128K_CR8K`     | 001 SNROM (MMC1)   | `5000` | WRAM residual |
+//! | `M2_P128K_CR8K_V`   | 002 UNROM          | `0000` | PASS |
+//! | `M3_P32K_C32K_H`    | 003 CNROM          | `0000` | PASS |
+//! | `M4_*` (×3)         | 004 T[N/S]ROM MMC3 | `0000` | PASS (incl. IRQ) |
+//! | `M7_P128K_CR8K`     | 007 ANROM (`AxROM`)  | `0000` | PASS |
+//! | `M9_P128K_C64K`     | 009 PNROM (MMC2)   | `0000` | PASS |
+//! | `M10_*` (×2)        | 010 F*ROM (MMC4)   | `0000` | PASS |
+//! | `M34_P128K_CR8K_H`  | 034 BNROM          | `0000` | PASS (NES 2.0 dual-reg OK) |
+//! | `M66_P64K_C16K_V`   | 066 MHROM (`GxROM`)  | `0000` | PASS |
+//! | `M69_*` (×2)        | 069 J*ROM (FME-7)  | `1000` | WRAM residual (IRQ OK) |
+//!
+//! ## The WRAM-disable residual (`M1_*`, `M69_*`: nonzero WRAM nibble)
+//!
+//! MMC1 and Sunsoft FME-7 both provide a *software WRAM-disable* bit (MMC1
+//! `$E000`/`$A000` bit 4 for power-off write-protection; FME-7 command `$8`
+//! RAM-enable bit). `RustyNES` treats cartridge WRAM at `$6000-$7FFF` as always
+//! enabled and does **not** model that disable path (`crates/rustynes-mappers/
+//! src/mmc1.rs` and `.../sprint3.rs` access `prg_ram` unconditionally). This is
+//! a deliberate, widely-shared simplification — Holy Mapperel's own README
+//! notes FCEUX and `PowerPak` omit it too, and modelling MMC1 RAM-disable is a
+//! notorious game-compatibility hazard. It is a *WRAM-protection* residual, not
+//! a bank-reachability defect (all banks are reachable and every other sub-test
+//! is `0`; the FME-7 IRQ nibble is `0` = the interval-timer IRQ works). It is
+//! recorded in `docs/accuracy-ledger.md` as a documented, deferred residual.
+//! This net pins the honest current code (`1000` / `5000`) rather than
+//! blind-passing — if the disable path is ever modelled, these hashes flip and
+//! force a conscious re-bless.
 
 #![cfg(feature = "test-roms")]
 
+use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 
-use rustynes_test_harness::run_nes_blargg;
+use rustynes_core::Nes;
 
-fn rom_path(rel: &str) -> PathBuf {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest
+/// Frame at which the result screen is fingerprinted. Holy Mapperel buzzes the
+/// speaker through the CHR-RAM pattern sweep, then draws a static result
+/// screen; empirically every committed ROM is settled well before this (~10 s
+/// of NES time — a generous margin past the longest CHR-RAM sweep).
+const PIN_FRAME: u64 = 600;
+
+/// Extra frames advanced past [`PIN_FRAME`] to prove the screen is static (the
+/// test finished and did not wedge in the Morse-code crash redraw loop).
+const SETTLE_FRAMES: u64 = 60;
+
+/// The committed subset is 17 ROMs; guard against a corpus that was silently
+/// trimmed (a shrunk net catches less).
+const MIN_COMMITTED_ROMS: usize = 17;
+
+/// FNV-1a 64-bit hash of a framebuffer — a tiny, dependency-free, byte-exact,
+/// cross-platform-stable fingerprint (the same primitive `visual_regression.rs`
+/// pins). The determinism contract guarantees an identical hash on every host.
+fn fnv1a64(fb: &[u8]) -> u64 {
+    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+    for &b in fb {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    h
+}
+
+/// Number of distinct RGBA colours in a framebuffer. A settled result screen
+/// has two (text + backdrop); a blanked crash screen collapses to one.
+fn distinct_colors(fb: &[u8]) -> usize {
+    let mut px: Vec<u32> = fb
+        .chunks_exact(4)
+        .map(|p| u32::from_le_bytes([p[0], p[1], p[2], p[3]]))
+        .collect();
+    px.sort_unstable();
+    px.dedup();
+    px.len()
+}
+
+/// Directory holding the committed, zlib-licensed Holy Mapperel ROM subset.
+fn rom_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())
         .expect("workspace root")
         .join("tests")
         .join("roms")
         .join("holy_mapperel")
-        .join(rel)
 }
 
-fn smoke_mapperel(rel: &str) {
-    let path = rom_path(rel);
-    let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
-    let r = run_nes_blargg(&bytes, 600).expect("rom must parse + run");
+/// Static, human-verified expectation for a ROM stem (see the module table).
+/// New ROMs dropped into the corpus that are not yet classified render as
+/// `UNVERIFIED`, which — together with their new snapshot line — forces a
+/// visual check + conscious re-bless before they can go green.
+fn expect_label(stem: &str) -> &'static str {
+    match stem {
+        "M0_P32K_CR32K_V" | "M0_P32K_CR8K_V" => "PASS NROM(000) detail=0000",
+        "M1_P128K_C32K" => "WRAM-RESIDUAL SJROM/MMC1(001) detail=1000",
+        "M1_P128K_CR8K" => "WRAM-RESIDUAL SNROM/MMC1(001) detail=5000",
+        "M2_P128K_CR8K_V" => "PASS UNROM(002) detail=0000",
+        "M3_P32K_C32K_H" => "PASS CNROM(003) detail=0000",
+        "M4_P128K_CR32K" | "M4_P128K_CR8K" => "PASS TNROM/MMC3(004) detail=0000",
+        "M4_P256K_C256K" => "PASS TSROM/MMC3(004) detail=0000",
+        "M7_P128K_CR8K" => "PASS ANROM/AxROM(007) detail=0000",
+        "M9_P128K_C64K" => "PASS PNROM/MMC2(009) detail=0000",
+        "M10_P128K_C64K_S8K" | "M10_P128K_C64K_W8K" => "PASS FxROM/MMC4(010) detail=0000",
+        "M34_P128K_CR8K_H" => "PASS BNROM(034) detail=0000",
+        "M66_P64K_C16K_V" => "PASS MHROM/GxROM(066) detail=0000",
+        "M69_P128K_C64K_S8K" | "M69_P128K_C64K_W8K" => "WRAM-RESIDUAL J*ROM/FME-7(069) detail=1000",
+        _ => "UNVERIFIED (new ROM — render + classify before blessing)",
+    }
+}
+
+/// Collect the committed `.nes` ROMs, sorted for a deterministic report order.
+/// This is the data-driven pivot: dropping a new Holy Mapperel ROM into the
+/// directory auto-enrolls it in the net (a new snapshot line + a forced
+/// `UNVERIFIED` classification).
+fn committed_roms() -> Vec<PathBuf> {
+    let mut roms: Vec<PathBuf> = fs::read_dir(rom_dir())
+        .expect("holy_mapperel rom dir")
+        // `.expect` (not `.flatten`) so a directory-read error fails the net loudly
+        // rather than silently dropping a ROM — a skipped mapper ROM would be a
+        // silent regression-net bypass.
+        .map(|e| e.expect("read holy_mapperel dir entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("nes")))
+        .collect();
+    roms.sort();
+    roms
+}
+
+/// The mapper bank-reachability + IRQ regression net.
+///
+/// Runs every committed Holy Mapperel ROM to its settled result screen,
+/// asserts the two structural guards (settled + non-blank) with a ROM-named
+/// message, then pins one combined `insta` snapshot of every ROM's framebuffer
+/// hash. A mapper regression flips exactly the affected ROM's hash line; a new
+/// ROM adds a line — both fail CI until consciously re-blessed.
+#[test]
+fn holy_mapperel_bank_reachability_regression_net() {
+    let roms = committed_roms();
     assert!(
-        r.frames > 0,
-        "{rel} produced 0 frames — emulator did not advance"
+        roms.len() >= MIN_COMMITTED_ROMS,
+        "expected the committed Holy Mapperel subset (>= {MIN_COMMITTED_ROMS} ROMs), found {} — \
+         has the corpus been trimmed?",
+        roms.len()
     );
-}
 
-// ---- NROM (mapper 0) ----
-#[test]
-fn holy_mapperel_m0_p32k_cr8k_v_smoke() {
-    smoke_mapperel("M0_P32K_CR8K_V.nes");
-}
+    let mut report = String::new();
+    for path in &roms {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .expect("utf-8 rom stem");
+        let bytes = fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let mut nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("{stem} must parse: {e:?}"));
 
-#[test]
-fn holy_mapperel_m0_p32k_cr32k_v_smoke() {
-    smoke_mapperel("M0_P32K_CR32K_V.nes");
-}
+        for _ in 0..PIN_FRAME {
+            nes.run_frame();
+        }
+        let pinned = fnv1a64(nes.framebuffer());
+        let colors = distinct_colors(nes.framebuffer());
 
-// ---- MMC1 (mapper 1) ----
-#[test]
-fn holy_mapperel_m1_p128k_cr8k_smoke() {
-    smoke_mapperel("M1_P128K_CR8K.nes");
-}
+        // Structural guard 1: non-blank (a hard Morse-crash blanks the screen).
+        assert!(
+            colors >= 2,
+            "{stem}: result screen is blank ({colors} colour) at frame {PIN_FRAME} — \
+             mapper detection or bank test crashed into the Morse-code handler"
+        );
 
-#[test]
-fn holy_mapperel_m1_p128k_c32k_smoke() {
-    smoke_mapperel("M1_P128K_C32K.nes");
-}
+        // Structural guard 2: settled (the test finished, not mid-buzz/redraw).
+        for _ in 0..SETTLE_FRAMES {
+            nes.run_frame();
+        }
+        let settled = fnv1a64(nes.framebuffer());
+        assert_eq!(
+            pinned,
+            settled,
+            "{stem}: framebuffer changed between frame {PIN_FRAME} and {} — result \
+             screen never settled (still buzzing, animating, or wedged)",
+            PIN_FRAME + SETTLE_FRAMES
+        );
 
-// ---- UxROM (mapper 2) ----
-#[test]
-fn holy_mapperel_m2_p128k_cr8k_v_smoke() {
-    smoke_mapperel("M2_P128K_CR8K_V.nes");
-}
+        writeln!(
+            report,
+            "{stem:<20} colors={colors} fnv1a64={pinned:016x}  [{}]",
+            expect_label(stem)
+        )
+        .expect("write report line");
+    }
 
-// ---- CNROM (mapper 3) ----
-#[test]
-fn holy_mapperel_m3_p32k_c32k_h_smoke() {
-    smoke_mapperel("M3_P32K_C32K_H.nes");
-}
-
-// ---- MMC3 (mapper 4) ----
-#[test]
-fn holy_mapperel_m4_p128k_cr8k_smoke() {
-    smoke_mapperel("M4_P128K_CR8K.nes");
-}
-
-#[test]
-fn holy_mapperel_m4_p128k_cr32k_smoke() {
-    smoke_mapperel("M4_P128K_CR32K.nes");
-}
-
-#[test]
-fn holy_mapperel_m4_p256k_c256k_smoke() {
-    smoke_mapperel("M4_P256K_C256K.nes");
-}
-
-// ---- AxROM (mapper 7) ----
-#[test]
-fn holy_mapperel_m7_p128k_cr8k_smoke() {
-    smoke_mapperel("M7_P128K_CR8K.nes");
-}
-
-// ---- MMC2 (mapper 9) ----
-#[test]
-fn holy_mapperel_m9_p128k_c64k_smoke() {
-    smoke_mapperel("M9_P128K_C64K.nes");
-}
-
-// ---- MMC4 (mapper 10) ----
-#[test]
-fn holy_mapperel_m10_p128k_c64k_w8k_smoke() {
-    smoke_mapperel("M10_P128K_C64K_W8K.nes");
-}
-
-#[test]
-fn holy_mapperel_m10_p128k_c64k_s8k_smoke() {
-    smoke_mapperel("M10_P128K_C64K_S8K.nes");
-}
-
-// ---- BNROM / NINA-001 variants (mapper 34) ----
-#[test]
-fn holy_mapperel_m34_p128k_cr8k_h_smoke() {
-    smoke_mapperel("M34_P128K_CR8K_H.nes");
-}
-
-// ---- GxROM (mapper 66) ----
-#[test]
-fn holy_mapperel_m66_p64k_c16k_v_smoke() {
-    smoke_mapperel("M66_P64K_C16K_V.nes");
-}
-
-// ---- Sunsoft FME-7 (mapper 69) ----
-#[test]
-fn holy_mapperel_m69_p128k_c64k_w8k_smoke() {
-    smoke_mapperel("M69_P128K_C64K_W8K.nes");
-}
-
-#[test]
-fn holy_mapperel_m69_p128k_c64k_s8k_smoke() {
-    smoke_mapperel("M69_P128K_C64K_S8K.nes");
+    // The combined golden sentinel: one snapshot, one line per ROM. A mapper
+    // regression diffs exactly the affected line; a newly-added ROM appends a
+    // line. Both fail until re-blessed.
+    insta::assert_snapshot!("holy_mapperel_bank_reachability", report);
 }

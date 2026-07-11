@@ -498,7 +498,7 @@ chunked `NSFE` containers; the FDS-style `$5FF6/$5FF7` RAM banking remains defer
 
 ## Test plan
 
-- **`holy_diver_battery_test`** / **`holy_mapperel`** (tepples): detects mappers and verifies bank reachability for each PRG/CHR bank.
+- **`holy_diver_battery_test`** / **`holy_mapperel`** (tepples): detects mappers and verifies bank reachability for each PRG/CHR bank. Wired into CI as the **mapper bank-reachability + IRQ regression net** (`crates/rustynes-test-harness/tests/holy_mapperel.rs`, gated on `--features test-roms`): the 17 committed zlib-licensed ROMs (`tests/roms/holy_mapperel/`) are each driven to their settled result screen and pinned by an `insta` framebuffer-hash snapshot, so a silent mapper-detection / bank-layout / RAM-sizing / IRQ regression flips exactly that ROM's hash and fails loudly. The net promotes nothing; it pins the honest current result, including the documented MMC1/FME-7 WRAM-disable residual (see `docs/accuracy-ledger.md`).
 - **`mmc3_test_2`** (5 sub-ROMs): MMC3 IRQ behavior including the Sharp/NEC distinction and edge cases.
 - **`mmc3_irq_tests`** (blargg): MMC3 IRQ timing.
 - **`vrc24test`** (AWJ): all VRC2/4 variants.

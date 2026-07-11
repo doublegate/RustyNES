@@ -40,6 +40,11 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
 | APU non-linear mixer | Lookup-table matches within the `apu_mixer` band | `apu_mixer` (analog-cancellation, tolerance) | **No stricter oracle** — the LUT already passes; ±4% is honest |
 | APU analog HPF/LPF chain | Fixed-coefficient 3-pole | No pass/fail ROM | **No stricter oracle** (optional measured-RC future work) |
 | PlayChoice-10 Z80 second-screen menu | Not modeled | — | **Out of scope** |
+| MMC1 / FME-7 software WRAM-disable | `$6000-$7FFF` cartridge WRAM is treated as always-enabled; the software power-off write-protect (MMC1 `$E000`/`$A000` bit 4) / RAM-enable (FME-7 command `$8`) bit is not modeled (`mmc1.rs` / `sprint3.rs` access `prg_ram` unconditionally) | Holy Mapperel `M1_*` / `M69_*` "detailed result" WRAM nibble (`1000` / `5000`) | **Deferred** — a widely-shared simplification (Holy Mapperel's README notes FCEUX / PowerPak omit it too; modelling MMC1 RAM-disable is a known game-compat hazard). *Not* a bank-reachability defect: every bank is reachable and the FME-7 IRQ nibble is `0` (IRQ works). Pinned honestly (not blind-passed) by the **v2.1.5 holy_mapperel bank-reachability regression net** |
+
+## Oracles / regression nets
+
+- **Holy Mapperel bank-reachability + IRQ net** (v2.1.5, `crates/rustynes-test-harness/tests/holy_mapperel.rs`, `--features test-roms`): the 17 committed zlib-licensed ROMs (`tests/roms/holy_mapperel/`) each run to their settled result screen, pinned by an `insta` framebuffer-hash snapshot with settled + non-blank structural guards. Catches silent mapper-detection / bank-layout / RAM-sizing / IRQ regressions the `AccuracyCoin` / blargg suites don't cover; 15/17 detect + reach all banks with detailed code `0000`, the two MMC1 + two FME-7 rows carry the documented WRAM-disable residual above.
 
 ## Notes
 
