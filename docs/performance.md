@@ -250,12 +250,16 @@ inline and the delta sits in the noise (+0.3%) — exactly the signature of a
 **Byte-identity — verified, not assumed.** Both profiles were rebuilt in
 **release** mode (so the actual LTO codegen is exercised, unlike a default
 `cargo test` dev build) and run against the golden oracle:
-`cargo test --release -p rustynes-test-harness --features test-roms --test
-accuracycoin --test visual_regression --test nestest --test apu_mixer`. Both
-`lto = "fat"` and `lto = "thin"` pass byte-for-byte identically — AccuracyCoin
+
+```bash
+cargo test --release -p rustynes-test-harness --features test-roms \
+    --test accuracycoin --test visual_regression --test nestest --test apu_mixer
+```
+
+Both `lto = "fat"` and `lto = "thin"` pass byte-for-byte identically — AccuracyCoin
 **141/141**, the `nestest` golden-log 0-diff, the golden-framebuffer
 `visual_regression` suite, and the APU `apu_mixer`/volume audio suites all
-green under each profile — confirming LTO level changes inlining and code
+green under each profile — confirming LTO level affects inlining and code
 layout only, never the emulated framebuffer/audio/cycle hashes (Rust emits no
 fast-math).
 
