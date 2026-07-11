@@ -36,14 +36,26 @@ cycle-accurate core later replaced.
   ROM auto-enrolls (new snapshot line + a forced `UNVERIFIED` classification).
   15 of 17 ROMs detect the correct mapper and reach every bank with detailed
   code `0000`; the two MMC1 (`M1_*`) and two FME-7 (`M69_*`) ROMs surface a
-  documented, honestly-pinned **WRAM-disable residual** (RustyNES treats
-  cartridge WRAM as always-enabled and does not model the software
-  write-protect / RAM-enable bit — a widely-shared simplification; not a
-  bank-reachability defect, and the FME-7 IRQ passes). The net is purely
+  documented, honestly-pinned **WRAM-protection residual** whose cause differs
+  per mapper. MMC1 genuinely does not model its software WRAM write-protect:
+  `mmc1.rs` accesses `$6000-$7FFF` `prg_ram` unconditionally and ignores the
+  `$E000`/`$A000` bit-4 disable, so the driver flags `1000` (SJROM, `$E000`
+  layer) / `5000` (SNROM, both layers) — a widely-shared simplification (Holy
+  Mapperel's own README notes FCEUX / PowerPak omit it, and modelling MMC1
+  RAM-disable is a known game-compat hazard). FME-7 is *not* an
+  always-enabled-WRAM case: it **does** model the command-`$8` RAM-enable
+  (bit 7) / RAM-select (bit 6) bits — `sprint3.rs` maps PRG-RAM only when both
+  are set and PRG-ROM when RAM is deselected — so its `1000` is a narrower gap:
+  the "RAM selected but disabled" state (bit 6 = 1, bit 7 = 0) should read back
+  as **open bus**, but RustyNES falls through to the last PRG-ROM bank; the
+  driver's third "read open bus" sub-check reads the last-bank tag (`1`, below
+  its `>= 3` open-bus threshold) and flags the WRAM-enable nibble. The FME-7
+  IRQ nibble is `0` (the interval-timer IRQ works), and neither case is a
+  bank-reachability defect (every bank is reachable). The net is purely
   additive: it changes no core behavior, so `AccuracyCoin` (141/141) and the
   commercial byte-identity oracle stay unchanged. ROM license provenance
-  (zlib, Damian Yerrick) is recorded in `tests/roms/LICENSES.md`; the residual
-  is recorded in `docs/accuracy-ledger.md`.
+  (zlib, Damian Yerrick) is recorded in `tests/roms/LICENSES.md`; the residuals
+  are recorded in `docs/accuracy-ledger.md`.
 
 ## [2.1.4] - 2026-07-11 - "Fathom" (accuracy hardening — opt-in OAM decay + BestEffort boot-smoke sweep + MMC3-clone A12/IRQ timing oracle; "Caliper")
 
