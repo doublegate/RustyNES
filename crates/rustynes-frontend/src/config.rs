@@ -1257,12 +1257,27 @@ fn default_audio_filter_model() -> String {
 /// Map the `[audio] filter_model` config string to the core enum
 /// (`"famicom"` / `"clean"`, anything else → `NesRf`).
 #[must_use]
-pub fn parse_filter_model(s: &str) -> rustynes_core::rustynes_apu::FilterModel {
+pub const fn parse_filter_model(s: &str) -> rustynes_core::rustynes_apu::FilterModel {
     use rustynes_core::rustynes_apu::FilterModel;
-    match s {
-        "famicom" => FilterModel::Famicom,
-        "clean" => FilterModel::Clean,
-        _ => FilterModel::NesRf,
+    // Case-insensitive so a hand-edited `"Clean"` / `"Famicom"` still resolves.
+    if s.eq_ignore_ascii_case("famicom") {
+        FilterModel::Famicom
+    } else if s.eq_ignore_ascii_case("clean") {
+        FilterModel::Clean
+    } else {
+        FilterModel::NesRf
+    }
+}
+
+/// The canonical lowercase config token for a [`rustynes_core::rustynes_apu::FilterModel`]
+/// (`"nes"` / `"famicom"` / `"clean"`). Round-trips with [`parse_filter_model`].
+#[must_use]
+pub const fn filter_model_token(model: rustynes_core::rustynes_apu::FilterModel) -> &'static str {
+    use rustynes_core::rustynes_apu::FilterModel;
+    match model {
+        FilterModel::NesRf => "nes",
+        FilterModel::Famicom => "famicom",
+        FilterModel::Clean => "clean",
     }
 }
 

@@ -1303,14 +1303,12 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
             "clean" => "Clean (full-range — fullest)",
             _ => "NES front-loader (authentic)",
         };
-        // Canonicalize to a known value first, so a corrupt / hand-edited
-        // `filter_model` string still selects a valid option (and, since it then
-        // differs from the raw config, is written back — clamping the config).
-        let mut sel = match config.audio.filter_model.as_str() {
-            "famicom" => "famicom",
-            "clean" => "clean",
-            _ => "nes",
-        }
+        // Canonicalize (case-insensitively) to a known token first, so a corrupt
+        // / hand-edited `filter_model` still selects a valid option (and, since it
+        // then differs from the raw config, is written back — healing the config).
+        let mut sel = crate::config::filter_model_token(crate::config::parse_filter_model(
+            &config.audio.filter_model,
+        ))
         .to_string();
         egui::ComboBox::from_id_salt("audio-filter-model")
             .selected_text(label)
