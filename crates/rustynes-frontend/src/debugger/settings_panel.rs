@@ -1303,7 +1303,15 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
             "clean" => "Clean (full-range — fullest)",
             _ => "NES front-loader (authentic)",
         };
-        let mut sel = config.audio.filter_model.clone();
+        // Canonicalize to a known value first, so a corrupt / hand-edited
+        // `filter_model` string still selects a valid option (and, since it then
+        // differs from the raw config, is written back — clamping the config).
+        let mut sel = match config.audio.filter_model.as_str() {
+            "famicom" => "famicom",
+            "clean" => "clean",
+            _ => "nes",
+        }
+        .to_string();
         egui::ComboBox::from_id_salt("audio-filter-model")
             .selected_text(label)
             .show_ui(ui, |ui| {
