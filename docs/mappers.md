@@ -379,7 +379,19 @@ dump — the 16 NES 2.0 high-id boards
 v3.23b's iNES-1.0 headers cannot encode); 8 boards with no matching cart
 (29/39/81/104/174/179/238/261); and 2 boards whose only dump jams at boot
 (50 SMB2j FDS-conversion, 111 GTROM "Ninja Ryukenden") — and stay register-decode
-and save-state unit-tested only. The mapper *implementations* described below
+and save-state unit-tested only. To keep that long tail from silently rotting,
+the **v2.1.0 "Fathom" F3.1 CI boot-smoke sweep**
+(`crates/rustynes-test-harness/tests/v21_best_effort_sweep.rs`) exercises the
+full parse -> construct -> dispatch -> run-loop integration for **every**
+`BestEffort` family: it derives the set live from the `mapper_tier` classifier
+(so future promotions in/out are covered automatically), builds a synthetic
+minimal iNES / NES 2.0 image for each, and runs ~60 headless frames asserting no
+panic and a well-formed framebuffer. It gates *integration robustness only*
+(register/bank/tick decode never panics or divides by zero), promotes nothing,
+and adds no oracle claim — accuracy stays defined by the Core/Curated gate. The
+two NTDEC boards **81**/**174** validate a non-zero-multiple-of-8-KiB CHR-ROM and
+honestly reject a CHR-RAM header with a typed `RomError` (not a panic), so the
+sweep hands them CHR-ROM geometry. The mapper *implementations* described below
 (reference-ported across v1.2.0-v1.8.9) are unchanged by the promotion — only the
 tier marker moved. The
 v1.6.0 `sprint11` batch ports MMC3-clone variants
