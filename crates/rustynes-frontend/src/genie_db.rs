@@ -13,12 +13,20 @@
 //! before being surfaced, so a malformed row is silently dropped and the
 //! determinism / no-cheat firewall is untouched.
 //!
-//! ## Key
+//! ## Keys (two CRC conventions)
 //!
-//! The key is the same "ROM CRC" [`crate::game_db::rom_crc32`] computes — the
-//! CRC32 of PRG-ROM + CHR-ROM, excluding the 16-byte iNES header (and any
-//! 512-byte trainer). So a loaded ROM resolves its codes by the CRC already
-//! computed at load.
+//! Entries are keyed by CRC32, but the two bundled catalogs use **different**
+//! conventions and a loaded ROM is matched against BOTH (see [`codes_for_crcs`]):
+//!
+//! - the curated starter set (`genie_database.tsv`) is keyed by the
+//!   header-EXCLUDED [`crate::game_db::rom_crc32`] (CRC of PRG-ROM + CHR-ROM,
+//!   header/trainer stripped), and
+//! - the v2.1.3 bulk catalog (`genie_database_full.tsv`) is keyed by the
+//!   full-file No-Intro [`crate::game_db::rom_crc32_full`] (CRC of the whole
+//!   `.nes` including the header).
+//!
+//! Both CRCs are computed for a ROM at load, so the pick-list resolves codes
+//! from either catalog regardless of the dump "flavor".
 
 use std::sync::OnceLock;
 
@@ -40,7 +48,10 @@ const FULL_DB_TEXT: &str = include_str!("genie_database_full.tsv");
 /// One Game Genie code entry: a named code for a specific ROM (by CRC32).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenieDbCode {
-    /// CRC32 of PRG-ROM + CHR-ROM (header/trainer excluded) — the key.
+    /// The ROM CRC32 this entry is keyed by. Its convention depends on the
+    /// source catalog: header-EXCLUDED `rom_crc32` for the curated starter set,
+    /// or full-file No-Intro `rom_crc32_full` for the bulk catalog (see the
+    /// module docs). A loaded ROM is matched against both conventions.
     pub crc: u32,
     /// Game title (display only).
     pub game: String,
@@ -120,11 +131,14 @@ pub fn game_for_crc(crc: u32) -> Option<String> {
 /// loaded ROM resolve its codes whatever dump "flavor" the user has.
 #[must_use]
 pub fn codes_for_crcs(crcs: &[u32]) -> Vec<GenieDbCode> {
+    // Query the sorted DB directly rather than via `codes_for_crc`, which would
+    // allocate + clone a throwaway Vec per CRC just to dedup it away here.
+    let database = db();
     let mut out: Vec<GenieDbCode> = Vec::new();
     for &crc in crcs {
-        for code in codes_for_crc(crc) {
+        for code in database.iter().filter(|c| c.crc == crc) {
             if !out.iter().any(|c| c.code == code.code) {
-                out.push(code);
+                out.push(code.clone());
             }
         }
     }

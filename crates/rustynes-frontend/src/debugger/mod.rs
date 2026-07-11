@@ -1673,10 +1673,15 @@ impl DebuggerOverlay {
                 // v2.1.3 — the ROM's identifying CRC32s for the Game Genie
                 // picklist: the header-excluded key + the full-file No-Intro key,
                 // so a loaded ROM matches whatever dump variant the user has.
-                let rom_crcs: Vec<u32> = [self.rom_crc, self.rom_crc_full]
-                    .into_iter()
-                    .flatten()
-                    .collect();
+                // Built into a stack buffer (at most two keys) — this runs every
+                // frame the Cheats panel is open, so it must not heap-allocate.
+                let mut crc_buf = [0u32; 2];
+                let mut crc_len = 0;
+                for crc in [self.rom_crc, self.rom_crc_full].into_iter().flatten() {
+                    crc_buf[crc_len] = crc;
+                    crc_len += 1;
+                }
+                let rom_crcs = &crc_buf[..crc_len];
                 #[cfg(not(target_arch = "wasm32"))]
                 cheat_panel::show(
                     ctx,
@@ -1684,16 +1689,10 @@ impl DebuggerOverlay {
                     &mut self.cheat_ui,
                     nes,
                     self.cheat_persist.as_ref(),
-                    &rom_crcs,
+                    rom_crcs,
                 );
                 #[cfg(target_arch = "wasm32")]
-                cheat_panel::show(
-                    ctx,
-                    &mut self.show_cheat,
-                    &mut self.cheat_ui,
-                    nes,
-                    &rom_crcs,
-                );
+                cheat_panel::show(ctx, &mut self.show_cheat, &mut self.cheat_ui, nes, rom_crcs);
             }
         }
         if self.show_game_db

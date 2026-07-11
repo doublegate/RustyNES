@@ -80,9 +80,10 @@ pub struct CheatPanelState {
     enc_result: String,
     /// Last encoder error (cleared on a successful encode).
     enc_error: String,
-    /// v1.8.9 — the loaded ROM's category-grouped DB codes, cached so the
-    /// pick-list does not re-query + sort + group the database every frame. Keyed
-    /// on the ROM CRC; rebuilt only when the CRC changes.
+    /// v1.8.9 / v2.1.3 — the loaded ROM's category-grouped DB codes, cached so
+    /// the pick-list does not re-query + sort + group the database every frame.
+    /// Keyed on the ROM's CRC *set* (`Vec<u32>` — the header-excluded + full-file
+    /// keys); rebuilt only when that set changes (i.e. a new ROM loads).
     genie_cache: Option<(Vec<u32>, GenieGroups)>,
 }
 
