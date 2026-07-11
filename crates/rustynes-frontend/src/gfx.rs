@@ -359,13 +359,23 @@ pub struct Gfx {
     /// (letterboxed) through the same nearest-sampling pipeline as the NES
     /// framebuffer. Lazily (re)built when the HD buffer dimensions change.
     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
-    hd: Option<HdBlit>,
+    hd: Option<DynBlit>,
+    /// v2.1.2 F2.1 — the Vs. `DualSystem` two-screen blit texture (the composed
+    /// 512x240 side-by-side or 256x480 stacked image), through the same
+    /// nearest-sampling pipeline. Always-on (not `hd-pack`-gated); lazily
+    /// (re)built when the composed dimensions change. Native only — the dual
+    /// present path is desktop-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    dual_blit: Option<DynBlit>,
 }
 
-/// v1.2.0 C3 — the HD-pack blit texture + its bind group, sized to the
-/// compositor's `scale*256 x scale*240` output.
-#[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
-struct HdBlit {
+/// v1.2.0 C3 / v2.1.2 F2.1 — a dynamically-sized RGBA blit texture + its bind
+/// group, blitted (letterboxed) through the same nearest-sampling pipeline as
+/// the NES framebuffer. Used by the HD-pack compositor (`scale*256 x scale*240`)
+/// and the Vs. `DualSystem` two-screen composite. Lazily (re)built when the
+/// source dimensions change. Native only (both consumers are desktop-only).
+#[cfg(not(target_arch = "wasm32"))]
+struct DynBlit {
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     uniforms: wgpu::Buffer,
@@ -738,6 +748,8 @@ impl Gfx {
             overscan: crate::config::Overscan::default(),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             hd: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            dual_blit: None,
         })
     }
 
@@ -1422,7 +1434,199 @@ impl Gfx {
                 },
             ],
         });
-        self.hd = Some(HdBlit {
+        self.hd = Some(DynBlit {
+            texture,
+            bind_group,
+            uniforms,
+            width: w,
+            height: h,
+        });
+    }
+
+    /// v2.1.2 F2.1 — present a composed Vs. `DualSystem` two-screen image
+    /// (`dual_rgba`, `dual_w` x `dual_h` — e.g. 512x240 side-by-side or 256x480
+    /// stacked). Reuses the nearest-sampling blit pipeline through a lazily-sized
+    /// [`DynBlit`], with an aspect-correct letterbox for the wide/tall combined
+    /// frame (no overscan / PAR — the source is already two composed screens).
+    /// Native only. Structurally identical to [`Self::render_hd_with_overlay`],
+    /// including the release-safe size guard that skips a mismatched upload
+    /// rather than aborting the process.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn render_dual<F>(
+        &mut self,
+        dual_rgba: &[u8],
+        dual_w: u32,
+        dual_h: u32,
+        overlay: F,
+    ) -> Result<(), PresentError>
+    where
+        F: FnOnce(
+            &wgpu::Device,
+            &wgpu::Queue,
+            &mut wgpu::CommandEncoder,
+            &wgpu::TextureView,
+            (u32, u32),
+        ),
+    {
+        debug_assert_eq!(dual_rgba.len(), (dual_w * dual_h * 4) as usize);
+        let ok = dual_rgba.len() == (dual_w * dual_h * 4) as usize;
+        self.ensure_dual_blit(dual_w, dual_h);
+        let blit = self.dual_blit.as_ref().expect("ensure_dual_blit built it");
+        if ok {
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &blit.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                dual_rgba,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(dual_w * 4),
+                    rows_per_image: Some(dual_h),
+                },
+                wgpu::Extent3d {
+                    width: dual_w,
+                    height: dual_h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        self.queue.write_buffer(
+            &blit.uniforms,
+            0,
+            bytemuck::cast_slice(&dual_letterbox_uniform(
+                self.config.width,
+                self.config.height,
+                dual_w,
+                dual_h,
+            )),
+        );
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+                return Err(PresentError::Reconfigure);
+            }
+            wgpu::CurrentSurfaceTexture::Timeout => return Err(PresentError::Other("timeout")),
+            wgpu::CurrentSurfaceTexture::Occluded => return Err(PresentError::Other("occluded")),
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err(PresentError::Other("validation"));
+            }
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("nes-dual-encoder"),
+            });
+        {
+            let blit = self.dual_blit.as_ref().expect("built above");
+            let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("nes-dual-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            rp.set_pipeline(&self.pipeline);
+            rp.set_bind_group(0, &blit.bind_group, &[]);
+            rp.draw(0..3, 0..1);
+        }
+        overlay(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &view,
+            (self.config.width, self.config.height),
+        );
+        self.queue.submit(Some(encoder.finish()));
+        frame.present();
+        Ok(())
+    }
+
+    /// (Re)build the dual-screen blit texture + bind group when absent or
+    /// resized. Mirrors `ensure_hd_blit` but is always available (not
+    /// `hd-pack`-gated) and lands in [`Self::dual_blit`].
+    #[cfg(not(target_arch = "wasm32"))]
+    fn ensure_dual_blit(&mut self, w: u32, h: u32) {
+        if self
+            .dual_blit
+            .as_ref()
+            .is_some_and(|b| b.width == w && b.height == h)
+        {
+            return;
+        }
+        let format = self.nes_texture.format();
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("nes-dual-texture"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("nes-dual-nearest"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let uniforms = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("nes-dual-letterbox"),
+                contents: bytemuck::cast_slice(&dual_letterbox_uniform(
+                    self.config.width,
+                    self.config.height,
+                    w,
+                    h,
+                )),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        let bgl = self.pipeline.get_bind_group_layout(0);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("nes-dual-bg"),
+            layout: &bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniforms.as_entire_binding(),
+                },
+            ],
+        });
+        self.dual_blit = Some(DynBlit {
             texture,
             bind_group,
             uniforms,
@@ -1502,6 +1706,93 @@ pub(crate) fn effective_overscan(
     .clamped()
 }
 
+/// v2.1.2 F2.1 — how the two Vs. `DualSystem` console screens are arranged in
+/// the composed present image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum DualLayout {
+    /// Main console on the left, sub on the right (512x240) — the authentic
+    /// side-by-side cabinet layout. The default.
+    #[default]
+    SideBySide,
+    /// Main console on top, sub below (256x480).
+    Stacked,
+}
+
+impl DualLayout {
+    /// Parse the `[graphics] dual_screen_layout` config string (`"stacked"` →
+    /// [`Self::Stacked`], anything else → [`Self::SideBySide`]).
+    #[must_use]
+    pub fn from_config(s: &str) -> Self {
+        match s {
+            "stacked" => Self::Stacked,
+            _ => Self::SideBySide,
+        }
+    }
+}
+
+/// v2.1.2 F2.1 — compose two NES 256x240 RGBA framebuffers (main + sub).
+///
+/// Writes into `out` per `layout`, returning the composed `(width, height)` —
+/// `512x240` side-by-side or `256x480` stacked. Robust to a short / empty input
+/// (the missing region stays black), so the very first frame (before the sub
+/// screen has been produced) presents cleanly instead of panicking.
+pub fn compose_dual_into(
+    out: &mut Vec<u8>,
+    main: &[u8],
+    sub: &[u8],
+    layout: DualLayout,
+) -> (u32, u32) {
+    let w = NES_W as usize;
+    let h = NES_H as usize;
+    let row = w * 4;
+    match layout {
+        DualLayout::SideBySide => {
+            let cw = w * 2;
+            out.clear();
+            out.resize(cw * h * 4, 0);
+            for y in 0..h {
+                let dst = y * cw * 4;
+                if main.len() >= (y + 1) * row {
+                    out[dst..dst + row].copy_from_slice(&main[y * row..(y + 1) * row]);
+                }
+                if sub.len() >= (y + 1) * row {
+                    out[dst + row..dst + 2 * row].copy_from_slice(&sub[y * row..(y + 1) * row]);
+                }
+            }
+            (u32::try_from(cw).unwrap_or(NES_W * 2), NES_H)
+        }
+        DualLayout::Stacked => {
+            let plane = w * h * 4;
+            out.clear();
+            out.resize(plane * 2, 0);
+            let m = main.len().min(plane);
+            out[..m].copy_from_slice(&main[..m]);
+            let s = sub.len().min(plane);
+            out[plane..plane + s].copy_from_slice(&sub[..s]);
+            (NES_W, NES_H * 2)
+        }
+    }
+}
+
+/// v2.1.2 F2.1 — letterbox transform for the composed Vs. `DualSystem`
+/// two-screen image (`img_w` x `img_h`, already two composited console screens)
+/// into the `width` x `height` swapchain, preserving the combined aspect. No
+/// overscan crop and no 8:7 PAR (the source is a raw composite of two screens),
+/// so `crop` is the identity. Returns the same `[rect(4), crop(4)]` uniform the
+/// blit pipeline expects.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[allow(clippy::cast_precision_loss)] // dims fit comfortably in the f32 mantissa.
+pub(crate) fn dual_letterbox_uniform(width: u32, height: u32, img_w: u32, img_h: u32) -> [f32; 8] {
+    let win_aspect = width as f32 / height.max(1) as f32;
+    let img_aspect = img_w as f32 / img_h.max(1) as f32;
+    let (sx, sy) = if win_aspect > img_aspect {
+        (img_aspect / win_aspect, 1.0)
+    } else {
+        (1.0, win_aspect / img_aspect)
+    };
+    [sx, sy, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0]
+}
+
 /// v1.0.0 — build the full 8-float blit uniform: the letterbox `rect`
 /// (`[sx, sy, ox, oy]`, computed against the VISIBLE NES width/height so the
 /// cropped image keeps a correct aspect) followed by the overscan `crop`
@@ -1558,6 +1849,74 @@ pub(crate) fn letterbox_uniform(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compose_dual_side_by_side_places_screens_left_and_right() {
+        // Two solid-colour screens: main = red, sub = blue. Side-by-side must
+        // be 512x240 with red in the left half of every row, blue in the right.
+        let main = vec![0xFFu8; (NES_W * NES_H * 4) as usize]
+            .iter()
+            .enumerate()
+            .map(|(i, _)| if i % 4 == 0 || i % 4 == 3 { 0xFF } else { 0x00 })
+            .collect::<Vec<u8>>();
+        let sub = (0..(NES_W * NES_H * 4))
+            .map(|i| if i % 4 == 2 || i % 4 == 3 { 0xFF } else { 0x00 })
+            .collect::<Vec<u8>>();
+        let mut out = Vec::new();
+        let (w, h) = compose_dual_into(&mut out, &main, &sub, DualLayout::SideBySide);
+        assert_eq!((w, h), (NES_W * 2, NES_H));
+        assert_eq!(out.len(), (NES_W * 2 * NES_H * 4) as usize);
+        // Row 0: pixel 0 (left) is red, pixel 256 (right) is blue.
+        assert_eq!(&out[0..4], &[0xFF, 0x00, 0x00, 0xFF]); // left = red
+        let right = (NES_W * 4) as usize;
+        assert_eq!(&out[right..right + 4], &[0x00, 0x00, 0xFF, 0xFF]); // right = blue
+    }
+
+    #[test]
+    fn compose_dual_stacked_dims_and_order() {
+        let main = vec![0x11u8; (NES_W * NES_H * 4) as usize];
+        let sub = vec![0x22u8; (NES_W * NES_H * 4) as usize];
+        let mut out = Vec::new();
+        let (w, h) = compose_dual_into(&mut out, &main, &sub, DualLayout::Stacked);
+        assert_eq!((w, h), (NES_W, NES_H * 2));
+        let plane = (NES_W * NES_H * 4) as usize;
+        assert!(out[..plane].iter().all(|&b| b == 0x11)); // top = main
+        assert!(out[plane..].iter().all(|&b| b == 0x22)); // bottom = sub
+    }
+
+    #[test]
+    fn compose_dual_tolerates_empty_sub() {
+        // Before the first sub frame, `present_fb_sub` is empty — must not panic
+        // and must still produce a full-size (black on the sub side) image.
+        let main = vec![0x33u8; (NES_W * NES_H * 4) as usize];
+        let mut out = Vec::new();
+        let (w, h) = compose_dual_into(&mut out, &main, &[], DualLayout::SideBySide);
+        assert_eq!((w, h), (NES_W * 2, NES_H));
+        assert_eq!(out.len(), (NES_W * 2 * NES_H * 4) as usize);
+        let right = (NES_W * 4) as usize;
+        assert!(out[right..right + 4].iter().all(|&b| b == 0)); // sub side black
+    }
+
+    #[test]
+    fn dual_letterbox_letterboxes_a_wide_image() {
+        // A 512x240 (aspect ~2.13) image into a square window is wider than the
+        // window, so it fits to width and bars the top/bottom: scale_x == 1,
+        // scale_y < 1, crop identity.
+        let u = dual_letterbox_uniform(480, 480, NES_W * 2, NES_H);
+        assert!((u[0] - 1.0).abs() < 1e-6 && u[1] < 1.0);
+        assert_eq!(&u[4..], &[1.0, 0.0, 1.0, 0.0]); // no crop
+    }
+
+    #[test]
+    fn dual_layout_parses_config_string() {
+        assert_eq!(DualLayout::from_config("stacked"), DualLayout::Stacked);
+        assert_eq!(
+            DualLayout::from_config("side-by-side"),
+            DualLayout::SideBySide
+        );
+        assert_eq!(DualLayout::from_config("garbage"), DualLayout::SideBySide);
+        assert_eq!(DualLayout::default(), DualLayout::SideBySide);
+    }
 
     #[test]
     fn letterbox_identity_when_window_matches_nes_aspect() {

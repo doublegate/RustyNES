@@ -16,6 +16,20 @@ cycle-accurate core later replaced.
 
 ### Added
 
+- **Vs. `DualSystem` second-screen presentation** (Fathom F2.1, desktop). A loaded
+  Vs. `DualSystem` cabinet (Balloon Fight, Wrecking Crew, Tennis, Baseball) now
+  runs **both** cross-wired consoles and presents them together — side-by-side
+  (512x240, default) or stacked (256x480), selectable via `[graphics]
+  dual_screen_layout`. P1/P2 drive the main console, P3/P4 the sub; coin-insert
+  (F10) and the main console's audio are wired. The core dual engine already
+  existed (`VsDualSystem` / `Emu::Dual`); this adds the frontend path — an
+  additive `EmuCore::dual` field, a `produce_dual_frame` step, a composed
+  two-screen blit (`Gfx::render_dual`), and Vs.-DB DIP/RGB-palette applied to both
+  consoles — so the single-console path stays byte-identical. The advanced
+  single-`Nes` features (run-ahead, rewind, netplay, TAS, dual save-state) are
+  **scoped out in dual mode** (ADR 0032); the debugger/HD are unavailable there.
+  Real-cabinet boot remains fixture-limited (the circulating dumps are the MAME
+  maincpu half only). Desktop only for now; wasm/mobile deferred.
 - **NTSC composite-shader ladder completed** (Fathom F2.2). The three-rung
   display-only ladder — simplified blur (`Ntsc`) → LMP88959 composite
   (`Lmp88959`) → Bisqwit per-dot (`CompositeRt`) — is verified end-to-end, and

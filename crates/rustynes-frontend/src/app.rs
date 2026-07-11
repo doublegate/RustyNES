@@ -511,6 +511,15 @@ pub struct App {
     /// v1.1.0 beta.1 (T-110-A1) — the per-frame NTSC colour phase (0..=2) that
     /// goes with `present_index_staging`.
     present_phase: u8,
+    /// v2.1.2 F2.1 — the composed Vs. `DualSystem` two-screen image (main + sub
+    /// arranged side-by-side / stacked), filled under the present lock and blitted
+    /// via `Gfx::render_dual`. Empty unless a cabinet is loaded.
+    #[cfg(not(target_arch = "wasm32"))]
+    present_dual: Vec<u8>,
+    /// v2.1.2 F2.1 — cached "a Vs. `DualSystem` cabinet is loaded" flag, set at
+    /// load / cleared at close, so the per-redraw present path can branch without
+    /// taking the emu lock just to check.
+    dual_mode: bool,
     gfx: Option<Gfx>,
     /// v1.2.0 beta.2 (Workstream C3) — the active HD-pack compositor, `Some`
     /// only while a pack is loaded for the current ROM. `None` (the default,
@@ -851,6 +860,9 @@ impl App {
             emu: crate::emu::EmuHandle::new(crate::emu::EmuCore::new()),
             present_staging: Vec::new(),
             present_index_staging: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            present_dual: Vec::new(),
+            dual_mode: false,
             present_phase: 0,
             gfx: None,
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
@@ -983,6 +995,9 @@ impl App {
             emu: crate::emu::EmuHandle::new(crate::emu::EmuCore::new()),
             present_staging: Vec::new(),
             present_index_staging: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            present_dual: Vec::new(),
+            dual_mode: false,
             present_phase: 0,
             gfx: None,
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
@@ -1151,11 +1166,14 @@ impl App {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
             emu.nes = None;
+            emu.dual = None;
             emu.perf.clear();
             emu.present_fb.clear();
+            emu.present_fb_sub.clear();
             emu.audio_buf.clear();
             emu.next_frame_time = None;
         }
+        self.dual_mode = false;
         // v1.6.0 "Studio" A2 — a TAStudio session anchors on the closed ROM; end it.
         if let Some(d) = self.debugger.as_mut() {
             d.clear_tas_editor();
@@ -1337,6 +1355,33 @@ impl App {
                 }
             }
         };
+        // v2.1.2 F2.1 — Vs. `DualSystem` cabinet detection (native, cartridge
+        // ROMs only). When the probe `nes` above is a DualSystem board, build the
+        // real two-console cabinet from the same bytes and apply the Vs.-DB DIP +
+        // RGB palette to BOTH consoles; the probe `nes` becomes a discarded
+        // throwaway (its single-console post-setup below is harmless). The install
+        // block routes this into `EmuCore::dual`. On wasm (no dual present path) a
+        // DualSystem ROM keeps running as the single main-console probe.
+        #[cfg(not(target_arch = "wasm32"))]
+        let dual_cabinet: Option<Box<rustynes_core::VsDualSystem>> = if !is_nsf_image(&bytes)
+            && !is_fds_image(&bytes)
+            && (nes.is_vs_dual_system()
+                || rustynes_core::vs_db::lookup(nes.rom_sha256()).is_some_and(|e| e.dual_system))
+        {
+            match rustynes_core::VsDualSystem::from_rom_with_sample_rate(&bytes, sample_rate) {
+                Ok(mut vs) => {
+                    self.apply_vs_db(vs.main_mut());
+                    self.apply_vs_db(vs.sub_mut());
+                    Some(Box::new(vs))
+                }
+                Err(e) => {
+                    eprintln!("rustynes: Vs. DualSystem build failed, running main-only: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         if self.config.rewind.enabled {
             let max_bytes: usize =
                 ((self.config.rewind.max_seconds as usize) * 60).max(60) * 200 * 1024;
@@ -1398,6 +1443,11 @@ impl App {
             .unwrap_or("rom.nes")
             .to_string();
         self.rom_bytes = bytes;
+        // v2.1.2 F2.1 — cache the dual flag for the per-redraw present branch.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.dual_mode = dual_cabinet.is_some();
+        }
         {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
@@ -1406,11 +1456,26 @@ impl App {
             emu.audio_buf.clear();
             emu.perf.clear();
             emu.present_fb.clear();
+            emu.present_fb_sub.clear();
             // v1.7.0 "Forge" D1 — a new ROM starts a fresh session timeline.
             emu.history.clear();
             // v1.7.0 "Forge" H4 — a new ROM starts a fresh lag-frame tally.
             emu.reset_lag_frames();
-            emu.nes = Some(nes);
+            // v2.1.2 F2.1 — install a Vs. `DualSystem` cabinet into `dual`
+            // (mutually exclusive with `nes`), else the single console. The probe
+            // `nes` is dropped in the dual case.
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(vs) = dual_cabinet {
+                emu.nes = None;
+                emu.dual = Some(vs);
+            } else {
+                emu.dual = None;
+                emu.nes = Some(nes);
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                emu.nes = Some(nes);
+            }
         }
         // v1.6.0 "Studio" A2 — the new ROM invalidates any TAStudio session
         // (it anchored on the previous game); end it so the editor can't
@@ -4317,6 +4382,10 @@ impl App {
                 if let Some(nes) = emu.nes.as_mut() {
                     nes.insert_coin(0);
                     emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
+                } else if let Some(dual) = emu.dual.as_mut() {
+                    // v2.1.2 F2.1 — coin into the MAIN cabinet acceptor.
+                    dual.insert_coin(0);
+                    emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
                 }
             }
             MenuAction::OpenPanel(panel) => {
@@ -5810,6 +5879,10 @@ impl App {
                 let emu = &mut *guard;
                 if let Some(nes) = emu.nes.as_mut() {
                     nes.insert_coin(0);
+                    emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
+                } else if let Some(dual) = emu.dual.as_mut() {
+                    // v2.1.2 F2.1 — coin into the MAIN cabinet acceptor.
+                    dual.insert_coin(0);
                     emu.vs_coin_frames = VS_COIN_HOLD_FRAMES;
                 }
             }
@@ -8132,11 +8205,16 @@ impl ApplicationHandler<AppEvent> for App {
                 // open. Otherwise take the staging branch (no `nes`). This keeps
                 // the Cheats panel functional with the overlay off without ever
                 // taking a SECOND emu lock inside the egui closure.
-                let needs_nes = dbg_visible
-                    || self
-                        .debugger
-                        .as_ref()
-                        .is_some_and(DebuggerOverlay::any_nes_tool_open);
+                // v2.1.2 F2.1 — a Vs. `DualSystem` cabinet never takes the
+                // `needs_nes` (single-`Nes` debugger / HD) branch; it composes both
+                // console screens in the common branch below. The debugger + HD are
+                // scoped out in dual mode (ADR 0032).
+                let needs_nes = !self.dual_mode
+                    && (dbg_visible
+                        || self
+                            .debugger
+                            .as_ref()
+                            .is_some_and(DebuggerOverlay::any_nes_tool_open));
                 // v1.1.0 beta.1 (T-110-A1) — snapshot the palette-index
                 // framebuffer + phase only while the true composite `NES_NTSC`
                 // filter is active (zero cost otherwise). v1.2.0 C2 — also when a
@@ -8433,6 +8511,10 @@ impl ApplicationHandler<AppEvent> for App {
                     // captured only under the emu lock (the handoff carries just the
                     // framebuffer), so a phase-consuming pass MUST take the locked
                     // path or `present_phase` would freeze and the dot-crawl stall.
+                    // v2.1.2 F2.1 — when a cabinet is loaded, the composed
+                    // two-screen dimensions (else `None` → the single present).
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let mut dual_present_dims: Option<(u32, u32)> = None;
                     #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                     let lockfree_fb = {
                         #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
@@ -8442,6 +8524,9 @@ impl ApplicationHandler<AppEvent> for App {
                         self.emu_thread_drives()
                             && !want_phase
                             && !hd_active
+                            // v2.1.2 F2.1 — dual needs BOTH framebuffers from the
+                            // lock (the handoff carries only the main screen).
+                            && !self.dual_mode
                             && self.present_buffer.has_published()
                     };
                     #[cfg(not(all(not(target_arch = "wasm32"), feature = "emu-thread")))]
@@ -8459,6 +8544,23 @@ impl ApplicationHandler<AppEvent> for App {
                     } else {
                         let mut guard = self.emu.lock();
                         let emu = &mut *guard;
+                        // v2.1.2 F2.1 — Vs. `DualSystem`: compose the two harvested
+                        // console framebuffers (main = `present_fb`, sub =
+                        // `present_fb_sub`) into `present_dual` per the configured
+                        // layout, under the same brief lock. `emu.dual`/`emu.nes` are
+                        // mutually exclusive, so this replaces the single fill.
+                        #[cfg(not(target_arch = "wasm32"))]
+                        if emu.dual.is_some() {
+                            let layout = crate::gfx::DualLayout::from_config(
+                                &self.config.graphics.dual_screen_layout,
+                            );
+                            dual_present_dims = Some(crate::gfx::compose_dual_into(
+                                &mut self.present_dual,
+                                &emu.present_fb,
+                                &emu.present_fb_sub,
+                                layout,
+                            ));
+                        }
                         if let Some(nes) = emu.nes.as_mut() {
                             Self::backfill_present_fb(&mut emu.present_fb, nes);
                             self.present_staging.clear();
@@ -8712,19 +8814,36 @@ impl ApplicationHandler<AppEvent> for App {
                     // redraw, present the upscaled buffer through the dedicated
                     // HD blit; otherwise the stock NES-resolution present path
                     // (byte-identical to before).
+                    // v2.1.2 F2.1 — a Vs. `DualSystem` cabinet presents the composed
+                    // two-screen image via the dedicated dynamic blit first.
                     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
-                    let render_result = match (hd_dims, hd_frame) {
-                        (Some((w, h)), Some(frame)) => {
-                            gfx.render_hd_with_overlay(frame, w, h, overlay)
+                    let render_result = if let Some((dw, dh)) = dual_present_dims {
+                        gfx.render_dual(&self.present_dual, dw, dh, overlay)
+                    } else {
+                        match (hd_dims, hd_frame) {
+                            (Some((w, h)), Some(frame)) => {
+                                gfx.render_hd_with_overlay(frame, w, h, overlay)
+                            }
+                            _ => gfx.render_with_overlay(
+                                &self.present_staging,
+                                index_arg,
+                                video_phase,
+                                overlay,
+                            ),
                         }
-                        _ => gfx.render_with_overlay(
+                    };
+                    #[cfg(all(not(feature = "hd-pack"), not(target_arch = "wasm32")))]
+                    let render_result = if let Some((dw, dh)) = dual_present_dims {
+                        gfx.render_dual(&self.present_dual, dw, dh, overlay)
+                    } else {
+                        gfx.render_with_overlay(
                             &self.present_staging,
                             index_arg,
                             video_phase,
                             overlay,
-                        ),
+                        )
                     };
-                    #[cfg(not(all(feature = "hd-pack", not(target_arch = "wasm32"))))]
+                    #[cfg(target_arch = "wasm32")]
                     let render_result = gfx.render_with_overlay(
                         &self.present_staging,
                         index_arg,
