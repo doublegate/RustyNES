@@ -220,7 +220,7 @@ gameplay frames spanning the bulk of the 172 mapper families.
   runs an experimental `piccolo` Lua backend (observational, not byte-parity with native
   `mlua`, ADR 0012). See [`docs/scripting.md`](docs/scripting.md).
 - **Cheats and input devices** — Game Genie codes (with a Game Genie *encoder*) and raw
-  RAM cheats. *(v2.1.3)* the Cheats panel now **nominates** the known Game Genie codes
+  RAM cheats. *(v2.1.3)* The Cheats panel now **nominates** the known Game Genie codes
   for the loaded game from a bundled catalog of **~10,800 codes across ~520 USA/World
   games** (ingested from the openly-licensed libretro Game Genie database), matched
   header-robustly on both the header-excluded and full-file CRC32 so a re-headered dump
@@ -330,12 +330,11 @@ the v2.0.0 core. Everything here is additive and default-off (or tonal-only on t
 default), so the shipped build stays **byte-identical** and AccuracyCoin holds
 **141/141** — v2.1.0 landed the accuracy-remediation work (a display-only PPU
 palette-backdrop-override fix, 86 mapper families promoted BestEffort → Curated, and
-the MMC3 R1/R2 scanline-IRQ residual closed by-design), and v2.1.2–v2.1.4 build on it:
+the MMC3 R1/R2 scanline-IRQ residual closed by design), and v2.1.2–v2.1.4 build on it:
 
 - **APU audio filter model** *(v2.1.3)* — the authentic NES front-loader filter (a 90 Hz
   plus an aggressive 440 Hz high-pass plus a 14 kHz low-pass) is byte-correct but rolls off
-  the bass hard, reading as a "thin / missing channel". **Settings → Audio → Filter model**
-  lets you
+  the bass hard, reading as a "thin / missing channel". **Settings → Audio → Filter model** lets you
   pick **`nes`** (default, authentic — byte-identical to earlier builds), **`famicom`** (a
   single ~37 Hz high-pass, fuller low end), or **`clean`** (a ~10 Hz DC-block, the
   Mesen2-like character). Tonal only — channel content, determinism, and the audio oracle
@@ -348,8 +347,9 @@ the MMC3 R1/R2 scanline-IRQ residual closed by-design), and v2.1.2–v2.1.4 buil
   default; enable under Settings → Palette → "Generated NTSC".
 - **Composite-shader ladder** *(v2.1.2)* — a three-rung display-only ladder (simplified blur
   → **LMP88959** composite → **Bisqwit** per-dot), with live emulator-synced dot-crawl now
-  wired to LMP88959 as well as Bisqwit. All passes are display-only — the visual-regression
-  corpus is byte-identical with any filter active.
+  wired to LMP88959 as well as Bisqwit. All passes are display-only — they run entirely in
+  the frontend, so the `visual_regression` corpus (which hashes the *pre-shader* core
+  framebuffer, `Nes::framebuffer()`) is byte-identical with any filter active.
 - **Vs. `DualSystem` second-screen presentation** *(v2.1.2, desktop)* — a loaded Vs.
   `DualSystem` cabinet (Balloon Fight, Wrecking Crew, Tennis, Baseball) now runs **both**
   cross-wired consoles and presents them together, side-by-side (512×240, default) or
@@ -659,7 +659,7 @@ state-machine reload and `v`-increment glitch, and the buggy sprite-overflow `n+
 evaluation with the three-group open-bus / MDR decay timer — all verified by committed
 oracles with no engine change. Those residuals were subsequently taken up by the
 **v2.0.0 "Timebase"** one-clock scheduler rewrite (ADR 0002 / ADR 0029) and the v2.1.0
-accuracy-remediation pass, which closed the MMC3 R1/R2 scanline-IRQ residual by-design
+accuracy-remediation pass, which closed the MMC3 R1/R2 scanline-IRQ residual by design
 (the full disposition of every remaining approximation lives in
 [`docs/accuracy-ledger.md`](docs/accuracy-ledger.md)).
 
@@ -785,7 +785,7 @@ byte-identical.
 
 The v2.1.x line opened with **v2.1.0**, the accuracy-remediation release (a display-only
 PPU palette-backdrop-override fix, 86 mapper families promoted BestEffort → Curated, and
-the MMC3 R1/R2 scanline-IRQ residual closed by-design), then **v2.1.1** (the Wizards &
+the MMC3 R1/R2 scanline-IRQ residual closed by design), then **v2.1.1** (the Wizards &
 Warriors game-database mirroring-override freeze fixed at the root), **v2.1.2 "Prism"**
 (a generated NTSC palette + composite-shader ladder, Vs. `DualSystem` desktop
 second-screen presentation, and NSF non-60 Hz / NSFe), and **v2.1.3 "Codex"** (the APU
@@ -796,7 +796,7 @@ powers the desktop, browser, Android, iOS, and Libretro builds.
 
 - **Download:** the [GitHub Releases](https://github.com/doublegate/RustyNES/releases) page — desktop binaries for Linux, macOS (aarch64), and Windows.
 - **Full per-version history:** [`CHANGELOG.md`](CHANGELOG.md).
-- **Authoritative current state:** [`docs/STATUS.md`](docs/STATUS.md) — the per-suite pass-count and mapper matrix.
+- **Authoritative current state:** [`docs/STATUS.md`](docs/STATUS.md) — the per-suite pass-count and mapper matrix (its release-header version can lag a patch-release bump; [`CHANGELOG.md`](CHANGELOG.md) and the [Releases](https://github.com/doublegate/RustyNES/releases) page are authoritative for the latest tag).
 
 ## Roadmap
 
