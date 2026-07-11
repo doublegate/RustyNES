@@ -85,38 +85,54 @@ cycle-accurate core later replaced.
   genuinely-untested axis-B lever; ADR 0002 records it as an axis-B candidate
   deferred to a maintainer decision (see the 2026-07-11 F5.0 decision update)
   and `docs/accuracy-ledger.md` is updated with the refined disposition.
-- **PAL APU frame-counter oracle + honest residual (v2.1.5 "Regression Net &
-  Residual").** Wired blargg's freely-redistributable **`pal_apu_tests`** corpus
-  (10 sub-ROMs, PAL-calibrated) into CI as the first PAL-region APU oracle
-  (`crates/rustynes-test-harness/tests/pal_apu_tests.rs`, gated on the default
-  `--features test-roms`), forcing PAL region via a throwaway-header stamp. In
-  doing so it **corrects a false oracle**: the prior revision drove these
-  2005-era ROMs through the `$6000` WRAM status runner and asserted `status ==
-  0` — but they are plain NROM with *no PRG-RAM*, so `$6000` reads `0` forever
-  and the check passed vacuously, claiming "all ten PASS" while validating
-  nothing (the blargg `$DE $B0 $61` completion magic never even appears). The
-  suite now reads the ROMs' real **on-screen** verdict (`APU <title>` then
-  `PASSED` / `FAILED: #<n>`) decoded from the nametable by the new
-  `run_nes_screen` harness runner, which early-returns the instant the verdict
-  renders (5-18 frames) and treats a never-settling screen as a hard failure,
-  never a pass. The honest result under PAL: **3 of 10 pass** — the
-  region-independent length-counter operation (`01`), length lookup table
-  (`02`), and frame-IRQ flag semantics (`03`) — and **7 fail**, all of them the
-  PAL frame-counter *step-timing* checks (clock jitter, mode-0/1 length timing,
-  IRQ-flag/IRQ timing, length halt/reload timing). The cause is a genuine,
-  now-documented PAL residual: RustyNES's APU frame counter
-  (`crates/rustynes-apu/src/frame_counter.rs`) is region-agnostic and clocks
-  the sequencer at the NTSC step positions unconditionally, with no PAL variant;
-  the PAL-calibrated ROMs therefore never match (and fail identically under
-  NTSC region too, pinning the cause to the timing model, not region select).
-  This is **not** an NTSC regression — the NTSC APU frame counter stays
-  oracle-exact (AccuracyCoin APU Frame-Counter-IRQ 141/141; `apu_test` 8/8) —
-  and no core code changed, so the deterministic NTSC path is byte-identical.
-  The seven residuals are pinned as fail-loud regression guards that trip the
-  moment PAL frame-counter timing is ever modeled (the honest, non-forcing
-  analogue of the `mmc3_test_2/4` `_currently_fails` convention). ROM provenance
-  (blargg, public domain) is recorded in `tests/roms/LICENSES.md`; the residual
-  is recorded in `docs/accuracy-ledger.md` and `docs/apu-2a03.md`.
+- **PAL APU frame-counter step positions + screen-reading oracle (v2.1.5
+  "Regression Net & Residual").** Modeled the PAL (2A07) APU frame-counter
+  sequencer step positions and wired blargg's freely-redistributable
+  **`pal_apu_tests`** corpus (10 sub-ROMs, PAL-calibrated) into CI as the first
+  PAL-region APU oracle (`crates/rustynes-test-harness/tests/pal_apu_tests.rs`,
+  gated on the default `--features test-roms`), forcing PAL region via a
+  throwaway-header stamp. In wiring it, this **corrects a false oracle**: the
+  prior revision drove these 2005-era ROMs through the `$6000` WRAM status
+  runner and asserted `status == 0` — but they are plain NROM with *no
+  PRG-RAM*, so `$6000` reads `0` forever and the check passed vacuously,
+  claiming "all ten PASS" while validating nothing (the blargg `$DE $B0 $61`
+  completion magic never even appears). The suite now reads the ROMs' real
+  **on-screen** verdict (`APU <title>` then `PASSED` / `FAILED: #<n>`) decoded
+  from the nametable by the new `run_nes_screen` harness runner, which
+  early-returns the instant the verdict renders (5-18 frames) and treats a
+  never-settling screen as a hard failure, never a pass.
+  - **PAL frame counter (`crates/rustynes-apu/src/frame_counter.rs`).** The
+    2A03 (NTSC) and 2A07 (PAL) share the same six-step sequencer but divide the
+    CPU clock differently, so the identical quarter/half/IRQ events land at
+    different CPU-cycle counts. `FrameCounter` now carries a `pal` selector,
+    derived from the console `Region` by `Apu::new` (true only for
+    `Region::Pal`; NTSC and Dendy keep the NTSC positions). PAL 4-step
+    (mode 0) clocks at 8313 / 16627 / 24939 / 33252 / 33253 / 33254; PAL 5-step
+    (mode 1) at 8313 / 16627 / 24939 / 41565 / 41566 (Mesen2 `stepCyclesPal`).
+    The mode-0 terminal three cycles replicate the NTSC IRQ-flag-visibility /
+    `irq_line_active` split verbatim at the PAL positions.
+  - **Result: 8 of 10 pass** (was a vacuous 10/10, honestly 3/10 pre-model) —
+    the three region-independent checks (`01.len_ctr`, `02.len_table`,
+    `03.irq_flag`) plus the five PAL frame-counter-timing checks
+    (`04.clock_jitter`, `05`/`06.len_timing_mode0`/`1`, `07.irq_flag_timing`,
+    `08.irq_timing`) that flipped to PASS with the PAL step positions.
+  - **NTSC byte-identity preserved (sacred).** The change is strictly
+    region-gated: the NTSC/Dendy step tables are unchanged and the power-on /
+    snapshot-restore default is NTSC (the `pal` selector is *derived*, not
+    persisted — the APU snapshot format is untouched, and `Apu::restore`
+    re-derives it from the restored region). Verified byte-identical:
+    AccuracyCoin 141/141 (100.00%), `apu_test` 8/8, NTSC `blargg_apu_2005`
+    11/11, `nestest` 0-diff — all unchanged.
+  - **Documented residual.** `10.len_halt_timing` and `11.len_reload_timing`
+    still fail, but the PAL step positions advanced them from `FAILED: #2` to
+    `FAILED: #3` / `#4`. Their NTSC builds pass (`blargg_apu_2005` 10 & 11),
+    localizing the gap to a PAL-specific length-counter halt/reload
+    write-vs-half-frame-clock ordering detail adjacent to the frame-counter
+    step model. Both are pinned as fail-loud residual guards (the honest,
+    non-forcing analogue of the `mmc3_test_2/4` `_currently_fails` convention)
+    and recorded in `docs/accuracy-ledger.md`. ROM provenance (blargg, public
+    domain) is in `tests/roms/LICENSES.md`; docs updated in `docs/apu-2a03.md`,
+    `docs/accuracy-ledger.md`, `docs/STATUS.md`, `docs/testing-strategy.md`.
 
 ### Changed
 
