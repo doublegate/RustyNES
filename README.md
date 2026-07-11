@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.0.4-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.1.4-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -92,11 +92,17 @@ platform for NES emulation.
 | **HD Audio** *(v1.6.0)* | HD-pack `<bgm>` / `<sfx>` OGG tracks triggered through the `$4100` register, mixed on top of the produced APU buffer (default-off `hd-pack`) |
 | **Shader Ecosystem** *(v1.6.0)* | LMP88959 NTSC/PAL, hqNx / xBRZ upscalers, and a constrained `.slangp` / `.cgp` preset import on the composable ShaderStack |
 | **Writable + Programmable** *(v1.7.0)* | Editing-capable debug tools (palette / nametable / CHR / OAM writeback, an iNES / NES 2.0 header editor, an inline 6502 assembler), a scriptable `tastudio.*` Lua API, host IPC automation (`script-ipc`), `.dbg` source maps, Zwinder tiered rewind, audio depth (stereo / reverb / 20-band EQ), web parity, and an i18n framework |
-| **Android App** *(v1.8.x)* | A complete native Android app on the byte-identical core — a multi-touch + hardware-controller (P1–P4) UI, wgpu `SurfaceView` rendering, save-states, Lua, RetroAchievements, direct-IP / CGNAT-TURN netplay, and a box-art ROM library (GitHub-sideload now; Google Play at v2.1.0) |
-| **iOS / iPadOS App** *(v1.9.x)* | A complete native iOS app on the byte-identical core — a native SwiftUI shell over Metal (`wgpu`), multi-touch + GameController support, iCloud save-state sync, room-code rollback netplay, RetroAchievements, and the full TAStudio power-user suite (TestFlight now; App Store at v2.1.0) |
+| **Android App** *(v1.8.x)* | A complete native Android app on the byte-identical core — a multi-touch + hardware-controller (P1–P4) UI, wgpu `SurfaceView` rendering, save-states, Lua, RetroAchievements, direct-IP / CGNAT-TURN netplay, and a box-art ROM library (GitHub-sideload now; Google Play at v2.3.0) |
+| **iOS / iPadOS App** *(v1.9.x)* | A complete native iOS app on the byte-identical core — a native SwiftUI shell over Metal (`wgpu`), multi-touch + GameController support, iCloud save-state sync, room-code rollback netplay, RetroAchievements, and the full TAStudio power-user suite (TestFlight now; App Store at v2.3.0) |
 | **Libretro Core** *(v1.10.0)* | A complete, cycle-accurate Libretro core (the `rustynes_libretro` shared library — `.so` / `.dylib` / `.dll` by platform) integrating RustyNES seamlessly into RetroArch with RetroAchievements, dynamic audio sync, and deterministic rollback/save-state support |
 | **One-Clock Timebase** *(v2.0.0)* | A single canonical cycle counter with every CPU cycle a real bus access and a split-around-the-access PPU catch-up, replacing the five-counter dot-lockstep scheduler; the release's designated breaking-behavior change (ADR 0002 / ADR 0029) |
-| **Vs. DualSystem** *(v2.0.0)* | Core-level emulation of the two-CPU/two-PPU Vs. arcade cabinet boards (Tennis, Mahjong, Wrecking Crew, Balloon Fight) via a shared-WRAM + cross-wired `$4016`/IRQ convergence model; core-and-harness-only, frontend wiring deferred |
+| **Vs. DualSystem** *(v2.0.0 core · v2.1.2 desktop)* | Core-level emulation of the two-CPU/two-PPU Vs. arcade cabinet boards (Tennis, Baseball, Wrecking Crew, Balloon Fight) via a shared-WRAM + cross-wired `$4016`/IRQ convergence model — now presented on desktop as a composed **two-screen** view (side-by-side / stacked) with both consoles cross-wired |
+| **Audio Filter Model** *(v2.1.3)* | Pick the APU analog filter — `nes` (default, authentic front-loader), `famicom` (fuller low end), or `clean` (Mesen2-like) — a tonal-only fix for the "thin / missing bass channel" character; the default stays byte-identical |
+| **Game Genie Database** *(v2.1.3)* | Per-game code nomination from a bundled catalog of **~10,800 codes across ~520 USA/World games**, header-robust CRC matching, and a Game Genie encoder — shipping on every target including the browser demo |
+| **Generated NTSC Palette + Shaders** *(v2.1.2)* | An in-core, byte-identical-across-targets NTSC palette synthesizer (off by default) feeding a three-rung composite-shader ladder (simplified blur → LMP88959 → Bisqwit per-dot) with live emulator-synced dot-crawl |
+| **NSF / NSFe, non-60 Hz** *(v2.1.2)* | The chiptune player parses the header play-speed divider and drives non-standard rates (PAL 50 Hz and custom) off a mapper cycle-timer IRQ, plus the chunked `NSFE` container |
+| **OAM Decay** *(v2.1.4, opt-in)* | Mesen2-modeled dynamic-RAM decay of un-refreshed OAM rows with rendering disabled; off by default (byte-identical), deterministic when on, round-trips the save-state |
+| **Documentation Handbook** *(v2.1.3)* | A Material-for-MkDocs site at [`/docs/`](https://doublegate.github.io/RustyNES/docs/) rendering the subsystem specs + user guide, alongside the playable demo (`/`) and rustdoc (`/api/`) on GitHub Pages |
 | **Pure Rust**          | `winit` + `wgpu` + `cpal` + `egui` frontend; safe `no_std + alloc` chip stack                 |
 
 <p align="center">
@@ -198,8 +204,11 @@ gameplay frames spanning the bulk of the 172 mapper families.
   **CRT / scanline** shader pass (curvature, scanlines, aperture mask), and
   **custom `.pal` palette** loading, layered on the existing 8:7 pixel-aspect + overscan
   pipeline.
-- **NSF / NSFe music player** *(v1.1.0)* — drop in a `.nsf` chiptune and play it through
-  the real APU, with a track selector and the file's title / artist / copyright.
+- **NSF / NSFe music player** *(v1.1.0; extended v2.1.2)* — drop in a `.nsf` chiptune and
+  play it through the real APU, with a track selector and the file's title / artist /
+  copyright. v2.1.2 parses the header **play-speed divider** and drives non-standard
+  rates correctly (PAL 50 Hz and custom dividers on the NTSC console, via a mapper
+  cycle-timer IRQ), and parses the chunked **`NSFE`** container.
 - **Lua scripting** *(v1.1.0, opt-in `scripting` feature, native-only)* — a sandboxed
   **Lua 5.4** engine: read / write memory, inspect CPU state, react to per-frame /
   per-access events, draw an HUD overlay, and drive control actions. v1.6.0 adds
@@ -211,7 +220,12 @@ gameplay frames spanning the bulk of the 172 mapper families.
   runs an experimental `piccolo` Lua backend (observational, not byte-parity with native
   `mlua`, ADR 0012). See [`docs/scripting.md`](docs/scripting.md).
 - **Cheats and input devices** — Game Genie codes (with a Game Genie *encoder*) and raw
-  RAM cheats, plus a broad peripheral set: the standard pad, **Four Score** (4-player),
+  RAM cheats. *(v2.1.3)* The Cheats panel now **nominates** the known Game Genie codes
+  for the loaded game from a bundled catalog of **~10,800 codes across ~520 USA/World
+  games** (ingested from the openly-licensed libretro Game Genie database), matched
+  header-robustly on both the header-excluded and full-file CRC32 so a re-headered dump
+  still resolves — shipping on every target including the browser demo. Plus a broad
+  peripheral set: the standard pad, **Four Score** (4-player),
   the **Arkanoid Vaus** paddle (both ports), the **Zapper** light gun, the **Power Pad**,
   the **SNES mouse**, the **Family BASIC keyboard**, the **Family Trainer** mat, the
   Konami / Bandai **Hyper Shot**, and the **Subor keyboard**. **Turbo / autofire** with an
@@ -309,6 +323,54 @@ The browser build closes several desktop-parity gaps with web-specific implement
   theme, aspect, zoom, FPS, volume) round-trips through a compact URL-safe blob, with a
   "Copy share link" button (ADR 0022).
 
+### Display, audio & accuracy — the "Fathom" line *(v2.1.x)*
+
+The v2.1.x "Fathom" releases deepen display fidelity, audio, and accuracy on top of
+the v2.0.0 core. Everything here is additive and default-off (or tonal-only on the
+default), so the shipped build stays **byte-identical** and AccuracyCoin holds
+**141/141** — v2.1.0 landed the accuracy-remediation work (a display-only PPU
+palette-backdrop-override fix, 86 mapper families promoted BestEffort → Curated, and
+the MMC3 R1/R2 scanline-IRQ residual closed by design), and v2.1.2–v2.1.4 build on it:
+
+- **APU audio filter model** *(v2.1.3)* — the authentic NES front-loader filter (a 90 Hz
+  plus an aggressive 440 Hz high-pass plus a 14 kHz low-pass) is byte-correct but rolls off
+  the bass hard, reading as a "thin / missing channel". **Settings → Audio → Filter model** lets you
+  pick **`nes`** (default, authentic — byte-identical to earlier builds), **`famicom`** (a
+  single ~37 Hz high-pass, fuller low end), or **`clean`** (a ~10 Hz DC-block, the
+  Mesen2-like character). Tonal only — channel content, determinism, and the audio oracle
+  are unchanged on the default.
+- **Generated NTSC palette** *(v2.1.2)* — an in-core synthesizer (`generate_base_palette`)
+  produces the 64-entry base palette from a model of the 2C02's composite output (Bisqwit /
+  ares YIQ integration), tunable via saturation / hue / contrast / brightness / gamma.
+  Every transcendental routes through `libm`, so the output is byte-identical across all
+  targets (x86 / aarch64 / wasm / `thumbv7em`) and locked by a committed golden. Off by
+  default; enable under Settings → Palette → "Generated NTSC".
+- **Composite-shader ladder** *(v2.1.2)* — a three-rung display-only ladder (simplified blur
+  → **LMP88959** composite → **Bisqwit** per-dot), with live emulator-synced dot-crawl now
+  wired to LMP88959 as well as Bisqwit. All passes are display-only — they run entirely in
+  the frontend, so the `visual_regression` corpus (which hashes the *pre-shader* core
+  framebuffer, `Nes::framebuffer()`) is byte-identical with any filter active.
+- **Vs. `DualSystem` second-screen presentation** *(v2.1.2, desktop)* — a loaded Vs.
+  `DualSystem` cabinet (Balloon Fight, Wrecking Crew, Tennis, Baseball) now runs **both**
+  cross-wired consoles and presents them together, side-by-side (512×240, default) or
+  stacked (256×480). P1/P2 drive the main console, P3/P4 the sub. The single-console path
+  stays byte-identical (ADR 0032); run-ahead / rewind / netplay / TAS are scoped out of dual
+  mode.
+- **NSF non-60 Hz + NSFe** *(v2.1.2)* — the chiptune player now honors the header play-speed
+  divider (driving sub-60 Hz rates off a mapper cycle-timer IRQ) and parses the chunked
+  `NSFE` container; the standard 60 Hz path is byte-identical.
+- **Optional OAM decay** *(v2.1.4, opt-in)* — the 2C02's OAM is dynamic RAM; with rendering
+  disabled long enough, un-refreshed rows decay to a fixed garbage pattern. RustyNES now
+  models this exactly like Mesen2 (a 3000-CPU-cycle refresh window per 8-byte row). It is
+  **off by default** (byte-identical output and suites), deterministic when on (driven off
+  the PPU's monotonic dot counter), and round-trips the save-state via an additive
+  `PPU_SNAPSHOT_VERSION` v7 tail. Enable via **Settings → Emulation → "OAM decay
+  (accuracy)"**.
+- **Mapper regression + IRQ oracles** *(v2.1.4)* — a CI boot-smoke sweep of all 26
+  `BestEffort` mapper families (auto-derived from the tier classifier) and a shared
+  MMC3-clone A12/IRQ timing oracle (eleven clone boards driven bit-for-bit against a
+  reference `Mmc3`) add safety-net coverage without moving any tier or touching the core.
+
 ### Android *(v1.8.x)*
 
 RustyNES runs as a complete native **Android app** on the byte-identical core (so
@@ -331,8 +393,8 @@ UniFFI bridge, a **`rustynes-android`** JNI layer, and a Jetpack **Compose** she
 
 The apps ship now as **GitHub-Releases / sideload**, full-featured; the Google Play
 production launch — with an ad-supported-freemium model and the `foss` / `play` flavor
-split — is **deferred to v2.1.0** (see [Roadmap](#roadmap)). Details in
-[`docs/android.md`](docs/android.md).
+split — is **deferred to the v2.3.0 joint store launch** (see [Roadmap](#roadmap)).
+Details in [`docs/android.md`](docs/android.md).
 
 ### iOS / iPadOS *(v1.9.x)*
 
@@ -343,7 +405,7 @@ RustyNES runs as a native **iOS / iPadOS app** on the byte-identical core (maint
 - **Connectivity & Tooling** — room-code netplay (CGNAT/TURN) and LAN rollback, RetroAchievements, iCloud save-state sync (CloudKit), Lua console, and power-user tooling (TAS `.rnm` movies, `.pal` palettes, `.zip` ROMs, HD-pack loading).
 - **Platform polish** — ReplayKit capture, Game Center, accessibility, EN/ES i18n, 4-slot save-state manager, and the dormant StoreKit `foss`/App-Store seam.
 
-The apps are currently distributed via **TestFlight**; the App Store launch is deferred to **v2.1.0** (see [Roadmap](#roadmap)). Details in [`docs/ios.md`](docs/ios.md).
+The apps are currently distributed via **TestFlight**; the App Store launch is deferred to the **v2.3.0** joint store launch (see [Roadmap](#roadmap)). Details in [`docs/ios.md`](docs/ios.md).
 
 ---
 
@@ -548,7 +610,7 @@ in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs
 | `rustynes-hdpack`        | HD-pack loader + compositor + HD audio (shared desktop + mobile) |
 | `rustynes-mobile`        | UniFFI bridge for the mobile platforms (Android, and v1.9.0 iOS) |
 | `rustynes-android`       | Android JNI glue over the mobile bridge                      |
-| `rustynes-monetization`  | `AdPolicy` ad-supported-freemium policy core (v2.1.0; dormant) |
+| `rustynes-monetization`  | `AdPolicy` ad-supported-freemium policy core (v2.3.0; dormant) |
 | `rustynes-test-harness`  | Integration tests and the accuracy / commercial-ROM oracles |
 
 ### Project layout
@@ -595,9 +657,11 @@ cluster — the DMC/OAM-DMA ↔ `$4016` / `$4017` controller-read double-clock /
 conflict, the `$2007` (PPUDATA) read-during-active-rendering window with its deferred
 state-machine reload and `v`-increment glitch, and the buggy sprite-overflow `n+m`
 evaluation with the three-group open-bus / MDR decay timer — all verified by committed
-oracles with no engine change. The few remaining residuals (a Test 5/6 active-window
-mirror refinement and the `$2002` NMI-suppression race) converge on the future v2.0
-fractional-master-clock refactor (ADR 0002).
+oracles with no engine change. Those residuals were subsequently taken up by the
+**v2.0.0 "Timebase"** one-clock scheduler rewrite (ADR 0002 / ADR 0029) and the v2.1.0
+accuracy-remediation pass, which closed the MMC3 R1/R2 scanline-IRQ residual by design
+(the full disposition of every remaining approximation lives in
+[`docs/accuracy-ledger.md`](docs/accuracy-ledger.md)).
 
 **Everything added since the v1.0.0 core is additive and off-by-default** — each new
 workstream is a frontend tap or an opt-in feature flag, so the shipped / native /
@@ -654,7 +718,7 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | **Android (arm64)** | Supported (v1.8.x; GitHub-Releases / sideload — see [`docs/android.md`](docs/android.md)) |
 | **Linux ARM64**     | Supported (cross-compile) |
 | **Libretro Core**   | Supported (RetroArch via `rustynes-libretro`) |
-| **iOS / iPadOS**    | Supported (v1.9.x TestFlight; App Store at v2.1.0) |
+| **iOS / iPadOS**    | Supported (v1.9.x TestFlight; App Store at v2.3.0) |
 
 ### System requirements
 
@@ -675,8 +739,9 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | [Architecture](docs/architecture.md)    | System design and the load-bearing decisions                      |
 | [Scheduler](docs/scheduler.md)          | The master-clock lockstep model                                   |
 | [CHANGELOG.md](CHANGELOG.md)            | Version history and release notes                                 |
-| [Roadmap](to-dos/ROADMAP.md)            | The forward roadmap — the path to v2.0.0 and beyond               |
-| [Release plans](to-dos/plans/README.md) | Per-release design plans (v1.0.0 → the v1.7.0–v2.0.0 forward set) + the reference-emulator research dives that fed them |
+| [Documentation handbook](https://doublegate.github.io/RustyNES/docs/) | The Material-for-MkDocs site rendering the subsystem specs + user guide (also on GitHub Pages) |
+| [Roadmap](to-dos/ROADMAP.md)            | The forward roadmap — deepening the project through v2.2.0 and the v2.3.0 store launch |
+| [Release plans](to-dos/plans/README.md) | Per-release design plans (v1.0.0 → the v2.0.0 "Timebase" set and the v2.1.x "Fathom" line) + the reference-emulator research dives that fed them |
 | [iOS / iPadOS App](docs/ios.md)         | Native SwiftUI shell over Metal (wgpu) — v1.9.x TestFlight        |
 | [Libretro Core](docs/libretro/WALKTHROUGH.md) | Libretro core architecture, snapshot determinism, and RetroArch setup |
 
@@ -691,43 +756,66 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | Testing    | [docs/testing-strategy.md](docs/testing-strategy.md) |
 | Netplay    | [docs/netplay-webrtc.md](docs/netplay-webrtc.md) |
 
-Architecture Decision Records live in [`docs/adr/`](docs/adr/) (0001–0025, including
-0024 mobile bridge + hybrid-Android host and 0025 the `foss` / `play` Android flavor
-split). (The deeper
-engine-development audit logs are kept locally, outside the public repo.)
+Architecture Decision Records live in [`docs/adr/`](docs/adr/) (0001–0032, including
+0028–0029 the v2.0.0 "Timebase" one-clock timebase + save-state/movie-format break,
+0030 the AccuracyCoin 2-cycle-ALE / octal-latch closure, 0031 the game-database
+must-not-override-mapper-controlled-state gate, and 0032 the Vs. `DualSystem` desktop
+presentation). (The deeper engine-development audit logs are kept locally, outside the
+public repo.)
 
-The hosted GitHub Pages deployment serves both the playable WebAssembly demo at
-**[doublegate.github.io/RustyNES](https://doublegate.github.io/RustyNES/)** and the
+The hosted GitHub Pages deployment serves **three** sections from one artifact: the
+playable WebAssembly demo at
+**[doublegate.github.io/RustyNES](https://doublegate.github.io/RustyNES/)**, the
 workspace API docs (rustdoc) at
-**[doublegate.github.io/RustyNES/api/](https://doublegate.github.io/RustyNES/api/)**.
+**[doublegate.github.io/RustyNES/api/](https://doublegate.github.io/RustyNES/api/)**,
+and the Material-for-MkDocs documentation handbook at
+**[doublegate.github.io/RustyNES/docs/](https://doublegate.github.io/RustyNES/docs/)**.
 
 ---
 
 ## Current Release
 
-RustyNES's current release is **v2.0.4 "Harbor"**, the Android release-candidate
-milestone of the v2.0.x mobile-finalization train. The headline accuracy work
-shipped one release earlier, in **v2.0.3**: it promoted the 2-cycle-ALE PPU fetch
-model to the default and took the shipped build to **AccuracyCoin 141/141
-(100.00%)** — every assigned test passing, including the two newest upstream PPU
-tests, "ALE + Read" and "Hybrid Addresses" (ADR 0030). The whole v2.0.x line rides
-on the **v2.0.0 "Timebase"** one-clock scheduler rewrite, and the same
-byte-identical cycle-accurate core powers the desktop, browser, Android, iOS, and
-Libretro builds.
+RustyNES's current release is **v2.1.4 "Fathom" ("Caliper")**, the accuracy-hardening
+step of the v2.1.x "Fathom" line — it adds an opt-in, Mesen2-modeled **OAM decay**
+accuracy feature (default-off), a CI boot-smoke sweep of every `BestEffort` mapper
+family, and a shared MMC3-clone A12/IRQ timing oracle, all on the byte-identical
+cycle-accurate core. The deterministic core is untouched: **AccuracyCoin stays 141/141
+(100.00%)**, nestest 0-diff, and the default-build framebuffer / audio are
+byte-identical.
+
+The v2.1.x line opened with **v2.1.0**, the accuracy-remediation release (a display-only
+PPU palette-backdrop-override fix, 86 mapper families promoted BestEffort → Curated, and
+the MMC3 R1/R2 scanline-IRQ residual closed by design), then **v2.1.1** (the Wizards &
+Warriors game-database mirroring-override freeze fixed at the root), **v2.1.2 "Prism"**
+(a generated NTSC palette + composite-shader ladder, Vs. `DualSystem` desktop
+second-screen presentation, and NSF non-60 Hz / NSFe), and **v2.1.3 "Codex"** (the APU
+audio filter-model selector, the full Game Genie code database + per-game nomination, and
+the Material-for-MkDocs documentation handbook). The whole line rides on the **v2.0.0
+"Timebase"** one-clock scheduler rewrite, and the same byte-identical cycle-accurate core
+powers the desktop, browser, Android, iOS, and Libretro builds.
 
 - **Download:** the [GitHub Releases](https://github.com/doublegate/RustyNES/releases) page — desktop binaries for Linux, macOS (aarch64), and Windows.
 - **Full per-version history:** [`CHANGELOG.md`](CHANGELOG.md).
-- **Authoritative current state:** [`docs/STATUS.md`](docs/STATUS.md) — the per-suite pass-count and mapper matrix.
+- **Authoritative current state:** [`docs/STATUS.md`](docs/STATUS.md) — the per-suite pass-count and mapper matrix (its release-header version can lag a patch-release bump; [`CHANGELOG.md`](CHANGELOG.md) and the [Releases](https://github.com/doublegate/RustyNES/releases) page are authoritative for the latest tag).
 
 ## Roadmap
 
-The forward arc of the v2.0.x mobile-finalization train (Android is finalized
-across v2.0.1–v2.0.4; both apps launch together at v2.1.0):
+With the mobile apps finalized (Android across v2.0.1–v2.0.4, iOS across v2.0.5–v2.0.8)
+and re-based onto the improved v2.1.x "Fathom" core, the forward arc keeps **deepening the
+project** — accuracy, performance, features, and quality — ahead of the joint mobile store
+launch:
 
-- **v2.0.5 → v2.0.8** — iOS finalization re-ported onto the v2.0.0 core, mirroring the completed Android line.
-- **v2.0.9** — a joint ready-for-release verification pass for both apps.
-- **v2.1.0** — the **joint mobile store launch** (Google Play + Apple App Store + F-Droid + AltStore PAL), turning on the `foss` / `play` flavor split (ADR 0025) and the ad-supported-freemium monetization (AppLovin MAX + RevenueCat, a one-time **$3.99** unlock).
-- **Beyond v2.1.0** — wiring `rustynes-frontend` to the core-level `Emu::Dual` front door so Vs. `DualSystem` dual-console play is reachable from the shipped UI, plus the R1/R2 MMC3-IRQ falling-edge residual left open by the bounded-effort campaign (ADR 0002).
+- **v2.1.5 → v2.2.0** — continued deepening of the existing project across accuracy,
+  performance, features, and quality (the v2.1.5 "Regression Net & Residual" work — a
+  Holy Mapperel mapper bank-reachability + IRQ regression net wired into CI — is already
+  under way in `[Unreleased]`).
+- **v2.3.0** — the **joint mobile store launch** (Google Play + Apple App Store + F-Droid +
+  AltStore PAL), turning on the `foss` / `play` flavor split (ADR 0025) and the
+  ad-supported-freemium monetization (AppLovin MAX + RevenueCat, a one-time **$3.99**
+  unlock).
+
+The exact per-release scope beyond v2.1.4 is planning, not a shipped promise — see the
+roadmap for the current framing.
 
 The longer forward arc lives as research-grounded design plans in
 [`to-dos/plans/`](to-dos/plans/README.md); see [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md)
@@ -819,7 +907,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {2.0.4},
+  version = {2.1.4},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (141/141), nestest 0-diff; 172 mapper families,
