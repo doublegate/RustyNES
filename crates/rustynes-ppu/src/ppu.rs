@@ -1233,6 +1233,7 @@ impl Ppu {
     ///   exactly like Mesen2).
     ///
     /// The subsequent `oam[addr]` read then returns the (possibly decayed) byte.
+    #[inline]
     fn oam_decay_on_read(&mut self, addr: u8) {
         if !self.oam_decay_active() {
             return;
@@ -1263,6 +1264,7 @@ impl Ppu {
     /// `WriteSpriteRam`: a write recharges the row's DRAM cells, so refresh the
     /// row's last-touch timestamp. Inactive (disabled or PAL) ⇒ no-op, so the write
     /// path is byte-identical to stock at the default.
+    #[inline]
     const fn oam_decay_on_write(&mut self, addr: u8) {
         if !self.oam_decay_active() {
             return;
