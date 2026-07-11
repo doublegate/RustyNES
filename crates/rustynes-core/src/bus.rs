@@ -1175,6 +1175,19 @@ impl LockstepBus {
         self.ppu.extra_scanlines()
     }
 
+    /// v2.1.4 F2.3 — enable/disable the optional OAM-decay accuracy model.
+    /// `false` (default) is byte-identical to a decay-free PPU. See
+    /// [`rustynes_ppu::Ppu::set_oam_decay`].
+    pub const fn set_oam_decay(&mut self, enabled: bool) {
+        self.ppu.set_oam_decay(enabled);
+    }
+
+    /// v2.1.4 F2.3 — whether the optional OAM-decay model is enabled.
+    #[must_use]
+    pub const fn oam_decay_enabled(&self) -> bool {
+        self.ppu.oam_decay_enabled()
+    }
+
     /// Cartridge region (NTSC / PAL / Dendy / Multi). Drives wall-clock
     /// frame pacing in the frontend and clock-divider selection inside the
     /// PPU + APU.

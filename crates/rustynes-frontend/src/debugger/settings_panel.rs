@@ -125,6 +125,10 @@ pub struct SettingsApply {
     /// palette was selected / edited / cleared / saved); the app re-applies the
     /// resolved base palette to the core (or clears it back to the built-in).
     pub palette_select: bool,
+    /// v2.1.4 F2.3 — the optional OAM-decay accuracy toggle changed; the app pushes
+    /// the new `[emulation] oam_decay` into the core under the emu lock. Off (the
+    /// default) is byte-identical to a decay-free core.
+    pub oam_decay: bool,
 }
 
 impl SettingsApply {
@@ -148,6 +152,7 @@ impl SettingsApply {
             || self.apu_filter_model
             || self.shader_stack
             || self.palette_select
+            || self.oam_decay
     }
 }
 
@@ -1761,6 +1766,25 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
     });
 
     ui.add_space(8.0);
+    ui.heading("Accuracy");
+    // v2.1.4 F2.3 — optional OAM decay. OFF by default is byte-identical to a
+    // decay-free core (the determinism oracle / AccuracyCoin / TAS / netplay are
+    // unaffected); ON models the 2C02's dynamic sprite-RAM decay when rendering is
+    // disabled (NTSC/Dendy only). Pushed to the core live via `oam_decay`.
+    if ui
+        .checkbox(&mut config.emulation.oam_decay, "OAM decay (accuracy)")
+        .on_hover_text(
+            "Model the 2C02's dynamic OAM losing un-refreshed sprite rows to a \
+             garbage pattern when rendering stays off (à la Mesen2). NTSC/Dendy \
+             only. Off is byte-identical to today's core.",
+        )
+        .changed()
+    {
+        state.apply.oam_decay = true;
+        save_config(config);
+    }
+
+    ui.add_space(8.0);
     enhancements_section(ui, state, config);
 
     ui.add_space(4.0);
@@ -1769,7 +1793,10 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
         config.input.run_ahead = crate::config::InputConfig::default().run_ahead;
         config.rewind = crate::config::RewindConfig::default();
         config.enhancements = crate::config::EnhancementsConfig::default();
+        // v2.1.4 F2.3 — reset OAM decay to its default (off) too, and push it live.
+        config.emulation = crate::config::EmulationConfig::default();
         state.apply.rewind_enabled = true;
+        state.apply.oam_decay = true;
         save_config(config);
     }
 }

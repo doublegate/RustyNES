@@ -14,6 +14,26 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Optional OAM decay (accuracy, default-OFF).** The 2C02's Object Attribute
+  Memory is dynamic RAM: sprite evaluation implicitly refreshes it every rendered
+  scanline, but with rendering disabled long enough the un-refreshed rows lose
+  charge and decay to a fixed garbage pattern. RustyNES now models this exactly
+  like Mesen2 (`ReadSpriteRam`/`WriteSpriteRam`, 3000-CPU-cycle refresh window per
+  8-byte row): every OAM read (`$2004` **and** the sprite-evaluation reads) and
+  write refreshes the row's timestamp, and a row un-touched past the window decays
+  on the next read to `((sprAddr & 3) == 2) ? (sprAddr & 0xE3) : sprAddr`. It is
+  **off by default** — with the default the framebuffer/audio/replay output and
+  the AccuracyCoin / commercial / visual regression suites are **byte-identical**
+  to a decay-free build. NTSC/Dendy only (PAL's refresh cadence masks decay).
+  Deterministic when on (driven off the PPU's monotonic dot counter, never
+  wall-clock/OS-RNG). Enable via **Settings → Emulation → "OAM decay (accuracy)"**,
+  the `[emulation] oam_decay` config bool, or `Nes::set_oam_decay(true)`. The
+  per-row decay state round-trips the save-state via an additive
+  `PPU_SNAPSHOT_VERSION` v7 tail (stored as a relative age so a run-ahead / netplay
+  `snapshot`→`restore` stays byte-identical); pre-v7 `.rns` blobs still load.
+
 ## [2.1.3] - 2026-07-11 - "Fathom" (quality-of-life — APU filter-model audio fix + Game Genie code nomination/database + universal header-robust matching + MkDocs docs handbook; "Codex")
 
 ### Added

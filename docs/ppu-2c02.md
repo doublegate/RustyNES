@@ -205,6 +205,38 @@ Set when a non-transparent pixel of sprite 0 overlaps a non-transparent pixel of
 
 Determined during sprite *rendering*, not evaluation.
 
+### OAM decay (optional, opt-in, default-OFF) (v2.1.4 F2.3)
+
+Real 2C02 OAM is dynamic RAM. Sprite evaluation reads every sprite's Y byte each
+rendered scanline, which implicitly refreshes the cell charge; but with rendering
+disabled long enough the un-refreshed rows lose charge and decay to a fixed garbage
+pattern. RustyNES models this exactly like Mesen2 (`NesPpu::ReadSpriteRam` /
+`WriteSpriteRam`, `OamDecayCycleCount = 3000`), gated behind a default-OFF toggle.
+
+- **Granularity** — one CPU-cycle timestamp per **8-byte row** (32 rows over the
+  256-byte OAM), `oam_decay_cycles[addr >> 3]`. The CPU cycle is derived from the
+  PPU's monotonic dot counter (`dot_counter / 3`) — deterministic, no wall-clock.
+- **On every OAM read** (the `$2004` read **and** the primary-OAM reads done during
+  sprite evaluation): if `cpu_cycle − oam_decay_cycles[addr>>3] ≤ 3000`, refresh the
+  timestamp; otherwise the row has decayed — rewrite all 8 of its bytes to
+  `((sprAddr & 3) == 2) ? (sprAddr & 0xE3) : sprAddr` (attribute bytes keep only
+  their implemented bits; the rest read back their own low address). The
+  refresh-on-sprite-eval is what keeps rows alive during normal rendering.
+- **On every OAM write** (`$2004` write and OAM DMA): write the byte, then refresh
+  the row's timestamp.
+- **Region** — NTSC/Dendy only. On PAL the far more frequent refresh cadence masks
+  decay entirely, so the model never acts there (matching Mesen2).
+- **Default-OFF byte-identity** — with the toggle off (the default) no OAM access
+  consults the decay state, so the framebuffer/audio/replay output and the
+  visual/`external_real_games`/AccuracyCoin suites are byte-identical to a build
+  without the field. Enable via `Nes::set_oam_decay(true)` /
+  `[emulation] oam_decay` / **Settings → Emulation → OAM decay (accuracy)**.
+- **Save-state** — the per-row timestamps are serialized in the `PPU_SNAPSHOT_VERSION`
+  v7 tail as a *relative age* (`now − timestamp`), reconstructed against the live
+  counter on load, so a run-ahead / netplay `snapshot`→`restore` stays byte-identical
+  even though the free-running `dot_counter` itself is not serialized. The enable
+  flag is a frontend/config knob re-applied on load (not serialized), like `region`.
+
 ### Loopy `v / t / x / w`
 
 Per `ref-docs/research-report.md` §Internal scroll registers:

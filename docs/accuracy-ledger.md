@@ -29,6 +29,7 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
 | OAMADDR forced to 0 across dots 257-320 + `$2004` `$E3` attribute-byte mask | Already modeled; both correct | AccuracyCoin `$2004` / `Sprite0Hit` (141/141) | **Verified** — F1.2 added a fast unit regression guard |
 | `OAMADDR & 0xF8` render-start OAM copy | Not modeled (revision-dependent, unreliable) | none | **Out of scope** — Mesen2, ares, and TriCNES all deliberately omit it |
 | PPU open-bus decay | Refresh map matches the Blargg `ppu_open_bus` table exactly; ~600 ms is the spec decay value (per-group model) | `ppu_open_bus` (verifies the map, not a stopwatch) | **Verified** — F1.3 audit + regression test; per-bit timing has no oracle and isn't pursued |
+| Optional OAM decay (F2.3) | Dynamic-RAM sprite decay when rendering stays off: per-8-byte-row 3000-CPU-cycle refresh model (Mesen2 `ReadSpriteRam`/`WriteSpriteRam`), rows refreshed by sprite-eval + `$2004`/DMA, decayed rows read `((a&3)==2)?a&0xE3:a` | No decay test ROM (Mesen2 code-level parity); NTSC/Dendy-only | **Shipped** (v2.1.4 F2.3) — **default-off** so the golden vectors / AccuracyCoin / commercial oracle (all decay-off) stay byte-identical; a real core feature (affects the framebuffer when ON), deterministic off `dot_counter`, save-state v7 tail (relative-age) |
 | NTSC generated palette (F1.4) | Optional composite-model base palette synthesized in-core (`rustynes_ppu::generate_base_palette`) in place of the hand table | `full_palette` visual corpus + Mesen2/ares baselines (visual only) | **Shipped** (v2.1.2) — **default-off**, golden-locked cross-target; select via Settings → Palette → "Generated NTSC". Default build byte-identical |
 | NTSC composite shader ladder (F2.2) | Display-only GPU post-passes: simplified blur (`Ntsc`) → LMP88959 composite → Bisqwit per-dot (`CompositeRt`) | No pass/fail ROM (visual only); `visual_regression` stays byte-identical with any filter active | **Shipped** (v2.1.2) — three-rung ladder verified end-to-end, live emulator-synced dot-crawl now on both composite passes (`Lmp88959` phase wired), palette↔pass split documented; no separable-kernel rung (LMP covers that tier). See `docs/frontend.md` |
 | Vs. `DualSystem` second screen | Core modeled + `sub_framebuffer()` exposed; desktop frontend now presents both screens (side-by-side / stacked), routes P1-P4 + coin, plays the main console's audio | Synth harness + boot of the 4 DualSystem titles (real-cabinet boot stays fixture-limited — see below) | **Shipped** (v2.1.2 F2.1, desktop) — advanced features (run-ahead / rewind / netplay / TAS / dual save-state) scoped out in dual mode per ADR 0032; wasm/mobile deferred |
@@ -42,11 +43,15 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
 
 ## Notes
 
-- **Determinism boundary.** Anything display-only (NTSC filter, optional OAM
-  decay) stays in the frontend/shader and never feeds the framebuffer/audio
-  golden-vector or save-state hash. The generated NTSC palette (F1.4) is the one
-  exception that changes framebuffer output, hence it ships default-off with a
-  deliberate visual re-bless before any promotion.
+- **Determinism boundary.** Display-only work (the NTSC composite filter/shader
+  ladder) stays in the frontend/shader and never feeds the framebuffer/audio
+  golden-vector or save-state hash. Two accuracy features DO change deterministic
+  core output when enabled — the generated NTSC palette (F1.4) and optional OAM
+  decay (F2.3) — so both ship **default-off**: with the default the golden vectors
+  / AccuracyCoin / commercial oracle / save-state hashes are byte-identical, and
+  turning either on is a deliberate, deterministic opt-in (OAM decay is driven off
+  the monotonic `dot_counter`, never wall-clock, and its per-row state round-trips
+  the save-state via the v7 relative-age tail).
 
 ## Ignored-test dispositions (all 20)
 
