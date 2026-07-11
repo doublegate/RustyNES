@@ -31,9 +31,10 @@ const DB_TEXT: &str = include_str!("genie_database.tsv");
 
 /// v2.1.3 — the bulk catalog (~10.8k codes / ~520 USA games) ingested from
 /// libretro-database + No-Intro, keyed by the FULL-FILE `rom_crc32_full`.
-/// **Native-only**: it is ~760 KB and would bloat the wasm bundle past its size
-/// budget, so the wasm demo keeps just the curated starter set above.
-#[cfg(not(target_arch = "wasm32"))]
+/// Compiled into **both** native and wasm: at ~777 KB raw it gzips to only
+/// ~128 KiB, which sits comfortably inside the wasm bundle's 5 MiB size budget
+/// (the bundle is ~3.8 MiB gzip), so the browser demo carries the full game
+/// coverage too rather than just the curated starter set above.
 const FULL_DB_TEXT: &str = include_str!("genie_database_full.tsv");
 
 /// One Game Genie code entry: a named code for a specific ROM (by CRC32).
@@ -90,9 +91,9 @@ fn db() -> &'static [GenieDbCode] {
     static DB: OnceLock<Vec<GenieDbCode>> = OnceLock::new();
     DB.get_or_init(|| {
         let mut rows: Vec<GenieDbCode> = DB_TEXT.lines().filter_map(parse_row).collect();
-        // v2.1.3 — append the bulk full-file-CRC catalog on native (the two key
-        // conventions coexist; the picklist matches a ROM against both keys).
-        #[cfg(not(target_arch = "wasm32"))]
+        // v2.1.3 — append the bulk full-file-CRC catalog (the two key conventions
+        // coexist; the picklist matches a ROM against both keys). Included on
+        // every target — it gzips small enough to fit the wasm size budget.
         rows.extend(FULL_DB_TEXT.lines().filter_map(parse_row));
         rows.sort_by(|a, b| a.crc.cmp(&b.crc).then_with(|| a.name.cmp(&b.name)));
         rows.shrink_to_fit();
@@ -304,16 +305,15 @@ mod tests {
         assert_eq!(flat.len(), grouped);
     }
 
-    /// v2.1.3 — the bulk full-file-CRC catalog is native-only (excluded from the
-    /// wasm bundle for size), so this test only runs off-wasm.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// v2.1.3 — the bulk full-file-CRC catalog ships on every target (it gzips
+    /// small enough for the wasm budget), folded on top of the curated set.
     #[test]
-    fn native_full_catalog_is_loaded_and_keyed_by_full_file_crc() {
-        // The native DB folds in the ~10.8k-code bulk catalog on top of the
-        // curated starter set, so it is far larger than the starter set alone.
+    fn full_catalog_is_loaded_and_keyed_by_full_file_crc() {
+        // The DB folds in the ~10.8k-code bulk catalog on top of the curated
+        // starter set, so it is far larger than the starter set alone.
         assert!(
             db().len() > 5_000,
-            "native DB must include the bulk full-file catalog (got {})",
+            "DB must include the bulk full-file catalog (got {})",
             db().len()
         );
         // Contra's full-file (No-Intro) CRC32 resolves to its codes — the key

@@ -1523,11 +1523,13 @@ and the panel unions the matches across both keys, de-duplicated by code
 (`codes_for_crcs`). The bulk catalog carries **~10.8k codes across ~520 USA/World
 games**, ingested from the openly-licensed libretro-database Game Genie cheat
 files and keyed to every known dump's CRC32 via the No-Intro NES DAT (multiple
-CRCs per game cover the dump revisions). It is **native-only**: at ~760 KB it is
-`#[cfg(not(target_arch = "wasm32"))]`-gated out of the wasm bundle to stay under
-the size budget, so the browser demo keeps just the curated starter set. Codes,
-effect names, and No-Intro CRC32s are factual data (not Nintendo program code)
-and freely redistributable; commercial ROMs are, as always, never committed.
+CRCs per game cover the dump revisions). It ships on **every target, including
+the wasm browser demo**: at ~777 KB raw it gzips to only ~128 KiB, which sits
+comfortably inside the wasm bundle's 5 MiB size budget (the bundle is ~3.8 MiB
+gzip), so the browser build carries the full game coverage rather than a
+subset. Codes, effect names, and No-Intro CRC32s are factual data (not Nintendo
+program code) and freely redistributable; commercial ROMs are, as always, never
+committed.
 
 ## Settings
 

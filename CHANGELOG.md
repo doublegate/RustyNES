@@ -43,8 +43,9 @@ cycle-accurate core later replaced.
   keys: the header-excluded `rom_crc32` (the curated starter catalog) and the
   full-file No-Intro `rom_crc32_full` (the bulk catalog), unioned + de-duplicated.
   Frontend-only (the deterministic core is untouched; codes re-validate at load).
-  The bulk catalog is native-only — it is excluded from the wasm bundle for size,
-  so the browser demo keeps the curated starter set.
+  The bulk catalog ships on every target including the wasm browser demo — at
+  ~777 KB raw it gzips to ~128 KiB, well inside the wasm bundle's 5 MiB budget —
+  so the browser build carries the full game coverage too.
 
 ## [2.1.2] - 2026-07-11 - "Fathom" (display-fidelity — generated NTSC palette + composite-shader ladder + Vs. `DualSystem` second screen + NSF non-60 Hz/NSFe; "Prism")
 
