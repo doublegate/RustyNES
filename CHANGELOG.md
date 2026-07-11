@@ -59,12 +59,15 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
-- **CI: flaky `relay_loopback` netplay test hardened — TURN client now
-  retransmits (RFC 5389 §7.2.1).** The native TURN client
+- **Netplay: the native TURN client now retransmits (RFC 5389 §7.2.1) — a real
+  production bug where symmetric-NAT relay fallback aborted on a single dropped
+  UDP datagram.** The native TURN client
   (`crates/rustynes-netplay/src/relay.rs`) sent each `Allocate` /
   `CreatePermission` request exactly once and waited for the reply; a single
   dropped UDP datagram (request *or* response) hard-failed the whole NAT
-  traversal with `NatPhase::Failed("TURN allocate failed: …")`. On loopback this
+  traversal with `NatPhase::Failed("TURN allocate failed: …")` — so real
+  symmetric-NAT netplay over any lossy internet path was equally fragile, not
+  only the CI loopback test. On loopback this
   is rare but real — a loaded shared CI runner (observed on `windows-latest`) can
   transiently overflow a socket receive buffer and silently discard a
   `127.0.0.1` datagram — which intermittently red-lit
