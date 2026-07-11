@@ -10,6 +10,24 @@
 //!   (NTSC).  Quarter-frame at 7457, 14913, 22371, 37281.  Half-frame at 14913 and
 //!   37281.  No IRQ.
 //!
+//! ## PAL step positions (v2.1.5)
+//!
+//! The 2A03's sequencer divides the CPU clock; the PAL 2A07 uses a different
+//! divisor, so the *same* six sequencer steps land at different CPU-cycle
+//! counts.  Selected by [`FrameCounter::pal`] (true only for
+//! [`Region::Pal`](crate::Region::Pal); Dendy keeps the NTSC period):
+//! - **4-step (mode 0)**: 8313, 16627, 24939, 33252, 33253, 33254.
+//!   Quarter at 8313 / 16627 / 24939 / 33253.  Half at 16627 / 33253.
+//!   Frame IRQ at 33252 / 33253 / 33254 if not inhibited.
+//! - **5-step (mode 1)**: 8313, 16627, 24939, 41565, 41566.
+//!   Quarter at 8313 / 16627 / 24939 / 41565.  Half at 16627 / 41565.  No IRQ.
+//!
+//! These are the canonical Mesen2 `stepCyclesPal` values (verified against
+//! blargg's PAL-calibrated `pal_apu_tests` corpus — see
+//! `crates/rustynes-test-harness/tests/pal_apu_tests.rs`).  The IRQ-flag
+//! visibility / `irq_line_active` split at the terminal three cycles is
+//! identical in structure to the NTSC path; only the cycle counts move.
+//!
 //! Writing `$4017`:
 //! - Resets the cycle counter, with a 3- or 4-cycle delay (depending on whether the
 //!   write happened on an even or odd CPU cycle: 3 if write occurred on apu-clock-aligned
@@ -110,6 +128,20 @@ pub struct FrameCounter {
     /// `$4017` write with this value before execution resumes from the
     /// reset vector. Power-on value `$00` (the power path "writes `$00`").
     pub(crate) last_4017: u8,
+    /// v2.1.5 (PAL frame-counter step positions): true iff the console
+    /// region is [`Region::Pal`](crate::Region::Pal), selecting the PAL
+    /// sequencer clock positions (8313 / 16627 / 24939 / 33252-33254 in
+    /// 4-step; 8313 / 16627 / 24939 / 41565-41566 in 5-step) instead of
+    /// the NTSC positions (7457 / 14913 / 22371 / 29828-29830; 37281-37282).
+    /// **Dendy stays NTSC** — it is a PAL-clocked famiclone whose APU frame
+    /// counter uses the NTSC sequencer period, so only true `Region::Pal`
+    /// flips this. Derived from the owning [`Apu`](crate::Apu)'s `region`,
+    /// **not** persisted: the snapshot format is unchanged, and
+    /// [`Apu::restore`](crate::Apu::restore) re-derives it from the restored
+    /// region after reading the counter back. Power-on /
+    /// [`FrameCounter::new`] default is `false` (NTSC), which keeps every
+    /// NTSC/Dendy tick byte-identical to the pre-v2.1.5 model.
+    pub(crate) pal: bool,
 }
 
 impl Default for FrameCounter {
@@ -134,6 +166,7 @@ impl FrameCounter {
             apu_aligned: true,
             irq_flag_clear_cycle: 0,
             last_4017: 0x00,
+            pal: false,
         }
     }
 
@@ -299,15 +332,89 @@ impl FrameCounter {
             }
         }
 
-        // Normal step.  Step boundaries (NTSC, in CPU cycles since seq start).
-        // Mode 0: 7457, 14913, 22371, 29828, 29829, 29830.  Quarter at 7457/14913/22371/29829.
-        //   Half at 14913 / 29829.  IRQ at 29828, 29829, 29830 (held for 3 cycles).
-        // Mode 1: 7457, 14913, 22371, 29829, 37281, 37282.  Quarter at 7457/14913/22371/37281.
-        //   Half at 14913 / 37281.  No IRQ.
+        self.clock_sequencer()
+    }
+
+    /// Advance the sequencer one CPU cycle and return the events it fires.
+    ///
+    /// Split out of [`tick`](Self::tick) so each mode's step table stays a
+    /// self-contained, readable unit (and to keep `tick` within the clippy
+    /// line budget). Dispatches to the mode-specific handler
+    /// ([`four_step`](Self::four_step) / [`five_step`](Self::five_step)),
+    /// each of which selects PAL vs NTSC step positions from [`Self::pal`].
+    fn clock_sequencer(&mut self) -> FrameEvents {
         let mut ev = FrameEvents::default();
         self.cycle += 1;
         match self.mode {
-            Mode::FourStep => match self.cycle {
+            Mode::FourStep => self.four_step(&mut ev),
+            Mode::FiveStep => self.five_step(&mut ev),
+        }
+        ev
+    }
+
+    /// 4-step (mode 0) sequencer step.  Fires quarter/half/IRQ events and wraps
+    /// the counter at the terminal step.
+    ///
+    /// - **NTSC/Dendy** (`pal == false`, default): steps at 7457 / 14913 /
+    ///   22371 / 29828 / 29829 / 29830.  Quarter at 7457 / 14913 / 22371 /
+    ///   29829; half at 14913 / 29829; frame IRQ at 29828 / 29829 / 29830.
+    ///   This arm is byte-identical to the pre-v2.1.5 model.
+    /// - **PAL** (`pal == true`, v2.1.5): steps at 8313 / 16627 / 24939 /
+    ///   33252 / 33253 / 33254 (Mesen2 `stepCyclesPal`).  Quarter at 8313 /
+    ///   16627 / 24939 / 33253; half at 16627 / 33253; frame IRQ at 33252 /
+    ///   33253 / 33254.  The IRQ-flag-visibility / `irq_line_active` split is
+    ///   structurally identical to the NTSC arm — only the cycle counts move.
+    fn four_step(&mut self, ev: &mut FrameEvents) {
+        if self.pal {
+            match self.cycle {
+                8313 => ev.quarter = true,
+                16627 => {
+                    ev.quarter = true;
+                    ev.half = true;
+                }
+                24939 => ev.quarter = true,
+                33252 => {
+                    // PAL step 4 (mirrors NTSC 29828): set the `$4015` bit-6
+                    // visibility flag unconditionally; assert the CPU IRQ line
+                    // (`irq_line_active`) only when NOT inhibited.
+                    self.irq_flag = true;
+                    self.irq_flag_clear_cycle = 0;
+                    if !self.irq_inhibit {
+                        self.irq_line_active = true;
+                        ev.irq = true;
+                    }
+                }
+                33253 => {
+                    // PAL step 5 (mirrors NTSC 29829): IRQ + quarter + half.
+                    self.irq_flag = true;
+                    self.irq_flag_clear_cycle = 0;
+                    if !self.irq_inhibit {
+                        self.irq_line_active = true;
+                        ev.irq = true;
+                    }
+                    ev.quarter = true;
+                    ev.half = true;
+                }
+                33254 => {
+                    // PAL step 6 / wrap (mirrors NTSC 29830): the inhibit
+                    // branch clears the flag (ending the visibility window),
+                    // the non-inhibit branch re-asserts the IRQ.
+                    if self.irq_inhibit {
+                        self.irq_flag = false;
+                        self.irq_flag_clear_cycle = 0;
+                        self.irq_line_active = false;
+                    } else {
+                        self.irq_flag = true;
+                        self.irq_flag_clear_cycle = 0;
+                        self.irq_line_active = true;
+                        ev.irq = true;
+                    }
+                    self.cycle = 0; // wrap
+                }
+                _ => {}
+            }
+        } else {
+            match self.cycle {
                 7457 => ev.quarter = true,
                 14913 => {
                     ev.quarter = true;
@@ -369,8 +476,37 @@ impl FrameCounter {
                     self.cycle = 0; // wrap
                 }
                 _ => {}
-            },
-            Mode::FiveStep => match self.cycle {
+            }
+        }
+    }
+
+    /// 5-step (mode 1) sequencer step.  No frame IRQ.
+    ///
+    /// - **NTSC/Dendy** (default): 7457 / 14913 / 22371 / 37281 / 37282.
+    ///   Quarter at 7457 / 14913 / 22371 / 37281; half at 14913 / 37281.
+    /// - **PAL** (v2.1.5): 8313 / 16627 / 24939 / 41565 / 41566.  Quarter at
+    ///   8313 / 16627 / 24939 / 41565; half at 16627 / 41565.
+    fn five_step(&mut self, ev: &mut FrameEvents) {
+        if self.pal {
+            match self.cycle {
+                8313 => ev.quarter = true,
+                16627 => {
+                    ev.quarter = true;
+                    ev.half = true;
+                }
+                24939 => ev.quarter = true,
+                // No event at 33253 in PAL 5-step.
+                41565 => {
+                    ev.quarter = true;
+                    ev.half = true;
+                }
+                41566 => {
+                    self.cycle = 0;
+                }
+                _ => {}
+            }
+        } else {
+            match self.cycle {
                 7457 => ev.quarter = true,
                 14913 => {
                     ev.quarter = true;
@@ -386,9 +522,8 @@ impl FrameCounter {
                     self.cycle = 0;
                 }
                 _ => {}
-            },
+            }
         }
-        ev
     }
 }
 
@@ -519,5 +654,114 @@ mod tests {
         fc.irq_flag_clear_cycle = 0; // mimicking the step body
         assert_eq!(fc.irq_flag_clear_cycle, 0);
         assert!(fc.irq_flag);
+    }
+
+    // ---- PAL sequencer step positions (v2.1.5) ----
+
+    /// Build a PAL-configured frame counter (as `Apu::new(Region::Pal, …)`
+    /// does): identical to `new()` except the PAL step-position selector.
+    fn pal_fc() -> FrameCounter {
+        let mut fc = FrameCounter::new();
+        fc.pal = true;
+        fc
+    }
+
+    #[test]
+    fn pal_four_step_quarter_frame_at_8313() {
+        // PAL step 0 fires a quarter-frame at 8313 (not the NTSC 7457), and
+        // nothing before it. Guards the region-gated step position.
+        let mut fc = pal_fc();
+        let mut cyc = 0u64;
+        for _ in 0..8312 {
+            assert!(!drive_tick(&mut fc, &mut cyc, true).quarter);
+        }
+        let ev = drive_tick(&mut fc, &mut cyc, true);
+        assert!(ev.quarter);
+        assert!(!ev.half);
+    }
+
+    #[test]
+    fn pal_four_step_half_frame_at_16627() {
+        let mut fc = pal_fc();
+        let mut cyc = 0u64;
+        for _ in 0..16626 {
+            let ev = drive_tick(&mut fc, &mut cyc, true);
+            assert!(!ev.half);
+        }
+        let ev = drive_tick(&mut fc, &mut cyc, true);
+        assert!(ev.quarter);
+        assert!(ev.half);
+    }
+
+    #[test]
+    fn pal_four_step_irq_at_33252() {
+        // PAL IRQ asserts at step 3 = cycle 33252 (mirrors NTSC 29828).
+        let mut fc = pal_fc();
+        let mut cyc = 0u64;
+        for _ in 0..33251 {
+            drive_tick(&mut fc, &mut cyc, true);
+        }
+        let ev = drive_tick(&mut fc, &mut cyc, true);
+        assert!(ev.irq);
+        assert!(fc.irq_flag);
+        assert!(fc.irq_line_active);
+    }
+
+    #[test]
+    fn pal_four_step_no_irq_at_ntsc_position() {
+        // A PAL counter must NOT fire the IRQ at the NTSC cycle 29828.
+        let mut fc = pal_fc();
+        let mut cyc = 0u64;
+        for _ in 0..29828 {
+            let ev = drive_tick(&mut fc, &mut cyc, true);
+            assert!(!ev.irq, "PAL counter fired IRQ at an NTSC step position");
+        }
+        assert!(!fc.irq_flag);
+    }
+
+    #[test]
+    fn pal_four_step_wrap_at_33254() {
+        // After the terminal step 5 (33254) the sequencer wraps: the next
+        // quarter lands at 33254 + 8313 = 41567 relative to start.
+        let mut fc = pal_fc();
+        let mut cyc = 0u64;
+        for _ in 0..33254 {
+            drive_tick(&mut fc, &mut cyc, true);
+        }
+        assert_eq!(fc.cycle, 0, "counter must wrap to 0 after cycle 33254");
+        for _ in 0..8312 {
+            assert!(!drive_tick(&mut fc, &mut cyc, true).quarter);
+        }
+        assert!(drive_tick(&mut fc, &mut cyc, true).quarter);
+    }
+
+    #[test]
+    fn pal_five_step_positions() {
+        // Mode-1 PAL: quarter at 8313/16627/24939/41565, half at 16627/41565,
+        // no IRQ, wrap at 41566.
+        let mut fc = pal_fc();
+        fc.write(0x80, true); // mode 1
+        let mut cyc = 0u64;
+        // Consume the 3-cycle reset delay + the immediate mode-1 clock.
+        for _ in 0..3 {
+            drive_tick(&mut fc, &mut cyc, true);
+        }
+        assert_eq!(fc.mode, Mode::FiveStep);
+        // 41565 is the 4th step (half + quarter); no IRQ anywhere.
+        let mut saw_irq = false;
+        for _ in 0..41566 {
+            let ev = drive_tick(&mut fc, &mut cyc, true);
+            saw_irq |= ev.irq;
+        }
+        assert!(!saw_irq, "PAL 5-step must never assert a frame IRQ");
+        assert_eq!(fc.cycle, 0, "PAL 5-step must wrap to 0 after 41566");
+    }
+
+    #[test]
+    fn ntsc_default_pal_flag_is_false() {
+        // The default (power-on / NTSC / Dendy) counter keeps the NTSC step
+        // positions — the byte-identity guarantee for NTSC/Dendy.
+        let fc = FrameCounter::new();
+        assert!(!fc.pal);
     }
 }

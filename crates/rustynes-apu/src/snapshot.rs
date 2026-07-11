@@ -602,6 +602,12 @@ impl Apu {
         self.noise = read_noise(&mut r)?;
         self.dmc = read_dmc(&mut r, self.region)?;
         self.frame_counter = read_fc(&mut r, version)?;
+        // v2.1.5: the frame counter's PAL step-position selector is derived
+        // from region, not persisted (the snapshot format is unchanged). Re-
+        // derive it here from the just-restored region so a restored PAL state
+        // keeps the PAL sequencer positions. `read_fc` returns a counter with
+        // `pal = false` (NTSC), which is correct for NTSC/Dendy.
+        self.frame_counter.pal = matches!(self.region, Region::Pal);
         self.blip = read_blip(&mut r)?;
 
         self.apu_phase = r.bool()?;

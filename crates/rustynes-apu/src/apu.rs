@@ -319,6 +319,12 @@ impl Apu {
             Region::Pal => CPU_HZ_PAL,
             _ => CPU_HZ_NTSC,
         };
+        // v2.1.5: the frame counter selects PAL vs NTSC sequencer step
+        // positions from the region. Only true `Region::Pal` uses the PAL
+        // (2A07) positions; NTSC and Dendy keep the NTSC (2A03) positions, so
+        // their frame-counter timing is byte-identical to the pre-v2.1.5 model.
+        let mut frame_counter = FrameCounter::new();
+        frame_counter.pal = matches!(region, Region::Pal);
         Self {
             region,
             pulse1: Pulse::new(true),
@@ -326,7 +332,7 @@ impl Apu {
             triangle: Triangle::new(),
             noise: Noise::new(region),
             dmc: Dmc::new(region),
-            frame_counter: FrameCounter::new(),
+            frame_counter,
             mixer: Mixer::new(),
             blip: BlipBuf::new(sample_rate, cpu_rate),
             apu_phase: false,
