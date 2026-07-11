@@ -1002,6 +1002,24 @@ impl Apu {
         self.last_frame_events = ev;
         self.handle_frame_events(ev);
 
+        // v2.1.5 length halt/reload ordering: promote each channel's deferred
+        // halt (`new_halt` -> `halt`) and pending length reload EVERY CPU cycle,
+        // AFTER the half-frame clock in `handle_frame_events` and BEFORE the
+        // mixer samples the channel outputs below. This realizes the 2A03's
+        // "halt change takes effect after clocking length" and "reload ignored
+        // during a non-zero length clock" rules (blargg `10.len_halt_timing` /
+        // `11.len_reload_timing`; TetaNES `LengthCounter::reload` +
+        // Mesen2 `_newHaltValue`). On the common cycle with no half-frame clock
+        // the reload applies in-cycle (the count was untouched since the write),
+        // so a plain length load / halt write remains byte-identical to an
+        // immediate apply — only the write-lands-on-the-clock-cycle coincidence
+        // the tests probe differs. The DMC has no length counter. See
+        // `crates/rustynes-apu/src/length.rs`.
+        self.pulse1.length.reload();
+        self.pulse2.length.reload();
+        self.triangle.length.reload();
+        self.noise.length.reload();
+
         // v2.0 Phase 2 (`mc-r1-dmc-reenable-phase`) reload-arm/reenable
         // bookkeeping and the `CannotRunDMCDMARightNow` exclusion decrement all
         // live at end-of-cycle (`dmc_tick_end`) under M-1, NOT here at cycle

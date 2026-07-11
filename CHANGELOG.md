@@ -111,28 +111,44 @@ cycle-accurate core later replaced.
     (mode 1) at 8313 / 16627 / 24939 / 41565 / 41566 (Mesen2 `stepCyclesPal`).
     The mode-0 terminal three cycles replicate the NTSC IRQ-flag-visibility /
     `irq_line_active` split verbatim at the PAL positions.
-  - **Result: 8 of 10 pass** (was a vacuous 10/10, honestly 3/10 pre-model) —
+  - **Result: 10 of 10 pass** (was a vacuous 10/10, honestly 3/10 pre-model) —
     the three region-independent checks (`01.len_ctr`, `02.len_table`,
-    `03.irq_flag`) plus the five PAL frame-counter-timing checks
+    `03.irq_flag`); the five PAL frame-counter-timing checks
     (`04.clock_jitter`, `05`/`06.len_timing_mode0`/`1`, `07.irq_flag_timing`,
-    `08.irq_timing`) that flipped to PASS with the PAL step positions.
-  - **NTSC byte-identity preserved (sacred).** The change is strictly
-    region-gated: the NTSC/Dendy step tables are unchanged and the power-on /
-    snapshot-restore default is NTSC (the `pal` selector is *derived*, not
-    persisted — the APU snapshot format is untouched, and `Apu::restore`
-    re-derives it from the restored region). Verified byte-identical:
-    AccuracyCoin 141/141 (100.00%), `apu_test` 8/8, NTSC `blargg_apu_2005`
-    11/11, `nestest` 0-diff — all unchanged.
-  - **Documented residual.** `10.len_halt_timing` and `11.len_reload_timing`
-    still fail, but the PAL step positions advanced them from `FAILED: #2` to
-    `FAILED: #3` / `#4`. Their NTSC builds pass (`blargg_apu_2005` 10 & 11),
-    localizing the gap to a PAL-specific length-counter halt/reload
-    write-vs-half-frame-clock ordering detail adjacent to the frame-counter
-    step model. Both are pinned as fail-loud residual guards (the honest,
-    non-forcing analogue of the `mmc3_test_2/4` `_currently_fails` convention)
-    and recorded in `docs/accuracy-ledger.md`. ROM provenance (blargg, public
-    domain) is in `tests/roms/LICENSES.md`; docs updated in `docs/apu-2a03.md`,
-    `docs/accuracy-ledger.md`, `docs/STATUS.md`, `docs/testing-strategy.md`.
+    `08.irq_timing`) that flipped to PASS with the PAL step positions; and
+    `10.len_halt_timing` / `11.len_reload_timing` closed by the length
+    halt/reload ordering fix below.
+  - **NTSC byte-identity preserved (sacred).** The step-position change is
+    strictly region-gated: the NTSC/Dendy step tables are unchanged and the
+    power-on / snapshot-restore default is NTSC (the `pal` selector is
+    *derived*, not persisted — the APU snapshot format is untouched, and
+    `Apu::restore` re-derives it from the restored region). The halt/reload
+    ordering change is region-agnostic but byte-identical on NTSC by
+    construction (see below). Verified byte-identical: AccuracyCoin 141/141
+    (100.00%), `apu_test` 8/8, NTSC `blargg_apu_2005` 11/11, `f2_accuracy_audit`
+    6/6, `apu_mixer` / `volume_tests` / `visual_regression` unchanged, `nestest`
+    0-diff.
+  - **Length halt/reload write-ordering fix (`crates/rustynes-apu/src/length.rs`).**
+    Closes `10.len_halt_timing` (was `FAILED: #3`) and `11.len_reload_timing`
+    (was `FAILED: #4`). The 2A03 applies a length-counter **halt** change and a
+    length **reload** one step *behind* the frame sequencer's half-frame length
+    clock: a halt write on the clock cycle governs the *next* clock (not this
+    one), and a reload on the clock cycle is dropped if the counter was clocked
+    from a non-zero value. `LengthCounter` now defers both — `set_halt` latches
+    `new_halt`, `load` latches `reload_val` + a `previous_count` snapshot — and
+    `LengthCounter::reload` (called on all four length channels once per CPU
+    cycle in `Apu::tick_with_external`, **after** the half-frame clock and
+    **before** the mixer sample) promotes the halt and applies the reload only
+    when the post-clock count still equals the snapshot. Mirrors `TetaNES`
+    `LengthCounter::reload` and Mesen2's `_newHaltValue` + reload-request.
+    Because the reload settles in-cycle on the common non-coincident write and
+    halt does not affect channel output directly, the change is byte-identical
+    on NTSC — it alters only the exact write-on-the-clock-cycle coincidence the
+    ROMs probe. The APU snapshot layout is unchanged (the deferral scratch
+    fields are not serialized; `read_length` seeds `new_halt = halt`).
+  - ROM provenance (blargg, public domain) is in `tests/roms/LICENSES.md`; docs
+    updated in `docs/apu-2a03.md`, `docs/accuracy-ledger.md`, `docs/STATUS.md`,
+    `docs/testing-strategy.md`.
 
 ### Changed
 

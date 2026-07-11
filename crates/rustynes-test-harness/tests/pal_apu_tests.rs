@@ -22,9 +22,9 @@
 //! [`run_nes_screen`] decodes from the nametable. See
 //! `docs/testing-strategy.md` §Layer 3 and `docs/accuracy-ledger.md`.
 //!
-//! ## Honest current state (v2.1.5 "Regression Net & Residual") — 8 / 10 PASS
+//! ## Current state (v2.1.5 "Regression Net & Residual") — 10 / 10 PASS
 //!
-//! **Eight of the ten** checks PASS under forced PAL:
+//! **All ten** checks PASS under forced PAL:
 //!
 //! - Region-independent (three): the length-counter operation, the length
 //!   lookup table (a ROM constant), and the frame-IRQ flag set/clear
@@ -40,23 +40,20 @@
 //!   positions (7457 / 14913 / 22371 / 29828-29830; 37281-37282), so the
 //!   NTSC/Dendy path is byte-identical — `AccuracyCoin` holds 141/141 and the
 //!   NTSC `blargg_apu_2005` + `apu_test` suites are unchanged.
-//!
-//! **Two remain as documented residuals** — `10.len_halt_timing` and
-//! `11.len_reload_timing`. With the PAL step positions in place they advanced
-//! from `FAILED: #2` to `FAILED: #3` / `FAILED: #4` respectively, but do not
-//! fully pass. The NTSC builds of these same two ROMs (`blargg_apu_2005` 10 &
-//! 11) PASS, which localizes the residual to a **PAL-specific
-//! length-counter halt/reload write-vs-half-frame-clock ordering** detail that
-//! sits *adjacent* to — not inside — the frame-counter step-position model this
-//! change delivered. It is recorded as a bounded PAL-accuracy residual in
-//! `docs/accuracy-ledger.md`; closing it is a separate, deeper length-counter
-//! timing investigation. (The suite has no `09.reset_timing` ROM — that variant
-//! lives only in the NTSC `blargg_apu_2005` set.)
-//!
-//! The two residuals are pinned as fail-loud regression guards: each asserts
-//! the ROM *currently* reports `FAILED` on-screen. If either later PASSES, the
-//! pin trips and this file must be promoted — the honest, non-forcing
-//! equivalent of the `mmc3_test_2/4` `_currently_fails` convention.
+//! - Length halt/reload write ordering (two, **newly passing in v2.1.5**):
+//!   `10.len_halt_timing` and `11.len_reload_timing`. These closed once the
+//!   length counter (`crates/rustynes-apu/src/length.rs`) gained the deferred
+//!   **halt-after-clock** (`new_halt`) and **reload-ignored-during-clock**
+//!   (`reload_val` / `previous_count`) mechanism — the owning APU promotes both
+//!   once per CPU cycle in `Apu::tick_with_external`, *after* the half-frame
+//!   length clock and *before* the mixer sample, mirroring `TetaNES`'s
+//!   `LengthCounter::reload` and Mesen2's `_newHaltValue` + reload-request. The
+//!   ordering change is invisible on the common non-coincident write cycle (the
+//!   reload settles in-cycle), so it is byte-identical on NTSC — `AccuracyCoin`
+//!   holds 141/141 and `blargg_apu_2005` stays 11/11. See `docs/apu-2a03.md`
+//!   §Length halt/reload ordering + `docs/accuracy-ledger.md`. (The suite has
+//!   no `09.reset_timing` ROM — that variant lives only in the NTSC
+//!   `blargg_apu_2005` set.)
 
 #![cfg(feature = "test-roms")]
 
@@ -113,31 +110,6 @@ macro_rules! pal_apu_pass {
     };
 }
 
-/// A PAL length-counter halt/reload-timing check that currently FAILS: the
-/// v2.1.5 PAL frame-counter step positions advanced these ROMs but did not
-/// fully close them (a deeper PAL write-vs-half-frame-clock ordering residual,
-/// see the module docs + `docs/accuracy-ledger.md`). Pinned as a fail-loud
-/// residual: the assertion trips (forcing this file to be updated) the moment
-/// the ROM starts reporting `PASSED` — i.e. when the residual is closed — or if
-/// it ever hangs (`Unresolved`).
-macro_rules! pal_apu_residual {
-    ($name:ident, $rom:literal) => {
-        #[test]
-        fn $name() {
-            let (verdict, text) = run($rom);
-            assert!(
-                matches!(verdict, ScreenVerdict::Failed(_)),
-                "PAL {} residual: expected an on-screen FAILED (PAL frame-counter \
-                 step positions are unmodeled — see docs/accuracy-ledger.md). Got \
-                 {verdict:?}. If this ROM now PASSES, PAL frame-counter timing has \
-                 been implemented — promote it to `pal_apu_pass!` and update the \
-                 ledger + docs/apu-2a03.md.\n{text}",
-                $rom
-            );
-        }
-    };
-}
-
 // Region-independent — PASS under forced PAL.
 pal_apu_pass!(pal_apu_01_len_ctr, "01.len_ctr.nes");
 pal_apu_pass!(pal_apu_02_len_table, "02.len_table.nes");
@@ -150,7 +122,7 @@ pal_apu_pass!(pal_apu_06_len_timing_mode1, "06.len_timing_mode1.nes");
 pal_apu_pass!(pal_apu_07_irq_flag_timing, "07.irq_flag_timing.nes");
 pal_apu_pass!(pal_apu_08_irq_timing, "08.irq_timing.nes");
 
-// PAL length halt/reload timing — documented residuals (currently FAIL at a
-// later sub-test than before v2.1.5; see module docs + docs/accuracy-ledger.md).
-pal_apu_residual!(pal_apu_10_len_halt_timing, "10.len_halt_timing.nes");
-pal_apu_residual!(pal_apu_11_len_reload_timing, "11.len_reload_timing.nes");
+// PAL length halt/reload timing — PASS since v2.1.5 (deferred halt/reload
+// ordering, see the module docs + docs/apu-2a03.md + docs/accuracy-ledger.md).
+pal_apu_pass!(pal_apu_10_len_halt_timing, "10.len_halt_timing.nes");
+pal_apu_pass!(pal_apu_11_len_reload_timing, "11.len_reload_timing.nes");

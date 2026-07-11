@@ -57,7 +57,10 @@ impl Triangle {
             length: LengthCounter {
                 count: 0,
                 halt: false,
+                new_halt: false,
                 enabled: false,
+                reload_val: 0,
+                previous_count: 0,
             },
             linear_reload_value: 0,
             linear_counter: 0,
@@ -69,8 +72,9 @@ impl Triangle {
     /// `$4008` write: control bit + linear counter reload value.
     pub fn write_linear(&mut self, value: u8) {
         self.linear_control = (value & 0x80) != 0;
-        // Length counter halt = control bit (per NESdev wiki).
-        self.length.halt = self.linear_control;
+        // Length counter halt = control bit (per NESdev wiki). Deferred:
+        // applied after the same-cycle half-frame clock (`LengthCounter::reload`).
+        self.length.set_halt(self.linear_control);
         self.linear_reload_value = value & 0x7F;
     }
 

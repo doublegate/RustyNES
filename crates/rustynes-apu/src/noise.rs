@@ -58,7 +58,10 @@ impl Noise {
             length: LengthCounter {
                 count: 0,
                 halt: false,
+                new_halt: false,
                 enabled: false,
+                reload_val: 0,
+                previous_count: 0,
             },
             region,
         }
@@ -67,7 +70,9 @@ impl Noise {
     /// `$400C` write.
     pub fn write_ctrl(&mut self, value: u8) {
         let halt = (value & 0x20) != 0;
-        self.length.halt = halt;
+        // Length-halt is deferred (applied after the same-cycle half-frame
+        // clock, per `LengthCounter::reload`); the envelope loop flag is not.
+        self.length.set_halt(halt);
         self.envelope.loop_flag = halt;
         self.envelope.constant = (value & 0x10) != 0;
         self.envelope.volume_or_period = value & 0x0F;
