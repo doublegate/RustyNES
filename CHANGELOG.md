@@ -57,6 +57,29 @@ cycle-accurate core later replaced.
   (zlib, Damian Yerrick) is recorded in `tests/roms/LICENSES.md`; the residuals
   are recorded in `docs/accuracy-ledger.md`.
 
+### Fixed
+
+- **CI: flaky `relay_loopback` netplay test hardened — TURN client now
+  retransmits (RFC 5389 §7.2.1).** The native TURN client
+  (`crates/rustynes-netplay/src/relay.rs`) sent each `Allocate` /
+  `CreatePermission` request exactly once and waited for the reply; a single
+  dropped UDP datagram (request *or* response) hard-failed the whole NAT
+  traversal with `NatPhase::Failed("TURN allocate failed: …")`. On loopback this
+  is rare but real — a loaded shared CI runner (observed on `windows-latest`) can
+  transiently overflow a socket receive buffer and silently discard a
+  `127.0.0.1` datagram — which intermittently red-lit
+  `nat_connect_loopback_relay_then_session_digests_agree` on `main` and, in turn,
+  blocked `release-auto`. The client now retransmits the request every 250 ms
+  (`RTO`) until the caller's overall timeout, exactly as RFC 5389 §7.2.1
+  prescribes, recovering transparently from a dropped datagram (STUN/TURN
+  requests are idempotent, so a duplicated request is answered again and any late
+  duplicate response is discarded by the transaction-id filter). This is a real
+  robustness fix for production symmetric-NAT fallback over lossy paths, not just
+  a test workaround; the session-digest-agreement assertion (the determinism
+  contract) is unchanged. The receive loop also now treats a Windows `TimedOut`
+  read expiry the same as a Unix `WouldBlock` (loop and retransmit rather than
+  fail).
+
 ## [2.1.4] - 2026-07-11 - "Fathom" (accuracy hardening — opt-in OAM decay + BestEffort boot-smoke sweep + MMC3-clone A12/IRQ timing oracle; "Caliper")
 
 ### Added

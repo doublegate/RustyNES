@@ -95,6 +95,25 @@ const TRANSPORT_UDP: u8 = 17;
 /// shorten it; long enough for a session, refreshed by re-allocating).
 const DEFAULT_LIFETIME_SECS: u32 = 600;
 
+/// Retransmission timeout (RTO) for a STUN/TURN request transaction.
+///
+/// STUN/TURN run over **unreliable UDP**, so RFC 5389 §7.2.1 mandates that a
+/// client retransmit an unacknowledged request rather than give up after a
+/// single silent wait: a request *or* its response can be dropped on any lossy
+/// path — and, in practice, even on `127.0.0.1` under load (a loaded CI runner
+/// can overflow a small per-socket receive buffer and silently discard a
+/// loopback datagram). Without retransmission a single dropped
+/// `Allocate` / `CreatePermission` datagram hard-fails the entire NAT traversal;
+/// with it, the transaction simply re-sends every [`RTO`] until the caller's
+/// overall `timeout` deadline. Because STUN/TURN requests are idempotent (a
+/// compliant server keys its reply on the transaction id / source and re-answers
+/// a duplicate), a retransmit is always safe — a late duplicate response for a
+/// completed transaction is discarded as a stray by the transaction-id filter in
+/// [`TurnClient::request_response`]. 250 ms yields ~20 attempts inside the 5 s
+/// Allocate budget and ~8 inside the 2 s `CreatePermission` budget — ample slack
+/// against occasional loss without a busy-wait.
+const RTO: Duration = Duration::from_millis(250);
+
 /// Long-term credentials for the TURN server (RFC 8656 §9.2).
 #[derive(Clone, Debug)]
 pub struct TurnConfig {
@@ -182,8 +201,7 @@ impl TurnClient {
         // REALM + NONCE we must echo in the authenticated retry.
         let tx1 = self.next_tx();
         let probe = self.build_allocate(&tx1, false);
-        socket.send_to(&probe, self.server)?;
-        let (msg_type, attrs) = self.recv_response(socket, &tx1, timeout)?;
+        let (msg_type, attrs) = self.request_response(socket, &probe, &tx1, timeout)?;
         if msg_type == MSG_ALLOCATE_SUCCESS {
             // An open relay answered the unauthenticated probe directly.
             return self.adopt_relayed(&attrs, &tx1);
@@ -206,8 +224,7 @@ impl TurnClient {
         // MESSAGE-INTEGRITY over the long-term key.
         let tx2 = self.next_tx();
         let req = self.build_allocate(&tx2, true);
-        socket.send_to(&req, self.server)?;
-        let (msg_type, attrs) = self.recv_response(socket, &tx2, timeout)?;
+        let (msg_type, attrs) = self.request_response(socket, &req, &tx2, timeout)?;
         if msg_type != MSG_ALLOCATE_SUCCESS {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -248,21 +265,23 @@ impl TurnClient {
         timeout: Duration,
     ) -> io::Result<()> {
         let prev_timeout = socket.read_timeout()?;
-        socket.set_read_timeout(Some(timeout))?;
         let tx = self.next_tx();
         let req = self.build_create_permission(&tx, peer);
-        let send_res = socket.send_to(&req, self.server);
-        let result = send_res.and_then(|_| {
-            let (msg_type, _attrs) = self.recv_response(socket, &tx, timeout)?;
-            if msg_type == MSG_CREATE_PERMISSION_SUCCESS {
-                Ok(())
-            } else {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "TURN: CreatePermission rejected",
-                ))
-            }
-        });
+        // `request_response` owns the send + retransmit + bounded receive loop
+        // (it sets the per-attempt read timeout itself), so no single dropped
+        // request/response datagram can hard-fail the permission install.
+        let result =
+            self.request_response(socket, &req, &tx, timeout)
+                .and_then(|(msg_type, _attrs)| {
+                    if msg_type == MSG_CREATE_PERMISSION_SUCCESS {
+                        Ok(())
+                    } else {
+                        Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "TURN: CreatePermission rejected",
+                        ))
+                    }
+                });
         let _ = socket.set_read_timeout(prev_timeout);
         result
     }
@@ -384,31 +403,68 @@ impl TurnClient {
         push_attr(out, ATTR_MESSAGE_INTEGRITY, &mac);
     }
 
-    /// Receive + match one STUN/TURN response for `tx` within `timeout`,
-    /// returning `(message_type, attribute_bytes)`. Strays (wrong tx / cookie)
-    /// are skipped until the deadline.
-    fn recv_response(
+    /// Send `request` to the server and wait up to `timeout` for the response
+    /// matching `tx`, **retransmitting the request every [`RTO`]** until either a
+    /// match arrives or the overall deadline elapses. Strays (wrong source / tx /
+    /// cookie, or a late duplicate for a prior transaction) are skipped.
+    ///
+    /// This is the resilience heart of the TURN client. UDP is unreliable, so a
+    /// single `send_to` + one blocking `recv` (the previous behaviour) turns any
+    /// dropped request-or-response datagram into a hard transaction failure —
+    /// observed as an intermittent `TURN allocate failed` on loopback under load
+    /// (a loaded CI runner can silently drop a `127.0.0.1` datagram when a socket
+    /// receive buffer briefly overflows). Retransmitting on the RTO recovers from
+    /// that loss exactly as RFC 5389 §7.2.1 prescribes, and because the server
+    /// answers a retransmit idempotently the recovery is transparent.
+    ///
+    /// The method drives the socket's read timeout itself (bounding each blocking
+    /// `recv_from` to the sooner of the next retransmit or the deadline); callers
+    /// that care about the prior read timeout restore it after returning.
+    fn request_response(
         &self,
         socket: &UdpSocket,
+        request: &[u8],
         tx: &TransactionId,
         timeout: Duration,
     ) -> io::Result<(u16, Vec<u8>)> {
         let deadline = Instant::now() + timeout;
         let mut buf = [0u8; 1500];
+        // Initial transmission, then retransmit on the RTO cadence below.
+        socket.send_to(request, self.server)?;
+        let mut next_retx = Instant::now() + RTO;
         loop {
-            if Instant::now() >= deadline {
+            let now = Instant::now();
+            if now >= deadline {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     "TURN: no matching response before timeout",
                 ));
             }
+            // Retransmit if the RTO elapsed without a matching response yet.
+            if now >= next_retx {
+                socket.send_to(request, self.server)?;
+                next_retx = now + RTO;
+            }
+            // Bound this blocking recv to the sooner of the next retransmit and
+            // the overall deadline, clamped to a positive minimum so a WouldBlock/
+            // TimedOut simply loops back to (maybe) retransmit rather than failing.
+            let slice = next_retx
+                .min(deadline)
+                .saturating_duration_since(now)
+                .max(Duration::from_millis(1));
+            socket.set_read_timeout(Some(slice))?;
             let (len, from) = match socket.recv_from(&mut buf) {
                 Ok(v) => v,
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "TURN: recv timed out",
-                    ));
+                // A read-timeout expiry surfaces as WouldBlock (Unix) or TimedOut
+                // (Windows); both just mean "no datagram this slice" — loop on to
+                // retransmit / re-check the deadline, do NOT fail the transaction.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    continue;
                 }
                 Err(e) => return Err(e),
             };
