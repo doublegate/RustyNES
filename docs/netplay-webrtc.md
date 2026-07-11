@@ -248,6 +248,19 @@ same `PublicAddr` channel. Once both relayed addresses are exchanged,
 `into_connection()` builds a relay-backed `UdpTransport` via
 `UdpTransport::from_relay`, so live gameplay flows over the relay (§2.5 below).
 
+Because `Allocate` and `CreatePermission` ride **unreliable UDP**, the client
+**retransmits** each request every `RTO` (250 ms) until the caller's overall
+timeout (5 s for `Allocate`, 2 s for `CreatePermission`), guided by RFC 5389 §7.2.1 (a fixed 250 ms RTO, not the RFC default 500 ms + exponential backoff) —
+a single dropped request-or-response datagram must not hard-fail the transaction.
+STUN/TURN requests are idempotent (the server re-answers a retransmit; a late
+duplicate response is discarded by the transaction-id filter), so the recovery is
+transparent. The unauthenticated 401-challenge round and the authenticated retry
+are each their own retransmitted transaction. (The STUN discovery probe is
+single-shot per pump but retried across pumps by `tick_discovering`, so it heals
+a dropped datagram the same way.) The read-timeout expiry that ends each blocking
+receive surfaces as `WouldBlock` on Unix and `TimedOut` on Windows; both are
+treated identically (loop and retransmit, never fail).
+
 > **Status — the relay-transport hand-off is wired and mock-TURN-verified;
 > only a live coturn run is pending.** `#40` added `UdpTransport::from_relay`,
 > so when both peers are symmetric-NAT-bound `NatConnect::into_connection` now

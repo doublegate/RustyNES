@@ -57,6 +57,34 @@ cycle-accurate core later replaced.
   (zlib, Damian Yerrick) is recorded in `tests/roms/LICENSES.md`; the residuals
   are recorded in `docs/accuracy-ledger.md`.
 
+### Fixed
+
+- **Netplay: the native TURN client now retransmits (RFC 5389 §7.2.1) — a real
+  production bug where symmetric-NAT relay fallback aborted on a single dropped
+  UDP datagram.** The native TURN client
+  (`crates/rustynes-netplay/src/relay.rs`) sent each `Allocate` /
+  `CreatePermission` request exactly once and waited for the reply; a single
+  dropped UDP datagram (request *or* response) hard-failed the whole NAT
+  traversal with `NatPhase::Failed("TURN allocate failed: …")` — so real
+  symmetric-NAT netplay over any lossy internet path was equally fragile, not
+  only the CI loopback test. On loopback this is rare but real — a loaded shared
+  CI runner (observed on `windows-latest`) can drop a `127.0.0.1` datagram (a
+  receive-buffer overflow, or — during the peer's socket-startup window — an ICMP
+  "Port Unreachable" that a subsequent `recv_from` surfaces as a transient
+  `ConnectionReset`), which intermittently red-lit
+  `nat_connect_loopback_relay_then_session_digests_agree` on `main` and, in turn,
+  blocked `release-auto`. The client now retransmits the request every 250 ms
+  (`RTO`) until the caller's overall timeout, guided by RFC 5389 §7.2.1 (a fixed
+  250 ms RTO here, not the RFC default 500 ms + exponential backoff), recovering
+  transparently from a dropped datagram (STUN/TURN requests are idempotent, so a
+  duplicated request is answered again and any late duplicate response is
+  discarded by the transaction-id filter). This is a real robustness fix for
+  production symmetric-NAT fallback over lossy paths, not just a test workaround;
+  the session-digest-agreement assertion (the determinism contract) is unchanged.
+  The receive loop treats a read-timeout expiry (`WouldBlock` on Unix, `TimedOut`
+  on Windows) **and** a transient `ConnectionReset` / `ConnectionRefused` as
+  "retransmit and retry" rather than a hard failure.
+
 ## [2.1.4] - 2026-07-11 - "Fathom" (accuracy hardening — opt-in OAM decay + BestEffort boot-smoke sweep + MMC3-clone A12/IRQ timing oracle; "Caliper")
 
 ### Added
