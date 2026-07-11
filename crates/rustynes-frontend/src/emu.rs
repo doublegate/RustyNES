@@ -313,8 +313,9 @@ pub struct EmuCore {
     pub present_fb: Vec<u8>,
     /// v2.1.2 F2.1 — the SUB console's framebuffer in Vs. `DualSystem` mode
     /// (empty otherwise). Harvested each produced frame alongside [`Self::present_fb`]
-    /// so the present path can compose the two-screen image without holding the
-    /// emu lock during the (CPU-side) compose.
+    /// so the present path can compose the two-screen image from these two owned
+    /// buffers. The compose runs under the same brief present lock as the
+    /// single-console `present_fb` copy (a cheap memcpy, not heavy work).
     pub present_fb_sub: Vec<u8>,
     /// v1.8.9 — the 8 KiB CHR pattern space ($0000-$1FFF) captured at PRODUCE
     /// time (the same visible frame as `present_fb`). With run-ahead active, the
@@ -954,8 +955,13 @@ impl EmuCore {
             let n = dual.main_mut().drain_audio_into(&mut self.audio_buf);
             audio.push_samples(&self.audio_buf[..n]);
         }
-        // Bound the SUB console's APU buffer even though its audio is not played.
-        let _ = dual.sub_mut().drain_audio();
+        // Bound the SUB console's APU buffer even though its audio is not played:
+        // drain it into the reusable `audio_buf` scratch (never a fresh `Vec`),
+        // looping until a partial fill signals the buffer is empty.
+        if self.audio_buf.is_empty() {
+            self.audio_buf.resize(1024, 0.0);
+        }
+        while dual.sub_mut().drain_audio_into(&mut self.audio_buf) == self.audio_buf.len() {}
     }
 
     /// v1.6.0 "Studio" Workstream G — feed this frame's produced framebuffer
