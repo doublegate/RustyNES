@@ -177,8 +177,10 @@ fn expect_label(stem: &str) -> &'static str {
 fn committed_roms() -> Vec<PathBuf> {
     let mut roms: Vec<PathBuf> = fs::read_dir(rom_dir())
         .expect("holy_mapperel rom dir")
-        .flatten()
-        .map(|e| e.path())
+        // `.expect` (not `.flatten`) so a directory-read error fails the net loudly
+        // rather than silently dropping a ROM — a skipped mapper ROM would be a
+        // silent regression-net bypass.
+        .map(|e| e.expect("read holy_mapperel dir entry").path())
         .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("nes")))
         .collect();
     roms.sort();
