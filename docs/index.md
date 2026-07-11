@@ -14,7 +14,7 @@ are updated in the same change as the code they describe.
 
 ## Try it and read the code
 
-<div class="grid cards" markdown>
+<div class="grid cards" markdown="1">
 
 - :material-play-circle: **[Play the demo](../)**
 

@@ -83,6 +83,13 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.tabbed:
       alternate_style: true
+  # Render Material's `:material-...:` icon shortcodes (used on the landing page's
+  # link cards) as inline SVGs instead of literal text. The `!!python/name:` tags
+  # are Material's documented setup; `mkdocs.yml` is therefore excluded from the
+  # `check-yaml` pre-commit hook (which uses safe_load and rejects those tags).
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
 plugins:
   - search
