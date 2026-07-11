@@ -56,6 +56,35 @@ cycle-accurate core later replaced.
   commercial byte-identity oracle stay unchanged. ROM license provenance
   (zlib, Damian Yerrick) is recorded in `tests/roms/LICENSES.md`; the residuals
   are recorded in `docs/accuracy-ledger.md`.
+- **MMC3 R1/R2 residual A12-phase instrumentation study (v2.1.5 F5.0, ADR
+  0002).** A purely-observational, default-off probe feature
+  (`mmc3-a12-phase-probe`, in `rustynes-mappers` + `rustynes-core` +
+  `rustynes-test-harness`) plus a reproducible study fixture
+  (`crates/rustynes-test-harness/tests/mmc3_r1r2_phase_probe.rs`) that answers,
+  with *fresh direct instrumentation*, the one avenue ADR 0002's F5.0 closure
+  left open: on the four `#[ignore]`'d MMC3 IRQ residuals, does any *qualifying*
+  (`gap >= 3`) A12 rising edge that clocks the IRQ counter ever land in the
+  post-access (M2-high, φ2) half of a host CPU cycle — the sub-cycle window an
+  ares-style M2-half-cycle low-time filter would treat differently from the
+  integer `gap >= 3` model? The feature seeds the real M2-phase into the mapper
+  `sub_dot` on the live one-clock scheduler and *only counts* qualifying rises
+  by half (no assertion deferral), so the emulated timeline is byte-identical to
+  the default build; the tallies are surfaced via `MapperDebugInfo.extra`. The
+  study **refines** the F5.0 finding: the two `scanline_timing` residuals
+  (`mmc3_test_2/4` #3, `mmc3_test_v1/4` #3) have zero post-access IRQ-clocking
+  rises — directly confirming Session B's (2026-07-02) indirect byte-identity
+  result — but the two "reload/set-IRQ-every-clock" residuals (`mmc3_test_v1/5`
+  #2, `mmc3_test_v1/6` #2), which Session B never tested, have **4** post-access
+  IRQ-clocking rises each (and *every* qualifying rise post-access). So the
+  "no post-access rise" premise is ROM-specific, not a structural NTSC-MMC3
+  property. Separately, engaging the existing default-off `mmc3-m2-phase-irq`
+  rising-edge deferral lever on `/5` and `/6` leaves their failure status
+  byte-identical — it is non-curative. **No production, scheduler, or MMC3
+  default behavior changed; AccuracyCoin stays 141/141** and all four residuals
+  stay `#[ignore]`'d. The ares-style M2-edge low-time *filter* remains the one
+  genuinely-untested axis-B lever; ADR 0002 records it as an axis-B candidate
+  deferred to a maintainer decision (see the 2026-07-11 F5.0 decision update)
+  and `docs/accuracy-ledger.md` is updated with the refined disposition.
 
 ### Fixed
 

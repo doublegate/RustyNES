@@ -73,6 +73,17 @@ ppu-octal-trace = ["rustynes-ppu/ppu-octal-trace"]
 # `docs/adr/0002-irq-timing-coordination.md` and
 # `docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md`.
 mmc3-m2-phase-irq = ["rustynes-mappers/mmc3-m2-phase-irq"]
+# v2.1.5 "Fathom" F5.0 MMC3 R1/R2 residual instrumentation study — forward to
+# `rustynes-mappers/mmc3-a12-phase-probe`. Like `mmc3-m2-phase-irq` this makes
+# `LockstepBus::run_ppu_to` seed the REAL M2-phase (pre-access/M2-low `sub_dot`
+# 0 vs post-access/M2-high `sub_dot` 2) into `PpuBusAdapter::sub_dot`, so the
+# MMC3 probe can bucket qualifying A12 rises by half. UNLIKE `mmc3-m2-phase-irq`
+# the MMC3 side only COUNTS (no assertion deferral), so with this feature ON the
+# emulated timeline is byte-identical to the default build — the probe observes
+# real default execution. Off by default. See
+# `docs/adr/0002-irq-timing-coordination.md` §"Decision update (2026-07-11,
+# v2.1.5 F5.0 instrumentation study)".
+mmc3-a12-phase-probe = ["rustynes-mappers/mmc3-a12-phase-probe"]
 
 [dependencies]
 rustynes-cpu.workspace = true

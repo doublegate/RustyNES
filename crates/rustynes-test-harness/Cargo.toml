@@ -54,6 +54,12 @@ cpu-boot-trace = ["rustynes-core/cpu-boot-trace"]
 # `rustynes-core/mmc3-m2-phase-irq`. Off by default; see
 # `docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md`.
 mmc3-m2-phase-irq = ["rustynes-core/mmc3-m2-phase-irq"]
+# v2.1.5 "Fathom" F5.0 MMC3 R1/R2 residual instrumentation study — forward to
+# `rustynes-core/mmc3-a12-phase-probe`. Off by default; enabled only by the
+# `mmc3_r1r2_phase_probe` study fixture (`cargo test --features
+# test-roms,mmc3-a12-phase-probe --test mmc3_r1r2_phase_probe`). Observational
+# only — byte-identical emulated timeline. See ADR 0002 F5.0.
+mmc3-a12-phase-probe = ["rustynes-core/mmc3-a12-phase-probe"]
 
 [dependencies]
 rustynes-core.workspace = true
@@ -204,3 +210,12 @@ required-features = ["cpu-instr-cycle-trace"]
 name = "fds"
 path = "tests/fds.rs"
 required-features = ["test-roms"]
+
+# v2.1.5 "Fathom" F5.0 MMC3 R1/R2 residual instrumentation study. Purely
+# observational A12-phase probe over the four failing sub-tests; requires both
+# `test-roms` (the ROMs) and `mmc3-a12-phase-probe` (the M2-phase seeding +
+# counters). Off the default gate; run explicitly. See ADR 0002 F5.0.
+[[test]]
+name = "mmc3_r1r2_phase_probe"
+path = "tests/mmc3_r1r2_phase_probe.rs"
+required-features = ["test-roms", "mmc3-a12-phase-probe"]

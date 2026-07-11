@@ -45,6 +45,23 @@ mapper-audio = []
 # `rustynes-core/mmc3-m2-phase-irq`, which supplies the real phase data) is
 # not enabled. See `docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md`.
 mmc3-m2-phase-irq = []
+# v2.1.5 "Fathom" F5.0 MMC3 R1/R2 residual instrumentation study — a PURELY
+# OBSERVATIONAL probe (no behavior change) that answers the one open question
+# left in ADR 0002's F5.0 closure: on the four failing sub-tests, does any
+# *qualifying* (gap >= 3) A12 rising edge EVER land in the POST-access (M2-high,
+# φ2, `sub_dot >= 2`) half of a host CPU cycle — the sub-cycle window where an
+# ares-style M2-half-cycle falling-edge low-time filter would clock the MMC3
+# counter but the integer `gap >= 3` model does not? Unlike `mmc3-m2-phase-irq`
+# (which DEFERS the assertion and thereby CHANGES behavior when on), this
+# feature only COUNTS qualifying rises by M2-phase half and surfaces the tallies
+# via `MapperDebugInfo.extra`; the `irq_pending_line` assertion path is
+# byte-identical to the default build, so the measurement faithfully reflects
+# the real (unmodified) default execution. Requires the paired
+# `rustynes-core/mmc3-a12-phase-probe`, which seeds the real M2-phase into
+# `sub_dot` on the live one-clock scheduler path. Off by default (zero footprint
+# on the shipped / no_std build). See ADR 0002 §"Decision update (2026-07-11,
+# v2.1.5 F5.0 instrumentation study)".
+mmc3-a12-phase-probe = []
 
 [dependencies]
 bitflags.workspace = true

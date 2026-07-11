@@ -12,8 +12,18 @@ that shifts the mapper-IRQ observation path relative to the `$2002` path without
 a scheduler-substrate change — which would risk the sacred AccuracyCoin 141/141
 for a bracket with **zero production-ROM impact**. The residual
 (`mmc3_test_2/4` sub-test #3 + siblings) therefore stays `#[ignore]`'d
-**permanently by design** (not as an open TODO). See §"Decision update
-(2026-07-09, v2.1.0 Fathom F5.0)" at the end for the full closing argument.
+**by design** (not as an open TODO). See §"Decision update
+(2026-07-09, v2.1.0 Fathom F5.0)" at the end for the closing argument, and
+§"Decision update (2026-07-11, v2.1.5 F5.0 instrumentation study)" for a
+**refinement**: fresh direct A12-phase instrumentation showed the "no
+post-access qualifying rise" premise is ROM-specific (true for the two
+`scanline_timing` residuals, **false** for `mmc3_test_v1/5` + `/6`, which have
+post-access IRQ-clocking rises Session B never measured). Every *tested* lever
+remains non-curative, so the closure and the `#[ignore]`s hold; but the closure
+rationale is now "no tested lever is curative" rather than "structurally
+unreachable", and one genuinely-untested axis-B lever (an ares-style
+M2-edge-precise falling-edge low-time filter) is recorded there as a candidate
+**deferred to a maintainer decision**, not as permanently closed.
 **Date:** 2026-05-10
 **Author:** RustyNES maintainers
 **Numbering:** 0002. ADR 0001 (mapper dispatch) will be written after
@@ -1625,3 +1635,107 @@ model, fully explained by the differential-mechanism finding — it is **not an
 accuracy gap** and not an open TODO. Re-opening would require a genuinely new,
 falsifiable single-axis hypothesis that specifically distinguishes itself from
 everything on the DO-NOT-RETRY list — none survived F5.0.
+
+---
+
+## Decision update (2026-07-11, v2.1.5 "Fathom" F5.0 instrumentation study) — axis-B candidate identified on `/5` + `/6`, deferred to maintainer
+
+The v2.1.0 F5.0 closure above rested on a *review of the two 2026-07-02 campaign
+audits' traces*, whose direct A12-phase evidence (Session B) covered **only
+`mmc3_test_2/4`**. It left one avenue explicitly open (2026-07-02 "Consolidated
+disposition"): whether "no qualifying rise ever lands post-access" is specific
+to that ROM's phase alignment, or a structural property of NTSC MMC3 A12 timing
+that would kill the entire phase-conditional branch for all four residuals. The
+v2.1.5 study answered that with **fresh, direct instrumentation** rather than an
+indirect byte-identity inference, and the answer changes the shape of the open
+question — so this residual is best characterized as **CLOSED for the shipping
+default, with one genuinely-untested axis-B lever now identified and deferred to
+a maintainer decision** (it is NOT solved, and the four pins stay `#[ignore]`'d).
+
+### Method (purely observational — no behavior change)
+
+A default-off `mmc3-a12-phase-probe` feature (`rustynes-mappers` +
+`rustynes-core` + `rustynes-test-harness`) seeds the *real* M2-phase into the
+mapper `sub_dot` on the live one-clock `run_ppu_to` split (pre-access/M2-low
+`sub_dot 0`, post-access/M2-high `sub_dot 2` — the same seeding
+`mmc3-m2-phase-irq` uses) and, in `Mmc3::notify_a12_at_sub_dot`, *only counts*
+qualifying (`gap >= 3`) A12 rises by half — it never defers or otherwise mutates
+`irq_pending_line`, so the emulated timeline is byte-identical to the default
+build (the measurement faithfully reflects real default execution). The tallies
+are surfaced via `MapperDebugInfo.extra` and read back by the reproducible study
+fixture `crates/rustynes-test-harness/tests/mmc3_r1r2_phase_probe.rs`
+(`cargo test -p rustynes-test-harness --features test-roms,mmc3-a12-phase-probe
+--test mmc3_r1r2_phase_probe -- --nocapture`), which pins each ROM's tally as a
+golden vector so any future drift re-opens this finding automatically.
+
+### Finding — the "no post-access rise" premise is ROM-specific, not structural
+
+The four failing sub-tests, 600-frame NTSC horizon, deterministic core. `qual_*`
+= qualifying (`gap >= 3`) A12 rises by half; `irq_*` = the subset that clocked
+the IRQ counter (the exact events an M2-half-cycle model could act on where the
+integer `gap >= 3` model does not):
+
+| Sub-test | status | qual_pre | qual_post | irq_pre | irq_post |
+|----------|--------|----------|-----------|---------|----------|
+| `mmc3_test_2/4` #3     | `$03` | 969 | 1003 | 2 | **0** |
+| `mmc3_test_v1/4` #3    | `$03` | 969 | 1003 | 2 | **0** |
+| `mmc3_test_v1/5` #2    | `$02` |   0 |  519 | 0 | **4** |
+| `mmc3_test_v1/6` #2    | `$02` |   0 |  519 | 0 | **4** |
+
+1. **The two `scanline_timing` (#3) residuals directly confirm the F5.0
+   closure.** `irq_post == 0`: no IRQ-clocking rise lands in the post-access
+   (M2-high) half — the direct measurement Session B could only prove indirectly
+   (byte-identical `mmc3-m2-phase-irq` on/off) for `mmc3_test_2/4`, now shown for
+   both scanline-timing ROMs. For these, axis B is dead: there is no post-access
+   IRQ-clocking rise for any M2-half-cycle filter to act on. (Consistent with the
+   F5.0 §2 argument — the qualifying sprite-fetch rise's gap from the prior fall
+   is ~900k cycles, so no threshold/edge refinement changes its acceptance.)
+
+2. **The two "reload/set-IRQ-every-clock" (#2) residuals break the premise.**
+   `mmc3_test_v1/5` and `/6` — which Session B **never tested** — produce **4
+   post-access IRQ-clocking rises each**, and *every* qualifying rise is
+   post-access (`qual_pre == 0`). These ROMs clock the counter on a tight A12
+   cadence (sub-test #2 = "reload and set IRQ every clock when reload is 0"), so
+   their qualifying rises are close-spaced, not ~900k apart — the F5.0 §2
+   "threshold is irrelevant because the gap is enormous" argument does **not**
+   extend to them. So "no post-access qualifying rise" is a property of the
+   scanline-timing ROMs' phase alignment, **not** a structural invariant of NTSC
+   MMC3 A12 timing.
+
+3. **But the concrete axis-B prototype is non-curative.** Running the four ROMs
+   with the existing default-off `mmc3-m2-phase-irq` *rising-edge* deferral lever
+   engaged (it defers exactly the `irq_post` events by one `notify_cpu_cycle`)
+   leaves every failure status **byte-identical** (`/5`+`/6` still `$02`, the
+   `/4`s still `$03`). So the post-access rises on `/5`+`/6` are real, but
+   deferring them one cycle does not flip sub-test #2. This lever stays on the
+   DO-NOT-RETRY list.
+
+### Disposition — axis-B candidate confirmed, prototype deferred to maintainer
+
+The literal F5.0 question ("does any qualifying IRQ-clocking rise land
+post-access?") is **YES on `mmc3_test_v1/5` and `/6`**. Per the study's charter,
+that is a STOP-and-report outcome, not a build-it outcome: the study did **not**
+implement any M2-filter or scheduler change. What it establishes is a *newly
+identified, still-untested* axis-B lever — the ares-style **M2-edge-precise
+falling-edge low-time filter** (an `master_clock`-resolution down-counter, cf.
+ares `irq_delay = 6` M2 half-cycles), which is *structurally distinct* from
+Session B's rising-edge visibility deferral (the only phase-conditional lever
+ever tried) and now has a plausible target: `/5`+`/6`'s tight, all-post-access
+A12 cadence, where the F5.0 gap-magnitude argument does not apply. Whether such a
+filter flips sub-test #2 without regressing the sacred **AccuracyCoin 141/141**
+and 540+ strict suite is unknown and requires a scheduler-substrate change to
+even prototype — precisely the "aggressive yields to sacred" trade the v2.0.0
+Risks #3 escape hatch reserves for a maintainer call.
+
+**Net status:** the residual **stays `#[ignore]`'d** with fail-loud
+`*_currently_fails` companions intact (zero production-ROM impact, unchanged).
+The F5.0 by-design closure **holds for every lever ever tested**; what the v2.1.5
+study changes is the *rationale*: the closure is no longer justified by "no
+post-access rise is structurally possible" (false for `/5`+`/6`) but by "no
+*tested* lever is curative, and the one untested lever needs a
+sacred-gate-risking substrate change that only the maintainer may authorize."
+The M2-edge low-time filter is therefore recorded here as an **axis-B candidate
+deferred to maintainer decision**, not added to the DO-NOT-RETRY list — it is the
+one hypothesis that genuinely distinguishes itself from everything on it. Full
+reproducible evidence: the `mmc3_r1r2_phase_probe` fixture (committed, golden-
+pinned) and `docs/accuracy-ledger.md`'s refined MMC3 residual rows.
