@@ -1,0 +1,164 @@
+# Material for MkDocs configuration for the RustyNES documentation site.
+#
+# This builds the /docs/ section of the combined GitHub Pages deployment at
+# https://doublegate.github.io/RustyNES/ (the site root is the playable wasm
+# demo; /api/ is the workspace rustdoc; /docs/ — built here — is this
+# Material-themed handbook of the subsystem specs and user guide).
+#
+# The nav is deliberately CURATED: only the genuinely useful subsystem specs
+# and user-facing guides are linked. Internal audit logs, ADRs, readiness
+# records, salvage manifests, and other engineering-only material are dropped
+# from the build (`exclude_docs`) or kept out of the nav (`not_in_nav`) so a
+# `--strict` build stays clean. `docs_dir` is the repo's existing `docs/` tree,
+# so the pages ARE the source-of-truth specs — no duplicated content.
+site_name: RustyNES
+site_url: https://doublegate.github.io/RustyNES/docs/
+site_description: >-
+  Documentation for RustyNES — a cycle-accurate Nintendo Entertainment System
+  emulator written in pure Rust, built to a Mesen2 / higan / ares accuracy bar.
+site_author: DoubleGate
+
+repo_url: https://github.com/doublegate/RustyNES
+repo_name: doublegate/RustyNES
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+# GitHub project Pages serve this repo under /RustyNES/, and this handbook is
+# mounted at /RustyNES/docs/. The site_url above carries that subpath, so
+# Material emits correctly-prefixed canonical and sitemap URLs.
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.indexes
+    - toc.follow
+    - search.highlight
+    - search.suggest
+    - search.share
+    - content.code.copy
+    - content.action.edit
+    - content.tooltips
+  # Retro-console palette: a deep indigo primary with a red accent, toggling
+  # between a light and a dark scheme.
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: red
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: red
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/doublegate/RustyNES
+
+nav:
+  - Overview:
+      - Home: index.md
+      - Project Status: STATUS.md
+      - Architecture: architecture.md
+      - Glossary: glossary.md
+  - Emulation Core:
+      - CPU (6502): cpu-6502.md
+      - PPU (2C02): ppu-2c02.md
+      - APU (2A03): apu-2a03.md
+      - Scheduler: scheduler.md
+      - Mappers: mappers.md
+      - Cartridge Format: cartridge-format.md
+  - Frontend & Features:
+      - Frontend Shell: frontend.md
+      - Scripting (Lua): scripting.md
+      - Netplay (WebRTC): netplay-webrtc.md
+      - RetroAchievements: cheevos-browser.md
+      - Compatibility: compatibility.md
+      - Performance: performance.md
+  - Testing & Accuracy:
+      - Testing Strategy: testing-strategy.md
+      - Accuracy Ledger: accuracy-ledger.md
+      - Hardware Emulation Checklist: nesdev-hardware-emulation-checklist.md
+  - Platforms:
+      - Android: android.md
+      - iOS / iPadOS: ios.md
+      - Libretro Core: libretro/architecture.md
+  - User Guide:
+      - Overview: user-guide/README.md
+      - Getting Started: user-guide/getting-started.md
+      - Controls: user-guide/controls.md
+      - Menus: user-guide/menus.md
+      - Display & Audio: user-guide/display-and-audio.md
+      - Save States & Rewind: user-guide/save-states-and-rewind.md
+      - Configuration: user-guide/configuration.md
+      - Debugger: user-guide/debugger.md
+      - File Locations: user-guide/file-locations.md
+      - Compatibility: user-guide/compatibility.md
+      - Troubleshooting: user-guide/troubleshooting.md
+      - Build & Tooling: build-and-tooling.md
+
+# Engineering-only material excluded from the built site entirely: audit logs,
+# ADRs, monetization scaffolding, release-note archives, internal readiness
+# records, salvage manifests, and the frozen dev/testing/tooling trees.
+exclude_docs: |
+  adr/
+  archive/
+  audit/
+  dev/
+  monetization/
+  release-notes/
+  testing/
+  tooling/
+  ios-v*-readiness.md
+  v1.0.0-synthesis-handoff-*.md
+  DOCUMENTATION_INDEX.md
+  SALVAGE_MANIFEST.md
+  ra-integration-request.md
+
+# Built (so cross-links resolve) but intentionally kept out of the curated nav:
+# deep-dive engineering notes and the libretro sub-pages beyond the overview.
+not_in_nav: |
+  benchmarks.md
+  hd-pack-zelda-troubleshooting.md
+  ppu-trace-tooling.md
+  libretro/UPSTREAM_SYNC.md
+  libretro/WALKTHROUGH.md
+  libretro/advanced_features.md
+  libretro/implementation_specifics.md
