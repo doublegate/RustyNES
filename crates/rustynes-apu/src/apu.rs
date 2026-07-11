@@ -445,6 +445,15 @@ impl Apu {
         }
     }
 
+    /// v2.1.3 — select the analog output-filter model (see
+    /// [`crate::mixer::FilterModel`]). Default [`crate::mixer::FilterModel::NesRf`]
+    /// is byte-identical to the pre-v2.1.3 output; the softer models drop the
+    /// aggressive 440 Hz high-pass for a fuller low end. Display/tonal only —
+    /// channel content is unchanged.
+    pub fn set_filter_model(&mut self, model: crate::mixer::FilterModel) {
+        self.blip.set_filter_model(model);
+    }
+
     /// Current per-channel output gain. See [`Apu::set_channel_gain`].
     #[must_use]
     pub const fn channel_gain(&self) -> [f32; 6] {

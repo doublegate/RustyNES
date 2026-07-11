@@ -112,6 +112,10 @@ pub struct SettingsApply {
     /// the core under the emu lock. The default (all 1.0) is byte-identical to
     /// today's mixer output.
     pub apu_channel_gain: bool,
+    /// v2.1.3 — the APU analog output-filter model changed; the app pushes the
+    /// new `[audio] filter_model` into the core under the emu lock. Default
+    /// (`"nes"`) is byte-identical to earlier builds.
+    pub apu_filter_model: bool,
     /// v1.2.0 C2 — the composable shader stack changed (a pass added / removed /
     /// reordered / toggled / re-parameterized, or a preset loaded); the app
     /// rebuilds the live `gfx` shader stack from `[graphics] shader_stack`. An
@@ -141,6 +145,7 @@ impl SettingsApply {
             || self.audio_eq
             || self.audio_stereo
             || self.apu_channel_gain
+            || self.apu_filter_model
             || self.shader_stack
             || self.palette_select
     }
@@ -1281,6 +1286,49 @@ pub fn audio_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: 
         }
         if ui.checkbox(&mut config.audio.muted, "Mute").changed() {
             state.apply.audio_gain = true;
+        }
+    });
+    // v2.1.3 — APU analog output-filter model. Default "nes" (the authentic NES
+    // front-loader 90+440 Hz high-pass + 14 kHz low-pass) is byte-identical to
+    // earlier builds but sounds thin (the aggressive 440 Hz HPF rolls off the
+    // bass/triangle); "famicom"/"clean" drop that high-pass for a fuller low end
+    // (closer to Mesen2/FCEUX). Pushed to the core on change via `apu_filter_model`.
+    ui.horizontal(|ui| {
+        ui.label("Filter model").on_hover_text(
+            "NES front-loader high-passes hard (thin bass — authentic). \
+                 Famicom/Clean keep more low end (closer to Mesen2).",
+        );
+        let label = match config.audio.filter_model.as_str() {
+            "famicom" => "Famicom (37 Hz HPF — fuller)",
+            "clean" => "Clean (full-range — fullest)",
+            _ => "NES front-loader (authentic)",
+        };
+        // Canonicalize (case-insensitively) to a known token first, so a corrupt
+        // / hand-edited `filter_model` still selects a valid option (and, since it
+        // then differs from the raw config, is written back — healing the config).
+        let mut sel = crate::config::filter_model_token(crate::config::parse_filter_model(
+            &config.audio.filter_model,
+        ))
+        .to_string();
+        egui::ComboBox::from_id_salt("audio-filter-model")
+            .selected_text(label)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut sel, "nes".to_string(), "NES front-loader (authentic)");
+                ui.selectable_value(
+                    &mut sel,
+                    "famicom".to_string(),
+                    "Famicom (37 Hz HPF — fuller)",
+                );
+                ui.selectable_value(
+                    &mut sel,
+                    "clean".to_string(),
+                    "Clean (full-range — fullest)",
+                );
+            });
+        if sel != config.audio.filter_model {
+            config.audio.filter_model = sel;
+            state.apply.apu_filter_model = true;
+            save_config(config);
         }
     });
     // v1.0.0 — per-APU-channel mute toggles (a studio/debug audio overlay).

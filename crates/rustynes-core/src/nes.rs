@@ -2007,6 +2007,18 @@ impl Nes {
         self.bus.apu_mut().set_channel_gain(gain);
     }
 
+    /// v2.1.3 — select the APU analog output-filter model (see
+    /// [`rustynes_apu::FilterModel`]). The default
+    /// [`rustynes_apu::FilterModel::NesRf`] (NES front-loader: 90 + 440 Hz HPF +
+    /// 14 kHz LPF) is byte-identical to the pre-v2.1.3 output; `Famicom` (37 Hz
+    /// HPF) and `Clean` (~10 Hz DC-block) drop the aggressive 440 Hz high-pass
+    /// for a fuller low end. Tonal only — channel content is unchanged, and the
+    /// model is never written into the save state (a frontend/config concern,
+    /// re-applied at load), so determinism and round-trips are unaffected.
+    pub fn set_apu_filter_model(&mut self, model: rustynes_apu::FilterModel) {
+        self.bus.apu_mut().set_filter_model(model);
+    }
+
     /// Current APU per-channel output gain. See [`Self::set_apu_channel_gain`].
     #[must_use]
     pub const fn apu_channel_gain(&self) -> [f32; 6] {

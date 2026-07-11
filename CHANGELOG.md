@@ -14,6 +14,23 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **APU audio filter-model selector** (fixes the "thin / missing bass channel"
+  sound). RustyNES applies the authentic **NES front-loader** analog filter — a
+  90 Hz + an aggressive **440 Hz high-pass** + a 14 kHz low-pass — which is
+  byte-correct (identical to ares/tetanes; verified by the APU golden vectors)
+  but rolls off the bass/triangle register hard, reading as a missing channel.
+  Mesen2 / FCEUX / Nestopia omit that high-pass, which is why they sound fuller.
+  You can now pick the model in **Settings → Audio → Filter model**
+  (`[audio] filter_model`): **`nes`** (default, authentic — byte-identical to
+  earlier builds), **`famicom`** (a single ~37 Hz high-pass — the nesdev Famicom
+  spec, fuller low end), or **`clean`** (a ~10 Hz DC-block only — fullest, the
+  Mesen2-like character). Core: `Apu::set_filter_model` / `Nes::set_apu_filter_model`.
+  Tonal only — channel content, determinism, save-states, and the audio oracle are
+  unchanged on the default. The DRC resampler + band-limited BLEP synthesis were
+  audited and found correct (they match Mesen2's approach); no change needed there.
+
 ## [2.1.2] - 2026-07-11 - "Fathom" (display-fidelity — generated NTSC palette + composite-shader ladder + Vs. `DualSystem` second screen + NSF non-60 Hz/NSFe; "Prism")
 
 ### Added
