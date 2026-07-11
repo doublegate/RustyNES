@@ -14,6 +14,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.1.3] - 2026-07-11 - "Fathom" (quality-of-life — APU filter-model audio fix + Game Genie code nomination/database + universal header-robust matching + MkDocs docs handbook; "Codex")
+
 ### Added
 
 - **Game Genie matching is now header-insensitive for all ~520 games.** The bulk
