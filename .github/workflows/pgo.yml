@@ -20,7 +20,7 @@ name: PGO
 #                output. PGO changes inlining + code layout, not FP semantics
 #                (Rust emits no fast-math), but we PROVE it: the determinism
 #                stage rebuilds + runs the full `--features test-roms` oracle
-#                (AccuracyCoin 139/139, nestest 0-diff, blargg/kevtris, the
+#                (AccuracyCoin 141/141, nestest 0-diff, blargg/kevtris, the
 #                golden-framebuffer visual_regression + audio mixer suites) with
 #                the MERGED PGO profile applied (`cargo pgo optimize test`). Any
 #                framebuffer/audio/cycle-hash divergence fails the stage.
@@ -120,7 +120,7 @@ jobs:
 
       # ---- Stage 4: byte-identical determinism oracle (the hard gate) ----
       # Rebuild + run the FULL test-roms oracle with the MERGED PGO profile
-      # applied. AccuracyCoin 139/139, nestest golden-log 0-diff, blargg/kevtris,
+      # applied. AccuracyCoin 141/141, nestest golden-log 0-diff, blargg/kevtris,
       # the golden-framebuffer visual_regression suite + the APU mixer/volume
       # audio suites all assert byte-exact values — if PGO codegen perturbed any
       # framebuffer/audio/cycle hash, this fails and blocks promotion.

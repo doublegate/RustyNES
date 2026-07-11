@@ -57,6 +57,29 @@ cycle-accurate core later replaced.
   (zlib, Damian Yerrick) is recorded in `tests/roms/LICENSES.md`; the residuals
   are recorded in `docs/accuracy-ledger.md`.
 
+### Changed
+
+- **fat-LTO release profile — measured, documented, and validated (v2.1.5
+  build-optimization pass).** `[profile.release]` already shipped
+  `lto = "fat"` + `codegen-units = 1` (since the v1.0.0 engine transplant), but
+  the choice had never been backed by an in-repo A/B and `docs/performance.md`
+  even mis-stated the profile as `lto = "thin"` in two places. Ran the
+  measure-first A/B (`lto = "fat"` vs `lto = "thin"`, everything else held; same
+  host, back-to-back Criterion, `taskset`-pinned): fat is **+8.4%**
+  (`nes_run_frame_nestest`) / **+20.8%** (`nes_run_frame_flowing_palette` and
+  `ppu_tick_one_frame`) faster on every cross-crate path, and within noise
+  (+0.3%) on the single-crate `cpu_throughput` control — the signature of a
+  cross-crate-inlining win. Byte-identity was **verified, not assumed**: both
+  profiles rebuilt in release mode pass the golden oracle byte-for-byte
+  (AccuracyCoin 141/141, `nestest` golden-log 0-diff, `visual_regression`,
+  `apu_mixer`/volume audio). **No default-build change** — this documents and
+  retroactively justifies the existing fat-LTO default (well above the standing
+  > 3% + byte-identical bar) and corrects the stale profile text. Also documents
+  the opt-in `release-native` (`target-cpu=native`) and `x86-64-v3` host-tuned
+  build variants, and refreshes the `pgo.yml` determinism-oracle comments from
+  the stale `AccuracyCoin 139/139` to the shipped `141/141`. Detail:
+  `docs/performance.md` § "fat-LTO vs thin-LTO release-profile A/B".
+
 ### Fixed
 
 - **Netplay: the native TURN client now retransmits (RFC 5389 §7.2.1) — a real
