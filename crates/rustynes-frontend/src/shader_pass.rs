@@ -608,7 +608,10 @@ impl ShaderStack {
                     // pattern is frozen (its phase was a static knob only).
                     if matches!(pass.kind, BuiltinPass::Lmp88959) {
                         let live = f32::from(video_phase) / 3.0;
-                        u[11] = (u[11] + live).fract();
+                        // `rem_euclid` (not `fract`) so a negative static `phase`
+                        // offset still wraps into [0, 1) rather than staying
+                        // negative — the WGSL treats the phase as a turn count.
+                        u[11] = (u[11] + live).rem_euclid(1.0);
                     }
                 }
                 BuiltinPass::Ntsc => {}

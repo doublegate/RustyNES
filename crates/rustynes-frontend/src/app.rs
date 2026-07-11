@@ -8419,12 +8419,20 @@ impl ApplicationHandler<AppEvent> for App {
                     let mut hd_dims: Option<(u32, u32)> = None;
                     // v1.5.0 H1 — when the dedicated emu thread is producing AND
                     // this present needs nothing from the live `Nes` beyond the
-                    // RGBA framebuffer (no NTSC composite-rt index buffer, no HD
-                    // pack), take the freshest frame from the lock-free handoff
-                    // and skip the emu mutex entirely — so the present thread
-                    // never blocks on the ~8.5 ms `produce_one_frame`. The
-                    // bytes are the same deterministic `present_fb` the locked
-                    // path copied; only the synchronization changed.
+                    // RGBA framebuffer (no NTSC composite-rt index buffer, no live
+                    // colour phase, no HD pack), take the freshest frame from the
+                    // lock-free handoff and skip the emu mutex entirely — so the
+                    // present thread never blocks on the ~8.5 ms
+                    // `produce_one_frame`. The bytes are the same deterministic
+                    // `present_fb` the locked path copied; only the
+                    // synchronization changed.
+                    //
+                    // v2.1.2 F2.2 — gate on `!want_phase`, not `!want_index`:
+                    // `want_index` implies `want_phase`, and an LMP88959-only stack
+                    // wants the live phase without the index buffer. The phase is
+                    // captured only under the emu lock (the handoff carries just the
+                    // framebuffer), so a phase-consuming pass MUST take the locked
+                    // path or `present_phase` would freeze and the dot-crawl stall.
                     #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                     let lockfree_fb = {
                         #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
@@ -8432,7 +8440,7 @@ impl ApplicationHandler<AppEvent> for App {
                         #[cfg(not(all(feature = "hd-pack", not(target_arch = "wasm32"))))]
                         let hd_active = false;
                         self.emu_thread_drives()
-                            && !want_index
+                            && !want_phase
                             && !hd_active
                             && self.present_buffer.has_published()
                     };
