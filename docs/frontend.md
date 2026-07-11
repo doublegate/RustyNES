@@ -475,6 +475,51 @@ the built-in palette and is byte-identical. The synthesizer routes every
 transcendental through `libm`, so its output is byte-identical across all targets
 and is locked by a committed golden (`palette_gen::tests::matches_committed_golden`).
 
+**NTSC / CRT shader ladder (v2.1.2 F2.2).** Presentation filters run as GPU
+post-passes over the PPU framebuffer — **display-only**: they never touch the
+core, the index framebuffer, audio, or any golden vector (the `visual_regression`
+corpus stays byte-identical with any filter active). Two selection surfaces
+coexist:
+
+- **Legacy single-select** (Settings → Video): the **NTSC filter** dropdown
+  (`[graphics] ntsc_filter` = `off` / `composite` / `rgb` / `composite-rt`) plus a
+  binary **CRT** toggle (`crt_filter` + `crt_scanline`). The `composite-rt`
+  (Bisqwit) option is the only place the Bisqwit **picture knobs** (contrast /
+  saturation / brightness / hue) have a UI; a `CompositeRt` pass added via the
+  stack inherits those same global knobs (`stack_ntsc_knobs`).
+- **Composable stack** (Settings → Shaders): add / reorder / toggle / remove any
+  of the six `BuiltinPass` variants, each with its `#pragma parameter` sliders,
+  plus a save/load preset bank and constrained `.slangp` / `.cgp` import.
+
+**Precedence:** when the stack has any enabled pass it **owns** the post-process
+path and the legacy `crt`/`ntsc`/`composite-rt` filters are bypassed; otherwise
+the legacy single-select applies (`App::on_gfx_ready`, and the same order in
+`Gfx::render_with_overlay`: stack → CRT → Bisqwit → NTSC → direct blit).
+
+**The three composite rungs** (there is deliberately **no** separate
+"separable-kernel `nes_ntsc`" rung — the LMP pass already covers that tier):
+
+1. `Ntsc` — a cheap simplified blur (5-tap + scanline dim + coarse fringe); not a
+   signal encode/decode.
+2. `Lmp88959` — a real single-pass composite encode→decode (EMMIR/LMP model),
+   RGBA post-pass, composes anywhere.
+3. `CompositeRt` — the faithful **Bisqwit** per-dot composite; samples the
+   `R16Uint` palette-**index** framebuffer, so it must be the first pass.
+
+**Live dot-crawl (phase).** The NES steps its colour phase through 3 frame states
+(`Ppu::ntsc_phase()` → 0..=2); that live phase drives emulator-synced crawl in
+both composite passes — `CompositeRt` via its `videoPhase` uniform, and
+`Lmp88959` (F2.2) by advancing its base subcarrier phase `video_phase / 3` turn
+on top of the user's static `phase` slider. The frontend snapshots the phase
+whenever a phase-consuming pass is active (`Gfx::shader_stack_needs_phase` /
+`BuiltinPass::uses_phase`); the phase is decoupled from the (heavier) index-FB
+snapshot so a Lmp-only stack gets crawl without the index upload.
+
+**Palette ↔ pass interaction.** The generated/custom palette (F1.4, `.pal`, named
+bank) re-tints the **RGBA** framebuffer, so it feeds the RGBA passes (`Ntsc`,
+`Lmp88959`, `Crt`) — but **not** `CompositeRt`, which decodes the raw palette
+**index** and is therefore independent of the RGBA palette choice.
+
 **Pixel aspect ratio.** When `[ui] pixel_aspect_correction` is on, the
 letterbox targets the NES's native **8:7** PAR (display aspect
 `(256 · 8/7) / 240`); off, it keeps the square-pixel 256:240 aspect. The

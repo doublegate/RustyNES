@@ -16,6 +16,18 @@ cycle-accurate core later replaced.
 
 ### Added
 
+- **NTSC composite-shader ladder completed** (Fathom F2.2). The three-rung
+  display-only ladder — simplified blur (`Ntsc`) → LMP88959 composite
+  (`Lmp88959`) → Bisqwit per-dot (`CompositeRt`) — is verified end-to-end, and
+  **live emulator-synced dot-crawl is now wired to LMP88959** as well as Bisqwit:
+  the NES 3-frame colour phase (`ntsc_phase()`) advances the LMP base subcarrier
+  phase (`video_phase / 3` turn) on top of the user's static offset. The live
+  phase is decoupled from the (heavier) palette-index snapshot, so an LMP-only
+  stack gets crawl without the index upload. All passes stay display-only —
+  `visual_regression` is byte-identical with any filter active. Documented the
+  legacy-vs-stack precedence and the palette↔pass split (the generated/custom
+  palette feeds the RGBA passes but not the index-based Bisqwit pass); no
+  separable-kernel rung is added (LMP covers that tier). See `docs/frontend.md`.
 - **Generated NTSC palette** (Fathom F1.4). A new in-core synthesizer
   (`rustynes_ppu::generate_base_palette`) produces the 64-entry base palette from
   a model of the 2C02's composite-video output (the Bisqwit / ares YIQ
