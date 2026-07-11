@@ -14,6 +14,31 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **CI boot-smoke sweep of every `BestEffort` mapper family (Fathom F3.1).** A
+  new test-harness suite
+  (`crates/rustynes-test-harness/tests/v21_best_effort_sweep.rs`, `--features
+  test-roms`) exercises the full parse → construct → dispatch → run-loop
+  integration for **all 26** `BestEffort` (Tier-2) mapper families — the
+  reference-ported long-tail boards that lack a cleanly-booting redistributable
+  ROM dump and so can never be honestly oracle-gated. The target set is derived
+  live from the `rustynes-mappers::mapper_tier` classifier (the single source of
+  truth), so any future family promoted into or out of `BestEffort` is swept —
+  or dropped — automatically with no edit to the test. Each family is built into
+  a synthetic minimal iNES / NES 2.0 image (256 KiB PRG spin loop + CHR-RAM;
+  NES 2.0 headers with the byte-8 mapper-MSB for the 17 high-id boards `> 255`)
+  and run for ~60 headless, deterministic frames, asserting no panic, an exact
+  mapper-id header round-trip, and a well-formed 256×240 RGBA framebuffer. Any
+  panic in a `BestEffort` register decode, bank wiring, or per-tick hook is now
+  caught in CI instead of only when a user loads a real cart. This is a **pure
+  safety net**: it promotes nothing, adds no accuracy/oracle claim (accuracy
+  stays defined by the Core/Curated gate), and leaves runtime behaviour and the
+  deterministic `#![no_std]` core byte-identical. The two NTDEC boards 81 / 174
+  correctly reject a CHR-RAM header with a typed `RomError` (not a panic) and are
+  handed CHR-ROM geometry; no real panics were found in the sweep. See
+  `docs/mappers.md` ("Mapper accuracy tiering") and `docs/adr/0011-mapper-tiering.md`.
+
 ## [2.1.3] - 2026-07-11 - "Fathom" (quality-of-life — APU filter-model audio fix + Game Genie code nomination/database + universal header-robust matching + MkDocs docs handbook; "Codex")
 
 ### Added
