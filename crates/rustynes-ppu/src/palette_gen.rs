@@ -44,9 +44,9 @@
 
 use libm::{cos, pow, round, sin};
 
-/// Core-math constant: π. `libm` takes radians; we build phase angles from this
-/// so the whole synthesizer is `no_std` and does not depend on `core::f64`
-/// associated consts being stable in a `const` context.
+/// Core-math constant: π in radians, from `core::f64::consts`. Named locally so
+/// the phase-angle integration reads cleanly; the whole synthesizer stays
+/// `no_std` (the trig itself goes through `libm`, not `std`).
 const PI: f64 = core::f64::consts::PI;
 
 /// The eight composite signal voltage levels the 2C02 emits, relative to the
@@ -62,6 +62,10 @@ const LEVELS: [f64; 8] = [
 const BLACK: f64 = 0.518;
 /// White reference voltage (the composite level that maps to full RGB).
 const WHITE: f64 = 1.962;
+/// Neutral display gamma — the [`NtscPaletteParams::default`] value and the
+/// fallback [`fcc_channel`] uses when a config-supplied `gamma` is non-finite or
+/// non-positive (which would make `2.2 / gamma` blow up).
+const DEFAULT_GAMMA: f64 = 1.8;
 
 /// Tunable parameters for [`generate_base_palette`].
 ///
@@ -92,7 +96,7 @@ impl Default for NtscPaletteParams {
             hue: 0.0,
             contrast: 1.0,
             brightness: 1.0,
-            gamma: 1.8,
+            gamma: DEFAULT_GAMMA,
         }
     }
 }
@@ -121,7 +125,7 @@ pub fn generate_base_palette(params: &NtscPaletteParams) -> [[u8; 3]; 64] {
     out
 }
 
-/// Synthesize a single color (`pixel` = the 6-bit NES index, 0..64).
+/// Synthesize a single color (`pixel` = the 6-bit NES index, `0..=63`).
 fn generate_one(pixel: usize, params: &NtscPaletteParams) -> [u8; 3] {
     let color = pixel & 0x0F; // chroma / hue nibble (0..15)
     // Colors $0E/$0F are "forbidden" blacks; clamp their luma level to 1 so the
@@ -173,10 +177,24 @@ fn generate_one(pixel: usize, params: &NtscPaletteParams) -> [u8; 3] {
 #[inline]
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn fcc_channel(f: f64, gamma: f64) -> u8 {
-    let corrected = if f <= 0.0 { 0.0 } else { pow(f, 2.2 / gamma) };
+    // `gamma` comes from user-editable config; a non-finite or non-positive
+    // value would make `2.2 / gamma` blow up, so fall back to the neutral
+    // default. The `f`/`scaled` finiteness guards likewise contain a NaN that
+    // leaked in from any (also config-supplied) param, so a malformed config
+    // degrades to a defined pixel instead of an undefined float→int cast.
+    let safe_gamma = if gamma.is_finite() && gamma > 0.0 {
+        gamma
+    } else {
+        DEFAULT_GAMMA
+    };
+    let corrected = if f.is_finite() && f > 0.0 {
+        pow(f, 2.2 / safe_gamma)
+    } else {
+        0.0
+    };
     let scaled = round(255.0 * corrected);
-    // Clamp; `round` keeps determinism (libm), the clamp guards overflow.
-    if scaled <= 0.0 {
+    // Clamp; `round` keeps determinism (libm), the guards catch overflow + NaN.
+    if scaled.is_nan() || scaled <= 0.0 {
         0
     } else if scaled >= 255.0 {
         255
@@ -284,6 +302,54 @@ mod tests {
         // visual re-bless) or a platform float divergence (a real bug).
         let pal = generate_base_palette(&NtscPaletteParams::default());
         assert_eq!(pal, GOLDEN_DEFAULT);
+    }
+
+    #[test]
+    fn malformed_params_never_panic() {
+        // A hand-edited config could carry non-finite / non-positive values.
+        // The synthesizer must degrade to a defined palette, never panic or
+        // produce an out-of-range channel (the float→int cast is guarded).
+        for bad in [
+            NtscPaletteParams {
+                gamma: 0.0,
+                ..NtscPaletteParams::default()
+            },
+            NtscPaletteParams {
+                gamma: -1.0,
+                ..NtscPaletteParams::default()
+            },
+            NtscPaletteParams {
+                gamma: f64::NAN,
+                ..NtscPaletteParams::default()
+            },
+            NtscPaletteParams {
+                saturation: f64::NAN,
+                brightness: f64::INFINITY,
+                contrast: f64::NAN,
+                hue: f64::NAN,
+                gamma: f64::NAN,
+            },
+        ] {
+            // Just constructing all 64 entries without a panic is the assertion
+            // (every channel is a valid u8 by type); a spot check keeps it honest.
+            let pal = generate_base_palette(&bad);
+            assert_eq!(pal.len(), 64);
+        }
+    }
+
+    #[test]
+    fn invalid_gamma_falls_back_to_default() {
+        // A non-finite / non-positive gamma resolves to DEFAULT_GAMMA, so the
+        // output equals the default-gamma palette (the other params here are the
+        // defaults). This proves the guard, not just the absence of a panic.
+        let good = generate_base_palette(&NtscPaletteParams::default());
+        for bad_gamma in [0.0, -3.0, f64::NAN, f64::INFINITY] {
+            let bad = generate_base_palette(&NtscPaletteParams {
+                gamma: bad_gamma,
+                ..NtscPaletteParams::default()
+            });
+            assert_eq!(bad, good, "gamma={bad_gamma} should fall back to default");
+        }
     }
 
     #[test]
