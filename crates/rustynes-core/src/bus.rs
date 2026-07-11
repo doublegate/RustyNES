@@ -4301,9 +4301,14 @@ impl Bus for LockstepBus {
     /// default convention.
     fn run_ppu_to(&mut self, target: u64, is_post_access: bool) {
         let ppu_div = u64::from(self.ppu_div_cached);
-        #[cfg(feature = "mmc3-m2-phase-irq")]
+        // Seed the real M2-phase into `sub_dot` (0 = pre-access/M2-low catch-up,
+        // 2 = post-access/M2-high catch-up) for the `mmc3-m2-phase-irq` deferral
+        // AND for the v2.1.5 F5.0 `mmc3-a12-phase-probe` observational tally.
+        // The probe only counts, so the emulated timeline stays byte-identical
+        // even with its feature on. See ADR 0002.
+        #[cfg(any(feature = "mmc3-m2-phase-irq", feature = "mmc3-a12-phase-probe"))]
         let mut sub_dot = if is_post_access { 2u8 } else { 0u8 };
-        #[cfg(not(feature = "mmc3-m2-phase-irq"))]
+        #[cfg(not(any(feature = "mmc3-m2-phase-irq", feature = "mmc3-a12-phase-probe")))]
         let (mut sub_dot, _) = (0u8, is_post_access);
         while self.ppu_clock + ppu_div <= target {
             let mut adapter = PpuBusAdapter {

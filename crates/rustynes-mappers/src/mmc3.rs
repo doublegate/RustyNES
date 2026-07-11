@@ -160,6 +160,43 @@ pub struct Mmc3 {
     // when the feature is off (zero footprint on the default build).
     #[cfg(feature = "mmc3-m2-phase-irq")]
     irq_assert_pending_next_cycle: bool,
+
+    // v2.1.5 F5.0 MMC3 R1/R2 residual instrumentation study (`mmc3-a12-phase-
+    // probe`, default-off): purely OBSERVATIONAL tallies of *qualifying*
+    // (`gap >= 3`) A12 rising edges, bucketed by the M2-phase half of the host
+    // CPU cycle in which they were observed. `sub_dot < 2` is the PRE-access
+    // (M2-low, φ1) half; `sub_dot >= 2` is the POST-access (M2-high, φ2) half.
+    // The `*_irq_*` pair further restricts to rises that actually clocked the
+    // counter to a state that asserts the IRQ line (`clock_irq()` returned
+    // true). These are counters only — they do NOT influence `irq_pending_line`
+    // or any emulated state, so the timeline is byte-identical to the default
+    // build. Surfaced via `debug_state().extra` for the study fixture to read.
+    // See ADR 0002 §"Decision update (2026-07-11, v2.1.5 F5.0 instrumentation
+    // study)". Compiled out entirely when the feature is off.
+    #[cfg(feature = "mmc3-a12-phase-probe")]
+    probe: Mmc3A12PhaseProbe,
+}
+
+/// Observational A12-phase probe state for the v2.1.5 F5.0 MMC3 R1/R2 residual
+/// instrumentation study. See the field doc on [`Mmc3::probe`]. Every counter
+/// is monotonic over a run; none feeds back into emulated state.
+#[cfg(feature = "mmc3-a12-phase-probe")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Mmc3A12PhaseProbe {
+    /// Qualifying (`gap >= 3`) A12 rises seen in the PRE-access (M2-low, φ1,
+    /// `sub_dot < 2`) half of a host CPU cycle.
+    qual_rises_pre: u64,
+    /// Qualifying (`gap >= 3`) A12 rises seen in the POST-access (M2-high, φ2,
+    /// `sub_dot >= 2`) half of a host CPU cycle. **The study's headline metric:
+    /// if this is 0 across all four failing sub-tests, no A12-phase / M2-half-
+    /// cycle filter refinement can move the residual (axis B is dead).**
+    qual_rises_post: u64,
+    /// Of the qualifying rises, those that clocked the counter to an
+    /// IRQ-asserting state (`clock_irq()` true) in the PRE-access half.
+    irq_clock_pre: u64,
+    /// Of the qualifying rises, those that clocked the counter to an
+    /// IRQ-asserting state (`clock_irq()` true) in the POST-access half.
+    irq_clock_post: u64,
 }
 
 impl Mmc3 {
@@ -236,6 +273,8 @@ impl Mmc3 {
             revision,
             #[cfg(feature = "mmc3-m2-phase-irq")]
             irq_assert_pending_next_cycle: false,
+            #[cfg(feature = "mmc3-a12-phase-probe")]
+            probe: Mmc3A12PhaseProbe::default(),
         })
     }
 
@@ -599,23 +638,62 @@ impl Mapper for Mmc3 {
         // immediately, matching the unconditional behavior. See the field
         // doc on `irq_assert_pending_next_cycle` and
         // `docs/audit/r1r2-per-dot-scheduler-attempt-2026-07-02.md`.
-        #[cfg(not(feature = "mmc3-m2-phase-irq"))]
+        // `sub_dot` is consumed by the `mmc3-m2-phase-irq` deferral AND by the
+        // `mmc3-a12-phase-probe` observational tally below; suppress the unused
+        // binding only when NEITHER feature is enabled (the default build).
+        #[cfg(all(
+            not(feature = "mmc3-m2-phase-irq"),
+            not(feature = "mmc3-a12-phase-probe")
+        ))]
         let _ = sub_dot;
         if !self.last_a12 && level {
             // Rising edge.
             let gap = self.cpu_cycle.saturating_sub(self.a12_low_cycle);
-            if gap >= 3 && self.clock_irq() {
-                #[cfg(feature = "mmc3-m2-phase-irq")]
+            // Restructured from the original `if gap >= 3 && self.clock_irq()`
+            // into a nested form so the v2.1.5 F5.0 probe can observe the
+            // *qualifying* rise (gap accepted) independently of whether it went
+            // on to clock the counter. This is behavior-identical: `clock_irq`
+            // (which mutates) is still only evaluated when `gap >= 3`, exactly
+            // the short-circuit the original `&&` provided.
+            if gap >= 3 {
+                // v2.1.5 F5.0 instrumentation study (observational only — no
+                // emulated-state change): bucket this qualifying A12 rise by the
+                // M2-phase half of the host CPU cycle it landed in. See ADR 0002
+                // F5.0. `sub_dot` carries real phase data only when the paired
+                // `rustynes-core/mmc3-a12-phase-probe` seeds it on the live
+                // one-clock scheduler path.
+                #[cfg(feature = "mmc3-a12-phase-probe")]
                 {
                     if sub_dot >= 2 {
-                        self.irq_assert_pending_next_cycle = true;
+                        self.probe.qual_rises_post += 1;
                     } else {
-                        self.irq_pending_line = true;
+                        self.probe.qual_rises_pre += 1;
                     }
                 }
-                #[cfg(not(feature = "mmc3-m2-phase-irq"))]
-                {
-                    self.irq_pending_line = true;
+                if self.clock_irq() {
+                    // Of the qualifying rises, count those that actually clocked
+                    // the counter into an IRQ-asserting state, by phase half —
+                    // the strictest form of the study's question.
+                    #[cfg(feature = "mmc3-a12-phase-probe")]
+                    {
+                        if sub_dot >= 2 {
+                            self.probe.irq_clock_post += 1;
+                        } else {
+                            self.probe.irq_clock_pre += 1;
+                        }
+                    }
+                    #[cfg(feature = "mmc3-m2-phase-irq")]
+                    {
+                        if sub_dot >= 2 {
+                            self.irq_assert_pending_next_cycle = true;
+                        } else {
+                            self.irq_pending_line = true;
+                        }
+                    }
+                    #[cfg(not(feature = "mmc3-m2-phase-irq"))]
+                    {
+                        self.irq_pending_line = true;
+                    }
                 }
             }
         } else if self.last_a12 && !level {
@@ -678,6 +756,29 @@ impl Mapper for Mmc3 {
             "prg_ram".into(),
             format!("en={} prot={}", self.prg_ram_enabled, self.prg_ram_protect),
         ));
+        // v2.1.5 F5.0 instrumentation study: surface the observational A12-phase
+        // tallies so the `mmc3_r1r2_phase_probe` fixture can read them after a
+        // run without new trait methods. Present only under the (default-off)
+        // probe feature — the shipped `debug_state` is unchanged. See ADR 0002.
+        #[cfg(feature = "mmc3-a12-phase-probe")]
+        {
+            info.extra.push((
+                "probe_qual_pre".into(),
+                format!("{}", self.probe.qual_rises_pre),
+            ));
+            info.extra.push((
+                "probe_qual_post".into(),
+                format!("{}", self.probe.qual_rises_post),
+            ));
+            info.extra.push((
+                "probe_irq_pre".into(),
+                format!("{}", self.probe.irq_clock_pre),
+            ));
+            info.extra.push((
+                "probe_irq_post".into(),
+                format!("{}", self.probe.irq_clock_post),
+            ));
+        }
         info
     }
 

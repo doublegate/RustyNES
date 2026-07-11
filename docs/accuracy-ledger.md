@@ -36,7 +36,7 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
 | NSF non-60 Hz playback + NSFe | **Done** (F4.1/F4.2): the play-speed divider (`$6E-$6F`/`$78-$79`) is parsed and a non-standard rate (PAL 50 Hz / custom µs) drives `play` via a mapper cycle-timer IRQ (frame-IRQ-disabled); standard 60 Hz keeps the byte-identical vblank-NMI path. `NSFE` chunked container parsed (INFO/DATA/BANK/auth). | `nsf` unit + core integration tests | **Done** (F4.1/F4.2) |
 | FDS medium model | No CRC/gaps-on-write, fixed-cycle seek (no analog seek) | Real-BIOS write-verify (copyright-gated, out of CI) | **Deferred** stretch (F4.3) |
 | BestEffort mapper tier (26 families, was 112) | Register-decode + save-state round-trip only; off the oracle gate | `mapper_tier_honesty.rs` invariant | **Mostly remediated** (F3): 86 promoted to Curated with commercial-ROM oracle; the 26 left have no cleanly-booting dump (16 NES 2.0 high-id + 8 no-cart + 2 jam-at-boot) |
-| MMC3 R1/R2 scanline-IRQ (ADR 0002) | ≤1-CPU-cycle differential on 4 `#[ignore]`'d sub-tests; zero game impact | `mmc3_test_2/4` #3 + siblings | **CLOSED by-design-permanent** (F5.0, ADR 0002) — differential 1-dot deficit, structurally unreachable; 21+ falsified levers |
+| MMC3 R1/R2 scanline-IRQ (ADR 0002) | ≤1-CPU-cycle differential on 4 `#[ignore]`'d sub-tests; zero game impact | `mmc3_test_2/4` #3 + siblings; `mmc3_r1r2_phase_probe` A12-phase golden probe (v2.1.5, `--features mmc3-a12-phase-probe`) | **CLOSED for the shipping default; axis-B candidate deferred to maintainer** (F5.0, ADR 0002). v2.1.5 direct instrumentation refined the closure: "no post-access qualifying rise" is ROM-specific (holds for the two `scanline_timing` #3 residuals, `irq_post=0`; **false** for `mmc3_test_v1/5`+`/6` #2, `irq_post=4` — post-access IRQ-clocking rises Session B never measured). Every *tested* lever stays non-curative (incl. the `mmc3-m2-phase-irq` deferral, byte-identical status on `/5`+`/6`); the four pins stay `#[ignore]`'d. One untested lever — an ares-style M2-edge-precise falling-edge low-time filter — is deferred to a maintainer decision (needs a sacred-gate-risking substrate change to prototype) |
 | APU non-linear mixer | Lookup-table matches within the `apu_mixer` band | `apu_mixer` (analog-cancellation, tolerance) | **No stricter oracle** — the LUT already passes; ±4% is honest |
 | APU analog HPF/LPF chain | Fixed-coefficient 3-pole | No pass/fail ROM | **No stricter oracle** (optional measured-RC future work) |
 | PlayChoice-10 Z80 second-screen menu | Not modeled | — | **Out of scope** |
@@ -63,16 +63,20 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
 
 Every `#[ignore]`'d test in the workspace, with its disposition. **None is an
 open accuracy gap** — each is either a superseded historical pin, a by-design
-revision/fixture/network limitation, or the now-closed MMC3 residual.
+revision/fixture/network limitation, or the MMC3 residual (closed for the
+shipping default; one axis-B lever deferred to a maintainer decision).
 
 | Group | Count | Tests | Disposition |
 |---|---|---|---|
 | Permanent historical pins | 7 | APU `$4015`-load / reload-arm / `put_cycle` (`apu.rs`), CPU interrupt-dispatch ×3 (`opcodes.rs`), PPU BG-shifter (`ppu.rs`) | Pin **superseded pre-master-clock** unit assertions on mock buses; the master-clock core is the only scheduler, so these legitimately cannot be un-ignored. Real coverage supersedes them: AccuracyCoin 100%, `cpu_interrupts_v2` 5/5 strict, `visual_regression` 7/7 |
-| MMC3 R1/R2 scanline-IRQ | 4 | `mmc3_test_2/4` #3, `mmc3_test_v1/4` #3, `/5` #2, `/6` #2 | **CLOSED by-design-permanent** (ADR 0002 F5.0, 2026-07-09) — a differential 1-dot deficit that is structurally unreachable on the one-clock batched-catch-up model; 21+ falsified levers; **zero production-ROM impact**. Fail-loud `*_currently_fails` companions stay |
+| MMC3 R1/R2 scanline-IRQ | 4 | `mmc3_test_2/4` #3, `mmc3_test_v1/4` #3, `/5` #2, `/6` #2 | **CLOSED for the shipping default** (ADR 0002 F5.0, 2026-07-09; refined 2026-07-11) — a ≤1-CPU-cycle differential; **zero production-ROM impact**; 21+ falsified levers, all *tested* levers non-curative. The v2.1.5 A12-phase probe (`mmc3_r1r2_phase_probe`) showed post-access IRQ-clocking rises DO exist on `/5`+`/6` (`irq_post=4`) — one untested axis-B lever (M2-edge low-time filter) is deferred to a maintainer decision. Fail-loud `*_currently_fails` companions stay |
 | MMC3 NEC-rev-B | 1 | `mmc3_test_2/6-MMC3_alt` | By-design: only one of the two *opposite* silicon revisions can pass; the project defaults to Sharp rev A (sub-ROM 5 passes strictly) |
 | Vs. DualSystem GVS boots | 5 | `vs_dualsystem` boot ×4 + 1 combined-dump diagnostic | Fixture-limited: the staged GVS dumps are the MAME maincpu half only (sub-CPU PRG absent), so boot cannot complete; needs a combined 64 KiB dual dump (see `docs/audit/vs-dualsystem-combined-dumps-2026-07-02.md`) |
 | Live-network probes | 2 | `stun_probe`, `turn_probe` | Hit live public STUN / TURN servers; `#[ignore]`'d so CI/offline runs stay hermetic — run manually with `--ignored` |
 | HD-pack local | 1 | `hdpack` | Needs a copyrighted local HD pack via `RUSTYNES_HDPACK_LOCAL` |
 
 The 16 in the last five rows are documented in `docs/testing-strategy.md`; the 4
-MMC3 R1/R2 pins are closed in ADR 0002's F5.0 decision-update.
+MMC3 R1/R2 pins are dispositioned in ADR 0002's F5.0 decision-update (closed for
+the shipping default; the v2.1.5 A12-phase instrumentation study
+(`mmc3_r1r2_phase_probe`) refined the rationale and deferred one untested axis-B
+lever to a maintainer decision).
