@@ -126,10 +126,14 @@ these run two CPUs/PPUs. As of v2.0.0 "Timebase" (beta.5) the **DualSystem core
 is modelled** — `crates/rustynes-core/src/vs_dualsystem.rs` runs two cross-wired
 `Nes` instances (`Emu::Dual`: inter-CPU `$4016`-bit-1 IRQ signalling, shared
 `$6000-$67FF` WRAM, coin/DIP routing, soft-lockstep step) and exposes **both**
-screens via `main_framebuffer()` and `sub_framebuffer()`. The remaining gap is
-**frontend presentation of the second screen** — the desktop/libretro hosts do
-not yet consume `sub_framebuffer()` (tracked as Fathom F2.1); netplay + RA on the
-dual path are out of scope by design. The non-DualSystem games (Excitebike, Clu
+screens via `main_framebuffer()` and `sub_framebuffer()`. As of v2.1.2 "Fathom"
+(F2.1) the **desktop frontend presents both screens** — side-by-side (512×240,
+default) or stacked (256×480) via `[graphics] dual_screen_layout` — with P1/P2 →
+main, P3/P4 → sub, coin (F10) → main acceptor, and the main console's audio (ADR
+0032). The advanced single-`Nes` features (run-ahead / rewind / netplay / TAS /
+dual save-state), the debugger, and HD-pack are **scoped out in dual mode**;
+libretro + wasm + mobile presentation remain deferred; real-cabinet boot stays
+fixture-limited (maincpu-half dumps). The non-DualSystem games (Excitebike, Clu
 Clu Land, Castlevania, Pinball, Gradius, Goonies, Ice Climber, Golf, Super Mario
 Bros.) boot and render with their correct 2C04 palette.
 **PlayChoice-10's second-screen instruction menu and its Z80 coprocessor are out

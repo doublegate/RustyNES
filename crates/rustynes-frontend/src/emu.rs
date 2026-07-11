@@ -290,15 +290,33 @@ impl ProduceFx {
 
 /// The emulation core: the per-frame produce state extracted from `App`.
 pub struct EmuCore {
-    /// The running emulator (None until a ROM is loaded).
+    /// The running single-console emulator (None until a single-console ROM is
+    /// loaded, or while a Vs. `DualSystem` cabinet is loaded — see [`Self::dual`]).
     pub nes: Option<Nes>,
+    /// v2.1.2 F2.1 — a loaded Vs. `DualSystem` cabinet (two cross-wired consoles).
+    /// Mutually exclusive with [`Self::nes`]: exactly one is `Some` while a ROM
+    /// is loaded. Additive so the single-console produce/present/latch paths stay
+    /// byte-identical; the dual path is a parallel branch at each chokepoint. The
+    /// advanced frontend features (run-ahead, rewind, netplay, TAS, save-state)
+    /// are scoped out while a cabinet is loaded (ADR 0032) — they snapshot a
+    /// single `Nes` and are disabled in dual mode.
+    pub dual: Option<Box<rustynes_core::VsDualSystem>>,
     /// TAS movie record/playback state machine.
     pub movie: MovieUi,
     /// Frame-pacing / audio instrumentation (Phase 0).
     pub perf: PerfStats,
     /// The framebuffer the renderer presents (with run-ahead active it is
-    /// the visible FUTURE frame while `nes` holds the persistent one).
+    /// the visible FUTURE frame while `nes` holds the persistent one). In dual
+    /// mode this holds the MAIN console's framebuffer (the sub console's is in
+    /// [`Self::present_fb_sub`]); the present path composes the two per the
+    /// configured layout.
     pub present_fb: Vec<u8>,
+    /// v2.1.2 F2.1 — the SUB console's framebuffer in Vs. `DualSystem` mode
+    /// (empty otherwise). Harvested each produced frame alongside [`Self::present_fb`]
+    /// so the present path can compose the two-screen image from these two owned
+    /// buffers. The compose runs under the same brief present lock as the
+    /// single-console `present_fb` copy (a cheap memcpy, not heavy work).
+    pub present_fb_sub: Vec<u8>,
     /// v1.8.9 — the 8 KiB CHR pattern space ($0000-$1FFF) captured at PRODUCE
     /// time (the same visible frame as `present_fb`). With run-ahead active, the
     /// `nes` is rolled back to the persistent frame after the visible frame is
@@ -407,9 +425,11 @@ impl EmuCore {
     pub fn new() -> Self {
         Self {
             nes: None,
+            dual: None,
             movie: MovieUi::default(),
             perf: PerfStats::default(),
             present_fb: Vec::new(),
+            present_fb_sub: Vec::new(),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
             hd_chr_snapshot: Vec::new(),
             #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
@@ -471,6 +491,19 @@ impl EmuCore {
         // RA-hardcore it stays `None` and this whole block is a no-op.
         #[cfg(feature = "scripting")]
         let script_override = core::mem::take(&mut self.script_input_override);
+        // v2.1.2 F2.1 — Vs. `DualSystem` cabinet: P1/P2 drive the main console's
+        // ports, P3/P4 the sub console's (`VsDualSystem::set_buttons` splits them).
+        // The four-score flag does not apply — a cabinet always wires both
+        // consoles' two ports — so all four are latched. Turbo keys off the main
+        // console's frame for a reproducible strobe.
+        if let Some(dual) = self.dual.as_mut() {
+            let frame = dual.main().frame();
+            let turbo = |b| apply_turbo(b, frame, inputs.turbo_mask, inputs.turbo_period);
+            for port in 0..4 {
+                dual.set_buttons(port, turbo(inputs.buttons[port]));
+            }
+            return;
+        }
         if let Some(nes) = self.nes.as_mut() {
             // v1.1.0 beta.1 (T-110-B2) — gate turbo/autofire here, keyed on the
             // emulated frame, so the strobe is reproducible under rollback / TAS
@@ -652,6 +685,18 @@ impl EmuCore {
         // otherwise).
         #[allow(unused_mut)]
         let mut fx = ProduceFx::default();
+        // v2.1.2 F2.1 — a loaded Vs. `DualSystem` cabinet takes a parallel, much
+        // simpler produce path: step both consoles, harvest both framebuffers,
+        // push the MAIN console's audio. The advanced single-`Nes` features
+        // (run-ahead, rewind, TAS, breakpoints, HD-pack, A/V record) are scoped
+        // out in dual mode (ADR 0032) — `dual` and `nes` are mutually exclusive,
+        // so the whole single path below is dead when a cabinet is loaded. Dual
+        // is native-only (the wasm frontend has no dual present path).
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.dual.is_some() {
+            self.produce_dual_frame(sinks);
+            return fx;
+        }
         let hardcore_blocked = inputs.hardcore_blocked;
         // v2.8.0 Phase 3 — resolve the run-ahead depth before borrowing
         // `nes`. 0 = plain frame.
@@ -868,6 +913,55 @@ impl EmuCore {
             self.av_capture_video();
         }
         fx
+    }
+
+    /// v2.1.2 F2.1 — produce one frame of a Vs. `DualSystem` cabinet.
+    ///
+    /// Steps both cross-wired consoles (`VsDualSystem::run_frame`), harvests the
+    /// MAIN framebuffer into [`Self::present_fb`] and the SUB framebuffer into
+    /// [`Self::present_fb_sub`] (the present path composes them per the configured
+    /// layout without holding the emu lock), and pushes the MAIN console's audio
+    /// to the sink. The SUB console's audio is drained and discarded so its APU
+    /// sample buffer cannot grow without bound. This path deliberately omits the
+    /// single-`Nes` machinery (run-ahead / rewind / TAS / breakpoints / HD-pack /
+    /// A/V record), which is scoped out in dual mode (ADR 0032). Native only.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn produce_dual_frame(&mut self, sinks: &mut FrameSinks<'_>) {
+        // v2.5.0 / F2.1 — Vs. System coin latch: a coin-insert holds the acceptor
+        // for a few frames, then auto-clears (uniform with the single path).
+        let clear_coin = self.vs_coin_frames > 0 && {
+            self.vs_coin_frames -= 1;
+            self.vs_coin_frames == 0
+        };
+        let Some(dual) = self.dual.as_mut() else {
+            return;
+        };
+        if clear_coin {
+            dual.clear_coin();
+        }
+        dual.run_frame();
+        self.present_fb.clear();
+        self.present_fb.extend_from_slice(dual.main_framebuffer());
+        self.present_fb_sub.clear();
+        self.present_fb_sub
+            .extend_from_slice(dual.sub_framebuffer());
+        // Push the MAIN console's audio; the frontend presents one audio stream.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(audio) = sinks.audio.as_mut() {
+            let target = ((u64::from(audio.sample_rate()) / 50) as usize).max(1024);
+            if self.audio_buf.len() < target {
+                self.audio_buf.resize(target, 0.0);
+            }
+            let n = dual.main_mut().drain_audio_into(&mut self.audio_buf);
+            audio.push_samples(&self.audio_buf[..n]);
+        }
+        // Bound the SUB console's APU buffer even though its audio is not played:
+        // drain it into the reusable `audio_buf` scratch (never a fresh `Vec`),
+        // looping until a partial fill signals the buffer is empty.
+        if self.audio_buf.is_empty() {
+            self.audio_buf.resize(1024, 0.0);
+        }
+        while dual.sub_mut().drain_audio_into(&mut self.audio_buf) == self.audio_buf.len() {}
     }
 
     /// v1.6.0 "Studio" Workstream G — feed this frame's produced framebuffer

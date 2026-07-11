@@ -104,8 +104,36 @@ impl VsDualSystem {
     ///
     /// Returns the underlying [`RomError`] if the bytes don't parse.
     pub fn from_rom(bytes: &[u8]) -> Result<Self, RomError> {
-        let main = Nes::from_rom(bytes)?;
-        let sub = Nes::from_rom(bytes)?;
+        Ok(Self::from_pair(
+            Nes::from_rom(bytes)?,
+            Nes::from_rom(bytes)?,
+        ))
+    }
+
+    /// Construct the dual system with an explicit audio sample rate (the
+    /// frontend's output-device rate), applied to BOTH consoles.
+    ///
+    /// The sample rate is baked into each `Nes` at construction (there is no
+    /// runtime setter), so the desktop present path — which knows the cpal
+    /// device rate — must build the pair through this constructor for the main
+    /// console's audio to resample correctly. Otherwise identical to
+    /// [`Self::from_rom`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying [`RomError`] if the bytes don't parse.
+    pub fn from_rom_with_sample_rate(bytes: &[u8], sample_rate: u32) -> Result<Self, RomError> {
+        Ok(Self::from_pair(
+            Nes::from_rom_with_sample_rate(bytes, sample_rate)?,
+            Nes::from_rom_with_sample_rate(bytes, sample_rate)?,
+        ))
+    }
+
+    /// Wire two freshly-constructed consoles into a `DualSystem` cabinet: mark
+    /// the sub half, provision the shared WRAM on both, and seed the reset-time
+    /// bit-1 handshake. Shared by every constructor so the wiring can never
+    /// drift between them.
+    fn from_pair(main: Nes, sub: Nes) -> Self {
         let mut dual = Self {
             main,
             sub,
@@ -130,7 +158,7 @@ impl VsDualSystem {
         // Wrecking Crew requires this seed to progress past its handshake.
         dual.apply_main_bit1(false);
         dual.apply_sub_bit1(true);
-        Ok(dual)
+        dual
     }
 
     /// Apply a MAIN-console bit-1 level: drive the sub's `/IRQ` (LOW
@@ -428,9 +456,31 @@ impl Emu {
         // iNES 1.0 (no byte 13), so the header alone can never flag them.
         let db_dual = crate::vs_db::lookup(nes.rom_sha256()).is_some_and(|e| e.dual_system);
         if nes.is_vs_dual_system() || db_dual {
-            // Re-construct as a dual pair (the probe Nes is discarded; the
-            // dual constructor builds both halves from the same bytes).
-            Ok(Self::Dual(Box::new(VsDualSystem::from_rom(bytes)?)))
+            // Reuse the probe as the MAIN console; parse once more for the SUB
+            // (two parses total, not three). `from_pair` applies the cabinet
+            // wiring to the pair.
+            let sub = Nes::from_rom(bytes)?;
+            Ok(Self::Dual(Box::new(VsDualSystem::from_pair(nes, sub))))
+        } else {
+            Ok(Self::Single(Box::new(nes)))
+        }
+    }
+
+    /// Like [`Self::from_rom`], but bakes the frontend's audio sample rate into
+    /// the console(s) — the desktop present path uses this so a `DualSystem`
+    /// cabinet's main-console audio resamples to the cpal device rate.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying [`RomError`] if the bytes don't parse.
+    pub fn from_rom_with_sample_rate(bytes: &[u8], sample_rate: u32) -> Result<Self, RomError> {
+        let nes = Nes::from_rom_with_sample_rate(bytes, sample_rate)?;
+        let db_dual = crate::vs_db::lookup(nes.rom_sha256()).is_some_and(|e| e.dual_system);
+        if nes.is_vs_dual_system() || db_dual {
+            // Reuse the probe as MAIN; parse once more for SUB (two parses, not
+            // three).
+            let sub = Nes::from_rom_with_sample_rate(bytes, sample_rate)?;
+            Ok(Self::Dual(Box::new(VsDualSystem::from_pair(nes, sub))))
         } else {
             Ok(Self::Single(Box::new(nes)))
         }

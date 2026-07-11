@@ -847,6 +847,15 @@ pub struct GraphicsConfig {
     /// neutral calibration, so a pre-F1.4 config loads unchanged.
     #[serde(default)]
     pub ntsc_palette: NtscPaletteConfig,
+    /// v2.1.2 "Fathom" F2.1 — Vs. `DualSystem` two-screen layout: `"side-by-side"`
+    /// (default, `512x240`) or `"stacked"` (`256x480`). Only used while a
+    /// `DualSystem` cabinet is loaded; irrelevant to single-console presentation.
+    #[serde(default = "default_dual_screen_layout")]
+    pub dual_screen_layout: String,
+}
+
+fn default_dual_screen_layout() -> String {
+    "side-by-side".to_string()
 }
 
 /// v2.1.2 "Fathom" F1.4 — serializable mirror of `rustynes_ppu::NtscPaletteParams`.
@@ -1061,6 +1070,7 @@ impl Default for GraphicsConfig {
             active_palette: None,
             ntsc_palette_enabled: false,
             ntsc_palette: NtscPaletteConfig::default(),
+            dual_screen_layout: default_dual_screen_layout(),
         }
     }
 }

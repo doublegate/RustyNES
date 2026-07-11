@@ -520,6 +520,24 @@ bank) re-tints the **RGBA** framebuffer, so it feeds the RGBA passes (`Ntsc`,
 `Lmp88959`, `Crt`) — but **not** `CompositeRt`, which decodes the raw palette
 **index** and is therefore independent of the RGBA palette choice.
 
+**Vs. `DualSystem` two-screen presentation (v2.1.2 F2.1).** A loaded Vs.
+`DualSystem` cabinet (Balloon Fight / Wrecking Crew / Tennis / Baseball) runs both
+cross-wired consoles and presents them together. The core dual engine
+(`VsDualSystem` / `Emu::Dual`) already existed; the frontend adds an **additive
+`EmuCore::dual` field** (mutually exclusive with `nes`), a `produce_dual_frame`
+step that harvests both framebuffers + plays the main console's audio, a
+`latch` branch routing P1/P2 → main and P3/P4 → sub, and a composed two-screen
+present: `Gfx::compose_dual_into` arranges the screens **side-by-side** (512×240,
+default) or **stacked** (256×480) per `[graphics] dual_screen_layout`, blitted via
+the always-on dynamic `Gfx::render_dual` with an aspect-correct letterbox. Coin
+(F10) routes to the main acceptor. Detection + install happen at ROM load
+(`Emu::from_rom_with_sample_rate`), with the Vs.-DB DIP + RGB palette applied to
+both consoles. The single-console path is byte-identical (the dual path is a
+parallel branch at each chokepoint). **Scoped out in dual mode (ADR 0032):**
+run-ahead, rewind, netplay, TAS, dual save-state, the debugger, and HD-pack — they
+snapshot a single `Nes`. Real-cabinet boot stays fixture-limited (the circulating
+dumps are the MAME maincpu half only). Desktop only; wasm/mobile deferred.
+
 **Pixel aspect ratio.** When `[ui] pixel_aspect_correction` is on, the
 letterbox targets the NES's native **8:7** PAR (display aspect
 `(256 · 8/7) / 240`); off, it keeps the square-pixel 256:240 aspect. The
