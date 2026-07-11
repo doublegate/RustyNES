@@ -207,6 +207,16 @@ impl BuiltinPass {
         matches!(self, Self::CompositeRt)
     }
 
+    /// True when this pass consumes the live per-frame NES colour phase
+    /// (`video_phase`, 0..=2) for emulator-synced dot-crawl: the Bisqwit
+    /// composite pass (`videoPhase`) and the LMP88959 composite pass (whose base
+    /// subcarrier phase is advanced each frame). Every other pass ignores it, so
+    /// the frontend only needs to snapshot the phase when one of these is active.
+    #[must_use]
+    pub const fn uses_phase(self) -> bool {
+        matches!(self, Self::CompositeRt | Self::Lmp88959)
+    }
+
     /// The ordered list of built-in passes a user can add to the stack.
     #[must_use]
     pub const fn all() -> &'static [Self] {
@@ -409,6 +419,9 @@ pub struct ShaderStack {
     /// `true` when the first pass samples the `R16Uint` palette-index texture
     /// (a leading composite-rt pass), so the caller must supply the index FB.
     needs_index: bool,
+    /// `true` when any pass consumes the live per-frame NES colour phase
+    /// (composite-rt or LMP88959), so the caller must snapshot `ntsc_phase()`.
+    needs_phase: bool,
 }
 
 impl ShaderStack {
@@ -508,6 +521,10 @@ impl ShaderStack {
             .first()
             .and_then(|d| d.builtin())
             .is_some_and(BuiltinPass::is_index_source);
+        let needs_phase = effective
+            .iter()
+            .filter_map(|d| d.builtin())
+            .any(BuiltinPass::uses_phase);
 
         Some(Self {
             _targets: targets,
@@ -515,6 +532,7 @@ impl ShaderStack {
             passes,
             _sampler: sampler,
             needs_index,
+            needs_phase,
         })
     }
 
@@ -522,6 +540,13 @@ impl ShaderStack {
     #[must_use]
     pub const fn needs_index_source(&self) -> bool {
         self.needs_index
+    }
+
+    /// Whether any pass consumes the live per-frame NES colour phase
+    /// (composite-rt or LMP88959), so the caller must snapshot `ntsc_phase()`.
+    #[must_use]
+    pub const fn needs_phase(&self) -> bool {
+        self.needs_phase
     }
 
     /// Render every pass, ping-ponging the intermediates; the final pass blits
@@ -573,6 +598,17 @@ impl ShaderStack {
                         if 8 + k < u.len() {
                             u[8 + k] = *v;
                         }
+                    }
+                    // v2.1.2 F2.2 — emulator-synced dot-crawl for LMP88959. The
+                    // NES steps its colour phase through 3 frame states (the
+                    // source of the crawl); advance the pass's base subcarrier
+                    // phase (`params.w` = u[11], in turns) by `video_phase / 3`
+                    // (0, 1/3, 2/3 turn) ON TOP OF the user's static `phase`
+                    // slider, wrapping into [0, 1). Without this the LMP artifact
+                    // pattern is frozen (its phase was a static knob only).
+                    if matches!(pass.kind, BuiltinPass::Lmp88959) {
+                        let live = f32::from(video_phase) / 3.0;
+                        u[11] = (u[11] + live).fract();
                     }
                 }
                 BuiltinPass::Ntsc => {}
@@ -821,6 +857,28 @@ mod tests {
     #[test]
     fn ignores_non_pragma_lines() {
         assert!(parse_pragma_parameters("let x = 1.0;\n// a comment\n").is_empty());
+    }
+
+    #[test]
+    fn phase_and_index_source_classification() {
+        // v2.1.2 F2.2 — the capture gating (which decides whether the frontend
+        // snapshots the index framebuffer and/or the live colour phase) rests on
+        // these classifications; they are the display-only contract's boundary.
+        // Only composite-rt samples the index texture (must be first); both
+        // composite passes consume the live phase, nothing else does.
+        for p in BuiltinPass::all() {
+            match p {
+                BuiltinPass::CompositeRt => {
+                    assert!(p.is_index_source() && p.uses_phase(), "{p:?}");
+                }
+                BuiltinPass::Lmp88959 => {
+                    assert!(!p.is_index_source() && p.uses_phase(), "{p:?}");
+                }
+                BuiltinPass::Crt | BuiltinPass::Ntsc | BuiltinPass::Hqx | BuiltinPass::Xbrz => {
+                    assert!(!p.is_index_source() && !p.uses_phase(), "{p:?}");
+                }
+            }
+        }
     }
 
     #[test]

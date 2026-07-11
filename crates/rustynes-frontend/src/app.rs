@@ -8141,10 +8141,15 @@ impl ApplicationHandler<AppEvent> for App {
                 // framebuffer + phase only while the true composite `NES_NTSC`
                 // filter is active (zero cost otherwise). v1.2.0 C2 — also when a
                 // leading composite-rt pass is active in the shader stack.
-                let want_index = self
-                    .gfx
-                    .as_ref()
-                    .is_some_and(|g| g.ntsc_bisqwit_active() || g.shader_stack_needs_index());
+                // v2.1.2 F2.2 — `want_index` gates the (expensive) palette-index
+                // framebuffer copy; `want_phase` gates the (cheap `u8`) colour-
+                // phase snapshot. They differ because LMP88959 needs the live
+                // phase for dot-crawl but samples RGBA (no index), so a Lmp-only
+                // stack wants the phase without the index upload.
+                let (want_index, want_phase) = self.gfx.as_ref().map_or((false, false), |g| {
+                    let idx = g.ntsc_bisqwit_active() || g.shader_stack_needs_index();
+                    (idx, idx || g.shader_stack_needs_phase())
+                });
                 // The early-return arm guarantees both `gfx` and `debugger` are
                 // `Some` in the later arms, but the `as_mut().expect(...)` must be
                 // deferred into those arms: binding them up front would hold a
@@ -8186,6 +8191,8 @@ impl ApplicationHandler<AppEvent> for App {
                                 self.present_index_staging.clear();
                                 self.present_index_staging
                                     .extend_from_slice(nes.index_framebuffer());
+                            }
+                            if want_phase {
                                 self.present_phase = nes.ntsc_phase();
                             }
                             // v1.7.1 (#3) — the deep-overlay / nes-tool branch must
@@ -8321,8 +8328,8 @@ impl ApplicationHandler<AppEvent> for App {
                     let save_states_ui = &mut self.save_states_ui;
                     #[cfg(not(target_arch = "wasm32"))]
                     let virtual_pad = &mut self.virtual_pad;
-                    let index_arg = want_index
-                        .then_some((self.present_index_staging.as_slice(), self.present_phase));
+                    let index_arg = want_index.then_some(self.present_index_staging.as_slice());
+                    let video_phase = self.present_phase;
                     let overlay = |device: &wgpu::Device,
                                    queue: &wgpu::Queue,
                                    encoder: &mut wgpu::CommandEncoder,
@@ -8387,11 +8394,20 @@ impl ApplicationHandler<AppEvent> for App {
                         (Some((w, h)), Some(frame)) => {
                             gfx.render_hd_with_overlay(frame, w, h, overlay)
                         }
-                        _ => gfx.render_with_overlay(&self.present_staging, index_arg, overlay),
+                        _ => gfx.render_with_overlay(
+                            &self.present_staging,
+                            index_arg,
+                            video_phase,
+                            overlay,
+                        ),
                     };
                     #[cfg(not(all(feature = "hd-pack", not(target_arch = "wasm32"))))]
-                    let render_result =
-                        gfx.render_with_overlay(&self.present_staging, index_arg, overlay);
+                    let render_result = gfx.render_with_overlay(
+                        &self.present_staging,
+                        index_arg,
+                        video_phase,
+                        overlay,
+                    );
                     render_result
                 } else {
                     // Common path: copy the presented framebuffer under a brief
@@ -8443,6 +8459,8 @@ impl ApplicationHandler<AppEvent> for App {
                                 self.present_index_staging.clear();
                                 self.present_index_staging
                                     .extend_from_slice(nes.index_framebuffer());
+                            }
+                            if want_phase {
                                 self.present_phase = nes.ntsc_phase();
                             }
                             // v1.2.0 C3 — under the lock, snapshot ONLY the inputs
@@ -8606,8 +8624,8 @@ impl ApplicationHandler<AppEvent> for App {
                     let save_states_ui = &mut self.save_states_ui;
                     #[cfg(not(target_arch = "wasm32"))]
                     let virtual_pad = &mut self.virtual_pad;
-                    let index_arg = want_index
-                        .then_some((self.present_index_staging.as_slice(), self.present_phase));
+                    let index_arg = want_index.then_some(self.present_index_staging.as_slice());
+                    let video_phase = self.present_phase;
                     let overlay = |device: &wgpu::Device,
                                    queue: &wgpu::Queue,
                                    encoder: &mut wgpu::CommandEncoder,
@@ -8691,11 +8709,20 @@ impl ApplicationHandler<AppEvent> for App {
                         (Some((w, h)), Some(frame)) => {
                             gfx.render_hd_with_overlay(frame, w, h, overlay)
                         }
-                        _ => gfx.render_with_overlay(&self.present_staging, index_arg, overlay),
+                        _ => gfx.render_with_overlay(
+                            &self.present_staging,
+                            index_arg,
+                            video_phase,
+                            overlay,
+                        ),
                     };
                     #[cfg(not(all(feature = "hd-pack", not(target_arch = "wasm32"))))]
-                    let render_result =
-                        gfx.render_with_overlay(&self.present_staging, index_arg, overlay);
+                    let render_result = gfx.render_with_overlay(
+                        &self.present_staging,
+                        index_arg,
+                        video_phase,
+                        overlay,
+                    );
                     // v1.5.0 A4 — write the HD pixel-inspector state (px/py/blend)
                     // + the (possibly closed) open flag back into the debugger now
                     // that the `extra` closure that mutated the clone is consumed.

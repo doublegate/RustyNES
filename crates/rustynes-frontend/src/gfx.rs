@@ -917,6 +917,16 @@ impl Gfx {
             .is_some_and(crate::shader_pass::ShaderStack::needs_index_source)
     }
 
+    /// True when the active shader stack has a pass that consumes the live NES
+    /// colour phase (composite-rt or LMP88959), so the caller must snapshot
+    /// `ntsc_phase()` even when the index framebuffer itself is not needed.
+    #[must_use]
+    pub fn shader_stack_needs_phase(&self) -> bool {
+        self.shader_stack
+            .as_ref()
+            .is_some_and(crate::shader_pass::ShaderStack::needs_phase)
+    }
+
     /// v1.2.0 C2 — push the live Bisqwit NTSC knobs forwarded to a leading
     /// composite-rt stack pass (kept in sync with the legacy filter's knobs).
     pub const fn set_stack_ntsc_knobs(&mut self, knobs: crate::ntsc_bisqwit::NtscKnobs) {
@@ -998,7 +1008,10 @@ impl Gfx {
     /// and present a frame.
     #[allow(clippy::needless_pass_by_ref_mut)] // matches `render_with_overlay`.
     pub fn render(&mut self, framebuffer: &[u8]) -> Result<(), PresentError> {
-        self.render_with_overlay(framebuffer, None, |_, _, _, _, _| {})
+        // No index framebuffer and phase 0: this simple present path is used when
+        // no phase-consuming shader is active (the composite passes take the
+        // `render_with_overlay` path with a live phase).
+        self.render_with_overlay(framebuffer, None, 0, |_, _, _, _, _| {})
     }
 
     /// Upload the framebuffer and present a frame; between the letterbox
@@ -1009,7 +1022,8 @@ impl Gfx {
     pub fn render_with_overlay<F>(
         &mut self,
         framebuffer: &[u8],
-        index: Option<(&[u16], u8)>,
+        index: Option<&[u16]>,
+        video_phase: u8,
         overlay: F,
     ) -> Result<(), PresentError>
     where
@@ -1033,32 +1047,36 @@ impl Gfx {
         // v1.1.0 beta.1 (T-110-A1) — upload the palette-index framebuffer for
         // the true composite `NES_NTSC` filter, only when it is active and the
         // caller supplied a correctly-sized snapshot. `R16Uint` = 2 bytes/texel.
+        // v2.1.2 F2.2 — `video_phase` (the live NES 3-frame colour phase) is now
+        // decoupled from the index framebuffer: composite-rt needs BOTH the index
+        // texture and the phase, but LMP88959 needs the phase only (it samples
+        // RGBA). The caller snapshots the phase whenever any phase-consuming pass
+        // is active; here we upload the index texture only when a pass samples it.
         let wants_index = self.ntsc_bisqwit.is_some() || self.shader_stack_needs_index();
-        let video_phase = match (wants_index, index) {
-            (true, Some((idx, phase))) if idx.len() == (NES_W * NES_H) as usize => {
-                self.queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &self.index_texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    bytemuck::cast_slice(idx),
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(NES_W * 2),
-                        rows_per_image: Some(NES_H),
-                    },
-                    wgpu::Extent3d {
-                        width: NES_W,
-                        height: NES_H,
-                        depth_or_array_layers: 1,
-                    },
-                );
-                phase
-            }
-            _ => 0,
-        };
+        if wants_index
+            && let Some(idx) = index
+            && idx.len() == (NES_W * NES_H) as usize
+        {
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.index_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(idx),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(NES_W * 2),
+                    rows_per_image: Some(NES_H),
+                },
+                wgpu::Extent3d {
+                    width: NES_W,
+                    height: NES_H,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         if fb_ok {
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
