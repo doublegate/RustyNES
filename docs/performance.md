@@ -41,8 +41,9 @@ real-time factors, all benches — lives in
 
 Numbers from `cargo bench` on the development host (Intel Core i9-10850K @
 3.6 GHz, CachyOS Linux, `powersave` governor, Rust 1.86, release profile
-`opt-level = 3 lto = "thin" codegen-units = 1 panic = "abort"`), captured
-2026-06-10. They are **hardware-specific**; replicate on your machine before
+`opt-level = 3 lto = "fat" codegen-units = 1 panic = "abort"`), captured
+2026-06-10. (This repo's `[profile.release]` has always been `lto = "fat"` —
+see "fat-LTO vs thin-LTO release-profile A/B" below for the measured rationale.) They are **hardware-specific**; replicate on your machine before
 treating any delta as a regression, and trust the *deltas* (same host,
 back-to-back Criterion baselines) over the absolute ms figures (~±3% host noise
 on a shared desktop). The benches live under `crates/*/benches/` and are wired
@@ -124,7 +125,7 @@ Based on architectural reasoning + cross-validation with TetaNES profiling notes
 - **Inlining**: mark hot functions `#[inline]`; let the compiler decide on `#[inline(always)]` only after profiling shows benefit.
 - **No unnecessary allocation in the hot loop**: framebuffer is a fixed `[u8; 256*240*4]`; OAM is fixed-size; nothing in `tick()` paths calls `Vec::push` or `Box::new`.
 - **Branch-free pixel composition** where it pays: BG vs sprite priority can be computed with masks rather than branches.
-- **Cargo profile**: `[profile.release] opt-level = 3, lto = "thin", codegen-units = 1, panic = "abort"` for the frontend binary; library crates honor the workspace profile.
+- **Cargo profile**: `[profile.release] opt-level = 3, lto = "fat", codegen-units = 1, panic = "abort"` for the frontend binary; library crates honor the workspace profile. The `lto = "fat"` + `codegen-units = 1` choice is measured, not assumed — see "fat-LTO vs thin-LTO release-profile A/B" below for the byte-identical +8–21% win that justifies it.
 
 ### Profile-guided
 
@@ -212,6 +213,93 @@ v1.7.0 H7) that exhausted the neutral-win candidates. This PR is a flag-cleanup,
 not a perf pass; the number is recorded as the honest current baseline and to
 prove the removal is neutral, not to justify a speculative change that would risk
 byte-identity for a marginal gain.
+
+### v2.1.5 — fat-LTO vs thin-LTO release-profile A/B (decision: retain fat)
+
+`[profile.release]` ships `lto = "fat"` + `codegen-units = 1` (see the "Cargo
+profile" bullet above and `Cargo.toml`). That has been the profile since the
+v1.0.0 engine transplant, but the choice had never been backed by an in-repo
+A/B on the current core — and the historical caption at the top of this file
+even mis-stated it as `thin`. This pass measures the difference the shipped
+profile actually buys, against the standing **> 3% Criterion-stable +
+byte-identical** adoption bar.
+
+Method: with `codegen-units = 1` and `panic = "abort"` held fixed, the release
+profile was flipped between `lto = "fat"` (the shipped default) and
+`lto = "thin"`, each rebuilt from clean and benched back-to-back on the same
+host (Intel Core i9-10850K, CachyOS, `powersave` governor, Rust 1.96, bench
+process pinned with `taskset -c 0-7`) via
+`cargo bench -p rustynes-cpu -p rustynes-ppu -p rustynes-core`
+(`--warm-up-time 1 --measurement-time 5`). Criterion medians:
+
+| Bench | Crate | thin | fat (shipped) | fat vs thin |
+|---|---|---|---|---|
+| `cpu_throughput::cpu_nop_step_x1000` | `rustynes-cpu` | 217.5 ns | 216.8 ns | **+0.3%** (within noise) |
+| `ppu_throughput::ppu_tick_one_frame` | `rustynes-ppu` | 725.6 µs | 574.5 µs | **+20.8%** |
+| `full_frame::nes_run_frame_nestest` | `rustynes-core` | 4.667 ms | 4.277 ms | **+8.4%** |
+| `full_frame::nes_run_frame_flowing_palette` | `rustynes-core` | 3.004 ms | 2.378 ms | **+20.8%** |
+
+fat-LTO clears the > 3% bar decisively on every bench that spans a crate
+boundary — the whole-scheduler `full_frame` paths (+8.4% / +20.8%) and the
+PPU dot loop (+20.8%, which calls across into `rustynes-mappers` for every
+CHR/nametable fetch). The single-crate `cpu_throughput` bench is the control:
+its cycle loop links essentially one crate, so cross-crate LTO has nothing to
+inline and the delta sits in the noise (+0.3%) — exactly the signature of a
+*cross-crate-inlining* win, not a codegen-quality artifact.
+
+**Byte-identity — verified, not assumed.** Both profiles were rebuilt in
+**release** mode (so the actual LTO codegen is exercised, unlike a default
+`cargo test` dev build) and run against the golden oracle:
+
+```bash
+cargo test --release -p rustynes-test-harness --features test-roms \
+    --test accuracycoin --test visual_regression --test nestest --test apu_mixer
+```
+
+Both `lto = "fat"` and `lto = "thin"` pass byte-for-byte identically — AccuracyCoin
+**141/141**, the `nestest` golden-log 0-diff, the golden-framebuffer
+`visual_regression` suite, and the APU `apu_mixer`/volume audio suites all
+green under each profile — confirming LTO level affects inlining and code
+layout only, never the emulated framebuffer/audio/cycle hashes (Rust emits no
+fast-math).
+
+**Decision: retain `lto = "fat"`.** It was already the shipped default; this
+A/B retroactively validates it well above the adoption bar at zero byte-identity
+cost. No default-build change was made — this is the measured justification for
+the existing profile, filling the gap the mis-stated caption had left. The one
+tradeoff is release build time (fat-LTO + `codegen-units = 1` serializes the
+final codegen: a clean `full_frame` bench rebuild ran ~55–80 s here); that is a
+build-time-only cost paid once per release, never at runtime, and is acceptable
+for the shipping binary.
+
+#### Host-tuned / target-CPU release variants (opt-in, non-default)
+
+The portable release build targets the baseline `x86-64` ISA so the shipped
+binary runs everywhere. Two opt-in variants trade portability for a tuned
+instruction set — both keep the emulated output byte-identical (Rust enables no
+fast-math / FP contraction under `target-cpu`), but **verify with the oracle
+suite anyway** when benchmarking with them, and never ship them as the portable
+artifact:
+
+- **`release-native` (host-tuned).** The `[profile.release-native]` profile
+  (inherits `release`) exists so host-tuned objects stay out of the portable
+  release cache; cargo profiles can't carry rustflags, so pair it with
+  `target-cpu=native`:
+
+  ```bash
+  RUSTFLAGS="-C target-cpu=native" cargo build --profile release-native -p rustynes-frontend
+  ```
+
+- **`x86-64-v3` (portable-but-modern desktop).** A middle ground that stays
+  portable across essentially all 2015-and-later x86-64 desktops (AVX2 + BMI2 +
+  FMA) without pinning to one exact CPU:
+
+  ```bash
+  RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release -p rustynes-frontend
+  ```
+
+  Useful for a self-built desktop binary; not wired into the release matrix
+  (which ships the maximally-portable baseline `x86-64` build).
 
 ### v1.4.0 Workstream F — measure-first micro-opt pass (core)
 
@@ -426,7 +514,7 @@ Its stages:
    back.
 4. **Determinism oracle** — rebuilds + runs the full `--features test-roms`
    suite with the PGO codegen applied (`cargo pgo optimize test`):
-   AccuracyCoin 139/139, `nestest` golden-log 0-diff, blargg/kevtris, the
+   AccuracyCoin 141/141, `nestest` golden-log 0-diff, blargg/kevtris, the
    golden-framebuffer `visual_regression` suite, and the APU mixer/volume audio
    suites — all assert byte-exact framebuffer/audio/cycle hashes.
 5. **Gate + upload** — computes the speedup and uploads the PGO binary as an
