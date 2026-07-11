@@ -56,7 +56,7 @@ pub use dmc::SUBPOS_DELAY;
 pub use envelope::Envelope;
 pub use frame_counter::{FrameCounter, FrameEvents, Mode as FrameCounterMode};
 pub use length::{LENGTH_TABLE, LengthCounter};
-pub use mixer::{FilterChain, Mixer, OnePole};
+pub use mixer::{FilterChain, FilterModel, Mixer, OnePole};
 pub use noise::{NTSC_NOISE_PERIODS, Noise, PAL_NOISE_PERIODS};
 pub use opll::{ChipType as OpllChipType, Opll, Patch as OpllPatch};
 pub use pulse::Pulse;

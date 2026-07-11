@@ -1504,6 +1504,7 @@ impl App {
         // v1.4.0 Workstream C — re-push the per-APU-channel output gain (the fresh
         // `Nes` booted at unity). Default (all 1.0) = byte-identical audio.
         self.apply_apu_channel_gain();
+        self.apply_apu_filter_model();
         // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
         // label so the expansion-channel volume slider matches the loaded mapper.
         self.refresh_expansion_audio_chip();
@@ -5490,6 +5491,18 @@ impl App {
         }
     }
 
+    /// v2.1.3 — push the configured APU analog output-filter model to the core.
+    /// Default (`"nes"`) is byte-identical to earlier builds; `"famicom"` /
+    /// `"clean"` drop the aggressive 440 Hz high-pass for a fuller low end.
+    /// Called on ROM load, after a power-cycle, and on a Settings change.
+    fn apply_apu_filter_model(&self) {
+        let model = crate::config::parse_filter_model(&self.config.audio.filter_model);
+        let mut guard = self.emu.lock();
+        if let Some(nes) = guard.nes.as_mut() {
+            nes.set_apu_filter_model(model);
+        }
+    }
+
     /// v1.4.0 Workstream C — query the loaded mapper's expansion-audio chip name
     /// from the core and push it into the Settings panel, so the Audio tab shows
     /// the expansion-channel volume slider only for boards with on-cart audio.
@@ -7389,6 +7402,7 @@ impl App {
             // v1.4.0 Workstream C — push the persisted per-APU-channel gain.
             // Default (all 1.0) leaves the deterministic audio unchanged.
             self.apply_apu_channel_gain();
+            self.apply_apu_filter_model();
             // v1.1.0 beta.1 / v1.5.0 D1 — re-apply the active palette (named
             // bank entry, else legacy .pal / built-in).
             self.apply_active_palette();
@@ -7568,6 +7582,7 @@ impl App {
         // v1.4.0 Workstream C — re-push the per-APU-channel gain onto the fresh
         // `Nes` (booted at unity); default (all 1.0) = byte-identical audio.
         self.apply_apu_channel_gain();
+        self.apply_apu_filter_model();
         // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
         // label so the expansion-channel volume slider matches the loaded mapper.
         self.refresh_expansion_audio_chip();
@@ -9066,6 +9081,9 @@ impl ApplicationHandler<AppEvent> for App {
                 // byte-identical.
                 if settings.apu_channel_gain {
                     self.apply_apu_channel_gain();
+                }
+                if settings.apu_filter_model {
+                    self.apply_apu_filter_model();
                 }
                 // v1.0.0 — act on a Save-States manager Save / Load click this
                 // frame, routing through the existing slot handlers; a Save

@@ -1157,6 +1157,15 @@ pub struct AudioConfig {
     /// core audio + the oracle stay byte-identical until the user moves a slider.
     #[serde(default = "default_audio_channel_gain")]
     pub channel_gain: [f32; 6],
+    /// v2.1.3 — the APU analog output-filter model: `"nes"` (default; the NES
+    /// front-loader's 90 + 440 Hz high-pass + 14 kHz low-pass — authentic and
+    /// thinnest, byte-identical to earlier builds), `"famicom"` (a single 37 Hz
+    /// high-pass — fuller bass), or `"clean"` (a ~10 Hz DC-block only — fullest,
+    /// closest to Mesen2/FCEUX which omit the high-pass). Tonal only; channel
+    /// content is unchanged and it never touches the save state. `#[serde(default)]`
+    /// = `"nes"`, so a pre-v2.1.3 config loads byte-identical.
+    #[serde(default = "default_audio_filter_model")]
+    pub filter_model: String,
     /// v1.7.0 "Forge" H3 — select the 20-band graphic EQ (using [`Self::eq_bands_20`])
     /// instead of the classic 5-band voicing ([`Self::eq_bands`]). `false`
     /// (default) keeps the 5-band behaviour, so a pre-v1.7.0 config with no key
@@ -1239,6 +1248,39 @@ const fn default_audio_channel_mask() -> u8 {
     0x3F
 }
 
+/// Serde default for [`AudioConfig::filter_model`] — the authentic NES
+/// front-loader chain (byte-identical to pre-v2.1.3 output).
+fn default_audio_filter_model() -> String {
+    "nes".to_string()
+}
+
+/// Map the `[audio] filter_model` config string to the core enum
+/// (`"famicom"` / `"clean"`, anything else → `NesRf`).
+#[must_use]
+pub const fn parse_filter_model(s: &str) -> rustynes_core::rustynes_apu::FilterModel {
+    use rustynes_core::rustynes_apu::FilterModel;
+    // Case-insensitive so a hand-edited `"Clean"` / `"Famicom"` still resolves.
+    if s.eq_ignore_ascii_case("famicom") {
+        FilterModel::Famicom
+    } else if s.eq_ignore_ascii_case("clean") {
+        FilterModel::Clean
+    } else {
+        FilterModel::NesRf
+    }
+}
+
+/// The canonical lowercase config token for a [`rustynes_core::rustynes_apu::FilterModel`]
+/// (`"nes"` / `"famicom"` / `"clean"`). Round-trips with [`parse_filter_model`].
+#[must_use]
+pub const fn filter_model_token(model: rustynes_core::rustynes_apu::FilterModel) -> &'static str {
+    use rustynes_core::rustynes_apu::FilterModel;
+    match model {
+        FilterModel::NesRf => "nes",
+        FilterModel::Famicom => "famicom",
+        FilterModel::Clean => "clean",
+    }
+}
+
 /// Serde default for [`AudioConfig::latency_ms`].
 const fn default_audio_latency_ms() -> u32 {
     60
@@ -1266,6 +1308,7 @@ impl Default for AudioConfig {
             eq_enabled: false,
             eq_bands: default_audio_eq_bands(),
             channel_gain: default_audio_channel_gain(),
+            filter_model: default_audio_filter_model(),
             eq_20_band: false,
             eq_bands_20: default_audio_eq_bands_20(),
             pan: default_audio_pan(),

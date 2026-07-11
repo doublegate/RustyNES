@@ -144,7 +144,30 @@ impl OnePole {
     }
 }
 
-/// 3-stage filter chain: HPF 90 Hz -> HPF 440 Hz -> LPF 14 kHz.
+/// v2.1.3 — the analog output-filter model the APU emulates.
+///
+/// The console hardware genuinely differs here (nesdev "APU Mixer"): the NES
+/// front-loader's RF/composite circuit high-passes aggressively, while the
+/// Famicom uses only a gentle 37 Hz high-pass. `Clean` is a modern full-range
+/// option (no aggressive high-pass — the character Mesen2 / FCEUX / Nestopia
+/// produce, which omit the 90/440 Hz cascade). This only affects the tonal
+/// balance of the output; it never changes channel content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilterModel {
+    /// **NES front-loader** — HPF 90 Hz → HPF 440 Hz → LPF 14 kHz (nesdev). The
+    /// authentic (and thinnest) output; byte-identical to ares/tetanes. Default.
+    #[default]
+    NesRf,
+    /// **Famicom** — a single HPF ~37 Hz → LPF 14 kHz (nesdev Famicom spec).
+    /// Much fuller low end than the NES RF circuit (drops the 440 Hz HPF).
+    Famicom,
+    /// **Clean / full-range** — only a gentle ~10 Hz DC-block HPF → LPF 14 kHz.
+    /// Keeps all bass; closest to Mesen2 / FCEUX (which apply no high-pass).
+    Clean,
+}
+
+/// 3-stage filter chain. The stages are model-dependent (see [`FilterModel`]);
+/// the default [`FilterModel::NesRf`] is HPF 90 Hz → HPF 440 Hz → LPF 14 kHz.
 #[derive(Debug, Clone, Copy)]
 pub struct FilterChain {
     pub(crate) hp1: OnePole,
@@ -153,15 +176,40 @@ pub struct FilterChain {
 }
 
 impl FilterChain {
-    /// Build the standard NES filter chain at `sample_rate` Hz.
+    /// Build the default (NES front-loader) filter chain at `sample_rate` Hz.
     #[must_use]
     pub fn new(sample_rate: u32) -> Self {
+        Self::for_model(sample_rate, FilterModel::NesRf)
+    }
+
+    /// Build the filter chain for a specific [`FilterModel`] at `sample_rate` Hz.
+    ///
+    /// The struct always keeps three one-pole stages; the softer models neutralize
+    /// the second high-pass by setting its corner near-DC (~1 Hz, coefficient
+    /// ≈ 1.0 → effectively transparent), so no struct/save-state layout changes.
+    #[must_use]
+    pub fn for_model(sample_rate: u32, model: FilterModel) -> Self {
         #[allow(clippy::cast_precision_loss)]
         let fs = sample_rate as f32;
-        Self {
-            hp1: OnePole::high_pass(90.0, fs),
-            hp2: OnePole::high_pass(440.0, fs),
-            lp: OnePole::low_pass(14_000.0, fs),
+        // A ~1 Hz high-pass is an all-but-transparent DC blocker used to
+        // "disable" the second HPF stage for the softer models.
+        let neutral_hpf = 1.0;
+        match model {
+            FilterModel::NesRf => Self {
+                hp1: OnePole::high_pass(90.0, fs),
+                hp2: OnePole::high_pass(440.0, fs),
+                lp: OnePole::low_pass(14_000.0, fs),
+            },
+            FilterModel::Famicom => Self {
+                hp1: OnePole::high_pass(37.0, fs),
+                hp2: OnePole::high_pass(neutral_hpf, fs),
+                lp: OnePole::low_pass(14_000.0, fs),
+            },
+            FilterModel::Clean => Self {
+                hp1: OnePole::high_pass(10.0, fs),
+                hp2: OnePole::high_pass(neutral_hpf, fs),
+                lp: OnePole::low_pass(14_000.0, fs),
+            },
         }
     }
 
@@ -204,6 +252,36 @@ mod tests {
     fn tnd_table_zero_at_zero() {
         let m = Mixer::new();
         assert_eq!(m.tnd_table[0], 0.0);
+    }
+
+    #[test]
+    fn filter_models_differ_in_low_end() {
+        // v2.1.3 — the softer models keep more bass. For a one-pole HPF,
+        // coeff = exp(-2*pi*fc/fs): a HIGHER corner → SMALLER coeff → more
+        // low-end removed. NesRf keeps the aggressive 440 Hz second HPF; the
+        // softer models neutralize it (near-DC corner → coeff ≈ 1.0).
+        let fs = 44_100;
+        let nes = FilterChain::for_model(fs, FilterModel::NesRf);
+        let fami = FilterChain::for_model(fs, FilterModel::Famicom);
+        let clean = FilterChain::for_model(fs, FilterModel::Clean);
+        // NesRf default is byte-identical to the historical `new`.
+        let legacy = FilterChain::new(fs);
+        assert_eq!(nes.hp1.coeff, legacy.hp1.coeff);
+        assert_eq!(nes.hp2.coeff, legacy.hp2.coeff);
+        // Second HPF: real 440 Hz on NesRf, transparent on the softer models.
+        assert!(nes.hp2.coeff < 0.95, "NesRf hp2 is a real 440 Hz HPF");
+        assert!(fami.hp2.coeff > 0.999, "Famicom hp2 near-transparent");
+        assert!(clean.hp2.coeff > 0.999, "Clean hp2 near-transparent");
+        // First HPF corner gentler on Famicom (37) than NesRf (90), gentlest on
+        // Clean (10): gentler corner → larger coeff.
+        assert!(
+            fami.hp1.coeff > nes.hp1.coeff,
+            "Famicom 37Hz gentler than 90Hz"
+        );
+        assert!(clean.hp1.coeff > fami.hp1.coeff, "Clean 10Hz gentlest");
+        // All keep the same 14 kHz low-pass.
+        assert_eq!(nes.lp.coeff, fami.lp.coeff);
+        assert_eq!(nes.lp.coeff, clean.lp.coeff);
     }
 
     #[test]
