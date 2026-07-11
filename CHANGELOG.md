@@ -56,6 +56,31 @@ cycle-accurate core later replaced.
   correctly reject a CHR-RAM header with a typed `RomError` (not a panic) and are
   handed CHR-ROM geometry; no real panics were found in the sweep. See
   `docs/mappers.md` ("Mapper accuracy tiering") and `docs/adr/0011-mapper-tiering.md`.
+- **Shared MMC3-clone A12/IRQ timing oracle (Fathom F3.3).** A new chip-level
+  test suite (`crates/rustynes-test-harness/tests/mmc3_clone_a12.rs`,
+  deterministic, headless, no ROM files — runs in the default `cargo test`)
+  proves the reusable `Mmc3Clone` core reproduces MMC3's A12-clocked
+  scanline-counter IRQ timing for all **eleven** `Mmc3CloneMapper` boards
+  (mappers 44, 49, 52, 115, 134, 189, 205, 238, 245, 348, 366). Because every
+  board routes its `$8000`-`$FFFF` register space — including the IRQ ports
+  `$C000`/`$C001`/`$E000`/`$E001` — into the same shared counter, the scanline
+  IRQ is board-independent by construction; the oracle exercises each board's
+  own register decode to confirm the ports reach that counter. The centerpiece
+  drives every clone board and a reference plain `Mmc3` (Sharp / rev A) through
+  the identical canonical rendering-scanline A12 edge sequence and asserts the
+  clone reproduces the reference's per-scanline IRQ-assert bitmap
+  **bit-for-bit**: the IRQ first asserts on rising edge `latch + 1` (the initial
+  `$C001` reload consumes edge 0, then `latch` decrements reach zero) and
+  re-asserts every `latch + 1` scanlines once acknowledged. The suite also pins
+  the `$E001`/`$E000` enable/acknowledge gate, the `$C001` reload periodicity,
+  and the A12 rising-**edge filter** (holding A12 high across consecutive reads
+  clocks the counter exactly once — no double-clock). The reference `Mmc3` *is*
+  the oracle, so any clone whose shared core drifted from MMC3's scanline timing
+  would fail. This is **additive test evidence** deepening the cluster's
+  existing `Curated` classification — it promotes nothing, moves no tier, and
+  leaves the deterministic `#![no_std]` core byte-identical (no mapper source
+  changed: the clone core already matches MMC3 timing). See `docs/mappers.md`
+  ("MMC3-clone A12/IRQ timing oracle").
 
 ## [2.1.3] - 2026-07-11 - "Fathom" (quality-of-life — APU filter-model audio fix + Game Genie code nomination/database + universal header-robust matching + MkDocs docs handbook; "Codex")
 
