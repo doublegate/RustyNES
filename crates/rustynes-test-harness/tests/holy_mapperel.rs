@@ -237,7 +237,7 @@ fn holy_mapperel_bank_reachability_regression_net() {
     // *loudly* below rather than merely printing the label into the pinned
     // snapshot — otherwise a `cargo insta accept` after a new ROM drops in would
     // silently bless an unclassified mapper ROM and let it go green in CI.
-    let mut unverified: Vec<String> = Vec::new();
+    let mut unverified: Vec<&str> = Vec::new();
     for path in &roms {
         let stem = path
             .file_stem()
@@ -245,7 +245,7 @@ fn holy_mapperel_bank_reachability_regression_net() {
             .expect("utf-8 rom stem");
         let label = expect_label(stem);
         if label.starts_with("UNVERIFIED") {
-            unverified.push(stem.to_owned());
+            unverified.push(stem);
         }
         let bytes = fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
         let mut nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("{stem} must parse: {e:?}"));
