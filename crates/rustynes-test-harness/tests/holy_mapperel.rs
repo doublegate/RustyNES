@@ -73,22 +73,49 @@
 //! | `M66_P64K_C16K_V`   | 066 MHROM (`GxROM`)  | `0000` | PASS |
 //! | `M69_*` (×2)        | 069 J*ROM (FME-7)  | `1000` | WRAM residual (IRQ OK) |
 //!
-//! ## The WRAM-disable residual (`M1_*`, `M69_*`: nonzero WRAM nibble)
+//! ## The WRAM-protection residual (`M1_*`, `M69_*`: nonzero WRAM nibble)
 //!
-//! MMC1 and Sunsoft FME-7 both provide a *software WRAM-disable* bit (MMC1
-//! `$E000`/`$A000` bit 4 for power-off write-protection; FME-7 command `$8`
-//! RAM-enable bit). `RustyNES` treats cartridge WRAM at `$6000-$7FFF` as always
-//! enabled and does **not** model that disable path (`crates/rustynes-mappers/
-//! src/mmc1.rs` and `.../sprint3.rs` access `prg_ram` unconditionally). This is
-//! a deliberate, widely-shared simplification — Holy Mapperel's own README
-//! notes FCEUX and `PowerPak` omit it too, and modelling MMC1 RAM-disable is a
-//! notorious game-compatibility hazard. It is a *WRAM-protection* residual, not
-//! a bank-reachability defect (all banks are reachable and every other sub-test
-//! is `0`; the FME-7 IRQ nibble is `0` = the interval-timer IRQ works). It is
-//! recorded in `docs/accuracy-ledger.md` as a documented, deferred residual.
+//! Both `M1_*` and `M69_*` land a `1` in the WRAM nibble, but for **different
+//! reasons** — the "`RustyNES` treats WRAM as always-enabled" story is accurate
+//! for MMC1 only; FME-7 does model its RAM-enable bits and fails a narrower,
+//! open-bus edge instead.
+//!
+//! **MMC1 (`M1_*` = `1000` / `5000`).** MMC1 provides a *software WRAM
+//! write-protect* bit (`$E000` bit 4; SNROM adds a second `$A000` bit-4 layer).
+//! `RustyNES` does **not** model it: `crates/rustynes-mappers/src/mmc1.rs`
+//! reads and writes `$6000-$7FFF` `prg_ram` unconditionally, ignoring the
+//! disable bit. Holy Mapperel's disable sub-checks therefore fail — `1000` on
+//! SJROM (`$E000` layer = `MAPTEST_WRAMEN` `$10`), `5000` on SNROM (both
+//! layers, `MAPTEST_WRAMEN2 $40 | MAPTEST_WRAMEN $10`). This is a deliberate,
+//! widely-shared simplification: Holy Mapperel's own README notes FCEUX and
+//! `PowerPak` omit it too, and modelling MMC1 RAM-disable is a notorious
+//! game-compatibility hazard.
+//!
+//! **FME-7 (`M69_*` = `1000`).** FME-7 is *not* an "always-enabled WRAM" case.
+//! `crates/rustynes-mappers/src/sprint3.rs` **does** model the command-`$8`
+//! RAM-enable (bit 7, `$80`) and RAM-select (bit 6, `$40`) bits: it maps
+//! PRG-RAM at `$6000-$7FFF` only when *both* are set, and maps a PRG-ROM bank
+//! when RAM is deselected (bit 6 = 0). Its `1` nibble is a narrower gap in a
+//! single register state. The FME-7 driver's WRAM test does three sub-checks:
+//! write-then-read RAM (`$C0|$3F` = select + enable, **passes** — RAM works),
+//! read the last ROM bank (`$00|$3F` = deselect, **passes** — ROM works), then
+//! read the *RAM-selected-but-disabled* window (`$40|$3F` = bit 6 = 1, bit 7 =
+//! 0) and require an **open-bus** byte `>= 3` (a `$7F` from the disconnected
+//! bus). On real hardware that state drives neither the RAM nor the ROM chip,
+//! so the read floats to open bus; `RustyNES` instead falls through to the
+//! PRG-ROM bank (`value & $3F` = the last 8 KiB bank) and returns its bank tag
+//! (`1`, which is `< 3`), so the driver sets `MAPTEST_WRAMEN` (`$10`) → WRAM
+//! nibble `1`. No known FME-7 game reads `$6000-$7FFF` in that
+//! RAM-selected-yet-disabled state, so closing the gap is not provably
+//! byte-identical against the commercial oracle; it is left as a documented,
+//! deferred open-bus edge rather than a speculative core change.
+//!
+//! Neither case is a bank-reachability defect — every bank is reachable and
+//! every other sub-test is `0`, including the FME-7 IRQ nibble (`0` = the
+//! interval-timer IRQ works). Both are recorded in `docs/accuracy-ledger.md`.
 //! This net pins the honest current code (`1000` / `5000`) rather than
-//! blind-passing — if the disable path is ever modelled, these hashes flip and
-//! force a conscious re-bless.
+//! blind-passing — if either path is ever modelled, these hashes flip and force
+//! a conscious re-bless.
 
 #![cfg(feature = "test-roms")]
 
@@ -205,11 +232,21 @@ fn holy_mapperel_bank_reachability_regression_net() {
     );
 
     let mut report = String::new();
+    // Any ROM whose stem is not yet classified in `expect_label` renders as the
+    // `UNVERIFIED` sentinel. Collecting the offenders here lets the test fail
+    // *loudly* below rather than merely printing the label into the pinned
+    // snapshot — otherwise a `cargo insta accept` after a new ROM drops in would
+    // silently bless an unclassified mapper ROM and let it go green in CI.
+    let mut unverified: Vec<String> = Vec::new();
     for path in &roms {
         let stem = path
             .file_stem()
             .and_then(|s| s.to_str())
             .expect("utf-8 rom stem");
+        let label = expect_label(stem);
+        if label.starts_with("UNVERIFIED") {
+            unverified.push(stem.to_owned());
+        }
         let bytes = fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
         let mut nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("{stem} must parse: {e:?}"));
 
@@ -241,11 +278,24 @@ fn holy_mapperel_bank_reachability_regression_net() {
 
         writeln!(
             report,
-            "{stem:<20} colors={colors} fnv1a64={pinned:016x}  [{}]",
-            expect_label(stem)
+            "{stem:<20} colors={colors} fnv1a64={pinned:016x}  [{label}]"
         )
         .expect("write report line");
     }
+
+    // Fail loudly on any still-`UNVERIFIED` ROM. The `UNVERIFIED` classification
+    // is documented as a CI-blocking gate (see the module preamble +
+    // `expect_label`): a newly-dropped ROM must be rendered and given an
+    // explicit `expect_label` entry before it can go green. Asserting here — not
+    // merely printing the label into the snapshot — is what makes the gate real;
+    // it trips even after a snapshot re-bless, so an unclassified mapper ROM
+    // cannot slip through CI.
+    assert!(
+        unverified.is_empty(),
+        "unclassified Holy Mapperel ROM(s) present: {unverified:?} — render each \
+         and add an explicit `expect_label` classification before blessing; the \
+         `UNVERIFIED` sentinel must never pass CI",
+    );
 
     // The combined golden sentinel: one snapshot, one line per ROM. A mapper
     // regression diffs exactly the affected line; a newly-added ROM appends a
