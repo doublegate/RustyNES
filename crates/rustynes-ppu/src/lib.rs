@@ -28,6 +28,7 @@ extern crate alloc;
 
 mod bus;
 mod palette;
+mod palette_gen;
 mod ppu;
 mod registers;
 mod snapshot;
@@ -36,6 +37,7 @@ pub mod state_trace;
 
 pub use bus::{BgSplitState, ExAttribute, PpuBus};
 pub use palette::{NES_PALETTE, PpuPalette, nes_color_to_rgba, palette_color_to_rgba};
+pub use palette_gen::{NtscPaletteParams, generate_base_palette};
 pub use ppu::MASK_WRITE_DELAY;
 pub use ppu::octal_trace;
 pub use ppu::read2007_diag;

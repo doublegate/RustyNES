@@ -16,6 +16,18 @@ cycle-accurate core later replaced.
 
 ### Added
 
+- **Generated NTSC palette** (Fathom F1.4). A new in-core synthesizer
+  (`rustynes_ppu::generate_base_palette`) produces the 64-entry base palette from
+  a model of the 2C02's composite-video output (the Bisqwit / ares YIQ
+  integration: two-level chroma square wave over 12 subcarrier phases →
+  demodulate → FCC YIQ→RGB with gamma), tunable via saturation / hue / contrast /
+  brightness / gamma. Every transcendental routes through `libm`, so the output is
+  **byte-identical across all targets** (x86 / aarch64 / wasm / `thumbv7em`) and
+  locked by a committed golden. It feeds the existing `set_custom_palette` /
+  emphasis-LUT path (no new emphasis model) and is **off by default** — the
+  shipped build keeps the hand-authored palette and is byte-identical; enable and
+  tune it under Settings → Palette → "Generated NTSC". Presentation-only; the
+  deterministic core and AccuracyCoin (141/141) are unaffected.
 - **NSF non-60 Hz playback + NSFe support** (Fathom F4.1/F4.2). The NSF player now
   parses the header **play-speed divider** (`$6E-$6F` NTSC / `$78-$79` PAL, µs per
   `play`) and drives non-standard rates correctly: a PAL 50 Hz tune — or any custom

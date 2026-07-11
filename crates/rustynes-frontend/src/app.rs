@@ -5489,6 +5489,20 @@ impl App {
         allow(clippy::missing_const_for_fn, clippy::needless_pass_by_ref_mut)
     )]
     fn apply_active_palette(&mut self) {
+        // v2.1.2 F1.4 — the generated NTSC palette, when enabled, takes
+        // precedence over the named bank + legacy `.pal` + built-in. It is a
+        // pure function of the stored params, synthesized fresh here (cheap:
+        // 64 colors, one-time on apply) and pushed as a custom base — the PPU
+        // applies the same emphasis LUT it uses for any custom palette.
+        if self.config.graphics.ntsc_palette_enabled {
+            let params = self.config.graphics.ntsc_palette.to_params();
+            let base = rustynes_core::rustynes_ppu::generate_base_palette(&params);
+            let mut guard = self.emu.lock();
+            if let Some(nes) = guard.nes.as_mut() {
+                nes.set_custom_palette(Some(base));
+            }
+            return;
+        }
         let base = self
             .config
             .graphics

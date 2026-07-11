@@ -833,6 +833,83 @@ pub struct GraphicsConfig {
     /// [`Self::palette_file`]). `#[serde(default)]` = `None`, byte-identical.
     #[serde(default)]
     pub active_palette: Option<String>,
+    /// v2.1.2 "Fathom" F1.4 — when `true`, the PPU base palette is *generated*
+    /// from the composite waveform model (`rustynes_ppu::generate_base_palette`,
+    /// tuned by [`Self::ntsc_palette`]) instead of the hand-authored built-in.
+    /// It takes precedence over the named bank + legacy `.pal`. **Default
+    /// `false`**, so the shipped presentation keeps the built-in palette and is
+    /// byte-identical (the generated palette changes framebuffer output, hence
+    /// it is opt-in). Presentation-only; no core / accuracy impact.
+    #[serde(default)]
+    pub ntsc_palette_enabled: bool,
+    /// v2.1.2 "Fathom" F1.4 — parameters for the generated NTSC palette (used
+    /// only when [`Self::ntsc_palette_enabled`]). `#[serde(default)]` = the
+    /// neutral calibration, so a pre-F1.4 config loads unchanged.
+    #[serde(default)]
+    pub ntsc_palette: NtscPaletteConfig,
+}
+
+/// v2.1.2 "Fathom" F1.4 — serializable mirror of `rustynes_ppu::NtscPaletteParams`.
+///
+/// A config can't reference the core type directly and stay `Deserialize`-stable,
+/// so this mirrors its fields; [`Self::to_params`] converts to the core type
+/// consumed by `generate_base_palette`. `f64` fields, so `PartialEq` only.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct NtscPaletteConfig {
+    /// Chroma gain (`1.0` neutral, `0.0` grayscale).
+    #[serde(default = "default_ntsc_pal_saturation")]
+    pub saturation: f64,
+    /// Global hue rotation in subcarrier-phase units (1 unit = 30°); `0.0` std.
+    #[serde(default)]
+    pub hue: f64,
+    /// Luma contrast about mid-gray (`1.0` neutral).
+    #[serde(default = "default_ntsc_pal_contrast")]
+    pub contrast: f64,
+    /// Overall luma gain (`1.0` neutral).
+    #[serde(default = "default_ntsc_pal_brightness")]
+    pub brightness: f64,
+    /// Display gamma for the `f^(2.2/gamma)` correction (`1.8` default).
+    #[serde(default = "default_ntsc_pal_gamma")]
+    pub gamma: f64,
+}
+
+const fn default_ntsc_pal_saturation() -> f64 {
+    1.0
+}
+const fn default_ntsc_pal_contrast() -> f64 {
+    1.0
+}
+const fn default_ntsc_pal_brightness() -> f64 {
+    1.0
+}
+const fn default_ntsc_pal_gamma() -> f64 {
+    1.8
+}
+
+impl Default for NtscPaletteConfig {
+    fn default() -> Self {
+        Self {
+            saturation: default_ntsc_pal_saturation(),
+            hue: 0.0,
+            contrast: default_ntsc_pal_contrast(),
+            brightness: default_ntsc_pal_brightness(),
+            gamma: default_ntsc_pal_gamma(),
+        }
+    }
+}
+
+impl NtscPaletteConfig {
+    /// Convert to the core synthesizer's parameter type.
+    #[must_use]
+    pub const fn to_params(self) -> rustynes_core::rustynes_ppu::NtscPaletteParams {
+        rustynes_core::rustynes_ppu::NtscPaletteParams {
+            saturation: self.saturation,
+            hue: self.hue,
+            contrast: self.contrast,
+            brightness: self.brightness,
+            gamma: self.gamma,
+        }
+    }
 }
 
 /// v1.5.0 "Lens" Workstream D1 — per-side overscan crop in NES pixels.
@@ -982,6 +1059,8 @@ impl Default for GraphicsConfig {
             overscan: Overscan::default(),
             palettes: PaletteBank::default(),
             active_palette: None,
+            ntsc_palette_enabled: false,
+            ntsc_palette: NtscPaletteConfig::default(),
         }
     }
 }
@@ -1858,6 +1937,23 @@ mod tests {
         assert_eq!(parse_pal(&bytes).unwrap()[0], [0, 1, 2]);
         // Too short → None.
         assert!(parse_pal(&[0u8; 191]).is_none());
+    }
+
+    #[test]
+    fn ntsc_palette_defaults_off_and_neutral() {
+        // Default = disabled + neutral params, so the shipped presentation keeps
+        // the built-in palette (byte-identical).
+        let g = GraphicsConfig::default();
+        assert!(
+            !g.ntsc_palette_enabled,
+            "generated palette must default off"
+        );
+        let p = g.ntsc_palette.to_params();
+        assert!((p.saturation - 1.0).abs() < f64::EPSILON);
+        assert!((p.hue - 0.0).abs() < f64::EPSILON);
+        assert!((p.contrast - 1.0).abs() < f64::EPSILON);
+        assert!((p.brightness - 1.0).abs() < f64::EPSILON);
+        assert!((p.gamma - 1.8).abs() < f64::EPSILON);
     }
 
     #[test]

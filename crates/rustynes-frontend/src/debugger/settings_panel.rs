@@ -804,6 +804,53 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
         ui.weak("(native only)");
     });
 
+    // --- Generated NTSC palette (F1.4, collapsing) ----------------------
+    // Synthesizes the 64-colour base from the composite-video model instead of
+    // the hand-authored built-in. Off by default (byte-identical presentation);
+    // when on it takes precedence over the named bank + legacy `.pal`.
+    egui::CollapsingHeader::new("Generated NTSC palette")
+        .id_salt("palette-generated-ntsc")
+        .default_open(false)
+        .show(ui, |ui| {
+            let g = &mut config.graphics;
+            let mut changed = ui
+                .checkbox(
+                    &mut g.ntsc_palette_enabled,
+                    "Use generated palette (overrides built-in / .pal)",
+                )
+                .changed();
+            ui.add_enabled_ui(g.ntsc_palette_enabled, |ui| {
+                let p = &mut g.ntsc_palette;
+                changed |= ui
+                    .add(egui::Slider::new(&mut p.saturation, 0.0..=2.0).text("Saturation"))
+                    .changed();
+                changed |= ui
+                    .add(egui::Slider::new(&mut p.hue, -3.0..=3.0).text("Hue (phase units)"))
+                    .changed();
+                changed |= ui
+                    .add(egui::Slider::new(&mut p.contrast, 0.5..=2.0).text("Contrast"))
+                    .changed();
+                changed |= ui
+                    .add(egui::Slider::new(&mut p.brightness, 0.5..=1.5).text("Brightness"))
+                    .changed();
+                changed |= ui
+                    .add(egui::Slider::new(&mut p.gamma, 1.0..=2.6).text("Gamma"))
+                    .changed();
+                if ui.button("Reset to defaults").clicked() {
+                    *p = crate::config::NtscPaletteConfig::default();
+                    changed = true;
+                }
+            });
+            if changed {
+                // Re-apply the resolved palette (the generated-precedence branch
+                // in `App::apply_active_palette` handles the enabled case) and
+                // re-seed the editor so its swatches reflect the new base.
+                state.apply.palette_select = true;
+                state.palette_editor.seeded = false;
+                save_config(config);
+            }
+        });
+
     // --- Editor (collapsing) --------------------------------------------
     egui::CollapsingHeader::new("Palette editor")
         .id_salt("palette-editor")
