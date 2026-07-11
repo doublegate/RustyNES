@@ -85,6 +85,38 @@ cycle-accurate core later replaced.
   genuinely-untested axis-B lever; ADR 0002 records it as an axis-B candidate
   deferred to a maintainer decision (see the 2026-07-11 F5.0 decision update)
   and `docs/accuracy-ledger.md` is updated with the refined disposition.
+- **PAL APU frame-counter oracle + honest residual (v2.1.5 "Regression Net &
+  Residual").** Wired blargg's freely-redistributable **`pal_apu_tests`** corpus
+  (10 sub-ROMs, PAL-calibrated) into CI as the first PAL-region APU oracle
+  (`crates/rustynes-test-harness/tests/pal_apu_tests.rs`, gated on the default
+  `--features test-roms`), forcing PAL region via a throwaway-header stamp. In
+  doing so it **corrects a false oracle**: the prior revision drove these
+  2005-era ROMs through the `$6000` WRAM status runner and asserted `status ==
+  0` — but they are plain NROM with *no PRG-RAM*, so `$6000` reads `0` forever
+  and the check passed vacuously, claiming "all ten PASS" while validating
+  nothing (the blargg `$DE $B0 $61` completion magic never even appears). The
+  suite now reads the ROMs' real **on-screen** verdict (`APU <title>` then
+  `PASSED` / `FAILED: #<n>`) decoded from the nametable by the new
+  `run_nes_screen` harness runner, which early-returns the instant the verdict
+  renders (5-18 frames) and treats a never-settling screen as a hard failure,
+  never a pass. The honest result under PAL: **3 of 10 pass** — the
+  region-independent length-counter operation (`01`), length lookup table
+  (`02`), and frame-IRQ flag semantics (`03`) — and **7 fail**, all of them the
+  PAL frame-counter *step-timing* checks (clock jitter, mode-0/1 length timing,
+  IRQ-flag/IRQ timing, length halt/reload timing). The cause is a genuine,
+  now-documented PAL residual: RustyNES's APU frame counter
+  (`crates/rustynes-apu/src/frame_counter.rs`) is region-agnostic and clocks
+  the sequencer at the NTSC step positions unconditionally, with no PAL variant;
+  the PAL-calibrated ROMs therefore never match (and fail identically under
+  NTSC region too, pinning the cause to the timing model, not region select).
+  This is **not** an NTSC regression — the NTSC APU frame counter stays
+  oracle-exact (AccuracyCoin APU Frame-Counter-IRQ 141/141; `apu_test` 8/8) —
+  and no core code changed, so the deterministic NTSC path is byte-identical.
+  The seven residuals are pinned as fail-loud regression guards that trip the
+  moment PAL frame-counter timing is ever modeled (the honest, non-forcing
+  analogue of the `mmc3_test_2/4` `_currently_fails` convention). ROM provenance
+  (blargg, public domain) is recorded in `tests/roms/LICENSES.md`; the residual
+  is recorded in `docs/accuracy-ledger.md` and `docs/apu-2a03.md`.
 
 ### Changed
 

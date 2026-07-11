@@ -119,6 +119,22 @@ The DMC IRQ flag is not cleared by reading `$4015`.
 PAL has separate frame-counter step positions. Do not derive PAL frame-counter
 timing by scaling NTSC sample rates; use region tables.
 
+> **PAL frame-counter step positions are a documented residual (v2.1.5).**
+> `crates/rustynes-apu/src/frame_counter.rs` is region-agnostic — it clocks the
+> sequencer at the **NTSC** step positions (7457 / 14913 / 22371 /
+> 29828-29830, and 37281-37282 for mode 1) *unconditionally*, with no PAL
+> variant (the PAL positions are 8313 / 16627 / 24939 / 33252-33253, …). PAL
+> *scheduler* timing (3.2:1 CPU:PPU, 50 Hz, PAL DMC/noise rate tables) is
+> modeled; the PAL frame **sequencer** positions are not. The blargg
+> `pal_apu_tests` oracle (see §Test plan) makes this visible: the three
+> region-independent checks pass, the seven PAL-step-timing checks fail. This
+> is a PAL-only gap and **not** an NTSC defect — the NTSC frame counter is
+> oracle-exact (AccuracyCoin APU Frame-Counter-IRQ 141/141; `apu_test` 8/8).
+> Tracked in `docs/accuracy-ledger.md`. Modeling it means region-parameterizing
+> the step-boundary constants (and replicating the mode-0 IRQ-visibility window
+> at the PAL positions) behind the `Region` already threaded into `Apu::new`,
+> keeping the NTSC constants — and therefore the default build — byte-identical.
+
 ### Reset behavior (v2.0.0 "Timebase", promoted in beta.4)
 
 Per the blargg `apu_reset` spec and nesdev ("At reset, `$4017` mode is
@@ -234,6 +250,18 @@ external open-bus latch used by cartridge or PPU register accesses.
 ## Test plan
 
 - **`apu_test`** (8 sub-ROMs) — register I/O, frame counter, length counter halt timing.
+- **`pal_apu_tests`** (10 sub-ROMs, **PAL** region) — blargg's PAL-calibrated
+  rebuild of the 2005-era APU length/frame-IRQ/timing checks. Wired in v2.1.5
+  as the first PAL-region APU oracle (`tests/pal_apu_tests.rs`). These predate
+  the `$6000` protocol and report **on-screen** (plain NROM, no PRG-RAM), so
+  the suite decodes the rendered `PASSED` / `FAILED: #<n>` verdict via the
+  `run_nes_screen` harness runner rather than the (vacuous, for these ROMs)
+  `$6000` check. Honest current state: `01.len_ctr` / `02.len_table` /
+  `03.irq_flag` pass (region-independent); `04.clock_jitter`,
+  `05`/`06.len_timing_mode0`/`1`, `07.irq_flag_timing`, `08.irq_timing`,
+  `10.len_halt_timing`, `11.len_reload_timing` fail — the PAL frame-counter
+  step-position residual documented above and in `docs/accuracy-ledger.md`
+  (pinned fail-loud so they flip when PAL step positions are modeled).
 - **`apu_mixer`** — confirms lookup-table mixer matches reference within 4%.
 - **`dmc_dma_during_read4`** — DMC DMA stalls + register read crosstalk.
 - **Audio capture comparison**: emit 60 frames of audio for a curated set of demo ROMs, compare PSNR against a Mesen-generated reference. (Not a strict pass/fail but a regression detector.)

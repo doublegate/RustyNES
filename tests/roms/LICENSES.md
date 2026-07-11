@@ -50,6 +50,7 @@ The following ROMs are vendored:
 | `blargg/sprite_hit_tests/01.basics.nes` ... `11.edge_timing.nes` | Sprite-zero hit (11 sub-ROMs) | `sprite_hit_tests_2005.10.05/*.nes` | NROM (0) | blargg | Public domain |
 | `blargg/apu_test/1-len_ctr.nes` ... `8-dmc_rates.nes` | APU register I/O + DMC (8 sub-ROMs) | `apu_test/rom_singles/*.nes` | NROM (0) | blargg | Public domain |
 | `blargg/apu_mixer/{square,triangle,noise,dmc}.nes` | APU non-linear mixer (4 sub-ROMs) | `apu_mixer/*.nes` | NROM (0) | blargg | Public domain |
+| `nes-test-roms/pal_apu_tests/{01.len_ctr,02.len_table,03.irq_flag,04.clock_jitter,05.len_timing_mode0,06.len_timing_mode1,07.irq_flag_timing,08.irq_timing,10.len_halt_timing,11.len_reload_timing}.nes` | APU length/frame-IRQ/timing — **PAL-calibrated** (10 sub-ROMs; on-screen `PASSED`/`FAILED: #n` verdict, no `$6000` protocol) | `pal_apu_tests/*.nes` | NROM (0) | blargg | Public domain |
 | `blargg/dmc_dma_during_read4/{dma_2007_read,dma_2007_write,dma_4016_read,double_2007_read,read_write_2007}.nes` | DMC DMA + register-readout bug (5 sub-ROMs) | `dmc_dma_during_read4/*.nes` | NROM (0) | blargg | Public domain |
 | `blargg/cpu_interrupts_v2/1-cli_latency.nes` ... `5-branch_delays_irq.nes` | CPU interrupt timing (5 sub-ROMs) | `cpu_interrupts_v2/rom_singles/*.nes` | NROM (0) | blargg | Public domain |
 | `blargg/mmc3_test_2/1-clocking.nes` ... `6-MMC3_alt.nes` | MMC3 IRQ + banking validation (6 sub-ROMs; modern $6000 protocol) | `mmc3_test_2/rom_singles/*.nes` | MMC3 (4) | blargg | Public domain |

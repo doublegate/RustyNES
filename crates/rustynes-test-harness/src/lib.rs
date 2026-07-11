@@ -25,7 +25,10 @@ mod nestest;
 pub mod coverage;
 
 pub use blargg::{BlarggBus, BlarggResult, run_blargg_until_complete};
-pub use nes_runner::{NesTestResult, run_nes_blargg, run_nes_blargg_pal, run_nes_blargg_reset};
+pub use nes_runner::{
+    NesTestResult, ScreenTestResult, ScreenVerdict, run_nes_blargg, run_nes_blargg_pal,
+    run_nes_blargg_reset, run_nes_screen,
+};
 pub use nestest::{LogLine, NestestBus, NestestRunner, format_log_line, parse_log_line};
 
 use rustynes_core::rustynes_cpu::Cpu;
