@@ -269,3 +269,7 @@ WARP.md
 # author/build the wiki; it carries its own .git and must never be committed
 # into the main repository.
 /RustyNES.wiki/
+
+# Game Genie header-robust re-key: NES 2.0 DB is a build-time input, never committed
+scripts/gg/nes20db.xml
+scripts/gg/__pycache__/
