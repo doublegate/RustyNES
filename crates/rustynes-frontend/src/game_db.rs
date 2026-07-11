@@ -402,6 +402,23 @@ pub fn rom_crc32(bytes: &[u8]) -> Option<u32> {
     Some(crc32(&bytes[start..end]))
 }
 
+/// v2.1.3 — compute the **full-file** CRC32 of an iNES image: the CRC32 of the
+/// whole `.nes` file **including** the 16-byte header (and any trainer).
+///
+/// This is the **No-Intro / libretro** convention — the key their DAT / cheat
+/// databases index by. It differs from [`rom_crc32`] (which excludes the
+/// header), so the Game Genie picklist tries BOTH keys: the header-excluded key
+/// matches the curated starter rows, and this full-file key matches the
+/// thousands of dump variants ingested from libretro-database. Returns `None`
+/// only when the bytes are not a plausible iNES image.
+#[must_use]
+pub fn rom_crc32_full(bytes: &[u8]) -> Option<u32> {
+    if bytes.len() < 16 || &bytes[0..4] != b"NES\x1A" {
+        return None;
+    }
+    Some(crc32(bytes))
+}
+
 /// IEEE CRC-32 (reflected, polynomial `0xEDB8_8320`) — the zip/PNG CRC, matching
 /// TetaNES' `compute_crc32`. Table-less; runs once per ROM load.
 fn crc32(data: &[u8]) -> u32 {

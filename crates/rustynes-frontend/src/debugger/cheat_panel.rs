@@ -83,7 +83,7 @@ pub struct CheatPanelState {
     /// v1.8.9 — the loaded ROM's category-grouped DB codes, cached so the
     /// pick-list does not re-query + sort + group the database every frame. Keyed
     /// on the ROM CRC; rebuilt only when the CRC changes.
-    genie_cache: Option<(u32, GenieGroups)>,
+    genie_cache: Option<(Vec<u32>, GenieGroups)>,
 }
 
 /// Category-grouped Game Genie DB codes for one ROM: `(category, codes)` rows.
@@ -140,7 +140,7 @@ pub fn show(
     state: &mut CheatPanelState,
     nes: &mut Nes,
     persist: Option<&CheatPersist>,
-    rom_crc: Option<u32>,
+    rom_crcs: &[u32],
 ) {
     let mut changed = false;
     egui::Window::new("Cheats (Game Genie)")
@@ -149,7 +149,7 @@ pub fn show(
         .default_size([420.0, 380.0])
         .resizable(true)
         .show(ctx, |ui| {
-            changed = body(ui, state, rom_crc);
+            changed = body(ui, state, rom_crcs);
         });
     // v1.0.0 (UX3 BUG-3) — re-sync the live core to the panel's enabled set on
     // EVERY frame the panel is open, not just when the list `changed`. The core
@@ -175,7 +175,7 @@ pub fn show(
     open: &mut bool,
     state: &mut CheatPanelState,
     nes: &mut Nes,
-    rom_crc: Option<u32>,
+    rom_crcs: &[u32],
 ) {
     egui::Window::new("Cheats (Game Genie)")
         .open(open)
@@ -183,14 +183,14 @@ pub fn show(
         .default_size([420.0, 380.0])
         .resizable(true)
         .show(ctx, |ui| {
-            let _ = body(ui, state, rom_crc);
+            let _ = body(ui, state, rom_crcs);
         });
     // v1.0.0 (UX3 BUG-3) — every-frame resync (see the native variant above).
     resync_nes(state, nes);
 }
 
 /// The window body. Returns `true` if the cheat set changed this frame.
-fn body(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crc: Option<u32>) -> bool {
+fn body(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crcs: &[u32]) -> bool {
     let mut changed = false;
 
     ui.horizontal(|ui| {
@@ -214,7 +214,7 @@ fn body(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crc: Option<u32>) ->
     // validated path as a typed code (`add_code_by_str`), feeding the existing
     // `GenieCode` decode + persistence. The list only appears when the loaded
     // ROM's CRC matches a database entry, so it never clutters an unknown ROM.
-    changed |= genie_db_picklist(ui, state, rom_crc);
+    changed |= genie_db_picklist(ui, state, rom_crcs);
 
     if !state.error.is_empty() {
         ui.colored_label(
@@ -472,14 +472,23 @@ fn add_code_by_str(state: &mut CheatPanelState, raw: &str) -> bool {
 /// match. Selecting a row appends that code through [`add_code_by_str`] (the
 /// same validated path as a typed code). Returns `true` if the cheat set
 /// changed.
-fn genie_db_picklist(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crc: Option<u32>) -> bool {
-    let Some(crc) = rom_crc else {
+fn genie_db_picklist(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crcs: &[u32]) -> bool {
+    if rom_crcs.is_empty() {
         return false;
-    };
-    // v1.8.9 — codes for the loaded ROM, grouped by effect category. Cached on
-    // the CRC so the (sort + group) runs only when a new ROM loads, not per frame.
-    if state.genie_cache.as_ref().is_none_or(|(c, _)| *c != crc) {
-        state.genie_cache = Some((crc, crate::genie_db::codes_for_crc_by_category(crc)));
+    }
+    // v1.8.9 / v2.1.3 — codes for the loaded ROM (matched on ANY of its
+    // identifying CRC32s — the header-excluded key + the full-file No-Intro key,
+    // so any common dump resolves), grouped by effect category. Cached on the
+    // CRC set so the (union + sort + group) runs only on a new ROM, not per frame.
+    if state
+        .genie_cache
+        .as_ref()
+        .is_none_or(|(c, _)| c.as_slice() != rom_crcs)
+    {
+        state.genie_cache = Some((
+            rom_crcs.to_vec(),
+            crate::genie_db::codes_for_crcs_by_category(rom_crcs),
+        ));
     }
     let Some((_, groups)) = state.genie_cache.as_ref() else {
         return false;
@@ -487,7 +496,7 @@ fn genie_db_picklist(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crc: Op
     if groups.is_empty() {
         return false;
     }
-    let game = crate::genie_db::game_for_crc(crc).unwrap_or_default();
+    let game = crate::genie_db::game_for_crcs(rom_crcs).unwrap_or_default();
     // Collect picks, then apply after the `&state` borrow ends (so the selection
     // can mutate the cheat list via `add_code_by_str`).
     let mut to_add: Vec<String> = Vec::new();

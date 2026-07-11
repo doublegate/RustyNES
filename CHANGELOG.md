@@ -30,6 +30,21 @@ cycle-accurate core later replaced.
   Tonal only — channel content, determinism, save-states, and the audio oracle are
   unchanged on the default. The DRC resampler + band-limited BLEP synthesis were
   audited and found correct (they match Mesen2's approach); no change needed there.
+- **Game Genie per-game code nomination + a bulk code database**. The Cheats
+  panel now suggests the known Game Genie codes for the loaded game — a
+  category-grouped "Known codes" pick-list, each row feeding the same validated
+  `GenieCode::new` + persistence path as a hand-typed code — instead of only
+  decoding codes you enter (previously it showed "No Game Genie cheats. Enter a
+  6- or 8-character code above." for essentially every commercial ROM). A new
+  bulk catalog (`genie_database_full.tsv`, **~10,800 codes across ~520 USA/World
+  games**) is ingested from the openly-licensed libretro-database Game Genie
+  files and keyed to every known dump's CRC32 via the No-Intro NES DAT. To match
+  whatever dump "flavor" a user has, a ROM is now recognized on **two** CRC32
+  keys: the header-excluded `rom_crc32` (the curated starter catalog) and the
+  full-file No-Intro `rom_crc32_full` (the bulk catalog), unioned + de-duplicated.
+  Frontend-only (the deterministic core is untouched; codes re-validate at load).
+  The bulk catalog is native-only — it is excluded from the wasm bundle for size,
+  so the browser demo keeps the curated starter set.
 
 ## [2.1.2] - 2026-07-11 - "Fathom" (display-fidelity — generated NTSC palette + composite-shader ladder + Vs. `DualSystem` second screen + NSF non-60 Hz/NSFe; "Prism")
 
