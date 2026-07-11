@@ -205,7 +205,7 @@ Set when a non-transparent pixel of sprite 0 overlaps a non-transparent pixel of
 
 Determined during sprite *rendering*, not evaluation.
 
-### OAM decay (optional, opt-in, default-OFF) (v2.1.4 F2.3)
+### OAM decay (optional, opt-in, default-OFF) (Unreleased, F2.3)
 
 Real 2C02 OAM is dynamic RAM. Sprite evaluation reads every sprite's Y byte each
 rendered scanline, which implicitly refreshes the cell charge; but with rendering
