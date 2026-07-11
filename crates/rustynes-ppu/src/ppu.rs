@@ -269,6 +269,25 @@ pub mod octal_trace {
 /// the v2.0.3 campaign plan.
 const COPY_V_DELAY: u8 = 4;
 
+/// v2.1.4 F2.3 — optional OAM decay threshold, in **CPU cycles**.
+///
+/// The 2C02's Object Attribute Memory is dynamic RAM: each row is implicitly
+/// refreshed every time sprite evaluation (or a `$2004` access) reads it during
+/// rendering, but with rendering disabled long enough the un-refreshed rows lose
+/// their charge and decay to a fixed garbage pattern. Mesen2 models this as a
+/// per-8-byte-row CPU-cycle timestamp with a 3000-cycle refresh window
+/// (`NesPpu::OamDecayCycleCount`, `Core/NES/NesPpu.cpp`); a read/write that lands
+/// within 3000 CPU cycles of the row's last touch refreshes it, otherwise the row
+/// has decayed. This value mirrors Mesen2's constant exactly so the two agree on
+/// when a row is considered stale.
+///
+/// This whole model is **off by default** (`Ppu::oam_decay_enabled == false`) and
+/// **NTSC/Dendy-only** — on PAL the far more frequent refresh cadence masks decay
+/// entirely, so the feature is never applied there. With it off, no OAM access
+/// consults the decay state and the PPU is byte-identical to a build that never
+/// had the field. See `docs/ppu-2c02.md` (§OAM decay).
+const OAM_DECAY_CPU_CYCLES: u64 = 3000;
+
 /// Region governs the size of the post-render-to-pre-render scanline span.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum PpuRegion {
@@ -478,6 +497,28 @@ pub struct Ppu {
     pub(crate) secondary_oam: [u8; 32],
     /// Palette RAM: 32 entries, 6-bit each (high 2 bits open-bus on read).
     pub(crate) palette_ram: [u8; 32],
+
+    // === v2.1.4 F2.3 optional OAM decay (opt-in, default-OFF) ===
+    /// Per-8-byte-row last-touch timestamp, in **CPU cycles** (`dot_counter / 3`).
+    /// OAM is 256 bytes = 32 rows of 8 bytes; `oam_decay_cycles[addr >> 3]` is the
+    /// CPU cycle at which row `addr >> 3` was last refreshed by an OAM read/write.
+    /// Only consulted when [`Self::oam_decay_enabled`] is set AND the region is
+    /// NTSC/Dendy; otherwise it is dead state that never influences a read. Mirrors
+    /// Mesen2's `_oamDecayCycles` (`Core/NES/NesPpu.cpp`).
+    ///
+    /// Serialized as a *relative age* in the PPU snapshot v7 tail (see
+    /// `snapshot.rs`): the absolute timestamps reference the free-running,
+    /// **un-serialized** `dot_counter`, so a raw absolute value would be meaningless
+    /// after a rollback/restore rebased that counter. Storing `now - timestamp`
+    /// (and reconstructing `now - age` on load, relative to the live counter) keeps
+    /// a run-ahead / netplay `snapshot`→`restore` byte-identical to the forward run.
+    pub(crate) oam_decay_cycles: [u64; 32],
+    /// Master enable for the OAM-decay model. **`false` by default** — a frontend /
+    /// config knob (re-applied on load like `region` / `active_palette`), NOT part
+    /// of the save-state. While `false`, every decay hook early-returns, so OAM
+    /// reads/writes touch neither this flag's siblings nor `oam_decay_cycles`, and
+    /// the framebuffer/audio/replay output is byte-identical to a decay-free build.
+    pub(crate) oam_decay_enabled: bool,
 
     // === Open-bus latch (for $2000-$3FFF) ===
     /// Most recent value driven onto the PPU bus by any register access.
@@ -937,6 +978,12 @@ impl Ppu {
             oam_bus_sprite_in_range: false,
             oam_bus_overflow_counter: 0,
             palette_ram: [0u8; 32],
+            // v2.1.4 F2.3 — OAM decay is off by default; the timestamps start at 0
+            // (row "last touched at cycle 0"). While disabled they are never read,
+            // and `set_oam_decay(true)` re-bases them to the current cycle so
+            // enabling mid-run does not instantly decay every row.
+            oam_decay_cycles: [0; 32],
+            oam_decay_enabled: false,
             open_bus: 0,
             open_bus_decay: [0; 3],
             nmi_line: false,
@@ -1119,6 +1166,112 @@ impl Ppu {
         self.extra_scanlines
     }
 
+    /// v2.1.4 F2.3 — enable or disable the optional OAM-decay accuracy model.
+    ///
+    /// **Off by default.** When off (the default) OAM reads/writes never consult
+    /// the decay state and the deterministic output is **byte-identical** to a
+    /// build without the feature — `AccuracyCoin`, the commercial oracle, and the
+    /// visual/`external_real_games` regression suites are unaffected. When on, the
+    /// PPU refreshes each 8-byte OAM row on every read (sprite evaluation + `$2004`)
+    /// and write; a row that goes un-refreshed for more than `OAM_DECAY_CPU_CYCLES`
+    /// (3000) CPU cycles decays to Mesen2's canonical garbage pattern on the next
+    /// read (`oam_decay_on_read`). The model is NTSC/Dendy-only (PAL's refresh
+    /// cadence masks decay) — the region gate lives in the hooks, so it is safe to
+    /// enable on any region.
+    ///
+    /// A frontend/config knob (re-applied on load like `region` / `active_palette`),
+    /// **not** part of the save-state. Turning the model ON re-bases every row's
+    /// timestamp to the current CPU cycle so a freshly-enabled model does not report
+    /// every row as instantly decayed; turning it OFF leaves the timestamps as-is
+    /// (they are simply no longer consulted).
+    pub const fn set_oam_decay(&mut self, enabled: bool) {
+        if enabled && !self.oam_decay_enabled {
+            // Freshly enabling: treat every row as just-refreshed so the first
+            // post-enable reads don't spuriously report a multi-second-old row as
+            // decayed. Idempotent re-enables (already on) skip this so a long
+            // rendering-disabled span already in progress keeps decaying.
+            let now = self.dot_counter / 3;
+            let mut i = 0;
+            while i < self.oam_decay_cycles.len() {
+                self.oam_decay_cycles[i] = now;
+                i += 1;
+            }
+        }
+        self.oam_decay_enabled = enabled;
+    }
+
+    /// v2.1.4 F2.3 — whether the optional OAM-decay model is currently enabled.
+    #[must_use]
+    pub const fn oam_decay_enabled(&self) -> bool {
+        self.oam_decay_enabled
+    }
+
+    /// v2.1.4 F2.3 — `true` when the OAM-decay model should act this access:
+    /// enabled AND the region is NTSC/Dendy (PAL's frequent refresh masks decay,
+    /// so Mesen2 never decays there). This is the single gate every decay hook
+    /// funnels through; at the default (disabled) it is a single bool test and the
+    /// hooks are behaviour-neutral.
+    #[inline]
+    const fn oam_decay_active(&self) -> bool {
+        self.oam_decay_enabled && !matches!(self.region, PpuRegion::Pal)
+    }
+
+    /// v2.1.4 F2.3 — OAM-read decay hook. Call **immediately before** reading
+    /// `oam[addr]` at every primary-OAM read site (the `$2004` read and both
+    /// sprite-evaluation read paths). Faithful port of Mesen2's `ReadSpriteRam`
+    /// (`Core/NES/NesPpu.cpp`):
+    ///
+    /// - If the model is inactive (disabled or PAL), this is a no-op — `oam` and
+    ///   the timestamps are left untouched, so the read is byte-identical to stock.
+    /// - Else, for the 8-byte row containing `addr`: if the last touch was within
+    ///   [`OAM_DECAY_CPU_CYCLES`] CPU cycles, refresh the row's timestamp (the DRAM
+    ///   cell was recharged by this access). Otherwise the row has decayed — rewrite
+    ///   all 8 of its bytes to the canonical pattern `((sprAddr & 3) == 2) ?
+    ///   (sprAddr & 0xE3) : sprAddr` (the attribute byte keeps only its implemented
+    ///   bits; the others read back their own low address) and leave the stale
+    ///   timestamp (so the row keeps reading decayed until a write refreshes it,
+    ///   exactly like Mesen2).
+    ///
+    /// The subsequent `oam[addr]` read then returns the (possibly decayed) byte.
+    #[inline]
+    fn oam_decay_on_read(&mut self, addr: u8) {
+        if !self.oam_decay_active() {
+            return;
+        }
+        let row = (addr >> 3) as usize;
+        let now = self.dot_counter / 3;
+        // Saturating (wrapping) subtraction: `now` is monotone ≥ the stored
+        // timestamp in practice, but `wrapping_sub` keeps this total even across a
+        // (astronomically unlikely) u64 counter wrap.
+        let elapsed = now.wrapping_sub(self.oam_decay_cycles[row]);
+        if elapsed <= OAM_DECAY_CPU_CYCLES {
+            self.oam_decay_cycles[row] = now;
+        } else {
+            let base = addr & 0xF8;
+            for i in 0..8u8 {
+                let spr_addr = base | i;
+                self.oam[spr_addr as usize] = if spr_addr & 0x03 == 0x02 {
+                    spr_addr & 0xE3
+                } else {
+                    spr_addr
+                };
+            }
+        }
+    }
+
+    /// v2.1.4 F2.3 — OAM-write decay hook. Call **after** writing `oam[addr]` at
+    /// every primary-OAM write site (`$2004` / OAM DMA). Faithful port of Mesen2's
+    /// `WriteSpriteRam`: a write recharges the row's DRAM cells, so refresh the
+    /// row's last-touch timestamp. Inactive (disabled or PAL) ⇒ no-op, so the write
+    /// path is byte-identical to stock at the default.
+    #[inline]
+    const fn oam_decay_on_write(&mut self, addr: u8) {
+        if !self.oam_decay_active() {
+            return;
+        }
+        self.oam_decay_cycles[(addr >> 3) as usize] = self.dot_counter / 3;
+    }
+
     /// Rebuild [`Self::rgba_lut`] from the custom palette when one is loaded,
     /// otherwise from the active built-in [`crate::palette::PpuPalette`].
     const fn rebuild_rgba_lut(&mut self) {
@@ -1174,6 +1327,18 @@ impl Ppu {
         self.data_buffer = 0;
         self.post_reset_mask_remaining = self.region.post_reset_mask_cycles();
         self.nmi_line = false;
+        // v2.1.4 F2.3 — mark every OAM row freshly refreshed at reset, matching
+        // Mesen2's `NesPpu::Reset` (which stamps `_oamDecayCycles` with the current
+        // clock unconditionally). Doing this regardless of the enable flag keeps the
+        // timestamps sane if decay is toggled on after a reset, and is inert while
+        // decay is off (the array is never read). `dot_counter / 3` is the current
+        // CPU cycle (NTSC/Dendy have 3 dots per CPU cycle).
+        let now = self.dot_counter / 3;
+        let mut i = 0;
+        while i < self.oam_decay_cycles.len() {
+            self.oam_decay_cycles[i] = now;
+            i += 1;
+        }
     }
 
     /// Returns `true` if the PPU is asserting the NMI line.
@@ -1508,6 +1673,10 @@ impl Ppu {
     /// hit OAM directly per nesdev.
     pub fn oam_dma_write(&mut self, value: u8) {
         self.oam[self.oam_addr as usize] = value;
+        // v2.1.4 F2.3 — OAM-decay write hook (no-op at the default): the DMA byte
+        // recharges the written row's DRAM cells, so refresh its timestamp. Mesen2
+        // routes DMA writes through the same `WriteSpriteRam` refresh.
+        self.oam_decay_on_write(self.oam_addr);
         self.oam_addr = self.oam_addr.wrapping_add(1);
     }
 
@@ -1730,6 +1899,10 @@ impl Ppu {
                         return v;
                     }
                 }
+                // v2.1.4 F2.3 — OAM-decay read hook (no-op at the default): a
+                // non-rendering `$2004` read refreshes the row, or returns the
+                // decayed pattern if it has gone stale. Must run before the read.
+                self.oam_decay_on_read(self.oam_addr);
                 let mut v = self.oam[self.oam_addr as usize];
                 if (self.oam_addr & 0x03) == 0x02 {
                     v &= 0xE3;
@@ -1966,6 +2139,9 @@ impl Ppu {
                     self.oam_addr = self.oam_addr.wrapping_add(4) & 0xFC;
                 } else {
                     self.oam[self.oam_addr as usize] = value;
+                    // v2.1.4 F2.3 — OAM-decay write hook (no-op at the default):
+                    // a direct `$2004` write refreshes the written row.
+                    self.oam_decay_on_write(self.oam_addr);
                     self.oam_addr = self.oam_addr.wrapping_add(1);
                 }
             }
@@ -3510,6 +3686,10 @@ impl Ppu {
                     self.oam_bus_addr_l = self.oam_addr & 0x03;
                 }
                 let addr = ((self.oam_bus_addr_l & 0x03) | (self.oam_bus_addr_h << 2)) as usize;
+                // v2.1.4 F2.3 — OAM-decay read hook (no-op at the default): a
+                // sprite-evaluation primary-OAM read refreshes the row's DRAM
+                // cells (this is what keeps OAM alive during normal rendering).
+                self.oam_decay_on_read((addr & 0xFF) as u8);
                 let raw = self.oam[addr & 0xFF];
                 // OAM byte 2 (attributes) bits 2-4 are unimplemented (read 0).
                 self.oam_bus_copybuffer = if addr & 0x03 == 0x02 { raw & 0xE3 } else { raw };
@@ -3741,6 +3921,10 @@ impl Ppu {
             // reads byte 0; the legacy special-case is preserved for
             // bit-exact compatibility.
             let addr = ((self.sprite_eval_n as usize) * 4) + (self.sprite_eval_m as usize);
+            // v2.1.4 F2.3 — OAM-decay read hook (no-op at the default): the legacy
+            // per-dot sprite-eval read path also refreshes the row it reads, so both
+            // eval models keep OAM alive identically during rendering.
+            self.oam_decay_on_read((addr & 0xFF) as u8);
             self.sprite_eval_read_latch = self.oam[addr & 0xFF];
             // Expose the current eval index via the OAMADDR register
             // (truncated to u8 via the `& 0xFF` mask). This is the
@@ -4430,6 +4614,138 @@ mod tests {
             p.tick(&mut b); // dot 256 -> 326, through the whole window
         }
         assert_eq!(p.oam_addr, 0, "OAMADDR washed to 0 across dots 257-320");
+    }
+
+    // v2.1.4 F2.3 — optional OAM decay (opt-in, default-OFF). Models Mesen2's
+    // `ReadSpriteRam`: a row un-refreshed for > OAM_DECAY_CPU_CYCLES CPU cycles
+    // decays to `((sprAddr & 3) == 2) ? (sprAddr & 0xE3) : sprAddr` on the next
+    // read. The read path used here is the plain (non-rendering) `$2004` read —
+    // `mask` empty + a vblank scanline keeps out of the rendering / dot-1-64 /
+    // dot-257-320 forcing windows.
+    #[test]
+    fn oam_decay_disabled_by_default_leaves_oam_untouched() {
+        let (mut p, mut b) = fresh_ppu();
+        p.mask = PpuMask::empty();
+        p.scanline = 250; // vblank — plain OAM read path
+        // Seed a distinctive value in row 0 (bytes 0..8).
+        for i in 0..8u8 {
+            p.oam[i as usize] = 0xAA;
+        }
+        // Advance the clock WELL past the decay window with no OAM access.
+        p.dot_counter = (OAM_DECAY_CPU_CYCLES + 10_000) * 3;
+        // Default is disabled — a read must return the seeded byte, and OAM must
+        // be byte-for-byte unchanged (no decay pattern written).
+        p.oam_addr = 0;
+        assert!(!p.oam_decay_enabled(), "decay off by default");
+        assert_eq!(
+            p.cpu_read_register(4, &mut b),
+            0xAA,
+            "no decay when disabled"
+        );
+        for i in 0..8usize {
+            assert_eq!(p.oam[i], 0xAA, "OAM row untouched when decay disabled");
+        }
+    }
+
+    #[test]
+    fn oam_decay_enabled_decays_stale_row_to_mesen_pattern() {
+        let (mut p, mut b) = fresh_ppu();
+        p.set_oam_decay(true);
+        p.mask = PpuMask::empty();
+        p.scanline = 250;
+        // Seed row 3 (OAM $18..$20) with a value distinct from the decay pattern.
+        for a in 0x18u8..0x20 {
+            p.oam[a as usize] = 0x5A;
+        }
+        // `set_oam_decay(true)` re-based the timestamps to the then-current cycle
+        // (0). Advance PAST the window so the row is stale on the next read.
+        p.dot_counter = (OAM_DECAY_CPU_CYCLES + 1) * 3;
+        // Read byte $1A (an attribute byte: $1A & 3 == 2) — the whole row decays
+        // first, then the (now-decayed) byte is returned. Expected decay byte for
+        // $1A = $1A & 0xE3 = $02; but `$2004` additionally $E3-masks an attr byte
+        // on the way out ($02 & $E3 == $02), so the observed value is $02.
+        p.oam_addr = 0x1A;
+        let v = p.cpu_read_register(4, &mut b);
+        assert_eq!(v, 0x1A & 0xE3, "attribute byte decays to sprAddr & 0xE3");
+        // The full row now holds the canonical pattern.
+        for a in 0x18u8..0x20 {
+            let expect = if a & 0x03 == 0x02 { a & 0xE3 } else { a };
+            assert_eq!(p.oam[a as usize], expect, "row byte ${a:02X} decayed");
+        }
+    }
+
+    #[test]
+    fn oam_decay_access_within_window_refreshes_row() {
+        let (mut p, mut b) = fresh_ppu();
+        p.set_oam_decay(true);
+        p.mask = PpuMask::empty();
+        p.scanline = 250;
+        for a in 0x18u8..0x20 {
+            p.oam[a as usize] = 0x5A;
+        }
+        // Touch the row just before the window closes (elapsed == threshold →
+        // still a refresh, not a decay), which re-stamps the timestamp.
+        p.dot_counter = OAM_DECAY_CPU_CYCLES * 3;
+        p.oam_addr = 0x18;
+        assert_eq!(
+            p.cpu_read_register(4, &mut b),
+            0x5A,
+            "in-window read: no decay"
+        );
+        // Advance another (threshold) cycles from the refresh point — still within
+        // the window relative to the refreshed timestamp, so no decay.
+        p.dot_counter += OAM_DECAY_CPU_CYCLES * 3;
+        p.oam_addr = 0x19;
+        assert_eq!(
+            p.cpu_read_register(4, &mut b),
+            0x5A,
+            "refresh kept row alive"
+        );
+        for a in 0x18u8..0x20 {
+            assert_eq!(p.oam[a as usize], 0x5A, "row still holds seeded data");
+        }
+    }
+
+    #[test]
+    fn oam_decay_is_pal_disabled() {
+        // PAL's frequent refresh cadence masks decay, so the model never acts
+        // there even when enabled (matches Mesen2). Same stale-row setup as the
+        // NTSC decay test, but on PAL the read must NOT decay.
+        let mut p = Ppu::new(PpuRegion::Pal);
+        p.post_reset_mask_remaining = 0;
+        let mut b = TestBus::new();
+        p.set_oam_decay(true);
+        p.mask = PpuMask::empty();
+        p.scanline = 250;
+        for a in 0x18u8..0x20 {
+            p.oam[a as usize] = 0x5A;
+        }
+        p.dot_counter = (OAM_DECAY_CPU_CYCLES + 1) * 3;
+        p.oam_addr = 0x18;
+        assert_eq!(p.cpu_read_register(4, &mut b), 0x5A, "PAL: decay disabled");
+        for a in 0x18u8..0x20 {
+            assert_eq!(p.oam[a as usize], 0x5A, "PAL row untouched");
+        }
+    }
+
+    #[test]
+    fn oam_decay_write_refreshes_row() {
+        let (mut p, mut b) = fresh_ppu();
+        p.set_oam_decay(true);
+        p.mask = PpuMask::empty();
+        p.scanline = 250;
+        for a in 0x18u8..0x20 {
+            p.oam[a as usize] = 0x5A;
+        }
+        // A `$2004` write of row 3 well past the window still refreshes it, so a
+        // subsequent in-window read of that row does not decay.
+        p.dot_counter = (OAM_DECAY_CPU_CYCLES + 5_000) * 3;
+        p.oam_addr = 0x18;
+        p.cpu_write_register(4, 0x33, &mut b); // writes $18, refreshes row 3
+        // Read $19 (same row) a short time later — within the window of the write.
+        p.dot_counter += 10 * 3;
+        p.oam_addr = 0x19;
+        assert_eq!(p.cpu_read_register(4, &mut b), 0x5A, "write kept row alive");
     }
 
     // F1.3 (Fathom) — PPU open-bus refresh map. The Blargg `ppu_open_bus` table

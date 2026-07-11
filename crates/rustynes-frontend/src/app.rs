@@ -1509,6 +1509,9 @@ impl App {
         // `Nes` booted at unity). Default (all 1.0) = byte-identical audio.
         self.apply_apu_channel_gain();
         self.apply_apu_filter_model();
+        // v2.1.4 F2.3 — re-push the optional OAM-decay toggle onto the fresh `Nes`
+        // (booted decay-off). Off (default) = byte-identical.
+        self.apply_oam_decay();
         // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
         // label so the expansion-channel volume slider matches the loaded mapper.
         self.refresh_expansion_audio_chip();
@@ -5507,6 +5510,18 @@ impl App {
         }
     }
 
+    /// v2.1.4 F2.3 — push the configured optional OAM-decay accuracy toggle to the
+    /// core. `false` (the default) is byte-identical to a decay-free core; `true`
+    /// models the 2C02's dynamic sprite-RAM decay (NTSC/Dendy only). Called on ROM
+    /// load, after a power-cycle, at startup, and on a Settings change.
+    fn apply_oam_decay(&self) {
+        let enabled = self.config.emulation.oam_decay;
+        let mut guard = self.emu.lock();
+        if let Some(nes) = guard.nes.as_mut() {
+            nes.set_oam_decay(enabled);
+        }
+    }
+
     /// v1.4.0 Workstream C — query the loaded mapper's expansion-audio chip name
     /// from the core and push it into the Settings panel, so the Audio tab shows
     /// the expansion-channel volume slider only for boards with on-cart audio.
@@ -7407,6 +7422,9 @@ impl App {
             // Default (all 1.0) leaves the deterministic audio unchanged.
             self.apply_apu_channel_gain();
             self.apply_apu_filter_model();
+            // v2.1.4 F2.3 — push the persisted OAM-decay toggle (no-op if no ROM
+            // is loaded yet; re-applied on each ROM load). Off = byte-identical.
+            self.apply_oam_decay();
             // v1.1.0 beta.1 / v1.5.0 D1 — re-apply the active palette (named
             // bank entry, else legacy .pal / built-in).
             self.apply_active_palette();
@@ -7587,6 +7605,9 @@ impl App {
         // `Nes` (booted at unity); default (all 1.0) = byte-identical audio.
         self.apply_apu_channel_gain();
         self.apply_apu_filter_model();
+        // v2.1.4 F2.3 — re-push the optional OAM-decay toggle onto the fresh `Nes`
+        // (booted decay-off). Off (default) = byte-identical.
+        self.apply_oam_decay();
         // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
         // label so the expansion-channel volume slider matches the loaded mapper.
         self.refresh_expansion_audio_chip();
@@ -9088,6 +9109,11 @@ impl ApplicationHandler<AppEvent> for App {
                 }
                 if settings.apu_filter_model {
                     self.apply_apu_filter_model();
+                }
+                // v2.1.4 F2.3 — OAM-decay toggle live-apply: push the new state
+                // into the core under the emu lock. Off (default) = byte-identical.
+                if settings.oam_decay {
+                    self.apply_oam_decay();
                 }
                 // v1.0.0 — act on a Save-States manager Save / Load click this
                 // frame, routing through the existing slot handlers; a Save

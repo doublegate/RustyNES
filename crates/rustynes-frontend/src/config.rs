@@ -1608,6 +1608,11 @@ pub struct Config {
     /// never part of the determinism oracle / `AccuracyCoin`.
     #[serde(default)]
     pub enhancements: EnhancementsConfig,
+    /// v2.1.4 F2.3 — the `[emulation]` section: optional *accuracy* toggles that
+    /// change the deterministic core behaviour (distinct from `[enhancements]`,
+    /// which never touches the oracle). All off by default = byte-identical.
+    #[serde(default)]
+    pub emulation: EmulationConfig,
     /// Vs. System arcade defaults (DIP switches) (v2.5.0).
     #[serde(default)]
     pub vs: VsConfig,
@@ -1659,6 +1664,26 @@ pub struct EnhancementsConfig {
     /// only. Clamped to `0..=80` on use.
     #[serde(default)]
     pub overclock_scanlines: u16,
+}
+
+/// v2.1.4 F2.3 — the `[emulation]` section: optional **accuracy** toggles.
+///
+/// Unlike [`EnhancementsConfig`] (non-accuracy "improvement" modes that are never
+/// applied while the oracle runs), these make emulation *more* faithful to real
+/// hardware and DO feed the deterministic core when enabled. Every field is
+/// off/neutral by default, so a pre-v2.1.4 config (no `[emulation]` section) loads
+/// **byte-identical** to today's behaviour.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct EmulationConfig {
+    /// Model OAM decay: the 2C02's dynamic sprite RAM loses un-refreshed rows to a
+    /// fixed garbage pattern when rendering is disabled for a while (à la Mesen2's
+    /// `EnableOamDecay`). **Off by default** = byte-identical to a decay-free core;
+    /// `AccuracyCoin`, the commercial oracle, and the visual regression suites are
+    /// unaffected. NTSC/Dendy-only (PAL's refresh cadence masks decay). Deterministic
+    /// when on (driven off the PPU's monotonic dot counter). Pushed into the core on
+    /// ROM load / power-cycle / a Settings change via `Nes::set_oam_decay`.
+    #[serde(default)]
+    pub oam_decay: bool,
 }
 
 /// `[retroachievements]` section (v2.7.0).

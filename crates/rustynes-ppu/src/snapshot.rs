@@ -81,7 +81,24 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///   audio class. v1..=5 blobs upconvert with `spr_halted = [true; 8]`
 ///   (halted = power-on default) and all others at `false`/`0`. Not a
 ///   *load-break* — a pre-v6 `.rns` still restores.
-pub const PPU_SNAPSHOT_VERSION: u8 = 6;
+/// - v7 (v2.1.4 F2.3): appends the optional OAM-decay model's per-8-byte-row
+///   last-touch timestamps (`oam_decay_cycles[32]`), stored as a **relative age**
+///   (`now - timestamp` in CPU cycles) rather than the raw absolute value. The
+///   absolute timestamps reference the free-running `dot_counter`, which is
+///   deliberately NOT part of the save-state (it is cosmetic / re-derived); a raw
+///   absolute value would be meaningless after a rollback/restore rebased that
+///   counter, and would desync the decay clock. Encoding the age and reconstructing
+///   `now - age` against the *live* counter on load makes a run-ahead / netplay
+///   `snapshot`→`restore` byte-identical to the forward run (the property the
+///   v3/v4/v5/v6 tails secured for the other mid-frame state). The enable flag
+///   itself is a frontend/config knob (re-applied on load like `region` /
+///   `active_palette`), so — matching the `extra_scanlines` precedent — it is NOT
+///   serialized; only the in-flight ages are. At the default (decay off) the ages
+///   are inert dead state, so the blob merely grows by 256 bytes and restore is
+///   behaviourally identical. v1..=6 blobs upconvert by stamping every row as
+///   freshly-touched at the live cycle (age 0), i.e. the rest state — correct for
+///   any pre-v7 save. Not a *load-break* — a pre-v7 `.rns` still restores.
+pub const PPU_SNAPSHOT_VERSION: u8 = 7;
 
 const CIRAM_LEN: usize = 0x800;
 const OAM_LEN: usize = 0x100;
@@ -200,6 +217,10 @@ impl R<'_> {
 
 impl Ppu {
     /// Encode the PPU's mutable state into a versioned binary blob.
+    // A flat, linear field-by-field encoder with per-version tail appends (v1
+    // through v7); splitting it would only scatter the schema that is clearest read
+    // top-to-bottom against the matching `restore` reader.
+    #[allow(clippy::too_many_lines)]
     #[must_use]
     pub fn snapshot(&self) -> Vec<u8> {
         // Capacity hint: ~256 KiB framebuffer dominates.
@@ -350,6 +371,18 @@ impl Ppu {
         w.u8(u8::from(self.oam_corruption_disabled));
         w.u8(u8::from(self.oam_corruption_disabled_instant));
 
+        // v7 (v2.1.4 F2.3): the optional OAM-decay model's per-row last-touch
+        // timestamps, stored as a RELATIVE AGE (`now - timestamp`) so the decay
+        // clock survives a rollback/restore that rebases the un-serialized
+        // free-running `dot_counter`. `now` is the live CPU cycle (`dot_counter / 3`,
+        // NTSC/Dendy divisor). `wrapping_sub` keeps the encode total even across the
+        // (astronomically unlikely) u64 wrap. When decay is off these ages are inert
+        // (never read on restore's decay path), but they still round-trip exactly.
+        let now = self.dot_counter / 3;
+        for ts in self.oam_decay_cycles {
+            w.u64(now.wrapping_sub(ts));
+        }
+
         w.buf
     }
 
@@ -380,7 +413,7 @@ impl Ppu {
         }
         let mut r = R { src: data, pos: 0 };
         let version = r.u8()?;
-        if !matches!(version, 1..=6) {
+        if !matches!(version, 1..=7) {
             return Err(PpuSnapshotError::UnsupportedVersion(version));
         }
         self.region = region_from_u8(r.u8()?)?;
@@ -527,6 +560,24 @@ impl Ppu {
             self.oam_corruption_index = 0;
             self.oam_corruption_disabled = false;
             self.oam_corruption_disabled_instant = false;
+        }
+
+        // v7 (v2.1.4 F2.3): the optional OAM-decay row timestamps, stored as a
+        // relative age. Reconstruct the absolute timestamp against the LIVE counter
+        // (`now = dot_counter / 3`, unchanged by restore) as `now - age`, so the
+        // decay clock is preserved regardless of how the counter was rebased between
+        // snapshot and restore (the rollback-determinism property). Pre-v7 blobs
+        // lack it: stamp every row as freshly-touched at the live cycle (age 0),
+        // i.e. the rest state a pre-v7 restore effectively left (the constructor's
+        // all-zero array with decay off is never consulted anyway).
+        let now = self.dot_counter / 3;
+        if version >= 7 {
+            for ts in &mut self.oam_decay_cycles {
+                let age = r.u64()?;
+                *ts = now.wrapping_sub(age);
+            }
+        } else {
+            self.oam_decay_cycles = [now; 32];
         }
 
         // sanity: the schema-fixed sizes mean we should be at end of input now.
@@ -694,11 +745,12 @@ mod tests {
         // u8*2 BG-reload freeze), the v4 extra-scanlines countdown (2 bytes:
         // u16 `extra_lines_remaining`), the v5 2-cycle-ALE fetch-state tail
         // (6 bytes: u8 `octal_latch` + u16 `address_bus` + u8 `ale_armed` + u8
-        // `pattern_latch_stale` + u8 `copy_v_delay`), AND the v6 render-state
+        // `pattern_latch_stale` + u8 `copy_v_delay`), the v6 render-state
         // tail (14 bytes: [u8;8] `spr_halted` + u8 `prev_rendering_enabled` + u8
-        // `rendering_enabled_delayed` + u8*4 `oam_corruption_*`) — 45 bytes
-        // total, none of which a v1 blob carried.
-        v1.extend_from_slice(&v2[at + 4..v2.len() - 45]);
+        // `rendering_enabled_delayed` + u8*4 `oam_corruption_*`), AND the v7
+        // OAM-decay tail (256 bytes: [u64;32] relative-age `oam_decay_cycles`) —
+        // 301 bytes total, none of which a v1 blob carried.
+        v1.extend_from_slice(&v2[at + 4..v2.len() - 301]);
         v1[0] = 1; // version byte -> v1
 
         let mut q = Ppu::new(PpuRegion::Ntsc);
@@ -783,6 +835,70 @@ mod tests {
         assert!(q.ale_armed);
         assert!(q.pattern_latch_stale);
         assert_eq!(q.copy_v_delay, 3);
+    }
+
+    #[test]
+    fn snapshot_round_trips_oam_decay_ages() {
+        // v2.1.4 F2.3: the optional OAM-decay per-row timestamps must round-trip.
+        // They are stored as a RELATIVE AGE against the un-serialized `dot_counter`,
+        // so the exact absolute value is preserved only when the restoring instance
+        // shares the same live counter (the normal same-instance snapshot/restore).
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.set_oam_decay(true);
+        p.dot_counter = 90_000; // now = 30_000 CPU cycles
+        // Distinct per-row timestamps (ages 0, 3, 6, ... spread across the array).
+        for (i, ts) in p.oam_decay_cycles.iter_mut().enumerate() {
+            *ts = 30_000 - (i as u64 * 3);
+        }
+        let blob = p.snapshot();
+        assert_eq!(
+            blob[0], PPU_SNAPSHOT_VERSION,
+            "blob carries current version"
+        );
+
+        // Restore into an instance with the SAME live counter → exact timestamps.
+        let mut q = Ppu::new(PpuRegion::Pal);
+        q.dot_counter = 90_000;
+        q.restore(&blob).unwrap();
+        assert_eq!(
+            q.oam_decay_cycles, p.oam_decay_cycles,
+            "absolute timestamps preserved when the live counter matches"
+        );
+
+        // Restore into an instance whose counter has been REBASED (the rollback
+        // case): the *relative age* — what the decay clock actually consumes — must
+        // be identical, even though the absolute timestamps differ.
+        let mut q2 = Ppu::new(PpuRegion::Ntsc);
+        q2.dot_counter = 3 * 1_000_000; // a wildly different base (now = 1_000_000)
+        q2.restore(&blob).unwrap();
+        let now_p = p.dot_counter / 3;
+        let now_q2 = q2.dot_counter / 3;
+        for i in 0..32 {
+            let age_p = now_p.wrapping_sub(p.oam_decay_cycles[i]);
+            let age_q2 = now_q2.wrapping_sub(q2.oam_decay_cycles[i]);
+            assert_eq!(age_p, age_q2, "row {i} age preserved across counter rebase");
+        }
+    }
+
+    #[test]
+    fn snapshot_pre_v7_blob_upconverts_oam_decay_to_rest() {
+        // A v6 blob lacks the OAM-decay tail; the v7 reader must upconvert it by
+        // stamping every row as freshly-touched at the live cycle (age 0), which is
+        // the rest state (decay is off in any pre-v7 build, so the array is inert).
+        // Synthesize a v6 blob by snapshotting v7 and truncating the 256-byte tail
+        // + rewriting the version byte.
+        let p = Ppu::new(PpuRegion::Ntsc);
+        let v7 = p.snapshot();
+        let mut v6 = v7[..v7.len() - 256].to_vec();
+        v6[0] = 6;
+
+        let mut q = Ppu::new(PpuRegion::Ntsc);
+        q.dot_counter = 3 * 12_345; // now = 12_345
+        q.restore(&v6).expect("v6 blob must upconvert");
+        assert_eq!(
+            q.oam_decay_cycles, [12_345u64; 32],
+            "pre-v7 rows stamped fresh at the live cycle"
+        );
     }
 
     #[test]

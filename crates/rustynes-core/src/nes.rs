@@ -2080,6 +2080,30 @@ impl Nes {
         self.bus.extra_scanlines()
     }
 
+    /// v2.1.4 F2.3 — enable or disable the optional OAM-decay accuracy model.
+    ///
+    /// The 2C02's OAM is dynamic RAM refreshed by sprite evaluation; with rendering
+    /// disabled for a while its un-refreshed 8-byte rows decay to a fixed garbage
+    /// pattern. This models that (à la Mesen2's `EnableOamDecay`): a row un-touched
+    /// for > 3000 CPU cycles decays on the next read. **Off by default** and
+    /// **byte-identical** to a decay-free core when off — `AccuracyCoin`, the
+    /// commercial oracle, and the visual regression suites are unaffected. It is
+    /// NTSC/Dendy-only (PAL's refresh cadence masks decay). Deterministic when on
+    /// (driven off the PPU's monotonic dot counter — no wall-clock / OS RNG), and a
+    /// frontend/config knob re-applied on load, NOT part of the save-state (the
+    /// in-flight per-row ages are serialized as a relative age so a rollback stays
+    /// deterministic; the enable flag is not).
+    pub const fn set_oam_decay(&mut self, enabled: bool) {
+        self.bus.set_oam_decay(enabled);
+    }
+
+    /// v2.1.4 F2.3 — whether the optional OAM-decay model is enabled (`false` =
+    /// default, byte-identical to a decay-free core).
+    #[must_use]
+    pub const fn oam_decay_enabled(&self) -> bool {
+        self.bus.oam_decay_enabled()
+    }
+
     /// Mapper debug info (bank registers, IRQ counters, mirroring, ...).
     #[must_use]
     pub fn mapper_info(&self) -> MapperDebugView {
