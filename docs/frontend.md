@@ -1496,6 +1496,41 @@ self-contained, fully-tested core; the deferred items are larger and more
 cross-cutting (most touch `app.rs`/the emu thread heavily, which a parallel-merge
 cut keeps minimal).
 
+### Game Genie code database + per-game nomination (v1.8.9 / v2.1.3)
+
+The Cheats panel does not only *decode* a code you type — it **nominates** the
+known Game Genie codes for the loaded ROM. When a game is recognized, a
+category-grouped pick-list ("Known codes for …") appears above the manual entry
+box; each row feeds the SAME validated path as a typed code
+(`add_code_by_str` → `rustynes_core::GenieCode::new` → the cheat persistence /
+post-frame poke overlay), so nominated and hand-entered codes are
+indistinguishable downstream. The pick-list is **frontend-only** (`genie_db`) —
+it never touches the deterministic core, and a malformed catalog row is silently
+dropped at load, so the determinism / no-cheat firewall is untouched.
+
+Recognition is by **CRC32**, and v2.1.3 matches a loaded ROM against *two* keys
+so any common dump "flavor" resolves:
+
+- the header-**excluded** `game_db::rom_crc32` (CRC of PRG-ROM + CHR-ROM) — the
+  key of the curated starter catalog (`genie_database.tsv`, compiled in for both
+  native and wasm), and
+- the full-file **No-Intro** `game_db::rom_crc32_full` (CRC of the whole `.nes`
+  including the 16-byte iNES header) — the key of the v2.1.3 bulk catalog
+  (`genie_database_full.tsv`).
+
+The debugger stashes both CRCs at ROM load (`set_rom_crc` / `set_rom_crc_full`)
+and the panel unions the matches across both keys, de-duplicated by code
+(`codes_for_crcs`). The bulk catalog carries **~10.8k codes across ~520 USA/World
+games**, ingested from the openly-licensed libretro-database Game Genie cheat
+files and keyed to every known dump's CRC32 via the No-Intro NES DAT (multiple
+CRCs per game cover the dump revisions). It ships on **every target, including
+the wasm browser demo**: at ~777 KB raw it gzips to only ~128 KiB, which sits
+comfortably inside the wasm bundle's 5 MiB size budget (the bundle is ~3.8 MiB
+gzip), so the browser build carries the full game coverage rather than a
+subset. Codes, effect names, and No-Intro CRC32s are factual data (not Nintendo
+program code) and freely redistributable; commercial ROMs are, as always, never
+committed.
+
 ## Settings
 
 Stored in `directories::ProjectDirs::config_dir() / "RustyNES" / "config.toml"`.

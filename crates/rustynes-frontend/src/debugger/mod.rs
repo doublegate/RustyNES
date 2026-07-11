@@ -342,6 +342,11 @@ pub struct DebuggerOverlay {
     /// [`DebuggerOverlay::set_rom_crc`] at load. `None` for FDS / NSF / no ROM.
     /// The ROM-database editor keys its overlay edits on this.
     rom_crc: Option<u32>,
+    /// v2.1.3 — the currently-loaded ROM's **full-file** CRC32 (whole `.nes`
+    /// including the header — the No-Intro key), pushed by
+    /// [`DebuggerOverlay::set_rom_crc_full`]. Used alongside [`Self::rom_crc`] so
+    /// the Game Genie picklist matches on either key (any dump variant).
+    rom_crc_full: Option<u32>,
     /// Graphics / audio / rewind settings panel state (v1.7.0).
     settings_ui: settings_panel::SettingsPanelState,
     /// Netplay host/join panel + status HUD state (v2.3.0).
@@ -537,6 +542,7 @@ impl DebuggerOverlay {
             cheat_ui: cheat_panel::CheatPanelState::default(),
             game_db_ui: game_db_panel::GameDbPanelState::default(),
             rom_crc: None,
+            rom_crc_full: None,
             settings_ui: settings_panel::SettingsPanelState::default(),
             netplay_ui: netplay_panel::NetplayPanelState::default(),
             perf_ui: perf_panel::PerfPanelState::default(),
@@ -736,9 +742,14 @@ impl DebuggerOverlay {
         self.cheat_ui.reapply_to_nes(nes);
     }
 
-    /// v1.2.0 (Workstream B, B4) — record the loaded ROM's CRC32 (PRG+CHR,
-    /// header-excluded) so the ROM-database editor panel can key its overlay
-    /// edits. `None` for FDS / NSF images (no CRC entry).
+    /// v2.1.3 — set the loaded ROM's full-file (No-Intro) CRC32 for the Game
+    /// Genie picklist's second match key (the `rom_crc_full` field).
+    pub fn set_rom_crc_full(&mut self, crc: Option<u32>) {
+        self.rom_crc_full = crc;
+    }
+
+    /// Set the loaded ROM's header-excluded CRC32 (the ROM-database editor + the
+    /// Game Genie picklist key on this; the `rom_crc` field).
     pub fn set_rom_crc(&mut self, crc: Option<u32>) {
         self.rom_crc = crc;
     }
@@ -1659,6 +1670,18 @@ impl DebuggerOverlay {
             // The Cheats panel reads `nes`; with no ROM loaded there is nothing
             // to edit, so no-op (the window simply doesn't open).
             if let Some(nes) = nes.as_deref_mut() {
+                // v2.1.3 — the ROM's identifying CRC32s for the Game Genie
+                // picklist: the header-excluded key + the full-file No-Intro key,
+                // so a loaded ROM matches whatever dump variant the user has.
+                // Built into a stack buffer (at most two keys) — this runs every
+                // frame the Cheats panel is open, so it must not heap-allocate.
+                let mut crc_buf = [0u32; 2];
+                let mut crc_len = 0;
+                for crc in [self.rom_crc, self.rom_crc_full].into_iter().flatten() {
+                    crc_buf[crc_len] = crc;
+                    crc_len += 1;
+                }
+                let rom_crcs = &crc_buf[..crc_len];
                 #[cfg(not(target_arch = "wasm32"))]
                 cheat_panel::show(
                     ctx,
@@ -1666,16 +1689,10 @@ impl DebuggerOverlay {
                     &mut self.cheat_ui,
                     nes,
                     self.cheat_persist.as_ref(),
-                    self.rom_crc,
+                    rom_crcs,
                 );
                 #[cfg(target_arch = "wasm32")]
-                cheat_panel::show(
-                    ctx,
-                    &mut self.show_cheat,
-                    &mut self.cheat_ui,
-                    nes,
-                    self.rom_crc,
-                );
+                cheat_panel::show(ctx, &mut self.show_cheat, &mut self.cheat_ui, nes, rom_crcs);
             }
         }
         if self.show_game_db

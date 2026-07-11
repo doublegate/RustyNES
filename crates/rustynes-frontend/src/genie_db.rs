@@ -13,25 +13,45 @@
 //! before being surfaced, so a malformed row is silently dropped and the
 //! determinism / no-cheat firewall is untouched.
 //!
-//! ## Key
+//! ## Keys (two CRC conventions)
 //!
-//! The key is the same "ROM CRC" [`crate::game_db::rom_crc32`] computes — the
-//! CRC32 of PRG-ROM + CHR-ROM, excluding the 16-byte iNES header (and any
-//! 512-byte trainer). So a loaded ROM resolves its codes by the CRC already
-//! computed at load.
+//! Entries are keyed by CRC32, but the two bundled catalogs use **different**
+//! conventions and a loaded ROM is matched against BOTH (see [`codes_for_crcs`]):
+//!
+//! - the curated starter set (`genie_database.tsv`) is keyed by the
+//!   header-EXCLUDED [`crate::game_db::rom_crc32`] (CRC of PRG-ROM + CHR-ROM,
+//!   header/trainer stripped), and
+//! - the v2.1.3 bulk catalog (`genie_database_full.tsv`) is keyed by the
+//!   full-file No-Intro [`crate::game_db::rom_crc32_full`] (CRC of the whole
+//!   `.nes` including the header).
+//!
+//! Both CRCs are computed for a ROM at load, so the pick-list resolves codes
+//! from either catalog regardless of the dump "flavor".
 
 use std::sync::OnceLock;
 
 use rustynes_core::GenieCode;
 
-/// The vendored database text (`#`/blank lines are comments; tab-separated rows).
-/// Small + factual — compiled in for both native and wasm.
+/// The curated starter database (`#`/blank lines are comments; tab-separated
+/// rows). Small + factual — compiled in for both native and wasm. Keyed by the
+/// header-EXCLUDED `crate::game_db::rom_crc32`.
 const DB_TEXT: &str = include_str!("genie_database.tsv");
+
+/// v2.1.3 — the bulk catalog (~10.8k codes / ~520 USA games) ingested from
+/// libretro-database + No-Intro, keyed by the FULL-FILE `rom_crc32_full`.
+/// Compiled into **both** native and wasm: at ~777 KB raw it gzips to only
+/// ~128 KiB, which sits comfortably inside the wasm bundle's 5 MiB size budget
+/// (the bundle is ~3.8 MiB gzip), so the browser demo carries the full game
+/// coverage too rather than just the curated starter set above.
+const FULL_DB_TEXT: &str = include_str!("genie_database_full.tsv");
 
 /// One Game Genie code entry: a named code for a specific ROM (by CRC32).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenieDbCode {
-    /// CRC32 of PRG-ROM + CHR-ROM (header/trainer excluded) — the key.
+    /// The ROM CRC32 this entry is keyed by. Its convention depends on the
+    /// source catalog: header-EXCLUDED `rom_crc32` for the curated starter set,
+    /// or full-file No-Intro `rom_crc32_full` for the bulk catalog (see the
+    /// module docs). A loaded ROM is matched against both conventions.
     pub crc: u32,
     /// Game title (display only).
     pub game: String,
@@ -82,6 +102,10 @@ fn db() -> &'static [GenieDbCode] {
     static DB: OnceLock<Vec<GenieDbCode>> = OnceLock::new();
     DB.get_or_init(|| {
         let mut rows: Vec<GenieDbCode> = DB_TEXT.lines().filter_map(parse_row).collect();
+        // v2.1.3 — append the bulk full-file-CRC catalog (the two key conventions
+        // coexist; the picklist matches a ROM against both keys). Included on
+        // every target — it gzips small enough to fit the wasm size budget.
+        rows.extend(FULL_DB_TEXT.lines().filter_map(parse_row));
         rows.sort_by(|a, b| a.crc.cmp(&b.crc).then_with(|| a.name.cmp(&b.name)));
         rows.shrink_to_fit();
         rows
@@ -100,11 +124,51 @@ pub fn game_for_crc(crc: u32) -> Option<String> {
     db().iter().find(|c| c.crc == crc).map(|c| c.game.clone())
 }
 
+/// v2.1.3 — codes for ANY of a ROM's identifying CRC32s, deduplicated by code.
+///
+/// The keys are the header-excluded [`crate::game_db::rom_crc32`] and the
+/// full-file No-Intro [`crate::game_db::rom_crc32_full`]. Matching on both lets a
+/// loaded ROM resolve its codes whatever dump "flavor" the user has.
+#[must_use]
+pub fn codes_for_crcs(crcs: &[u32]) -> Vec<GenieDbCode> {
+    // Query the sorted DB directly rather than via `codes_for_crc`, which would
+    // allocate + clone a throwaway Vec per CRC just to dedup it away here.
+    let database = db();
+    let mut out: Vec<GenieDbCode> = Vec::new();
+    for &crc in crcs {
+        for code in database.iter().filter(|c| c.crc == crc) {
+            if !out.iter().any(|c| c.code == code.code) {
+                out.push(code.clone());
+            }
+        }
+    }
+    out
+}
+
+/// The game title for the first of a ROM's CRC32s that matches. See
+/// [`codes_for_crcs`].
+#[must_use]
+pub fn game_for_crcs(crcs: &[u32]) -> Option<String> {
+    crcs.iter().find_map(|&c| game_for_crc(c))
+}
+
+/// The union of [`codes_for_crcs`] grouped by category (each group sorted by
+/// effect name) — the multi-key variant of [`codes_for_crc_by_category`].
+#[must_use]
+pub fn codes_for_crcs_by_category(crcs: &[u32]) -> Vec<(String, Vec<GenieDbCode>)> {
+    group_by_category(codes_for_crcs(crcs))
+}
+
 /// All known codes for a ROM grouped by category (each group sorted by effect
 /// name). For the cheat panel's category-grouped pick-list.
 #[must_use]
 pub fn codes_for_crc_by_category(crc: u32) -> Vec<(String, Vec<GenieDbCode>)> {
-    let mut codes = codes_for_crc(crc);
+    group_by_category(codes_for_crc(crc))
+}
+
+/// Sort a flat code list by (category, effect name) and collapse it into
+/// per-category groups. Shared by the single- and multi-CRC by-category lookups.
+fn group_by_category(mut codes: Vec<GenieDbCode>) -> Vec<(String, Vec<GenieDbCode>)> {
     codes.sort_by(|a, b| {
         a.category
             .cmp(&b.category)
@@ -224,5 +288,66 @@ mod tests {
         let cats = categories();
         assert!(cats.contains(&"Lives".to_string()) && cats.windows(2).all(|w| w[0] < w[1]));
         assert!(games().contains(&"Super Mario Bros.".to_string()));
+    }
+
+    #[test]
+    fn multi_crc_lookup_unions_and_dedups() {
+        // v2.1.3 — the multi-key lookup unions across every CRC and dedups by
+        // code, so passing the same CRC twice yields the single-CRC result (no
+        // duplicate rows) and never fewer codes than either key alone.
+        let single = codes_for_crc(0x3337_EC46);
+        let doubled = codes_for_crcs(&[0x3337_EC46, 0x3337_EC46]);
+        assert_eq!(
+            single.len(),
+            doubled.len(),
+            "a repeated CRC must not duplicate codes"
+        );
+        // A miss paired with a hit resolves to the hit's game (misses are skipped).
+        assert_eq!(
+            game_for_crcs(&[0xDEAD_BEEF, 0x3337_EC46]).as_deref(),
+            Some("Super Mario Bros.")
+        );
+        // The empty key set matches nothing.
+        assert!(codes_for_crcs(&[]).is_empty());
+        assert_eq!(game_for_crcs(&[]), None);
+        // The by-category union covers the same codes as the flat union.
+        let flat = codes_for_crcs(&[0x3337_EC46]);
+        let grouped: usize = codes_for_crcs_by_category(&[0x3337_EC46])
+            .iter()
+            .map(|(_, v)| v.len())
+            .sum();
+        assert_eq!(flat.len(), grouped);
+    }
+
+    /// v2.1.3 — the bulk full-file-CRC catalog ships on every target (it gzips
+    /// small enough for the wasm budget), folded on top of the curated set.
+    #[test]
+    fn full_catalog_is_loaded_and_keyed_by_full_file_crc() {
+        // The DB folds in the ~10.8k-code bulk catalog on top of the curated
+        // starter set, so it is far larger than the starter set alone.
+        assert!(
+            db().len() > 5_000,
+            "DB must include the bulk full-file catalog (got {})",
+            db().len()
+        );
+        // Contra's full-file (No-Intro) CRC32 resolves to its codes — the key
+        // convention the bulk catalog is indexed by (header INCLUDED), distinct
+        // from the header-excluded curated key.
+        let contra = codes_for_crc(0x37CF_0748);
+        assert!(
+            !contra.is_empty(),
+            "Contra's full-file CRC must list bulk-catalog codes"
+        );
+        assert_eq!(game_for_crc(0x37CF_0748).as_deref(), Some("Contra"));
+        // Every bulk-catalog code still round-trips through the core decoder
+        // (parse_row enforces it; this guards the larger corpus explicitly).
+        for entry in db() {
+            assert!(
+                GenieCode::new(&entry.code).is_ok(),
+                "bulk DB code {} ({}) must validate",
+                entry.code,
+                entry.name
+            );
+        }
     }
 }

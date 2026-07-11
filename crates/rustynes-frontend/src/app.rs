@@ -1432,9 +1432,13 @@ impl App {
             }
         }
         // v1.2.0 (B4) — let the ROM-database editor key its overlay on this ROM.
+        // v2.1.3 — also stash the full-file (No-Intro) CRC so the Game Genie
+        // picklist matches on either key (any dump variant of the loaded game).
         let rom_crc = crate::game_db::rom_crc32(&bytes);
+        let rom_crc_full = crate::game_db::rom_crc32_full(&bytes);
         if let Some(debugger) = self.debugger.as_mut() {
             debugger.set_rom_crc(rom_crc);
+            debugger.set_rom_crc_full(rom_crc_full);
         }
 
         self.rom_label = path
