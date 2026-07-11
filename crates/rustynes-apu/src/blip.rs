@@ -165,6 +165,15 @@ impl BlipBuf {
         b
     }
 
+    /// v2.1.3 — swap the analog output-filter model (see
+    /// [`crate::mixer::FilterModel`]), rebuilding the filter chain at the
+    /// current sample rate. Resets the filter's IIR state, so a change produces
+    /// a brief transient (as with any live filter swap) — the frontend applies
+    /// it at ROM load and on a settings change, not mid-note.
+    pub fn set_filter_model(&mut self, model: crate::mixer::FilterModel) {
+        self.filter = crate::mixer::FilterChain::for_model(self.sample_rate, model);
+    }
+
     /// Reset to silence. Empties the input ring, the pending output
     /// queue, and the filter chain state.
     pub fn reset(&mut self) {

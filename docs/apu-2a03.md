@@ -184,6 +184,18 @@ output = pulse_table[(pulse1 + pulse2) as usize]
 
 After mixing, apply: 90 Hz first-order high-pass, 440 Hz first-order high-pass, 14 kHz first-order low-pass.
 
+**Filter model (v2.1.3).** The three-stage chain above is the **NES front-loader**
+(RF/composite) circuit and is the default (`FilterModel::NesRf`, byte-identical to
+earlier builds — it matches ares/tetanes). Because that 440 Hz high-pass rolls off
+the bass/triangle register hard (an authentic but *thin* sound), `Apu::set_filter_model`
+also offers two softer, hardware-grounded models: **`Famicom`** (a single ~37 Hz
+high-pass — the nesdev Famicom spec, fuller low end) and **`Clean`** (only a ~10 Hz
+DC-block — fullest, the character Mesen2 / FCEUX / Nestopia produce by omitting the
+high-pass cascade). The model is tonal only — channel content is identical, it is
+never written into the save state, and the frontend re-applies it at ROM load — so
+determinism and the audio oracle hold on the default. Frontend selector: **Settings
+→ Audio → Filter model** (`[audio] filter_model` = `nes` / `famicom` / `clean`).
+
 ### Band-limited sample emission
 
 Naive sample-rate conversion produces aliasing. Use a blip-buf-style ring buffer:
