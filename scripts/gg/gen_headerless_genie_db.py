@@ -47,7 +47,11 @@ if not os.path.exists(XML):
 sys.path.insert(0, HERE)
 try:
     from alias_crcs import ALIAS_CRCS
-except Exception:
+except ImportError:
+    # Only the file being genuinely absent is tolerated (degraded run without the
+    # long-tail aliases). A syntax/other error in a present alias_crcs.py must NOT
+    # be swallowed into a silently-incomplete TSV — let it propagate.
+    print("warning: alias_crcs.py not found — running without the alias table")
     ALIAS_CRCS = {}
 
 ROMAN = {"i": "1", "ii": "2", "iii": "3", "iv": "4", "v": "5",
@@ -55,7 +59,7 @@ ROMAN = {"i": "1", "ii": "2", "iii": "3", "iv": "4", "v": "5",
 
 
 def norm(s):
-    s = s.split("\\")[-1]
+    s = re.split(r"[\\/]", s)[-1]
     s = re.sub(r"\.nes$", "", s, flags=re.I)
     s = re.sub(r"\s*\(rev\d+\)", "", s, flags=re.I)
     s = unicodedata.normalize("NFKD", s)
@@ -70,32 +74,37 @@ def norm(s):
     return "".join(toks)
 
 
-# 1. nes20db: normalized name -> set of header-excluded <rom crc32>
-xml = open(XML, encoding="utf-8").read()
+# 1. nes20db: normalized name -> set of header-excluded <rom crc32>. Each <game>
+# block has one <rom> today, but findall is used so multiple would all be picked
+# up (the `<rom\b` anchor excludes <prgrom>/<chrrom>).
+with open(XML, encoding="utf-8") as f:
+    xml = f.read()
 nes20 = {}
 for block in re.findall(r"<game>(.*?)</game>", xml, re.S):
     nm = re.search(r"<!--\s*(.*?)\s*-->", block)
-    rc = re.search(r'<rom\b[^>]*crc32="([0-9A-Fa-f]+)"', block)
-    if nm and rc:
-        nes20.setdefault(norm(nm.group(1)), set()).add(int(rc.group(1), 16))
+    rcs = re.findall(r'<rom\b[^>]*crc32="([0-9A-Fa-f]+)"', block)
+    if nm and rcs:
+        for rc in rcs:
+            nes20.setdefault(norm(nm.group(1)), set()).add(int(rc, 16))
 
 # 2. cheat content: game display name -> ordered distinct (effect, code, category)
 games = {}
 order = []
-for line in open(FULL, encoding="utf-8"):
-    if line.startswith("#") or not line.strip():
-        continue
-    p = line.rstrip("\n").split("\t")
-    if len(p) < 4:
-        continue
-    _crc, game, effect, code = p[0], p[1], p[2], p[3]
-    category = p[4] if len(p) > 4 and p[4] else "Misc"
-    if game not in games:
-        games[game] = []
-        order.append(game)
-    key = (effect, code, category)
-    if key not in games[game]:
-        games[game].append(key)
+with open(FULL, encoding="utf-8") as f:
+    for line in f:
+        if line.startswith("#") or not line.strip():
+            continue
+        p = line.rstrip("\n").split("\t")
+        if len(p) < 4:
+            continue
+        _crc, game, effect, code = p[0], p[1], p[2], p[3]
+        category = p[4] if len(p) > 4 and p[4] else "Misc"
+        if game not in games:
+            games[game] = []
+            order.append(game)
+        key = (effect, code, category)
+        if key not in games[game]:
+            games[game].append(key)
 
 # 3. resolve each game's header-excluded CRC set (name-join + alias fallback)
 rows = []
@@ -155,7 +164,8 @@ with open(OUT, "w", encoding="utf-8") as f:
     for (crc, game, effect, code, category) in uniq:
         f.write(f"{crc:08X}\t{game}\t{effect}\t{code}\t{category}\n")
 
-raw = open(OUT, "rb").read()
+with open(OUT, "rb") as f:
+    raw = f.read()
 gz = len(gzip.compress(raw))
 print(f"games total:        {len(order)}")
 print(f"games covered:      {covered_games}  (via alias: {covered_via_alias})")

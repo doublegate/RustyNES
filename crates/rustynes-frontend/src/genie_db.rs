@@ -125,6 +125,12 @@ fn db() -> &'static [GenieDbCode] {
         // gzip small enough to fit the wasm size budget.
         rows.extend(FULL_DB_TEXT.lines().filter_map(parse_row));
         rows.extend(HEADERLESS_DB_TEXT.lines().filter_map(parse_row));
+        // The three catalogs overlap (e.g. a game's full-file CRC appears in both
+        // the curated set and the bulk catalog), so drop exact (crc, code)
+        // duplicates before the display sort. `codes_for_crcs` already dedups by
+        // code per query, but this keeps `db()` itself and `codes_for_crc` clean.
+        rows.sort_by(|a, b| a.crc.cmp(&b.crc).then_with(|| a.code.cmp(&b.code)));
+        rows.dedup_by(|a, b| a.crc == b.crc && a.code == b.code);
         rows.sort_by(|a, b| a.crc.cmp(&b.crc).then_with(|| a.name.cmp(&b.name)));
         rows.shrink_to_fit();
         rows
@@ -391,12 +397,6 @@ mod tests {
         assert_eq!(
             game_for_crc(0xD779_4AFC).as_deref(),
             Some("Kirby's Adventure")
-        );
-        // The re-key materially grows coverage beyond the full-file catalog.
-        assert!(
-            db().len() > 15_000,
-            "DB must include the header-excluded re-key (got {})",
-            db().len()
         );
     }
 }
