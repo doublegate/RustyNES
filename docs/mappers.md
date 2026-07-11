@@ -414,6 +414,30 @@ window boards 305/306/312), and the BMC multicarts **261**/**289**/**320**/
 **336**/**349**. All are BestEffort: register-decode + save-state round-trip
 unit-tested, outside the AccuracyCoin / oracle gate.
 
+**MMC3-clone A12/IRQ timing oracle (Fathom F3.3).** The eleven
+`Mmc3CloneMapper` boards (44/49/52/115/134/189/205/238/245/348/366) all route
+their `$8000`-`$FFFF` register space — including the IRQ ports
+`$C000`/`$C001`/`$E000`/`$E001` — into a single shared `Mmc3Clone` core, so the
+A12-clocked scanline IRQ is board-independent by construction.
+`crates/rustynes-test-harness/tests/mmc3_clone_a12.rs` is a chip-level oracle
+(no ROM files, deterministic, runs in the default `cargo test`) that pins that
+timing as **additive evidence** behind the cluster's existing `Curated`
+classification — it does **not** move any tier. The centerpiece drives every
+clone board and a reference plain `Mmc3` (Sharp / rev A) through the identical
+canonical rendering-scanline A12 sequence and asserts the clone reproduces the
+reference's per-scanline IRQ-assert bitmap **bit-for-bit**: the first assertion
+lands on rising edge `latch + 1` (an initial `$C001` reload consumes edge 0,
+then `latch` decrements reach zero) and re-asserts every `latch + 1` scanlines
+once acknowledged. The suite additionally pins the `$E001`/`$E000` enable/ack
+gate, the `$C001` reload periodicity, and the A12 **edge filter** (holding A12
+high across consecutive reads clocks the counter exactly once — no
+double-clock). The reference `Mmc3` *is* the oracle, so any board whose shared
+core drifted from MMC3's scanline timing would fail; the non-zero latches used
+throughout keep the comparison on the mechanism both cores agree on
+unconditionally (the Sharp/NEC reload-to-zero sub-cadence and the ~3-M2-cycle
+too-close-edges hardware sub-filter are revision/accuracy nuances outside the
+Curated clone's remit).
+
 The v1.8.9 "Backlog" beta.6 `sprint13` batch ports four more well-documented
 NTDEC / TXC / discrete-BMC multicart cores, none with an IRQ
 (`MapperCaps::NONE`): **NTDEC TC-112** (193, *Fighting Hero* — a `$6000-$7FFF`
