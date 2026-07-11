@@ -55,6 +55,14 @@ ppu-octal-trace = []
 [dependencies]
 bitflags.workspace = true
 thiserror.workspace = true
+# v2.1.2 (Fathom F1.4) — the generated NTSC base-palette synthesizer
+# (`palette_gen`) integrates the composite waveform in YIQ, which needs
+# `cos`/`sin`/`pow`. We route those through `libm` (pure-Rust, `no_std`) rather
+# than `std`'s float methods so the generated palette is **byte-identical across
+# every target** (x86 / aarch64 / wasm / `thumbv7em`) by construction — the
+# committed golden snapshot then holds everywhere and CI never diverges. Mirrors
+# the APU crate's `libm` usage. `default-features = false` keeps it `no_std`.
+libm = { version = "0.2", default-features = false }
 
 [dev-dependencies]
 criterion.workspace = true

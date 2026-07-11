@@ -460,6 +460,21 @@ base table by `rustynes-ppu::build_rgba_lut_from_base` /
 `Ppu::set_custom_palette`. The default (built-in / unselected) is byte-identical.
 Native-only file I/O (the editor + bank work on wasm; file dialogs do not).
 
+**Generated NTSC palette (v2.1.2 F1.4).** A fourth palette source — **Settings →
+Video → Palette → "Generated NTSC"** (collapsing) — synthesizes the 64-entry base
+from a model of the 2C02's composite-video output rather than a hand table or a
+`.pal` file. A checkbox enables it (taking precedence over the named bank + legacy
+`.pal`), with live sliders for **saturation / hue / contrast / brightness /
+gamma** plus **Reset to defaults**. The base is produced by the in-core
+`rustynes_ppu::generate_base_palette` (Bisqwit / ares YIQ integration) and pushed
+through the same `App::apply_active_palette` → `Nes::set_custom_palette` +
+`build_rgba_lut_from_base` emphasis path as any custom palette — so there is no
+new emphasis model. It is **off by default** (`[graphics] ntsc_palette_enabled =
+false`; params in `[graphics.ntsc_palette]`), so the shipped presentation keeps
+the built-in palette and is byte-identical. The synthesizer routes every
+transcendental through `libm`, so its output is byte-identical across all targets
+and is locked by a committed golden (`palette_gen::tests::matches_committed_golden`).
+
 **Pixel aspect ratio.** When `[ui] pixel_aspect_correction` is on, the
 letterbox targets the NES's native **8:7** PAR (display aspect
 `(256 · 8/7) / 240`); off, it keeps the square-pixel 256:240 aspect. The
