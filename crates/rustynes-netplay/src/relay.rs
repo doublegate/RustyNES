@@ -414,7 +414,7 @@ impl TurnClient {
     /// observed as an intermittent `TURN allocate failed` on loopback under load
     /// (a loaded CI runner can silently drop a `127.0.0.1` datagram when a socket
     /// receive buffer briefly overflows). Retransmitting on the RTO recovers from
-    /// that loss exactly as RFC 5389 §7.2.1 prescribes, and because the server
+    /// that loss in line with RFC 5389 §7.2.1 (a fixed 250 ms RTO here, not the RFC default 500 ms + exponential backoff), and because the server
     /// answers a retransmit idempotently the recovery is transparent.
     ///
     /// The method drives the socket's read timeout itself (bounding each blocking
@@ -455,13 +455,24 @@ impl TurnClient {
             socket.set_read_timeout(Some(slice))?;
             let (len, from) = match socket.recv_from(&mut buf) {
                 Ok(v) => v,
-                // A read-timeout expiry surfaces as WouldBlock (Unix) or TimedOut
-                // (Windows); both just mean "no datagram this slice" — loop on to
-                // retransmit / re-check the deadline, do NOT fail the transaction.
+                // Transient, non-fatal receive outcomes — loop on to retransmit /
+                // re-check the deadline, do NOT fail the transaction:
+                //   - WouldBlock (Unix) / TimedOut (Windows): a read-timeout expiry
+                //     ("no datagram this slice").
+                //   - ConnectionReset / ConnectionRefused: on Windows a `recv_from`
+                //     after a `send_to` to a port that is closed / not-yet-bound
+                //     surfaces the ICMP "Port Unreachable" as `ConnectionReset`
+                //     (Unix can raise `ConnectionRefused`). This is exactly the
+                //     kind of startup-window transient that intermittently red-lit
+                //     the loopback test; retransmitting recovers once the peer's
+                //     socket is up.
                 Err(e)
                     if matches!(
                         e.kind(),
-                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                        io::ErrorKind::WouldBlock
+                            | io::ErrorKind::TimedOut
+                            | io::ErrorKind::ConnectionReset
+                            | io::ErrorKind::ConnectionRefused
                     ) =>
                 {
                     continue;

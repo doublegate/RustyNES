@@ -250,7 +250,7 @@ same `PublicAddr` channel. Once both relayed addresses are exchanged,
 
 Because `Allocate` and `CreatePermission` ride **unreliable UDP**, the client
 **retransmits** each request every `RTO` (250 ms) until the caller's overall
-timeout (5 s for `Allocate`, 2 s for `CreatePermission`), per RFC 5389 §7.2.1 —
+timeout (5 s for `Allocate`, 2 s for `CreatePermission`), guided by RFC 5389 §7.2.1 (a fixed 250 ms RTO, not the RFC default 500 ms + exponential backoff) —
 a single dropped request-or-response datagram must not hard-fail the transaction.
 STUN/TURN requests are idempotent (the server re-answers a retransmit; a late
 duplicate response is discarded by the transaction-id filter), so the recovery is
