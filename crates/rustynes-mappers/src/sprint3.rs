@@ -723,6 +723,23 @@ impl Mapper for Vrc4 {
 // not advance.
 // ---------------------------------------------------------------------------
 
+/// Linear scale applied to the summed VRC6 channel output (see
+/// [`Vrc6::mix_audio`]).
+///
+/// Calibrated so a single full-volume (15) VRC6 pulse reaches ~1.5x the
+/// amplitude of a single full-volume 2A03 pulse — the level the bbbradsmith
+/// `db_vrc6` decibel-comparison ROM and the Mesen2 mixer characterize (Mesen2
+/// `NesSoundMixer::GetOutputVolume` weights VRC6 at `output * 5` against a
+/// 2A03 pulse DAC of `95.88*5000/(8128/15+100) ≈ 746.9`, giving `15*15*5 /
+/// 746.9 ≈ 1.506`). Concretely, one pulse toggling 0↔15 swings the mixer by
+/// `15 * 979 = 14685` raw units; divided by the bus's `/65536` external-audio
+/// normalization that is `0.2241`, versus the 2A03 pulse's `pulse_table[15] ≈
+/// 0.1488` — a ratio of `1.506`. The full three-channel peak stays in range:
+/// `(61 - 30) * 979 = 30349 < i16::MAX`, so a loud Akumajou-Densetsu / Madara
+/// passage never clips. Before v2.1.6 this was `256` (≈0.39x the 2A03 pulse —
+/// ~11.7 dB too quiet). See `docs/apu-2a03.md` §Expansion-audio levels.
+const VRC6_MIX_SCALE: i16 = 979;
+
 /// VRC6 audio pulse channel state (`$9000-$9002` for pulse 1, `$A000-$A002`
 /// for pulse 2). Period is 12-bit, decrements every CPU cycle. On
 /// underflow, the duty index advances by 1 (mod 16). Output is volume when
@@ -1195,18 +1212,19 @@ impl Mapper for Vrc6 {
     #[cfg(feature = "mapper-audio")]
     fn mix_audio(&mut self) -> i16 {
         // Three channels: pulse1 (4-bit, 0..=15), pulse2 (4-bit, 0..=15),
-        // sawtooth (5-bit, 0..=31). Sum is in 0..=61. Scale to i16
-        // centered on zero with reasonable headroom for the APU mixer.
+        // sawtooth (5-bit, 0..=31). Sum is in 0..=61.
         //
         // Per nesdev "VRC6 audio": the three channels are summed digitally,
-        // so a linear sum is the canonical mix. Scaling factor of ~256
-        // brings the peak (61) to ~15,616 -- well below i16::MAX, leaving
-        // ~5x headroom for the APU adding alongside.
+        // so a linear sum is the canonical mix. The [`VRC6_MIX_SCALE`] = 979
+        // factor makes a single full-volume pulse ~1.5x the 2A03 pulse (the
+        // hardware/Mesen2/`db_vrc6` level); the full three-channel peak
+        // `(61 - 30) * 979 = 30349` stays below `i16::MAX`.
         let p1 = i16::from(self.pulse1.output());
         let p2 = i16::from(self.pulse2.output());
         let saw = i16::from(self.saw.output());
-        // Center at zero: subtract approx half the peak (~30).
-        ((p1 + p2 + saw) - 30) * 256
+        // Center at zero: subtract approx half the peak (~30), then scale by
+        // [`VRC6_MIX_SCALE`] for a hardware-accurate level vs the 2A03 pulse.
+        ((p1 + p2 + saw) - 30) * VRC6_MIX_SCALE
     }
 
     fn irq_pending(&self) -> bool {
@@ -2017,7 +2035,19 @@ impl Mapper for Vrc7 {
 /// 16-entry logarithmic volume DAC, ~3 dB per 4-bit step (= 1.5 dB per
 /// 5-bit step in the underlying chip).  Peak chosen so that three channels
 /// summed at maximum volume stay comfortably inside the `i16` headroom the
-/// APU mixer expects, in the same ballpark as VRC6's `(sum-30)*256` scale.
+/// APU mixer expects.
+///
+/// NOTE (v2.1.6 accuracy ledger): the *shape* of this table matches Mesen2's
+/// 5B DAC (each step is `1.1885^2 ≈ 1.4126x`, the +1.5 dB×2 logarithmic law),
+/// but the *absolute* level is intentionally headroom-limited. A single
+/// full-volume (15) 5B tone would have to swing ~3.6x the 2A03 pulse to match
+/// the `db_5b` decibel-comparison ROM / Mesen2 level, which exceeds `i16::MAX`
+/// for even one channel through the bus's `/65536` external-audio contract, and
+/// three simultaneous tones (Gimmick!, Hebereke) would clip hard. Raising the
+/// absolute level to the hardware value therefore needs a wider expansion-mix
+/// path than the current i16 contract provides — deferred as a documented
+/// regression guard (see `docs/accuracy-ledger.md` §Sunsoft 5B). The RELATIVE
+/// levels between volume steps are hardware-accurate.
 ///
 /// Per the NESdev "Sunsoft 5B audio" page, the chip's DAC has a 1.5 dB
 /// step on the 5-bit signal.  Because the wiki specifies that envelope
@@ -3669,8 +3699,8 @@ mod tests {
         // Tick once so the oscillator advances past the timer == 0 reload.
         m.clock_audio();
         let s = m.mix_audio();
-        // Centering subtracts ~30 from a 0..=61 sum, scales by 256.
-        // With only p1 = 15 contributing, s = (15 - 30) * 256 = -3840.
+        // Centering subtracts ~30 from a 0..=61 sum, scales by 979 (v2.1.6).
+        // With only p1 = 15 contributing, s = (15 - 30) * 979 = -14685.
         assert!(s < 0, "mix_audio with only p1 must be below center");
     }
 
@@ -3678,11 +3708,11 @@ mod tests {
     #[test]
     fn vrc6_mix_audio_silent_when_disabled() {
         let m = Vrc6::new(synth(8), synth_chr(8), 24, Mirroring::Vertical).unwrap();
-        // All channels disabled -> outputs 0 -> sum 0 -> mix = (0 - 30) * 256.
+        // All channels disabled -> outputs 0 -> sum 0 -> mix = (0 - 30) * 979.
         // Confirm we land at the documented "center - offset" position.
         let mut m = m;
         let s = m.mix_audio();
-        assert_eq!(s, -7680);
+        assert_eq!(s, -29370);
     }
 
     #[test]

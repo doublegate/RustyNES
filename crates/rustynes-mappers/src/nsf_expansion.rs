@@ -97,12 +97,15 @@ impl Vrc6Exp {
     }
 
     /// Same mix as `Vrc6::mix_audio`: linear sum of the three channels,
-    /// centred and scaled to leave APU headroom.
+    /// centred and scaled by the hardware-accurate `979` factor (v2.1.6; see
+    /// `Vrc6::mix_audio` and `docs/apu-2a03.md` §Expansion-audio levels). Kept
+    /// bit-identical to the cartridge path so an NSF VRC6 tune is level-matched
+    /// to a VRC6 cartridge.
     fn mix(&self) -> i16 {
         let p1 = i16::from(self.pulse1.output());
         let p2 = i16::from(self.pulse2.output());
         let saw = i16::from(self.saw.output());
-        ((p1 + p2 + saw) - 30) * 256
+        ((p1 + p2 + saw) - 30) * 979
     }
 
     fn write(&mut self, addr: u16, value: u8) {
@@ -172,7 +175,9 @@ impl Mmc5Exp {
         }
     }
 
-    /// Same mix as `Mmc5::mix_audio` (two pulses + 7-bit PCM, biased to zero).
+    /// Same mix as `Mmc5::mix_audio` (two pulses + 7-bit PCM, biased to zero),
+    /// with the v2.1.6 hardware-accurate `650`/`40` scale so an NSF MMC5 tune is
+    /// level-matched to an MMC5 cartridge (see `Mmc5::mix_audio`).
     fn mix(&self) -> i16 {
         let p1 = i16::from(self.audio.pulse1.output());
         let p2 = i16::from(self.audio.pulse2.output());
@@ -181,9 +186,9 @@ impl Mmc5Exp {
         } else {
             0
         };
-        let pulse_mix = (p1 + p2) * 256;
-        let pcm_mix = pcm * 16;
-        (pulse_mix + pcm_mix) - 4800
+        let pulse_mix = (p1 + p2) * 650;
+        let pcm_mix = pcm * 40;
+        (pulse_mix + pcm_mix) - 12290
     }
 
     fn write(&mut self, addr: u16, value: u8) {

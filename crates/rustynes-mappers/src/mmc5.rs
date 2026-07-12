@@ -1427,18 +1427,6 @@ impl Mapper for Mmc5 {
     fn mix_audio(&mut self) -> i16 {
         // Two pulse outputs (each 0..=15) plus one 7-bit PCM level.
         //
-        // Scaling rationale (NOTE: match Mesen2 convention — the nesdev
-        // wiki page §"MMC5 audio" notes the pulses were intended to be at
-        // the same gain as the 2A03 pulses; the PCM channel sits at
-        // roughly half that gain because the 7-bit raw level lacks the
-        // dynamic range of the proper DAC). We pick a linear scale that
-        // matches the VRC6 mix in absolute magnitude:
-        //   pulse range: 0..=15 -> contribute up to ~ 15 * 256 = 3840.
-        //   PCM range:   0..=127 -> contribute up to ~ 127 * 16 ≈ 2032.
-        // Sum peak ~ 9712; we center on zero by subtracting half-range so
-        // the output sits in roughly +/- 4800 -- 1/8 of i16::MAX, in the
-        // same ballpark as the VRC6 mixer (`((sum-30) * 256)`).
-        //
         // PCM is silenced when `$5010` bit 0 = 1 (read-mode) -- the chip
         // is then sourcing samples back to the CPU rather than outputting.
         let p1 = i16::from(self.audio.pulse1.output());
@@ -1448,10 +1436,22 @@ impl Mapper for Mmc5 {
         } else {
             0
         };
-        // Linear sum, biased to zero. Half-range = ~(15+15)*256/2 + 127*16/2 = ~4856.
-        let pulse_mix = (p1 + p2) * 256; // 0..=7680
-        let pcm_mix = pcm * 16; // 0..=2032
-        (pulse_mix + pcm_mix) - 4800
+        // v2.1.6 — hardware-accurate levels. The nesdev wiki §"MMC5 audio" and
+        // Mesen2 both note the MMC5 pulses use the SAME DAC/gain as the 2A03
+        // pulses, so a full-volume MMC5 square must be ~equal in loudness to a
+        // full-volume 2A03 square. A single pulse toggling 0↔15 must therefore
+        // swing the mixer by ~`0.1488 * 65536 ≈ 9755` raw units (the 2A03
+        // `pulse_table[15]` amplitude after the bus's `/65536` normalization) —
+        // i.e. a per-pulse scale of `9755/15 ≈ 650`. The 7-bit raw PCM keeps its
+        // documented ~half-gain relative to the pulses (`40 ≈ 650/16`). Peak
+        // stays in range: `(15+15)*650 + 127*40 = 24580 < i16::MAX`, so a Koei
+        // PCM-voice + dual-pulse passage never clips. Before v2.1.6 this was
+        // `256`/`16` (≈0.39x the 2A03 pulse — ~6.8 dB too quiet). Bias = half
+        // the peak so the AC signal is centred (the bus HPF removes any residual
+        // DC regardless). See `docs/mappers.md` §MMC5 audio.
+        let pulse_mix = (p1 + p2) * 650; // 0..=19500
+        let pcm_mix = pcm * 40; // 0..=5080
+        (pulse_mix + pcm_mix) - 12290
     }
 
     fn notify_scanline_start(&mut self) {
@@ -2565,11 +2565,11 @@ mod tests {
         for _ in 0..64 {
             m.notify_cpu_cycle();
         }
-        // mix_audio biases to -4800 baseline (no audio active). The
+        // mix_audio biases to -12290 baseline (no audio active). The
         // pulse-1 muted check applies regardless of duty step.
         assert!(m.audio.pulse1.muted());
         // With both pulses muted and pcm=0, the bias is the only term.
-        assert_eq!(m.mix_audio(), -4800);
+        assert_eq!(m.mix_audio(), -12290);
     }
 
     #[test]
@@ -2599,13 +2599,13 @@ mod tests {
     fn audio_5011_pcm_write_latches_sample_and_mix_reflects_it() {
         let mut m = fresh(8, 8);
         // PCM in write-mode (default, $5010 bit 0 = 0). Sample 64 -> mix
-        // contribution 64 * 16 = 1024 above the bias.
+        // contribution 64 * 40 = 2560 above the bias.
         m.cpu_write(0x5010, 0x00);
         m.cpu_write(0x5011, 64);
         assert_eq!(m.audio.pcm_sample, 64);
         // Pulses are silent (no length loaded). Expected mix = pcm_mix - bias.
         let mix = m.mix_audio();
-        assert_eq!(mix, 64 * 16 - 4800);
+        assert_eq!(mix, 64 * 40 - 12290);
     }
 
     #[test]
