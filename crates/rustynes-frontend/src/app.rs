@@ -2308,8 +2308,13 @@ impl App {
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
+        // v2.1.9 — GIF (animated, video-only) and WAV (audio-only) join the A/V
+        // containers; the chosen extension selects the pipeline in
+        // `av_record::ffmpeg_args` (Container::from_path).
         let mut dialog = rfd::FileDialog::new()
             .add_filter("Video (MP4/MKV)", &["mp4", "mkv"])
+            .add_filter("Animated GIF", &["gif"])
+            .add_filter("Audio (WAV)", &["wav"])
             .set_file_name(format!("{stem}-{secs}.mp4"));
         if let Some(d) = dir {
             dialog = dialog.set_directory(d);

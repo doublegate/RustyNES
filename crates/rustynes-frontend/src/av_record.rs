@@ -92,6 +92,12 @@ pub enum Container {
     Mp4,
     /// `.mkv` (Matroska; H.264 + AAC, the same codecs in a freer container).
     Mkv,
+    /// `.gif` (v2.1.9 — animated GIF, video-only, palette-quantized + frame-
+    /// decimated). No audio track (GIF carries none).
+    Gif,
+    /// `.wav` (v2.1.9 — standalone 16-bit PCM audio export, no video). A quick
+    /// way to capture just a tune / sound effect losslessly.
+    Wav,
 }
 
 impl Container {
@@ -106,8 +112,22 @@ impl Container {
             .as_deref()
         {
             Some("mkv") => Self::Mkv,
+            Some("gif") => Self::Gif,
+            Some("wav") => Self::Wav,
             _ => Self::Mp4,
         }
+    }
+
+    /// Whether this container carries a video stream (GIF yes, WAV no).
+    #[must_use]
+    pub const fn has_video(self) -> bool {
+        !matches!(self, Self::Wav)
+    }
+
+    /// Whether this container carries an audio stream (GIF has none).
+    #[must_use]
+    pub const fn has_audio(self) -> bool {
+        matches!(self, Self::Mp4 | Self::Mkv | Self::Wav)
     }
 }
 
@@ -322,6 +342,14 @@ pub struct AvParams {
 /// mono `f32le` PCM. Output is H.264 + AAC into the chosen container.
 #[must_use]
 pub fn ffmpeg_args(params: &AvParams, video_raw: &Path, audio_raw: &Path) -> Vec<String> {
+    let container = Container::from_path(&params.out_path);
+    // v2.1.9 — GIF (video-only, palette-quantized) and WAV (audio-only) take
+    // dedicated arg vectors; the A/V containers keep the two-input mux below.
+    match container {
+        Container::Gif => return gif_args(params, video_raw),
+        Container::Wav => return wav_args(params, audio_raw),
+        Container::Mp4 | Container::Mkv => {}
+    }
     let mut args: Vec<String> = vec![
         // Overwrite the output without prompting.
         "-y".into(),
@@ -381,6 +409,70 @@ pub fn ffmpeg_args(params: &AvParams, video_raw: &Path, audio_raw: &Path) -> Vec
     args.push("-shortest".into());
     args.push(params.out_path.to_string_lossy().into_owned());
     args
+}
+
+/// The GIF output frame rate cap (v2.1.9). NES frames run at ~60 fps, but GIF
+/// stores per-frame centiseconds so it can't represent 60 fps cleanly and the
+/// file balloons; decimating to a smooth, GIF-friendly rate keeps size sane. A
+/// factor-of-2-ish cut from 60 is the conventional choice for gameplay GIFs.
+const GIF_FPS: u32 = 25;
+
+/// Build the `ffmpeg` argument vector for a GIF export (video-only).
+///
+/// Reads the same completed rawvideo temp file the A/V mux uses, decimates to
+/// [`GIF_FPS`], and runs the standard single-pass `palettegen` / `paletteuse`
+/// filtergraph (an optimized per-clip 256-colour palette + Bayer-ordered dither)
+/// so the NES's already-small palette reproduces crisply. Pure + testable.
+#[must_use]
+fn gif_args(params: &AvParams, video_raw: &Path) -> Vec<String> {
+    vec![
+        "-y".into(),
+        "-f".into(),
+        "rawvideo".into(),
+        "-pixel_format".into(),
+        "rgba".into(),
+        "-video_size".into(),
+        format!("{NES_W}x{NES_H}"),
+        "-framerate".into(),
+        format!("{}/{}", params.fps_num, params.fps_den),
+        "-i".into(),
+        video_raw.to_string_lossy().into_owned(),
+        // Decimate to a GIF-friendly rate, build a per-clip optimized palette,
+        // then apply it with ordered dither. `split` feeds the same decimated
+        // stream to both palettegen and paletteuse in a single pass.
+        "-filter_complex".into(),
+        format!(
+            "fps={GIF_FPS},split[s0][s1];[s0]palettegen=stats_mode=diff[p];\
+             [s1][p]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle"
+        ),
+        "-loop".into(),
+        "0".into(),
+        params.out_path.to_string_lossy().into_owned(),
+    ]
+}
+
+/// Build the `ffmpeg` argument vector for a WAV export (audio-only).
+///
+/// Reads the completed mono-`f32le` PCM temp file and transcodes to canonical
+/// 16-bit little-endian PCM WAV at the capture sample rate. No video input, no
+/// re-timing — a lossless-enough, universally-openable audio capture. Pure +
+/// testable.
+#[must_use]
+fn wav_args(params: &AvParams, audio_raw: &Path) -> Vec<String> {
+    vec![
+        "-y".into(),
+        "-f".into(),
+        "f32le".into(),
+        "-ar".into(),
+        params.sample_rate.to_string(),
+        "-ac".into(),
+        "1".into(),
+        "-i".into(),
+        audio_raw.to_string_lossy().into_owned(),
+        "-c:a".into(),
+        "pcm_s16le".into(),
+        params.out_path.to_string_lossy().into_owned(),
+    ]
 }
 
 /// An active A/V recording session.
@@ -608,9 +700,52 @@ mod tests {
         assert_eq!(Container::from_path(Path::new("a.MP4")), Container::Mp4);
         assert_eq!(Container::from_path(Path::new("a.mkv")), Container::Mkv);
         assert_eq!(Container::from_path(Path::new("a.MKV")), Container::Mkv);
+        // v2.1.9 GIF / WAV containers.
+        assert_eq!(Container::from_path(Path::new("a.gif")), Container::Gif);
+        assert_eq!(Container::from_path(Path::new("a.GIF")), Container::Gif);
+        assert_eq!(Container::from_path(Path::new("a.wav")), Container::Wav);
+        assert_eq!(Container::from_path(Path::new("a.WAV")), Container::Wav);
         // Unknown / missing extension defaults to mp4.
         assert_eq!(Container::from_path(Path::new("a.avi")), Container::Mp4);
         assert_eq!(Container::from_path(Path::new("noext")), Container::Mp4);
+        // Stream presence flags.
+        assert!(Container::Gif.has_video() && !Container::Gif.has_audio());
+        assert!(!Container::Wav.has_video() && Container::Wav.has_audio());
+        assert!(Container::Mp4.has_video() && Container::Mp4.has_audio());
+    }
+
+    #[test]
+    fn gif_args_are_video_only_with_palette_filtergraph() {
+        // v2.1.9 — a `.gif` output routes to the video-only palettegen pipeline:
+        // one rawvideo input, NO audio input, and the split/palettegen/paletteuse
+        // filter_complex the crisp-GIF workflow requires.
+        let mut p = params();
+        p.out_path = PathBuf::from("/tmp/out.gif");
+        let args = ffmpeg_args(&p, Path::new("/tmp/v.raw"), Path::new("/tmp/a.pcm"));
+        assert_eq!(args.iter().filter(|a| *a == "-i").count(), 1, "one input");
+        assert!(args.iter().any(|a| a == "rawvideo"));
+        assert!(!args.iter().any(|a| a == "f32le"), "no audio input");
+        assert!(!args.iter().any(|a| a == "aac"));
+        let fc = args.iter().position(|a| a == "-filter_complex").unwrap();
+        assert!(args[fc + 1].contains("palettegen"));
+        assert!(args[fc + 1].contains("paletteuse"));
+        assert!(args[fc + 1].contains("fps=25"));
+        assert_eq!(args.last().unwrap(), "/tmp/out.gif");
+    }
+
+    #[test]
+    fn wav_args_are_audio_only_pcm() {
+        // v2.1.9 — a `.wav` output routes to the audio-only PCM export: one
+        // f32le input, NO video/rawvideo input, pcm_s16le codec, no `-shortest`.
+        let mut p = params();
+        p.out_path = PathBuf::from("/tmp/out.wav");
+        let args = ffmpeg_args(&p, Path::new("/tmp/v.raw"), Path::new("/tmp/a.pcm"));
+        assert_eq!(args.iter().filter(|a| *a == "-i").count(), 1, "one input");
+        assert!(args.iter().any(|a| a == "f32le"));
+        assert!(!args.iter().any(|a| a == "rawvideo"), "no video input");
+        assert!(args.iter().any(|a| a == "pcm_s16le"));
+        assert!(args.iter().any(|a| a == "48000"));
+        assert_eq!(args.last().unwrap(), "/tmp/out.wav");
     }
 
     #[test]
