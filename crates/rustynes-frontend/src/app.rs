@@ -3686,6 +3686,12 @@ impl App {
         crate::emu::FrameInputs {
             buttons,
             four_score: self.config.input.four_score,
+            // v2.2.0 "Capstone" — Famicom microphone hold-to-talk (native only;
+            // no key source on wasm). Byte-identical when released.
+            #[cfg(not(target_arch = "wasm32"))]
+            microphone: self.input.microphone(),
+            #[cfg(target_arch = "wasm32")]
+            microphone: false,
             // v2.7.0 — RA hardcore disables rewind; fold the gate here.
             rewind_held: self.input.rewind_held() && !hardcore_blocked,
             hardcore_blocked,

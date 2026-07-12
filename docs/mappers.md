@@ -101,6 +101,40 @@ distinguish some conflict-free homebrew or modified boards from original
 conflict-prone boards. The mapper implementation should therefore decide
 conflicts from mapper/submapper/board metadata, not only from mapper number.
 
+### FDS medium model (Mapper 20, v2.2.0 "Capstone")
+
+The Famicom Disk System RAM adapter (`crates/rustynes-mappers/src/fds.rs`) models
+the disk **medium** as a synthesized byte-stream wire image, not just the raw
+`.fds` payload:
+
+- **Wire image**: each inserted side is expanded into the hardware wire format the
+  RP2C33 controller scans — a lead-in gap (`$00` run), a `$80` start mark, the
+  block bytes, and a **CRC-16/KERMIT** (reflected poly `0x8408`) per block, with
+  inter-block gaps between them. Reads stream this wire image; the controller's
+  gap-skip hides the gap + start mark from the CPU (first byte delivered is the
+  block's first real byte).
+- **Per-block CRC-16 on write**: when the BIOS writes a block payload, the write
+  path mirrors the byte into the raw side **and re-emits that block's CRC-16**
+  over the updated payload (`resynth_block_crc`), modelling the controller's
+  continuous CRC generator so the medium stays self-consistent (a stricter loader
+  checking `$4030.D4`, and the synthetic oracle below, see a valid block).
+- **Continuous analog head-seek model** (opt-in, default-off — `set_analog_head_seek`):
+  the belt-driven head's motor-restart rewind time is proportional to the
+  distance it had travelled from the disk-start gap (a constant belt velocity,
+  `HEAD_SEEK_BYTES_PER_CYCLE`, plus a fixed `HEAD_SEEK_SETTLE_CYCLES` settle),
+  clamped to a cold `MOTOR_SPIN_UP_CYCLES` spin-up. This replaces the flat
+  `HEAD_RESEEK_CYCLES` not-ready window with a position-dependent seek. **With the
+  model disabled (the default) a non-writing `.fds` run is byte-identical** to
+  prior releases; the model state round-trips the **v4** save-state tail.
+- **Synthetic write-verify oracle** (`medium_write_verify`): a BIOS-free walk of
+  the wire image asserting every block's CRC-16 and gap/mark framing round-trips.
+  This is the **CI-verifiable** half of the medium model; the real-BIOS write-CRC
+  path needs a copyright FDS BIOS and is exercised only from a local, gitignored
+  dump. See `docs/accuracy-ledger.md` for the CI-verifiable vs local-only split.
+
+All FDS timing is deterministic cycle arithmetic (no wall-clock / analog jitter),
+so the determinism contract and save-state round-trip hold.
+
 ## Mapper coverage matrix (Phase 4 status)
 
 Sorted by number of commercial titles using each mapper.
