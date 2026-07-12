@@ -118,52 +118,70 @@ pub enum Region {
     Dendy,
 }
 
-/// Ricoh 2A03 CPU/APU die revision, selecting the small hardware-revision
-/// differences in the DMA unit (v2.1.7 "Hardware Revisions & DMA Frontier").
+/// Ricoh 2A03 CPU/APU die revision, selecting the hardware-revision difference
+/// in the DMA unit's **"unexpected DMA" extra halt-read** (v2.1.7 "Hardware
+/// Revisions & DMA Frontier").
 ///
-/// The 2A03 (and its PAL sibling the 2A07) shipped in several mask revisions
-/// over the console's life. For the emulated deterministic core the *only*
-/// externally-observable revision difference this enum gates is the DMA
-/// unit's **"unexpected DMA" extra halt-read** behavior (nesdev
-/// [DMA](https://www.nesdev.org/wiki/DMA) §"DMC DMA during OAM DMA" /
-/// §"Unexpected DMA"): a DMC DMA whose halt is requested on the *same* CPU
-/// cycle that the CPU already has a `$4014` OAM-DMA halt in flight (the "double
-/// halt" alignment) inserts one **additional** re-read of the parked address
-/// bus on the earlier-die parts before the transfer resumes. Everything else
-/// about the DMA engine — the get/put alternation, OAM alignment, the aborted
-/// DMC-DMA path, and the DMC-glitch register-readout corruption on
-/// `$2007`/`$4015`/`$4016`/`$4017` — is revision-invariant in this model and
-/// stays exactly as it is on every revision.
+/// # The frontier — read this before trusting the non-default arm
 ///
-/// **Default = [`Cpu2A03Revision::Rp2A03G`]**, which is byte-identical to the
-/// core as it shipped before v2.1.7 (`AccuracyCoin` 141/141, nestest 0-diff,
-/// every DMA oracle ROM `Passed`). Selecting [`Cpu2A03Revision::Rp2A03H`] is a
-/// purely additive, opt-in accuracy knob; it changes only the one alignment
-/// bracket described above and is **not** part of the save-state (a config knob
-/// re-applied on load, like the optional OAM-decay model — the DMA-engine
-/// transient state it influences is fully re-derived from the deterministic
-/// timeline, so a save/restore round-trip stays byte-identical for a fixed
-/// revision). See `docs/adr/0033-cpu-2a03-revision-dma-frontier.md`.
+/// The 2A03 shipped in several mask revisions. nesdev
+/// ([DMA](https://www.nesdev.org/wiki/DMA)) documents that when a DMC DMA halt
+/// is requested on a CPU cycle where an OAM (`$4014`) DMA is *also* halting —
+/// the "double-halt" overlap — some silicon performs an **extra** re-read of
+/// the parked 6502 address bus before the transfer resumes (the "unexpected
+/// DMA" read), and this differs by die revision.
+///
+/// **No public reference emulator models this die-revision difference, and no
+/// public test ROM verifies it.** A survey of Mesen2, ares, `BizHawk`,
+/// `TriCNES`, fceux, nestopia, `GeraNES`, and higan (v2.1.7, see ADR 0033)
+/// found that *none*
+/// branch DMA cycle behavior on 2A03 die stepping — the only revision-like
+/// switch any of them models is the orthogonal **console-type** distinction
+/// (Mesen2 `isNesBehavior`: NES-001/AV-Famicom clock a controller only on the
+/// *first* DMA idle read, original Famicom on *every* one), which is a
+/// different axis and is already reflected in this core's default
+/// register-readout model. The die-revision extra-read is therefore a genuine
+/// open frontier: this enum provides the **config surface** for it and a
+/// conservative, deterministic model, but the [`Rp2A03H`](Self::Rp2A03H) arm's
+/// direction is an **unverified hypothesis**, not an oracle-proven behavior.
+///
+/// # Contract
+///
+/// * **Default = [`Rp2A03G`](Self::Rp2A03G)** is **byte-identical** to the core
+///   as it shipped before v2.1.7 (`AccuracyCoin` 141/141, nestest 0-diff, and
+///   every committed DMA oracle ROM — the five `dmc_dma_during_read4` ROMs and
+///   both `sprdma_and_dmc_dma` ROMs — still `Passed`). Those ROMs were captured
+///   on `Rp2A03G`-class hardware, so `Rp2A03G` *has* the documented extra read.
+/// * **[`Rp2A03H`](Self::Rp2A03H)** is a purely additive, opt-in knob that
+///   *omits* the double-halt extra read. It is deterministic and reachable
+///   only when explicitly selected; the shipped/default build never touches it.
+///   Because it removes a read the oracle ROMs expect, selecting it can make
+///   the `sprdma_and_dmc_dma` overlap ROM diverge — that is expected and
+///   documented (ADR 0033), not a regression.
+///
+/// The revision is a **config knob re-applied on load, not part of the
+/// save-state** (like the optional OAM-decay model): the only state it
+/// influences is fully re-derived from the deterministic timeline, so a
+/// save/restore round-trip stays byte-identical for a fixed revision. See
+/// `docs/adr/0033-cpu-2a03-revision-dma-frontier.md`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Default)]
 pub enum Cpu2A03Revision {
-    /// RP2A03G — the common early/mid die (front-loading NES-CPU-* boards,
-    /// the vast majority of North-American/Japanese carts and the revision
-    /// the accuracy oracles were captured against). Models the "unexpected
-    /// DMA" extra halt-read. This is the **default** and the byte-identical
-    /// baseline.
+    /// RP2A03G — the common early/mid die the accuracy oracles were captured
+    /// against. **Performs** the double-halt "unexpected DMA" extra read.
+    /// This is the **default** and the byte-identical baseline.
     #[default]
     Rp2A03G,
-    /// RP2A03H — the later die (found on some top-loader / AV-Famicom era
-    /// units) whose DMA unit omits the extra halt-read on the double-halt
-    /// alignment. Opt-in; additive; not the default.
+    /// RP2A03H — a later die modeled as **omitting** the double-halt extra
+    /// read. Opt-in, additive, deterministic — but an **unverified** direction
+    /// (no reference / no ROM proves it; see the type-level docs and ADR 0033).
     Rp2A03H,
 }
 
 impl Cpu2A03Revision {
-    /// Whether this revision inserts the "unexpected DMA" extra halt-read on
-    /// the DMC-halt-coincides-with-OAM-halt alignment. `true` for
-    /// [`Cpu2A03Revision::Rp2A03G`] (the default / byte-identical baseline),
-    /// `false` for [`Cpu2A03Revision::Rp2A03H`].
+    /// Whether this revision performs the "unexpected DMA" extra re-read of the
+    /// parked address bus on the DMC-halt-coincides-with-OAM-halt overlap
+    /// cycle. `true` for [`Rp2A03G`](Self::Rp2A03G) (the default /
+    /// byte-identical baseline), `false` for [`Rp2A03H`](Self::Rp2A03H).
     #[must_use]
     pub const fn has_unexpected_dma_extra_read(self) -> bool {
         matches!(self, Self::Rp2A03G)

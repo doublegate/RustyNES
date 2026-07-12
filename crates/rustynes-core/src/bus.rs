@@ -48,6 +48,7 @@ use rustynes_ppu::{
     PpuPalette, PpuRegion, PpuRevision, PpuSnapshotError,
 };
 
+use crate::Cpu2A03Revision;
 use crate::controller::{Buttons, Controller};
 #[cfg(feature = "irq-timing-trace")]
 use crate::irq_trace::{A12Event, BusAccess, CycleRecord, IrqTrace};
@@ -594,6 +595,18 @@ pub struct LockstepBus {
     /// so a DMC-GET-stalled byte is re-read.
     uni_oam_addr: u16,
 
+    /// v2.1.7 "Hardware Revisions & DMA Frontier" — the emulated Ricoh 2A03 die
+    /// revision, gating the DMA unit's "unexpected DMA" extra halt-read on the
+    /// DMC-halt-overlaps-OAM-halt cycle. **Default [`Cpu2A03Revision::Rp2A03G`]**
+    /// = byte-identical to the pre-v2.1.7 core (performs the extra read the
+    /// committed DMA oracle ROMs expect); [`Cpu2A03Revision::Rp2A03H`] omits it
+    /// (opt-in, deterministic, unverified direction — see the enum docs + ADR
+    /// 0033). A config knob, NOT part of the save-state: the only state it
+    /// influences (the parked-address side-effect re-read count during a
+    /// DMC+OAM overlap) is fully re-derived from the deterministic timeline, so
+    /// a save/restore round-trip stays byte-identical for a fixed revision.
+    cpu_2a03_revision: Cpu2A03Revision,
+
     /// Active Game Genie codes, keyed by the PRG address they patch
     /// (`$8000-$FFFF`). Applied on the CPU read path; empty by default, so
     /// with no codes active reads are byte-identical to a build without the
@@ -867,6 +880,7 @@ impl LockstepBus {
             uni_oam_halt: false,
             uni_oam_aligned: false,
             uni_oam_addr: 0,
+            cpu_2a03_revision: Cpu2A03Revision::default(),
             dmc_halt: false,
             genie_codes: BTreeMap::new(),
             m2_phase: M2Phase::Low,
@@ -1278,6 +1292,21 @@ impl LockstepBus {
     #[must_use]
     pub const fn oam_decay_enabled(&self) -> bool {
         self.ppu.oam_decay_enabled()
+    }
+
+    /// v2.1.7 — set the emulated 2A03 die revision (DMA "unexpected read" axis).
+    /// [`Cpu2A03Revision::Rp2A03G`] (default) is byte-identical to the pre-v2.1.7
+    /// core; [`Cpu2A03Revision::Rp2A03H`] is the opt-in later-die model. See the
+    /// [`Cpu2A03Revision`] docs + ADR 0033.
+    pub const fn set_cpu_2a03_revision(&mut self, revision: Cpu2A03Revision) {
+        self.cpu_2a03_revision = revision;
+    }
+
+    /// v2.1.7 — the configured 2A03 die revision (default
+    /// [`Cpu2A03Revision::Rp2A03G`]).
+    #[must_use]
+    pub const fn cpu_2a03_revision(&self) -> Cpu2A03Revision {
+        self.cpu_2a03_revision
     }
 
     /// Cartridge region (NTSC / PAL / Dendy / Multi). Drives wall-clock
@@ -3666,10 +3695,36 @@ impl LockstepBus {
                     self.uni_oam_aligned = false;
                 }
             } else if self.uni_oam_active && !self.uni_oam_halt {
-                // A halted DMC shares this cycle: the held CPU read's
-                // side-effect replay fires first (lockstep noop-body order:
-                // `replay_dma_noop_read` THEN the OAM slot).
-                if self.in_dmc_dma {
+                // A halted DMC shares this OAM-READ cycle: on `Rp2A03G` the held
+                // CPU read's side-effect replay fires first (lockstep noop-body
+                // order: `replay_dma_noop_read` THEN the OAM slot). This extra
+                // parked-address re-read — a *halted* DMC squeezing a side-effect
+                // into an OAM-owned read cycle — is v2.1.7's "unexpected DMA"
+                // extra read, and it is revision-gated: `Rp2A03G` (default)
+                // performs it, `Rp2A03H` OMITS it (opt-in later-die model —
+                // unverified direction; see ADR 0033). Suppression is
+                // deterministic and cannot desync the transfer:
+                // `replay_dma_noop_read` only re-triggers a *register's*
+                // side-effect (a `$2007` buffer advance / `$4016`-`$4017` shift /
+                // `$4015` IRQ-clear); it ticks no time and advances no DMA
+                // counter, so the OAM/DMC data path and cycle length are
+                // identical on both arms.
+                //
+                // HONEST RESIDUAL (ADR 0033): on this ported engine the branch
+                // FIRES (measured ~75× in a synthetic DMC+OAM+`$2007`-loop probe)
+                // but `replay_dma_noop_read(halted_addr)` is a no-op every time,
+                // because `halted_addr` during a DMC+OAM overlap is always the
+                // post-`$4014` *instruction fetch* in PRG (OAM DMA drains on the
+                // next opcode read, not on a register operand read), never a
+                // `$2002/$2007/$4015/$4016/$4017` address. So `Rp2A03G` and
+                // `Rp2A03H` are, in practice, byte-identical on every public
+                // oracle and every constructible scenario — the die-revision
+                // extra read is unobservable here, not merely unverified. The
+                // gate is kept at its mechanism-correct location so it becomes
+                // live immediately if the parked-address model ever exposes a
+                // register during the overlap; it never perturbs the default
+                // (`Rp2A03G`) path.
+                if self.in_dmc_dma && self.cpu_2a03_revision.has_unexpected_dma_extra_read() {
                     self.replay_dma_noop_read(halted_addr);
                 }
                 // OAM GET: the OAM engine owns the bus slot.

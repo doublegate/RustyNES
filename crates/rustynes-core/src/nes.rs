@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 // any caller. See `docs/architecture.md` §149 (no_std + alloc migration).
 use core::time::Duration;
 
+use crate::Cpu2A03Revision;
 use crate::Region;
 use crate::bus::LockstepBus;
 use crate::controller::Buttons;
@@ -2236,6 +2237,29 @@ impl Nes {
     #[must_use]
     pub const fn power_on_ram(&self) -> PowerOnRam {
         self.bus.power_on_ram()
+    }
+
+    /// v2.1.7 "Hardware Revisions & DMA Frontier" — select the emulated Ricoh
+    /// 2A03 die revision, which gates the DMA unit's "unexpected DMA" extra
+    /// halt-read on the DMC-halt-overlaps-OAM-halt cycle.
+    ///
+    /// **[`Cpu2A03Revision::Rp2A03G`] is the default** and is byte-identical to
+    /// the core as it shipped before v2.1.7 (`AccuracyCoin` 141/141, nestest
+    /// 0-diff, every committed DMA oracle ROM `Passed`).
+    /// [`Cpu2A03Revision::Rp2A03H`] is a purely additive, opt-in accuracy knob
+    /// that omits the extra read; its direction is an **unverified hypothesis**
+    /// (no public reference emulator or test ROM models the 2A03 die-revision
+    /// DMA difference — see the type docs and ADR 0033). It is deterministic and
+    /// a config knob re-applied on load, NOT part of the save-state.
+    pub const fn set_cpu_2a03_revision(&mut self, revision: Cpu2A03Revision) {
+        self.bus.set_cpu_2a03_revision(revision);
+    }
+
+    /// v2.1.7 — the configured 2A03 die revision (default
+    /// [`Cpu2A03Revision::Rp2A03G`], byte-identical to the pre-v2.1.7 core).
+    #[must_use]
+    pub const fn cpu_2a03_revision(&self) -> Cpu2A03Revision {
+        self.bus.cpu_2a03_revision()
     }
 
     /// Mapper debug info (bank registers, IRQ counters, mirroring, ...).
