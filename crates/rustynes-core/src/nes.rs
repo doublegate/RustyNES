@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 use alloc::{format, vec};
 use rustynes_cpu::Cpu;
 use rustynes_mappers::RomError;
+use rustynes_ppu::{PaletteInit, PpuRevision};
 use sha2::{Digest, Sha256};
 
 // `core::time::Duration` is identical to `std::time::Duration` (same Duration
@@ -36,6 +37,47 @@ pub const FRAME_DURATION_PAL: Duration = Duration::from_nanos(19_997_200);
 
 /// Nominal Dendy frame duration: 50 Hz Russian famiclone, same as PAL.
 pub const FRAME_DURATION_DENDY: Duration = Duration::from_nanos(19_997_200);
+
+/// v2.1.7 P5 — power-on 2 KiB CPU work-RAM contents.
+///
+/// Real NES hardware powers up with unreliable RAM (nesdev "CPU power up
+/// state"); a few titles read uninitialized RAM before writing it (*Final
+/// Fantasy*'s RNG seed, *River City Ransom*, *Cybernoid*). This selects what
+/// pattern the work RAM (and the open-bus latch) is filled with at power-on.
+///
+/// **Default-off / deterministic.** [`Default`] ([`Self::Zeroed`]) is the
+/// established all-zero fill CI, the regression oracle, and save-state tests
+/// use; the other variants are opt-in and still fully **deterministic** (no
+/// wall-clock / OS RNG), so the `same config + ROM + input ⇒ bit-identical`
+/// contract holds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Default)]
+pub enum PowerOnRam {
+    /// Default. Work RAM + open bus power up all-zero (current behavior).
+    #[default]
+    Zeroed,
+    /// Deterministic `xorshift64` randomization keyed on the seed (the existing
+    /// developer mode; see [`Nes::from_rom_with_power_on_seed`]). Surfaces
+    /// software that depends on a particular post-power-on RAM pattern.
+    Seeded(u64),
+    /// Fill every work-RAM byte (and the open-bus latch) with a single uniform
+    /// byte — a documented known pattern (e.g. `0xFF`, the all-ones some
+    /// consoles come up with). Deterministic.
+    Filled(u8),
+}
+
+/// v2.1.7 P5 — power-on hardware configuration for a freshly-constructed or
+/// power-cycled machine.
+///
+/// A small, forward-extensible bundle of the "what state does the silicon come
+/// up in" knobs that are otherwise scattered. Currently just the work-RAM fill
+/// ([`PowerOnRam`]); the PPU-revision and power-up-palette knobs are exposed as
+/// their own setters on [`Nes`] since they live in the PPU. All fields default
+/// to the established behavior, so [`PowerOnConfig::default`] is byte-identical.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Default)]
+pub struct PowerOnConfig {
+    /// Work-RAM power-on fill. Defaults to [`PowerOnRam::Zeroed`].
+    pub ram: PowerOnRam,
+}
 
 /// v1.1.0 beta.2 (Workstream C, T-110-C2) — one cycle-trace record.
 ///
@@ -411,10 +453,35 @@ impl Nes {
     ///
     /// Returns the underlying [`RomError`] if the bytes don't parse.
     pub fn from_rom_with_power_on_seed(bytes: &[u8], seed: u64) -> Result<Self, RomError> {
+        Self::from_rom_with_power_on_config(
+            bytes,
+            PowerOnConfig {
+                ram: PowerOnRam::Seeded(seed),
+            },
+        )
+    }
+
+    /// v2.1.7 P5 — build an emulator with an explicit [`PowerOnConfig`].
+    ///
+    /// Generalizes [`Nes::from_rom_with_power_on_seed`]: the caller chooses the
+    /// power-on work-RAM fill ([`PowerOnRam::Zeroed`] / [`PowerOnRam::Seeded`] /
+    /// [`PowerOnRam::Filled`]). The config is stored on the bus so a subsequent
+    /// power-cycle re-applies the same fill (keeping `power_cycle == fresh
+    /// boot`). All fills are **deterministic**, so the `same config + ROM + input
+    /// ⇒ bit-identical` contract still holds. [`PowerOnConfig::default`]
+    /// ([`PowerOnRam::Zeroed`]) is byte-identical to [`Nes::from_rom`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying [`RomError`] if the bytes don't parse.
+    pub fn from_rom_with_power_on_config(
+        bytes: &[u8],
+        config: PowerOnConfig,
+    ) -> Result<Self, RomError> {
         let mut nes = Self::from_rom(bytes)?;
         // RAM is not consulted during the reset sequence (only the $FFFC/D
-        // vector is), so randomizing after construction is correct.
-        nes.bus.randomize_power_on_ram(seed);
+        // vector is), so applying the fill after construction is correct.
+        nes.bus.set_power_on_ram(config.ram);
         Ok(nes)
     }
 
@@ -2105,6 +2172,72 @@ impl Nes {
         self.bus.oam_decay_enabled()
     }
 
+    /// v2.1.7 P5 — select the emulated 2C02 die revision (see [`PpuRevision`]).
+    ///
+    /// The [`PpuRevision::default`] ([`PpuRevision::Rp2c02H`]) models no extra
+    /// quirks, so at the default this is inert and the core is **byte-identical**
+    /// to a build without it — `AccuracyCoin`, the commercial oracle, and the
+    /// visual / audio regression suites are unaffected. Selecting
+    /// [`PpuRevision::Rp2c02G`] additionally models the OAMADDR (`$2003`)
+    /// write-during-rendering OAM corruption glitch (*Huge Insect*). The
+    /// selection is stored so a power-cycle re-applies it; it is config, not
+    /// save-state (the corruption *state* it can arm already round-trips via the
+    /// v6 PPU snapshot tail). Deterministic. A frontend/config knob re-applied on
+    /// load, mirroring [`Nes::set_oam_decay`].
+    pub const fn set_ppu_revision(&mut self, revision: PpuRevision) {
+        self.bus.set_ppu_revision(revision);
+    }
+
+    /// v2.1.7 P5 — the currently-selected 2C02 die revision (default
+    /// [`PpuRevision::Rp2c02H`], byte-identical).
+    #[must_use]
+    pub const fn ppu_revision(&self) -> PpuRevision {
+        self.bus.ppu_revision()
+    }
+
+    /// v2.1.7 P5 — apply a power-up palette-RAM pattern (see [`PaletteInit`]).
+    ///
+    /// The 2C02's palette RAM is not cleared at power-on; this selects the
+    /// power-up contents. [`PaletteInit::default`] ([`PaletteInit::Zeroed`])
+    /// keeps the established all-zero power-up palette, so at the default this is
+    /// **byte-identical**. [`PaletteInit::Blargg`] loads the canonical blargg
+    /// power-up dump for software that samples uninitialized palette RAM. Writes
+    /// only palette RAM (already part of the snapshot), so no snapshot change is
+    /// needed; the selection is stored so a power-cycle re-applies it. Best
+    /// called at power-on (palette RAM is preserved across a warm reset, like
+    /// real hardware).
+    pub const fn set_power_up_palette(&mut self, init: PaletteInit) {
+        self.bus.set_power_up_palette(init);
+    }
+
+    /// v2.1.7 P5 — the currently-selected power-up palette pattern (default
+    /// [`PaletteInit::Zeroed`], byte-identical).
+    #[must_use]
+    pub const fn power_up_palette(&self) -> PaletteInit {
+        self.bus.power_up_palette()
+    }
+
+    /// v2.1.7 P5 — select the power-on work-RAM fill (see [`PowerOnRam`]).
+    ///
+    /// Applies the fill to the current 2 KiB work RAM (and open-bus latch)
+    /// immediately and stores it so a power-cycle re-applies the same fill
+    /// (`power_cycle == fresh boot`). [`PowerOnRam::default`]
+    /// ([`PowerOnRam::Zeroed`]) is the established all-zero power-up state
+    /// (**byte-identical**); the other variants are opt-in and deterministic,
+    /// surfacing software that reads uninitialized RAM (*Final Fantasy* RNG,
+    /// *River City Ransom*, *Cybernoid*). RAM is not consulted during reset, so
+    /// applying it here is safe.
+    pub fn set_power_on_ram(&mut self, ram: PowerOnRam) {
+        self.bus.set_power_on_ram(ram);
+    }
+
+    /// v2.1.7 P5 — the currently-selected power-on work-RAM fill (default
+    /// [`PowerOnRam::Zeroed`], byte-identical).
+    #[must_use]
+    pub const fn power_on_ram(&self) -> PowerOnRam {
+        self.bus.power_on_ram()
+    }
+
     /// Mapper debug info (bank registers, IRQ counters, mirroring, ...).
     #[must_use]
     pub fn mapper_info(&self) -> MapperDebugView {
@@ -2605,6 +2738,74 @@ mod tests {
         let mut b = Nes::from_rom_with_power_on_seed(&rom, 0xDEAD_BEEF).expect("parse + boot");
         let dump_b: Vec<u8> = (0x0000u16..0x0100).map(|x| b.cpu_bus_peek(x)).collect();
         assert_ne!(dump_a, dump_b, "different seeds should differ");
+    }
+
+    #[test]
+    fn power_on_config_defaults_byte_identical_and_variants_deterministic() {
+        // v2.1.7 P5 — the PowerOnConfig surface. Default (Zeroed) must match the
+        // plain constructor; Filled + Seeded must be deterministic and distinct.
+        let rom = synth_nrom(16, 8);
+
+        // Default config == from_rom (byte-identical work RAM).
+        let mut zeroed =
+            Nes::from_rom_with_power_on_config(&rom, PowerOnConfig::default()).expect("boot");
+        assert_eq!(zeroed.power_on_ram(), PowerOnRam::Zeroed);
+        for addr in (0x0000u16..0x0800).step_by(0x40) {
+            assert_eq!(zeroed.cpu_bus_peek(addr), 0, "Zeroed config: RAM zero");
+        }
+
+        // Filled(0xFF): every work-RAM byte is 0xFF, deterministically.
+        let mut filled = Nes::from_rom_with_power_on_config(
+            &rom,
+            PowerOnConfig {
+                ram: PowerOnRam::Filled(0xFF),
+            },
+        )
+        .expect("boot");
+        assert_eq!(filled.power_on_ram(), PowerOnRam::Filled(0xFF));
+        for addr in (0x0000u16..0x0800).step_by(0x40) {
+            assert_eq!(filled.cpu_bus_peek(addr), 0xFF, "Filled(0xFF)");
+        }
+
+        // Seeded is deterministic and differs from Zeroed.
+        let mut seeded = Nes::from_rom_with_power_on_config(
+            &rom,
+            PowerOnConfig {
+                ram: PowerOnRam::Seeded(42),
+            },
+        )
+        .expect("boot");
+        let dump: Vec<u8> = (0x0000u16..0x0100)
+            .map(|x| seeded.cpu_bus_peek(x))
+            .collect();
+        assert!(dump.iter().any(|&b| b != 0), "Seeded: not all zero");
+    }
+
+    #[test]
+    fn ppu_revision_and_palette_default_byte_identical() {
+        // v2.1.7 P5 — the PPU-revision + power-up-palette knobs default to the
+        // byte-identical state, and toggling them is observable + power-cycle
+        // durable.
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).expect("boot");
+        assert_eq!(nes.ppu_revision(), PpuRevision::Rp2c02H);
+        assert_eq!(nes.power_up_palette(), PaletteInit::Zeroed);
+
+        // Select the opt-in revision + Blargg palette; both must persist across a
+        // power-cycle (the bus re-applies them after rebuilding the PPU).
+        nes.set_ppu_revision(PpuRevision::Rp2c02G);
+        nes.set_power_up_palette(PaletteInit::Blargg);
+        nes.power_cycle();
+        assert_eq!(
+            nes.ppu_revision(),
+            PpuRevision::Rp2c02G,
+            "revision survives power-cycle"
+        );
+        assert_eq!(
+            nes.power_up_palette(),
+            PaletteInit::Blargg,
+            "palette survives power-cycle"
+        );
     }
 
     #[test]
