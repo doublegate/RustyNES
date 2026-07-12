@@ -1347,6 +1347,19 @@ mod tests {
                 "driving_loop.lua",
                 include_str!("../../../examples/scripts/driving_loop.lua"),
             ),
+            // v2.1.10 "Creator Tools" (B9) example library additions.
+            (
+                "hud_graph.lua",
+                include_str!("../../../examples/scripts/hud_graph.lua"),
+            ),
+            (
+                "lifecycle_events.lua",
+                include_str!("../../../examples/scripts/lifecycle_events.lua"),
+            ),
+            (
+                "palette_viewer.lua",
+                include_str!("../../../examples/scripts/palette_viewer.lua"),
+            ),
         ];
         for (name, src) in EXAMPLES {
             let mut nes = Nes::from_rom(&synth_rom()).expect("rom");

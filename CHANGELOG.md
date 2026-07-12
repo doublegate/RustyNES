@@ -48,6 +48,50 @@ cycle-accurate core later replaced.
   the RA-team `User-Agent` coordination, and a real browser RA login + casual unlock
   are the un-CI-able acceptance gate (runbook: `deploy/README.md`,
   `docs/cheevos-browser.md`).
+- **Creator tools: TAStudio depth + Lua API breadth (v2.1.10 "Creator Tools &
+  Web Parity", B8 + B9).**
+  - **Force-greenzone (B8).** A new "Force GZ" toggle in the TAStudio piano-roll
+    header guarantees a cached save-state at *every* frame in a bounded range
+    (up to `MAX_FORCED_GREENZONE_FRAMES` = 10,800 ≈ 3 min at 60 fps), so
+    scrubbing / rewinding anywhere inside it is instant — versus the normal
+    density-tiered keyframe skeleton. Forced frames are pinned as non-evictable
+    anchors and captured as the editor seeks / records across them; shrinking or
+    clearing the range releases only the anchors force-greenzone itself added
+    (marker / branch-point anchors are untouched). Documented memory budget; a
+    pure caching optimisation, so a seek into the forced range stays
+    bit-identical to a linear replay (the determinism / TAS contract is
+    unchanged). *(Named markers and branch save-slots already shipped in v1.6.0;
+    this deepens the greenzone half.)*
+  - **Lua HUD: `emu.drawLine` (B9).** The fourth overlay primitive alongside
+    `drawText` / `drawRect` / `drawPixel` — a straight segment for graphs, watch
+    plots, and hitbox visualisers. Pure overlay (never write-gated); full mlua +
+    piccolo parity.
+  - **Lua memory: palette + CHR domains (B9).** `memory:read_palette(idx)`
+    (`$3F00-$3F1F`, 6-bit index) and `memory:read_chr(addr)` (`$0000-$1FFF`,
+    mapper-banked), both via the side-effect-free debug-peek path — the
+    `*Debug` (no open-bus / no read-buffer-advance / no mapper side-effect)
+    variant by construction on this observational engine.
+  - **Lua lifecycle events (B9).** `reset`, `spriteZeroHit`, and `codeBreak`
+    join the `emu.addEventCallback` surface (host-fired: `reset` on
+    soft-reset / power-cycle, `spriteZeroHit` once per frame the PPU sprite-0
+    hit flag was set — sampled non-destructively via `peek($2002)` — and
+    `codeBreak` on a debugger breakpoint). Observational (no live `Nes`).
+  - **piccolo (wasm) parity uplift (B9).** The experimental pure-Rust backend
+    gains `emu.drawLine`, the read-parity `memory` table (CPU / PPU / palette /
+    CHR / OAM reads served from an extended per-frame snapshot; `poke` keeps the
+    gated + deferred contract), and an `addEventCallback` no-op so portable
+    scripts don't error on wasm — closing most of the read + HUD gap (ADR 0012
+    carve-out now only the per-access / per-interrupt replay callbacks and the
+    host-fired events).
+  - **Example script library.** Three well-commented additions —
+    `hud_graph.lua` (drawLine value graph), `palette_viewer.lua`
+    (`read_palette` / `read_chr` inspector), and `lifecycle_events.lua` (every
+    `addEventCallback` event) — all compile-time embedded and exercised by the
+    `bundled_example_scripts_load_and_run` test.
+  - Determinism preserved throughout: reads are debug-peeks, writes stay
+    gated / deferred exactly as before, and the deterministic `#![no_std]` core
+    is untouched — **AccuracyCoin holds 141/141 (100%)** and save-state / TAS
+    replay stays byte-identical.
 
 ### Deferred (documented)
 

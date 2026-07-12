@@ -47,12 +47,24 @@ What the piccolo backend supports vs. not:
 | `emu.read` / `peek` / `readRange` | yes (per-frame **snapshot**) | yes (live) |
 | `emu.cpu` / `frame` / `cycle` | yes (snapshot) | yes (live) |
 | `emu.log` / `print` | yes | yes |
-| `emu.drawText` / `drawRect` / `drawPixel` | yes | yes |
+| `emu.drawText` / `drawRect` / `drawPixel` / `drawLine` | yes | yes |
+| `memory:peek` / `peek_ppu` / `read_chr` / `read_palette` / `read_oam` / `read_range` | yes (snapshot) *(v2.1.10)* | yes (live) |
+| `memory:poke` | yes — gated + **deferred** *(v2.1.10)* | yes — gated, live |
 | `emu.write` | yes — gated + **deferred** (applied after the frame's callbacks; the snapshot is updated so a same-frame read sees it) | yes — gated, live |
 | `emu.pause` / `saveState` / `loadState` | queued | applied |
 | `emu.setInput` | queued + gated (not yet applied on wasm) | applied |
 | `emu.onExec` / `onRead` / `onWrite` | **no-op** (native-only) | yes |
 | `emu.onNmi` / `onIrq` | **no-op** (native-only) | yes |
+| `emu.addEventCallback` (`reset` / `spriteZeroHit` / `codeBreak` / `startFrame` / …) | **no-op** (registers cleanly, never fires; native-only) | yes |
+
+As of **v2.1.10 "Creator Tools"** the piccolo backend gained the read-parity
+`memory` table (CPU / PPU / palette / CHR / OAM reads served from an extended
+per-frame snapshot; `poke` keeps the same gated + deferred contract as
+`emu.write`) and the `emu.drawLine` primitive, closing most of the read + HUD
+gap. The remaining native-only carve-out is the per-access / per-interrupt
+replay callbacks and the host-fired lifecycle events (`addEventCallback`), which
+need the native event dispatch — they register as no-ops on wasm so a portable
+script does not error (ADR 0012).
 
 The runaway-loop guard is shared in spirit: piccolo's `Fuel` is fed the same
 per-frame instruction budget (`DEFAULT_INSTRUCTION_BUDGET`, 1,000,000), and
@@ -132,7 +144,11 @@ hijacks an in-progress IRQ/BRK sequence).
 | `emu.drawText(x, y, text [, color])` | Draw text (NES px coords; `color` is `0xRRGGBBAA`, default white). |
 | `emu.drawRect(x, y, w, h [, color])` | Draw a filled rectangle. |
 | `emu.drawPixel(x, y [, color])` | Draw a single pixel. |
+| `emu.drawLine(x1, y1, x2, y2 [, color])` *(v2.1.10)* | Draw a straight line segment — the fourth HUD primitive, ideal for graphs / plots / hitbox overlays. Full mlua + piccolo parity. |
 | `emu.log(...)` | Append to the console. `print(...)` is redirected here too. |
+
+All four draw primitives are pure overlay: they decorate the presented frame and
+are **never** write-gated (drawing cannot perturb deterministic state).
 
 Overlay coordinates are NES-framebuffer space (256×240), mapped onto the actual
 letterboxed game rect — honouring 8:7 pixel-aspect correction and the overscan
@@ -196,8 +212,17 @@ deterministic / locked session.
 | `memory:read_u16_le(addr)` *(v1.6.0)* | A 16-bit **little-endian** word — two CPU `peek`s (`addr`, `addr+1`), side-effect-free. The common need for positions / timers / pointers. |
 | `memory:read_u16_be(addr)` *(v1.6.0)* | A 16-bit **big-endian** word from `addr`. |
 | `memory:read_oam(index)` *(v1.6.0)* | One byte of sprite RAM (**OAM**) — the third read domain alongside CPU and PPU; `index` wraps to `0-255`. |
+| `memory:read_palette(index)` *(v2.1.10)* | One palette-RAM entry (`$3F00-$3F1F`, `index` masked to `0-31`), returning the raw 6-bit NES colour index (`0-63`). Side-effect-free. |
+| `memory:read_chr(addr)` *(v2.1.10)* | One CHR / pattern-table byte (`$0000-$1FFF`, `addr` masked to 13 bits), resolved through the mapper's current CHR banking exactly as the PPU fetches it. Side-effect-free. |
 | `memory:poke(addr, value)` | Write a byte into **system RAM** (`$0000-$1FFF`). Gated like `emu.write`. |
 | `memory:write_range(addr, bytes)` | Write a 1-based byte array starting at `addr` into system RAM. Gated like `emu.write`. |
+
+> **Side-effect-free reads (the `*Debug` contract).** Every `memory:*` read
+> above uses the emulator's debug-peek path, so observing memory never trips
+> open-bus, advances the `$2007` read buffer, clears the `$2002` VBL latch, or
+> fires a mapper side-effect. On this observational engine the standard reads
+> ARE the side-effect-free / `*Debug` variant — there is no separate
+> latch-consuming read to guard against.
 
 ### `joypad` — controller input (B3)
 
@@ -311,7 +336,7 @@ never mutate state. The event callbacks are observational.
 | `emu:setScreenBuffer(t)` | Paint the **display** framebuffer from such an array (output only — never a register/latch; a later real frame fully repaints). **Gated** like `emu.write`. |
 | `emu:getState()` | A structured map: CPU `a`/`x`/`y`/`s`/`p`/`pc` + `frameCount` / `cycle` / `region`. Read-only. |
 | `emu:setState(t)` | Write back the CPU register file from such a map (a partial table leaves the rest untouched). **Gated** like `emu.write`. |
-| `emu.addEventCallback(fn, type)` | Register `fn` for an event: `nmi`, `irq`, `startFrame`, `endFrame`, `inputPolled`, `stateLoaded`, `stateSaved`. Observational. An unknown type errors at load. |
+| `emu.addEventCallback(fn, type)` | Register `fn` for an event. Engine-fired: `startFrame`, `endFrame`, `inputPolled`, `nmi`, `irq`, `stateLoaded`, `stateSaved`. Host-fired *(v2.1.10)*: `reset` (soft-reset / power-cycle), `spriteZeroHit` (`fn(frame)`, once per frame the PPU sprite-0 hit flag was set — sampled non-destructively), `codeBreak` (`fn(pc)`, on a debugger breakpoint). All observational (no live `Nes`). An unknown type errors at load. |
 | `emu.addMemoryCallback(fn, "write", start[, end])` | A **value-modifying** write watch over `[start, end]`: `fn(addr, value)` may RETURN a replacement byte, which is poked back through the gated `poke_ram` path (a scriptable cheat / watchpoint). **Gated** like `emu.write`. |
 | `emu.takeScreenshot()` | Write the current frame to a PNG (the host owns the encoder + screenshot dir). A read-only side effect — *not* gated. |
 | `emu.getScriptDataFolder()` | A per-script sandboxed data directory (the clean persist-without-arbitrary-FS path), or `nil`. |
@@ -450,6 +475,25 @@ write-gated.
 - **Overlay coordinates** are mapped onto the actual letterboxed game rect
   (honouring 8:7 pixel-aspect correction + overscan crop), so HUD coordinates
   line up with game pixels.
+
+## Example script library
+
+Well-commented example scripts live in `examples/scripts/`. Load one from
+Debug → Lua Script → Load .lua…. Every bundled example is compile-time embedded
+and exercised by a `rustynes-script` test (`bundled_example_scripts_load_and_run`),
+so a doc-referenced example never bit-rots against the API.
+
+| Script | Demonstrates |
+|---|---|
+| `ram_watch.lua` | Watch + log RAM values each frame. |
+| `hud.lua` | A minimal on-screen HUD (`drawText` / `drawRect`). |
+| `hud_graph.lua` *(v2.1.10)* | A scrolling value graph drawn with `emu.drawLine`. |
+| `palette_viewer.lua` *(v2.1.10)* | An on-screen palette + CHR inspector (`memory:read_palette` / `read_chr`). |
+| `lifecycle_events.lua` *(v2.1.10)* | Every `emu.addEventCallback` lifecycle event (`reset` / `spriteZeroHit` / `codeBreak` / …). |
+| `memory_scanner.lua` | A simple changed-value memory scanner. |
+| `game_state_tracker.lua` | Track structured game state across frames. |
+| `tas_frame_analysis.lua` | Per-frame TAS analysis via the `tastudio` query API. |
+| `driving_loop.lua` | Drive the emulator a frame at a time (`emu.run` / `frameadvance`). |
 
 ## See also
 
