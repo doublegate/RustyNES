@@ -266,4 +266,26 @@ mod tests {
         .validate(&module)
         .expect("CRT WGSL must validate");
     }
+
+    /// The v2.1.9 marquee CRT stack (B6) + the raw NTSC signal-decode pass (P4)
+    /// must ALL parse and validate under the exact naga front-end + validator
+    /// wgpu runs at `create_shader_module`. This is the gate that proves the new
+    /// WGSL files are real, compilable shaders — not just string constants — and
+    /// guards the dynamic-array / binding-visibility bug classes a runtime crash
+    /// would otherwise hide. Runs the same validation the base CRT test does,
+    /// once per shader in the stack registry.
+    #[test]
+    fn crt_stack_shaders_parse_and_validate() {
+        for shader in rustynes_gfx_shaders::CrtStackShader::ALL {
+            let src = shader.wgsl();
+            let module = naga::front::wgsl::parse_str(src)
+                .unwrap_or_else(|e| panic!("{} WGSL must parse: {e:?}", shader.display_name()));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("{} WGSL must validate: {e:?}", shader.display_name()));
+        }
+    }
 }

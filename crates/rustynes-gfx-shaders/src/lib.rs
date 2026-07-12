@@ -256,3 +256,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 /// `ntsc_bisqwit::shader_src()`; a drift test in `rustynes-frontend` asserts the two
 /// stay identical, so editing the model there regenerates this file.
 pub const BISQWIT_WGSL: &str = include_str!("bisqwit.wgsl");
+
+// v2.1.9 "Presentation & Signal": the marquee CRT shader stack (B6) + the raw
+// NTSC signal-decode pass (P4) live in their own module + WGSL files so they add
+// atop the ladder above without disturbing it.
+mod crt_stack;
+pub use crt_stack::{
+    CRT_GUEST_WGSL, CRT_ROYALE_WGSL, CrtStackShader, MEGATRON_WGSL, SIGNAL_DECODE_WGSL,
+};
