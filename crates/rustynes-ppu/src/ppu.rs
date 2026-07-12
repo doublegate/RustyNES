@@ -967,6 +967,22 @@ pub struct Ppu {
     /// restore. At the default `extra_scanlines == 0` this is always `0`.
     pub(crate) extra_lines_remaining: u16,
 
+    /// v2.1.8 A1 — enable the specialized straight-line per-dot fast path for
+    /// the common visible-scanline BG-render window (see [`Self::tick`] and
+    /// `docs/performance.md`). A **default-OFF runtime knob** (like
+    /// `extra_scanlines` / `oam_decay`): when `false` (the shipped default)
+    /// the tick FSM takes the fully-general per-dot path and the frame is
+    /// byte-identical to a build without this field. When `true`, visible
+    /// scanline dots `1..=256` whose per-dot state is provably "undisturbed"
+    /// (no pending `$2006` copy-V, no PPUMASK write-delay, no PPUDATA state
+    /// machine in flight, no armed/pending OAM-corruption, warm scanline
+    /// classification cache, stable rendering-enable) are dispatched to
+    /// [`Self::tick_visible_render_fast`], which executes the identical
+    /// helper sequence with the statically-dead event/bookkeeping branches
+    /// pruned. Any disturbance drops instantly back to the exact path.
+    /// **Not serialized** — a frontend/config knob re-applied on restore.
+    pub(crate) fast_dotloop: bool,
+
     /// Optional per-PPU-dot state trace (Session-10 observability
     /// tooling). Gated on the `ppu-state-trace` cargo feature so
     /// the default build pays no memory or codegen cost. See
@@ -1180,6 +1196,7 @@ impl Ppu {
             frame_ntsc_phase: 0,
             extra_scanlines: 0,
             extra_lines_remaining: 0,
+            fast_dotloop: false,
             #[cfg(feature = "ppu-state-trace")]
             state_trace: None,
             #[cfg(feature = "hd-pack")]
@@ -1269,6 +1286,19 @@ impl Ppu {
     #[must_use]
     pub const fn extra_scanlines(&self) -> u16 {
         self.extra_scanlines
+    }
+
+    /// v2.1.8 A1 — enable/disable the specialized visible-scanline fast dot
+    /// path. Default OFF (byte-identical to a build without the field). See
+    /// [`Self::fast_dotloop`] and `docs/performance.md`.
+    pub const fn set_fast_dotloop(&mut self, enabled: bool) {
+        self.fast_dotloop = enabled;
+    }
+
+    /// v2.1.8 A1 — whether the visible-scanline fast dot path is enabled.
+    #[must_use]
+    pub const fn fast_dotloop(&self) -> bool {
+        self.fast_dotloop
     }
 
     /// v2.1.4 F2.3 — enable or disable the optional OAM-decay accuracy model.
@@ -2578,6 +2608,61 @@ impl Ppu {
         // the post-advance position.
         self.advance_dot();
 
+        // === v2.1.8 A1 — specialized visible-scanline fast dot path ===
+        //
+        // The per-dot `tick` FSM below is the emulator's single hottest
+        // function (`Ppu::tick` ~46% of a representative frame's self-time,
+        // `docs/performance.md`). The overwhelming majority of its 89,342
+        // per-frame invocations are visible-scanline BG-render dots whose
+        // surrounding event/bookkeeping branches are all statically dead —
+        // no scanline-241 VBL set, no pre-render clear, no OAM-corruption
+        // edge, no PPUDATA state machine in flight, no `$2006` copy-V or
+        // PPUMASK write delay pending, rendering stably enabled. This gate
+        // detects that regime cheaply and, when the (default-OFF) runtime
+        // knob is on, dispatches to [`Self::tick_visible_render_fast`], which
+        // runs the *identical* helper sequence with the dead branches pruned.
+        //
+        // BYTE-IDENTITY: the fast handler is byte-identical BY CONSTRUCTION —
+        // it calls the same helpers (`tick_oam_corruption`,
+        // `tick_sprite_eval_per_dot`, `tick_oam_bus`, `reload_bg_shift_regs`,
+        // the `ale_drive_*` / `fetch_*` pair, `inc_hori_v`, `inc_vert_v`,
+        // `emit_pixel`, `shift_bg`) in the same order the general path would
+        // for a dot satisfying the guard, and executes NONE of the branches
+        // the guard proves un-taken. The guard is conservative: any doubt
+        // (delay counters non-zero, corruption armed, cache cold, rendering
+        // toggling) falls through to the exact path below. Empirically pinned
+        // bit-for-bit by the differential test
+        // (`crates/rustynes-test-harness/tests/fast_dotloop_diff.rs`) and the
+        // full AccuracyCoin / visual-regression / nestest oracle.
+        //
+        // Compiled out under `ppu-state-trace` (whose end-of-tick hook must
+        // observe every dot); under that feature the knob is inert.
+        #[cfg(not(feature = "ppu-state-trace"))]
+        if self.fast_dotloop
+            && self.dot >= 1
+            && self.dot <= 256
+            // Scanline classification cache warm (dot 0 of the line, taken on
+            // the general path, warms it) AND this is a visible scanline.
+            && self.scanline == self.flags_cached_scanline
+            && self.cached_visible
+            // No sub-dot disturbance in flight.
+            && self.copy_v_delay == 0
+            && self.mask_write_delay == 0
+            && self.ppudata_sm_countdown == 0
+            && !self.oam_corruption_pending
+            && !self.oam_corruption_disabled
+            && !self.oam_corruption_disabled_instant
+            // Rendering stably enabled: immediate == 1-dot-delayed == previous
+            // dot's value, so `rendering`, `rendering_gate`, `bg_reload_render`
+            // and the shift gate all collapse to `true` with no edge to model.
+            && self.mask.rendering_enabled()
+            && self.rendering_enabled_delayed
+            && self.prev_rendering_enabled
+        {
+            self.tick_visible_render_fast(bus);
+            return;
+        }
+
         // v2.0.3 (ADR 0030, Option 1) — the delayed-`CopyV` landing (`TriCNES`
         // `Emulator.cs:1684-1704`). Ticked at the TOP of the dot, BEFORE the fetch
         // dispatch, so the `address_bus = v` splice is in place for THIS dot's
@@ -3069,6 +3154,86 @@ impl Ppu {
                 t.maybe_push(rec);
             }
         }
+    }
+
+    /// v2.1.8 A1 — the specialized straight-line body for a "clean" visible
+    /// BG-render dot: a visible scanline, `dot` in `1..=256`, rendering stably
+    /// enabled, and no sub-dot disturbance in flight. Dispatched from
+    /// [`Self::tick`] behind the default-OFF [`Self::fast_dotloop`] guard.
+    ///
+    /// This executes the *exact same* helper sequence the general per-dot path
+    /// runs for such a dot — in the same order — with every event and
+    /// bookkeeping branch the guard proves un-taken (VBL/NMI set/clear, the
+    /// pre-render vertical reload, sprite-tile fetch dots 260..=316, the
+    /// OAMADDR-reset window, the dot-257 hori-copy, the PPUDATA state machine,
+    /// the OAM-corruption commit, the odd-frame skip) elided. It is therefore
+    /// byte-identical to the general path by construction, and is additionally
+    /// pinned bit-for-bit by the differential test + the full oracle. See the
+    /// extensive rationale at the dispatch site in [`Self::tick`].
+    #[inline]
+    fn tick_visible_render_fast<B: PpuBus>(&mut self, bus: &mut B) {
+        let dot = self.dot;
+
+        // General-path top: with `mask_write_delay == 0` (guard) the BG-reload
+        // gate follows the stably-enabled rendering bit.
+        self.bg_reload_render = true;
+
+        // OAM-corruption pointer bookkeeping. The guard proved nothing is
+        // armed/pending/disabled, so this only maintains `oam2_addr` across the
+        // dots 1..=64 secondary-OAM clear window (and is a two-compare no-op for
+        // dots 65..=256) — exactly what the general path's
+        // `if render_line { tick_oam_corruption(rendering) }` does here.
+        self.tick_oam_corruption(true);
+
+        // Rendering-edge bookkeeping the NEXT dot's gate consumes. Both are
+        // already `true` (guard), but the general path assigns them every dot,
+        // so keep the writes to stay byte-identical across a fast→general dot
+        // boundary.
+        self.prev_rendering_enabled = true;
+        self.rendering_enabled_delayed = true;
+
+        // Sprite-evaluation FSM (visible scanline) + isolated OAM data-bus model.
+        self.tick_sprite_eval_per_dot();
+        self.tick_oam_bus();
+
+        // Background fetch pipeline: dots 1..=256 are all in the fetch window,
+        // `phase = (dot - 1) & 7`.
+        let phase = dot.wrapping_sub(1) & 7;
+        // Phase 0: shift-register reload (reload gate == `bg_reload_render`).
+        if phase == 0 {
+            self.reload_bg_shift_regs();
+        }
+        // 2-cycle-ALE address-latch half (even phases).
+        match phase {
+            0 => self.ale_drive_nt(),
+            2 => self.ale_drive_at(),
+            4 => self.ale_drive_bg_lo(),
+            6 => self.ale_drive_bg_hi(),
+            _ => {}
+        }
+        // Read half (odd phases).
+        match phase {
+            1 => self.fetch_nt(bus),
+            3 => self.fetch_at(bus),
+            5 => self.fetch_bg_lo(bus),
+            7 => self.fetch_bg_hi(bus),
+            _ => {}
+        }
+        // Phase 7 (cycle 8 of the group): coarse-X increment. The dots
+        // 321..=336 prefetch `<<= 8` is out of the 1..=256 range, so it never
+        // applies here.
+        if phase == 7 {
+            self.inc_hori_v();
+        }
+        // Dot 256: vertical-V increment (with the 29→0 wrap-and-flip quirk).
+        if dot == 256 {
+            self.inc_vert_v();
+        }
+
+        // Pixel emission + BG shift. The shift gate `render_line && rendering`
+        // is `true` throughout the covered window.
+        self.emit_pixel();
+        self.shift_bg();
     }
 
     // ------------------------------------------------------------------

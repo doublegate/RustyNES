@@ -86,5 +86,63 @@ fn bench_full_frame_rendering(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_full_frame, bench_full_frame_rendering);
+/// v2.1.8 A1 — the fast-dot-path A/B companions. Identical to the two benches
+/// above except `set_fast_dotloop(true)` is applied after boot, so a
+/// back-to-back Criterion run of `*_fast` vs the stock bench isolates the
+/// speedup the specialized visible-scanline handler buys (the emulated output
+/// is byte-identical — proven by `fast_dotloop_diff`). The delta on the
+/// rendering-heavy `flowing_palette` path is the headline figure.
+fn bench_full_frame_fast(c: &mut Criterion) {
+    let bytes = std::fs::read(rom_path("nestest/nestest.nes"))
+        .expect("nestest/nestest.nes vendored in tests/roms/");
+
+    c.bench_function("nes_run_frame_nestest_fast", |b| {
+        b.iter_batched(
+            || {
+                let mut nes = Nes::from_rom(&bytes).expect("nestest parses");
+                nes.set_fast_dotloop(true);
+                for _ in 0..60 {
+                    nes.run_frame();
+                }
+                nes
+            },
+            |mut nes| {
+                let fb = nes.run_frame();
+                black_box(fb.len());
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+}
+
+fn bench_full_frame_rendering_fast(c: &mut Criterion) {
+    let bytes = std::fs::read(rom_path("sprint-2/flowing_palette.nes"))
+        .expect("sprint-2/flowing_palette.nes vendored in tests/roms/");
+
+    c.bench_function("nes_run_frame_flowing_palette_fast", |b| {
+        b.iter_batched(
+            || {
+                let mut nes = Nes::from_rom(&bytes).expect("flowing_palette parses");
+                nes.set_fast_dotloop(true);
+                for _ in 0..60 {
+                    nes.run_frame();
+                }
+                nes
+            },
+            |mut nes| {
+                let fb = nes.run_frame();
+                black_box(fb.len());
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+}
+
+criterion_group!(
+    benches,
+    bench_full_frame,
+    bench_full_frame_rendering,
+    bench_full_frame_fast,
+    bench_full_frame_rendering_fast
+);
 criterion_main!(benches);
