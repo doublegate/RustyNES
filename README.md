@@ -779,14 +779,15 @@ RustyNES's current release is **v2.1.8 "Fathom" ("Tempo")**, the performance ste
 v2.1.5 → v2.2.0 "deepen the project" run — it adds a **specialized visible-scanline fast
 PPU dot path** (a straight-line renderer for clean dots that drops to the exact 2-cycle-ALE
 loop the instant any sub-scanline disturbance occurs; **~12% faster** on rendering-heavy
-frames), a **vectorized software palette→RGBA blitter** (scalar / `wide` / wasm `+simd128`
-paths), and a **wasm size/startup pass** (`wasm-opt -O4` → 3.99 MiB gzip, comfortably under
-budget). The fast dot path is **default-off** and **differential-tested bit-identical** to
-the exact path across the corpus (framebuffer + audio + cycles + snapshot), and the SIMD
-blitter is proven byte-identical to scalar — so the shipped build stays byte-identical:
+frames), a set of **SIMD-validated software palette→RGBA blitter paths** (scalar / `wide` /
+wasm `+simd128`, all proven byte-identical — but the conversion is a **memory-bound LUT
+gather**, so no SIMD path clears the >3% bar and **scalar stays the default**; the vector
+paths are validated and available, not a shipped speedup), and a **wasm size/startup pass**
+(`wasm-opt -O4` → 3.99 MiB gzip, comfortably under budget). The fast dot path is
+**default-off** and **differential-tested bit-identical** to the exact path across the
+corpus (framebuffer + audio + cycles + snapshot) — so the shipped build stays byte-identical:
 **AccuracyCoin stays 141/141 (100.00%)**, nestest 0-diff, `visual_regression` /
-`pal_apu_tests` unchanged. (The SIMD blitter is memory-bound, so scalar stays the default
-per the >3% adoption bar — the paths are validated and available.)
+`pal_apu_tests` unchanged.
 
 The v2.1.x line opened with **v2.1.0**, the accuracy-remediation release (a display-only
 PPU palette-backdrop-override fix, 86 mapper families promoted BestEffort → Curated, and
