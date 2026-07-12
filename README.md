@@ -783,11 +783,11 @@ PAL 2A07 frame counter, which also uncovered and fixed a real length-counter
 halt/reload write-ordering bug latent on NTSC too), fixes a **real TURN NAT-traversal
 production bug** (the relay client never retransmitted, so a single dropped UDP datagram
 aborted symmetric-NAT netplay), validates the shipped fat-LTO release profile with a
-measured A/B, and lands the MMC3 R1/R2 F5.0 A12-phase instrumentation study — all on the
-byte-identical cycle-accurate core. The deterministic NTSC core is untouched:
-**AccuracyCoin stays 141/141 (100.00%)**, nestest 0-diff, and the default-build
-framebuffer / audio are
-byte-identical.
+measured A/B, and lands the MMC3 R1/R2 F5.0 A12-phase instrumentation study. The NTSC
+**default-build output stays byte-identical** (the length-counter ordering fix touches
+shared code but is byte-identical on NTSC by construction, and the PAL frame counter is
+region-gated): **AccuracyCoin stays 141/141 (100.00%)**, nestest 0-diff, and the
+default-build framebuffer / audio are byte-identical.
 
 The v2.1.x line opened with **v2.1.0**, the accuracy-remediation release (a display-only
 PPU palette-backdrop-override fix, 86 mapper families promoted BestEffort → Curated, and
