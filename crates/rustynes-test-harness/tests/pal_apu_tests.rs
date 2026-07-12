@@ -91,10 +91,13 @@ fn run(name: &str) -> (ScreenVerdict, String) {
     (r.verdict, r.text)
 }
 
-/// A check that PASSES under forced PAL — either region-independent
-/// (length-counter operation, length lookup table, frame-IRQ flag semantics)
-/// or a PAL frame-counter-timing check now covered by the v2.1.5 PAL step
-/// positions (clock jitter, mode-0/1 length timing, frame-IRQ flag/IRQ timing).
+/// Asserts a `pal_apu_tests` sub-ROM reports on-screen `PASSED` under forced
+/// PAL. Covers all three categories the suite exercises — region-independent
+/// checks (length-counter operation, length lookup table, frame-IRQ flag
+/// semantics), the PAL frame-counter step-timing checks (clock jitter, mode-0/1
+/// length timing, frame-IRQ flag/IRQ timing), and the length halt/reload
+/// write-ordering checks — so the failure message stays neutral and makes no
+/// region-independence claim that would be false for the timing-sensitive ones.
 macro_rules! pal_apu_pass {
     ($name:ident, $rom:literal) => {
         #[test]
@@ -103,7 +106,7 @@ macro_rules! pal_apu_pass {
             assert_eq!(
                 verdict,
                 ScreenVerdict::Passed,
-                "PAL {} must PASS on-screen (region-independent APU check) — got {verdict:?}\n{text}",
+                "PAL APU {}: expected on-screen PASSED but ROM reported {verdict:?}\n{text}",
                 $rom
             );
         }

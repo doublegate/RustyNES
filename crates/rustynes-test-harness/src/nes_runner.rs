@@ -139,7 +139,8 @@ pub struct ScreenTestResult {
     pub frames: u64,
 }
 
-/// Decode the visible blargg text from the two on-screen nametables.
+/// Decode the visible blargg text from the two on-screen nametables into a
+/// caller-owned buffer, which is [`clear`](String::clear)ed first and reused.
 ///
 /// blargg's text engine writes tiles whose index equals the glyph's ASCII
 /// code directly (CHR-RAM is uploaded with an ASCII-positioned font), so the
@@ -147,14 +148,28 @@ pub struct ScreenTestResult {
 /// (`vram[0x000..0x3C0]` and `vram[0x400..0x7C0]`, each a 32x30 grid) are
 /// decoded and joined, since the ROM's mirroring may place the text in either
 /// — non-printable tiles collapse to spaces and blank lines are dropped.
-fn decode_screen_text(nes: &Nes) -> String {
+///
+/// Writing into a shared `&mut String` (rather than returning a fresh one)
+/// lets [`run_nes_screen`] decode every frame into ONE buffer instead of
+/// allocating a new `String` per frame plus a per-row intermediate — ~100k+
+/// heap allocations per run for the multi-hundred-frame ceiling. Trailing
+/// whitespace is trimmed and blank rows dropped *in place* by tracking each
+/// row's start offset and its last non-space byte, then truncating the buffer
+/// back to that boundary — no per-row scratch `String`. Every decoded glyph is
+/// ASCII (`0x20..=0x7e`), so one byte per char and the `truncate` offsets are
+/// always on a char boundary. The decoded text is byte-for-byte identical to
+/// the prior per-row-`trim_end` implementation.
+fn decode_screen_text_into(nes: &Nes, out: &mut String) {
+    out.clear();
     let vram = nes.vram();
-    let mut out = String::new();
     for base in [0x000usize, 0x400usize] {
         // A nametable is 32 cols x 30 rows of tile indices (0x3C0 bytes),
         // followed by its attribute table (skipped).
         for row in 0..30usize {
-            let mut line = String::new();
+            let row_start = out.len();
+            // Byte offset just past the last non-space glyph in this row; stays
+            // at `row_start` for an all-blank row so it is dropped entirely.
+            let mut row_end = row_start;
             for col in 0..32usize {
                 let idx = base + row * 32 + col;
                 let tile = vram.get(idx).copied().unwrap_or(0);
@@ -163,16 +178,19 @@ fn decode_screen_text(nes: &Nes) -> String {
                 } else {
                     ' '
                 };
-                line.push(ch);
+                out.push(ch);
+                if ch != ' ' {
+                    row_end = out.len();
+                }
             }
-            let trimmed = line.trim_end();
-            if !trimmed.is_empty() {
-                out.push_str(trimmed);
+            // Trim trailing spaces (and drop the row if it was all spaces) by
+            // truncating back to the last non-space boundary.
+            out.truncate(row_end);
+            if out.len() > row_start {
                 out.push('\n');
             }
         }
     }
-    out
 }
 
 /// Classify decoded on-screen text into a terminal [`ScreenVerdict`], or
@@ -227,10 +245,14 @@ pub fn run_nes_screen(
     let bytes: &[u8] = owned.as_deref().unwrap_or(rom_bytes);
     let mut nes = Nes::from_rom(bytes)?;
     let mut frames = 0u64;
+    // Single decode buffer reused across every frame (see
+    // `decode_screen_text_into`): `clear`ed + refilled each frame, then moved
+    // into the result at the end — no per-frame / per-row allocation.
+    let mut text = String::new();
     while frames < max_frames {
         nes.run_frame();
         frames += 1;
-        let text = decode_screen_text(&nes);
+        decode_screen_text_into(&nes, &mut text);
         if let Some(verdict) = classify_screen(&text) {
             return Ok(ScreenTestResult {
                 verdict,
@@ -239,7 +261,7 @@ pub fn run_nes_screen(
             });
         }
     }
-    let text = decode_screen_text(&nes);
+    decode_screen_text_into(&nes, &mut text);
     Ok(ScreenTestResult {
         verdict: ScreenVerdict::Unresolved,
         text,
