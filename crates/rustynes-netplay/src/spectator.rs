@@ -89,7 +89,7 @@ pub struct SpectatorConfig {
 
 impl SpectatorConfig {
     /// Upper bound on [`delay_frames`](Self::delay_frames). Kept comfortably
-    /// below [`MAX_SPECTATOR_FRAME_LOOKAHEAD`] so the buffered-but-unshown
+    /// below `MAX_SPECTATOR_FRAME_LOOKAHEAD` so the buffered-but-unshown
     /// backlog always fits inside the frames the session will accept, and a
     /// misconfigured huge delay cannot wedge the spectator permanently behind
     /// the horizon. 512 frames ≈ 8.5 s at 60 Hz — ample for a broadcast delay.

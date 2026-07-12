@@ -915,6 +915,50 @@ mod tests {
     }
 
     #[test]
+    fn synced_peer_liveness_grades_then_times_out() {
+        // Drive two connections to Synced, then stop pumping `b` so `a` receives
+        // no more datagrams. With tight (test-scale) liveness thresholds, `a`
+        // should progress Live -> Interrupted -> TimedOut and finally disconnect
+        // with `PeerTimeout`. This is the run-time RTT liveness, distinct from
+        // the connect-time handshake timeout.
+        let hash = [0x21u8; 32];
+        let (ta, tb) = transport_pair();
+        let mut a = NetplayConnection::with_transport(ta, hash)
+            .with_peer_timeouts(Duration::from_millis(60), Duration::from_millis(150));
+        let mut b = NetplayConnection::with_transport(tb, hash);
+
+        let mut rounds = 0;
+        while !(a.is_synced() && b.is_synced()) && rounds < 200 {
+            a.pump(0);
+            b.pump(0);
+            rounds += 1;
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(a.is_synced() && b.is_synced(), "both synced");
+        assert_eq!(a.peer_link(), PeerLink::Live, "fresh sync is Live");
+
+        // Silence `b`: only pump `a`. It grades up as the silence grows, then
+        // tears down. Bound the loop so a failure can't hang.
+        let mut saw_interrupted = false;
+        let mut timed_out = false;
+        for _ in 0..200 {
+            std::thread::sleep(Duration::from_millis(5));
+            let state = a.pump(0);
+            if a.peer_link() == PeerLink::Interrupted {
+                saw_interrupted = true;
+            }
+            if matches!(state, ConnectionState::Disconnected) {
+                timed_out = true;
+                break;
+            }
+        }
+        assert!(saw_interrupted, "peer_link passed through Interrupted");
+        assert!(timed_out, "silent peer eventually times out");
+        assert_eq!(a.disconnect_reason(), Some(DisconnectReason::PeerTimeout));
+        assert_eq!(a.peer_link(), PeerLink::TimedOut);
+    }
+
+    #[test]
     fn host_listen_adopts_joiner_from_first_sync() {
         // The host binds WITHOUT a known remote; the joiner dials the host's
         // concrete port. The host must adopt the joiner's address from its
