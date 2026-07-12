@@ -292,6 +292,19 @@ pub struct Apu {
     /// the oracle / test ROMs (which never touch a gain) are unaffected. NEVER
     /// serialized into the save state (a UI preference, like the mask / volume).
     pub(crate) channel_gain: [f32; 6],
+    /// v2.1.6 "Expansion Audio" — the most recent RAW external / on-cart
+    /// expansion-audio sample fed into [`Self::tick_with_external`] (BEFORE the
+    /// UI [`Self::channel_gain`] `[5]` re-weight), retained purely so the
+    /// frontend Audio Mixer panel can plot an expansion-channel oscilloscope /
+    /// VU meter alongside the five base-channel DAC taps.
+    ///
+    /// This is a WRITE-ONLY-from-synthesis, READ-ONLY-to-observers copy: it is
+    /// assigned once per tick and is never read back into the mixer, the IRQ
+    /// path, or any determinism-relevant state, and it is NEVER serialized into
+    /// the save state. It therefore cannot perturb the deterministic per-frame
+    /// audio — the visualization samples a copy, exactly like the base-channel
+    /// `*_out()` DAC accessors already do.
+    pub(crate) last_external: f32,
 }
 
 /// All [`Apu::channel_mask`] bits set — every channel audible (the default and
@@ -369,6 +382,7 @@ impl Apu {
             last_frame_events: FrameEvents::default(),
             channel_mask: CHANNEL_MASK_ALL,
             channel_gain: CHANNEL_GAIN_UNITY,
+            last_external: 0.0,
         }
     }
 
@@ -490,6 +504,16 @@ impl Apu {
     #[must_use]
     pub const fn dmc_out(&self) -> u8 {
         self.dmc.output()
+    }
+
+    /// v2.1.6 "Expansion Audio" — the most recent RAW on-cart expansion-audio
+    /// sample (pre-[`Self::channel_gain`], the `last_external` field). `0.0`
+    /// when the loaded board has no expansion audio. Read-only display tap for
+    /// the frontend Audio Mixer expansion-channel scope / VU meter — it reads a
+    /// copy and never feeds back into synthesis, so it is determinism-neutral.
+    #[must_use]
+    pub const fn external_out(&self) -> f32 {
+        self.last_external
     }
 
     /// Frame IRQ pending?
@@ -1063,6 +1087,10 @@ impl Apu {
                 }
             }
         };
+        // v2.1.6 — stash the RAW (pre-gain) external contribution for the
+        // frontend expansion-channel scope/VU. Write-only from synthesis; never
+        // read back into the mix, so it cannot alter deterministic output.
+        self.last_external = external;
         let ext_gain = gain[5];
         let ext = if ext_gain == 1.0 {
             external
@@ -1942,6 +1970,23 @@ mod tests {
     fn channel_gain_defaults_to_unity() {
         let a = Apu::new(Region::Ntsc, 44_100);
         assert_eq!(a.channel_gain(), CHANNEL_GAIN_UNITY);
+    }
+
+    #[test]
+    fn external_out_tracks_last_external_sample() {
+        // v2.1.6 — the read-only expansion-audio display tap reflects the most
+        // recent RAW value fed to `tick_with_external` and defaults to 0.0.
+        let mut a = Apu::new(Region::Ntsc, 44_100);
+        assert_eq!(a.external_out(), 0.0);
+        a.tick_with_external(0.25);
+        assert!((a.external_out() - 0.25).abs() < f32::EPSILON);
+        a.tick_with_external(-0.1);
+        assert!((a.external_out() - (-0.1)).abs() < f32::EPSILON);
+        // The tap is a copy: a non-unity external gain does NOT change what the
+        // scope observes (it always sees the raw chip contribution).
+        a.set_channel_gain([1.0, 1.0, 1.0, 1.0, 1.0, 0.5]);
+        a.tick_with_external(0.4);
+        assert!((a.external_out() - 0.4).abs() < f32::EPSILON);
     }
 
     #[test]

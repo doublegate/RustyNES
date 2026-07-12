@@ -80,6 +80,12 @@ pub struct ApuDebugView {
     pub noise: u8,
     /// DMC output (0..=127).
     pub dmc: u8,
+    /// v2.1.6 "Expansion Audio" — the most recent RAW on-cart expansion-audio
+    /// sample (VRC6/VRC7/FDS/MMC5/Namco 163/Sunsoft 5B), pre-UI-gain. `0.0`
+    /// when the board has no expansion audio. A read-only display tap for the
+    /// frontend Audio Mixer expansion oscilloscope / VU meter; sampling it does
+    /// not perturb the deterministic mix.
+    pub external: f32,
     /// Frame counter IRQ pending.
     pub frame_irq: bool,
     /// DMC IRQ pending.

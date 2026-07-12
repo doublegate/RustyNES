@@ -85,6 +85,10 @@ pub use tastudio_panel::TasRequest;
 
 mod access_counter;
 mod apu_panel;
+// v2.1.6 "Expansion Audio" B7 — shared oscilloscope/VU primitives + the Audio
+// Mixer tool panel (per-source mix-balance sliders + per-channel scopes).
+mod audio_mixer;
+mod audio_scope;
 // v1.7.0 "Forge" Workstream A3 — inline 6502 assembler used by the CPU panel.
 mod assembler;
 // v1.7.0 "Forge" Workstream A2 — iNES/NES 2.0 header editor + Cartridge Info
@@ -192,6 +196,9 @@ pub enum ToolPanel {
     HdPixelInspector,
     /// v1.8.9 — the `BasicBot` input-search control panel.
     BasicBot,
+    /// v2.1.6 "Expansion Audio" — the Audio Mixer (per-source balance sliders +
+    /// per-channel scopes / VU meters, incl. the on-cart expansion channel).
+    AudioMixer,
 }
 
 /// A chip-inspection panel surfaced from the Debug menu (v1.0.0).
@@ -259,6 +266,8 @@ pub struct DebuggerOverlay {
     show_events: bool,
     /// v1.8.9 — `BasicBot` control panel visible.
     show_basic_bot: bool,
+    /// v2.1.6 — whether the Audio Mixer tool panel is open.
+    show_audio_mixer: bool,
     show_nsf: bool,
     show_replay: bool,
     /// `TAStudio` piano-roll editor open flag (v1.6.0 "Studio" Workstream A2).
@@ -305,6 +314,8 @@ pub struct DebuggerOverlay {
     event_ui: event_panel::EventPanelState,
     /// v1.8.9 — `BasicBot` panel state.
     basic_bot_ui: basic_bot_panel::BasicBotPanel,
+    /// v2.1.6 — Audio Mixer panel display/sampling state (scope rings).
+    audio_mixer_ui: audio_mixer::AudioMixerState,
     /// NSF player panel state (T-110-D1).
     nsf_ui: nsf_panel::NsfPanelState,
     /// Replay / TAS window state (v1.5.0 "Lens" Workstream C2).
@@ -498,6 +509,7 @@ impl DebuggerOverlay {
             show_watch: false,
             show_events: false,
             show_basic_bot: false,
+            show_audio_mixer: false,
             show_nsf: false,
             show_replay: false,
             show_tas: false,
@@ -525,6 +537,7 @@ impl DebuggerOverlay {
             watch_ui: watch_panel::WatchPanelState::default(),
             event_ui: event_panel::EventPanelState::default(),
             basic_bot_ui: basic_bot_panel::BasicBotPanel::default(),
+            audio_mixer_ui: audio_mixer::AudioMixerState::default(),
             nsf_ui: nsf_panel::NsfPanelState::default(),
             replay_ui: replay_panel::ReplayPanelState::default(),
             tas_ui: tastudio_panel::TasStudioPanelState::default(),
@@ -752,6 +765,9 @@ impl DebuggerOverlay {
     /// Game Genie picklist key on this; the `rom_crc` field).
     pub fn set_rom_crc(&mut self, crc: Option<u32>) {
         self.rom_crc = crc;
+        // v2.1.6 — a fresh ROM has fresh audio; clear the Audio Mixer scope
+        // traces so a stale waveform from the previous game doesn't bleed in.
+        self.audio_mixer_ui.reset_traces();
     }
 
     /// Returns `true` if the overlay currently wants the keyboard (i.e.
@@ -1033,6 +1049,7 @@ impl DebuggerOverlay {
             ToolPanel::InputDisplay => self.show_input_display = true,
             ToolPanel::Replay => self.show_replay = true,
             ToolPanel::BasicBot => self.show_basic_bot = true,
+            ToolPanel::AudioMixer => self.show_audio_mixer = true,
             ToolPanel::TasStudio => self.show_tas = true,
             ToolPanel::HdPixelInspector => {
                 #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
@@ -1455,6 +1472,19 @@ impl DebuggerOverlay {
                 ctx,
                 &mut self.show_basic_bot,
                 &mut self.basic_bot_ui,
+                nes.as_deref_mut(),
+            );
+        }
+        // v2.1.6 "Expansion Audio" B7 — the Audio Mixer. It reads `config` (the
+        // persisted mix) and the optional `nes` (read-only DAC taps for the
+        // scopes + the sink for pushing changed gain/mask to the core overlay);
+        // it renders and remains usable with no ROM loaded (flat scopes).
+        if self.show_audio_mixer {
+            audio_mixer::show(
+                ctx,
+                &mut self.show_audio_mixer,
+                &mut self.audio_mixer_ui,
+                config,
                 nes.as_deref_mut(),
             );
         }
