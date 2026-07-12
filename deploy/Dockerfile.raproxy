@@ -1,0 +1,37 @@
+# RustyNES — browser RetroAchievements casual-only auth proxy (ADR 0015).
+#
+# A tiny, dependency-free (stdlib-only) HTTP proxy whose ONE job is to inject the
+# RA identity `User-Agent` header — which browsers forbid scripts from setting —
+# on every forwarded rcheevos request, so the WebAssembly frontend can be
+# identified/allowlisted by RetroAchievements. It ALSO enforces casual-only
+# (refuses to forward a hardcore award) and answers the CORS preflight for the
+# page origin that hosts the wasm build.
+#
+# The proxy is configured PURELY from environment variables (see the
+# `ra-proxy` service in docker-compose.yml + deploy/.env.example) — no config
+# file is baked in, and the proxy holds NO RA secret (it injects only the
+# non-secret identity header; the user's own login credentials transit at
+# request time and are never stored here).
+#
+# Build context is the workspace root (so the source script under scripts/ is
+# reachable), matching the signaling image:
+#   docker build -f deploy/Dockerfile.raproxy -t rustynes-raproxy ..
+FROM python:3.12-slim
+
+# Non-root for defence in depth — the proxy needs no privilege.
+RUN useradd --create-home --uid 10001 raproxy
+USER raproxy
+WORKDIR /home/raproxy
+
+# The reference stub is stdlib-only; copy it verbatim (single source of truth
+# with local development — no fork of the proxy logic).
+COPY --chown=raproxy:raproxy scripts/cheevos/auth_proxy_stub.py ./auth_proxy_stub.py
+
+# Configured entirely via env (RA_PROXY_BIND / RA_USER_AGENT / RA_UPSTREAM /
+# RA_ALLOWED_ORIGINS / RA_ENFORCE_CASUAL). Bind on all interfaces inside the
+# container network by default; Caddy is the only thing that reaches it.
+ENV RA_PROXY_BIND=0.0.0.0:8092
+EXPOSE 8092
+
+# No `--config`: pure env-driven configuration.
+ENTRYPOINT ["python3", "auth_proxy_stub.py"]

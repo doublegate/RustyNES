@@ -291,4 +291,43 @@ mod tests {
         assert!(banner.contains("casual-only"));
         assert!(banner.to_lowercase().contains("experimental"));
     }
+
+    #[test]
+    fn not_configured_caveat_flags_login_unavailable() {
+        // A fresh session has no proxy configured, so the banner must additionally
+        // tell the user login + unlocks are unavailable (nothing silently pretends
+        // to work — the load-bearing honesty invariant of ADR 0015).
+        let s = BrowserRaSession::new();
+        assert!(!s.proxy_configured());
+        assert!(s.caveat_banner().to_lowercase().contains("not configured"),);
+    }
+
+    #[test]
+    fn parse_unlock_titles_extracts_only_triggered_events() {
+        // Marshalling contract: `ra_do_frame` returns a JSON event array where each
+        // event has a numeric `type` and a `title`. Only ACHIEVEMENT_TRIGGERED
+        // (type == 1) events are toasted; other event types (progress, leaderboard,
+        // etc.) must be ignored. This pins the wasm boundary payload shape without a
+        // browser (the pure-Rust parser runs on the host).
+        let json = r#"[
+            {"type":1,"title":"First Blood"},
+            {"type":2,"title":"Some Progress Indicator"},
+            {"type":1,"title":"Speedrun"}
+        ]"#;
+        let titles = parse_unlock_titles(json);
+        assert_eq!(
+            titles,
+            vec!["First Blood".to_string(), "Speedrun".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_unlock_titles_tolerates_malformed_payload() {
+        // A malformed / empty payload must never panic across the wasm boundary — it
+        // degrades to "no unlocks this frame".
+        assert!(parse_unlock_titles("").is_empty());
+        assert!(parse_unlock_titles("not json").is_empty());
+        assert!(parse_unlock_titles("{}").is_empty());
+        assert!(parse_unlock_titles("[]").is_empty());
+    }
 }

@@ -11,16 +11,37 @@ This is a STUB for local development + as a deployable starting point. Productio
 hosting (TLS, a real domain, hardened CORS, rate limiting) is the maintainer's
 step. It deliberately enforces casual-only: it never forwards a hardcore award.
 
+Two configuration sources, in precedence order (later wins):
+  1. A TOML file passed via `--config` (optional).
+  2. Environment variables (always applied last, so a container deploy needs NO
+     committed config file — see `deploy/docker-compose.yml`). This satisfies the
+     project's "config/credentials from env only, never committed" rule; note the
+     proxy holds NO RA secret — it only injects the (non-secret) identity header
+     and the user's own login credentials transit at request time.
+
+Recognised environment variables:
+    RA_PROXY_BIND        host:port to listen on   (default 127.0.0.1:8092)
+    RA_USER_AGENT        the RA identity header    (keep the `RustyNES/` token)
+    RA_UPSTREAM          upstream RA origin        (default https://retroachievements.org)
+    RA_ALLOWED_ORIGINS   comma-separated CORS allowlist of page origins
+    RA_ENFORCE_CASUAL    "1"/"true" (default) to refuse hardcore awards
+
 Usage:
+    # File-driven (local dev):
     python3 scripts/cheevos/auth_proxy_stub.py --config scripts/cheevos/auth-proxy.example.toml
+    # Env-driven (container / deploy):
+    RA_PROXY_BIND=0.0.0.0:8092 RA_USER_AGENT='RustyNES/2.1.10 rcheevos/12.3.0' \
+        RA_ALLOWED_ORIGINS='https://doublegate.github.io' \
+        python3 scripts/cheevos/auth_proxy_stub.py
 
 Then point `RA_PROXY_BASE` in `crates/rustynes-frontend/web/cheevos/ra_glue.js`
-at this proxy's origin (e.g. http://127.0.0.1:8092).
+at this proxy's public origin (e.g. https://cheevos.example.com/ra).
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -30,6 +51,10 @@ try:  # Python 3.11+ has tomllib in the stdlib.
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None
+
+
+def _env_bool(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 class Config:
@@ -42,6 +67,27 @@ class Config:
         self.upstream = proxy.get("upstream", "https://retroachievements.org").rstrip("/")
         self.allowed_origins = set(proxy.get("allowed_origins", []))
         self.enforce_casual_only = data.get("casual", {}).get("enforce_casual_only", True)
+        # Environment overrides ALWAYS win (applied last) so a container deploy is
+        # fully env-driven and needs no committed config file. Each var is optional;
+        # an unset var leaves the file value (or the default) untouched.
+        self._apply_env_overrides()
+
+    def _apply_env_overrides(self) -> None:
+        bind = os.environ.get("RA_PROXY_BIND")
+        if bind:
+            host, _, port = bind.partition(":")
+            self.host = host or self.host
+            self.port = int(port or self.port)
+        self.user_agent = os.environ.get("RA_USER_AGENT", self.user_agent)
+        upstream = os.environ.get("RA_UPSTREAM")
+        if upstream:
+            self.upstream = upstream.rstrip("/")
+        origins = os.environ.get("RA_ALLOWED_ORIGINS")
+        if origins is not None:
+            self.allowed_origins = {o.strip() for o in origins.split(",") if o.strip()}
+        enforce = os.environ.get("RA_ENFORCE_CASUAL")
+        if enforce is not None:
+            self.enforce_casual_only = _env_bool(enforce)
 
 
 def make_handler(cfg: Config):
@@ -126,7 +172,11 @@ def make_handler(cfg: Config):
     return Handler
 
 
-def load_config(path: str) -> Config:
+def load_config(path: str | None) -> Config:
+    # No file → env/defaults only (the container path). A file → parse it, then env
+    # overrides are layered on top inside `Config.__init__`.
+    if path is None:
+        return Config({})
     if tomllib is None:
         sys.exit("error: Python 3.11+ (stdlib tomllib) required to parse the config")
     with open(path, "rb") as fh:
@@ -135,7 +185,11 @@ def load_config(path: str) -> Config:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", required=True, help="path to auth-proxy.example.toml")
+    ap.add_argument(
+        "--config",
+        default=None,
+        help="optional path to auth-proxy.example.toml; omit to configure purely from env vars",
+    )
     args = ap.parse_args()
     cfg = load_config(args.config)
     httpd = ThreadingHTTPServer((cfg.host, cfg.port), make_handler(cfg))

@@ -1,12 +1,27 @@
-# RustyNES — Caddy reverse proxy for the netplay signaling server.
+# RustyNES — Caddy reverse proxy for the netplay signaling server + the browser
+# RetroAchievements auth proxy.
 #
-# Terminates TLS and proxies WebSocket upgrades to the plain-ws signaling relay
-# so browsers can connect at wss://<DOMAIN>/. The {$DOMAIN} placeholder is
-# substituted from the compose `DOMAIN` env var (defaults to localhost, which
-# uses Caddy's internal self-signed CA for a local test; a real hostname gets an
-# automatic Let's Encrypt cert).
+# Terminates TLS and:
+#   - proxies WebSocket upgrades to the plain-ws signaling relay so browsers can
+#     connect at wss://<DOMAIN>/;
+#   - proxies https://<DOMAIN>/ra/* to the casual-only RA auth proxy (ADR 0015),
+#     stripping the /ra prefix so the rcheevos request path reaches upstream RA
+#     verbatim. `RA_PROXY_BASE` in web/cheevos/ra_glue.js points at
+#     https://<DOMAIN>/ra.
+# The {$DOMAIN} placeholder is substituted from the compose `DOMAIN` env var
+# (defaults to localhost, which uses Caddy's internal self-signed CA for a local
+# test; a real hostname gets an automatic Let's Encrypt cert).
 
 {$DOMAIN} {
+	# Browser RetroAchievements auth proxy (ADR 0015). `handle_path` strips the
+	# `/ra` prefix, so a request to https://<DOMAIN>/ra/dorequest.php arrives at
+	# the proxy as /dorequest.php and is forwarded verbatim to upstream RA with
+	# the identity User-Agent injected. The proxy itself answers the CORS
+	# preflight + refuses hardcore, so Caddy just forwards.
+	handle_path /ra/* {
+		reverse_proxy ra-proxy:8092
+	}
+
 	# The signaling relay (signaling_server.rs) speaks ONLY WebSocket: it runs
 	# `accept_async` on every connection and rejects anything without an
 	# `Upgrade: websocket` header. So proxy *only* real WebSocket upgrades to it;

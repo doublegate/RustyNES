@@ -1,10 +1,14 @@
-# RustyNES — browser-netplay deployment bundle
+# RustyNES — browser-netplay + RetroAchievements deployment bundle
 #
-# Three services wired together:
+# Four services wired together:
 #   - signaling : the WebRTC signaling relay (ws://signaling:9000), built from
 #                 the rustynes-netplay `signaling_server` example.
+#   - ra-proxy  : the casual-only browser RetroAchievements auth proxy (ADR 0015)
+#                 that injects RA's identity `User-Agent` server-side (browsers
+#                 forbid scripts setting it). Env-driven; holds no RA secret.
 #   - caddy     : a TLS-terminating reverse proxy that exposes the relay as
-#                 wss://<DOMAIN>/  (an https page cannot open a plain ws://).
+#                 wss://<DOMAIN>/ and the RA proxy as https://<DOMAIN>/ra/*
+#                 (an https page cannot open a plain ws:// or fetch a plain http://).
 #   - coturn    : a STUN + TURN server for NAT traversal (browsers point their
 #                 RtcConfiguration iceServers at it via [netplay] stun_servers).
 #
@@ -26,11 +30,38 @@ services:
     expose:
       - "9000"
 
+  ra-proxy:
+    build:
+      # Build context is the workspace root so the Dockerfile can copy the
+      # reference proxy stub from scripts/cheevos/.
+      context: ..
+      dockerfile: deploy/Dockerfile.raproxy
+    image: rustynes-raproxy:latest
+    restart: unless-stopped
+    # Configured purely from env (no committed config file). The proxy holds NO
+    # RA secret — it injects only the non-secret identity User-Agent and enforces
+    # casual-only + the CORS allowlist. Substitute these in `.env` (see
+    # deploy/.env.example):
+    #   RA_USER_AGENT       — keep the leading `RustyNES/` token (RA allowlists by it)
+    #   RA_ALLOWED_ORIGINS  — the page origin(s) hosting the wasm build (CSV)
+    #   RA_UPSTREAM         — upstream RA origin (default https://retroachievements.org)
+    #   RA_ENFORCE_CASUAL   — "1"/"true" (default) refuses hardcore awards
+    environment:
+      RA_PROXY_BIND: "0.0.0.0:8092"
+      RA_USER_AGENT: ${RA_USER_AGENT:-RustyNES/0.0.0 rcheevos/0.0.0}
+      RA_UPSTREAM: ${RA_UPSTREAM:-https://retroachievements.org}
+      RA_ALLOWED_ORIGINS: ${RA_ALLOWED_ORIGINS:-https://doublegate.github.io}
+      RA_ENFORCE_CASUAL: ${RA_ENFORCE_CASUAL:-1}
+    # Not published directly — only Caddy reaches it, on the internal network.
+    expose:
+      - "8092"
+
   caddy:
     image: caddy:2
     restart: unless-stopped
     depends_on:
       - signaling
+      - ra-proxy
     environment:
       # The public hostname Caddy serves wss:// on. `localhost` uses Caddy's
       # internal self-signed CA (good for a local two-tab test); a real domain
