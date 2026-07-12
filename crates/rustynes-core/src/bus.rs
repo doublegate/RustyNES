@@ -44,8 +44,8 @@ pub mod instr_trace {
 use rustynes_cpu::Bus;
 use rustynes_mappers::{Cartridge, Mapper, MapperError, MapperFrameEvents, RomError};
 use rustynes_ppu::{
-    BgSplitState as PpuBgSplitState, ExAttribute as PpuExAttribute, Ppu, PpuBus, PpuPalette,
-    PpuRegion, PpuSnapshotError,
+    BgSplitState as PpuBgSplitState, ExAttribute as PpuExAttribute, PaletteInit, Ppu, PpuBus,
+    PpuPalette, PpuRegion, PpuRevision, PpuSnapshotError,
 };
 
 use crate::controller::{Buttons, Controller};
@@ -351,6 +351,21 @@ pub struct LockstepBus {
     /// behavior, so the determinism contract and existing save-states are
     /// unaffected.
     four_score: bool,
+    /// v2.1.7 P5 — power-on 2 KiB work-RAM fill selection. [`crate::nes::PowerOnRam::Zeroed`]
+    /// (default) leaves the established all-zero power-up state; the other
+    /// variants are opt-in and deterministic. Stored so [`Self::power_cycle`] can
+    /// re-apply the same fill after it zeroes RAM, keeping `power_cycle == fresh
+    /// boot`. At the default this is inert (the zero fill matches `fresh_ram()`).
+    power_on_ram: crate::nes::PowerOnRam,
+    /// v2.1.7 P5 — selected 2C02 die revision (see [`PpuRevision`]). Stored so
+    /// [`Self::power_cycle`] can re-apply it after the PPU is reconstructed
+    /// (the PPU field is lost on rebuild, like the Vs. palette).
+    /// [`PpuRevision::default`] models no extra behavior → byte-identical.
+    ppu_die_revision: PpuRevision,
+    /// v2.1.7 P5 — selected power-up palette pattern (see [`PaletteInit`]).
+    /// Re-applied on [`Self::power_cycle`] after the PPU (and thus its palette
+    /// RAM) is rebuilt. [`PaletteInit::default`] is all-zero → byte-identical.
+    power_up_palette: PaletteInit,
     /// Players 3 (`$4016`) and 4 (`$4017`) — only polled when
     /// [`Self::four_score`] is set.
     controllers34: [Controller; 2],
@@ -793,6 +808,11 @@ impl LockstepBus {
             rom_bytes: None,
             controllers: [Controller::new(); 2],
             four_score: false,
+            // v2.1.7 P5 — power-on config knobs, all at their byte-identical
+            // defaults (zeroed RAM, default revision, all-zero power-up palette).
+            power_on_ram: crate::nes::PowerOnRam::Zeroed,
+            ppu_die_revision: PpuRevision::Rp2c02H,
+            power_up_palette: PaletteInit::Zeroed,
             controllers34: [Controller::new(); 2],
             four_score_idx: [0; 2],
             four_score_sig: [0; 2],
@@ -1001,6 +1021,16 @@ impl LockstepBus {
         // Re-apply the Vs./PC10 RGB-PPU configuration (lost when the PPU is
         // reconstructed). No-op for ConsoleType::Nes carts.
         self.reapply_vs_palette();
+        // v2.1.7 P5 — re-apply the PPU-revision + power-up-palette config lost
+        // when the PPU was reconstructed above, so `power_cycle == fresh boot`
+        // holds for these knobs too (a core-only consumer that power-cycles
+        // without a frontend still gets the configured hardware). All no-ops at
+        // their defaults, so a default power-cycle stays byte-identical.
+        self.ppu.set_revision(self.ppu_die_revision);
+        self.ppu.apply_power_up_palette(self.power_up_palette);
+        // v2.1.7 P5 — re-apply the power-on work-RAM fill after the `fill(0)`
+        // above. At the default (`Zeroed`) this is the same zero fill.
+        self.apply_power_on_ram();
         self.apu = Apu::new(self.apu_region(), self.apu.sample_rate);
         {
             self.apu.set_dmc_driven_externally(true);
@@ -1180,6 +1210,68 @@ impl LockstepBus {
     /// [`rustynes_ppu::Ppu::set_oam_decay`].
     pub const fn set_oam_decay(&mut self, enabled: bool) {
         self.ppu.set_oam_decay(enabled);
+    }
+
+    /// v2.1.7 P5 — select the emulated 2C02 die revision, storing it so a
+    /// power-cycle re-applies it, and applying it to the live PPU now. The
+    /// default revision is byte-identical. See [`PpuRevision`].
+    pub const fn set_ppu_revision(&mut self, revision: PpuRevision) {
+        self.ppu_die_revision = revision;
+        self.ppu.set_revision(revision);
+    }
+
+    /// v2.1.7 P5 — the currently-selected 2C02 die revision.
+    #[must_use]
+    pub const fn ppu_revision(&self) -> PpuRevision {
+        self.ppu_die_revision
+    }
+
+    /// v2.1.7 P5 — apply a power-up palette-RAM pattern, storing it so a
+    /// power-cycle re-applies it and writing it to the live PPU's palette RAM
+    /// now. The default ([`PaletteInit::Zeroed`]) is byte-identical. See
+    /// [`PaletteInit`].
+    pub const fn set_power_up_palette(&mut self, init: PaletteInit) {
+        self.power_up_palette = init;
+        self.ppu.apply_power_up_palette(init);
+    }
+
+    /// v2.1.7 P5 — the currently-selected power-up palette pattern.
+    #[must_use]
+    pub const fn power_up_palette(&self) -> PaletteInit {
+        self.power_up_palette
+    }
+
+    /// v2.1.7 P5 — select the power-on work-RAM fill, storing it so a
+    /// power-cycle re-applies it, and applying it to the current RAM now. The
+    /// default ([`crate::nes::PowerOnRam::Zeroed`]) is byte-identical. See [`crate::nes::PowerOnRam`].
+    pub fn set_power_on_ram(&mut self, ram: crate::nes::PowerOnRam) {
+        self.power_on_ram = ram;
+        self.apply_power_on_ram();
+    }
+
+    /// v2.1.7 P5 — the currently-selected power-on work-RAM fill.
+    #[must_use]
+    pub const fn power_on_ram(&self) -> crate::nes::PowerOnRam {
+        self.power_on_ram
+    }
+
+    /// v2.1.7 P5 — apply the stored [`Self::power_on_ram`] selection to the 2 KiB
+    /// work RAM (and the open-bus latch). Called by [`Self::set_power_on_ram`]
+    /// and re-applied by [`Self::power_cycle`] after it zeroes RAM. RAM is not
+    /// consulted during the reset sequence (only the `$FFFC/D` vector is), so
+    /// applying it here is correct. Deterministic: no wall-clock / OS RNG.
+    fn apply_power_on_ram(&mut self) {
+        match self.power_on_ram {
+            crate::nes::PowerOnRam::Zeroed => {
+                self.ram.fill(0);
+                self.open_bus = 0;
+            }
+            crate::nes::PowerOnRam::Seeded(seed) => self.randomize_power_on_ram(seed),
+            crate::nes::PowerOnRam::Filled(byte) => {
+                self.ram.fill(byte);
+                self.open_bus = byte;
+            }
+        }
     }
 
     /// v2.1.4 F2.3 — whether the optional OAM-decay model is enabled.

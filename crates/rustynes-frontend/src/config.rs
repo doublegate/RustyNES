@@ -1674,6 +1674,10 @@ pub struct EnhancementsConfig {
 /// off/neutral by default, so a pre-v2.1.4 config (no `[emulation]` section) loads
 /// **byte-identical** to today's behaviour.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+// These are independent, orthogonal accuracy toggles (each maps to a distinct
+// core knob), not a state machine — a bitfield/enum would only obscure the
+// serde config surface. v2.1.7 P5 pushed the count past the 3-bool lint.
+#[allow(clippy::struct_excessive_bools)]
 pub struct EmulationConfig {
     /// Model OAM decay: the 2C02's dynamic sprite RAM loses un-refreshed rows to a
     /// fixed garbage pattern when rendering is disabled for a while (à la Mesen2's
@@ -1684,6 +1688,34 @@ pub struct EmulationConfig {
     /// ROM load / power-cycle / a Settings change via `Nes::set_oam_decay`.
     #[serde(default)]
     pub oam_decay: bool,
+
+    /// v2.1.7 P5 — model the earlier `Rp2c02G` 2C02 die: when `true`, an OAMADDR
+    /// (`$2003`) write while rendering is active corrupts one OAM row (the *Huge
+    /// Insect* glitch). **Off by default** (the `Rp2c02H` revision), which is
+    /// byte-identical. Pushed into the core via `Nes::set_ppu_revision`.
+    #[serde(default)]
+    pub ppu_oamaddr_corruption: bool,
+
+    /// v2.1.7 P5 — load the canonical "blargg" power-up palette-RAM dump instead
+    /// of the all-zero default, for software that samples uninitialized palette
+    /// RAM. **Off by default** = all-zero power-up palette (byte-identical).
+    /// Pushed into the core via `Nes::set_power_up_palette`.
+    #[serde(default)]
+    pub blargg_power_up_palette: bool,
+
+    /// v2.1.7 P5 — randomize the 2 KiB work RAM at power-on from
+    /// [`Self::power_on_ram_seed`] (deterministic `xorshift64`), surfacing
+    /// software that reads uninitialized RAM (*Final Fantasy* RNG seed, *River
+    /// City Ransom*, *Cybernoid*). **Off by default** = all-zero work RAM
+    /// (byte-identical). Pushed into the core via `Nes::set_power_on_ram`.
+    #[serde(default)]
+    pub randomize_power_on_ram: bool,
+
+    /// v2.1.7 P5 — the deterministic seed used when [`Self::randomize_power_on_ram`]
+    /// is set. Same seed ⇒ identical power-on RAM (the determinism contract).
+    /// Ignored when randomization is off.
+    #[serde(default)]
+    pub power_on_ram_seed: u64,
 }
 
 /// `[retroachievements]` section (v2.7.0).

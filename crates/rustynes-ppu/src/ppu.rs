@@ -336,6 +336,87 @@ impl PpuRegion {
     }
 }
 
+/// v2.1.7 P5 — selectable 2C02 die revision, gating revision-dependent quirks.
+///
+/// Additive and **default-off**: the [`Default`] ([`Self::Rp2c02H`]) preserves
+/// `RustyNES`'s established behavior byte-for-byte, so `AccuracyCoin`, the
+/// commercial oracle, and the visual / audio regression suites are unaffected at
+/// the default. Only the opt-in [`Self::Rp2c02G`] selection changes any emulated
+/// behavior (see below).
+///
+/// Real RP2C02 dies shipped across several letter revisions. The one behavioral
+/// difference `RustyNES` currently models per-revision is the **OAMADDR
+/// (`$2003`) write-during-rendering OAM corruption** glitch: writing `$2003`
+/// while rendering is enabled on a visible / pre-render scanline copies one
+/// 8-byte OAM "row" from row 0 over the row the write's high bits target, on the
+/// next rendered dot (the same `CorruptOAM` mechanism the rendering-disable
+/// model uses; see `Ppu::process_oam_corruption`). A handful of titles —
+/// notably *Huge Insect* — trip it. It is **not** enabled on the default
+/// revision.
+///
+/// Honesty note (see `docs/accuracy-ledger.md`): the exact mapping of the
+/// `$2003` corruption onto specific 2C02 letter revisions is not firmly
+/// established in the public literature, and the precise per-title byte output
+/// of the glitch is not independently oracle-verified in this cut. `RustyNES`
+/// therefore offers the model as an opt-in approximation keyed to a single
+/// "earlier revision" selection ([`Self::Rp2c02G`]) rather than claiming exact
+/// silicon-revision fidelity. This is config, **not** save-state: like
+/// [`PpuRegion`] it is re-applied on load and is not part of the snapshot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Default)]
+pub enum PpuRevision {
+    /// Default. Later RP2C02 die (the "H"-class revision `RustyNES` has always
+    /// modeled). The OAMADDR (`$2003`) write-during-rendering OAM corruption is
+    /// **not** modeled, so the deterministic output is byte-identical to a build
+    /// without this feature.
+    #[default]
+    Rp2c02H,
+    /// Earlier RP2C02 die ("rev E+" in the nesdev notes). Additionally models the
+    /// OAMADDR (`$2003`) write-during-rendering OAM row-corruption glitch that
+    /// *Huge Insect* and a few other titles trip. Opt-in; changes emulated
+    /// behavior only for software that writes `$2003` mid-render.
+    Rp2c02G,
+}
+
+impl PpuRevision {
+    /// Whether this revision models the OAMADDR (`$2003`) write-during-rendering
+    /// OAM corruption glitch. Only [`Self::Rp2c02G`] does; the default returns
+    /// `false`, keeping the default build byte-identical.
+    #[must_use]
+    pub const fn models_oamaddr_corruption(self) -> bool {
+        matches!(self, Self::Rp2c02G)
+    }
+}
+
+/// v2.1.7 P5 — selectable power-up palette-RAM contents.
+///
+/// The 2C02's palette RAM is not cleared at power-on; different consoles (and
+/// thus different emulator authors' reference dumps) come up with different
+/// garbage. This is a documented power-up option, **default-off**: [`Default`]
+/// ([`Self::Zeroed`]) keeps `RustyNES`'s established all-zero power-up palette,
+/// so default rendering is byte-identical. It writes only `Ppu::palette_ram`,
+/// which is already part of the save-state snapshot, so it needs no
+/// snapshot-format change.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Default)]
+pub enum PaletteInit {
+    /// Default. All 32 palette-RAM bytes power up to `0x00` — `RustyNES`'s
+    /// established deterministic power-up state. Byte-identical.
+    #[default]
+    Zeroed,
+    /// The canonical "Blargg" power-up palette dump (the 32-byte pattern used by
+    /// blargg's NES and mirrored by `TriCNES`'s `BlarggPalette`). A documented,
+    /// deterministic known pattern for software that samples uninitialized
+    /// palette RAM before writing it. Opt-in.
+    Blargg,
+}
+
+/// The canonical "Blargg" power-up palette-RAM contents (32 bytes). Mirrors
+/// `TriCNES`'s `BlarggPalette` table (`Emulator.cs`) verbatim. Only applied when
+/// [`PaletteInit::Blargg`] is selected.
+const BLARGG_POWER_UP_PALETTE: [u8; 32] = [
+    0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D, 0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04, 0x2C,
+    0x09, 0x01, 0x34, 0x03, 0x00, 0x04, 0x00, 0x14, 0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08,
+];
+
 /// 2C02 PPU.
 ///
 /// `tick(bus)` advances one PPU dot. The PPU is the master clock;
@@ -815,6 +896,24 @@ pub struct Ppu {
     /// of a `$2002` read per nesdev "PPU registers" §2C05 identifier.
     pub(crate) id_2c05: u8,
 
+    /// v2.1.7 P5 — selected 2C02 die revision. Gates the OAMADDR (`$2003`)
+    /// write-during-rendering OAM corruption glitch (see [`PpuRevision`]). The
+    /// [`PpuRevision::default`] ([`PpuRevision::Rp2c02H`]) models NO extra
+    /// corruption, so the default build is byte-identical. Construction / config
+    /// only — never mutated by emulation and, like [`Self::active_palette`] /
+    /// [`Self::region`], re-applied on load rather than serialized in the
+    /// snapshot (the corruption *state* it can arm — `oam_corruption_pending` /
+    /// `oam_corruption_index` — IS in the v6 snapshot tail, so an armed
+    /// corruption still round-trips).
+    pub(crate) die_revision: PpuRevision,
+    /// v2.1.7 P5 — the power-up palette-RAM contents selected for this PPU (see
+    /// [`PaletteInit`]). Stored so a power-cycle can re-apply it after the PPU is
+    /// reconstructed. The [`PaletteInit::default`] ([`PaletteInit::Zeroed`])
+    /// leaves palette RAM all-zero (the established default), keeping default
+    /// rendering byte-identical. Config, not serialized (it writes
+    /// [`Self::palette_ram`], which the snapshot already carries).
+    pub(crate) power_up_palette: PaletteInit,
+
     /// Framebuffer (RGBA8). Filled by Sprint 2-2/2-3 rendering.
     pub(crate) framebuffer: Box<[u8]>,
 
@@ -1069,6 +1168,12 @@ impl Ppu {
             custom_palette: None,
             is_2c05: false,
             id_2c05: 0,
+            // v2.1.7 P5 — default revision models no extra corruption; default
+            // power-up palette is all-zero. Both keep the default build
+            // byte-identical (the `palette_ram: [0u8; 32]` above already reflects
+            // the `PaletteInit::Zeroed` default).
+            die_revision: PpuRevision::Rp2c02H,
+            power_up_palette: PaletteInit::Zeroed,
             framebuffer: vec![0u8; FRAMEBUFFER_LEN].into_boxed_slice(),
             index_framebuffer: vec![0u16; FRAMEBUFFER_PIXELS].into_boxed_slice(),
             dot_counter: 0,
@@ -1204,6 +1309,62 @@ impl Ppu {
     #[must_use]
     pub const fn oam_decay_enabled(&self) -> bool {
         self.oam_decay_enabled
+    }
+
+    /// v2.1.7 P5 — select the emulated 2C02 die revision (see [`PpuRevision`]).
+    ///
+    /// The [`PpuRevision::default`] ([`PpuRevision::Rp2c02H`]) models no extra
+    /// quirks, so at the default this is behaviorally inert and the PPU is
+    /// byte-identical to a build without the field. Selecting
+    /// [`PpuRevision::Rp2c02G`] additionally arms the OAMADDR (`$2003`)
+    /// write-during-rendering OAM corruption glitch. A construction/config knob,
+    /// re-applied on load like the region / active palette — not part of the
+    /// save-state.
+    pub const fn set_revision(&mut self, revision: PpuRevision) {
+        self.die_revision = revision;
+    }
+
+    /// v2.1.7 P5 — the currently-selected 2C02 die revision.
+    #[must_use]
+    pub const fn revision(&self) -> PpuRevision {
+        self.die_revision
+    }
+
+    /// v2.1.7 P5 — apply a power-up palette-RAM pattern (see [`PaletteInit`]).
+    ///
+    /// Writes all 32 palette-RAM bytes to the selected pattern and records the
+    /// selection so a subsequent power-cycle can re-apply it. The
+    /// [`PaletteInit::default`] ([`PaletteInit::Zeroed`]) writes all-zero — the
+    /// established power-up state — so at the default this leaves the PPU
+    /// byte-identical. Intended to be called at construction / power-on (palette
+    /// RAM is not cleared on a warm reset, matching real hardware). It writes
+    /// [`Self::palette_ram`] directly, which the snapshot already serializes, so
+    /// no snapshot-format change is required.
+    pub const fn apply_power_up_palette(&mut self, init: PaletteInit) {
+        self.power_up_palette = init;
+        match init {
+            PaletteInit::Zeroed => {
+                let mut i = 0;
+                while i < self.palette_ram.len() {
+                    self.palette_ram[i] = 0;
+                    i += 1;
+                }
+            }
+            PaletteInit::Blargg => {
+                let mut i = 0;
+                while i < self.palette_ram.len() {
+                    // Palette-RAM cells are 6-bit; mask to match a `$2007` write.
+                    self.palette_ram[i] = BLARGG_POWER_UP_PALETTE[i] & 0x3F;
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    /// v2.1.7 P5 — the currently-selected power-up palette pattern.
+    #[must_use]
+    pub const fn power_up_palette(&self) -> PaletteInit {
+        self.power_up_palette
     }
 
     /// v2.1.4 F2.3 — `true` when the OAM-decay model should act this access:
@@ -2112,6 +2273,25 @@ impl Ppu {
             3 => {
                 // $2003 OAMADDR.
                 self.oam_addr = value;
+                // v2.1.7 P5 — OAMADDR ($2003) write-during-rendering OAM
+                // corruption, modeled only on the earlier `Rp2c02G` revision
+                // (default `Rp2c02H` skips this entirely → byte-identical). On
+                // real "rev E+" 2C02 silicon, writing $2003 while rendering is
+                // active corrupts one OAM "row"; RustyNES arms the shared
+                // `CorruptOAM` row-copy (see `process_oam_corruption`) targeting
+                // the row the write's high bits select, committed on the next
+                // rendered dot. The `!oam_corruption_pending` guard defers to an
+                // already-armed corruption (e.g. the rendering-disable model) so
+                // the two sources never race. See `docs/ppu-2c02.md` (§OAMADDR
+                // corruption) and `docs/accuracy-ledger.md` for the honesty note.
+                if self.die_revision.models_oamaddr_corruption()
+                    && self.mask.rendering_enabled()
+                    && self.is_render_scanline()
+                    && !self.oam_corruption_pending
+                {
+                    self.oam_corruption_pending = true;
+                    self.oam_corruption_index = (value >> 3) & 0x1F;
+                }
             }
             4 => {
                 // $2004 OAMDATA write. Per nesdev §PPU OAM:
@@ -4581,9 +4761,11 @@ mod tests {
     // F1.2 (Fathom) — OAM / $2004 quirks. Both behaviors below are already
     // implemented and covered by the AccuracyCoin `$2004`/`Sprite0Hit` ROMs;
     // this is a FAST regression guard so an edit trips a unit test instead of
-    // only the ~57s ROM battery. (The `OAMADDR & 0xF8` render-start copy is
-    // deliberately NOT modeled — Mesen2, ares, and TriCNES all omit it as a
-    // revision-dependent, oracle-less corner; see `docs/accuracy-ledger.md`.)
+    // only the ~57s ROM battery. (The `OAMADDR & 0xF8` render-start copy is NOT
+    // modeled on the DEFAULT revision — Mesen2, ares, and TriCNES all omit it as
+    // a revision-dependent, oracle-less corner. As of v2.1.7 P5 the related
+    // OAMADDR `$2003` write-during-render corruption is available as an opt-in
+    // `PpuRevision::Rp2c02G` model; see `docs/accuracy-ledger.md`.)
     #[test]
     fn oam_2004_attribute_mask_and_oamaddr_257_320_forcing() {
         // (1) $2004 read of a sprite ATTRIBUTE byte (OAM offset & 3 == 2) masks
@@ -4746,6 +4928,105 @@ mod tests {
         p.dot_counter += 10 * 3;
         p.oam_addr = 0x19;
         assert_eq!(p.cpu_read_register(4, &mut b), 0x5A, "write kept row alive");
+    }
+
+    // v2.1.7 P5 — PPU revision + power-up palette (opt-in, default-off).
+
+    #[test]
+    fn revision_defaults_to_rp2c02h_no_corruption() {
+        let (p, _b) = fresh_ppu();
+        assert_eq!(p.revision(), PpuRevision::Rp2c02H, "default revision");
+        assert!(
+            !p.revision().models_oamaddr_corruption(),
+            "default revision models no OAMADDR corruption"
+        );
+    }
+
+    #[test]
+    fn default_revision_2003_write_during_render_does_not_corrupt() {
+        // On the default revision a $2003 write mid-render must NOT arm any OAM
+        // corruption — the byte-identity guarantee.
+        let (mut p, mut b) = fresh_ppu();
+        p.mask = PpuMask::SHOW_BG | PpuMask::SHOW_SPRITE;
+        p.scanline = 10; // visible render line
+        // Distinct row-0 vs row-1 so a spurious copy would be observable.
+        for i in 0..8u8 {
+            p.oam[i as usize] = 0x11;
+            p.oam[8 + i as usize] = 0x22;
+        }
+        p.cpu_write_register(3, 0x08, &mut b); // OAMADDR = row 1
+        assert!(
+            !p.oam_corruption_pending,
+            "default revision: no corruption armed"
+        );
+    }
+
+    #[test]
+    fn rp2c02g_2003_write_during_render_arms_and_corrupts_row() {
+        // On the earlier `Rp2c02G` revision a $2003 write while rendering is
+        // active arms the row-copy corruption; committing it copies row 0 over
+        // the targeted row (index = value >> 3).
+        let (mut p, mut b) = fresh_ppu();
+        p.set_revision(PpuRevision::Rp2c02G);
+        p.mask = PpuMask::SHOW_BG | PpuMask::SHOW_SPRITE;
+        p.scanline = 10; // visible render line
+        for i in 0..8u8 {
+            p.oam[i as usize] = 0x11; // row 0
+            p.oam[8 + i as usize] = 0x22; // row 1 (target)
+        }
+        p.cpu_write_register(3, 0x08, &mut b); // OAMADDR = 0x08 → row index 1
+        assert!(p.oam_corruption_pending, "Rp2c02G: corruption armed");
+        assert_eq!(p.oam_corruption_index, 1, "targets row 1");
+        // Commit and verify row 1 now mirrors row 0.
+        p.process_oam_corruption();
+        for i in 0..8u8 {
+            assert_eq!(
+                p.oam[8 + i as usize],
+                0x11,
+                "row 1 byte {i} corrupted from row 0"
+            );
+        }
+    }
+
+    #[test]
+    fn rp2c02g_2003_write_outside_render_does_not_corrupt() {
+        // Even on the corrupting revision, a $2003 write with rendering disabled
+        // (or in vblank) must NOT arm corruption — the glitch is render-gated.
+        let (mut p, mut b) = fresh_ppu();
+        p.set_revision(PpuRevision::Rp2c02G);
+        p.mask = PpuMask::empty(); // rendering disabled
+        p.scanline = 250; // vblank
+        p.cpu_write_register(3, 0x08, &mut b);
+        assert!(
+            !p.oam_corruption_pending,
+            "Rp2c02G but no rendering: no corruption"
+        );
+    }
+
+    #[test]
+    fn power_up_palette_defaults_zeroed() {
+        let (p, _b) = fresh_ppu();
+        assert_eq!(p.power_up_palette(), PaletteInit::Zeroed, "default palette");
+        assert_eq!(
+            p.palette_ram, [0u8; 32],
+            "default power-up palette all-zero"
+        );
+    }
+
+    #[test]
+    fn power_up_palette_blargg_applies_masked_pattern() {
+        let (mut p, _b) = fresh_ppu();
+        p.apply_power_up_palette(PaletteInit::Blargg);
+        assert_eq!(p.power_up_palette(), PaletteInit::Blargg);
+        // Byte 0 = 0x09, an attr-index that survives the 6-bit mask untouched.
+        assert_eq!(p.palette_ram[0], 0x09, "Blargg byte 0");
+        // Every cell must be 6-bit masked (matching a `$2007` write path).
+        for (i, &b) in p.palette_ram.iter().enumerate() {
+            assert_eq!(b, BLARGG_POWER_UP_PALETTE[i] & 0x3F, "cell {i} masked");
+        }
+        // Re-applying Zeroed restores the byte-identical default state.
+        p.apply_power_up_palette(PaletteInit::Zeroed);
+        assert_eq!(p.palette_ram, [0u8; 32], "re-zeroed");
     }
 
     // F1.3 (Fathom) — PPU open-bus refresh map. The Blargg `ppu_open_bus` table

@@ -27,7 +27,10 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
 |---|---|---|---|
 | Palette backdrop-override ($3F00-$3FFF, render disabled) | Was not modeled; PPU outputs `palette[v & 0x1F]` not the backdrop | `full_palette` / `flowing_palette` visual corpus | **Remediated** (F1.1) |
 | OAMADDR forced to 0 across dots 257-320 + `$2004` `$E3` attribute-byte mask | Already modeled; both correct | AccuracyCoin `$2004` / `Sprite0Hit` (141/141) | **Verified** — F1.2 added a fast unit regression guard |
-| `OAMADDR & 0xF8` render-start OAM copy | Not modeled (revision-dependent, unreliable) | none | **Out of scope** — Mesen2, ares, and TriCNES all deliberately omit it |
+| `OAMADDR & 0xF8` render-start OAM copy | Not modeled on the default revision (revision-dependent, unreliable) | none | **Out of scope** on the default `Rp2c02H` — Mesen2, ares, and TriCNES all omit it. The related OAMADDR `$2003` write corruption is an opt-in `Rp2c02G` model (row below) |
+| OAMADDR (`$2003`) write-during-render OAM corruption (P5) | A `$2003` write while rendering is active copies OAM row 0 over the row `(value>>3)&0x1F` (reuses the `CorruptOAM` row-copy), gated behind the opt-in `PpuRevision::Rp2c02G`; default `Rp2c02H` never arms it | No test ROM in-suite; *Huge Insect* is the reference title but its per-title byte output is not independently oracle-verified here | **Landed (v2.1.7 P5) — default-off / byte-identical.** Honest **opt-in approximation**: the exact 2C02 letter-revision taxonomy of the glitch and its per-title bytes are not oracle-verified; offered as a single "earlier revision" model, not exact silicon fidelity. Config re-applied on load (not snapshotted); the corruption state it arms already round-trips via the v6 PPU snapshot tail |
+| Power-up palette RAM (P5) | Palette RAM is uninitialized at power-on; optional `PaletteInit::Blargg` loads the canonical blargg power-up dump (6-bit masked) instead of the all-zero default | No pass/fail ROM (blargg dump is the de-facto reference) | **Landed (v2.1.7 P5) — default-off / byte-identical.** Default `Zeroed` keeps the established all-zero power-up palette; writes only `palette_ram` (already snapshotted) so no snapshot-format change |
+| Power-on work-RAM model (P5) | Work RAM is uninitialized at power-on; optional `PowerOnRam::Seeded(u64)` (deterministic xorshift64) / `Filled(u8)` for software that reads it (FF RNG, RCR, Cybernoid) | No pass/fail ROM (hardware is itself non-deterministic; RustyNES stays deterministic per config) | **Landed (v2.1.7 P5) — default-off / byte-identical.** Default `Zeroed` = all-zero (what CI/oracle/save-state tests use); all fills deterministic (no wall-clock/OS RNG); stored so `power_cycle == fresh boot` |
 | PPU open-bus decay | Refresh map matches the Blargg `ppu_open_bus` table exactly; ~600 ms is the spec decay value (per-group model) | `ppu_open_bus` (verifies the map, not a stopwatch) | **Verified** — F1.3 audit + regression test; per-bit timing has no oracle and isn't pursued |
 | Optional OAM decay (F2.3) | Dynamic-RAM sprite decay when rendering stays off: per-8-byte-row 3000-CPU-cycle refresh model (Mesen2 `ReadSpriteRam`/`WriteSpriteRam`), rows refreshed by sprite-eval + `$2004`/DMA, decayed rows read `((a&3)==2)?a&0xE3:a` | No decay test ROM (Mesen2 code-level parity); NTSC/Dendy-only | **Landed on `main`** (Unreleased, next tag; F2.3) — **default-off** so the golden vectors / AccuracyCoin / commercial oracle (all decay-off) stay byte-identical; a real core feature (affects the framebuffer when ON), deterministic off `dot_counter`, save-state v7 tail (relative-age) |
 | NTSC generated palette (F1.4) | Optional composite-model base palette synthesized in-core (`rustynes_ppu::generate_base_palette`) in place of the hand table | `full_palette` visual corpus + Mesen2/ares baselines (visual only) | **Shipped** (v2.1.2) — **default-off**, golden-locked cross-target; select via Settings → Palette → "Generated NTSC". Default build byte-identical |
@@ -62,7 +65,14 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
   / AccuracyCoin / commercial oracle / save-state hashes are byte-identical, and
   turning either on is a deliberate, deterministic opt-in (OAM decay is driven off
   the monotonic `dot_counter`, never wall-clock, and its per-row state round-trips
-  the save-state via the v7 relative-age tail).
+  the save-state via the v7 relative-age tail). The v2.1.7 P5 hardware-revision
+  knobs (opt-in `PpuRevision::Rp2c02G` OAMADDR corruption, `PaletteInit::Blargg`
+  power-up palette, `PowerOnRam::Seeded`/`Filled` work RAM) are likewise all
+  **default-off / deterministic**: at their defaults the core is byte-identical,
+  and every configured fill is seeded or uniform (no wall-clock / OS RNG). They
+  need no snapshot-format change — the state they touch (`oam_corruption_pending`,
+  `palette_ram`, work RAM) is already serialized, and the selections themselves
+  are config re-applied on load like `region`.
 
 ## Ignored-test dispositions (all 20)
 

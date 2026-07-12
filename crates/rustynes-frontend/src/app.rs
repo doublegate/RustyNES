@@ -1512,6 +1512,10 @@ impl App {
         // v2.1.4 F2.3 — re-push the optional OAM-decay toggle onto the fresh `Nes`
         // (booted decay-off). Off (default) = byte-identical.
         self.apply_oam_decay();
+        // v2.1.7 P5 — re-push the opt-in PPU-revision / power-up-palette /
+        // power-on-RAM knobs onto the fresh `Nes`. All-off (default) =
+        // byte-identical.
+        self.apply_ppu_hardware_config();
         // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
         // label so the expansion-channel volume slider matches the loaded mapper.
         self.refresh_expansion_audio_chip();
@@ -5522,6 +5526,37 @@ impl App {
         }
     }
 
+    /// v2.1.7 P5 — push the opt-in PPU hardware-revision + power-on knobs from
+    /// `[emulation]` config into the core. Called on ROM load, after a
+    /// power-cycle, and at startup. With every knob at its default (all off) the
+    /// core stays byte-identical: the default revision (`Rp2c02H`) models no
+    /// corruption, the default power-up palette is all-zero, and RAM powers up
+    /// zeroed. All configured behavior is deterministic (seeded / uniform fills).
+    fn apply_ppu_hardware_config(&self) {
+        use rustynes_core::{PaletteInit, PowerOnRam, PpuRevision};
+        let revision = if self.config.emulation.ppu_oamaddr_corruption {
+            PpuRevision::Rp2c02G
+        } else {
+            PpuRevision::Rp2c02H
+        };
+        let palette = if self.config.emulation.blargg_power_up_palette {
+            PaletteInit::Blargg
+        } else {
+            PaletteInit::Zeroed
+        };
+        let ram = if self.config.emulation.randomize_power_on_ram {
+            PowerOnRam::Seeded(self.config.emulation.power_on_ram_seed)
+        } else {
+            PowerOnRam::Zeroed
+        };
+        let mut guard = self.emu.lock();
+        if let Some(nes) = guard.nes.as_mut() {
+            nes.set_ppu_revision(revision);
+            nes.set_power_up_palette(palette);
+            nes.set_power_on_ram(ram);
+        }
+    }
+
     /// v1.4.0 Workstream C — query the loaded mapper's expansion-audio chip name
     /// from the core and push it into the Settings panel, so the Audio tab shows
     /// the expansion-channel volume slider only for boards with on-cart audio.
@@ -7425,6 +7460,9 @@ impl App {
             // v2.1.4 F2.3 — push the persisted OAM-decay toggle (no-op if no ROM
             // is loaded yet; re-applied on each ROM load). Off = byte-identical.
             self.apply_oam_decay();
+            // v2.1.7 P5 — push the persisted PPU-revision / power-up-palette /
+            // power-on-RAM knobs (no-op if no ROM yet). All-off = byte-identical.
+            self.apply_ppu_hardware_config();
             // v1.1.0 beta.1 / v1.5.0 D1 — re-apply the active palette (named
             // bank entry, else legacy .pal / built-in).
             self.apply_active_palette();
@@ -7608,6 +7646,10 @@ impl App {
         // v2.1.4 F2.3 — re-push the optional OAM-decay toggle onto the fresh `Nes`
         // (booted decay-off). Off (default) = byte-identical.
         self.apply_oam_decay();
+        // v2.1.7 P5 — re-push the opt-in PPU-revision / power-up-palette /
+        // power-on-RAM knobs onto the fresh `Nes`. All-off (default) =
+        // byte-identical.
+        self.apply_ppu_hardware_config();
         // v1.4.0 Workstream C — refresh the Settings panel's expansion-audio chip
         // label so the expansion-channel volume slider matches the loaded mapper.
         self.refresh_expansion_audio_chip();
