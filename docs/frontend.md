@@ -676,11 +676,18 @@ a 512-wide `max_width` geometry so RetroArch draws the variable width without a
 geometry renegotiation. Ports 0/1 → MAIN P1/P2, 2/3 → SUB P1/P2; MAIN audio plays;
 save states use `VsDualSystem::snapshot`/`restore`; memory maps expose the MAIN
 console. See `docs/libretro/advanced_features.md`. The **wasm** desktop-style
-present is still deferred: the CPU compositor (`Gfx::compose_dual_into`) and the
-core (`Emu::Dual`) are already cross-platform, but the wasm ROM-load detection and
-un-gating the GPU present branch (`Gfx::render_dual`, currently `cfg(not(wasm))`)
-land at the v2.1.8/v2.1.9 gfx/composite rebase to avoid colliding with that
-concurrently-rewritten present path. Mobile remains deferred.
+present remains deferred: the CPU compositor (`Gfx::compose_dual_into`) and the
+core (`Emu::Dual`) are already cross-platform, but enabling it requires adding the
+`VsDualSystem` detection to the *separate* wasm ROM-load path (the wasm build loads
+from bytes, not the native `load_rom_from_path`), un-gating the `present_dual` /
+`dual_mode` fields, and un-gating the GPU present branch (`Gfx::render_dual` +
+`ensure_dual_blit`, currently `cfg(not(wasm))`). That is a multi-site change to the
+**common** wasm present hot-path (which the single-console 99.99% case also runs)
+for a very niche feature — the four Vs. arcade cabinet boards in a browser tab —
+and a wasm GPU present cannot be runtime-verified in CI (no headless browser GPU
+present). The libretro core (above) delivers Vs. `DualSystem` for the mainstream
+RetroArch target now; the wasm second-screen present stays deferred until it can be
+validated in a browser. Mobile remains deferred.
 
 **Pixel aspect ratio.** When `[ui] pixel_aspect_correction` is on, the
 letterbox targets the NES's native **8:7** PAR (display aspect
