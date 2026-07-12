@@ -14,6 +14,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.1.9] - 2026-07-12 - "Fathom" (presentation and signal — marquee CRT shader stack (CRT-Royale / guest-advanced / Sony Megatron) + raw NTSC composite signal-decode path + GIF/WAV capture + generated-palette editor — "Aperture")
+
 ### Added
 
 - **Marquee CRT shader stack + raw NTSC composite signal (v2.1.9 "Presentation
