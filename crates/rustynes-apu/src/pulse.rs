@@ -72,7 +72,10 @@ impl Pulse {
             length: LengthCounter {
                 count: 0,
                 halt: false,
+                new_halt: false,
                 enabled: false,
+                reload_val: 0,
+                previous_count: 0,
             },
             sweep_enabled: false,
             sweep_period: 0,
@@ -88,7 +91,9 @@ impl Pulse {
     pub fn write_ctrl(&mut self, value: u8) {
         self.duty = (value >> 6) & 0x03;
         let halt = (value & 0x20) != 0;
-        self.length.halt = halt;
+        // Length-halt is deferred (applied after the same-cycle half-frame
+        // clock, per `LengthCounter::reload`); the envelope loop flag is not.
+        self.length.set_halt(halt);
         self.envelope.loop_flag = halt;
         self.envelope.constant = (value & 0x10) != 0;
         self.envelope.volume_or_period = value & 0x0F;
@@ -192,6 +197,10 @@ mod tests {
         let mut p = Pulse::new(true);
         p.write_ctrl(0b1011_0101); // duty=2, halt=1, const=1, period=5
         assert_eq!(p.duty, 2);
+        // Halt is deferred: latched in `new_halt`, promoted to `halt` by
+        // `LengthCounter::reload` (after the half-frame clock).
+        assert!(p.length.new_halt);
+        p.length.reload();
         assert!(p.length.halt);
         assert!(p.envelope.loop_flag);
         assert!(p.envelope.constant);
@@ -272,9 +281,13 @@ mod tests {
         let mut p = Pulse::new(true);
         p.length.enabled = false;
         p.write_timer_hi(0x08);
+        // The load is deferred; resolve it (no half-frame clock in between, so
+        // `reload` applies it in-cycle). A disabled channel still ignores it.
+        p.length.reload();
         assert_eq!(p.length.count, 0);
         p.length.enabled = true;
         p.write_timer_hi(0x08);
+        p.length.reload();
         assert_ne!(p.length.count, 0);
     }
 }

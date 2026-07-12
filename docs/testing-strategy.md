@@ -49,6 +49,7 @@ The full blargg + kevtris + community test ROM suite, vendored in `tests/roms/` 
 | PPU open bus | `ppu_open_bus` | Pass |
 | PPU sprite | `sprite_overflow_tests/*` (5), `sprite_hit_tests_2005.10.05/*` (10), `ppu_sprite_hit/*`, `oam_read`, `oam_stress` | All |
 | APU | `apu_test/*` (8), `apu_mixer/*` (4) | All |
+| APU PAL (v2.1.5) | `pal_apu_tests/*` (10, forced PAL, on-screen verdict via `run_nes_screen`) | 10/10 strict-pass: `01`/`02`/`03` (region-independent length/table/IRQ-flag) + `04`-`08` (PAL frame-counter-timing, passing since the v2.1.5 region-gated PAL step positions) + `10`/`11` (length halt/reload timing, passing since the v2.1.5 deferred halt/reload write-ordering fix in `length.rs`). Corrects a prior `$6000` false oracle (these NROM ROMs have no PRG-RAM). NTSC byte-identity preserved. Documented in `docs/apu-2a03.md` + `docs/accuracy-ledger.md` |
 | DMC DMA | `dmc_dma_during_read4/*` (4) | All |
 | MMC3 | `mmc3_test_2/*` (5), `mmc3_irq_tests/*` (6), `mmc3_test` v1 (6) | `mmc3_test_2` 1/2/3/5 + `mmc3_test` v1 1/2/3 strict; `mmc3_test_2/4` #3 + `mmc3_test` v1 4/5/6 are the ADR-0002 scanline-IRQ-cadence residuals (`#[ignore]`'d; expected-fail probes pin the failure shape) |
 | TASVideos / extended (C1) | `dpcmletterbox` (DMC-IRQ raster split, visual smoke) | Frame-hash sentinel; committable corpus only — see below |

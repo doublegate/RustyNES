@@ -319,6 +319,12 @@ impl Apu {
             Region::Pal => CPU_HZ_PAL,
             _ => CPU_HZ_NTSC,
         };
+        // v2.1.5: the frame counter selects PAL vs NTSC sequencer step
+        // positions from the region. Only true `Region::Pal` uses the PAL
+        // (2A07) positions; NTSC and Dendy keep the NTSC (2A03) positions, so
+        // their frame-counter timing is byte-identical to the pre-v2.1.5 model.
+        let mut frame_counter = FrameCounter::new();
+        frame_counter.pal = matches!(region, Region::Pal);
         Self {
             region,
             pulse1: Pulse::new(true),
@@ -326,7 +332,7 @@ impl Apu {
             triangle: Triangle::new(),
             noise: Noise::new(region),
             dmc: Dmc::new(region),
-            frame_counter: FrameCounter::new(),
+            frame_counter,
             mixer: Mixer::new(),
             blip: BlipBuf::new(sample_rate, cpu_rate),
             apu_phase: false,
@@ -995,6 +1001,24 @@ impl Apu {
         let ev = self.frame_counter.tick(self.cpu_cycle, self.apu_phase);
         self.last_frame_events = ev;
         self.handle_frame_events(ev);
+
+        // v2.1.5 length halt/reload ordering: promote each channel's deferred
+        // halt (`new_halt` -> `halt`) and pending length reload EVERY CPU cycle,
+        // AFTER the half-frame clock in `handle_frame_events` and BEFORE the
+        // mixer samples the channel outputs below. This realizes the 2A03's
+        // "halt change takes effect after clocking length" and "reload ignored
+        // during a non-zero length clock" rules (blargg `10.len_halt_timing` /
+        // `11.len_reload_timing`; TetaNES `LengthCounter::reload` +
+        // Mesen2 `_newHaltValue`). On the common cycle with no half-frame clock
+        // the reload applies in-cycle (the count was untouched since the write),
+        // so a plain length load / halt write remains byte-identical to an
+        // immediate apply — only the write-lands-on-the-clock-cycle coincidence
+        // the tests probe differs. The DMC has no length counter. See
+        // `crates/rustynes-apu/src/length.rs`.
+        self.pulse1.length.reload();
+        self.pulse2.length.reload();
+        self.triangle.length.reload();
+        self.noise.length.reload();
 
         // v2.0 Phase 2 (`mc-r1-dmc-reenable-phase`) reload-arm/reenable
         // bookkeeping and the `CannotRunDMCDMARightNow` exclusion decrement all

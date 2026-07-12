@@ -119,6 +119,58 @@ The DMC IRQ flag is not cleared by reading `$4015`.
 PAL has separate frame-counter step positions. Do not derive PAL frame-counter
 timing by scaling NTSC sample rates; use region tables.
 
+The PAL (2A07) sequencer positions are (in CPU cycles since sequencer reset):
+
+- **4-step (mode 0):** 8313 / 16627 / 24939 / 33252 / 33253 / 33254 — quarter
+  at 8313 / 16627 / 24939 / 33253, half at 16627 / 33253, frame IRQ at 33252 /
+  33253 / 33254 (if not inhibited).
+- **5-step (mode 1):** 8313 / 16627 / 24939 / 41565 / 41566 — quarter at 8313 /
+  16627 / 24939 / 41565, half at 16627 / 41565, no IRQ.
+
+> **PAL frame-counter step positions are modeled (v2.1.5).**
+> `crates/rustynes-apu/src/frame_counter.rs` selects the PAL positions above via
+> the `FrameCounter::pal` selector, which `Apu::new` derives from the console
+> `Region` (true only for `Region::Pal`; **NTSC and Dendy** keep the NTSC
+> positions 7457 / 14913 / 22371 / 29828-29830, and 37281-37282 for mode 1).
+> The NTSC arms are unchanged, so the default build and every NTSC/Dendy tick is
+> **byte-identical** to the pre-v2.1.5 model — AccuracyCoin APU
+> Frame-Counter-IRQ holds 141/141 and `apu_test` holds 8/8. The mode-0
+> IRQ-flag-visibility / `irq_line_active` split is replicated verbatim at the
+> PAL terminal steps (33252 / 33253 / 33254). The blargg `pal_apu_tests` oracle
+> (see §Test plan) validates this: **all 10 sub-ROMs pass**, including all five
+> PAL frame-counter-timing checks (clock jitter, mode-0/1 length timing, the two
+> frame-IRQ timing checks) and — since the length halt/reload ordering fix
+> below — `10.len_halt_timing` and `11.len_reload_timing`.
+
+### Length halt/reload ordering vs the half-frame clock (v2.1.5)
+
+The 2A03 applies a length-counter **halt** change (`$4000`/`$4004`/`$4008`/`$400C`
+bit) and a length **reload** (`$4003`/`$4007`/`$400B`/`$400F` load) one step
+*behind* the frame sequencer's half-frame length clock:
+
+- **Halt takes effect after clocking length, not before.** A halt write on the
+  exact CPU cycle of a half-frame length clock does **not** suppress that
+  cycle's clock; it governs the *next* one.
+- **A reload is ignored during a non-zero length clock.** A load on the
+  half-frame-clock cycle is honoured only when the counter was **not** clocked
+  this cycle (it was already zero, so the decrement was a no-op); if it was
+  clocked from a non-zero value the load is dropped.
+
+`crates/rustynes-apu/src/length.rs` models this with the deferral fields
+`new_halt`, `reload_val` and `previous_count`: `set_halt` / `load` latch the
+written values, and `LengthCounter::reload` — which `Apu::tick_with_external`
+calls on all four length channels once per CPU cycle, **after** the half-frame
+clock and **before** the mixer samples the channels — promotes the halt and
+applies (or drops) the reload. This mirrors `TetaNES` `LengthCounter::reload`
+and Mesen2's `_newHaltValue` + reload-request. The change is **region-agnostic
+and byte-identical on NTSC**: on the common write cycle with no coincident
+half-frame clock the reload settles in-cycle (identical to an immediate load),
+and halt does not affect `output()` directly — so it only alters the exact
+write-on-the-clock-cycle coincidence the ROMs probe. blargg's PAL
+`10.len_halt_timing` / `11.len_reload_timing` flipped from `FAILED: #3` / `#4`
+to `PASSED`; NTSC AccuracyCoin (141/141), `blargg_apu_2005` (11/11) and the
+`f2a_*` length-race pins (`f2_accuracy_audit.rs`) are all unchanged.
+
 ### Reset behavior (v2.0.0 "Timebase", promoted in beta.4)
 
 Per the blargg `apu_reset` spec and nesdev ("At reset, `$4017` mode is
@@ -219,7 +271,7 @@ external open-bus latch used by cartridge or PPU register accesses.
 
 1. **DMC DMA stalls CPU mid-instruction.** Per `ref-docs/research-report.md` §DMA, halt only on read cycles. The 2A03 register-readout bug (extra reads of `$2007`, `$4015`-`$4017` while halted) must be reproduced — required by `dmc_dma_during_read4`.
 2. **Frame counter write jitter.** Writing `$4017` with a value that includes IRQ inhibit set clears any pending frame IRQ flag.
-3. **Length counter halt / reload race (v1.7.0 F2a).** The halt flag is sampled at the right edge of the half-frame clock; the common subtle bug is sampling on the wrong cycle. A `$400x` halt-bit write — or a length **reload** — on the CPU cycle adjacent to the half-frame length clock has a one-cycle race over whether the length counter is clocked this step. This behavior is **already implemented** and verified on the current scheduler (not new in v1.7.0); blargg `blargg_apu_2005.07.30/10.len_halt_timing.nes` + `11.len_reload_timing.nes` bracket the exact cycle and both pass strictly. The `f2a_*` tests in `crates/rustynes-test-harness/tests/f2_accuracy_audit.rs` are the named regression pin.
+3. **Length counter halt / reload race (v1.7.0 F2a; ordering fixed v2.1.5).** The effective halt flag is consulted at the half-frame length clock; a `$400x` halt-bit write — or a length **reload** — on the CPU cycle of that clock races over whether the counter is clocked this step. Silicon resolves the halt change *after* the clock and drops a reload that lands on a non-zero clock. This is modeled by the deferral mechanism in `length.rs` (`new_halt` / `reload_val` / `previous_count`, promoted by `LengthCounter::reload` after the half-frame clock and before the mixer sample — see §Length halt/reload ordering above). blargg `10.len_halt_timing` + `11.len_reload_timing` bracket the exact cycle and pass strictly on **both** the NTSC (`blargg_apu_2005.07.30`) and PAL (`pal_apu_tests`) builds. The `f2a_*` tests in `crates/rustynes-test-harness/tests/f2_accuracy_audit.rs` are the named NTSC regression pin.
 4. **Triangle disabled silently when length counter or linear counter reaches 0.** Holds the last sequencer step (does not produce a click).
    - **Ultrasonic silence (timer period < 2).** When the triangle timer period is below 2 (frequency above ~55.9 kHz), real hardware cannot follow the sequencer and the channel effectively halts. We freeze the sequencer in `Triangle::clock_timer` (the step does not advance and the output holds its current value) rather than emitting the aliasing tone, matching the common-emulator convention; Mega Man 2's "Crash Man" stage relies on this to silence the triangle. The threshold is strictly `< 2` (period 2 still clocks). See `crates/rustynes-apu/src/triangle.rs`.
 5. **Pulse duty-sequencer phase reset on `$4003`/`$4007`.** Writing the length/timer-high register resets the pulse duty sequencer to step 0 (and sets the envelope-restart flag) but does **not** reset the timer divider. Implemented in `Pulse::write_timer_hi` (`crates/rustynes-apu/src/pulse.rs`).
@@ -234,6 +286,19 @@ external open-bus latch used by cartridge or PPU register accesses.
 ## Test plan
 
 - **`apu_test`** (8 sub-ROMs) — register I/O, frame counter, length counter halt timing.
+- **`pal_apu_tests`** (10 sub-ROMs, **PAL** region) — blargg's PAL-calibrated
+  rebuild of the 2005-era APU length/frame-IRQ/timing checks. Wired in v2.1.5
+  as the first PAL-region APU oracle (`tests/pal_apu_tests.rs`). These predate
+  the `$6000` protocol and report **on-screen** (plain NROM, no PRG-RAM), so
+  the suite decodes the rendered `PASSED` / `FAILED: #<n>` verdict via the
+  `run_nes_screen` harness runner rather than the (vacuous, for these ROMs)
+  `$6000` check. Current state: **10/10 pass** — `01.len_ctr` /
+  `02.len_table` / `03.irq_flag` (region-independent) plus `04.clock_jitter`,
+  `05`/`06.len_timing_mode0`/`1`, `07.irq_flag_timing`, `08.irq_timing` (the
+  PAL frame-counter-timing checks, passing since the v2.1.5 PAL step positions),
+  and `10.len_halt_timing` / `11.len_reload_timing` (passing since the v2.1.5
+  length halt/reload ordering fix documented above and in
+  `docs/accuracy-ledger.md`).
 - **`apu_mixer`** — confirms lookup-table mixer matches reference within 4%.
 - **`dmc_dma_during_read4`** — DMC DMA stalls + register read crosstalk.
 - **Audio capture comparison**: emit 60 frames of audio for a curated set of demo ROMs, compare PSNR against a Mesen-generated reference. (Not a strict pass/fail but a regression detector.)

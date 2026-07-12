@@ -212,10 +212,24 @@ fn write_length(w: &mut W, l: LengthCounter) {
     w.bool(l.enabled);
 }
 fn read_length(r: &mut R<'_>) -> Result<LengthCounter, ApuSnapshotError> {
+    let count = r.u8()?;
+    let halt = r.bool()?;
+    let enabled = r.bool()?;
+    // The deferred-write scratch fields (`new_halt` / `reload_val` /
+    // `previous_count`) are NOT serialized: they resolve within the same CPU
+    // cycle as the register write that sets them (`LengthCounter::reload` runs
+    // every cycle), so no live deferral survives to a save-state taken at an
+    // instruction boundary. The snapshot byte layout is therefore unchanged
+    // (count + halt + enabled). `new_halt` MUST be seeded to the restored
+    // `halt`, otherwise the first post-restore `reload` would promote a stale
+    // `false` and spuriously clear a genuinely-halted counter.
     Ok(LengthCounter {
-        count: r.u8()?,
-        halt: r.bool()?,
-        enabled: r.bool()?,
+        count,
+        halt,
+        new_halt: halt,
+        enabled,
+        reload_val: 0,
+        previous_count: 0,
     })
 }
 
@@ -602,6 +616,12 @@ impl Apu {
         self.noise = read_noise(&mut r)?;
         self.dmc = read_dmc(&mut r, self.region)?;
         self.frame_counter = read_fc(&mut r, version)?;
+        // v2.1.5: the frame counter's PAL step-position selector is derived
+        // from region, not persisted (the snapshot format is unchanged). Re-
+        // derive it here from the just-restored region so a restored PAL state
+        // keeps the PAL sequencer positions. `read_fc` returns a counter with
+        // `pal = false` (NTSC), which is correct for NTSC/Dendy.
+        self.frame_counter.pal = matches!(self.region, Region::Pal);
         self.blip = read_blip(&mut r)?;
 
         self.apu_phase = r.bool()?;
