@@ -1,40 +1,182 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.1.6 "Fathom" ("Timbre")** (2026-07-11) — the current head of
-> the **"Fathom"** accuracy line on the v2.0.0 "Timebase" core, and the **expansion-audio
-> fidelity** step of the **v2.1.5 → v2.2.0 "deepen the existing project"** run (the joint
-> iOS App Store / Google Play launch is deferred to v2.3.0). Two feature PRs (#277, #279),
-> plus this current-state docs sync. The base **2A03 NTSC output stays byte-identical** — expansion audio is a
-> separate additive `mix_audio` term (0 for non-expansion mappers) — so the deterministic
-> core is unchanged on the shipped default: **AccuracyCoin 141/141 (100.00%,
+> **Current release: v2.2.0 "Capstone"** (2026-07-12) — the **milestone cut** that
+> **closes the v2.1.5 → v2.2.0 "deepen the existing project"** run on the v2.0.0 "Timebase"
+> core, landing its two remaining marquees — the **netplay matchmaking / lobby** stack and the
+> **FDS medium model** — atop a peripherals + quality/security pass (the joint iOS App Store /
+> Google Play launch stays deferred to v2.3.0). Every change is **additive or default-off**, so
+> the deterministic core is unchanged on the shipped default: **AccuracyCoin 141/141 (100.00%,
 > RAM-authoritative)**, nestest 0-diff, `blargg_apu_2005` / `pal_apu_tests` (10/10) /
 > `visual_regression` / the 60-ROM commercial oracle unchanged, the `#![no_std]` chip stack
-> untouched. It lands: **(1)** an **expansion-audio decibel oracle** — the bbbradsmith `db_*`
-> comparison ROMs are upgraded from pure `insta` snapshots into a real accuracy oracle
-> (`crates/rustynes-test-harness/tests/audio_expansion.rs`): the new `level_db_*` tests
-> measure the peak amplitude of the reference-2A03-square and expansion-square segments in the
-> rendered waveform (`common::capture_frame_peaks`) and **assert** the expansion/reference
-> ratio against the Mesen2 / hardware target — APU triangle ÷ square ≈ 0.524, VRC6 ≈ 1.506,
-> MMC5 ≈ 1.000, N163 1-channel ≈ 6.02 (the 19 `insta` snapshots retained as byte-exact
-> regression guards). **(2)** **hardware/Mesen2 channel-level calibration** — VRC6 square
-> `256 → 979` (≈ 0.39× → ≈ 1.51× the 2A03 pulse), MMC5 pulse/PCM `256/16 → 650/40`
-> (≈ 0.39× → ≈ 1.0×, "equivalent to the APU" per hardware), and **Namco 163 `64 → 261`**
-> (≈ 1.48× → ≈ 6.02× for 1-channel mode — no reference emulator attenuates N163; **ours was
-> ~12 dB too quiet, now fixed**, the fix bit-shared with the NSF playback path). Only the
-> three `db_vrc6a/b` / `db_mmc5` expansion snapshots were re-blessed (audio hash only, provably
-> more accurate). **(3)** **VRC7 patch-set verification** — all 15 melodic (+ 3 rhythm) OPLL
-> instrument patches pinned to the canonical Nuke.YKT dump
-> (`vrc7_all_15_melodic_patches_match_nuke_ykt_canonical`), plus Sunsoft 5B log-DAC step-law
-> and Namco 163 long-period wavetable unit tests. **(4)** a frontend **Audio Mixer** panel
-> (Tools → Audio Mixer): per-source gain sliders + mute for the five base 2A03 channels and
-> the detected expansion channel, presets (Authentic / Balanced / Expansion-boost / Reset), and
-> live per-channel oscilloscope + VU meters — a determinism-safe `channel_gain` / `channel_mask`
-> frontend overlay that is byte-identical at unity, never serialized into the save state, so
-> save-state / TAS / netplay replay stays byte-identical regardless of slider positions.
-> **Sunsoft 5B absolute level** and **VRC7 FM level** are honest documented gaps
-> (`docs/accuracy-ledger.md` §Expansion-audio levels): both stay snapshot-guarded rather than
-> faked. **v2.1.7 "Hardware Revisions & DMA Frontier" is now in progress.**
-> See `CHANGELOG.md` `[2.1.6]` + `.github/release-notes/v2.1.6.md`.
+> untouched, save-state / TAS / netplay replay bit-identical. Two PRs (#290, #291; cut #297). It
+> lands: **(1)** a **netplay lobby + matchmaking** stack over the existing room-code / TURN
+> transport — new `SignalMessage` variants `ListRooms` → `RoomList` (a browse-and-join,
+> optionally game-filtered room directory whose `RoomInfo` carries code / player-count / capacity
+> / `rom_hash` and *no* SDP/ICE/identity) and `QuickMatch` → `Matched` (server-side quick-play:
+> join any open room via the shared `add_to_room` primitive, or mint a fresh `QM-NNNNNN`), the
+> `room-list` frame parsed by a brace-depth walk bounded at `MAX_ROOM_LIST` = 256; **signaling
+> only**, the determinism / rollback contract untouched. **(2)** **Delayed-stream spectators** —
+> `SpectatorConfig.delay_frames` (clamped to `MAX_DELAY_FRAMES` = 512 ≈ 8.5 s), a pure
+> *presentation* hold (`reveal_horizon()`) that cannot perturb the match. **(3)** a **hardened
+> desync + peer-liveness surface** — a graded `DesyncStatus` { InSync / Suspect / Desynced } with
+> a hysteresis threshold (`DEFAULT_DESYNC_THRESHOLD` = 3 ≈ 1.5 s) + a sticky peak-run rule, and a
+> graded `PeerLink` { Live / Interrupted / TimedOut } driven by `last_recv` against 2 s / 5 s
+> timeouts with a terminal `DisconnectReason::PeerTimeout` — pure telemetry over the existing
+> `NetMessage::Checksum` digests. **(4)** the **FDS medium model completion** (F4.3, a marquee) —
+> a per-block **CRC-16/KERMIT** re-emitted on every BIOS write (`resynth_block_crc`) over a
+> synthesized gap/mark wire image, an opt-in default-OFF continuous analog head-seek / velocity
+> model (`Fds::set_analog_head_seek`) replacing the flat `HEAD_RESEEK_CYCLES`, and a BIOS-free
+> synthetic write-verify oracle (`Fds::medium_write_verify`) as the CI-verifiable half (the
+> real-BIOS write-CRC path needs a copyright `disksys.rom` and runs only from a gitignored local
+> dump); an additive **v4** FDS save-state tail, **byte-identical** with the head-seek model off
+> (AccuracyCoin has no FDS ROM, so 141/141 is unaffected). **(5)** **peripherals** — a Famicom
+> controller-2 **microphone** on `$4016` bit 2 (`Nes::set_microphone`, never `$4017`) and a
+> **3×3-aperture** Zapper light-timing model (`ZAPPER_APERTURE_*`), both additive / default-off.
+> **(6)** a **quality / security** pass — cargo-fuzz targets grown **3 → 8** (`ppu_reg_io` /
+> `apu_reg_io` / `netplay_message` / `save_state` / `movie`), the `movie` target surfacing and
+> fixing **two real OOM-DoS paths** in `Movie::deserialize` (byte-identical for valid input;
+> regression `deserialize_hostile_frame_count_does_not_oom`); a read-only **Tools → ROM Info**
+> browser over `&Nes` that never mutates; and four new MkDocs handbook pages.
+> See `CHANGELOG.md` `[2.2.0]` + `.github/release-notes/v2.2.0.md`.
+>
+> **Earlier in the Fathom line: v2.1.10 "Fathom" ("Loom")** (2026-07-12) — the **creator-tools &
+> web-parity** step of the **v2.1.5 → v2.2.0 "deepen the existing project"** run on the v2.0.0
+> "Timebase" core. All work is **opt-in / additive**,
+> so the deterministic core is unchanged on the shipped default: **AccuracyCoin 141/141
+> (100.00%, RAM-authoritative)**, nestest 0-diff, `blargg_apu_2005` / `pal_apu_tests` (10/10) /
+> `visual_regression` / the 60-ROM commercial oracle unchanged, the `#![no_std]` chip stack
+> untouched, save-state / TAS / netplay replay byte-identical. It lands: **(1)** **TAStudio
+> greenzone depth** — a "Force GZ" toggle in the piano-roll header guarantees a cached
+> save-state at *every* frame in a bounded range (up to `MAX_FORCED_GREENZONE_FRAMES` = 10,800
+> ≈ 3 min at 60 fps) so scrubbing / rewinding anywhere inside it is instant; forced frames are
+> non-evictable anchors (marker / branch anchors untouched), and it stays a pure caching
+> optimisation, so a seek into the range is bit-identical to a linear replay (the TAS /
+> determinism contract is unchanged). **(2)** **Lua API breadth** — a fourth HUD primitive
+> `emu.drawLine`; `memory:read_palette(idx)` (`$3F00-$3F1F`) + `memory:read_chr(addr)`
+> (`$0000-$1FFF`, mapper-banked) via the side-effect-free debug-peek path; new lifecycle events
+> `reset` / `spriteZeroHit` / `codeBreak` on `emu.addEventCallback`; and a **piccolo (wasm)
+> parity uplift** closing most of the read + HUD gap (ADR 0012 carve-out now only per-access /
+> per-interrupt replay callbacks + host-fired events); three well-commented example scripts
+> (`hud_graph.lua` / `palette_viewer.lua` / `lifecycle_events.lua`) ship compile-time embedded.
+> **(3)** **Browser RetroAchievements auth-proxy deploy stack** (ADR 0015) — the remaining
+> deployable half of the browser-RA carryover: a first-class `ra-proxy` compose service
+> (`deploy/Dockerfile.raproxy`, the stdlib-only reference stub, configured purely from env —
+> `RA_USER_AGENT` / `RA_ALLOWED_ORIGINS` / `RA_UPSTREAM` / `RA_ENFORCE_CASUAL`, holding no RA
+> secret) behind the shared Caddy TLS proxy at `https://<DOMAIN>/ra/*`, injecting RA's identity
+> `User-Agent` server-side (browsers forbid scripts from setting it); marshalling-contract tests
+> added to `wasm_cheevos.rs`. **Code-complete + compose/config validated**; standing the stack on
+> a live host, the RA-team `User-Agent` coordination, and a real browser login are the un-CI-able
+> acceptance gate.
+> **(4)** **Vs. `DualSystem` presentation in the libretro core** — the RetroArch core
+> (`crates/rustynes-libretro`) now presents Vs. `DualSystem` arcade cabinets (Balloon Fight /
+> Wrecking Crew / Tennis / Baseball) at parity with the desktop frontend: it steps **both**
+> cross-wired consoles each `retro_run` and composes their two 256×240 framebuffers into a single
+> **512×240** XRGB8888 side-by-side image (MAIN left, SUB right); previously a `DualSystem` dump
+> booted a single console that hangs on its absent partner. **Code-complete + builds**; a live
+> RetroArch run with a real cabinet dump is the maintainer's manual check. The **wasm
+> desktop-style dual present remains deferred** (the CPU compositor + core are cross-platform, but
+> the wasm ROM-load detection + un-gating `Gfx::render_dual` are held). Determinism preserved
+> throughout — reads are debug-peeks, writes stay gated / deferred, the deterministic `#![no_std]`
+> core is untouched. **v2.2.0 "Capstone" has since shipped — see the top block.**
+> See `CHANGELOG.md` `[2.1.10]` + `.github/release-notes/v2.1.10.md`.
+>
+> **Earlier in the Fathom line: v2.1.9 "Fathom" ("Aperture")** (2026-07-12) — a
+> **presentation & signal** cut, all opt-in and **default byte-identical** (the shipped
+> presentation is untouched, so `visual_regression` stays byte-identical and AccuracyCoin holds
+> **141/141**). It lands a **raw NTSC composite core** — a new `rustynes-ppu::raw_signal`
+> module that keeps the 2C02 composite waveform *un-decoded* (for every `(index, emphasis)` pair
+> it emits the twelve per-subcarrier-phase voltages, so a decoder can reproduce composite colour
+> bleed / dot crawl / dither transparency a per-colour palette cannot; canonical Bisqwit
+> `nes_ntsc` / Mesen2 "raw palette" model, `f32` byte-identical across x86 / aarch64 / wasm /
+> `thumbv7em` under a `GOLDEN_SIGNAL` cross-target lock; additive + default-OFF) — plus a
+> **marquee CRT shader stack**: three single-pass WGSL ports of the reference libretro *slang*
+> presets behind a `CrtStackShader` registry (**CRT-Royale**, **CRT Guest Advanced /
+> guest-dr-venom**, **Sony Megatron** — the last with an HDR-headroom + SDR-Reinhard fallback),
+> all four new shaders (the three CRT + the raw signal-decode pass `signal_decode.wgsl`, which
+> reconstructs the 2C02's two-level chroma square wave and demodulates it with a windowed
+> quadrature filter) gate-validated as compilable WGSL by the same **naga** front-end wgpu runs
+> at pipeline creation. Selectable from **Settings → Shaders** as first-class `ShaderStack`
+> passes with `#pragma parameter` sliders + per-game presets. Also: **GIF / animated capture +
+> WAV audio export** (the `av-record` feature, driven from a read-only framebuffer / audio tap so
+> capture never perturbs the deterministic timeline), and a **live generated-palette preview**
+> (a 16×4 swatch of the generated NTSC base that regenerates from the current
+> saturation / hue / contrast / brightness / gamma params as you drag the sliders; purely visual,
+> the shipped palette unchanged until explicitly enabled). See `CHANGELOG.md` `[2.1.9]` +
+> `.github/release-notes/v2.1.9.md`.
+>
+> **Earlier in the Fathom line: v2.1.8 "Fathom" ("Tempo")** (2026-07-12) — a
+> **performance** cut (default build unchanged / byte-identical; the deterministic core is
+> untouched). Profiling shows `Ppu::tick` is the emulator's single hottest function
+> (**~46% of frame self-time**), the overwhelming majority of its 89,342 per-frame invocations
+> being visible-scanline background-render dots whose event/bookkeeping branches are statically
+> dead. A **runtime knob** (`Nes::set_fast_dotloop`, default **false**) dispatches those "clean"
+> dots (visible scanline, dots `1..=256`, rendering stably enabled, no sub-dot disturbance in
+> flight) to `Ppu::tick_visible_render_fast`, a straight-line handler running the **identical**
+> helper sequence with the dead branches pruned; any disturbance drops instantly back to the exact
+> per-dot path. **Byte-identical (proven, not assumed):** the default is byte-identical to a build
+> without the field, and with the knob ON a new differential test (`fast_dotloop_diff`) asserts a
+> corpus (`nestest`, `flowing_palette`, `oam_stress`, `AccuracyCoin`, the Holy Mapperel MMC1/MMC3
+> boards, a mid-frame raster demo) is bit-for-bit identical through **both** paths every frame —
+> including under the opt-in `Rp2c02G` die revision. **Measured** (interleaved per-frame A/B):
+> rendering-enabled content is **~+12.3% faster per frame** (4.54 → 3.98 ms), well above the
+> project's >3%-Criterion adoption bar; rendering-disabled content is neutral. A *whole-scanline
+> batch* is **precluded** by the v2.0.0 "Timebase" every-cycle-bus-access scheduler (the CPU
+> observes A12 / NMI / sprite-0 / `$2002` at 3-dot granularity), so this is a per-dot
+> specialization, not a dot-batch. Also lands a frontend-only **vectorized software
+> palette-index → RGBA blitter** (`gfx_blit`, scalar / scalar-`u32` / portable-SIMD paths, all
+> validated byte-for-byte equal by `simd_equals_scalar_byte_identical` over the full `0..512`
+> domain; a memory-bound LUT gather, so the SIMD path is within noise of scalar and **scalar stays
+> the default**, documented honestly) plus a **wasm size / startup pass** (3.99 MiB gzip).
+> **Shipped default-OFF** (recommended for promotion after maintainer review + a clean-host
+> Criterion confirmation). See `CHANGELOG.md` `[2.1.8]` + `.github/release-notes/v2.1.8.md`.
+>
+> **Earlier in the Fathom line: v2.1.7 "Fathom" ("Stepping")** (2026-07-12) — a
+> **hardware-revisions & DMA-frontier** cut, every knob **opt-in and default-off** so the
+> deterministic core stays **byte-identical** at the default (**AccuracyCoin 141/141 (100%)**,
+> nestest 0-diff, `visual_regression` / `pal_apu_tests` 10/10 and save-state round-trip
+> unchanged). On the **PPU side** it adds a selectable 2C02 die revision + power-on hardware model
+> (P5): a `PpuRevision` enum (default `Rp2c02H`, opt-in `Rp2c02G` gating the `$2003`
+> write-during-render OAM row-copy corruption — the *Huge Insect* glitch — with no snapshot-format
+> change), a power-up palette-RAM model (`PaletteInit`; default `Zeroed`, opt-in `Blargg` loading
+> the canonical blargg dump), and a deterministic power-on work-RAM model (`PowerOnRam`:
+> `Zeroed` / `Seeded(u64)` / `Filled(u8)` via `Nes::from_rom_with_power_on_config`, for titles
+> that read uninitialized RAM — *Final Fantasy* RNG seed, *River City Ransom*, *Cybernoid*), all
+> exposed through additive `Nes` setters + default-off `[emulation]` config keys. On the **2A03
+> side** it adds a `Cpu2A03Revision { Rp2A03G (default), Rp2A03H }` config gating the DMA unit's
+> "unexpected DMA" extra parked-address re-read on a DMC-halt-overlaps-OAM-halt cycle. The existing
+> DMC↔OAM collision, OAM alignment, aborted DMC-DMA, and the `$2007`/`$4015`/`$4016`/`$4017`
+> DMC-glitch register corruption all stay green (the five `dmc_dma_during_read4` ROMs, both
+> `sprdma_and_dmc_dma` variants, and `dma_timing_pin` all `Pass`). The RP2A03G-vs-RP2A03H revision
+> is modeled by **no** public reference emulator and verified by **no** test ROM; on this engine
+> the revision gate fires but is a **documented no-op on every committed oracle** (`Rp2A03H` is
+> byte-identical to `Rp2A03G` today — a mechanism-level model whose direction is an unverified
+> hypothesis, **recorded not faked** in **ADR 0033** + `docs/scheduler.md` §"Unexpected DMA"; no
+> `dmc_dma_during_read4` sub-test is failed or newly `#[ignore]`'d). See `CHANGELOG.md` `[2.1.7]` +
+> `.github/release-notes/v2.1.7.md`.
+>
+> **Earlier in the Fathom line: v2.1.6 "Fathom" ("Timbre")** (2026-07-11) — the
+> **expansion-audio fidelity** step. The base **2A03 NTSC output stays byte-identical** —
+> expansion audio is a separate additive `mix_audio` term (0 for non-expansion mappers) — so the
+> deterministic core is unchanged on the shipped default: **AccuracyCoin 141/141**, nestest
+> 0-diff, `blargg_apu_2005` / `pal_apu_tests` (10/10) / `visual_regression` / the 60-ROM
+> commercial oracle unchanged, the `#![no_std]` chip stack untouched. It lands: **(1)** an
+> **expansion-audio decibel oracle** — the bbbradsmith `db_*` comparison ROMs are upgraded from
+> pure `insta` snapshots into a real accuracy oracle (`audio_expansion.rs` `level_db_*` tests
+> measure the peak amplitude of the reference-2A03-square and expansion-square segments and
+> **assert** the ratio against the Mesen2 / hardware target — APU triangle ÷ square ≈ 0.524,
+> VRC6 ≈ 1.506, MMC5 ≈ 1.000, N163 1-channel ≈ 6.02; the 19 `insta` snapshots retained as
+> byte-exact guards). **(2)** **hardware/Mesen2 channel-level calibration** — VRC6 square
+> `256 → 979`, MMC5 pulse/PCM `256/16 → 650/40`, and **Namco 163 `64 → 261`** (1-channel mode was
+> **~12 dB too quiet, now fixed**, the fix bit-shared with the NSF path; only the three
+> `db_vrc6a/b` / `db_mmc5` expansion snapshots re-blessed, audio-hash-only). **(3)** **VRC7
+> patch-set verification** — all 15 melodic (+ 3 rhythm) OPLL patches pinned to the canonical
+> Nuke.YKT dump (+ 5B log-DAC / N163 long-wave unit tests). **(4)** a frontend **Audio Mixer**
+> panel (Tools → Audio Mixer — per-source gain sliders + mute, presets, live oscilloscope + VU
+> meters via a determinism-safe `channel_gain` / `channel_mask` overlay that is byte-identical at
+> unity and never serialized into the save state). **Sunsoft 5B absolute level** and **VRC7 FM
+> level** stay honest documented gaps (`docs/accuracy-ledger.md` §Expansion-audio levels),
+> snapshot-guarded rather than faked. See `CHANGELOG.md` `[2.1.6]` +
+> `.github/release-notes/v2.1.6.md`.
 >
 > **Earlier in the Fathom line: v2.1.5 "Fathom" ("Vernier")** (2026-07-11) — the
 > **regression-net & residual** step that opened the **v2.1.5 → v2.2.0 "deepen the existing
@@ -1583,16 +1725,31 @@ own semantic-version line starting at **v1.0.0**.
 > Wizards & Warriors game-DB freeze fix → **v2.1.2 "Prism"** display fidelity →
 > **v2.1.3 "Codex"** quality-of-life → **v2.1.4 "Caliper"** accuracy hardening →
 > **v2.1.5 "Vernier"** the regression-net & residual step →
-> **v2.1.6 "Timbre"** the expansion-audio fidelity step (**the current release**).
-> Forward, the **v2.1.5 → v2.2.0** line is a **"deepen the existing project"** run —
+> **v2.1.6 "Timbre"** the expansion-audio fidelity step →
+> **v2.1.7 "Stepping"** hardware revisions & DMA frontier →
+> **v2.1.8 "Tempo"** performance →
+> **v2.1.9 "Aperture"** presentation & signal →
+> **v2.1.10 "Loom"** creator tools & web parity →
+> **v2.2.0 "Capstone"** the milestone cut closing the run (**the current release**).
+> The **v2.1.5 → v2.2.0** line is a **"deepen the existing project"** run —
 > accuracy / performance / features / quality; v2.1.5 opened it (the tepples **Holy
 > Mapperel** mapper bank-reachability / IRQ regression net, the first PAL-region APU oracle
 > at `pal_apu_tests` 10/10, the MMC3 R1/R2 F5.0 A12-phase study, a measured fat-LTO A/B, and
-> a real TURN NAT-traversal retransmit production fix — all NTSC-byte-identical), and v2.1.6
+> a real TURN NAT-traversal retransmit production fix — all NTSC-byte-identical), v2.1.6
 > continued it (the expansion-audio decibel oracle, the hardware/Mesen2 channel-level
 > calibration incl. the Namco 163 ~12 dB fix, VRC7 patch-set verification vs Nuke.YKT, and a
-> frontend Audio Mixer panel — the base 2A03 NTSC output byte-identical); **v2.1.7 "Hardware
-> Revisions & DMA Frontier" is now in progress**. The **JOINT mobile store launch** (Google Play + Apple App
+> frontend Audio Mixer panel — the base 2A03 NTSC output byte-identical), v2.1.7 added
+> opt-in PPU / 2A03 die-revision + power-on RAM/palette hardware models (the DMA
+> "unexpected read" frontier proven a documented no-op on every oracle, ADR 0033 — honest, not
+> faked), v2.1.8 the default-OFF specialized fast PPU dot path (~12% rendering-heavy,
+> differential-tested bit-identical) + a SIMD-validated software blitter + a wasm size pass,
+> v2.1.9 the marquee CRT shader stack (CRT-Royale / crt-guest-advanced / Sony Megatron) + a raw
+> NTSC composite signal-decode path + GIF/WAV capture + a palette editor, and v2.1.10 the
+> TAStudio greenzone + Lua API breadth + the browser-RA auth-proxy deploy stack + Vs.
+> `DualSystem` libretro presentation, and v2.2.0 closed the run (the netplay matchmaking / lobby
+> stack + the FDS medium model + a peripherals & quality/security pass — cargo-fuzz targets 3 → 8,
+> a `Movie::deserialize` OOM-DoS fix, a read-only Tools → ROM Info browser) — all
+> NTSC-byte-identical, AccuracyCoin 141/141 throughout. The **JOINT mobile store launch** (Google Play + Apple App
 > Store + AltStore PAL + F-Droid), and with it the `rustynes-monetization` activation, is the
 > future **v2.3.0** (moved from the earlier v2.1.0 / v2.2.0 targets). The monetization model
 > is ad-supported with a **$3.99** premium unlock (AppLovin MAX + RevenueCat, a reward-ad
@@ -1602,7 +1759,7 @@ own semantic-version line starting at **v1.0.0**.
 
 | Version | Status | Bar |
 |---------|--------|-----|
-| **RustyNES v1.0.0** | **PRODUCTION BASE** (the current release is **v2.1.6**; see the top block) | The production cut. AccuracyCoin **100.00% (139/139)**; 60-ROM `external_real_games` + 52-entry `external_extended` oracles byte-identical; nestest 0-diff. Ships the cycle-accurate master-clock core, 51 mapper families (incl. VRC6/VRC7-OPLL/Sunsoft-5B/Namco-163/MMC5 expansion audio + Vs./PC10 RGB boards), real-BIOS FDS, 2-4-player rollback netplay (native UDP + browser WebRTC), RetroAchievements (opt-in/native), TAS movie record/replay + save states/rewind, the performance + desktop-UX shell (display-sync pacing matrix, lock-free audio ring + DRC, run-ahead, dedicated emulation thread, and an always-on egui shell — menu bar / status bar / tabbed Settings / themes / fullscreen / save-state slots / surfaced tool panels), and a WebAssembly build. All quality gates green (fmt / clippy 1.86+stable+wasm32 / doc / no_std / native + both-wasm). See `CHANGELOG.md` `[1.0.0]`. The rows below this one are the engine-lineage history that produced this release. |
+| **RustyNES v1.0.0** | **PRODUCTION BASE** (the current release is **v2.2.0**; see the top block) | The production cut. AccuracyCoin **100.00% (139/139)**; 60-ROM `external_real_games` + 52-entry `external_extended` oracles byte-identical; nestest 0-diff. Ships the cycle-accurate master-clock core, 51 mapper families (incl. VRC6/VRC7-OPLL/Sunsoft-5B/Namco-163/MMC5 expansion audio + Vs./PC10 RGB boards), real-BIOS FDS, 2-4-player rollback netplay (native UDP + browser WebRTC), RetroAchievements (opt-in/native), TAS movie record/replay + save states/rewind, the performance + desktop-UX shell (display-sync pacing matrix, lock-free audio ring + DRC, run-ahead, dedicated emulation thread, and an always-on egui shell — menu bar / status bar / tabbed Settings / themes / fullscreen / save-state slots / surfaced tool panels), and a WebAssembly build. All quality gates green (fmt / clippy 1.86+stable+wasm32 / doc / no_std / native + both-wasm). See `CHANGELOG.md` `[1.0.0]`. The rows below this one are the engine-lineage history that produced this release. |
 | *(engine lineage)* **v0.9.0** | superseded (historical) | 393 strict pass + 6 documented `#[ignore]`. Frontend MVP (window, audio, save state, rewind, debugger overlay, NTSC filter, rebind modal). 14 mappers. CHANGELOG dated; quality gates green. **Post-tag landings on `main`** raise this to **510 strict pass + 6 expected-fail `#[ignore]`'d** across Tracks C2 (VRC6 + 5B + N163 + MMC5 audio; VRC7 banking+IRQ with FM deferred per ADR-0004), C3 (polyphase BLEP / windowed-sinc synthesis with SFDR 81.61 dB), C4 (cargo-fuzz), C5 (`no_std + alloc` chip stack), C6 (thumbnails + ADR-0003 migration policy), B8 (cycle-resolution sprite-eval FSM), C1 pre-work (ADR-0002 Decision section + M2-phase IRQ tracing fixture + 6 golden baseline traces), C1 Phases A + B1 + B2/B3 (two-phase IRQ trace snapshots + `M2Phase` enum on `rustynes-cpu::scheduler` + `LockstepBus::current_m2_phase()` + `irq_snapshot_{mapper,apu}_at_{low,high}` + `Bus::poll_irq_at_phase`; +1 unit test), C1 Phase B4 success (cycle-precise MMC3 reload-pending Sharp discriminator flipping `mmc3_test_2/4` sub-test #2; `_currently_fails` probe now expects sub-test #3 residual), Phase 1A (AccuracyCoin pass-rate harness), and Phase D2 (AccuracyCoin RAM-direct per-test diagnostic decoder + 144-entry name/address catalog, surfacing the true `64.03%` pass rate across 50 named failing tests grouped by 20 upstream suites). **Post-Phase-D2 sequence on `main`** (chronological) then carries the row forward through Session-13: Phase D3 7-fix 6502 canonical bus-pattern landing (unofficial NOP DOP/TOP dummy reads; `$4020-$5FFF` open-bus floating-latch via new `Mapper::cpu_read_unmapped` trait method; absolute,X/Y page-cross dummy at unfixed address; canonical JSR cycle order with dummy stack read at `$0100\|S`; branch cycle-3 PC dummy + cycle-4 unfixed page-cross dummy; STA-family always-dummy at final address +`addr_ind_y` unfixed dummy; `$4015 / $4016 / $4017` open-bus semantics) lifting AccuracyCoin `64.03% → 67.63%` via the RAM-direct decoder; then C1 **Phase 3** OAM-DMA alignment audit (2026-05-15) flipping `cpu_interrupts_v2/4-irq_and_dma` from `#[ignore]` + `_currently_fails` probe to strict-pass and DELETING the probe (`67.63% → 69.06%`); then the 2026-05-17 recovery on `main` after the v0.9.0-rc accuracy-stabilization branch regressed SMB / Excitebike / Kid Icarus PAL — `main` rolled back to `10995f1`, `git bisect run` pinned `63d8dea` (B8b: flip sprite-eval FSM default to cycle-resolution) as first-bad, fix `834be9e` removed a destructive dot-64 reset that zeroed `spr_count` + `spr_shift_lo/hi[..]` + `spr_attr[..]` + `spr_x[..]` + `spr_zero_in_line` mid-scanline, and the sacred-trio boot-and-play was restored (`69.06% → 69.78%`); the same recovery cycle landed permanent regression-prevention infrastructure — 21-ROM permissive baseline harnesses at `crates/rustynes-test-harness/tests/{audio_tests,m22,mmc1_a12}.rs` (commit `6b3a818`), `scripts/regression-bisect/` turn-key `git bisect run` wrapper, the 60-ROM commercial-ROM oracle at `crates/rustynes-test-harness/tests/external_real_games.rs` (54 strict + 6 ignored, feature-gated on `commercial-roms`; commit `86691c8`) covering all 15 supported mappers each asserting ROM SHA-256 + framebuffer FNV-1a + audio FNV-1a + cumulative cycle count against committed `insta` snapshots, an 81-PNG visual baseline corpus at `screenshots/` (19 audio_tests + 1 m22 + 1 mmc1_a12 + 60 external across 19 mapper subdirs), and the new `docs/audit/` decision-rationale documentation tier with the WHY-axis `rom-library-buildout-2026-05-17.md` (commit `8eb66d6`) preserving the May-2026 audit including a 9-entry iNES-header-mismatch table; then Cascade B DMC DMA scheduler (commit `9b0c81c`, +11 AccuracyCoin tests: closes the entire `APU Registers and DMA tests` suite plus 3 side-benefits elsewhere, `69.78% → 76.98%`); then Cascade A OAMADDR-during-rendering reset (commit `f29f7ca`, hardware-accurate per nesdev "OAMADDR reset to 0 during dots 257-320 of every rendered scanline", +2 tests, `76.98% → 78.42%`); then session-7 OAMADDR-walks-during-eval + $4-aligned `$2004` write (commit `c230489`, closes`Address $2004 behavior` with code 16, `78.42% → 79.14%`); then session-7 RMW ABS,X/Y unfixed-address dummy read (commit `32d5b18`, 18 RMW opcodes get the canonical cycle-4 unfixed-address dummy via the SLO `$4015,X` bracket flipping `APU Tests :: Controller Clocking` + advancing `Implied Dummy Reads` 2→3 + `Frame Counter IRQ` 6→7, `79.14% → 79.86%`); then session-8 BG-pipeline cycle-9 reload + post-emit shift (commit`086ce4d`, architectural closure for the Cascade A`VerifySpriteZeroHits` step-2 geometric puzzle per `docs/audit/cascade-a-investigation-2026-05-19.md` — flipped Sprite 0 Hit behavior + Sprite overflow behavior + Suddenly Resize Sprite + $2007 read w/ rendering; +4 tests, +2.87pp the largest single-commit jump since Cascade B; 60-ROM commercial oracle re-baselined with framebuffer FNV-1a hashes shifted 1 column right, audio + cycle invariants byte-identical, `79.86% → 82.73%`); then Session-13 coordinated cold-boot alignment with Mesen2 —`Cpu::power_on()` reset SP from `0xFD` → `$00` + 8-cycle reset (Phase B Option B, commit `ea3cc4c`) and PPU scheduler power-up position aligned from dot=0 → dot=340 (the +344-dot empirical hypothesis from Sessions 10-12, commit`eb37ff8`) — provides the first contamination-free foundation for the next Track C1 IRQ-sample-point attempt by eliminating the SP-divergent stack writes + the +344-dot drift that masked all 11 prior C1 attempts; +3 new`cpu::power_on` unit tests in `crates/rustynes-cpu/tests/opcodes.rs`. **Final count:** **541 strict pass + 5 expected-fail`#[ignore]`'d** across 34 suites with`--features test-roms` (the 6th `#[ignore]` was deleted when `cpu_interrupts_v2/4-irq_and_dma` flipped to strict-pass in C1 Phase 3; the +1 from 540 → 541 is the Session-18 PPU `$2002`-race-window oracle unit test`vbl_race_window_2002_read_sweep`, the empirical truth-record that informed the Session-18 / C1-attempt-16 rollback); **with`--features test-roms,commercial-roms`: +60 commercial-ROM strict pass = 601 total**. Lines 56 and 267 are now consistent. Session-18 (2026-05-22) attempted C1 attempt 16 (PPU-axis`$2002` race-window predicate narrowing `dot <= 1` → `dot == 0` to match Mesen2 + nesdev) under feature flag `ppu-c1-attempt-16` and ROLLED IT BACK because the failing `cpu_interrupts_v2/{2,3,5}`reads land at scanline 241 dot 0 (not dot 1, where the predicate change only differs); the actual load-bearing axis is the intra-cycle CPU-vs-PPU access interleaving (`read1` reads BEFORE PPU ticks vs Mesen2's `MemoryRead` PPU-then-read order). See `docs/audit/session-18-c1-attempt16-ppu-axis-rollback-2026-05-22.md` and ADR-0002 §"Decision update (2026-05-22, Session-18)". |
 | **v1.0.0** | **RELEASED 2026-05-23** | **AccuracyCoin RAM-direct 90.65%** (126/139 — gate cleared by 0.65pp). Workspace: **545 strict + 5 ignored** across 34 suites with `--features test-roms`; **+60 strict commercial-ROM oracle** with `--features test-roms,commercial-roms` (605 total, 60/60). All 10 validation gauntlet gates green (fmt / clippy / doc / no_std cross-compile / sacred trio SMB+Excitebike+Kid Icarus PAL preserved / B4 invariant preserved / ppu_vbl_nmi 10/10 / sprite_hit_tests 11/11 / sprite_overflow_tests 5/5 / apu_test 8/8 / dmc_dma_during_read4 5/5). Phase 6 v1.0.0-final closures: Phase 1a/b/d (internal/external bus split + SH* unstable stores +5 + `$4015` bit-5 Open Bus #9 +1), Phase 0 (Mesen2 `EventType::PpuCycle` patch documentation), Phase 3a/b (sprite-eval base from OAMADDR +2: Arbitrary Sprite zero + Misaligned OAM behavior, plus OAM-corruption row tracking +1: cleared the 90% gate). Cumulative AccuracyCoin progress 84.17% → 90.65% (+9 tests). 4 Track C1 IRQ-timing residuals (`cpu_interrupts_v2/{2,3,5}` + `mmc3_test_2/4` sub-test #3) deferred to **v2.0** with documented architectural rationale per `docs/audit/session-29-c1-axis-final-conclusion-2026-05-23.md` + `docs/audit/session-29-option-a-empirical-falsification.md`: Session-29 empirically demonstrated that Option (a) "comprehensive PPU re-baseline" (global +2 PPU dot init shift) does NOT close the C1 axis (cpu_interrupts_v2/{2,3,5}_strict still failed with `--include-ignored` because the global shift moves VBL set position and BIT $2002 read position uniformly, preserving the race-window relationship). Closing C1 requires changing the per-cycle PHASE RELATIONSHIP between CPU and PPU — Option (b) master-clock-precise scheduling refactor targeted for v2.0 (replace integer-PPU-dot-per-CPU-cycle model with Mesen2's fractional 12-master-clocks-per-CPU-cycle model). Permanent v2.0 infrastructure landed in v1.0.0: `cpu-c1-attempt-17-access-reorder` cargo feature on `rustynes-cpu` + `rustynes-core` + `rustynes-ppu` (φ1/φ2 split scaffold, default OFF), `rustynes-core::irq_trace` + 6 golden traces, `rustynes-cpu::M2Phase` + per-phase IRQ snapshots, `rustynes-ppu::vbl_race_window_2002_read_sweep` permanent oracle, Mesen2 source patch `EventType::PpuCycle` for per-PPU-cycle Lua callbacks (89342 events/frame verified), `scripts/cpu_boot_trace_pc_align.py` + `cpu_boot_trace_diff` + `mesen2_cpu_boot_trace.lua` cross-emulator diff tooling. |
 | **v1.1.0** | **RELEASED 2026-05-25** | VRC7 OPLL FM audio (mapper 85) via a clean-room pure-Rust port of `emu2413 v1.5.9` (MIT) at `crates/rustynes-apu/src/opll.rs`; *Lagrange Point* produces in-game audio. ADR 0006 supersedes ADR 0004. Workspace **600 strict + 5 ignored** at the tag. AccuracyCoin 90.65% preserved. See `CHANGELOG.md` `[1.1.0]`. |
