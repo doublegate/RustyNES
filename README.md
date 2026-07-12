@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.1.4-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.1.5-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -775,12 +775,18 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.1.4 "Fathom" ("Caliper")**, the accuracy-hardening
-step of the v2.1.x "Fathom" line — it adds an opt-in, Mesen2-modeled **OAM decay**
-accuracy feature (default-off), a CI boot-smoke sweep of every `BestEffort` mapper
-family, and a shared MMC3-clone A12/IRQ timing oracle, all on the byte-identical
-cycle-accurate core. The deterministic core is untouched: **AccuracyCoin stays 141/141
-(100.00%)**, nestest 0-diff, and the default-build framebuffer / audio are
+RustyNES's current release is **v2.1.5 "Fathom" ("Vernier")**, the regression-net &
+residual step that opens the v2.1.5 → v2.2.0 "deepen the project" run — it wires the
+tepples **Holy Mapperel** mapper bank-reachability / IRQ regression net into CI, adds
+the first **PAL-region APU oracle** (blargg `pal_apu_tests`, now **10/10** on a modeled
+PAL 2A07 frame counter, which also uncovered and fixed a real length-counter
+halt/reload write-ordering bug latent on NTSC too), fixes a **real TURN NAT-traversal
+production bug** (the relay client never retransmitted, so a single dropped UDP datagram
+aborted symmetric-NAT netplay), validates the shipped fat-LTO release profile with a
+measured A/B, and lands the MMC3 R1/R2 F5.0 A12-phase instrumentation study — all on the
+byte-identical cycle-accurate core. The deterministic NTSC core is untouched:
+**AccuracyCoin stays 141/141 (100.00%)**, nestest 0-diff, and the default-build
+framebuffer / audio are
 byte-identical.
 
 The v2.1.x line opened with **v2.1.0**, the accuracy-remediation release (a display-only
@@ -907,7 +913,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {2.1.4},
+  version = {2.1.5},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (141/141), nestest 0-diff; 172 mapper families,
