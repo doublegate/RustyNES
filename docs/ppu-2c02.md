@@ -142,6 +142,37 @@ the default keeps both deterministic (all-zero).
 - **Dots 321..=336** — first two BG tiles of next scanline.
 - **Dots 337..=340** — two extra NT fetches (purpose debated; preserve them so MMC5's frame-end detection works).
 
+### Fast dot path vs exact dot path (v2.1.8 A1, opt-in, default-OFF)
+
+`Ppu::tick` is the emulator's single hottest function (~46% of frame self-time;
+`docs/performance.md`). Behind a **default-OFF runtime knob**
+(`Nes::set_fast_dotloop`) the per-dot FSM splits into two paths:
+
+- **Exact path** (the shipped default, and the always-correct fallback): the
+  fully-general per-dot body described throughout this document — every event
+  and quirk checked on every dot.
+- **Fast path** (`Ppu::tick_visible_render_fast`): a specialized straight-line
+  handler for the *common clean* dot — a **visible scanline, dots `1..=256`,
+  rendering stably enabled, and no sub-dot disturbance** (no `$2006` copy-V or
+  PPUMASK write-delay pending, no PPUDATA state machine in flight, no
+  armed/pending OAM-corruption, warm scanline-classification cache). It runs the
+  **identical** helper sequence (OAM-corruption pointer bookkeeping →
+  sprite-eval FSM → OAM data-bus → BG reload/ALE/fetch/`inc_hori_v` →
+  `inc_vert_v` at dot 256 → `emit_pixel` → `shift_bg`) with the branches the
+  guard proves un-taken elided, so it is byte-identical to the exact path.
+
+The dispatch guard is conservative: **any** disturbance — a mid-scanline
+`$2000/$2001/$2005/$2006/$2007` write, a `$2007` read during render (the PPUDATA
+state machine), a rendering-enable toggle, an armed OAM-corruption edge, the
+sprite-tile-fetch / OAMADDR-reset window (dots 257..=320), the pre-render line,
+scanline 241, dot 0 — fails the guard and takes the exact path. Correctness
+dominates: when in doubt, the exact path runs. A whole-scanline *batch* is
+**not** possible here — the lockstep every-cycle-bus-access scheduler advances
+the PPU ≤3 dots per CPU cycle (`docs/scheduler.md`, `docs/performance.md` §A1),
+so this is a per-dot specialization only. Byte-identity across the full corpus
+(framebuffer + index buffer + audio + cycles + snapshot) is pinned by
+`crates/rustynes-test-harness/tests/fast_dotloop_diff.rs`.
+
 ### Sprite evaluation (cycles 1..=256)
 
 Per `ref-docs/research-report.md` §Sprite evaluation:

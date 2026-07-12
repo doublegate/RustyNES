@@ -2637,10 +2637,26 @@ impl Ppu {
         //
         // Compiled out under `ppu-state-trace` (whose end-of-tick hook must
         // observe every dot); under that feature the knob is inert.
+        // Guard-condition ORDER is tuned to fail fast (short-circuit) for the
+        // common non-covered dots so the flag costs little when it does not
+        // apply: the dot-range and rendering-enabled tests eliminate the
+        // out-of-window and rendering-disabled dots first (a rendering-disabled
+        // frame — e.g. the `flowing_palette` all-64-colour backdrop-override
+        // demo — bails at `rendering_enabled()` before the more numerous
+        // sub-dot-disturbance checks). AND is commutative, so the reorder is
+        // byte-identity-neutral. NOTE: `cached_visible` is only meaningful once
+        // the classification cache is warm, so `scanline == flags_cached_scanline`
+        // MUST be tested before it.
         #[cfg(not(feature = "ppu-state-trace"))]
         if self.fast_dotloop
-            && self.dot >= 1
             && self.dot <= 256
+            && self.dot >= 1
+            // Rendering stably enabled: immediate == 1-dot-delayed == previous
+            // dot's value, so `rendering`, `rendering_gate`, `bg_reload_render`
+            // and the shift gate all collapse to `true` with no edge to model.
+            && self.mask.rendering_enabled()
+            && self.rendering_enabled_delayed
+            && self.prev_rendering_enabled
             // Scanline classification cache warm (dot 0 of the line, taken on
             // the general path, warms it) AND this is a visible scanline.
             && self.scanline == self.flags_cached_scanline
@@ -2652,12 +2668,6 @@ impl Ppu {
             && !self.oam_corruption_pending
             && !self.oam_corruption_disabled
             && !self.oam_corruption_disabled_instant
-            // Rendering stably enabled: immediate == 1-dot-delayed == previous
-            // dot's value, so `rendering`, `rendering_gate`, `bg_reload_render`
-            // and the shift gate all collapse to `true` with no edge to model.
-            && self.mask.rendering_enabled()
-            && self.rendering_enabled_delayed
-            && self.prev_rendering_enabled
         {
             self.tick_visible_render_fast(bus);
             return;
