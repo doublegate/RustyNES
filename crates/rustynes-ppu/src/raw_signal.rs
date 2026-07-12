@@ -21,11 +21,17 @@
 //!   subcarrier phases. Which six of the twelve phases are "high" is set by the
 //!   color's hue nibble (`InColorPhase`); the two voltage levels (low/high) are
 //!   set by the luma nibble via [`LEVELS`].
-//! * Grays (`$x0`, `$xD`) hold a constant level (no chroma), so any decoder
-//!   integrates them to zero saturation regardless of hue.
+//! * Grays (`$x0`, `$xD`) hold a constant level **with no chroma at
+//!   `emphasis == 0`**, so a decoder integrates the un-emphasized gray to zero
+//!   saturation regardless of hue. Note this "flat/no chroma" property is
+//!   scoped to `emphasis == 0`: the emphasis attenuation below is *phase-
+//!   selective*, so under `emphasis != 0` even a gray becomes non-flat across
+//!   the twelve phases (it picks up a small chroma component alongside the
+//!   darkening).
 //! * The three emphasis bits each attenuate the signal (by [`ATTENUATION`])
 //!   during the subcarrier phases that overlap "their" primary's hue region —
-//!   which is why enabling all three darkens uniformly while enabling one tints.
+//!   which is why enabling all three darkens (near-)uniformly while enabling one
+//!   tints (and, per the note above, breaks a gray's flatness).
 //!
 //! ## Determinism boundary (why this is `no_std` and float-locked)
 //!

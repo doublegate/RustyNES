@@ -80,6 +80,17 @@ fn in_color_phase(color: i32, phase: i32) -> bool {
     return ((color + phase) % 12) < 6;
 }
 
+// Non-negative modulo. WGSL `%` takes the sign of the dividend, so a filter tap
+// sampling off the LEFT edge (negative absolute sub-sample position) would give
+// a negative `phase`, flipping `in_color_phase` / emphasis decisions and making
+// the reconstructed signal inconsistent with the (edge-clamped) texel load — a
+// visible edge artifact. Wrapping into [0, n) keeps the subcarrier phase
+// continuous across the edge and consistent with the (also-continuous) demod
+// reference, so edge pixels reconstruct correctly.
+fn pmod(x: i32, n: i32) -> i32 {
+    return ((x % n) + n) % n;
+}
+
 // Reconstruct one normalized composite sample for source column `col` at
 // sub-sample `sub` (0..8), given the packed index texel and the line phase.
 fn composite_at(col: i32, sub: i32, row: i32, line_phase: i32) -> f32 {
@@ -95,8 +106,10 @@ fn composite_at(col: i32, sub: i32, row: i32, line_phase: i32) -> f32 {
     if (color < 0x0E) {
         level = (index >> 4) & 0x3;
     }
-    // Absolute subcarrier phase (8 phase units per pixel + per-line offset).
-    let phase = (col * 8 + sub + line_phase) % 12;
+    // Absolute subcarrier phase (8 phase units per pixel + per-line offset),
+    // wrapped non-negative so off-left-edge taps (negative `col`/`sub`) don't
+    // flip the in-phase/emphasis decisions (see `pmod`).
+    let phase = pmod(col * 8 + sub + line_phase, 12);
     let is_high = in_color_phase(color, phase) || color == 0x00;
     var lo_i = level;
     if (color == 0x00) { lo_i = level + 4; }
@@ -136,8 +149,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     let row = i32(floor(suv.y * rows));
     // Per-line phase offset gives the 3-phase dot crawl (params.x is the frame
-    // videoPhase; the row parity contributes the per-line shift).
-    let line_phase = (i32(round(u.params.x)) + row * 8) % 12;
+    // videoPhase; the row parity contributes the per-line shift). Wrapped
+    // non-negative for the same edge-consistency reason as `composite_at`.
+    let line_phase = pmod(i32(round(u.params.x)) + row * 8, 12);
 
     // Centre position in absolute sub-samples: 8 per pixel.
     let fcol = suv.x * f32(dim.x);
@@ -145,6 +159,25 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     // Window half-width in sub-samples; sharper => narrower (less bleed).
     let half = i32(round(mix(24.0, 8.0, sharp)));
+
+    // Rotating-oscillator demod. The reference subcarrier phase advances by a
+    // CONSTANT `TAU/12` per tap (each tap steps the absolute sub-sample by 1), so
+    // rather than a `sin()`/`cos()` per tap (~49 transcendental pairs/pixel — a
+    // real fullscreen-pass cost) we evaluate the pair ONCE at the window start
+    // and rotate it forward with the angle-addition identity:
+    //   cos(p+d) = cos p cos d - sin p sin d
+    //   sin(p+d) = sin p cos d + cos p sin d
+    // costing 3 transcendentals/pixel total (the start pair + the fixed
+    // `cos d`/`sin d`). f32 drift over the ~49-step recurrence is ~1e-5 and this
+    // is an opt-in display pass (default-off, never on the deterministic path),
+    // so the output stays visually identical to the per-tap form. (Mirrors the
+    // Bisqwit pass's avoidance of per-tap transcendentals.)
+    let dph = TAU / 12.0;
+    let cd = cos(dph);
+    let sd = sin(dph);
+    let start_ph = TAU * ((centre - f32(half)) / 12.0);
+    var cs = cos(start_ph);
+    var sn = sin(start_ph);
 
     var y_acc = 0.0;
     var i_acc = 0.0;
@@ -155,16 +188,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let col = i32(floor(abs_sub / 8.0));
         let sub = i32(floor(abs_sub)) % 8;
         let comp = composite_at(col, sub, row, line_phase);
-        // Subcarrier reference at this sample (period = 12 phase units).
-        let ph = TAU * (abs_sub / 12.0);
-        let cs = cos(ph);
-        let sn = sin(ph);
         // Triangular low-pass window.
         let w = 1.0 - abs(f32(s)) / (f32(half) + 1.0);
         y_acc = y_acc + comp * w;
         i_acc = i_acc + comp * cs * w * 2.0;
         q_acc = q_acc + comp * sn * w * 2.0;
         w_sum = w_sum + w;
+        // Advance the oscillator by one tap (dph) for the next iteration.
+        let ncs = cs * cd - sn * sd;
+        let nsn = sn * cd + cs * sd;
+        cs = ncs;
+        sn = nsn;
     }
     let inv = 1.0 / max(w_sum, 1e-4);
     var y = y_acc * inv;
