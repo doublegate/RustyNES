@@ -1,6 +1,6 @@
 //! Raw NTSC composite-signal model (v2.1.9 "Presentation & Signal", P4).
 //!
-//! Where [`crate::palette_gen`] *pre-decodes* each of the 64 base colors to a
+//! Where `palette_gen` *pre-decodes* each of the 64 base colors to a
 //! single RGB triple (an ideal TV integrated over one pixel), this module keeps
 //! the signal **un-decoded**: for every `(index, emphasis)` pair it emits the
 //! 2C02's raw composite waveform as the twelve per-subcarrier-phase voltage
@@ -32,14 +32,14 @@
 //! The waveform is built from **level lookups, one multiply (emphasis), and one
 //! affine normalize** — there is *no* transcendental (no `sin`/`cos`/`pow`), so
 //! the `f32` output is bit-identical across x86 / aarch64 / wasm / `thumbv7em`
-//! under IEEE-754 without needing `libm`. The committed [`tests::GOLDEN_SIGNAL`]
+//! under IEEE-754 without needing `libm`. The committed `GOLDEN_SIGNAL`
 //! snapshot locks that cross-target contract.
 //!
 //! ## Where this sits in the pipeline (additive, default-OFF)
 //!
 //! This is a **new, parallel** output. The default presentation path is
 //! untouched: the shipped build still pre-decodes through [`crate::NES_PALETTE`]
-//! / [`crate::palette::build_rgba_lut_from_base`], so the default framebuffer
+//! / `palette::build_rgba_lut_from_base`, so the default framebuffer
 //! golden vectors and `AccuracyCoin` are byte-identical. The raw signal is only
 //! consumed when the frontend explicitly selects the signal-decode presentation
 //! shader (a deliberate visual choice, gated + re-blessed like the generated
@@ -53,7 +53,7 @@
 
 /// The eight composite signal voltage levels the 2C02 emits, relative to sync.
 ///
-/// Identical to [`crate::palette_gen`]'s `LEVELS`, restated here so the raw-
+/// Identical to `palette_gen`'s `LEVELS`, restated here so the raw-
 /// signal model is self-contained. Indices `0..4` are the "signal low" half of
 /// the chroma square wave for luma levels `0..3`; `4..8` are the "signal high"
 /// half. (Bisqwit / nesdev "NTSC video".)
@@ -83,7 +83,7 @@ pub const RAW_ENTRIES: usize = 64 * 8;
 ///
 /// This is Bisqwit's `InColorPhase`: `((color + phase) % 12) < 6`. It is the
 /// phase generator that positions each of the twelve hues on the color wheel.
-/// (Note the phase *convention* differs from [`crate::palette_gen`]'s `+ 8`
+/// (Note the phase *convention* differs from `palette_gen`'s `+ 8`
 /// offset — the two are independent decoders; what matters is that this module
 /// is self-consistent with the Bisqwit decode a signal shader performs.)
 #[inline]
@@ -156,7 +156,7 @@ pub fn signal_samples(index: usize, emphasis: usize) -> [f32; PHASES] {
 ///
 /// This is the exact table a host uploads (e.g. as an `R32Float` /
 /// `Rgba8Unorm`-packed texture) for the signal-decode shader. Deterministic and
-/// `no_std`; see [`tests::GOLDEN_SIGNAL`] for the cross-target byte-lock. The
+/// `no_std`; see `GOLDEN_SIGNAL` for the cross-target byte-lock. The
 /// 24 KiB table is built directly on the heap (via the crate's `alloc`, never a
 /// stack temporary) as a [`RAW_ENTRIES`]-long boxed slice — generated once at
 /// shader-setup time, never on a hot path.

@@ -14,9 +14,11 @@
 //! These are opt-in: the shipped default presentation (plain blit / the existing
 //! CRT) is unchanged, so the default framebuffer stays byte-identical.
 
-/// CRT-Royale — single-pass WGSL port (Gaussian luminance-scaled beam, selectable
-/// phosphor mask, gamma-correct scanlines, barrel curvature). See the file header
-/// for the model and the shared CRT-stack uniform layout.
+/// CRT-Royale — single-pass WGSL port.
+///
+/// Gaussian luminance-scaled beam, selectable phosphor mask, gamma-correct
+/// scanlines, barrel curvature. See the file header for the model and the
+/// shared CRT-stack uniform layout.
 pub const CRT_ROYALE_WGSL: &str = include_str!("crt_royale.wgsl");
 
 /// crt-guest-advanced / guest-dr-venom — single-pass WGSL port (power-shaped
@@ -28,14 +30,18 @@ pub const CRT_GUEST_WGSL: &str = include_str!("crt_guest.wgsl");
 /// tone-map fallback).
 pub const MEGATRON_WGSL: &str = include_str!("megatron.wgsl");
 
-/// Raw NTSC signal-decode pass (P4). Reconstructs the 2C02's two-level chroma
-/// square wave from the palette-index framebuffer and demodulates it, so signal-
-/// domain artifacts (composite bleed, dot crawl, dither transparency) survive.
+/// Raw NTSC signal-decode pass (P4).
+///
+/// Reconstructs the 2C02's two-level chroma square wave from the palette-index
+/// framebuffer and demodulates it, so signal-domain artifacts (composite bleed,
+/// dot crawl, dither transparency) survive.
 pub const SIGNAL_DECODE_WGSL: &str = include_str!("signal_decode.wgsl");
 
-/// A stable identifier for each shader in the v2.1.9 CRT stack, so a host (the
-/// desktop frontend, the Android renderer) can select one by name from config or
-/// a per-game preset without hard-coding the WGSL source at the call site.
+/// A stable identifier for each shader in the v2.1.9 CRT stack.
+///
+/// Lets a host (the desktop frontend, the Android renderer) select one by name
+/// from config or a per-game preset without hard-coding the WGSL source at the
+/// call site.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CrtStackShader {
     /// [`CRT_ROYALE_WGSL`].
@@ -50,21 +56,21 @@ pub enum CrtStackShader {
 
 impl CrtStackShader {
     /// Every shader in the stack, in a stable order (for UI enumeration / tests).
-    pub const ALL: [CrtStackShader; 4] = [
-        CrtStackShader::CrtRoyale,
-        CrtStackShader::CrtGuest,
-        CrtStackShader::Megatron,
-        CrtStackShader::SignalDecode,
+    pub const ALL: [Self; 4] = [
+        Self::CrtRoyale,
+        Self::CrtGuest,
+        Self::Megatron,
+        Self::SignalDecode,
     ];
 
     /// The WGSL source for this shader.
     #[must_use]
     pub const fn wgsl(self) -> &'static str {
         match self {
-            CrtStackShader::CrtRoyale => CRT_ROYALE_WGSL,
-            CrtStackShader::CrtGuest => CRT_GUEST_WGSL,
-            CrtStackShader::Megatron => MEGATRON_WGSL,
-            CrtStackShader::SignalDecode => SIGNAL_DECODE_WGSL,
+            Self::CrtRoyale => CRT_ROYALE_WGSL,
+            Self::CrtGuest => CRT_GUEST_WGSL,
+            Self::Megatron => MEGATRON_WGSL,
+            Self::SignalDecode => SIGNAL_DECODE_WGSL,
         }
     }
 
@@ -72,10 +78,10 @@ impl CrtStackShader {
     #[must_use]
     pub const fn slug(self) -> &'static str {
         match self {
-            CrtStackShader::CrtRoyale => "crt-royale",
-            CrtStackShader::CrtGuest => "crt-guest",
-            CrtStackShader::Megatron => "megatron",
-            CrtStackShader::SignalDecode => "signal-decode",
+            Self::CrtRoyale => "crt-royale",
+            Self::CrtGuest => "crt-guest",
+            Self::Megatron => "megatron",
+            Self::SignalDecode => "signal-decode",
         }
     }
 
@@ -83,10 +89,10 @@ impl CrtStackShader {
     #[must_use]
     pub const fn display_name(self) -> &'static str {
         match self {
-            CrtStackShader::CrtRoyale => "CRT-Royale",
-            CrtStackShader::CrtGuest => "CRT Guest Advanced",
-            CrtStackShader::Megatron => "Sony Megatron (HDR)",
-            CrtStackShader::SignalDecode => "Raw NTSC Signal Decode",
+            Self::CrtRoyale => "CRT-Royale",
+            Self::CrtGuest => "CRT Guest Advanced",
+            Self::Megatron => "Sony Megatron (HDR)",
+            Self::SignalDecode => "Raw NTSC Signal Decode",
         }
     }
 
@@ -95,12 +101,12 @@ impl CrtStackShader {
     /// index framebuffer and use the index-uniform layout for these.
     #[must_use]
     pub const fn samples_index_texture(self) -> bool {
-        matches!(self, CrtStackShader::SignalDecode)
+        matches!(self, Self::SignalDecode)
     }
 
     /// Resolve a config/preset slug back to a shader, `None` if unrecognised.
     #[must_use]
-    pub fn from_slug(slug: &str) -> Option<CrtStackShader> {
+    pub fn from_slug(slug: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|s| s.slug() == slug)
     }
 }
