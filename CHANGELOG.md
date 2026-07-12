@@ -14,6 +14,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.1.7] - 2026-07-12 - "Fathom" (hardware revisions & DMA frontier — opt-in PPU/2A03 die-revision + power-on RAM/palette model + honest DMA "unexpected read" residual ADR 0033; "Stepping")
+
 ### Added
 
 - **PPU die-revision + power-on hardware model (v2.1.7 "Hardware Revisions &
