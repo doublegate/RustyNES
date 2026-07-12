@@ -167,6 +167,61 @@ pub trait VmBackend: Sized {
         false
     }
 
+    // ---- v2.1.10 "Creator Tools" (B9) — host-fired lifecycle events ----
+    //
+    // `reset` / `spriteZeroHit` / `codeBreak` are registered via
+    // `emu.addEventCallback(fn, "<name>")` but — unlike `startFrame` / `endFrame`
+    // which the engine fires from its own per-frame pump — these are driven by a
+    // host signal (a soft-reset, the per-frame sprite-0 hit verdict, a debugger
+    // break). The host calls the matching `fire_*` after the frame pump. Each is
+    // observational (no live `Nes`), mirroring the greenzone / branch events. The
+    // defaults suit a backend that does not host them (the piccolo wasm backend,
+    // where they are registered as no-ops per ADR 0012).
+
+    /// Invoke the registered `reset` event callbacks (soft-reset / power-cycle).
+    ///
+    /// # Errors
+    /// Returns [`ScriptError`] if a callback raises.
+    fn fire_reset(&self) -> Result<(), ScriptError> {
+        Ok(())
+    }
+
+    /// Invoke the registered `spriteZeroHit` event callbacks, passing the frame
+    /// the hit occurred on.
+    ///
+    /// # Errors
+    /// Returns [`ScriptError`] if a callback raises.
+    fn fire_sprite_zero_hit(&self, _frame: usize) -> Result<(), ScriptError> {
+        Ok(())
+    }
+
+    /// Invoke the registered `codeBreak` event callbacks, passing the PC the
+    /// break occurred at.
+    ///
+    /// # Errors
+    /// Returns [`ScriptError`] if a callback raises.
+    fn fire_code_break(&self, _pc: u16) -> Result<(), ScriptError> {
+        Ok(())
+    }
+
+    /// `true` if any `reset` event callback is registered (host fires `fire_reset`
+    /// only when so).
+    fn needs_reset_event(&self) -> bool {
+        false
+    }
+
+    /// `true` if any `spriteZeroHit` event callback is registered (host does the
+    /// per-frame PPUSTATUS check + `fire_sprite_zero_hit` only when so).
+    fn needs_sprite_zero_hit_event(&self) -> bool {
+        false
+    }
+
+    /// `true` if any `codeBreak` event callback is registered (host fires
+    /// `fire_code_break` on a debugger break only when so).
+    fn needs_code_break_event(&self) -> bool {
+        false
+    }
+
     /// B3 — set the per-script sandboxed data directory returned by
     /// `emu.getScriptDataFolder()` (`None` clears it). No-op default.
     fn set_script_data_folder(&self, _path: Option<String>) {}

@@ -249,6 +249,20 @@ pub struct MluaBackend {
     event_state_loaded: Shared<Vec<RegistryKey>>,
     /// `stateSaved` event callbacks (B3) — fired after `emu:save_state`.
     event_state_saved: Shared<Vec<RegistryKey>>,
+    /// v2.1.10 "Creator Tools" (B9) — `reset` event callbacks, fired by the host
+    /// on a soft-reset / power-cycle of the running ROM (an observational
+    /// notification; the callback receives no live `Nes`, exactly like the
+    /// greenzone-invalidated / branch-load events).
+    event_reset: Shared<Vec<RegistryKey>>,
+    /// v2.1.10 "Creator Tools" (B9) — `spriteZeroHit` event callbacks, fired by
+    /// the host at most once per frame when the PPU's sprite-0 hit flag was set
+    /// during the frame (checked non-destructively). The callback receives the
+    /// frame number.
+    event_sprite_zero_hit: Shared<Vec<RegistryKey>>,
+    /// v2.1.10 "Creator Tools" (B9) — `codeBreak` event callbacks, fired by the
+    /// host when execution hits a debugger breakpoint. The callback receives the
+    /// PC the break occurred at.
+    event_code_break: Shared<Vec<RegistryKey>>,
     /// v1.7.0 "Forge" Workstream B (B3) — `emu.addMemoryCallback` *value-modifying*
     /// write callbacks, keyed by CPU address. Unlike the observational `onWrite`,
     /// a callback here may RETURN a replacement byte; the engine then pokes it
@@ -461,6 +475,28 @@ impl MluaBackend {
                     Ok(())
                 })?,
         )?;
+        // v2.1.10 "Creator Tools" (B9) — `emu.drawLine(x1, y1, x2, y2[, color])`,
+        // the fourth HUD primitive. Pure overlay (never write-gated); the host
+        // rasterises the segment through the egui pass.
+        let draws = self.draws.clone();
+        emu.set(
+            "drawLine",
+            self.lua.create_function(
+                move |_, (x1, y1, x2, y2, color): (i32, i32, i32, i32, Option<u32>)| {
+                    push_capped(
+                        &draws,
+                        DrawCmd::Line {
+                            x1,
+                            y1,
+                            x2,
+                            y2,
+                            color: color.unwrap_or(0xFFFF_FFFF),
+                        },
+                    );
+                    Ok(())
+                },
+            )?,
+        )?;
 
         // Callback registrars. The handles are stored Rust-side as Lua registry
         // keys (NOT in a script-visible global), so a script can register but
@@ -632,6 +668,9 @@ impl MluaBackend {
         let polled = self.event_input_polled.clone();
         let loaded = self.event_state_loaded.clone();
         let saved = self.event_state_saved.clone();
+        let reset = self.event_reset.clone();
+        let sprite0 = self.event_sprite_zero_hit.clone();
+        let code_break = self.event_code_break.clone();
         emu.set(
             "addEventCallback",
             self.lua
@@ -644,6 +683,12 @@ impl MluaBackend {
                         "inputPolled" => &polled,
                         "stateLoaded" => &loaded,
                         "stateSaved" => &saved,
+                        // v2.1.10 "Creator Tools" (B9) — host-fired lifecycle
+                        // events (soft-reset / power-cycle, per-frame sprite-0
+                        // hit, debugger break).
+                        "reset" => &reset,
+                        "spriteZeroHit" => &sprite0,
+                        "codeBreak" => &code_break,
                         other => {
                             return Err(mlua::Error::RuntimeError(format!(
                                 "addEventCallback: unknown event type '{other}'"
@@ -1187,6 +1232,9 @@ impl VmBackend for MluaBackend {
             event_input_polled: Shared::new(Vec::new()),
             event_state_loaded: Shared::new(Vec::new()),
             event_state_saved: Shared::new(Vec::new()),
+            event_reset: Shared::new(Vec::new()),
+            event_sprite_zero_hit: Shared::new(Vec::new()),
+            event_code_break: Shared::new(Vec::new()),
             modify_write_cbs: Shared::new(HashMap::new()),
             script_data_folder: Shared::new(None),
             clients: Shared::new(Vec::new()),
@@ -1633,6 +1681,32 @@ impl VmBackend for MluaBackend {
                     Ok(nes_cell.borrow().oam_byte((index & 0xFF) as u8))
                 })?,
             )?;
+            // v2.1.10 "Creator Tools" (B9) — explicit palette + CHR domains, the
+            // two remaining PPU-space read domains a script commonly wants named
+            // (a palette viewer, a CHR/tile inspector). Both resolve through the
+            // side-effect-free PPU debug-peek path (`ppu_bus_peek`), so — like
+            // every `memory:*` read — they are already the *Debug* (no
+            // open-bus / no read-buffer-advance / no mapper side-effect) variant:
+            // observing them never perturbs the deterministic run.
+            //
+            // `memory:read_palette(idx)` — one of the 32 palette RAM entries at
+            // $3F00-$3F1F (index masked to 5 bits). Returns the raw 6-bit palette
+            // index the PPU stores (0..=0x3F).
+            memory.set(
+                "read_palette",
+                scope.create_function(|_, (_this, index): (mlua::Value, u16)| {
+                    Ok(nes_cell.borrow_mut().ppu_bus_peek(0x3F00 | (index & 0x1F)) & 0x3F)
+                })?,
+            )?;
+            // `memory:read_chr(addr)` — one byte of pattern-table / CHR space at
+            // $0000-$1FFF (address masked to 13 bits), resolved through the
+            // mapper's current CHR banking exactly as the PPU would fetch it.
+            memory.set(
+                "read_chr",
+                scope.create_function(|_, (_this, addr): (mlua::Value, u16)| {
+                    Ok(nes_cell.borrow_mut().ppu_bus_peek(addr & 0x1FFF))
+                })?,
+            )?;
             memory.set(
                 "poke",
                 scope.create_function(|_, (_this, addr, val): (mlua::Value, u16, u8)| {
@@ -1915,6 +1989,35 @@ impl VmBackend for MluaBackend {
 
     fn fire_branch_load(&self, index: usize) -> Result<(), ScriptError> {
         tastudio::fire_event(&self.lua, &self.tas.branch_load_cbs, index).map_err(ScriptError::from)
+    }
+
+    // v2.1.10 "Creator Tools" (B9) — host-fired lifecycle events. Each replays
+    // the registered `addEventCallback(fn, "<name>")` list with a single scalar
+    // arg via the shared `fire_event_list` helper (the same output-only,
+    // no-live-`Nes` dispatch as the greenzone / branch events).
+    fn fire_reset(&self) -> Result<(), ScriptError> {
+        fire_event_list(&self.lua, &self.event_reset, 0).map_err(ScriptError::from)
+    }
+
+    fn fire_sprite_zero_hit(&self, frame: usize) -> Result<(), ScriptError> {
+        fire_event_list(&self.lua, &self.event_sprite_zero_hit, frame as u64)
+            .map_err(ScriptError::from)
+    }
+
+    fn fire_code_break(&self, pc: u16) -> Result<(), ScriptError> {
+        fire_event_list(&self.lua, &self.event_code_break, u64::from(pc)).map_err(ScriptError::from)
+    }
+
+    fn needs_reset_event(&self) -> bool {
+        !self.event_reset.borrow().is_empty()
+    }
+
+    fn needs_sprite_zero_hit_event(&self) -> bool {
+        !self.event_sprite_zero_hit.borrow().is_empty()
+    }
+
+    fn needs_code_break_event(&self) -> bool {
+        !self.event_code_break.borrow().is_empty()
     }
 
     fn needs_tas_cell_query(&self) -> bool {

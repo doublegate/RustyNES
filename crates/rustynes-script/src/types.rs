@@ -251,6 +251,25 @@ pub enum DrawCmd {
         /// `0xRRGGBBAA`.
         color: u32,
     },
+    /// v2.1.10 "Creator Tools" (B9) — a straight line segment from `(x1, y1)` to
+    /// `(x2, y2)`. The fourth HUD primitive (`emu.drawLine`) alongside text /
+    /// rect / pixel: the natural building block for graph overlays, watch-value
+    /// plots, and hitbox visualisers a TAS/analysis script wants to draw over
+    /// the framebuffer. Pure overlay, so — like every other [`DrawCmd`] — it is
+    /// NOT gated by the write-lock (drawing can never perturb deterministic
+    /// emulator state; it only decorates the presented frame).
+    Line {
+        /// Start X (px).
+        x1: i32,
+        /// Start Y (px).
+        y1: i32,
+        /// End X (px).
+        x2: i32,
+        /// End Y (px).
+        y2: i32,
+        /// `0xRRGGBBAA`.
+        color: u32,
+    },
 }
 
 /// v1.7.0 "Forge" Workstream E1 — a host-mediated IPC request a script issued
