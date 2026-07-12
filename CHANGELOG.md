@@ -14,6 +14,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.1.8] - 2026-07-12 - "Fathom" (performance — default-off specialized fast PPU dot-loop (differential-tested byte-identical, +12% rendering-heavy) + SIMD software blitter + wasm size/startup pass; "Tempo")
+
 ### Performance
 
 - **Specialized visible-scanline fast dot path (v2.1.8 "Performance" A1;
