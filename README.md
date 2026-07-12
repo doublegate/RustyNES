@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.1.9-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.1.10-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -775,16 +775,19 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.1.9 "Fathom" ("Aperture")**, the presentation-and-signal
-step of the v2.1.5 → v2.2.0 "deepen the project" run — it adds a **marquee CRT shader stack**
-(WGSL ports of **CRT-Royale**, **crt-guest-advanced**, and **Sony Megatron** HDR, selectable
-in Settings → Shaders with mask/scanline/curvature controls and per-game presets), a
-**raw NTSC composite signal-decode path** (a new `rustynes-ppu::raw_signal` un-decoded 2C02
-composite model plus a `signal_decode.wgsl` pass that reconstructs and demodulates the real
-signal for artifact-accurate color), **GIF + WAV capture** (extending `av-record`), and a
-**generated-NTSC palette editor** with a live preview. Every shader / signal / capture path
-is **opt-in and default-off**, so the shipped default presentation stays byte-identical:
-**AccuracyCoin stays 141/141 (100.00%)**, nestest 0-diff, `visual_regression` byte-identical.
+RustyNES's current release is **v2.1.10 "Fathom" ("Loom")**, the creator-tools-and-web-parity
+step of the v2.1.5 → v2.2.0 "deepen the project" run — on the **creator** side it deepens
+**TAStudio** (greenzone / force-greenzone caching so piano-roll seeking is instant, named
+markers, richer branch slots) and broadens the **Lua API** (the full lifecycle-callback surface,
+CPU/PPU/palette/OAM/CHR read-write with side-effect-free `*Debug` variants, HUD drawing, an
+example-script library, and wasm-`piccolo` parity uplift); on the **web-parity** side it
+completes the **browser RetroAchievements** path (wasm trampoline marshalling + a deployable
+auth-proxy stack, ADR 0015) and brings **Vs. `DualSystem`** presentation to the **libretro**
+core. The deterministic core is untouched — greenzone snapshots + Lua reads/writes preserve
+the TAS/replay contract — so **AccuracyCoin stays 141/141 (100.00%)**, `visual_regression` is
+byte-identical, and save-state / TAS / netplay replay stay bit-identical. (Vs. `DualSystem` on
+the wasm present path is honestly deferred, and the browser-RA live login is a documented
+deploy-to-verify step — see the CHANGELOG.)
 
 The v2.1.x line opened with **v2.1.0**, the accuracy-remediation release (a display-only
 PPU palette-backdrop-override fix, 86 mapper families promoted BestEffort → Curated, and
@@ -910,7 +913,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {2.1.9},
+  version = {2.1.10},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (141/141), nestest 0-diff; 172 mapper families,
