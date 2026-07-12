@@ -14,8 +14,6 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [2.1.5] - 2026-07-11 - "Fathom" (regression net & residual — Holy Mapperel mapper regression net + PAL APU frame-counter 10/10 + real TURN NAT-retransmit production fix + fat-LTO A/B validation + MMC3 F5.0 A12-phase study; "Vernier")
-
 ### Added
 
 - **Expansion-audio mix UI + per-channel visualization (v2.1.6 "Expansion
@@ -38,6 +36,11 @@ cycle-accurate core later replaced.
   save-state / TAS / netplay replay stays byte-identical regardless of the
   slider positions, and the visualization samples a read-only copy that never
   feeds back into synthesis. AccuracyCoin holds **141/141 (100%)**.
+
+## [2.1.5] - 2026-07-11 - "Fathom" (regression net & residual — Holy Mapperel mapper regression net + PAL APU frame-counter 10/10 + real TURN NAT-retransmit production fix + fat-LTO A/B validation + MMC3 F5.0 A12-phase study; "Vernier")
+
+### Added
+
 - **Mapper bank-reachability + IRQ regression net (v2.1.5 "Regression Net &
   Residual").** Wired the tepples **Holy Mapperel** cartridge-PCB-assembly test
   ROMs into CI as a dedicated mapper regression net

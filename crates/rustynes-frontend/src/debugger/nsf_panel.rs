@@ -84,16 +84,23 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes
     let dmc = f32::from(apu.dmc) / 127.0;
     // v2.1.6 — the raw expansion-audio contribution. `external` is a small
     // signed sample (~[-0.5, 0.5] scale, like a mixed channel); take its
-    // magnitude and clamp for the 0..=1 scope/VU convention.
-    let ext = (apu.external.abs() * 2.0).clamp(0.0, 1.0);
+    // magnitude and clamp for the 0..=1 scope/VU convention. Guard non-finite
+    // first (a NaN self isn't pinned by `f32::clamp`) so it maps to silence
+    // instead of a garbage trace point.
+    let ext = if apu.external.is_finite() {
+        (apu.external.abs() * 2.0).min(1.0)
+    } else {
+        0.0
+    };
     state.pulse1.push(p1);
     state.pulse2.push(p2);
     state.triangle.push(tri);
     state.noise.push(noi);
     state.dmc.push(dmc);
     state.external.push(ext);
-    // v1.8.9 — the combined (averaged) level for the master scope.
-    state.master.push((p1 + p2 + tri + noi + dmc) / 5.0);
+    // v1.8.9 — the combined (averaged) level for the master scope. v2.1.6 —
+    // include the expansion channel so the master reflects all six sources.
+    state.master.push((p1 + p2 + tri + noi + dmc + ext) / 6.0);
     let expansion = nes.expansion_audio_chip();
 
     egui::Window::new("NSF Player")

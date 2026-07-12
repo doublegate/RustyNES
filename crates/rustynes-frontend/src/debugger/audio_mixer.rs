@@ -156,7 +156,14 @@ pub fn show(
         let dmc = f32::from(apu.dmc) / 127.0;
         // The external sample is a signed, already-mixed-scale value (~[-0.5,
         // 0.5]); fold to magnitude and clamp for the 0..=1 scope/VU convention.
-        let ext = (apu.external.abs() * 2.0).clamp(0.0, 1.0);
+        // Guard non-finite first: a NaN would render a garbage VU bar / scope
+        // point (`f32::clamp` propagates a NaN self rather than pinning it), so
+        // a non-finite chip sample maps to silence.
+        let ext = if apu.external.is_finite() {
+            (apu.external.abs() * 2.0).min(1.0)
+        } else {
+            0.0
+        };
         state.pulse1.push(p1);
         state.pulse2.push(p2);
         state.triangle.push(tri);
@@ -305,7 +312,11 @@ pub fn show(
             n.set_apu_channel_mask(config.audio.channel_mask);
         }
         // Persist so the mix survives a restart, like the other audio prefs.
-        let _ = config.save();
+        // Surface (don't swallow) a save failure, matching the `ui_shell.rs`
+        // convention so a read-only / full config dir is diagnosable.
+        if let Err(e) = config.save() {
+            eprintln!("rustynes: failed to save config: {e}");
+        }
     }
 }
 
@@ -360,8 +371,12 @@ fn channel_row(
             changed = true;
         }
     });
-    // VU peak.
-    vu_meter(ui, desc.short, peak, desc.color);
+    // VU peak — drawn in the same enabled/disabled UI state as the rest of the
+    // row so a disabled expansion row (no on-cart audio) greys out consistently
+    // and doesn't show a stale/active-looking meter.
+    ui.add_enabled_ui(enabled, |ui| {
+        vu_meter(ui, desc.short, peak, desc.color);
+    });
     changed
 }
 
