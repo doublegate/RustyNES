@@ -55,18 +55,40 @@ type PendingWrites = Rc<RefCell<Vec<(u16, u8)>>>;
 /// every `Callback::from_fn` closure as an `Rc` (piccolo callbacks are
 /// `'static + Fn`, so host state must be interior-mutable + `'static`; an `Rc`
 /// is exactly that — no GC rooting, no `unsafe`).
-#[derive(Default)]
 struct Snapshot {
     /// The full 64 KiB CPU address space, captured at frame start via `peek`.
     /// `emu.read` / `readRange` serve from this; a same-frame `emu.write`
     /// updates it so a subsequent read observes the new value.
     mem: Vec<u8>,
+    /// v2.1.10 "Creator Tools" (B9) — the full 16 KiB PPU address space
+    /// ($0000-$3FFF), captured at frame start via the side-effect-free
+    /// `ppu_bus_peek`. Backs the `memory:peek_ppu` / `read_chr` / `read_palette`
+    /// reads on the piccolo backend (parity with the mlua `memory` table, minus
+    /// the live pokes piccolo defers). Read-only: PPU space is never poked from
+    /// a script, so — unlike `mem` — it is not mutated by a same-frame write.
+    ppu: Vec<u8>,
+    /// v2.1.10 "Creator Tools" (B9) — the 256-byte primary OAM, captured at
+    /// frame start (`memory:read_oam`).
+    oam: [u8; 256],
     /// CPU registers (a, x, y, s, p, pc) at frame start.
     cpu: [u32; 6],
     /// `nes.frame()`.
     frame: u64,
     /// `nes.cycle()`.
     cycle: u64,
+}
+
+impl Default for Snapshot {
+    fn default() -> Self {
+        Self {
+            mem: Vec::new(),
+            ppu: Vec::new(),
+            oam: [0u8; 256],
+            cpu: [0; 6],
+            frame: 0,
+            cycle: 0,
+        }
+    }
 }
 
 /// Push `cmd` into a host-drained queue unless it is already at the per-frame
@@ -396,6 +418,28 @@ impl PiccoloBackend {
                 });
                 emu.set(ctx, "drawPixel", f).ok();
             }
+            // v2.1.10 "Creator Tools" (B9) — `emu.drawLine`, at full parity with
+            // the mlua backend (a pure overlay, host-rasterised).
+            {
+                let draws = Rc::clone(&draws);
+                let f = Callback::from_fn(&ctx, move |ctx, _ex, mut stack| {
+                    let (x1, y1, x2, y2, color) = stack
+                        .consume::<(i64, i64, i64, i64, Option<i64>)>(ctx)
+                        .unwrap_or((0, 0, 0, 0, None));
+                    push_capped(
+                        &draws,
+                        DrawCmd::Line {
+                            x1: coord(x1),
+                            y1: coord(y1),
+                            x2: coord(x2),
+                            y2: coord(y2),
+                            color: mask_color(color),
+                        },
+                    );
+                    Ok(CallbackReturn::Return)
+                });
+                emu.set(ctx, "drawLine", f).ok();
+            }
 
             // emu.onFrame(fn) — stash the supplied function for per-frame replay.
             {
@@ -419,8 +463,147 @@ impl PiccoloBackend {
                 let f = Callback::from_fn(&ctx, |_ctx, _ex, _stack| Ok(CallbackReturn::Return));
                 emu.set(ctx, name, f).ok();
             }
+            // v2.1.10 "Creator Tools" (B9) — `emu.addEventCallback(fn, type)` is a
+            // documented no-op on piccolo (the host-fired lifecycle events need
+            // the native event dispatch; ADR 0012). Registering as a no-op — like
+            // `onExec` / `onNmi` above — means a portable script that wires
+            // `reset` / `spriteZeroHit` / `codeBreak` / `startFrame` handlers does
+            // not error on wasm; the handlers simply never fire.
+            {
+                let f = Callback::from_fn(&ctx, |_ctx, _ex, _stack| Ok(CallbackReturn::Return));
+                emu.set(ctx, "addEventCallback", f).ok();
+            }
 
             ctx.set_global("emu", emu).ok();
+
+            // v2.1.10 "Creator Tools" (B9) — the `memory` table, brought to
+            // read-parity with the mlua backend: CPU + PPU + palette + CHR + OAM
+            // reads, all served from the per-frame [`Snapshot`] (so no callback
+            // needs a live `&mut Nes`). Every read here is the side-effect-free
+            // *Debug* variant by construction — the snapshot is captured via the
+            // debug peeks. `poke` / `write_range` route through the SAME gated,
+            // deferred `emu.write` path (buffered, applied after the frame,
+            // dropped when locked), so the piccolo `memory` writes keep the
+            // documented deferred-but-lands contract.
+            let memory = Table::new(&ctx);
+            {
+                let snapshot = Rc::clone(&snapshot);
+                let f = Callback::from_fn(&ctx, move |ctx, _ex, mut stack| {
+                    let (_this, addr) = stack
+                        .consume::<(Value, i64)>(ctx)
+                        .unwrap_or((Value::Nil, 0));
+                    let v = snapshot
+                        .borrow()
+                        .mem
+                        .get(mask_addr(addr))
+                        .copied()
+                        .unwrap_or(0);
+                    stack.replace(ctx, i64::from(v));
+                    Ok(CallbackReturn::Return)
+                });
+                memory.set(ctx, "peek", f).ok();
+            }
+            {
+                let snapshot = Rc::clone(&snapshot);
+                let f = Callback::from_fn(&ctx, move |ctx, _ex, mut stack| {
+                    let (_this, addr) = stack
+                        .consume::<(Value, i64)>(ctx)
+                        .unwrap_or((Value::Nil, 0));
+                    // PPU bus is 14 bits ($0000-$3FFF, mirrored to $4000).
+                    let idx = usize::try_from(addr & 0x3FFF).unwrap_or(0);
+                    let v = snapshot.borrow().ppu.get(idx).copied().unwrap_or(0);
+                    stack.replace(ctx, i64::from(v));
+                    Ok(CallbackReturn::Return)
+                });
+                memory.set(ctx, "peek_ppu", f).ok();
+            }
+            {
+                let snapshot = Rc::clone(&snapshot);
+                let f = Callback::from_fn(&ctx, move |ctx, _ex, mut stack| {
+                    let (_this, addr) = stack
+                        .consume::<(Value, i64)>(ctx)
+                        .unwrap_or((Value::Nil, 0));
+                    // CHR / pattern space is 13 bits ($0000-$1FFF).
+                    let idx = usize::try_from(addr & 0x1FFF).unwrap_or(0);
+                    let v = snapshot.borrow().ppu.get(idx).copied().unwrap_or(0);
+                    stack.replace(ctx, i64::from(v));
+                    Ok(CallbackReturn::Return)
+                });
+                memory.set(ctx, "read_chr", f).ok();
+            }
+            {
+                let snapshot = Rc::clone(&snapshot);
+                let f = Callback::from_fn(&ctx, move |ctx, _ex, mut stack| {
+                    let (_this, index) = stack
+                        .consume::<(Value, i64)>(ctx)
+                        .unwrap_or((Value::Nil, 0));
+                    // Palette RAM at $3F00-$3F1F (5-bit index), 6-bit value.
+                    let idx = usize::try_from(0x3F00 | (index & 0x1F)).unwrap_or(0x3F00);
+                    let v = snapshot.borrow().ppu.get(idx).copied().unwrap_or(0) & 0x3F;
+                    stack.replace(ctx, i64::from(v));
+                    Ok(CallbackReturn::Return)
+                });
+                memory.set(ctx, "read_palette", f).ok();
+            }
+            {
+                let snapshot = Rc::clone(&snapshot);
+                let f = Callback::from_fn(&ctx, move |ctx, _ex, mut stack| {
+                    let (_this, index) = stack
+                        .consume::<(Value, i64)>(ctx)
+                        .unwrap_or((Value::Nil, 0));
+                    let idx = usize::try_from(index & 0xFF).unwrap_or(0);
+                    let v = snapshot.borrow().oam.get(idx).copied().unwrap_or(0);
+                    stack.replace(ctx, i64::from(v));
+                    Ok(CallbackReturn::Return)
+                });
+                memory.set(ctx, "read_oam", f).ok();
+            }
+            {
+                let snapshot = Rc::clone(&snapshot);
+                let f = Callback::from_fn(&ctx, move |ctx, _ex, mut stack| {
+                    let (_this, addr, len) =
+                        stack
+                            .consume::<(Value, i64, i64)>(ctx)
+                            .unwrap_or((Value::Nil, 0, 0));
+                    let len = len.clamp(0, 0x1_0000);
+                    let snap = snapshot.borrow();
+                    let out = Table::new(&ctx);
+                    for i in 0..len {
+                        let v = snap
+                            .mem
+                            .get(mask_addr(addr.wrapping_add(i)))
+                            .copied()
+                            .unwrap_or(0);
+                        out.set(ctx, i + 1, i64::from(v)).ok();
+                    }
+                    stack.replace(ctx, out);
+                    Ok(CallbackReturn::Return)
+                });
+                memory.set(ctx, "read_range", f).ok();
+            }
+            {
+                let pending_writes = Rc::clone(&pending_writes);
+                let snapshot = Rc::clone(&snapshot);
+                let writes_locked = Rc::clone(&writes_locked);
+                let f = Callback::from_fn(&ctx, move |ctx, _ex, mut stack| {
+                    let (_this, addr, val) =
+                        stack
+                            .consume::<(Value, i64, i64)>(ctx)
+                            .unwrap_or((Value::Nil, 0, 0));
+                    if !writes_locked.get() {
+                        let addr = mask_addr(addr);
+                        let val = mask_byte(val);
+                        if let Some(slot) = snapshot.borrow_mut().mem.get_mut(addr) {
+                            *slot = val;
+                        }
+                        #[allow(clippy::cast_possible_truncation)] // addr <= 0xFFFF
+                        push_capped(&pending_writes, (addr as u16, val));
+                    }
+                    Ok(CallbackReturn::Return)
+                });
+                memory.set(ctx, "poke", f).ok();
+            }
+            ctx.set_global("memory", memory).ok();
         });
     }
 
@@ -436,6 +619,24 @@ impl PiccoloBackend {
         // cast + clippy suppression (gemini #76).
         for (addr, slot) in (0u16..=0xFFFF).zip(snap.mem.iter_mut()) {
             *slot = nes.peek(addr);
+        }
+        // v2.1.10 "Creator Tools" (B9) — capture the 16 KiB PPU address space
+        // ($0000-$3FFF) + the 256-byte OAM via the side-effect-free debug peeks,
+        // so the `memory:peek_ppu` / `read_chr` / `read_palette` / `read_oam`
+        // reads have a consistent per-frame view (the same snapshot discipline
+        // as `mem`, without needing a live `&mut Nes` inside a `'static`
+        // piccolo callback).
+        if snap.ppu.len() != 0x4000 {
+            snap.ppu.resize(0x4000, 0);
+        }
+        for (addr, slot) in (0u16..=0x3FFF).zip(snap.ppu.iter_mut()) {
+            *slot = nes.ppu_bus_peek(addr);
+        }
+        for (index, slot) in snap.oam.iter_mut().enumerate() {
+            #[allow(clippy::cast_possible_truncation)] // index is 0..256
+            {
+                *slot = nes.oam_byte(index as u8);
+            }
         }
         let c = nes.cpu();
         snap.cpu = [

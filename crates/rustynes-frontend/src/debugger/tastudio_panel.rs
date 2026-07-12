@@ -78,6 +78,10 @@ pub enum TasRequest {
         /// The per-frame pattern.
         frames: Vec<FrameInput>,
     },
+    /// v2.1.10 "Creator Tools" (B8) — enable / move (`Some((start, end))`) or
+    /// disable (`None`) the force-greenzone range: guarantee a cached save-state
+    /// at every frame in the range so scrubbing there is instant.
+    SetForcedGreenzone(Option<(usize, usize)>),
 }
 
 /// An in-progress left-drag that paints one button column to a single value,
@@ -366,6 +370,28 @@ fn header(ui: &mut egui::Ui, state: &mut TasStudioPanelState, editor: &TasEditor
             .clicked()
         {
             state.scroll_to = Some(editor.cursor());
+        }
+        // v2.1.10 "Creator Tools" (B8) — force-greenzone toggle. When enabled it
+        // guarantees a cached state at every frame in the recent window ending at
+        // the cursor (capped span), so scrubbing / rewinding there is instant. A
+        // pure caching optimisation — it never alters the deterministic timeline.
+        ui.separator();
+        let mut forced = editor.forced_greenzone_range().is_some();
+        if ui
+            .checkbox(&mut forced, "Force GZ")
+            .on_hover_text(
+                "Force-cache a save-state at every frame in the recent window \
+                 (up to ~3 min) for instant scrubbing",
+            )
+            .changed()
+        {
+            if forced {
+                let cursor = editor.cursor();
+                let start = cursor.saturating_sub(crate::tastudio::MAX_FORCED_GREENZONE_FRAMES - 1);
+                state.emit(TasRequest::SetForcedGreenzone(Some((start, cursor))));
+            } else {
+                state.emit(TasRequest::SetForcedGreenzone(None));
+            }
         }
     });
 }

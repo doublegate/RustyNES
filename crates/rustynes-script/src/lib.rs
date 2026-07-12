@@ -379,6 +379,55 @@ impl ScriptEngine {
         self.inner.needs_tas_cell_query()
     }
 
+    /// v2.1.10 "Creator Tools" (B9) — invoke the registered `reset` event
+    /// callbacks (the host calls this after a soft-reset / power-cycle).
+    ///
+    /// # Errors
+    /// Returns [`ScriptError`] if a callback raises.
+    pub fn fire_reset(&self) -> Result<(), ScriptError> {
+        self.inner.fire_reset()
+    }
+
+    /// v2.1.10 "Creator Tools" (B9) — invoke the registered `spriteZeroHit` event
+    /// callbacks (the host calls this once per frame the sprite-0 hit fired).
+    ///
+    /// # Errors
+    /// Returns [`ScriptError`] if a callback raises.
+    pub fn fire_sprite_zero_hit(&self, frame: usize) -> Result<(), ScriptError> {
+        self.inner.fire_sprite_zero_hit(frame)
+    }
+
+    /// v2.1.10 "Creator Tools" (B9) — invoke the registered `codeBreak` event
+    /// callbacks (the host calls this on a debugger breakpoint, passing the PC).
+    ///
+    /// # Errors
+    /// Returns [`ScriptError`] if a callback raises.
+    pub fn fire_code_break(&self, pc: u16) -> Result<(), ScriptError> {
+        self.inner.fire_code_break(pc)
+    }
+
+    /// v2.1.10 "Creator Tools" (B9) — `true` if any `reset` event callback is
+    /// registered (so the host fires [`Self::fire_reset`] only when needed).
+    #[must_use]
+    pub fn needs_reset_event(&self) -> bool {
+        self.inner.needs_reset_event()
+    }
+
+    /// v2.1.10 "Creator Tools" (B9) — `true` if any `spriteZeroHit` event
+    /// callback is registered (so the host does the per-frame check only when
+    /// needed).
+    #[must_use]
+    pub fn needs_sprite_zero_hit_event(&self) -> bool {
+        self.inner.needs_sprite_zero_hit_event()
+    }
+
+    /// v2.1.10 "Creator Tools" (B9) — `true` if any `codeBreak` event callback is
+    /// registered (so the host fires [`Self::fire_code_break`] only when needed).
+    #[must_use]
+    pub fn needs_code_break_event(&self) -> bool {
+        self.inner.needs_code_break_event()
+    }
+
     /// B3 — set the per-script sandboxed data directory returned by
     /// `emu.getScriptDataFolder()` (`None` clears it). A no-op on the piccolo
     /// backend.
@@ -819,6 +868,37 @@ mod tests {
         assert!(eng.drain_controls().is_empty());
     }
 
+    /// v2.1.10 "Creator Tools" (B9) — `emu.drawLine` queues a `DrawCmd::Line`
+    /// with the segment endpoints + colour. Cross-backend (the fourth HUD
+    /// primitive is at full parity between mlua and piccolo).
+    #[test]
+    fn draw_line_queues_a_line_command() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                emu.drawLine(1, 2, 30, 40, 0x00FF00FF)
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        eng.on_frame(&mut nes).expect("on_frame");
+        let draws = eng.drain_draws();
+        assert_eq!(draws.len(), 1);
+        assert!(matches!(
+            &draws[0],
+            DrawCmd::Line {
+                x1: 1,
+                y1: 2,
+                x2: 30,
+                y2: 40,
+                color: 0x00FF_00FF,
+            }
+        ));
+    }
+
     // ----- v1.5.0 Workstream B: Lua dev/TAS API depth (native-only / mlua) -----
     // The `memory` / `cart` / `sym` tables + in-memory save-state slots +
     // `on_breakpoint` / `pause_at_frame` are installed only on the mlua backend
@@ -850,6 +930,76 @@ mod tests {
         assert_eq!(nes.peek(0x30), 0x12);
         assert_eq!(nes.peek(0x31), 0x34);
         assert_eq!(nes.peek(0x32), 0x56);
+    }
+
+    /// v2.1.10 "Creator Tools" (B9) — `memory:read_palette` / `read_chr` resolve
+    /// the palette + CHR PPU domains through the side-effect-free debug path.
+    /// A CHR read of `$0000` matches the core's own `ppu_bus_peek`, and a palette
+    /// read is bounded to the 6-bit palette-index range.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn memory_palette_and_chr_reads() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.onFrame(function()
+                local chr0 = memory:read_chr(0x0000)
+                local pal0 = memory:read_palette(0)
+                emu.log('chr=' .. chr0 .. ' pal_ok=' .. tostring(pal0 >= 0 and pal0 <= 0x3F))
+            end)
+            ",
+        )
+        .expect("load");
+        nes.run_frame();
+        let expect_chr = nes.ppu_bus_peek(0x0000);
+        eng.on_frame(&mut nes).expect("on_frame");
+        assert_eq!(
+            eng.drain_log(),
+            vec![format!("chr={expect_chr} pal_ok=true")]
+        );
+    }
+
+    /// v2.1.10 "Creator Tools" (B9) — the host-fired lifecycle events
+    /// (`reset` / `spriteZeroHit` / `codeBreak`) register via `addEventCallback`
+    /// and fire on the matching `fire_*` host call, passing their scalar arg.
+    /// `needs_*_event` reports registration so the host only fires when armed.
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn host_fired_lifecycle_events() {
+        let mut nes = Nes::from_rom(&synth_rom()).expect("rom");
+        let mut eng = ScriptEngine::new().expect("engine");
+        eng.load(
+            r"
+            emu.addEventCallback(function() emu.log('reset') end, 'reset')
+            emu.addEventCallback(function(f) emu.log('s0@' .. f) end, 'spriteZeroHit')
+            emu.addEventCallback(function(pc) emu.log('brk@' .. pc) end, 'codeBreak')
+            ",
+        )
+        .expect("load");
+        assert!(eng.needs_reset_event());
+        assert!(eng.needs_sprite_zero_hit_event());
+        assert!(eng.needs_code_break_event());
+        nes.run_frame();
+        eng.fire_reset().expect("reset");
+        eng.fire_sprite_zero_hit(42).expect("s0");
+        eng.fire_code_break(0xC000).expect("brk");
+        let log = eng.drain_log();
+        assert!(log.contains(&"reset".to_owned()), "{log:?}");
+        assert!(log.contains(&"s0@42".to_owned()), "{log:?}");
+        assert!(log.contains(&"brk@49152".to_owned()), "{log:?}");
+    }
+
+    /// v2.1.10 "Creator Tools" (B9) — an unknown `addEventCallback` type is a
+    /// clear error on mlua (validating the event name up front).
+    #[cfg(not(feature = "script-wasm"))]
+    #[test]
+    fn unknown_event_type_errors() {
+        let mut eng = ScriptEngine::new().expect("engine");
+        let err = eng
+            .load("emu.addEventCallback(function() end, 'notAnEvent')")
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown event type"), "{err:?}");
     }
 
     /// B1 — `memory:peek` is side-effect-free: a script peek of `$2002` must NOT
@@ -1196,6 +1346,19 @@ mod tests {
             (
                 "driving_loop.lua",
                 include_str!("../../../examples/scripts/driving_loop.lua"),
+            ),
+            // v2.1.10 "Creator Tools" (B9) example library additions.
+            (
+                "hud_graph.lua",
+                include_str!("../../../examples/scripts/hud_graph.lua"),
+            ),
+            (
+                "lifecycle_events.lua",
+                include_str!("../../../examples/scripts/lifecycle_events.lua"),
+            ),
+            (
+                "palette_viewer.lua",
+                include_str!("../../../examples/scripts/palette_viewer.lua"),
             ),
         ];
         for (name, src) in EXAMPLES {

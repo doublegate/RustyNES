@@ -25,7 +25,7 @@
 
 mod greenzone;
 
-pub use greenzone::Greenzone;
+pub use greenzone::{Greenzone, MAX_FORCED_GREENZONE_FRAMES};
 
 use std::collections::BTreeMap;
 
@@ -690,7 +690,13 @@ impl TasEditor {
             nes.run_frame();
             self.record_lag(f, nes);
             let next = f + 1;
-            if next.is_multiple_of(self.capture_interval) && !self.greenzone.has(next) {
+            // v2.1.10 "Creator Tools" (B8) — capture on the normal keyframe
+            // stride OR at *every* frame inside an active force-greenzone range
+            // (`store` then pins the forced frame as a non-evictable anchor), so
+            // scrubbing anywhere in the forced range is instant.
+            if (next.is_multiple_of(self.capture_interval) || self.greenzone.is_forced(next))
+                && !self.greenzone.has(next)
+            {
                 self.greenzone.store(next, nes.snapshot(), target);
             }
         }
@@ -713,10 +719,33 @@ impl TasEditor {
         nes.run_frame();
         self.record_lag(frame, nes);
         self.cursor = frame + 1;
-        if self.cursor.is_multiple_of(self.capture_interval) && !self.greenzone.has(self.cursor) {
+        // v2.1.10 "Creator Tools" (B8) — same force-greenzone capture rule as in
+        // `seek`: keyframe stride OR any frame inside the forced range.
+        if (self.cursor.is_multiple_of(self.capture_interval)
+            || self.greenzone.is_forced(self.cursor))
+            && !self.greenzone.has(self.cursor)
+        {
             self.greenzone
                 .store(self.cursor, nes.snapshot(), self.cursor);
         }
+    }
+
+    /// v2.1.10 "Creator Tools" (B8) — enable / move / disable the force-greenzone
+    /// range (guarantee a cached save-state at *every* frame in `range`, so
+    /// scrubbing / rewinding inside it is instant). `None` disables it. The span
+    /// is normalised + clamped to `MAX_FORCED_GREENZONE_FRAMES`; the
+    /// forced frames are (re)captured as the editor seeks / records across them,
+    /// and are pinned so the byte-budget's eviction never drops them. Bumps the
+    /// snapshot revision so the piano-roll / host snapshot refreshes.
+    pub fn set_forced_greenzone_range(&mut self, range: Option<(usize, usize)>) {
+        self.greenzone.set_forced_range(range);
+        self.bump();
+    }
+
+    /// v2.1.10 "Creator Tools" (B8) — the active force-greenzone range, or `None`.
+    #[must_use]
+    pub const fn forced_greenzone_range(&self) -> Option<(usize, usize)> {
+        self.greenzone.forced_range()
     }
 }
 
@@ -895,6 +924,53 @@ mod tests {
         ed.seek(&mut nes, 200); // warm the greenzone across the whole movie
         ed.seek(&mut nes, 137); // seek back — uses a cached keyframe <= 137
         assert_eq!(ed.cursor(), 137);
+        assert_eq!(
+            nes.framebuffer(),
+            ref_fb.as_slice(),
+            "framebuffer must match"
+        );
+        assert_eq!(nes.cycle(), ref_cycle, "cycle count must match");
+    }
+
+    /// v2.1.10 "Creator Tools" (B8) — with a force-greenzone range active, a seek
+    /// across it caches a state at EVERY frame in the range (not just the
+    /// keyframe stride), and a subsequent seek into the range stays bit-identical
+    /// to a linear replay (force-greenzone is a pure caching optimisation — it
+    /// never alters the deterministic timeline).
+    #[test]
+    fn force_greenzone_caches_every_frame_and_stays_bit_identical() {
+        let rom = synth_nrom();
+        let inputs = varied_inputs(200);
+
+        // Linear reference to frame 155.
+        let mut linear = Nes::from_rom(&rom).unwrap();
+        linear.power_cycle();
+        for f in &inputs[..155] {
+            linear.set_buttons(0, f.p1);
+            linear.set_buttons(1, f.p2);
+            linear.run_frame();
+        }
+        let ref_fb = linear.framebuffer().to_vec();
+        let ref_cycle = linear.cycle();
+
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.power_cycle();
+        // A coarse keyframe stride (20) so most frames are NOT normally cached.
+        let mut ed = TasEditor::from_inputs(&nes, inputs, 1 << 24, 20);
+        ed.set_forced_greenzone_range(Some((150, 160)));
+        assert_eq!(ed.forced_greenzone_range(), Some((150, 160)));
+        ed.seek(&mut nes, 200); // warm the greenzone across the whole movie
+        // Every frame in the forced range now holds a state, despite the stride.
+        for f in 150..=160 {
+            assert!(
+                ed.greenzone().has(f),
+                "forced frame {f} must be cached after the seek"
+            );
+        }
+        // A frame at neither a stride multiple nor in the range is NOT cached.
+        assert!(!ed.greenzone().has(143));
+        // Seeking back into the forced range is still bit-identical.
+        ed.seek(&mut nes, 155);
         assert_eq!(
             nes.framebuffer(),
             ref_fb.as_slice(),

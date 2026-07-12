@@ -1566,6 +1566,39 @@ byte-identical (the HistoryViewer only *observes*; compression is lossless).
   assert byte-equality. LZ4 (`lz4_flex`, already a core dep + no_std-wired) is
   reused as the deflate codec; the round-trip gate is codec-agnostic.
 
+#### v2.1.10 "Creator Tools" (B8) — force-greenzone
+
+The normal greenzone keeps a density-tiered *skeleton* (keyframe stride + a dense
+cursor neighbourhood), so scrubbing to an arbitrary frame costs a
+load-nearest-keyframe + short re-emulate. **Force-greenzone** lets the user pin a
+bounded frame range where a save-state is guaranteed at *every* frame, so
+scrubbing / rewinding anywhere inside it is instant — for tightening a boss
+pattern or a hard movement puzzle frame-by-frame.
+
+- **API:** `TasEditor::set_forced_greenzone_range(Some((start, end)))` /
+  `forced_greenzone_range()`; toggled from the piano-roll header's **"Force GZ"**
+  checkbox (`TasRequest::SetForcedGreenzone`, dispatched under the emu lock). The
+  checkbox forces a window of up to `MAX_FORCED_GREENZONE_FRAMES` ending at the
+  cursor.
+- **Mechanism (`src/tastudio/greenzone.rs`):** `Greenzone` tracks a normalised,
+  span-clamped forced range plus the set of frames it *itself* pinned as anchors.
+  `store()` pins a forced frame as a non-evictable anchor (so budget eviction
+  never drops it); the `seek` / `record_frame` capture loops now store at every
+  forced frame, not just the keyframe stride. Shrinking / clearing the range
+  releases **only** the anchors force-greenzone added — a marker / branch-point
+  anchor the editor pinned for its own reasons is untouched.
+- **Memory budget:** the span is clamped to `MAX_FORCED_GREENZONE_FRAMES`
+  (10,800 ≈ 3 min at 60 fps). Because forced frames escape density-tiered
+  eviction, an unbounded range would defeat the byte budget — hence the cap. At
+  the desktop save-state cost (≤ 1 ms to capture, ≤ 64 KiB uncompressed, far less
+  under the Zwinder XOR-delta + LZ4 codec) the worst-case pinned footprint is on
+  the order of tens of MiB compressed, well inside `DEFAULT_GREENZONE_BUDGET`
+  (256 MiB).
+- **Determinism:** force-greenzone is a pure *caching* optimisation. A seek into
+  the forced range is bit-identical to a linear replay (the
+  `force_greenzone_caches_every_frame_and_stays_bit_identical` editor test), so
+  the TAS / save-state contract is unchanged.
+
 ### v1.6.0 "Studio" Workstream G — A/V recording (`av_record`, native + `av-record` feature)
 
 Records the running game to a `.mp4` / `.mkv` (video + synchronized audio), and

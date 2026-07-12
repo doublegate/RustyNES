@@ -3019,6 +3019,10 @@ impl App {
                 TasRequest::StampMacro { start, frames } => {
                     ed.stamp_macro(start, &frames);
                 }
+                // v2.1.10 "Creator Tools" (B8) — set / move / clear the
+                // force-greenzone range. The forced frames are captured as the
+                // editor next seeks / records across them.
+                TasRequest::SetForcedGreenzone(range) => ed.set_forced_greenzone_range(range),
                 // Handled in the first pass (outside the lock — they open dialogs).
                 TasRequest::SaveProject | TasRequest::LoadProject => {}
             }
@@ -4193,6 +4197,17 @@ impl App {
             // v1.7.0 "Forge" H4 — a reset starts a fresh lag-frame tally.
             guard.reset_lag_frames();
         }
+        // v2.1.10 "Creator Tools" (B9) — notify any Lua `reset` event callbacks.
+        // Output-only (no `Nes`), fired outside the emu lock; a callback raise is
+        // logged to the script console rather than aborting the reset.
+        #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
+        if let Some(engine) = self.script.as_mut()
+            && engine.needs_reset_event()
+            && let Err(e) = engine.fire_reset()
+            && let Some(dbg) = self.debugger.as_mut()
+        {
+            dbg.script_panel().set_error(format!("reset event: {e}"));
+        }
         #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
         self.reset_ra();
     }
@@ -4680,6 +4695,13 @@ impl App {
         }
 
         let writes_locked;
+        // v2.1.10 "Creator Tools" (B9) — captured inside the lock (needs the live
+        // `Nes`), fired after the lock drops (firing re-enters Lua but needs no
+        // `Nes`). `Some(frame)` when the PPU's sprite-0 hit flag was set during
+        // this frame — read non-destructively via `peek($2002)` (the debug-peek
+        // path does NOT clear the latch), so the check never perturbs the
+        // deterministic run.
+        let mut sprite0_hit_frame: Option<usize> = None;
         {
             let mut guard = self.emu.lock();
             // Read the movie flags before the `nes` borrow — a `MutexGuard`
@@ -4704,7 +4726,28 @@ impl App {
             if let Err(e) = engine.on_frame(nes) {
                 err = Some(e.to_string());
             }
+            // v2.1.10 (B9) — sample the sprite-0 hit verdict for the `spriteZeroHit`
+            // event only when a script armed it (no cost otherwise). PPUSTATUS
+            // bit 6 (`0x40`) is the sprite-0 hit flag; it is set once the hit
+            // occurs and persists until the pre-render line clears it, so a single
+            // post-frame non-destructive read answers "did a sprite-0 hit fire
+            // this frame".
+            if engine.needs_sprite_zero_hit_event() && (nes.peek(0x2002) & 0x40) != 0 {
+                #[allow(clippy::cast_possible_truncation)] // frame count fits usize
+                {
+                    sprite0_hit_frame = Some(nes.frame() as usize);
+                }
+            }
         } // emu lock dropped here
+
+        // v2.1.10 (B9) — fire the sprite-0 hit event outside the lock (the
+        // callbacks are output-only and need no `Nes`). A raise is surfaced the
+        // same way an `on_frame` raise is.
+        if let Some(frame) = sprite0_hit_frame
+            && let Err(e) = engine.fire_sprite_zero_hit(frame)
+        {
+            err = Some(e.to_string());
+        }
 
         // Drain engine-side buffers (no `Nes` access) outside the lock (M2).
         let log = engine.drain_log();
@@ -5129,6 +5172,22 @@ impl App {
                         col(*color),
                     );
                 }
+                // v2.1.10 "Creator Tools" (B9) — the `emu.drawLine` overlay
+                // primitive: a straight segment in NES framebuffer space, mapped
+                // through the same `p()` scaling as the other primitives and
+                // stroked at ~1 NES pixel wide (scaled to the current zoom).
+                DrawCmd::Line {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    color,
+                } => {
+                    painter.line_segment(
+                        [p(*x1, *y1), p(*x2, *y2)],
+                        egui::Stroke::new(sy.max(1.0), col(*color)),
+                    );
+                }
             }
         }
     }
@@ -5327,6 +5386,22 @@ impl App {
                         egui::Rect::from_min_size(p(*x, *y), egui::vec2(sx.max(1.0), sy.max(1.0))),
                         0.0,
                         col(*color),
+                    );
+                }
+                // v2.1.10 "Creator Tools" (B9) — the `emu.drawLine` overlay
+                // primitive: a straight segment in NES framebuffer space, mapped
+                // through the same `p()` scaling as the other primitives and
+                // stroked at ~1 NES pixel wide (scaled to the current zoom).
+                DrawCmd::Line {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    color,
+                } => {
+                    painter.line_segment(
+                        [p(*x1, *y1), p(*x2, *y2)],
+                        egui::Stroke::new(sy.max(1.0), col(*color)),
                     );
                 }
             }
