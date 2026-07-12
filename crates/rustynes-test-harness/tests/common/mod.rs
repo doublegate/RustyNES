@@ -241,7 +241,10 @@ pub fn capture_frame_peaks(rom_rel: &str, frames: u64) -> Vec<f32> {
     let path = rom_path(rom_rel);
     let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
     let mut nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rom_rel}: {e}"));
-    let mut peaks = Vec::with_capacity(usize::try_from(frames).unwrap_or(usize::MAX));
+    // Bounded capacity hint: fall back to 0 (let the Vec grow) rather than
+    // `usize::MAX` if `frames` somehow exceeds `usize` on a 32-bit target, so a
+    // pathological `frames` can never trigger a huge speculative allocation.
+    let mut peaks = Vec::with_capacity(usize::try_from(frames).unwrap_or(0));
     for _ in 0..frames {
         nes.run_frame();
         let chunk = nes.drain_audio();

@@ -117,6 +117,32 @@ const NAMETABLE_SIZE: usize = 0x0400;
 
 const SAVE_STATE_VERSION: u8 = 4;
 
+// ---------------------------------------------------------------------------
+// MMC5 audio mixer level (v2.1.6 "Expansion Audio")
+//
+// The single source of truth for the MMC5 expansion-audio DAC scale. Both the
+// cartridge path ([`Mmc5::mix_audio`]) and the NSF-playback path
+// (`crate::nsf_expansion::Mmc5Exp::mix`) reference these so the two can never
+// drift apart — an NSF MMC5 tune is guaranteed level-matched to an MMC5
+// cartridge. Per the nesdev wiki §"MMC5 audio" and Mesen2, the MMC5 pulses use
+// the SAME DAC/gain as the 2A03 pulses, so a full-volume MMC5 square is
+// ~equal in loudness to a full-volume 2A03 square (`db_mmc5` ≈ 1.0×; the
+// per-pulse scale ≈ `pulse_table[15] * 65536 / 15 ≈ 650`). The 7-bit raw PCM
+// keeps its documented ~half-gain relative to the pulses (`40 ≈ 650 / 16`).
+// See `docs/apu-2a03.md` §Expansion-audio levels.
+// ---------------------------------------------------------------------------
+
+/// Per-pulse linear scale for the two MMC5 square channels (0..=15 each).
+pub(crate) const MMC5_PULSE_SCALE: i16 = 650;
+/// Linear scale for the 7-bit raw PCM channel (0..=127) — ~half the pulse gain.
+pub(crate) const MMC5_PCM_SCALE: i16 = 40;
+/// DC bias subtracted to centre the AC signal on zero (half the maximum linear
+/// sum `(15+15) * PULSE + 127 * PCM`). Derived from the scales via
+/// `i16::midpoint` so it can never drift out of sync (`midpoint(30*650,
+/// 127*40) = 12290`). The APU mixer's downstream high-pass filters remove any
+/// residual DC regardless.
+pub(crate) const MMC5_MIX_BIAS: i16 = i16::midpoint(30 * MMC5_PULSE_SCALE, 127 * MMC5_PCM_SCALE);
+
 /// 32-entry length-counter lookup table (same as the 2A03 APU).
 /// Indexed by the top 5 bits of `$5003` / `$5007` writes.
 const LENGTH_TABLE: [u8; 32] = [
@@ -1448,10 +1474,11 @@ impl Mapper for Mmc5 {
         // PCM-voice + dual-pulse passage never clips. Before v2.1.6 this was
         // `256`/`16` (≈0.39x the 2A03 pulse — ~6.8 dB too quiet). Bias = half
         // the peak so the AC signal is centred (the bus HPF removes any residual
-        // DC regardless). See `docs/mappers.md` §MMC5 audio.
-        let pulse_mix = (p1 + p2) * 650; // 0..=19500
-        let pcm_mix = pcm * 40; // 0..=5080
-        (pulse_mix + pcm_mix) - 12290
+        // DC regardless). See `docs/mappers.md` §MMC5 audio. The scale/bias
+        // constants are shared with the NSF path so they can't drift.
+        let pulse_mix = (p1 + p2) * MMC5_PULSE_SCALE; // 0..=19500
+        let pcm_mix = pcm * MMC5_PCM_SCALE; // 0..=5080
+        (pulse_mix + pcm_mix) - MMC5_MIX_BIAS
     }
 
     fn notify_scanline_start(&mut self) {

@@ -738,7 +738,12 @@ impl Mapper for Vrc4 {
 /// `(61 - 30) * 979 = 30349 < i16::MAX`, so a loud Akumajou-Densetsu / Madara
 /// passage never clips. Before v2.1.6 this was `256` (≈0.39x the 2A03 pulse —
 /// ~11.7 dB too quiet). See `docs/apu-2a03.md` §Expansion-audio levels.
-const VRC6_MIX_SCALE: i16 = 979;
+///
+/// `pub(crate)` so the NSF-playback path (`crate::nsf_expansion::Vrc6Exp::mix`)
+/// references the SAME constant as the cartridge path — the two mixers can
+/// never drift apart, guaranteeing an NSF VRC6 tune stays level-matched to a
+/// VRC6 cartridge.
+pub(crate) const VRC6_MIX_SCALE: i16 = 979;
 
 /// Linear scale applied to the channel-count-averaged Namco 163 output (see
 /// [`Namco163::mix_audio`] via the audio struct's `mix`).
