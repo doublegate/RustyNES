@@ -96,6 +96,8 @@ pub mod regime {
 pub struct SharedInput {
     buttons: [AtomicU8; 4],
     four_score: AtomicBool,
+    /// v2.2.0 "Capstone" — Famicom microphone held (`$4016` bit 2).
+    microphone: AtomicBool,
     rewind_held: AtomicBool,
     hardcore_blocked: AtomicBool,
     run_ahead: AtomicU8,
@@ -136,6 +138,7 @@ impl SharedInput {
             slot.store(b.bits(), Ordering::Relaxed);
         }
         self.four_score.store(inputs.four_score, Ordering::Relaxed);
+        self.microphone.store(inputs.microphone, Ordering::Relaxed);
         self.rewind_held
             .store(inputs.rewind_held, Ordering::Relaxed);
         self.hardcore_blocked
@@ -203,6 +206,7 @@ impl SharedInput {
         FrameInputs {
             buttons,
             four_score: self.four_score.load(Ordering::Relaxed),
+            microphone: self.microphone.load(Ordering::Relaxed),
             rewind_held: self.rewind_held.load(Ordering::Relaxed),
             hardcore_blocked: self.hardcore_blocked.load(Ordering::Relaxed),
             run_ahead: u32::from(self.run_ahead.load(Ordering::Relaxed)),
@@ -806,6 +810,7 @@ mod tests {
                 Buttons::all(),
             ],
             four_score: true,
+            microphone: false,
             rewind_held: true,
             hardcore_blocked: false,
             run_ahead: 2,
@@ -853,6 +858,7 @@ mod tests {
         let mut inputs = FrameInputs {
             buttons: [Buttons::empty(); 4],
             four_score: false,
+            microphone: false,
             rewind_held: false,
             hardcore_blocked: false,
             run_ahead: 0,

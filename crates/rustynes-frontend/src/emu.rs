@@ -135,6 +135,9 @@ pub struct FrameInputs {
     pub buttons: [Buttons; 4],
     /// Whether the Four Score adapter is enabled (players 3/4 latch).
     pub four_score: bool,
+    /// v2.2.0 "Capstone" — Famicom built-in microphone held (read on `$4016`
+    /// bit 2). `false` (default) keeps the `$4016` read byte-identical.
+    pub microphone: bool,
     /// The rewind gesture is held (already hardcore-gated by `App`).
     pub rewind_held: bool,
     /// RA hardcore gating is active (disables raw cheats; rewind is
@@ -516,6 +519,9 @@ impl EmuCore {
                 nes.set_buttons(2, turbo(inputs.buttons[2]));
                 nes.set_buttons(3, turbo(inputs.buttons[3]));
             }
+            // v2.2.0 "Capstone" — Famicom microphone ($4016 bit 2). Latched at
+            // the SAME point as the buttons; byte-identical when released.
+            nes.set_microphone(inputs.microphone);
             // v1.2.0 (T-110-E2) — Lua setInput override: replace ports 0/1 AFTER
             // the keyboard/turbo latch, so the script's recorded bitmask wins for
             // this frame. Applied at the late-latch point, so a session that
@@ -1187,6 +1193,7 @@ mod tests {
         FrameInputs {
             buttons: [Buttons::empty(); 4],
             four_score: false,
+            microphone: false,
             rewind_held: false,
             hardcore_blocked: false,
             run_ahead: 0,

@@ -664,6 +664,11 @@ pub struct InputState {
     /// [`BANDAI_HYPER_SHOT_KEYS`]. Only consumed when a Bandai Hyper Shot is the
     /// configured expansion device.
     bandai_hyper_shot: u8,
+    /// v2.2.0 "Capstone" — Famicom built-in microphone (read on `$4016` bit 2),
+    /// held while [`MICROPHONE_KEY`] is down. Tracked unconditionally; the core
+    /// only surfaces it when driven, so `false` (default) keeps `$4016`
+    /// byte-identical.
+    microphone: bool,
 }
 
 /// v1.1.0 beta.1 (T-110-B1) — default keyboard mapping for the 12 Power Pad mat
@@ -720,6 +725,13 @@ pub const BANDAI_HYPER_SHOT_KEYS: [KeyCode; 8] = [
     KeyCode::Digit7,
     KeyCode::Digit8,
 ];
+
+/// Default hold-to-talk key for the Famicom built-in microphone (v2.2.0).
+///
+/// The microphone is read on `$4016` bit 2. The key is chosen off the P1/P2
+/// controller keys and the system bindings; games such as *Zelda* (Pols Voice)
+/// and *Kid Icarus* poll it. Fixed for now (a rebindable mic key is a follow-up).
+pub const MICROPHONE_KEY: KeyCode = KeyCode::KeyM;
 
 /// v1.2.0 Workstream D — host-key -> Family BASIC keyboard matrix-index map.
 ///
@@ -821,6 +833,7 @@ impl InputState {
             power_pad: 0,
             konami_hyper_shot: 0,
             bandai_hyper_shot: 0,
+            microphone: false,
         }
     }
 
@@ -881,6 +894,14 @@ impl InputState {
     #[must_use]
     pub const fn bandai_hyper_shot(&self) -> u8 {
         self.bandai_hyper_shot
+    }
+
+    /// v2.2.0 "Capstone" — whether the Famicom microphone hold-to-talk key
+    /// ([`MICROPHONE_KEY`]) is currently held. Fed to the core each frame via
+    /// `Nes::set_microphone`; `false` (default) keeps `$4016` byte-identical.
+    #[must_use]
+    pub const fn microphone(&self) -> bool {
+        self.microphone
     }
 
     /// Currently-held player-1 buttons (keyboard OR gamepad OR stick).
@@ -1073,6 +1094,13 @@ impl InputState {
             }
         }
 
+        // v2.2.0 "Capstone" — Famicom microphone hold-to-talk key. Tracked
+        // unconditionally; the core only surfaces it on $4016.D2 when driven, so
+        // the no-mic path stays byte-identical.
+        if code == MICROPHONE_KEY {
+            self.microphone = pressed;
+        }
+
         // System actions. Rewind is special: emit on both press and
         // release so the run loop can transition between forward play
         // and step-back.
@@ -1098,6 +1126,18 @@ impl InputState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn microphone_key_tracks_hold_state() {
+        let mut s = InputState::with_defaults();
+        assert!(!s.microphone(), "mic released by default");
+        let (k, e) = down(MICROPHONE_KEY);
+        s.handle_key(k, e);
+        assert!(s.microphone(), "mic key down -> held");
+        let (k, e) = up(MICROPHONE_KEY);
+        s.handle_key(k, e);
+        assert!(!s.microphone(), "mic key up -> released");
+    }
 
     fn down(code: KeyCode) -> (PhysicalKey, ElementState) {
         (PhysicalKey::Code(code), ElementState::Pressed)

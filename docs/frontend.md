@@ -1136,6 +1136,32 @@ movies + netplay and adds no new determinism surface. Hidden by default (the
 "Touch controls" checkbox reveals it), so the desktop keyboard UX is unchanged;
 the native build is byte-identical (all touch state is wasm-only).
 
+**Capstone peripherals (v2.2.0).** Three input-path additions, all additive so
+the default (no-device) input path stays byte-identical:
+
+- **Famicom microphone.** The hardwired second Famicom controller's push-to-talk
+  microphone is surfaced on **`$4016` bit 2** (a `$4016`-only signal — it never
+  touches `$4017`), driven by `Nes::set_microphone(pressed)`. The frontend maps a
+  hold-to-talk key to it; games such as *The Legend of Zelda* (killing Pols
+  Voice) and *Kid Icarus* poll it. Default (mic released) leaves the `$4016` read
+  byte-identical to a stock NES, so the standard controller path is unaffected.
+  The mic is a transient live signal (like a held button), released on
+  power-cycle.
+- **Family BASIC keyboard.** The full `9 × 8` positional keyboard matrix
+  (`FamilyKeyboardState`, and the Subor clone) is selectable as the port-2
+  expansion device; `input::family_keyboard_index` maps host keys 1:1 onto the
+  72-key matrix (row-select via the `$4016` strobe + column-half on `$4017`).
+- **Zapper light-timing.** The photodiode now integrates a **3×3 aperture**
+  (field-of-view) around the aim point rather than a single pixel, asserting
+  light only when ≥2 pixels cross the luma threshold (`ZAPPER_APERTURE_*`). This
+  hardens detection against sub-pixel aim error and PPU edge noise while
+  remaining a deterministic, pure function of the presented framebuffer (no
+  save-state change). The finer ~19-26-scanline photodiode temporal hold is
+  below the per-frame sample resolution used here; supported light-gun titles
+  re-poll every frame, so frame-granular aperture sampling suffices. A full
+  per-dot temporal integration against the beam position is a documented future
+  refinement.
+
 **Browser save-states + movies (wasm)** (v1.4.0 Workstream E). The browser
 build reaches native QoL parity for two persistence features:
 
