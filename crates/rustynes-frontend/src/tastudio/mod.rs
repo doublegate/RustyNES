@@ -744,7 +744,7 @@ impl TasEditor {
 
     /// v2.1.10 "Creator Tools" (B8) — the active force-greenzone range, or `None`.
     #[must_use]
-    pub fn forced_greenzone_range(&self) -> Option<(usize, usize)> {
+    pub const fn forced_greenzone_range(&self) -> Option<(usize, usize)> {
         self.greenzone.forced_range()
     }
 }
