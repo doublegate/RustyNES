@@ -15,10 +15,21 @@
 -- API used: emu.addEventCallback, emu.log, emu.frame.
 
 -- Frame boundaries — fired from the engine's own per-frame pump.
+-- These fire 60x/second, so they log nothing by default (uncomment to trace);
+-- they are registered so this example exercises the FULL event surface it claims.
 emu.addEventCallback(function()
-    -- Keep this quiet; uncomment to trace every frame boundary.
     -- emu.log("startFrame " .. emu.frame)
 end, "startFrame")
+
+emu.addEventCallback(function()
+    -- emu.log("endFrame " .. emu.frame)
+end, "endFrame")
+
+-- The controllers were polled this frame (a $4016/$4017 strobe+read). High
+-- frequency, so quiet by default.
+emu.addEventCallback(function()
+    -- emu.log("inputPolled " .. emu.frame)
+end, "inputPolled")
 
 -- The sprite-0 hit event fires at most once per frame the PPU set the flag —
 -- a classic split-screen / status-bar timing signal.
@@ -41,9 +52,18 @@ emu.addEventCallback(function()
     emu.log("nmi")
 end, "nmi")
 
+emu.addEventCallback(function()
+    emu.log("irq")
+end, "irq")
+
 -- A save-state was loaded (host or scripted).
 emu.addEventCallback(function(slot)
     emu.log(string.format("state loaded (slot %d)", slot))
 end, "stateLoaded")
+
+-- A save-state was saved (host or scripted).
+emu.addEventCallback(function(slot)
+    emu.log(string.format("state saved (slot %d)", slot))
+end, "stateSaved")
 
 emu.log("lifecycle_events.lua loaded")

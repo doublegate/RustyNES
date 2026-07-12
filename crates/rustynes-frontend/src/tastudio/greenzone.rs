@@ -110,7 +110,19 @@ impl Greenzone {
     pub fn store(&mut self, frame: usize, bytes: Vec<u8>, cursor: usize) {
         // Pin BEFORE storing so the store's own budget-eviction pass already sees
         // the frame as a reserved anchor (it must never evict a just-forced state).
-        if self.is_forced(frame) && self.forced_anchors.insert(frame) {
+        //
+        // Only claim *force-ownership* of a frame that is not ALREADY an anchor
+        // for another reason (a marker / branch point). If force-greenzone recorded
+        // a pre-existing marker/branch anchor in `forced_anchors`, later shrinking
+        // or clearing the forced range (via `set_forced_range`) would `remove_anchor`
+        // it — unpinning a state some other mechanism still needs. A frame that is
+        // already anchored is retained by its existing owner; force-greenzone
+        // piggy-backs on that guarantee without claiming (and thus without being
+        // able to release) it.
+        if self.is_forced(frame)
+            && !self.inner.is_anchor(frame as u64)
+            && self.forced_anchors.insert(frame)
+        {
             self.inner.add_anchor(frame as u64);
         }
         self.inner.store(frame as u64, &bytes, cursor as u64);
@@ -220,12 +232,27 @@ impl Greenzone {
     /// accumulate and starve the eviction budget.
     pub fn clear_non_default_anchors(&mut self) {
         self.inner.clear_non_default_anchors();
-        // The manager just dropped every non-frame-0 anchor, so the force-anchor
-        // bookkeeping is now stale — reset it (and the range) so it never claims
-        // to hold anchors the manager no longer has. The editor re-applies any
-        // still-wanted force-range afterwards (v2.1.10 B8).
+        // The manager just dropped every non-frame-0 anchor — including the ones
+        // force-greenzone had pinned — so the `forced_anchors` bookkeeping is now
+        // stale. A user-configured Force-GZ range must OUTLIVE a wholesale anchor
+        // rebuild (marker shift, branch load, project load), so keep
+        // `forced_range` and re-derive its anchors rather than disabling it
+        // (v2.1.10 B8). Re-pin every forced frame that still has a cached state;
+        // forced frames not (yet) cached are re-pinned by `store` as the editor
+        // re-emulates / seeks across the range.
         self.forced_anchors.clear();
-        self.forced_range = None;
+        if let Some((start, end)) = self.forced_range {
+            let cached_in_range: Vec<usize> = self
+                .inner
+                .cached_frames()
+                .map(|f| f as usize)
+                .filter(|f| (start..=end).contains(f))
+                .collect();
+            for frame in cached_in_range {
+                self.inner.add_anchor(frame as u64);
+                self.forced_anchors.insert(frame);
+            }
+        }
     }
 
     /// Drop all cached states (e.g. on loading a new project / power-cycle).
@@ -433,6 +460,63 @@ mod tests {
         assert!(gz.is_anchor(108), "frame still inside stays pinned");
         assert!(!gz.is_forced(104));
         assert!(gz.is_forced(112));
+    }
+
+    #[test]
+    fn clear_non_default_anchors_preserves_forced_range() {
+        // Regression (PR #288 review): a wholesale anchor rebuild must NOT
+        // silently disable an active Force-GZ range. The range survives and its
+        // still-cached frames stay pinned.
+        let mut gz = Greenzone::new(1 << 24);
+        gz.set_forced_range(Some((100, 105)));
+        for f in 100..=105 {
+            gz.store(f, blob(f, 512), 100);
+        }
+        assert!(
+            gz.is_anchor(102),
+            "forced frame is pinned before the rebuild"
+        );
+        gz.clear_non_default_anchors();
+        // The user-configured Force-GZ range must outlive the rebuild.
+        assert_eq!(
+            gz.forced_range(),
+            Some((100, 105)),
+            "Force-GZ range must survive an anchor rebuild"
+        );
+        // Its cached frames are re-pinned as forced anchors...
+        assert!(
+            gz.is_anchor(102),
+            "cached forced frame re-pinned after rebuild"
+        );
+        // ...and disabling force afterwards still releases exactly them.
+        gz.set_forced_range(None);
+        assert!(
+            !gz.is_anchor(102),
+            "forced anchor released once force disabled"
+        );
+        assert!(gz.is_anchor(0), "frame-0 anchor is permanent");
+    }
+
+    #[test]
+    fn forced_store_does_not_claim_a_preexisting_marker_anchor() {
+        // Regression (PR #288 review): storing a forced frame that is ALREADY a
+        // marker/branch anchor must not record it as force-owned — otherwise
+        // shrinking/clearing the forced range would evict the marker's anchor.
+        let mut gz = Greenzone::new(1 << 24);
+        gz.add_anchor(102); // a marker the editor owns, inside the coming range
+        gz.set_forced_range(Some((100, 105)));
+        for f in 100..=105 {
+            gz.store(f, blob(f, 512), 100);
+        }
+        assert!(gz.is_anchor(102));
+        // Releasing the forced range unpins the frames force-greenzone owns, but
+        // leaves the pre-existing marker anchor (102) intact.
+        gz.set_forced_range(None);
+        assert!(
+            gz.is_anchor(102),
+            "pre-existing marker anchor must survive force release"
+        );
+        assert!(!gz.is_anchor(103), "force-owned frame is released");
     }
 
     #[test]
