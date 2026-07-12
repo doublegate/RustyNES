@@ -14,6 +14,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-07-12 - "Capstone" (milestone cut — netplay matchmaking/lobby + FDS medium model + peripherals + quality/security pass)
+
 ### Added
 
 - **Netplay lobby + matchmaking (v2.2.0 "Capstone", B5).** The pure signaling protocol (`crates/rustynes-netplay/src/signaling.rs`) grows a **browse-and-join** lobby directory and a matchmaking path atop the existing room-code / TURN stack. New `SignalMessage` variants — `ListRooms { rom_hash }` → `RoomList { rooms: Vec<RoomInfo> }` (the open, joinable, optionally game-filtered rooms; each `RoomInfo` carries the code / player count / capacity / `rom_hash` and *no* SDP/ICE/identity), and `QuickMatch { rom_hash, max_players }` → `Matched { room, slot, max_players }` (server-side "quick play": join any open room for the ROM via the shared `add_to_room` primitive, or create a fresh one with a deterministic `QM-NNNNNN` code). The `room-list` JSON array is parsed by a brace-depth walk bounded at `MAX_ROOM_LIST` (256) so an oversized frame cannot force an unbounded allocation. Determinism/rollback contract untouched — this is signaling only.
