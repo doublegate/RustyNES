@@ -56,6 +56,29 @@ cycle-accurate core later replaced.
     per-dot specialization, not a dot-batch. **Shipped default-OFF** (the
     shipped build is unchanged/byte-identical); recommended for promotion to
     default after maintainer review + a clean-host Criterion confirmation.
+- **Vectorized software palette-index -> RGBA blitter + wasm size/startup pass
+  (v2.1.8 "Performance", A2 + A4).** A new frontend-only `gfx_blit` module
+  (`crates/rustynes-frontend/src/gfx_blit.rs`) that converts the PPU's
+  palette-index framebuffer (`&[u16]`, `(emphasis << 6) | colour`) to RGBA8
+  through the exact 512-entry LUT the core emits with, so its output is
+  **byte-identical** to `Ppu::framebuffer` by construction. Three interchangeable
+  paths — a scalar reference, a tight scalar-`u32`, and portable SIMD (`wide::u32x8`
+  on desktop / `core::arch::wasm32` `v128` under `+simd128` on wasm, with a scalar
+  fallback for non-SIMD wasm) — all validated byte-for-byte equal by the
+  `simd_equals_scalar_byte_identical` unit test over a full-frame corpus that sweeps the whole
+  `0..512` domain, and profiled by a Criterion bench (`benches/gfx_blit.rs`). The
+  conversion is a memory-bound LUT gather, so per the measured bench the SIMD path
+  is within noise of scalar (documented honestly in `docs/performance.md`); the
+  module is a reusable, oracle-checked utility (the shipped on-screen frame path
+  stays GPU-resident and does not route through it). Determinism-neutral: the core
+  and its golden vectors are untouched — AccuracyCoin **141/141**, `visual_regression`
+  byte-identical. Web build (A4): the release wasm artifact now runs `wasm-opt -O4`
+  (SIMD + bulk-memory features preserved) via `data-wasm-opt` in `web/index.html`,
+  with streaming instantiation documented; the real `trunk build --release`
+  bundle measures **3.99 MiB gzip** — 1.01 MiB of headroom under the 5 MiB budget
+  (`scripts/wasm_size_budget.sh`). `wide` is a native-only dependency, so it
+  never enters the wasm bundle and the `#![no_std]` chip stack stays
+  dependency-light.
 
 ## [2.1.7] - 2026-07-12 - "Fathom" (hardware revisions & DMA frontier — opt-in PPU/2A03 die-revision + power-on RAM/palette model + honest DMA "unexpected read" residual ADR 0033; "Stepping")
 

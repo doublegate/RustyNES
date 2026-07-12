@@ -22,8 +22,26 @@
         `#[wasm_bindgen(start)]`, so trunk generates the JS glue that
         invokes it after the `.wasm` instance is constructed.
     -->
+    <!--
+        v2.1.8 "Performance" (A4) — wasm size/startup:
+        * `data-wasm-opt="4"` runs `wasm-opt -O4` on the release artifact
+          (Binaryen's aggressive speed pipeline) instead of trunk's default
+          `-Oz`. -O4 optimizes for runtime speed, which matters for a
+          per-frame emulator hot loop; the resulting module is still well
+          under the 5 MiB gzip budget (verified by
+          `scripts/wasm_size_budget.sh` + the CI `web` gate). Dev builds skip
+          wasm-opt entirely, so `trunk serve` stays fast.
+        * `data-wasm-opt-params` keeps SIMD + bulk-memory enabled through the
+          opt pass (Binaryen otherwise validates against the MVP feature set),
+          matching the `+simd128` blitter path in `src/gfx_blit.rs`.
+        * Streaming instantiation: trunk's generated loader already uses
+          `WebAssembly.instantiateStreaming` (compile-while-download) when the
+          server sends `Content-Type: application/wasm` — GitHub Pages does,
+          and the service worker (`sw.js`) preserves that header on cache hits.
+    -->
     <link data-trunk rel="rust" href="../Cargo.toml"
-          data-target-name="rustynes_frontend" data-cargo-features="" />
+          data-target-name="rustynes_frontend" data-cargo-features=""
+          data-wasm-opt="4" data-wasm-opt-params="--enable-simd --enable-bulk-memory" />
 
     <!--
         v1.7.0 "Forge" beta.5 Workstream H6 — PWA: manifest + service worker +

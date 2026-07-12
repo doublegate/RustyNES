@@ -214,6 +214,88 @@ not a perf pass; the number is recorded as the honest current baseline and to
 prove the removal is neutral, not to justify a speculative change that would risk
 byte-identity for a marginal gain.
 
+### v2.1.8 "Performance" (A2) — software palette-index -> RGBA blitter (decision: keep scalar-`u32` default)
+
+A2 adds a frontend-only, reusable software blitter
+(`crates/rustynes-frontend/src/gfx_blit.rs`) that reconstructs the RGBA frame
+from the PPU's palette-index framebuffer (`&[u16]`, `(emphasis << 6) | colour`)
+through the same 512-entry LUT the core emits with — so its output is
+**byte-identical to `Ppu::framebuffer` by construction** (asserted by
+`scalar_matches_core_lut_contract` against `build_rgba_lut`). The A2 brief called
+for vectorizing this conversion with portable SIMD; the honest, measure-first
+result is that it is **memory-bandwidth bound and does not vectorize
+profitably**.
+
+Method: the Criterion bench `benches/gfx_blit.rs` converts a full 256x240 frame
+whose indices sweep the entire `0..512` LUT domain, comparing three
+byte-identical paths — the naive per-pixel `[u8; 4]` `copy_from_slice`
+(`copy4`, the shape `emit_pixel` uses), a tight scalar-`u32` gather+store, and
+the `wide::u32x8` portable-SIMD path (scalar 8-wide gather + one 256-bit store).
+Run on the same host as the fat-LTO A/B below (Intel Core i9-10850K, CachyOS,
+Rust 1.96, release + fat-LTO bench profile, `--warm-up-time 1 --measurement-time
+3`). Criterion medians:
+
+| Path | median | throughput | vs `copy4` (Δ time, + = slower) |
+|---|---|---|---|
+| `copy4` (scalar reference) | 12.003 µs | 19.07 GiB/s | — |
+| `u32` (scalar gather+store) | 12.034 µs | 19.02 GiB/s | **+0.3%** (within noise) |
+| `simd` (`wide::u32x8`) | 12.225 µs | 18.72 GiB/s | **+1.8%** (measurably *slower*) |
+
+All three land at ~12 µs / ~19 GiB/s — which is the single-thread DRAM
+bandwidth ceiling of this host, the tell-tale signature of a memory-bound
+kernel. The conversion is a **table gather** (`out[i] = lut[idx[i]]`), and no
+stable-target portable SIMD has a hardware gather, so the load side stays scalar
+and SIMD only widens the store; the store was never the bottleneck, so the
+`wide` path is not just within noise but marginally slower (non-overlapping CIs,
+~1.8% over the scalar reference — the extra shuffle/pack around a store that
+`copy4`/`u32` already lower to a single move).
+
+**Decision: the `blit` dispatcher stays scalar-`u32` on every target.** No path
+clears the project's **> 3% Criterion-stable + byte-identical** adoption bar, so
+the memory-bound hot loop keeps the simplest reference-equivalent form. The SIMD
+variants (`blit_simd` via `wide` on desktop, `blit_simd_wasm` via
+`core::arch::wasm32` `v128` under `+simd128` on wasm, both with the scalar
+fallback) are implemented, **byte-identical** (guarded by
+`simd_equals_scalar_byte_identical`, which asserts each target's SIMD path
+byte-for-byte against the scalar reference over the full corpus for both the
+composite and an RGB LUT), and remain directly callable — they are the requested
+deliverable and a ready building block, just not the default because the
+measurement did not justify displacing scalar. **Determinism unaffected:** the
+core and its golden vectors are untouched — AccuracyCoin **141/141**,
+`visual_regression` byte-identical (the shipped on-screen frame path stays
+GPU-resident and does not route through this module). This is the frontend
+counterpart to the "measure, don't assume" discipline the fat-LTO A/B below
+applies to the release profile: there the measurement *cleared* the bar and the
+choice was retained; here it *did not*, and the SIMD path is provided-but-not-adopted.
+
+### v2.1.8 "Performance" (A4) — release wasm size/startup
+
+The release wasm build now runs `wasm-opt -O4` (Binaryen's aggressive speed
+pipeline, SIMD + bulk-memory preserved) instead of trunk's default `-Oz`,
+selected via `data-wasm-opt="4"` in `crates/rustynes-frontend/web/index.html`.
+`-O4` optimizes for runtime speed (the per-frame emulator hot loop) rather than
+raw size; the wasm-opt pass still shrinks the wasm-bindgen output **12.7 MiB ->
+11.1 MiB raw** (~13%), and the shippable bundle lands well inside the 5 MiB gzip
+budget enforced by `scripts/wasm_size_budget.sh` + the CI `web` gate. Measured on
+the real `trunk build --release` artifact:
+
+| Asset | raw | gzip | brotli |
+|---|---|---|---|
+| `rustynes-frontend-*_bg.wasm` | 11.61 MB | 4.16 MB | 2.97 MB |
+| `rustynes-frontend-*.js` (glue) | 168.7 KB | 25.7 KB | 21.3 KB |
+| `sw.js` | 3.5 KB | 1.5 KB | 1.2 KB |
+| **TOTAL** | 11.78 MB | **3.99 MiB** | 2.85 MiB |
+
+**gzip total 3.99 MiB vs the 5.00 MiB budget — PASS, 1.01 MiB headroom.** Startup
+uses streaming instantiation (trunk's loader calls `WebAssembly.instantiateStreaming`;
+`sw.js` serves cached responses with the `application/wasm` content-type
+preserved, so a warm PWA cache still streams). On code-splitting: the two heavy
+optional features are already out of the wasm bundle by construction —
+`scripting` (mlua) and `hd-pack` are `cfg(not(target_arch = "wasm32"))`-only, and
+the lightweight `wasm-canvas` embed is the existing feature-flag split; single-
+cdylib dynamic-`import()` splitting is not supported by the pinned trunk
+toolchain (documented in `docs/frontend.md`).
+
 ### v2.1.5 — fat-LTO vs thin-LTO release-profile A/B (decision: retain fat)
 
 `[profile.release]` ships `lto = "fat"` + `codegen-units = 1` (see the "Cargo
