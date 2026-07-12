@@ -2067,10 +2067,22 @@ impl Fds {
             off += 1;
             self.pre_rewind_head =
                 u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+            // Advance past the u32 we just consumed so `off` keeps reflecting the
+            // total bytes read — preserving the "offset == consumed" invariant so
+            // any future tail extension starts from the correct position.
+            off += 4;
         } else {
             self.analog_head_seek = false;
             self.pre_rewind_head = 0;
         }
+        // Both paths must have consumed exactly the blob the length check at the
+        // top validated (`expected == data.len()`); assert the invariant and, in
+        // doing so, read `off` on every path (no `unused_assignments`).
+        debug_assert_eq!(
+            off,
+            data.len(),
+            "FDS disk tail consumed byte count must match the validated blob length"
+        );
         Ok(())
     }
 }

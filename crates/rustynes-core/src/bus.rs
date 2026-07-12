@@ -3550,7 +3550,12 @@ impl LockstepBus {
                 sample
             }
             0x4016 => {
-                let v = (sample & 0xE0) | self.controllers[0].read();
+                // Keep the DMC-conflict $4016 composition consistent with the
+                // normal controller read (line ~3890): D2 carries the Famicom
+                // built-in microphone. Default-off (mic released) leaves `mic`
+                // = 0, so the returned byte is byte-identical to prior releases.
+                let mic = u8::from(self.famicom_mic) << 2;
+                let v = (sample & 0xE0) | self.controllers[0].read() | mic;
                 self.open_bus = v;
                 v
             }

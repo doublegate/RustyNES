@@ -65,6 +65,7 @@ cycle-accurate core later replaced.
 ### Changed
 
 - **Movie (`.rnm`) deserializer hardening (v2.2.0 "Capstone", quality).** The new `movie` fuzz target surfaced two OOM DoS paths in `Movie::deserialize` (`crates/rustynes-core/src/movie.rs`), both now fixed **byte-identically for valid input**: (1) the untrusted 4-byte `frame_count` was passed straight to `Vec::with_capacity`, so a 49-byte header could claim a multi-gigabyte reservation — now capped at `remaining_bytes / width` (== `frame_count` for any real file); (2) a `bytes_per_frame` of 0 made each `r.take(0)` consume no input, so the frame loop pushed `frame_count` empty records out of a finite file — now rejected up front (a real movie always writes the fixed `BYTES_PER_FRAME` ≥ 1). Regression test `deserialize_hostile_frame_count_does_not_oom` added; the existing 44 movie tests (incl. the determinism round-trip) stay green.
+
 ## [2.1.10] - 2026-07-12 - "Fathom" (creator tools and web parity — TAStudio greenzone + Lua API breadth + browser-RA auth-proxy deploy stack + Vs. DualSystem libretro presentation — "Loom")
 
 ### Added
