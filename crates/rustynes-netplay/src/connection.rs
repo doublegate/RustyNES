@@ -688,13 +688,20 @@ impl NetplayConnection {
         //    host-listen connection can ADOPT the peer) and react to the
         //    handshake / ping traffic.
         for (msg, from) in self.transport.poll_with_source() {
-            // Any datagram from the peer is proof of life — refresh the liveness
-            // clock that drives `PeerLink` / `DisconnectReason::PeerTimeout`.
-            self.last_recv = now;
             // A host that has not yet adopted a remote ignores everything
             // EXCEPT a valid Sync (right magic + matching rom_hash), whose
             // source it adopts. Until then there is no peer to talk to.
             let remote_known = self.transport.remote_addr().is_some();
+            // A datagram from the adopted peer — or ANY datagram while we are
+            // still a listening host awaiting adoption — is proof of life:
+            // refresh the liveness clock that drives `PeerLink` /
+            // `DisconnectReason::PeerTimeout`. Once a peer is adopted, a
+            // datagram from any OTHER source (a third party that can reach the
+            // socket) must NOT refresh the clock, or it could indefinitely mask
+            // a genuine peer timeout.
+            if self.transport.remote_addr().is_none_or(|peer| peer == from) {
+                self.last_recv = now;
+            }
             match msg {
                 NetMessage::Sync { magic, rom_hash } => {
                     if magic != NetMessage::SYNC_MAGIC {

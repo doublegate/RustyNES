@@ -745,6 +745,9 @@ mod tests {
 
     #[test]
     fn deserialize_hostile_frame_count_does_not_oom() {
+        // frame_count is the 4-byte LE field right after the 32-byte rom hash
+        // (offset 8 + 2 + 1 + 1 + 32 = 44).
+        const FRAME_COUNT_OFF: usize = 8 + 2 + 1 + 1 + 32;
         // A tiny (header-only) movie whose `frame_count` field claims ~4.3
         // billion frames. The old `Vec::with_capacity(frame_count)` would try to
         // reserve multiple gigabytes before the input-stream read failed (an OOM
@@ -758,9 +761,6 @@ mod tests {
             rerecord_count: 0,
         };
         let mut bytes = movie.serialize();
-        // frame_count is the 4-byte LE field right after the 32-byte rom hash
-        // (offset 8 + 2 + 1 + 1 + 32 = 44).
-        const FRAME_COUNT_OFF: usize = 8 + 2 + 1 + 1 + 32;
         bytes[FRAME_COUNT_OFF..FRAME_COUNT_OFF + 4].copy_from_slice(&u32::MAX.to_le_bytes());
         // Deserialize must return promptly with an error, not exhaust memory.
         assert!(matches!(

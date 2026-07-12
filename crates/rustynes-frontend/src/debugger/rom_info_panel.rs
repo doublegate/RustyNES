@@ -11,7 +11,7 @@
 //!
 //! # Two CRC32 keys
 //!
-//! RustyNES keys ROM identity two ways, and both are shown:
+//! `RustyNES` keys ROM identity two ways, and both are shown:
 //!
 //! - **Header-excluded CRC32** — CRC of the PRG+CHR payload only (the iNES
 //!   header + any trainer removed). This is the *game-database key*
@@ -51,14 +51,14 @@ fn sha256_hex(hash: &[u8; 32]) -> (String, String) {
     (hi, lo)
 }
 
-/// Human-readable size: bytes for < 1 KiB, else KiB.
+/// Human-readable size: raw bytes for < 1 KiB, else `<n> KiB (<bytes> bytes)`
+/// for any size at or above 1 KiB (the KiB figure is a floored `bytes / 1024`,
+/// with the exact byte count always shown alongside for non-multiples).
 fn fmt_size(bytes: usize) -> String {
-    if bytes == 0 {
-        "0".to_string()
-    } else if bytes % 1024 == 0 {
-        format!("{} KiB ({bytes} bytes)", bytes / 1024)
-    } else {
+    if bytes < 1024 {
         format!("{bytes} bytes")
+    } else {
+        format!("{} KiB ({bytes} bytes)", bytes / 1024)
     }
 }
 

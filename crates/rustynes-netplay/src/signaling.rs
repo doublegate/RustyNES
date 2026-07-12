@@ -666,11 +666,19 @@ impl Relay {
         max_players: u8,
     ) -> Vec<Action> {
         // Prefer an existing open room for this exact game with a free slot.
+        // Scan `self.rooms` directly (not `open_rooms`, which truncates at
+        // `MAX_ROOM_LIST`) so matchmaking reaches every joinable room even in a
+        // lobby with more than 256 open rooms — matching the `MAX_ROOM_LIST`
+        // contract — and avoids allocating/cloning a `Vec<RoomInfo>` to pick one.
         let target = self
-            .open_rooms(rom_hash)
-            .into_iter()
-            .find(|r| r.is_joinable() && (rom_hash.is_empty() || r.rom_hash == rom_hash))
-            .map(|r| r.code);
+            .rooms
+            .iter()
+            .find(|(_, r)| {
+                !r.slots.is_empty()
+                    && r.slots.len() < usize::from(r.max_players)
+                    && (rom_hash.is_empty() || r.rom_hash == rom_hash)
+            })
+            .map(|(code, _)| code.clone());
 
         let room_code = target.unwrap_or_else(|| self.next_room_code());
         match self.add_to_room(client, &room_code, rom_hash, max_players) {
@@ -702,12 +710,10 @@ impl Relay {
         }
         let max_players = room.max_players;
 
-        // Reject a joiner past the room's player count. Drop a freshly-created
-        // but now-unused room so a rejected QuickMatch race leaves no ghost.
+        // Reject a joiner past the room's player count. A freshly-created room
+        // (empty `slots`) can never be full here — `max_players` was just clamped
+        // to 2..=4 above — so no ghost-room cleanup is needed on this path.
         if room.slots.len() >= usize::from(max_players) {
-            if room.slots.is_empty() {
-                self.rooms.remove(room_code);
-            }
             return Err("room full");
         }
 

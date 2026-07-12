@@ -2218,6 +2218,9 @@ fn np_tick_connecting(g: &mut Inner, mut conn: NetplayConnection, is_host: bool)
                 Some(DisconnectReason::HandshakeTimeout) => {
                     "handshake timed out (no peer answered)".to_string()
                 }
+                Some(DisconnectReason::PeerTimeout) => {
+                    "peer stopped responding (connection timed out)".to_string()
+                }
                 None => "connection closed".to_string(),
             };
             g.netplay = None;

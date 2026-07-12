@@ -566,7 +566,7 @@ impl DebuggerOverlay {
             show_documentation: false,
             cheat_ui: cheat_panel::CheatPanelState::default(),
             game_db_ui: game_db_panel::GameDbPanelState::default(),
-            rom_info_ui: rom_info_panel::RomInfoPanelState::default(),
+            rom_info_ui: rom_info_panel::RomInfoPanelState,
             rom_crc: None,
             rom_crc_full: None,
             settings_ui: settings_panel::SettingsPanelState::default(),

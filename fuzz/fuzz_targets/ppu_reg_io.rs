@@ -19,8 +19,9 @@
 use libfuzzer_sys::fuzz_target;
 use rustynes_ppu::{Ppu, PpuBus, PpuRegion};
 
-/// Minimal `PpuBus`: an 8 KiB CHR/pattern-table window backing every PPU-space
-/// read/write. Nametable mirroring uses the trait's default `nametable_address`.
+/// Minimal `PpuBus`: a flat 16 KiB (`0x4000`) store masked to the full PPU
+/// address space (`addr & 0x3FFF`) backing every PPU-space read/write.
+/// Nametable mirroring uses the trait's default `nametable_address`.
 /// This is exactly the surface `cpu_read_register`/`cpu_write_register` reach
 /// through for PPUDATA ($2007) — no mapper side effects, no A12 notifications.
 struct FuzzPpuBus {
