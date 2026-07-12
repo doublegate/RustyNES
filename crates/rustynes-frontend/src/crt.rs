@@ -48,6 +48,67 @@ pub const fn stack_shader_src() -> &'static str {
     STACK_SHADER_SRC
 }
 
+// =============================================================================
+// v2.1.9 "Presentation & Signal" (B6/P4) — the marquee CRT stack + raw signal
+// decode as composable `ShaderStack` passes.
+//
+// The WGSL bodies live in the shared `rustynes-gfx-shaders` crate (new files,
+// so they compose atop the base ladder without touching it). Here we declare
+// the `#pragma parameter` sliders each exposes, ORDERED to match the shared
+// 16-float `rect(4)+crop(4)+params(4)+aux(4)` uniform so the generic
+// declaration-order fill in `shader_pass::ShaderStack::render` drops each slider
+// value into the correct slot. Trailing "source rows" slots are intentionally
+// left undeclared (0 -> the shader's 240 default via `select`).
+// =============================================================================
+
+/// CRT-Royale stack knobs (params.x..w = scanline/mask/mask_type/curvature;
+/// aux.x..z = beam sigma / input gamma / output gamma).
+pub const ROYALE_STACK_PARAMS: &str = concat!(
+    "// #pragma parameter scanline \"Scanline weight\" 0.7 0.0 1.0 0.05\n",
+    "// #pragma parameter mask \"Mask strength\" 0.3 0.0 1.0 0.05\n",
+    "// #pragma parameter mask_type \"Mask (0 grille/1 slot/2 dot)\" 0.0 0.0 2.0 1.0\n",
+    "// #pragma parameter curvature \"Curvature\" 0.0 0.0 1.0 0.05\n",
+    "// #pragma parameter beam \"Beam sigma\" 0.4 0.1 1.0 0.05\n",
+    "// #pragma parameter gamma_in \"Input gamma\" 2.4 1.0 3.0 0.05\n",
+    "// #pragma parameter gamma_out \"Output gamma\" 2.2 1.0 3.0 0.05\n",
+);
+
+/// CRT Guest Advanced stack knobs (params.x..w = scanline/mask/mask_type/
+/// curvature; aux.x..z = beam width / glow / sharpness).
+pub const GUEST_STACK_PARAMS: &str = concat!(
+    "// #pragma parameter scanline \"Scanline weight\" 0.7 0.0 1.0 0.05\n",
+    "// #pragma parameter mask \"Mask strength\" 0.3 0.0 1.0 0.05\n",
+    "// #pragma parameter mask_type \"Mask (0 grille/1 slot/2 dot)\" 0.0 0.0 2.0 1.0\n",
+    "// #pragma parameter curvature \"Curvature\" 0.0 0.0 1.0 0.05\n",
+    "// #pragma parameter beam \"Beam width\" 0.5 0.0 1.0 0.05\n",
+    "// #pragma parameter glow \"Halation glow\" 0.25 0.0 1.0 0.05\n",
+    "// #pragma parameter sharp \"Scanline sharpness\" 0.5 0.0 1.0 0.05\n",
+);
+
+/// Sony Megatron stack knobs (params.x..w = scanline/mask/mask_type/curvature;
+/// aux.x..z = beam sigma / HDR headroom / HDR flag).
+pub const MEGATRON_STACK_PARAMS: &str = concat!(
+    "// #pragma parameter scanline \"Scanline weight\" 0.7 0.0 1.0 0.05\n",
+    "// #pragma parameter mask \"Mask strength\" 0.5 0.0 1.0 0.05\n",
+    "// #pragma parameter mask_type \"Mask (0 grille/1 slot/2 dot)\" 0.0 0.0 2.0 1.0\n",
+    "// #pragma parameter curvature \"Curvature\" 0.0 0.0 1.0 0.05\n",
+    "// #pragma parameter beam \"Beam sigma\" 0.4 0.1 1.0 0.05\n",
+    "// #pragma parameter headroom \"HDR headroom\" 4.0 1.0 8.0 0.25\n",
+    "// #pragma parameter hdr \"HDR output (0/1)\" 0.0 0.0 1.0 1.0\n",
+);
+
+/// Raw NTSC signal-decode stack knobs. NOTE: `params.x` is filled by the render
+/// path with the live NES video phase (dot-crawl), NOT a slider — so the sliders
+/// here map to `params.y`(sat) `params.z`(sharp) then `knobs.x/y/z`
+/// (bright/contrast/hue); the render arm places them explicitly.
+pub const SIGNAL_DECODE_STACK_PARAMS: &str = concat!(
+    "// #pragma parameter saturation \"Saturation\" 1.0 0.0 2.0 0.05\n",
+    "// #pragma parameter sharpness \"Sharpness\" 0.5 0.0 1.0 0.05\n",
+    "// #pragma parameter brightness \"Brightness\" 1.0 0.5 1.5 0.02\n",
+    "// #pragma parameter contrast \"Contrast\" 1.0 0.5 1.5 0.02\n",
+    "// #pragma parameter hue \"Hue (radians)\" 0.0 -1.0 1.0 0.02\n",
+);
+
 /// CRT / scanline post-process filter.
 pub struct CrtFilter {
     pipeline: wgpu::RenderPipeline,

@@ -13,11 +13,14 @@
 //   * Selectable mask (aperture / slot / shadow) shared with the CRT stack.
 //   * Barrel curvature.
 //
-// Uniform layout (16 f32 / 64 bytes) matches the shared CRT-stack block:
+// Uniform layout (16 f32 / 64 bytes) matches the shared CRT-stack block. The
+// aux knobs are ordered so the composable-stack `#pragma parameter` sliders fill
+// them contiguously and the rarely-touched source-row count lands last (0 -> the
+// 240 default via `select`):
 //   rect, crop as in CRT_WGSL.
 //   params: (x = scanline weight, y = mask strength, z = mask type, w = curvature)
-//   aux   : (x = beam width 0..1, y = source rows, z = glow amount 0..1,
-//            w = sharpness 0..1)
+//   aux   : (x = beam width 0..1, y = glow amount 0..1, z = sharpness 0..1,
+//            w = source rows, default 240)
 //
 // Presentation only — never touches the core or the determinism contract.
 
@@ -111,9 +114,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let mask_kind = u.params.z;
     let curvature = u.params.w;
     let width = mix(0.25, 0.8, u.aux.x);
-    let rows = select(240.0, u.aux.y, u.aux.y >= 1.0);
-    let glow_amt = u.aux.z;
-    let sharp = u.aux.w;
+    let glow_amt = u.aux.y;
+    let sharp = u.aux.z;
+    let rows = select(240.0, u.aux.w, u.aux.w >= 1.0);
 
     var uv = in.uv;
     if (curvature > 0.001) {

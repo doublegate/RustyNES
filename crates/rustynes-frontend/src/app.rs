@@ -1311,6 +1311,20 @@ impl App {
             let entry = cfg.overrides.to_game_db_entry(crc, String::new());
             crate::game_db::apply_header_overrides(&mut bytes, &entry);
         }
+        // v2.1.9 B6 — per-game shader preset. A named preset in the per-game
+        // overlay is resolved against the user preset bank (then the built-ins)
+        // and applied to the live shader stack, so a game can auto-select a CRT
+        // look on load. Presentation-only: `None` / unknown-name applies nothing,
+        // so the default load path stays byte-identical (and the core untouched).
+        if let Some(name) = per_game.as_ref().and_then(|c| c.shader_preset.as_deref())
+            && let Some(stack) = self.config.graphics.shader_presets.resolve(name)
+        {
+            self.config.graphics.shader_stack = stack;
+            if let Some(gfx) = self.gfx.as_mut() {
+                gfx.set_stack_ntsc_knobs(Self::ntsc_knobs_from(&self.config.graphics));
+                gfx.apply_shader_stack(&self.config.graphics.shader_stack);
+            }
+        }
         let sample_rate = self.audio.as_ref().map_or(44_100, |a| a.sample_rate);
         // v2.2.0 — a Famicom Disk System `.fds` image needs the disksys.rom
         // BIOS + the writable-disk save path; the standard cartridge `.nes`
