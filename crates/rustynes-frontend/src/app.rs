@@ -4204,10 +4204,9 @@ impl App {
         if let Some(engine) = self.script.as_mut()
             && engine.needs_reset_event()
             && let Err(e) = engine.fire_reset()
+            && let Some(dbg) = self.debugger.as_mut()
         {
-            if let Some(dbg) = self.debugger.as_mut() {
-                dbg.script_panel().set_error(format!("reset event: {e}"));
-            }
+            dbg.script_panel().set_error(format!("reset event: {e}"));
         }
         #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
         self.reset_ra();

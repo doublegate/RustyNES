@@ -733,7 +733,7 @@ impl TasEditor {
     /// v2.1.10 "Creator Tools" (B8) — enable / move / disable the force-greenzone
     /// range (guarantee a cached save-state at *every* frame in `range`, so
     /// scrubbing / rewinding inside it is instant). `None` disables it. The span
-    /// is normalised + clamped to [`greenzone::MAX_FORCED_GREENZONE_FRAMES`]; the
+    /// is normalised + clamped to `MAX_FORCED_GREENZONE_FRAMES`; the
     /// forced frames are (re)captured as the editor seeks / records across them,
     /// and are pinned so the byte-budget's eviction never drops them. Bumps the
     /// snapshot revision so the piano-roll / host snapshot refreshes.

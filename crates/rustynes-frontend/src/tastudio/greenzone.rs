@@ -54,7 +54,7 @@ use rustynes_core::ZwinderStateManager;
 /// XOR-delta + LZ4 codec), a 10,800-frame cap is ~3 minutes of gameplay at
 /// 60 fps — generous for the tight-scrub use case (boss patterns, a hard
 /// movement puzzle) while keeping the worst-case pinned footprint bounded (on
-/// the order of tens of MiB compressed, well within [`super::DEFAULT_GREENZONE_BUDGET`]).
+/// the order of tens of MiB compressed, well within `DEFAULT_GREENZONE_BUDGET`).
 pub const MAX_FORCED_GREENZONE_FRAMES: usize = 10_800;
 
 /// A density-tiered, byte-budgeted, **compressed** history of frame-keyed
