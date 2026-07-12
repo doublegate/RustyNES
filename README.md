@@ -780,7 +780,7 @@ step of the v2.1.5 → v2.2.0 "deepen the project" run — it adds an opt-in, de
 **selectable PPU die-revision** model (2C02 rev-E+ OAMADDR/`$2003` corruption à la *Huge
 Insect*, power-up palette variants) and a **power-on RAM model** (all-zero default, opt-in
 seeded/patterned — for games that read uninitialized RAM like *Final Fantasy*), plus an
-opt-in **2A03 die-revision** (`RP2A03G`/`RP2A03H`) config that gates the "unexpected read"
+opt-in **2A03 die-revision** (`Rp2A03G`/`Rp2A03H`) config that gates the "unexpected read"
 DMA behavior. The last is the honest **DMA frontier** work: direct instrumentation proved
 the die-revision DMA gate is a **no-op on every committed oracle ROM** (and no reference
 emulator branches DMA on die stepping), so the residual is documented in **ADR 0033**
