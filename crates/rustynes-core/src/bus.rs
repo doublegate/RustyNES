@@ -598,13 +598,17 @@ pub struct LockstepBus {
     /// v2.1.7 "Hardware Revisions & DMA Frontier" — the emulated Ricoh 2A03 die
     /// revision, gating the DMA unit's "unexpected DMA" extra halt-read on the
     /// DMC-halt-overlaps-OAM-halt cycle. **Default [`Cpu2A03Revision::Rp2A03G`]**
-    /// = byte-identical to the pre-v2.1.7 core (performs the extra read the
-    /// committed DMA oracle ROMs expect); [`Cpu2A03Revision::Rp2A03H`] omits it
-    /// (opt-in, deterministic, unverified direction — see the enum docs + ADR
-    /// 0033). A config knob, NOT part of the save-state: the only state it
-    /// influences (the parked-address side-effect re-read count during a
-    /// DMC+OAM overlap) is fully re-derived from the deterministic timeline, so
-    /// a save/restore round-trip stays byte-identical for a fixed revision.
+    /// = byte-identical to the pre-v2.1.7 core; it performs the extra read *in
+    /// the model*, but that read is a documented no-op on every committed oracle
+    /// (the parked address during a DMC+OAM overlap is never a side-effect
+    /// register — see the enum docs + ADR 0033), so it changes nothing
+    /// observable. [`Cpu2A03Revision::Rp2A03H`] omits the modeled read and is
+    /// consequently byte-identical to `Rp2A03G` across the entire committed DMA
+    /// corpus today (opt-in, deterministic, unverified direction). A config
+    /// knob, NOT part of the save-state: the only state it influences (the
+    /// parked-address side-effect re-read count during a DMC+OAM overlap) is
+    /// fully re-derived from the deterministic timeline, so a save/restore
+    /// round-trip stays byte-identical for a fixed revision.
     cpu_2a03_revision: Cpu2A03Revision,
 
     /// Active Game Genie codes, keyed by the PRG address they patch

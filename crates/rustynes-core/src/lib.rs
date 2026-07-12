@@ -150,14 +150,17 @@ pub enum Region {
 /// * **Default = [`Rp2A03G`](Self::Rp2A03G)** is **byte-identical** to the core
 ///   as it shipped before v2.1.7 (`AccuracyCoin` 141/141, nestest 0-diff, and
 ///   every committed DMA oracle ROM — the five `dmc_dma_during_read4` ROMs and
-///   both `sprdma_and_dmc_dma` ROMs — still `Passed`). Those ROMs were captured
-///   on `Rp2A03G`-class hardware, so `Rp2A03G` *has* the documented extra read.
+///   both `sprdma_and_dmc_dma` ROMs — still `Passed`).
 /// * **[`Rp2A03H`](Self::Rp2A03H)** is a purely additive, opt-in knob that
-///   *omits* the double-halt extra read. It is deterministic and reachable
-///   only when explicitly selected; the shipped/default build never touches it.
-///   Because it removes a read the oracle ROMs expect, selecting it can make
-///   the `sprdma_and_dmc_dma` overlap ROM diverge — that is expected and
-///   documented (ADR 0033), not a regression.
+///   *omits* the double-halt extra read in the model. It is deterministic and
+///   reachable only when explicitly selected; the shipped/default build never
+///   touches it. **On this engine the extra-read gate is a documented no-op on
+///   every committed oracle**, so today `Rp2A03H` produces a **byte-identical**
+///   result to `Rp2A03G` across the entire committed DMA corpus (proven by the
+///   `cpu_2a03_revision` tests): the halted-DMC overlap-read fires but its
+///   parked address is always the post-`$4014` instruction fetch, never a
+///   side-effect register (see below). The revision difference is therefore a
+///   mechanism-level *model*, not an observable divergence — ADR 0033.
 ///
 /// The revision is a **config knob re-applied on load, not part of the
 /// save-state** (like the optional OAM-decay model): the only state it
