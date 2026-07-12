@@ -42,7 +42,7 @@
 > cross-crate hot paths, zero byte-identity cost) and correcting stale `139/139` / `lto =
 > "thin"` text. **(5)** a **real symmetric-NAT netplay production-bug fix** — the native
 > TURN client (`relay.rs`) now retransmits each `Allocate` / `CreatePermission` every
-> 250 ms (RFC 5389 §7.2.1) instead of sending once, so a single dropped datagram no longer
+> 250 ms (a fixed RTO, not the RFC 5389 §7.2.1 default of 500 ms + exponential backoff) instead of sending once, so a single dropped datagram no longer
 > hard-fails NAT traversal (and de-flakes the `windows-latest` `relay_loopback` CI test
 > that was blocking `release-auto`); the session-digest determinism contract is unchanged.
 > See `CHANGELOG.md` `[2.1.5]` + `.github/release-notes/v2.1.5.md`.
