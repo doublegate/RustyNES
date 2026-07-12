@@ -11,9 +11,11 @@
 //! move by a single bit.
 //!
 //! This suite is the hard contract for that claim. For each ROM in a corpus
-//! spanning the accuracy-critical configurations (`nestest` CPU/idle-render,
-//! `flowing_palette` full-BG-every-frame, `oam_stress` sprite-eval stress,
-//! `AccuracyCoin` the PPU-timing gauntlet, and the Holy Mapperel MMC1/MMC3
+//! spanning the accuracy-critical configurations (`nestest` a rendering-enabled
+//! menu — where the fast path actually engages, `flowing_palette` a
+//! rendering-DISABLED 64-colour backdrop-override demo — the guard-bail /
+//! neutral case, `oam_stress` sprite-eval stress, `AccuracyCoin` the PPU-timing
+//! gauntlet, and the Holy Mapperel MMC1/MMC3
 //! banked boards), it runs the SAME scripted input twice — once with the fast
 //! path OFF (the shipped exact path) and once ON — and asserts that EVERY
 //! observable stream is bit-for-bit identical:
@@ -37,7 +39,7 @@ mod common;
 use common::{fnv1a64, rom_path};
 use std::fs;
 
-use rustynes_core::{Buttons, Nes};
+use rustynes_core::{Buttons, Nes, PpuRevision};
 
 /// Scripted, deterministic input for frame `f`: Start on a 4-of-7 cycle (drives
 /// title screens forward — Mesen2's `PGOHelper` trick) plus a rotating
@@ -58,21 +60,27 @@ fn buttons_for(f: u32) -> Buttons {
     b
 }
 
+/// FNV-1a 64-bit over a stream of bytes (identical algorithm/constants to
+/// [`fnv1a64`], but folding an iterator so callers never materialize a `Vec`).
+fn fnv1a64_stream(bytes: impl Iterator<Item = u8>) -> u64 {
+    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+    for b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    h
+}
+
 /// Fold one frame's every observable output into a single 64-bit hash: the RGBA
-/// framebuffer, the palette-index framebuffer (as little-endian bytes), and the
-/// audio drained this frame.
+/// framebuffer, the palette-index framebuffer, and the audio drained this frame.
+/// The `u16` index buffer and `f32` samples are hashed by folding their
+/// little-endian bytes directly (no per-frame `Vec` allocation — this runs on
+/// every frame of every corpus ROM, twice per ROM).
 fn frame_hash(nes: &Nes, audio: &[f32]) -> u64 {
     let mut h = fnv1a64(nes.framebuffer());
-    // Mix the index framebuffer.
-    let idx_bytes: Vec<u8> = nes
-        .index_framebuffer()
-        .iter()
-        .flat_map(|v| v.to_le_bytes())
-        .collect();
-    h ^= fnv1a64(&idx_bytes).rotate_left(17);
-    // Mix the audio.
-    let audio_bytes: Vec<u8> = audio.iter().flat_map(|s| s.to_le_bytes()).collect();
-    h ^= fnv1a64(&audio_bytes).rotate_left(33);
+    h ^= fnv1a64_stream(nes.index_framebuffer().iter().flat_map(|v| v.to_le_bytes()))
+        .rotate_left(17);
+    h ^= fnv1a64_stream(audio.iter().flat_map(|s| s.to_le_bytes())).rotate_left(33);
     h
 }
 
@@ -85,12 +93,14 @@ struct Capture {
     snapshot: Vec<u8>,
 }
 
-/// Run `rom` for `frames` frames with the fast dot path `fast` (on/off), feeding
-/// the scripted input, and capture every observable stream.
-fn capture(rom: &str, frames: u32, fast: bool) -> Capture {
+/// Run `rom` for `frames` frames with the fast dot path `fast` (on/off) and the
+/// given PPU die `revision`, feeding the scripted input, and capture every
+/// observable stream.
+fn capture(rom: &str, frames: u32, fast: bool, revision: PpuRevision) -> Capture {
     let path = rom_path(rom);
     let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
     let mut nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rom}: {e:?}"));
+    nes.set_ppu_revision(revision);
     nes.set_fast_dotloop(fast);
     assert_eq!(nes.fast_dotloop(), fast, "fast_dotloop knob did not stick");
 
@@ -109,16 +119,17 @@ fn capture(rom: &str, frames: u32, fast: bool) -> Capture {
     }
 }
 
-/// The core differential assertion for one ROM: OFF (exact path) and ON (fast
-/// path) must agree bit-for-bit on every stream, every frame.
-fn assert_byte_identical(rom: &str, frames: u32) {
-    let exact = capture(rom, frames, false);
-    let fast = capture(rom, frames, true);
+/// The core differential assertion for one ROM under one PPU revision: OFF
+/// (exact path) and ON (fast path) must agree bit-for-bit on every stream,
+/// every frame.
+fn assert_byte_identical(rom: &str, frames: u32, revision: PpuRevision) {
+    let exact = capture(rom, frames, false, revision);
+    let fast = capture(rom, frames, true, revision);
 
     assert_eq!(
         exact.per_frame.len(),
         fast.per_frame.len(),
-        "{rom}: frame count differs"
+        "{rom} [{revision:?}]: frame count differs"
     );
     // Pinpoint the FIRST diverging frame for a useful failure message.
     for (i, (a, b)) in exact
@@ -129,19 +140,19 @@ fn assert_byte_identical(rom: &str, frames: u32) {
     {
         assert_eq!(
             a, b,
-            "{rom}: fast dot path diverged at frame {i} \
+            "{rom} [{revision:?}]: fast dot path diverged at frame {i} \
              (framebuffer / index buffer / audio hash mismatch) — \
              the fast path is NOT byte-identical for this case"
         );
     }
     assert_eq!(
         exact.cpu_cycles, fast.cpu_cycles,
-        "{rom}: cumulative CPU-cycle count differs (fast path changed timing)"
+        "{rom} [{revision:?}]: cumulative CPU-cycle count differs (fast path changed timing)"
     );
     assert_eq!(
         fnv1a64(&exact.snapshot),
         fnv1a64(&fast.snapshot),
-        "{rom}: final core snapshot differs (fast path changed internal state)"
+        "{rom} [{revision:?}]: final core snapshot differs (fast path changed internal state)"
     );
 }
 
@@ -149,9 +160,12 @@ fn assert_byte_identical(rom: &str, frames: u32) {
 /// get each ROM well past its boot/blank period and into steady-state rendering
 /// where the fast path is exercised, while keeping the test brisk.
 const CORPUS: &[(&str, u32)] = &[
-    // CPU-heavy, near-static menu (BG fetch + sprite eval active).
+    // Rendering-ENABLED near-static menu (BG fetch + sprite eval active) — the
+    // case where the fast path actually engages.
     ("nestest/nestest.nes", 180),
-    // Full background rewritten every frame — the fast path's prime workload.
+    // Rendering-DISABLED 64-colour backdrop-override demo: the fast path never
+    // engages (the guard bails at `rendering_enabled()`), so this pins the
+    // neutral / guard-bail case as byte-identical too.
     ("sprint-2/flowing_palette.nes", 180),
     // Sprite-evaluation stress (OAM / secondary-OAM / overflow paths).
     ("sprint-2/oam_stress.nes", 180),
@@ -169,7 +183,30 @@ const CORPUS: &[(&str, u32)] = &[
 #[test]
 fn fast_dotloop_is_byte_identical_across_corpus() {
     for &(rom, frames) in CORPUS {
-        assert_byte_identical(rom, frames);
+        assert_byte_identical(rom, frames, PpuRevision::Rp2c02H);
+    }
+}
+
+/// v2.1.7 P5 (#280) added the opt-in `Rp2c02G` die revision, whose only per-dot
+/// effect is that an OAMADDR (`$2003`) write during rendering ARMS
+/// `oam_corruption_pending`. That armed/pending state is one of the
+/// disturbances the fast-path dispatch guard tests (`!oam_corruption_pending`),
+/// so the fast path must drop to the exact path the instant a `$2003`-write
+/// corruption is armed and let the exact path arm/commit it. This re-runs the
+/// OAM-exercising corpus with the corruption-modelling revision enabled to
+/// PROVE fast == exact even through #280's corruption paths.
+#[test]
+fn fast_dotloop_is_byte_identical_under_oamaddr_corruption_revision() {
+    // The OAM / sprite-heavy members of the corpus — the ones most likely to
+    // drive OAMADDR (`$2003`) writes during rendering and thus actually arm
+    // #280's corruption on `Rp2c02G`.
+    for &(rom, frames) in &[
+        ("sprint-2/oam_stress.nes", 180u32),
+        ("accuracycoin/AccuracyCoin.nes", 240),
+        ("nestest/nestest.nes", 180),
+        ("nes-test-roms/scanline/scanline.nes", 180),
+    ] {
+        assert_byte_identical(rom, frames, PpuRevision::Rp2c02G);
     }
 }
 
@@ -193,7 +230,7 @@ fn fast_dotloop_off_equals_untouched() {
         }
         (hashes, nes.snapshot())
     };
-    let off = capture(rom, 120, false);
+    let off = capture(rom, 120, false, PpuRevision::Rp2c02H);
 
     assert_eq!(
         untouched.0, off.per_frame,

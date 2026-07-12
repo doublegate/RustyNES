@@ -90,8 +90,12 @@ fn bench_full_frame_rendering(c: &mut Criterion) {
 /// above except `set_fast_dotloop(true)` is applied after boot, so a
 /// back-to-back Criterion run of `*_fast` vs the stock bench isolates the
 /// speedup the specialized visible-scanline handler buys (the emulated output
-/// is byte-identical — proven by `fast_dotloop_diff`). The delta on the
-/// rendering-heavy `flowing_palette` path is the headline figure.
+/// is byte-identical — proven by `fast_dotloop_diff`). The headline figure is
+/// the **`nestest`** delta: nestest renders a menu (rendering ENABLED), so the
+/// fast path engages. `flowing_palette` is a rendering-DISABLED 64-colour
+/// backdrop-override demo — the fast path never engages there, so its `*_fast`
+/// variant is expected to be NEUTRAL and serves only as the guard-bail control
+/// (see `docs/performance.md` §"v2.1.8 A1").
 fn bench_full_frame_fast(c: &mut Criterion) {
     let bytes = std::fs::read(rom_path("nestest/nestest.nes"))
         .expect("nestest/nestest.nes vendored in tests/roms/");
