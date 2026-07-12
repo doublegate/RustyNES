@@ -113,9 +113,11 @@ impl Default for RustyNesLibretro {
         Self {
             nes: None,
             dual: None,
-            // 4096 samples comfortably holds ~85ms of audio at 48kHz,
-            // well beyond the 16.6ms standard 60Hz frame delivery.
-            audio_buffer: Vec::with_capacity(4096),
+            // `audio_float_buffer` holds up to 4096 MONO samples (drained per
+            // frame — comfortably ~85ms at 48kHz, well beyond the 16.6ms 60Hz
+            // frame); `audio_buffer` holds the STEREO interleave of those, so it
+            // needs 2x the capacity to stay allocation-free on the hot path.
+            audio_buffer: Vec::with_capacity(4096 * 2),
             audio_float_buffer: Vec::with_capacity(4096),
             // Sized for the widest present (512x240 Vs. DualSystem side-by-side)
             // so the hot path never reallocates even in dual mode.
@@ -195,10 +197,16 @@ fn blit_scanline_rgba_to_xrgb(dst: &mut [u8], src: &[u8]) {
 impl RustyNesLibretro {
     /// Convert `produced` mono `f32` samples from `audio_float_buffer` into
     /// interleaved stereo `i16` and push them. Shared by both present paths so the
-    /// audio scaling / interleave logic lives in exactly one place. The buffers are
-    /// pre-allocated, so this stays allocation-free on the hot path.
+    /// audio scaling / interleave logic lives in exactly one place. The buffer is
+    /// pre-allocated to `2 * 4096` (the stereo interleave of the widest mono
+    /// drain), so this stays allocation-free on the hot path; the `reserve` below
+    /// is a belt-and-suspenders no-op that keeps that guarantee true even if the
+    /// mono drain buffer is ever grown past 4096.
     fn push_audio(&mut self, ctx: &mut RunContext, produced: usize) {
         self.audio_buffer.clear();
+        // No-op while capacity already covers `2 * produced` (the common case);
+        // only ever allocates if a future change enlarges `audio_float_buffer`.
+        self.audio_buffer.reserve(produced * 2);
         for &sample in &self.audio_float_buffer[..produced] {
             // RustyNES APU outputs bipolar ~[-0.5, 0.5], so we scale by 65535.0.
             let s16 = (sample * 65535.0).clamp(-32768.0, 32767.0) as i16;
@@ -547,7 +555,7 @@ impl Core for RustyNesLibretro {
 retro_core!(RustyNesLibretro {
     nes: None,
     dual: None,
-    audio_buffer: Vec::with_capacity(4096),
+    audio_buffer: Vec::with_capacity(4096 * 2),
     audio_float_buffer: Vec::with_capacity(4096),
     video_buffer: Vec::with_capacity(DUAL_W * NES_H * 4),
     serialize_size: 0,

@@ -299,7 +299,7 @@ mod tests {
         // to work — the load-bearing honesty invariant of ADR 0015).
         let s = BrowserRaSession::new();
         assert!(!s.proxy_configured());
-        assert!(s.caveat_banner().to_lowercase().contains("not configured"),);
+        assert!(s.caveat_banner().to_lowercase().contains("not configured"));
     }
 
     #[test]

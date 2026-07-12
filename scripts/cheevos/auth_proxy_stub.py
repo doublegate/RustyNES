@@ -57,12 +57,29 @@ def _env_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _parse_port(value: str, default: int, source: str) -> int:
+    # Fail fast with a clear, actionable message instead of an unhandled
+    # `ValueError` traceback when a deploy `.env` / config carries a typo'd,
+    # non-numeric, or out-of-range port. Container deployments surface a bad
+    # config as a clean "exit + message", not a stack trace.
+    text = value.strip()
+    if not text:
+        return default
+    try:
+        port = int(text)
+    except ValueError:
+        sys.exit(f"error: {source} port must be an integer, got {value!r}")
+    if not (1 <= port <= 65535):
+        sys.exit(f"error: {source} port {port} out of range (1-65535)")
+    return port
+
+
 class Config:
     def __init__(self, data: dict) -> None:
         proxy = data.get("proxy", {})
         host, _, port = proxy.get("bind", "127.0.0.1:8092").partition(":")
         self.host = host or "127.0.0.1"
-        self.port = int(port or 8092)
+        self.port = _parse_port(port, 8092, "config [proxy] bind")
         self.user_agent = proxy.get("user_agent", "RustyNES/0.0.0 rcheevos/0.0.0")
         self.upstream = proxy.get("upstream", "https://retroachievements.org").rstrip("/")
         self.allowed_origins = set(proxy.get("allowed_origins", []))
@@ -77,7 +94,7 @@ class Config:
         if bind:
             host, _, port = bind.partition(":")
             self.host = host or self.host
-            self.port = int(port or self.port)
+            self.port = _parse_port(port, self.port, "RA_PROXY_BIND")
         self.user_agent = os.environ.get("RA_USER_AGENT", self.user_agent)
         upstream = os.environ.get("RA_UPSTREAM")
         if upstream:
