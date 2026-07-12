@@ -97,10 +97,12 @@ pub const MEGATRON_STACK_PARAMS: &str = concat!(
     "// #pragma parameter hdr \"HDR output (0/1)\" 0.0 0.0 1.0 1.0\n",
 );
 
-/// Raw NTSC signal-decode stack knobs. NOTE: `params.x` is filled by the render
-/// path with the live NES video phase (dot-crawl), NOT a slider — so the sliders
-/// here map to `params.y`(sat) `params.z`(sharp) then `knobs.x/y/z`
-/// (bright/contrast/hue); the render arm places them explicitly.
+/// Raw NTSC signal-decode stack knobs.
+///
+/// NOTE: `params.x` is filled by the render path with the live NES video phase
+/// (dot-crawl), NOT a slider — so the sliders here map to `params.y`(sat)
+/// `params.z`(sharp) then `knobs.x/y/z` (bright/contrast/hue); the render arm
+/// places them explicitly.
 pub const SIGNAL_DECODE_STACK_PARAMS: &str = concat!(
     "// #pragma parameter saturation \"Saturation\" 1.0 0.0 2.0 0.05\n",
     "// #pragma parameter sharpness \"Sharpness\" 0.5 0.0 1.0 0.05\n",

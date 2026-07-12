@@ -55,10 +55,13 @@ cycle-accurate core later replaced.
     WAV audio export alongside the existing PNG-sequence / raw A/V capture —
     driven from a read-only framebuffer/audio tap so capture never perturbs the
     deterministic emulation timeline.
-  - **Palette editor UI.** A live editor for the generated-NTSC palette
-    parameters (saturation / hue / contrast / brightness / gamma) feeding
-    `palette_gen.rs`, with a swatch preview; off by default (the shipped palette
-    is unchanged until explicitly enabled).
+  - **Palette editor — live generated-palette preview.** The existing
+    generated-NTSC palette editor (Settings → Video → Generated NTSC palette:
+    saturation / hue / contrast / brightness / gamma sliders feeding
+    `palette_gen.rs`, plus the 64-swatch editor) gains a live 16×4 swatch preview
+    of the *generated* base that regenerates from the current params as you drag
+    the sliders — so the look can be dialled in before enabling it. Purely
+    visual; the shipped palette is unchanged until explicitly enabled.
 
 ## [2.1.8] - 2026-07-12 - "Fathom" (performance — default-off specialized fast PPU dot-loop (differential-tested byte-identical, +12% rendering-heavy) + SIMD software blitter + wasm size/startup pass; "Tempo")
 

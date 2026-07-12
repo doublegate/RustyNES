@@ -445,7 +445,10 @@ impl ShaderPresetBank {
             ("CRT - Heavy Aperture".to_string(), crt(0.8, 0.25)),
             // v2.1.9 marquee CRT stack.
             ("CRT-Royale".to_string(), single("crt-royale", &[])),
-            ("CRT-Royale - Curved".to_string(), single("crt-royale", &[("curvature", 0.4)])),
+            (
+                "CRT-Royale - Curved".to_string(),
+                single("crt-royale", &[("curvature", 0.4)]),
+            ),
             ("CRT Guest Advanced".to_string(), single("crt-guest", &[])),
             ("Sony Megatron".to_string(), single("megatron", &[])),
             // v2.1.9 raw NTSC signal decode (index-source, must be first).
@@ -1022,7 +1025,9 @@ mod tests {
             "Sony Megatron",
             "Raw NTSC Signal",
         ] {
-            let stack = bank.resolve(name).unwrap_or_else(|| panic!("{name} missing"));
+            let stack = bank
+                .resolve(name)
+                .unwrap_or_else(|| panic!("{name} missing"));
             assert!(stack.has_enabled_passes(), "{name} has no enabled pass");
             for p in &stack.passes {
                 assert!(p.builtin().is_some(), "{name}: unknown id {}", p.id);

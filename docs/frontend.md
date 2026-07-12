@@ -622,10 +622,20 @@ All three share a 64-byte `rect / crop / params / aux` uniform: `params` carries
 scanline weight, mask strength, mask type, and curvature; `aux` carries the
 per-shader beam/gamma/glow/HDR knobs. Each is gate-validated as real,
 compilable WGSL by a **naga** parse+validate test (`crt::tests::crt_stack_shaders_parse_and_validate`,
-the same front-end + validator wgpu runs at `create_shader_module`). *Wiring
-status:* the shader **sources + registry are complete and validated**; selecting
-them from the composable stack UI + per-game presets is the follow-on frontend
-wiring (the passes reuse the existing `ShaderStack` plumbing).
+the same front-end + validator wgpu runs at `create_shader_module`).
+
+They are wired as first-class `BuiltinPass` variants
+(`CrtRoyale` / `CrtGuest` / `Megatron`) selectable from **Settings → Shaders**,
+each exposing its `#pragma parameter` sliders (declared in `crt.rs`, ordered to
+match the uniform slots so the generic declaration-order fill in
+`ShaderStack::render` places each knob correctly; the trailing "source rows" aux
+slot is left 0 and each shader falls back to 240 via `select`). Five showcase
+entries join the built-in preset bank (CRT-Royale, CRT-Royale Curved, CRT Guest
+Advanced, Sony Megatron, Raw NTSC Signal). **Per-game shader presets**:
+`PerGameConfig` gains an optional `shader_preset` name resolved on ROM load
+against the user preset bank then the built-ins (`ShaderPresetBank::resolve`) and
+applied to the live stack — `None` / an unknown name applies nothing, so the
+default load path stays byte-identical and the core is untouched.
 
 **Raw NTSC signal-decode pass (v2.1.9 P4).** `signal_decode.wgsl` is the display
 companion to the new core `rustynes-ppu::raw_signal` model. Like `CompositeRt`
@@ -1537,10 +1547,21 @@ byte-identical (the HistoryViewer only *observes*; compression is lossless).
 
 ### v1.6.0 "Studio" Workstream G — A/V recording (`av_record`, native + `av-record` feature)
 
-Records the running game to a `.mp4` / `.mkv` (video + synchronized audio).
+Records the running game to a `.mp4` / `.mkv` (video + synchronized audio), and
+since v2.1.9 to an animated `.gif` (video-only) or a `.wav` (audio-only).
 **Native-only + behind the default-OFF `av-record` feature**, so the shipped /
 wasm / `no_std` builds are byte-identical with it off (the module is not even
 compiled). Implemented in `src/av_record.rs`.
+
+- **Output format = the chosen extension (v2.1.9).** The recorder always
+  captures both raw streams to temp files; the file extension picked in the save
+  dialog (`Container::from_path`) selects which the single stop-time `ffmpeg`
+  pass consumes. `.mp4` / `.mkv` = the two-input A/V mux (unchanged); `.gif` =
+  video-only through the single-pass `palettegen` / `paletteuse` filtergraph
+  (per-clip optimized palette + Bayer dither, decimated to 25 fps for a small
+  crisp GIF); `.wav` = audio-only transcode of the mono `f32le` PCM to canonical
+  16-bit PCM. The arg builders (`ffmpeg_args` → `gif_args` / `wav_args`) are pure
+  and unit-tested.
 
 - **Capture is a read-only tap on the already-produced output.** Inside
   `EmuCore::produce_one_frame`, *after* the emulator has produced the frame, the
