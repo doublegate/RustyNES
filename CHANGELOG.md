@@ -23,11 +23,48 @@ cycle-accurate core later replaced.
 - **Fuzz-target expansion (v2.2.0 "Capstone", quality).** `fuzz/` grows from 3 to 8 cargo-fuzz targets covering the remaining untrusted-input boundaries: `ppu_reg_io` (`Ppu::cpu_{read,write}_register` over a minimal `PpuBus`), `apu_reg_io` (`Apu::write_register` / `read_status`), `netplay_message` (the highest-value target — `NetMessage::from_bytes` binary UDP + `SignalMessage::parse` JSON signaling/lobby, both ingesting bytes straight off the wire), `save_state` (`parse_header` + `Nes::extract_thumbnail` + `restore_quiet`), and `movie` (`Movie::deserialize`). Each builds under nightly cargo-fuzz and runs clean for tens of thousands of iterations. `fuzz/README.md` documents the targets + the LeakSanitizer-under-sandbox note.
 - **Read-only ROM Info browser (v2.2.0 "Capstone").** A new **Tools → ROM Info** panel (`crates/rustynes-frontend/src/debugger/rom_info_panel.rs`) surfaces, for the loaded ROM, the two dump-identity CRC32 keys (the header-excluded game-DB key + the full-file **No-Intro** key), the SHA-256, the effective per-game database entry (title / mapper / region / mirroring / submapper), and the decoded cartridge header read straight off the running `Nes` (mapper id, region, PRG-ROM / CHR-ROM sizes). Read-only (`&Nes`) — never mutates the emulator or the DB overlay; the deterministic core never consults it. Honest about surfacing only the vendored per-game DB + the header (no bootgod / nescartdb table is vendored).
 - **MkDocs handbook deepening (v2.2.0 "Capstone", quality).** Four new Material-for-MkDocs handbook pages — `docs/expansion-audio.md`, `docs/pal-region.md`, `docs/crt-composite.md`, `docs/creator-tools.md` — curated entry points for the newer subsystems, cross-linked to the authoritative `apu-2a03.md` / `ppu-2c02.md` / `frontend.md` specs, with matching `mkdocs.yml` nav entries.
+- **FDS medium model completion — CRC-16 / gap / continuous head-seek (v2.2.0
+  "Capstone", F4.3).** The Famicom Disk System RAM adapter
+  (`crates/rustynes-mappers/src/fds.rs`) completes the disk **medium** model. The
+  disk is a synthesized byte-stream wire image — lead-in / inter-block gaps, a
+  `$80` start mark, the block bytes, and a **CRC-16/KERMIT** per block — and each
+  BIOS-written block now **re-emits a fresh per-block CRC-16** over its updated
+  payload (`resynth_block_crc`), modelling the RP2C33 controller's continuous CRC
+  generator so the medium stays self-consistent after a write. A new **continuous
+  analog head-seek / velocity model** (opt-in, default-OFF —
+  `Fds::set_analog_head_seek`) replaces the flat fixed `HEAD_RESEEK_CYCLES`
+  motor-restart not-ready window with a belt-driven, distance-proportional seek
+  time (`HEAD_SEEK_BYTES_PER_CYCLE` velocity + `HEAD_SEEK_SETTLE_CYCLES` settle,
+  clamped to a cold spin-up), sized from the head-travel distance captured at
+  motor-off. A **BIOS-free synthetic write-verify oracle**
+  (`Fds::medium_write_verify`) walks the wire image and asserts every block's
+  CRC-16 and gap/mark framing round-trips — the CI-verifiable half of the medium
+  model; the real-BIOS write-CRC path needs a copyright `disksys.rom` and is
+  exercised only from a gitignored local dump (`docs/accuracy-ledger.md` records
+  the CI-verifiable-vs-local-only split). **Additive and deterministic**: with
+  the head-seek model off (the default) a non-writing `.fds` run is
+  **byte-identical** to prior releases; the new state round-trips an additive
+  **v4** FDS save-state tail (v1/v2/v3 blobs load with the model disabled).
+  AccuracyCoin has no FDS ROM, so **141/141 (100%)** is unaffected.
+- **Famicom microphone + Zapper light-timing hardening (v2.2.0 "Capstone"
+  peripherals).** The Famicom built-in controller-2 **microphone** is modelled on
+  **`$4016` bit 2** (`Nes::set_microphone` / `Bus::set_microphone`), wired through
+  the frontend input path (hold-to-talk `M` key → `FrameInputs.microphone` →
+  latch), for games such as *The Legend of Zelda* (Pols Voice) and *Kid Icarus*.
+  It is a `$4016`-only signal (never touches `$4017`). The **Zapper** photodiode
+  now integrates a **3×3 aperture** (field-of-view) around the aim point,
+  asserting light only when ≥2 pixels cross the luma threshold
+  (`ZAPPER_APERTURE_*`) — hardening detection against sub-pixel aim error and PPU
+  edge noise vs the prior single-pixel sample, while staying a deterministic pure
+  function of the presented framebuffer (no save-state change). Both are additive
+  and **default-off**: the mic released leaves the `$4016` read byte-identical,
+  and the standard controller / Four Score path is unchanged. (The full Family
+  BASIC `9×8` keyboard matrix was already modelled; its frontend mapping is
+  unchanged.)
 
 ### Changed
 
 - **Movie (`.rnm`) deserializer hardening (v2.2.0 "Capstone", quality).** The new `movie` fuzz target surfaced two OOM DoS paths in `Movie::deserialize` (`crates/rustynes-core/src/movie.rs`), both now fixed **byte-identically for valid input**: (1) the untrusted 4-byte `frame_count` was passed straight to `Vec::with_capacity`, so a 49-byte header could claim a multi-gigabyte reservation — now capped at `remaining_bytes / width` (== `frame_count` for any real file); (2) a `bytes_per_frame` of 0 made each `r.take(0)` consume no input, so the frame loop pushed `frame_count` empty records out of a finite file — now rejected up front (a real movie always writes the fixed `BYTES_PER_FRAME` ≥ 1). Regression test `deserialize_hostile_frame_count_does_not_oom` added; the existing 44 movie tests (incl. the determinism round-trip) stay green.
-
 ## [2.1.10] - 2026-07-12 - "Fathom" (creator tools and web parity — TAStudio greenzone + Lua API breadth + browser-RA auth-proxy deploy stack + Vs. DualSystem libretro presentation — "Loom")
 
 ### Added
@@ -300,44 +337,6 @@ cycle-accurate core later replaced.
   byte-identical (AccuracyCoin **141/141**, nestest 0-diff, save-state
   round-trip byte-identical). No `dmc_dma_during_read4` sub-test is made to fail
   or newly `#[ignore]`'d. See ADR 0033 + `docs/scheduler.md` §"Unexpected DMA".
-- **FDS medium model completion — CRC-16 / gap / continuous head-seek (v2.2.0
-  "Capstone", F4.3).** The Famicom Disk System RAM adapter
-  (`crates/rustynes-mappers/src/fds.rs`) completes the disk **medium** model. The
-  disk is a synthesized byte-stream wire image — lead-in / inter-block gaps, a
-  `$80` start mark, the block bytes, and a **CRC-16/KERMIT** per block — and each
-  BIOS-written block now **re-emits a fresh per-block CRC-16** over its updated
-  payload (`resynth_block_crc`), modelling the RP2C33 controller's continuous CRC
-  generator so the medium stays self-consistent after a write. A new **continuous
-  analog head-seek / velocity model** (opt-in, default-OFF —
-  `Fds::set_analog_head_seek`) replaces the flat fixed `HEAD_RESEEK_CYCLES`
-  motor-restart not-ready window with a belt-driven, distance-proportional seek
-  time (`HEAD_SEEK_BYTES_PER_CYCLE` velocity + `HEAD_SEEK_SETTLE_CYCLES` settle,
-  clamped to a cold spin-up), sized from the head-travel distance captured at
-  motor-off. A **BIOS-free synthetic write-verify oracle**
-  (`Fds::medium_write_verify`) walks the wire image and asserts every block's
-  CRC-16 and gap/mark framing round-trips — the CI-verifiable half of the medium
-  model; the real-BIOS write-CRC path needs a copyright `disksys.rom` and is
-  exercised only from a gitignored local dump (`docs/accuracy-ledger.md` records
-  the CI-verifiable-vs-local-only split). **Additive and deterministic**: with
-  the head-seek model off (the default) a non-writing `.fds` run is
-  **byte-identical** to prior releases; the new state round-trips an additive
-  **v4** FDS save-state tail (v1/v2/v3 blobs load with the model disabled).
-  AccuracyCoin has no FDS ROM, so **141/141 (100%)** is unaffected.
-- **Famicom microphone + Zapper light-timing hardening (v2.2.0 "Capstone"
-  peripherals).** The Famicom built-in controller-2 **microphone** is modelled on
-  **`$4016` bit 2** (`Nes::set_microphone` / `Bus::set_microphone`), wired through
-  the frontend input path (hold-to-talk `M` key → `FrameInputs.microphone` →
-  latch), for games such as *The Legend of Zelda* (Pols Voice) and *Kid Icarus*.
-  It is a `$4016`-only signal (never touches `$4017`). The **Zapper** photodiode
-  now integrates a **3×3 aperture** (field-of-view) around the aim point,
-  asserting light only when ≥2 pixels cross the luma threshold
-  (`ZAPPER_APERTURE_*`) — hardening detection against sub-pixel aim error and PPU
-  edge noise vs the prior single-pixel sample, while staying a deterministic pure
-  function of the presented framebuffer (no save-state change). Both are additive
-  and **default-off**: the mic released leaves the `$4016` read byte-identical,
-  and the standard controller / Four Score path is unchanged. (The full Family
-  BASIC `9×8` keyboard matrix was already modelled; its frontend mapping is
-  unchanged.)
 
 ## [2.1.6] - 2026-07-11 - "Fathom" (expansion audio — decibel oracle + hardware/Mesen2 channel-level calibration + Namco 163 12 dB fix + mix UI/scopes; "Timbre")
 

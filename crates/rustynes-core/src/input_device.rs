@@ -245,8 +245,8 @@ impl ZapperState {
     ///
     /// v2.2.0 "Capstone" light-timing hardening: rather than sampling a single
     /// pixel, the sensor integrates a `(2r+1) x (2r+1)` aperture
-    /// ([`ZAPPER_APERTURE_RADIUS`]) and asserts light only when at least
-    /// [`ZAPPER_APERTURE_MIN_BRIGHT`] pixels cross [`ZAPPER_LUMA_THRESHOLD`]. This
+    /// (`ZAPPER_APERTURE_RADIUS`) and asserts light only when at least
+    /// `ZAPPER_APERTURE_MIN_BRIGHT` pixels cross `ZAPPER_LUMA_THRESHOLD`. This
     /// models the lens/photodiode field-of-view against the PPU's per-dot output:
     /// the bright target the game flashes lights the whole aperture (robust
     /// detection), while a black "blanked" background frame — or a lone stray

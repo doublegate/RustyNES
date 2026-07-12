@@ -1652,7 +1652,7 @@ impl Fds {
     ///
     /// # Errors
     ///
-    /// Returns the first [`FdsMediumError`] encountered (missing start mark,
+    /// Returns the first `FdsMediumError` encountered (missing start mark,
     /// CRC mismatch, truncated block, or a corrupted inter-block gap). Returns
     /// `Ok(())` when no side is inserted (nothing to verify).
     pub fn medium_write_verify(&self) -> Result<(), FdsMediumError> {
@@ -1711,7 +1711,7 @@ impl Fds {
     /// rewinds use the flat [`HEAD_RESEEK_CYCLES`] window, so a non-writing
     /// `.fds` run is byte-identical to prior releases. When enabled, the re-seek
     /// window scales with head-travel distance (belt velocity). See
-    /// [`Self::reseek_window_cycles`].
+    /// `Self::reseek_window_cycles`.
     pub const fn set_analog_head_seek(&mut self, enabled: bool) {
         self.analog_head_seek = enabled;
     }
