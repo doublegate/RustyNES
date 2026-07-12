@@ -14,6 +14,31 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **2A03 die-revision config + the DMA "unexpected read" frontier (v2.1.7
+  "Hardware Revisions & DMA Frontier").** New additive
+  `Cpu2A03Revision { Rp2A03G (default), Rp2A03H }` config
+  (`Nes::set_cpu_2a03_revision`) gating the DMA unit's "unexpected DMA" extra
+  parked-address re-read on a DMC-halt-overlaps-OAM-halt cycle. **Modeled +
+  verified:** the existing DMC↔OAM collision (get/put), OAM alignment, aborted
+  DMC-DMA, and the `$2007`/`$4015`/`$4016`/`$4017` DMC-glitch register-readout
+  corruption all stay green on the default — the five `dmc_dma_during_read4`
+  ROMs, both `sprdma_and_dmc_dma` variants, and `dma_timing_pin` all `Pass`.
+  **Documented residual (honesty gate, ADR 0033):** the RP2A03G-vs-RP2A03H die
+  revision is modeled by **no** public reference emulator (Mesen2 / ares /
+  BizHawk / TriCNES / fceux / nestopia / GeraNES / higan) and verified by **no**
+  test ROM; on this engine the revision gate fires but is a **documented no-op
+  on every committed oracle** (the parked address during a DMC+OAM overlap is
+  always the post-`$4014` instruction fetch, never a side-effect register), so
+  `Rp2A03H` is byte-identical to `Rp2A03G` today — the difference is a
+  mechanism-level model, not an observable divergence, and its direction is an
+  unverified hypothesis recorded not faked. The revision is a config re-applied
+  on load, **not** part of the save-state; the default (`Rp2A03G`) stays
+  byte-identical (AccuracyCoin **141/141**, nestest 0-diff, save-state
+  round-trip byte-identical). No `dmc_dma_during_read4` sub-test is made to fail
+  or newly `#[ignore]`'d. See ADR 0033 + `docs/scheduler.md` §"Unexpected DMA".
+
 ## [2.1.6] - 2026-07-11 - "Fathom" (expansion audio — decibel oracle + hardware/Mesen2 channel-level calibration + Namco 163 12 dB fix + mix UI/scopes; "Timbre")
 
 ### Added

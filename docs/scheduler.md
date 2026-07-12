@@ -93,6 +93,38 @@ considered. The scheduler must preserve this distinction all the way to the bus
 because repeated halted reads of `$2007`, `$4015`, `$4016`, and `$4017` are
 observable side effects.
 
+The v2.0.0 "Timebase" rewrite collapsed these three drivers (standalone OAM,
+standalone DMC, and the DMC-during-OAM overlap) into one per-cycle engine —
+`LockstepBus::unified_dma_cycle_impl` in `crates/rustynes-core/src/bus.rs`, a
+direct port of TriCNES's `_6502` DMA dispatch table. The 513/514 (OAM) and 3/4
+(DMC) spans are **emergent** from a single get/put parity label
+(`get = !apu.put_cycle()`) rather than an owed-cycle counter. The committed
+oracle floor for this engine — the five `dmc_dma_during_read4` ROMs, both
+`sprdma_and_dmc_dma` variants, and `dma_timing_pin` (the AccuracyCoin
+`CheckDMATiming` reload span = 4 + the `$50-$5F` DMC-during-OAM landing sweep on
+KEY) — is all green.
+
+#### Unexpected DMA (2A03 die revision — the documented frontier)
+
+nesdev [DMA](https://www.nesdev.org/wiki/DMA) notes that when a DMC-DMA halt
+coincides with an OAM-DMA halt (the "double-halt" overlap) some 2A03 silicon
+inserts an **extra** re-read of the parked 6502 address bus, and this differs by
+mask revision (RP2A03G vs RP2A03H). RustyNES exposes this as the additive
+`Cpu2A03Revision { Rp2A03G (default), Rp2A03H }` config (`Nes::set_cpu_2a03_revision`),
+gating the halted-DMC parked-address re-read that fires inside an OAM-owned read
+cycle during a DMC+OAM overlap. `Rp2A03G` performs it (the byte-identical
+default); `Rp2A03H` omits it.
+
+This is an **unclosed, honestly-documented frontier** (ADR 0033): no public
+reference emulator branches DMA behavior on 2A03 die stepping and no test ROM
+captures it, and on this engine the gate — while at its mechanism-correct
+location — is behaviorally inert, because the parked address during a DMC+OAM
+overlap is always the post-`$4014` instruction fetch (OAM drains on the next
+opcode read), never a `$2002`/`$2007`/`$4015`/`$4016`/`$4017` register. So
+`Rp2A03H` is byte-identical to `Rp2A03G` on every oracle. The knob is a config
+re-applied on load, **not** part of the save-state (determinism is preserved for
+a fixed revision). See ADR 0033 and the `cpu_2a03_revision` test suite.
+
 ### Region cadence
 
 NTSC and Dendy can use a simple 3 PPU dots per CPU cycle cadence. PAL needs a
