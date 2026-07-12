@@ -101,7 +101,7 @@ impl Greenzone {
     ///
     /// v2.1.10 "Creator Tools" (B8) — if `frame` falls inside the active
     /// force-greenzone range it is additionally pinned as a non-evictable anchor
-    /// (tracked in [`Greenzone::forced_anchors`]), so the forced range keeps a
+    /// (tracked in `forced_anchors`), so the forced range keeps a
     /// state at *every* frame regardless of budget pressure.
     // `bytes` stays owned (`Vec<u8>`) for source-compatibility with the prior
     // uncompressed greenzone API + every caller (they hand over a fresh
