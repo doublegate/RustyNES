@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.1.6-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.1.7-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -775,18 +775,18 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.1.6 "Fathom" ("Timbre")**, the expansion-audio
-fidelity step of the v2.1.5 → v2.2.0 "deepen the project" run — it upgrades the
-bbbradsmith `nes-audio-tests` corpus from pure snapshots into a **real decibel-comparison
-oracle** (each `db_*` ROM now asserts the expansion/reference level ratio against the
-Mesen2 / hardware target), **calibrates the VRC6 / MMC5 / Namco 163 channel levels** to
-those targets (the N163 1-channel path was ~12 dB too quiet — no reference emulator
-attenuates it — now fixed), verifies the **VRC7 OPLL patch set** against the canonical
-Nuke.YKT table, and adds a frontend **Audio Mixer** panel (per-source mix sliders +
-presets + per-channel scopes/VU meters). The Sunsoft 5B absolute level and VRC7 FM level
-are honest documented gaps. The base **2A03 NTSC output stays byte-identical** (expansion
-audio is a separate additive mix term): **AccuracyCoin stays 141/141 (100.00%)**, nestest
-0-diff, `blargg_apu_2005` / `pal_apu_tests` / `visual_regression` unchanged.
+RustyNES's current release is **v2.1.7 "Fathom" ("Stepping")**, the hardware-revisions
+step of the v2.1.5 → v2.2.0 "deepen the project" run — it adds an opt-in, default-off
+**selectable PPU die-revision** model (2C02 rev-E+ OAMADDR/`$2003` corruption à la *Huge
+Insect*, power-up palette variants) and a **power-on RAM model** (all-zero default, opt-in
+seeded/patterned — for games that read uninitialized RAM like *Final Fantasy*), plus an
+opt-in **2A03 die-revision** (`RP2A03G`/`RP2A03H`) config that gates the "unexpected read"
+DMA behavior. The last is the honest **DMA frontier** work: direct instrumentation proved
+the die-revision DMA gate is a **no-op on every committed oracle ROM** (and no reference
+emulator branches DMA on die stepping), so the residual is documented in **ADR 0033**
+rather than faked. Every toggle defaults off, so the shipped build stays **byte-identical**:
+**AccuracyCoin stays 141/141 (100.00%)**, nestest 0-diff, `visual_regression` /
+`pal_apu_tests` unchanged.
 
 The v2.1.x line opened with **v2.1.0**, the accuracy-remediation release (a display-only
 PPU palette-backdrop-override fix, 86 mapper families promoted BestEffort → Curated, and
@@ -912,7 +912,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {2.1.6},
+  version = {2.1.7},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (141/141), nestest 0-diff; 172 mapper families,
