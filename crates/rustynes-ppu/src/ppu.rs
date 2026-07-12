@@ -350,7 +350,7 @@ impl PpuRegion {
 /// while rendering is enabled on a visible / pre-render scanline copies one
 /// 8-byte OAM "row" from row 0 over the row the write's high bits target, on the
 /// next rendered dot (the same `CorruptOAM` mechanism the rendering-disable
-/// model uses; see [`Ppu::process_oam_corruption`]). A handful of titles —
+/// model uses; see `Ppu::process_oam_corruption`). A handful of titles —
 /// notably *Huge Insect* — trip it. It is **not** enabled on the default
 /// revision.
 ///
@@ -393,7 +393,7 @@ impl PpuRevision {
 /// thus different emulator authors' reference dumps) come up with different
 /// garbage. This is a documented power-up option, **default-off**: [`Default`]
 /// ([`Self::Zeroed`]) keeps `RustyNES`'s established all-zero power-up palette,
-/// so default rendering is byte-identical. It writes only [`Ppu::palette_ram`],
+/// so default rendering is byte-identical. It writes only `Ppu::palette_ram`,
 /// which is already part of the save-state snapshot, so it needs no
 /// snapshot-format change.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Default)]

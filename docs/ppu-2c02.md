@@ -127,7 +127,11 @@ write-pair latch also does not toggle during this mask. `$2002`, `$2003`,
 
 Cold power shortly after a previous power-off can look reset-like rather than
 fresh. Tests and user-facing deterministic mode should therefore avoid assuming
-stable OAM, palette, nametable, CHR RAM, or PPUSTATUS low-bit state.
+stable OAM, palette, nametable, CHR RAM, or PPUSTATUS low-bit state. The
+unspecified power-up palette RAM and CPU work RAM are modeled by the opt-in,
+default-off knobs described below (see [Power-up palette RAM](#power-up-palette-ram-optional-opt-in-default-off-v217-p5)
+and [Power-on work-RAM model](#power-on-work-ram-model-optional-opt-in-default-off-v217-p5));
+the default keeps both deterministic (all-zero).
 
 ### Per-dot fetch sequencing (visible + pre-render scanlines)
 
@@ -190,9 +194,11 @@ Future work (post-flip):
   phase). The per-dot FSM has the state for this but the `$2004` read
   path does not yet observe the FSM phase. Add when a test ROM
   distinguishes the behavior.
-- OAMADDR-during-rendering corruption: real hardware drives
-  `OAMADDR=0` across dots 257-320. Not yet modeled in either path.
-  Add when a test ROM distinguishes the behavior.
+- OAMADDR-during-rendering `OAMADDR=0` forcing across dots 257-320 is
+  modeled (the sprite-tile-load wash). The *write*-triggered OAMADDR
+  (`$2003`) corruption glitch is now available as an opt-in
+  revision-gated model — see [OAMADDR (`$2003`) write corruption](#oamaddr-2003-write-corruption-optional-opt-in-default-off)
+  below.
 
 ### Sprite-0 hit
 
@@ -236,6 +242,86 @@ pattern. RustyNES models this exactly like Mesen2 (`NesPpu::ReadSpriteRam` /
   counter on load, so a run-ahead / netplay `snapshot`→`restore` stays byte-identical
   even though the free-running `dot_counter` itself is not serialized. The enable
   flag is a frontend/config knob re-applied on load (not serialized), like `region`.
+
+### PPU die revision (optional, opt-in, default-OFF) (v2.1.7, P5)
+
+Real RP2C02 dies shipped across several letter revisions. RustyNES exposes a
+selectable `PpuRevision` (`rustynes_core::PpuRevision`) that gates the one
+revision-dependent behavior it models, the OAMADDR `$2003` write corruption:
+
+- `Rp2c02H` (**default**) — the later "H"-class die RustyNES has always modeled.
+  No `$2003` write corruption. **Byte-identical** to a build without the field —
+  AccuracyCoin, the commercial oracle, and the visual/audio suites are
+  unaffected at the default.
+- `Rp2c02G` — the earlier die ("rev E+" in the nesdev notes). Additionally
+  models the `$2003` write corruption (below). Opt-in.
+
+The selection is **config**, re-applied on load like `region` / the active
+palette — it is **not** serialized in the snapshot. (The corruption *state* it
+can arm — `oam_corruption_pending` / `oam_corruption_index` — is already in the
+`PPU_SNAPSHOT_VERSION` v6 tail, so an armed corruption still round-trips.) Set
+via `Nes::set_ppu_revision` / `[emulation] ppu_oamaddr_corruption`.
+
+### OAMADDR (`$2003`) write corruption (optional, opt-in, default-OFF)
+
+On the earlier `Rp2c02G` revision, writing OAMADDR (`$2003`) while rendering is
+enabled on a visible or pre-render scanline corrupts one 8-byte OAM "row". A few
+titles — notably *Huge Insect* — trip it. RustyNES models it by reusing the same
+`CorruptOAM` row-copy the rendering-disable corruption uses: on such a write it
+arms `oam_corruption_pending` with `oam_corruption_index = (value >> 3) & 0x1F`
+(the row the write's high bits select), and the existing per-dot commit path
+applies it on the next rendered dot — copying OAM row 0 over the targeted row
+(plus the matching secondary-OAM byte). The `!oam_corruption_pending` guard
+defers to an already-armed corruption so the two sources never race.
+
+- **Render-gated** — only a `$2003` write with rendering enabled on a
+  visible / pre-render scanline arms it; writes outside rendering (or in vblank)
+  never corrupt, on any revision.
+- **Default-OFF byte-identity** — the default `Rp2c02H` revision never arms it,
+  so the corruption path is inert and the default build is byte-identical.
+- **Honesty** — the precise 2C02 letter-revision taxonomy of this glitch, and
+  its exact per-title byte output, are not independently oracle-verified in this
+  cut; RustyNES offers the model as an opt-in approximation keyed to a single
+  "earlier revision" selection rather than claiming exact silicon fidelity. See
+  `docs/accuracy-ledger.md`.
+
+### Power-up palette RAM (optional, opt-in, default-OFF) (v2.1.7, P5)
+
+The 2C02's palette RAM is not cleared at power-on; different consoles come up
+with different garbage, and a few titles sample it before writing. RustyNES
+exposes a `PaletteInit` (`rustynes_core::PaletteInit`):
+
+- `Zeroed` (**default**) — all 32 palette-RAM bytes power up to `$00`, the
+  established deterministic state. **Byte-identical**.
+- `Blargg` — the canonical "blargg" 32-byte power-up dump (mirrors TriCNES's
+  `BlarggPalette`), each cell 6-bit masked like a `$2007` write. Opt-in.
+
+It writes only `palette_ram`, which the snapshot already serializes, so **no
+snapshot-format change is required**. Best applied at power-on (palette RAM is
+preserved across a warm reset, like real hardware); the selection is stored so a
+power-cycle re-applies it. Set via `Nes::set_power_up_palette` /
+`[emulation] blargg_power_up_palette`.
+
+### Power-on work-RAM model (optional, opt-in, default-OFF) (v2.1.7, P5)
+
+Real hardware powers up with unreliable 2 KiB CPU work RAM (nesdev "CPU power up
+state"); a few titles read it before writing (*Final Fantasy*'s RNG seed, *River
+City Ransom*, *Cybernoid*). `rustynes_core::PowerOnConfig` selects the fill via
+`PowerOnRam`:
+
+- `Zeroed` (**default**) — all-zero work RAM + open bus (**byte-identical**;
+  what CI, the oracle, and save-state tests use).
+- `Seeded(u64)` — deterministic `xorshift64` randomization keyed on the seed
+  (the existing developer mode; same seed ⇒ identical RAM).
+- `Filled(u8)` — every work-RAM byte set to a uniform documented pattern.
+
+All fills are **deterministic** (no wall-clock / OS RNG), so the `same config +
+ROM + input ⇒ bit-identical` contract holds. The fill is stored on the bus so a
+power-cycle re-applies it (`power_cycle == fresh boot`). Build via
+`Nes::from_rom_with_power_on_config` / set via `Nes::set_power_on_ram`, or the
+`[emulation] randomize_power_on_ram` + `power_on_ram_seed` config keys. (This
+strictly generalizes `Nes::from_rom_with_power_on_seed`, which now routes through
+`PowerOnRam::Seeded`.)
 
 ### Loopy `v / t / x / w`
 

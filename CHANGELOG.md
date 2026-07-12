@@ -18,6 +18,44 @@ cycle-accurate core later replaced.
 
 ### Added
 
+- **PPU die-revision + power-on hardware model (v2.1.7 "Hardware Revisions &
+  DMA Frontier", P5 — PPU side).** A selectable 2C02 die revision and power-on
+  state model, every knob **opt-in and default-off** so the deterministic core
+  stays **byte-identical** at the default (AccuracyCoin **141/141 (100%)**,
+  nestest 0-diff, `visual_regression` / `pal_apu_tests` 10/10 and save-state
+  round-trip all unchanged). Four additive pieces:
+  - **`PpuRevision` enum** (`rustynes_core::PpuRevision`; default `Rp2c02H`,
+    opt-in `Rp2c02G`) gating the one revision-dependent quirk RustyNES models.
+    Config re-applied on load like `region` — not serialized.
+  - **OAMADDR (`$2003`) write-during-render OAM corruption**, modeled only on
+    the opt-in `Rp2c02G` die: a `$2003` write while rendering is active copies
+    OAM row 0 over the row `(value>>3)&0x1F` (reusing the existing `CorruptOAM`
+    row-copy, committed on the next rendered dot). The *Huge Insect* glitch. The
+    default revision never arms it. The corruption state it can arm
+    (`oam_corruption_pending`/`_index`) already round-trips via the v6 PPU
+    snapshot tail, so **no snapshot-format change** is needed. Documented as an
+    honest opt-in approximation (the exact per-revision/per-title byte output is
+    not independently oracle-verified) in `docs/accuracy-ledger.md`.
+  - **Power-up palette-RAM model** (`rustynes_core::PaletteInit`; default
+    `Zeroed`, opt-in `Blargg`) loading the canonical blargg power-up dump (6-bit
+    masked) for software that samples uninitialized palette RAM. Writes only
+    `palette_ram` (already serialized), so no snapshot change. Default keeps the
+    established all-zero power-up palette.
+  - **Power-on work-RAM model** (`rustynes_core::PowerOnConfig` / `PowerOnRam`:
+    `Zeroed` default / `Seeded(u64)` / `Filled(u8)`) via the new
+    `Nes::from_rom_with_power_on_config`, for titles that read uninitialized RAM
+    (*Final Fantasy* RNG seed, *River City Ransom*, *Cybernoid*). Every fill is
+    **deterministic** (no wall-clock / OS RNG), stored on the bus so
+    `power_cycle == fresh boot`. `from_rom_with_power_on_seed` now routes through
+    `PowerOnRam::Seeded`; the default all-zero path is unchanged.
+  - Exposed through additive `Nes` setters (`set_ppu_revision`,
+    `set_power_up_palette`, `set_power_on_ram`) mirroring the v2.1.4 OAM-decay
+    knob shape, and default-off `[emulation]` config keys
+    (`ppu_oamaddr_corruption`, `blargg_power_up_palette`,
+    `randomize_power_on_ram`, `power_on_ram_seed`) pushed into the core on ROM
+    load / power-cycle / startup. `docs/ppu-2c02.md` documents each; the
+    `#![no_std]` chip stack stays clean.
+
 - **Expansion-audio mix UI + per-channel visualization (v2.1.6 "Expansion
   Audio").** A dedicated **Audio Mixer** tool panel (Tools → Audio Mixer)
   unifying per-source mix balance with live per-channel visualization for any

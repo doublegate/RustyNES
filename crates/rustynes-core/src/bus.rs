@@ -351,7 +351,7 @@ pub struct LockstepBus {
     /// behavior, so the determinism contract and existing save-states are
     /// unaffected.
     four_score: bool,
-    /// v2.1.7 P5 — power-on 2 KiB work-RAM fill selection. [`PowerOnRam::Zeroed`]
+    /// v2.1.7 P5 — power-on 2 KiB work-RAM fill selection. [`crate::nes::PowerOnRam::Zeroed`]
     /// (default) leaves the established all-zero power-up state; the other
     /// variants are opt-in and deterministic. Stored so [`Self::power_cycle`] can
     /// re-apply the same fill after it zeroes RAM, keeping `power_cycle == fresh
@@ -1243,7 +1243,7 @@ impl LockstepBus {
 
     /// v2.1.7 P5 — select the power-on work-RAM fill, storing it so a
     /// power-cycle re-applies it, and applying it to the current RAM now. The
-    /// default ([`PowerOnRam::Zeroed`]) is byte-identical. See [`PowerOnRam`].
+    /// default ([`crate::nes::PowerOnRam::Zeroed`]) is byte-identical. See [`crate::nes::PowerOnRam`].
     pub fn set_power_on_ram(&mut self, ram: crate::nes::PowerOnRam) {
         self.power_on_ram = ram;
         self.apply_power_on_ram();
