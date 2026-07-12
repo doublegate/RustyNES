@@ -3019,6 +3019,10 @@ impl App {
                 TasRequest::StampMacro { start, frames } => {
                     ed.stamp_macro(start, &frames);
                 }
+                // v2.1.10 "Creator Tools" (B8) — set / move / clear the
+                // force-greenzone range. The forced frames are captured as the
+                // editor next seeks / records across them.
+                TasRequest::SetForcedGreenzone(range) => ed.set_forced_greenzone_range(range),
                 // Handled in the first pass (outside the lock — they open dialogs).
                 TasRequest::SaveProject | TasRequest::LoadProject => {}
             }
