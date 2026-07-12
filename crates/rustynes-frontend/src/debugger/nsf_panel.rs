@@ -21,11 +21,15 @@
 //! combined per-redraw level, and a row of **per-channel peak VU meters** (the
 //! recent max level of each channel's ring). Both derive from the same
 //! already-sampled DAC copies, so they remain output-only and determinism-neutral.
+//!
+//! v2.1.6 "Expansion Audio" adds an **expansion-channel scope + VU** (the raw
+//! on-cart VRC6/VRC7/FDS/MMC5/N163/5B contribution, [`Nes::apu_snapshot`]'s
+//! `external` tap) and factors the scope/VU/ring primitives out into the shared
+//! [`super::audio_scope`] module (also used by the Audio Mixer panel).
 
 use rustynes_core::Nes;
 
-/// Number of samples retained per channel scope (one per redraw, ~60 Hz).
-const SCOPE_LEN: usize = 256;
+use super::audio_scope::{ScopeRing, scope, vu_meter};
 
 /// NSF panel state. The metadata strings are populated by the frontend at load
 /// time (the core mapper does not retain them); the live track index is read
@@ -47,33 +51,10 @@ pub struct NsfPanelState {
     dmc: ScopeRing,
     /// v1.8.9 — the combined (mixed) per-redraw level, for a master scope.
     master: ScopeRing,
-}
-
-/// A small rolling sample history for one channel scope.
-struct ScopeRing {
-    buf: [f32; SCOPE_LEN],
-    head: usize,
-}
-
-impl Default for ScopeRing {
-    fn default() -> Self {
-        Self {
-            buf: [0.0; SCOPE_LEN],
-            head: 0,
-        }
-    }
-}
-
-impl ScopeRing {
-    fn push(&mut self, v: f32) {
-        self.buf[self.head] = v;
-        self.head = (self.head + 1) % SCOPE_LEN;
-    }
-
-    /// The peak (max) magnitude across the ring — drives the per-channel VU bar.
-    fn peak(&self) -> f32 {
-        self.buf.iter().copied().fold(0.0_f32, f32::max)
-    }
+    /// v2.1.6 — the raw on-cart expansion-audio contribution (VRC6/VRC7/FDS/
+    /// MMC5/N163/5B), sampled from the read-only `external` DAC tap. Silent
+    /// (flat) when the loaded NSF drives no expansion chip.
+    external: ScopeRing,
 }
 
 impl NsfPanelState {
@@ -101,11 +82,16 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes
     let tri = f32::from(apu.triangle) / 15.0;
     let noi = f32::from(apu.noise) / 15.0;
     let dmc = f32::from(apu.dmc) / 127.0;
+    // v2.1.6 — the raw expansion-audio contribution. `external` is a small
+    // signed sample (~[-0.5, 0.5] scale, like a mixed channel); take its
+    // magnitude and clamp for the 0..=1 scope/VU convention.
+    let ext = (apu.external.abs() * 2.0).clamp(0.0, 1.0);
     state.pulse1.push(p1);
     state.pulse2.push(p2);
     state.triangle.push(tri);
     state.noise.push(noi);
     state.dmc.push(dmc);
+    state.external.push(ext);
     // v1.8.9 — the combined (averaged) level for the master scope.
     state.master.push((p1 + p2 + tri + noi + dmc) / 5.0);
     let expansion = nes.expansion_audio_chip();
@@ -209,6 +195,19 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes
                     ui.label("Expansion:");
                     ui.colored_label(egui::Color32::from_rgb(0xC0, 0x90, 0xF0), chip);
                 });
+                // v2.1.6 — the expansion chip's own scope + VU (raw contribution).
+                scope(
+                    ui,
+                    chip,
+                    &state.external,
+                    egui::Color32::from_rgb(0xC0, 0x90, 0xF0),
+                );
+                vu_meter(
+                    ui,
+                    "Ext",
+                    state.external.peak(),
+                    egui::Color32::from_rgb(0xC0, 0x90, 0xF0),
+                );
                 ui.weak("Expansion channels are summed into the master mix above.");
             }
 
@@ -218,62 +217,4 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes
                 "Tempo \u{2248} NTSC 60 Hz (vblank-driven); non-60 Hz tunes play slightly off.",
             );
         });
-}
-
-/// Draw one channel's rolling waveform into a fixed-height strip.
-#[allow(clippy::cast_precision_loss)]
-fn scope(ui: &mut egui::Ui, label: &str, ring: &ScopeRing, color: egui::Color32) {
-    ui.label(label);
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 36.0), egui::Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 2.0, egui::Color32::from_black_alpha(180));
-    let width = rect.width();
-    let height = rect.height();
-    let mut points = Vec::with_capacity(SCOPE_LEN);
-    for i in 0..SCOPE_LEN {
-        // chronological order (oldest first): start at head.
-        let s = ring.buf[(ring.head + i) % SCOPE_LEN];
-        let x = rect.min.x + (i as f32 / SCOPE_LEN as f32) * width;
-        // Sample is 0..=1; plot on the inverted Y axis.
-        let y = rect.max.y - s.clamp(0.0, 1.0) * height;
-        points.push(egui::pos2(x, y));
-    }
-    painter.add(egui::Shape::line(points, egui::Stroke::new(1.0, color)));
-}
-
-/// Draw one channel's peak level as a horizontal VU bar (label + filled bar).
-fn vu_meter(ui: &mut egui::Ui, label: &str, peak: f32, color: egui::Color32) {
-    ui.horizontal(|ui| {
-        ui.monospace(label);
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), 12.0), egui::Sense::hover());
-        let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 2.0, egui::Color32::from_black_alpha(180));
-        let filled = rect.width() * peak.clamp(0.0, 1.0);
-        if filled > 0.5 {
-            painter.rect_filled(
-                egui::Rect::from_min_size(rect.min, egui::vec2(filled, rect.height())),
-                2.0,
-                color,
-            );
-        }
-    });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn scope_ring_wraps_and_keeps_latest() {
-        let mut r = ScopeRing::default();
-        for i in 0..(SCOPE_LEN + 5) {
-            r.push(i as f32);
-        }
-        // After SCOPE_LEN+5 pushes the head wrapped; the newest sample is the
-        // one just before the head.
-        let newest = r.buf[(r.head + SCOPE_LEN - 1) % SCOPE_LEN];
-        assert!((newest - (SCOPE_LEN as f32 + 4.0)).abs() < f32::EPSILON);
-    }
 }

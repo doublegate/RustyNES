@@ -1271,6 +1271,14 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenChipPanel(ChipPanel::Nsf));
                         ui.close();
                     }
+                    // v2.1.6 "Expansion Audio" B7 — the Audio Mixer: per-source
+                    // balance sliders + per-channel scopes / VU (base 2A03 + the
+                    // on-cart expansion channel). A frontend mix overlay; the
+                    // deterministic core output is unchanged.
+                    if ui.button(ic(glyph::SLIDERS, "Audio Mixer")).clicked() {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::AudioMixer));
+                        ui.close();
+                    }
                     // v1.5.0 "Lens" Workstream C2 — Replay / TAS window (device
                     // topology + timebase + branch/seek UX over the .rnm machinery).
                     if ui.button(ic(glyph::VIDEO, "Replay / TAS")).clicked() {
