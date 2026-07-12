@@ -721,7 +721,8 @@ impl TasEditor {
         self.cursor = frame + 1;
         // v2.1.10 "Creator Tools" (B8) — same force-greenzone capture rule as in
         // `seek`: keyframe stride OR any frame inside the forced range.
-        if (self.cursor.is_multiple_of(self.capture_interval) || self.greenzone.is_forced(self.cursor))
+        if (self.cursor.is_multiple_of(self.capture_interval)
+            || self.greenzone.is_forced(self.cursor))
             && !self.greenzone.has(self.cursor)
         {
             self.greenzone
