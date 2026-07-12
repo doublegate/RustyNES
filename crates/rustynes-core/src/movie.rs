@@ -307,10 +307,18 @@ impl Movie {
         // Frame count + width.
         let frame_count = r.u32().map_err(map_eof)? as usize;
         let bytes_per_frame = r.u8().map_err(map_eof)?;
-        if bytes_per_frame > BYTES_PER_FRAME {
+        if bytes_per_frame == 0 || bytes_per_frame > BYTES_PER_FRAME {
             // A newer movie packs more device bytes than we understand; we
             // fail cleanly rather than mis-parse (the reserved byte exists
             // precisely so this stays a graceful error, not a corruption).
+            //
+            // SECURITY: a `bytes_per_frame` of 0 is likewise rejected. With a
+            // zero-width record each frame read (`r.take(0)`) consumes no input,
+            // so the `for _ in 0..frame_count` loop below would push
+            // `frame_count` (an untrusted u32, up to ~4.3 billion) empty frames
+            // out of a finite file — an OOM DoS (found by the `movie` fuzz
+            // target). A real movie always writes the fixed `BYTES_PER_FRAME`
+            // (>= 1), so rejecting 0 costs no legitimate file.
             return Err(MovieError::UnsupportedFrameWidth {
                 got: bytes_per_frame,
                 max: BYTES_PER_FRAME,
@@ -323,9 +331,20 @@ impl Movie {
         } else {
             StartPoint::PowerOn
         };
-        // Input stream: `frame_count` records of `bytes_per_frame` bytes.
-        let mut frames = Vec::with_capacity(frame_count);
+        // Input stream: `frame_count` records of `bytes_per_frame` bytes
+        // (`width >= 1`, enforced above).
         let width = usize::from(bytes_per_frame);
+        // SECURITY: `frame_count` is an untrusted 4-byte field (up to ~4.3
+        // billion). Pre-sizing `Vec::with_capacity(frame_count)` from it lets a
+        // 49-byte header claim a multi-gigabyte allocation — an OOM DoS (found
+        // by the `movie` fuzz target). A real movie carries exactly
+        // `frame_count * width` more bytes, so cap the reservation at what the
+        // remaining input could actually hold: for a valid file this equals
+        // `frame_count` (identical allocation, byte-for-byte the same result),
+        // and for a truncated / hostile one the `r.take(width)` below still
+        // fails cleanly with an EOF error once the real bytes run out.
+        let max_plausible_frames = r.remaining() / width;
+        let mut frames = Vec::with_capacity(frame_count.min(max_plausible_frames));
         for _ in 0..frame_count {
             let rec = r.take(width).map_err(map_eof)?;
             // rec[0] = p1, rec[1] = p2 (present whenever width >= 2, which it
@@ -721,6 +740,32 @@ mod tests {
         assert!(matches!(
             Movie::deserialize(&[0u8; 10]),
             Err(MovieError::HeaderTruncated { .. })
+        ));
+    }
+
+    #[test]
+    fn deserialize_hostile_frame_count_does_not_oom() {
+        // A tiny (header-only) movie whose `frame_count` field claims ~4.3
+        // billion frames. The old `Vec::with_capacity(frame_count)` would try to
+        // reserve multiple gigabytes before the input-stream read failed (an OOM
+        // DoS found by the `movie` fuzz target). It must now reject cleanly with
+        // an EOF: the capacity is capped at the remaining bytes / width.
+        let movie = Movie {
+            region: Region::Ntsc,
+            rom_sha256: [0; 32],
+            start: StartPoint::PowerOn,
+            frames: Vec::new(),
+            rerecord_count: 0,
+        };
+        let mut bytes = movie.serialize();
+        // frame_count is the 4-byte LE field right after the 32-byte rom hash
+        // (offset 8 + 2 + 1 + 1 + 32 = 44).
+        const FRAME_COUNT_OFF: usize = 8 + 2 + 1 + 1 + 32;
+        bytes[FRAME_COUNT_OFF..FRAME_COUNT_OFF + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        // Deserialize must return promptly with an error, not exhaust memory.
+        assert!(matches!(
+            Movie::deserialize(&bytes),
+            Err(MovieError::Eof(_))
         ));
     }
 

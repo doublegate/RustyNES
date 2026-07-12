@@ -20,6 +20,38 @@
 
 use std::collections::VecDeque;
 
+/// The graded desync verdict derived from the recent comparison history.
+///
+/// This is the **clear desync surface** the frontend renders: rather than force
+/// the panel to re-derive a verdict from the raw counters, [`DesyncDiagnostics`]
+/// exposes one enum that folds them together with a hysteresis threshold, so a
+/// single out-of-order or momentarily-late peer checksum does not flash a
+/// false "desynced" banner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DesyncStatus {
+    /// Every comparison so far matched — the peers are in lockstep.
+    InSync,
+    /// At least one frame has ever mismatched, but the current consecutive-run
+    /// is below the confirm threshold: either a transient (a match has since
+    /// reset the run to 0, leaving a sticky historical mismatch) or a
+    /// still-building run that has not yet crossed into a confirmed desync.
+    Suspect {
+        /// The current consecutive-mismatch run (0 if the last compare matched).
+        consecutive: u32,
+        /// The earliest frame that ever diverged.
+        first_desync_frame: u32,
+    },
+    /// The consecutive-mismatch run has reached the confirm threshold: this is a
+    /// real, sustained divergence. Once entered it is **sticky** — a desync is
+    /// unrecoverable for a rollback session (the peers can never re-converge
+    /// without a full state resync), so the surface never silently downgrades a
+    /// confirmed [`Desynced`](Self::Desynced) back to [`Suspect`](Self::Suspect).
+    Desynced {
+        /// The earliest frame that diverged.
+        first_desync_frame: u32,
+    },
+}
+
 /// One recorded confirmed-frame checksum comparison.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CrcCompare {
@@ -64,6 +96,15 @@ pub struct DesyncDiagnostics {
     /// Consecutive mismatches ending at the most recent comparison (reset to 0
     /// by any match). A nonzero value means the session is currently diverged.
     consecutive_mismatches: u32,
+    /// Peak consecutive-mismatch run ever observed. Drives the sticky
+    /// [`DesyncStatus::Desynced`] verdict: once the run has *ever* reached
+    /// [`desync_threshold`](Self::desync_threshold) the session is treated as
+    /// confirmed-desynced even if a later stray match briefly resets the live
+    /// run (a rollback desync is unrecoverable, so the verdict must not flap).
+    peak_consecutive: u32,
+    /// How many consecutive mismatches confirm a real desync (hysteresis). A
+    /// single reordered / late peer checksum stays [`DesyncStatus::Suspect`].
+    desync_threshold: u32,
     /// The most recent comparison, for the "local vs remote CRC" readout.
     last: Option<CrcCompare>,
 }
@@ -79,15 +120,37 @@ impl DesyncDiagnostics {
     /// 30-frame checksum interval (~2 per second) this is ~32 s of history.
     pub const CAPACITY: usize = 64;
 
-    /// A fresh, empty diagnostics record.
+    /// Default hysteresis: how many *consecutive* mismatching comparisons
+    /// confirm a real desync (vs. a single reordered / late peer checksum).
+    ///
+    /// A confirmed-frame checksum is only exchanged every `checksum_interval`
+    /// frames and covers a *confirmed* frame, so a legitimate one-off mismatch
+    /// is nearly impossible on a correct implementation — but a burst-reordered
+    /// pair of `Checksum` messages can momentarily disagree before the deferred
+    /// `compare_pending_checksums` pass reconciles them. Requiring **3** in a
+    /// row (~1.5 s at the default interval) rejects that transient while still
+    /// declaring a genuine divergence promptly.
+    pub const DEFAULT_DESYNC_THRESHOLD: u32 = 3;
+
+    /// A fresh, empty diagnostics record with the default desync threshold.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_threshold(Self::DEFAULT_DESYNC_THRESHOLD)
+    }
+
+    /// A fresh, empty diagnostics record with an explicit confirm threshold
+    /// (consecutive mismatches before [`DesyncStatus::Desynced`]). A `0` is
+    /// treated as `1` (the very first mismatch confirms).
+    #[must_use]
+    pub fn with_threshold(desync_threshold: u32) -> Self {
         Self {
             history: VecDeque::with_capacity(Self::CAPACITY),
             total: 0,
             mismatches: 0,
             first_desync_frame: None,
             consecutive_mismatches: 0,
+            peak_consecutive: 0,
+            desync_threshold: desync_threshold.max(1),
             last: None,
         }
     }
@@ -115,6 +178,7 @@ impl DesyncDiagnostics {
         } else {
             self.mismatches += 1;
             self.consecutive_mismatches = self.consecutive_mismatches.saturating_add(1);
+            self.peak_consecutive = self.peak_consecutive.max(self.consecutive_mismatches);
             self.first_desync_frame = Some(self.first_desync_frame.map_or(frame, |f| f.min(frame)));
         }
         if self.history.len() == Self::CAPACITY {
@@ -128,6 +192,51 @@ impl DesyncDiagnostics {
     #[must_use]
     pub const fn in_sync(&self) -> bool {
         self.first_desync_frame.is_none()
+    }
+
+    /// The graded [`DesyncStatus`] verdict — the frontend's single desync
+    /// surface. Applies the hysteresis threshold and the sticky-once-confirmed
+    /// rule (see [`DesyncStatus`]).
+    #[must_use]
+    pub const fn status(&self) -> DesyncStatus {
+        match self.first_desync_frame {
+            None => DesyncStatus::InSync,
+            Some(first) => {
+                // Confirmed if the run has EVER reached the threshold (sticky):
+                // a rollback desync cannot recover, so never downgrade it.
+                if self.peak_consecutive >= self.desync_threshold {
+                    DesyncStatus::Desynced {
+                        first_desync_frame: first,
+                    }
+                } else {
+                    DesyncStatus::Suspect {
+                        consecutive: self.consecutive_mismatches,
+                        first_desync_frame: first,
+                    }
+                }
+            }
+        }
+    }
+
+    /// `true` once the consecutive-mismatch run has ever reached the confirm
+    /// threshold — i.e. [`status`](Self::status) is
+    /// [`DesyncStatus::Desynced`]. Convenience for a boolean gate.
+    #[must_use]
+    pub const fn is_desynced(&self) -> bool {
+        matches!(self.status(), DesyncStatus::Desynced { .. })
+    }
+
+    /// The confirm threshold in effect (consecutive mismatches → confirmed
+    /// desync).
+    #[must_use]
+    pub const fn desync_threshold(&self) -> u32 {
+        self.desync_threshold
+    }
+
+    /// Peak consecutive-mismatch run ever observed (survives a later match).
+    #[must_use]
+    pub const fn peak_consecutive_mismatches(&self) -> u32 {
+        self.peak_consecutive
     }
 
     /// The earliest frame whose checksums disagreed, if any.
@@ -279,6 +388,64 @@ mod tests {
         );
         // The most recent compare matched, so the consecutive run is 0.
         assert_eq!(d.consecutive_mismatches(), 0);
+    }
+
+    #[test]
+    fn status_applies_hysteresis_then_confirms_and_sticks() {
+        let mut d = DesyncDiagnostics::with_threshold(3);
+        assert_eq!(d.status(), DesyncStatus::InSync);
+
+        // One mismatch: suspect, not confirmed (below threshold 3).
+        d.record(30, 1, 9, 0, 0);
+        assert_eq!(
+            d.status(),
+            DesyncStatus::Suspect {
+                consecutive: 1,
+                first_desync_frame: 30
+            }
+        );
+        assert!(!d.is_desynced());
+
+        // A match resets the live run but leaves the sticky first-desync frame:
+        // still merely suspect (a transient).
+        d.record(60, 5, 5, 0, 0);
+        assert_eq!(
+            d.status(),
+            DesyncStatus::Suspect {
+                consecutive: 0,
+                first_desync_frame: 30
+            }
+        );
+
+        // Three consecutive mismatches reach the threshold → confirmed desync.
+        d.record(90, 1, 2, 0, 0);
+        d.record(120, 1, 2, 0, 0);
+        d.record(150, 1, 2, 0, 0);
+        assert_eq!(
+            d.status(),
+            DesyncStatus::Desynced {
+                first_desync_frame: 30
+            }
+        );
+        assert!(d.is_desynced());
+        assert_eq!(d.peak_consecutive_mismatches(), 3);
+
+        // A later stray match must NOT downgrade a confirmed desync (sticky).
+        d.record(180, 7, 7, 0, 0);
+        assert_eq!(
+            d.status(),
+            DesyncStatus::Desynced {
+                first_desync_frame: 30
+            }
+        );
+    }
+
+    #[test]
+    fn threshold_zero_is_treated_as_one() {
+        let mut d = DesyncDiagnostics::with_threshold(0);
+        assert_eq!(d.desync_threshold(), 1);
+        d.record(30, 1, 2, 0, 0);
+        assert!(d.is_desynced(), "first mismatch confirms at threshold 1");
     }
 
     #[test]

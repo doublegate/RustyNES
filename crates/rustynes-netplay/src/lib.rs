@@ -148,8 +148,10 @@ pub mod signaling;
 pub mod webrtc;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use connection::{ConnectionState, DisconnectReason, NetplayConnection, UdpTransport};
-pub use diagnostics::{CrcCompare, DesyncDiagnostics};
+pub use connection::{
+    ConnectionState, DisconnectReason, NetplayConnection, PeerLink, UdpTransport,
+};
+pub use diagnostics::{CrcCompare, DesyncDiagnostics, DesyncStatus};
 #[cfg(not(target_arch = "wasm32"))]
 pub use mesh_net::{MeshError, MeshHost, MeshJoiner, UdpMeshTransport};
 pub use message::{NetMessage, PROTOCOL_VERSION, fnv1a64};
@@ -159,7 +161,7 @@ pub use nat_connect::{NatConfig, NatConnect, NatPhase};
 pub use relay::{RelayUdpSocket, TurnClient, TurnConfig};
 pub use rng::SplitMix64;
 pub use session::{AdvanceOutcome, MAX_PLAYERS, NetplayError, RollbackSession, SessionConfig};
-pub use signaling::{Action, ClientId, Relay, SignalMessage};
+pub use signaling::{Action, ClientId, MAX_ROOM_LIST, Relay, RoomInfo, SignalMessage};
 #[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
 pub use signaling_client::{SignalEvent, SignalingClient};
 pub use spectator::{SpectatorConfig, SpectatorOutcome, SpectatorSession};

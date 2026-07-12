@@ -155,6 +155,11 @@ pub struct NetplayUi {
     /// Session config (input delay, rollback window, checksum interval). The
     /// `local_player` field is overwritten at connect from `is_host`.
     config: SessionConfig,
+    /// Extra delayed-stream buffer depth (frames) applied when *spectating* a
+    /// match — a broadcast / anti-spoiler delay layered on top of the natural
+    /// spectator lag. `0` (default) shows confirmed frames immediately. See
+    /// [`SpectatorConfig::delay_frames`](rustynes_netplay::SpectatorConfig::delay_frames).
+    spectator_delay_frames: u32,
 }
 
 impl Default for NetplayUi {
@@ -165,6 +170,7 @@ impl Default for NetplayUi {
             rom_hash: [0u8; 32],
             status: NetplayStatus::default(),
             config: SessionConfig::default(),
+            spectator_delay_frames: 0,
         }
     }
 }
@@ -178,6 +184,19 @@ impl NetplayUi {
     #[must_use]
     pub const fn is_active(&self) -> bool {
         !matches!(self.state, NetplayState::Idle)
+    }
+
+    /// Set the delayed-stream buffer depth (frames) used when spectating. Takes
+    /// effect on the next spectate; clamped by the session to
+    /// [`SpectatorConfig::MAX_DELAY_FRAMES`](rustynes_netplay::SpectatorConfig::MAX_DELAY_FRAMES).
+    pub const fn set_spectator_delay_frames(&mut self, frames: u32) {
+        self.spectator_delay_frames = frames;
+    }
+
+    /// The configured spectator delayed-stream buffer depth (frames).
+    #[must_use]
+    pub const fn spectator_delay_frames(&self) -> u32 {
+        self.spectator_delay_frames
     }
 
     /// The current phase.
@@ -290,6 +309,7 @@ impl NetplayUi {
                 let session = SpectatorSession::new(
                     SpectatorConfig {
                         num_players: self.config.num_players,
+                        delay_frames: self.spectator_delay_frames,
                     },
                     transport,
                     rom_hash,
@@ -402,6 +422,9 @@ impl NetplayUi {
                     }
                     Some(DisconnectReason::HandshakeTimeout) => {
                         "handshake timed out (no peer answered)".to_string()
+                    }
+                    Some(DisconnectReason::PeerTimeout) => {
+                        "peer connection lost (no data for several seconds)".to_string()
                     }
                     None => "connection closed".to_string(),
                 };

@@ -22,6 +22,29 @@ threads through `rustc`. Install with `rustup toolchain install nightly`.
 | `cartridge_parser` | `rustynes_mappers::parse(&[u8])` | iNES / NES 2.0 header is attacker-controlled input |
 | `cpu_step` | `Cpu::step(&mut bus)` | 256-opcode dispatch incl. unofficial / JAM opcodes |
 | `mapper_writes` | `Mapper::cpu_write` + `ppu_write` + notify_* | Bank-table OOB, IRQ counter overflow |
+| `ppu_reg_io` | `Ppu::cpu_write_register` / `cpu_read_register` | $2000–$2007 write-toggle / PPUDATA buffer / OAM decode |
+| `apu_reg_io` | `Apu::write_register` / `read_status` | $4000–$4017 length/frame-counter/IRQ decode (no bus) |
+| `netplay_message` | `NetMessage::from_bytes` + `SignalMessage::parse` | **untrusted network input** — binary UDP + JSON signaling/lobby parsers |
+| `save_state` | `parse_header` + `Nes::extract_thumbnail` + `restore_quiet` | untrusted `.rns` file: header + section length prefixes |
+| `movie` | `Movie::deserialize` | untrusted `.rnm` file: header, embedded `.rns` start-point, per-frame stream |
+
+The v2.2.0 targets cover the remaining untrusted-input boundaries: the two
+CPU-facing chip register files, the netplay network parsers (highest value —
+these ingest bytes straight off a socket / WebSocket), and the two on-disk
+deserializers. The `movie` target already earned its keep, surfacing two
+`Movie::deserialize` OOM DoS paths (an untrusted `frame_count` pre-sizing a
+multi-GB `Vec`, and a zero-width `bytes_per_frame` looping `frame_count` empty
+pushes) — both fixed with bounded-allocation guards + a regression test.
+
+### Environment note (LeakSanitizer)
+
+In sandboxed / containerized environments where LeakSanitizer cannot attach
+(it relies on ptrace), disable leak detection so the harness runs the code
+under test rather than aborting on an LSan setup error:
+
+```bash
+ASAN_OPTIONS=detect_leaks=0 cargo +nightly fuzz run <target> -- -detect_leaks=0
+```
 
 ## Running
 
@@ -54,7 +77,8 @@ compile on every PR via the standard workspace clippy/check jobs.
 To run a CI-friendly time-bounded fuzz campaign:
 
 ```bash
-for target in cartridge_parser cpu_step mapper_writes; do
+for target in cartridge_parser cpu_step mapper_writes \
+              ppu_reg_io apu_reg_io netplay_message save_state movie; do
     cargo +nightly fuzz run "$target" -- -max_total_time=120 -runs=0
 done
 ```

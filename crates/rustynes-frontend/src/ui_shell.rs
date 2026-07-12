@@ -1324,6 +1324,15 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::GameDb));
                         ui.close();
                     }
+                    // (H1) v2.2.0 "Capstone" — the read-only ROM Info browser
+                    // needs a loaded ROM to describe.
+                    if ui
+                        .add_enabled(rom, egui::Button::new(ic(glyph::CIRCLE_INFO, "ROM Info")))
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::RomInfo));
+                        ui.close();
+                    }
                     // v1.3.0 menu reorg — HD-pack loader (v1.2.0 C3), folded in
                     // from the former standalone "Mod" menu as a Tools submenu;
                     // native + `hd-pack`-feature-gated. (H1) Load/unload needs a

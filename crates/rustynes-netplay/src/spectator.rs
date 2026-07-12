@@ -64,11 +64,44 @@ pub struct SpectatorConfig {
     /// when a frame is fully confirmed (all `num_players` inputs present) and
     /// whether to enable the Four Score adapter. Defaults to `2`.
     pub num_players: u8,
+    /// **Delayed-stream buffer depth**, in frames. A spectator already lags the
+    /// live match by `input_delay + network-latency` frames (it can only show a
+    /// frame it has fully received); `delay_frames` adds a *further* intentional
+    /// hold so the spectator only reveals frame `f` once frame `f + delay_frames`
+    /// is also confirmed. Defaults to `0` (show as soon as confirmed).
+    ///
+    /// # Why an extra delay
+    ///
+    /// - **Anti-spoiler / broadcast delay.** A tournament stream commonly runs a
+    ///   spectator several seconds behind so a caster (or a co-spectator on the
+    ///   same feed) cannot leak an imminent input to a player.
+    /// - **Jitter smoothing.** Holding a small backlog of confirmed frames lets
+    ///   the frontend present at a steady cadence even when confirmations arrive
+    ///   bursty over a lossy relay, instead of stalling then fast-forwarding.
+    ///
+    /// This is purely a *presentation* delay: the emulated frames are still
+    /// produced byte-identically and in order — only the moment each is revealed
+    /// moves later. It never sends anything, so it cannot perturb the match. The
+    /// value is clamped to [`SpectatorConfig::MAX_DELAY_FRAMES`] on use so it can
+    /// never push the reveal point past the bounded lookahead window.
+    pub delay_frames: u32,
+}
+
+impl SpectatorConfig {
+    /// Upper bound on [`delay_frames`](Self::delay_frames). Kept comfortably
+    /// below [`MAX_SPECTATOR_FRAME_LOOKAHEAD`] so the buffered-but-unshown
+    /// backlog always fits inside the frames the session will accept, and a
+    /// misconfigured huge delay cannot wedge the spectator permanently behind
+    /// the horizon. 512 frames ≈ 8.5 s at 60 Hz — ample for a broadcast delay.
+    pub const MAX_DELAY_FRAMES: u32 = 512;
 }
 
 impl Default for SpectatorConfig {
     fn default() -> Self {
-        Self { num_players: 2 }
+        Self {
+            num_players: 2,
+            delay_frames: 0,
+        }
     }
 }
 
@@ -165,6 +198,28 @@ impl<T: Transport> SpectatorSession<T> {
         self.config.num_players
     }
 
+    /// The configured delayed-stream buffer depth, clamped to
+    /// [`SpectatorConfig::MAX_DELAY_FRAMES`]. See
+    /// [`SpectatorConfig::delay_frames`].
+    #[must_use]
+    pub const fn delay_frames(&self) -> u32 {
+        let d = self.config.delay_frames;
+        if d > SpectatorConfig::MAX_DELAY_FRAMES {
+            SpectatorConfig::MAX_DELAY_FRAMES
+        } else {
+            d
+        }
+    }
+
+    /// The newest frame the spectator is currently permitted to *reveal*: the
+    /// confirmed horizon pulled back by [`delay_frames`](Self::delay_frames).
+    /// `None` until enough frames past the delay have been confirmed.
+    #[must_use]
+    fn reveal_horizon(&self) -> Option<u32> {
+        self.last_confirmed_frame
+            .and_then(|c| c.checked_sub(self.delay_frames()))
+    }
+
     /// `true` once a `Sync` with the matching ROM has been observed.
     #[must_use]
     pub const fn is_synced(&self) -> bool {
@@ -175,9 +230,9 @@ impl<T: Transport> SpectatorSession<T> {
     /// how far the spectator is *behind* the live match. The frontend can
     /// fast-forward (call [`Self::advance`] repeatedly) to catch up.
     #[must_use]
-    pub const fn pending_frames(&self) -> u32 {
-        match self.last_confirmed_frame {
-            Some(c) if c >= self.current_frame => c - self.current_frame + 1,
+    pub fn pending_frames(&self) -> u32 {
+        match self.reveal_horizon() {
+            Some(h) if h >= self.current_frame => h - self.current_frame + 1,
             _ => 0,
         }
     }
@@ -204,9 +259,13 @@ impl<T: Transport> SpectatorSession<T> {
         self.ingest();
         self.recompute_confirmed();
 
-        // Show the next frame only once every player's real input is known.
+        // Show the next frame only once every player's real input is known AND
+        // it sits at or behind the (optionally delayed) reveal horizon. With
+        // `delay_frames == 0` this is exactly "as soon as confirmed"; with a
+        // positive delay the frame is held until `frame + delay_frames` has also
+        // been confirmed (the delayed-stream / broadcast-delay buffer).
         let frame = self.current_frame;
-        let ready = self.last_confirmed_frame.is_some_and(|c| frame <= c);
+        let ready = self.reveal_horizon().is_some_and(|h| frame <= h);
         if !ready {
             return SpectatorOutcome::default();
         }
@@ -378,6 +437,78 @@ mod tests {
         assert_eq!(spec.pending_frames(), 0);
     }
 
+    /// A delayed-stream spectator holds each confirmed frame until `delay_frames`
+    /// *further* frames are also confirmed, then reveals frames in order and
+    /// byte-identically to a no-delay spectator (the delay is presentation-only).
+    #[test]
+    fn spectator_delay_buffer_holds_then_reveals() {
+        const DELAY: u32 = 3;
+        let rom = synth_nrom();
+        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
+        let mut spec = SpectatorSession::new(
+            SpectatorConfig {
+                num_players: 2,
+                delay_frames: DELAY,
+            },
+            spec_link,
+            hash,
+        );
+        let mut nes = Nes::from_rom(&rom).unwrap();
+
+        // Confirm frames 0..=2 (fewer than DELAY past frame 0): nothing reveals.
+        for f in 0..DELAY {
+            for player in 0..2 {
+                feeder.send(&NetMessage::Input {
+                    player,
+                    frame: f,
+                    input: 0,
+                });
+            }
+        }
+        for _ in 0..DELAY {
+            assert!(
+                !spec.advance(&mut nes).produced_frame,
+                "nothing reveals until delay_frames past frame 0 are confirmed"
+            );
+        }
+        assert_eq!(spec.pending_frames(), 0, "reveal horizon not reached yet");
+
+        // Confirm frame 3 (== frame 0 + DELAY): frame 0 may now be revealed.
+        for player in 0..2 {
+            feeder.send(&NetMessage::Input {
+                player,
+                frame: DELAY,
+                input: 0,
+            });
+        }
+        let out = spec.advance(&mut nes);
+        assert!(
+            out.produced_frame,
+            "frame 0 reveals once frame DELAY confirmed"
+        );
+        assert_eq!(out.frame, 0);
+        assert_eq!(spec.delay_frames(), DELAY);
+    }
+
+    /// An absurd `delay_frames` is clamped to `MAX_DELAY_FRAMES`, so it cannot
+    /// push the reveal point past the accept window.
+    #[test]
+    fn spectator_delay_is_clamped() {
+        let rom = synth_nrom();
+        let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
+        let (a, _b) = MemoryTransport::pair(LinkConditions::PERFECT, 1);
+        let spec = SpectatorSession::new(
+            SpectatorConfig {
+                num_players: 2,
+                delay_frames: u32::MAX,
+            },
+            a,
+            hash,
+        );
+        assert_eq!(spec.delay_frames(), SpectatorConfig::MAX_DELAY_FRAMES);
+    }
+
     /// The load-bearing determinism-safety property: a spectator fed the SAME
     /// confirmed per-player input stream reaches a **byte-identical
     /// framebuffer** to a reference `Nes` run directly over those inputs. This
@@ -392,7 +523,14 @@ mod tests {
         let rom = synth_nrom();
         let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
         let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
-        let mut spec = SpectatorSession::new(SpectatorConfig { num_players: 2 }, spec_link, hash);
+        let mut spec = SpectatorSession::new(
+            SpectatorConfig {
+                num_players: 2,
+                delay_frames: 0,
+            },
+            spec_link,
+            hash,
+        );
         let mut nes = Nes::from_rom(&rom).unwrap();
 
         // An absurd frame index (near u32::MAX) for a valid player. The horizon
@@ -448,7 +586,14 @@ mod tests {
         let rom = synth_nrom();
         let hash = *Nes::from_rom(&rom).unwrap().rom_sha256();
         let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
-        let mut spec = SpectatorSession::new(SpectatorConfig { num_players: 2 }, spec_link, hash);
+        let mut spec = SpectatorSession::new(
+            SpectatorConfig {
+                num_players: 2,
+                delay_frames: 0,
+            },
+            spec_link,
+            hash,
+        );
         let mut nes = Nes::from_rom(&rom).unwrap();
 
         // Confirm + show frame 0 (a 2-player match).
@@ -505,7 +650,14 @@ mod tests {
         // Spectator: feed the same stream over the transport. `feeder.send`
         // pushes onto the spectator's inbound wire.
         let (spec_link, mut feeder) = MemoryTransport::pair(LinkConditions::PERFECT, 7);
-        let mut spec = SpectatorSession::new(SpectatorConfig { num_players: 2 }, spec_link, hash);
+        let mut spec = SpectatorSession::new(
+            SpectatorConfig {
+                num_players: 2,
+                delay_frames: 0,
+            },
+            spec_link,
+            hash,
+        );
         let mut spec_nes = Nes::from_rom(&rom).unwrap();
         spec_nes.power_cycle();
 

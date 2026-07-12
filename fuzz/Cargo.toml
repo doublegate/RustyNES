@@ -17,6 +17,13 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 rustynes-mappers = { path = "../crates/rustynes-mappers" }
 rustynes-cpu = { path = "../crates/rustynes-cpu" }
+# v2.2.0 — expanded fuzz surface: PPU / APU register I/O, the netplay
+# message + signaling parsers (untrusted network input), and the save-state
+# (.rns) / movie (.rnm) deserializers (untrusted file input).
+rustynes-ppu = { path = "../crates/rustynes-ppu" }
+rustynes-apu = { path = "../crates/rustynes-apu" }
+rustynes-netplay = { path = "../crates/rustynes-netplay", default-features = false }
+rustynes-core = { path = "../crates/rustynes-core" }
 
 # Match workspace profile choices but with reasonable fuzz defaults.
 [profile.release]
@@ -40,6 +47,41 @@ bench = false
 [[bin]]
 name = "mapper_writes"
 path = "fuzz_targets/mapper_writes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ppu_reg_io"
+path = "fuzz_targets/ppu_reg_io.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "apu_reg_io"
+path = "fuzz_targets/apu_reg_io.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "netplay_message"
+path = "fuzz_targets/netplay_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "save_state"
+path = "fuzz_targets/save_state.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "movie"
+path = "fuzz_targets/movie.rs"
 test = false
 doc = false
 bench = false

@@ -119,6 +119,9 @@ mod basic_bot_panel;
 // conditional trace. Pure + frontend-only; the unit tests live in the module.
 mod expr;
 mod game_db_panel;
+// v2.2.0 "Capstone" — read-only ROM Info browser (per-game DB + No-Intro CRC +
+// decoded cartridge header for the loaded ROM).
+mod rom_info_panel;
 // v1.5.0 "Lens" Workstream A4 — HD-pack per-pixel inspector (native + hd-pack).
 // `pub(crate)` so `app.rs` can drive its `show` (the panel needs the compositor
 // + per-frame snapshots the app owns, so its render lives there, not here).
@@ -182,6 +185,10 @@ pub enum ToolPanel {
     Input,
     /// Per-game ROM-database editor (v1.2.0 Workstream B, B4).
     GameDb,
+    /// Read-only ROM Info browser (v2.2.0 "Capstone"): the loaded ROM's
+    /// identity CRCs / SHA-256, its per-game DB entry, and its decoded
+    /// cartridge header. A read-only companion to [`Self::GameDb`].
+    RomInfo,
     /// Live "Input Display" panel — the consolidated controller + expansion-
     /// device HUD (v1.7.0 "Forge" beta.5, #51; the v1.5.0 "Lens" Workstream A1
     /// Input Miniatures overlay absorbed the former standalone Input Display).
@@ -280,6 +287,8 @@ pub struct DebuggerOverlay {
     show_cheevos: bool,
     show_perf: bool,
     show_game_db: bool,
+    /// Read-only ROM Info browser open flag (v2.2.0 "Capstone").
+    show_rom_info: bool,
     /// "Input Display" panel open flag (v1.7.0 "Forge" beta.5, #51; née the
     /// v1.5.0 A1 Input Miniatures overlay).
     show_input_display: bool,
@@ -349,6 +358,8 @@ pub struct DebuggerOverlay {
     cheat_ui: cheat_panel::CheatPanelState,
     /// ROM-database editor panel state (v1.2.0 Workstream B, B4).
     game_db_ui: game_db_panel::GameDbPanelState,
+    /// Read-only ROM Info panel state (v2.2.0 "Capstone").
+    rom_info_ui: rom_info_panel::RomInfoPanelState,
     /// CRC32 of the currently-loaded ROM (PRG+CHR, header-excluded), pushed by
     /// [`DebuggerOverlay::set_rom_crc`] at load. `None` for FDS / NSF / no ROM.
     /// The ROM-database editor keys its overlay edits on this.
@@ -521,6 +532,7 @@ impl DebuggerOverlay {
             show_cheevos: false,
             show_perf: false,
             show_game_db: false,
+            show_rom_info: false,
             show_input_display: false,
             #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
             show_hd_pixel: false,
@@ -554,6 +566,7 @@ impl DebuggerOverlay {
             show_documentation: false,
             cheat_ui: cheat_panel::CheatPanelState::default(),
             game_db_ui: game_db_panel::GameDbPanelState::default(),
+            rom_info_ui: rom_info_panel::RomInfoPanelState::default(),
             rom_crc: None,
             rom_crc_full: None,
             settings_ui: settings_panel::SettingsPanelState::default(),
@@ -1046,6 +1059,7 @@ impl DebuggerOverlay {
             ToolPanel::Perf => self.show_perf = true,
             ToolPanel::Input => self.show_input = true,
             ToolPanel::GameDb => self.show_game_db = true,
+            ToolPanel::RomInfo => self.show_rom_info = true,
             ToolPanel::InputDisplay => self.show_input_display = true,
             ToolPanel::Replay => self.show_replay = true,
             ToolPanel::BasicBot => self.show_basic_bot = true,
@@ -1285,12 +1299,13 @@ impl DebuggerOverlay {
     /// `tool_panels` must be listed here or it silently fails to open
     /// standalone (it would only render while another `nes`-reading panel
     /// happened to be open, then vanish when that one closed). Today the
-    /// `nes`-reading tool panels are **Cheats** (`show_cheat`) and the
-    /// **ROM Database** editor (`show_game_db`). If you add another panel that
-    /// takes `&mut Nes` in `tool_panels`, add its `show_*` flag here too.
+    /// `nes`-reading tool panels are **Cheats** (`show_cheat`), the
+    /// **ROM Database** editor (`show_game_db`), and the read-only **ROM Info**
+    /// browser (`show_rom_info`). If you add another panel that takes `&Nes` /
+    /// `&mut Nes` in `tool_panels`, add its `show_*` flag here too.
     #[must_use]
     pub const fn any_nes_tool_open(&self) -> bool {
-        self.show_cheat || self.show_game_db
+        self.show_cheat || self.show_game_db || self.show_rom_info
     }
 
     /// Build the egui UI for this frame (the deep-overlay path: chip panels +
@@ -1726,7 +1741,7 @@ impl DebuggerOverlay {
             }
         }
         if self.show_game_db
-            && let Some(nes) = nes
+            && let Some(nes) = nes.as_deref_mut()
         {
             game_db_panel::show(
                 ctx,
@@ -1734,6 +1749,21 @@ impl DebuggerOverlay {
                 &mut self.game_db_ui,
                 nes,
                 self.rom_crc,
+            );
+        }
+        if self.show_rom_info
+            && let Some(nes) = nes.as_deref()
+        {
+            // Read-only: takes `&Nes`. Surfaces the loaded ROM's identity CRCs +
+            // SHA-256, its per-game DB entry, and its decoded cartridge header.
+            // (v2.2.0 "Capstone".)
+            rom_info_panel::show(
+                ctx,
+                &mut self.show_rom_info,
+                &mut self.rom_info_ui,
+                nes,
+                self.rom_crc,
+                self.rom_crc_full,
             );
         }
         if self.show_settings {

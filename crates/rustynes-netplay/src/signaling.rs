@@ -61,6 +61,66 @@ use std::collections::HashMap;
 /// the transport.
 pub type ClientId = u64;
 
+/// The maximum number of rooms a single [`SignalMessage::RoomList`] carries.
+///
+/// Both the encoder and [`SignalMessage::parse`] cap at this count, so a
+/// malicious / oversized frame cannot drive an unbounded allocation (a `DoS`). A
+/// public lobby with more than this many concurrent open rooms simply truncates
+/// the browse list — matchmaking ([`SignalMessage::QuickMatch`]) still reaches
+/// them.
+pub const MAX_ROOM_LIST: usize = 256;
+
+/// One open room's public metadata, for the lobby browser
+/// ([`SignalMessage::RoomList`]).
+///
+/// Carries only what a joiner needs to decide whether to join: the room `code`,
+/// how many players are present vs. the room's capacity, and the `rom_hash` the
+/// room is playing (so the browser can label / filter by game). It deliberately
+/// exposes **no** SDP, ICE, or per-client identity — the lobby is a directory,
+/// not a transport.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoomInfo {
+    /// The room code a joiner passes to [`SignalMessage::Join`].
+    pub code: String,
+    /// Players currently in the room (`1..=max_players`).
+    pub players: u8,
+    /// The room's total capacity (2..=4).
+    pub max_players: u8,
+    /// Hex SHA-256 of the ROM the room is playing (may be empty for a room that
+    /// announced no hash).
+    pub rom_hash: String,
+}
+
+impl RoomInfo {
+    /// `true` if the room has a free slot a new peer could take.
+    #[must_use]
+    pub const fn is_joinable(&self) -> bool {
+        self.players < self.max_players
+    }
+
+    /// Encode as a flat JSON object (an element of the `rooms` array).
+    fn to_json_object(&self) -> String {
+        format!(
+            r#"{{"room":{},"players":{},"max_players":{},"rom_hash":{}}}"#,
+            json_quote(&self.code),
+            self.players,
+            self.max_players,
+            json_quote(&self.rom_hash)
+        )
+    }
+
+    /// Parse one flat JSON object (a `rooms` array element). Returns `None` if a
+    /// required field is missing / malformed.
+    fn parse_object(obj: &str) -> Option<Self> {
+        Some(Self {
+            code: json_str_field(obj, "room")?,
+            players: u8::try_from(json_num_field(obj, "players")?).ok()?,
+            max_players: u8::try_from(json_num_field(obj, "max_players")?).ok()?,
+            rom_hash: json_str_field(obj, "rom_hash").unwrap_or_default(),
+        })
+    }
+}
+
 /// A signaling message, in both directions.
 ///
 /// Parsed from / encoded to the JSON wire form (see the module docs). The
@@ -157,6 +217,49 @@ pub enum SignalMessage {
         /// A short human-readable reason.
         reason: String,
     },
+    /// Client → server: request the current lobby directory — the open,
+    /// joinable rooms — for a **browse-and-join** UI (v2.2.0). Optionally
+    /// filtered to rooms playing a specific `rom_hash` (empty = all games). The
+    /// server replies with a [`RoomList`](Self::RoomList). Carrying no per-room
+    /// identity, this is safe to answer for any connected client.
+    ListRooms {
+        /// Restrict the listing to rooms whose `rom_hash` matches (hex; empty =
+        /// no filter).
+        rom_hash: String,
+    },
+    /// Server → client: the open, joinable rooms (a [`ListRooms`](Self::ListRooms)
+    /// reply, capped at [`MAX_ROOM_LIST`]). Each [`RoomInfo`] carries the code a
+    /// joiner passes to [`Join`](Self::Join).
+    RoomList {
+        /// The open rooms (may be empty).
+        rooms: Vec<RoomInfo>,
+    },
+    /// Client → server: **matchmaking** — put me into *any* open room playing
+    /// `rom_hash` with a free slot, creating a fresh room if none exists
+    /// (v2.2.0). The server resolves a target room and joins the client to it,
+    /// replying with [`Matched`](Self::Matched) (which names the resolved room
+    /// code) and nudging the room's existing peers exactly like a normal
+    /// [`Join`](Self::Join). This is the "quick play" path — the user never sees
+    /// or types a room code.
+    QuickMatch {
+        /// Hex SHA-256 of the ROM to match on (a room's game must match).
+        rom_hash: String,
+        /// The player count to request when *creating* a new room (2..=4).
+        max_players: u8,
+    },
+    /// Server → client: a [`QuickMatch`](Self::QuickMatch) landed you in room
+    /// `room` at `slot` (which holds `max_players`). Distinct from
+    /// [`Joined`](Self::Joined) only in that it also reports the resolved room
+    /// **code**, so the matchmade client can display / share it. WebRTC pairing
+    /// then proceeds identically (lower slot offers to higher).
+    Matched {
+        /// The resolved room code (existing or freshly created).
+        room: String,
+        /// The assigned slot (`0..max_players`).
+        slot: u8,
+        /// The room's total capacity (2..=4).
+        max_players: u8,
+    },
 }
 
 impl SignalMessage {
@@ -220,6 +323,25 @@ impl SignalMessage {
             "error" => Some(Self::Error {
                 reason: json_str_field(json, "reason").unwrap_or_default(),
             }),
+            "list-rooms" => Some(Self::ListRooms {
+                rom_hash: json_str_field(json, "rom_hash").unwrap_or_default(),
+            }),
+            "room-list" => Some(Self::RoomList {
+                rooms: parse_room_array(json),
+            }),
+            "quick-match" => Some(Self::QuickMatch {
+                rom_hash: json_str_field(json, "rom_hash").unwrap_or_default(),
+                max_players: json_num_field(json, "max_players")
+                    .and_then(|n| u8::try_from(n).ok())
+                    .unwrap_or(2),
+            }),
+            "matched" => Some(Self::Matched {
+                room: json_str_field(json, "room")?,
+                slot: u8::try_from(json_num_field(json, "slot")?).ok()?,
+                max_players: json_num_field(json, "max_players")
+                    .and_then(|n| u8::try_from(n).ok())
+                    .unwrap_or(2),
+            }),
             _ => None,
         }
     }
@@ -277,8 +399,101 @@ impl SignalMessage {
             Self::Error { reason } => {
                 format!(r#"{{"type":"error","reason":{}}}"#, json_quote(reason))
             }
+            Self::ListRooms { rom_hash } => {
+                format!(
+                    r#"{{"type":"list-rooms","rom_hash":{}}}"#,
+                    json_quote(rom_hash)
+                )
+            }
+            Self::RoomList { rooms } => {
+                let mut out = String::from(r#"{"type":"room-list","rooms":["#);
+                for (i, r) in rooms.iter().take(MAX_ROOM_LIST).enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&r.to_json_object());
+                }
+                out.push_str("]}");
+                out
+            }
+            Self::QuickMatch {
+                rom_hash,
+                max_players,
+            } => format!(
+                r#"{{"type":"quick-match","rom_hash":{},"max_players":{max_players}}}"#,
+                json_quote(rom_hash)
+            ),
+            Self::Matched {
+                room,
+                slot,
+                max_players,
+            } => format!(
+                r#"{{"type":"matched","room":{},"slot":{slot},"max_players":{max_players}}}"#,
+                json_quote(room)
+            ),
         }
     }
+}
+
+/// Split the `rooms` array of a `room-list` frame into [`RoomInfo`]s.
+///
+/// Extracts the `"rooms":[ ... ]` array substring, walks it at brace depth 1 to
+/// slice out each top-level `{ ... }` element, and parses each with
+/// [`RoomInfo::parse_object`]. Malformed elements are skipped (never panic); the
+/// count is capped at [`MAX_ROOM_LIST`] so an oversized frame cannot force an
+/// unbounded allocation. Depth tracking ignores braces inside quoted strings so
+/// a `rom_hash`/code value containing a brace cannot desync the walk.
+fn parse_room_array(json: &str) -> Vec<RoomInfo> {
+    let Some(arr_start) = field_value_start(json, "rooms") else {
+        return Vec::new();
+    };
+    // The value must open with '['.
+    let Some(after_bracket) = arr_start.strip_prefix('[') else {
+        return Vec::new();
+    };
+
+    let mut rooms = Vec::new();
+    let mut depth = 0i32;
+    let mut obj_start: Option<usize> = None;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, c) in after_bracket.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    obj_start = Some(i);
+                }
+                depth += 1;
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 0
+                    && let Some(start) = obj_start.take()
+                    && let Some(room) = RoomInfo::parse_object(&after_bracket[start..=i])
+                {
+                    rooms.push(room);
+                    if rooms.len() >= MAX_ROOM_LIST {
+                        break;
+                    }
+                }
+            }
+            // The closing ']' at depth 0 ends the array.
+            ']' if depth == 0 => break,
+            _ => {}
+        }
+    }
+    rooms
 }
 
 /// One action the async layer must perform after [`Relay::handle`]: send a
@@ -324,6 +539,10 @@ pub struct Relay {
     /// Reverse index: which room each connected client is in (for O(1)
     /// disconnect handling + relay).
     client_room: HashMap<ClientId, String>,
+    /// Monotonic counter feeding the generated room codes for matchmaking
+    /// ([`SignalMessage::QuickMatch`] rooms). Deterministic (no RNG in this
+    /// I/O-free core), so the server behaves reproducibly in tests.
+    quick_match_seq: u64,
 }
 
 impl Relay {
@@ -357,11 +576,16 @@ impl Relay {
                 room,
                 rom_hash,
                 max_players,
-            } => self.handle_join(client, room, rom_hash, max_players),
+            } => self.handle_join(client, &room, &rom_hash, max_players),
             relayable @ (SignalMessage::Offer { .. }
             | SignalMessage::Answer { .. }
             | SignalMessage::Candidate { .. }
             | SignalMessage::PublicAddr { .. }) => self.relay(client, &relayable),
+            SignalMessage::ListRooms { rom_hash } => self.handle_list_rooms(client, &rom_hash),
+            SignalMessage::QuickMatch {
+                rom_hash,
+                max_players,
+            } => self.handle_quick_match(client, &rom_hash, max_players),
             // Server→client message types arriving FROM a client are not
             // expected; ignore them rather than trust them.
             _ => Vec::new(),
@@ -405,11 +629,71 @@ impl Relay {
     fn handle_join(
         &mut self,
         client: ClientId,
-        room_code: String,
-        rom_hash: String,
+        room_code: &str,
+        rom_hash: &str,
         req_max_players: u8,
     ) -> Vec<Action> {
-        let room = self.rooms.entry(room_code.clone()).or_default();
+        match self.add_to_room(client, room_code, rom_hash, req_max_players) {
+            Ok((slot, max_players, existing_peers)) => {
+                Self::join_actions(client, slot, max_players, &existing_peers, None)
+            }
+            Err(reason) => Self::reject(client, reason),
+        }
+    }
+
+    /// Reply to a [`SignalMessage::ListRooms`] with the open, joinable rooms —
+    /// the lobby directory (v2.2.0). Only sent to the requester. An optional
+    /// non-empty `rom_hash` filter restricts the listing to rooms playing that
+    /// game. Full rooms are omitted (a browse-and-join UI only shows enterable
+    /// rooms). Capped at [`MAX_ROOM_LIST`].
+    fn handle_list_rooms(&self, client: ClientId, rom_hash: &str) -> Vec<Action> {
+        vec![Action::Send {
+            to: client,
+            msg: SignalMessage::RoomList {
+                rooms: self.open_rooms(rom_hash),
+            },
+        }]
+    }
+
+    /// Handle a [`SignalMessage::QuickMatch`]: join the client to any open room
+    /// playing `rom_hash`, or create a fresh room if none exists (v2.2.0). The
+    /// client learns the resolved room via [`SignalMessage::Matched`]; existing
+    /// peers get the usual `PeerJoined` nudge.
+    fn handle_quick_match(
+        &mut self,
+        client: ClientId,
+        rom_hash: &str,
+        max_players: u8,
+    ) -> Vec<Action> {
+        // Prefer an existing open room for this exact game with a free slot.
+        let target = self
+            .open_rooms(rom_hash)
+            .into_iter()
+            .find(|r| r.is_joinable() && (rom_hash.is_empty() || r.rom_hash == rom_hash))
+            .map(|r| r.code);
+
+        let room_code = target.unwrap_or_else(|| self.next_room_code());
+        match self.add_to_room(client, &room_code, rom_hash, max_players) {
+            Ok((slot, max, existing_peers)) => {
+                Self::join_actions(client, slot, max, &existing_peers, Some(room_code))
+            }
+            // A race (the chosen room filled between selection and add) falls
+            // back to a rejection the client can retry — never panics.
+            Err(reason) => Self::reject(client, reason),
+        }
+    }
+
+    /// The shared room-entry primitive: create/lookup the room, enforce capacity
+    /// + rom-hash matching, add the client, and return `(slot, max_players,
+    /// existing_peers)` — or an error reason for a full / mismatched room.
+    fn add_to_room(
+        &mut self,
+        client: ClientId,
+        room_code: &str,
+        rom_hash: &str,
+        req_max_players: u8,
+    ) -> Result<(u8, u8, Vec<ClientId>), &'static str> {
+        let room = self.rooms.entry(room_code.to_string()).or_default();
 
         // The first joiner sets the room size (clamped 2..=4); later joiners
         // inherit it.
@@ -418,54 +702,104 @@ impl Relay {
         }
         let max_players = room.max_players;
 
-        // Reject a joiner past the room's player count.
+        // Reject a joiner past the room's player count. Drop a freshly-created
+        // but now-unused room so a rejected QuickMatch race leaves no ghost.
         if room.slots.len() >= usize::from(max_players) {
-            return vec![
-                Action::Send {
-                    to: client,
-                    msg: SignalMessage::Error {
-                        reason: "room full".to_string(),
-                    },
-                },
-                Action::Close { who: client },
-            ];
+            if room.slots.is_empty() {
+                self.rooms.remove(room_code);
+            }
+            return Err("room full");
         }
 
         // The first joiner sets the room's rom hash; the rest must match it
         // (a non-empty mismatch is rejected; an empty hash skips the check).
         if room.slots.is_empty() {
-            room.rom_hash = rom_hash;
+            room.rom_hash = rom_hash.to_string();
         } else if !room.rom_hash.is_empty() && !rom_hash.is_empty() && room.rom_hash != rom_hash {
-            return vec![
-                Action::Send {
-                    to: client,
-                    msg: SignalMessage::Error {
-                        reason: "rom mismatch".to_string(),
-                    },
-                },
-                Action::Close { who: client },
-            ];
+            return Err("rom mismatch");
         }
 
         let slot = u8::try_from(room.slots.len()).unwrap_or(u8::MAX);
-        // Snapshot the existing peers before adding the newcomer; each gets a
-        // PeerJoined nudge so it offers to the newcomer (lower offers to higher).
         let existing_peers: Vec<ClientId> = room.slots.clone();
         room.slots.push(client);
-        self.client_room.insert(client, room_code);
+        self.client_room.insert(client, room_code.to_string());
+        Ok((slot, max_players, existing_peers))
+    }
 
+    /// Build the actions for a successful room entry: tell the newcomer its slot
+    /// (via [`Matched`](SignalMessage::Matched) when `matched_room` is set — the
+    /// `QuickMatch` path — else [`Joined`](SignalMessage::Joined)), then nudge each
+    /// existing peer with `PeerJoined` (lower slot offers to higher).
+    fn join_actions(
+        client: ClientId,
+        slot: u8,
+        max_players: u8,
+        existing_peers: &[ClientId],
+        matched_room: Option<String>,
+    ) -> Vec<Action> {
+        let self_msg = matched_room.map_or(SignalMessage::Joined { slot, max_players }, |room| {
+            SignalMessage::Matched {
+                room,
+                slot,
+                max_players,
+            }
+        });
         let mut actions = vec![Action::Send {
             to: client,
-            msg: SignalMessage::Joined { slot, max_players },
+            msg: self_msg,
         }];
-        for peer in existing_peers {
+        for &peer in existing_peers {
             actions.push(Action::Send {
                 to: peer,
                 msg: SignalMessage::PeerJoined { slot },
             });
         }
-
         actions
+    }
+
+    /// A room-full / rom-mismatch rejection: an `Error` then `Close`.
+    fn reject(client: ClientId, reason: &str) -> Vec<Action> {
+        vec![
+            Action::Send {
+                to: client,
+                msg: SignalMessage::Error {
+                    reason: reason.to_string(),
+                },
+            },
+            Action::Close { who: client },
+        ]
+    }
+
+    /// The open (has a free slot), optionally `rom_hash`-filtered rooms as
+    /// [`RoomInfo`]s, capped at [`MAX_ROOM_LIST`]. The order is unspecified
+    /// (`HashMap` iteration); a client sorts for display.
+    #[must_use]
+    pub fn open_rooms(&self, rom_hash_filter: &str) -> Vec<RoomInfo> {
+        self.rooms
+            .iter()
+            .filter(|(_, r)| !r.slots.is_empty() && r.slots.len() < usize::from(r.max_players))
+            .filter(|(_, r)| rom_hash_filter.is_empty() || r.rom_hash == rom_hash_filter)
+            .take(MAX_ROOM_LIST)
+            .map(|(code, r)| RoomInfo {
+                code: code.clone(),
+                players: u8::try_from(r.slots.len()).unwrap_or(u8::MAX),
+                max_players: r.max_players,
+                rom_hash: r.rom_hash.clone(),
+            })
+            .collect()
+    }
+
+    /// Generate the next unused matchmaking room code from the monotonic
+    /// counter, e.g. `QM-000001`. Bumps until an unused code is found so a
+    /// generated code never collides with a live room.
+    fn next_room_code(&mut self) -> String {
+        loop {
+            self.quick_match_seq = self.quick_match_seq.wrapping_add(1);
+            let code = format!("QM-{:06}", self.quick_match_seq);
+            if !self.rooms.contains_key(&code) {
+                return code;
+            }
+        }
     }
 
     /// Relay an `Offer` / `Answer` / `Candidate` to the peer named by its `to`
@@ -942,6 +1276,152 @@ mod tests {
                 max_players: 2
             }
         );
+    }
+
+    #[test]
+    fn lobby_messages_roundtrip() {
+        let msgs = [
+            SignalMessage::ListRooms {
+                rom_hash: "deadbeef".into(),
+            },
+            SignalMessage::ListRooms {
+                rom_hash: String::new(),
+            },
+            SignalMessage::RoomList { rooms: Vec::new() },
+            SignalMessage::RoomList {
+                rooms: vec![
+                    RoomInfo {
+                        code: "AB12CD".into(),
+                        players: 1,
+                        max_players: 2,
+                        rom_hash: "deadbeef".into(),
+                    },
+                    RoomInfo {
+                        code: "QM-000001".into(),
+                        players: 3,
+                        max_players: 4,
+                        rom_hash: String::new(),
+                    },
+                ],
+            },
+            SignalMessage::QuickMatch {
+                rom_hash: "cafe".into(),
+                max_players: 3,
+            },
+            SignalMessage::Matched {
+                room: "QM-000007".into(),
+                slot: 2,
+                max_players: 4,
+            },
+        ];
+        for m in &msgs {
+            let json = m.to_json();
+            let back =
+                SignalMessage::parse(&json).unwrap_or_else(|| panic!("parse failed for {json}"));
+            assert_eq!(*m, back, "roundtrip mismatch for {json}");
+        }
+    }
+
+    #[test]
+    fn list_rooms_returns_only_open_matching_rooms() {
+        let mut relay = Relay::new();
+        // A 2-player room for game "aa" with one peer (open).
+        let _ = relay.handle(1, join("open", "aa"));
+        // A full 2-player room for game "bb".
+        let _ = relay.handle(2, join("full", "bb"));
+        let _ = relay.handle(3, join("full", "bb"));
+
+        // Unfiltered: only the open room is listed (the full one is omitted).
+        let acts = relay.handle(
+            1,
+            SignalMessage::ListRooms {
+                rom_hash: String::new(),
+            },
+        );
+        let Action::Send {
+            to: 1,
+            msg: SignalMessage::RoomList { rooms },
+        } = &acts[0]
+        else {
+            panic!("expected a room-list reply, got {acts:?}");
+        };
+        assert_eq!(rooms.len(), 1);
+        assert_eq!(rooms[0].code, "open");
+        assert_eq!(rooms[0].players, 1);
+        assert!(rooms[0].is_joinable());
+
+        // Filtered to game "bb": the only "bb" room is full, so the list is empty.
+        let acts = relay.handle(
+            1,
+            SignalMessage::ListRooms {
+                rom_hash: "bb".into(),
+            },
+        );
+        let Action::Send {
+            msg: SignalMessage::RoomList { rooms },
+            ..
+        } = &acts[0]
+        else {
+            panic!("expected a room-list reply");
+        };
+        assert!(rooms.is_empty(), "the matching room is full → omitted");
+    }
+
+    #[test]
+    fn quick_match_joins_an_open_room_then_creates_one() {
+        let mut relay = Relay::new();
+        // Host opens a room for game "aa".
+        let _ = relay.handle(1, join_n("host", "aa", 2));
+
+        // A quick-match for "aa" lands in the existing open room at slot 1 and
+        // the existing peer is nudged.
+        let acts = relay.handle(
+            2,
+            SignalMessage::QuickMatch {
+                rom_hash: "aa".into(),
+                max_players: 2,
+            },
+        );
+        assert!(acts.contains(&Action::Send {
+            to: 2,
+            msg: SignalMessage::Matched {
+                room: "host".into(),
+                slot: 1,
+                max_players: 2,
+            },
+        }));
+        assert!(acts.contains(&Action::Send {
+            to: 1,
+            msg: SignalMessage::PeerJoined { slot: 1 },
+        }));
+
+        // A quick-match for a DIFFERENT game finds no open room → a new one is
+        // created (a generated QM- code) with the client at slot 0.
+        let acts = relay.handle(
+            3,
+            SignalMessage::QuickMatch {
+                rom_hash: "zz".into(),
+                max_players: 2,
+            },
+        );
+        let Action::Send {
+            to: 3,
+            msg:
+                SignalMessage::Matched {
+                    room,
+                    slot,
+                    max_players,
+                },
+        } = &acts[0]
+        else {
+            panic!("expected a matched reply, got {acts:?}");
+        };
+        assert!(
+            room.starts_with("QM-"),
+            "created room has a generated code: {room}"
+        );
+        assert_eq!(*slot, 0);
+        assert_eq!(*max_players, 2);
     }
 
     fn join(room: &str, hash: &str) -> SignalMessage {
