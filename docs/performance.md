@@ -301,6 +301,99 @@ artifact:
   Useful for a self-built desktop binary; not wired into the release matrix
   (which ships the maximally-portable baseline `x86-64` build).
 
+### v2.1.8 "Performance" A1 — specialized visible-scanline fast dot path
+
+**Profile first (mandatory).** A `perf record` of a representative mixed
+workload (the PGO training corpus — `nestest`, `flowing_palette`, `oam_stress`,
+`db_apu`, `AccuracyCoin`, and the MMC1/MMC3 Holy Mapperel boards, self-driven
+past their title screens) attributes frame self-time as:
+
+| Function | Self-time |
+|---|---|
+| `rustynes_ppu::ppu::Ppu::tick` | **46.5%** |
+| `LockstepBus::cpu_clock` | 22.5% |
+| `Cpu::end_cycle` | 10.4% |
+| `Cpu::read1` | 8.0% |
+| `LockstepBus::raw_cpu_read` / `Cpu::dispatch` / mapper reads | remainder |
+
+So the PPU per-dot FSM is the single dominant hot function — **the correct
+target** (this also corrects a stale inference from the synthetic
+`ppu_tick_one_frame` bench, whose no-op `PpuBus` and rendering-disabled default
+under-represent the real per-dot cost). The overwhelming majority of `tick`'s
+89,342 per-frame calls are visible-scanline background-render dots whose
+surrounding event/bookkeeping branches (scanline-241 VBL set, pre-render clear,
+sprite-tile fetch dots 260..=316, the OAMADDR-reset window, the dot-257
+hori-copy, the PPUDATA state machine, the OAM-corruption commit, the odd-frame
+skip) are all statically dead.
+
+**Design.** A default-OFF runtime knob (`Nes::set_fast_dotloop`) gates a
+specialized straight-line handler (`Ppu::tick_visible_render_fast`). When ON,
+the `tick` dispatch tests a conservative guard — a visible scanline, dots
+`1..=256`, rendering stably enabled (immediate == 1-dot-delayed == previous
+dot), and no sub-dot disturbance (no `$2006` copy-V delay, no PPUMASK
+write-delay, no PPUDATA state machine in flight, no armed/pending
+OAM-corruption, warm classification cache) — and, when it holds, runs the
+handler and returns. The handler executes the **identical** helper sequence the
+general path would for such a dot (`tick_oam_corruption`,
+`tick_sprite_eval_per_dot`, `tick_oam_bus`, `reload_bg_shift_regs`, the
+`ale_drive_*` / `fetch_*` pair, `inc_hori_v` / `inc_vert_v`, `emit_pixel`,
+`shift_bg`) with the dead branches elided, so it is **byte-identical by
+construction**; any disturbance falls instantly back to the exact per-dot path.
+The guard is ordered to short-circuit cheaply for non-covered dots (dot range →
+rendering-enabled → cache/visible → the rare disturbance flags), so the knob
+costs ~nothing when the fast path does not apply. Compiled out under
+`ppu-state-trace` (whose end-of-tick hook must observe every dot).
+
+**Why a per-dot specialization and not a whole-scanline batch.** The
+Mesen2/tetanes-style approach batches an entire visible scanline in one
+straight-line renderer. That is **architecturally precluded** here by the v2.0.0
+"Timebase" lockstep every-cycle-bus-access scheduler: `LockstepBus::run_ppu_to`
+is called twice per CPU cycle (split around the bus access) and advances the PPU
+by **≤3 dots per CPU cycle**, and the CPU observes PPU side-effects
+(A12→MMC3 IRQ at dot 260, the /NMI edge sampled between dots, sprite-0 hit and
+VBL via `$2002`, `$2004` / `$2007` reads) at that 3-dot granularity. The PPU is
+therefore **never invited to run a scanline uninterrupted** — a true batch would
+require reintroducing the catch-up scheduler v2.0.0 deliberately removed and
+would break the exact-dot event delivery. So A1 optimizes the per-dot *work*
+(pruning dead branches on the hot dots), not the dot *cadence*.
+
+**Byte-identity — proven, not assumed.** With the knob OFF (the shipped default)
+the build is byte-identical to one without the field. With it ON, the
+differential test `crates/rustynes-test-harness/tests/fast_dotloop_diff.rs`
+runs a corpus (`nestest`, `flowing_palette`, `oam_stress`, `AccuracyCoin`, the
+Holy Mapperel MMC1/MMC3 boards, and a mid-frame raster demo) through BOTH paths
+and asserts bit-for-bit identical framebuffer + palette-index framebuffer +
+audio + CPU-cycle count + full core snapshot, **every frame**. AccuracyCoin
+holds **141/141**, `nestest` 0-diff, the `visual_regression` golden set and the
+APU oracle all byte-identical.
+
+**Measured — interleaved per-frame A/B (drift-robust).** The development host
+(Intel Core i9-10850K, 20 logical cores) was under heavy concurrent build load
+during this pass, which contaminates the cross-bench Criterion `full_frame`
+comparison (later benches absorb the load spike). An interleaved harness that
+alternates OFF/ON at **per-frame** granularity cancels that slow drift; measured
+at low load, rock-stable across three rounds:
+
+| Workload (rendering state) | exact (OFF) | fast (ON) | fast is faster by |
+|---|---|---|---|
+| `nestest` (rendering **enabled**, rendered menu) | ~4.54 ms/frame | ~3.98 ms/frame | **+12.3%** |
+| `flowing_palette` (rendering **disabled** — 64-colour backdrop-override demo) | ~2.64 ms/frame | ~2.64 ms/frame | +0.3% (neutral) |
+
+The +12.3% on rendering-enabled content clears the standing **>3% + byte-identical**
+adoption bar decisively; the rendering-disabled demo never enters the fast path
+(the guard bails at `rendering_enabled()`), so it is neutral. Real games render
+the vast majority of the time, so the representative effect is the +12.3% figure.
+Criterion `full_frame` baselines this pass (stock, same host): `nes_run_frame_nestest`
+~4.26 ms, `nes_run_frame_flowing_palette` ~2.55 ms, `ppu_tick_one_frame` ~541 µs.
+
+**Decision: shipped default-OFF (opt-in).** The optimization is a pure,
+byte-identical speedup, so per this file's convention it *could* be the default.
+It is nonetheless kept **default-OFF** for this cut — it is the roadmap's single
+highest-risk item, and shipping it off keeps the default build unchanged and
+byte-identical while the differential test + oracle prove correctness and the
+A/B proves the win. Recommended for promotion to default after maintainer review
+and a clean-host Criterion confirmation.
+
 ### v1.4.0 Workstream F — measure-first micro-opt pass (core)
 
 All changes are zero-behavior / zero-synthesis: bit-identical framebuffer +

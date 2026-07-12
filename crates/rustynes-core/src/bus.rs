@@ -1223,6 +1223,19 @@ impl LockstepBus {
         self.ppu.extra_scanlines()
     }
 
+    /// v2.1.8 A1 — enable/disable the specialized visible-scanline fast dot
+    /// path. `false` (default) is byte-identical to a build without it. See
+    /// [`rustynes_ppu::Ppu::set_fast_dotloop`].
+    pub const fn set_fast_dotloop(&mut self, enabled: bool) {
+        self.ppu.set_fast_dotloop(enabled);
+    }
+
+    /// v2.1.8 A1 — whether the visible-scanline fast dot path is enabled.
+    #[must_use]
+    pub const fn fast_dotloop(&self) -> bool {
+        self.ppu.fast_dotloop()
+    }
+
     /// v2.1.4 F2.3 — enable/disable the optional OAM-decay accuracy model.
     /// `false` (default) is byte-identical to a decay-free PPU. See
     /// [`rustynes_ppu::Ppu::set_oam_decay`].

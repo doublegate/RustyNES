@@ -14,6 +14,49 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Performance
+
+- **Specialized visible-scanline fast dot path (v2.1.8 "Performance" A1;
+  default-OFF, opt-in).** Profiling a representative mixed workload
+  (`perf`, the PGO training corpus) shows `Ppu::tick` is the emulator's single
+  hottest function — **~46% of frame self-time** — and the overwhelming majority
+  of its 89,342 per-frame invocations are visible-scanline background-render dots
+  whose surrounding event/bookkeeping branches are all statically dead. A new
+  **runtime knob** (`Nes::set_fast_dotloop`, default **false**) dispatches those
+  "clean" dots — a visible scanline, dots `1..=256`, rendering stably enabled,
+  and no sub-dot disturbance in flight (no `$2006` copy-V or PPUMASK write-delay
+  pending, no PPUDATA state machine running, no armed/pending OAM-corruption,
+  warm scanline-classification cache) — to `Ppu::tick_visible_render_fast`, a
+  straight-line handler that runs the **identical** helper sequence with the
+  dead branches pruned. Any disturbance drops instantly back to the exact
+  per-dot path.
+  - **Byte-identical (proven, not assumed).** The default (`false`) is
+    byte-identical to a build without the field. With the knob ON, a new
+    differential test (`fast_dotloop_diff`) runs a corpus (`nestest`,
+    `flowing_palette`, `oam_stress`, `AccuracyCoin`, the Holy Mapperel MMC1/MMC3
+    boards, and a mid-frame raster demo) through BOTH paths and asserts
+    bit-for-bit identical framebuffer + palette-index framebuffer + audio + CPU
+    cycles + full core snapshot, every frame — including under the opt-in
+    `Rp2c02G` die revision (v2.1.7 #280), whose `$2003`-write-during-render
+    OAM-corruption is one of the disturbances that forces the exact path.
+    AccuracyCoin holds **141/141**, nestest 0-diff, the `visual_regression`
+    golden set, and the APU oracle all stay byte-identical.
+  - **Measured (interleaved per-frame A/B, drift-robust):** rendering-enabled
+    content (`nestest`, a rendered menu) is **~+12.3% faster per frame**
+    (4.54 → 3.98 ms, stable across rounds), well above the project's
+    >3%-Criterion adoption bar; rendering-**disabled** content (`flowing_palette`,
+    which shows all 64 colours via the rendering-off backdrop-override trick, so
+    the fast path never applies) is **neutral** (~+0.3%, the reordered
+    short-circuit guard costs ~nothing). See `docs/performance.md`.
+  - **Architectural note:** a *whole-scanline batch* (the Mesen2/tetanes-style
+    straight-line renderer) is **precluded** by the v2.0.0 "Timebase" lockstep
+    every-cycle-bus-access scheduler — `run_ppu_to` advances the PPU ≤3 dots per
+    CPU cycle and the CPU observes A12/NMI/sprite-0/`$2002` at 3-dot granularity,
+    so the PPU is never invited to run a scanline uninterrupted. This is a
+    per-dot specialization, not a dot-batch. **Shipped default-OFF** (the
+    shipped build is unchanged/byte-identical); recommended for promotion to
+    default after maintainer review + a clean-host Criterion confirmation.
+
 ## [2.1.7] - 2026-07-12 - "Fathom" (hardware revisions & DMA frontier — opt-in PPU/2A03 die-revision + power-on RAM/palette model + honest DMA "unexpected read" residual ADR 0033; "Stepping")
 
 ### Added

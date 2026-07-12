@@ -2149,6 +2149,30 @@ impl Nes {
         self.bus.extra_scanlines()
     }
 
+    /// v2.1.8 A1 — enable or disable the specialized visible-scanline fast dot
+    /// path (a pure performance optimization for the PPU's hottest per-dot
+    /// case).
+    ///
+    /// The PPU dot FSM (`Ppu::tick`) is the emulator's single hottest function
+    /// (~46% of a representative frame's self-time). This knob dispatches the
+    /// common "clean" visible BG-render dots (visible scanline, dots `1..=256`,
+    /// rendering stably enabled, no sub-dot disturbance) to a straight-line
+    /// handler that runs the identical helper sequence with the statically-dead
+    /// event branches pruned. **Off by default** and **byte-identical** to a
+    /// build without it — proven bit-for-bit by the differential test
+    /// (`fast_dotloop_diff`) and the full `AccuracyCoin` / visual-regression /
+    /// nestest oracle. A frontend/config knob, NOT part of the save-state.
+    pub const fn set_fast_dotloop(&mut self, enabled: bool) {
+        self.bus.set_fast_dotloop(enabled);
+    }
+
+    /// v2.1.8 A1 — whether the visible-scanline fast dot path is enabled
+    /// (`false` = default, byte-identical to a build without it).
+    #[must_use]
+    pub const fn fast_dotloop(&self) -> bool {
+        self.bus.fast_dotloop()
+    }
+
     /// v2.1.4 F2.3 — enable or disable the optional OAM-decay accuracy model.
     ///
     /// The 2C02's OAM is dynamic RAM refreshed by sprite evaluation; with rendering
