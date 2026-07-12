@@ -14,6 +14,55 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Marquee CRT shader stack + raw NTSC composite signal (v2.1.9 "Presentation
+  & Signal").** A presentation/display cut, all opt-in and **default
+  byte-identical** (the shipped presentation is untouched, so `visual_regression`
+  stays byte-identical and AccuracyCoin holds **141/141**).
+  - **Raw composite core (P4).** A new `rustynes-ppu::raw_signal` module that
+    keeps the 2C02 composite waveform *un-decoded*: for every `(index, emphasis)`
+    pair it emits the twelve per-subcarrier-phase voltages the chip actually
+    generates, so a decoder can reproduce signal-domain artifacts a per-colour
+    palette cannot — composite colour bleed, dot crawl, and the waterfall/dither
+    transparency tricks. Follows the canonical Bisqwit `nes_ntsc` / Mesen2 "raw
+    palette" model; `generate_raw_signal_lut()` yields the full 512×12 table a
+    host uploads as a signal texture. No transcendental in the path, so it is
+    `f32` byte-identical across x86 / aarch64 / wasm / `thumbv7em` (a `no_std`
+    `GOLDEN_SIGNAL` cross-target lock guards it). Additive + default-OFF.
+  - **CRT shader stack (B6).** Three single-pass WGSL ports of the reference
+    libretro *slang* CRT presets, added as **new WGSL files** in
+    `rustynes-gfx-shaders` behind a `CrtStackShader` registry: **CRT-Royale**
+    (luminance-scaled Gaussian beam, selectable aperture/slot/shadow mask,
+    gamma-correct scanlines, curvature), **CRT Guest Advanced / guest-dr-venom**
+    (power-shaped beam, halation glow, mask, curvature), and **Sony Megatron**
+    (per-subpixel phosphor lighting with an HDR headroom + SDR Reinhard
+    fallback). All four new shaders — the three CRT plus the P4 signal-decode
+    pass — are gate-validated as real, compilable WGSL by the same **naga**
+    front-end + validator wgpu runs at pipeline creation.
+  - **Composable-stack UI wiring + per-game presets.** The CRT trio and the raw
+    signal-decode pass are selectable from **Settings → Shaders** as first-class
+    `ShaderStack` passes with their `#pragma parameter` sliders (mask type,
+    scanline weight, curvature, beam, glow, HDR headroom), plus per-game shader
+    presets (auto-applied on ROM load, off by default).
+  - **Raw NTSC signal-decode pass (P4 shader).** `signal_decode.wgsl`
+    reconstructs the 2C02's actual two-level chroma square wave from the
+    palette-index framebuffer (matching `raw_signal.rs` byte-for-byte) and
+    demodulates it with a windowed quadrature filter — decoding the true signal
+    rather than re-encoding already-decoded RGB.
+  - **Capture: GIF / animated capture + WAV audio export.** The `av-record`
+    feature gains GIF export (palette-quantized, frame-decimated) and standalone
+    WAV audio export alongside the existing PNG-sequence / raw A/V capture —
+    driven from a read-only framebuffer/audio tap so capture never perturbs the
+    deterministic emulation timeline.
+  - **Palette editor — live generated-palette preview.** The existing
+    generated-NTSC palette editor (Settings → Video → Generated NTSC palette:
+    saturation / hue / contrast / brightness / gamma sliders feeding
+    `palette_gen.rs`, plus the 64-swatch editor) gains a live 16×4 swatch preview
+    of the *generated* base that regenerates from the current params as you drag
+    the sliders — so the look can be dialled in before enabling it. Purely
+    visual; the shipped palette is unchanged until explicitly enabled.
+
 ## [2.1.8] - 2026-07-12 - "Fathom" (performance — default-off specialized fast PPU dot-loop (differential-tested byte-identical, +12% rendering-heavy) + SIMD software blitter + wasm size/startup pass; "Tempo")
 
 ### Performance
@@ -149,6 +198,40 @@ cycle-accurate core later replaced.
 ## [2.1.6] - 2026-07-11 - "Fathom" (expansion audio — decibel oracle + hardware/Mesen2 channel-level calibration + Namco 163 12 dB fix + mix UI/scopes; "Timbre")
 
 ### Added
+
+- **Marquee CRT shader stack + raw NTSC composite signal (v2.1.9 "Presentation
+  & Signal").** A presentation/display cut, all opt-in and **default
+  byte-identical** (the shipped presentation is untouched, so `visual_regression`
+  stays byte-identical and AccuracyCoin holds **141/141**).
+  - **Raw composite core (P4).** A new `rustynes-ppu::raw_signal` module that
+    keeps the 2C02 composite waveform *un-decoded*: for every `(index, emphasis)`
+    pair it emits the twelve per-subcarrier-phase voltages the chip actually
+    generates, so a decoder can reproduce signal-domain artifacts a per-colour
+    palette cannot — composite colour bleed, dot crawl, and the waterfall/dither
+    transparency tricks. Follows the canonical Bisqwit `nes_ntsc` / Mesen2 "raw
+    palette" model; `generate_raw_signal_lut()` yields the full 512×12 table a
+    host uploads as a signal texture. No transcendental in the path, so it is
+    `f32` byte-identical across x86 / aarch64 / wasm / `thumbv7em` (a `no_std`
+    `GOLDEN_SIGNAL` cross-target lock guards it). Additive + default-OFF: the
+    core, the default framebuffer, and AccuracyCoin are unaffected.
+  - **CRT shader stack (B6).** Three single-pass WGSL ports of the reference
+    libretro *slang* CRT presets, added as **new WGSL files** in
+    `rustynes-gfx-shaders` behind a `CrtStackShader` registry: **CRT-Royale**
+    (luminance-scaled Gaussian beam, selectable aperture/slot/shadow mask,
+    gamma-correct scanlines, curvature), **CRT Guest Advanced / guest-dr-venom**
+    (power-shaped beam, halation glow, mask, curvature), and **Sony Megatron**
+    (per-subpixel phosphor lighting with an HDR headroom + SDR Reinhard
+    fallback). All four new shaders — the three CRT plus the P4 signal-decode
+    pass — are gate-validated as real, compilable WGSL by the same **naga**
+    front-end + validator wgpu runs at pipeline creation.
+  - **Raw NTSC signal-decode pass (P4 shader).** `signal_decode.wgsl`
+    reconstructs the 2C02's actual two-level chroma square wave from the
+    palette-index framebuffer (matching `raw_signal.rs` byte-for-byte) and
+    demodulates it with a windowed quadrature filter — decoding the true signal
+    rather than re-encoding already-decoded RGB.
+  - Display suite: the CRT shaders expose curvature / mask-type / scanline-weight
+    uniforms and build on the existing 8:7 PAR correction, overscan crop, and
+    hqNx/xBRZ integer-style scaler foundations already in the tree.
 
 - **Expansion-audio mix UI + per-channel visualization (v2.1.6 "Expansion
   Audio").** A dedicated **Audio Mixer** tool panel (Tools → Audio Mixer)

@@ -144,6 +144,11 @@ pub struct PerGameConfig {
     pub audio: Option<serde_json::Value>,
     /// Reserved per-game input settings (forward-compat).
     pub input: Option<serde_json::Value>,
+    /// v2.1.9 B6 — an optional named shader preset (a key in
+    /// `[graphics.shader_presets]` or a built-in) applied on ROM load. `None`
+    /// (the default) applies nothing, so the load path stays byte-identical; an
+    /// unknown name is ignored. Presentation-only — never touches the core.
+    pub shader_preset: Option<String>,
     /// Free-form user notes (display only).
     pub notes: Option<String>,
 }
@@ -351,6 +356,7 @@ mod tests {
             video: None,
             audio: None,
             input: None,
+            shader_preset: Some("CRT-Royale".into()),
             notes: Some("note".into()),
         };
         let json = serde_json::to_vec(&cfg).expect("serialize");

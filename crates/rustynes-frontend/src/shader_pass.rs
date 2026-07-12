@@ -157,6 +157,19 @@ pub enum BuiltinPass {
     Hqx,
     /// v1.6.0 "Studio" I2 — xBRZ-style pixel-art upscaler ([`crate::upscale`]).
     Xbrz,
+    /// v2.1.9 B6 — CRT-Royale single-pass port (Gaussian beam, mask, gamma
+    /// scanlines, curvature). RGBA pass; WGSL in `rustynes-gfx-shaders`.
+    CrtRoyale,
+    /// v2.1.9 B6 — CRT Guest Advanced / guest-dr-venom single-pass port (beam,
+    /// halation glow, mask, curvature). RGBA pass.
+    CrtGuest,
+    /// v2.1.9 B6 — Sony Megatron single-pass port (per-subpixel phosphor
+    /// lighting, HDR headroom + SDR fallback). RGBA pass.
+    Megatron,
+    /// v2.1.9 P4 — raw NTSC signal-decode. Like [`Self::CompositeRt`] it samples
+    /// the `R16Uint` palette-index texture (must be first) and consumes the live
+    /// colour phase, but decodes the true 2C02 two-level signal.
+    SignalDecode,
 }
 
 impl BuiltinPass {
@@ -170,6 +183,10 @@ impl BuiltinPass {
             "lmp88959" => Some(Self::Lmp88959),
             "hqx" => Some(Self::Hqx),
             "xbrz" => Some(Self::Xbrz),
+            "crt-royale" => Some(Self::CrtRoyale),
+            "crt-guest" => Some(Self::CrtGuest),
+            "megatron" => Some(Self::Megatron),
+            "signal-decode" => Some(Self::SignalDecode),
             _ => None,
         }
     }
@@ -184,6 +201,10 @@ impl BuiltinPass {
             Self::Lmp88959 => "lmp88959",
             Self::Hqx => "hqx",
             Self::Xbrz => "xbrz",
+            Self::CrtRoyale => "crt-royale",
+            Self::CrtGuest => "crt-guest",
+            Self::Megatron => "megatron",
+            Self::SignalDecode => "signal-decode",
         }
     }
 
@@ -197,14 +218,20 @@ impl BuiltinPass {
             Self::Lmp88959 => "NTSC/PAL composite (LMP88959)",
             Self::Hqx => "hqNx upscale (edge-smooth)",
             Self::Xbrz => "xBRZ upscale (edge-smooth)",
+            Self::CrtRoyale => "CRT-Royale (B6)",
+            Self::CrtGuest => "CRT Guest Advanced (B6)",
+            Self::Megatron => "Sony Megatron (B6, HDR)",
+            Self::SignalDecode => "Raw NTSC signal decode (P4)",
         }
     }
 
     /// True when this pass samples the `R16Uint` palette-index texture rather
-    /// than the RGBA framebuffer (so it must be the first pass).
+    /// than the RGBA framebuffer (so it must be the first pass). Both the Bisqwit
+    /// composite-rt pass and the v2.1.9 raw signal-decode pass decode the palette
+    /// index directly.
     #[must_use]
     pub const fn is_index_source(self) -> bool {
-        matches!(self, Self::CompositeRt)
+        matches!(self, Self::CompositeRt | Self::SignalDecode)
     }
 
     /// True when this pass consumes the live per-frame NES colour phase
@@ -214,7 +241,10 @@ impl BuiltinPass {
     /// the frontend only needs to snapshot the phase when one of these is active.
     #[must_use]
     pub const fn uses_phase(self) -> bool {
-        matches!(self, Self::CompositeRt | Self::Lmp88959)
+        matches!(
+            self,
+            Self::CompositeRt | Self::Lmp88959 | Self::SignalDecode
+        )
     }
 
     /// The ordered list of built-in passes a user can add to the stack.
@@ -227,6 +257,10 @@ impl BuiltinPass {
             Self::Lmp88959,
             Self::Hqx,
             Self::Xbrz,
+            Self::CrtRoyale,
+            Self::CrtGuest,
+            Self::Megatron,
+            Self::SignalDecode,
         ]
     }
 
@@ -239,6 +273,10 @@ impl BuiltinPass {
             Self::Lmp88959 => parse_pragma_parameters(crate::ntsc_lmp88959::stack_shader_params()),
             Self::Hqx => parse_pragma_parameters(crate::upscale::hqx_params()),
             Self::Xbrz => parse_pragma_parameters(crate::upscale::xbrz_params()),
+            Self::CrtRoyale => parse_pragma_parameters(crate::crt::ROYALE_STACK_PARAMS),
+            Self::CrtGuest => parse_pragma_parameters(crate::crt::GUEST_STACK_PARAMS),
+            Self::Megatron => parse_pragma_parameters(crate::crt::MEGATRON_STACK_PARAMS),
+            Self::SignalDecode => parse_pragma_parameters(crate::crt::SIGNAL_DECODE_STACK_PARAMS),
             // The simplified NTSC blur and the Bisqwit composite-rt pass expose
             // no stack-tunable knobs here (the latter keeps its own dedicated
             // NtscKnobs UI in the legacy path).
@@ -354,6 +392,20 @@ pub struct ShaderPresetBank {
 }
 
 impl ShaderPresetBank {
+    /// Resolve a preset by name for the per-game apply path (v2.1.9 B6): a user
+    /// preset of that name wins, else a built-in of the same name, else `None`
+    /// (an unknown name applies nothing, keeping the load byte-identical).
+    #[must_use]
+    pub fn resolve(&self, name: &str) -> Option<ShaderStackConfig> {
+        if let Some(cfg) = self.presets.get(name) {
+            return Some(cfg.clone());
+        }
+        Self::builtins()
+            .into_iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, cfg)| cfg)
+    }
+
     /// The built-in CRT preset bank, merged into a user bank on first run (only
     /// when the user has no preset of the same name — never clobbering a user
     /// edit). Each reuses the existing [`crate::crt`] shader at varying knobs.
@@ -371,10 +423,36 @@ impl ShaderPresetBank {
                 }],
             }
         };
+        // v2.1.9 B6/P4 — a preset that is just the named pass at its shader
+        // defaults (empty params map -> each `#pragma parameter` default). One
+        // optional (name, value) override lets the Megatron preset flip a knob.
+        let single = |id: &str, overrides: &[(&str, f32)]| {
+            let mut params = BTreeMap::new();
+            for (k, v) in overrides {
+                params.insert((*k).to_string(), *v);
+            }
+            ShaderStackConfig {
+                passes: vec![ShaderPassDesc {
+                    id: id.to_string(),
+                    enabled: true,
+                    params,
+                }],
+            }
+        };
         vec![
             ("CRT - Sharp".to_string(), crt(0.25, 0.05)),
             ("CRT - Classic".to_string(), crt(0.5, 0.10)),
             ("CRT - Heavy Aperture".to_string(), crt(0.8, 0.25)),
+            // v2.1.9 marquee CRT stack.
+            ("CRT-Royale".to_string(), single("crt-royale", &[])),
+            (
+                "CRT-Royale - Curved".to_string(),
+                single("crt-royale", &[("curvature", 0.4)]),
+            ),
+            ("CRT Guest Advanced".to_string(), single("crt-guest", &[])),
+            ("Sony Megatron".to_string(), single("megatron", &[])),
+            // v2.1.9 raw NTSC signal decode (index-source, must be first).
+            ("Raw NTSC Signal".to_string(), single("signal-decode", &[])),
         ]
     }
 }
@@ -593,7 +671,17 @@ impl ShaderStack {
                 // fill the uniform generically in declaration order: the first 4
                 // values land in params.x..w, then a 5th (the LMP `pal` flag) in
                 // aux.x. Each shader reads only the prefix it declares.
-                BuiltinPass::Lmp88959 | BuiltinPass::Hqx | BuiltinPass::Xbrz => {
+                // v2.1.9 B6 — the CRT-stack passes declare their `#pragma
+                // parameter` sliders in exact uniform-slot order (params.x..w
+                // then aux.x..), so the same generic declaration-order fill
+                // places every knob correctly; the trailing "source rows" aux
+                // slot stays 0 and each shader falls back to 240 via `select`.
+                BuiltinPass::Lmp88959
+                | BuiltinPass::Hqx
+                | BuiltinPass::Xbrz
+                | BuiltinPass::CrtRoyale
+                | BuiltinPass::CrtGuest
+                | BuiltinPass::Megatron => {
                     for (k, v) in pass.param_values.iter().enumerate() {
                         if 8 + k < u.len() {
                             u[8 + k] = *v;
@@ -613,6 +701,20 @@ impl ShaderStack {
                         // negative — the WGSL treats the phase as a turn count.
                         u[11] = (u[11] + live).rem_euclid(1.0);
                     }
+                }
+                // v2.1.9 P4 — raw signal decode: params.x is the live NES video
+                // phase (dot-crawl, like composite-rt), NOT a slider; the five
+                // declared sliders (saturation, sharpness, brightness, contrast,
+                // hue) land at params.y/z then knobs.x/y/z. params.w (rows) stays
+                // 0 -> the shader's 240 default.
+                BuiltinPass::SignalDecode => {
+                    u[8] = f32::from(video_phase);
+                    let pv = |k: usize, d: f32| pass.param_values.get(k).copied().unwrap_or(d);
+                    u[9] = pv(0, 1.0); // params.y = saturation
+                    u[10] = pv(1, 0.5); // params.z = sharpness
+                    u[12] = pv(2, 1.0); // knobs.x  = brightness
+                    u[13] = pv(3, 1.0); // knobs.y  = contrast
+                    u[14] = pv(4, 0.0); // knobs.z  = hue
                 }
                 BuiltinPass::Ntsc => {}
             }
@@ -671,6 +773,10 @@ fn compile_pass(
         BuiltinPass::Lmp88959 => crate::ntsc_lmp88959::SHADER_SRC.into(),
         BuiltinPass::Hqx => crate::upscale::hqx_shader_src().into(),
         BuiltinPass::Xbrz => crate::upscale::xbrz_shader_src().into(),
+        BuiltinPass::CrtRoyale => rustynes_gfx_shaders::CRT_ROYALE_WGSL.into(),
+        BuiltinPass::CrtGuest => rustynes_gfx_shaders::CRT_GUEST_WGSL.into(),
+        BuiltinPass::Megatron => rustynes_gfx_shaders::MEGATRON_WGSL.into(),
+        BuiltinPass::SignalDecode => rustynes_gfx_shaders::SIGNAL_DECODE_WGSL.into(),
     };
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("shader-stack-shader"),
@@ -871,17 +977,63 @@ mod tests {
         // composite passes consume the live phase, nothing else does.
         for p in BuiltinPass::all() {
             match p {
-                BuiltinPass::CompositeRt => {
+                // v2.1.9 P4 — the raw signal-decode pass also samples the index
+                // texture (must be first) and consumes the live phase.
+                BuiltinPass::CompositeRt | BuiltinPass::SignalDecode => {
                     assert!(p.is_index_source() && p.uses_phase(), "{p:?}");
                 }
                 BuiltinPass::Lmp88959 => {
                     assert!(!p.is_index_source() && p.uses_phase(), "{p:?}");
                 }
-                BuiltinPass::Crt | BuiltinPass::Ntsc | BuiltinPass::Hqx | BuiltinPass::Xbrz => {
+                BuiltinPass::Crt
+                | BuiltinPass::Ntsc
+                | BuiltinPass::Hqx
+                | BuiltinPass::Xbrz
+                | BuiltinPass::CrtRoyale
+                | BuiltinPass::CrtGuest
+                | BuiltinPass::Megatron => {
                     assert!(!p.is_index_source() && !p.uses_phase(), "{p:?}");
                 }
             }
         }
+    }
+
+    #[test]
+    fn v219_passes_declare_params_and_roundtrip_ids() {
+        // Every v2.1.9 CRT-stack pass must expose stack knobs and round-trip its
+        // id, so the composable-stack UI can add + persist it.
+        for (id, min_params) in [
+            ("crt-royale", 7usize),
+            ("crt-guest", 7),
+            ("megatron", 7),
+            ("signal-decode", 5),
+        ] {
+            let p = BuiltinPass::from_id(id).unwrap_or_else(|| panic!("{id} must resolve"));
+            assert_eq!(p.id(), id);
+            assert_eq!(p.params().len(), min_params, "{id} param count");
+        }
+    }
+
+    #[test]
+    fn builtin_presets_resolve_and_are_valid_stacks() {
+        // The v2.1.9 showcase presets must resolve by name and produce a stack
+        // whose passes are all recognized builtins (so they actually render).
+        let bank = ShaderPresetBank::default();
+        for name in [
+            "CRT-Royale",
+            "CRT Guest Advanced",
+            "Sony Megatron",
+            "Raw NTSC Signal",
+        ] {
+            let stack = bank
+                .resolve(name)
+                .unwrap_or_else(|| panic!("{name} missing"));
+            assert!(stack.has_enabled_passes(), "{name} has no enabled pass");
+            for p in &stack.passes {
+                assert!(p.builtin().is_some(), "{name}: unknown id {}", p.id);
+            }
+        }
+        assert!(bank.resolve("nonexistent-preset").is_none());
     }
 
     #[test]
@@ -961,11 +1113,16 @@ mod tests {
 
     #[test]
     fn builtin_presets_are_crt_stacks() {
+        // Every built-in preset is a single enabled pass drawn from the CRT
+        // family (the legacy `crt` scanline pass or, since v2.1.9, one of the
+        // marquee CRT-stack / raw-signal passes) and must resolve to a builtin.
         let presets = ShaderPresetBank::builtins();
         assert!(!presets.is_empty());
-        for (_, stack) in presets {
-            assert!(stack.has_enabled_passes());
-            assert_eq!(stack.passes[0].id, "crt");
+        for (name, stack) in presets {
+            assert!(stack.has_enabled_passes(), "{name}");
+            assert_eq!(stack.passes.len(), 1, "{name} should be a single pass");
+            let pass = &stack.passes[0];
+            assert!(pass.builtin().is_some(), "{name}: unknown id {}", pass.id);
         }
     }
 }

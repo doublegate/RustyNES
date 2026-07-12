@@ -601,6 +601,55 @@ bank) re-tints the **RGBA** framebuffer, so it feeds the RGBA passes (`Ntsc`,
 `Lmp88959`, `Crt`) — but **not** `CompositeRt`, which decodes the raw palette
 **index** and is therefore independent of the RGBA palette choice.
 
+**Marquee CRT stack (v2.1.9 "Presentation & Signal", B6).** Three additional
+single-pass CRT shaders — WGSL ports of the reference libretro *slang* presets —
+live in the shared `rustynes-gfx-shaders` crate as **new WGSL files**
+(`crt_royale.wgsl`, `crt_guest.wgsl`, `megatron.wgsl`), enumerated by the
+`CrtStackShader` registry (stable slug + display name + index-texture flag):
+
+- **CRT-Royale** — a Gaussian scanline beam integrated over the nearest source
+  rows in gamma-linear light (beam width follows luminance), a selectable
+  phosphor mask (aperture grille / slot / shadow-dot), photometric in/out gamma,
+  barrel curvature + edge vignette.
+- **CRT Guest Advanced / guest-dr-venom** — a power-shaped (crisper) beam with
+  configurable width + sharpness, a 5-tap halation glow mixed in linear light,
+  the shared mask selection, and curvature.
+- **Sony Megatron (HDR)** — per-subpixel phosphor lighting driven into an exposed
+  HDR headroom, with an SDR Reinhard tone-map fallback (the HDR hook remains in
+  the uniform for a real HDR swapchain path).
+
+All three share a 64-byte `rect / crop / params / aux` uniform: `params` carries
+scanline weight, mask strength, mask type, and curvature; `aux` carries the
+per-shader beam/gamma/glow/HDR knobs. Each is gate-validated as real,
+compilable WGSL by a **naga** parse+validate test (`crt::tests::crt_stack_shaders_parse_and_validate`,
+the same front-end + validator wgpu runs at `create_shader_module`).
+
+They are wired as first-class `BuiltinPass` variants
+(`CrtRoyale` / `CrtGuest` / `Megatron`) selectable from **Settings → Shaders**,
+each exposing its `#pragma parameter` sliders (declared in `crt.rs`, ordered to
+match the uniform slots so the generic declaration-order fill in
+`ShaderStack::render` places each knob correctly; the trailing "source rows" aux
+slot is left 0 and each shader falls back to 240 via `select`). Five showcase
+entries join the built-in preset bank (CRT-Royale, CRT-Royale Curved, CRT Guest
+Advanced, Sony Megatron, Raw NTSC Signal). **Per-game shader presets**:
+`PerGameConfig` gains an optional `shader_preset` name resolved on ROM load
+against the user preset bank then the built-ins (`ShaderPresetBank::resolve`) and
+applied to the live stack — `None` / an unknown name applies nothing, so the
+default load path stays byte-identical and the core is untouched.
+
+**Raw NTSC signal-decode pass (v2.1.9 P4).** `signal_decode.wgsl` is the display
+companion to the new core `rustynes-ppu::raw_signal` model. Like `CompositeRt`
+it samples the palette-**index** framebuffer, but instead of Bisqwit's baked
+tables it reconstructs the 2C02's **actual two-level chroma square wave** from
+the index + emphasis (8 sub-samples/pixel over a 12-unit subcarrier wheel, with
+per-line dot-crawl phase and emphasis attenuation — byte-for-byte the same model
+as `raw_signal.rs`) and demodulates it with a windowed quadrature filter. Because
+it decodes the true signal, it reproduces signal-domain artifacts an RGB
+re-encode structurally cannot: composite colour bleed, dot crawl, and the
+waterfall/dither transparency tricks. Off by default (a deliberate visual
+choice, re-blessed like the generated palette); the default framebuffer +
+`visual_regression` corpus stay byte-identical.
+
 **Vs. `DualSystem` two-screen presentation (v2.1.2 F2.1).** A loaded Vs.
 `DualSystem` cabinet (Balloon Fight / Wrecking Crew / Tennis / Baseball) runs both
 cross-wired consoles and presents them together. The core dual engine
@@ -1498,10 +1547,21 @@ byte-identical (the HistoryViewer only *observes*; compression is lossless).
 
 ### v1.6.0 "Studio" Workstream G — A/V recording (`av_record`, native + `av-record` feature)
 
-Records the running game to a `.mp4` / `.mkv` (video + synchronized audio).
+Records the running game to a `.mp4` / `.mkv` (video + synchronized audio), and
+since v2.1.9 to an animated `.gif` (video-only) or a `.wav` (audio-only).
 **Native-only + behind the default-OFF `av-record` feature**, so the shipped /
 wasm / `no_std` builds are byte-identical with it off (the module is not even
 compiled). Implemented in `src/av_record.rs`.
+
+- **Output format = the chosen extension (v2.1.9).** The recorder always
+  captures both raw streams to temp files; the file extension picked in the save
+  dialog (`Container::from_path`) selects which the single stop-time `ffmpeg`
+  pass consumes. `.mp4` / `.mkv` = the two-input A/V mux (unchanged); `.gif` =
+  video-only through the single-pass `palettegen` / `paletteuse` filtergraph
+  (per-clip optimized palette + Bayer dither, decimated to 25 fps for a small
+  crisp GIF); `.wav` = audio-only transcode of the mono `f32le` PCM to canonical
+  16-bit PCM. The arg builders (`ffmpeg_args` → `gif_args` / `wav_args`) are pure
+  and unit-tested.
 
 - **Capture is a read-only tap on the already-produced output.** Inside
   `EmuCore::produce_one_frame`, *after* the emulator has produced the frame, the

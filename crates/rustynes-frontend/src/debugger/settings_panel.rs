@@ -851,6 +851,17 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
                     changed = true;
                 }
             });
+            // v2.1.9 — live preview of the GENERATED 64-colour base as the params
+            // change, even while the generated palette is not the active one, so
+            // the look can be dialled in before committing. Pure display: it
+            // regenerates from the current params via the same deterministic
+            // `generate_base_palette` the renderer uses, and paints nothing into
+            // the emulation path.
+            ui.separator();
+            ui.weak("Preview (generated base, 16 x 4):");
+            let base =
+                rustynes_core::rustynes_ppu::generate_base_palette(&g.ntsc_palette.to_params());
+            paint_palette_preview(ui, &base);
             if changed {
                 // Re-apply the resolved palette (the generated-precedence branch
                 // in `App::apply_active_palette` handles the enabled case) and
@@ -1002,6 +1013,27 @@ fn resolve_active_base_palette(config: &Config) -> [[u8; 3]; 64] {
             || rustynes_core::rustynes_ppu::NES_PALETTE,
             crate::config::CustomPalette::to_base,
         )
+}
+
+/// v2.1.9 — paint a compact non-interactive 16x4 swatch strip of a 64-colour
+/// base palette (the standard NES palette grid layout). Used for the live
+/// preview of the generated palette; purely visual (no picker, no persistence).
+fn paint_palette_preview(ui: &mut egui::Ui, base: &[[u8; 3]; 64]) {
+    const COLS: usize = 16;
+    const ROWS: usize = 4;
+    let cell = 12.0_f32;
+    let (rect, _resp) = ui.allocate_exact_size(
+        egui::vec2(cell * COLS as f32, cell * ROWS as f32),
+        egui::Sense::hover(),
+    );
+    let painter = ui.painter_at(rect);
+    for (idx, rgb) in base.iter().enumerate() {
+        let col = (idx % COLS) as f32;
+        let row = (idx / COLS) as f32;
+        let min = rect.min + egui::vec2(col * cell, row * cell);
+        let swatch = egui::Rect::from_min_size(min, egui::vec2(cell, cell));
+        painter.rect_filled(swatch, 0.0, egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+    }
 }
 
 /// v1.2.0 C2 — the composable shader-stack editor + preset bank UI (mirrors

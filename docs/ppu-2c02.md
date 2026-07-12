@@ -414,6 +414,36 @@ snapshot), the index framebuffer + phase are NOT saved — they regenerate on th
 emitted frame, so a state loaded while paused shows correct NTSC from the first frame
 after resume.
 
+### Raw composite-signal model (`raw_signal`, v2.1.9 P4)
+
+`rustynes_ppu::raw_signal` is a **new, parallel, presentation-only** output that keeps
+the 2C02 composite waveform *un-decoded*. Where the generated palette (`palette_gen`,
+F1.4) pre-integrates each of the 64 base colours to a single RGB triple (an ideal TV
+over one pixel), `raw_signal` emits, for every `(index 0..=63, emphasis 0..=7)` pair, the
+twelve per-subcarrier-phase composite voltages the chip actually generates within a
+pixel. A shader (or any host NTSC decoder — see the frontend `signal_decode.wgsl` pass)
+demodulates the *real* signal across neighbouring pixels, reproducing signal-domain
+artifacts a per-colour RGB palette structurally cannot: composite colour bleed, dot
+crawl, and the waterfall/dither transparency tricks (Kirby's Adventure waterfalls, the
+240p test suite colour-bleed screens) that depend on adjacent-pixel chroma mixing.
+
+The model is the canonical **Bisqwit `nes_ntsc` / Mesen2 "raw palette"** generator
+(nesdev "NTSC video"): a two-level chroma square wave over 12 subcarrier phases, with
+`InColorPhase((color + phase) % 12 < 6)` positioning the hue, the luma nibble selecting
+the two `LEVELS` voltages, and each of the three emphasis bits attenuating by `0.746`
+during the phases overlapping its primary's hue region. `generate_raw_signal_lut()`
+yields the full 512-row (index-major) × 12-phase normalized table a host uploads as a
+signal texture (heap-boxed; built once at shader-setup time, never on a hot path).
+
+**Determinism:** the waveform is level-lookup + one multiply + one affine normalize with
+**no transcendental**, so the `f32` output is bit-identical across x86 / aarch64 / wasm /
+`thumbv7em` under IEEE-754 without `libm`. An in-crate `GOLDEN_SIGNAL` snapshot (row
+`$00`, all 8 emphasis) locks that cross-target contract via a `const`-eval sibling of the
+runtime path. It is **additive + default-OFF**: nothing here feeds the deterministic core
+or the default presentation, so the default framebuffer golden vectors and AccuracyCoin
+stay byte-identical (141/141). It is consumed only when the frontend explicitly selects
+the signal-decode presentation shader.
+
 ### HD-pack tile-source export (`hd-pack` feature; v1.2.0 C3)
 
 Behind the default-OFF `hd-pack` cargo feature, the emit path writes a third parallel

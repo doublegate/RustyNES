@@ -30,6 +30,7 @@ mod bus;
 mod palette;
 mod palette_gen;
 mod ppu;
+mod raw_signal;
 mod registers;
 mod snapshot;
 #[cfg(feature = "ppu-state-trace")]
@@ -47,6 +48,10 @@ pub use ppu::read2007_diag;
 pub use ppu::{FRAMEBUFFER_LEN, PaletteInit, Ppu, PpuRegion, PpuRevision};
 #[cfg(feature = "hd-pack")]
 pub use ppu::{HD_CHR_RAM, HD_TILE_NONE, HdSprite, HdTileSource};
+pub use raw_signal::{
+    ATTENUATION, BLACK, LEVELS, PHASES, RAW_ENTRIES, WHITE, composite_voltage,
+    generate_raw_signal_lut, in_color_phase, normalize, signal_samples,
+};
 pub use snapshot::{PPU_SNAPSHOT_VERSION, PpuSnapshotError};
 
 #[cfg(feature = "ppu-state-trace")]
