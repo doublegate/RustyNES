@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.1.10-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.2.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -775,19 +775,23 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.1.10 "Fathom" ("Loom")**, the creator-tools-and-web-parity
-step of the v2.1.5 → v2.2.0 "deepen the project" run — on the **creator** side it deepens
-**TAStudio** (greenzone / force-greenzone caching so piano-roll seeking is instant, named
-markers, richer branch slots) and broadens the **Lua API** (the full lifecycle-callback surface,
-CPU/PPU/palette/OAM/CHR read-write with side-effect-free `*Debug` variants, HUD drawing, an
-example-script library, and wasm-`piccolo` parity uplift); on the **web-parity** side it
-completes the **browser RetroAchievements** path (wasm trampoline marshalling + a deployable
-auth-proxy stack, ADR 0015) and brings **Vs. `DualSystem`** presentation to the **libretro**
-core. The deterministic core is untouched — greenzone snapshots + Lua reads/writes preserve
-the TAS/replay contract — so **AccuracyCoin stays 141/141 (100.00%)**, `visual_regression` is
-byte-identical, and save-state / TAS / netplay replay stay bit-identical. (Vs. `DualSystem` on
-the wasm present path is honestly deferred, and the browser-RA live login is a documented
-deploy-to-verify step — see the CHANGELOG.)
+RustyNES's current release is **v2.2.0 "Capstone"**, the milestone cut that **closes the
+v2.1.5 → v2.2.0 "deepen the existing project" run**, landing its two remaining marquees — the
+**netplay matchmaking/lobby** stack (a browse-and-join room directory + server-side quick-play
+over the existing room-code / TURN transport, delayed-stream spectators, a graded
+hysteresis-based desync verdict, and multi-second peer-liveness RTT timeouts — all signaling
+and telemetry only) and the **FDS medium model** (per-block **CRC-16/KERMIT** re-emitted on
+every BIOS write + a synthesized gap/mark wire image, an opt-in continuous analog head-seek /
+velocity model, and a BIOS-free synthetic write-verify oracle) — alongside a **peripherals**
+pass (the Famicom `$4016`-bit-2 microphone and a 3×3-aperture Zapper light-timing model, both
+default-off) and a **quality/security** pass (cargo-fuzz targets grown 3 → 8, which surfaced and
+fixed two real OOM-DoS paths in the `.rnm` movie deserializer; a read-only ROM Info browser;
+and four new MkDocs handbook pages). Every change is additive or default-off and the
+deterministic core is untouched, so **AccuracyCoin holds 141/141 (100.00%)**, `visual_regression`
+is byte-identical, `pal_apu_tests` is 10/10, and save-state / TAS / netplay replay stay
+bit-identical. It follows **v2.1.10 "Fathom" ("Loom")**, the creator-tools-and-web-parity step
+(TAStudio greenzone + Lua API breadth + browser RetroAchievements + Vs. `DualSystem` libretro
+presentation).
 
 The v2.1.x line opened with **v2.1.0**, the accuracy-remediation release (a display-only
 PPU palette-backdrop-override fix, 86 mapper families promoted BestEffort → Curated, and
@@ -913,7 +917,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {2.1.10},
+  version = {2.2.0},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (141/141), nestest 0-diff; 172 mapper families,
