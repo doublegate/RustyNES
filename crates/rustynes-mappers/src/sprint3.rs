@@ -740,6 +740,28 @@ impl Mapper for Vrc4 {
 /// ~11.7 dB too quiet). See `docs/apu-2a03.md` §Expansion-audio levels.
 const VRC6_MIX_SCALE: i16 = 979;
 
+/// Linear scale applied to the channel-count-averaged Namco 163 output (see
+/// [`Namco163::mix_audio`] via the audio struct's `mix`).
+///
+/// Calibrated so a single full-volume (nibble 0↔15, volume 15) N163 square in
+/// 1-channel mode reaches ~6.0x the amplitude of a single full-volume 2A03
+/// pulse — the level Mesen2 (RustyNES's accuracy bar) produces and that no
+/// reference emulator attenuates. Mesen2 `NesSoundMixer::GetOutputVolume`
+/// weights N163 at `output * 20` against the 2A03 pulse DAC of
+/// `95.88*5000/(8128/15+100) ≈ 746.9`; a full 0↔15 square has per-channel
+/// `(sample-8)*volume` swing `225` (from `(0-8)*15 = -120` to `(15-8)*15 =
+/// +105`) which, divided by 1 channel and weighted `*20`, is `4500` — a ratio
+/// of `4500 / 746.9 ≈ 6.03`. Our path is `((sum / n) * scale) / 65536`; for the
+/// same 1-channel full square the normalized swing is `225 * scale / 65536`,
+/// which against the 2A03 pulse's `pulse_table[15] ≈ 0.14882` equals
+/// `225 * 261 / 65536 / 0.14882 ≈ 6.02`. Peak stays representable: a single
+/// full-volume channel reaches `±120 * 261 = ±31320 < i16::MAX`, and the
+/// channel-count division keeps multi-voice sums bounded to the same envelope
+/// (each of `n` voices only drives `1/n` of the output). Before v2.1.6 this was
+/// `64` (≈1.48x — ~12 dB too quiet, an outlier no reference matched). See
+/// `docs/apu-2a03.md` §Expansion-audio levels.
+const NAMCO163_MIX_SCALE: i32 = 261;
+
 /// VRC6 audio pulse channel state (`$9000-$9002` for pulse 1, `$A000-$A002`
 /// for pulse 2). Period is 12-bit, decrements every CPU cycle. On
 /// underflow, the duty index advances by 1 (mod 16). Output is volume when
@@ -2038,16 +2060,22 @@ impl Mapper for Vrc7 {
 /// APU mixer expects.
 ///
 /// NOTE (v2.1.6 accuracy ledger): the *shape* of this table matches Mesen2's
-/// 5B DAC (each step is `1.1885^2 ≈ 1.4126x`, the +1.5 dB×2 logarithmic law),
-/// but the *absolute* level is intentionally headroom-limited. A single
-/// full-volume (15) 5B tone would have to swing ~3.6x the 2A03 pulse to match
-/// the `db_5b` decibel-comparison ROM / Mesen2 level, which exceeds `i16::MAX`
-/// for even one channel through the bus's `/65536` external-audio contract, and
-/// three simultaneous tones (Gimmick!, Hebereke) would clip hard. Raising the
-/// absolute level to the hardware value therefore needs a wider expansion-mix
-/// path than the current i16 contract provides — deferred as a documented
-/// regression guard (see `docs/accuracy-ledger.md` §Sunsoft 5B). The RELATIVE
-/// levels between volume steps are hardware-accurate.
+/// 5B DAC (each step is `1.1885^2 ≈ 1.4126x`, the +1.5 dB×2 logarithmic law;
+/// `LUT[12] = 668`, `LUT[15] = 1882`, cross-checked against Mesen2's
+/// `Sunsoft5bAudio::_volumeLut` `[63, 177]` and tetanes), but the *absolute*
+/// level is intentionally headroom-limited and NOT calibrated to the `db_5b`
+/// comparison ROM. To hit the Mesen2 `db_5b` level a **volume-12** 5B square
+/// (what the ROM compares) would sit at ~1.27x the 2A03 pulse — which alone is
+/// representable — but the DAC shape then puts a **volume-15** tone at
+/// ~3.56x (`×1.4126³`), whose unipolar swing `≈ 3.56 × 0.14882 × 65536 ≈ 34.7k`
+/// exceeds `i16::MAX` for even one channel through the bus's `/65536`
+/// external-audio contract, and three simultaneous full-volume tones (Gimmick!,
+/// Hebereke) overflow it several-fold. Representing the full 5B dynamic range
+/// at the hardware level therefore needs a wider (i32/f32) expansion-mix path —
+/// a cross-cutting `Mapper::mix_audio` signature change deferred as a
+/// documented gap (see `docs/accuracy-ledger.md` §Expansion-audio levels).
+/// The RELATIVE levels between volume steps ARE hardware-accurate and are
+/// pinned by the `sunsoft5b_volume_dac_follows_logarithmic_step_law` test.
 ///
 /// Per the NESdev "Sunsoft 5B audio" page, the chip's DAC has a 1.5 dB
 /// step on the 5-bit signal.  Because the wiki specifies that envelope
@@ -3112,18 +3140,20 @@ impl Namco163Audio {
         signed * i16::from(self.channel_volume(base))
     }
 
-    /// Linear-summed audio output, scaled to ~i16 with similar headroom
-    /// to VRC6 and Sunsoft 5B.  Per the wiki, channels are output
-    /// one-at-a-time on hardware; emulators (Mesen2, FCEUX) approximate
-    /// the mix by summing channel outputs and dividing by the number of
-    /// active channels.  We do the same and scale by 64 so a single
-    /// full-volume bipolar channel reaches ~±7,680 — comfortably under
-    /// `i16::MAX` and in the same ballpark as VRC6's `(sum-30)*256`.
+    /// Linear-summed audio output, scaled by [`NAMCO163_MIX_SCALE`] to the
+    /// hardware-accurate level (v2.1.6).  Per the wiki, channels are output
+    /// one-at-a-time on hardware; emulators (Mesen2, FCEUX) approximate the
+    /// mix by summing channel outputs and dividing by the number of active
+    /// channels.  We do the same, then scale by `261` so a single full-volume
+    /// bipolar channel reaches `±31,320` — just under `i16::MAX` and, through
+    /// the bus's `/65536` external contract, ~6.0x the 2A03 pulse peak (the
+    /// Mesen2 `*20`-weighted `db_n163` level; see [`NAMCO163_MIX_SCALE`]).
     ///
     /// NOTE: The channel-count division matches the reference emulators'
     /// behaviour; the chip's real per-channel time-multiplexed output is
     /// effectively the same average since each channel only drives the
-    /// output `1/n` of the time.
+    /// output `1/n` of the time.  Before v2.1.6 the scale was `64` (~1.48x —
+    /// ~12 dB too quiet).
     #[cfg(feature = "mapper-audio")]
     pub(crate) fn mix(&self) -> i16 {
         let n = self.channel_count();
@@ -3134,10 +3164,9 @@ impl Namco163Audio {
         for ch in 0..n {
             sum += i32::from(self.channel_output(ch));
         }
-        // Per-channel range is -120..=+105; sum has the same average
-        // amplitude after dividing by n.  Scale by 64 to use ~half the
-        // i16 range at full tilt.
-        ((sum / i32::from(n)) * 64) as i16
+        // Per-channel range is -120..=+105; the channel-count-averaged sum has
+        // the same envelope.  Scale to the Mesen2 `db_n163` level.
+        ((sum / i32::from(n)) * NAMCO163_MIX_SCALE) as i16
     }
 
     /// `mix_audio` shim for the no-audio build.
@@ -4117,8 +4146,9 @@ mod tests {
 
         let output = m.audio.channel_output(0);
         assert_eq!(output, (15 - 8) * 15, "+105 expected for nibble=15, vol=15");
-        // Mix returns (sum / 1) * 64 = 105 * 64 = 6720.
-        assert_eq!(m.audio.mix(), 105 * 64);
+        // Mix returns (sum / 1) * NAMCO163_MIX_SCALE = 105 * 261 = 27405
+        // (v2.1.6 hardware-accurate 6.0x db_n163 level; was 105 * 64).
+        assert_eq!(m.audio.mix(), 105 * NAMCO163_MIX_SCALE as i16);
 
         // Now swap the wavetable to nibble 0 — output should swing
         // negative: (0 - 8) * 15 = -120.
@@ -4140,6 +4170,86 @@ mod tests {
         n163_write_ram(&mut m, 0x7F, false, 0x00); // vol=0, C=0
         assert_eq!(m.audio.channel_output(0), 0);
         assert_eq!(m.audio.mix(), 0);
+    }
+
+    #[test]
+    #[cfg(feature = "mapper-audio")]
+    fn namco163_longwave_256_sample_wave_phase_wraps_and_reads_full_period() {
+        // The `test_n163_longwave` accuracy criterion: long-period wavetables
+        // (the case several emulators truncate). RustyNES uses the canonical
+        // wave-length formula `L = 256 - (reg[base+4] & 0xFC)` and a 64-bit
+        // phase accumulator wrapped at `L << 16`, so a full 256-sample wave and
+        // a low frequency address the whole period without aliasing.
+        let mut m = namco163_for_audio();
+        // Fill 128 wave-RAM bytes = 256 nibbles with a ramp so every sample
+        // index is distinguishable: nibble[i] = i & 0x0F.
+        for byte in 0u8..0x80 {
+            // low nibble = (2*byte)&0xF, high nibble = (2*byte+1)&0xF.
+            let lo = (2 * byte) & 0x0F;
+            let hi = (2 * byte + 1) & 0x0F;
+            n163_write_ram(&mut m, byte, false, (hi << 4) | lo);
+        }
+        // Channel 8 ($78-$7F). N163 register layout (per Mesen `SoundReg`):
+        // base+0 = freq lo, +2 = freq mid, +4 = freq hi (bits 0-1) + wave
+        // length (bits 2-7), +6 = wave addr, +7 = volume. Set a frequency that
+        // advances the phase by exactly one sample per clock update
+        // (freq = 1<<16, i.e. freq-hi bit set) while keeping the wave length at
+        // the max 256 (`256 - (reg & 0xFC)` with the length bits zero), then
+        // step the wave across its full period and confirm every one of the
+        // 256 sample indices is reached (no early wrap, no aliasing) — the
+        // hallmark long-period behaviour.
+        n163_write_ram(&mut m, 0x78, false, 0x00); // freq lo = 0
+        n163_write_ram(&mut m, 0x7A, false, 0x00); // freq mid = 0
+        n163_write_ram(&mut m, 0x7C, false, 0x01); // freq hi = 1 (-> 0x10000), length bits 0 -> L=256
+        n163_write_ram(&mut m, 0x7E, false, 0x00); // wave_addr = 0
+        n163_write_ram(&mut m, 0x7F, false, 0x0F); // volume=15, channel-count=0
+        assert_eq!(
+            m.audio.channel_length(0x78),
+            256,
+            "L must be 256, not truncated"
+        );
+        let mut seen = [false; 256];
+        // N163 advances one channel every 15 CPU cycles; 256 samples * 15 = 3840
+        // cycles cover the whole period, plus margin.
+        for _ in 0..(256 * 15 + 15) {
+            let idx = ((m.audio.channel_phase(0x78) >> 16) % 256) as usize;
+            seen[idx] = true;
+            m.audio.clock();
+        }
+        assert!(
+            seen.iter().all(|&s| s),
+            "long-period wave must reach every one of the 256 sample indices"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "mapper-audio")]
+    fn sunsoft5b_volume_dac_follows_logarithmic_step_law() {
+        // The `db_5b` relative-level accuracy criterion RustyNES *can* verify
+        // exactly (the absolute level is an honest i16-headroom deferral — see
+        // docs/accuracy-ledger.md): the 5B volume DAC is logarithmic, ~+3 dB
+        // (×1.1885² ≈ ×1.4125) per 4-bit step, matching Mesen2's
+        // `Sunsoft5bAudio` `_volumeLut` (LUT[12]=63, LUT[15]=177) and tetanes.
+        assert_eq!(SUNSOFT5B_LOG_VOL[0], 0, "silence at volume 0");
+        // Shape parity with Mesen2's table (floor(10^(0.15*i))) at the two
+        // survey-relevant points.
+        assert_eq!(SUNSOFT5B_LOG_VOL[12], 668);
+        assert_eq!(SUNSOFT5B_LOG_VOL[15], 1882);
+        // Each non-zero step multiplies by ~1.4125 (the +1.5 dB × 2 law).
+        for v in 2..16usize {
+            let ratio = f64::from(SUNSOFT5B_LOG_VOL[v]) / f64::from(SUNSOFT5B_LOG_VOL[v - 1]);
+            assert!(
+                (ratio - 1.4125).abs() < 0.06,
+                "5B DAC step {v}: ratio {ratio:.4} not ~1.4125 (logarithmic law violated)"
+            );
+        }
+        // vol-15 is ~2.82× vol-12 (three +3 dB steps = ×1.4125^3 ≈ 2.818),
+        // the ~9 dB the `db_5b` ROM's vol-12 choice sits below full volume.
+        let v15_v12 = f64::from(SUNSOFT5B_LOG_VOL[15]) / f64::from(SUNSOFT5B_LOG_VOL[12]);
+        assert!(
+            (v15_v12 - 2.818).abs() < 0.05,
+            "vol-15/vol-12 ratio {v15_v12:.4} not ~2.818"
+        );
     }
 
     #[test]

@@ -222,6 +222,48 @@ pub fn snapshot_line_full(
     )
 }
 
+/// Run `rom_rel` for `frames` frames and return the per-frame **peak audio
+/// envelope**: `peaks[i]` is `max(|sample|)` over every audio sample the core
+/// emitted during frame `i` (0.0 for a silent frame).
+///
+/// This is the measurement primitive behind the `audio_expansion` decibel
+/// oracle. The bbbradsmith `db_*` "hotswap" ROMs play a sustained full-volume
+/// **2A03 reference square** in one time segment and the **expansion-chip
+/// square** in a later segment; on real hardware you compare them by ear /
+/// oscilloscope, and in the emulator the equivalent is comparing the peak
+/// amplitude of the two segments in the rendered waveform. Returning a
+/// per-frame envelope lets a caller pick the (deterministic) frame windows for
+/// each segment and take the ratio — a machine-verifiable level criterion.
+///
+/// The whole core is deterministic, so the returned envelope is byte-stable
+/// run-to-run for a given ROM + frame count.
+pub fn capture_frame_peaks(rom_rel: &str, frames: u64) -> Vec<f32> {
+    let path = rom_path(rom_rel);
+    let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
+    let mut nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rom_rel}: {e}"));
+    let mut peaks = Vec::with_capacity(usize::try_from(frames).unwrap_or(usize::MAX));
+    for _ in 0..frames {
+        nes.run_frame();
+        let chunk = nes.drain_audio();
+        let peak = chunk.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
+        peaks.push(peak);
+    }
+    peaks
+}
+
+/// Peak of a per-frame envelope over the half-open frame window
+/// `[start, end)` (see [`capture_frame_peaks`]). Panics if the window is out
+/// of range so a mis-specified segment fails loudly rather than silently
+/// reading 0.0.
+pub fn window_peak(peaks: &[f32], start: usize, end: usize) -> f32 {
+    assert!(
+        end <= peaks.len() && start < end,
+        "window [{start}, {end}) out of range for {} captured frames",
+        peaks.len()
+    );
+    peaks[start..end].iter().fold(0.0_f32, |m, &s| m.max(s))
+}
+
 /// Helpers specific to the commercial-roms harness
 /// (`tests/external_real_games.rs`). Gated behind the `commercial-roms`
 /// feature so the `sha2` dev-dep is only pulled in when the harness is

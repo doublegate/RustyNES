@@ -2621,7 +2621,8 @@ mod tests {
         // the bias only. The delta should equal the pre-switch PCM
         // contribution.
         assert_ne!(mix_write_mode, mix_read_mode);
-        assert_eq!(mix_read_mode, -4800);
+        // v2.1.6: bias is now -12290 (hardware-accurate 650/40 level scale).
+        assert_eq!(mix_read_mode, -12290);
         // Also: writes to $5011 in read-mode are dropped.
         m.cpu_write(0x5011, 50);
         assert_eq!(m.audio.pcm_sample, 100);

@@ -81,6 +81,10 @@ For a curated corpus of freely-distributable demos (NESDev compo entries, homebr
 
 This catches drift caused by accidental changes that the unit and ROM tests miss (e.g., subtle audio mixer drift).
 
+### Expansion-audio decibel oracle (`audio_expansion.rs`, v2.1.6)
+
+The bbbradsmith `nes-audio-tests` `db_*` "hotswap" ROMs each play a sustained full-volume 2A03 reference square, then the expansion-chip square. `crates/rustynes-test-harness/tests/audio_expansion.rs` runs each ROM, measures the **peak amplitude of each segment** in the rendered waveform via `common::capture_frame_peaks` over deterministic frame windows, and **asserts the expansion/reference ratio** against the Mesen2 / hardware target (`level_db_*`): APU triangle ≈0.524, VRC6 ≈1.506, MMC5 ≈1.000, N163 1-ch ≈6.02. This is a real accuracy criterion, not just a hash. `db_5b` (i16-headroom deferral) and `db_vrc7` (patch-dependent FM level) have no `level_db_*` assertion — their real criteria are the `sunsoft5b_volume_dac_follows_logarithmic_step_law` (5B step law) and `vrc7_all_15_melodic_patches_match_nuke_ykt_canonical` (VRC7 patch ROM) unit tests. Every ROM (all 19) is additionally pinned by an `insta` framebuffer+cycle+audio-hash snapshot (byte-exact regression guard); a snapshot is re-blessed only when the new output is provably more accurate (measured vs the ROM target). See `docs/apu-2a03.md` §Expansion-audio levels and `docs/accuracy-ledger.md`.
+
 ## Layer 4.5 — commercial-ROM regression-prevention oracle (since 2026-05-17)
 
 The May-2026 SMB / Excitebike / Kid Icarus regression motivated a
