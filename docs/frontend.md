@@ -666,7 +666,21 @@ both consoles. The single-console path is byte-identical (the dual path is a
 parallel branch at each chokepoint). **Scoped out in dual mode (ADR 0032):**
 run-ahead, rewind, netplay, TAS, dual save-state, the debugger, and HD-pack — they
 snapshot a single `Nes`. Real-cabinet boot stays fixture-limited (the circulating
-dumps are the MAME maincpu half only). Desktop only; wasm/mobile deferred.
+dumps are the MAME maincpu half only).
+
+**Present-path parity (v2.1.10 "Web Parity").** The **libretro** core
+(`crates/rustynes-libretro`) now presents Vs. `DualSystem` cabinets too: it detects
+them with the same `Emu::from_rom` and composes the two 256×240 framebuffers
+side-by-side into a 512×240 XRGB8888 image (MAIN left, SUB right), presented within
+a 512-wide `max_width` geometry so RetroArch draws the variable width without a
+geometry renegotiation. Ports 0/1 → MAIN P1/P2, 2/3 → SUB P1/P2; MAIN audio plays;
+save states use `VsDualSystem::snapshot`/`restore`; memory maps expose the MAIN
+console. See `docs/libretro/advanced_features.md`. The **wasm** desktop-style
+present is still deferred: the CPU compositor (`Gfx::compose_dual_into`) and the
+core (`Emu::Dual`) are already cross-platform, but the wasm ROM-load detection and
+un-gating the GPU present branch (`Gfx::render_dual`, currently `cfg(not(wasm))`)
+land at the v2.1.8/v2.1.9 gfx/composite rebase to avoid colliding with that
+concurrently-rewritten present path. Mobile remains deferred.
 
 **Pixel aspect ratio.** When `[ui] pixel_aspect_correction` is on, the
 letterbox targets the NES's native **8:7** PAR (display aspect
