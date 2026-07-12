@@ -36,6 +36,16 @@ cycle-accurate core later replaced.
   save-state / TAS / netplay replay stays byte-identical regardless of the
   slider positions, and the visualization samples a read-only copy that never
   feeds back into synthesis. AccuracyCoin holds **141/141 (100%)**.
+- **Expansion-audio decibel oracle (v2.1.6 "Expansion Audio").** Upgraded `crates/rustynes-test-harness/tests/audio_expansion.rs` from pure `insta` snapshots into a real accuracy oracle: each bbbradsmith `db_*` comparison ROM now has a machine-verifiable level criterion. The new `level_db_*` tests measure the peak amplitude of the reference-2A03-square and expansion-square segments in the rendered waveform (`common::capture_frame_peaks` over deterministic frame windows) and **assert** the expansion/reference ratio against the Mesen2 / hardware target — APU triangle ÷ square ≈0.524, VRC6 ≈1.506, MMC5 ≈1.000, N163 1-channel ≈6.02. The 19 `insta` snapshots are retained as byte-exact regression guards.
+- VRC7 instrument-ROM verification: `vrc7_all_15_melodic_patches_match_nuke_ykt_canonical` pins all 15 melodic patches (+ 3 rhythm) to the canonical Nuke.YKT dump (byte-identical across fceux / Mesen2 / nestopia) — the real `patch_vrc7` criterion. Sunsoft 5B log-DAC step-law and Namco 163 long-period (256-sample) wavetable unit tests added.
+
+### Changed
+
+- **Expansion-audio channel levels calibrated to the hardware / Mesen2 db_* levels.** VRC6 square `256 → 979` (`VRC6_MIX_SCALE`, ≈0.39× → ≈1.51× the 2A03 pulse), MMC5 pulse/PCM `256/16 → 650/40` (≈0.39× → ≈1.0×, "equivalent to the APU" per hardware), and **Namco 163** `64 → 261` (`NAMCO163_MIX_SCALE`, ≈1.48× → ≈6.02× for 1-channel mode — no reference emulator attenuates N163; ours was ~12 dB too quiet). The N163 fix is bit-shared with the NSF playback path. **Base 2A03 NTSC output stays byte-identical** — expansion audio is a separate additive `mix_audio` term (0 for non-expansion mappers), so AccuracyCoin (141/141), `blargg_apu_2005`, `nestest`, and `visual_regression` are unchanged; only the three `db_vrc6a/b`/`db_mmc5` expansion snapshots were re-blessed (audio hash only, provably more accurate).
+
+### Deferred (documented)
+
+- **Sunsoft 5B absolute level** and **VRC7 FM level** are honest documented gaps (`docs/accuracy-ledger.md` §Expansion-audio levels): the 5B log-DAC *shape* is hardware-exact but its full vol-15 / 3-simultaneous-tone range overflows the `i16` `mix_audio` contract (needs a wider mix path); the VRC7 OPLL FM synth + patch ROM are correct, but the pseudo-sine absolute level is patch-dependent and has no clean square-vs-square oracle. Both stay snapshot-guarded.
 
 ## [2.1.5] - 2026-07-11 - "Fathom" (regression net & residual — Holy Mapperel mapper regression net + PAL APU frame-counter 10/10 + real TURN NAT-retransmit production fix + fat-LTO A/B validation + MMC3 F5.0 A12-phase study; "Vernier")
 

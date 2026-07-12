@@ -319,6 +319,26 @@ Six on-cart expansion sound chips are synthesized and summed into the external-a
 
 All synth cores are behind the default-on `mapper-audio` Cargo feature; when it is off (e.g. the `no_std` build) the register decoders still latch (save-state round-trip preserved) but `clock`/`mix` are no-op shims that return silence. The VRC7 OPLL core is deliberately the MIT `emu2413` lineage — **not** Nuked-OPLL (GPL/LGPL, license-incompatible).
 
+### Expansion-audio levels (v2.1.6 "Expansion Audio")
+
+Each chip's `mix_audio()` is scaled so its full-volume square sits at the **relative loudness the hardware and Mesen2 (RustyNES's accuracy bar) produce vs the 2A03 pulse**, measured by the bbbradsmith `db_*` decibel-comparison ROMs. The reference is Mesen2 `NesSoundMixer::GetOutputVolume` (2A03 pulse peak `95.88*5000/(8128/15+100) ≈ 746.9`; linear expansion weights VRC6 `×5`·internally-`×15`, MMC5 `×43`, N163 `×20`, 5B `×15`, VRC7 `×1`), cross-checked against nestopia / puNES / fceux / tetanes. The `crates/rustynes-test-harness/tests/audio_expansion.rs` `level_db_*` oracle asserts the measured expansion-vs-reference ratio from each ROM's rendered waveform:
+
+| Chip (ROM)        | Target ratio vs APU square | RustyNES scale (`mix_audio`)         | Status |
+|-------------------|----------------------------|--------------------------------------|--------|
+| APU triangle (`db_apu`) | ≈ 0.524 (fixed 2A03 DAC balance) | `pulse_table` / `tnd_table` LUT   | **Asserted** |
+| VRC6 (`db_vrc6a/b`)     | ≈ 1.506                   | `VRC6_MIX_SCALE = 979` (`sprint3.rs`; was 256) | **Asserted** (v2.1.6) |
+| MMC5 (`db_mmc5`)        | ≈ 1.000 ("equivalent to APU") | pulse `×650` / PCM `×40` (`mmc5.rs`; was 256/16) | **Asserted** (v2.1.6) |
+| Namco 163 1-ch (`db_n163`) | ≈ 6.02                | `NAMCO163_MIX_SCALE = 261` (`sprint3.rs`; was 64) | **Asserted** (v2.1.6) |
+| Sunsoft 5B (`db_5b`)    | ≈ 1.27 (vol-12) / 3.56 (vol-15) | log DAC `SUNSOFT5B_LOG_VOL` (shape exact) | **Deferred level** — see below |
+| VRC7 (`db_vrc7`)        | ≈ 2.7 peak (patch-dependent) | raw `Opll::calc()` (`±4095`)      | **Snapshot-guarded** — see below |
+
+VRC6 (1.506), MMC5 (1.0) and N163 (6.02) were the v2.1.6 level corrections; MMC5's `mix_audio` bias moves to `-12290` accordingly. **VRC6/MMC5/N163 fixes touch only the expansion channel** — the base 2A03 mix is a separate additive term (`mix_audio() == 0` for non-expansion mappers), so AccuracyCoin / blargg / nestest stay byte-identical.
+
+Two levels are honest documented gaps (`docs/accuracy-ledger.md` §Expansion-audio levels):
+
+- **Sunsoft 5B absolute level.** The log-volume DAC *shape* is hardware-exact (`×1.4126`/step, verified by `sunsoft5b_volume_dac_follows_logarithmic_step_law`), but a full-volume (vol-15) tone at the `db_5b` level would swing ~3.56× the APU pulse — `≈34.7k` unipolar — which overflows the `i16` `mix_audio` contract for even one channel, and three simultaneous tones overflow it several-fold. Representing the full range at the hardware level needs a wider (i32/f32) mix path (a cross-cutting trait-signature change), deferred.
+- **VRC7 FM level.** The OPLL FM synthesizer *is* implemented (emu2413 port) and its instrument ROM is verified canonical (`vrc7_all_15_melodic_patches_match_nuke_ykt_canonical` in `rustynes_apu::opll` — that is the `patch_vrc7` criterion). The absolute FM output vs the APU square is a pseudo-sine (not a square) and patch/TL/feedback-dependent, so it is not cleanly oracle-pinned; the `db_vrc7`/`clip_vrc7` ROMs stay byte-exact snapshot regression guards.
+
 ### NSF expansion-audio routing (v1.7.0 "Forge" G2/G3)
 
 A classic `.nsf` may declare expansion audio in the `$07B` bitfield (bit 0 VRC6, 1 VRC7, 2 FDS, 3 MMC5, 4 N163, 5 5B). The NSF player (`crates/rustynes-mappers/src/nsf.rs`) does **not** reimplement any synthesis: `crates/rustynes-mappers/src/nsf_expansion.rs` (`NsfExpansion`) owns instances of the **exact same** cores listed above and routes the NSF register windows into them — `$9000-$B002` (VRC6), `$9010`/`$9030` (VRC7), `$4040-$408A` (FDS), `$5000-$5015` (MMC5), `$4800`/`$F800` (N163), `$C000`/`$E000` (5B) — clocking on `notify_cpu_cycle` and fanning APU frame events (MMC5 envelope/length) on `notify_frame_event`. Because the bit-for-bit math is shared with the cartridge path, an NSF VRC6 tune sounds identical to a VRC6 cartridge. The `$5FF8-$5FFF` bank registers retain priority over the overlapping expansion windows. `NsfExpansion` is constructed only for NSF files and is unreachable from any oracle cartridge ROM, so it cannot perturb existing AccuracyCoin / blargg / kevtris audio.

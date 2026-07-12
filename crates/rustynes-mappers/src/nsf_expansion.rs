@@ -42,8 +42,8 @@
 )]
 
 use crate::fds::FdsAudio;
-use crate::mmc5::Mmc5Audio;
-use crate::sprint3::{Namco163Audio, Sunsoft5BAudio, Vrc6Pulse, Vrc6Saw};
+use crate::mmc5::{MMC5_MIX_BIAS, MMC5_PCM_SCALE, MMC5_PULSE_SCALE, Mmc5Audio};
+use crate::sprint3::{Namco163Audio, Sunsoft5BAudio, VRC6_MIX_SCALE, Vrc6Pulse, Vrc6Saw};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -97,12 +97,16 @@ impl Vrc6Exp {
     }
 
     /// Same mix as `Vrc6::mix_audio`: linear sum of the three channels,
-    /// centred and scaled to leave APU headroom.
+    /// centred and scaled by the shared [`VRC6_MIX_SCALE`] factor (v2.1.6; see
+    /// `Vrc6::mix_audio` and `docs/apu-2a03.md` §Expansion-audio levels).
+    /// Referencing the SAME const as the cartridge path keeps this
+    /// bit-identical to it, so an NSF VRC6 tune is level-matched to a VRC6
+    /// cartridge and the two mixers can never drift.
     fn mix(&self) -> i16 {
         let p1 = i16::from(self.pulse1.output());
         let p2 = i16::from(self.pulse2.output());
         let saw = i16::from(self.saw.output());
-        ((p1 + p2 + saw) - 30) * 256
+        ((p1 + p2 + saw) - 30) * VRC6_MIX_SCALE
     }
 
     fn write(&mut self, addr: u16, value: u8) {
@@ -172,7 +176,11 @@ impl Mmc5Exp {
         }
     }
 
-    /// Same mix as `Mmc5::mix_audio` (two pulses + 7-bit PCM, biased to zero).
+    /// Same mix as `Mmc5::mix_audio` (two pulses + 7-bit PCM, biased to zero),
+    /// referencing the shared [`MMC5_PULSE_SCALE`] / [`MMC5_PCM_SCALE`] /
+    /// [`MMC5_MIX_BIAS`] consts (v2.1.6) so an NSF MMC5 tune is level-matched to
+    /// an MMC5 cartridge and the two mixers can never drift (see
+    /// `Mmc5::mix_audio`).
     fn mix(&self) -> i16 {
         let p1 = i16::from(self.audio.pulse1.output());
         let p2 = i16::from(self.audio.pulse2.output());
@@ -181,9 +189,9 @@ impl Mmc5Exp {
         } else {
             0
         };
-        let pulse_mix = (p1 + p2) * 256;
-        let pcm_mix = pcm * 16;
-        (pulse_mix + pcm_mix) - 4800
+        let pulse_mix = (p1 + p2) * MMC5_PULSE_SCALE;
+        let pcm_mix = pcm * MMC5_PCM_SCALE;
+        (pulse_mix + pcm_mix) - MMC5_MIX_BIAS
     }
 
     fn write(&mut self, addr: u16, value: u8) {

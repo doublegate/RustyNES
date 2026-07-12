@@ -203,6 +203,24 @@ across the engine lineage in the long-tail batches above (all shipping in
 RustyNES v1.0.0); see `to-dos/ROADMAP.md`. FDS audio shipped as the last
 expansion-audio integration.
 
+#### Expansion-audio levels (v2.1.6 "Expansion Audio")
+
+The expansion synth cores (VRC6/VRC7/MMC5/N163/5B, above) are correct in
+*shape*; v2.1.6 calibrated their **absolute level** vs the 2A03 pulse to the
+bbbradsmith `db_*` decibel-comparison ROMs / Mesen2 mixer weights, verified by
+the `crates/rustynes-test-harness/tests/audio_expansion.rs` `level_db_*` oracle.
+Corrected scales (`mix_audio`): **VRC6** `256 → 979` (`VRC6_MIX_SCALE`, ≈1.51×),
+**MMC5** `256/16 → 650/40` (≈1.0×, "equivalent to APU"), **Namco 163**
+`64 → 261` (`NAMCO163_MIX_SCALE`, ≈6.0× for 1-channel mode — no reference
+attenuates N163, ours was ~12 dB too quiet). The N163 change is bit-shared with
+the NSF path (`nsf_expansion.rs`). Two levels remain documented gaps: the
+**Sunsoft 5B** absolute level (log DAC shape is exact, but the full vol-15 /
+3-tone range overflows the `i16` `mix_audio` contract — needs a wider mix path)
+and the **VRC7** FM level (OPLL implemented + patch ROM verified canonical, but
+the pseudo-sine level is patch-dependent, not oracle-pinned). Full detail +
+targets: `docs/apu-2a03.md` §Expansion-audio levels and
+`docs/accuracy-ledger.md`.
+
 ### Fifth long-tail batch — v1.2.0 curated (9 families, 51 → 60)
 
 Discrete-logic boards added in `sprint5.rs`, each with register-decode unit
