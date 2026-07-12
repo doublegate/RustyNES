@@ -14,6 +14,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.1.6] - 2026-07-11 - "Fathom" (expansion audio — decibel oracle + hardware/Mesen2 channel-level calibration + Namco 163 12 dB fix + mix UI/scopes; "Timbre")
+
 ### Added
 
 - **Expansion-audio mix UI + per-channel visualization (v2.1.6 "Expansion
