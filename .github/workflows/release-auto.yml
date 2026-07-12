@@ -138,15 +138,28 @@ jobs:
 
       - name: Create tag + GitHub Release
         if: steps.decide.outputs.should_release == 'true'
+        # Pass every dynamic value through the environment and reference it as a
+        # shell variable ("$RELEASE_TITLE"), never via a `${{ }}` expression
+        # interpolated straight into the `run:` script. The title is derived from
+        # the CHANGELOG header, which contains double quotes (the "Codename" and
+        # any quoted phrase like "unexpected read") and `;` / `(` / `)` — splicing
+        # that into the shell command text breaks quoting (a codename-only header
+        # merely got its quotes stripped, but a header with a quoted multi-word
+        # phrase split into bare words and a `;` was read as a command separator,
+        # failing the v2.1.7 auto-release). Env-var expansion is quote-safe.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.decide.outputs.tag }}
+          RELEASE_TARGET: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_TITLE: ${{ steps.notes.outputs.title }}
+          RELEASE_BODY_FILE: ${{ steps.notes.outputs.body_file }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "${{ steps.decide.outputs.tag }}" \
-            --target "${{ github.event.workflow_run.head_sha }}" \
-            --title "${{ steps.notes.outputs.title }}" \
-            --notes-file "${{ steps.notes.outputs.body_file }}" \
+          gh release create "$RELEASE_TAG" \
+            --target "$RELEASE_TARGET" \
+            --title "$RELEASE_TITLE" \
+            --notes-file "$RELEASE_BODY_FILE" \
             --latest
 
   build:
