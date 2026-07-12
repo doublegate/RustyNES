@@ -422,10 +422,34 @@ fn handle_signal(ws: &WebSocket, shared: &Rc<RefCell<Shared>>, msg: SignalMessag
             s.phase = BrowserNetplayPhase::Error;
             s.message = reason;
         }
-        // `Join` is a client->server message; never inbound to a client.
-        // `PublicAddr` is the native-UDP (mobile) rendezvous address; the
-        // browser SDP/ICE path does not use it.
-        SignalMessage::Join { .. } | SignalMessage::PublicAddr { .. } => {}
+        // v2.2.0 "Capstone": a `QuickMatch` reply. Identical to `Joined` for the
+        // WebRTC pairing that follows (record our slot + room size); the extra
+        // `room` code is surfaced so the matchmade user can see / share it.
+        SignalMessage::Matched {
+            room,
+            slot,
+            max_players,
+        } => {
+            let mut s = shared.borrow_mut();
+            s.slot = slot;
+            s.max_players = max_players;
+            s.message = format!("matched into room {room}");
+        }
+        // v2.2.0 "Capstone": the lobby directory reply. The browser lobby-browse
+        // UI is not wired yet, so record the open-room count for display; the
+        // codes are reachable via a subsequent `Join`.
+        SignalMessage::RoomList { rooms } => {
+            let mut s = shared.borrow_mut();
+            s.message = format!("{} open room(s)", rooms.len());
+        }
+        // Client->server message types are never inbound to a client:
+        // `Join` / `ListRooms` / `QuickMatch` (requests we send), and
+        // `PublicAddr` (the native-UDP mobile rendezvous; the browser SDP/ICE
+        // path does not use it).
+        SignalMessage::Join { .. }
+        | SignalMessage::ListRooms { .. }
+        | SignalMessage::QuickMatch { .. }
+        | SignalMessage::PublicAddr { .. } => {}
     }
 }
 

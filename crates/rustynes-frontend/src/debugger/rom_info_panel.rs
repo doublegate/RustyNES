@@ -97,17 +97,19 @@ pub fn show(
                     ui.end_row();
 
                     ui.label("CRC32 (game-DB key)");
-                    ui.label(crc.map_or_else(
-                        || "(no cartridge CRC)".to_string(),
-                        |c| format!("{c:08X}"),
-                    ));
+                    ui.label(
+                        crc.map_or_else(
+                            || "(no cartridge CRC)".to_string(),
+                            |c| format!("{c:08X}"),
+                        ),
+                    );
                     ui.end_row();
 
                     ui.label("CRC32 (No-Intro, full file)");
-                    ui.label(crc_full.map_or_else(
-                        || "(unavailable)".to_string(),
-                        |c| format!("{c:08X}"),
-                    ));
+                    ui.label(
+                        crc_full
+                            .map_or_else(|| "(unavailable)".to_string(), |c| format!("{c:08X}")),
+                    );
                     ui.end_row();
 
                     let (hi, lo) = sha256_hex(nes.rom_sha256());
