@@ -1971,6 +1971,7 @@ impl Nes {
             triangle: apu.triangle_out(),
             noise: apu.noise_out(),
             dmc: apu.dmc_out(),
+            external: apu.external_out(),
             frame_irq: apu.frame_irq_pending(),
             dmc_irq: apu.dmc_irq_pending(),
         }
