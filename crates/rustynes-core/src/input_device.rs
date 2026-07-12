@@ -204,6 +204,21 @@ pub struct ZapperState {
 /// pixel counts as "bright enough" to trigger the photodiode.
 pub(crate) const ZAPPER_LUMA_THRESHOLD: u16 = 0x80;
 
+/// Photodiode **aperture radius** in pixels (v2.2.0 "Capstone" light-timing
+/// hardening). The real Zapper's lens focuses light from a small solid angle
+/// onto the photodiode, so the sensor integrates a *region* of the CRT phosphor,
+/// not a single dot. Sampling a `(2r+1) x (2r+1)` window around the aim point
+/// (rather than one pixel) hardens detection against sub-pixel aim error and
+/// single-pixel dropouts in the PPU output — matching how the hardware responds
+/// to the bright target the game flashes. Radius 1 = a 3x3 aperture.
+pub(crate) const ZAPPER_APERTURE_RADIUS: i32 = 1;
+
+/// Minimum number of bright pixels within the aperture required to assert
+/// "light detected". Requiring more than one rejects a lone stray-bright pixel
+/// (PPU edge artefact) as a false positive while still firing on the target
+/// flash, which lights the whole aperture. Calibrated for the 3x3 aperture.
+pub(crate) const ZAPPER_APERTURE_MIN_BRIGHT: u32 = 2;
+
 impl ZapperState {
     /// New zapper aimed off-screen, trigger released, no light.
     #[must_use]
@@ -223,29 +238,64 @@ impl ZapperState {
         self.trigger = trigger;
     }
 
-    /// Sample the framebuffer luminance at the aim point, setting `light_seen`
-    /// if the pixel is bright enough. `framebuffer` is the PPU's RGBA8 256x240
-    /// buffer. Called once per frame by the bus after the frame completes.
+    /// Sample the framebuffer luminance over the photodiode **aperture** around
+    /// the aim point, setting `light_seen` when enough of the aperture is bright.
+    /// `framebuffer` is the PPU's RGBA8 256x240 buffer. Called once per frame by
+    /// the bus after the frame completes.
+    ///
+    /// v2.2.0 "Capstone" light-timing hardening: rather than sampling a single
+    /// pixel, the sensor integrates a `(2r+1) x (2r+1)` aperture
+    /// ([`ZAPPER_APERTURE_RADIUS`]) and asserts light only when at least
+    /// [`ZAPPER_APERTURE_MIN_BRIGHT`] pixels cross [`ZAPPER_LUMA_THRESHOLD`]. This
+    /// models the lens/photodiode field-of-view against the PPU's per-dot output:
+    /// the bright target the game flashes lights the whole aperture (robust
+    /// detection), while a black "blanked" background frame — or a lone stray
+    /// bright pixel — yields no light (no false positive). The computation is a
+    /// pure, deterministic function of the framebuffer + aim point, so it needs
+    /// no additional save-state and preserves the determinism contract.
+    ///
+    /// The temporal light-sense window (the ~19-26-scanline photodiode hold) is
+    /// finer than the per-frame sample resolution used here; the supported
+    /// light-gun titles re-poll every frame, so frame-granular sampling of the
+    /// presented framebuffer is sufficient. A full per-dot temporal integration
+    /// against the beam position is a documented future refinement — see
+    /// `docs/frontend.md`.
     pub fn sample_light(&mut self, framebuffer: &[u8]) {
-        const W: usize = 256;
-        const H: usize = 240;
-        if (self.x as usize) >= W || (self.y as usize) >= H {
+        const W: i32 = 256;
+        const H: i32 = 240;
+        let (ax, ay) = (i32::from(self.x), i32::from(self.y));
+        if ax >= W || ay >= H {
             // Aimed off-screen: never sees light.
             self.light_seen = false;
             return;
         }
-        let idx = ((self.y as usize) * W + (self.x as usize)) * 4;
-        // Guard against a partial framebuffer.
-        if idx + 2 >= framebuffer.len() {
-            self.light_seen = false;
-            return;
+        let mut bright = 0u32;
+        let r = ZAPPER_APERTURE_RADIUS;
+        for dy in -r..=r {
+            for dx in -r..=r {
+                let (px, py) = (ax + dx, ay + dy);
+                if !(0..W).contains(&px) || !(0..H).contains(&py) {
+                    continue; // aperture clipped by the screen edge
+                }
+                // px/py are now bounded to the screen, so the linear index is
+                // non-negative and fits a usize.
+                let Ok(idx) = usize::try_from((py * W + px) * 4) else {
+                    continue;
+                };
+                if idx + 2 >= framebuffer.len() {
+                    continue; // guard against a partial framebuffer
+                }
+                let cr = u16::from(framebuffer[idx]);
+                let cg = u16::from(framebuffer[idx + 1]);
+                let cb = u16::from(framebuffer[idx + 2]);
+                // Rec.601 luma approximation (integer): (77*R + 150*G + 29*B) >> 8.
+                let luma = (77 * cr + 150 * cg + 29 * cb) >> 8;
+                if luma >= ZAPPER_LUMA_THRESHOLD {
+                    bright += 1;
+                }
+            }
         }
-        let r = u16::from(framebuffer[idx]);
-        let g = u16::from(framebuffer[idx + 1]);
-        let b = u16::from(framebuffer[idx + 2]);
-        // Rec.601 luma approximation (integer): (77*R + 150*G + 29*B) >> 8.
-        let luma = (77 * r + 150 * g + 29 * b) >> 8;
-        self.light_seen = luma >= ZAPPER_LUMA_THRESHOLD;
+        self.light_seen = bright >= ZAPPER_APERTURE_MIN_BRIGHT;
     }
 
     /// The device byte for a `$4016`/`$4017` access. Bit 3 = light (0 detected /
@@ -1155,21 +1205,45 @@ mod tests {
     }
 
     #[test]
-    fn zapper_light_detected_for_bright_pixel() {
+    fn zapper_light_detected_for_bright_region() {
         let mut z = ZapperState::new();
         z.set(10, 10, false);
         let mut fb = alloc::vec![0u8; 256 * 240 * 4];
-        // Bright white pixel at (10, 10).
-        let idx = (10 * 256 + 10) * 4;
-        fb[idx] = 0xFF;
-        fb[idx + 1] = 0xFF;
-        fb[idx + 2] = 0xFF;
+        // Bright white 3x3 target block centred on the aim point (10, 10) — the
+        // target flash lights the whole photodiode aperture.
+        for py in 9..=11usize {
+            for px in 9..=11usize {
+                let idx = (py * 256 + px) * 4;
+                fb[idx] = 0xFF;
+                fb[idx + 1] = 0xFF;
+                fb[idx + 2] = 0xFF;
+            }
+        }
         z.sample_light(&fb);
         // Light detected -> bit 3 = 0.
         assert_eq!(
             z.read() & (1 << 3),
             0,
-            "bright pixel -> light detected (bit3=0)"
+            "bright target region -> light detected (bit3=0)"
+        );
+    }
+
+    #[test]
+    fn zapper_aperture_rejects_lone_bright_pixel() {
+        // A single stray-bright pixel (below ZAPPER_APERTURE_MIN_BRIGHT) is not
+        // enough to fire the photodiode — the aperture rejects PPU edge noise.
+        let mut z = ZapperState::new();
+        z.set(50, 50, false);
+        let mut fb = alloc::vec![0u8; 256 * 240 * 4];
+        let idx = (50 * 256 + 50) * 4;
+        fb[idx] = 0xFF;
+        fb[idx + 1] = 0xFF;
+        fb[idx + 2] = 0xFF;
+        z.sample_light(&fb);
+        assert_eq!(
+            z.read() & (1 << 3),
+            1 << 3,
+            "lone bright pixel -> no light (bit3=1)"
         );
     }
 

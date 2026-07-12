@@ -49,12 +49,28 @@
 //!   dumps; the Kid Icarus side-B fix above is title-independent (the timed
 //!   head model) and needs no entry.
 //!
-//! Still simplified (matching Stage 1): CRC/gap bytes are not synthesized on
-//! write (the BIOS's CRC is recomputed in its own RAM, not on the medium), and
-//! the seek windows are short deterministic fixed cycle counts, not an analog
-//! seek-time model. BIOS-driven writing is unverified without a real BIOS.
+//! v2.2.0 "Capstone" completes the **medium model**:
+//!
+//! - **Byte-stream disk medium with per-block CRC-16 on write**: reads present a
+//!   synthesized wire image (gap / `$80` start mark / block / CRC-16-KERMIT),
+//!   and each written block re-emits a fresh CRC-16 over its payload
+//!   ([`Fds::resynth_block_crc`]) — modelling the RP2C33 controller's per-block
+//!   CRC generator, so the medium stays self-consistent after a BIOS write.
+//! - **Continuous analog head-seek / velocity model** ([`Fds::set_analog_head_seek`]):
+//!   an opt-in, default-OFF replacement for the fixed [`HEAD_RESEEK_CYCLES`]
+//!   not-ready window. The belt-driven head's rewind time becomes proportional
+//!   to the distance it had travelled from the disk-start gap (a constant belt
+//!   velocity, [`HEAD_SEEK_BYTES_PER_CYCLE`]), rather than a flat constant. With
+//!   the model disabled a non-writing `.fds` run is byte-identical to prior
+//!   releases; the new state round-trips the v4 save-state tail.
+//! - **Synthetic write-verify oracle** ([`Fds::medium_write_verify`]): a
+//!   BIOS-free walk of the wire image asserting every block's CRC-16 + gap /
+//!   mark framing round-trips — the CI-verifiable half of the medium model. The
+//!   real-BIOS write-CRC path depends on a copyright FDS BIOS and is validated
+//!   only from a local, gitignored dump (see `docs/accuracy-ledger.md`).
+//!
 //! The frontend wiring (BIOS prompt, side-swap keybind, `.fds.sav` file I/O)
-//! is a later stage; this module only provides the core API + state.
+//! is provided by `rustynes-frontend`; this module owns the core API + state.
 //!
 //! References (nesdev wiki, committed under `nesdev_wiki/`):
 //! - `Family_Computer_Disk_System.xhtml` — register map + IRQ + banks.
@@ -151,6 +167,34 @@ pub const MOTOR_SPIN_UP_CYCLES: u32 = 50_000;
 /// deterministic (no analog seek-time model). Per-game quirks ([`FdsQuirk`])
 /// may extend it for titles whose timing the nominal value does not satisfy.
 pub const HEAD_RESEEK_CYCLES: u32 = 8_000;
+
+/// Belt-driven head-seek velocity for the **continuous analog head-seek model**
+/// (v2.2.0 "Capstone", opt-in — see [`Fds::set_analog_head_seek`]).
+///
+/// The stock model above opens a single *fixed* [`HEAD_RESEEK_CYCLES`] not-ready
+/// window on every motor-restart rewind, regardless of how far into the disk the
+/// head had travelled. Real hardware is a belt-driven linear actuator: the time
+/// to rewind the head back to the disk-start gap is **proportional to the
+/// distance** the head sits from that gap (a constant belt velocity), not a flat
+/// constant. This value expresses that velocity as *wire bytes of head travel
+/// undone per CPU cycle*: the re-seek window becomes
+/// `HEAD_SEEK_SETTLE_CYCLES + pre_rewind_head / HEAD_SEEK_BYTES_PER_CYCLE`,
+/// clamped to [`MOTOR_SPIN_UP_CYCLES`] (a rewind can never take longer than a
+/// cold spin-up). The divisor is calibrated so a full-side rewind (head parked
+/// near the inner track, ≈65500 wire bytes) lands close to the historical fixed
+/// [`HEAD_RESEEK_CYCLES`] window, while a shallow rewind (a few blocks in)
+/// completes proportionally sooner — a genuine continuous position→time map.
+///
+/// The model is **deterministic** (integer distance ÷ integer velocity, no
+/// wall-clock / analog jitter) and **opt-in / default-off**, so a non-writing
+/// `.fds` run with the model disabled is byte-identical to the fixed-window path.
+pub const HEAD_SEEK_BYTES_PER_CYCLE: u32 = 8;
+
+/// Fixed settle time (CPU cycles) added to every continuous head-seek window,
+/// modelling the head-carriage settle + track-0 detent that is independent of
+/// the seek distance. Even a zero-distance re-seek reports not-ready for this
+/// long so the BIOS re-read loop always observes the not-ready -> ready edge.
+pub const HEAD_SEEK_SETTLE_CYCLES: u32 = 512;
 
 /// Per-game FDS timing quirk, modelled on `puNES` `fds.c`'s per-CRC drive table.
 ///
@@ -389,6 +433,47 @@ fn build_side_wire(side: &[u8]) -> (Vec<u8>, Vec<WireBlock>) {
     // running straight off the end (a small, fixed tail is enough).
     wire.resize(wire.len() + WIRE_BLOCK_GAP, 0x00);
     (wire, map)
+}
+
+/// A structural fault found by [`Fds::medium_write_verify`] while walking a
+/// synthesized wire image. Used by the **synthetic FDS write-verify oracle**
+/// (v2.2.0 "Capstone"): after driving the register-level write path, the test
+/// re-walks the medium and asserts every block's synthesized CRC-16 and
+/// surrounding gap/mark framing round-trips. This is the CI-verifiable half of
+/// the medium model — it needs **no copyright FDS BIOS** (the real-BIOS write
+/// path is exercised only from a gitignored local dump; see
+/// `docs/accuracy-ledger.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FdsMediumError {
+    /// A block's leading `$80` start mark was missing at the expected offset.
+    MissingStartMark {
+        /// Zero-based block index in stream order.
+        block: usize,
+        /// Wire offset the mark was expected at.
+        wire_pos: usize,
+    },
+    /// A block's synthesized CRC-16 does not match a recomputation over its
+    /// payload — i.e. a write did not re-emit a consistent per-block CRC.
+    CrcMismatch {
+        /// Zero-based block index in stream order.
+        block: usize,
+        /// The CRC-16 stored on the wire (little-endian lo/hi).
+        stored: u16,
+        /// The CRC-16 recomputed from the block payload.
+        expected: u16,
+    },
+    /// The block payload ran past the end of the wire image (a truncated wire).
+    Truncated {
+        /// Zero-based block index in stream order.
+        block: usize,
+    },
+    /// The inter-block gap before a block was not all-`$00` (framing corrupted).
+    GapNotZero {
+        /// Zero-based block index in stream order.
+        block: usize,
+        /// Wire offset of the first non-zero gap byte.
+        wire_pos: usize,
+    },
 }
 
 /// A parsed FDS disk image: an ordered list of disk sides.
@@ -1175,6 +1260,21 @@ pub struct Fds {
     /// ([`quirk_for_crc`]). [`FdsQuirk::NONE`] for the vast majority of titles.
     /// Derived once from immutable inputs, so it is not part of the save-state.
     quirk: FdsQuirk,
+    /// Opt-in **continuous analog head-seek model** (v2.2.0 "Capstone"). When
+    /// `false` (the default), a motor-restart rewind opens the flat
+    /// [`HEAD_RESEEK_CYCLES`] not-ready window (byte-identical to prior
+    /// releases). When `true`, the window is instead the belt-driven
+    /// distance-proportional seek time computed from [`Self::pre_rewind_head`]
+    /// via [`HEAD_SEEK_BYTES_PER_CYCLE`] + [`HEAD_SEEK_SETTLE_CYCLES`]. Persisted
+    /// in the v4 save-state tail; toggled via [`Fds::set_analog_head_seek`].
+    analog_head_seek: bool,
+    /// Wire head position captured at the *instant the motor stops* — i.e. how
+    /// far the belt-driven head had travelled from the disk-start gap before the
+    /// motor-off rewind snapped [`Self::head`] back to 0. The next motor-on uses
+    /// this distance to size the continuous re-seek window (a far-out head takes
+    /// proportionally longer to rewind). Only consulted while
+    /// [`Self::analog_head_seek`] is set; persisted in the v4 tail.
+    pre_rewind_head: usize,
 
     // --- Registers ---
     /// $4020/$4021 — 16-bit timer IRQ reload value.
@@ -1299,6 +1399,11 @@ impl Fds {
             // ready transition it waits for.
             insert_not_ready: 0,
             quirk,
+            // The continuous head-seek model is opt-in (default off) so a
+            // non-writing `.fds` run stays byte-identical to the fixed-window
+            // path. `pre_rewind_head` starts at 0 (head parked at disk start).
+            analog_head_seek: false,
+            pre_rewind_head: 0,
             audio: FdsAudio::default(),
             trace_on: false,
             trace: Vec::new(),
@@ -1451,11 +1556,18 @@ impl Fds {
                     // BIOS writes whole blocks back to the same position it read
                     // them, so the existing block geometry stays valid.
                     let raw_off = self.wire_head_to_raw(self.head);
+                    let written_pos = self.head;
                     self.wire[self.head] = self.write_data;
                     if let Some(off) = raw_off
                         && off < self.disk.side(idx).len()
                     {
                         self.disk.side_mut(idx)[off] = self.write_data;
+                        // The FDS controller emits a fresh CRC-16 after each
+                        // block it writes; re-synthesize this block's stored CRC
+                        // over its (now-updated) payload so the medium stays
+                        // self-consistent — the synthetic write-verify oracle and
+                        // any $4030.D4-checking loader then see a valid block.
+                        self.resynth_block_crc(written_pos);
                     }
                     self.disk_dirty = true;
                 }
@@ -1470,6 +1582,144 @@ impl Fds {
         if self.irq_on_transfer {
             self.irq_pending = true;
         }
+    }
+
+    /// Compute the motor-restart re-seek not-ready window (CPU cycles).
+    ///
+    /// With the continuous head-seek model disabled (the default) this is the
+    /// flat [`HEAD_RESEEK_CYCLES`] plus any per-game quirk slack — byte-identical
+    /// to prior releases. With the model enabled it is the belt-driven,
+    /// distance-proportional seek time: a fixed [`HEAD_SEEK_SETTLE_CYCLES`]
+    /// settle plus the head-travel distance ([`Self::pre_rewind_head`] wire
+    /// bytes) divided by the belt velocity [`HEAD_SEEK_BYTES_PER_CYCLE`],
+    /// clamped so a rewind never exceeds a cold [`MOTOR_SPIN_UP_CYCLES`]
+    /// spin-up. Both paths add the per-game quirk slack and are fully
+    /// deterministic (integer arithmetic, no analog jitter).
+    fn reseek_window_cycles(&self) -> u32 {
+        let base = if self.analog_head_seek {
+            let travel = (self.pre_rewind_head as u32) / HEAD_SEEK_BYTES_PER_CYCLE;
+            HEAD_SEEK_SETTLE_CYCLES
+                .saturating_add(travel)
+                .min(MOTOR_SPIN_UP_CYCLES)
+        } else {
+            HEAD_RESEEK_CYCLES
+        };
+        base.saturating_add(self.quirk.extra_reseek_cycles)
+    }
+
+    /// Re-emit the per-block CRC-16 for the block whose payload contains wire
+    /// offset `wire_pos`, recomputing it over the block's current payload bytes.
+    ///
+    /// Real FDS hardware appends a fresh CRC-16 immediately after each block it
+    /// writes; the RP2C33 controller's CRC generator runs continuously over the
+    /// block stream and the two CRC bytes it emits close the block. Modelling
+    /// that keeps the synthesized wire image self-consistent after a BIOS write:
+    /// once the last payload byte of a block lands, its stored CRC matches a
+    /// recomputation, so [`Self::medium_write_verify`] (and any stricter loader
+    /// that checks `$4030.D4`) sees a valid block. Gap / start-mark / CRC
+    /// positions map to no block payload and are skipped (their framing is
+    /// regenerated from the raw side on the next [`Self::rebuild_wire`]).
+    fn resynth_block_crc(&mut self, wire_pos: usize) {
+        for blk in &self.wire_map {
+            let payload_end = blk.wire_payload_start + blk.len;
+            if wire_pos >= blk.wire_payload_start && wire_pos < payload_end {
+                // The two CRC bytes sit immediately after the payload on the
+                // wire (build_side_wire lays them out `[block][crc_lo][crc_hi]`).
+                if payload_end + 1 < self.wire.len() {
+                    let crc = fds_block_crc(
+                        WIRE_START_MARK,
+                        &self.wire[blk.wire_payload_start..payload_end],
+                    );
+                    self.wire[payload_end] = (crc & 0xFF) as u8;
+                    self.wire[payload_end + 1] = (crc >> 8) as u8;
+                }
+                return;
+            }
+        }
+    }
+
+    /// Walk the synthesized wire image of the currently inserted side and verify
+    /// every block's gap / start-mark framing and per-block CRC-16 round-trips —
+    /// the **synthetic FDS write-verify oracle** (v2.2.0 "Capstone").
+    ///
+    /// This is deliberately BIOS-free: it validates the emulator's own medium
+    /// synthesis (gap runs, `$80` start marks, CRC-16/KERMIT block CRCs) so the
+    /// write path can be exercised and checked entirely in CI without any
+    /// copyright FDS BIOS. The real-BIOS write path (which recomputes the CRC in
+    /// its own RAM and streams it to `$4024`) is validated only from a local,
+    /// gitignored dump — see `docs/accuracy-ledger.md` for the CI-verifiable vs
+    /// local-only split.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`FdsMediumError`] encountered (missing start mark,
+    /// CRC mismatch, truncated block, or a corrupted inter-block gap). Returns
+    /// `Ok(())` when no side is inserted (nothing to verify).
+    pub fn medium_write_verify(&self) -> Result<(), FdsMediumError> {
+        for (block, blk) in self.wire_map.iter().enumerate() {
+            // The `$80` start mark sits one byte before the payload.
+            if blk.wire_payload_start == 0
+                || self.wire[blk.wire_payload_start - 1] != WIRE_START_MARK
+            {
+                return Err(FdsMediumError::MissingStartMark {
+                    block,
+                    wire_pos: blk.wire_payload_start.saturating_sub(1),
+                });
+            }
+            let payload_end = blk.wire_payload_start + blk.len;
+            // Payload + its two CRC bytes must fit inside the wire.
+            if payload_end + 1 >= self.wire.len() {
+                return Err(FdsMediumError::Truncated { block });
+            }
+            let expected = fds_block_crc(
+                WIRE_START_MARK,
+                &self.wire[blk.wire_payload_start..payload_end],
+            );
+            let stored =
+                u16::from(self.wire[payload_end]) | (u16::from(self.wire[payload_end + 1]) << 8);
+            if stored != expected {
+                return Err(FdsMediumError::CrcMismatch {
+                    block,
+                    stored,
+                    expected,
+                });
+            }
+            // The gap before this block (from the prior block's CRC end, or the
+            // start of the wire) must be all `$00`.
+            let gap_start = if block == 0 {
+                0
+            } else {
+                let prev = &self.wire_map[block - 1];
+                prev.wire_payload_start + prev.len + 2
+            };
+            let mark_pos = blk.wire_payload_start - 1;
+            for (i, &b) in self.wire[gap_start..mark_pos].iter().enumerate() {
+                if b != 0x00 {
+                    return Err(FdsMediumError::GapNotZero {
+                        block,
+                        wire_pos: gap_start + i,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Enable or disable the continuous analog head-seek model (default off).
+    ///
+    /// Opt-in accuracy feature: when disabled (the default) motor-restart
+    /// rewinds use the flat [`HEAD_RESEEK_CYCLES`] window, so a non-writing
+    /// `.fds` run is byte-identical to prior releases. When enabled, the re-seek
+    /// window scales with head-travel distance (belt velocity). See
+    /// [`Self::reseek_window_cycles`].
+    pub const fn set_analog_head_seek(&mut self, enabled: bool) {
+        self.analog_head_seek = enabled;
+    }
+
+    /// Whether the continuous analog head-seek model is currently enabled.
+    #[must_use]
+    pub const fn analog_head_seek(&self) -> bool {
+        self.analog_head_seek
     }
 
     /// Acknowledge a pending timer IRQ (clears the timer-IRQ status bit and the
@@ -1531,9 +1781,7 @@ impl Fds {
                 // (i.e. a true rewind happened), which is what the post-load
                 // re-read sequence produces.
                 if self.head == 0 {
-                    self.insert_not_ready = self
-                        .insert_not_ready
-                        .max(HEAD_RESEEK_CYCLES + self.quirk.extra_reseek_cycles);
+                    self.insert_not_ready = self.insert_not_ready.max(self.reseek_window_cycles());
                 }
             } else {
                 // First motor-on since the disk was inserted: the drive spins up
@@ -1556,6 +1804,12 @@ impl Fds {
             // the load stalls forever. The cold spin-up window is NOT re-opened
             // (`spun_up` stays set) — only the disk position rewinds, matching the
             // mid-session rewind hardware does without a full spin-up delay.
+            //
+            // Capture how far the head had travelled from the disk-start gap
+            // BEFORE snapping it back, so the continuous head-seek model can size
+            // the next motor-on's re-seek window by that distance (belt
+            // velocity). The fixed-window model ignores this field.
+            self.pre_rewind_head = self.head;
             self.head = 0;
             self.end_of_head = false;
             self.read_skipping_gap = true;
@@ -1766,11 +2020,15 @@ impl Fds {
         data: &[u8],
         mut off: usize,
         base: usize,
+        version: u8,
     ) -> Result<(), MapperError> {
         let saved_sides = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
         off += 4;
-        // Validate the full v3 length now that the side count is known.
-        let expected = base + FdsAudio::TAIL_LEN + 4 + saved_sides * FDS_SIDE_LEN + 4 + 4 + 1;
+        // Validate the full length now that the side count is known. v4 appends
+        // the continuous head-seek tail after the v3 fields.
+        let v4_extra = if version >= 4 { FDS_V4_TAIL_LEN } else { 0 };
+        let expected =
+            base + FdsAudio::TAIL_LEN + 4 + saved_sides * FDS_SIDE_LEN + 4 + 4 + 1 + v4_extra;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -1799,9 +2057,20 @@ impl Fds {
         self.insert_not_ready = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
         off += 4;
         let disk_flags = data[off];
+        off += 1;
         self.disk_dirty = (disk_flags & 0x01) != 0;
         self.write_protected = (disk_flags & 0x02) != 0;
         self.spun_up = (disk_flags & 0x04) != 0;
+        // v4 continuous head-seek tail; v3 blobs default the model off.
+        if version >= 4 {
+            self.analog_head_seek = data[off] != 0;
+            off += 1;
+            self.pre_rewind_head =
+                u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+        } else {
+            self.analog_head_seek = false;
+            self.pre_rewind_head = 0;
+        }
         Ok(())
     }
 }
@@ -1819,7 +2088,16 @@ impl Fds {
 ///   is retained (clamped) for back-compat; v3 overwrites it from the tail.
 ///   Loading a v1/v2 blob leaves the disk at its construction contents
 ///   (un-modified), side 0 inserted, not dirty, writable.
-const FDS_SAVE_VERSION: u8 = 3;
+/// - v4 (Capstone): appends the **continuous head-seek** tail
+///   ([`FDS_V4_TAIL_LEN`]) after the v3 disk tail — the `analog_head_seek`
+///   opt-in flag + the `pre_rewind_head` distance. Strictly additive: a v1/v2/v3
+///   blob restores with the model disabled and `pre_rewind_head` = 0 (the
+///   byte-identical default).
+const FDS_SAVE_VERSION: u8 = 4;
+
+/// Extra bytes the v4 disk tail appends after the v3 tail: the
+/// `analog_head_seek` flag (1 byte) + `pre_rewind_head` (u32, 4 bytes).
+const FDS_V4_TAIL_LEN: usize = 1 + 4;
 
 impl Mapper for Fds {
     fn sram(&self) -> &[u8] {
@@ -2141,6 +2419,11 @@ impl Mapper for Fds {
         disk_flags |= u8::from(self.write_protected) << 1;
         disk_flags |= u8::from(self.spun_up) << 2;
         out.push(disk_flags);
+        // v4 tail (Capstone): continuous head-seek model state. Strictly
+        // additive after the v3 disk tail — v1/v2/v3 blobs restore with the
+        // model disabled and `pre_rewind_head` = 0 (the byte-identical default).
+        out.push(u8::from(self.analog_head_seek));
+        out.extend_from_slice(&(self.pre_rewind_head as u32).to_le_bytes());
         out
     }
 
@@ -2170,7 +2453,7 @@ impl Mapper for Fds {
                     });
                 }
             }
-            3 => {
+            3 | 4 => {
                 // Need at least the fixed prefix + audio tail + the disk tail's
                 // leading side-count u32 to learn how long the tail is.
                 let min = base + FdsAudio::TAIL_LEN + 4;
@@ -2260,7 +2543,7 @@ impl Mapper for Fds {
         // Legacy v1/v2 blobs leave the disk at its construction contents
         // (un-modified), side 0 inserted, not dirty, writable.
         if version >= 3 {
-            self.load_disk_tail(data, off, base)?;
+            self.load_disk_tail(data, off, base, version)?;
         } else {
             self.disk_dirty = false;
             self.write_protected = false;
@@ -2269,6 +2552,9 @@ impl Mapper for Fds {
             // spun up so a restored mid-game state does not re-trigger a spin-up
             // window (the disk was spinning when the state was captured).
             self.spun_up = true;
+            // v1/v2/v3 predate the continuous head-seek model: default it off.
+            self.analog_head_seek = false;
+            self.pre_rewind_head = 0;
         }
         // Rebuild the wire image from the (possibly modified) inserted side and
         // clamp the restored head into it. The wire image is derived state — it
@@ -3068,7 +3354,10 @@ mod tests {
             fds.notify_cpu_cycle();
         }
         let blob = fds.save_state();
-        assert_eq!(blob[0], 3, "FDS save version is 3 (Stage 2b)");
+        assert_eq!(
+            blob[0], 4,
+            "FDS save version is 4 (Capstone head-seek tail)"
+        );
 
         let mut fresh = make_device(2);
         fresh.load_state(&blob).unwrap();
@@ -3117,8 +3406,9 @@ mod tests {
         let mut fds = make_device(1);
         enable_sound_io(&mut fds);
         // Build a v1-shaped blob by truncating off the disk + audio tails and
-        // stamping version 1.
-        let disk_tail = 4 + FDS_SIDE_LEN + 4 + 4 + 1;
+        // stamping version 1. `save_state` now emits v4, so the disk tail
+        // includes the Capstone head-seek extra.
+        let disk_tail = 4 + FDS_SIDE_LEN + 4 + 4 + 1 + FDS_V4_TAIL_LEN;
         let mut blob = fds.save_state();
         blob.truncate(blob.len() - disk_tail - FdsAudio::TAIL_LEN);
         blob[0] = 1;
@@ -3506,7 +3796,7 @@ mod tests {
         assert!(fds.disk_is_dirty());
         assert_eq!(fds.transfer, TransferState::Writing);
         let blob = fds.save_state();
-        assert_eq!(blob[0], 3, "FDS save version bumped to 3");
+        assert_eq!(blob[0], 4, "FDS save version bumped to 4 (Capstone)");
 
         let mut fresh = make_device(2);
         fresh.load_state(&blob).unwrap();
@@ -3557,9 +3847,9 @@ mod tests {
         // the disk un-modified, side 0 inserted, clean, writable.
         let mut fds = make_device(2);
         enable_disk_io(&mut fds);
-        // Build a v2-shaped blob by truncating off the v3 disk tail + stamping 2.
-        // The disk tail = 4 (side count) + sides*FDS_SIDE_LEN + 4 + 4 + 1.
-        let disk_tail = 4 + 2 * FDS_SIDE_LEN + 4 + 4 + 1;
+        // Build a v2-shaped blob by truncating off the v4 disk tail + stamping 2.
+        // The disk tail = 4 (side count) + sides*FDS_SIDE_LEN + 4 + 4 + 1 + v4.
+        let disk_tail = 4 + 2 * FDS_SIDE_LEN + 4 + 4 + 1 + FDS_V4_TAIL_LEN;
         let mut blob = fds.save_state();
         blob.truncate(blob.len() - disk_tail);
         blob[0] = 2;
@@ -3578,7 +3868,7 @@ mod tests {
         // A v1 blob has neither audio nor disk tail; the disk defaults apply.
         let mut fds = make_device(1);
         let blob_v3 = fds.save_state();
-        let disk_tail = 4 + FDS_SIDE_LEN + 4 + 4 + 1;
+        let disk_tail = 4 + FDS_SIDE_LEN + 4 + 4 + 1 + FDS_V4_TAIL_LEN;
         let mut blob = blob_v3;
         blob.truncate(blob.len() - FdsAudio::TAIL_LEN - disk_tail);
         blob[0] = 1;
@@ -3587,5 +3877,114 @@ mod tests {
         assert_eq!(fds.inserted_disk_side(), Some(0));
         assert!(!fds.disk_is_dirty());
         assert_eq!(fds.cpu_read(0x4032) & 0x04, 0x00, "v1 defaults to writable");
+    }
+
+    // --- v2.2.0 "Capstone" medium model ---
+
+    #[test]
+    fn freshly_built_wire_passes_write_verify() {
+        // The synthesized wire image for a power-on disk must already satisfy the
+        // oracle: every block has a $80 mark, a correct CRC-16, and all-$00 gaps.
+        let fds = make_device(1);
+        fds.medium_write_verify()
+            .expect("power-on wire image is well-formed");
+    }
+
+    #[test]
+    fn synthetic_write_verify_crc_and_gap_round_trip() {
+        // The BIOS-free synthetic write-verify oracle: drive the register-level
+        // WRITE path over a block payload, then re-walk the medium and assert the
+        // per-block CRC-16 was re-emitted and the gap/mark framing round-trips —
+        // no copyright FDS BIOS required (see docs/accuracy-ledger.md).
+        let mut fds = make_device(1);
+        enable_disk_io(&mut fds);
+        // Land inside the disk-info block payload so the writes mirror into the
+        // raw side and re-synthesize that block's CRC.
+        seek_head(&mut fds, FIRST_BLOCK_WIRE_PAYLOAD);
+        write_bytes(&mut fds, &[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert!(fds.disk_is_dirty(), "a write dirties the medium");
+        // The whole medium remains structurally valid after the write.
+        fds.medium_write_verify()
+            .expect("write path keeps the medium self-consistent");
+        // Prove the CRC oracle actually bites: corrupt one payload byte on the
+        // wire WITHOUT re-synthesizing its CRC and confirm the verifier catches
+        // the mismatch on the first (disk-info) block.
+        fds.wire[FIRST_BLOCK_WIRE_PAYLOAD] ^= 0xFF;
+        match fds.medium_write_verify() {
+            Err(FdsMediumError::CrcMismatch { block: 0, .. }) => {}
+            other => panic!("expected a block-0 CRC mismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resynthesized_block_crc_matches_reference() {
+        // After a block-payload write, the stored CRC-16 on the wire must equal a
+        // fresh reference computation over the (updated) payload.
+        let mut fds = make_device(1);
+        enable_disk_io(&mut fds);
+        seek_head(&mut fds, FIRST_BLOCK_WIRE_PAYLOAD);
+        write_bytes(&mut fds, &[0x10, 0x20, 0x30]);
+        let blk = fds.wire_map[0];
+        let end = blk.wire_payload_start + blk.len;
+        let stored = u16::from(fds.wire[end]) | (u16::from(fds.wire[end + 1]) << 8);
+        let expected = fds_block_crc(WIRE_START_MARK, &fds.wire[blk.wire_payload_start..end]);
+        assert_eq!(
+            stored, expected,
+            "written block re-emits a consistent CRC-16"
+        );
+    }
+
+    #[test]
+    fn analog_head_seek_defaults_off_and_matches_fixed_window() {
+        // With the model OFF (default), a motor-restart re-seek opens the flat
+        // HEAD_RESEEK_CYCLES window regardless of head distance — byte-identical
+        // to prior releases.
+        let mut fds = make_device(1);
+        assert!(!fds.analog_head_seek(), "model is opt-in / default off");
+        fds.pre_rewind_head = 40_000; // far-out head; ignored while disabled
+        assert_eq!(fds.reseek_window_cycles(), HEAD_RESEEK_CYCLES);
+    }
+
+    #[test]
+    fn analog_head_seek_scales_with_distance() {
+        // With the model ON, the re-seek window grows with the pre-rewind head
+        // distance (belt velocity) and clamps at a cold spin-up.
+        let mut fds = make_device(1);
+        fds.set_analog_head_seek(true);
+        fds.pre_rewind_head = 0;
+        let near = fds.reseek_window_cycles();
+        assert_eq!(
+            near, HEAD_SEEK_SETTLE_CYCLES,
+            "zero-distance = settle floor"
+        );
+        fds.pre_rewind_head = 8_000;
+        let mid = fds.reseek_window_cycles();
+        assert_eq!(
+            mid,
+            HEAD_SEEK_SETTLE_CYCLES + 8_000 / HEAD_SEEK_BYTES_PER_CYCLE
+        );
+        assert!(mid > near, "a farther head takes longer to rewind");
+        // A head parked deep past the whole disk clamps to the spin-up ceiling.
+        fds.pre_rewind_head = 10_000_000;
+        assert_eq!(fds.reseek_window_cycles(), MOTOR_SPIN_UP_CYCLES);
+    }
+
+    #[test]
+    fn v4_save_state_round_trips_analog_head_seek() {
+        // The v4 tail persists the head-seek model state.
+        let mut fds = make_device(2);
+        enable_disk_io(&mut fds);
+        fds.set_analog_head_seek(true);
+        fds.pre_rewind_head = 12_345;
+        let blob = fds.save_state();
+        assert_eq!(blob[0], 4);
+        let mut fresh = make_device(2);
+        fresh.load_state(&blob).unwrap();
+        assert!(fresh.analog_head_seek(), "v4 restores the opt-in flag");
+        assert_eq!(
+            fresh.pre_rewind_head, 12_345,
+            "v4 restores the seek distance"
+        );
+        assert_eq!(fresh.save_state(), blob, "re-serialize is byte-identical");
     }
 }

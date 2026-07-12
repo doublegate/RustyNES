@@ -434,6 +434,17 @@ pub struct LockstepBus {
     /// the default + Four Score reads and the determinism contract are
     /// unaffected unless a device is explicitly attached.
     expansion_device: [Option<crate::input_device::InputDevice>; 2],
+    /// Famicom built-in **microphone** signal (v2.2.0 "Capstone"). The hardwired
+    /// second Famicom controller carries a push-to-talk microphone whose state is
+    /// read on **`$4016` bit 2** (not `$4017`) — games such as *The Legend of
+    /// Zelda* (killing Pols Voice), *Kid Icarus*, *Raid on Bungeling Bay*, and
+    /// *Takeshi no Chōsenjō* poll it. Modelled as a single live bit (the analog
+    /// mic is quantized to "loud enough / not" by the frontend, matching how the
+    /// Famicom's comparator fed the port): `true` ORs `1` into `$4016.D2`.
+    /// Default `false` leaves the `$4016` read byte-identical (bit 2 is otherwise
+    /// open-bus / 0), so the standard controller path is unaffected until a
+    /// frontend explicitly drives the mic via [`Self::set_microphone`].
+    famicom_mic: bool,
     /// v1.1.0 beta.1 (T-110-B4) — optional per-game nametable mirroring
     /// override. `None` (default) defers to the mapper's `nametable_address`
     /// (byte-identical). When `Some`, the standard `$2000-$3EFF` nametable
@@ -843,6 +854,7 @@ impl LockstepBus {
             vs_4016_bit1: false,
             vs_4016_bit1_dirty: false,
             expansion_device: [None, None],
+            famicom_mic: false,
             nt_mirroring_override: None,
             #[cfg(feature = "debug-hooks")]
             events: alloc::vec::Vec::new(),
@@ -1073,6 +1085,9 @@ impl LockstepBus {
         // Non-standard input devices are unplugged on power-cycle (they are
         // re-attached explicitly by the frontend, like the controllers above).
         self.expansion_device = [None, None];
+        // The microphone is a transient live signal; a power-cycle releases it
+        // (the frontend re-drives it each frame while a key is held).
+        self.famicom_mic = false;
         self.cycle = 0;
         self.dma_pending = None;
         self.dma_cycles_owed = 0;
@@ -1485,7 +1500,7 @@ impl LockstepBus {
                 }
                 v
             }
-            0x4016 => 0x40 | self.peek_port(0),
+            0x4016 => 0x40 | self.peek_port(0) | (u8::from(self.famicom_mic) << 2),
             0x4017 => 0x40 | self.peek_port(1),
             0x4000..=0x4014 | 0x4018..=0x401F => self.open_bus,
             0x4020..=0xFFFF => {
@@ -1660,6 +1675,20 @@ impl LockstepBus {
         {
             z.set(x, y, trigger);
         }
+    }
+
+    /// Drive the Famicom built-in microphone signal (read on `$4016` bit 2).
+    ///
+    /// `pressed` = the frontend's quantized "mic is loud" verdict. Additive:
+    /// leaving it `false` (the default) keeps the `$4016` read byte-identical.
+    pub const fn set_microphone(&mut self, pressed: bool) {
+        self.famicom_mic = pressed;
+    }
+
+    /// Whether the Famicom microphone signal is currently asserted.
+    #[must_use]
+    pub const fn microphone(&self) -> bool {
+        self.famicom_mic
     }
 
     /// Update an attached Power Pad's live button mask (bit `i` = mat button
@@ -3859,7 +3888,8 @@ impl LockstepBus {
             // "Standard controller" + AccuracyCoin `CPU Behavior ::
             // Open Bus` Test 6.
             0x4016 => {
-                let base = (self.open_bus & 0xE0) | self.read_port(0);
+                let mic = u8::from(self.famicom_mic) << 2;
+                let base = (self.open_bus & 0xE0) | self.read_port(0) | mic;
                 self.vs_overlay_4016(base)
             }
             0x4017 => {
@@ -4942,6 +4972,27 @@ mod four_score_tests {
     fn strobe(bus: &mut LockstepBus) {
         bus.commit_controller_strobe(1);
         bus.commit_controller_strobe(0);
+    }
+
+    #[test]
+    fn famicom_microphone_drives_4016_bit2() {
+        let mut bus = test_bus();
+        // Default: mic released -> $4016 bit 2 clear (byte-identical stock read).
+        assert!(!bus.microphone());
+        assert_eq!(bus.peek_cpu(0x4016) & 0x04, 0x00, "mic off -> D2 clear");
+        // Press the mic: $4016 bit 2 reads 1.
+        bus.set_microphone(true);
+        assert!(bus.microphone());
+        assert_eq!(bus.peek_cpu(0x4016) & 0x04, 0x04, "mic on -> D2 set");
+        // $4017 is unaffected (the Famicom mic is a $4016-only signal).
+        assert_eq!(bus.peek_cpu(0x4017) & 0x04, 0x00, "mic never touches $4017");
+        // Release restores the stock read.
+        bus.set_microphone(false);
+        assert_eq!(
+            bus.peek_cpu(0x4016) & 0x04,
+            0x00,
+            "mic released -> D2 clear"
+        );
     }
 
     #[test]

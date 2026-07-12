@@ -1261,6 +1261,17 @@ impl Nes {
         self.bus.set_zapper(port, x, y, trigger);
     }
 
+    /// Drive the Famicom built-in **microphone** (read on `$4016` bit 2).
+    ///
+    /// The hardwired second Famicom controller carries a push-to-talk mic that
+    /// games poll on `$4016.D2` (e.g. *Zelda*'s Pols Voice, *Kid Icarus*). Pass
+    /// `pressed = true` while the frontend's mic key is held / an audio source
+    /// crosses the loudness threshold. Additive and opt-in: `false` (the
+    /// default) keeps the `$4016` read byte-identical to a stock NES.
+    pub const fn set_microphone(&mut self, pressed: bool) {
+        self.bus.set_microphone(pressed);
+    }
+
     /// Attach an NES Power Pad / Family Fun Fitness mat on `port` (typically
     /// port 1 / `$4017`) and set its live button mask (bit `i` = mat button
     /// `i+1`, 0..=11). Convenience wrapper that attaches the device if absent
