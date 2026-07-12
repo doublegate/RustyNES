@@ -210,9 +210,11 @@ pub const fn build_rgba_lut(palette: PpuPalette) -> [[u8; 4]; 512] {
 }
 
 /// Build the 512-entry `(emphasis << 6) | color` → RGBA8 lookup from a custom
-/// 64-entry base palette (e.g. a loaded `.pal` file), applying the standard 2C02
-/// composite emphasis model — the same `apply_emphasis` the default composite path
-/// uses, so a custom palette behaves like a drop-in replacement for `NES_PALETTE`.
+/// 64-entry base palette (e.g. a loaded `.pal` file).
+///
+/// Applies the standard 2C02 composite emphasis model — the same `apply_emphasis`
+/// the default composite path uses — so a custom palette behaves like a drop-in
+/// replacement for `NES_PALETTE`.
 ///
 /// v1.1.0 beta.1 (T-110-A3): the frontend feeds the parsed `.pal` here via
 /// `Ppu::set_custom_palette`. With no custom palette the PPU keeps using

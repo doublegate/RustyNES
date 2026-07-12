@@ -477,6 +477,45 @@ the two newest upstream PPU tests are known gaps).
   is length-capped (8 KiB) and tolerant of malformed input (silently keeps
   defaults), and the blob is version-tolerant (`#[serde(default)]` fields).
 
+### wasm size & startup + software blitter (v2.1.8 "Performance", A2 + A4)
+
+**A4 — release wasm size/startup.** The `<link data-trunk rel="rust">` in
+`web/index.html` now carries `data-wasm-opt="4"`, so the release build runs
+`wasm-opt -O4` (Binaryen's aggressive speed pipeline) on the artifact instead of
+trunk's default `-Oz`; `data-wasm-opt-params="--enable-simd --enable-bulk-memory"`
+keeps the SIMD + bulk-memory features enabled through the opt pass (matching the
+`+simd128` blitter path). Dev builds skip wasm-opt entirely, so `trunk serve`
+stays fast. Startup uses **streaming instantiation**: trunk's generated loader
+calls `WebAssembly.instantiateStreaming` (compile-while-download) whenever the
+server sends `Content-Type: application/wasm` — GitHub Pages does, and the
+service worker (`sw.js`) serves cached `Response`s with that header preserved, so
+a warm PWA cache still instantiates by streaming. The bundle stays within the
+5 MiB gzip budget enforced by `scripts/wasm_size_budget.sh` and the CI `web` gate.
+
+On **code-splitting**: the two heavy optional native features are already absent
+from the wasm bundle by construction — `scripting` (mlua) and `hd-pack`
+(`rustynes-hdpack`) live only in the `cfg(not(target_arch = "wasm32"))` dep
+table, so there is nothing to split out (the browser Lua path is the separate
+default-off `script-wasm`/piccolo backend). The one heavyweight in the default
+`wasm-winit` bundle is the egui debugger overlay, which is intrinsic to that
+build; the lightweight split already exists as the `wasm-canvas` embed feature (a
+direct canvas-2D blit with no egui/debugger). True dynamic-`import()`
+code-splitting of a single `wasm-bindgen` cdylib is not supported by the trunk
+toolchain we pin, so the feature-flag split (`wasm-winit` vs `wasm-canvas`) is the
+mechanism, not per-symbol lazy loading.
+
+**A2 — vectorized software palette blitter (`src/gfx_blit.rs`).** A reusable,
+byte-identical CPU implementation of the core's palette-index -> RGBA emit: given
+the PPU's `index_framebuffer` (`&[u16]`) plus the 512-entry LUT, it reconstructs
+the RGBA frame that `Ppu::framebuffer` would produce. Scalar reference +
+`wide::u32x8` (desktop) + `core::arch::wasm32` `v128` (`+simd128`, scalar
+fallback otherwise); a unit test asserts SIMD == scalar byte-for-byte and against
+the `build_rgba_lut` oracle. It is a validated utility (used by its bench + tests
+and available to any host that has the index frame), **not** on the shipped frame
+path — that stays GPU-resident (see the "Rendering" section below and
+`docs/performance.md` for the measured profile and the honest note that a LUT
+gather is memory-bound, so SIMD lands within noise of scalar).
+
 ## Rendering
 
 - The PPU emits a `[u8; 256*240*4]` RGBA8 sRGB framebuffer.

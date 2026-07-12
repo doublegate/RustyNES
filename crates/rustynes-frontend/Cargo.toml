@@ -244,6 +244,14 @@ web-time.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rustynes-netplay.workspace = true
 
+# v2.1.8 "Performance" (A2) — stable-Rust portable SIMD (`wide::u32x8`) for the
+# desktop software palette-index -> RGBA blitter (`src/gfx_blit.rs::blit_simd`).
+# Frontend-only: the `#![no_std]` chip stack never sees it, so the core stays
+# dependency-light. Native-only on purpose — the wasm blitter uses
+# `core::arch::wasm32` v128 intrinsics under `+simd128` (with a scalar fallback),
+# so `wide` never enters the wasm bundle and the 5 MiB size budget is untouched.
+wide = "0.7"
+
 # v1.7.0 "Forge" G4 — movie-export hash hardening (native export path only, so
 # the wasm size budget is untouched). `.fm2` wants an MD5 `romChecksum`, `.bk2`
 # a SHA-1; recompute both from the loaded ROM and render as hex on export.
@@ -451,3 +459,15 @@ tempfile = "3"
 # NTSC filter. Pinned to wgpu 29's naga (29.x) so the validation matches what
 # ships AND the two don't duplicate in the lock.
 naga = { version = "29", features = ["wgsl-in"] }
+# v2.1.8 "Performance" (A2) — Criterion bench for the software blitter, so the
+# scalar / u32 / SIMD variants are profiled before adoption (see `docs/performance.md`).
+criterion.workspace = true
+
+# v2.1.8 "Performance" (A2) — blitter microbenchmark. Native-only (the wasm
+# blitter is validated by the `simd_equals_scalar_byte_identical` unit test,
+# which runs under both `+simd128` and the scalar fallback via the wasm test
+# runner); Criterion itself does not target `wasm32-unknown-unknown`.
+[[bench]]
+name = "gfx_blit"
+path = "benches/gfx_blit.rs"
+harness = false

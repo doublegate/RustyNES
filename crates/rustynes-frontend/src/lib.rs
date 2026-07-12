@@ -60,6 +60,11 @@ pub mod genie_db;
 // (frontend-only, pure; round-trips through the core decoder).
 pub mod genie_encode;
 pub mod gfx;
+// v2.1.8 "Performance" (A2) — vectorized software palette-index -> RGBA
+// blitter, byte-identical to the core's pixel-emit path. Reusable on every
+// target (native `wide` SIMD, wasm `+simd128`, scalar fallback); see the module
+// docs for why the shipped GPU frame path does not route through it.
+pub mod gfx_blit;
 // v1.4.0 Workstream H3 — interactive ratatui help browser. Native-only +
 // behind the default-on `help-tui` feature (a minimal build can drop it); the
 // ratatui / crossterm deps are gated out of the wasm target in `Cargo.toml`.
