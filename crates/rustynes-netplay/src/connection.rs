@@ -353,6 +353,51 @@ pub enum DisconnectReason {
     HandshakeTimeout,
     /// The peer announced a different ROM hash in its `Sync`.
     RomMismatch,
+    /// The peer was synced but then went silent past the disconnect timeout
+    /// (no datagram of any kind received for [`NetplayConnection`]'s
+    /// `peer_disconnect_timeout`). See [`PeerLink`] for the graded liveness
+    /// signal that precedes this terminal state.
+    PeerTimeout,
+}
+
+/// The liveness of an already-[`Synced`](ConnectionState::Synced) peer, graded
+/// by how long it has been since the last datagram of any kind arrived.
+///
+/// This is the **run-time** counterpart to the one-shot
+/// [`DisconnectReason::HandshakeTimeout`]: once gameplay is underway, a peer
+/// can stall (packet loss, a paused laptop, a flaky LTE handoff) without ever
+/// formally disconnecting. GGPO-style netcode surfaces that as a graded signal
+/// so the frontend can show a "connection interrupted" overlay *before*
+/// tearing the match down, then only give up after a much longer grace period.
+///
+/// # Why not Mesen's 150 ms
+///
+/// Mesen's netplay declares a peer stalled after ~150 ms of silence, which is
+/// famously trigger-happy: a single dropped `Quality` ping (they are sent only
+/// once per second here) or a routine Wi-Fi/LTE retransmit spike routinely
+/// exceeds 150 ms of inter-arrival gap on a real internet path whose RTT is
+/// already 60-120 ms, producing spurious "desynced/interrupted" flapping on
+/// otherwise-healthy connections. We instead grade liveness against the packet
+/// cadence: the [`Interrupted`](Self::Interrupted) warning fires only after
+/// `peer_interrupt_timeout` (default **2 s** — two full ping intervals plus
+/// slack, so a single lost ping never trips it), and the terminal
+/// [`TimedOut`](Self::TimedOut) only after `peer_disconnect_timeout`
+/// (default **5 s**), matching the multi-second grace windows GGPO/Parsec use.
+/// Both are configurable via
+/// [`with_peer_timeouts`](NetplayConnection::with_peer_timeouts) for LAN play
+/// (where much tighter bounds are appropriate) or high-latency relayed play.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PeerLink {
+    /// A datagram arrived within `peer_interrupt_timeout`; the link is healthy.
+    Live,
+    /// No datagram for at least `peer_interrupt_timeout` but less than
+    /// `peer_disconnect_timeout` — the frontend should warn, but the session is
+    /// still recoverable (a late packet returns the link to
+    /// [`Live`](Self::Live)).
+    Interrupted,
+    /// No datagram for at least `peer_disconnect_timeout`; the connection is
+    /// (or is about to be) torn down with [`DisconnectReason::PeerTimeout`].
+    TimedOut,
 }
 
 /// A direct host/join netplay connection: owns a [`UdpTransport`], performs the
@@ -400,6 +445,15 @@ pub struct NetplayConnection {
     ping_in_flight: Option<Instant>,
     /// Exponentially-smoothed round-trip estimate, milliseconds.
     smoothed_ping_ms: Option<f64>,
+    /// When we last received *any* datagram from the peer. Drives the graded
+    /// [`PeerLink`] liveness signal and the [`DisconnectReason::PeerTimeout`]
+    /// terminal state once [`Synced`](ConnectionState::Synced).
+    last_recv: Instant,
+    /// Silence after which a synced peer is reported [`PeerLink::Interrupted`].
+    peer_interrupt_timeout: Duration,
+    /// Silence after which a synced peer is torn down with
+    /// [`DisconnectReason::PeerTimeout`].
+    peer_disconnect_timeout: Duration,
     /// The peer's most recently reported frame advantage (its local frame
     /// minus its last-confirmed remote frame).
     remote_frame_advantage: i32,
@@ -412,6 +466,15 @@ impl NetplayConnection {
     const DEFAULT_PING_INTERVAL: Duration = Duration::from_secs(1);
     /// Default handshake timeout.
     const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+    /// Default peer-interrupt threshold: silence after which a synced peer is
+    /// reported [`PeerLink::Interrupted`]. Two full [`DEFAULT_PING_INTERVAL`]s
+    /// (2 s) so a single lost ping never trips it — deliberately far above
+    /// Mesen's trigger-happy ~150 ms (see [`PeerLink`]).
+    const DEFAULT_PEER_INTERRUPT: Duration = Duration::from_secs(2);
+    /// Default peer-disconnect threshold: silence after which a synced peer is
+    /// torn down with [`DisconnectReason::PeerTimeout`]. Matches the multi-second
+    /// grace window GGPO/Parsec use.
+    const DEFAULT_PEER_DISCONNECT: Duration = Duration::from_secs(5);
     /// Smoothing factor for the RTT estimate (new sample weight).
     const PING_SMOOTHING: f64 = 0.2;
 
@@ -475,6 +538,9 @@ impl NetplayConnection {
             ping_interval: Self::DEFAULT_PING_INTERVAL,
             ping_in_flight: None,
             smoothed_ping_ms: None,
+            last_recv: now,
+            peer_interrupt_timeout: Self::DEFAULT_PEER_INTERRUPT,
+            peer_disconnect_timeout: Self::DEFAULT_PEER_DISCONNECT,
             remote_frame_advantage: 0,
         }
     }
@@ -484,6 +550,41 @@ impl NetplayConnection {
     pub const fn with_handshake_timeout(mut self, timeout: Duration) -> Self {
         self.handshake_timeout = timeout;
         self
+    }
+
+    /// Override the synced-peer liveness thresholds (defaults: interrupt 2 s,
+    /// disconnect 5 s). Builder-style. Tighten these for LAN play or loosen
+    /// them for high-latency relayed play; keep `interrupt < disconnect`.
+    ///
+    /// See [`PeerLink`] for why these are seconds, not Mesen's ~150 ms.
+    #[must_use]
+    pub const fn with_peer_timeouts(mut self, interrupt: Duration, disconnect: Duration) -> Self {
+        self.peer_interrupt_timeout = interrupt;
+        self.peer_disconnect_timeout = disconnect;
+        self
+    }
+
+    /// The graded liveness of an already-[`Synced`](ConnectionState::Synced)
+    /// peer (or [`PeerLink::TimedOut`] once disconnected for that reason).
+    ///
+    /// Before the handshake completes this always reports [`PeerLink::Live`]
+    /// (the handshake has its own [`DisconnectReason::HandshakeTimeout`]).
+    #[must_use]
+    pub fn peer_link(&self) -> PeerLink {
+        if matches!(self.disconnect_reason, Some(DisconnectReason::PeerTimeout)) {
+            return PeerLink::TimedOut;
+        }
+        if !matches!(self.state, ConnectionState::Synced) {
+            return PeerLink::Live;
+        }
+        let silent = self.last_recv.elapsed();
+        if silent >= self.peer_disconnect_timeout {
+            PeerLink::TimedOut
+        } else if silent >= self.peer_interrupt_timeout {
+            PeerLink::Interrupted
+        } else {
+            PeerLink::Live
+        }
     }
 
     /// Override the ping interval (default 1s). Builder-style.
@@ -591,6 +692,16 @@ impl NetplayConnection {
             // EXCEPT a valid Sync (right magic + matching rom_hash), whose
             // source it adopts. Until then there is no peer to talk to.
             let remote_known = self.transport.remote_addr().is_some();
+            // A datagram from the adopted peer — or ANY datagram while we are
+            // still a listening host awaiting adoption — is proof of life:
+            // refresh the liveness clock that drives `PeerLink` /
+            // `DisconnectReason::PeerTimeout`. Once a peer is adopted, a
+            // datagram from any OTHER source (a third party that can reach the
+            // socket) must NOT refresh the clock, or it could indefinitely mask
+            // a genuine peer timeout.
+            if self.transport.remote_addr().is_none_or(|peer| peer == from) {
+                self.last_recv = now;
+            }
             match msg {
                 NetMessage::Sync { magic, rom_hash } => {
                     if magic != NetMessage::SYNC_MAGIC {
@@ -664,6 +775,19 @@ impl NetplayConnection {
         // 2. Promote to Synced once the peer has acknowledged our ROM.
         if self.peer_synced && matches!(self.state, ConnectionState::Connecting) {
             self.state = ConnectionState::Synced;
+        }
+
+        // 2b. Once synced, enforce the run-time peer-liveness disconnect: a peer
+        //     that goes silent past `peer_disconnect_timeout` is terminal. The
+        //     softer `Interrupted` grade is surfaced via `peer_link()` without
+        //     tearing the session down (a late packet recovers it). See
+        //     `PeerLink` for why this is seconds, not Mesen's ~150 ms.
+        if matches!(self.state, ConnectionState::Synced)
+            && now.saturating_duration_since(self.last_recv) >= self.peer_disconnect_timeout
+        {
+            self.state = ConnectionState::Disconnected;
+            self.disconnect_reason = Some(DisconnectReason::PeerTimeout);
+            return self.state;
         }
 
         // 3. While still connecting, re-send Sync periodically and enforce the
@@ -795,6 +919,50 @@ mod tests {
         assert!(a.is_synced(), "a synced");
         assert!(b.is_synced(), "b synced");
         assert_eq!(a.state(), ConnectionState::Synced);
+    }
+
+    #[test]
+    fn synced_peer_liveness_grades_then_times_out() {
+        // Drive two connections to Synced, then stop pumping `b` so `a` receives
+        // no more datagrams. With tight (test-scale) liveness thresholds, `a`
+        // should progress Live -> Interrupted -> TimedOut and finally disconnect
+        // with `PeerTimeout`. This is the run-time RTT liveness, distinct from
+        // the connect-time handshake timeout.
+        let hash = [0x21u8; 32];
+        let (ta, tb) = transport_pair();
+        let mut a = NetplayConnection::with_transport(ta, hash)
+            .with_peer_timeouts(Duration::from_millis(60), Duration::from_millis(150));
+        let mut b = NetplayConnection::with_transport(tb, hash);
+
+        let mut rounds = 0;
+        while !(a.is_synced() && b.is_synced()) && rounds < 200 {
+            a.pump(0);
+            b.pump(0);
+            rounds += 1;
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(a.is_synced() && b.is_synced(), "both synced");
+        assert_eq!(a.peer_link(), PeerLink::Live, "fresh sync is Live");
+
+        // Silence `b`: only pump `a`. It grades up as the silence grows, then
+        // tears down. Bound the loop so a failure can't hang.
+        let mut saw_interrupted = false;
+        let mut timed_out = false;
+        for _ in 0..200 {
+            std::thread::sleep(Duration::from_millis(5));
+            let state = a.pump(0);
+            if a.peer_link() == PeerLink::Interrupted {
+                saw_interrupted = true;
+            }
+            if matches!(state, ConnectionState::Disconnected) {
+                timed_out = true;
+                break;
+            }
+        }
+        assert!(saw_interrupted, "peer_link passed through Interrupted");
+        assert!(timed_out, "silent peer eventually times out");
+        assert_eq!(a.disconnect_reason(), Some(DisconnectReason::PeerTimeout));
+        assert_eq!(a.peer_link(), PeerLink::TimedOut);
     }
 
     #[test]

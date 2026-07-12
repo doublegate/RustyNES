@@ -507,6 +507,22 @@ the live match (it can only show a frame it has *received* every input for).
 can fast-forward to catch up; the Netplay panel + status bar show `spectate fN
 +pending`.
 
+**Delayed-stream buffer (v2.2.0 "Capstone").** On top of that natural lag,
+`SpectatorConfig.delay_frames` adds a *configurable, intentional* hold: the
+spectator reveals frame `f` only once frame `f + delay_frames` is also confirmed
+(`reveal_horizon()` = the confirmed horizon pulled back by the delay). Two uses:
+a **broadcast / anti-spoiler delay** (a tournament feed running several seconds
+behind so a caster cannot leak an imminent input), and **jitter smoothing**
+(holding a backlog of confirmed frames so presentation stays steady over a bursty
+relay instead of stall-then-fast-forward). It is purely a *presentation* delay —
+the emulated frames are still produced byte-identically and in order; only the
+moment each is revealed moves later — so it never sends anything and cannot
+perturb the match. The value is clamped to `SpectatorConfig::MAX_DELAY_FRAMES`
+(512 ≈ 8.5 s at 60 Hz), which keeps the buffered-but-unshown backlog inside the
+bounded lookahead window so a misconfigured huge delay cannot wedge the spectator
+behind the horizon. The frontend exposes it as `NetplayUi::spectator_delay_frames`
+(default 0 = reveal as soon as confirmed).
+
 **Maintainer-manual carryover (like the live 2-4p matrix):** the host-side
 spectator *broadcast/relay* (a host fanning the confirmed input stream to N
 spectators) + the `deploy/` relay config are deployment-ready but not
@@ -515,6 +531,91 @@ property are exercised by unit tests (see the verified table below). Until the
 host-side spectator broadcast lands, the panel's Spectate control dials a host
 and waits for a stream; the byte-identical replay path it runs on receipt is the
 tested-and-proven part.
+
+---
+
+## 4b. Lobby, matchmaking, liveness + desync hardening (v2.2.0 "Capstone")
+
+The v2.2.0 "Capstone" B5 workstream layers browse-and-join matchmaking, a graded
+peer-liveness signal, and a hardened desync surface on top of the existing
+room-code / TURN stack — all in the signaling / session / transport layers plus
+the frontend lobby UI. The deterministic core is untouched and the rollback
+determinism contract (byte-identical re-simulation) is preserved.
+
+### 4b.1 Lobby directory + matchmaking (signaling)
+
+The pure signaling protocol (`crates/rustynes-netplay/src/signaling.rs`,
+`SignalMessage` + `Relay`) gains a lobby directory and a matchmaking path so a
+player can join by *browsing* rather than only by typing a room code:
+
+- **`ListRooms { rom_hash }` → `RoomList { rooms: Vec<RoomInfo> }`** — the client
+  asks for the open (joinable, not-full), optionally game-filtered rooms; the
+  server replies with each room's `RoomInfo` (code, current player count,
+  capacity, `rom_hash`). `RoomInfo` carries **no** SDP / ICE / per-client
+  identity — the lobby is a directory, not a transport. The reply is capped at
+  `MAX_ROOM_LIST` (256), and the `room-list` JSON array is parsed by a
+  brace-depth walk that is likewise bounded, so an oversized frame cannot force
+  an unbounded allocation.
+- **`QuickMatch { rom_hash, max_players }` → `Matched { room, slot, max_players }`**
+  — "quick play": the relay joins the client to *any* open room playing that ROM
+  (via the shared `add_to_room` primitive that `Join` also uses — same slot
+  assignment + `PeerJoined` nudges), or **creates** a fresh room with a
+  deterministic generated code (`QM-NNNNNN`) if none exists. The client learns
+  the resolved room code via `Matched` (distinct from `Joined` only in also
+  reporting the code, so a matchmade client can display / share it); WebRTC
+  pairing then proceeds identically (lower slot offers to higher).
+
+Both new client→server messages are ignored when they arrive from the wrong
+direction, and the JSON encode/parse stays hand-rolled + dependency-free like the
+rest of the protocol.
+
+### 4b.2 Peer-liveness RTT timeouts (connection)
+
+Once a 2-player `NetplayConnection` is `Synced`, a peer can stall (packet loss, a
+paused laptop, an LTE handoff) without ever formally disconnecting. The
+connection now grades that as a `PeerLink` signal driven by the time since the
+last received datagram (`last_recv`):
+
+| `PeerLink` | Silence ≥ | Meaning |
+|---|---|---|
+| `Live` | — | a datagram arrived within `peer_interrupt_timeout` |
+| `Interrupted` | `peer_interrupt_timeout` (default **2 s**) | warn the user; still recoverable (a late packet restores `Live`) |
+| `TimedOut` | `peer_disconnect_timeout` (default **5 s**) | terminal — the connection tears down with `DisconnectReason::PeerTimeout` |
+
+**Why seconds, not Mesen's ~150 ms.** Mesen's netplay declares a peer stalled
+after ~150 ms of silence, which is famously trigger-happy: `Quality` pings here
+are sent only once per second, and a single dropped ping or a routine Wi-Fi / LTE
+retransmit spike routinely exceeds 150 ms of inter-arrival gap on a real internet
+path whose RTT is already 60–120 ms — producing spurious "interrupted / desynced"
+flapping on otherwise-healthy links. The interrupt threshold (2 s) is two full
+ping intervals plus slack, so a single lost ping never trips it; the disconnect
+threshold (5 s) matches the multi-second grace windows GGPO / Parsec use. Both
+are builder-configurable (`with_peer_timeouts`) for tighter LAN bounds or looser
+high-latency relayed play. (The connect-time `handshake_timeout` stays 10 s and
+the frame-advantage stall stays `max_rollback_frames` = 8 — these govern
+*connecting* and *speculation*, orthogonal to run-time liveness.)
+
+### 4b.3 Hardened desync status (diagnostics)
+
+The observational `DesyncDiagnostics` (§4's Debugging aid) gains a single graded
+verdict, `DesyncStatus`, so the panel does not re-derive one from the raw
+counters:
+
+- **`InSync`** — every comparison matched.
+- **`Suspect { consecutive, first_desync_frame }`** — a mismatch has occurred but
+  the current consecutive run is below the confirm threshold. A burst-reordered
+  pair of `Checksum` messages can momentarily disagree before the deferred
+  `compare_pending_checksums` pass reconciles them, so a single mismatch is *not*
+  flashed as a hard desync.
+- **`Desynced { first_desync_frame }`** — the consecutive-mismatch run has reached
+  `desync_threshold` (default **3**, ≈ 1.5 s at the 30-frame checksum interval).
+  This is **sticky**: a rollback desync is unrecoverable (the peers can never
+  re-converge without a full state resync), so the surface never downgrades a
+  confirmed `Desynced` back to `Suspect` even if a later stray checksum matches.
+
+This remains pure telemetry — it only reads the confirmed-frame digests the
+session already exchanges (`NetMessage::Checksum`) and never feeds back into the
+rollback, so disabling it leaves every frame / checksum / rollback byte-identical.
 
 ---
 
@@ -542,6 +643,11 @@ tested-and-proven part.
 | Desync-diagnostics capture (CRC-match history, first-desync frame, consecutive-mismatch counter) | Unit tests (`rustynes-netplay::diagnostics`) — synthetic CRC sequences; observational only (does not affect the rollback algorithm) |
 | Spectator replay is byte-identical to a reference run over the same confirmed inputs (H8) | Unit test (`rustynes-netplay::spectator` — framebuffer compare); `SpectatorSession` sends nothing and waits for fully-confirmed frames |
 | Spectator frontend driver (enter `Spectating`, poll-only tick, clean leave) | Unit test (`netplay_ui::spectator_enters_phase_and_leaves_cleanly`) |
+| Lobby directory + matchmaking (`ListRooms`/`RoomList`/`QuickMatch`/`Matched`, `RoomInfo`) — open-room filtering, join-existing-vs-create, bounded `room-list` array parse (v2.2.0) | Unit tests (`signaling` — roundtrip, `list_rooms_returns_only_open_matching_rooms`, `quick_match_joins_an_open_room_then_creates_one`) |
+| Delayed-stream spectator buffer (`delay_frames`, hold-then-reveal in order, clamp to `MAX_DELAY_FRAMES`) (v2.2.0) | Unit tests (`spectator::spectator_delay_buffer_holds_then_reveals` / `spectator_delay_is_clamped`) |
+| Graded desync status (`DesyncStatus` hysteresis + sticky-confirmed) (v2.2.0) | Unit tests (`diagnostics::status_applies_hysteresis_then_confirms_and_sticks` / `threshold_zero_is_treated_as_one`) |
+| Peer-liveness RTT (`PeerLink` Live/Interrupted/TimedOut, `DisconnectReason::PeerTimeout`, `with_peer_timeouts`) (v2.2.0) | Unit tests (`connection`) — synced peer graded by `last_recv` against the 2 s / 5 s thresholds |
+| Netplay wire parsers never panic / OOM on hostile input (`NetMessage::from_bytes`, `SignalMessage::parse`) (v2.2.0) | `netplay_message` cargo-fuzz target (`fuzz/`) — tens of thousands of clean iterations |
 
 **Debugging aid (v1.3.0 Workstream G1).** When a session desyncs, the native
 Netplay panel's read-only **Diagnostics** section surfaces a GeraNES-style
@@ -552,6 +658,9 @@ remote CRC (classified as a timing/cycle divergence when the framebuffer hashes
 match, else a state divergence), and a rolling CRC-match history. It reads the
 confirmed-frame digests the session already exchanges (`NetMessage::Checksum`)
 and never feeds back into the rollback — pure telemetry, determinism intact.
+From v2.2.0 the panel reads the single graded `DesyncStatus` verdict (§4b.3)
+instead of re-deriving one, so a lone reordered checksum no longer flashes a
+false desync banner.
 
 **Pending (deployment-ready, NOT verified — the maintainer's manual run):**
 

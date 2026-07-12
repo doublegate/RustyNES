@@ -917,7 +917,18 @@ persistent `arboard` handle so the image survives on X11 / Wayland (the clipboar
 is owned by the live process), fixing the silent no-op + false success toast
 (I1). **Tools -> ROM Database** opens standalone now that the locked-render
 predicate (`DebuggerOverlay::any_nes_tool_open`) lists every `nes`-reading tool
-panel — Cheats *and* the ROM Database editor (I6). The **RetroAchievements**
+panel — Cheats, the ROM Database editor, *and* (v2.2.0) the read-only ROM Info
+browser (I6). **Tools -> ROM Info** (v2.2.0 "Capstone",
+`debugger::rom_info_panel`) is a purely observational companion to the ROM
+Database editor: for the loaded ROM it surfaces the two dump-identity CRC32 keys
+(the header-excluded game-DB key + the full-file **No-Intro** key), the SHA-256,
+the effective per-game database entry (title / mapper / region / mirroring /
+submapper), and the decoded cartridge header read straight off the running `Nes`
+(mapper id, region, PRG-ROM / CHR-ROM sizes; "CHR-RAM" when there is no CHR ROM).
+It takes `&Nes` (read-only) — it never mutates the emulator, never writes the DB
+overlay, and the deterministic core never consults it. No bootgod / nescartdb
+board table is vendored, so the panel is honest about surfacing only the per-game
+DB + the header rather than implying provenance it does not carry. The **RetroAchievements**
 readout moved into the bottom status bar between the emulator-state label and the
 FPS counter (I7). The **Keyboard Shortcuts** window reads the live `[input]` /
 `[input.system]` bindings with a Player/device selector (I9). The **Input
@@ -1024,10 +1035,11 @@ conversion can proceed panel-by-panel without regressions.
 The panels split by what they need:
 
 - **Tool panels** (`ToolPanel`: Cheats, Settings, Netplay, Cheevos, Perf,
-  Input) render whenever open, with the deep overlay off. `OpenPanel` sets the
-  flag without forcing the overlay visible. (Cheats reads `&mut Nes`, so the
-  render path takes the locked branch — `any_nes_tool_open` — when it is
-  open.)
+  Input, GameDb, RomInfo, …) render whenever open, with the deep overlay off.
+  `OpenPanel` sets the flag without forcing the overlay visible. (Cheats, the
+  ROM Database editor, and the read-only ROM Info browser read the `Nes`, so
+  the render path takes the locked branch — `any_nes_tool_open` — when any of
+  them is open.)
 - **Chip panels** (`ChipPanel`: Cpu, Ppu, Oam, Apu, Memory, Mapper) need
   `&mut Nes` and a per-frame core poll, so they render only while the overlay
   is visible. `OpenChipPanel` therefore forces the overlay visible.

@@ -120,12 +120,16 @@ nav:
       - CPU (6502): cpu-6502.md
       - PPU (2C02): ppu-2c02.md
       - APU (2A03): apu-2a03.md
+      - Expansion Audio: expansion-audio.md
+      - PAL / Region: pal-region.md
       - Scheduler: scheduler.md
       - Mappers: mappers.md
       - Cartridge Format: cartridge-format.md
   - Frontend & Features:
       - Frontend Shell: frontend.md
       - Scripting (Lua): scripting.md
+      - Creator Tools: creator-tools.md
+      - CRT / Composite Video: crt-composite.md
       - Netplay (WebRTC): netplay-webrtc.md
       - RetroAchievements: cheevos-browser.md
       - Compatibility: compatibility.md
