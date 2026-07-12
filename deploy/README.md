@@ -1,9 +1,18 @@
-# RustyNES — netplay deployment bundle
+# RustyNES — netplay + RetroAchievements deployment bundle
 
-This directory deploys the pieces an internet **netplay** session needs: a
-**signaling server** (brokers the rendezvous), a **TLS reverse proxy** (so an
-`https` page / a `wss://` client can reach the relay), and a **STUN/TURN server**
-(NAT traversal).
+This directory deploys the server-side pieces the **browser** build needs that a
+static page cannot provide itself:
+
+- an internet **netplay** session's **signaling server** (brokers the
+  rendezvous), a **TLS reverse proxy** (so an `https` page / a `wss://` client can
+  reach the relay), and a **STUN/TURN server** (NAT traversal); and
+- the casual-only **browser RetroAchievements auth proxy** (ADR 0015) — a tiny
+  service that injects RA's identity `User-Agent` header server-side (browsers
+  forbid scripts from setting it) so the wasm build can be identified by
+  RetroAchievements. It holds no RA secret and refuses hardcore awards.
+
+All four services come up from one `docker compose up`; each is independent, so
+you can host only the subset you need (netplay only, RA only, or both).
 
 **One stack, two clients.** The exact same signaling + Caddy-TLS + coturn stack
 serves **both**:
@@ -25,22 +34,28 @@ rendezvous) and §3 (browser WebRTC) — and how each frontend plugs in.
 
 **Deployment-ready; live verification pending.** Every piece below builds and is
 unit/loopback-tested, and this bundle is turn-key (`docker compose up` on a host
-with a domain brings up signaling + STUN/TURN). A real end-to-end internet
-session — browser WebRTC ICE, or the mobile room-code STUN/punch, plus a live
-signaling round-trip — **cannot be exercised headlessly** and has **not** been
-run here. It is the maintainer's manual step: the copy-pasteable checklists are
-the [Mobile room-code checklist](#mobile-room-code-checklist-maintainer-ops) and
-the [Manual verification checklist](#manual-verification-checklist) below.
+with a domain brings up signaling + STUN/TURN + the RA auth proxy). Two classes of
+end-to-end check **cannot be exercised headlessly** and have **not** been run
+here — they are the maintainer's manual steps:
+
+- a real internet **netplay** session (browser WebRTC ICE, or the mobile
+  room-code STUN/punch, plus a live signaling round-trip) — see the
+  [Mobile room-code checklist](#mobile-room-code-checklist-maintainer-ops) and the
+  [Manual verification checklist](#manual-verification-checklist); and
+- a live **browser RetroAchievements** login + casual unlock through the deployed
+  proxy — see the
+  [Browser RA live-verify checklist](#browser-ra-live-verify-checklist-maintainer-ops).
 
 ## What's here
 
 | File | Role |
 |---|---|
 | `Dockerfile` | Builds + runs the `rustynes-netplay` `signaling_server` example (`--features signaling-server`). |
-| `docker-compose.yml` | Wires `signaling` + `caddy` (TLS proxy, `wss://`) + `coturn` (STUN/TURN). |
-| `Caddyfile` | Caddy config: terminate TLS, proxy WebSocket upgrades to the relay. |
+| `Dockerfile.raproxy` | Builds + runs the casual-only browser RA auth proxy (the stdlib-only `scripts/cheevos/auth_proxy_stub.py`), env-configured (ADR 0015). |
+| `docker-compose.yml` | Wires `signaling` + `ra-proxy` + `caddy` (TLS proxy, `wss://` + `/ra/*`) + `coturn` (STUN/TURN). |
+| `Caddyfile` | Caddy config: terminate TLS, proxy WebSocket upgrades to the relay, and proxy `/ra/*` to the RA auth proxy. |
 | `turnserver.conf` | Minimal coturn STUN + TURN config (credential/realm injected from env). |
-| `.env.example` | Template for the per-deploy values (`DOMAIN`, `TURN_*`); copy to `.env`. |
+| `.env.example` | Template for the per-deploy values (`DOMAIN`, `TURN_*`, `RA_*`); copy to `.env`. |
 | `.dockerignore` lives at the **workspace root** | Keeps `target/`, ROMs, docs out of the build context. |
 
 The signaling relay carries **no gameplay traffic** — for the browser path it
@@ -136,6 +151,63 @@ trunk build --release
 # serve dist/ from your https host, or `trunk serve` for local dev
 ```
 
+## Browser RetroAchievements (auth proxy)
+
+The `ra-proxy` service is the deployable half of ADR 0015's browser
+RetroAchievements carryover. RA identifies/allowlists a client by its HTTP
+`User-Agent` (`RustyNES/<crate-ver> rcheevos/<rcheevos-ver>`), and browsers
+**forbid scripts from setting `User-Agent`** — so every rcheevos server call from
+the wasm build is routed through this proxy, which injects the header
+server-side. The full browser-RA design is in `docs/cheevos-browser.md`; this
+section is only the hosting.
+
+**It holds no RA secret.** The proxy's job is header injection + CORS + refusing
+hardcore — not credential storage. The user's own RA login (username/password)
+transits at request time inside the rcheevos login body and is never persisted by
+the proxy. Everything the proxy needs comes from environment variables (no
+committed config file):
+
+| `.env` var | Role |
+|---|---|
+| `RA_USER_AGENT` | The exact identity header injected on every forwarded request. Keep the leading `RustyNES/` token — RA allowlists by it. Coordinate the exact string + casual-only intent with the RA team before going live. |
+| `RA_ALLOWED_ORIGINS` | CORS allowlist: the page origin(s) that host the wasm build (comma-separated), e.g. `https://doublegate.github.io`. |
+| `RA_UPSTREAM` | Upstream RA origin (default `https://retroachievements.org`). |
+| `RA_ENFORCE_CASUAL` | `1`/`true` (default) → the proxy refuses to forward a hardcore award. Leave it on: browser hardcore is untrustworthy (DevTools can patch the wasm). |
+
+Caddy exposes the proxy at `https://<DOMAIN>/ra/*` (the `handle_path /ra/*` block
+strips the `/ra` prefix, so the rcheevos path reaches upstream RA verbatim). Point
+`RA_PROXY_BASE` in `crates/rustynes-frontend/web/cheevos/ra_glue.js` at
+`https://<DOMAIN>/ra`, build the frontend with `--features browser-cheevos`, and
+build the Emscripten rcheevos side module (`scripts/cheevos/build_rcheevos_wasm.sh`).
+
+**Local test (no Docker):** run the reference stub directly and point the glue at
+it:
+
+```bash
+RA_PROXY_BIND=127.0.0.1:8092 \
+RA_ALLOWED_ORIGINS='http://127.0.0.1:8081' \
+RA_USER_AGENT='RustyNES/2.1.10 rcheevos/12.3.0' \
+  python3 scripts/cheevos/auth_proxy_stub.py
+# then RA_PROXY_BASE = "http://127.0.0.1:8092" in ra_glue.js
+```
+
+### Browser RA live-verify checklist (maintainer ops)
+
+This cannot be done in CI (no headless RA login, no live proxy) — it is the
+acceptance gate for flipping ADR 0015 to fully Implemented:
+
+- [ ] Host this stack (or run the stub) with `RA_USER_AGENT`/`RA_ALLOWED_ORIGINS`
+      set; confirm `https://<DOMAIN>/ra/` reaches the proxy (a `curl -X OPTIONS`
+      with an allowlisted `Origin` returns the CORS headers).
+- [ ] Coordinate the exact `User-Agent` string + casual-only intent with the RA
+      team so the client is allowlisted.
+- [ ] Build the side module + the frontend with `--features browser-cheevos`, set
+      `RA_PROXY_BASE`, and open the page.
+- [ ] Log in with a real RA account through the proxy; confirm the caveat banner
+      shows "configured" and login succeeds.
+- [ ] Load a game with achievements and earn one; confirm the casual unlock toast
+      and that the unlock is recorded on RetroAchievements (casual, not hardcore).
+
 ## Point the mobile (Android) build at it
 
 The Android **room-code** netplay (v1.8.7) uses the *same* deployed stack. The
@@ -201,8 +273,8 @@ tabs) to fullest (four players across machines).
 - [ ] `cp deploy/.env.example deploy/.env` and set `DOMAIN`, `TURN_USER`,
       a strong `TURN_SECRET`, `TURN_REALM`.
 - [ ] Real domain: removed `tls internal` from `Caddyfile` (Let's Encrypt).
-- [ ] `docker compose up --build -d`; `docker compose ps` shows all three
-      services healthy.
+- [ ] `docker compose up --build -d`; `docker compose ps` shows all four
+      services (`signaling`, `ra-proxy`, `caddy`, `coturn`) healthy.
 - [ ] Firewall: `443/tcp` open; `3478/udp` + `3478/tcp` open; coturn relay port
       range reachable.
 - [ ] coturn behind 1:1 NAT → `--external-ip=` flag added.

@@ -14,6 +14,50 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Vs. `DualSystem` presentation in the libretro core (v2.1.10 "Web Parity").**
+  The libretro core (`crates/rustynes-libretro`) now presents Vs. `DualSystem`
+  arcade cabinets (Balloon Fight / Wrecking Crew / Tennis / Baseball), reaching
+  parity with the desktop frontend. It detects them with the same `Emu::from_rom`
+  (NES 2.0 header Vs. type OR the SHA-keyed `vs_db`), steps **both** cross-wired
+  consoles each `retro_run`, and composes their two 256×240 framebuffers into a
+  single **512×240** XRGB8888 side-by-side image (MAIN left, SUB right) — presented
+  within a 512-wide `max_width` geometry so RetroArch draws the variable width with
+  no geometry renegotiation. Libretro ports 0/1 → MAIN P1/P2, 2/3 → SUB P1/P2; only
+  MAIN audio plays; save states use `VsDualSystem::snapshot`/`restore`; the RA/cheat
+  memory maps expose the MAIN console. Previously a `DualSystem` dump booted a single
+  console that hangs on its absent partner. The deterministic `no_std` core is
+  untouched and byte-identical — this is a parallel present/serialize branch in the
+  FFI wrapper. **Code-complete + builds** (`cargo build -p rustynes-libretro`);
+  a live RetroArch run with a real cabinet dump is the maintainer's manual check.
+  Docs: `docs/libretro/advanced_features.md`, `docs/frontend.md`.
+- **Browser RetroAchievements auth-proxy deploy stack (v2.1.10 "Web Parity", ADR
+  0015).** The browser-RA marshalling (`ra_glue.js` + `wasm_cheevos.rs`) has shipped
+  since v1.7.0; this lands the remaining ADR 0015 carryover's **deployable** half —
+  the casual-only auth proxy that injects RA's identity `User-Agent` server-side
+  (browsers forbid scripts from setting it). `deploy/` gains a first-class
+  `ra-proxy` compose service (`deploy/Dockerfile.raproxy`, running the stdlib-only
+  reference stub) behind the shared Caddy TLS proxy at `https://<DOMAIN>/ra/*`,
+  configured **purely from env** (`RA_USER_AGENT` / `RA_ALLOWED_ORIGINS` /
+  `RA_UPSTREAM` / `RA_ENFORCE_CASUAL`) — the proxy holds no RA secret. The stub
+  grew env-var configuration so one script serves both local dev and the container.
+  Marshalling-contract tests added to `wasm_cheevos.rs` (ACHIEVEMENT_TRIGGERED
+  filtering + malformed-payload tolerance + the not-configured caveat).
+  **Code-complete + compose/config validated**; standing the stack on a live host,
+  the RA-team `User-Agent` coordination, and a real browser RA login + casual unlock
+  are the un-CI-able acceptance gate (runbook: `deploy/README.md`,
+  `docs/cheevos-browser.md`).
+
+### Deferred (documented)
+
+- **Vs. `DualSystem` on the wasm desktop-style present (v2.1.10 "Web Parity").**
+  The CPU compositor (`Gfx::compose_dual_into`) and the core (`Emu::Dual`) are
+  already cross-platform, but the wasm ROM-load detection + un-gating the GPU
+  present branch (`Gfx::render_dual`, currently `cfg(not(wasm))`) remain deferred.
+  The libretro dual present (see Added) ships now; mobile stays deferred. See
+  `docs/frontend.md`.
+
 ## [2.1.9] - 2026-07-12 - "Fathom" (presentation and signal — marquee CRT shader stack (CRT-Royale / guest-advanced / Sony Megatron) + raw NTSC composite signal-decode path + GIF/WAV capture + generated-palette editor — "Aperture")
 
 ### Added
@@ -257,6 +301,38 @@ cycle-accurate core later replaced.
   feeds back into synthesis. AccuracyCoin holds **141/141 (100%)**.
 - **Expansion-audio decibel oracle (v2.1.6 "Expansion Audio").** Upgraded `crates/rustynes-test-harness/tests/audio_expansion.rs` from pure `insta` snapshots into a real accuracy oracle: each bbbradsmith `db_*` comparison ROM now has a machine-verifiable level criterion. The new `level_db_*` tests measure the peak amplitude of the reference-2A03-square and expansion-square segments in the rendered waveform (`common::capture_frame_peaks` over deterministic frame windows) and **assert** the expansion/reference ratio against the Mesen2 / hardware target — APU triangle ÷ square ≈0.524, VRC6 ≈1.506, MMC5 ≈1.000, N163 1-channel ≈6.02. The 19 `insta` snapshots are retained as byte-exact regression guards.
 - VRC7 instrument-ROM verification: `vrc7_all_15_melodic_patches_match_nuke_ykt_canonical` pins all 15 melodic patches (+ 3 rhythm) to the canonical Nuke.YKT dump (byte-identical across fceux / Mesen2 / nestopia) — the real `patch_vrc7` criterion. Sunsoft 5B log-DAC step-law and Namco 163 long-period (256-sample) wavetable unit tests added.
+- **Vs. `DualSystem` presentation in the libretro core (v2.1.10 "Web Parity").**
+  The libretro core (`crates/rustynes-libretro`) now presents Vs. `DualSystem`
+  arcade cabinets (Balloon Fight / Wrecking Crew / Tennis / Baseball), reaching
+  parity with the desktop frontend. It detects them with the same `Emu::from_rom`
+  (NES 2.0 header Vs. type OR the SHA-keyed `vs_db`), steps **both** cross-wired
+  consoles each `retro_run`, and composes their two 256×240 framebuffers into a
+  single **512×240** XRGB8888 side-by-side image (MAIN left, SUB right) — presented
+  within a 512-wide `max_width` geometry so RetroArch draws the variable width with
+  no geometry renegotiation. Libretro ports 0/1 → MAIN P1/P2, 2/3 → SUB P1/P2; only
+  MAIN audio plays; save states use `VsDualSystem::snapshot`/`restore`; the RA/cheat
+  memory maps expose the MAIN console. Previously a `DualSystem` dump booted a single
+  console that hangs on its absent partner. The deterministic `no_std` core is
+  untouched and byte-identical — this is a parallel present/serialize branch in the
+  FFI wrapper. **Code-complete + builds** (`cargo build -p rustynes-libretro`);
+  a live RetroArch run with a real cabinet dump is the maintainer's manual check.
+  Docs: `docs/libretro/advanced_features.md`, `docs/frontend.md`.
+- **Browser RetroAchievements auth-proxy deploy stack (v2.1.10 "Web Parity", ADR
+  0015).** The browser-RA marshalling (`ra_glue.js` + `wasm_cheevos.rs`) has shipped
+  since v1.7.0; this lands the remaining ADR 0015 carryover's **deployable** half —
+  the casual-only auth proxy that injects RA's identity `User-Agent` server-side
+  (browsers forbid scripts from setting it). `deploy/` gains a first-class
+  `ra-proxy` compose service (`deploy/Dockerfile.raproxy`, running the stdlib-only
+  reference stub) behind the shared Caddy TLS proxy at `https://<DOMAIN>/ra/*`,
+  configured **purely from env** (`RA_USER_AGENT` / `RA_ALLOWED_ORIGINS` /
+  `RA_UPSTREAM` / `RA_ENFORCE_CASUAL`) — the proxy holds no RA secret. The stub
+  grew env-var configuration so one script serves both local dev and the container.
+  Marshalling-contract tests added to `wasm_cheevos.rs` (ACHIEVEMENT_TRIGGERED
+  filtering + malformed-payload tolerance + the not-configured caveat).
+  **Code-complete + compose/config validated**; standing the stack on a live host,
+  the RA-team `User-Agent` coordination, and a real browser RA login + casual unlock
+  are the un-CI-able acceptance gate (runbook: `deploy/README.md`,
+  `docs/cheevos-browser.md`).
 
 ### Changed
 
@@ -264,6 +340,13 @@ cycle-accurate core later replaced.
 
 ### Deferred (documented)
 
+- **Vs. `DualSystem` on the wasm desktop-style present (v2.1.10 "Web Parity").**
+  The CPU compositor (`Gfx::compose_dual_into`) and the core (`Emu::Dual`) are
+  already cross-platform, but the wasm ROM-load detection + un-gating the GPU
+  present branch (`Gfx::render_dual`, currently `cfg(not(wasm))`) are deferred to
+  the v2.1.8/v2.1.9 gfx/composite rebase to avoid colliding with that concurrently
+  rewritten present path. The libretro dual present ships now (see Added); mobile
+  stays deferred. See `docs/frontend.md`.
 - **Sunsoft 5B absolute level** and **VRC7 FM level** are honest documented gaps (`docs/accuracy-ledger.md` §Expansion-audio levels): the 5B log-DAC *shape* is hardware-exact but its full vol-15 / 3-simultaneous-tone range overflows the `i16` `mix_audio` contract (needs a wider mix path); the VRC7 OPLL FM synth + patch ROM are correct, but the pseudo-sine absolute level is patch-dependent and has no clean square-vs-square oracle. Both stay snapshot-guarded.
 
 ## [2.1.5] - 2026-07-11 - "Fathom" (regression net & residual — Holy Mapperel mapper regression net + PAL APU frame-counter 10/10 + real TURN NAT-retransmit production fix + fat-LTO A/B validation + MMC3 F5.0 A12-phase study; "Vernier")

@@ -77,11 +77,27 @@ the browser is routed through a small proxy that injects the header server-side.
 - **Spec / config:** `scripts/cheevos/auth-proxy.example.toml`.
 - **Reference stub (stdlib-only Python):** `scripts/cheevos/auth_proxy_stub.py` —
   injects the `User-Agent`, enforces CORS to the page origin, and refuses
-  hardcore awards. Run it for local development:
+  hardcore awards. It is configured from a TOML file **or** (as of v2.1.10)
+  purely from environment variables, so the same script drives both local dev and
+  the container deploy. Run it for local development:
 
   ```bash
+  # File-driven:
   python3 scripts/cheevos/auth_proxy_stub.py --config scripts/cheevos/auth-proxy.example.toml
+  # Env-driven (no config file):
+  RA_PROXY_BIND=127.0.0.1:8092 RA_ALLOWED_ORIGINS='http://127.0.0.1:8081' \
+    RA_USER_AGENT='RustyNES/2.1.10 rcheevos/12.3.0' \
+    python3 scripts/cheevos/auth_proxy_stub.py
   ```
+
+- **Deployable stack (v2.1.10 "Web Parity"):** `deploy/` now ships the proxy as a
+  first-class `ra-proxy` compose service (`deploy/Dockerfile.raproxy` runs the
+  same stub, env-configured) behind the shared Caddy TLS reverse proxy, which
+  exposes it at `https://<DOMAIN>/ra/*`. See `deploy/README.md` §"Browser
+  RetroAchievements (auth proxy)". The proxy holds **no RA secret** — it injects
+  only the non-secret identity header; the user's own login transits at request
+  time. Configuration is env-only (`RA_USER_AGENT` / `RA_ALLOWED_ORIGINS` /
+  `RA_UPSTREAM` / `RA_ENFORCE_CASUAL`), never a committed credential.
 
 - **Request shape** the glue produces: the server-call trampoline forwards each
   rcheevos request **verbatim** — it takes the path + query of the rcheevos-built
@@ -124,13 +140,28 @@ build script now also exports `set_event_handler` and the `getValue` / `setValue
 Off by default, so the shipped native + wasm builds are byte-identical and
 AccuracyCoin holds 139/141 (the two newest upstream PPU tests are known gaps).
 
+**v2.1.10 "Web Parity" update — the auth proxy is now a deployable service.**
+The deploy stack (`deploy/`) gained a first-class `ra-proxy` compose service
+(`deploy/Dockerfile.raproxy`) behind the shared Caddy TLS proxy at
+`https://<DOMAIN>/ra/*`, env-configured (no committed config or secret). The
+reference stub grew env-var configuration so one script serves both local dev and
+the container. `docker compose up` now brings the proxy up alongside signaling +
+STUN/TURN. What remains is genuinely un-CI-able: standing the stack on a real host
+and a live RA login (below).
+
 **Maintainer-manual (no headless path — ADR 0015) — the only remaining carryovers:**
 
-1. **Deploy the auth proxy** (host + TLS + hardened CORS) and coordinate the exact
-   `User-Agent` + casual-only intent with the RA team. Then set `RA_PROXY_BASE`.
+1. **Stand the proxy up on a real host** — `docker compose up` in `deploy/` with
+   `RA_USER_AGENT`/`RA_ALLOWED_ORIGINS` set (TLS via Caddy), and coordinate the
+   exact `User-Agent` + casual-only intent with the RA team. Then set
+   `RA_PROXY_BASE` in `web/cheevos/ra_glue.js` to `https://<DOMAIN>/ra`. The
+   service + config are code-complete (`deploy/README.md` §"Browser
+   RetroAchievements"); only running it on a live host + the RA-team coordination
+   remain.
 2. **Live-browser verification with a real RA account** — build with
    `--features browser-cheevos`, add the `<script type="module" src="./cheevos/ra_glue.js">`
    to `web/index.html`, build the side module, log in through the deployed proxy,
    and confirm a casual unlock in a real browser. CI cannot do this (it needs a
    human, a live RA login, and the deployed proxy). This is the acceptance gate
-   for flipping ADR 0015 to fully Implemented; native RA is unaffected.
+   for flipping ADR 0015 to fully Implemented; native RA is unaffected. The
+   copy-paste runbook is `deploy/README.md` §"Browser RA live-verify checklist".

@@ -34,6 +34,39 @@ To support this, `rustynes-libretro` relies on the deterministic serialization e
    * `on_unserialize(buffer: &[u8])`: Pass the `buffer` to `BinReader`. Determinism guarantees the state is restored perfectly without desync.
 3. **Fast-Forward Optimization (`get_fastforwarding`):** If the frontend is fast-forwarding to catch up during a rollback, the FFI wrapper should skip copying audio into the batch buffer and optionally skip rendering logic to vastly increase throughput.
 
+## Vs. `DualSystem` Two-Screen Presentation (v2.1.10 "Web Parity")
+
+Four Vs. arcade titles (Balloon Fight, Wrecking Crew, Tennis, Baseball) ship on
+**Vs. `DualSystem`** boards: two cross-wired NES consoles in one cabinet, each with
+its own screen. The core already models them (`rustynes_core::Emu::Dual` /
+`VsDualSystem`); the libretro wrapper wires the present path so RetroArch shows
+both screens, matching the desktop frontend.
+
+* **Detection:** `on_load_game` calls `Emu::from_rom`, which OR's the NES 2.0
+  header Vs.-hardware type with the SHA-keyed `vs_db` — the identical detection the
+  desktop frontend uses. The core then holds either `nes: Option<Nes>` **or**
+  `dual: Option<Box<VsDualSystem>>` (mutually exclusive). Without this, a
+  `DualSystem` dump would boot a single console that hangs waiting on its absent
+  cross-wired partner.
+* **Composed present:** `on_run` steps **both** consoles each frame, then composes
+  their two 256×240 RGBA framebuffers into a single **512×240** XRGB8888 image —
+  MAIN on the left half, SUB on the right — presented via `draw_frame`. The
+  advertised AV-info `max_width` is raised to **512** so RetroArch honours the
+  per-frame width without a geometry renegotiation: a single-console 256×240 frame
+  and a dual 512×240 frame both draw correctly against the same AV info.
+* **Input:** libretro ports **0/1 → MAIN P1/P2**, ports **2/3 → SUB P1/P2**
+  (matching `VsDualSystem::set_buttons`).
+* **Audio:** only the **MAIN** console's audio is played (one stream, as on
+  desktop); the SUB console's APU ring is drained-and-discarded to keep it bounded.
+* **Save states + memory maps:** dual state serializes through
+  `VsDualSystem::snapshot`/`restore` (a self-describing blob of both consoles, with
+  the same static-size permanency the single path guarantees); the RA / cheat
+  memory maps expose the **MAIN** console.
+
+The deterministic `no_std` core is untouched — this is purely a parallel
+present/serialize branch in the FFI wrapper, exactly mirroring the desktop
+frontend's `emu.dual` branch.
+
 ## Famicom Disk System (FDS) Subsystem Negotiation
 
 Standard NES ROMs (`.nes`) bundle all data in a single file. The Famicom Disk System requires two distinct components: the `.fds` disk image and the `disksys.rom` BIOS.
