@@ -3,8 +3,8 @@
 > **Current release: v2.1.6 "Fathom" ("Timbre")** (2026-07-11) — the current head of
 > the **"Fathom"** accuracy line on the v2.0.0 "Timebase" core, and the **expansion-audio
 > fidelity** step of the **v2.1.5 → v2.2.0 "deepen the existing project"** run (the joint
-> iOS App Store / Google Play launch is deferred to v2.3.0). Three PRs (#277, #279, plus the
-> #278 docs sync). The base **2A03 NTSC output stays byte-identical** — expansion audio is a
+> iOS App Store / Google Play launch is deferred to v2.3.0). Two feature PRs (#277, #279),
+> plus this current-state docs sync. The base **2A03 NTSC output stays byte-identical** — expansion audio is a
 > separate additive `mix_audio` term (0 for non-expansion mappers) — so the deterministic
 > core is unchanged on the shipped default: **AccuracyCoin 141/141 (100.00%,
 > RAM-authoritative)**, nestest 0-diff, `blargg_apu_2005` / `pal_apu_tests` (10/10) /
