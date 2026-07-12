@@ -18,6 +18,26 @@ cycle-accurate core later replaced.
 
 ### Added
 
+- **Expansion-audio mix UI + per-channel visualization (v2.1.6 "Expansion
+  Audio").** A dedicated **Audio Mixer** tool panel (Tools → Audio Mixer)
+  unifying per-source mix balance with live per-channel visualization for any
+  ROM — cartridge audio, not just `.nsf` tunes. Per-source gain sliders
+  (`0.0`–`2.0`) + mute toggles for the five base 2A03 channels (pulse 1/2,
+  triangle, noise, DMC) and the on-cart **expansion** channel, which is enabled
+  and labelled with the detected chip family (VRC6 / VRC7 (OPLL) / MMC5 / Namco
+  163 / Sunsoft 5B / FDS). Sensible **presets** — `Authentic (HVC-001)` (unity),
+  a Mesen-style `Balanced` rebalance (tames a hot expansion chip vs the 2A03),
+  and `Expansion boost` — plus a reset-to-unity. Per-channel **oscilloscope**
+  traces and peak **VU meters** (master + all six sources), including a new
+  read-only expansion-audio display tap (`ApuDebugView::external` /
+  `Apu::external_out()`). The NSF player panel gains the same expansion scope/VU,
+  and the scope/VU primitives are factored into a shared module reused by both.
+  **The mix is a frontend re-weight, not a synthesis change**: it drives the
+  existing determinism-safe `channel_gain` / `channel_mask` core overlay, which
+  is byte-identical at unity and is never serialized into the save state — so a
+  save-state / TAS / netplay replay stays byte-identical regardless of the
+  slider positions, and the visualization samples a read-only copy that never
+  feeds back into synthesis. AccuracyCoin holds **141/141 (100%)**.
 - **Mapper bank-reachability + IRQ regression net (v2.1.5 "Regression Net &
   Residual").** Wired the tepples **Holy Mapperel** cartridge-PCB-assembly test
   ROMs into CI as a dedicated mapper regression net

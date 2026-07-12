@@ -507,7 +507,7 @@ impl Apu {
     }
 
     /// v2.1.6 "Expansion Audio" — the most recent RAW on-cart expansion-audio
-    /// sample (pre-[`Self::channel_gain`], see [`Self::last_external`]). `0.0`
+    /// sample (pre-[`Self::channel_gain`], the `last_external` field). `0.0`
     /// when the loaded board has no expansion audio. Read-only display tap for
     /// the frontend Audio Mixer expansion-channel scope / VU meter — it reads a
     /// copy and never feeds back into synthesis, so it is determinism-neutral.

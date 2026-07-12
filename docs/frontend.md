@@ -319,6 +319,48 @@ mono samples, all bypass-by-default so the shipped sound is byte-identical
   Native-only (cpal enumeration); the wasm path is unaffected. Default `None` =
   the system default device (today's behaviour).
 
+### Audio Mixer panel (Tools → Audio Mixer, v2.1.6 "Expansion Audio")
+
+A dedicated tool panel (`debugger::audio_mixer`, `ToolPanel::AudioMixer`) that
+unifies the per-source **mix balance** with **per-channel visualization** in one
+window, for *any* ROM — cartridge audio, not just `.nsf` tunes. It renders in
+`DebuggerOverlay::tool_panels` (which owns both the persisted `Config` and the
+optional `&mut Nes`), so it works whether or not the deep debugger overlay is
+open, and remains usable with no ROM loaded (the scopes sit flat).
+
+- **Mix balance** — a slider (`0.0`–`2.0`) + mute checkbox per source: the five
+  base 2A03 channels (pulse 1/2, triangle, noise, DMC) and the on-cart
+  **expansion** channel (index 5), which is enabled + labelled with the detected
+  chip family (`Nes::expansion_audio_chip()`: VRC6 / VRC7 (OPLL) / MMC5 / Namco
+  163 / Sunsoft 5B / FDS) and greyed out on boards with no expansion audio. These
+  edit the **same** `[audio] channel_gain` / `channel_mask` config the Settings →
+  Audio tab does — the two surfaces stay in sync — and are the existing
+  determinism-safe core UI overlay (`Nes::set_apu_channel_gain` /
+  `set_apu_channel_mask`). **The mix is a frontend re-weight, not a synthesis
+  change**: at the unity default the core mix takes the exact integer-gate path
+  and is byte-identical, and because the gains/mask are never serialized into the
+  `.rns` save state or `.rnm` movie, a save-state / TAS / netplay replay is
+  byte-identical **regardless of the slider positions** — the recorded sound is
+  always the core's own output.
+- **Presets** — `Authentic (HVC-001)` (unity — the byte-identical default),
+  `Balanced` (a Mesen-style "rebalanced VRC6 vs HVC-001" bias that tames a hot
+  expansion chip and nudges the DMC down), and `Expansion boost` (pushes the
+  expansion channel forward), plus a `Reset to unity`. Each writes a `[f32; 6]`
+  into `channel_gain` and is clamped to the slider range.
+- **Per-channel visualization** — a master scope plus per-channel rolling
+  oscilloscope traces and peak **VU meters** for the six sources, sampled once per
+  redraw from the read-only `Nes::apu_snapshot` DAC taps. This includes the v2.1.6
+  `ApuDebugView::external` **expansion tap** (`Apu::external_out()`), a
+  write-only-from-synthesis / read-only-to-observers copy of the raw external
+  contribution that is never read back into the mix and never serialized — so the
+  scope is display-only and determinism-neutral. The scope-ring / trace / VU
+  primitives live in the shared `debugger::audio_scope` module, reused verbatim by
+  the NSF player panel (which now also plots the expansion chip's own scope + VU).
+
+Edits are applied to the core immediately (after the egui pass, no emu lock held
+inside the closure) and persisted to `config.audio` on change, exactly like the
+other audio preferences.
+
 ### HD-pack HD audio (v1.6.0 "Studio" Workstream H, `hd-pack`)
 
 An HD-pack can ship external, studio-quality OGG Vorbis tracks that replace /
