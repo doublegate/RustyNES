@@ -45,7 +45,7 @@ serde_json = { version = "1.0", optional = true }
 # worker. `rustls-tls-webpki-roots` keeps it pure-Rust TLS (no system OpenSSL),
 # which is what lets it cross-compile cleanly to aarch64-linux-android. No async
 # runtime: this is the blocking `tungstenite::connect` + `read`/`send` API.
-tungstenite = { version = "0.29", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"], optional = true }
+tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"], optional = true }
 
 # v2.5.0 Phase C — WebRTC transport scaffold for the browser (wasm32 only).
 # The native build (UDP/std::net) needs none of these; on wasm they back the
