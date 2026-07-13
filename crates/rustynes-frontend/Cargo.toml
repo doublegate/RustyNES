@@ -250,7 +250,7 @@ rustynes-netplay.workspace = true
 # dependency-light. Native-only on purpose — the wasm blitter uses
 # `core::arch::wasm32` v128 intrinsics under `+simd128` (with a scalar fallback),
 # so `wide` never enters the wasm bundle and the 5 MiB size budget is untouched.
-wide = "0.7"
+wide = "1.5"
 
 # v1.7.0 "Forge" G4 — movie-export hash hardening (native export path only, so
 # the wasm size budget is untouched). `.fm2` wants an MD5 `romChecksum`, `.bk2`
