@@ -75,7 +75,7 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 # STUN responder, exactly like `rustynes-netplay`'s `tests/nat_loopback.rs`. The
 # blocking `tungstenite` server side mirrors the client the bridge uses; same
 # version + pure-rustls features (no OpenSSL) so the dev build stays consistent.
-tungstenite = { version = "0.29", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 
 [[bin]]
 # The binding generator the platform builds invoke:

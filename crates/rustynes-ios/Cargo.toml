@@ -44,7 +44,7 @@ log = "0.4"
 [target.'cfg(target_os = "ios")'.dependencies]
 wgpu = "29"
 raw-window-handle = "0.6"
-pollster = "0.4"
+pollster = "1.0"
 bytemuck = { version = "1", features = ["derive"] }
 cpal = "0.18"
 # Shared CRT/scanline/NTSC WGSL (single source of truth with the desktop
