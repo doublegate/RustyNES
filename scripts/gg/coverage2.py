@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
 """Improved name-join: handle ', The/A/An' article suffix, &/_ , roman<->arabic."""
-import re, unicodedata
+import os
+import re
+import unicodedata
+from pathlib import Path
 
-FULL = "/home/parobek/Code/OSS_Public-Projects/RustyNES/crates/rustynes-frontend/src/genie_database_full.tsv"
-XML  = "nes20db.xml"
+# Repo-relative inputs (not a developer-local absolute path) so this runs from a
+# fresh checkout regardless of CWD; override the full-file DB via GENIE_FULL_TSV.
+_HERE = Path(__file__).resolve().parent          # scripts/gg/
+_REPO = _HERE.parents[1]                          # repo root
+FULL = os.environ.get(
+    "GENIE_FULL_TSV",
+    str(_REPO / "crates" / "rustynes-frontend" / "src" / "genie_database_full.tsv"),
+)
+XML = str(_HERE / "nes20db.xml")
 
 ROMAN = {'i':'1','ii':'2','iii':'3','iv':'4','v':'5','vi':'6','vii':'7','viii':'8','ix':'9','x':'10'}
 

@@ -2,8 +2,11 @@
 """Parse nes20db.xml and resolve cheat-DB game-name aliases to header-excluded ROM CRCs."""
 import re
 import sys
+from pathlib import Path
 
-XML = "nes20db.xml"
+# Resolve nes20db.xml next to this script, not via a bare relative path, so it is
+# found regardless of the caller's CWD (e.g. run from the repo root).
+XML = str(Path(__file__).resolve().parent / "nes20db.xml")
 
 def load():
     data = open(XML, encoding="utf-8").read()

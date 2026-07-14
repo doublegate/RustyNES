@@ -2,10 +2,21 @@
 """Estimate name-join coverage: for each distinct game in genie_database_full.tsv
 (No-Intro-named, full-file keyed), can we find a nes20db entry (by normalized name)
 to attach a header-excluded <rom crc32>?"""
-import re, unicodedata
+import os
+import re
+import unicodedata
+from pathlib import Path
 
-FULL = "/home/parobek/Code/OSS_Public-Projects/RustyNES/crates/rustynes-frontend/src/genie_database_full.tsv"
-XML  = "nes20db.xml"
+# Resolve inputs relative to the repo, not a developer-local absolute path, so the
+# archived tooling runs from a fresh checkout regardless of CWD. Override the
+# full-file DB via the GENIE_FULL_TSV env var if it ever moves.
+_HERE = Path(__file__).resolve().parent          # scripts/gg/
+_REPO = _HERE.parents[1]                          # repo root
+FULL = os.environ.get(
+    "GENIE_FULL_TSV",
+    str(_REPO / "crates" / "rustynes-frontend" / "src" / "genie_database_full.tsv"),
+)
+XML = str(_HERE / "nes20db.xml")
 
 def norm(s):
     # strip region-path prefix, .nes suffix, unicode-fold, drop punctuation/spaces, lowercase
