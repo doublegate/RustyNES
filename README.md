@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.2.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.2.1-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -775,7 +775,18 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.2.0 "Capstone"**, the milestone cut that **closes the
+RustyNES's current release is **v2.2.1**, a **housekeeping patch** on top of
+v2.2.0 "Capstone" (below): archives two batches of dev/research tooling (the
+Game Genie header-robust re-key's research scripts and a 2A03-revision
+DMA-divergence probe), consolidates six open Dependabot PRs with **zero
+source changes** (pollster, wide, tungstenite/tokio-tungstenite, bytemuck,
+cc, actions/setup-python), and wires four gitignored, BIOS-gated smoke tests
+against `TakuikaNinja`'s FDS hardware-verification probes (regression
+insurance for behavior RustyNES already models correctly). **Zero accuracy,
+feature, or core changes** — AccuracyCoin holds **141/141 (100.00%)**,
+unchanged from v2.2.0.
+
+It follows **v2.2.0 "Capstone"**, the milestone cut that **closes the
 v2.1.5 → v2.2.0 "deepen the existing project" run**, landing its two remaining marquees — the
 **netplay matchmaking/lobby** stack (a browse-and-join room directory + server-side quick-play
 over the existing room-code / TURN transport, delayed-stream spectators, a graded

@@ -1,6 +1,21 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.2.0 "Capstone"** (2026-07-12) — the **milestone cut** that
+> **Current release: v2.2.1** (2026-07-15) — a **housekeeping patch** on top of
+> v2.2.0 "Capstone" (below): archives two batches of dev/research tooling (the
+> Game Genie header-robust re-key's six research/verification scripts in
+> `scripts/gg/`, and the 2A03-revision DMA-divergence probe in `scripts/probes/`),
+> consolidates six open Dependabot PRs with **zero source changes** (`pollster`
+> 0.4→1.0, `wide` 0.7→1.5, `tungstenite`/`tokio-tungstenite` 0.29→0.30,
+> `bytemuck`/`cc` patch, `actions/setup-python` v5→v6), and wires four gitignored,
+> `RUSTYNES_FDS_BIOS`-gated smoke tests against `TakuikaNinja`'s FDS `$4023` /
+> mirroring / audio-register / DRAM-watchdog hardware-verification probes
+> (regression insurance for behavior RustyNES already models correctly — not a
+> fix). **Zero accuracy, feature, or core changes** — the deterministic
+> `#![no_std]` chip stack, save-state / TAS / netplay-replay formats, and every
+> golden vector are untouched; **AccuracyCoin holds 141/141 (100.00%)**,
+> unchanged from v2.2.0.
+>
+> The prior release, **v2.2.0 "Capstone"** (2026-07-12), was the **milestone cut** that
 > **closes the v2.1.5 → v2.2.0 "deepen the existing project"** run on the v2.0.0 "Timebase"
 > core, landing its two remaining marquees — the **netplay matchmaking / lobby** stack and the
 > **FDS medium model** — atop a peripherals + quality/security pass (the joint iOS App Store /
