@@ -14,6 +14,22 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependency consolidation (PR #305 — closes Dependabot #298–#303).** Rolled
+  all six open Dependabot bumps into one reviewed change, each verified against
+  the code and gates; all landed with **no source changes** and the deterministic
+  `#![no_std]` core untouched (AccuracyCoin stays **141/141**): **pollster
+  0.4 → 1.0** (frontend / android / iOS `block_on` for wgpu/Metal init), **wide
+  0.7 → 1.5** (the desktop `u32x8` SIMD blitter — the SIMD-vs-scalar byte-identity
+  gate still passes), **tungstenite + tokio-tungstenite 0.29 → 0.30** (netplay +
+  mobile signaling; `default-features = false` + `handshake` +
+  `rustls-tls-webpki-roots` retained for clean pure-rustls cross-compiles),
+  **bytemuck 1.25.0 → 1.25.1** and **cc 1.2.66 → 1.2.67** (patch), and CI
+  **actions/setup-python v5 → v6** (MkDocs step). Verified with `cargo check` /
+  `clippy -D warnings` / `cargo deny` / the `wide` byte-identity test / the full
+  netplay tungstenite-0.30 suite.
+
 ## [2.2.0] - 2026-07-12 - "Capstone" (milestone cut — netplay matchmaking/lobby + FDS medium model + peripherals + quality/security pass)
 
 ### Added
