@@ -10,8 +10,8 @@ use common::{fnv1a64, rom_path};
 use std::fs;
 use rustynes_core::{Cpu2A03Revision, Nes};
 fn snaphash(name: &str, rev: Cpu2A03Revision, frames: u64) -> u64 {
-    let bytes = fs::read(rom_path(name)).unwrap();
-    let mut nes = Nes::from_rom(&bytes).unwrap();
+    let bytes = fs::read(rom_path(name)).expect("failed to read ROM");
+    let mut nes = Nes::from_rom(&bytes).expect("failed to parse ROM");
     nes.set_cpu_2a03_revision(rev);
     for _ in 0..frames { nes.run_frame(); }
     fnv1a64(&nes.snapshot())
