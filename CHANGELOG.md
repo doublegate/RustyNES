@@ -14,6 +14,19 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Game Genie re-key research tooling archived (PR #304).** Preserved the six
+  intermediate research / verification scripts behind the header-robust Game Genie
+  code re-key (which shipped in #262) beside the generator in `scripts/gg/`:
+  `crc_combine.py` (the zlib-style CRC32-combine identity that derives the
+  header-excluded `rom_crc32` from a full-file CRC + the 16-byte iNES header),
+  `alias_resolve.py` (long-tail title-alias CRC resolution), `coverage.py` /
+  `coverage2.py` (name-join coverage accounting), `inspect.py`, and `verify.py`
+  (which now proves the combine identity over every standard nes20db cart dump).
+  Dev / research tooling only — paths resolve repo-relative, and it touches no
+  crate and does not affect the build or the deterministic core.
+
 ### Changed
 
 - **Dependency consolidation (PR #305 — closes Dependabot #298–#303).** Rolled
