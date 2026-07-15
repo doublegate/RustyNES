@@ -14,6 +14,12 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-07-15 - Housekeeping patch (dev-tooling archival + dependency consolidation + FDS test corpus)
+
+Zero accuracy, feature, or core changes — the deterministic `#![no_std]` chip
+stack, save-state / TAS / netplay-replay formats, and every golden vector are
+untouched. AccuracyCoin holds **141/141 (100.00%)**, unchanged from v2.2.0.
+
 ### Added
 
 - **Game Genie re-key research tooling archived (PR #304).** Preserved the six
@@ -41,9 +47,8 @@ cycle-accurate core later replaced.
   absent, keeping CI clean by default. The underlying `$4023` and mirroring
   behaviors these probes exercise are already implemented and unit-tested
   independently in `crates/rustynes-mappers/src/fds.rs` — this is regression
-  insurance against a second, hardware-verified oracle, not a fix for a
-  gap. The
-  `$4030.D1` DRAM-watchdog probe tracks a known, honest residual (not yet
+  insurance against a second, hardware-verified oracle, not a fix for a gap.
+  The `$4030.D1` DRAM-watchdog probe tracks a known, honest residual (not yet
   modeled by RustyNES or, per upstream, by most current FDS emulators) —
   see `docs/accuracy-ledger.md`.
 
