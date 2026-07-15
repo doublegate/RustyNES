@@ -66,8 +66,8 @@ shipped pipeline in `scripts/gg/` and committed.
 | `…/6112789e/scratchpad/gg-research/{crc_combine,alias_resolve,coverage,coverage2,inspect,verify}.py` | `scripts/gg/` (committed) | The 6 intermediate GG re-key research/verification helpers not committed with #262 — CRC32-combine derivation, alias CRC resolution, coverage accounting, output spot-check + round-trip verify |
 | `…/gg-research/{genie_database_headerless.tsv, alias_crcs.py, gen_headerless.py, nes20db.xml}` | — (dropped) | Redundant: TSV + `alias_crcs.py` byte-identical to shipped #262; `gen_headerless.py` a superseded draft; `nes20db.xml` already at `scripts/gg/` (gitignored) |
 | `…/6112789e/scratchpad/{batch2,convert_gg,enumerate_staged,gen_promotion,ids,mapper_scan,scan,show252,showthreads,threads}.py` + `promo_tests{,_2}.rs` | `scripts/mapper-promotion/` (untracked) | Mapper tier-promotion tooling + Rust harness — on disk for reboot survival, not committed |
-| `/tmp/probe_rev.rs` | `scripts/probes/` (untracked) | 2A03-revision (Rp2A03G vs H) DMA divergence probe |
-| `/tmp/check_dirs.rs`, `/tmp/dsp_debug_test.rs` | `scripts/probes/` (untracked) | Ad-hoc dev probes |
+| `/tmp/probe_rev.rs` | `scripts/probes/` (committed) | 2A03-revision (Rp2A03G vs H) DMA divergence probe behind the shipped v2.1.7 "Stepping" DMA-frontier work (ADR 0033) — mirrors the PR #304 gg-research precedent for post-hoc diagnostic tooling |
+| `/tmp/check_dirs.rs`, `/tmp/dsp_debug_test.rs` | `scripts/probes/` (untracked) | Dropped on review: `check_dirs.rs` is RustySNES content (a false-positive cross-project match), `dsp_debug_test.rs` is self-labeled scratch — neither committed |
 
 **Dropped as already-persisted or regenerable (not salvaged):** ~1,751
 `ww-head/` and `ww-movie/` PNG frames (Wizards & Warriors debug captures — that
@@ -80,3 +80,25 @@ thread `.json` dumps (transient API responses); `/tmp/holy-mapperel` git clone
 (already vendored at `ref-proj/holy-mapperel-v0.02` + `tests/roms/holy_mapperel`);
 `/tmp/rustynes-mkdocs-test` (6 MB) + `/tmp/rustynes-hm` (4 MB) build/test scratch;
 vendored `libretro-database/` + `mkdocs-venv/` upstream/venv scripts.
+
+## 2026-07-14 — tmp-salvage follow-up (confirm-noise sweep, `probe_rev.rs` committed)
+
+Re-ran the dry run plus a by-hand check of `/tmp/claude-1000/`'s own nested
+content — its directory name matches the salvage script's `claude-\d+`
+agent-scratch exclusion pattern, so the automated scanner skips the whole
+tree (including loose files sitting directly at its root) regardless of
+what's inside; every prior salvage pass in this project has therefore relied
+on a manual look there. Confirmed noise this pass: loose top-level files
+(`status_head.md` — a stale STATUS.md snapshot superseded by the current
+doc; `reply-status.txt`/`reply-agents.txt` — bot replies already posted to
+GitHub; `pal_text.out`/`pal_all.out`/`ntsc_verify.out` — raw `cargo test`
+captures from the already-shipped PAL APU oracle work) and
+`.../swiftgen/` (regenerable UniFFI-generated Swift bindings output). The
+main `/tmp` STRONG-match project directories (`/tmp/RustyNES`,
+`/tmp/claude-rustynes`, `/tmp/rustynes-hm`, `/tmp/rustynes-mkdocs-test`) were
+all re-confirmed as draft PR/commit/reply text already posted or merged, CI
+gate logs, visual-regression dumps from already-shipped mapper regression
+testing, and a built MkDocs static site — all spent/regenerable, none
+salvaged. Only `scripts/probes/probe_rev.rs` was promoted from untracked
+scratch to committed (see the row above) — everything else from the prior
+pass stays as previously recorded.
