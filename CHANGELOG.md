@@ -39,9 +39,10 @@ cycle-accurate core later replaced.
   releases) rather than committed, mirroring the existing commercial-ROM
   convention; every test skips cleanly when the BIOS or a probe disk is
   absent, keeping CI clean by default. The underlying `$4023` and mirroring
-  behavior these probe is already implemented and unit-tested independently
-  in `crates/rustynes-mappers/src/fds.rs` — this is regression insurance
-  against a second, hardware-verified oracle, not a fix for a gap. The
+  behaviors these probes exercise are already implemented and unit-tested
+  independently in `crates/rustynes-mappers/src/fds.rs` — this is regression
+  insurance against a second, hardware-verified oracle, not a fix for a
+  gap. The
   `$4030.D1` DRAM-watchdog probe tracks a known, honest residual (not yet
   modeled by RustyNES or, per upstream, by most current FDS emulators) —
   see `docs/accuracy-ledger.md`.

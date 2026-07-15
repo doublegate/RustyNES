@@ -70,19 +70,16 @@ fn run_probe(test_name: &str, rom_filename: &str, frames: u64) {
         }
     };
 
-    let disk_path = format!(
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../tests/roms/external/fds-takuikaninja/{}"
-        ),
-        rom_filename
-    );
+    let disk_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/roms/external/fds-takuikaninja")
+        .join(rom_filename);
     let disk = match std::fs::read(&disk_path) {
         Ok(d) => d,
         Err(e) => {
             eprintln!(
-                "SKIP {test_name}: cannot read {disk_path}: {e} (fetch it from the TakuikaNinja \
-                 GitHub release and place it there — see this file's module doc)."
+                "SKIP {test_name}: cannot read {}: {e} (fetch it from the TakuikaNinja \
+                 GitHub release and place it there — see this file's module doc).",
+                disk_path.display()
             );
             return;
         }
