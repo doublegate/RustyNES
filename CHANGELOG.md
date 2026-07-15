@@ -28,6 +28,24 @@ cycle-accurate core later replaced.
   Dev / research tooling only — paths resolve repo-relative, and it touches no
   crate and does not affect the build or the deterministic core.
 
+- **`TakuikaNinja` FDS hardware-verification probes wired in (gated,
+  gitignored).** Added `crates/rustynes-test-harness/tests/fds_takuikaninja.rs`
+  with four `RUSTYNES_FDS_BIOS`-gated smoke tests against
+  `FDS-Mirroring-Test`, `FDS-4023-Test`, `FDS-Audio-Registers`, and
+  `FDS-4030D1-Addr` — real hardware-verified probes of `$4023`/mirroring/audio
+  register behavior and the FDS DRAM-refresh-watchdog IRQ. None of the four
+  carries an explicit permissive license, so they're staged gitignored under
+  `tests/roms/external/fds-takuikaninja/` (fetched from the author's GitHub
+  releases) rather than committed, mirroring the existing commercial-ROM
+  convention; every test skips cleanly when the BIOS or a probe disk is
+  absent, keeping CI clean by default. The underlying `$4023` and mirroring
+  behavior these probe is already implemented and unit-tested independently
+  in `crates/rustynes-mappers/src/fds.rs` — this is regression insurance
+  against a second, hardware-verified oracle, not a fix for a gap. The
+  `$4030.D1` DRAM-watchdog probe tracks a known, honest residual (not yet
+  modeled by RustyNES or, per upstream, by most current FDS emulators) —
+  see `docs/accuracy-ledger.md`.
+
 ### Changed
 
 - **Dependency consolidation (PR #305 — closes Dependabot #298–#303).** Rolled
