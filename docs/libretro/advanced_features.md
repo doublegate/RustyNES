@@ -5,11 +5,11 @@ To fulfill RustyNES's preservation-grade feature set (GGPO rollback, RetroAchiev
 ## Direct Memory Mapping & RetroAchievements (implemented)
 
 Traditionally, achievement networks like `rcheevos` utilize `READ_CORE_RAM` function pointers, which incur massive function-call overhead by querying memory one byte at a time.
-`RustyNesLibretro::register_memory_maps` (`crates/rustynes-libretro/src/lib.rs`) bypasses this via `RETRO_ENVIRONMENT_SET_MEMORY_MAPS`, called at the end of `on_load_game` on the `LoadGameContext` (this hook is only available there and on `InitContext` — **not** on `SetEnvironmentContext`, since the memory pointers aren't known until a ROM is loaded). It exposes an array of `retro_memory_descriptor` structures directly mapping the emulator's 6502 CPU virtual address space to physical Rust heap pointers:
+`RustyNesLibretro::register_memory_maps` (`crates/rustynes-libretro/src/lib.rs`) bypasses this via `RETRO_ENVIRONMENT_SET_MEMORY_MAPS`, called at the end of `on_load_game` on the `LoadGameContext` (this hook is only available there and on `InitContext` — **not** on `SetEnvironmentContext`, since the memory pointers aren't known until a ROM is loaded). It exposes an array of `retro_memory_descriptor` structures:
 
-* **Work RAM (WRAM):** Maps address range `$0000 - $07FF`. Flagged as `RETRO_MEMDESC_SYSTEM_RAM`.
-* **Save RAM (SRAM):** Maps address range `$6000 - $7FFF`, when non-empty (battery-backed carts only). Flagged as `RETRO_MEMDESC_SAVE_RAM`.
-* **Video RAM (VRAM):** Maps address range `$2000 - $2FFF`. Flagged as `RETRO_MEMDESC_VIDEO_RAM`.
+* **Work RAM (WRAM):** Maps address range `$0000 - $07FF` in the blank/default (6502 CPU) address space. Flagged as `RETRO_MEMDESC_SYSTEM_RAM`.
+* **Save RAM (SRAM):** Maps address range `$6000 - $7FFF` in the same CPU address space, when non-empty (battery-backed carts only). Flagged as `RETRO_MEMDESC_SAVE_RAM`.
+* **Video RAM (VRAM):** Maps address range `$2000 - $2FFF`, flagged as `RETRO_MEMDESC_VIDEO_RAM` — but in a **named `"PPU"` address space**, not the blank/default one, since nametable RAM (CIRAM) lives on the PPU's own internal bus. On the CPU's real bus, `$2000-$2007` are the PPU MMIO registers (PPUCTRL/PPUMASK/etc.), not video RAM; registering the VRAM pointer under the default CPU space at that range would misrepresent it. This mirrors the convention `libretro.h` documents for other genuinely separate buses (e.g. the SNES SPC700 audio coprocessor's `"S"` address space).
 
 The legacy `get_memory_data`/`get_memory_size` (`RETRO_MEMORY_*`) pointer path is kept alongside this, unchanged — RetroArch's own `.srm` persistence goes through it regardless, so the descriptor registration is additive, not a replacement. Both paths expose the MAIN console's memory in Vs. `DualSystem` mode (see `RustyNesLibretro::active_nes_mut`/`active_nes`).
 

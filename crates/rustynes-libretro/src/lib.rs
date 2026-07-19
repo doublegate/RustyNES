@@ -75,6 +75,11 @@ const NES_H: usize = 240;
 /// Composed width of a Vs. `DualSystem` side-by-side present (two consoles).
 const DUAL_W: usize = NES_W * 2;
 
+/// Named `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` address space for PPU nametable
+/// RAM (CIRAM), distinct from the blank/default CPU-bus address space WRAM
+/// and SRAM are registered under. See `register_memory_maps`.
+const PPU_ADDRSPACE: &CStr = c"PPU";
+
 /// The central libretro core structure for RustyNES.
 ///
 /// This struct holds the underlying cycle-accurate `Nes` emulator instance alongside
@@ -272,6 +277,13 @@ impl RustyNesLibretro {
                 addrspace: std::ptr::null(),
             });
         }
+        // Nametable RAM (CIRAM) lives on the PPU's own internal address bus, not
+        // the CPU's: on the CPU bus, $2000-$2007 are the PPU MMIO registers
+        // (PPUCTRL/PPUMASK/etc.), not video RAM. Registering this under the
+        // blank/default (CPU) address space at $2000 would therefore be
+        // misleading, so it gets its own named "PPU" address space instead —
+        // the same convention `libretro.h` documents for other genuinely
+        // separate buses (e.g. the SNES SPC700 audio coprocessor's "S" space).
         descriptors.push(retro_memory_descriptor {
             flags: u64::from(RETRO_MEMDESC_VIDEO_RAM),
             ptr: nes.vram_mut().as_mut_ptr().cast::<std::os::raw::c_void>(),
@@ -280,7 +292,7 @@ impl RustyNesLibretro {
             select: 0,
             disconnect: 0,
             len: nes.vram_mut().len(),
-            addrspace: std::ptr::null(),
+            addrspace: PPU_ADDRSPACE.as_ptr(),
         });
         let map = retro_memory_map {
             descriptors: descriptors.as_ptr(),
@@ -724,6 +736,13 @@ impl Core for RustyNesLibretro {
         let Some(nes) = self.active_nes_mut() else {
             return false;
         };
+        // Cartridge builds report 0 sides; `Nes::set_disk_side` is a safe no-op
+        // for them (the `Mapper` trait's default impl), so this can't panic
+        // either way, but reporting `false` for non-disk content is more
+        // honest than silently no-op-ing and claiming success.
+        if nes.disk_side_count() == 0 {
+            return false;
+        }
         if ejected {
             nes.set_disk_side(None);
         } else {
@@ -768,9 +787,19 @@ impl Core for RustyNesLibretro {
     }
 
     fn on_get_image_label(&mut self, index: u32) -> Option<CString> {
-        // Synthesize "Side A" / "Side B" / ... labels for the Quick Menu.
-        let letter = char::from(b'A' + u8::try_from(index).ok()?);
-        CString::new(format!("Side {letter}")).ok()
+        // Synthesize "Side A" / "Side B" / ... labels for the Quick Menu. No FDS
+        // image realistically has more than a handful of sides, but `index` is
+        // frontend-supplied, so bound it explicitly rather than let `b'A' + index`
+        // overflow `u8` (a debug-build panic, a silent wrap in release) for any
+        // value past 'Z'.
+        if let Ok(index_u8) = u8::try_from(index)
+            && index_u8 < 26
+        {
+            let letter = char::from(b'A' + index_u8);
+            CString::new(format!("Side {letter}")).ok()
+        } else {
+            CString::new(format!("Side {}", index.saturating_add(1))).ok()
+        }
     }
 
     // --- Cheats (native Game Genie) ------------------------------------------------
@@ -793,6 +822,15 @@ impl Core for RustyNesLibretro {
             return;
         };
         if enabled {
+            // A frontend may re-toggle/edit the code at an already-active slot
+            // without disabling it first; remove whatever code was previously
+            // applied at this index so it doesn't stay active alongside the new
+            // one (both would otherwise patch the ROM simultaneously).
+            if let Some(old_code) = self.genie_cheats.remove(&index)
+                && let Some(nes) = self.active_nes_mut()
+            {
+                nes.remove_genie_code(&old_code);
+            }
             let applied = self
                 .active_nes_mut()
                 .is_some_and(|nes| nes.add_genie_code(code_str).is_ok());
