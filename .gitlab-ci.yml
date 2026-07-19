@@ -1,0 +1,117 @@
+# RustyNES libretro core — buildbot recipe.
+#
+# Populates RetroArch's built-in core downloader via the shared libretro CI
+# templates (git.libretro.com/libretro-infrastructure/ci-templates). Added
+# per https://github.com/doublegate/RustyNES/issues/311.
+#
+# `CORENAME` is `rustynes`, NOT `rustynes_libretro` or `rustynes-libretro`:
+# these templates always run a fixed `mv lib${CORENAME}.<ext>
+# ${CORENAME}_libretro.<ext>` step. `crates/rustynes-libretro/Cargo.toml`
+# sets `[lib] name = "rustynes"` explicitly (its `[package] name` stays
+# `rustynes-libretro` for `-p rustynes-libretro` scoping everywhere else),
+# so `CORENAME=rustynes` makes both the compiled-artifact name and the
+# final packaged name resolve correctly to `rustynes_libretro.<ext>` —
+# matching the already-published `rustynes_libretro.info`.
+#
+# `cargo build --release --target <triple>` here runs from the repo root
+# with no `-p` flag (the template scripts are centrally maintained and not
+# per-core editable); the root `Cargo.toml`'s `[workspace] default-members =
+# ["crates/rustynes-libretro"]` is what scopes that bare command to just
+# this crate instead of all 18 workspace members.
+#
+# Platform scope: mirrors the two proven, currently-building reference
+# cores (doukutsu-rs-libretro, holani-retro) minus platforms we have
+# concrete evidence won't build — no `rust-libnx*.yml` template exists in
+# ci-templates (Nintendo Switch is not buildable this way for a Rust core
+# today), and no reference core includes webOS. Both can be added later
+# once the basics are proven on the buildbot.
+
+.core-defs:
+  variables:
+    CORENAME: rustynes
+
+include:
+  ################################## DESKTOPS ################################
+  # Windows 64-bit
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/rust-windows-x64.yml'
+
+  # Linux 64-bit
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/rust-linux-x64.yml'
+
+  # macOS/iOS/tvOS
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/rust-apple.yml'
+
+  ################################## CELLULAR ################################
+  # Android
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/rust-android-jni.yml'
+
+stages:
+  - build-prepare
+  - build-shared
+  - build-static
+
+################################### DESKTOPS #################################
+# Windows 64-bit
+libretro-build-windows-x64:
+  extends:
+    - .libretro-rust-windows-x64-default
+    - .core-defs
+
+# Linux 64-bit
+libretro-build-linux-x64:
+  extends:
+    - .libretro-rust-linux-x64-default
+    - .core-defs
+
+# macOS 64-bit
+libretro-build-osx-x64:
+  extends:
+    - .libretro-rust-osx-x86_64-default
+    - .core-defs
+
+# macOS ARM 64-bit
+libretro-build-osx-arm64:
+  extends:
+    - .libretro-rust-osx-arm64-default
+    - .core-defs
+
+################################### CELLULAR #################################
+# Android ARMv7a
+android-armeabi-v7a:
+  extends:
+    - .libretro-rust-android-jni-armeabi-v7a
+    - .core-defs
+
+# Android ARMv8a
+android-arm64-v8a:
+  extends:
+    - .libretro-rust-android-jni-arm64-v8a
+    - .core-defs
+
+# Android 64-bit x86
+android-x86_64:
+  extends:
+    - .libretro-rust-android-jni-x86_64
+    - .core-defs
+
+# Android 32-bit x86
+android-x86:
+  extends:
+    - .libretro-rust-android-jni-x86
+    - .core-defs
+
+# iOS
+libretro-build-ios-arm64:
+  extends:
+    - .libretro-rust-ios-arm64-default
+    - .core-defs
+
+# tvOS
+libretro-build-tvos-arm64:
+  extends:
+    - .libretro-rust-tvos-arm64-default
+    - .core-defs

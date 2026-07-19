@@ -21,9 +21,21 @@
 //!   For a `DualSystem` cabinet libretro ports 0/1 drive the MAIN console's P1/P2 and
 //!   ports 2/3 drive the SUB console's P1/P2 (matching `VsDualSystem::set_buttons`).
 //! - **Save States & Memory Maps**: Direct pointers to WRAM, SRAM, and VRAM are provided
-//!   safely by isolating the memory accessors in the core. Save states serialize statically
-//!   sized binary blobs natively through `Nes::snapshot_core_into` (single console) or
-//!   `VsDualSystem::snapshot` (dual cabinet).
+//!   safely by isolating the memory accessors in the core, exposed both via the legacy
+//!   `retro_get_memory_data`/`_size` pointer API and the modern
+//!   `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` descriptor registration RetroAchievements'
+//!   `rcheevos` prefers. Save states serialize statically sized binary blobs natively
+//!   through `Nes::snapshot_core_into` (single console) or `VsDualSystem::snapshot`
+//!   (dual cabinet) — this is also what RetroArch's own generic rollback netplay and
+//!   movie/rewind features ride on; RustyNES's bespoke `rustynes-netplay` P2P crate is
+//!   intentionally NOT linked into this core, since it would be redundant with (and
+//!   conflict with) RetroArch's own equivalent systems.
+//! - **FDS**: `.fds` disk images are routed to [`rustynes_core::Nes::from_disk`] (looking
+//!   up `disksys.rom` in the frontend's system directory), and multi-side disk swapping is
+//!   exposed through libretro's disk-control interface (`on_set_eject_state` et al.).
+//! - **Cheats**: Native Game Genie code application via `on_cheat_set`/`on_cheat_reset`,
+//!   backed by [`rustynes_core::Nes::add_genie_code`] (excluded from serialized state, so
+//!   it never affects save-state/netplay/TAS determinism).
 //!
 //! # Vs. `DualSystem` present path (v2.1.10 "Web Parity")
 //!
@@ -53,7 +65,8 @@ use rust_libretro::{
     types::*,
 };
 use rustynes_core::{Emu, Nes, VsDualSystem};
-use std::ffi::CString;
+use std::collections::BTreeMap;
+use std::ffi::{CStr, CString};
 
 /// NES native framebuffer width in pixels (one console).
 const NES_W: usize = 256;
@@ -61,6 +74,11 @@ const NES_W: usize = 256;
 const NES_H: usize = 240;
 /// Composed width of a Vs. `DualSystem` side-by-side present (two consoles).
 const DUAL_W: usize = NES_W * 2;
+
+/// Named `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` address space for PPU nametable
+/// RAM (CIRAM), distinct from the blank/default CPU-bus address space WRAM
+/// and SRAM are registered under. See `register_memory_maps`.
+const PPU_ADDRSPACE: &CStr = c"PPU";
 
 /// The central libretro core structure for RustyNES.
 ///
@@ -106,6 +124,12 @@ pub struct RustyNesLibretro {
 
     /// Pre-allocated buffer for snapshot serialization.
     serialize_buffer: Vec<u8>,
+
+    /// Active Game Genie codes, keyed by the frontend's per-slot cheat index
+    /// (`on_cheat_set`'s `index`). Deliberately NOT part of save-state /
+    /// serialized state, matching `Nes::add_genie_code`'s own contract, so
+    /// cheats never affect the deterministic core or netplay/TAS replay.
+    genie_cheats: BTreeMap<u32, String>,
 }
 
 impl Default for RustyNesLibretro {
@@ -124,6 +148,7 @@ impl Default for RustyNesLibretro {
             video_buffer: Vec::with_capacity(DUAL_W * NES_H * 4),
             serialize_size: 0,
             serialize_buffer: Vec::new(),
+            genie_cheats: BTreeMap::new(),
         }
     }
 }
@@ -195,6 +220,94 @@ fn blit_scanline_rgba_to_xrgb(dst: &mut [u8], src: &[u8]) {
 }
 
 impl RustyNesLibretro {
+    /// The single `Nes` that RetroAchievements / cheats / disk-control / memory-maps
+    /// target: the single-console instance, or the MAIN console of a loaded Vs.
+    /// `DualSystem` cabinet. Factored out of `get_memory_data`/`get_memory_size` (which
+    /// duplicated this match) and shared by `register_memory_maps`, the disk-control
+    /// hooks, and the cheat hooks — all of which use the same MAIN-console convention.
+    fn active_nes_mut(&mut self) -> Option<&mut Nes> {
+        match (self.nes.as_mut(), self.dual.as_mut()) {
+            (Some(nes), _) => Some(nes),
+            (None, Some(dual)) => Some(dual.main_mut()),
+            (None, None) => None,
+        }
+    }
+
+    /// Shared-reference counterpart of [`Self::active_nes_mut`].
+    fn active_nes(&self) -> Option<&Nes> {
+        match (self.nes.as_ref(), self.dual.as_ref()) {
+            (Some(nes), _) => Some(nes),
+            (None, Some(dual)) => Some(dual.main()),
+            (None, None) => None,
+        }
+    }
+
+    /// Register `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` descriptors for WRAM, PRG-RAM/SRAM
+    /// (when battery-backed), and PPU nametable VRAM. This is the memory-inspection path
+    /// RetroAchievements' `rcheevos` prefers over the legacy `get_memory_data`/`_size`
+    /// pointer API (kept below, unchanged, since RetroArch's own `.srm` persistence goes
+    /// through it regardless — this is additive, not a replacement). The descriptor
+    /// pointers are the SAME fixed-size, constructed-once allocations the legacy path
+    /// already exposes, so reusing them here is exactly as safe.
+    fn register_memory_maps(&mut self, ctx: &mut LoadGameContext) {
+        let Some(nes) = self.active_nes_mut() else {
+            return;
+        };
+        let mut descriptors = Vec::with_capacity(3);
+        descriptors.push(retro_memory_descriptor {
+            flags: u64::from(RETRO_MEMDESC_SYSTEM_RAM),
+            ptr: nes.wram_mut().as_mut_ptr().cast::<std::os::raw::c_void>(),
+            offset: 0,
+            start: 0x0000,
+            select: 0,
+            disconnect: 0,
+            len: nes.wram_mut().len(),
+            addrspace: std::ptr::null(),
+        });
+        let sram_len = nes.sram_mut().len();
+        if sram_len > 0 {
+            descriptors.push(retro_memory_descriptor {
+                flags: u64::from(RETRO_MEMDESC_SAVE_RAM),
+                ptr: nes.sram_mut().as_mut_ptr().cast::<std::os::raw::c_void>(),
+                offset: 0,
+                start: 0x6000,
+                select: 0,
+                disconnect: 0,
+                len: sram_len,
+                addrspace: std::ptr::null(),
+            });
+        }
+        // Nametable RAM (CIRAM) lives on the PPU's own internal address bus, not
+        // the CPU's: on the CPU bus, $2000-$2007 are the PPU MMIO registers
+        // (PPUCTRL/PPUMASK/etc.), not video RAM. Registering this under the
+        // blank/default (CPU) address space at $2000 would therefore be
+        // misleading, so it gets its own named "PPU" address space instead —
+        // the same convention `libretro.h` documents for other genuinely
+        // separate buses (e.g. the SNES SPC700 audio coprocessor's "S" space).
+        descriptors.push(retro_memory_descriptor {
+            flags: u64::from(RETRO_MEMDESC_VIDEO_RAM),
+            ptr: nes.vram_mut().as_mut_ptr().cast::<std::os::raw::c_void>(),
+            offset: 0,
+            start: 0x2000,
+            select: 0,
+            disconnect: 0,
+            len: nes.vram_mut().len(),
+            addrspace: PPU_ADDRSPACE.as_ptr(),
+        });
+        let map = retro_memory_map {
+            descriptors: descriptors.as_ptr(),
+            num_descriptors: descriptors.len() as std::os::raw::c_uint,
+        };
+        // SAFETY: `ctx` carries a valid environment callback for the duration of
+        // `on_load_game` (guaranteed by the libretro spec); the frontend copies
+        // `descriptors[0..num_descriptors]` synchronously before this call returns
+        // (standard `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` semantics), so `descriptors`
+        // only needs to outlive this call, not `self`.
+        unsafe {
+            ctx.set_memory_maps(map);
+        }
+    }
+
     /// Convert `produced` mono `f32` samples from `audio_float_buffer` into
     /// interleaved stereo `i16` and push them. Shared by both present paths so the
     /// audio scaling / interleave logic lives in exactly one place. The buffer is
@@ -216,6 +329,22 @@ impl RustyNesLibretro {
         }
         rust_libretro::contexts::AudioContext::from(&mut *ctx)
             .batch_audio_samples(&self.audio_buffer);
+    }
+
+    /// Whether RetroArch is currently fast-forwarding (either user-requested or the
+    /// rollback-netplay/GGPO catch-up path). The emulation clock itself can't be
+    /// cheaply skipped (no mixer-bypass exists in `rustynes-core`), but the per-frame
+    /// `f32`→`i16` interleave + `batch_audio_samples` FFI push is pure presentation
+    /// overhead that's safe to skip while fast-forwarding — a modest, safe win, not a
+    /// large perf change (APU synthesis inside `run_frame()` dominates and isn't
+    /// touched by this).
+    fn is_fastforwarding(ctx: &mut RunContext) -> bool {
+        // SAFETY: `ctx` carries a valid environment callback for the duration of
+        // `on_run` (guaranteed by the libretro spec).
+        unsafe {
+            let generic_ctx: GenericContext = (&*ctx).into();
+            generic_ctx.get_fastforwarding()
+        }
     }
 
     /// The classic single-console present path: 256x240 XRGB8888 + one audio stream.
@@ -248,7 +377,9 @@ impl RustyNesLibretro {
             .as_mut()
             .expect("nes present")
             .drain_audio_into(&mut self.audio_float_buffer);
-        self.push_audio(ctx, produced);
+        if !Self::is_fastforwarding(ctx) {
+            self.push_audio(ctx, produced);
+        }
     }
 
     /// The Vs. `DualSystem` present path: step BOTH consoles, compose their two
@@ -283,7 +414,9 @@ impl RustyNesLibretro {
             .expect("dual present")
             .main_mut()
             .drain_audio_into(&mut self.audio_float_buffer);
-        self.push_audio(ctx, produced);
+        if !Self::is_fastforwarding(ctx) {
+            self.push_audio(ctx, produced);
+        }
 
         // Bound the SUB console's APU buffer even though its audio is not played:
         // drain it into a small stack scratch, looping until a partial fill signals
@@ -373,6 +506,11 @@ impl Core for RustyNesLibretro {
                 { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right" }
             );
             rust_libretro::environment::set_input_descriptors(cb, &descriptors);
+
+            // Register the disk-control callback trampolines (on_set_eject_state,
+            // on_get_image_index, etc. below) so RetroArch's Quick Menu → Disk
+            // Control surfaces FDS multi-side swapping.
+            generic_ctx.enable_disk_control_interface();
         }
     }
 
@@ -417,17 +555,52 @@ impl Core for RustyNesLibretro {
             slice.to_vec()
         };
 
-        // `Emu::from_rom` picks the right shape for the cart: a `VsDualSystem` for the
-        // four Vs. DualSystem boards (detected via the NES 2.0 header Vs. type OR the
-        // SHA-keyed `vs_db`), else a standard single `Nes`. This is the SAME detection
-        // the desktop frontend uses, so the libretro core presents dual cabinets
-        // identically (two consoles side-by-side) instead of booting a single console
-        // that would hang waiting on its cross-wired partner.
-        let emu = match Emu::from_rom(&rom_data) {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("[RustyNES] Failed to parse ROM: {e:?}");
-                return Err(format!("Failed to load ROM: {e:?}").into());
+        // `ext_info.ext` reflects the original file extension even when the ROM was
+        // handed to us as an in-memory buffer (need_fullpath is false). Route `.fds`
+        // disk images to the dedicated FDS constructor: `Emu::from_rom` only parses
+        // iNES/NES 2.0 cartridge headers, so without this branch FDS loading silently
+        // fails despite `valid_extensions` advertising it.
+        // SAFETY: `ext_info.ext` is either null or a valid, NUL-terminated,
+        // frontend-owned C string for the duration of this call, per the same
+        // `RetroGameInfoExt` contract already relied on above for `data`/`size`.
+        let is_fds = (!ext_info.ext.is_null())
+            && unsafe { CStr::from_ptr(ext_info.ext) }
+                .to_str()
+                .is_ok_and(|ext| ext.eq_ignore_ascii_case("fds"));
+
+        let emu = if is_fds {
+            let generic_ctx: GenericContext = (&*ctx).into();
+            let bios_dir = generic_ctx
+                .get_system_directory()
+                .ok_or("Frontend did not provide a system directory for the FDS BIOS")?;
+            let bios_path = bios_dir.join("disksys.rom");
+            let bios = std::fs::read(&bios_path).map_err(|e| {
+                format!(
+                    "Missing FDS BIOS at {}: {e} (RustyNES needs disksys.rom in the \
+                     frontend's system directory to boot Famicom Disk System games)",
+                    bios_path.display()
+                )
+            })?;
+            match Nes::from_disk(&rom_data, &bios) {
+                Ok(nes) => Emu::Single(Box::new(nes)),
+                Err(e) => {
+                    eprintln!("[RustyNES] Failed to parse FDS disk image: {e:?}");
+                    return Err(format!("Failed to load FDS disk: {e:?}").into());
+                }
+            }
+        } else {
+            // `Emu::from_rom` picks the right shape for the cart: a `VsDualSystem` for
+            // the four Vs. DualSystem boards (detected via the NES 2.0 header Vs. type OR
+            // the SHA-keyed `vs_db`), else a standard single `Nes`. This is the SAME
+            // detection the desktop frontend uses, so the libretro core presents dual
+            // cabinets identically (two consoles side-by-side) instead of booting a
+            // single console that would hang waiting on its cross-wired partner.
+            match Emu::from_rom(&rom_data) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("[RustyNES] Failed to parse ROM: {e:?}");
+                    return Err(format!("Failed to load ROM: {e:?}").into());
+                }
             }
         };
 
@@ -454,6 +627,7 @@ impl Core for RustyNesLibretro {
                 eprintln!("[RustyNES] Loaded Vs. DualSystem cabinet (512x240 side-by-side).");
             }
         }
+        self.register_memory_maps(ctx);
         Ok(())
     }
 
@@ -477,11 +651,12 @@ impl Core for RustyNesLibretro {
         // Memory boundary enforcement remains safe within the `rustynes_core` design.
         // In dual mode the MAIN console is the one RetroAchievements / cheats target
         // (its memory map is where gameplay state lives); expose it, matching the
-        // single-console mapping. `main_mut()` yields the MAIN `Nes`.
-        let nes = match (self.nes.as_mut(), self.dual.as_mut()) {
-            (Some(nes), _) => nes,
-            (None, Some(dual)) => dual.main_mut(),
-            (None, None) => return std::ptr::null_mut(),
+        // single-console mapping (see `Self::active_nes_mut`). Kept alongside the
+        // richer `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` registration (`register_memory_maps`)
+        // since RetroArch's own `.srm` persistence goes through this legacy path
+        // regardless.
+        let Some(nes) = self.active_nes_mut() else {
+            return std::ptr::null_mut();
         };
         match id {
             RETRO_MEMORY_SAVE_RAM => {
@@ -504,10 +679,8 @@ impl Core for RustyNesLibretro {
         _ctx: &mut GetMemorySizeContext,
     ) -> usize {
         // Mirror `get_memory_data`: the MAIN console in dual mode.
-        let nes = match (self.nes.as_ref(), self.dual.as_ref()) {
-            (Some(nes), _) => nes,
-            (None, Some(dual)) => dual.main(),
-            (None, None) => return 0,
+        let Some(nes) = self.active_nes() else {
+            return 0;
         };
         match id {
             RETRO_MEMORY_SAVE_RAM => nes.sram().len(),
@@ -550,6 +723,135 @@ impl Core for RustyNesLibretro {
         }
         false
     }
+
+    // --- Disk control (FDS multi-side swap) ---------------------------------------
+    //
+    // Backed entirely by `Nes::disk_side_count`/`inserted_disk_side`/`set_disk_side`
+    // (the same API the desktop frontend's F9 disk-swap keybind uses) — no cartridge
+    // build ever reports more than 0 sides, so these are no-ops outside FDS. Callback
+    // trampolines are registered once via `enable_disk_control_interface()` in
+    // `on_set_environment`.
+
+    fn on_set_eject_state(&mut self, ejected: bool) -> bool {
+        let Some(nes) = self.active_nes_mut() else {
+            return false;
+        };
+        // Cartridge builds report 0 sides; `Nes::set_disk_side` is a safe no-op
+        // for them (the `Mapper` trait's default impl), so this can't panic
+        // either way, but reporting `false` for non-disk content is more
+        // honest than silently no-op-ing and claiming success.
+        if nes.disk_side_count() == 0 {
+            return false;
+        }
+        if ejected {
+            nes.set_disk_side(None);
+        } else {
+            // Re-insert whichever side was last active, defaulting to side 0 (Side A)
+            // if the disk had never been inserted this session.
+            let side = nes.inserted_disk_side().unwrap_or(0);
+            nes.set_disk_side(Some(side));
+        }
+        true
+    }
+
+    fn on_get_eject_state(&mut self) -> bool {
+        self.active_nes_mut()
+            .is_some_and(|nes| nes.inserted_disk_side().is_none())
+    }
+
+    fn on_get_image_index(&mut self) -> u32 {
+        self.active_nes()
+            .and_then(Nes::inserted_disk_side)
+            .map_or(0, |i| i as u32)
+    }
+
+    fn on_set_image_index(&mut self, index: u32) -> bool {
+        let Some(nes) = self.active_nes_mut() else {
+            return false;
+        };
+        if (index as usize) >= nes.disk_side_count() {
+            return false;
+        }
+        nes.set_disk_side(Some(index as usize));
+        true
+    }
+
+    fn on_get_num_images(&mut self) -> u32 {
+        self.active_nes_mut()
+            .map_or(0, |nes| nes.disk_side_count() as u32)
+    }
+
+    fn on_get_image_path(&mut self, _index: u32) -> Option<CString> {
+        // No real per-side file paths exist for a single multi-side `.fds` container.
+        None
+    }
+
+    fn on_get_image_label(&mut self, index: u32) -> Option<CString> {
+        // Synthesize "Side A" / "Side B" / ... labels for the Quick Menu. No FDS
+        // image realistically has more than a handful of sides, but `index` is
+        // frontend-supplied, so bound it explicitly rather than let `b'A' + index`
+        // overflow `u8` (a debug-build panic, a silent wrap in release) for any
+        // value past 'Z'.
+        if let Ok(index_u8) = u8::try_from(index)
+            && index_u8 < 26
+        {
+            let letter = char::from(b'A' + index_u8);
+            CString::new(format!("Side {letter}")).ok()
+        } else {
+            CString::new(format!("Side {}", index.saturating_add(1))).ok()
+        }
+    }
+
+    // --- Cheats (native Game Genie) ------------------------------------------------
+    //
+    // Backed by `Nes::add_genie_code`/`remove_genie_code`/`clear_genie_codes`, which
+    // are deliberately excluded from serialized state, so cheats never affect
+    // save-state / netplay / TAS determinism. `genie_cheats` just remembers which
+    // code string was applied at each frontend-assigned slot `index`, since
+    // `on_cheat_set` only tells us the code being toggled, not what was there before.
+
+    fn on_cheat_set(
+        &mut self,
+        index: std::os::raw::c_uint,
+        enabled: bool,
+        code: &CStr,
+        _ctx: &mut CheatSetContext,
+    ) {
+        let Ok(code_str) = code.to_str() else {
+            eprintln!("[RustyNES] Ignoring non-UTF8 cheat code at index {index}.");
+            return;
+        };
+        if enabled {
+            // A frontend may re-toggle/edit the code at an already-active slot
+            // without disabling it first; remove whatever code was previously
+            // applied at this index so it doesn't stay active alongside the new
+            // one (both would otherwise patch the ROM simultaneously).
+            if let Some(old_code) = self.genie_cheats.remove(&index)
+                && let Some(nes) = self.active_nes_mut()
+            {
+                nes.remove_genie_code(&old_code);
+            }
+            let applied = self
+                .active_nes_mut()
+                .is_some_and(|nes| nes.add_genie_code(code_str).is_ok());
+            if applied {
+                self.genie_cheats.insert(index, code_str.to_owned());
+            } else {
+                eprintln!("[RustyNES] Rejected Game Genie code {code_str:?} at index {index}.");
+            }
+        } else if let Some(old_code) = self.genie_cheats.remove(&index)
+            && let Some(nes) = self.active_nes_mut()
+        {
+            nes.remove_genie_code(&old_code);
+        }
+    }
+
+    fn on_cheat_reset(&mut self, _ctx: &mut CheatResetContext) {
+        self.genie_cheats.clear();
+        if let Some(nes) = self.active_nes_mut() {
+            nes.clear_genie_codes();
+        }
+    }
 }
 
 retro_core!(RustyNesLibretro {
@@ -560,4 +862,5 @@ retro_core!(RustyNesLibretro {
     video_buffer: Vec::with_capacity(DUAL_W * NES_H * 4),
     serialize_size: 0,
     serialize_buffer: Vec::new(),
+    genie_cheats: BTreeMap::new(),
 });

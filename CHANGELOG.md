@@ -14,6 +14,28 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- Libretro buildbot CI recipe (`.gitlab-ci.yml`, issue #311) covering Windows
+  x64, Linux x64, macOS x64/arm64, Android (4 ABIs), iOS arm64, and tvOS
+  arm64 — the missing piece to get RustyNES onto RetroArch's built-in core
+  downloader (the repo was already integrated with the legacy
+  `libretro-super` scripts). Paired with a `[workspace] default-members`
+  fix so the templates' unscoped `cargo build --release --target <triple>`
+  builds only `crates/rustynes-libretro`, and a `[lib] name = "rustynes"`
+  override resolving a compiled-artifact naming collision with the shared
+  CI templates' fixed `${CORENAME}_libretro` convention.
+- Libretro core feature completion: native `RETRO_ENVIRONMENT_SET_MEMORY_MAPS`
+  registration (the memory-descriptor path RetroAchievements' `rcheevos`
+  prefers, alongside the existing legacy pointer API); an FDS load-path fix
+  (`.fds` content is now correctly routed to `Nes::from_disk` with a
+  `disksys.rom` lookup in the frontend's system directory — previously
+  broken despite `valid_extensions` advertising it) plus a full disk-control
+  interface for FDS multi-side swapping via RetroArch's Quick Menu; native
+  Game Genie cheat support (`on_cheat_set`/`on_cheat_reset`); and a
+  `get_fastforwarding`-gated audio-push skip during RetroArch's
+  fast-forward/rollback-netplay catch-up path.
+
 ## [2.2.1] - 2026-07-15 - Housekeeping patch (dev-tooling archival + dependency consolidation + FDS test corpus)
 
 Zero accuracy, feature, or core changes — the deterministic `#![no_std]` chip

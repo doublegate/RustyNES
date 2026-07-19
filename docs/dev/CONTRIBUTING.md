@@ -38,8 +38,8 @@ git remote add upstream https://github.com/ORIGINAL_AUTHOR/rustynes.git
 ### Build and Test
 
 ```bash
-cargo build
-cargo test
+cargo build --workspace
+cargo test --workspace
 ```
 
 See [BUILD.md](BUILD.md) for detailed build instructions.
