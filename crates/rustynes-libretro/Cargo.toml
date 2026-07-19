@@ -11,6 +11,17 @@ keywords = ["nes", "emulator", "famicom", "libretro", "retroarch"]
 categories = ["emulators"]
 
 [lib]
+# Explicit override so the compiled artifact is `librustynes.{so,dylib,a}` /
+# `rustynes.dll` rather than the package-name default `rustynes_libretro`.
+# The libretro buildbot's shared CI templates (`libretro-infrastructure/
+# ci-templates`) run a fixed `mv lib${CORENAME}.so ${CORENAME}_libretro.so`
+# step, so the compiled lib name must NOT already contain `_libretro` or the
+# final artifact name would double up (`rustynes_libretro_libretro.so`).
+# `CORENAME=rustynes` in `.gitlab-ci.yml` pairs with this to produce the
+# correct `rustynes_libretro.*` name both CI paths (this and the legacy
+# libretro-super Makefile) ultimately require. See `.gitlab-ci.yml` and
+# `Makefile` in this crate.
+name = "rustynes"
 crate-type = ["cdylib", "staticlib"]
 
 [lints]
@@ -18,7 +29,11 @@ workspace = true
 
 [dependencies]
 libc = "0.2.186"
-rust-libretro = "0.3.2"
+# `unstable-env-commands` unlocks `set_memory_maps` (RetroAchievements'
+# preferred memory-descriptor path) and `get_fastforwarding` (used to skip
+# non-essential audio work during RetroArch's rollback-netplay/fast-forward
+# fast path) — both are compiled out of `rust-libretro` without this feature.
+rust-libretro = { version = "0.3.2", features = ["unstable-env-commands"] }
 
 [dependencies.rustynes-core]
 path = "../rustynes-core"

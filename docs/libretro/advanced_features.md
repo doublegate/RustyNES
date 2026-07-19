@@ -2,16 +2,16 @@
 
 To fulfill RustyNES's preservation-grade feature set (GGPO rollback, RetroAchievements, FDS support), the FFI wrapper must deeply integrate with advanced `libretro.h` subsystems, exposing the strict deterministic capabilities of the `rustynes-core` engine.
 
-## Direct Memory Mapping & RetroAchievements
+## Direct Memory Mapping & RetroAchievements (implemented)
 
 Traditionally, achievement networks like `rcheevos` utilize `READ_CORE_RAM` function pointers, which incur massive function-call overhead by querying memory one byte at a time.
-RustyNES must bypass this by utilizing the `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` hook. This exposes an array of `retro_memory_descriptor` structures directly mapping the emulator's 6502 CPU virtual address space to physical Rust heap pointers.
+`RustyNesLibretro::register_memory_maps` (`crates/rustynes-libretro/src/lib.rs`) bypasses this via `RETRO_ENVIRONMENT_SET_MEMORY_MAPS`, called at the end of `on_load_game` on the `LoadGameContext` (this hook is only available there and on `InitContext` — **not** on `SetEnvironmentContext`, since the memory pointers aren't known until a ROM is loaded). It exposes an array of `retro_memory_descriptor` structures directly mapping the emulator's 6502 CPU virtual address space to physical Rust heap pointers:
 
 * **Work RAM (WRAM):** Maps address range `$0000 - $07FF`. Flagged as `RETRO_MEMDESC_SYSTEM_RAM`.
-* **Save RAM (SRAM):** Maps address range `$6000 - $7FFF`. Flagged as `RETRO_MEMDESC_SAVE_RAM`.
+* **Save RAM (SRAM):** Maps address range `$6000 - $7FFF`, when non-empty (battery-backed carts only). Flagged as `RETRO_MEMDESC_SAVE_RAM`.
 * **Video RAM (VRAM):** Maps address range `$2000 - $2FFF`. Flagged as `RETRO_MEMDESC_VIDEO_RAM`.
 
-By exposing these pointers right after `retro_load_game`, RetroAchievements clients hash and observe memory natively, guaranteeing cycle-accurate achievement tracking without stalling the `on_run` loop.
+The legacy `get_memory_data`/`get_memory_size` (`RETRO_MEMORY_*`) pointer path is kept alongside this, unchanged — RetroArch's own `.srm` persistence goes through it regardless, so the descriptor registration is additive, not a replacement. Both paths expose the MAIN console's memory in Vs. `DualSystem` mode (see `RustyNesLibretro::active_nes_mut`/`active_nes`).
 
 ## SRAM and Virtual File System (VFS) Offloading
 
@@ -32,7 +32,7 @@ To support this, `rustynes-libretro` relies on the deterministic serialization e
 2. **Implementation:**
    * `on_serialize(buffer: &mut [u8])`: Instantiate `rustynes_core::save_state::BinWriter` targeting the `buffer`. The engine pushes exact byte-for-byte state.
    * `on_unserialize(buffer: &[u8])`: Pass the `buffer` to `BinReader`. Determinism guarantees the state is restored perfectly without desync.
-3. **Fast-Forward Optimization (`get_fastforwarding`):** If the frontend is fast-forwarding to catch up during a rollback, the FFI wrapper should skip copying audio into the batch buffer and optionally skip rendering logic to vastly increase throughput.
+3. **Fast-Forward Optimization (`get_fastforwarding`, implemented):** `RustyNesLibretro::is_fastforwarding` queries this each frame in `run_single`/`run_dual` and skips the `push_audio` call (the `f32`→`i16` interleave plus the `batch_audio_samples` FFI push) while fast-forwarding. This is a modest, honest win, not a large one: `rustynes-core` has no mixer-bypass API, so the dominant cost — APU synthesis inside `run_frame()` — is not skipped; only the presentation-side audio conversion/push is.
 
 ## Vs. `DualSystem` Two-Screen Presentation (v2.1.10 "Web Parity")
 
@@ -67,8 +67,14 @@ The deterministic `no_std` core is untouched — this is purely a parallel
 present/serialize branch in the FFI wrapper, exactly mirroring the desktop
 frontend's `emu.dual` branch.
 
-## Famicom Disk System (FDS) Subsystem Negotiation
+## Famicom Disk System (FDS) Loading & Disk Control (implemented)
 
 Standard NES ROMs (`.nes`) bundle all data in a single file. The Famicom Disk System requires two distinct components: the `.fds` disk image and the `disksys.rom` BIOS.
-Using `RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO`, the core declares the "FDS" operating mode.
-When selected, RetroArch triggers a specialized `retro_load_game_special` hook, passing multiple memory buffers simultaneously. The core extracts both the BIOS buffer and the Disk buffer, forwarding them securely to `rustynes_core::Nes::from_disk(disk_bytes, bios_bytes)`. This provides a pristine, CLI-free user experience entirely mediated by RetroArch's UI.
+
+**Load path.** `on_load_game` (`crates/rustynes-libretro/src/lib.rs`) inspects the extension libretro's `GET_GAME_INFO_EXT` reports (`ext_info.ext`, valid even in in-memory/`need_fullpath = false` mode). For `.fds` content, it looks up `disksys.rom` via `RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY` (`GenericContext::get_system_directory`), reads it with `std::fs::read` (this crate links full `std`, unlike the `no_std` `rustynes-core`), and constructs via `rustynes_core::Nes::from_disk(disk_bytes, bios_bytes)`. Missing BIOS surfaces as a clear `on_load_game` error naming the expected path. **This is a simpler alternative to `RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO`/`retro_load_game_special`** (an earlier design considered but not built) — routing on the single game-load path avoids the added subsystem-registration/multi-buffer-negotiation surface for no loss of functionality, since RetroArch always resolves `disksys.rom` from the system directory the same way regardless.
+
+**Multi-side disk swap.** Once loaded, the disk-control trait overrides (`on_set_eject_state`, `on_get_eject_state`, `on_get_image_index`, `on_set_image_index`, `on_get_num_images`, `on_get_image_path`/`on_get_image_label`) are backed by `Nes::disk_side_count`/`inserted_disk_side`/`set_disk_side` — the same API the desktop frontend's F9 disk-swap keybind uses. The callback trampolines are registered once via `GenericContext::enable_disk_control_interface()` in `on_set_environment`, surfacing swap/eject in RetroArch's Quick Menu → Disk Control. `on_get_image_path`/`on_get_image_label` synthesize "Side A"/"Side B" labels since no real per-side file paths exist for a single multi-side `.fds` container; `on_replace_image_index`/`on_add_image_index` are left at their default no-ops for the same reason.
+
+## Native Cheats (Game Genie, implemented)
+
+`on_cheat_set`/`on_cheat_reset` are backed by `Nes::add_genie_code`/`remove_genie_code`/`clear_genie_codes`, which are deliberately excluded from serialized state — cheats never affect save-state / netplay / TAS determinism. `RustyNesLibretro::genie_cheats` (an `index -> code` map) remembers which code was applied at each frontend-assigned cheat slot, since `on_cheat_set` only reports the code being toggled, not what was previously there. Only Game Genie code syntax is decoded — a generic RetroArch "raw address:value" poke cheat is not, so `RetroArch Cheats` (the frontend's own address-poke cheat manager) stays unsupported while `Native Cheats` (Game Genie) is supported.

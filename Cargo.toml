@@ -19,6 +19,17 @@ members = [
     "crates/rustynes-ra",
     "crates/rustynes-monetization", "crates/rustynes-libretro",
 ]
+# The libretro buildbot's shared CI templates run a bare, unscoped
+# `cargo build --release --target <triple>` from the repo root (no `-p`,
+# no `--manifest-path` — the script is centrally maintained and can't be
+# edited per-core). Scoping the default member to just the libretro crate
+# keeps that command building ONLY `rustynes-libretro`, not all 18 workspace
+# members (in particular `rustynes-frontend`, which needs wgpu/winit/cpal/
+# wayland system libs the buildbot's headless cross-compile image doesn't
+# have). This does not change any `--workspace`/`-p <crate>`-scoped command
+# — every CI workflow, this crate's own Makefile, and every scripts/*.sh
+# invocation already scopes explicitly. See `.gitlab-ci.yml`.
+default-members = ["crates/rustynes-libretro"]
 
 [workspace.package]
 version = "2.2.1"

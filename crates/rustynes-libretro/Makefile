@@ -26,6 +26,17 @@ ifeq ($(platform),android)
 	else ifeq ($(ARCH),x86)
 		RUST_TARGET := i686-linux-android
 	endif
+else ifeq ($(platform),osx)
+	# Only force an explicit cross-target when the buildbot tells us the arch
+	# (ARCH set); a bare local `make` on macOS with no ARCH falls through to
+	# native compile (empty RUST_TARGET), same as before this branch existed.
+	ifeq ($(ARCH),arm64)
+		RUST_TARGET := aarch64-apple-darwin
+	else ifeq ($(ARCH),aarch64)
+		RUST_TARGET := aarch64-apple-darwin
+	else ifeq ($(ARCH),x86_64)
+		RUST_TARGET := x86_64-apple-darwin
+	endif
 else ifeq ($(platform),ios)
 	RUST_TARGET := aarch64-apple-ios
 else ifeq ($(platform),tvos)
@@ -94,12 +105,12 @@ all: release
 
 build:
 	$(CARGO_CMD)
-	cp $(OUT_DIR)/debug/$(PREFIX)rustynes_libretro.$(EXT) rustynes_libretro.$(EXT)
+	cp $(OUT_DIR)/debug/$(PREFIX)rustynes.$(EXT) rustynes_libretro.$(EXT)
 	@echo "Copied debug core to rustynes_libretro.$(EXT)"
 
 release:
 	$(CARGO_CMD) --release
-	cp $(OUT_DIR)/release/$(PREFIX)rustynes_libretro.$(EXT) rustynes_libretro.$(EXT)
+	cp $(OUT_DIR)/release/$(PREFIX)rustynes.$(EXT) rustynes_libretro.$(EXT)
 	@echo "Copied release core to rustynes_libretro.$(EXT)"
 
 clean:

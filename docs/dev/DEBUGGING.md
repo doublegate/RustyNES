@@ -277,7 +277,7 @@ cargo test --test blargg_cpu_exec_space
 **Using perf**:
 
 ```bash
-cargo build --release
+cargo build --release -p rustynes-frontend
 perf record -g ./target/release/rustynes rom.nes
 perf report
 ```
