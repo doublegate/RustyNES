@@ -107,7 +107,7 @@ serde_json = "1.0"
 # rewind ring buffer to compress per-frame snapshots. `std` is opted in
 # by `rustynes-core`'s `std` feature (default on for desktop builds; off when
 # cross-compiling to a no_std target like `thumbv7em-none-eabihf`).
-lz4_flex = { version = "0.13", default-features = false, features = ["safe-encode", "safe-decode"] }
+lz4_flex = { version = "0.14", default-features = false, features = ["safe-encode", "safe-decode"] }
 
 # Frontend deps
 winit = "0.30"
