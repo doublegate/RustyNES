@@ -14,14 +14,10 @@
 
 language: en-US
 
-tone_instructions: >
-  Precise, technical language. No emojis, no poems. Flag correctness,
-  determinism, and no_std/unsafe-boundary issues in the rustynes-* chip
-  crates with higher priority than style nits. This repo's own
-  cargo fmt / clippy -D warnings / markdownlint gates already run in CI —
-  don't duplicate pure style findings clippy or rustfmt would already
-  catch; focus review effort on things those tools can't see (timing,
-  determinism, API/docs drift, security boundaries).
+tone_instructions: >-
+  Precise, technical language. No emojis or poems. Prioritize determinism
+  and no_std/unsafe-boundary correctness in rustynes-* chip crates over
+  style nits clippy/rustfmt/markdownlint already catch in CI.
 
 reviews:
   profile: assertive
