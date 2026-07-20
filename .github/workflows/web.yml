@@ -117,7 +117,7 @@ jobs:
       # than straight into `_site/docs`, because the assemble step below clears +
       # recreates `_site`.
       - name: Set up Python for MkDocs
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 

@@ -106,8 +106,14 @@ serde_json = "1.0"
 # `safe-decode` features avoid all `unsafe` in the hot path. Used by the
 # rewind ring buffer to compress per-frame snapshots. `std` is opted in
 # by `rustynes-core`'s `std` feature (default on for desktop builds; off when
-# cross-compiling to a no_std target like `thumbv7em-none-eabihf`).
-lz4_flex = { version = "0.13", default-features = false, features = ["safe-encode", "safe-decode"] }
+# cross-compiling to a no_std target like `thumbv7em-none-eabihf`). `alloc`
+# is requested unconditionally: 0.14 split the crate's own no_std support so
+# `compress_prepend_size`/`decompress_size_prepended` (the Vec-returning block
+# API rewind.rs/zwinder.rs use) now live behind `alloc`, not `std` — and
+# rustynes-core already links `extern crate alloc;` in every build, std or
+# not, so this costs nothing on the no_std path (`std` still implies `alloc`
+# via lz4_flex's own feature table for the desktop/wasm builds).
+lz4_flex = { version = "0.14", default-features = false, features = ["safe-encode", "safe-decode", "alloc"] }
 
 # Frontend deps
 winit = "0.30"
