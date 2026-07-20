@@ -1,0 +1,59 @@
+# CodeRabbit configuration for RustyNES.
+# https://docs.coderabbit.ai/reference/configuration
+#
+# Added as an alternate PR review bot alongside gemini-code-assist and
+# copilot-pull-request-reviewer (project convention: reply-and-resolve every
+# bot review thread before merge — see docs/dev/CONTRIBUTING.md and the
+# HARD MERGE-GATE ceremony this project follows). Requires installing the
+# CodeRabbit GitHub App on this repo before it will actually run.
+
+language: en-US
+
+tone_instructions: >
+  Precise, technical language. No emojis. Flag correctness, determinism,
+  and no_std/unsafe-boundary issues in the rustynes-* chip crates with
+  higher priority than style nits.
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!ref-proj/**"
+    - "!ref-docs/**"
+    - "!docs/archive/**"
+    - "!to-dos/archive/**"
+    - "!Cargo.lock"
+  path_instructions:
+    - path: "crates/rustynes-cpu/**"
+      instructions: >
+        This is a #![no_std] deterministic 6502 core validated against
+        nestest and the blargg/kevtris/AccuracyCoin test-ROM suites.
+        Flag anything that could introduce non-determinism (wall-clock,
+        OS RNG, unordered iteration) or break cycle-accuracy.
+    - path: "crates/rustynes-ppu/**"
+      instructions: >
+        PPU-dot-resolution lockstep timing is load-bearing (see
+        docs/scheduler.md). Flag any change that could shift sub-instruction
+        PPU event timing without an accompanying test-ROM justification.
+    - path: "crates/rustynes-apu/**"
+      instructions: >
+        Audio synthesis must stay byte-identical to the golden vectors in
+        tests/golden/ unless the PR explicitly re-blesses them.
+    - path: "**/*.md"
+      instructions: >
+        Docs are the spec here, not a changelog. Flag documentation that
+        drifts from the code it describes rather than just prose nits.
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  learnings:
+    scope: auto
