@@ -1,35 +1,116 @@
 # CodeRabbit configuration for RustyNES.
 # https://docs.coderabbit.ai/reference/configuration
 #
-# Added as an alternate PR review bot alongside gemini-code-assist and
+# Alternate PR review bot alongside gemini-code-assist and
 # copilot-pull-request-reviewer (project convention: reply-and-resolve every
 # bot review thread before merge — see docs/dev/CONTRIBUTING.md and the
-# HARD MERGE-GATE ceremony this project follows). Requires installing the
-# CodeRabbit GitHub App on this repo before it will actually run.
+# HARD MERGE-GATE ceremony this project follows).
+#
+# profile: assertive — deliberately more thorough than the "chill" default.
+# This project treats accuracy/determinism regressions and no_std/unsafe
+# boundary mistakes as high-cost (they can silently break AccuracyCoin or a
+# save-state/movie format), so a few extra nitpicks are worth it in exchange
+# for not missing the one comment that matters.
 
 language: en-US
 
 tone_instructions: >
-  Precise, technical language. No emojis. Flag correctness, determinism,
-  and no_std/unsafe-boundary issues in the rustynes-* chip crates with
-  higher priority than style nits.
+  Precise, technical language. No emojis, no poems. Flag correctness,
+  determinism, and no_std/unsafe-boundary issues in the rustynes-* chip
+  crates with higher priority than style nits. This repo's own
+  cargo fmt / clippy -D warnings / markdownlint gates already run in CI —
+  don't duplicate pure style findings clippy or rustfmt would already
+  catch; focus review effort on things those tools can't see (timing,
+  determinism, API/docs drift, security boundaries).
 
 reviews:
-  profile: chill
+  profile: assertive
   request_changes_workflow: false
   high_level_summary: true
+  sequence_diagrams: true
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  suggested_labels: true
+  auto_apply_labels: false
+  suggested_reviewers: true
+  auto_assign_reviewers: false
   poem: false
   review_status: true
   collapse_walkthrough: true
+  changed_files_summary: true
+  slop_detection:
+    enabled: true
   auto_review:
     enabled: true
+    auto_incremental_review: true
     drafts: false
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT REVIEW"
+  finishing_touches:
+    docstrings:
+      enabled: true
+    unit_tests:
+      enabled: true
+    autofix:
+      enabled: true
+    simplify:
+      # Off deliberately: hot-path chip code (Cpu::tick/Ppu::tick/mapper
+      # register access) is intentionally allocation-free and
+      # abstraction-light per project convention — an auto-"simplify"
+      # suggestion is more likely to fight that than help it.
+      enabled: false
+  pre_merge_checks:
+    title:
+      mode: warning
+    description:
+      mode: warning
+    issue_assessment:
+      mode: warning
+    docstrings:
+      mode: warning
+      threshold: 80
+    custom_checks:
+      - name: "Docs-as-spec sync"
+        mode: warning
+        instructions: >
+          If this PR changes observable behavior in crates/rustynes-cpu,
+          crates/rustynes-ppu, crates/rustynes-apu, or crates/rustynes-mappers
+          (not just internal refactoring), the matching docs/<subsystem>.md
+          file should be updated in the same PR. Fail if a chip-behavior
+          change has no corresponding docs change and the PR body doesn't
+          explain why one isn't needed.
+      - name: "CHANGELOG entry for user-visible changes"
+        mode: warning
+        instructions: >
+          If this PR changes user-visible behavior, adds a feature, or fixes
+          a user-facing bug, CHANGELOG.md should gain an entry under
+          [Unreleased]. Pass for pure-internal refactors, dependency-only
+          bumps with no behavior change, or CI/tooling-only changes.
+      - name: "No unwrap/expect/panic on untrusted input"
+        mode: warning
+        instructions: >
+          Flag any new `.unwrap()`, `.expect()`, or `panic!()` applied to
+          data parsed from an external/untrusted source (ROM/save-state/
+          movie file bytes, network/netplay messages, user-supplied paths)
+          outside of #[cfg(test)] code. These boundaries must return a typed
+          Result/error instead. Pass if the unwrap/expect is on a value the
+          code just constructed or an invariant already checked nearby.
+      - name: "SAFETY comment on new unsafe blocks"
+        mode: warning
+        instructions: >
+          Every new `unsafe { ... }` block or `unsafe fn` must have an
+          adjacent `// SAFETY:` comment explaining the invariant the caller
+          upholds. Fail if a new unsafe block has no such comment nearby.
   path_filters:
     - "!ref-proj/**"
     - "!ref-docs/**"
     - "!docs/archive/**"
     - "!to-dos/archive/**"
     - "!Cargo.lock"
+    - "!crates/rustynes-cheevos/vendor/**"
   path_instructions:
     - path: "crates/rustynes-cpu/**"
       instructions: >
@@ -46,14 +127,170 @@ reviews:
       instructions: >
         Audio synthesis must stay byte-identical to the golden vectors in
         tests/golden/ unless the PR explicitly re-blesses them.
+    - path: "crates/rustynes-core/**"
+      instructions: >
+        The Bus owns all mutable subsystem state; the CPU/PPU/APU each see
+        only the narrow trait (PpuBus/ApuBus) they need. Flag any change
+        that widens a crate's access beyond that, or that could break
+        save-state / TAS movie / netplay-replay format compatibility
+        without an accompanying format-version bump (see ADR 0028).
+    - path: "crates/*/Cargo.toml"
+      instructions: >
+        This workspace pins a single compatible egui/wgpu/winit/naga/
+        accesskit tier (currently egui 0.35 / wgpu 29 / winit 0.30.13 /
+        accesskit 0.24.1). Flag a version bump to any one of these crates
+        that isn't accompanied by matching bumps to the others, or that
+        would require two incompatible major versions of the same
+        transitive dependency to coexist.
+    - path: "android/**/*.kt"
+      instructions: >
+        Kotlin/Compose Android app. Flag Compose recomposition footguns
+        (unstable lambdas/params causing unnecessary recomposition) and
+        any direct filesystem/SharedPreferences access that bypasses the
+        existing UniFFI bridge to rustynes-mobile.
+    - path: "**/*.swift"
+      instructions: >
+        SwiftUI/Metal iOS app calling into rustynes-mobile via UniFFI-
+        generated bindings. Flag force-unwraps (`!`) on values that
+        originate from the Rust bridge or from user/file I/O.
+    - path: "scripts/**/*.py"
+      instructions: >
+        One-off developer tooling, not shipped product code. Prioritize
+        correctness and clear error messages over style; don't ask for
+        packaging/type-hints polish unless it affects correctness.
+    - path: ".github/workflows/**"
+      instructions: >
+        Flag unpinned third-party actions (should be pinned to a version
+        tag or commit SHA, not a branch), missing least-privilege
+        `permissions:` blocks, and secrets echoed into logs.
     - path: "**/*.md"
       instructions: >
         Docs are the spec here, not a changelog. Flag documentation that
         drifts from the code it describes rather than just prose nits.
+        This repo's markdownlint gate is pinned to v0.39.0 via pre-commit
+        (see CLAUDE.md) — don't flag rules that version doesn't have.
+
+  tools:
+    clippy:
+      enabled: true
+    ast-grep:
+      essential_rules: true
+    semgrep:
+      enabled: true
+    opengrep:
+      enabled: true
+    gitleaks:
+      enabled: true
+    trufflehog:
+      enabled: true
+    osvScanner:
+      enabled: true
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true
+    yamllint:
+      enabled: true
+    markdownlint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    hadolint:
+      enabled: true
+    checkmake:
+      enabled: true
+    detekt:
+      enabled: true
+    swiftlint:
+      enabled: true
+    ruff:
+      enabled: true
+    luacheck:
+      enabled: true
+    clang:
+      enabled: true
+    cppcheck:
+      enabled: true
+    # Off: no real content for these ecosystems in this repo (Rust/Kotlin/
+    # Swift/Python/Lua/C/shell/YAML/Markdown/GH-Actions/Docker cover the
+    # actual stack — see the language footprint check that motivated this
+    # list). Left explicit rather than silently defaulted-on so the config
+    # documents the stack instead of just inheriting ~50 tools' worth of
+    # noise for languages this project doesn't use.
+    pylint:
+      enabled: false # redundant with ruff, avoid duplicate findings
+    flake8:
+      enabled: false # redundant with ruff, avoid duplicate findings
+    fbinfer:
+      enabled: false # Java/C static analysis; our first-party C is tiny and
+        # already covered by clang+cppcheck, vendored C is path-filtered out
+    pmd:
+      enabled: false # Java — project has none (Android app is Kotlin)
+    phpstan:
+      enabled: false
+    phpcs:
+      enabled: false
+    phpmd:
+      enabled: false
+    rubocop:
+      enabled: false
+    brakeman:
+      enabled: false
+    prismaLint:
+      enabled: false
+    sqlfluff:
+      enabled: false
+    squawk:
+      enabled: false
+    checkov:
+      enabled: false
+    tflint:
+      enabled: false
+    buf:
+      enabled: false
+    regal:
+      enabled: false
+    oasdiff:
+      enabled: false
+    circleci:
+      enabled: false
+    reactDoctor:
+      enabled: false
+    emberTemplateLint:
+      enabled: false
+    shopifyThemeCheck:
+      enabled: false
+    smartyLint:
+      enabled: false
+    htmlhint:
+      enabled: false
+    stylelint:
+      enabled: false
+    dotenvLint:
+      enabled: false
+    psscriptanalyzer:
+      enabled: false
+    blinter:
+      enabled: false
 
 chat:
   auto_reply: true
 
 knowledge_base:
+  opt_out: false
+  web_search:
+    enabled: true
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "**/AGENTS.md"
+      - "**/CLAUDE.md"
+      - "docs/dev/CONTRIBUTING.md"
+      - "docs/testing-strategy.md"
+      - "docs/architecture.md"
   learnings:
+    scope: auto
+  issues:
+    scope: auto
+  pull_requests:
     scope: auto
