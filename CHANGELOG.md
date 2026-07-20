@@ -44,12 +44,15 @@ cycle-accurate core later replaced.
   **no source changes** and the deterministic `#![no_std]` core untouched
   (AccuracyCoin stays **141/141**): CI **actions/setup-python v6 → v7**
   (MkDocs step), **lz4_flex 0.13 → 0.14** (save-state/movie compression;
-  `default-features = false` + `safe-encode`/`safe-decode` retained),
+  `default-features = false` + `safe-encode`/`safe-decode` retained, plus
+  an explicit `alloc` feature request — 0.14 split `alloc`-vs-`std` no_std
+  support, and without it the `rustynes-core` no_std cross-compile job
+  fails to compile `compress_prepend_size`/`decompress_size_prepended`),
   the `production-dependencies` group (**bitflags 2.13.0 → 2.13.1**,
   **bytemuck 1.25.1 → 1.25.2**, **cc 1.2.67 → 1.3.0**, **clap 4.6.1 →
   4.6.2**, **futures-core/-macro/-sink/-task/-util 0.3.32 → 0.3.33**,
   **serde_json 1.0.150 → 1.0.151**), and a workspace-wide `cargo update`
-  picking up **tokio 1.53.0 → 1.53.1** (which also drops its transitive
+  picking up **tokio 1.52.3 → 1.53.1** (which also drops its transitive
   `windows-sys`/`windows_*` 0.53.x dependency set entirely) and
   **clap/clap_derive → 4.6.3**. Surveyed the remainder of the tree via
   `cargo outdated --workspace` and confirmed nothing else is actionable:
