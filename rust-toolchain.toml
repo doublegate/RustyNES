@@ -12,5 +12,18 @@ components = ["rustfmt", "clippy"]
 # (typenum for thumbv7em; cfg-if for wasm32). Declaring them here adds
 # the target to the 1.86.0 channel that cargo actually uses, and also
 # means `trunk build` + local dev get the wasm32 target for free.
+#
+# DO NOT add the libretro buildbot's cross targets to this list. That
+# buildbot (git.libretro.com, `.gitlab-ci.yml`) hits the exact same trap
+# from the other direction: its build image pre-provisions every cross
+# target on ITS default toolchain, but the `channel` pin above makes
+# rustup install a separate pristine 1.96.0 that carries only the host
+# std plus whatever is listed here — so nine of ten jobs died with the
+# same `E0463: can't find crate for core` in pipeline #91899. Listing
+# the eight triples here would fix it, but at the cost of every
+# contributor and every GitHub Actions job downloading ~8 extra
+# `rust-std` components on each toolchain install. They are installed
+# per-job by `.gitlab-ci.yml` instead, keeping that cost where the need
+# is. See the post-mortem comment at the top of `.gitlab-ci.yml`.
 targets = ["thumbv7em-none-eabihf", "wasm32-unknown-unknown"]
 profile = "default"

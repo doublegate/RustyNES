@@ -15,7 +15,22 @@ repos:
         # mkdocs.yml uses Material for MkDocs' documented `!!python/name:` YAML
         # tags (pymdownx.emoji icon rendering), which check-yaml's safe_load
         # rejects; the mkdocs build itself validates the file in CI.
-        exclude: ^mkdocs\.yml$
+        #
+        # .gitlab-ci.yml is handled by the `--unsafe` pass below rather than
+        # excluded outright, so it still gets a real syntax check.
+        exclude: ^(mkdocs\.yml|\.gitlab-ci\.yml)$
+      # .gitlab-ci.yml uses GitLab's `!reference [job, key]` tag to compose the
+      # libretro build templates' own `before_script` (exporting SDKROOT / CC /
+      # CXX for the Apple jobs) with our `rustup target add` step. GitLab's
+      # `extends` REPLACES array-valued keys rather than merging them, so
+      # `!reference` is the only way to add a step without forking upstream's
+      # internals into this repo. It is a GitLab-specific tag that PyYAML's
+      # safe_load cannot construct, so this file gets `--unsafe`: syntax and
+      # duplicate keys are still validated, only tag construction is skipped.
+      - id: check-yaml
+        name: check yaml (gitlab-ci, custom tags)
+        args: [--unsafe]
+        files: ^\.gitlab-ci\.yml$
       - id: check-toml
       - id: check-merge-conflict
       - id: mixed-line-ending

@@ -62,6 +62,45 @@ retry = 10
 [http]
 multiplexing = false
 
+# Libretro MinGW (`x86_64-pc-windows-gnu`) bindgen ABI override — works around
+# an upstream `rust-libretro 0.3.2` bug that makes the Windows buildbot job
+# fail to compile. Do not remove without re-testing that target.
+#
+# `rust-libretro/src/lib.rs`'s `retro_keyboard_callback_fn` carries this
+# workaround for bindgen's enum-signedness behaviour:
+#
+#     cfg_if::cfg_if! {
+#         if #[cfg(target_family = "windows")] {
+#             let keycode = keycode as i32;
+#         }
+#     };
+#     ... retro_key(keycode) ...
+#
+# That cfg is too broad. C enum signedness is chosen by the target's *ABI*, not
+# its OS family: under the **MSVC** ABI clang gives plain enums `int`, but under
+# every other ABI — including **MinGW** (`x86_64-pc-windows-gnu`), which is what
+# the libretro buildbot builds with — all-non-negative enums get `unsigned int`.
+# So bindgen emits `pub struct retro_key(pub c_uint)` for MinGW while the cast
+# above hands it an `i32`, and the crate fails with E0308. Verified locally:
+# `x86_64-pc-windows-msvc` -> `c_int` (compiles), `x86_64-pc-windows-gnu` /
+# apple / android -> `c_uint` (MinGW is the only one that then breaks). The
+# correct upstream fix is `target_env = "msvc"` rather than
+# `target_family = "windows"`, but https://github.com/max-m/rust-libretro has
+# had no commit since 2023-02 and 0.3.2 is its newest release, so we handle it.
+#
+# Pointing bindgen's clang at the MSVC triple for this one target reproduces the
+# ABI upstream's cast assumes. It is surgical: diffing the two generated
+# `bindings_libretro.rs` files shows 28 changed lines, ALL of them enum
+# signedness (`#[repr(u32)]` -> `#[repr(i32)]` plus the `retro_key`/`retro_mod`
+# newtype fields). Zero struct layouts, function signatures, or type sizes
+# move — MinGW and MSVC share the Windows platform ABI (LLP64, same record
+# layout), and every libretro enum value is non-negative and fits in `int`, so
+# i32/u32 are wire-identical here. `cargo`'s `[env]` applies to build scripts,
+# so this reaches bindgen for every invocation (buildbot, CI, local) without
+# each one having to remember to export it.
+[env]
+BINDGEN_EXTRA_CLANG_ARGS_x86_64_pc_windows_gnu = "--target=x86_64-pc-windows-msvc"
+
 # Libretro Cross-Compilation:
 # The `crates/rustynes-libretro/Makefile` automatically intercepts the buildbot's
 # cross-compiler `CC` and passes it to Cargo via the `CARGO_TARGET_<TRIPLE>_LINKER`

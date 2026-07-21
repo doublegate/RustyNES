@@ -25,10 +25,50 @@
 # ci-templates (Nintendo Switch is not buildable this way for a Rust core
 # today), and no reference core includes webOS. Both can be added later
 # once the basics are proven on the buildbot.
+#
+# ---------------------------------------------------------------------------
+# Why every job carries a `before_script` (pipeline #91899 post-mortem)
+# ---------------------------------------------------------------------------
+# The first buildbot run passed only `libretro-build-linux-x64`; the other
+# nine died with `E0463: can't find crate for core`. Root cause is entirely
+# on our side, not the build images:
+#
+# This repo pins its toolchain in `rust-toolchain.toml` (`channel =
+# "1.96.0"`). The build image ships its own default toolchain with every
+# libretro cross target pre-provisioned — but our pin makes rustup download
+# and install a SEPARATE, pristine 1.96.0 toolchain on the first `cargo`
+# invocation, and that toolchain carries only the host `rust-std` plus the
+# two targets `rust-toolchain.toml` declares (`thumbv7em-none-eabihf`,
+# `wasm32-unknown-unknown`). Every job whose `TARGET_ARCH` is not the host
+# triple therefore had no `core`/`std` to link against. Linux x64 passed
+# purely because its target IS the host triple.
+#
+# The fix is one `rustup target add` per job, into the pinned toolchain.
+# `before_script` runs inside the checkout, so rustup resolves
+# `rust-toolchain.toml` and installs the target where cargo will look for
+# it. This is deliberately NOT solved by appending the eight triples to
+# `rust-toolchain.toml`'s `targets = [...]`: that would force every
+# contributor and every GitHub Actions job to download ~8 extra `rust-std`
+# components on each toolchain install, imposing a large permanent cost on
+# everyone to serve one downstream CI. Keep the cost where the need is.
+#
+# The Apple jobs must NOT `extends: .rust-target-install` — their upstream
+# templates already define a `before_script` (exporting `SDKROOT` / `STRIP`
+# / `CC` / `CXX`), and GitLab's `extends` REPLACES array-valued keys rather
+# than merging them, so extending would silently drop the SDK and
+# cross-compiler environment. They compose via `!reference` instead, which
+# pulls in the template's own `before_script` verbatim without duplicating
+# (and thereby forking) upstream's internals here.
 
 .core-defs:
   variables:
     CORENAME: rustynes
+
+# Shared `before_script` for the jobs whose upstream template defines none
+# (Windows, Linux, and all four Android). See the post-mortem above.
+.rust-target-install:
+  before_script:
+    - rustup target add ${RUST_TARGET}
 
 include:
   ################################## DESKTOPS ################################
@@ -60,58 +100,146 @@ libretro-build-windows-x64:
   extends:
     - .libretro-rust-windows-x64-default
     - .core-defs
+    - .rust-target-install
+  variables:
+    RUST_TARGET: x86_64-pc-windows-gnu
 
 # Linux 64-bit
+# `RUST_TARGET` is the host triple here, so the `rustup target add` is a
+# no-op — declared anyway so every job states its target the same way and a
+# future host-image change can't silently reintroduce the #91899 failure.
 libretro-build-linux-x64:
   extends:
     - .libretro-rust-linux-x64-default
     - .core-defs
+    - .rust-target-install
+  variables:
+    RUST_TARGET: x86_64-unknown-linux-gnu
 
 # macOS 64-bit
 libretro-build-osx-x64:
   extends:
     - .libretro-rust-osx-x86_64-default
     - .core-defs
+  variables:
+    RUST_TARGET: x86_64-apple-darwin
+  before_script:
+    - !reference [.libretro-rust-osx-x86_64-default, before_script]
+    - rustup target add ${RUST_TARGET}
 
 # macOS ARM 64-bit
 libretro-build-osx-arm64:
   extends:
     - .libretro-rust-osx-arm64-default
     - .core-defs
+  variables:
+    RUST_TARGET: aarch64-apple-darwin
+  before_script:
+    - !reference [.libretro-rust-osx-arm64-default, before_script]
+    - rustup target add ${RUST_TARGET}
 
 ################################### CELLULAR #################################
 # Android ARMv7a
+# `cargo ndk -t <abi>` resolves the ABI name to a Rust target triple, so
+# `RUST_TARGET` is that triple (NOT the `ANDROID_ABI` value) for the two
+# ABI-named jobs; the x86 jobs already use triples as their ABI value.
 android-armeabi-v7a:
   extends:
     - .libretro-rust-android-jni-armeabi-v7a
     - .core-defs
+    - .rust-target-install
+  variables:
+    RUST_TARGET: armv7-linux-androideabi
 
 # Android ARMv8a
 android-arm64-v8a:
   extends:
     - .libretro-rust-android-jni-arm64-v8a
     - .core-defs
+    - .rust-target-install
+  variables:
+    RUST_TARGET: aarch64-linux-android
 
 # Android 64-bit x86
 android-x86_64:
   extends:
     - .libretro-rust-android-jni-x86_64
     - .core-defs
+    - .rust-target-install
+  variables:
+    RUST_TARGET: x86_64-linux-android
 
 # Android 32-bit x86
 android-x86:
   extends:
     - .libretro-rust-android-jni-x86
     - .core-defs
+    - .rust-target-install
+  variables:
+    RUST_TARGET: i686-linux-android
 
 # iOS
 libretro-build-ios-arm64:
   extends:
     - .libretro-rust-ios-arm64-default
     - .core-defs
+  variables:
+    RUST_TARGET: aarch64-apple-ios
+  before_script:
+    - !reference [.libretro-rust-ios-arm64-default, before_script]
+    - rustup target add ${RUST_TARGET}
 
 # tvOS
+#
+# The tvOS template overrides `script` with
+# `cargo +nightly build -Zbuild-std --target aarch64-apple-tvos --release`
+# (aarch64-apple-tvos needs build-std). That explicit `+nightly` outranks
+# BOTH `rust-toolchain.toml` and `RUSTUP_TOOLCHAIN`, so this is the one job
+# that does not run on our pinned 1.96.0 — and the image's pre-installed
+# nightly is 1.94.0-nightly, which trips cargo's MSRV gate against the
+# workspace's `rust-version = "1.96"` before compilation even starts:
+#
+#   error: rustc 1.94.0-nightly is not supported by the following packages:
+#     rustynes-core@2.2.1 requires rustc 1.96   (+ apu/cpu/libretro/mappers/ppu)
+#
+# Refreshing the nightly channel is the surgical fix. Lowering `rust-version`
+# on those six crates would also silence it, but `.cargo/config.toml` sets
+# `[resolver] incompatible-rust-versions = "fallback"`, which keys off the
+# LOWEST workspace-member MSRV — so that route risks silently downgrading
+# dependencies workspace-wide on the next `cargo update`. Not worth it for
+# one job.
+#
+# Uninstall-then-install rather than `rustup update nightly`: a stale extra
+# component carried by the image's nightly may not be published for the new
+# nightly date, which aborts an in-place update. `rust-src` is required by
+# `-Zbuild-std`. The container is ephemeral, so this is job-local.
+#
+# Refreshing the nightly then exposes a SECOND tvOS-only blocker. A bare
+# `-Zbuild-std` builds `std` but NOT `panic_abort`, and this workspace sets
+# `[profile.release] panic = "abort"`, so linking the cdylib fails with
+# `E0463: can't find crate for panic_abort`. The usual fix is
+# `-Zbuild-std=std,panic_abort` — but the flag is hardcoded in the template's
+# `script`, and `CARGO_UNSTABLE_BUILD_STD` does NOT help (verified: the CLI
+# `-Z` flag wins over the config/env form, so the crate list stays the
+# default). Overriding the profile's panic strategy for this job is the
+# remaining lever, and it uses the same `CARGO_PROFILE_RELEASE_*` mechanism
+# the template itself already uses for `CARGO_PROFILE_RELEASE_DEBUG`.
+#
+# `unwind` is safe here: since Rust 1.81 a panic that reaches an `extern "C"`
+# boundary aborts rather than unwinding into C frames, so a libretro core
+# behaves the same on a panic either way — this costs only slightly larger
+# code and unwind tables, on tvOS alone. Every other platform keeps
+# `panic = "abort"` untouched.
+#
+# GitLab concatenates `before_script` and `script` into ONE shell invocation
+# (that is how the template's own `export SDKROOT=...` reaches its cargo
+# call), so exporting here does reach the build.
 libretro-build-tvos-arm64:
   extends:
     - .libretro-rust-tvos-arm64-default
     - .core-defs
+  before_script:
+    - !reference [.libretro-rust-tvos-arm64-default, before_script]
+    - rustup toolchain uninstall nightly || true
+    - rustup toolchain install nightly --profile minimal --component rust-src
+    - export CARGO_PROFILE_RELEASE_PANIC=unwind
