@@ -70,6 +70,22 @@ jobs:
           # checkout suffices: we read Cargo.toml + CHANGELOG.md, and the tag
           # existence check uses `git ls-remote` (no local tag history needed).
           ref: ${{ github.event.workflow_run.head_sha }}
+          #
+          # DELIBERATELY the one checkout in this repo that KEEPS persisted Git
+          # credentials (every other one sets `persist-credentials: false`; see
+          # issue #318). The `git ls-remote --tags origin` below is the only real
+          # Git network operation in the whole `.github/` tree, and this job is
+          # unreachable from untrusted input — `workflow_run`, further gated to
+          # `event == 'push'` above — and executes no repository code at all: it
+          # reads two text files. So hardening buys nothing here while risking a
+          # release path that is only exercised at a version cut.
+          #
+          # If a future sweep wants uniformity, first replace the `ls-remote`
+          # with `gh api repos/$GITHUB_REPOSITORY/git/ref/tags/$tag` (which uses
+          # GH_TOKEN and is unaffected by credential persistence), THEN drop the
+          # credentials. That swap also fixes a latent bug: the `>/dev/null 2>&1`
+          # below makes a transient network/auth failure indistinguishable from
+          # "tag does not exist", so a blip would publish a duplicate release.
 
       - name: Decide whether a new version needs releasing
         id: decide

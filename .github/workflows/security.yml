@@ -53,6 +53,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       # Install the PREBUILT binary, never `cargo install` (build-from-source):
       # the repo pins rustc 1.96 (rust-toolchain.toml), but the current
       # cargo-audit release needs >= 1.88 to COMPILE. The prebuilt binary RUNS
@@ -68,6 +70,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       # Prebuilt binary for the same reason as the audit job: the latest
       # cargo-deny needs rustc >= 1.88 to build from source, while the repo is
       # pinned to 1.96. Policy lives in `deny.toml`.
@@ -81,6 +85,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/rust-setup
         with:
           toolchain: 1.96.0

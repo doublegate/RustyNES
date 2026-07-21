@@ -40,6 +40,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       # The project toolchain (rust-toolchain.toml = 1.96) plus the two shipped
       # Android targets (arm64 ships; x86_64 is the emulator/CI ABI).
@@ -105,6 +107,8 @@ jobs:
     needs: cross-build
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install Android Rust targets
         run: rustup target add aarch64-linux-android x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
