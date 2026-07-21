@@ -96,7 +96,10 @@ cycle-accurate core later replaced.
     `x86_64-pc-windows-gnu` job uses — bindgen emits `retro_key(c_uint)`, so
     the crate fails with `E0308`. Upstream has had no commit since 2023-02
     and 0.3.2 is its newest release, so `.cargo/config.toml` now points
-    bindgen's clang at the MSVC triple for that one target. Surgical: the
+    bindgen's clang at the matching MSVC triple for **both** MinGW targets
+    — `x86_64-pc-windows-gnu` (the buildbot) and `i686-pc-windows-gnu`
+    (32-bit Windows via this crate's `Makefile`, the legacy libretro-super
+    path), which was verified to fail identically. Surgical: the
     generated bindings differ by 28 lines, all enum signedness, with no
     struct layout, signature, or type size affected.
   - **tvOS `panic_abort` + MSRV (tvOS).** Its template overrides `script`
