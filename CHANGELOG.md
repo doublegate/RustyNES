@@ -43,21 +43,24 @@ cycle-accurate core later replaced.
   workflow `GITHUB_TOKEN` into `.git/config`, where any code the job then
   executes from the checkout — Cargo build scripts, proc macros, test
   binaries, Gradle build scripts, `scripts/*.sh`, the MkDocs build — can read
-  it. On a pull request that tree is by definition unreviewed code, and every
-  CI job compiles and runs it. Applied to **18 of the 19** checkouts in
+  it. On a pull request that tree is by definition unreviewed code, and nearly
+  every CI job compiles or runs it — the exceptions being the `audit` / `deny`
+  jobs, which install prebuilt binaries and only parse `Cargo.lock`. Applied to
+  **18 of the 19** checkouts in
   `.github/`. Highest-exposure site was not a `ci.yml` job but `web.yml`'s
   `build`, whose workflow-level `permissions:` grant `pages: write` +
   `id-token: write` and which is PR-reachable while running `trunk`,
   `cargo doc`, `pip install`, and `mkdocs build`.
   Audited rather than applied blanket: `.github/actions/rust-setup` performs
   no checkout of its own, so call-site hardening is complete coverage; and
-  **no** job actually needed the persisted credential — nothing pushes
-  commits, tags, or branches, there are no submodules, GitHub Pages uses the
-  OIDC flow (not a `gh-pages` push), and `gh release create` /
-  `softprops/action-gh-release` / `fastlane match` all authenticate by API
-  token or their own separate repository credentials. The single deliberate
-  exception is `release-auto.yml`'s `prepare`, the only job in the tree with a
-  real Git network operation (`git ls-remote --tags origin`); it is
+  **every hardened job was confirmed not to need the checkout credential** —
+  nothing pushes commits, tags, or branches, there are no submodules, GitHub
+  Pages uses the OIDC flow (not a `gh-pages` push), and `gh release create` /
+  `softprops/action-gh-release` authenticate by API token while
+  `fastlane match` clones a different remote with its own `MATCH_GIT_*`
+  credentials. The single deliberate
+  exception is `release-auto.yml`'s `prepare`, the one job whose work needs
+  that credential (`git ls-remote --tags origin`); it is
   unreachable from untrusted input and executes no repository code, so
   hardening would buy nothing while risking a release path exercised only at a
   version cut. Its checkout now carries an inline comment recording that, plus
