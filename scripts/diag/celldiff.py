@@ -45,7 +45,7 @@ def rnorm(acc):
 
 # Walk both from landmark, report first structural divergences (addr or normalized-kind)
 mlist=mes[mi:]; rlist=rny[ri:]
-# Mesen has NO Idle rows; RustyNES emits I rows. To align, drop RustyNES I rows? 
+# Mesen has NO Idle rows; RustyNES emits I rows. To align, drop RustyNES I rows?
 # But I rows ARE cycles. Mesen logs a read every cycle (no idle). So an I in Rusty
 # where Mesen has a read = the structural divergence we hunt. Keep both, align by index.
 divs=0
@@ -57,7 +57,7 @@ for off in range(n):
     if ma!=ra or mk2!=rk2:
         print(f"off={off:5d} | MES {mk}{('('+mk+')') if mk in 'HDAG' else ''} {ma:04X}={mv:02X} | RNY {racc} {ra:04X}={rd:02X} indmc={indmc}")
         divs+=1
-        if divs>=40: 
+        if divs>=40:
             print("... (capped at 40)")
             break
 print(f"total divergences shown (cap 40 of first {n} aligned cycles)")

@@ -8,9 +8,34 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
     hooks:
+      # The three hooks below REWRITE files rather than just checking them, so
+      # they must not touch trees we do not author. Without this exclusion a
+      # `pre-commit run --all-files` silently reformats vendored upstream source
+      # and the immutable reference corpus — observed: 41 files across the
+      # vendored TriCNES C#, the vendored rcheevos C, `ref-docs/`, an upstream
+      # font licence, and upstream test-ROM READMEs. That destroys the "kept
+      # pristine / byte-identical to upstream" property those trees exist for,
+      # and pollutes any diff that happens to run the hooks broadly.
+      #
+      # `.markdownlintignore` already exempts most of these for markdownlint;
+      # this is the equivalent for the whitespace fixers, which had no exclusion
+      # at all. Scope is deliberately narrower than `.markdownlintignore`: only
+      # content we did not write (vendored / upstream / immutable reference).
+      # Frozen-but-ours trees (`docs/archive/`, `to-dos/plans/`, …) stay in
+      # scope — they are our prose, and whitespace hygiene on them is harmless.
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
+        exclude: &vendored_trees |
+          (?x)^(
+            ref-docs/
+            |ref-proj/
+            |crates/rustynes-test-harness/golden/tricnes/
+            |crates/rustynes-cheevos/vendor/
+            |tests/roms/
+            |assets/RustyNES_Icon/OFL\.txt$
+          )
       - id: end-of-file-fixer
+        exclude: *vendored_trees
       - id: check-yaml
         # mkdocs.yml uses Material for MkDocs' documented `!!python/name:` YAML
         # tags (pymdownx.emoji icon rendering), which check-yaml's safe_load
@@ -35,6 +60,9 @@ repos:
       - id: check-merge-conflict
       - id: mixed-line-ending
         args: [--fix=lf]
+        # Third rewriting hook — same exclusion. Upstream `.resx` / `.csproj`
+        # files in the vendored TriCNES tree legitimately carry CRLF.
+        exclude: *vendored_trees
 
   # Markdown linting
   - repo: https://github.com/igorshubovych/markdownlint-cli
