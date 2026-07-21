@@ -21,6 +21,14 @@ Cargo.lock
 *.a
 *.lib
 *.pdb
+# Apple debug symbols. The libretro Apple jobs (osx / ios / tvos) and the iOS
+# xcframework build emit `<name>.dylib.dSYM` bundles next to the library, and
+# the buildbot additionally zips them for upload — `*.dylib` above covers the
+# library but neither the bundle directory nor the archive. Building any Apple
+# libretro target locally (`crates/rustynes-libretro/Makefile`) leaves both in
+# the working tree.
+*.dSYM/
+*.dSYM.zip
 
 # --- WebAssembly / trunk / wasm-pack ---
 /pkg/
