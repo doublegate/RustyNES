@@ -38,8 +38,37 @@ cycle-accurate core later replaced.
 
 ### Security
 
+- **Fail-closed release-tag check + a pinned toolchain action, completing the
+  #318 hardening at 19/19 checkouts.** Two items deferred out of the sweep
+  below, now finished:
+  - `release-auto.yml`'s tag-existence check was
+    `git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1`,
+    which collapsed *tag present*, *tag absent*, and *lookup failed* into a
+    two-way answer, reading any non-zero exit as "absent" — so a transient
+    network or auth blip pushed an already-released version down the
+    `should_release=true` path. It is now a `gh api` call against
+    `git/matching-refs/tags/<tag>`, chosen over `git/ref/tags/<tag>` because it
+    answers "absent" with HTTP 200 and an empty array rather than a 404, so a
+    genuine miss can never be confused with an error and no error-body parsing
+    is needed. That endpoint matches by prefix, so the exact ref is compared in
+    `jq` — verified necessary, not theoretical: `v2.2` prefix-matches two real
+    tags while exact-matching none. Every failure path now aborts the job under
+    `set -euo pipefail` instead of resolving to a release decision.
+  - Because that check no longer needs Git credentials, `release-auto.yml`'s
+    checkout — the one documented exception in the sweep below — drops them
+    too, so **all 19 checkouts are now uniform**.
+  - `.github/actions/rust-setup` pinned `dtolnay/rust-toolchain` from `@master`
+    to commit `e97e2d8c` (`# v1`). `@master` is a **branch** that advances on
+    every upstream commit, unlike the `@vN` tags used everywhere else, and this
+    composite feeds 12 of the 19 checkouts — including `release.yml`
+    (`contents: write`) and `web.yml` (`pages: write` + `id-token: write`) —
+    while being the action that installs the compiler. The `# v1` trailing
+    comment is what Dependabot's already-enabled `github-actions` ecosystem
+    reads to keep the pin current, so this does not trade a supply-chain risk
+    for a stale-action one.
+
 - **`persist-credentials: false` on every CI checkout that compiles or runs
-  repository code (closes #318).** `actions/checkout` defaults to writing the
+  repository code (#318).** `actions/checkout` defaults to writing the
   workflow `GITHUB_TOKEN` into `.git/config`, where any code the job then
   executes from the checkout — Cargo build scripts, proc macros, test
   binaries, Gradle build scripts, `scripts/*.sh`, the MkDocs build — can read

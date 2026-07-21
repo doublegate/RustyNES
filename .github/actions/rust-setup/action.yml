@@ -37,8 +37,23 @@ inputs:
 runs:
   using: composite
   steps:
+    # Pinned to a commit SHA, not `@master`. Every other action in this repo is
+    # referenced by a `@vN` tag, which is not expected to move; `@master` is a
+    # BRANCH that advances on every upstream commit, so each run silently
+    # resolved to whatever HEAD happened to be — no review window, no signal
+    # that anything changed. That matters disproportionately here: this
+    # composite is consumed by 12 of the repo's 19 checkouts, including
+    # `release.yml` (`contents: write`, builds the shipped binaries) and
+    # `web.yml` (`pages: write` + `id-token: write`), and it is the action that
+    # installs the compiler — a position where a compromise is very hard to
+    # detect from the build output.
+    #
+    # The trailing `# v1` is the convention Dependabot's `github-actions`
+    # ecosystem (already enabled in `.github/dependabot.yml`) reads to keep the
+    # pin current, so this does not trade a supply-chain risk for a stale-action
+    # one. Verified: `refs/tags/v1` -> e97e2d8c at time of pinning.
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@master
+      uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
       with:
         toolchain: ${{ inputs.toolchain }}
         targets: ${{ inputs.targets }}
