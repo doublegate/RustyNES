@@ -318,22 +318,42 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # One representative triple per ABI family the libretro buildbot
-        # (`.gitlab-ci.yml`) builds: MinGW-Windows, Android/NDK, Apple-iOS,
-        # Apple-macOS. The remaining buildbot triples are same-ABI siblings
-        # (the other three Android ABIs, x86_64-apple-darwin), so this catches
-        # the same breakage at a quarter of the runner cost.
+        # Only the buildbot triples a LINUX runner can model faithfully.
+        #
+        # `rust-libretro-sys` runs bindgen, and bindgen needs a real sysroot for
+        # the target it parses `libretro.h` under. Two of the four buildbot ABI
+        # families can supply one here and two cannot:
+        #   * MinGW-Windows — no glibc involved at all (and `.cargo/config.toml`
+        #     points its bindgen at the MSVC triple), so it parses cleanly.
+        #   * Android — ubuntu-latest ships an NDK, whose sysroot is wired up
+        #     below exactly as `cargo ndk` does it on the buildbot.
+        #   * Apple (macOS/iOS) — DELIBERATELY EXCLUDED. There is no Apple SDK
+        #     on a Linux runner, so clang falls back to host glibc headers and
+        #     dies on Debian multiarch (`bits/libc-header-start.h` not found);
+        #     "fixing" that by feeding it `/usr/include/x86_64-linux-gnu` would
+        #     generate Apple bindings from Linux headers — a lookalike, not a
+        #     rehearsal. Doing it properly needs a macOS runner, which this repo
+        #     reserves for full (non-PR) runs; see the `test` job's `setup`-driven
+        #     OS matrix. The Apple legs share this crate's entire dependency
+        #     graph with the two legs below, so the marginal coverage is small.
         target:
           - x86_64-pc-windows-gnu
           - aarch64-linux-android
-          - aarch64-apple-ios
-          - aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/rust-setup
         with:
           apt: "false"
           cache-key: libretro-${{ matrix.target }}
+      # Point bindgen at the NDK sysroot, which is what `cargo ndk` does for us
+      # on the buildbot. Without it clang has no Android `stdint.h` and the
+      # build script panics before a single Rust line is compiled. The NDK path
+      # prefix matches `android.yml`'s (`$ANDROID_NDK_LATEST_HOME`, then
+      # `toolchains/llvm/prebuilt/linux-x86_64/...`).
+      - name: Point bindgen at the NDK sysroot
+        if: matrix.target == 'aarch64-linux-android'
+        run: |
+          echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot" >> "$GITHUB_ENV"
       # Deliberately NOT the composite action's `targets:` input. That routes
       # through `dtolnay/rust-toolchain`, which installs the target for the
       # channel IT pins (stable) — while `rust-toolchain.toml` then switches
@@ -348,12 +368,12 @@ jobs:
       # Until this job existed there was ZERO libretro coverage in GitHub
       # Actions, so breakage only surfaced on libretro's own GitLab buildbot —
       # where we can't push, can't re-run, and turnaround is days. Pipeline
-      # #91899 failed 9 of 10 jobs on two problems this job reproduces in
-      # seconds: a missing cross target (see `rust-toolchain.toml`) and an
-      # upstream `rust-libretro` MinGW-ABI bug (see `.cargo/config.toml`).
+      # #91899 failed 9 of 10 jobs on problems this job reproduces in seconds:
+      # a missing cross target (see `rust-toolchain.toml`) and an upstream
+      # `rust-libretro` MinGW-ABI bug (see `.cargo/config.toml`).
       #
-      # `check`, not `build`: none of these targets can LINK on a Linux runner
-      # without their platform SDKs, and both failures were compile-time. The
+      # `check`, not `build`: neither target can LINK on a Linux runner without
+      # its platform SDK, and every #91899 failure was compile-time. The
       # buildbot remains the authority on linking; this is the early-warning
       # gate for target availability, dependency portability, and MSRV drift.
       - run: cargo check --release -p rustynes-libretro --target ${{ matrix.target }}
