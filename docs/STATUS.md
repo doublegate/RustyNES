@@ -1,6 +1,23 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.2.1** (2026-07-15) — a **housekeeping patch** on top of
+> **Current release: v2.2.2** (2026-07-21) — **"Conduit"**, a **build,
+> distribution, and CI-integrity patch** on top of v2.2.1 (below). It takes the
+> libretro buildbot recipe from 1 of 10 jobs green to **all ten building**
+> (three rounds of diagnosis against a third-party pipeline we cannot push to or
+> re-run), hardens the GitHub Actions supply chain (`persist-credentials: false`
+> on all 19 checkouts, a fail-closed release-tag check, a SHA-pinned toolchain
+> action), and collapses the toolchain to a **single pinned source of truth** —
+> `rust-toolchain.toml` — with **no `nightly` on any build path** and zero
+> toolchain version literals under `.github/`. **Zero emulation-core changes**:
+> nothing under `crates/rustynes-{cpu,ppu,apu,mappers,core}` is touched, so the
+> deterministic `#![no_std]` chip stack, save-state / TAS / netplay-replay
+> formats, and every golden vector are untouched by construction — **AccuracyCoin
+> holds 141/141 (100.00%)**, unchanged since v2.2.0. The one behavioural
+> improvement reaching a shipped artifact: the libretro **tvOS** core is now
+> built with `panic = "abort"` like every other platform, instead of the
+> `panic = "unwind"` its previous `-Zbuild-std` path forced.
+>
+> The prior release, **v2.2.1** (2026-07-15) — a **housekeeping patch** on top of
 > v2.2.0 "Capstone" (below): archives two batches of dev/research tooling (the
 > Game Genie header-robust re-key's six research/verification scripts in
 > `scripts/gg/`, and the 2A03-revision DMA-divergence probe in `scripts/probes/`),

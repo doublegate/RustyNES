@@ -14,6 +14,27 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-07-21 - "Conduit" (libretro buildbot 10/10 + CI supply-chain hardening + single-source toolchain)
+
+A **build, distribution, and CI-integrity patch**. It carries RustyNES onto
+RetroArch's own buildbot — the recipe now builds **all ten platform jobs**,
+after a three-round diagnosis against a third-party pipeline we cannot push to
+or re-run — hardens the GitHub Actions supply chain, and collapses the
+toolchain to a single pinned source of truth with no `nightly` on any build
+path.
+
+**Zero emulation-core changes.** No file under `crates/rustynes-{cpu,ppu,apu,
+mappers,core}` is touched, so the deterministic `#![no_std]` chip stack,
+save-state / TAS / netplay-replay formats, and every golden vector are
+untouched by construction: **AccuracyCoin holds 141/141 (100.00%)**, nestest
+stays 0-diff, and `blargg_apu_2005` / `pal_apu_tests` (10/10) /
+`visual_regression` / the 60-ROM commercial oracle are all unchanged from
+v2.2.1.
+
+One behavioural improvement does reach a shipped artifact: the libretro **tvOS**
+core is now built with `panic = "abort"` like every other platform, rather than
+the `panic = "unwind"` its previous `-Zbuild-std` path forced.
+
 ### Added
 
 - Libretro buildbot CI recipe (`.gitlab-ci.yml`, issue #311) covering Windows
