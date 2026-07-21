@@ -169,6 +169,31 @@ cycle-accurate core later replaced.
     lookalike rather than a rehearsal. There was previously
     *zero* libretro coverage in GitHub Actions, which is why all three
     defects reached a third-party buildbot we cannot push to or re-run.
+- **Libretro buildbot: the last failing job (tvOS) now builds on the pinned
+  stable toolchain, dropping three workarounds.** The follow-up run
+  ([pipeline #91954](https://git.libretro.com/libretro/RustyNES/-/pipelines/91954))
+  took the recipe from 1/10 to 9/10, leaving only
+  `libretro-build-tvos-arm64`. Its upstream template overrides `script` with
+  `cargo +nightly build -Zbuild-std`, which dates from when
+  `aarch64-apple-tvos` was a tier-3 target with no distributed `rust-std`.
+  The target has since been promoted and rustup now ships a complete
+  prebuilt std for it — `panic_abort` included — so the job now uses the
+  shared Apple build script (via `!reference`) on the same pinned 1.96.0 as
+  every other job. That removes all three workarounds the `+nightly` path
+  had forced, rather than adding a fourth: the nightly-channel reinstall
+  (needed because `+nightly` outranks the channel pin and the image's
+  1.94.0-nightly is below the workspace `rust-version = "1.96"`); the
+  `CARGO_PROFILE_RELEASE_PANIC=unwind` override (needed because bare
+  `-Zbuild-std` omits the `panic_abort` that `[profile.release] panic =
+  "abort"` requires, and the hardcoded flag cannot be overridden by
+  `CARGO_UNSTABLE_BUILD_STD`); and a clearing of the image-injected
+  `-Car=<path>,Clink-arg=...`, whose long-deprecated `-C ar` became a **hard
+  error in Rust 1.97** (bisected: 1.96.1 warns, 1.97.1 errors) and so broke
+  the refreshed nightly. tvOS now honours `panic = "abort"` exactly like
+  every other platform. All four Apple jobs still receive the `-C ar` flag
+  and are green only because 1.96.0 treats it as a warning, so
+  `rust-toolchain.toml` carries a warning for whoever bumps that pin to
+  1.97+.
 
 ## [2.2.1] - 2026-07-15 - Housekeeping patch (dev-tooling archival + dependency consolidation + FDS test corpus)
 

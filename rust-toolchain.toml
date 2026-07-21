@@ -25,5 +25,26 @@ components = ["rustfmt", "clippy"]
 # `rust-std` components on each toolchain install. They are installed
 # per-job by `.gitlab-ci.yml` instead, keeping that cost where the need
 # is. See the post-mortem comment at the top of `.gitlab-ci.yml`.
+#
+# BEFORE BUMPING `channel` TO 1.97 OR NEWER, read this. The libretro build
+# image injects `-Car=<path>,Clink-arg=...` into EVERY Apple job, and `-C ar`
+# — a deprecated no-op for years — became a hard error in Rust 1.97:
+#
+#   error: `-C ar`: this option has been removed
+#
+# No job trips it at 1.96.0 — all four Apple jobs merely log the warning.
+# The moment this pin reaches 1.97+, all four (`libretro-build-osx-x64`,
+# `-osx-arm64`, `-ios-arm64`, `-tvos-arm64`) fail together. The fix is two
+# lines in each job's `before_script`:
+#
+#   - unset CARGO_ENCODED_RUSTFLAGS
+#   - export RUSTFLAGS=""
+#
+# Cargo takes extra flags from exactly one source, first match wins
+# (CARGO_ENCODED_RUSTFLAGS -> RUSTFLAGS -> target.<triple>.rustflags ->
+# build.rustflags), so that pair wins without needing to know where the
+# image sets them. Discarding them is safe: rustc splits `-C` at the FIRST
+# `=`, so the whole comma-joined string is consumed as the `ar` value and
+# those link arguments have never reached the linker for any core.
 targets = ["thumbv7em-none-eabihf", "wasm32-unknown-unknown"]
 profile = "default"

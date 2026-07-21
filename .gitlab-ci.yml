@@ -191,55 +191,62 @@ libretro-build-ios-arm64:
 
 # tvOS
 #
-# The tvOS template overrides `script` with
-# `cargo +nightly build -Zbuild-std --target aarch64-apple-tvos --release`
-# (aarch64-apple-tvos needs build-std). That explicit `+nightly` outranks
-# BOTH `rust-toolchain.toml` and `RUSTUP_TOOLCHAIN`, so this is the one job
-# that does not run on our pinned 1.96.0 — and the image's pre-installed
-# nightly is 1.94.0-nightly, which trips cargo's MSRV gate against the
-# workspace's `rust-version = "1.96"` before compilation even starts:
+# Unlike the other three Apple jobs, the upstream tvOS template also overrides
+# `script`, replacing the shared Apple build line with
 #
-#   error: rustc 1.94.0-nightly is not supported by the following packages:
-#     rustynes-core@2.2.1 requires rustc 1.96   (+ apu/cpu/libretro/mappers/ppu)
+#   cargo +nightly build -Zbuild-std --target aarch64-apple-tvos --release
 #
-# Refreshing the nightly channel is the surgical fix. Lowering `rust-version`
-# on those six crates would also silence it, but `.cargo/config.toml` sets
-# `[resolver] incompatible-rust-versions = "fallback"`, which keys off the
-# LOWEST workspace-member MSRV — so that route risks silently downgrading
-# dependencies workspace-wide on the next `cargo update`. Not worth it for
-# one job.
+# That dates from when `aarch64-apple-tvos` was a tier-3 target with no
+# distributed `rust-std`, making `-Zbuild-std` — and therefore nightly — the
+# only way to build it. The target has since been promoted and rustup now
+# ships a complete prebuilt std for it, `panic_abort` included, so the
+# override is obsolete. Verified against the pinned 1.96.0:
+# `rustup target add aarch64-apple-tvos` installs 26 rlibs (`panic_abort`
+# among them) and `cargo check --release -p rustynes-libretro --target
+# aarch64-apple-tvos` compiles the entire graph, bindgen included.
 #
-# Uninstall-then-install rather than `rustup update nightly`: a stale extra
-# component carried by the image's nightly may not be published for the new
-# nightly date, which aborts an in-place update. `rust-src` is required by
-# `-Zbuild-std`. The container is ephemeral, so this is job-local.
+# Restoring the shared script puts tvOS on the same pinned 1.96.0 as every
+# other job, and dissolves three separate workarounds this job used to need
+# rather than accumulating a fourth:
 #
-# Refreshing the nightly then exposes a SECOND tvOS-only blocker. A bare
-# `-Zbuild-std` builds `std` but NOT `panic_abort`, and this workspace sets
-# `[profile.release] panic = "abort"`, so linking the cdylib fails with
-# `E0463: can't find crate for panic_abort`. The usual fix is
-# `-Zbuild-std=std,panic_abort` — but the flag is hardcoded in the template's
-# `script`, and `CARGO_UNSTABLE_BUILD_STD` does NOT help (verified: the CLI
-# `-Z` flag wins over the config/env form, so the crate list stays the
-# default). Overriding the profile's panic strategy for this job is the
-# remaining lever, and it uses the same `CARGO_PROFILE_RELEASE_*` mechanism
-# the template itself already uses for `CARGO_PROFILE_RELEASE_DEBUG`.
+#   1. MSRV. `+nightly` outranks BOTH `rust-toolchain.toml` and
+#      `RUSTUP_TOOLCHAIN`, pinning the job to the image's stale
+#      1.94.0-nightly — below the workspace's `rust-version = "1.96"`, so
+#      cargo's MSRV gate failed before compiling anything. The job had to
+#      uninstall and reinstall the nightly channel to get past it.
+#   2. `panic_abort`. A bare `-Zbuild-std` builds `std` but NOT
+#      `panic_abort`, which `[profile.release] panic = "abort"` requires, so
+#      the cdylib failed to link with `E0463`. The crate list is hardcoded in
+#      the template and `CARGO_UNSTABLE_BUILD_STD` cannot override it (the
+#      CLI `-Z` flag wins), so the job had to force `panic = "unwind"` via
+#      `CARGO_PROFILE_RELEASE_PANIC`. The prebuilt std ships `panic_abort`,
+#      so the profile is now honoured as written and tvOS matches every
+#      other platform.
+#   3. `-C ar`. Refreshing to a current nightly then failed with
+#      `error: `-C ar`: this option has been removed`. The build image
+#      injects `-Car=<path>,Clink-arg=...` into every Apple job, and that
+#      long-deprecated no-op became a hard error in Rust 1.97 (bisected:
+#      1.96.1 warns, 1.97.1 errors). On the pinned 1.96.0 it is still only a
+#      warning — exactly as it already was for the three Apple jobs that
+#      were green throughout.
 #
-# `unwind` is safe here: since Rust 1.81 a panic that reaches an `extern "C"`
-# boundary aborts rather than unwinding into C frames, so a libretro core
-# behaves the same on a panic either way — this costs only slightly larger
-# code and unwind tables, on tvOS alone. Every other platform keeps
-# `panic = "abort"` untouched.
+# `!reference [.libretro-rust-apple-base, script]` pulls in the generic Apple
+# build/package steps instead of duplicating them here, so upstream fixes to
+# that script keep reaching this job. It drives off `TARGET_ARCH`, which the
+# tvOS template already sets to `aarch64-apple-tvos`, and honours the same
+# `STRIP_CORE_LIB` / `DSYM_CORE_LIB` flags the template sets.
 #
-# GitLab concatenates `before_script` and `script` into ONE shell invocation
-# (that is how the template's own `export SDKROOT=...` reaches its cargo
-# call), so exporting here does reach the build.
+# NOTE: `-C ar` is still a latent hazard for ALL FOUR Apple jobs, now
+# including this one. Read `rust-toolchain.toml` before bumping `channel` to
+# 1.97 or newer.
 libretro-build-tvos-arm64:
   extends:
     - .libretro-rust-tvos-arm64-default
     - .core-defs
+  variables:
+    RUST_TARGET: aarch64-apple-tvos
   before_script:
     - !reference [.libretro-rust-tvos-arm64-default, before_script]
-    - rustup toolchain uninstall nightly || true
-    - rustup toolchain install nightly --profile minimal --component rust-src
-    - export CARGO_PROFILE_RELEASE_PANIC=unwind
+    - rustup target add ${RUST_TARGET}
+  script:
+    - !reference [.libretro-rust-apple-base, script]
