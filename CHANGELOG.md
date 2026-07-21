@@ -88,6 +88,24 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **One toolchain everywhere: `rust-toolchain.toml` is now the single source
+  of truth for CI.** `.github/actions/rust-setup` parses the `channel` from
+  that file and installs it, failing closed if it cannot be parsed, so there
+  is no longer a `toolchain:` version literal anywhere in `.github/` — a
+  toolchain bump is a one-line edit. Previously the composite defaulted to
+  `stable` and 5 of its 12 call sites overrode that with an explicit
+  `1.96.0`. That was misleading rather than broken: `rust-toolchain.toml` is
+  a directory override and outranks the `rustup default` the action
+  performs, so **every job was already compiling on 1.96.0** — the `stable`
+  default merely downloaded a second toolchain nothing used, and made the
+  workflows read as though they tested against latest stable, which they
+  never did. With the libretro tvOS job also moved onto the pin (see Fixed),
+  every build, test, lint, docs, release, and packaging path across GitHub
+  Actions, the libretro buildbot, and local builds now runs on the same
+  pinned 1.96.0. Nightly survives in exactly two places, neither of them a
+  gate: `cargo fuzz`, which requires it for its sanitizer flags, and the
+  dormant `rustynes-monetization` crate's standalone `uniffi-bindgen`
+  helper.
 - **Dependency version-bump consolidation (closes Dependabot #313–#315).**
   Rolled all three open Dependabot PRs into one reviewed change plus a
   full `cargo update --workspace` sweep of the rest of the tree, all with

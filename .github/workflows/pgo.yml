@@ -83,7 +83,6 @@ jobs:
       # full `rustynes-frontend` binary).
       - uses: ./.github/actions/rust-setup
         with:
-          toolchain: 1.96.0
           components: llvm-tools-preview
           cache-key: pgo
 
@@ -199,7 +198,6 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/rust-setup
         with:
-          toolchain: 1.96.0
           components: llvm-tools-preview
           cache-key: pgo-bolt
       - name: Install cargo-pgo

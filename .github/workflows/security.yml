@@ -89,7 +89,6 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/rust-setup
         with:
-          toolchain: 1.96.0
           components: clippy
           cache-key: security-clippy
       # The main CI `lint` job already runs `clippy -D warnings` on the DEFAULT
