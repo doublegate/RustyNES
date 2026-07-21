@@ -6,7 +6,8 @@
 
 - **Rust edition**: 2024.
 - **MSRV (minimum supported Rust version)**: 1.96.0. Pinned via `rust-toolchain.toml`. (Bumped from 1.86 in v1.3.0 "Bedrock" to unblock the edition-2024 + egui 0.34.3 / wgpu 29 / rfd 0.17.2 dependency tier.)
-- **Channel**: stable. Nightly only for fuzz tests (`cargo +nightly fuzz`).
+- **Channel**: the pinned `1.96.0` stable release — *not* a floating `stable`. `rust-toolchain.toml` is the single source of truth: every GitHub Actions job resolves its toolchain from that file (`.github/actions/rust-setup` parses the `channel` and fails closed if it cannot), the libretro buildbot builds all ten of its jobs on it, and local builds pick it up automatically as a directory override. There is no `toolchain:` version literal anywhere in `.github/`, so bumping the pin is a one-line edit here — but read the `-C ar` warning in `rust-toolchain.toml` before bumping to 1.97 or newer.
+- **Nightly** is used for exactly two things, both outside CI and neither a gate: `cargo fuzz`, which requires it for the sanitizer flags it threads through `rustc` (`cargo +nightly fuzz run <target>` — see `fuzz/README.md`), and the dormant `rustynes-monetization` crate's standalone `uniffi-bindgen` helper, which needs it for metadata discovery. No build, test, lint, docs, release, or packaging path uses nightly.
 - **Targets supported**: `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`. Tier 2: `aarch64-unknown-linux-gnu`. Cross-compile targets declared in `rust-toolchain.toml` (auto-installed): `thumbv7em-none-eabihf` (the `no_std` chip-stack gate) and `wasm32-unknown-unknown` (browser). Android arm64/arm/x86_64 via `cargo ndk` (see `docs/android.md`). The `x86_64-apple-darwin` release target was retired (ADR 0009).
 
 ## Workspace layout

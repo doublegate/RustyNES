@@ -7,8 +7,12 @@ description: >-
 
 inputs:
   toolchain:
-    description: "Rust toolchain (e.g. stable, 1.86.0)."
-    default: stable
+    description: >-
+      Rust toolchain to install. Leave empty (the default) to use the channel
+      from `rust-toolchain.toml`, which is the single source of truth for the
+      project toolchain — set it there, not here. Only pass a value to install
+      something deliberately different from the project pin.
+    default: ""
   targets:
     description: "Comma-separated extra rustup targets (e.g. wasm32-unknown-unknown)."
     default: ""
@@ -37,6 +41,64 @@ inputs:
 runs:
   using: composite
   steps:
+    # Resolve the toolchain from `rust-toolchain.toml` unless the caller asked
+    # for a specific one. This keeps ONE version literal in the repo: bumping
+    # the project toolchain is a single edit to `rust-toolchain.toml` and every
+    # workflow follows, with no chance of a call site drifting behind.
+    #
+    # This used to default to `stable`, which was misleading rather than wrong:
+    # `rust-toolchain.toml` is a directory override and outranks the `rustup
+    # default` this action performs, so every job was ALREADY compiling on the
+    # pinned channel (rustup logs "toolchain '<channel>' is currently in use
+    # (overridden by .../rust-toolchain.toml)"). The only effect of the
+    # `stable` default was to download a second toolchain that nothing then
+    # used — and to make the workflows read as though they tested on latest
+    # stable, which they never did.
+    #
+    # Extraction is scoped to the `[toolchain]` TABLE, not "the first `channel`
+    # key in the file". A bare `channel = ...` match would take the wrong value
+    # if any other table ever gained a `channel` key ahead of `[toolchain]` —
+    # silently installing whatever that said, which is exactly the kind of
+    # guess the fail-closed design exists to prevent.
+    #
+    # Only TOML basic (double-quoted) strings are accepted. A literal
+    # single-quoted channel is valid TOML but is not used here, and failing
+    # loudly on one beats guessing at its value.
+    #
+    # Fail-closed: an unparseable `rust-toolchain.toml` aborts the job rather
+    # than silently falling back to some other channel.
+    - name: Resolve Rust toolchain
+      id: resolve
+      shell: bash
+      env:
+        REQUESTED: ${{ inputs.toolchain }}
+      run: |
+        set -euo pipefail
+        if [ -n "$REQUESTED" ]; then
+          resolved="$REQUESTED"
+          echo "Toolchain requested explicitly by the caller: ${resolved}"
+        else
+          resolved="$(awk '
+            /^[[:space:]]*\[/ {
+              in_toolchain = /^[[:space:]]*\[toolchain\][[:space:]]*$/
+              next
+            }
+            in_toolchain && match($0, /^[[:space:]]*channel[[:space:]]*=[[:space:]]*"[^"]*"/) {
+              v = substr($0, RSTART, RLENGTH)
+              sub(/^[^"]*"/, "", v)
+              sub(/"$/, "", v)
+              print v
+              exit
+            }
+          ' rust-toolchain.toml)"
+          if [ -z "$resolved" ]; then
+            echo "::error::Could not parse [toolchain].channel (as a double-quoted string) from rust-toolchain.toml"
+            exit 1
+          fi
+          echo "Toolchain resolved from rust-toolchain.toml: ${resolved}"
+        fi
+        echo "toolchain=${resolved}" >> "$GITHUB_OUTPUT"
+
     # Pinned to a commit SHA, not `@master`. Every other action in this repo is
     # referenced by a `@vN` tag, which is not expected to move; `@master` is a
     # BRANCH that advances on every upstream commit, so each run silently
@@ -55,7 +117,7 @@ runs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
       with:
-        toolchain: ${{ inputs.toolchain }}
+        toolchain: ${{ steps.resolve.outputs.toolchain }}
         targets: ${{ inputs.targets }}
         components: ${{ inputs.components }}
 
