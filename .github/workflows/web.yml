@@ -76,6 +76,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       # Shared toolchain + cargo cache. `apt: true` because the rustdoc build
       # compiles the whole workspace (incl. rustynes-frontend) for the host,

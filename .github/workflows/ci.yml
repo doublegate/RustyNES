@@ -86,9 +86,19 @@ jobs:
       # the base commit. (On `pull_request` it uses the GitHub API and needs no
       # history.) Without this the push-event filter falls back to "everything
       # changed" — safe, but it loses the docs-only skip on direct main pushes.
+      #
+      # This is the one job in the credential-hardening sweep (#318) where the
+      # change touches the git layer at all: paths-filter reads local git on
+      # `push` events. It needs no authentication — `fetch-depth: 0` means the
+      # base commit is already local, and the `pull_request` path goes through
+      # the GitHub API with its own token — so dropping the persisted credential
+      # is expected to be inert. Failure mode if that is ever wrong is benign
+      # (the filter reports "everything changed" and the full suite runs), but
+      # it would silently cost the docs-only skip the comment above describes.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -168,6 +178,8 @@ jobs:
       RUSTDOCFLAGS: -D warnings
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/rust-setup
         with:
           toolchain: 1.96.0
@@ -219,6 +231,8 @@ jobs:
         os: ${{ fromJSON(needs.setup.outputs.os) }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/rust-setup
         with:
           cache-key: test
@@ -246,6 +260,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/rust-setup
         with:
           cache-key: test-roms
@@ -270,6 +286,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/rust-setup
         with:
           targets: thumbv7em-none-eabihf
@@ -288,6 +306,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/rust-setup
         with:
           targets: wasm32-unknown-unknown
@@ -402,6 +422,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/rust-setup
         with:
           apt: "false"

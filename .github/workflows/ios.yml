@@ -43,6 +43,8 @@ jobs:
     if: ${{ github.event_name != 'schedule' || vars.IOS_SIGNING_READY == 'true' }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       # v2.0.7 "Trim" — App Store submission floor. From 2026-04-28 every App Store
       # Connect upload must be built with the iOS 26 SDK (Xcode 26). Select the newest

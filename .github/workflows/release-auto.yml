@@ -67,9 +67,37 @@ jobs:
       - uses: actions/checkout@v7
         with:
           # Build the release from the exact commit CI went green on. A shallow
-          # checkout suffices: we read Cargo.toml + CHANGELOG.md, and the tag
-          # existence check uses `git ls-remote` (no local tag history needed).
+          # checkout suffices: we only read plain text files (Cargo.toml,
+          # CHANGELOG.md, and the optional `.github/release-notes/vX.Y.Z.md`
+          # override), and the tag existence check uses `git ls-remote` (no
+          # local tag history needed).
           ref: ${{ github.event.workflow_run.head_sha }}
+          #
+          # DELIBERATELY the one checkout in this repo that KEEPS persisted Git
+          # credentials (every other one sets `persist-credentials: false`; see
+          # issue #318). The `git ls-remote --tags origin` below is the only
+          # operation in this repo that needs THIS checkout's `origin`
+          # credential. (It is not the only Git-over-network call in `.github/`
+          # — `fastlane match` in `ios.yml` clones the signing repository — but
+          # that one authenticates with its own `MATCH_GIT_*` secrets against a
+          # different remote, so it is unaffected by this setting.) This job is
+          # also unreachable from untrusted input — `workflow_run`, further
+          # gated to `event == 'push'` above — and executes no repository code
+          # at all: it only reads the text files named above. So hardening buys
+          # nothing here while risking a release path that is only exercised at
+          # a version cut.
+          #
+          # If a future sweep wants uniformity, first replace the `ls-remote`
+          # with `gh api repos/$GITHUB_REPOSITORY/git/ref/tags/$tag` (which uses
+          # GH_TOKEN and is unaffected by credential persistence), THEN drop the
+          # credentials. That swap also fixes a latent bug: the `>/dev/null 2>&1`
+          # below makes a transient network/auth failure indistinguishable from
+          # "tag does not exist", so a blip sends the workflow down the
+          # should_release=true path for a version that is already tagged.
+          # `gh release create` then either fails outright (if a release already
+          # exists for that tag) or publishes a release against the pre-existing
+          # tag — noisy or wrong, but not silently duplicated. Fail-closed
+          # handling belongs with that change, not here.
 
       - name: Decide whether a new version needs releasing
         id: decide

@@ -87,6 +87,8 @@ jobs:
             bin_name: rustynes.exe
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       # Shared toolchain + Linux deps (no-op on macOS/Windows) + cargo cache.
       # The per-target cache key keeps each platform's artifacts separate.
