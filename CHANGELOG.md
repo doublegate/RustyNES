@@ -38,35 +38,53 @@ cycle-accurate core later replaced.
 
 ### Security
 
-- **`persist-credentials: false` on every CI checkout that compiles or runs
-  repository code (closes #318).** `actions/checkout` defaults to writing the
-  workflow `GITHUB_TOKEN` into `.git/config`, where any code the job then
-  executes from the checkout — Cargo build scripts, proc macros, test
-  binaries, Gradle build scripts, `scripts/*.sh`, the MkDocs build — can read
-  it. On a pull request that tree is by definition unreviewed code, and nearly
-  every CI job compiles or runs it — the exceptions being the `audit` / `deny`
-  jobs, which install prebuilt binaries and only parse `Cargo.lock`. Applied to
-  **18 of the 19** checkouts in
-  `.github/`. Highest-exposure site was not a `ci.yml` job but `web.yml`'s
+- **`persist-credentials: false` on all 19 CI checkouts, plus a fail-closed
+  release-tag check and a pinned toolchain action (closes #318).**
+  `actions/checkout` defaults to writing the workflow `GITHUB_TOKEN` into
+  `.git/config`, where any code the job then executes from the checkout —
+  Cargo build scripts, proc macros, test binaries, Gradle build scripts,
+  `scripts/*.sh`, the MkDocs build — can read it. On a pull request that tree
+  is by definition unreviewed code, and nearly every CI job compiles or runs
+  it (the exceptions being the `audit` / `deny` jobs, which install prebuilt
+  binaries and only parse `Cargo.lock`).
+  Audited rather than applied blanket: `.github/actions/rust-setup` performs
+  no checkout of its own, so call-site hardening is complete coverage; and
+  **no job was found to need the checkout credential** — nothing pushes
+  commits, tags, or branches, there are no submodules, GitHub Pages uses the
+  OIDC flow (not a `gh-pages` push), and `gh release create` /
+  `softprops/action-gh-release` authenticate by API token while
+  `fastlane match` clones a different remote with its own `MATCH_GIT_*`
+  credentials. Highest-exposure site was not a `ci.yml` job but `web.yml`'s
   `build`, whose workflow-level `permissions:` grant `pages: write` +
   `id-token: write` and which is PR-reachable while running `trunk`,
   `cargo doc`, `pip install`, and `mkdocs build`.
-  Audited rather than applied blanket: `.github/actions/rust-setup` performs
-  no checkout of its own, so call-site hardening is complete coverage; and
-  **every hardened job was confirmed not to need the checkout credential** —
-  nothing pushes commits, tags, or branches, there are no submodules, GitHub
-  Pages uses the OIDC flow (not a `gh-pages` push), and `gh release create` /
-  `softprops/action-gh-release` authenticate by API token while
-  `fastlane match` clones a different remote with its own `MATCH_GIT_*`
-  credentials. The single deliberate
-  exception is `release-auto.yml`'s `prepare`, the one job whose work needs
-  that credential (`git ls-remote --tags origin`); it is
-  unreachable from untrusted input and executes no repository code, so
-  hardening would buy nothing while risking a release path exercised only at a
-  version cut. Its checkout now carries an inline comment recording that, plus
-  the safe migration order for anyone wanting uniformity later. Purely
-  additive CI configuration — no source, build output, or emulation behavior
-  changes.
+  Two related hardening items landed alongside it:
+  - `release-auto.yml`'s tag-existence check was
+    `git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1`,
+    which collapsed *tag present*, *tag absent*, and *lookup failed* into a
+    two-way answer, reading any non-zero exit as "absent" — so a transient
+    network or auth blip pushed an already-released version down the
+    `should_release=true` path. It is now a `gh api` call against
+    `git/matching-refs/tags/<tag>`, chosen over `git/ref/tags/<tag>` because it
+    answers "absent" with HTTP 200 and an empty array rather than a 404, so a
+    genuine miss can never be confused with an error and no error-body parsing
+    is needed. That endpoint matches by prefix, so the exact ref is compared in
+    `jq` — verified necessary, not theoretical: `v2.2` prefix-matches two real
+    tags while exact-matching none. Every failure path now aborts the job under
+    `set -euo pipefail` instead of resolving to a release decision. Removing
+    the last Git operation is also what let that job's checkout — the only one
+    that had needed the credential — join the sweep.
+  - `.github/actions/rust-setup` pinned `dtolnay/rust-toolchain` from `@master`
+    to commit `e97e2d8c` (`# v1`). `@master` is a **branch** that advances on
+    every upstream commit, unlike the `@vN` tags used everywhere else, and this
+    composite feeds 12 of the 19 checkouts — including `release.yml`
+    (`contents: write`) and `web.yml` (`pages: write` + `id-token: write`) —
+    while being the action that installs the compiler. The `# v1` trailing
+    comment is what Dependabot's already-enabled `github-actions` ecosystem
+    reads to keep the pin current, so this does not trade a supply-chain risk
+    for a stale-action one.
+  Purely additive CI configuration — no source, build output, or emulation
+  behavior changes.
 
 ### Changed
 

@@ -69,39 +69,22 @@ jobs:
           # Build the release from the exact commit CI went green on. A shallow
           # checkout suffices: we only read plain text files (Cargo.toml,
           # CHANGELOG.md, and the optional `.github/release-notes/vX.Y.Z.md`
-          # override), and the tag existence check uses `git ls-remote` (no
-          # local tag history needed).
+          # override), and the tag existence check is an API call, not a Git
+          # operation.
           ref: ${{ github.event.workflow_run.head_sha }}
-          #
-          # DELIBERATELY the one checkout in this repo that KEEPS persisted Git
-          # credentials (every other one sets `persist-credentials: false`; see
-          # issue #318). The `git ls-remote --tags origin` below is the only
-          # operation in this repo that needs THIS checkout's `origin`
-          # credential. (It is not the only Git-over-network call in `.github/`
-          # — `fastlane match` in `ios.yml` clones the signing repository — but
-          # that one authenticates with its own `MATCH_GIT_*` secrets against a
-          # different remote, so it is unaffected by this setting.) This job is
-          # also unreachable from untrusted input — `workflow_run`, further
-          # gated to `event == 'push'` above — and executes no repository code
-          # at all: it only reads the text files named above. So hardening buys
-          # nothing here while risking a release path that is only exercised at
-          # a version cut.
-          #
-          # If a future sweep wants uniformity, first replace the `ls-remote`
-          # with `gh api repos/$GITHUB_REPOSITORY/git/ref/tags/$tag` (which uses
-          # GH_TOKEN and is unaffected by credential persistence), THEN drop the
-          # credentials. That swap also fixes a latent bug: the `>/dev/null 2>&1`
-          # below makes a transient network/auth failure indistinguishable from
-          # "tag does not exist", so a blip sends the workflow down the
-          # should_release=true path for a version that is already tagged.
-          # `gh release create` then either fails outright (if a release already
-          # exists for that tag) or publishes a release against the pre-existing
-          # tag — noisy or wrong, but not silently duplicated. Fail-closed
-          # handling belongs with that change, not here.
+          # Completes the #318 sweep — this was the last checkout in the repo
+          # still persisting credentials, held back only because the tag check
+          # used `git ls-remote origin`. That check is now `gh api` (see the
+          # step below), which authenticates with GH_TOKEN and needs nothing
+          # from `.git/config`, so the exception no longer has a reason to
+          # exist and all 19 checkouts are uniform.
+          persist-credentials: false
 
       - name: Decide whether a new version needs releasing
         id: decide
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           # Workspace version from [workspace.package] in Cargo.toml.
@@ -113,13 +96,46 @@ jobs:
           tag="v${version}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
-            echo "Tag ${tag} already exists - nothing to release."
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "Version ${version} has no ${tag} tag yet - will release."
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-          fi
+
+          # Tag-existence check, FAIL-CLOSED. The previous implementation was
+          #   git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1
+          # which collapsed three distinct outcomes into two: tag present, tag
+          # absent, and *lookup failed* all became a simple true/false, with any
+          # non-zero exit read as "absent". A transient network or auth blip
+          # therefore pushed an already-released version down the
+          # should_release=true path. This decides the entire release, so
+          # guessing is the one thing it must not do.
+          #
+          # `git/matching-refs` is used rather than `git/ref/tags/$tag` because
+          # it answers "absent" with HTTP 200 and an empty array instead of a
+          # 404 — so a genuine miss never looks like an error, and no error-body
+          # parsing is needed to tell them apart. It matches by PREFIX, so
+          # `tags/v2.2.1` would also return `v2.2.10`; the jq filter compares the
+          # full ref for exactness.
+          #
+          # Everything here fails closed under `set -euo pipefail`: a gh/API
+          # failure, malformed JSON, or an unexpected count aborts the job
+          # rather than resolving to a release decision. It also needs no Git
+          # credentials, which is what let the checkout above join the rest of
+          # the #318 sweep.
+          refs_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${tag}")"
+          count="$(printf '%s\n' "$refs_json" \
+            | jq --arg r "refs/tags/${tag}" '[.[] | select(.ref == $r)] | length')"
+          case "$count" in
+            0)
+              echo "Version ${version} has no ${tag} tag yet - will release."
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+              ;;
+            1)
+              echo "Tag ${tag} already exists - nothing to release."
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::Unexpected match count (${count}) for refs/tags/${tag} - refusing to guess."
+              printf '%s\n' "$refs_json" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Resolve release notes + title
         if: steps.decide.outputs.should_release == 'true'
