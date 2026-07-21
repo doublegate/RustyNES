@@ -70,6 +70,56 @@ cycle-accurate core later replaced.
   `cargo clippy --workspace --all-targets -D warnings` (+ every feature
   combo), and `cargo test --workspace`.
 
+### Fixed
+
+- **Libretro buildbot pipeline: 1 of 10 jobs green → all 10 building.** The
+  first run of the v2.2.1 `.gitlab-ci.yml` recipe on libretro's GitLab
+  buildbot ([pipeline #91899](https://git.libretro.com/libretro/RustyNES/-/pipelines/91899))
+  passed only `libretro-build-linux-x64`. Three independent, previously
+  invisible defects — all on our side, none in libretro's build images:
+  - **Missing cross-compile targets (8 jobs).** `rust-toolchain.toml` pins
+    `channel = "1.96.0"`, so rustup installs a *fresh* 1.96.0 toolchain in
+    the build image carrying only the host std plus the two targets that
+    file declares — bypassing the image's own default toolchain, on which
+    every libretro cross target is pre-provisioned. Every non-host job died
+    with `E0463: can't find crate for core`; Linux x64 survived only because
+    its target *is* the host triple. Each job now runs
+    `rustup target add ${RUST_TARGET}` into the pinned toolchain. Not solved
+    by extending `rust-toolchain.toml`'s `targets = [...]`, which would make
+    every contributor and every GitHub Actions job download ~8 extra
+    `rust-std` components on each toolchain install.
+  - **Upstream `rust-libretro` MinGW ABI bug (Windows).** Masked behind the
+    target failure and never previously reached. `rust-libretro 0.3.2` casts
+    a keycode to `i32` under `cfg(target_family = "windows")`, but C enum
+    signedness follows the *ABI*, not the OS family: only the **MSVC** ABI
+    gives plain enums `int`. Under **MinGW** — which is what the buildbot's
+    `x86_64-pc-windows-gnu` job uses — bindgen emits `retro_key(c_uint)`, so
+    the crate fails with `E0308`. Upstream has had no commit since 2023-02
+    and 0.3.2 is its newest release, so `.cargo/config.toml` now points
+    bindgen's clang at the matching MSVC triple for **both** MinGW targets
+    — `x86_64-pc-windows-gnu` (the buildbot) and `i686-pc-windows-gnu`
+    (32-bit Windows via this crate's `Makefile`, the legacy libretro-super
+    path), which was verified to fail identically. Surgical: the
+    generated bindings differ by 28 lines, all enum signedness, with no
+    struct layout, signature, or type size affected.
+  - **tvOS `panic_abort` + MSRV (tvOS).** Its template overrides `script`
+    with `cargo +nightly build -Zbuild-std`, which bypasses our channel pin
+    onto the image's stale 1.94.0-nightly — below the workspace's
+    `rust-version = "1.96"`, failing cargo's MSRV gate before compiling
+    anything. Refreshing the nightly channel exposed a second issue: bare
+    `-Zbuild-std` does not build `panic_abort`, which
+    `[profile.release] panic = "abort"` requires. Both are handled in the
+    job (the template hardcodes the flag, so neither is fixable by argument).
+  - **New `libretro-cross` CI job** (`.github/workflows/ci.yml`) cross-checks
+    `rustynes-libretro` against the buildbot ABI families a Linux runner
+    can model faithfully — MinGW-Windows and Android/NDK. The Apple
+    families are excluded on purpose: bindgen needs a real per-target
+    sysroot, there is no Apple SDK on a Linux runner, and feeding it host
+    glibc headers would generate Apple bindings from Linux headers — a
+    lookalike rather than a rehearsal. There was previously
+    *zero* libretro coverage in GitHub Actions, which is why all three
+    defects reached a third-party buildbot we cannot push to or re-run.
+
 ## [2.2.1] - 2026-07-15 - Housekeeping patch (dev-tooling archival + dependency consolidation + FDS test corpus)
 
 Zero accuracy, feature, or core changes — the deterministic `#![no_std]` chip
