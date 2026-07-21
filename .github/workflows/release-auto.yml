@@ -119,8 +119,22 @@ jobs:
           # credentials, which is what let the checkout above join the rest of
           # the #318 sweep.
           refs_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${tag}")"
+          # The `type != "array"` guard is load-bearing, not belt-and-braces.
+          # Without it, a body of `{}` makes `.[]` iterate zero object VALUES,
+          # so the filter yields an empty list and `length` is 0 — identical to
+          # a genuine "tag absent", which takes the RELEASE path. That is a
+          # fail-OPEN on the one decision this step exists to get right.
+          # (Other malformed shapes — a bare string, null, an object with
+          # entries — do abort on their own, because `.[]` or `.ref` errors;
+          # `{}` is the shape that slips through, which is exactly why an
+          # explicit type check is needed rather than relying on jq erroring.)
           count="$(printf '%s\n' "$refs_json" \
-            | jq --arg r "refs/tags/${tag}" '[.[] | select(.ref == $r)] | length')"
+            | jq --arg r "refs/tags/${tag}" '
+                if type != "array" then
+                  error("expected a JSON array from git/matching-refs")
+                else
+                  [.[] | select(.ref == $r)] | length
+                end')"
           case "$count" in
             0)
               echo "Version ${version} has no ${tag} tag yet - will release."

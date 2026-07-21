@@ -92,7 +92,11 @@ the `panic = "unwind"` its previous `-Zbuild-std` path forced.
     is needed. That endpoint matches by prefix, so the exact ref is compared in
     `jq` — verified necessary, not theoretical: `v2.2` prefix-matches two real
     tags while exact-matching none. Every failure path now aborts the job under
-    `set -euo pipefail` instead of resolving to a release decision. Removing
+    `set -euo pipefail` instead of resolving to a release decision — including
+    the one shape that slipped through review-round one: an explicit
+    `type != "array"` guard, because a body of `{}` makes `.[]` iterate zero
+    object values, so the filter returns `0` and is indistinguishable from a
+    genuine "tag absent", which takes the *release* path. Removing
     the last Git operation is also what let that job's checkout — the only one
     that had needed the credential — join the sweep.
   - `.github/actions/rust-setup` pinned `dtolnay/rust-toolchain` from `@master`
