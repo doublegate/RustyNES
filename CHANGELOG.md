@@ -111,8 +111,12 @@ cycle-accurate core later replaced.
     `[profile.release] panic = "abort"` requires. Both are handled in the
     job (the template hardcodes the flag, so neither is fixable by argument).
   - **New `libretro-cross` CI job** (`.github/workflows/ci.yml`) cross-checks
-    `rustynes-libretro` against one triple per buildbot ABI family
-    (MinGW-Windows, Android, Apple-iOS, Apple-macOS). There was previously
+    `rustynes-libretro` against the buildbot ABI families a Linux runner
+    can model faithfully — MinGW-Windows and Android/NDK. The Apple
+    families are excluded on purpose: bindgen needs a real per-target
+    sysroot, there is no Apple SDK on a Linux runner, and feeding it host
+    glibc headers would generate Apple bindings from Linux headers — a
+    lookalike rather than a rehearsal. There was previously
     *zero* libretro coverage in GitHub Actions, which is why all three
     defects reached a third-party buildbot we cannot push to or re-run.
 
