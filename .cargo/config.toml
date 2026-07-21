@@ -98,8 +98,23 @@ multiplexing = false
 # i32/u32 are wire-identical here. `cargo`'s `[env]` applies to build scripts,
 # so this reaches bindgen for every invocation (buildbot, CI, local) without
 # each one having to remember to export it.
+#
+# BOTH MinGW triples need it, and for different consumers: the GitLab buildbot
+# builds `x86_64-pc-windows-gnu`, while this crate's `Makefile` (the legacy
+# libretro-super path) also builds `i686-pc-windows-gnu` for 32-bit Windows.
+# The variable is target-suffixed, so each triple needs its own line — and the
+# 32-bit one is verified to fail identically without it.
+#
+# When testing a change to these lines, delete
+# `target/<triple>/release/build/rust-libretro-sys-*` first:
+# `rust-libretro-sys`'s build script does not emit
+# `cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS*`, so cargo happily
+# reuses previously-generated bindings and the edit appears to do nothing.
+# CI and the buildbot always start from a clean tree, so this is a local-only
+# trap.
 [env]
 BINDGEN_EXTRA_CLANG_ARGS_x86_64_pc_windows_gnu = "--target=x86_64-pc-windows-msvc"
+BINDGEN_EXTRA_CLANG_ARGS_i686_pc_windows_gnu = "--target=i686-pc-windows-msvc"
 
 # Libretro Cross-Compilation:
 # The `crates/rustynes-libretro/Makefile` automatically intercepts the buildbot's
