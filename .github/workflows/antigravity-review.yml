@@ -1,0 +1,49 @@
+# Antigravity PR Review -- copy this file (and the scripts/ dir) into any repo.
+# Runs a Gemini review on a self-hosted runner using your `agy` OAuth session,
+# so it draws on your Google AI Ultra limits instead of a paid API key.
+#
+# Requires a self-hosted runner registered with the label `agy` on a machine
+# where `agy` is logged in. See ../../README.md for the full setup.
+name: Antigravity PR Review
+
+on:
+  pull_request:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+
+# One review at a time per PR; cancel a superseded run.
+concurrency:
+  group: agy-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    # PR opened/reopened, OR an `/agy-review` comment on a PR.
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event.issue.pull_request != null &&
+       startsWith(github.event.comment.body, '/agy-review'))
+    runs-on: [self-hosted, agy]
+    steps:
+      - name: Check out repo (for the style guide + scripts)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Antigravity review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # --- optional overrides (uncomment to change) ---
+          # AGY_MODEL: gemini-3-pro        # default: agy's configured model
+          AGY_EFFORT: high                 # low|medium|high
+          MAX_DIFF_BYTES: "200000"         # truncate huge diffs (~200 KB)
+          # STYLE_GUIDE: .github/agy-review.md   # style guide, loaded if present
+        run: |
+          chmod +x scripts/agy-review.sh scripts/_agy_print.sh
+          scripts/agy-review.sh
