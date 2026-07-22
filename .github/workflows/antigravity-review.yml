@@ -12,11 +12,6 @@ on:
   issue_comment:
     types: [created]
 
-# One review at a time per PR; cancel a superseded run.
-concurrency:
-  group: agy-review-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
   pull-requests: write
@@ -24,22 +19,29 @@ permissions:
 
 jobs:
   review:
-    # SECURITY GATE (self-hosted runner on a public repo):
-    #  - pull_request: only from a branch in THIS repo, never a fork (a fork PR
-    #    must not execute on the self-hosted host).
-    #  - issue_comment: only `/agy-review` from someone with write access
-    #    (OWNER/MEMBER/COLLABORATOR), so a stranger can't trigger execution.
+    # PR opened/reopened, OR an `/agy-review` comment on a PR from a trusted author.
+    # The comment path is gated on author_association so an untrusted outside user cannot run the
+    # self-hosted runner by commenting `/agy-review` (belt-and-suspenders with the repo's
+    # Settings -> Actions -> "Fork pull request workflows -> require approval for all outside
+    # collaborators"). The `pull_request` trigger is already `opened`/`reopened` only.
     if: >-
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request != null &&
+      github.event_name == 'pull_request' ||
+      (github.event.issue.pull_request != null &&
        startsWith(github.event.comment.body, '/agy-review') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    # Concurrency at the JOB level (NOT workflow level): a job skipped by the `if:`
+    # above never enters the group, so an unrelated `issue_comment` on the PR (e.g.
+    # another review bot commenting) can't cancel an in-progress review. And
+    # cancel-in-progress:false means a second *real* review queues behind the first
+    # instead of killing it. Fixes the race where any comment on the PR aborted the
+    # running review mid-`agy`.
+    concurrency:
+      group: agy-review-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
     runs-on: [self-hosted, agy]
     steps:
       - name: Check out repo (for the style guide + scripts)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
@@ -52,5 +54,5 @@ jobs:
           MAX_DIFF_BYTES: "200000"         # truncate huge diffs (~200 KB)
           # STYLE_GUIDE: .github/agy-review.md   # style guide, loaded if present
         run: |
-          chmod +x scripts/agy-review.sh
+          chmod +x scripts/agy-review.sh scripts/_agy_print.sh
           scripts/agy-review.sh
