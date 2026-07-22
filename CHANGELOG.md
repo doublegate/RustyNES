@@ -33,9 +33,12 @@ cycle-accurate core later replaced.
   is launched with `GH_TOKEN`/`GITHUB_TOKEN` removed from its environment, the
   `script(1)` fallback quotes its argv with `printf %q` instead of interpolating
   env-settable flags into a shell string, the conversation-database fallback is
-  scoped to the current invocation (it can no longer publish an unrelated
-  session's output), and prior-comment cleanup is restricted to comments
-  authored by the workflow's own bot.
+  removed outright (agy's store is shared per-user, so it could copy an unrelated
+  session into a public comment, and agy exposes no per-invocation store to scope
+  it to), and prior-comment cleanup is restricted to comments authored by the
+  workflow's own bot. The trigger gate — not `agy --sandbox`, which upstream
+  reports can be auto-approved away — is the trust boundary, and is documented as
+  such at the invocation site.
 
 ## [2.2.2] - 2026-07-21 - "Conduit" (libretro buildbot 10/10 + CI supply-chain hardening + single-source toolchain)
 

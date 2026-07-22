@@ -27,7 +27,6 @@ MAX_DIFF_BYTES="${MAX_DIFF_BYTES:-90000}"  # truncate very large diffs (~90 KB)
 MAX_PROMPT_BYTES="${MAX_PROMPT_BYTES:-120000}"
 STYLE_GUIDE="${STYLE_GUIDE:-.github/agy-review.md}"  # repo-relative; loaded if present
                                            # (dedicated name -- avoids colliding with GEMINI.md/AGENTS.md)
-CONV_DIR="${CONV_DIR:-$HOME/.gemini/antigravity-cli/conversations}"
 # Per-run log path. A fixed name would collide between concurrent jobs whenever
 # RUNNER_TEMP is unset (local runs fall back to /tmp, which is shared).
 LOG="${RUNNER_TEMP:-/tmp}/agy-review-${GITHUB_RUN_ID:-$$}.log"
@@ -133,13 +132,34 @@ flags=( --print-timeout "$AGY_PRINT_TIMEOUT" --sandbox --dangerously-skip-permis
 [ -n "$AGY_MODEL" ]  && flags+=( --model "$AGY_MODEL" )
 [ -n "$AGY_EFFORT" ] && flags+=( --effort "$AGY_EFFORT" )
 
-# `--dangerously-skip-permissions` is REQUIRED for headless operation -- without it agy
-# blocks on an interactive approval prompt that no one is there to answer, and the run
-# just times out. What it removes is the approval gate, so the agent could act on
-# instructions embedded in the (attacker-controlled) diff it is reviewing. The exposure
-# that actually matters is the GitHub token in this job's environment, so agy is launched
-# WITHOUT it: `gh` calls happen in this script, before and after, and agy never needs it.
-# `--sandbox` still confines filesystem and network access.
+# TRUST MODEL -- read this before changing the trigger conditions.
+#
+# `--dangerously-skip-permissions` is REQUIRED for headless operation: without it agy
+# blocks on an interactive approval prompt that no one is present to answer, and the run
+# burns --print-timeout and exits empty. What it removes is the approval gate, so agy
+# could act on instructions embedded in the diff it is reviewing (prompt injection).
+#
+# `--sandbox` is NOT a security boundary and must not be treated as one. Upstream
+# antigravity-cli#36 reports that --dangerously-skip-permissions can auto-approve the
+# very prompts needed to escape the sandbox, and there is a published prompt-injection
+# -> RCE/sandbox-escape writeup against the CLI. It is kept for defense in depth only.
+#
+# The ACTUAL boundary is upstream of this script, in the workflow's `if:`: a fork PR
+# cannot schedule this job, and `/agy-review` requires OWNER/MEMBER/COLLABORATOR. A
+# same-repo branch means the diff was pushed by someone who already has write access to
+# this repository -- and therefore has far more direct means than prompt injection.
+# There is no path by which an external party's diff reaches agy. That gate is the whole
+# defense: weaken it (e.g. add `pull_request_target`, or drop the fork check) and this
+# becomes remote code execution on the maintainer's machine.
+#
+# Within that model, two cheap reductions are still worth having:
+#   * agy runs with GH_TOKEN/GITHUB_TOKEN removed from its environment -- `gh` runs in
+#     this script, before and after, and agy has no use for the token.
+#   * the conversation-store fallback is gone (see the loop below), so nothing from the
+#     shared per-user agy state can be copied into a public comment.
+# Neither isolates the host. Doing that properly needs an ephemeral account or VM, which
+# is incompatible with the OAuth session in $HOME that makes these reviews free under
+# Ultra; if this is ever opened to untrusted diffs, that isolation becomes mandatory.
 agy_env=( env -u GH_TOKEN -u GITHUB_TOKEN )
 
 out_file="$(mktemp)"
@@ -161,9 +181,6 @@ fi
 # The flock (above) is held across all attempts, released after the loop.
 for (( attempt=1; attempt<=AGY_RETRIES; attempt++ )); do
   : > "$out_file"   # clear any partial output from a prior attempt
-  # Reference instant for the SQLite fallback below: only a conversation DB modified at
-  # or after this point can plausibly belong to this attempt.
-  attempt_start="$(date +%s)"
 
   rc=0
   if command -v unbuffer >/dev/null 2>&1; then
@@ -190,37 +207,24 @@ for (( attempt=1; attempt<=AGY_RETRIES; attempt++ )); do
   # normalize CRs without sed -i (avoid in-place edit footguns)
   tr -d '\r' < "$out_file" > "$out_file.clean" && mv "$out_file.clean" "$out_file"
 
-  # --- fallback: recover the answer from agy's conversation SQLite store --------
-  #     (belt-and-suspenders for issue #76 on hosts where the PTY trick still
-  #     yields nothing). The schema is NOT officially documented and can change
-  #     between agy versions -- inspect with `sqlite3 <db> .schema` and adjust.
+  # --- NO conversation-store fallback, deliberately -----------------------------
+  #     The upstream template recovers the answer from agy's SQLite conversation store
+  #     when the PTY trick yields nothing (belt-and-suspenders for agy issue #76). That
+  #     store is SHARED per-user: `$HOME/.gemini/antigravity-cli/conversations` holds
+  #     every session on the host, including the owner's interactive chats and reviews
+  #     for other repos. Reading it and posting the result to a PUBLIC pull request
+  #     comment risks publishing an unrelated conversation.
   #
-  #     SCOPED TO THIS ATTEMPT ON PURPOSE. Taking the globally newest DB (the upstream
-  #     template's `ls -t | head -1`) means that when agy fails BEFORE creating a
-  #     conversation, this posts the last assistant message from whatever unrelated
-  #     session ran on this host -- another repo's review, or the owner's interactive
-  #     chat -- straight into a public PR comment. `find -newermt` restricts the search
-  #     to a DB this attempt actually touched; if there is none, the fallback yields
-  #     nothing and the retry/failure path takes over. (`find` also avoids the `ls`
-  #     parsing that shellcheck SC2012 flags.)
-  if ! have_text "$out_file"; then
-    log "print output empty; trying SQLite conversation fallback"
-    if command -v sqlite3 >/dev/null 2>&1 && [ -d "$CONV_DIR" ]; then
-      db="$(find "$CONV_DIR" -maxdepth 1 -name '*.db' -newermt "@$(( attempt_start - 1 ))" \
-              -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- || true)"
-      if [ -z "${db:-}" ]; then
-        log "no conversation DB from this attempt; skipping fallback (refusing to read an unrelated session)"
-      fi
-      if [ -n "${db:-}" ]; then
-        for q in \
-          "SELECT text FROM messages WHERE role='assistant' ORDER BY rowid DESC LIMIT 1;" \
-          "SELECT content FROM messages WHERE role='assistant' ORDER BY rowid DESC LIMIT 1;" \
-          "SELECT body FROM message WHERE role='assistant' ORDER BY rowid DESC LIMIT 1;"; do
-          sqlite3 "$db" "$q" > "$out_file" 2>/dev/null && have_text "$out_file" && break
-        done
-      fi
-    fi
-  fi
+  #     Narrowing by mtime is not sufficient -- it bounds a time window, not ownership,
+  #     and the flock above serializes review JOBS, not the owner's own agy usage. The
+  #     only sound version of this fallback needs a conversation ID (or a private store)
+  #     tied to THIS invocation, and agy exposes neither: the OAuth session lives in
+  #     $HOME, so it cannot be relocated per run without losing the login that makes
+  #     these reviews free under Ultra.
+  #
+  #     So it fails closed instead: no usable stdout means retry, then fail the job.
+  #     Losing a review is recoverable (`/agy-review` re-runs it); publishing someone
+  #     else's session into a public comment is not.
 
   have_text "$out_file" && break
   if [ "$attempt" -lt "$AGY_RETRIES" ]; then
