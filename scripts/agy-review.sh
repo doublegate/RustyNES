@@ -76,10 +76,39 @@ log "reviewing ${REPO}#${PR}"
 diff_file= meta_file= prompt_file= out_file= raw= body_file=
 trap 'rm -f "$diff_file" "$meta_file" "$prompt_file" "$out_file" "$raw" "$body_file"' EXIT
 
-# --- fetch the diff + metadata -------------------------------------------------
-diff_file="$(mktemp)"; meta_file="$(mktemp)"
+# --- metadata first, because the fork gate depends on it -----------------------
+# FAIL-CLOSED. The old form fell back to `{}` when `gh pr view` failed, which was
+# harmless when the only field read was the title -- it is not harmless now that
+# isCrossRepository gates whether an untrusted diff reaches agy. A lookup failure must
+# never be indistinguishable from "same-repo".
+meta_file="$(mktemp)"
+gh pr view "$PR" --repo "$REPO" --json title,isCrossRepository > "$meta_file" \
+  || { log "gh pr view failed; refusing to review without knowing the PR's head repo"; exit 1; }
+
+# THE FORK GATE (see the trust model at the agy invocation below). The workflow `if:`
+# blocks fork PRs on the `pull_request` trigger, but it CANNOT do so on `issue_comment`:
+# that payload carries no head-repo information at all, so a collaborator commenting
+# `/agy-review` on a fork PR would otherwise schedule this job against an external diff.
+# A trusted person typing the command does not make the DIFF trusted -- and the diff is
+# what agy ingests, under --dangerously-skip-permissions, on the maintainer's machine.
+# Enforced here because this is the first point where the answer is knowable.
+# NOT `.isCrossRepository // empty` -- jq's `//` treats `false` as absent, so the
+# alternative fires on exactly the same-repo case this gate is meant to admit, and every
+# legitimate review would be refused. Read the raw value and match all three shapes.
+is_fork="$(jq -r '.isCrossRepository' "$meta_file")"
+case "$is_fork" in
+  true)
+    log "PR #${PR} is from a fork; refusing to run agy on an external diff"
+    log "(review it by hand, or push the branch into this repo first)"
+    exit 0
+    ;;
+  false) : ;;
+  *) log "could not determine whether PR #${PR} is cross-repository; refusing"; exit 1 ;;
+esac
+
+# --- fetch the diff ------------------------------------------------------------
+diff_file="$(mktemp)"
 gh pr diff "$PR" --repo "$REPO" > "$diff_file" || { log "gh pr diff failed"; exit 1; }
-gh pr view "$PR" --repo "$REPO" --json title > "$meta_file" 2>/dev/null || echo '{}' > "$meta_file"
 
 if ! have_text "$diff_file"; then log "empty diff; nothing to review"; exit 0; fi
 
@@ -144,13 +173,20 @@ flags=( --print-timeout "$AGY_PRINT_TIMEOUT" --sandbox --dangerously-skip-permis
 # very prompts needed to escape the sandbox, and there is a published prompt-injection
 # -> RCE/sandbox-escape writeup against the CLI. It is kept for defense in depth only.
 #
-# The ACTUAL boundary is upstream of this script, in the workflow's `if:`: a fork PR
-# cannot schedule this job, and `/agy-review` requires OWNER/MEMBER/COLLABORATOR. A
-# same-repo branch means the diff was pushed by someone who already has write access to
-# this repository -- and therefore has far more direct means than prompt injection.
-# There is no path by which an external party's diff reaches agy. That gate is the whole
-# defense: weaken it (e.g. add `pull_request_target`, or drop the fork check) and this
-# becomes remote code execution on the maintainer's machine.
+# The ACTUAL boundary is "agy only ever sees a same-repo diff", and it takes TWO checks
+# because no single one covers both triggers:
+#   * the workflow `if:` rejects fork PRs on `pull_request`, and requires
+#     OWNER/MEMBER/COLLABORATOR on `issue_comment`;
+#   * the isCrossRepository check above rejects fork PRs on the `issue_comment` path,
+#     which the workflow cannot do -- that payload carries no head-repo field, so
+#     `/agy-review` on a fork PR would otherwise feed an external diff straight in.
+#     Authorizing the COMMENTER is not the same as trusting the DIFF, and the diff is
+#     what agy ingests.
+# With both in place, a diff reaching agy was pushed to a branch of this repository by
+# someone who already holds write access -- and therefore has far more direct means
+# available than prompt injection. Those two checks are the whole defense: weaken either
+# (add `pull_request_target`, drop the fork check, let the metadata lookup fail open) and
+# this becomes remote code execution on the maintainer's machine.
 #
 # Within that model, two cheap reductions are still worth having:
 #   * agy runs with GH_TOKEN/GITHUB_TOKEN removed from its environment -- `gh` runs in

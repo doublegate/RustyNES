@@ -36,9 +36,14 @@ cycle-accurate core later replaced.
   removed outright (agy's store is shared per-user, so it could copy an unrelated
   session into a public comment, and agy exposes no per-invocation store to scope
   it to), and prior-comment cleanup is restricted to comments authored by the
-  workflow's own bot. The trigger gate — not `agy --sandbox`, which upstream
-  reports can be auto-approved away — is the trust boundary, and is documented as
-  such at the invocation site.
+  workflow's own bot. The trust boundary is "`agy` only ever sees a same-repo
+  diff", enforced by two checks because neither trigger is covered by one: the
+  workflow rejects fork PRs on `pull_request`, and the script rejects them again
+  on the `issue_comment` path, where the payload carries no head-repo field and
+  `/agy-review` on a fork PR would otherwise feed in an external diff.
+  Authorizing the commenter is not the same as trusting the diff. `agy --sandbox`
+  is explicitly *not* part of that boundary — upstream reports it can be
+  auto-approved away — and the invocation site says so.
 
 ## [2.2.2] - 2026-07-21 - "Conduit" (libretro buildbot 10/10 + CI supply-chain hardening + single-source toolchain)
 
