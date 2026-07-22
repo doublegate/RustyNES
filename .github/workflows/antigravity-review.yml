@@ -1,0 +1,80 @@
+# Antigravity PR Review -- copy this file (and the scripts/ dir) into any repo.
+# Runs a Gemini review on a self-hosted runner using your `agy` OAuth session,
+# so it draws on your Google AI Ultra limits instead of a paid API key.
+#
+# Requires a self-hosted runner registered with the label `agy` on a machine
+# where `agy` is logged in. See ../../README.md for the full setup.
+name: Antigravity PR Review
+
+on:
+  pull_request:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    # SECURITY GATE (a self-hosted runner on a PUBLIC repo executes on real hardware
+    # and spends the owner's Google AI Ultra quota, so "who can start a run" is the
+    # primary control):
+    #  - pull_request: only from a branch in THIS repo. A FORK PR must never schedule
+    #    work on the self-hosted host. GitHub's "require approval for outside
+    #    collaborators" setting is belt-and-suspenders, not the gate — its default only
+    #    covers *first-time* contributors, so a returning outside contributor would
+    #    otherwise get a runner.
+    #  - issue_comment: only `/agy-review` from someone with write access
+    #    (OWNER/MEMBER/COLLABORATOR), so a stranger cannot trigger execution by
+    #    commenting. `scripts/agy-review.sh` re-checks this defensively.
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       startsWith(github.event.comment.body, '/agy-review') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    # Concurrency at the JOB level (NOT workflow level): a job skipped by the `if:`
+    # above never enters the group, so an unrelated `issue_comment` on the PR (e.g.
+    # another review bot commenting) can't cancel an in-progress review. And
+    # cancel-in-progress:false means a second *real* review queues behind the first
+    # instead of killing it. Fixes the race where any comment on the PR aborted the
+    # running review mid-`agy`.
+    concurrency:
+      group: agy-review-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
+    runs-on: [self-hosted, agy]
+    steps:
+      # Check out the DEFAULT BRANCH, never the PR head. This job runs the checked-out
+      # `scripts/agy-review.sh` on a self-hosted runner with a token in the environment,
+      # so taking those scripts from the PR would let the reviewed change rewrite its own
+      # reviewer. The review content is unaffected: the diff is fetched from the API by
+      # `gh pr diff`, not from the working tree. Consequence worth knowing: a PR that
+      # edits the reviewer or the style guide is reviewed by the version already on main.
+      - name: Check out repo (for the style guide + scripts)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          # Repo-wide rule (PR #319): no checkout persists credentials. Nothing here
+          # performs an authenticated git network operation — `gh` uses GH_TOKEN.
+          persist-credentials: false
+
+      - name: Run Antigravity review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # --- optional overrides (uncomment to change) ---
+          # AGY_MODEL: gemini-3-pro        # default: agy's configured model
+          AGY_EFFORT: high                 # low|medium|high
+          # Diff budget. The prompt is passed to agy as a SINGLE argv string, and Linux
+          # caps one argument at MAX_ARG_STRLEN = 32 * PAGE_SIZE = 128 KiB (this is a
+          # separate, much lower ceiling than ARG_MAX). 90 KB leaves room for the
+          # instruction boilerplate + style guide; the script enforces the total cap.
+          MAX_DIFF_BYTES: "90000"
+          # STYLE_GUIDE: .github/agy-review.md   # style guide, loaded if present
+        run: |
+          chmod +x scripts/agy-review.sh scripts/_agy_print.sh
+          scripts/agy-review.sh
