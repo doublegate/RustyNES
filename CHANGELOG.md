@@ -14,6 +14,29 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- Antigravity PR reviewer (`.github/workflows/antigravity-review.yml` +
+  `scripts/agy-review.sh`): an automated first-pass code review on a self-hosted
+  runner, driven by the `agy` CLI's OAuth session (Google AI Ultra, no metered
+  API key). Runs on PR open/reopen and on an `/agy-review` comment from a
+  contributor with write access, and replaces its own prior comment each run.
+  Review priorities live in `.github/agy-review.md`. CI-only — no crate, no
+  shipped artifact, and no emulation-core change.
+
+### Security
+
+- The reviewer executes on the maintainer's own hardware with a token in scope,
+  so its trigger and execution paths are gated accordingly: fork PRs cannot
+  schedule the job, the automation scripts are checked out from the default
+  branch rather than the PR head (a PR cannot rewrite its own reviewer), `agy`
+  is launched with `GH_TOKEN`/`GITHUB_TOKEN` removed from its environment, the
+  `script(1)` fallback quotes its argv with `printf %q` instead of interpolating
+  env-settable flags into a shell string, the conversation-database fallback is
+  scoped to the current invocation (it can no longer publish an unrelated
+  session's output), and prior-comment cleanup is restricted to comments
+  authored by the workflow's own bot.
+
 ## [2.2.2] - 2026-07-21 - "Conduit" (libretro buildbot 10/10 + CI supply-chain hardening + single-source toolchain)
 
 A **build, distribution, and CI-integrity patch**. It carries RustyNES onto
