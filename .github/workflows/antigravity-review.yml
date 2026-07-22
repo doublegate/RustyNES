@@ -24,15 +24,22 @@ permissions:
 
 jobs:
   review:
-    # PR opened/reopened, OR an `/agy-review` comment on a PR.
+    # SECURITY GATE (self-hosted runner on a public repo):
+    #  - pull_request: only from a branch in THIS repo, never a fork (a fork PR
+    #    must not execute on the self-hosted host).
+    #  - issue_comment: only `/agy-review` from someone with write access
+    #    (OWNER/MEMBER/COLLABORATOR), so a stranger can't trigger execution.
     if: >-
-      github.event_name == 'pull_request' ||
-      (github.event.issue.pull_request != null &&
-       startsWith(github.event.comment.body, '/agy-review'))
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       startsWith(github.event.comment.body, '/agy-review') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: [self-hosted, agy]
     steps:
       - name: Check out repo (for the style guide + scripts)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
@@ -45,5 +52,5 @@ jobs:
           MAX_DIFF_BYTES: "200000"         # truncate huge diffs (~200 KB)
           # STYLE_GUIDE: .github/agy-review.md   # style guide, loaded if present
         run: |
-          chmod +x scripts/agy-review.sh scripts/_agy_print.sh
+          chmod +x scripts/agy-review.sh
           scripts/agy-review.sh

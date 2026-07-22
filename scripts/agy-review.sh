@@ -2,36 +2,45 @@
 #
 # agy-review.sh -- headless GitHub PR reviewer driven by Antigravity CLI (`agy`).
 #
-# Runs on a SELF-HOSTED GitHub Actions runner that lives on a machine where `agy`
-# is already logged in via Google OAuth. Because it uses the CLI's cached OAuth
-# session (not an API key), every review is billed against your Google AI Ultra
-# rate limits -- i.e. free under the subscription, no metered API spend.
+# Runs on a SELF-HOSTED GitHub Actions runner where `agy` is logged in via Google
+# OAuth, so reviews draw on your Google AI Ultra rate limits (no metered API key).
 #
-# Flow: resolve PR -> `gh pr diff` -> build an adversarial-reviewer prompt
-#       (+ repo style guide) -> `agy --print` under a PTY -> post via `gh pr comment`.
+# Flow: resolve PR -> `gh pr diff` -> adversarial-reviewer prompt (+ style guide)
+#       -> `agy --print` under a PTY (argv-safe) -> post via `gh pr comment`.
 #
-# See ../README.md for setup, the issue #76 PTY workaround, and the ToS caveat.
+# Security: the workflow gates who can trigger this (same-repo PRs only; comments
+# only from OWNER/MEMBER/COLLABORATOR). This script re-checks the comment gate
+# defensively. See ../README.md.
 set -euo pipefail
 
-# --- configuration (all env-overridable from the workflow) ---------------------
+# --- configuration (env-overridable from the workflow) ------------------------
 AGY_BIN="${AGY_BIN:-agy}"
 command -v "$AGY_BIN" >/dev/null 2>&1 || AGY_BIN="$HOME/.local/bin/agy"
-AGY_MODEL="${AGY_MODEL:-}"                 # empty = agy's configured default (Gemini 3.x Pro)
+AGY_MODEL="${AGY_MODEL:-}"                 # empty = agy's configured default
 AGY_EFFORT="${AGY_EFFORT:-high}"           # low|medium|high
 AGY_PRINT_TIMEOUT="${AGY_PRINT_TIMEOUT:-5m}"
-MAX_DIFF_BYTES="${MAX_DIFF_BYTES:-200000}" # truncate very large diffs (~200 KB)
-STYLE_GUIDE="${STYLE_GUIDE:-.github/agy-review.md}"  # repo-relative; loaded if present
-                                           # (dedicated name -- avoids colliding with GEMINI.md/AGENTS.md)
-CONV_DIR="${CONV_DIR:-$HOME/.gemini/antigravity-cli/conversations}"
-LOG="${RUNNER_TEMP:-/tmp}/agy-review.log"
+MAX_DIFF_BYTES="${MAX_DIFF_BYTES:-200000}" # truncate very large diffs (bounds ARG_MAX too)
+STYLE_GUIDE="${STYLE_GUIDE:-.github/agy-review.md}"
 MARKER="<!-- antigravity-pr-review -->"
+
+# --- temp files + cleanup trap (no leftover scratch on the runner) ------------
+diff_file= meta_file= prompt_file= out_file= body_file= LOG=
+cleanup() {
+  local f
+  for f in "$diff_file" "$meta_file" "$prompt_file" "$out_file" "$body_file" "$LOG"; do
+    [ -n "$f" ] && rm -f "$f"
+  done
+}
+trap cleanup EXIT
+LOG="$(mktemp)"
 
 log() { printf '[agy-review] %s\n' "$*" >&2; }
 have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
+die() { log "$*"; [ -s "$LOG" ] && { log "--- agy stderr ---"; cat "$LOG" >&2; }; exit 1; }
 
 REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY not set}"
 
-# --- resolve the PR number from the triggering event --------------------------
+# --- resolve the PR number; re-verify the comment gate defensively ------------
 case "${GITHUB_EVENT_NAME:-}" in
   pull_request|pull_request_target)
     PR="$(jq -r '.pull_request.number' "$GITHUB_EVENT_PATH")"
@@ -39,26 +48,27 @@ case "${GITHUB_EVENT_NAME:-}" in
   issue_comment)
     is_pr="$(jq -r '.issue.pull_request // empty' "$GITHUB_EVENT_PATH")"
     body="$(jq -r '.comment.body // ""' "$GITHUB_EVENT_PATH")"
-    [ -n "$is_pr" ] || { log "comment is not on a PR; skipping"; exit 0; }
-    case "$body" in
-      /agy-review*) : ;;
-      *) log "comment is not an /agy-review command; skipping"; exit 0 ;;
+    assoc="$(jq -r '.comment.author_association // ""' "$GITHUB_EVENT_PATH")"
+    [ -n "$is_pr" ] || { log "comment not on a PR; skipping"; exit 0; }
+    case "$body" in /agy-review*) : ;; *) log "not an /agy-review command; skipping"; exit 0 ;; esac
+    case "$assoc" in
+      OWNER|MEMBER|COLLABORATOR) : ;;
+      *) log "comment author association '$assoc' lacks write access; skipping"; exit 0 ;;
     esac
     PR="$(jq -r '.issue.number' "$GITHUB_EVENT_PATH")"
     ;;
   *)
     PR="${1:-}"
-    [ -n "$PR" ] || { log "unknown event; pass a PR number as \$1"; exit 1; }
+    [ -n "$PR" ] || die "unknown event; pass a PR number as \$1"
     ;;
 esac
 log "reviewing ${REPO}#${PR}"
 
-# --- fetch the diff + metadata -------------------------------------------------
+# --- fetch the diff + metadata ------------------------------------------------
 diff_file="$(mktemp)"; meta_file="$(mktemp)"
-gh pr diff "$PR" --repo "$REPO" > "$diff_file" || { log "gh pr diff failed"; exit 1; }
+gh pr diff "$PR" --repo "$REPO" > "$diff_file" || die "gh pr diff failed"
 gh pr view "$PR" --repo "$REPO" --json title > "$meta_file" 2>/dev/null || echo '{}' > "$meta_file"
-
-if ! have_text "$diff_file"; then log "empty diff; nothing to review"; exit 0; fi
+have_text "$diff_file" || { log "empty diff; nothing to review"; exit 0; }
 
 truncated=""
 if [ "$(wc -c < "$diff_file")" -gt "$MAX_DIFF_BYTES" ]; then
@@ -67,7 +77,7 @@ if [ "$(wc -c < "$diff_file")" -gt "$MAX_DIFF_BYTES" ]; then
   log "diff truncated to ${MAX_DIFF_BYTES} bytes"
 fi
 
-# --- build the prompt ----------------------------------------------------------
+# --- build the prompt ---------------------------------------------------------
 title="$(jq -r '.title // ""' "$meta_file")"
 style=""; [ -f "$STYLE_GUIDE" ] && style="$(cat "$STYLE_GUIDE")"
 
@@ -87,61 +97,35 @@ Do not praise. Focus on what could be wrong. If the change is trivial, say so br
 
 PR title: ${title}
 EOF
-  if [ -n "$style" ]; then
-    printf '\n--- PROJECT STYLE GUIDE (enforce these) ---\n%s\n' "$style"
-  fi
+  [ -n "$style" ] && printf '\n--- PROJECT STYLE GUIDE (enforce these) ---\n%s\n' "$style"
   printf '\n--- UNIFIED DIFF ---\n'
   cat "$diff_file"
 } > "$prompt_file"
 
-# --- run agy headless, under a PTY (works around agy issue #76: -p drops --------
-#     stdout when stdout is not a TTY, e.g. piped/redirected/subprocess) ---------
+# --- run agy headless under a PTY (works around agy issue #76: -p drops --------
+#     stdout on a non-TTY). Both paths pass an argv ARRAY -- no shell string --
+#     so env-provided flags cannot inject a command or word-split. -------------
 flags=( --print-timeout "$AGY_PRINT_TIMEOUT" --sandbox --dangerously-skip-permissions )
 [ -n "$AGY_MODEL" ]  && flags+=( --model "$AGY_MODEL" )
 [ -n "$AGY_EFFORT" ] && flags+=( --effort "$AGY_EFFORT" )
 
 out_file="$(mktemp)"
 here="$(cd "$(dirname "$0")" && pwd)"
-: > "$LOG"
-
+prompt="$(cat "$prompt_file")"
+rc=0
 if command -v unbuffer >/dev/null 2>&1; then
-  log "running agy via unbuffer (allocates a PTY)"
-  unbuffer "$AGY_BIN" "${flags[@]}" --print "$(cat "$prompt_file")" > "$out_file" 2>>"$LOG" || true
+  unbuffer "$AGY_BIN" "${flags[@]}" --print "$prompt" > "$out_file" 2>>"$LOG" || rc=$?
+elif command -v python3 >/dev/null 2>&1; then
+  python3 "$here/_agy_pty.py" "$AGY_BIN" "${flags[@]}" --print "$prompt" > "$out_file" 2>>"$LOG" || rc=$?
 else
-  log "unbuffer not found; falling back to script(1)"
-  raw="$(mktemp)"
-  AGY_BIN="$AGY_BIN" script -qfec "$here/_agy_print.sh '$prompt_file' ${flags[*]}" "$raw" >/dev/null 2>>"$LOG" || true
-  col -b < "$raw" > "$out_file"
+  die "need 'unbuffer' (from the 'expect' package) or python3 for a PTY; neither found"
 fi
-
-# normalize CRs without sed -i (avoid in-place edit footguns)
+[ "$rc" -eq 0 ] || log "agy exited non-zero ($rc); checking output anyway"
 tr -d '\r' < "$out_file" > "$out_file.clean" && mv "$out_file.clean" "$out_file"
 
-# --- fallback: recover the answer from agy's conversation SQLite store ----------
-#     (belt-and-suspenders for issue #76 on hosts where the PTY trick still
-#     yields nothing). The schema is NOT officially documented and can change
-#     between agy versions -- inspect with `sqlite3 <db> .schema` and adjust.
-if ! have_text "$out_file"; then
-  log "print output empty; trying SQLite conversation fallback"
-  if command -v sqlite3 >/dev/null 2>&1 && [ -d "$CONV_DIR" ]; then
-    db="$(ls -t "$CONV_DIR"/*.db 2>/dev/null | head -1 || true)"
-    if [ -n "${db:-}" ]; then
-      for q in \
-        "SELECT text FROM messages WHERE role='assistant' ORDER BY rowid DESC LIMIT 1;" \
-        "SELECT content FROM messages WHERE role='assistant' ORDER BY rowid DESC LIMIT 1;" \
-        "SELECT body FROM message WHERE role='assistant' ORDER BY rowid DESC LIMIT 1;"; do
-        sqlite3 "$db" "$q" > "$out_file" 2>/dev/null && have_text "$out_file" && break
-      done
-    fi
-  fi
-fi
+have_text "$out_file" || die "no review output from agy (rc=$rc). Confirm 'agy -p \"hi\"' works for this user."
 
-if ! have_text "$out_file"; then
-  log "no review output produced. Check $LOG and confirm 'agy -p \"hi\"' works for this user."
-  exit 1
-fi
-
-# --- assemble the comment body -------------------------------------------------
+# --- assemble the comment body ------------------------------------------------
 body_file="$(mktemp)"
 {
   printf '%s\n' "$MARKER"
@@ -151,7 +135,9 @@ body_file="$(mktemp)"
   printf '\n\n<sub>Automated first-pass review by `agy` on a self-hosted runner -- not a human review.</sub>\n'
 } > "$body_file"
 
-# --- replace any prior review comment, then post fresh -------------------------
+# --- replace any prior review comment, then post fresh ------------------------
+# Comment deletion is best-effort by design (a delete failure must not block the
+# new review), so its errors are intentionally not fatal.
 gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
     --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" 2>/dev/null \
   | while read -r cid; do
