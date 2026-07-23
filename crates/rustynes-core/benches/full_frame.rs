@@ -65,8 +65,8 @@ fn bench_full_frame(c: &mut Criterion) {
 /// far harder — it is the recommended `perf record` input (see
 /// `docs/performance.md`).
 fn bench_full_frame_rendering(c: &mut Criterion) {
-    let bytes = std::fs::read(rom_path("sprint-2/flowing_palette.nes"))
-        .expect("sprint-2/flowing_palette.nes vendored in tests/roms/");
+    let bytes = std::fs::read(rom_path("assorted/flowing_palette.nes"))
+        .expect("assorted/flowing_palette.nes vendored in tests/roms/");
 
     c.bench_function("nes_run_frame_flowing_palette", |b| {
         b.iter_batched(
@@ -120,8 +120,8 @@ fn bench_full_frame_fast(c: &mut Criterion) {
 }
 
 fn bench_full_frame_rendering_fast(c: &mut Criterion) {
-    let bytes = std::fs::read(rom_path("sprint-2/flowing_palette.nes"))
-        .expect("sprint-2/flowing_palette.nes vendored in tests/roms/");
+    let bytes = std::fs::read(rom_path("assorted/flowing_palette.nes"))
+        .expect("assorted/flowing_palette.nes vendored in tests/roms/");
 
     c.bench_function("nes_run_frame_flowing_palette_fast", |b| {
         b.iter_batched(

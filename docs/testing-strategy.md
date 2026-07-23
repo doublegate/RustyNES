@@ -186,7 +186,7 @@ indices and the `christopherpow/nes-test-roms` aggregator, looking for
 committable tests BEYOND the 139 AccuracyCoin battery. Findings (pinned
 2026-06-16):
 
-- **`mmc3_test` v1 (6 sub-ROMs)** — wired (`tests/mmc3.rs`). The older
+- **`mmc3_test` v1 (6 sub-ROMs)** — wired (`tests/m004_mmc3.rs`). The older
   kevtris/blargg MMC3 suite (distinct ROMs from the already-wired
   `mmc3_test_2`; same `$6000` protocol). **1/2/3 strict-PASS.** **4/5/6 are
   expected-fail** and converge on the *same* ADR-0002

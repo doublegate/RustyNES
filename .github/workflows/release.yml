@@ -156,3 +156,118 @@ jobs:
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --------------------------------------------------------------------------
+  # PGO build + promotion gate (linux x86_64 only).
+  #
+  # Runs the full instrument -> train -> optimized-rebuild cycle and its two
+  # gates (>3% faster on `full_frame` AND byte-identical across the whole
+  # `--features test-roms` oracle). Before v2.2.3 this ran on the same tag push
+  # as the release but nothing consumed the result — a promoted binary was
+  # computed and discarded. Now `pgo-linux-asset` below ships it.
+  #
+  # FAILURE SEMANTICS (note: `continue-on-error` is NOT permitted on a
+  # reusable-workflow `uses:` job — actionlint rejects it — so the tolerance
+  # lives inside pgo.yml instead):
+  #
+  #   * A GATE verdict (slower than the 3% bar, or an oracle divergence) is not
+  #     a failure at all. pgo.yml's determinism step carries a step-level
+  #     `continue-on-error`, so the gate simply reports promotable=false, this
+  #     job stays green, and `pgo-linux-asset` below is skipped.
+  #   * An INFRASTRUCTURE failure (runner died, cargo-pgo unavailable) does mark
+  #     this job — and therefore the run — red. That is deliberate: a broken PGO
+  #     pipeline should be visible, not swallowed. The RELEASE is still correct
+  #     either way: `build` has already attached the plain assets for all three
+  #     targets, and the replacement job below is skipped.
+  #
+  # Scope is deliberately linux-x86_64 ONLY — PGO training has to RUN the
+  # instrumented binary, so each additional target needs its own native runner
+  # doing a full train cycle. macOS-aarch64 and Windows keep shipping plain
+  # release builds; extending PGO to them is a separate decision with a real
+  # cost (~90 min of runner time each), not a freebie.
+  pgo:
+    name: PGO build + gate (linux x86_64)
+    uses: ./.github/workflows/pgo.yml
+    permissions:
+      contents: read
+
+  # Replace the Linux release asset with the PGO binary when — and only when —
+  # the gate promoted it.
+  #
+  # Sequencing note: `build` attaches the plain Linux archive first (it finishes
+  # in ~10 min; the PGO job takes up to 90), so for the intervening window the
+  # release carries the plain binary and is then upgraded in place. That is the
+  # deliberate trade: the release is complete and downloadable immediately
+  # rather than gated behind an hour and a half of PGO, and the swap is
+  # idempotent. The archive keeps the SAME name, so download links and
+  # checksums-by-name do not change shape.
+  pgo-linux-asset:
+    name: Ship PGO binary as the linux asset
+    needs: [build, pgo]
+    if: needs.pgo.outputs.promotable == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve release tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          # Same resolution as the `build` job: `inputs.tag` on
+          # workflow_dispatch / workflow_call, else the pushed ref.
+          if [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Download the promoted PGO binary
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.pgo.outputs.artifact }}
+          path: pgo-bin
+
+      - name: Stage + archive (identical layout to the plain Linux asset)
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="x86_64-unknown-linux-gnu"
+          stage="rustynes-${TAG}-${target}"
+          mkdir -p "$stage"
+          cp pgo-bin/rustynes "$stage/rustynes"
+          chmod +x "$stage/rustynes"
+          strip "$stage/rustynes"
+          cp README.md LICENSE-MIT LICENSE-APACHE NOTICE CHANGELOG.md "$stage/"
+          tar -czf "${stage}.tar.gz" "$stage"
+          echo "asset=${stage}.tar.gz" >> "$GITHUB_ENV"
+
+      # `gh release upload --clobber` rather than softprops/action-gh-release:
+      # this is a REPLACEMENT of an asset the `build` job already attached under
+      # the same name, and the API rejects a duplicate asset name without an
+      # explicit overwrite. `--clobber` is that overwrite.
+      - name: Replace the Linux asset with the PGO build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          SPEEDUP: ${{ needs.pgo.outputs.speedup_pct }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" "$asset" --clobber --repo "$GITHUB_REPOSITORY"
+          {
+            echo "### PGO binary shipped"
+            echo
+            echo "The \`x86_64-unknown-linux-gnu\` release asset is the"
+            echo "profile-guided-optimized build (**${SPEEDUP}%** faster on"
+            echo "\`full_frame\`, byte-identical across the full test-roms oracle)."
+          } >> "$GITHUB_STEP_SUMMARY"

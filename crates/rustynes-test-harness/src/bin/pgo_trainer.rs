@@ -23,8 +23,8 @@ use rustynes_core::{Buttons, Nes};
 /// Committed training corpus, workspace-relative.
 const COMMITTED: &[&str] = &[
     "tests/roms/nestest/nestest.nes",
-    "tests/roms/sprint-2/flowing_palette.nes",
-    "tests/roms/sprint-2/oam_stress.nes",
+    "tests/roms/assorted/flowing_palette.nes",
+    "tests/roms/assorted/oam_stress.nes",
     "tests/roms/audio-tests/db_apu.nes",
     "tests/roms/accuracycoin/AccuracyCoin.nes",
     "tests/roms/holy_mapperel/M1_P128K_CR8K.nes",

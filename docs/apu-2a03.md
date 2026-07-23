@@ -189,6 +189,22 @@ disabled); the channel registers — including the halt/duty bits — survive.
 This closes plan-residual R4 (`apu_reset/4017_written`): all six blargg
 `apu_reset` ROMs pass strictly.
 
+**Save-state coverage (`APU_SNAPSHOT_VERSION` v4).** The scheduled re-write is
+live state for the two CPU cycles between `Apu::reset` arming it and
+`tick_with_external` firing it, so `reset_4017_delay` + `reset_4017_value` are
+serialized. They were not before v4: a snapshot landing in that window restored
+`delay = 0`, cancelling the re-write, and the restored frame counter kept the
+sequencer phase the re-write exists to reset. The window is narrow and no
+user-visible symptom was ever attributed to it — unlike the PPU's v5/v6/v8
+tails, this one was found by the standing schema audit
+(`crates/rustynes-test-harness/tests/snapshot_schema_audit.rs`) rather than by a
+bug report. Pinned behaviourally by
+`a_reset_survives_a_snapshot_restore_taken_mid_countdown`, which compares
+`frame_counter.cycle` across a mid-countdown round trip; note that
+`frame_counter.mode` cannot serve as the oracle, since `reset_rewrite_4017`
+retains bit 7 and the re-write therefore restores the mode already in effect.
+v1..=3 blobs upconvert to "no re-write pending", the resting value.
+
 ### DMC channel
 
 - **Memory reader**: when sample buffer is empty and bytes-remaining > 0, request DMA. Bus halts CPU and reads 1 byte from `$C000-$FFFF`. Halt cost: 3 or 4 CPU cycles per `ref-docs/research-report.md` §DMA. Read advances address (wraps `$8000` after `$FFFF`) and decrements bytes-remaining.
@@ -310,10 +326,10 @@ Six on-cart expansion sound chips are synthesized and summed into the external-a
 
 | Chip       | Mapper(s)        | Synth core                                            | Clock cadence                  |
 |------------|------------------|-------------------------------------------------------|--------------------------------|
-| VRC6       | 24 / 26          | `Vrc6Pulse` x2 + `Vrc6Saw` (`crates/rustynes-mappers/src/sprint3.rs`) | every CPU cycle (`$9003` halt + freq-scale shift) |
+| VRC6       | 24 / 26          | `Vrc6Pulse` x2 + `Vrc6Saw` (`crates/rustynes-mappers/src/m024_vrc6.rs`) | every CPU cycle (`$9003` halt + freq-scale shift) |
 | VRC7       | 85               | `rustynes_apu::Opll` (emu2413-derived, MIT)           | OPLL `calc()` every 36 CPU cycles (49,716 Hz)      |
 | FDS        | 20 (FDS device)  | `FdsAudio` wavetable + FM (`crates/rustynes-mappers/src/fds.rs`) | wave/mod every 16 CPU cycles; envelopes per cycle |
-| MMC5       | 5                | `Mmc5Audio` (2 pulse + 7-bit PCM, `crates/rustynes-mappers/src/mmc5.rs`) | pulse timer every other CPU cycle; envelope/length on 2A03 frame events |
+| MMC5       | 5                | `Mmc5Audio` (2 pulse + 7-bit PCM, `crates/rustynes-mappers/src/m005_mmc5.rs`) | pulse timer every other CPU cycle; envelope/length on 2A03 frame events |
 | Namco 163  | 19 / 210         | `Namco163Audio` (1-8 time-multiplexed wavetable channels) | round-robin channel update every 15 CPU cycles    |
 | Sunsoft 5B | 69 (FME-7)       | `Sunsoft5BAudio` (3 tone + noise + envelope)          | every CPU cycle                |
 
@@ -326,17 +342,18 @@ Each chip's `mix_audio()` is scaled so its full-volume square sits at the **rela
 | Chip (ROM)        | Target ratio vs APU square | RustyNES scale (`mix_audio`)         | Status |
 |-------------------|----------------------------|--------------------------------------|--------|
 | APU triangle (`db_apu`) | ≈ 0.524 (fixed 2A03 DAC balance) | `pulse_table` / `tnd_table` LUT   | **Asserted** |
-| VRC6 (`db_vrc6a/b`)     | ≈ 1.506                   | `VRC6_MIX_SCALE = 979` (`sprint3.rs`; was 256) | **Asserted** (v2.1.6) |
-| MMC5 (`db_mmc5`)        | ≈ 1.000 ("equivalent to APU") | pulse `×650` / PCM `×40` (`mmc5.rs`; was 256/16) | **Asserted** (v2.1.6) |
-| Namco 163 1-ch (`db_n163`) | ≈ 6.02                | `NAMCO163_MIX_SCALE = 261` (`sprint3.rs`; was 64) | **Asserted** (v2.1.6) |
-| Sunsoft 5B (`db_5b`)    | ≈ 1.27 (vol-12) / 3.56 (vol-15) | log DAC `SUNSOFT5B_LOG_VOL` (shape exact) | **Deferred level** — see below |
+| VRC6 (`db_vrc6a/b`)     | ≈ 1.506                   | `VRC6_MIX_SCALE = 979` (`m024_vrc6.rs`; was 256) | **Asserted** (v2.1.6) |
+| MMC5 (`db_mmc5`)        | ≈ 1.000 ("equivalent to APU") | pulse `×650` / PCM `×40` (`m005_mmc5.rs`; was 256/16) | **Asserted** (v2.1.6) |
+| Namco 163 1-ch (`db_n163`) | ≈ 6.02                | `NAMCO163_MIX_SCALE = 261` (`m019_namco163.rs`; was 64) | **Asserted** (v2.1.6) |
+| Sunsoft 5B (`db_5b`)    | ≈ 1.265 (vol-12) / 3.554 (vol-15) | shape `SUNSOFT5B_LOG_VOL` + level `SUNSOFT5B_MIX_SCALE_NUM/DEN = 2549/138` | **Asserted** (v2.2.3) |
 | VRC7 (`db_vrc7`)        | ≈ 2.7 peak (patch-dependent) | raw `Opll::calc()` (`±4095`)      | **Snapshot-guarded** — see below |
 
 VRC6 (1.506), MMC5 (1.0) and N163 (6.02) were the v2.1.6 level corrections; MMC5's `mix_audio` bias moves to `-12290` accordingly. **VRC6/MMC5/N163 fixes touch only the expansion channel** — the base 2A03 mix is a separate additive term (`mix_audio() == 0` for non-expansion mappers), so AccuracyCoin / blargg / nestest stay byte-identical.
 
-Two levels are honest documented gaps (`docs/accuracy-ledger.md` §Expansion-audio levels):
+**Sunsoft 5B absolute level — closed in v2.2.3 (A1).** The log-volume DAC *shape* was always hardware-exact (`×1.4126`/step, verified by `sunsoft5b_volume_dac_follows_logarithmic_step_law`); the *level* was deferred for one reason only — `Mapper::mix_audio` returned `i16`, and a full-volume tone at the `db_5b` level is `1882 × 18.471 = 34,761`, past `i16::MAX` for a single channel (three simultaneous tones ≈104 k, 3.2× over). The trait return is now **`i32`**, and the level is calibrated by `SUNSOFT5B_MIX_SCALE_NUM/DEN = 2549/138 ≈ 18.471`: measured `0.0685×` before (~23 dB too quiet), **1.2651×** after, against the Mesen2-derived target `LUT[12]=63 × weight 15 / 746.9 = 1.265`. Asserted by `level_db_5b`. Shape and level are now separately pinned, each by its own oracle. The widening is representational for every other board — they return the values they always did.
 
-- **Sunsoft 5B absolute level.** The log-volume DAC *shape* is hardware-exact (`×1.4126`/step, verified by `sunsoft5b_volume_dac_follows_logarithmic_step_law`), but a full-volume (vol-15) tone at the `db_5b` level would swing ~3.56× the APU pulse — `≈34.7k` unipolar — which overflows the `i16` `mix_audio` contract for even one channel, and three simultaneous tones overflow it several-fold. Representing the full range at the hardware level needs a wider (i32/f32) mix path (a cross-cutting trait-signature change), deferred.
+One level remains an honest documented gap (`docs/accuracy-ledger.md` §Expansion-audio levels):
+
 - **VRC7 FM level.** The OPLL FM synthesizer *is* implemented (emu2413 port) and its instrument ROM is verified canonical (`vrc7_all_15_melodic_patches_match_nuke_ykt_canonical` in `rustynes_apu::opll` — that is the `patch_vrc7` criterion). The absolute FM output vs the APU square is a pseudo-sine (not a square) and patch/TL/feedback-dependent, so it is not cleanly oracle-pinned; the `db_vrc7`/`clip_vrc7` ROMs stay byte-exact snapshot regression guards.
 
 ### NSF expansion-audio routing (v1.7.0 "Forge" G2/G3)

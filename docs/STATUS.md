@@ -1,21 +1,58 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.2.2** (2026-07-21) — **"Conduit"**, a **build,
-> distribution, and CI-integrity patch** on top of v2.2.1 (below). It takes the
-> libretro buildbot recipe from 1 of 10 jobs green to **all ten building**
-> (three rounds of diagnosis against a third-party pipeline we cannot push to or
-> re-run), hardens the GitHub Actions supply chain (`persist-credentials: false`
-> on all 19 checkouts, a fail-closed release-tag check, a SHA-pinned toolchain
-> action), and collapses the toolchain to a **single pinned source of truth** —
-> `rust-toolchain.toml` — with **no `nightly` on any build path** and zero
-> toolchain version literals under `.github/`. **Zero emulation-core changes**:
-> nothing under `crates/rustynes-{cpu,ppu,apu,mappers,core}` is touched, so the
-> deterministic `#![no_std]` chip stack, save-state / TAS / netplay-replay
-> formats, and every golden vector are untouched by construction — **AccuracyCoin
-> holds 141/141 (100.00%)**, unchanged since v2.2.0. The one behavioural
-> improvement reaching a shipped artifact: the libretro **tvOS** core is now
-> built with `panic = "abort"` like every other platform, instead of the
-> `panic = "unwind"` its previous `-Zbuild-std` path forced.
+> **Current release: v2.2.3** (2026-07-23) — **"Datum"**, a **performance and
+> accuracy-closure patch** on top of v2.2.2 (below), produced by a measure-first
+> appraisal that profiled the emulator and acted on what it found.
+>
+> **Performance.** The specialized PPU fast dot path is promoted to the
+> **default** and exposed to users for the first time — `Nes::set_fast_dotloop`
+> previously had **no caller outside the core**, so a **−11.3%** frame-time win
+> (fresh clean-host Criterion, reproducing v2.1.8's +12.3% by a different
+> method) shipped switched off and unreachable. It has been differential-tested
+> bit-identical every frame — framebuffer, palette-index framebuffer, audio,
+> CPU-cycle count and full core snapshot — since v2.1.8. Release builds now ship
+> **PGO-optimized** Linux binaries when the existing >3%-and-byte-identical gate
+> passes, falling back to the plain build otherwise; and CI gained a same-runner
+> **relative** frame-time regression gate, closing a hole where a 2.5x slowdown
+> passed the deliberately-loose absolute ceiling.
+>
+> **Two optimizations were measured and REJECTED**, documented in
+> `docs/performance.md` with their numbers per that file's convention. P3
+> (`emit_pixel` bounds-check elision) made the shipped default **slower**
+> (+4.32% / +3.35% on the two `_fast` workloads, p ≤ 0.02); P4 (`cpu_clock`)
+> found both textbook optimizations already implemented and the one remaining
+> lever capped at **≤1.9%**, below the 3% bar.
+>
+> **Accuracy — the last two Holy Mapperel residuals are closed**, so all 17 ROMs
+> now report `detail=0000` (was 15/17). MMC1's two software WRAM write-protect
+> layers (`$E000` bit 4 and SNROM's CHR-register layer) and FME-7's open bus on
+> the RAM-selected-but-disabled window are both modelled, routed through the
+> trait's existing `cpu_read_unmapped` contract. MMC1 is the change Holy
+> Mapperel's README calls a game-compatibility hazard, so it was validated
+> before landing: **60/60** commercial ROMs (including seven battery-backed MMC1
+> saves — Zelda, Metroid, Final Fantasy, Mega Man 2, Castlevania II, Ninja
+> Gaiden, Kid Icarus) and **138/138** extended.
+>
+> The **Sunsoft 5B absolute level** is calibrated against Mesen2, which required
+> widening `Mapper::mix_audio` to `i32` — the correct full-scale 5B tone
+> (`1882 * 18.471 = 34,761`) does not fit `i16`. A **save-state schema gap** is
+> fixed (`PPU_SNAPSHOT_VERSION` 8 carrying sprite-eval + OAM-bus state, plus an
+> APU v4 tail), which is what made AccuracyCoin report **141/141 through
+> run-ahead** as well as without it; a new standing field-vs-schema audit found
+> it and the two APU gaps mechanically. A **Zapper beam-relative light model**
+> lands opt-in / default-off (no pass-fail light-gun ROM exists to adjudicate
+> it). **AccuracyCoin holds 141/141 (100.00%)**, nestest 0-diff.
+>
+> Also: the eleven `sprintN.rs` mapper modules (27,631 lines, ~110 boards) are
+> renamed for the boards they emulate with `mNNN_` mapper-number prefixes,
+> verified content-preserving by a byte-for-byte item comparison (930 items, 0
+> altered) and an identical 172-ID dispatch table.
+>
+> The prior release, **v2.2.2** (2026-07-21) — **"Conduit"**, a **build,
+> distribution, and CI-integrity patch**: the libretro buildbot recipe from 1 of
+> 10 jobs green to **all ten building**, a GitHub Actions supply-chain hardening
+> pass, and the toolchain collapsed to a single pinned source of truth with no
+> `nightly` on any build path. Zero emulation-core changes.
 >
 > The prior release, **v2.2.1** (2026-07-15) — a **housekeeping patch** on top of
 > v2.2.0 "Capstone" (below): archives two batches of dev/research tooling (the
@@ -1304,7 +1341,7 @@ without panicking (no `$6000` status protocol).
 | `instr_test_v5` | 18 | 18 | — | — | All 16 sub-ROMs + `all_instrs` + `official_only` aggregates. `all_instrs` / `official_only` exercise MMC1 banking. |
 | `instr_misc` | 5 | 5 | — | — | **Vendored + wired in Phase 7 (T-71-003).** blargg aggregate + 4 sub-ROMs (`01-abs_x_wrap`, `02-branch_wrap`, `03-dummy_reads`, `04-dummy_reads_apu`). MMC1. All strict-pass on the **full** lockstep `Nes` (`run_nes_blargg`) — `04-dummy_reads_apu` needs the real APU and cannot pass on the CPU-only `BlarggBus`. |
 | `instr_timing` | 2 | 2 | — | — | **Vendored + wired in Phase 7 (T-71-003).** blargg `1-instr_timing` + `2-branch_timing`. MMC1. Both strict-pass on the full `Nes` (the timing harness depends on APU frame-counter cadence). `1-instr_timing` completes ~frame 1016. |
-| `cpu_reset` | 2 | 1 | 2 | — | **Wired in Phase 7 (T-71-002).** ROMs were vendored at `sprint-2/cpu_reset_{registers,ram_after_reset}.nes` but unused. `cpu_reset_registers_power_on_state` strict-passes by asserting the ROM's power-on register dump `A X Y P S = 00 00 00 34 FD`. The two `_full_protocol` tests are `#[ignore]`'d — these are interactive ("Press reset AFTER this message disappears") and the headless `0x81`-handler can't supply the externally-timed reset; reset register/RAM semantics are covered by `Cpu::power_on` / `Nes::reset` unit tests. |
+| `cpu_reset` | 2 | 1 | 2 | — | **Wired in Phase 7 (T-71-002).** ROMs were vendored at `assorted/cpu_reset_{registers,ram_after_reset}.nes` but unused. `cpu_reset_registers_power_on_state` strict-passes by asserting the ROM's power-on register dump `A X Y P S = 00 00 00 34 FD`. The two `_full_protocol` tests are `#[ignore]`'d — these are interactive ("Press reset AFTER this message disappears") and the headless `0x81`-handler can't supply the externally-timed reset; reset register/RAM semantics are covered by `Cpu::power_on` / `Nes::reset` unit tests. |
 | `cpu_timing_test6` | 1 | 1 | — | — | NROM; runs through `nes_blargg.rs` (`cpu_timing_test_phase1_deferred`) and `blargg_cpu.rs` (boot-completes smoke). |
 | `branch_timing_tests` | 3 | 3 | — | — | `Branch_Basics`, `Backward_Branch`, `Forward_Branch`. |
 | `cpu_dummy_reads` | 1 | 1 | — | — | NROM. |
@@ -1315,8 +1352,8 @@ without panicking (no `$6000` status protocol).
 | `ppu_vbl_nmi` | 10 | 10 | — | — | All ten sub-ROMs (`01-vbl_basics` through `10-even_odd_timing`) pass strictly. |
 | `sprite_overflow_tests` | 5 | 5 | — | — | `1.Basics` through `5.Emulator`. |
 | `sprite_hit_tests` | 11 | 11 | — | — | blargg `sprite_hit_tests_2005.10.05`. `01.basics` through `11.edge_timing`. |
-| `oam_read` | 1 | 1 | — | — | `sprint-2/oam_read.nes`. |
-| `oam_stress` | 1 | 1 | — | — | `sprint-2/oam_stress.nes`. Long-running (~30 s NES time); test gives 3000-frame budget. |
+| `oam_read` | 1 | 1 | — | — | `assorted/oam_read.nes`. |
+| `oam_stress` | 1 | 1 | — | — | `assorted/oam_stress.nes`. Long-running (~30 s NES time); test gives 3000-frame budget. |
 | `apu_test` | 8 | 8 | — | — | `1-len_ctr` through `8-dmc_rates`. All sub-ROMs pass strictly including the IRQ-flag and jitter tests. |
 | `apu_mixer` | 4 | 4 | — | — | `square`, `triangle`, `noise`, `dmc`. Validates the lookup-table non-linear mixer. |
 | `pal_apu_tests` | 10 | 10 | 0 | — | **PAL-region APU oracle (v2.1.5).** blargg's PAL-calibrated APU length/frame-IRQ/timing rebuild, forced to PAL region. These 2005-era ROMs predate the `$6000` protocol (plain NROM, no PRG-RAM → `$6000` reads 0 forever), so the suite decodes the **on-screen** `PASSED`/`FAILED: #<n>` verdict via the `run_nes_screen` harness runner — correcting a prior *false* `$6000`-based oracle that vacuously reported all 10 as passing. **All 10 strict pass**: the three region-independent checks (`01.len_ctr`, `02.len_table`, `03.irq_flag`); the five PAL frame-counter-timing checks (`04.clock_jitter`, `05`/`06.len_timing_mode0`/`1`, `07.irq_flag_timing`, `08.irq_timing`) that flipped to PASS in v2.1.5 when the frame counter gained **region-gated PAL step positions** (2A07 sequencer at 8313/16627/24939/33252-33254 4-step, 8313/16627/24939/41565-41566 5-step); and `10.len_halt_timing` / `11.len_reload_timing` (were `FAILED: #3` / `#4`), closed in v2.1.5 by the **length halt/reload write-ordering** fix — the length counter now defers the halt (`new_halt`) and reload (`reload_val` + `previous_count`), promoted per CPU cycle in `Apu::tick_with_external` after the half-frame clock and before the mixer sample (mirrors `TetaNES`/Mesen2; see `docs/apu-2a03.md` + `docs/accuracy-ledger.md`). NTSC byte-identity preserved: the PAL positions are `Region::Pal`-only and the ordering fix settles in-cycle on non-coincident writes (NTSC/Dendy unchanged; AccuracyCoin 141/141, `apu_test` 8/8, `blargg_apu_2005` 11/11 exact). |
@@ -1326,7 +1363,7 @@ without panicking (no `$6000` status protocol).
 | `mmc5` (smoke) | 3 | — | — | 3 | `mapper_mmc5test_v1.nes`, `mapper_mmc5test_v2.nes`, `mapper_mmc5exram.nes` from `christopherpow/nes-test-roms/mmc5test/`. Visual-only; smoke-tested. Deep features (split-screen ExGrafix, audio extension) tested via in-tree mapper unit tests. |
 | `holy_mapperel` | 17 | 17 | — | 17 | Damian Yerrick / tepples cartridge-PCB-assembly test (zlib license). 17 ROMs across mappers 0/1/2/3/4/7/9/10/34/66/69. Visual-only protocol → smoke-tested only. Track B1. |
 | `vrc24test` | — | — | — | — | **Skipped (Track B1)**: link rot. AWJ's original forum attachment (id=10017 on forums.nesdev.org/viewtopic.php?p=203716) is auth-walled; the deletion is documented at archive.nes.science. No GitHub mirror found. |
-| `AccuracyCoin` | 1 | 1 | — | — | 100thCoin / Chris Siebert single-NROM accuracy battery (MIT license, 146 tests across 20 suites + 5 visual-only `Power On State` tests sharing `$03FF`; the v2.0.1 upstream re-sync grew the catalog from 144 to 146 rows / 139 to 141 assigned tests, adding the PPU "ALE + Read" and "Hybrid Addresses" tests). Interactive (D-Pad menu); the harness presses `START` to "run all tests on the ROM" then takes two parallel measurements. **(1) Framebuffer decoder** reads the 10×16 on-screen result grid by exact-pixel colour (5-colour palette: `#64A0FF` = pass, `#4F1000` = fail, `#DC834C` = partial-pass, `#4C4C4C` = no-test / not-run, `#FFFFFF` = border); this is the legacy path and has a known grid-stride bug that under-samples by ~31 cells. **(2) RAM-direct decoder** reads each test's result byte from its fixed CPU-RAM address (catalogued from upstream `AccuracyCoin.asm` in `crates/rustynes-test-harness/src/accuracy_coin_catalog.rs` and `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv` — 146 `(suite, name, addr)` triples) and decodes per-test pass/fail/error-code names + per-suite breakdowns. This is the authoritative path. **Current measured pass rate (RAM-direct): 100.00% (141/141)** on the default build — the two upstream PPU tests "ALE + Read" and "Hybrid Addresses" (briefly the only gaps at 139/141 after the v2.0.1 catalog re-sync) were **closed in v2.0.3** by promoting the 2-cycle-ALE PPU fetch model to the unconditional default. The `90.65%`, `84.17%` and the trajectory figures below are historical engine-lineage milestones (the pre-promotion v1.0.0-rc2 / Session-26 era), retained as history. Historical trajectory: `64.03%` (post-D2 baseline) → `67.63%` (post-D3, 7 6502 bus-pattern fixes) → `69.06%` (post-Phase-3 OAM DMA parity fix, +1 strict test flipped) → `69.78%` (post-FSM-fix recovery, +1 sprite-related sub-test flipped as a side-benefit of the `crates/rustynes-ppu/src/ppu.rs` dot-64 reset removal) → `76.98%` (post-Cascade-B DMC DMA scheduler, commit `9b0c81c` — closes all 8 tests in the `APU Registers and DMA tests` suite + 3 net elsewhere as side-benefits; +11 tests flipped) → `78.42%` (post-Cascade-A OAMADDR-during-rendering reset, commit `f29f7ca` — hardware-accurate per nesdev: OAMADDR is reset to 0 during dots 257-320 of every rendered scanline; +2 tests flipped — Sprite overflow behavior PASSES, Sprite 0 Hit advances from error 1 → error 13) → `79.14%` (post-session-7 OAMADDR-walks-during-eval + $4-aligned `$2004` write, commit `c230489` — closes `Address $2004 behavior` with code 16; +1 net flip) → `79.86%` (post-session-7 RMW ABS,X/Y unfixed-address dummy read, commit `32d5b18` — 18 RMW opcodes get the canonical cycle-4 unfixed-address dummy; flips `APU Tests :: Controller Clocking` and advances `Implied Dummy Reads` 2→3 + `Frame Counter IRQ` 6→7 via the SLO $4015,X bracket; +1 net flip) → `82.73%` (post-session-8 BG-pipeline cycle-9 reload + post-emit shift, commit `086ce4d` — fixes the long-standing 1-column BG pixel off-by-one identified in `docs/audit/cascade-a-investigation-2026-05-19.md`; flips `Sprite 0 Hit behavior` + `Sprite overflow behavior` + `Suddenly Resize Sprite` + `$2007 read w/ rendering`; +4 net flips, +2.87pp) → `83.45%` (post-session-24 Controller Strobing M2-low-defer write, Session-24 Phase 3 — deferred `$4016` commit buffer on `LockstepBus` mirrors Mesen2's `NesControlManager::ProcessWrites`; flips `APU Tests :: Controller Strobing` from `[error 4]` to PASS; +1 net flip) → **`84.17%` (post-session-26 Sprint 2 iter 5 Frame-Counter-IRQ split, 2026-05-23 — separates `FrameCounter::irq_flag` ($4015 bit 6 visibility) from `FrameCounter::irq_line_active` (CPU IRQ source driver) so Tests I/J/K/L/M/N/O all PASS without spuriously asserting the CPU IRQ line on inhibited frame-counter cycles; flips `APU Tests :: Frame Counter IRQ` from `[error 19]` to PASS; +1 net flip)**. Session-26 Sprint 2 iter 4 (APU Register Activation OAM-DMA chip-select gate) advanced the same suite's APU Register Activation entry internally from `[error 4]` to `[error 6]` but did not flip the catalog-headline metric. The previous `75.93%` headline reflected the framebuffer decoder's stride bug, not real accuracy. Strict floor in CI is **60%** — see `crates/rustynes-test-harness/tests/accuracycoin.rs::MIN_PASS_RATE`. the v0.9.x 80% target and the v1.0.0 90% gate were both cleared, and the default build now measures **100.00% (141/141)** — the master-clock core is the default, the former C1 + sub-cycle residuals are closed, and the two v2.0.1 PPU tests were closed in v2.0.3 (see "Accuracy residuals" below). There are no open AccuracyCoin gaps. Implementation in `crates/rustynes-test-harness/src/accuracy_coin.rs` + `accuracy_coin_catalog.rs`. Phase D1 / D2 / D3. |
+| `AccuracyCoin` | 1 | 1 | — | — | 100thCoin / Chris Siebert single-NROM accuracy battery (MIT license, 146 tests across 20 suites + 5 visual-only `Power On State` tests sharing `$03FF`; the v2.0.1 upstream re-sync grew the catalog from 144 to 146 rows / 139 to 141 assigned tests, adding the PPU "ALE + Read" and "Hybrid Addresses" tests). Interactive (D-Pad menu); the harness presses `START` to "run all tests on the ROM" then takes two parallel measurements. **(1) Framebuffer decoder** reads the 10×16 on-screen result grid by exact-pixel colour (5-colour palette: `#64A0FF` = pass, `#4F1000` = fail, `#DC834C` = partial-pass, `#4C4C4C` = no-test / not-run, `#FFFFFF` = border); this is the legacy path and has a known grid-stride bug that under-samples by ~31 cells. **(2) RAM-direct decoder** reads each test's result byte from its fixed CPU-RAM address (catalogued from upstream `AccuracyCoin.asm` in `crates/rustynes-test-harness/src/accuracy_coin_catalog.rs` and `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv` — 146 `(suite, name, addr)` triples) and decodes per-test pass/fail/error-code names + per-suite breakdowns. This is the authoritative path. **Current measured pass rate (RAM-direct): 100.00% (141/141)** on the default build — the two upstream PPU tests "ALE + Read" and "Hybrid Addresses" (briefly the only gaps at 139/141 after the v2.0.1 catalog re-sync) were **closed in v2.0.3** by promoting the 2-cycle-ALE PPU fetch model to the unconditional default. The `90.65%`, `84.17%` and the trajectory figures below are historical engine-lineage milestones (the pre-promotion v1.0.0-rc2 / Session-26 era), retained as history. Historical trajectory: `64.03%` (post-D2 baseline) → `67.63%` (post-D3, 7 6502 bus-pattern fixes) → `69.06%` (post-Phase-3 OAM DMA parity fix, +1 strict test flipped) → `69.78%` (post-FSM-fix recovery, +1 sprite-related sub-test flipped as a side-benefit of the `crates/rustynes-ppu/src/ppu.rs` dot-64 reset removal) → `76.98%` (post-Cascade-B DMC DMA scheduler, commit `9b0c81c` — closes all 8 tests in the `APU Registers and DMA tests` suite + 3 net elsewhere as side-benefits; +11 tests flipped) → `78.42%` (post-Cascade-A OAMADDR-during-rendering reset, commit `f29f7ca` — hardware-accurate per nesdev: OAMADDR is reset to 0 during dots 257-320 of every rendered scanline; +2 tests flipped — Sprite overflow behavior PASSES, Sprite 0 Hit advances from error 1 → error 13) → `79.14%` (post-session-7 OAMADDR-walks-during-eval + $4-aligned `$2004` write, commit `c230489` — closes `Address $2004 behavior` with code 16; +1 net flip) → `79.86%` (post-session-7 RMW ABS,X/Y unfixed-address dummy read, commit `32d5b18` — 18 RMW opcodes get the canonical cycle-4 unfixed-address dummy; flips `APU Tests :: Controller Clocking` and advances `Implied Dummy Reads` 2→3 + `Frame Counter IRQ` 6→7 via the SLO $4015,X bracket; +1 net flip) → `82.73%` (post-session-8 BG-pipeline cycle-9 reload + post-emit shift, commit `086ce4d` — fixes the long-standing 1-column BG pixel off-by-one identified in `docs/audit/cascade-a-investigation-2026-05-19.md`; flips `Sprite 0 Hit behavior` + `Sprite overflow behavior` + `Suddenly Resize Sprite` + `$2007 read w/ rendering`; +4 net flips, +2.87pp) → `83.45%` (post-session-24 Controller Strobing M2-low-defer write, Session-24 Phase 3 — deferred `$4016` commit buffer on `LockstepBus` mirrors Mesen2's `NesControlManager::ProcessWrites`; flips `APU Tests :: Controller Strobing` from `[error 4]` to PASS; +1 net flip) → **`84.17%` (post-session-26 Sprint 2 iter 5 Frame-Counter-IRQ split, 2026-05-23 — separates `FrameCounter::irq_flag` ($4015 bit 6 visibility) from `FrameCounter::irq_line_active` (CPU IRQ source driver) so Tests I/J/K/L/M/N/O all PASS without spuriously asserting the CPU IRQ line on inhibited frame-counter cycles; flips `APU Tests :: Frame Counter IRQ` from `[error 19]` to PASS; +1 net flip)**. Session-26 Sprint 2 iter 4 (APU Register Activation OAM-DMA chip-select gate) advanced the same suite's APU Register Activation entry internally from `[error 4]` to `[error 6]` but did not flip the catalog-headline metric. The previous `75.93%` headline reflected the framebuffer decoder's stride bug, not real accuracy. Strict floor in CI is **60%** — see `crates/rustynes-test-harness/tests/accuracycoin.rs::MIN_PASS_RATE`. the v0.9.x 80% target and the v1.0.0 90% gate were both cleared, and the default build now measures **100.00% (141/141)** — the master-clock core is the default, the former C1 + sub-cycle residuals are closed, and the two v2.0.1 PPU tests were closed in v2.0.3 (see "Accuracy residuals" below). There are no open AccuracyCoin gaps. Implementation in `crates/rustynes-test-harness/src/accuracy_coin.rs` + `accuracy_coin_catalog.rs`. Phase D1 / D2 / D3. **The battery is now also run under the frontend's run-ahead snapshot/restore cycle** (`accuracycoin_runahead.rs`, depths 1 and 2) — the plain `run_frame` driver cannot see save-state gaps, and a real one cost three tests (141/141 headless vs 138/141 on the desktop app at the default `run_ahead = 1`) until the sprite-evaluation FSM + OAM-data-bus state was serialized in the `PPU_SNAPSHOT_VERSION` **v8** tail. That tail is the one non-additive save-state change since ADR 0028: the `.rns` container is version-exact per section, so pre-v8 save states no longer load. |
 
 **Top-line counts (workspace + `--features test-roms`): the suite has grown substantially across the v1.6.0 → v1.8.8 train — `cargo test --workspace --features test-roms -- --list` currently enumerates ~**2030** tests workspace-wide (AccuracyCoin holds **100.00% / 141-141** since v2.0.3; host CI is green). The per-release figures cited in this section (661 strict + 10 ignored at v1.5.0; 545 strict / 605-with-`commercial-roms` at v1.0.0-rc2 / Session-26; etc.) are point-in-time historical provenance, NOT the current count — see `CHANGELOG.md` per-version entries and CI for authoritative per-release / per-suite numbers:
 
@@ -1422,9 +1459,9 @@ ROM dumps under `tests/roms/external/`, not committed):
 > RustyNES **v1.0.0 shipped 51 mapper families**; **v1.2.0 extended this to
 > 87**, **v1.3.0 "Bedrock" to 101**, **v1.4.0 "Fidelity" to 113**, and
 > **v1.5.0 "Lens" to 123**, **v1.6.0 "Studio" to 150** — the J.Y. Company ASIC
-> mappers (m90/209/211) + the UNIF loader + Workstream E's `sprint11` batch — and
+> mappers (m90/209/211) + the UNIF loader + Workstream E's MMC3-clone batch — and
 > **v1.7.0 "Forge" to 168** (Workstream G1's reusable-ASIC batch), and
-> **v1.8.9 "Backlog" beta.6 to 172** (the current count; the `sprint13`
+> **v1.8.9 "Backlog" beta.6 to 172** (the current count; the final NTDEC/TXC/BMC
 > NTDEC/TXC/BMC multicart batch — m193/204/221/299 — plus a UNIF board-map
 > breadth pass). See
 > `docs/mappers.md` §Mapper coverage matrix +
@@ -1437,12 +1474,12 @@ licensed library by title count) → **51 families at v1.0.0** → **87 families
 v1.2.0** → **101 families at v1.3.0 "Bedrock"** → **113 families at v1.4.0
 "Fidelity"** → **123 families at v1.5.0 "Lens"** → **150 families at v1.6.0
 "Studio"** (the J.Y. Company ASIC sweep 35/90/209/211 +
-Workstream E's `sprint11` batch: MMC3-clones, Sachen 8259 A/B/C, discrete
-multicarts) → **168 families at v1.7.0 "Forge"** (Workstream G1's `sprint12`
+Workstream E's batch: MMC3-clones, Sachen 8259 A/B/C, discrete
+multicarts) → **168 families at v1.7.0 "Forge"** (Workstream G1's reusable-ASIC
 reusable-ASIC batch: FK23C, COOLBOY/MINDKIDS, Sachen 9602/3011, Waixing
 164/253/286, Kaiser 56/142/303/305/306/312, and BMC multicarts
 261/289/320/336/349) → **172 families at v1.8.9 "Backlog" beta.6** (the current
-count; the `sprint13` NTDEC/TXC/BMC multicart batch — NTDEC TC-112 m193, BMC
+count; the final NTDEC/TXC/BMC multicart batch — NTDEC TC-112 m193, BMC
 2-in-1 m204, NTDEC N625092 m221, TXC/BMC-11160 m299 — plus a UNIF board-map
 breadth pass wiring well-known board aliases to already-implemented families),
 tiered for accuracy honesty:
@@ -1543,6 +1580,7 @@ pirate carts, niche boards) is documented in `docs/compatibility.md`.
 | `mapper-audio` | `rustynes-mappers` | **on** | Gates on-cart audio extensions. Post-tag v0.9.x ships VRC6 (mappers 24/26), Sunsoft 5B (mapper 69, Phase 2.1), Namco 163 (mapper 19, Phase 2.2), and MMC5 (mapper 5, Phase 2.3); VRC7 (mapper 85) FM audio **landed in v1.1.0** (`crates/rustynes-apu/src/opll.rs`; ADR-0006 supersedes 0004). With the flag off, register decoders still latch state (preserves save-state round-trip) but channel oscillators do not advance and `mix_audio` returns 0. |
 | `irq-timing-trace` | `rustynes-core`, `rustynes-test-harness` | off | Track C1 per-CPU-cycle IRQ tracing fixture. See `crates/rustynes-core/src/irq_trace.rs` and ADR-0002 §"Test fixture". CI does not enable it (the fixture is heavy: ~3-4 M records per ROM × 6 ROMs ≈ 160 MB peak). Enabled by `cargo test --features test-roms,irq-timing-trace --test irq_trace_fixture`. |
 | `ppu-state-trace` | `rustynes-ppu`, `rustynes-core`, `rustynes-test-harness` | off | Session-10 per-PPU-dot state-tracing fixture. See `crates/rustynes-ppu/src/state_trace.rs`, ADR-0005, `docs/ppu-trace-tooling.md`. When OFF, every byte of overhead is gone via `#[cfg]` gates inside `Ppu::tick` and on the storage field. CI does not enable it; the fixture is heavy (180 MB / 10-frame visible-only window). Enabled by `cargo test --features test-roms,ppu-state-trace --test ppu_state_trace_fixture`. |
+| `ppu-idle-line-fast` | `rustynes-ppu`, `rustynes-core`, `rustynes-test-harness` | off | v2.2.3 P2. The specialized **idle-line** PPU dot path (`Ppu::tick_idle_line_fast`) for the post-render line + vblank lines 242..=260 — 6,820 of the 89,342 NTSC dots, where the per-dot body provably reduces to three rendering-flag assignments. **Byte-identical** (pinned by `fast_dotloop_diff`, incl. a vblank-I/O torture ROM that forces the guard's fall-through arms), but measured **below the >3% adoption bar** — a same-session A/B against a ±0.7% noise floor gives −1.3%/−1.5% on rendering-*disabled* content and +0.2%/+0.4% on the rendering-heavy case that dominates real play. Kept behind a flag rather than deleted; compile-time rather than runtime because the cost *is* the per-dot guard. With it off the field, guard and handler are all absent. See `docs/performance.md` §P2. |
 | `commercial-roms` | `rustynes-test-harness` | off | 60-ROM regression bisect harness against user-supplied dumps at `tests/roms/external/`. Snapshots committed; ROM dumps gitignored. Enables `cargo test --features test-roms,commercial-roms --test external_real_games`. |
 | `cpu-implied-dummy-reads` | `rustynes-cpu`, `rustynes-core`, `rustynes-test-harness` | off | Sprint 2.3 (v1.2.0). Enables canonical cycle-2 PC dummy reads for the 23 implied/accumulator/transfer/flag opcodes per nesdev §6502 cpu cycle reference. Default-off pending DMC scheduler co-fix (see `dmc-get-put-scheduler` row below + ADR 0007). With the flag ON in isolation, the `Implied Dummy Reads` AccuracyCoin test still does NOT flip to PASS — the cascade-target needs the get/put scheduler interaction. |
 | `dmc-get-put-scheduler` *(removed)* | — | **removed** | **Historical (v2.0.0-era); the flag was deleted.** Engine-lineage Phase 8 Sprint 3 (v1.2.0). Replaces the v1.1.0 phase-agnostic "noop loop + compensating delays" DMC scheduler in `rustynes-core::bus::service_dmc_dma` with Mesen2's canonical get/put cycle alternation model (`NesCpu.cpp:399-447`). Default-off via parallel-implementation pattern (ADR 0007). This parallel experiment reached only **6/10** on the AccuracyCoin DMA cluster (4 failures in the DMC abort path) and was **superseded and removed**: the default master-clock core closes that DMA cluster **10/10** (see the AccuracyCoin 100% breakdown above). |
@@ -1618,7 +1656,7 @@ before it landed. The "deferred to v2.0" language inside it is history, not a pl
    closed; it shares the same architectural surface as
    `cpu_interrupts_v2/{2..5}` above (CPU per-cycle IRQ sample point /
    bus poll location). `#[ignore]`'d strict probe + `_currently_fails`
-   companion in `crates/rustynes-test-harness/tests/mmc3.rs`.
+   companion in `crates/rustynes-test-harness/tests/m004_mmc3.rs`.
 
 CHANGELOG `[Unreleased]` → "Investigated and rolled back" documents
 **seven** prior code attempts (the original 4 from v0.9.0-rc prep,

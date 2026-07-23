@@ -5,13 +5,13 @@ G=/usr/bin/git
 $G reset --soft HEAD~1
 $G restore --staged .
 # mapper 119 commit
-$G add crates/rustynes-mappers/src/tqrom.rs crates/rustynes-mappers/src/lib.rs crates/rustynes-mappers/src/mmc3.rs crates/rustynes-test-harness/tests/v21_coverage_mappers.rs docs/mappers.md docs/compatibility.md
+$G add crates/rustynes-mappers/src/m119_tqrom.rs crates/rustynes-mappers/src/lib.rs crates/rustynes-mappers/src/m004_mmc3.rs crates/rustynes-test-harness/tests/v21_coverage_mappers.rs docs/mappers.md docs/compatibility.md
 $G commit -q -F - <<'EOF'
 feat(mappers): add iNES mapper 119 (TQROM) — Pin*Bot, High Speed
 
 TQROM is an MMC3 variant with a mixed CHR address space: 64 KiB CHR-ROM +
 8 KiB CHR-RAM, selected per 1 KiB bank by bit 6 of the MMC3 CHR bank number
-(set = CHR-RAM, clear = CHR-ROM). New rustynes-mappers/src/tqrom.rs embeds an Mmc3
+(set = CHR-RAM, clear = CHR-ROM). New rustynes-mappers/src/m119_tqrom.rs embeds an Mmc3
 and delegates PRG/IRQ/mirroring verbatim (the TxSrom/mapper-118 pattern),
 overriding only the pattern-table read/write to route on bit 6 (Mmc3 gains a
 small chr_bank_1k helper). Parse arm for 119; save-state v1. 8 unit tests +

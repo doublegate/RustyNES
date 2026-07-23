@@ -61,8 +61,8 @@
 //! | ROM | Detected | Detailed | Class |
 //! |-----|----------|----------|-------|
 //! | `M0_*` (×2)         | 000 NROM           | `0000` | PASS |
-//! | `M1_P128K_C32K`     | 001 SJROM (MMC1)   | `1000` | WRAM residual |
-//! | `M1_P128K_CR8K`     | 001 SNROM (MMC1)   | `5000` | WRAM residual |
+//! | `M1_P128K_C32K`     | 001 SJROM (MMC1)   | `0000` | PASS (v2.2.3 A2) |
+//! | `M1_P128K_CR8K`     | 001 SNROM (MMC1)   | `0000` | PASS (v2.2.3 A2) |
 //! | `M2_P128K_CR8K_V`   | 002 UNROM          | `0000` | PASS |
 //! | `M3_P32K_C32K_H`    | 003 CNROM          | `0000` | PASS |
 //! | `M4_*` (×3)         | 004 T[N/S]ROM MMC3 | `0000` | PASS (incl. IRQ) |
@@ -71,7 +71,7 @@
 //! | `M10_*` (×2)        | 010 F*ROM (MMC4)   | `0000` | PASS |
 //! | `M34_P128K_CR8K_H`  | 034 BNROM          | `0000` | PASS (NES 2.0 dual-reg OK) |
 //! | `M66_P64K_C16K_V`   | 066 MHROM (`GxROM`)  | `0000` | PASS |
-//! | `M69_*` (×2)        | 069 J*ROM (FME-7)  | `1000` | WRAM residual (IRQ OK) |
+//! | `M69_*` (×2)        | 069 J*ROM (FME-7)  | `0000` | PASS (v2.2.3 A2)       |
 //!
 //! ## The WRAM-protection residual (`M1_*`, `M69_*`: nonzero WRAM nibble)
 //!
@@ -80,35 +80,43 @@
 //! for MMC1 only; FME-7 does model its RAM-enable bits and fails a narrower,
 //! open-bus edge instead.
 //!
-//! **MMC1 (`M1_*` = `1000` / `5000`).** MMC1 provides a *software WRAM
-//! write-protect* bit (`$E000` bit 4; SNROM adds a second `$A000` bit-4 layer).
-//! `RustyNES` does **not** model it: `crates/rustynes-mappers/src/mmc1.rs`
-//! reads and writes `$6000-$7FFF` `prg_ram` unconditionally, ignoring the
-//! disable bit. Holy Mapperel's disable sub-checks therefore fail — `1000` on
-//! SJROM (`$E000` layer = `MAPTEST_WRAMEN` `$10`), `5000` on SNROM (both
-//! layers, `MAPTEST_WRAMEN2 $40 | MAPTEST_WRAMEN $10`). This is a deliberate,
-//! widely-shared simplification: Holy Mapperel's own README notes FCEUX and
-//! `PowerPak` omit it too, and modelling MMC1 RAM-disable is a notorious
-//! game-compatibility hazard.
+//! **MMC1 (`M1_*` = `0000`, CLOSED in v2.2.3 A2).** MMC1 carries *two*
+//! software PRG-RAM write-protect layers and `RustyNES` modelled neither,
+//! reading and writing `$6000-$7FFF` unconditionally: the `$E000` bit-4
+//! disable common to every MMC1 board, and SNROM's second layer, where on a
+//! CHR-RAM board the CHR bank register's bit 4 is wired to the RAM's second
+//! enable. Hence the two different failures — `1000` on SJROM (the `$E000`
+//! layer alone, `MAPTEST_WRAMEN $10`) and `5000` on SNROM (both,
+//! `MAPTEST_WRAMEN2 $40 | MAPTEST_WRAMEN $10`).
 //!
-//! **FME-7 (`M69_*` = `1000`).** FME-7 is *not* an "always-enabled WRAM" case.
-//! `crates/rustynes-mappers/src/sprint3.rs` **does** model the command-`$8`
-//! RAM-enable (bit 7, `$80`) and RAM-select (bit 6, `$40`) bits: it maps
-//! PRG-RAM at `$6000-$7FFF` only when *both* are set, and maps a PRG-ROM bank
-//! when RAM is deselected (bit 6 = 0). Its `1` nibble is a narrower gap in a
-//! single register state. The FME-7 driver's WRAM test does three sub-checks:
-//! write-then-read RAM (`$C0|$3F` = select + enable, **passes** — RAM works),
-//! read the last ROM bank (`$00|$3F` = deselect, **passes** — ROM works), then
-//! read the *RAM-selected-but-disabled* window (`$40|$3F` = bit 6 = 1, bit 7 =
-//! 0) and require an **open-bus** byte `>= 3` (a `$7F` from the disconnected
-//! bus). On real hardware that state drives neither the RAM nor the ROM chip,
-//! so the read floats to open bus; `RustyNES` instead falls through to the
-//! PRG-ROM bank (`value & $3F` = the last 8 KiB bank) and returns its bank tag
-//! (`1`, which is `< 3`), so the driver sets `MAPTEST_WRAMEN` (`$10`) → WRAM
-//! nibble `1`. No known FME-7 game reads `$6000-$7FFF` in that
-//! RAM-selected-yet-disabled state, so closing the gap is not provably
-//! byte-identical against the commercial oracle; it is left as a documented,
-//! deferred open-bus edge rather than a speculative core change.
+//! Both are now modelled, and a disabled window reports `cpu_read_unmapped`
+//! so the read floats to open bus rather than returning stale RAM. Holy
+//! Mapperel's own README notes FCEUX and `PowerPak` omit this and calls it a
+//! game-compatibility hazard, so it was validated before landing rather than
+//! assumed: the full commercial-ROM oracle passes **60/60** (including seven
+//! battery-backed MMC1 titles — Zelda, Metroid, Final Fantasy, Mega Man 2,
+//! Castlevania II, Ninja Gaiden, Kid Icarus, exactly the saves that break if
+//! the RAM enable is mismodelled) and the extended corpus **138/138**.
+//!
+//! **FME-7 (`M69_*` = `0000`, CLOSED in v2.2.3 A2).** FME-7 was never an
+//! "always-enabled WRAM" case. `m069_sunsoft_fme7.rs` models the command-`$8`
+//! RAM-enable (bit 7) and RAM-select (bit 6) bits: PRG-RAM maps only when both
+//! are set, and a PRG-ROM bank maps when RAM is deselected. Its old `1` nibble
+//! was a single missing register state. The driver's WRAM test does three
+//! sub-checks: write-then-read RAM (`$C0|$3F`, passed), read the last ROM bank
+//! (`$00|$3F`, passed), then read the *RAM-selected-but-disabled* window
+//! (`$40|$3F` — bit 6 = 1, bit 7 = 0) and require an **open-bus** byte `>= 3`.
+//! That state drives neither chip on hardware, so the databus floats; `RustyNES`
+//! fell through to the PRG-ROM bank and returned its tag byte `1` (`< 3`), so
+//! the driver set `MAPTEST_WRAMEN` (`$10`).
+//!
+//! v2.2.3 A2 routes that one state through `Mapper::cpu_read_unmapped`, the
+//! trait's existing "not wired to mapper-resident memory" contract, so the bus
+//! preserves the open-bus latch instead of clobbering it. The window now reads
+//! `$7F` and the nibble is `0`. Verified by negative control — reverting the
+//! change flips the on-screen digit back from `0` to `1` — and against the
+//! commercial oracle, where the FME-7 titles (Mr. Gimmick, Batman: Return of
+//! the Joker) are byte-unchanged by it.
 //!
 //! Neither case is a bank-reachability defect — every bank is reachable and
 //! every other sub-test is `0`, including the FME-7 IRQ nibble (`0` = the
@@ -181,8 +189,8 @@ fn rom_dir() -> PathBuf {
 fn expect_label(stem: &str) -> &'static str {
     match stem {
         "M0_P32K_CR32K_V" | "M0_P32K_CR8K_V" => "PASS NROM(000) detail=0000",
-        "M1_P128K_C32K" => "WRAM-RESIDUAL SJROM/MMC1(001) detail=1000",
-        "M1_P128K_CR8K" => "WRAM-RESIDUAL SNROM/MMC1(001) detail=5000",
+        "M1_P128K_C32K" => "PASS SJROM/MMC1(001) detail=0000",
+        "M1_P128K_CR8K" => "PASS SNROM/MMC1(001) detail=0000",
         "M2_P128K_CR8K_V" => "PASS UNROM(002) detail=0000",
         "M3_P32K_C32K_H" => "PASS CNROM(003) detail=0000",
         "M4_P128K_CR32K" | "M4_P128K_CR8K" => "PASS TNROM/MMC3(004) detail=0000",
@@ -192,7 +200,7 @@ fn expect_label(stem: &str) -> &'static str {
         "M10_P128K_C64K_S8K" | "M10_P128K_C64K_W8K" => "PASS FxROM/MMC4(010) detail=0000",
         "M34_P128K_CR8K_H" => "PASS BNROM(034) detail=0000",
         "M66_P64K_C16K_V" => "PASS MHROM/GxROM(066) detail=0000",
-        "M69_P128K_C64K_S8K" | "M69_P128K_C64K_W8K" => "WRAM-RESIDUAL J*ROM/FME-7(069) detail=1000",
+        "M69_P128K_C64K_S8K" | "M69_P128K_C64K_W8K" => "PASS J*ROM/FME-7(069) detail=0000",
         _ => "UNVERIFIED (new ROM — render + classify before blessing)",
     }
 }

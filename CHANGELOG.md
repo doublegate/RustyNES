@@ -14,8 +14,388 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.2.3] - 2026-07-23 - "Datum" (fast dot path promoted + PGO shipped + the last two mapper residuals closed)
+
+### Performance
+
+- **The specialized PPU fast dot path is now the default (`~11%` faster on
+  rendering-heavy content).** `Ppu::tick` is the emulator's hottest function
+  (32.8% of frame self-time in a fresh profile of the 7-ROM training corpus);
+  v2.1.8 added `tick_visible_render_fast`, a straight-line handler for the
+  common undisturbed visible background dot, and shipped it **off** as that
+  roadmap's highest-risk item, pending "maintainer review and a clean-host
+  Criterion confirmation". Both conditions are now met, so it defaults on.
+
+  Clean-host `full_frame`: `nes_run_frame_nestest` **4.4343 ms → 3.9331 ms
+  (−11.3%)**; the rendering-disabled `flowing_palette` workload is unchanged
+  (−0.07%, noise — its guard bails at `rendering_enabled()`). This reproduces
+  v2.1.8's interleaved +12.3% measurement by a different method.
+
+  **Byte-identical, and not newly so:** `fast_dotloop_diff.rs` has compared both
+  paths' framebuffer + palette-index framebuffer + audio + CPU-cycle count +
+  full core snapshot *every frame* since v2.1.8. Re-verified with the new
+  default across the whole `--features test-roms` suite. *At the promotion
+  commit* that read **2219 passed / 0 failed** — the pre-promotion 2218 plus
+  exactly the one config test added alongside, with no test changing its
+  verdict, which is the number that matters for this item. The suite total then
+  grew with the later work in this release; the figure for the release as a
+  whole is **2238 passed / 0 failed / 20 ignored** (see the Verification block
+  and `.github/release-notes/v2.2.3.md`, which quote that same total).
+  AccuracyCoin 141/141, nestest 0-diff, `visual_regression` and the APU oracles
+  unmoved.
+
+  Until now the win was **unreachable in practice**: `Nes::set_fast_dotloop` had
+  no callers outside the core and its tests, so no shipped frontend
+  configuration could turn it on.
+
+### Fixed
+
+- **The last two Holy Mapperel mapper residuals are closed — all 17 ROMs now
+  report `detail=0000`** (was 15/17). Both were single missing register states,
+  not bank-reachability defects.
+
+  **MMC1 software WRAM write-protect.** MMC1 has *two* PRG-RAM write-protect
+  layers and RustyNES modelled neither, reading and writing `$6000-$7FFF`
+  unconditionally: the `$E000` bit-4 disable common to every board, and SNROM's
+  second layer, where on a CHR-**RAM** board the CHR bank register's bit 4 is
+  wired to the RAM's other enable. That is exactly what Holy Mapperel measured —
+  `1000` on SJROM (one layer) versus `5000` on SNROM (both). The SNROM layer is
+  gated on `chr_is_ram`, since on a CHR-ROM board those bits are real CHR
+  banking; getting that wrong would break every SJROM/SUROM title, so it carries
+  its own negative-control test.
+
+  Holy Mapperel's README calls this a game-compatibility hazard and notes FCEUX
+  and PowerPak decline to model it, so it was validated before landing rather
+  than assumed: the commercial-ROM oracle passes **60/60** — including seven
+  battery-backed MMC1 saves (Zelda, Metroid, Final Fantasy, Mega Man 2,
+  Castlevania II, Ninja Gaiden, Kid Icarus), precisely the titles that corrupt if
+  the RAM enable is wrong — and the extended corpus **138/138**. No regression,
+  so it ships on by default.
+
+  **FME-7 open bus on the RAM-selected-but-disabled window.** Command `$8`
+  bit 6 = 1 with bit 7 = 0 drives neither the RAM nor the ROM chip, so the
+  databus floats; RustyNES fell through to the PRG-ROM bank and returned its tag
+  byte. Both fixes route through `Mapper::cpu_read_unmapped`, the trait's
+  existing "not wired to mapper-resident memory" contract, so the bus preserves
+  the open-bus latch instead of clobbering it.
+
+  Each was negative-controlled by decoding the ROM's on-screen result to ASCII
+  and confirming that reverting flips the digit back — the harness's `detail=`
+  string is a hand-maintained classification, not a measurement.
+
+- **Seven commercial-oracle audio rows had gone silently stale; re-blessed with
+  their provenance recorded.** They failed on `audio_fnv1a64` alone — frames,
+  cycles, sample counts and every framebuffer checkpoint byte-identical. The
+  MMC5 (×3) and VRC6 (×3) rows had been stale since **v2.1.6**, when
+  `VRC6_MIX_SCALE` and all three MMC5 level constants were recalibrated: those
+  snapshots were last blessed 2026-06-13, 28 days earlier. The FME-7 row moved
+  with this line's own 5B level calibration.
+
+  Root cause was structural — the suite needs `--features commercial-roms` **and**
+  local gitignored ROM dumps, so neither CI nor the default gate can run it, and
+  a golden vector nothing executes only accumulates drift. A new
+  `expansion_level_tripwire` unit test (which CI *does* run) pins every
+  expansion-audio level constant and fails with instructions naming both suites
+  that must be re-blessed in the same change.
+
+- Sunsoft 5B audio register file (`$07` mixer, `$08-$0A` volumes, envelope
+  period/shape/output, live mix value) is now surfaced in the FME-7 mapper
+  debug window (`Nes::mapper_info()`). Added while diagnosing the snapshot-window
+  gap below — the 5B was the only part of that board with no debug view, and its
+  mixer/volume bytes are exactly what answer "why is this cart silent?".
+
+- **Sunsoft 5B expansion audio was ~23 dB too quiet; now calibrated.** The 5B's
+  logarithmic DAC *shape* has been hardware-exact since v2.1.6, but its
+  *absolute level* was a documented gap — for one reason only: `Mapper::mix_audio`
+  returned `i16`, and the correct full-scale tone is `1882 × 18.471 = 34,761`,
+  past `i16::MAX` for a **single** channel (three simultaneous tones, as in
+  Gimmick! / Hebereke, reach ~104 k — 3.2× over). The blocker was the type, not
+  the value.
+
+  The trait return is widened to **`i32`** and the level calibrated by
+  `SUNSOFT5B_MIX_SCALE_NUM/DEN = 2549/138 ≈ 18.471`. `db_5b` measured
+  **0.0685×** before and **1.2651×** after, against a target derived from Mesen2
+  rather than from our own prior numbers: `LUT[12]=63 × mixer weight 15 / 746.9
+  = 1.265` (full scale `3.554`), independently reproducing the figures the
+  accuracy ledger recorded when the work was deferred. Now asserted by a new
+  `level_db_5b` oracle, so shape and level are each pinned by their own test.
+
+  Every other board returns exactly the values it always did — the widening is
+  representational. AccuracyCoin 141/141, the other 24 audio-expansion tests,
+  and the APU oracles are unchanged.
+
+  One consequence had to be chased down rather than left: `NsfExpansion::mix`
+  summed the chips into an `i16` **with a clamp**, which was harmless while
+  every chip fitted — but a calibrated 5B reaches ~104 k at full scale, so an
+  NSF 5B tune would have *clipped* where the identical cartridge 5B path does
+  not. Since the entire point of `nsf_expansion` is that an NSF tune sounds
+  bit-for-bit like the cartridge, that function is now `i32` and unclamped.
+
+- **The expansion-audio snapshot layer was blind to expansion audio.** Snapshots
+  captured 120 frames, but these ROMs hold a 2A03 reference tone first and do
+  not switch the expansion chip in until ~frame 560 — so the "load-bearing audio
+  sentinel" hashed boot and the reference section and never observed the chip
+  under test. Found by accident: the 5B level change above is **18.5×** and all
+  six 5B snapshots stayed byte-identical.
+
+  The capture window now spans the expansion segment (660 frames, reusing
+  `DB_FRAMES`), and all 19 snapshots are re-blessed accordingly — the hash
+  changes are the window extension plus, for the 5B ROMs, the level fix.
+  Verified by perturbation rather than assumed: a **one-unit** scale change
+  (0.04%) now fails **all six** 5B snapshots, where an 18.5× change previously
+  failed none.
+
+  Reaching all six needed per-ROM windows, not just a bigger shared one.
+  Instrumenting the 5B register file (new `5b_*` rows in the FME-7 debug
+  window, `Nes::mapper_info()`) measured each ROM's first non-zero 5B output:
+  `db_5b` ~540, `envelope_5b` ~420, but **`noise_5b` ~900** and **`sweep_5b`
+  ~4740** (~79 s). Neither late ROM is broken and neither awaits input —
+  `noise_5b` enables noise on channel A about 15 s in, and `sweep_5b` runs a
+  slow volume sweep holding mixer `$3F` (the "both bits set ⇒ constant output
+  at volume" case). They simply outlast the shared window, so they now get
+  `NOISE_5B_FRAMES` / `SWEEP_5B_FRAMES` of their own.
+
+- **Run-ahead cost three AccuracyCoin tests.** The PPU save-state carried
+  `secondary_oam` but not the sprite-evaluation FSM that fills it — the
+  `sprite_eval_*` pointers and phase flags, the parallel OAM-data-bus model
+  (`oam_bus_*`), and the clear-window write pointer `oam2_addr`. The frontend's
+  run-ahead (`[input] run_ahead`, **default 1**) snapshots and restores the core
+  once per visible frame, so every frame restored a full secondary-OAM buffer
+  next to a reset walker. The battery measured 141/141 headless but **138/141**
+  through the desktop app, failing `Sprite Evaluation :: Arbitrary Sprite zero`
+  (error 2), `Sprite Evaluation :: Misaligned OAM behavior` (error 1), and
+  `PPU Behavior :: Rendering Flag Behavior` (error 2). Serializing that state in
+  a new `PPU_SNAPSHOT_VERSION` **v8** tail (50 bytes) restores **141/141 with
+  run-ahead on**, at depth 1 and 2. Same bug class as the v6 tail (Wizards &
+  Warriors), a different uncovered field set; Mesen2 serializes the equivalent
+  fields. Netplay rollback and TAS seeking take the same round trip and get the
+  same fix. New regression net:
+  `crates/rustynes-test-harness/tests/accuracycoin_runahead.rs` reruns the whole
+  battery through the run-ahead cycle and names any test it costs.
+
+### Changed
+
+- **Mapper modules are named for the board they emulate, not the sprint that
+  added them.** Eleven `sprintN.rs` files (27,631 lines, ~110 boards) named
+  after a point in the development calendar are replaced by board-named
+  modules, and every single-mapper file now carries its iNES mapper number as
+  an `mNNN_` prefix so the directory sorts by mapper: `m000_nrom.rs`,
+  `m004_mmc3.rs`, `m009_mmc2.rs`, `m069_sunsoft_fme7.rs`, `m085_vrc7.rs`, and
+  so on. Files that implement **one** shared core spanning many mapper IDs keep
+  a plain descriptive name, because no single number describes them —
+  `mmc3_clones.rs` (11 IDs), `multicart_discrete.rs` (27), `bmc_simple.rs` (7),
+  `kaiser.rs` (6), `sachen_8259.rs`, `ntdec.rs`, `waixing.rs`,
+  `sachen_discrete.rs`, `homebrew_boards.rs`, `jaleco_discrete.rs`.
+
+  Boards that were merely *adjacent* are now separate files even where a doc
+  argument could be made for pairing them: MMC2 and MMC4 share the tile-fetch
+  CHR-latch concept but not a line of code, so they are `m009_mmc2.rs` and
+  `m010_mmc4.rs`, consistent with the pre-existing `m001_mmc1.rs` /
+  `m004_mmc3.rs` / `m005_mmc5.rs`. Likewise VRC2 and VRC4, which share only the
+  small `vrc_a_bits` pin-rewiring helper — now duplicated per file, exactly as
+  the crate already duplicates `nametable_offset` across ~40 modules.
+
+  Every new module gains a hand-written `//!` preamble explaining what the
+  board *is* and why it is shaped that way — MMC2's mid-scanline CHR swap and
+  why Punch-Out!! needs it; why three mapper numbers describe one VRC4;
+  Bandai Oeka Kids latching CHR bits off the *PPU* address bus; why the FDS
+  conversion boards carry a free-running IRQ counter.
+
+  **This moves code; it does not change it.** Verified mechanically rather than
+  asserted: all **499** top-level items from the eleven sprint files and all
+  **431** from the pre-existing mapper files compare **byte-identical** in code
+  (comments excluded, since module docs were deliberately rewritten), with zero
+  missing and zero altered; the `parse()` dispatch table still resolves the
+  same **172** mapper IDs to the same constructors, an identical set. Test
+  count moves 696 → 701 only because five tests that each exercised two-to-four
+  different boards were split into per-board tests, so a failure now names the
+  board.
+
+  Also renamed for the same reason: `tests/roms/sprint-2/` →
+  `tests/roms/assorted/` (a mixed blargg/kevtris corpus, not a sprint), and
+  `m78.rs` → `m078_irem_jaleco78.rs` (every peer uses a vendor name).
+
+- **`PPU_SNAPSHOT_VERSION` 7 → 8 — this breaks existing `.rns` save states.**
+  The `.rns` container is version-exact per section, so a pre-v8 save now fails
+  to load with a clear `VersionMismatch` instead of silently misreading (ADR
+  0028). Accepted deliberately: the alternative is loading states that restore
+  a broken sprite-evaluation FSM. Movies (`.rnm`) and netplay are unaffected —
+  both re-derive state from a fresh power-on. `Ppu::restore` still upconverts
+  v1..=7 blobs for direct callers.
+- The scanline-classification cache (`cached_visible` / `cached_pre_render` /
+  `cached_render_line`, keyed by `flags_cached_scanline`) is now invalidated on
+  every restore rather than left warm. It is derived from `scanline` + `region`,
+  both serialized, so this adds no bytes; it stops a cache filled under one
+  timeline from satisfying the fast dot path's staleness guard under another.
+
+- **Release builds now ship the PGO binary on `x86_64-unknown-linux-gnu`.** The
+  `PGO` workflow has computed a profile-guided-optimized build behind a
+  >3%-faster **and** byte-identical gate since v1.2.0 — but nothing consumed the
+  result: it ran on the release tag, promoted an artifact, and `release.yml`
+  attached the plain build regardless, so the measured win never reached a
+  single user. `release.yml` now *calls* the PGO workflow and replaces the Linux
+  asset with the promoted binary under the same asset name.
+
+  A PGO gate verdict — slower than the 3% bar, or an oracle divergence — never
+  blocks or reddens a release: the determinism step is now step-level
+  `continue-on-error`, so the gate reports `promotable=false`, and the
+  replacement job is skipped, leaving the plain asset the build matrix already
+  attached. (A PGO *infrastructure* failure does still mark the run red, which
+  is intended — a broken PGO pipeline should be visible. The release assets are
+  correct regardless.) `continue-on-error` cannot be used on the caller job
+  itself: GitHub disallows it on a reusable-workflow `uses:` job, which
+  `actionlint` catches. Because the plain archive lands in ~10 minutes and PGO
+  takes up to 90, the release is complete and downloadable immediately and is
+  then upgraded in place — deliberately preferred over withholding the whole
+  release for an hour and a half.
+
+  Scope is **linux-x86_64 only**: PGO training has to *run* the instrumented
+  binary, so each further target needs its own native runner doing a full
+  ~90-minute train cycle. macOS-aarch64 and Windows keep shipping plain
+  release builds.
+
+  Two latent bugs were fixed in passing, both of which this wiring would have
+  tripped over: the PGO workflow read `github.event.inputs.frames`, which is
+  empty on `workflow_call` and would have silently dropped the caller's value
+  (now `inputs.frames`); and the BOLT job's condition admitted any non-dispatch
+  event, so it would have fired on every release, adding ~90 minutes for an
+  artifact nothing consumes (now explicit `workflow_dispatch` + `run_bolt`
+  only). The workflow's own `push: tags` trigger was removed so a hand-pushed
+  tag no longer starts two 90-minute PGO runs.
+
+- **CI gained a relative frame-time regression gate**
+  (`scripts/bench_relative_check.sh`), alongside — not replacing — the existing
+  absolute ceiling. It builds and benches the base commit and HEAD **back to
+  back on the same runner** and fails if HEAD is more than 10% slower
+  (`BENCH_MAX_REGRESSION_PCT`).
+
+  The ceiling answers "is the emulator still real-time?", not "did this change
+  make it worse": at the ~4 ms/frame the core actually runs at, a change could
+  get **2.5x slower and still pass**. v1.6.0 judged a percentage gate too flaky
+  for shared runners, and that was correct for *cross-run* comparison — but a
+  same-runner back-to-back A/B makes runner variance common-mode, which is the
+  technique `pgo.yml` has used for its >3% bar since v1.2.0 and which measured a
+  ±0.7% noise floor during this pass. The 10% default sits far above that on
+  purpose: this gate is for gross regressions, not 2% micro-optimizations.
+
+  The base commit is benched in a throwaway **git worktree**, never via
+  `git checkout`, so the gate cannot disturb the tree it runs in; and it **skips
+  with exit 0** rather than inventing a verdict when no base is resolvable
+  (shallow clone, root commit, new branch, `workflow_dispatch`). The `bench` job
+  now checks out with `fetch-depth: 0` so the normal case does not skip.
+
+- **`rustynes-mappers` with `mapper-audio` compiled OUT was broken, and is now
+  gated in CI.** `Namco163Audio` was missing the feature-off `clock()` shim that
+  the NSF expansion router calls unconditionally, so the whole configuration
+  failed to build with a hard `E0599`. Nothing noticed because nothing built it:
+  every other feature gate turns features *on*, and the `no_std` job is
+  `-p rustynes-core`, which keeps `mapper-audio` on.
+
+  The shim is added (matching the pattern FDS and Sunsoft 5B already had), and
+  `cargo clippy -p rustynes-mappers --no-default-features --all-targets -D
+  warnings` joins the `lint` job so the subtraction case cannot rot again.
+
+  Two follow-ons the newly-compiling config exposed, neither of which is
+  unfinished work — the default build is dead-code-warning clean and every item
+  has real call sites (`effective_period_p/_s` drive VRC6 period computation,
+  `half_period` reloads the 5B tone/noise counters). They are audio-support
+  items that are simply unreachable once the subsystem is compiled out, so they
+  carry `#[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]` rather
+  than `#[cfg]` — they still compile, so any future non-audio caller keeps
+  working. The feature-off shims themselves also needed narrow
+  `clippy::unused_self` / `needless_pass_by_ref_mut` allows: a shim must keep
+  the gated signature so the unconditional caller compiles, which is exactly
+  what those lints object to.
+
+- **`actionlint` is now clean across every workflow** (it was not before, which
+  is how the invalid `continue-on-error` above was caught). Two pre-existing
+  findings fixed:
+  - `ios.yml` used `ls -d … | sort | tail -1` to pick an Xcode 26 toolchain
+    (shellcheck SC2012). Replaced with shell globbing, preserving the ordering
+    exactly — including the non-obvious part, that `Xcode_26.app` outranks
+    `Xcode_26.<n>.app` because `a` sorts above any digit after the shared
+    prefix. Verified equivalent against six synthetic runner layouts (canonical
+    only, canonical + point releases, point releases only, none, unrelated
+    versions, and the documented 26.9/26.10 lexical bound).
+  - The `agy` self-hosted runner label in `antigravity-review.yml` was reported
+    as unknown. Declared in a new `.github/actionlint.yaml`, which is the
+    mechanism actionlint's own diagnostic points at; the alternative (a hosted
+    label) is not available, since that runner holds the `agy` CLI's OAuth
+    session.
+
 ### Added
 
+- **Zapper beam-relative light model (A3), default off.** The photodiode's
+  ~19-26-scanline hold is now modelled: `Nes::set_zapper_temporal_light` makes
+  the light bit a function of where the CRT beam is at the moment of the
+  `$4016`/`$4017` read — dark before the beam paints the aim row, lit for the
+  hold, dark once drained. The frame-granular model structurally cannot express
+  this; it returns one answer for the entire frame.
+
+  It holds **no extra state** — light is derived on demand from
+  `(framebuffer, aim, scanline)` — so it adds nothing to serialize and cannot
+  desync a save state or a netplay rollback, and both models share one aperture
+  test so they differ only in *when* they sample. It stays opt-in because no
+  redistributable pass/fail light-gun ROM exists to adjudicate it, and the
+  supported titles re-poll every frame and are satisfied by either model:
+  promoting it would change output with no oracle able to confirm the change is
+  an improvement.
+
+- **`ppu-idle-line-fast` cargo feature (default OFF)** — a second PPU dot-path
+  specialization covering *idle lines* (post-render 240 + vblank 242..=260;
+  6,820 of the 89,342 NTSC dots), where the per-dot body provably reduces to
+  three assignments. It is byte-identical — proven by `fast_dotloop_diff`,
+  extended with `idle_line_fast_path_matches_exact_under_vblank_io`, a
+  purpose-built NROM that hammers `$2000`/`$2001`/`$2006`/`$2007` throughout
+  vblank so the guard's fall-through arms are exercised rather than assumed.
+  It ships **off** because it does not clear the project's >3% adoption bar:
+  a same-session A/B (±0.7% noise floor) measures −1.3%/−1.5% on
+  rendering-*disabled* content but +0.2%/+0.4% on the rendering-heavy case that
+  dominates real play. Kept behind a compile-time flag rather than deleted —
+  the code is proven and becomes worthwhile if per-dot dispatch gets cheaper;
+  compile-time rather than runtime because the cost *is* the per-dot guard.
+  Full measurement, and the contaminated first A/B that nearly got it deleted,
+  in `docs/performance.md` §P2.
+
+- Desktop setting `[emulation] fast_dotloop` (Settings → Accuracy, labelled
+  "performance, not accuracy") as an escape hatch for the fast-dot-path
+  promotion under **Performance** above — there is no accuracy reason to
+  disable it. Defaulted through `default_fast_dotloop()`
+  rather than `#[serde(default)]` so an existing on-disk config loads as `true`
+  instead of silently opting the user out of an ~11% speedup; pinned by
+  `emulation_fast_dotloop_defaults_on_for_pre_v2_2_3_configs`. The libretro core
+  and the mobile bridge inherit the win from the core default and deliberately
+  gain no new option — neither exposes a comparable knob today.
+
+- **Save-state schema audit as a standing test**
+  (`crates/rustynes-test-harness/tests/snapshot_schema_audit.rs`). Every field
+  of `Ppu` / `Cpu` / `Apu` must be touched by that chip's `snapshot` writer or
+  appear on an exclusion list with a written reason. The same bug has now
+  shipped three times — a live mid-frame field added to a chip struct without
+  the serializer (the v5 ALE fetch state, the v6 sprite-shifter/OAM-corruption
+  state, the v8 sprite-evaluation FSM) — because no straight-`run_frame` test
+  can see an incomplete schema; only run-ahead, netplay rollback and TAS
+  seeking round-trip mid-frame. This audit is a text diff over `include_str!`'d
+  sources: no ROM, no emulation, runs in the default `cargo test` job, and
+  would have caught all three at the commit that introduced them. It scopes the
+  search to the writer body (a whole-file search is satisfied by `restore`'s
+  own upconvert defaults, i.e. by the bug itself) and matches on word
+  boundaries; both properties are pinned by their own tests, and the writer
+  scoping was confirmed by negative control.
+- **`APU_SNAPSHOT_VERSION` 3 → 4** — serializes the scheduled warm-reset
+  `$4017` re-write (`reset_4017_delay` + `reset_4017_value`, 2 bytes), the
+  first gap the schema audit above found on its own rather than after a bug
+  report. `Apu::reset` arms the countdown at 2 and `tick_with_external`
+  decrements it once per CPU cycle, issuing the frame-counter write on zero; a
+  snapshot taken inside that 2-cycle window used to restore `delay = 0` and
+  cancel the re-write, leaving the restored sequencer in the phase the
+  re-write exists to reset. Narrow window and no symptom was ever attributed
+  to it, but it is the same class as the PPU's v5/v6/v8 tails. Pinned
+  behaviourally, not just as a field round trip, by
+  `a_reset_survives_a_snapshot_restore_taken_mid_countdown`. v1..=3 blobs
+  upconvert to "no re-write pending". No additional compatibility cost: the
+  `.rns` container is version-exact per section and the PPU v8 tail in this
+  same change already rejects pre-existing save states.
 - Antigravity PR reviewer (`.github/workflows/antigravity-review.yml` +
   `scripts/agy-review.sh`): an automated first-pass code review on a self-hosted
   runner, driven by the `agy` CLI's OAuth session (Google AI Ultra, no metered

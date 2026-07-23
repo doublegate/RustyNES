@@ -16,7 +16,7 @@ APU crate, because it is cartridge hardware.
 | VRC6 | 2 pulse + 1 saw | `Vrc6Pulse` ×2 + `Vrc6Saw` (`rustynes-mappers`) | every CPU cycle |
 | VRC7 | 6 FM (OPLL) | `rustynes_apu::Opll` (emu2413-derived, **MIT**) | OPLL `calc()` every 36 CPU cycles (~49,716 Hz) |
 | FDS | 1 wavetable + FM | `FdsAudio` (`fds.rs`) | wave/mod every 16 CPU cycles |
-| MMC5 | 2 pulse + 7-bit PCM | `Mmc5Audio` (`mmc5.rs`) | pulse every other CPU cycle |
+| MMC5 | 2 pulse + 7-bit PCM | `Mmc5Audio` (`m005_mmc5.rs`) | pulse every other CPU cycle |
 | Namco 163 | 1–8 time-multiplexed wavetable | `Namco163Audio` | round-robin every 15 CPU cycles |
 | Sunsoft 5B | 3 tone + noise + envelope | `Sunsoft5BAudio` (FME-7) | every CPU cycle |
 

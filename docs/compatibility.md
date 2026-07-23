@@ -179,7 +179,7 @@ documents them; GeraNES models them) — a register write is driven onto the bus
 ANDed with the PRG-ROM byte already at that address. RustyNES applied the raw
 write, so a CHR/PRG/mirroring select that the game expects to be masked resolved
 to the wrong bank. The fix masks the written value with `read_prg(addr)` (the
-existing bus-conflict idiom, e.g. `gxrom.rs`); the 4-bit CHR decode (bit 7 = A16)
+existing bus-conflict idiom, e.g. `m066_gxrom.rs`); the 4-bit CHR decode (bit 7 = A16)
 is kept — correct for this 128 KiB-CHR title. Verified on the real cartridge:
 the title screen renders and stays rendered past frame 600. A bus-conflict unit
 test guards it.

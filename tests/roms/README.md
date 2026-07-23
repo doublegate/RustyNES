@@ -18,7 +18,7 @@ on this corpus.
 |------|------------|-----------------|---------|
 | [`nestest/`](./nestest/) | The kevtris CPU instruction validation ROM + matching Nintendulator golden log. | kevtris | Public domain |
 | [`blargg/`](./blargg/) | Shay Green ("blargg")'s full NES test suites: CPU instr_test-v5, CPU dummy reads/writes, CPU interrupts v2, CPU timing test6, PPU vbl_nmi, PPU open bus, APU test + mixer + DMC DMA, sprite hit / overflow tests, branch timing tests, MMC3 IRQ tests v2, MMC3 IRQ tests (older visual). | blargg | Public domain |
-| [`sprint-2/`](./sprint-2/) | Extra blargg sub-suites kept separate by historical convention: branch_timing, cpu_reset, oam_read/stress, apu 2005-07-30 (len_ctr / len_table), full_palette + flowing_palette, a copy of `nestest`. | blargg / kevtris | Public domain |
+| [`assorted/`](./assorted/) | Extra blargg sub-suites kept separate by historical convention: branch_timing, cpu_reset, oam_read/stress, apu 2005-07-30 (len_ctr / len_table), full_palette + flowing_palette, a copy of `nestest`. | blargg / kevtris | Public domain |
 | [`holy_mapperel/`](./holy_mapperel/) | Damian Yerrick's "Holy Mapperel" cartridge-PCB-assembly tests (mapper-detection + bank-reachability). 17 ROMs covering mappers 0, 1, 2, 3, 4, 7, 9, 10, 34, 66, 69. | Damian Yerrick / tepples | zlib |
 | [`mmc5/`](./mmc5/) | MMC5 (mapper 5) accuracy suite from `christopherpow/nes-test-roms`: split-screen, ExRAM modes, scanline IRQ. | Various (aggregator) | Public domain |
 | [`accuracycoin/`](./accuracycoin/) | Chris Siebert's 144-test single-NROM AccuracyCoin battery — the **single source of truth** for the v0.9.x → v1.0.0 quality bar. | Chris Siebert (100thCoin) | MIT |
@@ -37,7 +37,7 @@ subdirectory for end-user smoke testing against commercial games.
 
 | Mapper | Committed ROM(s) | Features exercised | External counterpart |
 |--------|------------------|-------------------|---------------------|
-| **0 NROM** | `nestest/nestest.nes`; all `blargg/{cpu,ppu,apu,sprite,dmc,branch}_*` ROMs; `sprint-2/*`; `holy_mapperel/M0_*`; `accuracycoin/AccuracyCoin.nes`; `audio-tests/{db_apu,tri_silence,dac_square}.nes` | CPU instructions, PPU VBL/NMI, APU, branch timing, sprite-zero hit, OAM, full palette | [`external/mapper-000-NROM/`](./external/mapper-000-NROM/) |
+| **0 NROM** | `nestest/nestest.nes`; all `blargg/{cpu,ppu,apu,sprite,dmc,branch}_*` ROMs; `assorted/*`; `holy_mapperel/M0_*`; `accuracycoin/AccuracyCoin.nes`; `audio-tests/{db_apu,tri_silence,dac_square}.nes` | CPU instructions, PPU VBL/NMI, APU, branch timing, sprite-zero hit, OAM, full palette | [`external/mapper-000-NROM/`](./external/mapper-000-NROM/) |
 | **1 MMC1** | `blargg/instr_test_v5/*` (16 sub-ROMs); `holy_mapperel/M1_P128K_*` (2); `mmc1_a12/mmc1_a12.nes` | Serial-shift register banking, PRG/CHR variants, A12-event smoke test | [`external/mapper-001-MMC1/`](./external/mapper-001-MMC1/) |
 | **2 UxROM** | `holy_mapperel/M2_P128K_CR8K_V.nes` | Bank switching with fixed CHR | [`external/mapper-002-UxROM/`](./external/mapper-002-UxROM/) |
 | **3 CNROM** | `holy_mapperel/M3_P32K_C32K_H.nes` | CHR-only banking | [`external/mapper-003-CNROM/`](./external/mapper-003-CNROM/) |

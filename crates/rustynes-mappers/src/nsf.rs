@@ -751,7 +751,7 @@ impl Mapper for NsfMapper {
         }
     }
 
-    fn mix_audio(&mut self) -> i16 {
+    fn mix_audio(&mut self) -> i32 {
         self.exp_audio.as_ref().map_or(0, NsfExpansion::mix)
     }
 

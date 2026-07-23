@@ -35,138 +35,216 @@ extern crate std;
 
 use alloc::{boxed::Box, string::ToString};
 
-mod axrom;
-mod bandai152;
-mod bandai74;
-mod bandai_fcg;
+mod bmc_simple;
 mod cartridge;
-mod cnrom;
 mod fds;
-mod gxrom;
 mod header;
-mod irem_g101;
-mod irem_h3001;
-mod jaleco87;
-mod jaleco_ss88006;
-mod jy_asic;
-mod konami_vs;
-mod m78;
+mod homebrew_boards;
+mod jaleco_discrete;
+mod kaiser;
+mod m000_nrom;
+mod m001_mmc1;
+mod m002_uxrom;
+mod m003_cnrom;
+mod m004_mmc3;
+mod m005_mmc5;
+mod m007_axrom;
+mod m009_mmc2;
+mod m010_mmc4;
+mod m011_color_dreams;
+mod m013_cprom;
+mod m016_bandai_fcg;
+mod m018_jaleco_ss88006;
+mod m019_namco163;
+mod m021_vrc4;
+mod m022_vrc2;
+mod m024_vrc6;
+mod m032_irem_g101;
+mod m033_taito_tc0190;
+mod m034_bnrom_nina001;
+mod m035_jy_asic;
+mod m036_txc_policeman;
+mod m038_bitcorp38;
+mod m039_subor39;
+mod m041_caltron41;
+mod m042_fds_conv_bio_miracle;
+mod m048_taito_tc0690;
+mod m050_fds_conv_smb2j;
+mod m064_rambo1;
+mod m065_irem_h3001;
+mod m066_gxrom;
+mod m067_sunsoft3;
+mod m068_sunsoft4;
+mod m069_sunsoft_fme7;
+mod m070_bandai74;
+mod m071_camerica_bf9093;
+mod m073_vrc3;
+mod m075_vrc1;
+mod m076_namcot3446;
+mod m077_irem_napoleon;
+mod m078_irem_jaleco78;
+mod m079_ave_nina03_06;
+mod m080_taito_x1_005;
+mod m082_taito_x1_017;
+mod m085_vrc7;
+mod m087_jaleco87;
+mod m088_namco118;
+mod m089_sunsoft2;
+mod m093_sunsoft3r;
+mod m094_un1rom;
+mod m095_namcot3425;
+mod m096_bandai96;
+mod m097_irem_tam_s1;
+mod m099_vs_system;
+mod m107_magic_dragon107;
+mod m113_ave_nina006;
+mod m118_txsrom;
+mod m119_tqrom;
+mod m132_txc_22211;
+mod m136_sachen_3011;
+mod m151_konami_vs;
+mod m152_bandai152;
+mod m156_daou156;
+mod m176_bmc_fk23c;
+mod m177_hengedianzi;
+mod m179_hengedianzi;
+mod m180_nichibutsu180;
+mod m184_sunsoft1;
+mod m185_cnrom185;
+mod m210_namco175;
+mod m232_camerica_bf9096;
+mod m240_cne_multicart;
+mod m241_bxrom241;
+mod m244_cne_decathlon;
+mod m246_fong_shen_bang246;
+mod m250_nitra250;
+mod m268_bmc_coolboy;
+mod m513_sachen_9602;
 mod mapper;
-mod mmc1;
-mod mmc3;
-mod mmc5;
-mod namco118;
-mod namco175;
-mod nrom;
+mod mmc3_clones;
+mod multicart_discrete;
 mod nsf;
 mod nsf_expansion;
-mod rambo1;
-mod sprint10;
-mod sprint11;
-mod sprint12;
-mod sprint13;
-mod sprint2;
-mod sprint3;
-mod sprint5;
-mod sprint6;
-mod sprint7;
-mod sprint8;
-mod sprint9;
-mod sunsoft1;
-mod sunsoft2;
-mod sunsoft3;
-mod sunsoft3r;
-mod sunsoft4;
-mod taito_tc0190;
-mod taito_tc0690;
-mod taito_x1_005;
-mod taito_x1_017;
+mod ntdec;
+mod sachen_8259;
+mod sachen_discrete;
 mod tier;
-mod tqrom;
-mod txsrom;
 mod unif;
-mod uxrom;
-mod vrc3;
-mod vs_system;
+mod waixing;
 
-pub use axrom::AxRom;
-pub use bandai_fcg::{BandaiFcg, FcgVariant};
-pub use bandai74::Bandai74;
-pub use bandai152::Bandai152;
+pub use bmc_simple::{new_m164, new_m261, new_m286, new_m289, new_m320, new_m336, new_m349};
 pub use cartridge::{Cartridge, ConsoleType, Mirroring, Region, RomError, VsPpuPalette, VsPpuType};
-pub use cnrom::CnRom;
 pub use fds::{
     DISK_BYTE_CYCLES, FDS_SIDE_LEN, Fds, FdsDisk, FdsQuirk, FdsTraceRec, HEAD_RESEEK_CYCLES,
     fds_crc32, parse_fds, quirk_for_crc,
 };
-pub use gxrom::GxRom;
 pub use header::{Header, parse_header, serialize_header};
-pub use irem_g101::IremG101;
-pub use irem_h3001::IremH3001;
-pub use jaleco_ss88006::JalecoSs88006;
-pub use jaleco87::Jaleco87;
-pub use jy_asic::{JyAsic, JyBoard};
-pub use konami_vs::KonamiVs;
-pub use m78::{M78, M78Variant};
+pub use homebrew_boards::{Action53M28, Cufrom29, Gtrom111, Inl31, MagicFloor218, Unrom512M30};
+pub use jaleco_discrete::{Jaleco72, Jaleco86, Jaleco92, Jaleco101, Jaleco140};
+pub use kaiser::{new_m56, new_m142, new_m303, new_m305, new_m306, new_m312};
+pub use m000_nrom::Nrom;
+pub use m001_mmc1::Mmc1;
+pub use m002_uxrom::UxRom;
+pub use m003_cnrom::CnRom;
+pub use m004_mmc3::{Mmc3, Mmc3Revision};
+pub use m005_mmc5::Mmc5;
+pub use m007_axrom::AxRom;
+pub use m009_mmc2::Mmc2;
+pub use m010_mmc4::Mmc4;
+pub use m011_color_dreams::ColorDreams;
+pub use m013_cprom::Cprom;
+pub use m016_bandai_fcg::{BandaiFcg, FcgVariant};
+pub use m018_jaleco_ss88006::JalecoSs88006;
+pub use m019_namco163::Namco163;
+pub use m021_vrc4::Vrc4;
+pub use m022_vrc2::Vrc2;
+pub use m024_vrc6::Vrc6;
+pub use m032_irem_g101::IremG101;
+pub use m033_taito_tc0190::TaitoTc0190;
+pub use m034_bnrom_nina001::{M34, M34Variant};
+pub use m035_jy_asic::{JyAsic, JyBoard};
+pub use m036_txc_policeman::Txc36;
+pub use m038_bitcorp38::Bitcorp38;
+pub use m039_subor39::Subor39;
+pub use m041_caltron41::Caltron41;
+pub use m042_fds_conv_bio_miracle::Mapper42;
+pub use m048_taito_tc0690::TaitoTc0690;
+pub use m050_fds_conv_smb2j::Mapper50;
+pub use m064_rambo1::Rambo1;
+pub use m065_irem_h3001::IremH3001;
+pub use m066_gxrom::GxRom;
+pub use m067_sunsoft3::Sunsoft3;
+pub use m068_sunsoft4::Sunsoft4;
+pub use m069_sunsoft_fme7::Fme7;
+pub use m070_bandai74::Bandai74;
+pub use m071_camerica_bf9093::Camerica;
+pub use m073_vrc3::Vrc3;
+pub use m075_vrc1::Vrc1;
+pub use m076_namcot3446::Namcot3446M76;
+pub use m077_irem_napoleon::Irem77;
+pub use m078_irem_jaleco78::{M78, M78Variant};
+pub use m079_ave_nina03_06::Nina0379;
+pub use m080_taito_x1_005::TaitoX1005;
+pub use m082_taito_x1_017::TaitoX1017;
+pub use m085_vrc7::Vrc7;
+pub use m087_jaleco87::Jaleco87;
+pub use m088_namco118::{Namco118, Namco118Board};
+pub use m089_sunsoft2::Sunsoft2;
+pub use m093_sunsoft3r::Sunsoft3r;
+pub use m094_un1rom::Un1rom94;
+pub use m095_namcot3425::Namcot3425M95;
+pub use m096_bandai96::Bandai96;
+pub use m097_irem_tam_s1::Irem97;
+pub use m099_vs_system::VsSystem;
+pub use m107_magic_dragon107::MagicDragon107;
+pub use m113_ave_nina006::Nina006M113;
+pub use m118_txsrom::TxSrom;
+pub use m119_tqrom::Tqrom;
+pub use m132_txc_22211::Txc132;
+pub use m136_sachen_3011::new_m136;
+pub use m151_konami_vs::KonamiVs;
+pub use m152_bandai152::Bandai152;
+pub use m156_daou156::Daou156;
+pub use m176_bmc_fk23c::new_m176;
+pub use m177_hengedianzi::Hengedianzi177;
+pub use m179_hengedianzi::Hengedianzi179;
+pub use m180_nichibutsu180::Nichibutsu180;
+pub use m184_sunsoft1::Sunsoft1;
+pub use m185_cnrom185::CnRom185;
+pub use m210_namco175::{Namco175, Namco175Board};
+pub use m232_camerica_bf9096::Camerica232;
+pub use m240_cne_multicart::Cne240;
+pub use m241_bxrom241::Bxrom241;
+pub use m244_cne_decathlon::Decathlon244;
+pub use m246_fong_shen_bang246::FongShenBang246;
+pub use m250_nitra250::Nitra250;
+pub use m268_bmc_coolboy::new_m268;
+pub use m513_sachen_9602::new_m513;
 pub use mapper::{
     BgSplitState, ExAttribute, Mapper, MapperCaps, MapperDebugInfo, MapperError, MapperFrameEvents,
     mirroring_name,
 };
-pub use mmc1::Mmc1;
-pub use mmc3::{Mmc3, Mmc3Revision};
-pub use mmc5::Mmc5;
-pub use namco118::{Namco118, Namco118Board};
-pub use namco175::{Namco175, Namco175Board};
-pub use nrom::Nrom;
+pub use mmc3_clones::{
+    Mmc3CloneMapper, new_m44, new_m49, new_m52, new_m115, new_m134, new_m189, new_m205, new_m238,
+    new_m245, new_m348, new_m366,
+};
+pub use multicart_discrete::{
+    DiscreteBoard, DiscreteMapper, Maxi15M234, Multicart15, Multicart58, Multicart60, Multicart61,
+    Multicart62, Multicart200, Multicart201, Multicart202, Multicart203, Multicart212,
+    Multicart213, Multicart214, Multicart225, Multicart226, Multicart227, Multicart229,
+    Multicart231, Multicart233, new_m46, new_m51, new_m57, new_m104, new_m120, new_m204, new_m290,
+    new_m299, new_m301,
+};
 pub use nsf::{Nsf, NsfMapper, is_nsf, parse_nsf};
-pub use rambo1::Rambo1;
-pub use sprint2::{Camerica, ColorDreams, Cprom, M34, M34Variant, Mmc2, Mmc4, Vrc1};
-pub use sprint3::{Fme7, Namco163, Vrc2, Vrc4, Vrc6, Vrc7};
-pub use sprint5::{
-    Bitcorp38, Bxrom241, Caltron41, Camerica232, Cne240, Jaleco86, Jaleco140, Nina006M113, Nina0379,
+pub use ntdec::{Ntdec63, Ntdec81, Ntdec174, Ntdec2722M40, NtdecAsder112, new_m193, new_m221};
+pub use sachen_8259::{Sachen8259, Sachen8259M137, Sachen8259Variant};
+pub use sachen_discrete::{
+    Sachen133, Sachen145, Sachen146, Sachen148, Sachen149, Sachen150, Sachen3018M147,
+    SachenTca01M143,
 };
-pub use sprint6::{
-    Bandai96, Irem77, Irem97, Jaleco72, Jaleco92, Multicart15, Multicart61, Multicart62, Sachen133,
-    Sachen145, Sachen146, Subor39, Txc36, Txc132,
-};
-pub use sprint7::{
-    CnRom185, Multicart200, Multicart201, Multicart202, Multicart203, Multicart212, Multicart213,
-    Multicart214, Nichibutsu180, Sachen148, Sachen149, Sachen150, Sachen3018M147,
-};
-pub use sprint8::{
-    Cufrom29, Gtrom111, Hengedianzi177, Hengedianzi179, Inl31, Jaleco101, MagicDragon107,
-    MagicFloor218, Maxi15M234, Multicart58, Multicart60, Multicart231, SachenTca01M143, Un1rom94,
-};
-pub use sprint9::{
-    Action53M28, FongShenBang246, Multicart225, Multicart226, Multicart227, Multicart229,
-    Multicart233, Namcot3446M76, Ntdec63, Ntdec174, Unrom512M30, Waixing242,
-};
-pub use sprint10::{
-    Daou156, Decathlon244, Namcot3425M95, Nitra250, Ntdec81, Ntdec2722M40, NtdecAsder112,
-    Sachen8259M137, Waixing178, WaixingFs304M162,
-};
-pub use sprint11::{
-    DiscreteBoard, DiscreteMapper, Mapper42, Mapper50, Mmc3CloneMapper, Sachen8259,
-    Sachen8259Variant, new_m44, new_m46, new_m49, new_m51, new_m52, new_m57, new_m104, new_m115,
-    new_m120, new_m134, new_m189, new_m205, new_m238, new_m245, new_m290, new_m301, new_m348,
-    new_m366,
-};
-pub use sunsoft1::Sunsoft1;
-pub use sunsoft2::Sunsoft2;
-pub use sunsoft3::Sunsoft3;
-pub use sunsoft3r::Sunsoft3r;
-pub use sunsoft4::Sunsoft4;
-pub use taito_tc0190::TaitoTc0190;
-pub use taito_tc0690::TaitoTc0690;
-pub use taito_x1_005::TaitoX1005;
-pub use taito_x1_017::TaitoX1017;
 pub use tier::{MapperTier, mapper_tier};
-pub use tqrom::Tqrom;
-pub use txsrom::TxSrom;
 pub use unif::{UnifError, UnifImage, board_to_mapper, parse_unif, unif_to_ines};
-pub use uxrom::UxRom;
-pub use vrc3::Vrc3;
-pub use vs_system::VsSystem;
+pub use waixing::{Waixing178, Waixing242, WaixingFs304M162, new_m253};
 
 /// Returns the crate version string.
 #[must_use]
@@ -389,7 +467,7 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // MMC5 v0: banking + ExRAM modes 10/11 + scanline IRQ. Several
             // features deferred (vertical split, dual sprite/BG CHR for
             // 8x16 sprites, ExGrafix attribute injection, audio extension);
-            // see `crates/rustynes-mappers/src/mmc5.rs` module docs.
+            // see `crates/rustynes-mappers/src/m005_mmc5.rs` module docs.
             let prg_ram_bytes = if h.prg_ram_size == 0 {
                 0
             } else {
@@ -436,9 +514,9 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // selects pin-decoder variant.  Banking matches between VRC2
             // and VRC4; the difference is mostly the IRQ counter which
             // VRC2 lacks (we just leave it idle).
-            let vrc4 = Vrc4::new(prg_rom, chr_rom, h.mapper_id, h.submapper, h.mirroring)
+            let m021_vrc4 = Vrc4::new(prg_rom, chr_rom, h.mapper_id, h.submapper, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
-            Box::new(vrc4)
+            Box::new(m021_vrc4)
         }
         22 => {
             let vrc2 = Vrc2::new(prg_rom, chr_rom, 22, h.submapper, h.mirroring)
@@ -675,7 +753,7 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             // TQROM (Pin*Bot, High Speed): MMC3 PRG/IRQ/mirroring plus a mixed
             // CHR address space — 64 KiB CHR-ROM + 8 KiB CHR-RAM, selected per
             // 1 KiB bank by bit 6 of the resolved CHR bank number (set =
-            // CHR-RAM). See `crates/rustynes-mappers/src/tqrom.rs`.
+            // CHR-RAM). See `crates/rustynes-mappers/src/m119_tqrom.rs`.
             let prg_ram_bytes = if h.prg_ram_size == 0 {
                 0
             } else {
@@ -759,10 +837,10 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
             Box::new(vrc7)
         }
-        // --- v1.2.0 Workstream A, curated (Tier-1) long-tail boards (sprint5). ---
+        // --- v1.2.0 Workstream A, curated (Tier-1) long-tail boards. ---
         // Simple discrete-logic mappers; see `tier.rs` (`MapperTier::Curated`)
         // and `docs/adr/0011-mapper-tiering.md`. Each is register-decode
-        // unit-tested in `sprint5.rs`.
+        // unit-tested in its own per-board module.
         38 => Box::new(
             Bitcorp38::new(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
@@ -801,7 +879,7 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         // --- v1.2.0 Workstream A, best-effort (Tier-2) long-tail sweep
-        // (sprint6 + sprint7). Reference-ported discrete/multicart boards,
+        // Reference-ported discrete / multicart boards,
         // register-decode unit-tested only, NOT accuracy-gated. See `tier.rs`
         // (`MapperTier::BestEffort`) + `docs/adr/0011-mapper-tiering.md`.
         15 => Box::new(
@@ -911,7 +989,7 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         // --- v1.3.0 "Bedrock" Workstream D1, best-effort (Tier-2) sweep
-        // (sprint8). Reference-ported discrete / multicart boards,
+        // Reference-ported discrete / multicart boards,
         // register-decode unit-tested only, NOT accuracy-gated. See `tier.rs`
         // (`MapperTier::BestEffort`) + `docs/adr/0011-mapper-tiering.md`.
         29 => Box::new(
@@ -972,7 +1050,7 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         // --- v1.4.0 "Fidelity" Workstream G, best-effort (Tier-2) sweep
-        // (sprint9). Reference-ported discrete / multicart boards,
+        // Reference-ported discrete / multicart boards,
         // register-decode unit-tested only, NOT accuracy-gated. See `tier.rs`
         // (`MapperTier::BestEffort`) + `docs/adr/0011-mapper-tiering.md`.
         28 => Box::new(
@@ -1040,7 +1118,7 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         // --- v1.5.0 "Lens" Workstream F, best-effort (Tier-2) sweep
-        // (sprint10). Reference-ported discrete / multicart / pirate boards,
+        // Reference-ported discrete / multicart / pirate boards,
         // register-decode + save-state unit-tested only, NOT accuracy-gated.
         // See `tier.rs` (`MapperTier::BestEffort`) + `docs/adr/0011-mapper-tiering.md`.
         40 => Box::new(
@@ -1108,51 +1186,51 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         // --- v1.6.0 "Studio" Workstream E, best-effort (Tier-2) sweep
-        // (sprint11). MMC3-clone variants (shared MMC3-style core + A12 IRQ),
+        // MMC3-clone variants (shared MMC3-style core + A12 IRQ),
         // Sachen 8259 A/B/C, and discrete multicarts. Register-decode +
         // save-state unit-tested only, NOT accuracy-gated (`tier.rs`).
         44 => Box::new(
-            sprint11::new_m44(prg_rom, chr_rom, h.mirroring)
+            new_m44(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         49 => Box::new(
-            sprint11::new_m49(prg_rom, chr_rom, h.mirroring)
+            new_m49(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         52 => Box::new(
-            sprint11::new_m52(prg_rom, chr_rom, h.mirroring)
+            new_m52(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         115 => Box::new(
-            sprint11::new_m115(prg_rom, chr_rom, h.mirroring)
+            new_m115(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         134 => Box::new(
-            sprint11::new_m134(prg_rom, chr_rom, h.mirroring)
+            new_m134(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         189 => Box::new(
-            sprint11::new_m189(prg_rom, chr_rom, h.mirroring)
+            new_m189(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         205 => Box::new(
-            sprint11::new_m205(prg_rom, chr_rom, h.mirroring)
+            new_m205(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         238 => Box::new(
-            sprint11::new_m238(prg_rom, chr_rom, h.mirroring)
+            new_m238(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         245 => Box::new(
-            sprint11::new_m245(prg_rom, chr_rom, h.mirroring)
+            new_m245(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         348 => Box::new(
-            sprint11::new_m348(prg_rom, chr_rom, h.mirroring)
+            new_m348(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         366 => Box::new(
-            sprint11::new_m366(prg_rom, chr_rom, h.mirroring)
+            new_m366(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         // Sachen 8259 A/B/C (the 2 KiB-CHR variants; 8259D is mapper 137).
@@ -1179,126 +1257,126 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         46 => Box::new(
-            sprint11::new_m46(prg_rom, chr_rom, h.mirroring)
+            new_m46(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         51 => Box::new(
-            sprint11::new_m51(prg_rom, chr_rom, h.mirroring)
+            new_m51(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         57 => Box::new(
-            sprint11::new_m57(prg_rom, chr_rom, h.mirroring)
+            new_m57(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         104 => Box::new(
-            sprint11::new_m104(prg_rom, chr_rom, h.mirroring)
+            new_m104(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         120 => Box::new(
-            sprint11::new_m120(prg_rom, chr_rom, h.mirroring)
+            new_m120(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         290 => Box::new(
-            sprint11::new_m290(prg_rom, chr_rom, h.mirroring)
+            new_m290(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         301 => Box::new(
-            sprint11::new_m301(prg_rom, chr_rom, h.mirroring)
+            new_m301(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         // --- v1.7.0 "Forge" Workstream G1, best-effort (Tier-2) reusable-ASIC
-        // BMC / pirate cores (sprint12). FK23C / COOLBOY / MINDKIDS / Sachen /
+        // BMC / pirate cores. FK23C / COOLBOY / MINDKIDS / Sachen /
         // Waixing / Kaiser clusters. Register-decode + save-state unit-tested
         // only, NOT accuracy-gated (`tier.rs`).
         176 => Box::new(
-            sprint12::new_m176(prg_rom, chr_rom, h.mirroring)
+            new_m176(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         268 => Box::new(
-            sprint12::new_m268(prg_rom, chr_rom, h.mirroring)
+            new_m268(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         513 => Box::new(
-            sprint12::new_m513(prg_rom, chr_rom, h.mirroring)
+            new_m513(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         136 => Box::new(
-            sprint12::new_m136(prg_rom, chr_rom, h.mirroring)
+            new_m136(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         164 => Box::new(
-            sprint12::new_m164(prg_rom, chr_rom, h.mirroring)
+            new_m164(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         253 => Box::new(
-            sprint12::new_m253(prg_rom, chr_rom, h.mirroring)
+            new_m253(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         286 => Box::new(
-            sprint12::new_m286(prg_rom, chr_rom, h.mirroring)
+            new_m286(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         56 => Box::new(
-            sprint12::new_m56(prg_rom, chr_rom, h.mirroring)
+            new_m56(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         142 => Box::new(
-            sprint12::new_m142(prg_rom, chr_rom, h.mirroring)
+            new_m142(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         303 => Box::new(
-            sprint12::new_m303(prg_rom, chr_rom, h.mirroring)
+            new_m303(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         305 => Box::new(
-            sprint12::new_m305(prg_rom, chr_rom, h.mirroring)
+            new_m305(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         306 => Box::new(
-            sprint12::new_m306(prg_rom, chr_rom, h.mirroring)
+            new_m306(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         312 => Box::new(
-            sprint12::new_m312(prg_rom, chr_rom, h.mirroring)
+            new_m312(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         261 => Box::new(
-            sprint12::new_m261(prg_rom, chr_rom, h.mirroring)
+            new_m261(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         289 => Box::new(
-            sprint12::new_m289(prg_rom, chr_rom, h.mirroring)
+            new_m289(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         320 => Box::new(
-            sprint12::new_m320(prg_rom, chr_rom, h.mirroring)
+            new_m320(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         336 => Box::new(
-            sprint12::new_m336(prg_rom, chr_rom, h.mirroring)
+            new_m336(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         349 => Box::new(
-            sprint12::new_m349(prg_rom, chr_rom, h.mirroring)
+            new_m349(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         // --- v1.8.9 "Backlog" beta.6, best-effort (Tier-2) NTDEC / TXC / BMC
-        // multicart cores (sprint13). Register-decode + save-state unit-tested
+        // multicart cores. Register-decode + save-state unit-tested
         // only, NOT accuracy-gated (`tier.rs`).
         193 => Box::new(
-            sprint13::new_m193(prg_rom, chr_rom, h.mirroring)
+            new_m193(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         204 => Box::new(
-            sprint13::new_m204(prg_rom, chr_rom, h.mirroring)
+            new_m204(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         221 => Box::new(
-            sprint13::new_m221(prg_rom, chr_rom, h.mirroring)
+            new_m221(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         299 => Box::new(
-            sprint13::new_m299(prg_rom, chr_rom, h.mirroring)
+            new_m299(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         other => return Err(RomError::UnsupportedMapper(other)),
@@ -1449,5 +1527,83 @@ mod tests {
         let (cart, _) = parse(&rom).unwrap();
         assert!(cart.has_trainer);
         assert_eq!(cart.prg_rom.len(), 32 * 1024);
+    }
+}
+
+/// Tripwire pinning every expansion-audio **level** constant.
+///
+/// ## Why this exists
+///
+/// Changing one of these constants changes the audio of every game on that
+/// board — correctly, when the change is a deliberate recalibration. The
+/// problem is *where the evidence of that lives*. The 60-ROM commercial oracle
+/// (`tests/external_real_games.rs`) hashes real cartridge audio and is the only
+/// gate that would notice, but it needs `--features commercial-roms` **and**
+/// local gitignored ROM dumps, so neither CI nor the default
+/// `--features test-roms` gate can run it. A golden vector nothing executes is
+/// not a gate.
+///
+/// That gap bit for real. `VRC6_MIX_SCALE` and all three MMC5 constants were
+/// recalibrated in v2.1.6 (`fd82485c`, 2026-07-11); the commercial-oracle
+/// snapshots had last been blessed on 2026-06-13, 28 days earlier. Six rows sat
+/// silently stale across several releases until someone ran the suite by hand.
+///
+/// This test **can** run in CI. It fails the moment a level constant moves,
+/// with instructions naming the suites that must be re-blessed in the same
+/// change. It asserts nothing about correctness — the oracles do that
+/// (`audio_expansion.rs`'s `level_db_*` decibel tests, `docs/apu-2a03.md`
+/// §Expansion-audio levels). Its only job is to make a silent change loud.
+///
+/// **If this test fails and the change was intentional:** update the value
+/// here, then re-bless BOTH `cargo test -p rustynes-test-harness --features
+/// test-roms --test audio_expansion` and `cargo test -p rustynes-test-harness
+/// --features test-roms,commercial-roms --test external_real_games` (the latter
+/// needs the local dumps; if you do not have them, say so in the PR rather than
+/// leaving the rows stale).
+#[cfg(test)]
+mod expansion_level_tripwire {
+    const RE_BLESS: &str = "expansion-audio level constant changed -- re-bless \
+        `audio_expansion` AND the gitignored `external_real_games` \
+        (--features commercial-roms) in this same change; see this module's docs";
+
+    #[test]
+    fn expansion_audio_levels_are_pinned() {
+        assert_eq!(crate::m024_vrc6::VRC6_MIX_SCALE, 979, "VRC6: {RE_BLESS}");
+        assert_eq!(
+            crate::m005_mmc5::MMC5_PULSE_SCALE,
+            650,
+            "MMC5 pulse: {RE_BLESS}"
+        );
+        assert_eq!(crate::m005_mmc5::MMC5_PCM_SCALE, 40, "MMC5 PCM: {RE_BLESS}");
+        assert_eq!(
+            crate::m019_namco163::NAMCO163_MIX_SCALE,
+            261,
+            "N163: {RE_BLESS}"
+        );
+        assert_eq!(
+            crate::m069_sunsoft_fme7::SUNSOFT5B_MIX_SCALE_NUM,
+            2549,
+            "5B numerator: {RE_BLESS}"
+        );
+        assert_eq!(
+            crate::m069_sunsoft_fme7::SUNSOFT5B_MIX_SCALE_DEN,
+            138,
+            "5B denominator: {RE_BLESS}"
+        );
+    }
+
+    /// `MMC5_MIX_BIAS` is derived from the two MMC5 scales, so it cannot drift
+    /// independently — but pin the derivation itself, since an edit to the
+    /// formula would move every MMC5 game's DC offset without touching a scale.
+    #[test]
+    fn mmc5_mix_bias_stays_the_midpoint_of_its_two_scales() {
+        assert_eq!(
+            crate::m005_mmc5::MMC5_MIX_BIAS,
+            i16::midpoint(
+                30 * crate::m005_mmc5::MMC5_PULSE_SCALE,
+                127 * crate::m005_mmc5::MMC5_PCM_SCALE
+            ),
+            "MMC5 bias formula: {RE_BLESS}"
+        );
     }
 }

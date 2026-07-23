@@ -233,7 +233,7 @@ const CASES: &[Case] = &[
 /// its recorded golden baseline.
 ///
 /// This is a golden-vector regression guard, not a pass/fail on the emulator's
-/// accuracy: the four sub-tests stay `#[ignore]`'d in `tests/mmc3.rs` (the
+/// accuracy: the four sub-tests stay `#[ignore]`'d in `tests/m004_mmc3.rs` (the
 /// residual is unchanged). What this locks down is the *A12-phase distribution*
 /// that the F5.0 finding rests on. Any drift in the tallies — especially
 /// `irq_post` (IRQ-clocking rises in the post-access / M2-high half) — fails

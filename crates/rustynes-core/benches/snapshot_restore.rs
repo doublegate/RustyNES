@@ -105,7 +105,7 @@ fn bench_rom(c: &mut Criterion, label: &str, rel: &str) {
 }
 
 fn bench_snapshot_restore(c: &mut Criterion) {
-    bench_rom(c, "flowing_palette", "sprint-2/flowing_palette.nes");
+    bench_rom(c, "flowing_palette", "assorted/flowing_palette.nes");
     bench_rom(c, "mmc3", "holy_mapperel/M4_P128K_CR8K.nes");
 }
 

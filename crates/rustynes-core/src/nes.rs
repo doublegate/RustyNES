@@ -1261,6 +1261,28 @@ impl Nes {
         self.bus.set_zapper(port, x, y, trigger);
     }
 
+    /// A3 (v2.2.3): enable the **beam-relative** Zapper light model.
+    ///
+    /// Default **off**. See [`crate::bus::LockstepBus::set_zapper_temporal_light`]
+    /// for the model; in short, the light bit becomes a function of where the
+    /// CRT beam is at the moment of the read (dark before the beam paints the
+    /// aim row, lit for the ~19-26-scanline photodiode hold, dark after)
+    /// instead of one answer for the whole frame.
+    ///
+    /// Deterministic either way: the temporal answer is a pure function of
+    /// framebuffer + aim + current scanline and holds no extra state, so it
+    /// adds nothing to serialize and cannot desync a save state or a netplay
+    /// rollback.
+    pub const fn set_zapper_temporal_light(&mut self, on: bool) {
+        self.bus.set_zapper_temporal_light(on);
+    }
+
+    /// Whether the beam-relative Zapper light model is enabled (A3).
+    #[must_use]
+    pub const fn zapper_temporal_light(&self) -> bool {
+        self.bus.zapper_temporal_light()
+    }
+
     /// Drive the Famicom built-in **microphone** (read on `$4016` bit 2).
     ///
     /// The hardwired second Famicom controller carries a push-to-talk mic that
@@ -2169,16 +2191,19 @@ impl Nes {
     /// common "clean" visible BG-render dots (visible scanline, dots `1..=256`,
     /// rendering stably enabled, no sub-dot disturbance) to a straight-line
     /// handler that runs the identical helper sequence with the statically-dead
-    /// event branches pruned. **Off by default** and **byte-identical** to a
-    /// build without it — proven bit-for-bit by the differential test
-    /// (`fast_dotloop_diff`) and the full `AccuracyCoin` / visual-regression /
-    /// nestest oracle. A frontend/config knob, NOT part of the save-state.
+    /// event branches pruned. **On by default since v2.2.3** (OFF through
+    /// v2.2.2) and **byte-identical** to the exact path — proven bit-for-bit
+    /// every frame by the differential test (`fast_dotloop_diff`) and the full
+    /// `AccuracyCoin` / visual-regression / nestest oracle, and measured at
+    /// **-11.3%** on the rendering-heavy `full_frame` bench. Setting it `false`
+    /// selects the fully-general per-dot path and remains the fallback. A
+    /// frontend/config knob, NOT part of the save-state.
     pub const fn set_fast_dotloop(&mut self, enabled: bool) {
         self.bus.set_fast_dotloop(enabled);
     }
 
     /// v2.1.8 A1 — whether the visible-scanline fast dot path is enabled
-    /// (`false` = default, byte-identical to a build without it).
+    /// (`true` = default since v2.2.3; both settings produce identical frames).
     #[must_use]
     pub const fn fast_dotloop(&self) -> bool {
         self.bus.fast_dotloop()
@@ -3529,5 +3554,19 @@ mod tests {
         assert_eq!(nes.nsf_current_song(), 0);
         nes.nsf_set_song(1); // no-op, must not panic or reset spuriously
         assert_eq!(nes.nsf_current_song(), 0);
+    }
+
+    /// A3 (v2.2.3): the beam-relative Zapper model is OFF by default, so the
+    /// shipped `$4017` byte is exactly what the frame-granular model produced.
+    #[test]
+    fn zapper_temporal_light_is_off_by_default() {
+        let mut nes = Nes::from_rom(&synth_nrom(16, 8)).expect("nrom builds");
+        assert!(!nes.zapper_temporal_light(), "A3 must default OFF");
+        nes.set_zapper(1, 100, 120, false);
+        // Toggling it on and back off must restore the default exactly.
+        nes.set_zapper_temporal_light(true);
+        assert!(nes.zapper_temporal_light());
+        nes.set_zapper_temporal_light(false);
+        assert!(!nes.zapper_temporal_light());
     }
 }

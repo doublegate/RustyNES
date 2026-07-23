@@ -152,20 +152,61 @@ Top 5 hot functions get a focused optimization pass. Specifically watch:
 See **"Measured baselines (v2.0.0)"** above for the values, or
 [`docs/benchmarks.md`](benchmarks.md) for the full reproducible record.
 
-**CI regression gate (landed v1.6.0).** `scripts/bench_regression_check.sh`
-runs the `full_frame` benches and fails if headless frame production exceeds an
-absolute ceiling (default 10 ms — 60% of the 16.67 ms NTSC deadline), wired as
-the `bench` job in `.github/workflows/ci.yml`. The ceiling is deliberately
-generous: shared CI runners vary run-to-run by tens of percent, so a tight
-percentage-regression gate would flake; the absolute ceiling instead protects
-the property that matters — headless production stays comfortably real-time —
-and trips only on a gross (~3x) regression. For the tighter ~5% comparison, use
-criterion baselines locally:
+**CI regression gates.** The `bench` job in `.github/workflows/ci.yml` runs
+**two** gates, deliberately different in kind. Both are FULL-run only (merge /
+release), not per-PR-push.
+
+1. **Absolute ceiling** (`scripts/bench_regression_check.sh`, v1.6.0) — fails if
+   headless frame production exceeds a wall-clock ceiling (default 10 ms — 60%
+   of the 16.67 ms NTSC deadline). Deliberately generous, and never flaky: it
+   protects the property that matters — headless production stays comfortably
+   real-time.
+
+2. **Relative same-runner A/B** (`scripts/bench_relative_check.sh`, v2.2.3 P6) —
+   builds and benches the **base commit and HEAD back to back on the same
+   runner**, in one job sharing one target dir, and fails if HEAD is more than
+   `BENCH_MAX_REGRESSION_PCT` (default 10%) slower.
+
+**Why gate 2 exists.** The ceiling answers "is the emulator still real-time?",
+not "did this change make it worse". On the ~4 ms/frame the core actually runs
+at, a change could get **2.5x slower and still pass** — the gate would sleep
+through it. That is a real hole, not a hypothetical: this repo's own history has
+a 10% swing (the v2.1.8 fast dot path) that the ceiling would not have noticed
+in either direction.
+
+**Why a percentage gate is sound now when v1.6.0 judged it too flaky.** That
+judgement was right about *cross-run* comparison — this run's number against a
+figure recorded on another machine — where hosted runners differ by tens of
+percent. Gate 2 never does that. It compares two builds measured back to back on
+one runner, so runner-to-runner variance is common-mode and cancels. This is the
+identical technique `pgo.yml` has relied on since v1.2.0 for its >3% promotion
+bar, and the measured back-to-back noise floor is **±0.7%** (§P2, where an
+identical configuration benched against its own baseline reported "no change" on
+all four workloads, p > 0.05). The 10% default is nonetheless far above that: a
+CI runner is noisier than a quiet desktop, and this gate's job is to catch the
+gross regression the ceiling misses, not to adjudicate a 2% micro-optimization.
+
+The base commit is benched in a **throwaway git worktree**, never via
+`git checkout` — the gate must not touch the working tree it runs in. It
+**skips with exit 0** (rather than inventing a verdict) when no base commit is
+resolvable: a shallow clone, a root commit, a brand-new branch whose
+`github.event.before` is all-zeros, or a `workflow_dispatch` with no base at
+all. The job checks out with `fetch-depth: 0` precisely so the normal case does
+*not* skip.
+
+For an ad-hoc local comparison, criterion baselines directly:
 
 ```bash
 cargo bench -p rustynes-core --bench full_frame -- --save-baseline main
 # ... make changes ...
 cargo bench -p rustynes-core --bench full_frame -- --baseline main
+```
+
+or run the CI gate itself against any base:
+
+```bash
+scripts/bench_relative_check.sh HEAD~1
+BENCH_MAX_REGRESSION_PCT=5 scripts/bench_relative_check.sh origin/main
 ```
 
 Per the v1.6.0 gap-analysis plan §5, do **not** monomorphize `Box<dyn Mapper>`
@@ -468,13 +509,255 @@ the vast majority of the time, so the representative effect is the +12.3% figure
 Criterion `full_frame` baselines this pass (stock, same host): `nes_run_frame_nestest`
 ~4.26 ms, `nes_run_frame_flowing_palette` ~2.55 ms, `ppu_tick_one_frame` ~541 µs.
 
-**Decision: shipped default-OFF (opt-in).** The optimization is a pure,
+**Decision (v2.1.8): shipped default-OFF (opt-in).** The optimization is a pure,
 byte-identical speedup, so per this file's convention it *could* be the default.
 It is nonetheless kept **default-OFF** for this cut — it is the roadmap's single
 highest-risk item, and shipping it off keeps the default build unchanged and
 byte-identical while the differential test + oracle prove correctness and the
 A/B proves the win. Recommended for promotion to default after maintainer review
 and a clean-host Criterion confirmation.
+
+**Decision (v2.2.3): PROMOTED TO DEFAULT.** Both conditions the v2.1.8 decision
+named are now met, so the knob defaults to ON and the shipped build takes the
+fast path.
+
+*Clean-host Criterion confirmation* (quiet host, stock `cargo bench -p
+rustynes-core --bench full_frame`, no concurrent build load — the contamination
+that forced v2.1.8's interleaved harness):
+
+| Workload (rendering state) | exact (OFF) | fast (ON) | Δ |
+|---|---|---|---|
+| `nes_run_frame_nestest` (rendering **enabled**) | 4.4343 ms | 3.9331 ms | **−11.3%** |
+| `nes_run_frame_flowing_palette` (rendering **disabled**) | 2.6741 ms | 2.6723 ms | −0.07% (noise) |
+
+This independently reproduces v2.1.8's interleaved +12.3% / neutral pair on a
+different measurement method, and clears the standing **>3% + byte-identical**
+bar. The rendering-disabled demo is unchanged because its guard bails at
+`rendering_enabled()`; real games render nearly all the time, so −11.3% is the
+representative figure.
+
+*Byte-identity* was never in question and is not newly asserted here: it has been
+held continuously since v2.1.8 by `fast_dotloop_diff.rs`, which runs both paths
+over the corpus and compares framebuffer + palette-index framebuffer + audio +
+CPU-cycle count + full core snapshot **every frame**. Promotion was re-verified
+against the whole `--features test-roms` suite with the new default in place:
+**2218 passed / 0 failed**, identical to the pre-promotion tally — AccuracyCoin
+141/141, nestest 0-diff, `visual_regression` and the APU oracles unmoved.
+
+*User surface.* The desktop frontend exposes it as
+`[emulation] fast_dotloop` (Settings → Accuracy, labelled "performance, not
+accuracy"), defaulted through `default_fast_dotloop()` rather than
+`#[serde(default)]` so an existing on-disk config loads as `true` instead of
+silently opting the user out — pinned by
+`emulation_fast_dotloop_defaults_on_for_pre_v2_2_3_configs`. It is an escape
+hatch, not a tuning knob: there is no accuracy reason to turn it off.
+`rustynes-libretro` and `rustynes-mobile` inherit the win from the core default
+and deliberately gain **no** new option — neither exposes any comparable knob
+today (libretro's `CoreOptions` impl is empty), and adding each crate's first one
+for a byte-identical escape hatch is not justified.
+
+**Prior to this, the win was unreachable in practice:** `Nes::set_fast_dotloop`
+had zero callers outside the core and its tests, so no shipped configuration of
+any frontend could enable it.
+
+### v2.2.3 P4 — every-cycle bus cost `cpu_clock` (decision: no change adopted)
+
+`<LockstepBus as Bus>::cpu_clock` is the second-hottest function at **22.43%**
+of frame self-time. The v2.0.0 substrate calls it once per CPU cycle and it
+unconditionally runs `drain_dma(None)`, `ppu.on_cpu_cycle()`, and
+`apu_advance_one()`; only `mapper.notify_cpu_cycle()` is capability-gated.
+The plan proposed an idle/capability early-out mirroring that gate.
+
+**`perf annotate` redirected the whole investigation.** The hot instructions
+inside `cpu_clock` are not bus bookkeeping — they are *floating point*:
+
+```text
+6.57%  vaddss  %xmm0,%xmm3,%xmm0
+4.97%  vaddss  0x4144(%rbx,%rax,4),%xmm2,%xmm0
+3.63%  vsubss  0x407c(%rbx),%xmm1,%xmm0
+3.37%  vmulss  0x4494(%rbx),%xmm0,%xmm0
+3.27%  vminss  %xmm0,%xmm1,%xmm1
+```
+
+That is the APU, inlined through `apu_advance_one`: the non-linear mixer's two
+table lookups, then `Blip::add_sample`'s finite-check / clamp / delta, then the
+phase advance. The DMA and PPU hooks the plan suspected are not the cost.
+
+**Both textbook optimizations are already implemented.** The per-channel UI gain
+already short-circuits at unity (`if g == 1.0 { v }` in `scale`), so the default
+build performs no gain arithmetic; and the FIR scatter is already guarded by
+`if delta != 0.0`, so a cycle whose mixed output is unchanged already skips the
+32-tap band-limited scatter. What remains per cycle is genuinely structural: you
+cannot know the delta is zero without computing the sample, and the phase
+advance **is** the output-sample clock, which must run on every CPU cycle.
+
+**A confounded probe, recorded because the trap is reusable.** The first attempt
+stubbed `mixed` to a constant and measured a 6.9-7.9% saving — apparently a huge
+win. It was an artifact: with `mixed` constant, LLVM proves `delta == 0.0` and
+deletes the entire FIR scatter, so the probe measured *band-limited synthesis*,
+not the mixer. Any probe that alters the value flowing into `add_sample` is
+measuring the synthesis path, whatever it looks like it is measuring. (Same
+class of error as the P2 contaminated A/B.)
+
+**The clean measurement.** Add a SECOND, `black_box`ed mixer evaluation whose
+result is discarded, leaving the value into `add_sample` — and therefore the FIR
+— completely untouched. The delta is then exactly one mixer evaluation plus its
+five `output()` reads:
+
+| build | wall clock (900 frames, 3 runs) | delta |
+|---|---|---|
+| baseline | 20.35 / 19.21 / 19.16 s | — |
+| + one discarded mixer call | 19.58 / 19.54 / 19.59 s | **+1.9%** |
+
+So the mixer and its channel reads cost **≤1.9%** of frame time. That is the
+hard ceiling on the one remaining lever — caching the mixed sample across cycles
+whose channel outputs are unchanged — and it would be realised only by a cache
+that never misses, before paying for the change-detection compare itself. It
+also needs new per-instance state, which under the v2.2.3 schema audit
+(`snapshot_schema_audit.rs`) is a save-state schema decision rather than a local
+optimization.
+
+**Below the 3% bar. No change adopted, nothing reverted** (the probes were
+throwaway). `cpu_clock` stays 22.43% because that 22.43% is the APU doing the
+work the accuracy model requires.
+
+### v2.2.3 P3 — `emit_pixel` bounds-check elision (decision: REJECTED, reverted)
+
+`Ppu::emit_pixel` is the third-hottest function in the emulator: **9.38% of
+frame self-time** in a fresh `perf record --call-graph=dwarf -F 999` over the
+committed 7-ROM PGO training corpus (`tick` 29.85%, `cpu_clock` 22.43%). It had
+never appeared in this document's hot-path table.
+
+**The hypothesis, from `perf annotate` rather than from reading the source.**
+The hottest instructions were not the pixel math. They clustered at the *stores*:
+
+```text
+5.37%  mov  %esi,(%rdx,%rax,1)      <- the framebuffer store
+5.33%  mov  0x1e8(%rdi,%rcx,4),%esi <- the rgba_lut load
+3.13%  mov  0x40(%rdi),%rdx         <- reload the buffer base pointer
+2.70%  lea  (%rsi,%r8,4),%rax       }
+2.15%  mov  0x38(%rdi),%rdx         } bounds-check machinery
+2.09%  cmp  %rdx,%rsi               }
+```
+
+`framebuffer: Box<[u8]>` and `index_framebuffer: Box<[u16]>` carry a **runtime**
+length, so the optimiser cannot prove either index in range and emits a bounds
+check plus a panic path for **every pixel** — 61,440 pixels per frame, twice
+each. The BG-shifter block by contrast was already auto-vectorised
+(`vpbroadcastw` / `vpand` / `vpcmpeqw` / `vmovmskps`) and is not the problem.
+
+**The candidate.** Change both fields to fixed-size boxed arrays
+(`Box<[u8; FRAMEBUFFER_LEN]>`, `Box<[u16; FRAMEBUFFER_PIXELS]>`) so the length
+becomes a compile-time constant, and clamp the pixel index once with a
+branchless `.min(FRAMEBUFFER_PIXELS - 1)` so the optimiser can discharge both
+checks. The clamp can never bind — `emit_pixel` is only reached for a visible
+dot (1..=256) on a visible scanline (0..=239) — so it is byte-identical, with a
+`debug_assert!` pinning the invariant. Public surface unchanged (`framebuffer()`
+still returns `&[u8]`).
+
+**Measured: it makes the shipped default SLOWER.** Same-runner Criterion A/B, a
+`git worktree` at HEAD benched against the working tree through one shared
+target dir:
+
+| workload | change | p | verdict |
+|---|---|---|---|
+| `nes_run_frame_nestest` (exact path) | −3.10% | 0.09 | no change — CI spans zero |
+| `nes_run_frame_flowing_palette` (exact) | +0.06% | 0.83 | no change |
+| **`nes_run_frame_nestest_fast`** | **+4.32%** | **0.00** | **regressed** |
+| **`nes_run_frame_flowing_palette_fast`** | **+3.35%** | **0.02** | **regressed** |
+
+The two `_fast` rows are the ones that matter: P1 promoted the fast dot path to
+the **default**, so those are the shipped configuration. Both regressed
+significantly. The only favourable number, −3.10% on the now-non-default exact
+path, is not statistically significant.
+
+**Reverted in full.** Two lessons worth keeping. First, `perf`'s self-time
+*percentage* is not a verdict: after the change `emit_pixel` measured **10.26%**,
+*higher* than the 9.38% before — a share, not a duration, and the program around
+it had changed. Only the wall-clock A/B settles it. Second, removing a bounds
+check is not free: the check was almost perfectly predicted, whereas the `cmov`
+that replaces it sits on the store's address dependency chain, and narrowing
+`Box<[T]>` to `Box<[T; N]>` shrinks `Ppu` and perturbs inlining and layout
+decisions across the whole hot loop. The theoretically-cheaper code lost.
+
+**What is left on the table.** The store cluster is real and still unaddressed;
+what has been ruled out is *this* way of attacking it. A structural change —
+making the framebuffer per-pixel (`[[u8; 4]]`) so the RGBA write and the
+index write share one index and one check — is the untried option, but it
+changes a public type consumed by the frontend, libretro, mobile and the tests,
+so it is a deliberate API decision rather than a micro-optimization.
+
+### v2.2.3 P2 — specialized idle-line dot path (decision: implemented, gated OFF)
+
+A1 covers visible dots `1..=256` — 61,440 of the 89,342 NTSC dots (68.8%). The
+other **27,902 (31.2%)** still walk the full general per-dot body, and the four
+parts sum exactly: the non-`1..=256` dots of the 240 visible lines — dot 0 plus
+257..=340, so 85 × 240 = **20,400**; post-render line 240 — **341**; vblank
+lines 241..=260 — 20 × 341 = **6,820**; and pre-render line 261 — **341**.
+(20,400 + 341 + 6,820 + 341 = 27,902 = 89,342 − 61,440.) P2
+attacked the cheapest slice to prove correct: the **idle line** — post-render
+line 240 plus every vblank line except the VBL-set line 241, 20 of 262 lines.
+
+**Why it looked promising.** On an idle line the general body provably reduces
+to three assignments; every other branch is gated on `render_line`, `visible`,
+`pre_render`, `scanline == vblank_start_line()`, or a disturbance countdown.
+So ~30 predicates were being evaluated to perform three stores.
+
+**Implementation.** `Ppu::tick_idle_line_fast` behind a guard requiring a warm
+classification cache (new derived `cached_idle_line` flag), plus all three
+sub-dot countdowns idle. Byte-identical by construction on A1's terms, and
+pinned by `fast_dotloop_diff` — extended here with
+`idle_line_fast_path_matches_exact_under_vblank_io`, which drives a
+purpose-built NROM that hammers `$2000`/`$2001`/`$2006`/`$2007` for the length
+of vblank so the guard's fall-through arms are *exercised* rather than assumed
+(vblank is when real software does its PPU I/O, so this is the case that
+matters).
+
+**Measured — same-session Criterion A/B, feature-off vs feature-on**, noise
+floor ±0.7% (established by re-running an identical configuration against its
+own baseline: all four workloads `p > 0.05`):
+
+| Workload | Δ | |
+|---|---|---|
+| `nes_run_frame_nestest` | +0.16% | p = 0.23, no change |
+| `nes_run_frame_nestest_fast` | +0.41% | p = 0.01, marginally worse |
+| `nes_run_frame_flowing_palette` | **−1.31%** | small win |
+| `nes_run_frame_flowing_palette_fast` | **−1.55%** | small win |
+
+A ~1.5% win only on **rendering-disabled** content, neutral-to-slightly-negative
+on the rendering-heavy case that dominates real play. The guard runs on every dot
+A1's guard does not already claim — ~28k per frame, and all 89k when rendering is
+off, which is exactly why the rendering-disabled demo is where it pays — to save
+work on 6,820 idle dots whose general path was already short-circuiting on a
+cached bool. The two roughly cancel.
+
+**Decision: implemented, byte-identity proven, shipped OFF behind the
+`ppu-idle-line-fast` cargo feature.** It does not clear the >3% bar, so it does
+not displace the default — the same outcome the A2 SIMD blitter got, for the same
+reason. It is **compile-time** rather than a runtime knob precisely because the
+cost *is* the per-dot guard: a runtime flag would still pay it when disabled. With
+the feature off the field, the guard, and the handler are all absent, so the
+default build is unchanged.
+
+> **Methodology trap — worth not repeating.** The first A/B reported P2 as a
+> **+2% to +7.3% regression** and nearly got it deleted. That measurement was
+> contaminated: the "off" baseline was produced by short-circuiting the guard with
+> `if false && …` while leaving the new `cached_idle_line` field in the struct. The
+> field changed `Ppu`'s layout, and the layout — not the guard — moved
+> `flowing_palette` by ~3%. Only a genuine feature-off build (field absent)
+> compares like with like. **When A/B-ing a change that adds a struct field, the
+> baseline must not carry the field**; a `cfg` gate is the honest scaffold, an
+> `if false` is not.
+>
+> **Also learned:** the three assignments in `tick_idle_line_fast` are, given the
+> guard, provably redundant — deleting any one leaves the entire differential
+> suite green (verified). They are kept anyway: "same assignments, same order" is
+> checkable by reading twenty lines, whereas "these stores are dead" is a
+> reachability argument that must be re-derived whenever the guard moves. Note the
+> corollary for anyone extending this — a negative control that deletes a *dead*
+> store proves nothing. The control that actually discriminates is one that breaks
+> the *classification* (treating line 241 as idle makes all four differential
+> tests fail, including the new torture case).
 
 ### v1.4.0 Workstream F — measure-first micro-opt pass (core)
 
@@ -505,7 +788,7 @@ full-BG-every-frame) inputs; the headline number is the rendering path.
   loop (`crates/rustynes-apu/src/blip.rs`) was re-verified as still split into
   two contiguous SAXPY runs (auto-vectorizes; no change needed).
 - **F2 — MMC5 `cpu_read` hot-path short-circuit**
-  (`crates/rustynes-mappers/src/mmc5.rs`). PRG-ROM/RAM fetches at
+  (`crates/rustynes-mappers/src/m005_mmc5.rs`). PRG-ROM/RAM fetches at
   `$8000-$FFFF` dominate `cpu_read` (every opcode + operand fetch on an MMC5
   cart), while the register / ExRAM arms only fire on explicit `$5xxx`
   accesses. An early `if addr >= 0x8000 { return self.read_prg_window(addr); }`
@@ -676,7 +959,23 @@ per-PR pipeline: an instrument + train + optimized-rebuild cycle compiles the
 workspace twice plus a multi-ROM sweep, far too slow for the PR gate (that's the
 fast absolute-ceiling `bench` job in `ci.yml`). The `PGO` workflow triggers on
 **`workflow_dispatch`** (Actions tab → *Run workflow*; optional `frames` and
-`run_bolt` inputs) and on **push of a release tag (`v*`)**.
+`run_bolt` inputs) and via **`workflow_call` from `release.yml`** on a version
+tag.
+
+> **v2.2.3 — the promoted binary now actually ships.** Until this release the
+> workflow also triggered directly on a `v*` tag push "so a release can consider
+> shipping the PGO binary" — but nothing ever consumed the result: the gate ran,
+> promoted an artifact, and the release attached the plain build regardless. The
+> measured win never reached a single user. `release.yml` now *calls* this
+> workflow and replaces the `x86_64-unknown-linux-gnu` asset with the promoted
+> binary. The standalone tag trigger was removed at the same time, so a
+> hand-pushed tag no longer starts two 90-minute PGO runs.
+>
+> **Scope: linux-x86_64 only.** PGO training must *run* the instrumented binary,
+> so every additional target needs its own native runner doing a full train
+> cycle (~90 min each). macOS-aarch64 and Windows keep shipping plain release
+> builds; extending PGO to them is a separate decision with a real cost, not a
+> freebie.
 
 Its stages:
 
@@ -706,14 +1005,37 @@ Its stages:
   no fast-math), but the gate **proves** it rather than assuming it: any
   framebuffer/audio/cycle-hash difference fails the stage and blocks promotion.
 
-A failed gate is informational — it never blocks a release; `release.yml` ships
-the plain-release binary independently.
+A failed gate is informational — it never blocks a release. The determinism
+stage carries a **step-level** `continue-on-error`, so a divergence produces a
+`promotable=false` verdict rather than a dead job, and the asset-replacement
+job (gated on `needs.pgo.outputs.promotable == 'true'`) is simply skipped,
+leaving the plain-release asset that `build` already attached exactly where it
+is.
+
+Note that `continue-on-error` **cannot** be applied to the caller job: GitHub
+does not allow it on a reusable-workflow `uses:` job (only `name`, `uses`,
+`with`, `secrets`, `needs`, `if`, `permissions`), and `actionlint` flags it as a
+syntax error. The tolerance therefore has to live inside the called workflow.
+An *infrastructure* failure (runner died, `cargo-pgo` unavailable) still marks
+the run red — deliberately, since a broken PGO pipeline should be visible — but
+the release assets are correct either way.
+
+**Sequencing.** `build` attaches the plain Linux archive in ~10 minutes; the PGO
+job takes up to 90. For that window the release carries the plain binary and is
+then upgraded in place via `gh release upload --clobber` under the *same* asset
+name (so download links do not change shape). The alternative — withholding the
+whole release until PGO finishes — was rejected: a complete, downloadable
+release an hour sooner is worth more than avoiding an in-place swap.
 
 #### BOLT (Linux post-link, optional)
 
 A second Linux-only `bolt` job runs behind the **same > 3% + byte-identical
 gate**, only after the PGO stage has already promoted (`needs.pgo.outputs.promotable
-== 'true'`), and on `workflow_dispatch` only when the `run_bolt` input is true.
+== 'true'`), and **only** on an explicit `workflow_dispatch` with `run_bolt:
+true`. (Before v2.2.3 its condition admitted any non-dispatch event, which —
+once `release.yml` began calling this workflow — would have fired BOLT on every
+release, adding ~90 minutes for an artifact nothing consumes, since the release
+ships the PGO binary and not the BOLT one.)
 It is **best-effort**: it probes for `llvm-bolt` (PATH, then `apt-get install
 bolt`) and skips cleanly if unavailable, so the workflow never hard-fails on a
 runner image without BOLT. When present it chains `cargo pgo bolt build` →
@@ -727,8 +1049,9 @@ extra ~2% on top of PGO).
 # Manual (from a checkout with the gh CLI):
 gh workflow run PGO.yml                     # default 3600 frames/ROM, no BOLT
 gh workflow run PGO.yml -f frames=7200 -f run_bolt=true
-# Or push a release tag (runs alongside release.yml):
-git tag v1.2.0 && git push origin v1.2.0
+# Or push a release tag — `release.yml` calls PGO and ships the promoted
+# binary as the linux-x86_64 asset when the gate passes:
+git tag v2.2.3 && git push origin v2.2.3
 ```
 
 ## Things explicitly *not* in scope for v1.0

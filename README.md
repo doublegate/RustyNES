@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.2.2-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.2.3-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -775,20 +775,39 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.2.2 "Conduit"**, a **build, distribution,
-and CI-integrity patch**. It takes the libretro buildbot recipe from 1 of 10
-jobs green to **all ten building** — the last step before RustyNES appears in
-RetroArch's built-in core downloader — hardens the GitHub Actions supply chain
-(`persist-credentials: false` on all 19 checkouts, a fail-closed release-tag
-check, a SHA-pinned toolchain action), and collapses the toolchain to a single
-pinned source of truth with **no `nightly` on any build path**. **Zero
-emulation-core changes** — nothing under `crates/rustynes-{cpu,ppu,apu,mappers,
-core}` is touched, so AccuracyCoin holds **141/141 (100.00%)** and every golden
-vector is untouched by construction. The one behavioural improvement in a
-shipped artifact: the libretro **tvOS** core is now built with `panic = "abort"`
-like every other platform.
+RustyNES's current release is **v2.2.3 "Datum"**, a **performance and
+accuracy-closure patch**. A measure-first appraisal profiled the emulator and
+acted on what it found rather than on intuition.
 
-It follows **v2.2.1**, a **housekeeping patch** on top of
+**Performance.** The specialized PPU fast dot path — measured at **−11.3%**
+frame time on rendering-heavy content and differential-tested bit-identical
+every frame since v2.1.8 — is now the **default**, and reachable from the
+frontend for the first time (`Nes::set_fast_dotloop` previously had no caller
+outside the core, so the win shipped switched off and unreachable). Release
+builds now ship **PGO-optimized** Linux binaries when the >3%-and-byte-identical
+gate passes, and CI gained a same-runner relative frame-time regression gate to
+close a hole where a 2.5x slowdown could pass the old absolute ceiling.
+
+**Accuracy.** The **last two Holy Mapperel residuals are closed** — all 17 ROMs
+now report `detail=0000`. MMC1's two software WRAM write-protect layers and
+FME-7's open-bus-on-disabled-RAM window are both modelled, the former validated
+against **60/60** commercial ROMs (including seven battery-backed MMC1 saves,
+precisely the titles that corrupt if the RAM enable is wrong) plus **138/138**
+extended. The Sunsoft 5B's absolute level is calibrated against Mesen2, which
+required widening `Mapper::mix_audio` to `i32` — the correct full-scale 5B tone
+does not fit `i16`. A save-state schema gap found by a new standing audit is
+fixed (`PPU_SNAPSHOT_VERSION` 8, plus an APU v4 tail), which is what made
+AccuracyCoin report 141/141 through run-ahead as well as without it.
+
+**Two optimizations were measured and rejected**, and are documented with their
+numbers — the project records what did not clear the bar as well as what did.
+**AccuracyCoin holds 141/141 (100.00%)**, nestest 0-diff.
+
+It follows **v2.2.2 "Conduit"**, a build, distribution, and CI-integrity patch
+that took the libretro buildbot recipe from 1 of 10 jobs green to **all ten
+building**, hardened the GitHub Actions supply chain, and collapsed the
+toolchain to a single pinned source of truth with no `nightly` on any build
+path; and **v2.2.1**, a **housekeeping patch** on top of
 v2.2.0 "Capstone" (below): archives two batches of dev/research tooling (the
 Game Genie header-robust re-key's research scripts and a 2A03-revision
 DMA-divergence probe), consolidates six open Dependabot PRs with **zero

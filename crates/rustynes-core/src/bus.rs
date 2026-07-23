@@ -434,6 +434,10 @@ pub struct LockstepBus {
     /// the default + Four Score reads and the determinism contract are
     /// unaffected unless a device is explicitly attached.
     expansion_device: [Option<crate::input_device::InputDevice>; 2],
+    /// A3 (v2.2.3), default **off**: serve a Zapper's light bit from the
+    /// beam-relative temporal model instead of the frame-granular one. See
+    /// [`Bus::set_zapper_temporal_light`].
+    zapper_temporal_light: bool,
     /// Famicom built-in **microphone** signal (v2.2.0 "Capstone"). The hardwired
     /// second Famicom controller carries a push-to-talk microphone whose state is
     /// read on **`$4016` bit 2** (not `$4017`) — games such as *The Legend of
@@ -854,6 +858,7 @@ impl LockstepBus {
             vs_4016_bit1: false,
             vs_4016_bit1_dirty: false,
             expansion_device: [None, None],
+            zapper_temporal_light: false,
             famicom_mic: false,
             nt_mirroring_override: None,
             #[cfg(feature = "debug-hooks")]
@@ -1621,6 +1626,32 @@ impl LockstepBus {
             0 | 1 => self.controllers[port].set_buttons(buttons),
             _ => self.controllers34[port - 2].set_buttons(buttons),
         }
+    }
+
+    /// A3 (v2.2.3): enable the **beam-relative** Zapper light model.
+    ///
+    /// Default **off**, which keeps the frame-granular model and therefore
+    /// byte-identical output on every shipped build.
+    ///
+    /// With it on, the light bit is derived from where the CRT beam is at the
+    /// moment of the `$4016`/`$4017` read rather than from the completed frame:
+    /// dark before the beam paints the aim row, lit while the photodiode holds
+    /// (~19-26 scanlines), dark once it drains. That is what real hardware
+    /// does, and the frame model structurally cannot express it — it returns
+    /// one answer for the whole frame.
+    ///
+    /// Opt-in rather than promoted because there is **no pass/fail light-gun
+    /// test ROM** to adjudicate it: the supported titles re-poll every frame and
+    /// are satisfied by either model, so promoting it would change output with
+    /// no oracle able to confirm the change is an improvement.
+    pub const fn set_zapper_temporal_light(&mut self, on: bool) {
+        self.zapper_temporal_light = on;
+    }
+
+    /// Whether the beam-relative Zapper light model is enabled (A3).
+    #[must_use]
+    pub const fn zapper_temporal_light(&self) -> bool {
+        self.zapper_temporal_light
     }
 
     /// Attach (or replace) a non-standard overlay device on `port` (0 =
@@ -2446,7 +2477,7 @@ impl LockstepBus {
     /// advancing the shift register. Four Score off → just
     /// `controllers[port].read()`; on → the multiplexed 24-read sequence
     /// (primary pad → secondary pad → signature → 1s).
-    const fn read_port(&mut self, port: usize) -> u8 {
+    fn read_port(&mut self, port: usize) -> u8 {
         // v1.6.0 Workstream A3 (`TAStudio` lag log): any read of $4016/$4017
         // counts as the game polling input this frame. Output-only; gated.
         #[cfg(feature = "debug-hooks")]
@@ -2458,6 +2489,28 @@ impl LockstepBus {
         // bits 3/4) instead of the standard D0 shift-register bit. The
         // standard controller is still strobed (in `commit_controller_strobe`)
         // so detaching the device restores byte-identical behavior.
+        // A3 (v2.2.3, opt-in): serve the Zapper's light bit from the
+        // beam-relative model. `read_at_scanline` takes `&self` and the PPU is a
+        // different field, so these are disjoint borrows. Off by default, so the
+        // shipped path below is byte-identical.
+        if self.zapper_temporal_light
+            && let Some(crate::input_device::InputDevice::Zapper(z)) = &self.expansion_device[port]
+        {
+            // `scanline()` is `i16` but is non-negative on every current region
+            // (visible 0..=239, then post-render / vblank up to the pre-render
+            // line — 261 NTSC / 311 PAL, NOT -1), so `try_from` always succeeds
+            // and this resolves to `read_at_scanline`, which already yields
+            // no-light for the pre-render line (`prerender - y >= HOLD` for every
+            // visible aim). The `Err` arm is a total-conversion fallback: if a
+            // future convention ever produced a negative scanline (a -1
+            // pre-render), the correct answer is "no light yet" —
+            // `read_before_visible` — rather than the row-0 fold a bare
+            // `unwrap_or(0)` would give.
+            return match u16::try_from(self.ppu.scanline()) {
+                Ok(sl) => z.read_at_scanline(self.ppu.framebuffer(), sl),
+                Err(_) => z.read_before_visible(),
+            };
+        }
         if let Some(d) = &mut self.expansion_device[port] {
             return d.read();
         }
@@ -2483,7 +2536,23 @@ impl LockstepBus {
     }
 
     /// Side-effect-free companion to [`Self::read_port`] (debugger peek).
-    const fn peek_port(&self, port: usize) -> u8 {
+    fn peek_port(&self, port: usize) -> u8 {
+        // Mirror the temporal-Zapper branch in `read_port` so a debugger peek
+        // shows the same `$4016`/`$4017` byte the CPU would receive. Without
+        // this, with `zapper_temporal_light` on, `peek_port` fell through to the
+        // overlay's frame-granular `peek()` and could disagree with the live
+        // read. `peek` is non-mutating and all of `scanline()` / `framebuffer()`
+        // / `read_at_scanline` / `read_before_visible` take `&self`, so this is a
+        // pure read; it costs `peek_port` its `const` (try_from/match are not
+        // const here), which nothing relied on. Off by default → byte-identical.
+        if self.zapper_temporal_light
+            && let Some(crate::input_device::InputDevice::Zapper(z)) = &self.expansion_device[port]
+        {
+            return u16::try_from(self.ppu.scanline()).map_or_else(
+                |_| z.read_before_visible(),
+                |sl| z.read_at_scanline(self.ppu.framebuffer(), sl),
+            );
+        }
         if let Some(d) = &self.expansion_device[port] {
             return d.peek();
         }
@@ -2979,11 +3048,18 @@ impl LockstepBus {
         self.ppu.on_cpu_cycle();
         self.mapper.notify_cpu_cycle();
         // Sample the mapper's audio extension AFTER notify_cpu_cycle has
-        // advanced its oscillators. `Mapper::mix_audio` returns i16; we
-        // scale to approximately the same [-0.5, 0.5] range as the APU
-        // mixer's own output. Mappers without on-cart audio return 0,
-        // which scales to 0.0 -- a no-op for the standard cartridges.
-        let mapper_sample = f32::from(self.mapper.mix_audio()) / 65536.0;
+        // advanced its oscillators. `Mapper::mix_audio` returns i32 (widened
+        // from i16 in v2.2.3 so the Sunsoft 5B's ~3.6x full-volume level is
+        // representable); we scale to approximately the same [-0.5, 0.5] range
+        // as the APU mixer's own output. Mappers without on-cart audio return
+        // 0, which scales to 0.0 -- a no-op for the standard cartridges.
+        //
+        // `as f32` rather than `f32::from`: there is no lossless From<i32> for
+        // f32. The cast is exact for every value any board actually produces
+        // (|sample| well under 2^24, where f32 is still integer-exact); the
+        // widening exists to raise a ~32k ceiling to ~16.7M, not to use it.
+        #[allow(clippy::cast_precision_loss)]
+        let mapper_sample = self.mapper.mix_audio() as f32 / 65536.0;
         self.apu.tick_with_external(mapper_sample);
         // Fan-out the APU frame-counter events to any on-cart audio
         // extension that shares the 2A03 frame-counter cadence (MMC5).
@@ -4083,8 +4159,9 @@ impl LockstepBus {
     /// and boards without the frame hook have the default no-op. Skipping
     /// both saves two virtual calls + an f32 divide per CPU cycle.
     fn apu_advance_one(&mut self) {
+        #[allow(clippy::cast_precision_loss)] // see `mix_audio`'s call site above
         let mapper_sample = if self.mapper_caps.audio {
-            f32::from(self.mapper.mix_audio()) / 65536.0
+            self.mapper.mix_audio() as f32 / 65536.0
         } else {
             0.0
         };
@@ -5136,6 +5213,62 @@ mod four_score_tests {
             }
             other => panic!("port 1 should be a Zapper, got {other:?}"),
         }
+    }
+
+    /// With the beam-relative Zapper model on, a debugger peek of `$4017` must
+    /// return the SAME light contribution the CPU read produces — at the
+    /// pre-render line and at a visible line — and must not advance device
+    /// state.
+    ///
+    /// Regression pin for the `peek_port` parity fix: before it, `peek_port`
+    /// fell through to the overlay's frame-granular `peek()` and could report a
+    /// different light bit than `read_port` at the same instant. (This is the
+    /// real defect the fix addressed; the separate `read_before_visible`
+    /// conversion fallback is defensive, since `scanline()` is non-negative on
+    /// every current region — pre-render is line 261 NTSC / 311 PAL, not -1.)
+    #[test]
+    fn temporal_zapper_debugger_peek_matches_cpu_read() {
+        use crate::input_device::{InputDevice, ZapperState};
+
+        // $4017 bit 3 is the (inverted) light bit; the open-bus upper bits differ
+        // between the read and peek paths, so compare only the device bit.
+        const LIGHT: u8 = 0b0000_1000;
+
+        // The two models are constructed to DISAGREE, so the test fails if
+        // `peek_port` does not mirror `read_port`'s temporal branch:
+        //   * frame model (`peek()` -> `ZapperState::read()`) reads `light_seen`,
+        //     which we force TRUE via `from_parts` -> reports light;
+        //   * temporal model (`read_at_scanline`) reads the current scanline. A
+        //     fresh bus sits on the pre-render line (261 NTSC), past the
+        //     photodiode hold window -> reports NO light.
+        // So a peek that (wrongly) fell through to the frame `peek()` would
+        // return light while the CPU read returns none. No framebuffer or
+        // scanline poke is needed — the injected `light_seen` supplies the
+        // divergence, and the default dark framebuffer keeps the temporal path
+        // at no-light on every line anyway.
+        let mut bus = test_bus();
+        // from_parts(x, y, trigger, light_seen): trigger + light_seen both true.
+        let zapper = ZapperState::from_parts(128, 12, true, true);
+        bus.set_expansion_device(1, Some(InputDevice::Zapper(zapper)));
+        bus.set_zapper_temporal_light(true);
+
+        assert!(
+            bus.ppu.scanline() > 239,
+            "fresh PPU is on the pre-render line"
+        );
+        let cpu = bus.read_port(1) & LIGHT;
+        let peek = bus.peek_port(1) & LIGHT;
+        assert_eq!(cpu, LIGHT, "temporal read at pre-render reports NO light");
+        assert_eq!(
+            peek, cpu,
+            "debugger peek must match the CPU read, not the frame `peek()` \
+             (which would report light from the injected light_seen)",
+        );
+
+        // The peek must be side-effect-free: repeating it does not change the
+        // answer (guards a regression where a peek routes through mutating state).
+        assert_eq!(bus.peek_port(1) & LIGHT, peek);
+        assert_eq!(bus.peek_port(1) & LIGHT, peek);
     }
 
     #[test]

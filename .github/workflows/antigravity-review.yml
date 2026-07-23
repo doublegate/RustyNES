@@ -51,16 +51,24 @@ jobs:
       # Check out the DEFAULT BRANCH, never the PR head. This job runs the checked-out
       # `scripts/agy-review.sh` on a self-hosted runner with a token in the environment,
       # so taking those scripts from the PR would let the reviewed change rewrite its own
-      # reviewer. The review content is unaffected: the diff is fetched from the API by
-      # `gh pr diff`, not from the working tree. Consequence worth knowing: a PR that
-      # edits the reviewer or the style guide is reviewed by the version already on main.
+      # reviewer. The review content is unaffected: the diff comes from `gh pr diff` (or,
+      # for a diff over GitHub's 20,000-line API limit, from a local `git diff` of fetched
+      # objects) — never from the checked-out working tree, which stays on the default
+      # branch throughout. Consequence worth knowing: a PR that edits the reviewer or the
+      # style guide is reviewed by the version already on main.
       - name: Check out repo (for the style guide + scripts)
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
+          # Not `fetch-depth: 0`: the large-diff fallback fetches exactly the two refs it
+          # needs on demand, so a full history clone would be paid on every run for a path
+          # most runs never take.
           fetch-depth: 1
-          # Repo-wide rule (PR #319): no checkout persists credentials. Nothing here
-          # performs an authenticated git network operation — `gh` uses GH_TOKEN.
+          # Repo-wide rule (PR #319): no checkout persists credentials. The large-diff
+          # fallback does perform an authenticated fetch, but supplies the token per
+          # command via `http.extraheader` rather than persisting it into .git/config —
+          # which is the point of the rule, since agy executes with the repo as its
+          # workspace.
           persist-credentials: false
 
       - name: Run Antigravity review
@@ -69,10 +77,12 @@ jobs:
           # --- optional overrides (uncomment to change) ---
           # AGY_MODEL: gemini-3-pro        # default: agy's configured model
           AGY_EFFORT: high                 # low|medium|high
-          # Diff budget. The prompt is passed to agy as a SINGLE argv string, and Linux
-          # caps one argument at MAX_ARG_STRLEN = 32 * PAGE_SIZE = 128 KiB (this is a
-          # separate, much lower ceiling than ARG_MAX). 90 KB leaves room for the
-          # instruction boilerplate + style guide; the script enforces the total cap.
+          # INLINE diff budget — not a cap on what gets reviewed. The prompt reaches agy
+          # as a SINGLE argv string, and Linux caps one argument at
+          # MAX_ARG_STRLEN = 32 * PAGE_SIZE = 128 KiB (a separate, much lower ceiling than
+          # ARG_MAX). 90 KB leaves room for the instruction boilerplate + style guide.
+          # A diff over this is NOT truncated: it is written into agy's workspace in parts
+          # and read with agy's file tools, so PR size no longer bounds review coverage.
           MAX_DIFF_BYTES: "90000"
           # STYLE_GUIDE: .github/agy-review.md   # style guide, loaded if present
         run: |

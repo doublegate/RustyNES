@@ -33,6 +33,11 @@ debug-hooks = ["rustynes-core/debug-hooks"]
 # --test ppu_state_trace_fixture`). See ADR-0005 and
 # `docs/ppu-trace-tooling.md`.
 ppu-state-trace = ["rustynes-core/ppu-state-trace"]
+# v2.2.3 P2 — forward to `rustynes-core/ppu-idle-line-fast` so the differential
+# suite can prove the gated path byte-identical:
+#   cargo test -p rustynes-test-harness --features test-roms,ppu-idle-line-fast \
+#     --test fast_dotloop_diff
+ppu-idle-line-fast = ["rustynes-core/ppu-idle-line-fast"]
 # v1.2.0 beta.2 (Workstream C3) — forward to `rustynes-core/hd-pack` so the
 # determinism proof can run the full ROM corpus with the HD-pack tile-source
 # telemetry ENABLED and confirm a byte-identical result vs. the feature OFF.

@@ -470,7 +470,21 @@ pub trait Mapper: Send {
 
     /// Return one signed audio sample for mappers with on-cart audio
     /// (VRC6/7, MMC5, Sunsoft 5B, Namco 163, FDS). Default returns silence.
-    fn mix_audio(&mut self) -> i16 {
+    ///
+    /// **`i32`, widened from `i16` in v2.2.3 (A1).** The bus scales this by
+    /// `/ 65536.0` into roughly the same `[-0.5, 0.5]` range as the APU mixer's
+    /// own output, so the old `i16` return capped a chip's representable level
+    /// at `32767 / 65536 ≈ 0.5`. That was fine for every board except the
+    /// Sunsoft 5B, whose logarithmic DAC needs ~3.6x the 2A03 pulse at full
+    /// volume — and three simultaneous full-volume tones (Gimmick!, Hebereke)
+    /// several times more. The 5B's absolute level was therefore a documented,
+    /// deliberately un-calibrated gap purely because the return type could not
+    /// hold it. Widening the type is what unblocks it; see
+    /// `docs/accuracy-ledger.md` §Expansion-audio levels and `SUNSOFT5B_MIX_SCALE`.
+    ///
+    /// Boards other than the 5B return exactly the values they always did —
+    /// the widening is representational only and changes no mixed output.
+    fn mix_audio(&mut self) -> i32 {
         0
     }
 

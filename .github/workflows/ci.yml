@@ -209,6 +209,20 @@ jobs:
       # cfg-gated-code coverage gap (#11a) without a per-feature matrix.
       - name: clippy (full — every native feature)
         run: cargo clippy -p rustynes-frontend --all-targets --features full -- -D warnings
+      # `rustynes-mappers` with `mapper-audio` OFF. Every combo above turns
+      # features ON; this is the only gate that compiles a feature OUT, and the
+      # subtraction is where the rot happens: this configuration was outright
+      # BROKEN — a hard `E0599`, because `Namco163Audio` was missing the
+      # feature-off `clock()` shim that the NSF expansion router calls
+      # unconditionally — and nothing noticed, because nothing built it. The
+      # `no_std` job below is `-p rustynes-core`, which keeps `mapper-audio` on.
+      #
+      # The feature's contract (see the crate manifest) is that with audio off
+      # the register decoders stay live — so save states from an audio-enabled
+      # build still load — while the oscillators freeze. That asymmetry is
+      # exactly what a compile-only gate protects.
+      - name: clippy (mappers — mapper-audio compiled OUT)
+        run: cargo clippy -p rustynes-mappers --no-default-features --all-targets -- -D warnings
 
   # Cross-platform behaviour: full `cargo test` on stable across the three
   # shipped OSes. The previous ubuntu / 1.96 MSRV *test* entry is dropped — the
@@ -418,17 +432,43 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          # fetch-depth: 0 — the RELATIVE gate below benches the base commit in
+          # a worktree, which needs real history. The default depth-1 checkout
+          # cannot resolve it and the gate would skip on every run.
+          fetch-depth: 0
       - uses: ./.github/actions/rust-setup
         with:
           apt: "false"
           cache-key: bench
       # The `rustynes-core` full_frame bench is chip-stack-only (no wgpu/winit),
-      # so no apt deps are needed. The gate asserts headless frame production
-      # stays well under the 16.67 ms NTSC real-time deadline — a deliberately
-      # non-flaky absolute ceiling (a tight %-regression gate would flake on
-      # shared runners; that's a local criterion-baseline workflow instead).
-      # See scripts/bench_regression_check.sh + docs/performance.md.
+      # so no apt deps are needed.
+      #
+      # TWO gates, deliberately different in kind:
+      #
+      #   1. ABSOLUTE ceiling — headless frame production stays well under the
+      #      16.67 ms NTSC deadline. Never flakes, but on the ~4 ms/frame the
+      #      core actually runs at, a change could get 2.5x slower and still
+      #      pass. It answers "is the emulator still real-time?", not "did this
+      #      PR make it worse".
+      #   2. RELATIVE A/B — builds and benches the base commit and HEAD back to
+      #      back on THIS runner and compares them to each other. Runner-to-
+      #      runner variance is common-mode and cancels, which is why a
+      #      percentage gate is sound here where a cross-run one would flake
+      #      (same technique as pgo.yml's >3% promotion bar). It answers the
+      #      question the ceiling cannot.
+      #
+      # See scripts/bench_{regression,relative}_check.sh + docs/performance.md.
       - run: ./scripts/bench_regression_check.sh
+
+      # Base ref: the PR's base-branch tip, else the push's previous head.
+      # Neither is present on a workflow_dispatch, and `github.event.before` is
+      # all-zeros for a brand-new branch — in both cases the script resolves
+      # nothing and SKIPs with exit 0 rather than inventing a verdict.
+      - name: Relative frame-time A/B (base vs HEAD, same runner)
+        env:
+          BENCH_BASE_REF: >-
+            ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/bench_relative_check.sh
 
   # Single summary status — the ONE check to require in branch protection / the
   # merge queue. It runs always (even when a needed job fails or is skipped) and

@@ -59,7 +59,7 @@ fn flowing_palette_rom() -> Vec<u8> {
         .parent()
         .and_then(|p| p.parent())
         .expect("workspace root");
-    std::fs::read(root.join("tests/roms/sprint-2/flowing_palette.nes"))
+    std::fs::read(root.join("tests/roms/assorted/flowing_palette.nes"))
         .expect("flowing_palette.nes (committed CC0)")
 }
 
@@ -73,8 +73,8 @@ fn flowing_palette_rom() -> Vec<u8> {
 #[test]
 fn asymmetric_realtime_drive_stays_in_sync() {
     for rel in [
-        "tests/roms/sprint-2/flowing_palette.nes",
-        "tests/roms/sprint-2/oam_stress.nes",
+        "tests/roms/assorted/flowing_palette.nes",
+        "tests/roms/assorted/oam_stress.nes",
         "tests/roms/accuracycoin/AccuracyCoin.nes",
     ] {
         let rom = rom_at(rel);
@@ -156,7 +156,7 @@ fn rom_at(rel: &str) -> Vec<u8> {
 fn snapshot_restore_replay_matches_forward_run_sprite_apu_heavy() {
     for rel in [
         "tests/roms/accuracycoin/AccuracyCoin.nes",
-        "tests/roms/sprint-2/oam_stress.nes",
+        "tests/roms/assorted/oam_stress.nes",
         "tests/roms/audio-tests/db_apu.nes",
     ] {
         let rom = rom_at(rel);

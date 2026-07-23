@@ -29,7 +29,7 @@ terms.
   - 11: read-only ExRAM
 
 The integration test at
-`crates/nes-test-harness/tests/mmc5.rs` drives each of these ROMs
+`crates/nes-test-harness/tests/m005_mmc5.rs` drives each of these ROMs
 through the standard `$6000` blargg-style status protocol where
 applicable, plus a small set of property tests against the `nes-mappers`
 crate.

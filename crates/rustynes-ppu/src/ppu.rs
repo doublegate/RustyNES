@@ -860,6 +860,15 @@ pub struct Ppu {
     pub(crate) cached_visible: bool,
     pub(crate) cached_pre_render: bool,
     pub(crate) cached_render_line: bool,
+    /// v2.2.3 P2 — `true` on an **idle** line: not visible, not pre-render, and
+    /// not the VBL-set line (`vblank_start_line`). On NTSC that is line 240
+    /// (post-render) plus lines 242..=260 — 20 of 262. Such a line issues no
+    /// fetch, emits no pixel, runs no sprite evaluation, and raises no event, so
+    /// its dots are eligible for [`Self::tick_idle_line_fast`]. Derived from
+    /// `scanline` + `region` exactly like the three flags above, and keyed by
+    /// the same [`Self::flags_cached_scanline`] sentinel.
+    #[cfg(feature = "ppu-idle-line-fast")]
+    pub(crate) cached_idle_line: bool,
     /// Sentinel: the scanline `cached_*` were last computed for. `i16::MIN`
     /// (an impossible scanline) forces a recompute on the first tick.
     pub(crate) flags_cached_scanline: i16,
@@ -969,18 +978,38 @@ pub struct Ppu {
 
     /// v2.1.8 A1 — enable the specialized straight-line per-dot fast path for
     /// the common visible-scanline BG-render window (see [`Self::tick`] and
-    /// `docs/performance.md`). A **default-OFF runtime knob** (like
-    /// `extra_scanlines` / `oam_decay`): when `false` (the shipped default)
-    /// the tick FSM takes the fully-general per-dot path and the frame is
-    /// byte-identical to a build without this field. When `true`, visible
-    /// scanline dots `1..=256` whose per-dot state is provably "undisturbed"
-    /// (no pending `$2006` copy-V, no PPUMASK write-delay, no PPUDATA state
-    /// machine in flight, no armed/pending OAM-corruption, warm scanline
-    /// classification cache, stable rendering-enable) are dispatched to
+    /// `docs/performance.md`). When `true`, visible scanline dots `1..=256`
+    /// whose per-dot state is provably "undisturbed" (no pending `$2006`
+    /// copy-V, no PPUMASK write-delay, no PPUDATA state machine in flight, no
+    /// armed/pending OAM-corruption, warm scanline classification cache,
+    /// stable rendering-enable) are dispatched to
     /// [`Self::tick_visible_render_fast`], which executes the identical
     /// helper sequence with the statically-dead event/bookkeeping branches
     /// pruned. Any disturbance drops instantly back to the exact path.
     /// **Not serialized** — a frontend/config knob re-applied on restore.
+    ///
+    /// **Default `true` since the v2.2.3 performance pass (was default-OFF for
+    /// v2.1.8 .. v2.2.2).** A1 shipped this off deliberately: it was that
+    /// roadmap's highest-risk item, and keeping it off left the shipped build
+    /// byte-identical while the differential test and the oracle suites proved
+    /// correctness. Both conditions A1 named for promotion are now met —
+    ///
+    /// * **byte-identity**, held continuously since v2.1.8 by
+    ///   `crates/rustynes-test-harness/tests/fast_dotloop_diff.rs`, which runs
+    ///   a ROM corpus through BOTH paths and asserts identical framebuffer,
+    ///   palette-index framebuffer, audio, CPU-cycle count and full core
+    ///   snapshot **every frame** (so the fast path has never been unproven —
+    ///   only unshipped); and
+    /// * **a clean-host Criterion confirmation** of the win: `full_frame`
+    ///   `nes_run_frame_nestest` 4.4343 ms -> 3.9331 ms, **-11.3%**, on a quiet
+    ///   host, reproducing A1's interleaved +12.3% measurement. The
+    ///   rendering-disabled `flowing_palette` workload is unchanged (-0.07%,
+    ///   noise) because its guard bails at `rendering_enabled()`.
+    ///
+    /// Promotion changes the *default*, not the behaviour: the frame the fast
+    /// path produces is the frame the exact path produces, by construction and
+    /// by test. `false` still selects the fully-general per-dot path and
+    /// remains the fallback for any future doubt.
     pub(crate) fast_dotloop: bool,
 
     /// Optional per-PPU-dot state trace (Session-10 observability
@@ -1178,6 +1207,8 @@ impl Ppu {
             cached_visible: false,
             cached_pre_render: false,
             cached_render_line: false,
+            #[cfg(feature = "ppu-idle-line-fast")]
+            cached_idle_line: false,
             flags_cached_scanline: i16::MIN,
             active_palette: crate::palette::PpuPalette::Composite2C02,
             rgba_lut: build_rgba_lut(crate::palette::PpuPalette::Composite2C02),
@@ -1196,7 +1227,11 @@ impl Ppu {
             frame_ntsc_phase: 0,
             extra_scanlines: 0,
             extra_lines_remaining: 0,
-            fast_dotloop: false,
+            // v2.2.3 performance pass: promoted to the default (was `false`
+            // through v2.2.2). Byte-identical to the exact path by
+            // construction and by `fast_dotloop_diff.rs`; -11.3% on the
+            // rendering-heavy `full_frame` bench. See the field's rustdoc.
+            fast_dotloop: true,
             #[cfg(feature = "ppu-state-trace")]
             state_trace: None,
             #[cfg(feature = "hd-pack")]
@@ -1289,8 +1324,10 @@ impl Ppu {
     }
 
     /// v2.1.8 A1 — enable/disable the specialized visible-scanline fast dot
-    /// path. Default OFF (byte-identical to a build without the field). See
-    /// [`Self::fast_dotloop`] and `docs/performance.md`.
+    /// path. **Default ON since the v2.2.3 performance pass** (was OFF through
+    /// v2.2.2); either setting produces the identical frame, so this selects a
+    /// code path, not a behaviour. See [`Self::fast_dotloop`] and
+    /// `docs/performance.md`.
     pub const fn set_fast_dotloop(&mut self, enabled: bool) {
         self.fast_dotloop = enabled;
     }
@@ -2673,6 +2710,72 @@ impl Ppu {
             return;
         }
 
+        // === v2.2.3 P2 — specialized IDLE-LINE fast dot path ===
+        //
+        // A1 (above) covers visible dots 1..=256 — 61,440 of the 89,342 NTSC
+        // dots, 68.8%. The remaining 31.2% still walk the whole general body.
+        // The cheapest slice of that remainder to prove is the **idle line**:
+        // the post-render line (240) plus every vblank line except the VBL-set
+        // line 241, i.e. 20 of 262 lines / 6,820 dots per frame.
+        //
+        // On such a dot the general path below reduces, provably, to exactly
+        // three assignments — every other branch is gated on `render_line`,
+        // `visible`, `pre_render`, `scanline == vblank_start_line()`, or a
+        // disturbance counter this guard requires to be zero:
+        //
+        //   * `bg_reload_render = mask.rendering_enabled()` (the
+        //     `mask_write_delay == 0` arm),
+        //   * `prev_rendering_enabled = rendering`,
+        //   * `rendering_enabled_delayed = rendering`.
+        //
+        // `tick_idle_line_fast` performs precisely those, in that order, from
+        // the same single `mask.rendering_enabled()` read — so it is
+        // byte-identical BY CONSTRUCTION, on the same terms as A1.
+        //
+        // The guard requires the classification cache to be WARM for this
+        // scanline, which is what makes `cached_idle_line` trustworthy: dot 0
+        // of every line misses the cache and takes the general path (warming
+        // it), so the fast path serves dots 1..=340 — 340 of each idle line's
+        // 341 dots.
+        //
+        // It also requires the three sub-dot disturbance countdowns to be
+        // idle. `$2006` (`copy_v_delay`) and `$2001` (`mask_write_delay`) are
+        // load-bearing: both are perfectly legal during vblank — that is when
+        // most games issue them — and each has real work to do on landing.
+        // `ppudata_sm_countdown` is BELT-AND-BRACES: it is armed only under
+        // `mask.rendering_enabled() && is_render_scanline()` (see the `$2007`
+        // read handler), so it cannot currently be live on an idle line at all.
+        // It is tested anyway so the guard's correctness is self-evident from
+        // the guard itself, rather than resting on an invariant enforced three
+        // hundred lines away that a future change could quietly break. One
+        // comparison is a fair price for that.
+        //
+        // NOTE for anyone extending this: the three assignments in
+        // `tick_idle_line_fast` are, given this guard, provably redundant —
+        // the mask cannot change without a `$2001` write, which arms
+        // `mask_write_delay` and routes the affected dots through the general
+        // path, so the values are already correct on every dot the fast path
+        // serves. Verified empirically: deleting any one of them leaves the
+        // whole differential suite green. They are kept regardless, because
+        // "runs the same assignments in the same order" is a claim that can be
+        // checked by reading twenty lines, whereas "these stores are dead" is a
+        // reachability argument that must be re-derived every time the guard
+        // moves. Three stores per idle dot is not worth trading that away.
+        //
+        // Compiled out under `ppu-state-trace`, whose end-of-tick hook must
+        // observe every dot (same treatment as A1).
+        #[cfg(all(feature = "ppu-idle-line-fast", not(feature = "ppu-state-trace")))]
+        if self.fast_dotloop
+            && self.scanline == self.flags_cached_scanline
+            && self.cached_idle_line
+            && self.copy_v_delay == 0
+            && self.mask_write_delay == 0
+            && self.ppudata_sm_countdown == 0
+        {
+            self.tick_idle_line_fast();
+            return;
+        }
+
         // v2.0.3 (ADR 0030, Option 1) — the delayed-`CopyV` landing (`TriCNES`
         // `Emulator.cs:1684-1704`). Ticked at the TOP of the dot, BEFORE the fetch
         // dispatch, so the `address_bus = v` splice is in place for THIS dot's
@@ -2716,6 +2819,19 @@ impl Ppu {
                 self.scanline >= 0 && self.scanline <= self.region.last_visible_line();
             self.cached_pre_render = self.scanline == self.region.prerender_line();
             self.cached_render_line = self.cached_visible || self.cached_pre_render;
+            // v2.2.3 P2 — an "idle" line: neither visible nor pre-render, and not
+            // the VBL-set line. That is the post-render line (240) plus every
+            // vblank line except 241 — 20 of the 262 NTSC lines. On such a line
+            // no dot fetches, renders, evaluates sprites, or raises an event, so
+            // the whole per-dot body collapses to the rendering-flag bookkeeping
+            // (see `tick_idle_line_fast`). Cached here with the other
+            // classification flags because it is the same pure function of
+            // `scanline` + `region` and shares their `flags_cached_scanline` key.
+            #[cfg(feature = "ppu-idle-line-fast")]
+            {
+                self.cached_idle_line =
+                    !self.cached_render_line && self.scanline != self.region.vblank_start_line();
+            }
             self.flags_cached_scanline = self.scanline;
         }
         let visible = self.cached_visible;
@@ -3169,7 +3285,8 @@ impl Ppu {
     /// v2.1.8 A1 — the specialized straight-line body for a "clean" visible
     /// BG-render dot: a visible scanline, `dot` in `1..=256`, rendering stably
     /// enabled, and no sub-dot disturbance in flight. Dispatched from
-    /// [`Self::tick`] behind the default-OFF [`Self::fast_dotloop`] guard.
+    /// [`Self::tick`] behind the [`Self::fast_dotloop`] guard (default ON
+    /// since v2.2.3).
     ///
     /// This executes the *exact same* helper sequence the general per-dot path
     /// runs for such a dot — in the same order — with every event and
@@ -3180,6 +3297,41 @@ impl Ppu {
     /// byte-identical to the general path by construction, and is additionally
     /// pinned bit-for-bit by the differential test + the full oracle. See the
     /// extensive rationale at the dispatch site in [`Self::tick`].
+    /// v2.2.3 P2 — the specialized straight-line body for an **idle-line** dot:
+    /// a post-render or vblank line other than the VBL-set line, with no
+    /// sub-dot disturbance in flight. Dispatched from [`Self::tick`] behind the
+    /// [`Self::fast_dotloop`] guard.
+    ///
+    /// An idle line issues no VRAM fetch, emits no pixel, runs no sprite
+    /// evaluation, clocks no shifter, and raises no VBL / NMI / A12 /
+    /// scanline-start event. Walking the general per-dot body for it therefore
+    /// evaluates ~30 predicates to perform three assignments. This is those
+    /// three assignments, in the general path's order, derived from one
+    /// `mask.rendering_enabled()` read exactly as it does:
+    ///
+    /// 1. `bg_reload_render` — the general path's `mask_write_delay` `else`
+    ///    arm. The guard proves the countdown is zero, so that arm is the one
+    ///    taken.
+    /// 2. `prev_rendering_enabled` — assigned unconditionally there.
+    /// 3. `rendering_enabled_delayed` — likewise, and deliberately AFTER (2):
+    ///    the general path updates the 1-dot-delayed copy last so the *next*
+    ///    dot observes it, and reordering here would shift a mid-vblank
+    ///    `$2001` toggle by one dot.
+    ///
+    /// Byte-identical by construction, and pinned bit-for-bit by
+    /// `fast_dotloop_diff` (which compares whole frames — every idle dot
+    /// included — and by `idle_line_fast_path_matches_exact_under_vblank_io`,
+    /// which drives `$2000`/`$2001`/`$2006`/`$2007` during vblank so the
+    /// guard's fall-through arms are exercised rather than assumed).
+    #[cfg(feature = "ppu-idle-line-fast")]
+    #[inline]
+    const fn tick_idle_line_fast(&mut self) {
+        let rendering = self.mask.rendering_enabled();
+        self.bg_reload_render = rendering;
+        self.prev_rendering_enabled = rendering;
+        self.rendering_enabled_delayed = rendering;
+    }
+
     #[inline]
     fn tick_visible_render_fast<B: PpuBus>(&mut self, bus: &mut B) {
         let dot = self.dot;

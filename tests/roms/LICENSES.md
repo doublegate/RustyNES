@@ -24,16 +24,16 @@ The following ROMs are vendored:
 
 | File | Suite | Source path in nes-test-roms | Mapper | Author | License |
 |------|-------|------------------------------|--------|--------|---------|
-| `sprint-2/cpu_timing_test.nes` | CPU timing | `cpu_timing_test6/cpu_timing_test.nes` | NROM (0) | blargg | Public domain |
-| `sprint-2/branch_timing_1_basics.nes` | Branch timing | `branch_timing_tests/1.Branch_Basics.nes` | NROM (0) | blargg | Public domain |
-| `sprint-2/branch_timing_2_backward.nes` | Branch timing | `branch_timing_tests/2.Backward_Branch.nes` | NROM (0) | blargg | Public domain |
-| `sprint-2/branch_timing_3_forward.nes` | Branch timing | `branch_timing_tests/3.Forward_Branch.nes` | NROM (0) | blargg | Public domain |
-| `sprint-2/oam_read.nes` | OAM | `oam_read/oam_read.nes` | NROM (0) | blargg | Public domain |
-| `sprint-2/oam_stress.nes` | OAM | `oam_stress/oam_stress.nes` | NROM (0) | blargg | Public domain |
-| `sprint-2/cpu_reset_ram_after_reset.nes` | CPU reset | `cpu_reset/ram_after_reset.nes` | NROM (0) | blargg | Public domain |
-| `sprint-2/cpu_reset_registers.nes` | CPU reset | `cpu_reset/registers.nes` | NROM (0) | blargg | Public domain |
-| `sprint-2/apu_01_len_ctr.nes` | APU 2005-07-30 | `blargg_apu_2005.07.30/01.len_ctr.nes` | NROM (0) | blargg | Public domain |
-| `sprint-2/apu_02_len_table.nes` | APU 2005-07-30 | `blargg_apu_2005.07.30/02.len_table.nes` | NROM (0) | blargg | Public domain |
+| `assorted/cpu_timing_test.nes` | CPU timing | `cpu_timing_test6/cpu_timing_test.nes` | NROM (0) | blargg | Public domain |
+| `assorted/branch_timing_1_basics.nes` | Branch timing | `branch_timing_tests/1.Branch_Basics.nes` | NROM (0) | blargg | Public domain |
+| `assorted/branch_timing_2_backward.nes` | Branch timing | `branch_timing_tests/2.Backward_Branch.nes` | NROM (0) | blargg | Public domain |
+| `assorted/branch_timing_3_forward.nes` | Branch timing | `branch_timing_tests/3.Forward_Branch.nes` | NROM (0) | blargg | Public domain |
+| `assorted/oam_read.nes` | OAM | `oam_read/oam_read.nes` | NROM (0) | blargg | Public domain |
+| `assorted/oam_stress.nes` | OAM | `oam_stress/oam_stress.nes` | NROM (0) | blargg | Public domain |
+| `assorted/cpu_reset_ram_after_reset.nes` | CPU reset | `cpu_reset/ram_after_reset.nes` | NROM (0) | blargg | Public domain |
+| `assorted/cpu_reset_registers.nes` | CPU reset | `cpu_reset/registers.nes` | NROM (0) | blargg | Public domain |
+| `assorted/apu_01_len_ctr.nes` | APU 2005-07-30 | `blargg_apu_2005.07.30/01.len_ctr.nes` | NROM (0) | blargg | Public domain |
+| `assorted/apu_02_len_table.nes` | APU 2005-07-30 | `blargg_apu_2005.07.30/02.len_table.nes` | NROM (0) | blargg | Public domain |
 | `blargg/instr_test_v5/01-basics.nes` ... `16-special.nes` | instr_test-v5 sub-ROMs | `instr_test-v5/rom_singles/*.nes` | MMC1 (1) | blargg | Public domain |
 | `blargg/instr_test_v5/all_instrs.nes` | instr_test-v5 single | `instr_test-v5/all_instrs.nes` | MMC1 (1) | blargg | Public domain |
 | `blargg/instr_test_v5/official_only.nes` | instr_test-v5 single | `instr_test-v5/official_only.nes` | MMC1 (1) | blargg | Public domain |
@@ -186,9 +186,9 @@ the pass rate (currently un-measured; the ≥ 90% bar is documented in
 
 | File | Source | Mapper | Author | License |
 |------|--------|--------|--------|---------|
-| `sprint-2/full_palette.nes` | `full_palette/full_palette.nes` | NROM (0) | blargg | Public domain |
-| `sprint-2/flowing_palette.nes` | `full_palette/flowing_palette.nes` | NROM (0) | blargg | Public domain |
-| `sprint-2/nestest.nes` | `other/nestest.nes` | NROM (0) | kevtris | Public domain |
+| `assorted/full_palette.nes` | `full_palette/full_palette.nes` | NROM (0) | blargg | Public domain |
+| `assorted/flowing_palette.nes` | `full_palette/flowing_palette.nes` | NROM (0) | blargg | Public domain |
+| `assorted/nestest.nes` | `other/nestest.nes` | NROM (0) | kevtris | Public domain |
 
 ## Expansion-audio tests (Brad Smith / `bbbradsmith`)
 

@@ -219,6 +219,16 @@ pub(crate) const ZAPPER_APERTURE_RADIUS: i32 = 1;
 /// flash, which lights the whole aperture. Calibrated for the 3x3 aperture.
 pub(crate) const ZAPPER_APERTURE_MIN_BRIGHT: u32 = 2;
 
+/// Photodiode hold, in scanlines (A3, v2.2.3 — used only by the opt-in
+/// temporal model).
+///
+/// The Zapper's photodiode charges when the CRT beam paints a bright pixel in
+/// its field of view, then drains exponentially: `NESdev` "Zapper" puts the
+/// resulting light-sense window at roughly **19-26 scanlines**. 22 is the
+/// midpoint, and the span is wide enough that no supported title distinguishes
+/// values inside it.
+pub(crate) const ZAPPER_LIGHT_HOLD_SCANLINES: u16 = 22;
+
 impl ZapperState {
     /// New zapper aimed off-screen, trigger released, no light.
     #[must_use]
@@ -261,13 +271,22 @@ impl ZapperState {
     /// against the beam position is a documented future refinement — see
     /// `docs/frontend.md`.
     pub fn sample_light(&mut self, framebuffer: &[u8]) {
+        self.light_seen = Self::aperture_is_bright(framebuffer, self.x, self.y);
+    }
+
+    /// Shared aperture test: is the `(2r+1)x(2r+1)` photodiode field of view at
+    /// `(x, y)` bright enough to charge the sensor?
+    ///
+    /// A3 (v2.2.3) factored this out of [`Self::sample_light`] so the
+    /// frame-granular and beam-relative models cannot drift apart — the
+    /// temporal model differs from the frame model ONLY in *when* it samples,
+    /// never in what counts as light.
+    fn aperture_is_bright(framebuffer: &[u8], x: u16, y: u16) -> bool {
         const W: i32 = 256;
         const H: i32 = 240;
-        let (ax, ay) = (i32::from(self.x), i32::from(self.y));
+        let (ax, ay) = (i32::from(x), i32::from(y));
         if ax >= W || ay >= H {
-            // Aimed off-screen: never sees light.
-            self.light_seen = false;
-            return;
+            return false; // aimed off-screen: never sees light
         }
         let mut bright = 0u32;
         let r = ZAPPER_APERTURE_RADIUS;
@@ -295,7 +314,77 @@ impl ZapperState {
                 }
             }
         }
-        self.light_seen = bright >= ZAPPER_APERTURE_MIN_BRIGHT;
+        bright >= ZAPPER_APERTURE_MIN_BRIGHT
+    }
+
+    /// A3 (v2.2.3): does the photodiode see light **right now**, given where
+    /// the CRT beam currently is?
+    ///
+    /// The frame-granular [`Self::sample_light`] answers "was the aim point
+    /// bright in the completed frame", which is constant for the whole frame —
+    /// so a game polling immediately after its flash and one polling 100
+    /// scanlines later get the same answer. Real hardware does not work that
+    /// way: the photodiode charges as the beam *passes* the aim point and
+    /// drains over ~19-26 scanlines afterwards.
+    ///
+    /// This models that directly, as a pure function of
+    /// `(framebuffer, aim, current scanline)`:
+    ///
+    /// * before the beam reaches the aim row (`scanline < y`) — dark, because
+    ///   this frame has not painted it yet;
+    /// * from the aim row until the hold expires — bright iff the aperture is
+    ///   bright, the same aperture test [`Self::sample_light`] uses;
+    /// * after the hold — dark again, the capacitor having drained.
+    ///
+    /// Holding **no extra state** is deliberate: light is derived on demand at
+    /// read time rather than latched by a per-scanline callback, so it adds no
+    /// field to serialize, cannot desync a save state or a netplay rollback,
+    /// and keeps the determinism contract (same framebuffer + aim + scanline
+    /// always yields the same answer).
+    ///
+    /// One consequence is physically right rather than a compromise: the
+    /// aperture rows *below* the beam still hold the previous frame's pixels,
+    /// which is exactly what the sensor sees, since the beam has not repainted
+    /// them yet.
+    #[must_use]
+    pub fn light_at_scanline(&self, framebuffer: &[u8], scanline: u16) -> bool {
+        let y = self.y;
+        if scanline < y {
+            return false; // beam has not painted the aim row yet this frame
+        }
+        if scanline - y >= ZAPPER_LIGHT_HOLD_SCANLINES {
+            return false; // photodiode has drained
+        }
+        Self::aperture_is_bright(framebuffer, self.x, y)
+    }
+
+    /// The device byte as [`Self::read`] would return it, but using the
+    /// beam-relative light state from [`Self::light_at_scanline`].
+    #[must_use]
+    pub fn read_at_scanline(&self, framebuffer: &[u8], scanline: u16) -> u8 {
+        let light_not_detected = u8::from(!self.light_at_scanline(framebuffer, scanline));
+        let trigger = u8::from(self.trigger);
+        (trigger << 4) | (light_not_detected << 3)
+    }
+
+    /// The device byte for a read taken **before the visible frame begins** —
+    /// the answer when the PPU's scanline is *negative*, which no light is
+    /// detectable for (the beam has painted nothing this frame yet).
+    ///
+    /// This is a total-conversion fallback, not a fix for a live defect. In this
+    /// engine `Ppu::scanline()` is non-negative on every region — the pre-render
+    /// line is 261 (NTSC) / 311 (PAL), not -1 — so the visible/vblank path
+    /// through [`Self::read_at_scanline`] already yields no-light for pre-render
+    /// (`prerender - y >= ZAPPER_LIGHT_HOLD_SCANLINES` for every on-screen aim),
+    /// and this branch is not reached. It exists so that the caller's
+    /// `u16::try_from(scanline)` has a *correct* `Err` answer — "no light yet" —
+    /// rather than the row-0 fold a bare `unwrap_or(0)` would produce, should a
+    /// future scanline convention (a -1 pre-render, as some emulators use) ever
+    /// hand this a negative value.
+    #[must_use]
+    pub const fn read_before_visible(&self) -> u8 {
+        let trigger = self.trigger as u8;
+        (trigger << 4) | (1 << 3) // light NOT detected (bit 3 is inverted)
     }
 
     /// The device byte for a `$4016`/`$4017` access. Bit 3 = light (0 detected /
@@ -1682,5 +1771,155 @@ mod tests {
         bd.write_strobe(0);
         let _ = bd.read();
         let _ = bd.peek();
+    }
+
+    // ---------------------------------------------------------------
+    // A3 (v2.2.3): beam-relative temporal light integration.
+    // ---------------------------------------------------------------
+
+    /// Build a framebuffer with a bright 3x3 target centred on `(x, y)`.
+    /// Clamped at the edges so a target on row/column 0 is expressible (the
+    /// pre-render regression test needs `y == 0`); the 3x3 aperture is simply
+    /// clipped there, exactly as it is on hardware at the screen edge.
+    fn fb_with_target(x: usize, y: usize) -> alloc::vec::Vec<u8> {
+        let mut fb = alloc::vec![0u8; 256 * 240 * 4];
+        for py in y.saturating_sub(1)..=(y + 1).min(239) {
+            for px in x.saturating_sub(1)..=(x + 1).min(255) {
+                let idx = (py * 256 + px) * 4;
+                fb[idx] = 0xFF;
+                fb[idx + 1] = 0xFF;
+                fb[idx + 2] = 0xFF;
+            }
+        }
+        fb
+    }
+
+    /// The core of A3: light is a function of WHERE THE BEAM IS, not merely of
+    /// the frame. Before the beam paints the aim row there is no light, however
+    /// bright the target; during the photodiode hold there is; after it drains
+    /// there is not.
+    #[test]
+    fn zapper_temporal_light_follows_the_beam() {
+        let mut z = ZapperState::new();
+        z.set(100, 120, false);
+        let fb = fb_with_target(100, 120);
+
+        // Beam still above the aim row: the row has not been painted yet.
+        assert!(!z.light_at_scanline(&fb, 0));
+        assert!(!z.light_at_scanline(&fb, 119));
+
+        // Beam reaches the aim row -> charged.
+        assert!(z.light_at_scanline(&fb, 120));
+        // Still within the ~19-26 scanline hold.
+        assert!(z.light_at_scanline(&fb, 120 + ZAPPER_LIGHT_HOLD_SCANLINES - 1));
+        // Drained.
+        assert!(!z.light_at_scanline(&fb, 120 + ZAPPER_LIGHT_HOLD_SCANLINES));
+        assert!(!z.light_at_scanline(&fb, 239));
+    }
+
+    /// The frame-granular model cannot express the above: it reports the SAME
+    /// answer at every scanline. This test is what makes A3 worth having.
+    #[test]
+    fn zapper_frame_model_is_scanline_invariant_but_temporal_is_not() {
+        let mut z = ZapperState::new();
+        z.set(100, 120, false);
+        let fb = fb_with_target(100, 120);
+        z.sample_light(&fb);
+        // Frame model: one answer for the whole frame.
+        assert!(z.light_seen);
+        // Temporal model: three different answers within that same frame.
+        let before = z.light_at_scanline(&fb, 10);
+        let during = z.light_at_scanline(&fb, 125);
+        let after = z.light_at_scanline(&fb, 200);
+        assert!(
+            !before && during && !after,
+            "temporal model must vary within a frame"
+        );
+    }
+
+    /// The temporal path must reuse the SAME aperture rule, not a looser one:
+    /// a lone bright pixel still fails to charge the sensor even at the exact
+    /// beam position.
+    #[test]
+    fn zapper_temporal_rejects_lone_bright_pixel() {
+        let mut z = ZapperState::new();
+        z.set(50, 60, false);
+        let mut fb = alloc::vec![0u8; 256 * 240 * 4];
+        let idx = (60 * 256 + 50) * 4;
+        fb[idx] = 0xFF;
+        fb[idx + 1] = 0xFF;
+        fb[idx + 2] = 0xFF;
+        assert!(
+            !z.light_at_scanline(&fb, 60),
+            "one pixel must not trip the aperture"
+        );
+        z.sample_light(&fb);
+        assert!(!z.light_seen, "frame model must agree");
+    }
+
+    /// Aiming off-screen never sees light at any beam position.
+    #[test]
+    fn zapper_temporal_off_screen_never_sees_light() {
+        let mut z = ZapperState::new();
+        z.set(300, 250, false);
+        let fb = alloc::vec![0xFFu8; 256 * 240 * 4];
+        for sl in [0u16, 120, 239] {
+            assert!(!z.light_at_scanline(&fb, sl));
+        }
+    }
+
+    /// `read_at_scanline` carries the same inverted polarity and trigger bit as
+    /// `read`, so a caller can swap models without re-deriving the byte format.
+    #[test]
+    fn zapper_temporal_read_byte_matches_the_documented_bit_layout() {
+        let mut z = ZapperState::new();
+        z.set(100, 120, true); // trigger pulled
+        let fb = fb_with_target(100, 120);
+        // In the hold: light detected -> bit 3 = 0; trigger -> bit 4 = 1.
+        assert_eq!(z.read_at_scanline(&fb, 121) & 0b0001_1000, 0b0001_0000);
+        // Drained: light NOT detected -> bit 3 = 1.
+        assert_eq!(z.read_at_scanline(&fb, 200) & 0b0001_1000, 0b0001_1000);
+    }
+
+    /// [`ZapperState::read_before_visible`] — the total-conversion fallback for a
+    /// negative scanline — reports no light regardless of the framebuffer, and
+    /// still carries the trigger bit.
+    ///
+    /// This pins the fallback's contract, not a live defect: `Ppu::scanline()`
+    /// is non-negative on every region (pre-render is line 261 NTSC / 311 PAL,
+    /// not -1), so the bus reaches this only if a future convention ever hands a
+    /// negative scanline to `u16::try_from`. The paired assertion below shows the
+    /// difference the fallback guards against — the real pre-render line, being
+    /// past the photodiode hold window, already reads no-light through the normal
+    /// `read_at_scanline` path.
+    #[test]
+    fn zapper_read_before_visible_reports_no_light() {
+        let mut z = ZapperState::new();
+        z.set(100, 0, true); // aim on visible row 0, trigger pulled
+        let fb = fb_with_target(100, 0);
+
+        // Row 0 itself is inside the hold window: light IS detected there.
+        assert_eq!(
+            z.read_at_scanline(&fb, 0) & 0b0000_1000,
+            0,
+            "row 0 detects light (contrast for the fallback below)"
+        );
+
+        // The real pre-render line (261 NTSC) is already no-light via the normal
+        // path — it is past the hold window, so no fallback is needed there.
+        assert_eq!(
+            z.read_at_scanline(&fb, 261) & 0b0000_1000,
+            0b0000_1000,
+            "the real pre-render line (261) already reads no-light",
+        );
+
+        // The negative-scanline fallback: no light regardless of framebuffer.
+        assert_eq!(
+            z.read_before_visible() & 0b0000_1000,
+            0b0000_1000,
+            "read_before_visible reports light NOT detected",
+        );
+        // ...and it still carries the trigger bit like every other read.
+        assert_eq!(z.read_before_visible() & 0b0001_0000, 0b0001_0000);
     }
 }

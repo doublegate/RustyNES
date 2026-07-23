@@ -142,15 +142,17 @@ the default keeps both deterministic (all-zero).
 - **Dots 321..=336** — first two BG tiles of next scanline.
 - **Dots 337..=340** — two extra NT fetches (purpose debated; preserve them so MMC5's frame-end detection works).
 
-### Fast dot path vs exact dot path (v2.1.8 A1, opt-in, default-OFF)
+### Fast dot path vs exact dot path (v2.1.8 A1; default since v2.2.3)
 
 `Ppu::tick` is the emulator's single hottest function (~46% of frame self-time;
-`docs/performance.md`). Behind a **default-OFF runtime knob**
-(`Nes::set_fast_dotloop`) the per-dot FSM splits into two paths:
+`docs/performance.md`). Behind a runtime knob (`Nes::set_fast_dotloop`,
+**default ON since v2.2.3**; default-OFF for v2.1.8 .. v2.2.2) the per-dot FSM
+splits into two paths:
 
-- **Exact path** (the shipped default, and the always-correct fallback): the
-  fully-general per-dot body described throughout this document — every event
-  and quirk checked on every dot.
+- **Exact path** (the always-correct fallback, and the shipped default through
+  v2.2.2): the fully-general per-dot body described throughout this document —
+  every event and quirk checked on every dot. Still taken for every dot the
+  guard below does not admit, which is ~31% of them.
 - **Fast path** (`Ppu::tick_visible_render_fast`): a specialized straight-line
   handler for the *common clean* dot — a **visible scanline, dots `1..=256`,
   rendering stably enabled, and no sub-dot disturbance** (no `$2006` copy-V or
@@ -172,6 +174,24 @@ the PPU ≤3 dots per CPU cycle (`docs/scheduler.md`, `docs/performance.md` §A1
 so this is a per-dot specialization only. Byte-identity across the full corpus
 (framebuffer + index buffer + audio + cycles + snapshot) is pinned by
 `crates/rustynes-test-harness/tests/fast_dotloop_diff.rs`.
+
+**Idle-line specialization (v2.2.3 P2, `ppu-idle-line-fast`, default OFF).** A
+second handler, `Ppu::tick_idle_line_fast`, covers *idle lines* — the
+post-render line plus every vblank line except the VBL-set line — where the
+per-dot body provably reduces to three rendering-flag assignments. It is
+byte-identical (same differential suite, plus a vblank-I/O torture ROM that
+forces the guard's fall-through arms), but measures below the >3% adoption bar,
+so it is compiled out by default and the general path continues to serve those
+dots. See `docs/performance.md` §P2.
+
+The "warm scanline-classification cache" in that guard
+(`cached_visible` / `cached_pre_render` / `cached_render_line`, keyed by
+`flags_cached_scanline`) is a pure function of `scanline` + `region`, so it is
+**recomputed rather than serialized**: `Ppu::restore` resets the key to the
+`Ppu::new` sentinel at every schema version, forcing the next tick to refill it
+from the restored scanline. Carrying a warm key across a restore would let a
+cache filled under one timeline satisfy the guard against a value computed under
+another.
 
 ### Sprite evaluation (cycles 1..=256)
 
@@ -218,6 +238,44 @@ reference implementation (`reference_eval`). Originally introduced as
 the parallel-implementation firewall gating the B8 swap from
 single-shot to per-dot FSM; after B8c removed the single-shot impl
 the corpus is the regression net pinning the FSM output.
+
+**Save-state coverage (`PPU_SNAPSHOT_VERSION` v8).** The FSM's working
+registers are part of the save-state, not derived: `sprite_eval_read_latch`,
+`sprite_eval_n` / `_m` / `_found` / `_sec_idx`, and the
+`_copying` / `_done` / `_overflow_search` / `_zero_found` / `_first_iter`
+phase flags, alongside the parallel OAM-data-bus model (`oam_bus_*`) and the
+dots-1..=64 clear-window write pointer `oam2_addr`. `secondary_oam` — the
+buffer they fill — was serialized from v1, but the pointers and phase driving
+it were not until v8, so a checkpoint taken mid-eval restored a full buffer
+next to a power-on-default walker.
+
+This is invisible to a straight `run_frame` loop and shows up only where a
+save-state round trip lands mid-frame: the frontend's **run-ahead**
+(`[input] run_ahead`, default 1) does exactly that every visible frame, as do
+netplay rollback and TAS seeking. Before the v8 tail the AccuracyCoin battery
+measured 141/141 headless but 138/141 through the desktop frontend, failing
+`Sprite Evaluation :: Arbitrary Sprite zero` (error 2),
+`Sprite Evaluation :: Misaligned OAM behavior` (error 1), and
+`PPU Behavior :: Rendering Flag Behavior` (error 2). The regression net is
+`crates/rustynes-test-harness/tests/accuracycoin_runahead.rs`, which reruns the
+whole battery through the run-ahead cycle at depths 1 and 2 and asserts no test
+is lost. Mesen2 serializes the equivalent set (`NesPpu<T>::Serialize`:
+`_spriteIndex`, `_sprite0Added`, `_sprite0Visible`, `_oamCopybuffer`,
+`_secondaryOamAddr`, `_spriteInRange`, `_oamCopyDone`, `_overflowBugCounter`).
+
+**Compatibility: v8 is a rejection epoch, not an upconversion.** `PPU_SNAPSHOT_VERSION`
+8 is *not* a strictly-additive tail that older readers can truncate past, because the
+state it adds (the sprite-evaluation FSM + OAM data-bus model) has no correct default
+for a mid-frame restore — inventing one is exactly the broken-FSM restore the tail
+exists to prevent. So the reader accepts `1..=PPU_SNAPSHOT_VERSION` and returns
+`PpuSnapshotError::UnsupportedVersion` for anything else; a `.rns` slot written by
+v2.2.2 or earlier fails to load with a clear version error rather than being
+upconverted or silently misread. Per ADR 0028 / ADR 0034 this is the deliberate
+choice, and it is confined to `.rns` files on disk: `.rnm` movies replay inputs from
+a power-on and carry no PPU snapshot, and netplay-rollback / TAS-seek snapshots are
+in-memory and always written by the running build. The acceptance bound is expressed
+as `1..=PPU_SNAPSHOT_VERSION` in `snapshot.rs` rather than a literal so it cannot
+drift from the emitted version.
 
 Future work (post-flip):
 

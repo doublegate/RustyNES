@@ -94,12 +94,12 @@ sprite_hit_test!(sprite_hit_10_timing_order, "10.timing_order.nes");
 sprite_hit_test!(sprite_hit_11_edge_timing, "11.edge_timing.nes");
 
 // ============================================================================
-// oam_read / oam_stress (these were vendored in Phase 1's sprint-2/)
+// oam_read / oam_stress (these were vendored in Phase 1's assorted/)
 // ============================================================================
 
 #[test]
 fn oam_read_via_nes_runner() {
-    let (s, m, f) = run_one("sprint-2/oam_read.nes", 600);
+    let (s, m, f) = run_one("assorted/oam_read.nes", 600);
     eprintln!("oam_read: status={s:#x} frames={f} msg={m:?}");
     assert_eq!(s, 0, "oam_read failed: {m}");
 }
@@ -107,7 +107,7 @@ fn oam_read_via_nes_runner() {
 #[test]
 fn oam_read_nes_test_roms_corpus() {
     // The standalone `oam_read/oam_read.nes` (40 KiB, distinct from the
-    // Phase-1-vendored `sprint-2/oam_read.nes`): reads OAM through $2004 and
+    // Phase-1-vendored `assorted/oam_read.nes`): reads OAM through $2004 and
     // verifies the value matches what was written. PASSES under R1.
     let (s, m, f) = run_one("nes-test-roms/oam_read/oam_read.nes", 600);
     eprintln!("oam_read (nes-test-roms): status={s:#x} frames={f} msg={m:?}");
@@ -119,7 +119,7 @@ fn oam_stress_via_nes_runner() {
     // oam_stress runs ~30 seconds of NES time before reporting; the default
     // 600-frame budget cuts it off at status=$80 (still running).  3000
     // frames (~50 seconds) is comfortably past completion.
-    let (s, m, f) = run_one("sprint-2/oam_stress.nes", 3000);
+    let (s, m, f) = run_one("assorted/oam_stress.nes", 3000);
     eprintln!("oam_stress: status={s:#x} frames={f} msg={m:?}");
     assert_eq!(s, 0, "oam_stress failed: {m}");
 }
