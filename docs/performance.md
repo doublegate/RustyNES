@@ -152,20 +152,61 @@ Top 5 hot functions get a focused optimization pass. Specifically watch:
 See **"Measured baselines (v2.0.0)"** above for the values, or
 [`docs/benchmarks.md`](benchmarks.md) for the full reproducible record.
 
-**CI regression gate (landed v1.6.0).** `scripts/bench_regression_check.sh`
-runs the `full_frame` benches and fails if headless frame production exceeds an
-absolute ceiling (default 10 ms — 60% of the 16.67 ms NTSC deadline), wired as
-the `bench` job in `.github/workflows/ci.yml`. The ceiling is deliberately
-generous: shared CI runners vary run-to-run by tens of percent, so a tight
-percentage-regression gate would flake; the absolute ceiling instead protects
-the property that matters — headless production stays comfortably real-time —
-and trips only on a gross (~3x) regression. For the tighter ~5% comparison, use
-criterion baselines locally:
+**CI regression gates.** The `bench` job in `.github/workflows/ci.yml` runs
+**two** gates, deliberately different in kind. Both are FULL-run only (merge /
+release), not per-PR-push.
+
+1. **Absolute ceiling** (`scripts/bench_regression_check.sh`, v1.6.0) — fails if
+   headless frame production exceeds a wall-clock ceiling (default 10 ms — 60%
+   of the 16.67 ms NTSC deadline). Deliberately generous, and never flaky: it
+   protects the property that matters — headless production stays comfortably
+   real-time.
+
+2. **Relative same-runner A/B** (`scripts/bench_relative_check.sh`, v2.2.3 P6) —
+   builds and benches the **base commit and HEAD back to back on the same
+   runner**, in one job sharing one target dir, and fails if HEAD is more than
+   `BENCH_MAX_REGRESSION_PCT` (default 10%) slower.
+
+**Why gate 2 exists.** The ceiling answers "is the emulator still real-time?",
+not "did this change make it worse". On the ~4 ms/frame the core actually runs
+at, a change could get **2.5x slower and still pass** — the gate would sleep
+through it. That is a real hole, not a hypothetical: this repo's own history has
+a 10% swing (the v2.1.8 fast dot path) that the ceiling would not have noticed
+in either direction.
+
+**Why a percentage gate is sound now when v1.6.0 judged it too flaky.** That
+judgement was right about *cross-run* comparison — this run's number against a
+figure recorded on another machine — where hosted runners differ by tens of
+percent. Gate 2 never does that. It compares two builds measured back to back on
+one runner, so runner-to-runner variance is common-mode and cancels. This is the
+identical technique `pgo.yml` has relied on since v1.2.0 for its >3% promotion
+bar, and the measured back-to-back noise floor is **±0.7%** (§P2, where an
+identical configuration benched against its own baseline reported "no change" on
+all four workloads, p > 0.05). The 10% default is nonetheless far above that: a
+CI runner is noisier than a quiet desktop, and this gate's job is to catch the
+gross regression the ceiling misses, not to adjudicate a 2% micro-optimization.
+
+The base commit is benched in a **throwaway git worktree**, never via
+`git checkout` — the gate must not touch the working tree it runs in. It
+**skips with exit 0** (rather than inventing a verdict) when no base commit is
+resolvable: a shallow clone, a root commit, a brand-new branch whose
+`github.event.before` is all-zeros, or a `workflow_dispatch` with no base at
+all. The job checks out with `fetch-depth: 0` precisely so the normal case does
+*not* skip.
+
+For an ad-hoc local comparison, criterion baselines directly:
 
 ```bash
 cargo bench -p rustynes-core --bench full_frame -- --save-baseline main
 # ... make changes ...
 cargo bench -p rustynes-core --bench full_frame -- --baseline main
+```
+
+or run the CI gate itself against any base:
+
+```bash
+scripts/bench_relative_check.sh HEAD~1
+BENCH_MAX_REGRESSION_PCT=5 scripts/bench_relative_check.sh origin/main
 ```
 
 Per the v1.6.0 gap-analysis plan §5, do **not** monomorphize `Box<dyn Mapper>`

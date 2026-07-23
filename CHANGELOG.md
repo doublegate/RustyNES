@@ -111,6 +111,27 @@ cycle-accurate core later replaced.
   only). The workflow's own `push: tags` trigger was removed so a hand-pushed
   tag no longer starts two 90-minute PGO runs.
 
+- **CI gained a relative frame-time regression gate**
+  (`scripts/bench_relative_check.sh`), alongside — not replacing — the existing
+  absolute ceiling. It builds and benches the base commit and HEAD **back to
+  back on the same runner** and fails if HEAD is more than 10% slower
+  (`BENCH_MAX_REGRESSION_PCT`).
+
+  The ceiling answers "is the emulator still real-time?", not "did this change
+  make it worse": at the ~4 ms/frame the core actually runs at, a change could
+  get **2.5x slower and still pass**. v1.6.0 judged a percentage gate too flaky
+  for shared runners, and that was correct for *cross-run* comparison — but a
+  same-runner back-to-back A/B makes runner variance common-mode, which is the
+  technique `pgo.yml` has used for its >3% bar since v1.2.0 and which measured a
+  ±0.7% noise floor during this pass. The 10% default sits far above that on
+  purpose: this gate is for gross regressions, not 2% micro-optimizations.
+
+  The base commit is benched in a throwaway **git worktree**, never via
+  `git checkout`, so the gate cannot disturb the tree it runs in; and it **skips
+  with exit 0** rather than inventing a verdict when no base is resolvable
+  (shallow clone, root commit, new branch, `workflow_dispatch`). The `bench` job
+  now checks out with `fetch-depth: 0` so the normal case does not skip.
+
 - **`actionlint` is now clean across every workflow** (it was not before, which
   is how the invalid `continue-on-error` above was caught). Two pre-existing
   findings fixed:
