@@ -42,7 +42,6 @@ if ! [ "$MAX_PROMPT_BYTES" -le "$ARG_SIZE_CEILING" ] 2>/dev/null; then
 fi
 STYLE_GUIDE="${STYLE_GUIDE:-.github/agy-review.md}"  # repo-relative; loaded if present
                                            # (dedicated name -- avoids colliding with GEMINI.md/AGENTS.md)
-CONV_DIR="${CONV_DIR:-$HOME/.gemini/antigravity-cli/conversations}"
 LOG="${RUNNER_TEMP:-/tmp}/agy-review.log"
 AGY_LOCK="${AGY_LOCK:-$HOME/.gemini/antigravity-cli/.agy-review.lock}"
 AGY_LOCK_WAIT="${AGY_LOCK_WAIT:-600}"      # seconds to wait for the agy lock before proceeding
@@ -63,10 +62,19 @@ case "${GITHUB_EVENT_NAME:-}" in
   issue_comment)
     is_pr="$(jq -r '.issue.pull_request // empty' "$GITHUB_EVENT_PATH")"
     body="$(jq -r '.comment.body // ""' "$GITHUB_EVENT_PATH")"
+    assoc="$(jq -r '.comment.author_association // ""' "$GITHUB_EVENT_PATH")"
     [ -n "$is_pr" ] || { log "comment is not on a PR; skipping"; exit 0; }
     case "$body" in
       /agy-review*) : ;;
       *) log "comment is not an /agy-review command; skipping"; exit 0 ;;
+    esac
+    # Defense in depth: the workflow `if:` already gates on author_association, but this
+    # script is also runnable by hand and by any future caller, so re-check here that the
+    # commenter has write access. A stranger's `/agy-review` must never schedule an agy
+    # run on the self-hosted host — losing this to a workflow-only gate would be silent.
+    case "$assoc" in
+      OWNER|MEMBER|COLLABORATOR) : ;;
+      *) log "comment author association '$assoc' lacks write access; skipping"; exit 0 ;;
     esac
     PR="$(jq -r '.issue.number' "$GITHUB_EVENT_PATH")"
     ;;
@@ -307,6 +315,12 @@ fi
 # --- run agy headless, under a PTY (works around agy issue #76: -p drops --------
 #     stdout when stdout is not a TTY, e.g. piped/redirected/subprocess) ---------
 flags=( --print-timeout "$AGY_PRINT_TIMEOUT" --sandbox --dangerously-skip-permissions )
+
+# Strip the repo tokens from agy's own environment. agy runs under
+# --dangerously-skip-permissions and ingests an untrusted diff (prompt-injection
+# surface); `gh` and the large-diff fetch run in THIS script, before and after, and
+# agy has no use for GH_TOKEN / GITHUB_TOKEN — so it should not inherit them.
+agy_env=( env -u GH_TOKEN -u GITHUB_TOKEN )
 [ -n "$AGY_MODEL" ]  && flags+=( --model "$AGY_MODEL" )
 [ -n "$AGY_EFFORT" ] && flags+=( --effort "$AGY_EFFORT" )
 
@@ -336,14 +350,17 @@ for (( attempt=1; attempt<=AGY_RETRIES; attempt++ )); do
 
   if command -v unbuffer >/dev/null 2>&1; then
     log "running agy via unbuffer (allocates a PTY) [attempt ${attempt}/${AGY_RETRIES}]"
-    unbuffer "$AGY_BIN" "${flags[@]}" --print "$(cat "$prompt_file")" > "$out_file" 2>>"$LOG" || true
+    "${agy_env[@]}" unbuffer "$AGY_BIN" "${flags[@]}" --print "$(cat "$prompt_file")" > "$out_file" 2>>"$LOG" || true
   else
     log "unbuffer not found; falling back to script(1) [attempt ${attempt}/${AGY_RETRIES}]"
     raw="$(mktemp)"
-    # `script -c` runs its command through `sh -c`, so every path in the command string is quoted for
-    # that inner shell: `'$here'` and `'$prompt_file'` are wrapped in single quotes (the outer double
-    # quotes still expand them) so a repo path containing spaces survives the word-split.
-    AGY_BIN="$AGY_BIN" script -qfec "'$here'/_agy_print.sh '$prompt_file' ${flags[*]}" "$raw" >/dev/null 2>>"$LOG" || true
+    # `script -c` runs its command through `sh -c`. Build that command with `printf '%q '`
+    # so every argument -- including the flag values, which come from env vars
+    # (AGY_MODEL / AGY_EFFORT / AGY_PRINT_TIMEOUT) -- is shell-escaped for the inner shell.
+    # A raw `${flags[*]}` here would let a shell metacharacter in any of those be evaluated
+    # by `sh -c` (command injection); `%q` quotes each token exactly.
+    cmd="$(printf '%q ' "$here/_agy_print.sh" "$prompt_file" "${flags[@]}")"
+    "${agy_env[@]}" AGY_BIN="$AGY_BIN" script -qfec "$cmd" "$raw" >/dev/null 2>>"$LOG" || true
     col -b < "$raw" > "$out_file"
     rm -f "$raw"   # each retry makes a fresh $raw; the EXIT trap only holds the last one
   fi
@@ -351,24 +368,11 @@ for (( attempt=1; attempt<=AGY_RETRIES; attempt++ )); do
   # normalize CRs without sed -i (avoid in-place edit footguns)
   tr -d '\r' < "$out_file" > "$out_file.clean" && mv "$out_file.clean" "$out_file"
 
-  # --- fallback: recover the answer from agy's conversation SQLite store --------
-  #     (belt-and-suspenders for issue #76 on hosts where the PTY trick still
-  #     yields nothing). The schema is NOT officially documented and can change
-  #     between agy versions -- inspect with `sqlite3 <db> .schema` and adjust.
-  if ! have_text "$out_file"; then
-    log "print output empty; trying SQLite conversation fallback"
-    if command -v sqlite3 >/dev/null 2>&1 && [ -d "$CONV_DIR" ]; then
-      db="$(ls -t "$CONV_DIR"/*.db 2>/dev/null | head -1 || true)"
-      if [ -n "${db:-}" ]; then
-        for q in \
-          "SELECT text FROM messages WHERE role='assistant' ORDER BY rowid DESC LIMIT 1;" \
-          "SELECT content FROM messages WHERE role='assistant' ORDER BY rowid DESC LIMIT 1;" \
-          "SELECT body FROM message WHERE role='assistant' ORDER BY rowid DESC LIMIT 1;"; do
-          sqlite3 "$db" "$q" > "$out_file" 2>/dev/null && have_text "$out_file" && break
-        done
-      fi
-    fi
-  fi
+  # NOTE: there is deliberately no SQLite-conversation-store fallback here. agy's
+  # store is keyed by mtime, not session, and on a shared/multi-user runner the
+  # most-recent `.db` can belong to an UNRELATED concurrent local `agy` session --
+  # reading it would post that session's output into a public PR comment (data
+  # leak). The PTY path above plus the retry loop cover agy issue #76 without it.
 
   have_text "$out_file" && break
   if [ "$attempt" -lt "$AGY_RETRIES" ]; then
@@ -409,8 +413,11 @@ body_file="$(mktemp)"
 # --- replace any prior review comment, then post fresh -------------------------
 # A failed delete is logged, not swallowed: silently ignoring it would let a transient API/perms
 # error leave the old comment in place AND post a new one, so runs accumulate duplicates.
+# The author filter is load-bearing, not cosmetic: without it, ANY user could put the
+# marker (an HTML comment) in a PR comment and have this bot delete arbitrary comments on
+# the next run. Only ever delete OUR OWN bot's prior review comments.
 gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
-    --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" 2>/dev/null \
+    --jq ".[] | select(.user.type == \"Bot\" and .user.login == \"github-actions[bot]\") | select(.body | contains(\"${MARKER}\")) | .id" 2>/dev/null \
   | while read -r cid; do
       [ -n "$cid" ] || continue
       if ! gh api -X DELETE "repos/${REPO}/issues/comments/${cid}" >/dev/null 2>&1; then

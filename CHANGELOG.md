@@ -63,6 +63,15 @@ byte-identical to v2.2.3 by construction.
   `isCrossRepository` fork gate, fail-closed metadata, default-branch checkout
   with `persist-credentials: false`, and the `synchronize` auto-re-review
   trigger.
+- **Reviewer security hardening (found by the reviewer itself).** The
+  Antigravity reviewer, run against this PR, flagged five security regressions
+  the standardized template had relative to RustyNES's prior version — all
+  fixed: `printf '%q '`-escaped `script(1)` fallback (was a raw `${flags[*]}` in
+  `sh -c` — command injection), an author-scoped comment-deletion filter (was
+  marker-only — arbitrary comment deletion), removal of the unscoped SQLite
+  conversation-store fallback (a shared-runner data-leak vector), stripping
+  `GH_TOKEN` / `GITHUB_TOKEN` from `agy`'s environment (`env -u`), and the
+  `issue_comment` author-association re-check restored in the script.
 
 ## [2.2.3] - 2026-07-23 - "Datum" (fast dot path promoted + PGO shipped + the last two mapper residuals closed)
 
