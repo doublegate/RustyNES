@@ -2496,11 +2496,16 @@ impl LockstepBus {
         if self.zapper_temporal_light
             && let Some(crate::input_device::InputDevice::Zapper(z)) = &self.expansion_device[port]
         {
-            // `scanline()` is `i16` and is -1 on the PRE-RENDER line. That must
-            // not fall back to visible row 0: for an aim at `y == 0` row 0 is
-            // inside the photodiode hold window, so the old `unwrap_or(0)`
-            // reported light during pre-render, before the beam had painted
-            // anything this frame. Route it to the explicit pre-render answer.
+            // `scanline()` is `i16` but is non-negative on every current region
+            // (visible 0..=239, then post-render / vblank up to the pre-render
+            // line — 261 NTSC / 311 PAL, NOT -1), so `try_from` always succeeds
+            // and this resolves to `read_at_scanline`, which already yields
+            // no-light for the pre-render line (`prerender - y >= HOLD` for every
+            // visible aim). The `Err` arm is a total-conversion fallback: if a
+            // future convention ever produced a negative scanline (a -1
+            // pre-render), the correct answer is "no light yet" —
+            // `read_before_visible` — rather than the row-0 fold a bare
+            // `unwrap_or(0)` would give.
             return match u16::try_from(self.ppu.scanline()) {
                 Ok(sl) => z.read_at_scanline(self.ppu.framebuffer(), sl),
                 Err(_) => z.read_before_visible(),
@@ -5208,6 +5213,62 @@ mod four_score_tests {
             }
             other => panic!("port 1 should be a Zapper, got {other:?}"),
         }
+    }
+
+    /// With the beam-relative Zapper model on, a debugger peek of `$4017` must
+    /// return the SAME light contribution the CPU read produces — at the
+    /// pre-render line and at a visible line — and must not advance device
+    /// state.
+    ///
+    /// Regression pin for the `peek_port` parity fix: before it, `peek_port`
+    /// fell through to the overlay's frame-granular `peek()` and could report a
+    /// different light bit than `read_port` at the same instant. (This is the
+    /// real defect the fix addressed; the separate `read_before_visible`
+    /// conversion fallback is defensive, since `scanline()` is non-negative on
+    /// every current region — pre-render is line 261 NTSC / 311 PAL, not -1.)
+    #[test]
+    fn temporal_zapper_debugger_peek_matches_cpu_read() {
+        use crate::input_device::{InputDevice, ZapperState};
+
+        // $4017 bit 3 is the (inverted) light bit; the open-bus upper bits differ
+        // between the read and peek paths, so compare only the device bit.
+        const LIGHT: u8 = 0b0000_1000;
+
+        // The two models are constructed to DISAGREE, so the test fails if
+        // `peek_port` does not mirror `read_port`'s temporal branch:
+        //   * frame model (`peek()` -> `ZapperState::read()`) reads `light_seen`,
+        //     which we force TRUE via `from_parts` -> reports light;
+        //   * temporal model (`read_at_scanline`) reads the current scanline. A
+        //     fresh bus sits on the pre-render line (261 NTSC), past the
+        //     photodiode hold window -> reports NO light.
+        // So a peek that (wrongly) fell through to the frame `peek()` would
+        // return light while the CPU read returns none. No framebuffer or
+        // scanline poke is needed — the injected `light_seen` supplies the
+        // divergence, and the default dark framebuffer keeps the temporal path
+        // at no-light on every line anyway.
+        let mut bus = test_bus();
+        // from_parts(x, y, trigger, light_seen): trigger + light_seen both true.
+        let zapper = ZapperState::from_parts(128, 12, true, true);
+        bus.set_expansion_device(1, Some(InputDevice::Zapper(zapper)));
+        bus.set_zapper_temporal_light(true);
+
+        assert!(
+            bus.ppu.scanline() > 239,
+            "fresh PPU is on the pre-render line"
+        );
+        let cpu = bus.read_port(1) & LIGHT;
+        let peek = bus.peek_port(1) & LIGHT;
+        assert_eq!(cpu, LIGHT, "temporal read at pre-render reports NO light");
+        assert_eq!(
+            peek, cpu,
+            "debugger peek must match the CPU read, not the frame `peek()` \
+             (which would report light from the injected light_seen)",
+        );
+
+        // The peek must be side-effect-free: repeating it does not change the
+        // answer (guards a regression where a peek routes through mutating state).
+        assert_eq!(bus.peek_port(1) & LIGHT, peek);
+        assert_eq!(bus.peek_port(1) & LIGHT, peek);
     }
 
     #[test]

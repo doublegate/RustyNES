@@ -368,16 +368,19 @@ impl ZapperState {
     }
 
     /// The device byte for a read taken **before the visible frame begins** —
-    /// i.e. on the PPU's pre-render line, which is scanline `-1`.
+    /// the answer when the PPU's scanline is *negative*, which no light is
+    /// detectable for (the beam has painted nothing this frame yet).
     ///
-    /// This exists because the pre-render line cannot be represented in the
-    /// `u16` scanline [`Self::read_at_scanline`] takes, and folding it onto
-    /// visible row 0 is wrong rather than merely imprecise: for an aim at
-    /// `y == 0`, `light_at_scanline(fb, 0)` passes both the "beam has reached
-    /// the aim row" and "photodiode has not drained" guards and samples the
-    /// aperture, reporting light during a period when the beam has painted
-    /// nothing this frame. On the pre-render line the photodiode has, by
-    /// definition, seen nothing yet, so light is never detected.
+    /// This is a total-conversion fallback, not a fix for a live defect. In this
+    /// engine `Ppu::scanline()` is non-negative on every region — the pre-render
+    /// line is 261 (NTSC) / 311 (PAL), not -1 — so the visible/vblank path
+    /// through [`Self::read_at_scanline`] already yields no-light for pre-render
+    /// (`prerender - y >= ZAPPER_LIGHT_HOLD_SCANLINES` for every on-screen aim),
+    /// and this branch is not reached. It exists so that the caller's
+    /// `u16::try_from(scanline)` has a *correct* `Err` answer — "no light yet" —
+    /// rather than the row-0 fold a bare `unwrap_or(0)` would produce, should a
+    /// future scanline convention (a -1 pre-render, as some emulators use) ever
+    /// hand this a negative value.
     #[must_use]
     pub const fn read_before_visible(&self) -> u8 {
         let trigger = self.trigger as u8;
@@ -1878,33 +1881,43 @@ mod tests {
         assert_eq!(z.read_at_scanline(&fb, 200) & 0b0001_1000, 0b0001_1000);
     }
 
-    /// The pre-render line (PPU scanline `-1`) must never report light, even
-    /// for an aim on visible row 0.
+    /// [`ZapperState::read_before_visible`] — the total-conversion fallback for a
+    /// negative scanline — reports no light regardless of the framebuffer, and
+    /// still carries the trigger bit.
     ///
-    /// Regression pin: the bus originally reached the temporal model via
-    /// `u16::try_from(scanline).unwrap_or(0)`, which folded pre-render onto
-    /// visible row 0. For `y == 0` that row is inside the photodiode hold
-    /// window, so a bright target reported LIGHT DETECTED during a period when
-    /// the beam has painted nothing this frame. `read_before_visible` is the
-    /// explicit answer for that case.
+    /// This pins the fallback's contract, not a live defect: `Ppu::scanline()`
+    /// is non-negative on every region (pre-render is line 261 NTSC / 311 PAL,
+    /// not -1), so the bus reaches this only if a future convention ever hands a
+    /// negative scanline to `u16::try_from`. The paired assertion below shows the
+    /// difference the fallback guards against — the real pre-render line, being
+    /// past the photodiode hold window, already reads no-light through the normal
+    /// `read_at_scanline` path.
     #[test]
-    fn zapper_pre_render_line_never_reports_light() {
+    fn zapper_read_before_visible_reports_no_light() {
         let mut z = ZapperState::new();
-        z.set(100, 0, true); // aim on visible row 0 — the case that regressed
+        z.set(100, 0, true); // aim on visible row 0, trigger pulled
         let fb = fb_with_target(100, 0);
 
         // Row 0 itself is inside the hold window: light IS detected there.
         assert_eq!(
             z.read_at_scanline(&fb, 0) & 0b0000_1000,
             0,
-            "row 0 should detect light (guards the negative control below)"
+            "row 0 detects light (contrast for the fallback below)"
         );
 
-        // Pre-render, however, precedes the whole visible frame: bit 3 set.
+        // The real pre-render line (261 NTSC) is already no-light via the normal
+        // path — it is past the hold window, so no fallback is needed there.
+        assert_eq!(
+            z.read_at_scanline(&fb, 261) & 0b0000_1000,
+            0b0000_1000,
+            "the real pre-render line (261) already reads no-light",
+        );
+
+        // The negative-scanline fallback: no light regardless of framebuffer.
         assert_eq!(
             z.read_before_visible() & 0b0000_1000,
             0b0000_1000,
-            "pre-render must report light NOT detected"
+            "read_before_visible reports light NOT detected",
         );
         // ...and it still carries the trigger bit like every other read.
         assert_eq!(z.read_before_visible() & 0b0001_0000, 0b0001_0000);
