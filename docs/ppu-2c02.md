@@ -263,6 +263,20 @@ is lost. Mesen2 serializes the equivalent set (`NesPpu<T>::Serialize`:
 `_spriteIndex`, `_sprite0Added`, `_sprite0Visible`, `_oamCopybuffer`,
 `_secondaryOamAddr`, `_spriteInRange`, `_oamCopyDone`, `_overflowBugCounter`).
 
+**Compatibility: v8 is a rejection epoch, not an upconversion.** `PPU_SNAPSHOT_VERSION`
+8 is *not* a strictly-additive tail that older readers can truncate past, because the
+state it adds (the sprite-evaluation FSM + OAM data-bus model) has no correct default
+for a mid-frame restore — inventing one is exactly the broken-FSM restore the tail
+exists to prevent. So the reader accepts `1..=PPU_SNAPSHOT_VERSION` and returns
+`PpuSnapshotError::UnsupportedVersion` for anything else; a `.rns` slot written by
+v2.2.2 or earlier fails to load with a clear version error rather than being
+upconverted or silently misread. Per ADR 0028 / ADR 0034 this is the deliberate
+choice, and it is confined to `.rns` files on disk: `.rnm` movies replay inputs from
+a power-on and carry no PPU snapshot, and netplay-rollback / TAS-seek snapshots are
+in-memory and always written by the running build. The acceptance bound is expressed
+as `1..=PPU_SNAPSHOT_VERSION` in `snapshot.rs` rather than a literal so it cannot
+drift from the emitted version.
+
 Future work (post-flip):
 
 - Reading `$2004` during cycles 1-64 should return `$FF` (idle clear

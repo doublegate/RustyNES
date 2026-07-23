@@ -4,7 +4,8 @@
 //! logic: CHR banks at 2 KiB granularity, and four nametables of *real* VRAM
 //! wired on the cartridge. That makes its nametable handling four-screen
 //! rather than the usual mirrored pair -- the console's own 2 KiB of CIRAM is
-//! bypassed for the upper half.//!
+//! bypassed for the upper half.
+//!
 //! A best-effort (Tier-2) board: register-decode correctness verified against
 //! the reference emulators (`Mesen2`, `GeraNES`) and the nesdev wiki, with no
 //! commercial-oracle ROM in the tree. Banking math is direct slice indexing and
@@ -43,20 +44,6 @@ const SAVE_STATE_VERSION: u8 = 1;
 // ---------------------------------------------------------------------------
 // Shared nametable helper (mirrors the one in the other simple-mapper modules).
 // ---------------------------------------------------------------------------
-
-// ===========================================================================
-// Mapper 15 — K-1029 / 100-in-1 Contra Function 16.
-//
-// Single register decoded across $8000-$FFFF (data + low two address bits):
-//   addr bits 0-1 select the banking MODE; data holds the PRG bank, a CHR-RAM
-//   mirroring bit (bit 6) and a "half-bank" bit (bit 7).
-//     mode 0: 32 KiB at the 16 KiB granularity, second half = bank|1
-//     mode 1: 128 KiB? upper half forced to bank|7 (UNROM-like fixed top)
-//     mode 2: 8 KiB-granular ((bank<<1)|b) mirrored across the whole window
-//     mode 3: single 16 KiB bank mirrored across the whole window
-//   CHR is always 8 KiB RAM; CHR writes are protected in modes 0 and 3.
-//   mirroring: data bit 6 (1 = horizontal, 0 = vertical). No IRQ.
-// ===========================================================================
 
 /// Mapper 77 (Irem, Napoleon Senki).
 pub struct Irem77 {
@@ -208,18 +195,6 @@ impl Mapper for Irem77 {
     }
 }
 
-// ===========================================================================
-// Mapper 96 — Bandai Oeka Kids.
-//
-// A write to $8000-$FFFF sets the 32 KiB PRG bank (bits 0-1) and the CHR outer
-// bank (bit 2). The CHR INNER 4 KiB bank for the $0000 slot is selected by
-// sniffing the PPU address bus: on the rising edge into a nametable fetch
-// (`$2xxx`), bits 9-8 of the address become the inner bank. CHR uses 4 KiB
-// banking; the $1000 slot is always (outer | 0x03). CHR is ROM (or RAM dumps).
-// Mirroring header-fixed; no IRQ.
-// ===========================================================================
-
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

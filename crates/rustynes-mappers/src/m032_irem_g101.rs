@@ -124,11 +124,18 @@ impl IremG101 {
 
     fn read_prg(&self, addr: u16) -> u8 {
         let bank_count = (self.prg_rom.len() / PRG_BANK_8K).max(1);
+        // `saturating_sub`, not `-`: the constructor admits any non-zero 8 KiB
+        // multiple, so `bank_count == 1` is reachable from a crafted iNES image
+        // and a bare `bank_count - 2` underflows. Release builds survive only
+        // because the wrap happens to land back in range after `% bank_count`;
+        // overflow-checked builds panic outright on an untrusted-ROM read path.
+        // Same fixed-tail idiom as `m088_namco118.rs` / `m004_mmc3.rs`.
+        let fixed_second_last = bank_count.saturating_sub(2);
         let slot = (addr >> 13) & 0x03; // 0=$8000,1=$A000,2=$C000,3=$E000
         let bank = match slot {
             0 => {
                 if self.prg_swap_mode {
-                    bank_count - 2 // mode 1: $8000 fixed {-2}
+                    fixed_second_last // mode 1: $8000 fixed {-2}
                 } else {
                     self.prg_bank[0] as usize // mode 0: $8000 swappable
                 }
@@ -138,10 +145,10 @@ impl IremG101 {
                 if self.prg_swap_mode {
                     self.prg_bank[0] as usize // mode 1: $C000 swappable
                 } else {
-                    bank_count - 2 // mode 0: $C000 fixed {-2}
+                    fixed_second_last // mode 0: $C000 fixed {-2}
                 }
             }
-            _ => bank_count - 1, // $E000 always fixed {-1}
+            _ => bank_count - 1, // $E000 always fixed {-1}: `.max(1)` makes this safe
         } % bank_count;
         let off = (addr as usize) & (PRG_BANK_8K - 1);
         self.prg_rom[bank * PRG_BANK_8K + off]

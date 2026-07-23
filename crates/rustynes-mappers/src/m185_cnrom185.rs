@@ -43,24 +43,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 147 — Sachen 3018 (TXC JV001).
-//
-// Driven by the TXC JV001 scrambling-accumulator ASIC. Four internal registers
-// are written via $4100-$4103 (decoded on `addr & 0x4103`); the scrambled
-// output latch updates on any $4100 / $8000-$FFFF write. The boot code performs
-// a protection handshake by WRITING a value to $4102/$4100, then READING the
-// chip back at $4100 and comparing — so the read MUST return the scrambled
-// value, not open bus, or the boot validation loops forever.
-//
-// JV001 chip read value:  output = (accumulator & 0x3F) | ((inverter ^ inv) & 0xC0)
-// Bank decode from the chip output latch (PRG A bits + CHR low bits):
-//   PRG (32 KiB) = (output >> 4) & 0x03      (up to 128 KiB)
-//   CHR ( 8 KiB) =  output       & 0x0F
-// Writes land at $4100-$5FFF (register file) and at $8000-$FFFF (output latch,
-// with bus conflict). Mirroring header-fixed; no IRQ.
-// ===========================================================================
-
 /// Mapper 185 (`CNROM` with CHR-disable copy protection).
 pub struct CnRom185 {
     prg_rom: Box<[u8]>,
@@ -230,19 +212,6 @@ impl Mapper for CnRom185 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 200 — MG109 NROM-128 multicart (address latch).
-//
-// Submapper 0: write $8000-$FFFF, the value is ignored; the ADDRESS bits drive
-// the bank/mirroring:
-//   A~[1... .... .... bBBB]
-//   PRG (16 KiB, mirrored at $8000 and $C000) = addr & 0x07
-//   CHR (8 KiB)                               = addr & 0x07
-//   mirroring = bit 3 of addr (0: vertical, 1: horizontal)
-// CPU $8000-$BFFF mirrors CPU $C000-$FFFF (NROM-128). Header-fixed CHR present;
-// CHR-RAM accepted. No IRQ.
-// ===========================================================================
 
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]

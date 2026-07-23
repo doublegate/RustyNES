@@ -1,3 +1,7 @@
+import sys
+
+if len(sys.argv) < 2:
+    raise SystemExit(f"usage: {sys.argv[0]} <dump>")
 #!/usr/bin/env python3
 """Per-index $2007 Stress evaluator.
 

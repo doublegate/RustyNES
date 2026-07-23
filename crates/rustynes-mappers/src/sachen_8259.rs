@@ -55,24 +55,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 40 — NTDEC 2722 (Super Mario Bros. 2J pirate conversion).
-//
-// PRG layout is fixed except for one switchable window:
-//   $6000-$7FFF -> 8 KiB bank 6 (a copy of PRG bank 6; some dumps use it as
-//                  the "intro" bank — modelled as bank 6 of the image).
-//   $8000-$9FFF -> fixed bank 4
-//   $A000-$BFFF -> fixed bank 5
-//   $C000-$DFFF -> switchable 8 KiB bank (low 3 bits of any $E000-$FFFF write)
-//   $E000-$FFFF -> fixed bank 7
-// Registers (data ignored; address-decoded):
-//   $8000-$9FFF : IRQ disable + acknowledge (counter held in reset).
-//   $A000-$BFFF : IRQ enable (counter starts counting M2 cycles).
-//   $E000-$FFFF : select the $C000 8 KiB bank (value & 0x07).
-// The IRQ counter is a 12-bit M2 counter: once enabled it counts up and, when
-// it reaches 4096 (0x1000), asserts the IRQ and holds. CHR is 8 KiB RAM.
-// ===========================================================================
-
 const fn byte_to_mirroring(b: u8, fallback: Mirroring) -> Mirroring {
     match b {
         0 => Mirroring::Horizontal,
@@ -244,21 +226,6 @@ impl Mapper for Sachen8259M137 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 156 — DIS23C01 DAOU (Open Corp / Daou Infosys).
-//
-// Separate low/high CHR-bank register banks plus a 16 KiB PRG register and an
-// explicit one-screen mirroring register, all decoded in the $C000-$C014
-// window:
-//   $C000-$C003 : CHR low bits for 1 KiB slots 0..3.
-//   $C004-$C007 : CHR low bits for 1 KiB slots 4..7.
-//   $C008-$C00B : CHR high bits for slots 0..3.
-//   $C00C-$C00F : CHR high bits for slots 4..7.
-//   $C010       : 16 KiB PRG bank at $8000 ($C000 half fixed to last).
-//   $C014       : mirroring (bit 0: 0 = SingleScreenA, 1 = SingleScreenB).
-// CHR is ROM (eight 1 KiB slots). No IRQ.
-// ===========================================================================
 
 /// Which Sachen 8259 variant (CHR shift + OR constants).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -478,10 +445,6 @@ impl Mapper for Sachen8259 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 42 — FDS-to-cartridge conversion (Mario Baby / Ai Senshi Nicol).
-// ===========================================================================
 
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]

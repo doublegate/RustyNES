@@ -39,24 +39,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 40 — NTDEC 2722 (Super Mario Bros. 2J pirate conversion).
-//
-// PRG layout is fixed except for one switchable window:
-//   $6000-$7FFF -> 8 KiB bank 6 (a copy of PRG bank 6; some dumps use it as
-//                  the "intro" bank — modelled as bank 6 of the image).
-//   $8000-$9FFF -> fixed bank 4
-//   $A000-$BFFF -> fixed bank 5
-//   $C000-$DFFF -> switchable 8 KiB bank (low 3 bits of any $E000-$FFFF write)
-//   $E000-$FFFF -> fixed bank 7
-// Registers (data ignored; address-decoded):
-//   $8000-$9FFF : IRQ disable + acknowledge (counter held in reset).
-//   $A000-$BFFF : IRQ enable (counter starts counting M2 cycles).
-//   $E000-$FFFF : select the $C000 8 KiB bank (value & 0x07).
-// The IRQ counter is a 12-bit M2 counter: once enabled it counts up and, when
-// it reaches 4096 (0x1000), asserts the IRQ and holds. CHR is 8 KiB RAM.
-// ===========================================================================
-
 /// Mapper 250 (Nitra, *Time Diver Avenger*).
 // Independent banking / mode / IRQ flags; grouping them would obscure the
 // MMC3-equivalent register decode for no gain (mirrors `MapperCaps`).
@@ -126,11 +108,17 @@ impl Nitra250 {
 
     fn prg_bank_for(&self, addr: u16) -> usize {
         let last = (self.prg_rom.len() / PRG_BANK_8K).max(1) - 1;
+        // `saturating_sub`, not `last - 1`: `new()` accepts any non-zero 8 KiB
+        // multiple, so an 8 KiB PRG gives `last == 0` and the fixed second-last
+        // slot underflows on an ordinary `$C000` read — a panic under overflow
+        // checks, contradicting this module's own "cannot afford a panic on a
+        // register access" invariant. `m004_mmc3` uses the same guard.
+        let second_last = last.saturating_sub(1);
         let r6 = self.bank_regs[6] as usize;
         let r7 = self.bank_regs[7] as usize;
         match (self.prg_mode, addr) {
             (false, 0x8000..=0x9FFF) | (true, 0xC000..=0xDFFF) => r6,
-            (false, 0xC000..=0xDFFF) | (true, 0x8000..=0x9FFF) => last - 1,
+            (false, 0xC000..=0xDFFF) | (true, 0x8000..=0x9FFF) => second_last,
             (_, 0xA000..=0xBFFF) => r7,
             _ => last,
         }

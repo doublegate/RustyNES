@@ -158,14 +158,6 @@ impl Mapper for Bitcorp38 {
     }
 }
 
-// ===========================================================================
-// Mapper 79 — AVE NINA-03 / NINA-06.
-//
-// One register decoded across $4100-$5FFF: any address with A8 set
-// (`addr & 0x0100 != 0`) latches the byte. CHR = data bits 0-2 (8 KiB),
-// PRG = data bit 3 (32 KiB). CHR may be RAM. Mirroring is header-fixed; no IRQ.
-// ===========================================================================
-
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]
 mod tests {

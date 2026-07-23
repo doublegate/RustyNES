@@ -2,7 +2,8 @@
 //!
 //! A `UxROM` (`m002_uxrom.rs`) whose PRG bank field sits in data bits 4-2 rather
 //! than the low bits, so the same 16 KiB-switchable / 16 KiB-fixed layout is
-//! driven by a shifted register value. CHR is RAM and there is no IRQ.//!
+//! driven by a shifted register value. CHR is RAM and there is no IRQ.
+//!
 //! A best-effort (Tier-2) board: register-decode correctness verified against
 //! the reference emulators (`Mesen2`, `GeraNES`) and the nesdev wiki, with no
 //! commercial-oracle ROM in the tree. Banking math is direct slice indexing and
@@ -174,14 +175,6 @@ impl Mapper for Un1rom94 {
     }
 }
 
-// ===========================================================================
-// Mapper 101 — Jaleco JF-10 CHR latch.
-//
-// A single fixed 32 KiB PRG bank. An 8 KiB CHR bank is latched by a write to
-// the $6000-$7FFF (PRG-RAM) window. Mirroring header-fixed; no IRQ.
-// ===========================================================================
-
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

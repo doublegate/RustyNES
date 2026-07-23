@@ -32,14 +32,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 38 — Bit Corp UNL-PCI556.
-//
-// Single 8-bit latch at $7000-$7FFF. Low 2 bits select a 32 KiB PRG bank;
-// bits 3-2 select an 8 KiB CHR bank. No bus conflicts (the register lives in
-// the $6000-$7FFF window, not in PRG-ROM). Mirroring is header-fixed; no IRQ.
-// ===========================================================================
-
 /// Mapper 241 (`BxROM`-like pirate board).
 pub struct Bxrom241 {
     prg_rom: Box<[u8]>,

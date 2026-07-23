@@ -57,26 +57,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 28 — Action 53 homebrew multicart.
-//
-// A single outer register at $5000-$5FFF selects which inner register a
-// $8000-$FFFF write targets (reg index in bits 7-6 of the $5xxx value). The
-// four inner registers are:
-//   reg 0 ($00): CHR bank (8 KiB CHR-RAM is single-bank, so this only stores).
-//   reg 1 ($01): low PRG bank bits.
-//   reg 2 ($80): mode/mirroring: bits 0-1 = mirroring, bits 2-3 = PRG mode,
-//                bits 4-5 = outer-bank size mask.
-//   reg 3 ($81): outer PRG bank.
-// We model the documented PRG-banking + mirroring; CHR is 8 KiB RAM. No IRQ.
-//
-// The resolved PRG layout follows the nesdev "Action 53" decode: the 32 KiB
-// CPU window splits into two 16 KiB halves. Mode (bits 2-3 of reg 2) picks:
-//   0/1 (NROM-256): both halves track the selected 32 KiB bank.
-//   2  (UNROM):     $8000 = selectable 16 KiB, $C000 = fixed last-in-outer.
-//   3  (NROM-128):  both halves mirror one 16 KiB bank.
-// ===========================================================================
-
 const CHR_BANK_1K: usize = 0x0400;
 
 const fn byte_to_mirroring(b: u8, fallback: Mirroring) -> Mirroring {
@@ -243,22 +223,6 @@ impl Mapper for Ntdec63 {
     }
 }
 
-// ===========================================================================
-// Mapper 76 — NAMCOT-3446 (Namco 109 variant, e.g. Digital Devil Story:
-// Megami Tensei).
-//
-// MMC3-like register port at $8000 (index) / $8001 (data), but with only the
-// CNROM-style 2 KiB CHR + simple PRG layout:
-//   index 2 -> CHR bank 0 (2 KiB at $0000)
-//   index 3 -> CHR bank 1 (2 KiB at $0800)
-//   index 4 -> CHR bank 2 (2 KiB at $1000)
-//   index 5 -> CHR bank 3 (2 KiB at $1800)
-//   index 6 -> PRG bank at $8000 (8 KiB)
-//   index 7 -> PRG bank at $A000 (8 KiB)
-// $C000 and $E000 are fixed to the last two 8 KiB banks. Mirroring is
-// header-fixed (the board has no mirroring register). No IRQ.
-// ===========================================================================
-
 /// Mapper 174 (NTDEC `5-in-1`).
 pub struct Ntdec174 {
     prg_rom: Box<[u8]>,
@@ -407,19 +371,6 @@ impl Mapper for Ntdec174 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 225 — ColorDreams 72-in-1 multicart.
-//
-// Address-decoded register across $8000-$FFFF. For the absolute address A:
-//   mode (bit 12): 0 = 32 KiB PRG, 1 = 16 KiB PRG.
-//   high bit (bit 14): outer bank select (combines with the low bits).
-//   PRG bank index = ((A >> 14) & 1) << 6 | ((A >> 7) & 0x3F)  (8-bit space)
-//   CHR (8 KiB) bank = A & 0x3F (with the high bit folded in).
-//   mirroring = (A >> 13) & 1 -> 1 = horizontal, 0 = vertical.
-// A separate $5800-$5FFF four-byte scratch register block is modelled as RAM.
-// CHR is ROM. No IRQ.
-// ===========================================================================
 
 /// Mapper 40 (NTDEC 2722, *SMB2J* pirate).
 pub struct Ntdec2722M40 {
@@ -724,22 +675,6 @@ impl Mapper for Ntdec81 {
     }
 }
 
-// ===========================================================================
-// Mapper 95 — NAMCOT-3425 (Dragon Buster).
-//
-// An MMC3-subset register port at $8000 (index) / $8001 (data), but with no
-// A12 IRQ and no PRG/CHR mode bits. The eight register slots map like MMC3's
-// banking-only subset:
-//   index 0/1 -> 2 KiB CHR at $0000 / $0800
-//   index 2..5 -> 1 KiB CHR at $1000 / $1400 / $1800 / $1C00
-//   index 6/7 -> 8 KiB PRG at $8000 / $A000 ($C000/$E000 fixed to last two)
-// The board's distinctive feature: bit 5 of the value written to CHR register
-// 0 (and 1) drives one-screen nametable selection (A on 0, B on 1) for that
-// half of the screen; we model the simpler whole-screen single-screen select
-// derived from CHR reg 0 bit 5, which is what the documented Dragon Buster
-// decode uses. CHR is ROM.
-// ===========================================================================
-
 /// Mapper 112 (NTDEC ASDER / Huang-1).
 pub struct NtdecAsder112 {
     prg_rom: Box<[u8]>,
@@ -897,21 +832,6 @@ impl Mapper for NtdecAsder112 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 137 — Sachen 8259D.
-//
-// A $4100/$4101 command/data protection-style board (the 8259 family). $4100
-// latches a 3-bit command index; $4101 supplies the data for that command:
-//   cmd 0..3 : CHR 2 KiB bank selects (slots 0..3 at $0000/$0800/$1000/$1800).
-//   cmd 4    : (high CHR bits — modelled as an outer CHR add; we keep it as a
-//              stored register that biases all CHR slots).
-//   cmd 5    : PRG 32 KiB bank select (low bits).
-//   cmd 7    : mirroring / mode (bit 0: 0 = vertical, 1 = horizontal).
-// CHR is ROM, four 2 KiB banks. The 8259D variant uses straight 2 KiB CHR
-// slots (8259A/B/C reorder the low CHR address lines; that reorder is omitted
-// here as it does not affect the register-decode contract).
-// ===========================================================================
 
 /// Validate a PRG-ROM image is a non-zero multiple of 8 KiB.
 fn check_prg(prg: &[u8], id: u16) -> Result<(), MapperError> {

@@ -459,7 +459,6 @@ impl Mapper for Vrc4 {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
 

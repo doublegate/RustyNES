@@ -488,7 +488,9 @@ impl Ppu {
         }
         let mut r = R { src: data, pos: 0 };
         let version = r.u8()?;
-        if !matches!(version, 1..=8) {
+        // Bound tied to the constant, not a literal: the acceptance range and
+        // the emitted version must move together on every schema bump.
+        if !matches!(version, 1..=PPU_SNAPSHOT_VERSION) {
             return Err(PpuSnapshotError::UnsupportedVersion(version));
         }
         self.region = region_from_u8(r.u8()?)?;

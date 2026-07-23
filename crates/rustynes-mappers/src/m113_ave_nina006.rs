@@ -3,7 +3,8 @@
 //! Mapper 79 (`m079_ave_nina03_06.rs`) plus a register-controlled mirroring
 //! bit and a wider CHR field -- the additions a multicart needs, since each
 //! bundled game may want different mirroring and the combined CHR is larger
-//! than any single title's. Same A8 decode in the `$4100-$5FFF` window.//!
+//! than any single title's. Same A8 decode in the `$4100-$5FFF` window.
+//!
 //! A discrete-logic board in the shape of the stock mappers (`NROM`, `CNROM`,
 //! `UxROM`, `GxROM`, `AxROM`): bank-select latch registers, no IRQ, no on-cart
 //! audio. Banking / mirroring semantics are cross-checked against the
@@ -44,14 +45,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let physical = mirroring.physical_bank(table);
     physical * NAMETABLE_SIZE + local
 }
-
-// ===========================================================================
-// Mapper 38 — Bit Corp UNL-PCI556.
-//
-// Single 8-bit latch at $7000-$7FFF. Low 2 bits select a 32 KiB PRG bank;
-// bits 3-2 select an 8 KiB CHR bank. No bus conflicts (the register lives in
-// the $6000-$7FFF window, not in PRG-ROM). Mirroring is header-fixed; no IRQ.
-// ===========================================================================
 
 /// Mapper 113 (`NINA-006`/`MB-91` multicart).
 pub struct Nina006M113 {
@@ -205,18 +198,6 @@ impl Mapper for Nina006M113 {
     }
 }
 
-// ===========================================================================
-// Mapper 86 — Jaleco JF-13.
-//
-// Single latch at $6000-$6FFF (writes to $7000-$7FFF address the on-cart
-// sample-playback ADPCM, which we do not emulate). The latch byte VVdd_pPcc
-// selects:
-//   PRG = (value >> 4) & 0x03            (32 KiB)
-//   CHR = (value & 0x03) | ((value >> 4) & 0x04)   (8 KiB, 3-bit)
-// Mirroring is header-fixed; no IRQ.
-// ===========================================================================
-
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

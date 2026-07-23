@@ -4,7 +4,8 @@
 //! `m076_namcot3446.rs`, with one addition worth knowing: a bit of the CHR
 //! bank number is routed to the nametable select, so the board drives
 //! single-screen mirroring from the *CHR banking registers* rather than from a
-//! dedicated mirroring register.//!
+//! dedicated mirroring register.
+//!
 //! A best-effort (Tier-2) board: register-decode correctness verified against
 //! the reference emulators (`Mesen2`, `GeraNES`) and the nesdev wiki, with no
 //! commercial-oracle ROM in the tree. Banking math is direct slice indexing and
@@ -49,26 +50,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let physical = mirroring.physical_bank(table);
     physical * NAMETABLE_SIZE + local
 }
-
-// ===========================================================================
-// Mapper 28 — Action 53 homebrew multicart.
-//
-// A single outer register at $5000-$5FFF selects which inner register a
-// $8000-$FFFF write targets (reg index in bits 7-6 of the $5xxx value). The
-// four inner registers are:
-//   reg 0 ($00): CHR bank (8 KiB CHR-RAM is single-bank, so this only stores).
-//   reg 1 ($01): low PRG bank bits.
-//   reg 2 ($80): mode/mirroring: bits 0-1 = mirroring, bits 2-3 = PRG mode,
-//                bits 4-5 = outer-bank size mask.
-//   reg 3 ($81): outer PRG bank.
-// We model the documented PRG-banking + mirroring; CHR is 8 KiB RAM. No IRQ.
-//
-// The resolved PRG layout follows the nesdev "Action 53" decode: the 32 KiB
-// CPU window splits into two 16 KiB halves. Mode (bits 2-3 of reg 2) picks:
-//   0/1 (NROM-256): both halves track the selected 32 KiB bank.
-//   2  (UNROM):     $8000 = selectable 16 KiB, $C000 = fixed last-in-outer.
-//   3  (NROM-128):  both halves mirror one 16 KiB bank.
-// ===========================================================================
 
 const CHR_BANK_1K: usize = 0x0400;
 
@@ -231,24 +212,6 @@ impl Mapper for Namcot3425M95 {
     }
 }
 
-// ===========================================================================
-// Mapper 112 — NTDEC ASDER / Huang-1.
-//
-// An indexed register port (no A12 IRQ — distinct from the MMC3 it resembles):
-//   $8000 : register index (bits 0-2).
-//   $A000 : register data.
-//   $C000 : CHR high bits / outer (modelled as an outer CHR bank add).
-//   $E000 : mirroring (bit 0: 0 = vertical, 1 = horizontal).
-// Register slots:
-//   0 -> PRG bank at $8000 (8 KiB)
-//   1 -> PRG bank at $A000 (8 KiB)
-//   2 -> CHR 2 KiB at $0000
-//   3 -> CHR 2 KiB at $0800
-//   4..7 -> CHR 1 KiB at $1000/$1400/$1800/$1C00
-// $C000/$E000 are fixed to the last two 8 KiB PRG banks. CHR is ROM.
-// ===========================================================================
-
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

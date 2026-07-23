@@ -9,7 +9,8 @@
 //! game is polling.
 //!
 //! The other conversion board is mapper 50, in
-//! `m050_fds_conv_smb2j.rs`. The real FDS is emulated in `fds.rs`.//!
+//! `m050_fds_conv_smb2j.rs`. The real FDS is emulated in `fds.rs`.
+//!
 //! A best-effort (Tier-2) board: register-decode correctness verified against
 //! the reference emulators (`Mesen2`, `GeraNES`) and the nesdev wiki, with no
 //! commercial-oracle ROM in the tree. Banking math is direct slice indexing and
@@ -297,19 +298,6 @@ impl Mapper for Mapper42 {
     }
 }
 
-// ===========================================================================
-// Mapper 50 — Alibaba / SMB2J alternate FDS-to-cartridge conversion.
-//
-// Fixed PRG layout (8 KiB banks): $6000 -> bank 15, $8000 -> bank 8,
-// $A000 -> bank 9, $C000 -> switchable, $E000 -> bank 11. The $C000 bank is
-// written via $4020 (addr & 0x4120 == 0x4020) with a bit-scrambled value:
-//   bank = (v & 0x08) | ((v & 0x01) << 2) | ((v & 0x06) >> 1).
-// $4120 (addr & 0x4120 == 0x4120): IRQ enable (bit 0). When enabled, an M2
-// counter counts up and asserts once at 4096 cycles, then disables. Disabling
-// clears + acknowledges. 8 KiB CHR-RAM.
-// ===========================================================================
-
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,4 +1,7 @@
 import sys
+
+if len(sys.argv) < 2:
+    raise SystemExit(f"usage: {sys.argv[0]} <trace.csv>")
 def load(p):
     r=[]
     for l in open(p).read().splitlines()[1:]:

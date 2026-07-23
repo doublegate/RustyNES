@@ -49,14 +49,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 38 — Bit Corp UNL-PCI556.
-//
-// Single 8-bit latch at $7000-$7FFF. Low 2 bits select a 32 KiB PRG bank;
-// bits 3-2 select an 8 KiB CHR bank. No bus conflicts (the register lives in
-// the $6000-$7FFF window, not in PRG-ROM). Mirroring is header-fixed; no IRQ.
-// ===========================================================================
-
 /// Mapper 86 (Jaleco `JF-13`).
 pub struct Jaleco86 {
     prg_rom: Box<[u8]>,
@@ -304,22 +296,6 @@ impl Mapper for Jaleco140 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 41 — Caltron 6-in-1.
-//
-// Two registers:
-//   $6000-$67FF (outer, decoded from ADDRESS bits, data ignored):
-//      addr layout 0110 0xxx xxMC CEPP
-//      PRG (32 KiB) = (E << 2) | PP   where E = A2, PP = A1..A0
-//      outer CHR (high 2 bits of the 8 KiB bank) = A4..A3 (CC)
-//      mirroring = A5 (M): 1 = horizontal, 0 = vertical
-//      E also gates the inner CHR register: the inner write is honoured only
-//      while E (= A2 of the last outer write) is set.
-//   $8000-$FFFF (inner CHR, from DATA bits, WITH bus conflict):
-//      inner CHR (low 2 bits) = data & 0x03
-// 8 KiB CHR bank = (CC << 2) | cc. No IRQ.
-// ===========================================================================
 
 /// Shared register/strobe state for the Jaleco JF-17/19 family (mappers 72/92).
 // The four flags each model a distinct hardware signal (CHR-RAM presence, the
@@ -628,18 +604,6 @@ impl Mapper for Jaleco92 {
     }
 }
 
-// ===========================================================================
-// Mapper 77 — Irem (Napoleon Senki).
-//
-// A write to $8000-$FFFF (with bus conflicts) holds [CCCC PPPP]:
-//   PPPP = 32 KiB PRG bank, CCCC = 2 KiB CHR-ROM bank at $0000-$07FF.
-// The CHR region $0800-$1FFF and the nametables are backed by on-cart RAM
-// (the board exposes 4-screen-style VRAM). To keep this in the PPU-side hooks
-// we model a contiguous 10 KiB RAM ($0800-$2FFF logically) and route the four
-// nametables (indices 0..=3) into the upper 4 KiB of that RAM via the
-// `nametable_fetch`/`nametable_write` hooks. No IRQ.
-// ===========================================================================
-
 /// Mapper 101 (Jaleco `JF-10` CHR latch).
 pub struct Jaleco101 {
     prg_rom: Box<[u8]>,
@@ -752,18 +716,6 @@ impl Mapper for Jaleco101 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 218 — "Magic Floor".
-//
-// No PRG/CHR-ROM banking: PRG is a fixed 32 KiB bank; the "CHR" is the console
-// CIRAM (the 2 KiB nametable RAM) addressed directly. The board has no CHR-ROM
-// at all — pattern-table reads alias into the same 2 KiB RAM that the
-// nametables use, under a fixed custom mirroring mode selected by the cart
-// wiring (vertical / horizontal / one-screen-A / one-screen-B). We model the
-// CIRAM as mapper-owned 2 KiB VRAM and serve both pattern + nametable fetches
-// from it. No IRQ.
-// ===========================================================================
 
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]

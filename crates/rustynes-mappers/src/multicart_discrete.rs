@@ -292,14 +292,6 @@ impl Mapper for Multicart15 {
     }
 }
 
-// ===========================================================================
-// Mapper 36 — TXC 01-22000 (Policeman).
-//
-// Single register decoded across $4100-$5FFF on A8 (any in-window address with
-// bit 8 set): byte PPPP_CCCC selects PRG (high nibble, 32 KiB) and CHR (low
-// nibble, 8 KiB). Mirroring header-fixed; no IRQ.
-// ===========================================================================
-
 /// Mapper 61 (0x80-style multicart).
 pub struct Multicart61 {
     prg_rom: Box<[u8]>,
@@ -591,19 +583,6 @@ impl Mapper for Multicart62 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 72 — Jaleco JF-17 / JF-19.
-//
-// A write to $8000-$FFFF (with bus conflicts) carries two strobe bits:
-//   bit 7 = PRG latch strobe, bit 6 = CHR latch strobe.
-// On the RISING edge of each strobe the corresponding low-nibble bank field is
-// latched: PRG = data & 0x0F (16 KiB), CHR = data & 0x0F (8 KiB). The lower
-// 16 KiB PRG window ($8000-$BFFF) reads the latched PRG bank; the upper window
-// ($C000-$FFFF) is fixed to the last 16 KiB bank. Mirroring header-fixed; no IRQ.
-//
-// Mapper 92 reuses this logic with a 5-bit PRG field (see `Jaleco92`).
-// ===========================================================================
 
 /// Mapper 200 (`MG109` NROM-128 multicart).
 pub struct Multicart200 {
@@ -2220,17 +2199,6 @@ impl Mapper for Multicart231 {
     }
 }
 
-// ===========================================================================
-// Mapper 111 — GTROM / Cheapocabra homebrew.
-//
-// A write/read to $5000-$5FFF (and the $7000-$7FFF save-RAM window) latches one
-// register: PRG (32 KiB) bank = value & 0x0F; CHR (8 KiB) bank = (value >> 4) &
-// 0x01; nametable bank = (value >> 5) & 0x01. CHR is 16 KiB RAM (two 8 KiB
-// banks). The nametable is a 4-screen RAM (four 1 KiB screens per nt bank)
-// inside the same 16 KiB CHR-RAM array, selected by the nt bank bit. The board
-// also exposes a flashable PRG + an LED bit (bit 6) which we ignore. No IRQ.
-// ===========================================================================
-
 /// Mapper 234 (Maxi 15 / `BNROM`-like multicart).
 pub struct Maxi15M234 {
     prg_rom: Box<[u8]>,
@@ -3228,18 +3196,6 @@ impl Mapper for Multicart233 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 242 — Waixing 43-in-1 / Wai Xing Zhan Shi.
-//
-// A $8000-$FFFF address-decoded register selects a switchable 32 KiB PRG page
-// (the inner bank = address bits 2..4, the outer bank = address bits 5..6) and
-// a mirroring bit (address bit 1: 1 = horizontal, 0 = vertical). CHR is 8 KiB
-// RAM. The board carries 8 KiB of (battery) work-RAM at $6000-$7FFF — several
-// Waixing titles boot by clearing/using that RAM before any PRG bank switch, so
-// it must be present and read/write-backed or the reset routine derails.
-// No IRQ.
-// ===========================================================================
 
 /// Which discrete board the [`DiscreteMapper`] models.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

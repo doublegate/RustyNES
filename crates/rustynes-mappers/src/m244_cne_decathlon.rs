@@ -2,7 +2,8 @@
 //!
 //! A value-decoded sibling of the C&E multicart in `m240_cne_multicart.rs`:
 //! the *written byte* selects the PRG and CHR banks through lookup tables
-//! rather than supplying the bank number directly.//!
+//! rather than supplying the bank number directly.
+//!
 //! A discrete-logic board in the shape of the stock mappers (`NROM`, `CNROM`,
 //! `UxROM`, `GxROM`, `AxROM`): bank-select latch registers, no IRQ, no on-cart
 //! audio. Banking / mirroring semantics are cross-checked against the
@@ -43,14 +44,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let physical = mirroring.physical_bank(table);
     physical * NAMETABLE_SIZE + local
 }
-
-// ===========================================================================
-// Mapper 38 — Bit Corp UNL-PCI556.
-//
-// Single 8-bit latch at $7000-$7FFF. Low 2 bits select a 32 KiB PRG bank;
-// bits 3-2 select an 8 KiB CHR bank. No bus conflicts (the register lives in
-// the $6000-$7FFF window, not in PRG-ROM). Mirroring is header-fixed; no IRQ.
-// ===========================================================================
 
 /// Mapper 244 (Decathlon).
 pub struct Decathlon244 {
@@ -192,21 +185,6 @@ impl Mapper for Decathlon244 {
     }
 }
 
-// ===========================================================================
-// Mapper 250 — Nitra (Time Diver Avenger).
-//
-// An MMC3-register-compatible board, but the register index/value normally
-// carried in the data byte is instead carried in the *address* bits A0-A7,
-// and the data byte is ignored. The effective MMC3 write is:
-//   reg select  ($8000-$9FFE, even) : index = A0-A7.
-//   reg data    ($8001-$9FFF, odd)  : value = A0-A7.
-//   mirroring   ($A000-$BFFE, even) : A0.
-// The board provides the MMC3 banking subset (two 8 KiB PRG + the fixed-last
-// layout + 2 KiB/1 KiB CHR slots) plus a CPU-cycle (M2) IRQ counter modelled
-// like the VRC-style 8-bit reload counter. CHR is ROM.
-// ===========================================================================
-
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

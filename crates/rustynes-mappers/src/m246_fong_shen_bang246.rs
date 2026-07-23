@@ -38,26 +38,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 28 — Action 53 homebrew multicart.
-//
-// A single outer register at $5000-$5FFF selects which inner register a
-// $8000-$FFFF write targets (reg index in bits 7-6 of the $5xxx value). The
-// four inner registers are:
-//   reg 0 ($00): CHR bank (8 KiB CHR-RAM is single-bank, so this only stores).
-//   reg 1 ($01): low PRG bank bits.
-//   reg 2 ($80): mode/mirroring: bits 0-1 = mirroring, bits 2-3 = PRG mode,
-//                bits 4-5 = outer-bank size mask.
-//   reg 3 ($81): outer PRG bank.
-// We model the documented PRG-banking + mirroring; CHR is 8 KiB RAM. No IRQ.
-//
-// The resolved PRG layout follows the nesdev "Action 53" decode: the 32 KiB
-// CPU window splits into two 16 KiB halves. Mode (bits 2-3 of reg 2) picks:
-//   0/1 (NROM-256): both halves track the selected 32 KiB bank.
-//   2  (UNROM):     $8000 = selectable 16 KiB, $C000 = fixed last-in-outer.
-//   3  (NROM-128):  both halves mirror one 16 KiB bank.
-// ===========================================================================
-
 /// Mapper 246 (`Fong Shen Bang` / G0151-1).
 pub struct FongShenBang246 {
     prg_rom: Box<[u8]>,

@@ -109,8 +109,12 @@ impl TaitoTc0190 {
         let bank = match slot {
             0 => self.prg_bank[0] as usize,
             1 => self.prg_bank[1] as usize,
-            2 => bank_count - 2, // fixed second-last
-            _ => bank_count - 1, // fixed last
+            // `saturating_sub`: a single-bank (8 KiB) PRG image is accepted by
+            // the constructor, and a bare `- 2` underflows on that untrusted-ROM
+            // path (panic under overflow checks; only the later `% bank_count`
+            // saves release builds).
+            2 => bank_count.saturating_sub(2), // fixed second-last
+            _ => bank_count - 1,               // fixed last: `.max(1)` makes this safe
         } % bank_count;
         let off = (addr as usize) & (PRG_BANK_8K - 1);
         self.prg_rom[bank * PRG_BANK_8K + off]

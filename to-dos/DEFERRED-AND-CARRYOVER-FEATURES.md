@@ -361,7 +361,7 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   FK23C / COOLBOY / MINDKIDS / Sachen / Waixing / Kaiser clusters, honesty-gated.
   The long-tail toward the full ~300–370 set continues incrementally. Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) G1; [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md)
-  E. Target: **v1.7.x → v2.0+**. Files: `crates/rustynes-mappers/src/sprintN.rs`.
+  E. Target: **v1.7.x → v2.0+**. Files: the per-board `crates/rustynes-mappers/src/mNNN_<board>.rs` modules (these were `sprintN.rs` until the v2.2.3 rename).
 - `[ ]` **Zero-library mappers (no freely-available ROM)** — families 28, 29, 31,
   39, 81, 174, 179 have no freely-available dump, so they have no committed
   screenshots (register-decode unit-tested only). Source: the standing

@@ -690,8 +690,11 @@ so it is a deliberate API decision rather than a micro-optimization.
 ### v2.2.3 P2 — specialized idle-line dot path (decision: implemented, gated OFF)
 
 A1 covers visible dots `1..=256` — 61,440 of the 89,342 NTSC dots (68.8%). The
-other **27,902 (31.2%)** still walk the full general per-dot body: visible dots
-257..=340 (20,400), vblank lines 241..=260 (6,820), pre-render (341). P2
+other **27,902 (31.2%)** still walk the full general per-dot body, and the four
+parts sum exactly: the non-`1..=256` dots of the 240 visible lines — dot 0 plus
+257..=340, so 85 × 240 = **20,400**; post-render line 240 — **341**; vblank
+lines 241..=260 — 20 × 341 = **6,820**; and pre-render line 261 — **341**.
+(20,400 + 341 + 6,820 + 341 = 27,902 = 89,342 − 61,440.) P2
 attacked the cheapest slice to prove correct: the **idle line** — post-render
 line 240 plus every vblank line except the VBL-set line 241, 20 of 262 lines.
 
@@ -1048,7 +1051,7 @@ gh workflow run PGO.yml                     # default 3600 frames/ROM, no BOLT
 gh workflow run PGO.yml -f frames=7200 -f run_bolt=true
 # Or push a release tag — `release.yml` calls PGO and ships the promoted
 # binary as the linux-x86_64 asset when the gate passes:
-git tag v1.2.0 && git push origin v1.2.0
+git tag v2.2.3 && git push origin v2.2.3
 ```
 
 ## Things explicitly *not* in scope for v1.0

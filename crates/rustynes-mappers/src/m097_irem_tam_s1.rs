@@ -3,7 +3,8 @@
 //! Inverts the normal `UxROM` arrangement: the *first* 16 KiB is fixed and the
 //! *second* switchable. That matters because the 6502 reset and interrupt
 //! vectors live at the top of the address space -- on this board they sit in
-//! the switchable half, so the bank in place at reset is load-bearing.//!
+//! the switchable half, so the bank in place at reset is load-bearing.
+//!
 //! A best-effort (Tier-2) board: register-decode correctness verified against
 //! the reference emulators (`Mesen2`, `GeraNES`) and the nesdev wiki, with no
 //! commercial-oracle ROM in the tree. Banking math is direct slice indexing and
@@ -49,20 +50,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let physical = mirroring.physical_bank(table);
     physical * NAMETABLE_SIZE + local
 }
-
-// ===========================================================================
-// Mapper 15 — K-1029 / 100-in-1 Contra Function 16.
-//
-// Single register decoded across $8000-$FFFF (data + low two address bits):
-//   addr bits 0-1 select the banking MODE; data holds the PRG bank, a CHR-RAM
-//   mirroring bit (bit 6) and a "half-bank" bit (bit 7).
-//     mode 0: 32 KiB at the 16 KiB granularity, second half = bank|1
-//     mode 1: 128 KiB? upper half forced to bank|7 (UNROM-like fixed top)
-//     mode 2: 8 KiB-granular ((bank<<1)|b) mirrored across the whole window
-//     mode 3: single 16 KiB bank mirrored across the whole window
-//   CHR is always 8 KiB RAM; CHR writes are protected in modes 0 and 3.
-//   mirroring: data bit 6 (1 = horizontal, 0 = vertical). No IRQ.
-// ===========================================================================
 
 /// Mapper 97 (Irem `TAM-S1`, Kaiketsu Yanchamaru).
 pub struct Irem97 {
@@ -218,21 +205,6 @@ impl Mapper for Irem97 {
     }
 }
 
-// ===========================================================================
-// Mapper 132 — TXC 22211.
-//
-// Driven by the TXC scrambling-accumulator chip (the non-JV001 variant). The
-// chip has four internal registers written via $4100-$4103 (decoded on
-// addr & 0xE103) and an output latch updated on any $8000-$FFFF write:
-//   output = (accumulator & 0x0F) | ((inverter & 0x08) << 1)
-// The mapper then resolves:
-//   PRG (32 KiB) = (output >> 2) & 0x01
-//   CHR (8 KiB)  =  output       & 0x03
-// `readMapperRegister` at $4100|$4103==0x4100 returns the chip read value in
-// the low nibble. Mirroring header-fixed; no IRQ.
-// ===========================================================================
-
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

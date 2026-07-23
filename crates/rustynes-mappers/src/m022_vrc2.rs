@@ -348,7 +348,6 @@ impl Mapper for Vrc2 {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
 

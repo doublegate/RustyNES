@@ -37,20 +37,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 15 — K-1029 / 100-in-1 Contra Function 16.
-//
-// Single register decoded across $8000-$FFFF (data + low two address bits):
-//   addr bits 0-1 select the banking MODE; data holds the PRG bank, a CHR-RAM
-//   mirroring bit (bit 6) and a "half-bank" bit (bit 7).
-//     mode 0: 32 KiB at the 16 KiB granularity, second half = bank|1
-//     mode 1: 128 KiB? upper half forced to bank|7 (UNROM-like fixed top)
-//     mode 2: 8 KiB-granular ((bank<<1)|b) mirrored across the whole window
-//     mode 3: single 16 KiB bank mirrored across the whole window
-//   CHR is always 8 KiB RAM; CHR writes are protected in modes 0 and 3.
-//   mirroring: data bit 6 (1 = horizontal, 0 = vertical). No IRQ.
-// ===========================================================================
-
 /// Mapper 39 (Subor `BNROM`-like, 32 KiB PRG).
 pub struct Subor39 {
     prg_rom: Box<[u8]>,
@@ -188,19 +174,6 @@ impl Mapper for Subor39 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 61 — 0x80-style multicart.
-//
-// The register is decoded entirely from the absolute CPU address ($8000-$FFFF);
-// data is ignored. With `A = addr`:
-//   prg_page          = ((A & 0x0F) << 1) | ((A >> 5) & 0x01)
-//   prg_16k_mode      =  (A & 0x10) != 0
-//   horizontal_mirror =  (A & 0x80) != 0
-// In 16 KiB mode the 16 KiB bank `prg_page` is mirrored across the window; in
-// 32 KiB mode the 32 KiB bank `prg_page >> 1` is used. CHR is 8 KiB RAM (fixed).
-// No IRQ.
-// ===========================================================================
 
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]

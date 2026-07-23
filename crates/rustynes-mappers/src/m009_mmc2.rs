@@ -275,7 +275,6 @@ impl Mapper for Mmc2 {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -60,26 +60,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 28 — Action 53 homebrew multicart.
-//
-// A single outer register at $5000-$5FFF selects which inner register a
-// $8000-$FFFF write targets (reg index in bits 7-6 of the $5xxx value). The
-// four inner registers are:
-//   reg 0 ($00): CHR bank (8 KiB CHR-RAM is single-bank, so this only stores).
-//   reg 1 ($01): low PRG bank bits.
-//   reg 2 ($80): mode/mirroring: bits 0-1 = mirroring, bits 2-3 = PRG mode,
-//                bits 4-5 = outer-bank size mask.
-//   reg 3 ($81): outer PRG bank.
-// We model the documented PRG-banking + mirroring; CHR is 8 KiB RAM. No IRQ.
-//
-// The resolved PRG layout follows the nesdev "Action 53" decode: the 32 KiB
-// CPU window splits into two 16 KiB halves. Mode (bits 2-3 of reg 2) picks:
-//   0/1 (NROM-256): both halves track the selected 32 KiB bank.
-//   2  (UNROM):     $8000 = selectable 16 KiB, $C000 = fixed last-in-outer.
-//   3  (NROM-128):  both halves mirror one 16 KiB bank.
-// ===========================================================================
-
 const CHR_BANK_1K: usize = 0x0400;
 
 const fn byte_to_mirroring(b: u8, fallback: Mirroring) -> Mirroring {
@@ -266,22 +246,6 @@ impl Mapper for Waixing242 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 246 — Fong Shen Bang / G0151-1.
-//
-// Four banking registers in the $6000-$6003 window (the high half of that
-// window, $6800-$7FFF, is on-cart PRG-RAM):
-//   $6000: PRG 8 KiB bank at $8000
-//   $6001: PRG 8 KiB bank at $A000
-//   $6002: PRG 8 KiB bank at $C000
-//   $6003: PRG 8 KiB bank at $E000
-//   $6004: CHR 2 KiB bank at $0000
-//   $6005: CHR 2 KiB bank at $0800
-//   $6006: CHR 2 KiB bank at $1000
-//   $6007: CHR 2 KiB bank at $1800
-// CHR is ROM; mirroring is header-fixed. No IRQ.
-// ===========================================================================
 
 /// Mapper 162 (Waixing FS304).
 pub struct WaixingFs304M162 {
@@ -643,17 +607,6 @@ impl Mapper for Waixing178 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 244 — Decathlon (Mega Soft).
-//
-// A $8000-$FFFF data-decoded multicart. The bank select is carried in the
-// written DATA byte (not the address) through two scramble LUTs, with bit 3
-// selecting CHR vs PRG:
-//   value & 0x08 != 0 -> CHR 8 KiB bank = LUT_CHR[(value>>4)&7][value&7].
-//   else              -> PRG 32 KiB bank = LUT_PRG[(value>>4)&3][value&3].
-// CHR is ROM, mirroring header-fixed. No IRQ.
-// ===========================================================================
 
 /// Waixing VRC4-clone (mapper 253, *Dragon Ball Z*).
 pub struct Waixing253 {

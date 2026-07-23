@@ -1628,13 +1628,6 @@ impl LockstepBus {
         }
     }
 
-    /// Attach (or replace) a non-standard overlay device on `port` (0 =
-    /// `$4016`, 1 = `$4017`). Pass `None` to unplug the device and return the
-    /// port to the standard controller / Four Score path (byte-identical).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `port` is not in `0..=1`.
     /// A3 (v2.2.3): enable the **beam-relative** Zapper light model.
     ///
     /// Default **off**, which keeps the frame-granular model and therefore
@@ -2503,8 +2496,15 @@ impl LockstepBus {
         if self.zapper_temporal_light
             && let Some(crate::input_device::InputDevice::Zapper(z)) = &self.expansion_device[port]
         {
-            let sl = u16::try_from(self.ppu.scanline()).unwrap_or(0);
-            return z.read_at_scanline(self.ppu.framebuffer(), sl);
+            // `scanline()` is `i16` and is -1 on the PRE-RENDER line. That must
+            // not fall back to visible row 0: for an aim at `y == 0` row 0 is
+            // inside the photodiode hold window, so the old `unwrap_or(0)`
+            // reported light during pre-render, before the beam had painted
+            // anything this frame. Route it to the explicit pre-render answer.
+            return match u16::try_from(self.ppu.scanline()) {
+                Ok(sl) => z.read_at_scanline(self.ppu.framebuffer(), sl),
+                Err(_) => z.read_before_visible(),
+            };
         }
         if let Some(d) = &mut self.expansion_device[port] {
             return d.read();

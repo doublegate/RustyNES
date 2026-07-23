@@ -8,7 +8,8 @@
 //! emulator that banks on the `$4100` write alone produces the wrong bank.
 //!
 //! The simpler TXC board on mapper 36 is in `m036_txc_policeman.rs`; Sachen's
-//! 3011 drives a variant of the same chip, duplicated in `m136_sachen_3011.rs`.//!
+//! 3011 drives a variant of the same chip, duplicated in `m136_sachen_3011.rs`.
+//!
 //! A best-effort (Tier-2) board: register-decode correctness verified against
 //! the reference emulators (`Mesen2`, `GeraNES`) and the nesdev wiki, with no
 //! commercial-oracle ROM in the tree. Banking math is direct slice indexing and
@@ -54,20 +55,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let physical = mirroring.physical_bank(table);
     physical * NAMETABLE_SIZE + local
 }
-
-// ===========================================================================
-// Mapper 15 — K-1029 / 100-in-1 Contra Function 16.
-//
-// Single register decoded across $8000-$FFFF (data + low two address bits):
-//   addr bits 0-1 select the banking MODE; data holds the PRG bank, a CHR-RAM
-//   mirroring bit (bit 6) and a "half-bank" bit (bit 7).
-//     mode 0: 32 KiB at the 16 KiB granularity, second half = bank|1
-//     mode 1: 128 KiB? upper half forced to bank|7 (UNROM-like fixed top)
-//     mode 2: 8 KiB-granular ((bank<<1)|b) mirrored across the whole window
-//     mode 3: single 16 KiB bank mirrored across the whole window
-//   CHR is always 8 KiB RAM; CHR writes are protected in modes 0 and 3.
-//   mirroring: data bit 6 (1 = horizontal, 0 = vertical). No IRQ.
-// ===========================================================================
 
 /// The TXC scrambling-accumulator chip (mappers 132 / 172 / 173 family). This
 /// is the non-JV001 variant used by mapper 132.
@@ -265,16 +252,6 @@ impl Mapper for Txc132 {
     }
 }
 
-// ===========================================================================
-// Mapper 133 — Sachen 3009 (and 3011).
-//
-// One register decoded on A8 across $4100-$5FFF: byte selects
-//   PRG (32 KiB) = (value >> 2) & 0x01
-//   CHR (8 KiB)  =  value       & 0x03
-// Mirroring header-fixed; no IRQ.
-// ===========================================================================
-
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

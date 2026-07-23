@@ -32,7 +32,7 @@ section).
 ## What they test
 
 - **`cpu_timing_test.nes`** — End-to-end CPU per-instruction cycle
-  count (more comprehensive than `cpu_timing_test6`).
+  count, from blargg's `cpu_timing_test6` suite (see `tests/roms/LICENSES.md`).
 - **`branch_timing_*`** — Branch taken / not-taken; backward branch
   page-cross; forward branch page-cross. (`blargg/branch_timing_tests/`
   has the same set but in a different sub-ROM layout.)

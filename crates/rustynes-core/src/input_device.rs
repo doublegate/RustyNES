@@ -367,6 +367,23 @@ impl ZapperState {
         (trigger << 4) | (light_not_detected << 3)
     }
 
+    /// The device byte for a read taken **before the visible frame begins** —
+    /// i.e. on the PPU's pre-render line, which is scanline `-1`.
+    ///
+    /// This exists because the pre-render line cannot be represented in the
+    /// `u16` scanline [`Self::read_at_scanline`] takes, and folding it onto
+    /// visible row 0 is wrong rather than merely imprecise: for an aim at
+    /// `y == 0`, `light_at_scanline(fb, 0)` passes both the "beam has reached
+    /// the aim row" and "photodiode has not drained" guards and samples the
+    /// aperture, reporting light during a period when the beam has painted
+    /// nothing this frame. On the pre-render line the photodiode has, by
+    /// definition, seen nothing yet, so light is never detected.
+    #[must_use]
+    pub const fn read_before_visible(&self) -> u8 {
+        let trigger = self.trigger as u8;
+        (trigger << 4) | (1 << 3) // light NOT detected (bit 3 is inverted)
+    }
+
     /// The device byte for a `$4016`/`$4017` access. Bit 3 = light (0 detected /
     /// 1 not), bit 4 = trigger (1 pulled). Independent of the strobe (the
     /// Zapper has no shift register). The caller ORs in the open-bus upper bits.
@@ -1758,10 +1775,13 @@ mod tests {
     // ---------------------------------------------------------------
 
     /// Build a framebuffer with a bright 3x3 target centred on `(x, y)`.
+    /// Clamped at the edges so a target on row/column 0 is expressible (the
+    /// pre-render regression test needs `y == 0`); the 3x3 aperture is simply
+    /// clipped there, exactly as it is on hardware at the screen edge.
     fn fb_with_target(x: usize, y: usize) -> alloc::vec::Vec<u8> {
         let mut fb = alloc::vec![0u8; 256 * 240 * 4];
-        for py in y - 1..=y + 1 {
-            for px in x - 1..=x + 1 {
+        for py in y.saturating_sub(1)..=(y + 1).min(239) {
+            for px in x.saturating_sub(1)..=(x + 1).min(255) {
                 let idx = (py * 256 + px) * 4;
                 fb[idx] = 0xFF;
                 fb[idx + 1] = 0xFF;
@@ -1856,5 +1876,37 @@ mod tests {
         assert_eq!(z.read_at_scanline(&fb, 121) & 0b0001_1000, 0b0001_0000);
         // Drained: light NOT detected -> bit 3 = 1.
         assert_eq!(z.read_at_scanline(&fb, 200) & 0b0001_1000, 0b0001_1000);
+    }
+
+    /// The pre-render line (PPU scanline `-1`) must never report light, even
+    /// for an aim on visible row 0.
+    ///
+    /// Regression pin: the bus originally reached the temporal model via
+    /// `u16::try_from(scanline).unwrap_or(0)`, which folded pre-render onto
+    /// visible row 0. For `y == 0` that row is inside the photodiode hold
+    /// window, so a bright target reported LIGHT DETECTED during a period when
+    /// the beam has painted nothing this frame. `read_before_visible` is the
+    /// explicit answer for that case.
+    #[test]
+    fn zapper_pre_render_line_never_reports_light() {
+        let mut z = ZapperState::new();
+        z.set(100, 0, true); // aim on visible row 0 — the case that regressed
+        let fb = fb_with_target(100, 0);
+
+        // Row 0 itself is inside the hold window: light IS detected there.
+        assert_eq!(
+            z.read_at_scanline(&fb, 0) & 0b0000_1000,
+            0,
+            "row 0 should detect light (guards the negative control below)"
+        );
+
+        // Pre-render, however, precedes the whole visible frame: bit 3 set.
+        assert_eq!(
+            z.read_before_visible() & 0b0000_1000,
+            0b0000_1000,
+            "pre-render must report light NOT detected"
+        );
+        // ...and it still carries the trigger bit like every other read.
+        assert_eq!(z.read_before_visible() & 0b0001_0000, 0b0001_0000);
     }
 }

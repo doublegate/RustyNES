@@ -2,7 +2,8 @@
 //!
 //! One register carrying both the PRG and CHR bank fields, decoded in the
 //! `$4020-$5FFF` expansion window -- so it does not collide with the PRG-RAM
-//! window a bundled game may also be using.//!
+//! window a bundled game may also be using.
+//!
 //! A discrete-logic board in the shape of the stock mappers (`NROM`, `CNROM`,
 //! `UxROM`, `GxROM`, `AxROM`): bank-select latch registers, no IRQ, no on-cart
 //! audio. Banking / mirroring semantics are cross-checked against the
@@ -43,14 +44,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let physical = mirroring.physical_bank(table);
     physical * NAMETABLE_SIZE + local
 }
-
-// ===========================================================================
-// Mapper 38 — Bit Corp UNL-PCI556.
-//
-// Single 8-bit latch at $7000-$7FFF. Low 2 bits select a 32 KiB PRG bank;
-// bits 3-2 select an 8 KiB CHR bank. No bus conflicts (the register lives in
-// the $6000-$7FFF window, not in PRG-ROM). Mirroring is header-fixed; no IRQ.
-// ===========================================================================
 
 /// Mapper 240 (C&E multicart).
 pub struct Cne240 {
@@ -174,15 +167,6 @@ impl Mapper for Cne240 {
     }
 }
 
-// ===========================================================================
-// Mapper 241 — BxROM-like pirate ("Mortal Kombat" and friends).
-//
-// A single 32 KiB PRG bank selected by the whole byte written to $8000-$FFFF
-// (no bus conflict; no register-bit masking beyond the modulo wrap). CHR is
-// always 8 KiB RAM. Mirroring header-fixed; no IRQ.
-// ===========================================================================
-
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

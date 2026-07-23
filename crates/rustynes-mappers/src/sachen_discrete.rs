@@ -59,20 +59,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 15 — K-1029 / 100-in-1 Contra Function 16.
-//
-// Single register decoded across $8000-$FFFF (data + low two address bits):
-//   addr bits 0-1 select the banking MODE; data holds the PRG bank, a CHR-RAM
-//   mirroring bit (bit 6) and a "half-bank" bit (bit 7).
-//     mode 0: 32 KiB at the 16 KiB granularity, second half = bank|1
-//     mode 1: 128 KiB? upper half forced to bank|7 (UNROM-like fixed top)
-//     mode 2: 8 KiB-granular ((bank<<1)|b) mirrored across the whole window
-//     mode 3: single 16 KiB bank mirrored across the whole window
-//   CHR is always 8 KiB RAM; CHR writes are protected in modes 0 and 3.
-//   mirroring: data bit 6 (1 = horizontal, 0 = vertical). No IRQ.
-// ===========================================================================
-
 /// Mapper 133 (Sachen 3009).
 pub struct Sachen133 {
     prg_rom: Box<[u8]>,
@@ -1270,17 +1256,6 @@ impl Sachen150 {
     }
 }
 
-// ===========================================================================
-// Mapper 180 — Nichibutsu UNROM (inverted), Crazy Climber.
-//
-// Like UxROM (mapper 2) but using AND logic, so the FIXED bank is at $8000
-// (bank 0) and the SWITCHABLE bank is at $C000:
-//   CPU $8000-$BFFF: 16 KiB, fixed to bank 0
-//   CPU $C000-$FFFF: 16 KiB, selected by (value & 0x07)
-// Bus conflicts on the bank-select write. CHR is 8 KiB RAM. Mirroring
-// header-fixed; no IRQ.
-// ===========================================================================
-
 /// Mapper 143 (Sachen `TCA01`).
 pub struct SachenTca01M143 {
     prg_rom: Box<[u8]>,
@@ -1411,13 +1386,6 @@ impl Mapper for SachenTca01M143 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 177 — Hengedianzi.
-//
-// $8000-$FFFF latch: the whole byte selects a 32 KiB PRG bank; bit 5 selects
-// mirroring (1 = horizontal, 0 = vertical). CHR is 8 KiB RAM. No IRQ.
-// ===========================================================================
 
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]

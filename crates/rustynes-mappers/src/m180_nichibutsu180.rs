@@ -39,24 +39,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 147 — Sachen 3018 (TXC JV001).
-//
-// Driven by the TXC JV001 scrambling-accumulator ASIC. Four internal registers
-// are written via $4100-$4103 (decoded on `addr & 0x4103`); the scrambled
-// output latch updates on any $4100 / $8000-$FFFF write. The boot code performs
-// a protection handshake by WRITING a value to $4102/$4100, then READING the
-// chip back at $4100 and comparing — so the read MUST return the scrambled
-// value, not open bus, or the boot validation loops forever.
-//
-// JV001 chip read value:  output = (accumulator & 0x3F) | ((inverter ^ inv) & 0xC0)
-// Bank decode from the chip output latch (PRG A bits + CHR low bits):
-//   PRG (32 KiB) = (output >> 4) & 0x03      (up to 128 KiB)
-//   CHR ( 8 KiB) =  output       & 0x0F
-// Writes land at $4100-$5FFF (register file) and at $8000-$FFFF (output latch,
-// with bus conflict). Mirroring header-fixed; no IRQ.
-// ===========================================================================
-
 /// Mapper 180 (Nichibutsu `UNROM`-inverted, Crazy Climber).
 pub struct Nichibutsu180 {
     prg_rom: Box<[u8]>,
@@ -211,22 +193,6 @@ impl Nichibutsu180 {
         }
     }
 }
-
-// ===========================================================================
-// Mapper 185 — CNROM with CHR-disable copy protection.
-//
-// Stock CNROM banking (8 KiB CHR latch in $8000-$FFFF, bus conflicts), plus a
-// copy-protection scheme: certain values written to the CHR register DISABLE
-// CHR-ROM, causing reads to return $FF. The submapper selects which 2-bit
-// pattern enables CHR; submapper 0 (the common heuristic) enables CHR whenever
-// either of the low two bits is set (i.e. value & 0x03 != 0). We model the
-// data-driven enable test (the per-read $2007 heuristic of GeraNES is not
-// needed for the data-bus protection most mapper-185 ROMs use).
-//   CHR (8 KiB) = effective & mask
-//   CHR enabled (submapper 0) iff (effective & 0x03) != 0
-//   submapper 4/5/6/7 enable iff (effective & 0x03) == 0/1/2/3 respectively
-// PRG is fixed (16 or 32 KiB NROM). Mirroring header-fixed; no IRQ.
-// ===========================================================================
 
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]

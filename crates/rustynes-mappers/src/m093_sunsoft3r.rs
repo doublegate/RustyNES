@@ -71,6 +71,26 @@ impl Sunsoft3r {
         })
     }
 
+    /// PRG-ROM read, shared by [`Mapper::cpu_read`] and the bus-conflict mask in
+    /// [`Mapper::cpu_write`] (which needs `&self`, not the trait's `&mut self`).
+    fn read_prg(&self, addr: u16) -> u8 {
+        let bank_count = (self.prg_rom.len() / PRG_BANK_16K).max(1);
+        match addr {
+            0x8000..=0xBFFF => {
+                let bank = (self.prg_bank as usize) % bank_count;
+                let off = (addr - 0x8000) as usize;
+                self.prg_rom[bank * PRG_BANK_16K + off]
+            }
+            0xC000..=0xFFFF => {
+                // `.max(1)` above makes this subtraction safe for any accepted image.
+                let last = bank_count - 1;
+                let off = (addr - 0xC000) as usize;
+                self.prg_rom[last * PRG_BANK_16K + off]
+            }
+            _ => 0,
+        }
+    }
+
     const fn nametable_offset(&self, addr: u16) -> usize {
         let table = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as u8;
         let local = (addr as usize) & (NAMETABLE_SIZE - 1);
@@ -87,24 +107,22 @@ impl Mapper for Sunsoft3r {
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
-        let bank_count = (self.prg_rom.len() / PRG_BANK_16K).max(1);
-        match addr {
-            0x8000..=0xBFFF => {
-                let bank = (self.prg_bank as usize) % bank_count;
-                let off = (addr - 0x8000) as usize;
-                self.prg_rom[bank * PRG_BANK_16K + off]
-            }
-            0xC000..=0xFFFF => {
-                let last = bank_count - 1;
-                let off = (addr - 0xC000) as usize;
-                self.prg_rom[last * PRG_BANK_16K + off]
-            }
-            _ => 0,
-        }
+        self.read_prg(addr)
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
         if let 0x8000..=0xFFFF = addr {
+            // The Sunsoft-3R board has **bus conflicts** — this module's own
+            // header already cites nesdev `INES_Mapper_093.xhtml` "BUS
+            // CONFLICTS", but the mask was missing, so the doc and the code
+            // disagreed. The register shares the address space with PRG-ROM, so
+            // a store drives the written byte ANDed with the ROM byte already at
+            // that address. Same treatment as the sibling Sunsoft-2 board in
+            // `m089_sunsoft2.rs`, and matching the designated reference
+            // `ref-proj/GeraNES/src/GeraNES/Mappers/Mapper093.h`, whose
+            // `writePrg` opens with `data &= readPrg(addr);`.
+            // Decode every field from the masked value.
+            let value = value & self.read_prg(addr);
             // [.PPP ...E]: bits 4-6 = 16K PRG bank, bit 0 = CHR-RAM enable.
             self.prg_bank = (value >> 4) & 0x07;
             self.chr_ram_enabled = (value & 0x01) != 0;
@@ -205,8 +223,17 @@ impl Mapper for Sunsoft3r {
 mod tests {
     use super::*;
 
+    /// Filled `0xFF` — NOT `0x00` — with only the first byte of each bank
+    /// carrying its index as a marker.
+    ///
+    /// This board has bus conflicts: `cpu_write` ANDs the written byte with the
+    /// ROM byte at that address. A `0x00` fill would silently mask every
+    /// register write to zero and make these tests assert the wrong behavior,
+    /// so register writes below target `$8001` (a `0xFF` byte, mask
+    /// transparent) rather than `$8000` (the bank marker). Same convention as
+    /// the sibling `m089_sunsoft2.rs`.
     fn synth_prg(banks: usize) -> Box<[u8]> {
-        let mut v = vec![0u8; banks * PRG_BANK_16K];
+        let mut v = vec![0xFFu8; banks * PRG_BANK_16K];
         for b in 0..banks {
             v[b * PRG_BANK_16K] = b as u8;
         }
@@ -224,7 +251,7 @@ mod tests {
     fn prg_bank_select_bits_4_to_6() {
         let mut m = Sunsoft3r::new(synth_prg(8), Mirroring::Vertical).unwrap();
         // [.PPP ...E]: PRG=5 (bits 4-6) + CHR enable (bit 0) -> 0b0101_0001.
-        m.cpu_write(0x8000, 0b0101_0001);
+        m.cpu_write(0x8001, 0b0101_0001);
         assert_eq!(m.cpu_read(0x8000), 5);
         assert_eq!(m.cpu_read(0xC000), 7); // fixed unchanged
     }
@@ -236,18 +263,18 @@ mod tests {
         m.ppu_write(0x0010, 0xCD);
         assert_eq!(m.ppu_read(0x0010), 0xCD);
         // Disable CHR-RAM (bit 0 = 0): writes ignored, reads open bus (0).
-        m.cpu_write(0x8000, 0x00);
+        m.cpu_write(0x8001, 0x00);
         m.ppu_write(0x0020, 0xEE);
         assert_eq!(m.ppu_read(0x0020), 0);
         // Re-enable: previously-written byte still there.
-        m.cpu_write(0x8000, 0x01);
+        m.cpu_write(0x8001, 0x01);
         assert_eq!(m.ppu_read(0x0010), 0xCD);
     }
 
     #[test]
     fn save_state_round_trip() {
         let mut m = Sunsoft3r::new(synth_prg(4), Mirroring::Vertical).unwrap();
-        m.cpu_write(0x8000, 0b0010_0001);
+        m.cpu_write(0x8001, 0b0010_0001);
         m.ppu_write(0x0001, 0x77);
         let blob = m.save_state();
         let mut m2 = Sunsoft3r::new(synth_prg(4), Mirroring::Vertical).unwrap();

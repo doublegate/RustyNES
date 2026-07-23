@@ -3,7 +3,8 @@
 //! The same 32 KiB PRG select plus mirroring bit as mapper 177
 //! (`m177_hengedianzi.rs`), but split across two windows: PRG through
 //! `$5000-$5FFF` and mirroring through `$8000-$FFFF`, so a bank switch can
-//! never be confused with an ordinary ROM write.//!
+//! never be confused with an ordinary ROM write.
+//!
 //! A best-effort (Tier-2) board: register-decode correctness verified against
 //! the reference emulators (`Mesen2`, `GeraNES`) and the nesdev wiki, with no
 //! commercial-oracle ROM in the tree. Banking math is direct slice indexing and
@@ -49,15 +50,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let physical = mirroring.physical_bank(table);
     physical * NAMETABLE_SIZE + local
 }
-
-// ===========================================================================
-// Mapper 31 — INL / NSF-style 4 KiB-banked board ("2A03 Puritans").
-//
-// Eight 4 KiB PRG slots ($8000/$9000/.../$F000), each latched by a write to
-// $5FF8-$5FFF (the low three address bits pick the slot). Power-on fixes the
-// last slot ($F000) to the final 4 KiB bank (0xFF & mask). CHR is 8 KiB RAM.
-// Mirroring header-fixed; no IRQ.
-// ===========================================================================
 
 /// Mapper 179 (Hengedianzi variant).
 pub struct Hengedianzi179 {
@@ -180,19 +172,6 @@ impl Mapper for Hengedianzi179 {
     }
 }
 
-// ===========================================================================
-// Mapper 58 — multicart.
-//
-// Address-decoded register across $8000-$FFFF (data byte ignored). For the
-// absolute address A:
-//   PRG (16 KiB) bank = A & 0x07
-//   32 KiB mode when (A & 0x40) == 0: use ((A & 0x06) >> 1) as the 32 KiB bank
-//   CHR (8 KiB) bank = (A >> 3) & 0x07
-//   mirroring = bit 7 of A (1 = horizontal, 0 = vertical)
-// No IRQ.
-// ===========================================================================
-
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

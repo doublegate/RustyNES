@@ -6,7 +6,8 @@
 //! It additionally *scrambles* the bank bits of its `$8000` window -- the
 //! written value's bits are permuted before becoming a bank number, a copy
 //! protection measure rather than a technical necessity, and the detail a naive
-//! port gets wrong.//!
+//! port gets wrong.
+//!
 //! A best-effort (Tier-2) board: register-decode correctness verified against
 //! the reference emulators (`Mesen2`, `GeraNES`) and the nesdev wiki, with no
 //! commercial-oracle ROM in the tree. Banking math is direct slice indexing and
@@ -242,7 +243,6 @@ impl Mapper for Mapper50 {
 // (46/51/57/104/120/290/301). 32/16 KiB PRG window + 8 KiB CHR-ROM/RAM.
 // ===========================================================================
 
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -34,10 +34,15 @@ cycle-accurate core later replaced.
   **Byte-identical, and not newly so:** `fast_dotloop_diff.rs` has compared both
   paths' framebuffer + palette-index framebuffer + audio + CPU-cycle count +
   full core snapshot *every frame* since v2.1.8. Re-verified with the new
-  default across the whole `--features test-roms` suite — **2219 passed / 0
-  failed** (the pre-promotion 2218 plus exactly the one config test added
-  alongside; no test changed its verdict); AccuracyCoin 141/141, nestest
-  0-diff, `visual_regression` and the APU oracles unmoved.
+  default across the whole `--features test-roms` suite. *At the promotion
+  commit* that read **2219 passed / 0 failed** — the pre-promotion 2218 plus
+  exactly the one config test added alongside, with no test changing its
+  verdict, which is the number that matters for this item. The suite total then
+  grew with the later work in this release; the figure for the release as a
+  whole is **2238 passed / 0 failed / 20 ignored** (see the Verification block
+  and `.github/release-notes/v2.2.3.md`, which quote that same total).
+  AccuracyCoin 141/141, nestest 0-diff, `visual_regression` and the APU oracles
+  unmoved.
 
   Until now the win was **unreachable in practice**: `Nes::set_fast_dotloop` had
   no callers outside the core and its tests, so no shipped frontend

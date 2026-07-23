@@ -1,6 +1,19 @@
 import collections
+import os
+import sys
+
+# The capture path is an argument (or RUSTYNES_DIAG_2002), not a hardcoded
+# world-writable `/tmp/RustyNES/s2002.csv`: a fixed path under a shared /tmp is
+# pre-creatable by any local user, so the reader can be pointed at planted data
+# (and, run as another user, at a symlink). Ad-hoc research tooling, but there
+# is no reason to keep the predictable path.
+DEFAULT = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache"),
+    "rustynes-diag", "s2002.csv",
+)
+path = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("RUSTYNES_DIAG_2002", DEFAULT)
 rows=[]
-with open('/tmp/RustyNES/s2002.csv') as f:
+with open(path) as f:
     h=next(f)
     for line in f:
         p=line.strip().split(',')

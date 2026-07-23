@@ -41,20 +41,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 15 — K-1029 / 100-in-1 Contra Function 16.
-//
-// Single register decoded across $8000-$FFFF (data + low two address bits):
-//   addr bits 0-1 select the banking MODE; data holds the PRG bank, a CHR-RAM
-//   mirroring bit (bit 6) and a "half-bank" bit (bit 7).
-//     mode 0: 32 KiB at the 16 KiB granularity, second half = bank|1
-//     mode 1: 128 KiB? upper half forced to bank|7 (UNROM-like fixed top)
-//     mode 2: 8 KiB-granular ((bank<<1)|b) mirrored across the whole window
-//     mode 3: single 16 KiB bank mirrored across the whole window
-//   CHR is always 8 KiB RAM; CHR writes are protected in modes 0 and 3.
-//   mirroring: data bit 6 (1 = horizontal, 0 = vertical). No IRQ.
-// ===========================================================================
-
 /// Mapper 96 (Bandai Oeka Kids).
 pub struct Bandai96 {
     prg_rom: Box<[u8]>,
@@ -233,15 +219,6 @@ impl Mapper for Bandai96 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 97 — Irem TAM-S1 (Kaiketsu Yanchamaru).
-//
-// A write to $8000-$FFFF holds [Mxxx xxPP_PPP]: bits 0-4 = switchable 16 KiB
-// PRG bank, bit 7 = mirroring (1 = vertical, 0 = horizontal). The PRG layout is
-// REVERSED relative to UNROM: $8000-$BFFF is FIXED to the LAST 16 KiB bank, and
-// $C000-$FFFF is the SWITCHABLE bank. CHR is 8 KiB (ROM or RAM). No IRQ.
-// ===========================================================================
 
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]

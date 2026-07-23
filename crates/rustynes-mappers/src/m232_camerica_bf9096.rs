@@ -35,14 +35,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 38 — Bit Corp UNL-PCI556.
-//
-// Single 8-bit latch at $7000-$7FFF. Low 2 bits select a 32 KiB PRG bank;
-// bits 3-2 select an 8 KiB CHR bank. No bus conflicts (the register lives in
-// the $6000-$7FFF window, not in PRG-ROM). Mirroring is header-fixed; no IRQ.
-// ===========================================================================
-
 /// Mapper 232 (Camerica Quattro / `BF9096`).
 pub struct Camerica232 {
     prg_rom: Box<[u8]>,
@@ -187,17 +179,6 @@ impl Mapper for Camerica232 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 240 — C&E multicart.
-//
-// One register across $4020-$5FFF: byte DDDD_PPPP
-//   PRG (32 KiB) = (data >> 4) & 0x0F
-//   CHR (8 KiB)  = data & 0x0F
-// The register window overlaps the normal WRAM range; many 240 boards have no
-// PRG-RAM, so the register is the only thing wired at $4020-$5FFF. Mirroring is
-// header-fixed; no IRQ.
-// ===========================================================================
 
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]

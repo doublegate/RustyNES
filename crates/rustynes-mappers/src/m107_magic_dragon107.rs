@@ -37,15 +37,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 31 — INL / NSF-style 4 KiB-banked board ("2A03 Puritans").
-//
-// Eight 4 KiB PRG slots ($8000/$9000/.../$F000), each latched by a write to
-// $5FF8-$5FFF (the low three address bits pick the slot). Power-on fixes the
-// last slot ($F000) to the final 4 KiB bank (0xFF & mask). CHR is 8 KiB RAM.
-// Mirroring header-fixed; no IRQ.
-// ===========================================================================
-
 /// Mapper 107 (Magic Dragon).
 pub struct MagicDragon107 {
     prg_rom: Box<[u8]>,
@@ -164,15 +155,6 @@ impl Mapper for MagicDragon107 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 143 — Sachen TCA01.
-//
-// NROM-128: $8000 and $C000 both read the first/second 16 KiB bank (a 16 KiB
-// PRG is mirrored across the 32 KiB window). A simple protection register in
-// the $4020-$5FFF window returns (~addr & 0x3F) | 0x40. CHR is 8 KiB ROM (or
-// RAM). Mirroring header-fixed; no IRQ.
-// ===========================================================================
 
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]

@@ -34,7 +34,6 @@ use crate::mapper::{Mapper, MapperCaps, MapperError};
 use alloc::{boxed::Box, format, vec, vec::Vec};
 
 const PRG_BANK_8K: usize = 0x2000;
-const PRG_BANK_32K: usize = 0x8000;
 const CHR_BANK_8K: usize = 0x2000;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
@@ -204,8 +203,15 @@ impl Mapper for Sachen3011 {
                 v
             }
             0x8000..=0xFFFF => {
-                let count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
-                self.prg_rom[(addr as usize & 0x7FFF) % (count * PRG_BANK_32K)]
+                // Wrap against the ACTUAL image length, not a rounded-up bank
+                // count. `check_prg` admits any non-zero multiple of 8 KiB, so a
+                // 16 KiB PRG yields `count == 1` and a modulus of 32768 — and
+                // `$C000` then resolves to offset 16384, one past the end of a
+                // 16 KiB slice. `% len()` is what actually upholds this crate's
+                // "a register write can never index out of bounds" invariant on
+                // ROM-parsed (untrusted) sizes. `check_prg` guarantees non-empty,
+                // so the modulus cannot divide by zero.
+                self.prg_rom[(addr as usize & 0x7FFF) % self.prg_rom.len()]
             }
             _ => 0,
         }
@@ -302,17 +308,6 @@ pub fn new_m136(
 ) -> Result<Sachen3011, MapperError> {
     Sachen3011::new(prg_rom, chr_rom, mirroring)
 }
-
-// ===========================================================================
-// SimpleBmc — a shared body for the address/register-decoded discrete BMC
-// multicarts that have no IRQ and an 8 KiB CHR-ROM/RAM window:
-//   164 (Waixing164), 261 (Bmc810544), 289 (Bmc60311), 320 (Bmc830425),
-//   336 (BmcK3046), 349 (BmcG146), 286 (Bs5).
-// Each board's bank decode is in `SimpleBoard`. PRG slots are tracked as two
-// 16 KiB windows (slot 0 = $8000-$BFFF, slot 1 = $C000-$FFFF) so 32 KiB and
-// UNROM-style layouts share one read path; CHR is one 8 KiB window (286 uses
-// four 2 KiB windows, handled inline).
-// ===========================================================================
 
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]

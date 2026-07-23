@@ -39,24 +39,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     physical * NAMETABLE_SIZE + local
 }
 
-// ===========================================================================
-// Mapper 40 — NTDEC 2722 (Super Mario Bros. 2J pirate conversion).
-//
-// PRG layout is fixed except for one switchable window:
-//   $6000-$7FFF -> 8 KiB bank 6 (a copy of PRG bank 6; some dumps use it as
-//                  the "intro" bank — modelled as bank 6 of the image).
-//   $8000-$9FFF -> fixed bank 4
-//   $A000-$BFFF -> fixed bank 5
-//   $C000-$DFFF -> switchable 8 KiB bank (low 3 bits of any $E000-$FFFF write)
-//   $E000-$FFFF -> fixed bank 7
-// Registers (data ignored; address-decoded):
-//   $8000-$9FFF : IRQ disable + acknowledge (counter held in reset).
-//   $A000-$BFFF : IRQ enable (counter starts counting M2 cycles).
-//   $E000-$FFFF : select the $C000 8 KiB bank (value & 0x07).
-// The IRQ counter is a 12-bit M2 counter: once enabled it counts up and, when
-// it reaches 4096 (0x1000), asserts the IRQ and holds. CHR is 8 KiB RAM.
-// ===========================================================================
-
 /// Mapper 156 (DIS23C01 DAOU).
 pub struct Daou156 {
     prg_rom: Box<[u8]>,
@@ -225,23 +207,6 @@ impl Mapper for Daou156 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 162 — Waixing FS304 (San Guo Zhi II, and similar Waixing RPGs).
-//
-// Four registers in the $5000-$5FFF window (index = address bits 8-9) compose a
-// 32 KiB PRG-ROM bank select from individual A15-A20 bits, with a mode selector
-// in $5300 (NESdev INES_Mapper_162):
-//   regs[0]=$5000: A18..A17 = bits 3..2; A16 = bit 1 (when $5300.2=1);
-//                  A15 = bit 0 (when $5300.2=1 and $5300.0=1).
-//   regs[1]=$5100: A15 = bit 1 (when $5300.0=0).
-//   regs[2]=$5200: A20..A19 = bits 1..0.
-//   regs[3]=$5300: bit 2 = A16 mode, bit 0 = A15 mode.
-// Because reset clears all registers, games boot in 32 KiB bank #2 (A16=1,
-// A15=0) — the OLD decode booted bank 0 instead, so the reset vector read the
-// wrong bank and the game hung/blanked. CHR is 8 KiB RAM, mirroring header-
-// fixed. No IRQ.
-// ===========================================================================
 
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]

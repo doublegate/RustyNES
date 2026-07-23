@@ -8,7 +8,8 @@
 //!
 //! `NINA-006` (mapper 113) is the multicart relative, in
 //! `m113_ave_nina006.rs`; `NINA-001` is an unrelated board on mapper 34, in
-//! `m034_bnrom_nina001.rs`.//!
+//! `m034_bnrom_nina001.rs`.
+//!
 //! A discrete-logic board in the shape of the stock mappers (`NROM`, `CNROM`,
 //! `UxROM`, `GxROM`, `AxROM`): bank-select latch registers, no IRQ, no on-cart
 //! audio. Banking / mirroring semantics are cross-checked against the
@@ -49,14 +50,6 @@ const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let physical = mirroring.physical_bank(table);
     physical * NAMETABLE_SIZE + local
 }
-
-// ===========================================================================
-// Mapper 38 — Bit Corp UNL-PCI556.
-//
-// Single 8-bit latch at $7000-$7FFF. Low 2 bits select a 32 KiB PRG bank;
-// bits 3-2 select an 8 KiB CHR bank. No bus conflicts (the register lives in
-// the $6000-$7FFF window, not in PRG-ROM). Mirroring is header-fixed; no IRQ.
-// ===========================================================================
 
 /// Mapper 79 (AVE `NINA-03`/`NINA-06`).
 pub struct Nina0379 {
@@ -211,19 +204,6 @@ impl Mapper for Nina0379 {
     }
 }
 
-// ===========================================================================
-// Mapper 113 — NINA-006 / MB-91 multicart.
-//
-// Same $4100-$5FFF register window as mapper 79, but the bank layout differs
-// and a mirroring bit is added:
-//   data: M0pp pccc   (M = vertical mirroring, p = PRG bits, c = CHR bits)
-//   PRG  = (data >> 3) & 0x07          (32 KiB)
-//   CHR  = (data & 0x07) | ((data >> 3) & 0x08)   (8 KiB, 4-bit)
-//   mirroring = bit 7 (1 = vertical, 0 = horizontal)
-// CHR may be RAM. No IRQ.
-// ===========================================================================
-
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

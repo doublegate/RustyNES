@@ -191,14 +191,6 @@ impl Mapper for Inl31 {
     }
 }
 
-// ===========================================================================
-// Mapper 94 — UN1ROM (Senjou no Ookami).
-//
-// $8000-$FFFF write (with bus conflict): the 16 KiB PRG bank at $8000 is
-// (data >> 2) & 0x0F. $C000 is fixed to the last 16 KiB bank. CHR is 8 KiB RAM.
-// Mirroring header-fixed; no IRQ.
-// ===========================================================================
-
 /// Custom mirroring/CHR-source mode for mapper 218 ("Magic Floor").
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MagicFloorMode {
@@ -512,13 +504,6 @@ impl Mapper for Cufrom29 {
     }
 }
 
-// ===========================================================================
-// Mapper 107 — Magic Dragon.
-//
-// $8000-$FFFF latch: PRG (32 KiB) bank = (value >> 1); CHR (8 KiB) bank =
-// value. Mirroring header-fixed; no IRQ.
-// ===========================================================================
-
 /// Mapper 111 (`GTROM`/Cheapocabra).
 pub struct Gtrom111 {
     prg_rom: Box<[u8]>,
@@ -667,17 +652,6 @@ impl Mapper for Gtrom111 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 234 — Maxi 15 / BNROM-like multicart.
-//
-// Two registers latched by reads/writes in the $FF80-$FF9F (reg0) and
-// $FFE8-$FFF8 (reg1) windows. reg0 latches once (while its low 6 bits are 0)
-// and selects the outer block + sub-mode (bit 6 = NINA-style); reg1 selects the
-// inner PRG/CHR within the block. The resolved 32 KiB PRG bank and 8 KiB CHR
-// bank follow GeraNES `prgBank()` / `chrBank()`. Mirroring = reg0 bit 7
-// (1 = horizontal, 0 = vertical). No IRQ.
-// ===========================================================================
 
 /// Mapper 28 (Action 53 homebrew multicart).
 pub struct Action53M28 {
@@ -1180,26 +1154,6 @@ impl Mapper for Unrom512M30 {
         Ok(())
     }
 }
-
-// ===========================================================================
-// Mapper 63 — NTDEC 0324 "Powerful 250-in-1".
-//
-// Address-decoded register across $8000-$FFFF (data byte ignored). For the
-// absolute address A:
-//   PRG: bits 1-6 of A select a 16 KiB bank index; bit 0 picks 32 KiB mode
-//        (when A&1 == 0, the two 16 KiB halves form a 32 KiB bank).
-//   mirroring = bit 0 of (A >> 1)? -> we follow the common decode: A bit 1
-//        selects H/V is not used; mapper 63 uses A & 0x06 for the 16K bank and
-//        bit 0 for the 32K/16K mode; mirroring follows A bit 0 of the high byte.
-// We use the documented decode: bank = (A >> 1) & 0x3F; if (A & 1)==0 -> 32 KiB
-// (bank &= !1, high half = bank|1); mirroring = (A & 0x0001_0000)?? — there is
-// no separate mirroring line, so the board uses the standard A-bit decode:
-// mirroring = if (A & 0x06) == 0x06 horizontal else vertical is NOT it either.
-//
-// To keep this register-decode honest and simple we implement the widely-cited
-// FCEUX decode: PRG 16 KiB bank = (A >> 2) & 0x3F, 32 KiB mode when (A & 2)==0,
-// CHR is 8 KiB RAM, mirroring = (A & 1) ? horizontal : vertical.
-// ===========================================================================
 
 #[cfg(test)]
 #[allow(clippy::cast_possible_truncation)]
