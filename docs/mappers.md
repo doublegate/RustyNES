@@ -257,8 +257,9 @@ targets: `docs/apu-2a03.md` §Expansion-audio levels and
 
 ### Fifth long-tail batch — v1.2.0 curated (9 families, 51 → 60)
 
-Discrete-logic boards added in `sprint5.rs`, each with register-decode unit
-tests. All are **Tier-1 Curated** (see "Mapper accuracy tiering" below).
+Discrete-logic boards, each with register-decode unit tests. They now live in
+per-board modules (`m038_bitcorp38.rs`, `m041_caltron41.rs`, `ave_nina.rs`,
+`jaleco_discrete.rs`, `m232_camerica_bf9096.rs`, `cne240.rs`, `m241_bxrom241.rs`). All are **Tier-1 Curated** (see "Mapper accuracy tiering" below).
 
 | iNES | Name | Audio | IRQ | Notes |
 |------|------|-------|-----|-------|
@@ -274,19 +275,19 @@ tests. All are **Tier-1 Curated** (see "Mapper accuracy tiering" below).
 
 ### Sixth long-tail batch — v1.2.0 best-effort sweep (27 families, 60 → 87)
 
-The aggressive Tier-2 sweep, ported from the GeraNES / Mesen2 references into
-`sprint6.rs` (14 boards) and `sprint7.rs` (13 boards). Mostly multicart / Sachen
+The aggressive Tier-2 sweep, ported from the GeraNES / Mesen2 references (14 +
+13 boards). Mostly multicart / Sachen
 / discrete boards with no redistributable test fixture; **register-decode
 unit-tested only and not accuracy-gated** (see the tiering note below).
 
-| `sprint6.rs` | `sprint7.rs` |
+| first wave | second wave |
 |---|---|
 | 15 (K-1029 multicart), 36 (TXC 01-22000), 39 (Subor BNROM-like), 61, 62 (multicart), 72 / 92 (Jaleco JF-17/19), 77 (Irem, 4-screen CHR-RAM), 96 (Bandai Oeka Kids, PPU-bus CHR latch), 97 (Irem TAM-S1), 132 (TXC 22211), 133 / 145 / 146 (Sachen) | 147 (Sachen 3018), 148 / 149 (Sachen), 150 (Sachen SA-015, readable protection + custom mirroring), 180 (Nichibutsu UNROM-inverted), 185 (CNROM CHR-disable protection), 200 / 201 / 202 / 203 / 212 / 213 / 214 (multicart) |
 
 ### Seventh long-tail batch — v1.3.0 "Bedrock" best-effort sweep (14 families, 87 → 101)
 
-The v1.3.0 Workstream D1 Tier-2 sweep, ported from the GeraNES reference into
-`sprint8.rs`. Simple discrete / homebrew / multicart boards with no IRQ, no
+The v1.3.0 Workstream D1 Tier-2 sweep, ported from the GeraNES reference.
+Simple discrete / homebrew / multicart boards with no IRQ, no
 on-cart audio, and no per-cycle / A12 hook (`MapperCaps::NONE`); **register-decode
 unit-tested only and not accuracy-gated** (see the tiering note below).
 
@@ -309,7 +310,7 @@ unit-tested only and not accuracy-gated** (see the tiering note below).
 
 ### Eighth long-tail batch — v1.4.0 "Fidelity" best-effort sweep (12 families, 101 → 113)
 
-The v1.4.0 Workstream G Tier-2 sweep, ported into `sprint9.rs` from the
+The v1.4.0 Workstream G Tier-2 sweep, ported from the
 concretely-documented nesdev decode tables (and the `Mesen2` / `GeraNES`
 reference implementations). Simple discrete / homebrew / multicart boards with
 no IRQ, no on-cart audio, and no per-cycle / A12 hook (`MapperCaps::NONE`);
@@ -343,7 +344,7 @@ matrix and the per-mapper fix log.
 
 ### Ninth long-tail batch — v1.5.0 "Lens" best-effort sweep (10 families, 113 → 123)
 
-The v1.5.0 Workstream F Tier-2 sweep, ported into `sprint10.rs` from the
+The v1.5.0 Workstream F Tier-2 sweep, ported from the
 concretely-documented nesdev decode tables (and the `Mesen2` / `GeraNES` /
 `puNES` reference implementations). Small pirate / unlicensed / multicart
 boards; eight are hook-free (`MapperCaps::NONE`) and two carry a simple
@@ -446,14 +447,14 @@ honestly reject a CHR-RAM header with a typed `RomError` (not a panic), so the
 sweep hands them CHR-ROM geometry. The mapper *implementations* described below
 (reference-ported across v1.2.0-v1.8.9) are unchanged by the promotion — only the
 tier marker moved. The
-v1.6.0 `sprint11` batch ports MMC3-clone variants
+v1.6.0 batch ports MMC3-clone variants
 (44/49/52/115/134/189/205/238/245/348/366, on a shared MMC3-style core with an
 A12 falling-edge IRQ + per-board outer-bank transform), the Sachen 8259 A/B/C
 2 KiB-CHR variants (141/138/139 — siblings of the existing 8259D mapper 137),
 and discrete unlicensed / FDS-conversion / multicart boards
 (42/50 with CPU-cycle IRQs, 46/51/57/104/120/290/301 hook-free). Mapper 35 is
 the J.Y. Company single-game "extended" board folded into `jy_asic.rs` (same
-silicon as 209). The v1.7.0 `sprint12` batch ports the next reusable-ASIC
+silicon as 209). The v1.7.0 batch ports the next reusable-ASIC
 BMC/pirate cores: the Waixing **FK23C** 8/16 Mbit BMC (176, `$5000` config +
 MMC3 surface + A12 IRQ), **COOLBOY / MINDKIDS** (268, MMC3 + four `$6000` outer
 registers), Sachen **9602** (513, MMC3 + PRG-A19/A20 outer) and **3011** (136,
@@ -492,7 +493,7 @@ unconditionally (the Sharp/NEC reload-to-zero sub-cadence and the ~3-M2-cycle
 too-close-edges hardware sub-filter are revision/accuracy nuances outside the
 Curated clone's remit).
 
-The v1.8.9 "Backlog" beta.6 `sprint13` batch ports four more well-documented
+The v1.8.9 "Backlog" beta.6 batch ports four more well-documented
 NTDEC / TXC / discrete-BMC multicart cores, none with an IRQ
 (`MapperCaps::NONE`): **NTDEC TC-112** (193, *Fighting Hero* — a `$6000-$7FFF`
 four-register surface with one switchable 8 KiB PRG window over three fixed and

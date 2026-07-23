@@ -120,7 +120,7 @@ mod tests {
     /// VISIBLE frame equals the plain run one frame later (N=1).
     #[test]
     fn runahead_persistent_timeline_matches_plain_run() {
-        let bytes = rom("sprint-2/flowing_palette.nes");
+        let bytes = rom("assorted/flowing_palette.nes");
         let mut ahead = Nes::from_rom(&bytes).expect("rom parses");
         let mut plain = Nes::from_rom(&bytes).expect("rom parses");
         // Rewind armed on BOTH so the capture-suppression path is exercised.
@@ -190,7 +190,7 @@ mod tests {
     /// run-ahead interaction.
     #[test]
     fn runahead_preserves_genie_codes() {
-        let bytes = rom("sprint-2/flowing_palette.nes");
+        let bytes = rom("assorted/flowing_palette.nes");
         let mut nes = Nes::from_rom(&bytes).expect("rom parses");
         nes.enable_rewind();
         nes.add_genie_code("SXIOPO").expect("valid 6-char code");
@@ -273,7 +273,7 @@ mod tests {
     /// ring, and the rollback must not clear it.
     #[test]
     fn runahead_rewind_ring_holds_persistent_frames_only() {
-        let bytes = rom("sprint-2/flowing_palette.nes");
+        let bytes = rom("assorted/flowing_palette.nes");
         let mut nes = Nes::from_rom(&bytes).expect("rom parses");
         nes.enable_rewind();
         let mut ra = RunAhead::default();

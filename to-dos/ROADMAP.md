@@ -332,10 +332,11 @@ master-clock work (current AccuracyCoin **100.00%**). They are not live TODOs.
   WRAM read/write paths. Reads returned 0; writes silently dropped.
   Konami's save-bearing titles stalled in save-validation. Fixes:
   - commit `895e426`: VRC2/VRC4/VRC6 8 KiB `prg_ram` field added +
-    read/write paths in `crates/rustynes-mappers/src/sprint3.rs`. Flipped
-    Esper Dream 2, Mouryou Senki Madara, Ganbare Goemon 2.
+    read/write paths in `crates/rustynes-mappers/src/vrc2_vrc4.rs` +
+    `vrc6.rs`. Flipped Esper Dream 2, Mouryou Senki Madara,
+    Ganbare Goemon 2.
   - commit `42f31ff`: MMC4 same pattern in
-    `crates/rustynes-mappers/src/sprint2.rs`. Flipped Fire Emblem Gaiden.
+    `crates/rustynes-mappers/src/mmc2_mmc4.rs`. Flipped Fire Emblem Gaiden.
 
   **T-60-003 is now FULLY CLOSED — all 6 originally-stuck commercial
   ROMs strict-passing. Commercial-roms count: 60 strict + 0 ignored.**

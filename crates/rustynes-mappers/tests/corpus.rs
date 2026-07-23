@@ -1,4 +1,4 @@
-//! Sprint 2 corpus test: walk every NROM ROM under `tests/roms/sprint-2/`
+//! Assorted-corpus test: walk every NROM ROM under `tests/roms/assorted/`
 //! and assert the parser + NROM construction succeed.
 //!
 //! Gated behind the `test-roms` feature so default `cargo test --workspace`
@@ -19,11 +19,11 @@ fn corpus_dir() -> PathBuf {
         .expect("workspace root has two parents above the crate manifest")
         .join("tests")
         .join("roms")
-        .join("sprint-2")
+        .join("assorted")
 }
 
 #[test]
-fn every_sprint2_rom_parses_as_nrom() {
+fn every_assorted_rom_parses_as_nrom() {
     let dir = corpus_dir();
     let entries: Vec<_> = fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("failed to read {dir:?}: {e}"))
@@ -33,7 +33,7 @@ fn every_sprint2_rom_parses_as_nrom() {
 
     assert!(
         entries.len() >= 10,
-        "sprint-2 corpus should have >= 10 NROM ROMs; found {}",
+        "assorted corpus should have >= 10 NROM ROMs; found {}",
         entries.len()
     );
 
@@ -45,7 +45,7 @@ fn every_sprint2_rom_parses_as_nrom() {
             Ok((cart, _mapper)) => {
                 assert_eq!(
                     cart.mapper_id, 0,
-                    "sprint-2 ROM {path:?} should be NROM but reported mapper {}",
+                    "assorted ROM {path:?} should be NROM but reported mapper {}",
                     cart.mapper_id
                 );
                 assert!(!cart.prg_rom.is_empty(), "{path:?} has empty PRG-ROM");

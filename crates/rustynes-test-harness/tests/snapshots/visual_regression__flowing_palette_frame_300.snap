@@ -2,4 +2,4 @@
 source: crates/rustynes-test-harness/tests/visual_regression.rs
 expression: snap
 ---
-rom=sprint-2/flowing_palette.nes frames=300 fb_bytes=245760 fnv1a64=202bca13f7cadc83
+rom=assorted/flowing_palette.nes frames=300 fb_bytes=245760 fnv1a64=202bca13f7cadc83

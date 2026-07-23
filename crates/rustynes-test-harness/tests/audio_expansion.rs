@@ -40,7 +40,7 @@
 //! snapshot-guarded only. The VRC7 instrument patch ROM is instead verified
 //! byte-for-byte against the canonical Nuke.YKT dump by a `rustynes_apu::opll`
 //! unit test (the real `patch_vrc7` criterion); the 5B logarithmic volume DAC
-//! step law by a `rustynes_mappers::sprint3` unit test. See
+//! step law by a `rustynes_mappers::m069_sunsoft_fme7` unit test. See
 //! `docs/accuracy-ledger.md` §Expansion-audio levels.
 //!
 //! **Layer 2 — a byte-exact regression guard** (`snapshot_*`). Every ROM (all
@@ -163,7 +163,7 @@ fn level_db_apu() {
 fn level_db_vrc6a() {
     // VRC6a (Akumajou Densetsu pinout): a full-volume VRC6 square is ~1.5× the
     // 2A03 pulse (Mesen2 weights VRC6 `output*15` internally × `*5` mixer =
-    // `15*15*5/746.9 ≈ 1.506`). See `VRC6_MIX_SCALE` in `sprint3.rs`.
+    // `15*15*5/746.9 ≈ 1.506`). See `VRC6_MIX_SCALE` in `vrc6.rs`.
     assert_ratio("db_vrc6a.nes", 1.506, 0.04);
 }
 
@@ -177,7 +177,7 @@ fn level_db_vrc6b() {
 fn level_db_mmc5() {
     // MMC5 pulses reuse the 2A03 pulse DAC: "equivalent in volume to the
     // corresponding APU channels" (Mesen2 `Mmc5Audio.h`), i.e. ~1.0×. See the
-    // 650/40 scale in `mmc5.rs::mix_audio`.
+    // 650/40 scale in `m005_mmc5.rs::mix_audio`.
     assert_ratio("db_mmc5.nes", 1.000, 0.04);
 }
 
@@ -190,7 +190,7 @@ fn level_db_5b() {
     // weight `* 15` over `_volumeLut = (uint8_t)1.1885^(2i)` (`LUT[12] = 63`),
     // giving `63 * 15 / 746.9 = 1.265`. Full scale (`LUT[15] = 177`) is
     // `3.554×`, which is what made this uncalibratable while `Mapper::mix_audio`
-    // returned `i16`. See `SUNSOFT5B_MIX_SCALE_NUM` in `sprint3.rs`.
+    // returned `i16`. See `SUNSOFT5B_MIX_SCALE_NUM` in `m069_sunsoft_fme7.rs`.
     //
     // This is the v2.2.3 A1 fix: the level was a documented gap (measured
     // `0.0685×`, ~23 dB too quiet) purely because the return type could not
@@ -203,7 +203,7 @@ fn level_db_n163() {
     // Namco 163, 1-channel mode: ~6.0× the 2A03 pulse — the Mesen2 `*20`
     // weight on the un-attenuated `(sample-8)*volume` channel (no reference
     // emulator attenuates 1-channel N163). See `NAMCO163_MIX_SCALE` (261) in
-    // `sprint3.rs`. This is the v2.1.6 fix (was ~1.48×, ~12 dB too quiet).
+    // `m019_namco163.rs`. This is the v2.1.6 fix (was ~1.48×, ~12 dB too quiet).
     assert_ratio("db_n163.nes", 6.02, 0.20);
 }
 
@@ -289,7 +289,7 @@ audio_expansion_test!(db_n163, "db_n163.nes");
 // db_5b: the 5B's hardware-relative full-volume level (~3.6× the APU pulse)
 // overflows the i16 `mix_audio` contract for the full 3-tone dynamic range;
 // deferred (documented) — snapshot-only. The 5B log-volume DAC *step law* is
-// verified by a sprint3.rs unit test. See docs/accuracy-ledger.md.
+// verified by a m069_sunsoft_fme7.rs unit test. See docs/accuracy-ledger.md.
 audio_expansion_test!(db_5b, "db_5b.nes");
 audio_expansion_test!(db_mmc5, "db_mmc5.nes");
 
@@ -306,7 +306,7 @@ audio_expansion_test!(noise_vrc7, "noise_vrc7.nes");
 // Namco 163 characterization. `test_n163_longwave` exercises the long-period
 // wavetable edge case; RustyNES's N163 uses the canonical `256-(reg&0xFC)`
 // wave length + 64-bit phase accumulator wrapped at `length<<16` (verified by
-// a sprint3.rs unit test), so this is a regression guard.
+// a m069_sunsoft_fme7.rs unit test), so this is a regression guard.
 audio_expansion_test!(test_n163_longwave, "test_n163_longwave.nes");
 
 // Sunsoft 5B / FME-7 characterization. `clip_5b` (amplifier nonlinearity) is a

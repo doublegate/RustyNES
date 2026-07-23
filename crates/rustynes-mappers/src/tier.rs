@@ -72,7 +72,7 @@ pub const fn mapper_tier(id: u16, _submapper: u8) -> Option<MapperTier> {
             Some(MapperTier::Core)
         }
 
-        // --- Tier 1 / Curated: discrete-logic long-tail boards (sprint5) + the
+        // --- Tier 1 / Curated: discrete-logic long-tail boards + the
         // v2.1.0 "Fathom" F3 promotion batch (86 previously-BestEffort families
         // with a cleanly-booting staged commercial-ROM dump — 57 already-staged +
         // 29 sourced from GoodNES v3.23b — wired into a byte-identity boot-snapshot
@@ -143,7 +143,7 @@ mod tests {
         );
     }
 
-    /// The v1.2.0 curated (Tier-1) batch added in `sprint5.rs`. Must stay in
+    /// The v1.2.0 curated (Tier-1) discrete-logic batch. Must stay in
     /// lockstep with the `parse()` match arms for those ids.
     const CURATED_IDS: &[u16] = &[
         15, 28, 30, 31, 35, 36, 38, 40, 41, 42, 44, 46, 49, 51, 52, 56, 57, 58, 60, 61, 62, 63, 72,
@@ -164,17 +164,16 @@ mod tests {
         }
     }
 
-    /// The best-effort (Tier-2) sweep added in `sprint6.rs` + `sprint7.rs`
-    /// (v1.2.0), the v1.3.0 "Bedrock" Workstream D1 batch (`sprint8.rs`), the
-    /// v1.4.0 "Fidelity" Workstream G batch (`sprint9.rs`), the v1.5.0 "Lens"
-    /// Workstream F batch (`sprint10.rs`), the v1.6.0 "Studio" J.Y. Company
-    /// ASIC (90/209/211 + the 35 sibling), the v1.6.0 "Studio" Workstream E
-    /// `sprint11.rs` batch (MMC3-clones, Sachen 8259 A/B/C, discrete
-    /// multicarts), and the v1.7.0 "Forge" Workstream G1 `sprint12.rs`
+    /// The best-effort (Tier-2) sweeps: the v1.2.0 discrete / Sachen /
+    /// multicart batches, the v1.3.0 "Bedrock" Workstream D1 batch, the
+    /// v1.4.0 "Fidelity" Workstream G batch, the v1.5.0 "Lens" Workstream F
+    /// batch, the v1.6.0 "Studio" J.Y. Company ASIC (90/209/211 + the 35
+    /// sibling), the v1.6.0 "Studio" Workstream E batch (MMC3-clones, Sachen
+    /// 8259 A/B/C, discrete multicarts), the v1.7.0 "Forge" Workstream G1
     /// reusable-ASIC BMC/pirate batch (FK23C, COOLBOY/MINDKIDS, Sachen
     /// 9602/3011, Waixing 164/253/286, Kaiser 56/142/303/305/306/312, and BMC
     /// multicarts 261/289/320/336/349), and the v1.8.9 "Backlog" beta.6
-    /// `sprint13.rs` NTDEC/TXC/BMC multicart batch (193/204/221/299).
+    /// NTDEC/TXC/BMC multicart batch (193/204/221/299).
     const BEST_EFFORT_IDS: &[u16] = &[
         29, 39, 50, 81, 104, 111, 174, 179, 238, 261, 268, 286, 289, 290, 299, 301, 303, 305, 306,
         312, 320, 336, 348, 349, 366, 513,

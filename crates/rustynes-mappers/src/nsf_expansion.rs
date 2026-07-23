@@ -6,12 +6,12 @@
 //!
 //! | Bit | Chip          | Synth core (reused verbatim)               |
 //! |-----|---------------|--------------------------------------------|
-//! | 0   | VRC6          | [`crate::sprint3`] `Vrc6Pulse` / `Vrc6Saw` |
+//! | 0   | VRC6          | [`crate::vrc6`] `Vrc6Pulse` / `Vrc6Saw`  |
 //! | 1   | VRC7 (OPLL)   | [`rustynes_apu::Opll`]                      |
 //! | 2   | FDS           | [`crate::fds`] `FdsAudio`                   |
-//! | 3   | MMC5          | [`crate::mmc5`] `Mmc5Audio`                 |
-//! | 4   | Namco 163     | [`crate::sprint3`] `Namco163Audio`          |
-//! | 5   | Sunsoft 5B    | [`crate::sprint3`] `Sunsoft5BAudio`         |
+//! | 3   | MMC5          | [`crate::m005_mmc5`] `Mmc5Audio`                 |
+//! | 4   | Namco 163     | [`crate::m019_namco163`] `Namco163Audio`          |
+//! | 5   | Sunsoft 5B    | [`crate::m069_sunsoft_fme7`] `Sunsoft5BAudio`         |
 //!
 //! This module does **not** reimplement any synthesis. It is a thin router:
 //! it owns instances of the existing cores, forwards the NSF register-window
@@ -42,8 +42,10 @@
 )]
 
 use crate::fds::FdsAudio;
-use crate::mmc5::{MMC5_MIX_BIAS, MMC5_PCM_SCALE, MMC5_PULSE_SCALE, Mmc5Audio};
-use crate::sprint3::{Namco163Audio, Sunsoft5BAudio, VRC6_MIX_SCALE, Vrc6Pulse, Vrc6Saw};
+use crate::m005_mmc5::{MMC5_MIX_BIAS, MMC5_PCM_SCALE, MMC5_PULSE_SCALE, Mmc5Audio};
+use crate::m019_namco163::Namco163Audio;
+use crate::m069_sunsoft_fme7::Sunsoft5BAudio;
+use crate::vrc6::{VRC6_MIX_SCALE, Vrc6Pulse, Vrc6Saw};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -57,7 +59,7 @@ const EXP_5B: u8 = 0x20;
 
 /// VRC6 audio sub-state: the two pulse channels + sawtooth + the `$9003`
 /// global control byte (halt + frequency-scale shift). Mirrors the live
-/// state the [`crate::sprint3`] `Vrc6` mapper keeps; the clock/output math
+/// state the [`crate::vrc6`] `Vrc6` mapper keeps; the clock/output math
 /// is reused verbatim from that mapper's channel cores.
 #[derive(Default)]
 struct Vrc6Exp {

@@ -6,7 +6,7 @@
 //! movie replays bit-identically (framebuffer FNV-1a + audio FNV-1a +
 //! cumulative cycle count) from its start point.
 //!
-//! Gated on `test-roms` because the driver ROM (`sprint-2/flowing_palette.nes`
+//! Gated on `test-roms` because the driver ROM (`assorted/flowing_palette.nes`
 //! — an animated palette demo) lives under `tests/roms/`. The pure-unit
 //! determinism tests (synthetic NROM) live in `crates/rustynes-core/src/movie.rs`
 //! and run in the default build.
@@ -21,7 +21,7 @@ use rustynes_core::{Movie, MoviePlayer, MovieRecorder, Nes, StartPoint};
 /// An animated CC0 demo: the palette flows, so successive framebuffers
 /// differ — a strong signal that the movie reconstructs *visible* motion,
 /// not just a static screen.
-const DRIVER_ROM: &[u8] = include_bytes!("../../../tests/roms/sprint-2/flowing_palette.nes");
+const DRIVER_ROM: &[u8] = include_bytes!("../../../tests/roms/assorted/flowing_palette.nes");
 
 fn fnv(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xCBF2_9CE4_8422_2325;

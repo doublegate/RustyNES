@@ -326,10 +326,10 @@ Six on-cart expansion sound chips are synthesized and summed into the external-a
 
 | Chip       | Mapper(s)        | Synth core                                            | Clock cadence                  |
 |------------|------------------|-------------------------------------------------------|--------------------------------|
-| VRC6       | 24 / 26          | `Vrc6Pulse` x2 + `Vrc6Saw` (`crates/rustynes-mappers/src/sprint3.rs`) | every CPU cycle (`$9003` halt + freq-scale shift) |
+| VRC6       | 24 / 26          | `Vrc6Pulse` x2 + `Vrc6Saw` (`crates/rustynes-mappers/src/vrc6.rs`) | every CPU cycle (`$9003` halt + freq-scale shift) |
 | VRC7       | 85               | `rustynes_apu::Opll` (emu2413-derived, MIT)           | OPLL `calc()` every 36 CPU cycles (49,716 Hz)      |
 | FDS        | 20 (FDS device)  | `FdsAudio` wavetable + FM (`crates/rustynes-mappers/src/fds.rs`) | wave/mod every 16 CPU cycles; envelopes per cycle |
-| MMC5       | 5                | `Mmc5Audio` (2 pulse + 7-bit PCM, `crates/rustynes-mappers/src/mmc5.rs`) | pulse timer every other CPU cycle; envelope/length on 2A03 frame events |
+| MMC5       | 5                | `Mmc5Audio` (2 pulse + 7-bit PCM, `crates/rustynes-mappers/src/m005_mmc5.rs`) | pulse timer every other CPU cycle; envelope/length on 2A03 frame events |
 | Namco 163  | 19 / 210         | `Namco163Audio` (1-8 time-multiplexed wavetable channels) | round-robin channel update every 15 CPU cycles    |
 | Sunsoft 5B | 69 (FME-7)       | `Sunsoft5BAudio` (3 tone + noise + envelope)          | every CPU cycle                |
 
@@ -342,9 +342,9 @@ Each chip's `mix_audio()` is scaled so its full-volume square sits at the **rela
 | Chip (ROM)        | Target ratio vs APU square | RustyNES scale (`mix_audio`)         | Status |
 |-------------------|----------------------------|--------------------------------------|--------|
 | APU triangle (`db_apu`) | ≈ 0.524 (fixed 2A03 DAC balance) | `pulse_table` / `tnd_table` LUT   | **Asserted** |
-| VRC6 (`db_vrc6a/b`)     | ≈ 1.506                   | `VRC6_MIX_SCALE = 979` (`sprint3.rs`; was 256) | **Asserted** (v2.1.6) |
-| MMC5 (`db_mmc5`)        | ≈ 1.000 ("equivalent to APU") | pulse `×650` / PCM `×40` (`mmc5.rs`; was 256/16) | **Asserted** (v2.1.6) |
-| Namco 163 1-ch (`db_n163`) | ≈ 6.02                | `NAMCO163_MIX_SCALE = 261` (`sprint3.rs`; was 64) | **Asserted** (v2.1.6) |
+| VRC6 (`db_vrc6a/b`)     | ≈ 1.506                   | `VRC6_MIX_SCALE = 979` (`vrc6.rs`; was 256) | **Asserted** (v2.1.6) |
+| MMC5 (`db_mmc5`)        | ≈ 1.000 ("equivalent to APU") | pulse `×650` / PCM `×40` (`m005_mmc5.rs`; was 256/16) | **Asserted** (v2.1.6) |
+| Namco 163 1-ch (`db_n163`) | ≈ 6.02                | `NAMCO163_MIX_SCALE = 261` (`m019_namco163.rs`; was 64) | **Asserted** (v2.1.6) |
 | Sunsoft 5B (`db_5b`)    | ≈ 1.265 (vol-12) / 3.554 (vol-15) | shape `SUNSOFT5B_LOG_VOL` + level `SUNSOFT5B_MIX_SCALE_NUM/DEN = 2549/138` | **Asserted** (v2.2.3) |
 | VRC7 (`db_vrc7`)        | ≈ 2.7 peak (patch-dependent) | raw `Opll::calc()` (`±4095`)      | **Snapshot-guarded** — see below |
 

@@ -110,7 +110,7 @@ fn rom_at(rel: &str) -> Vec<u8> {
 #[test]
 fn udp_asymmetric_idle_drive_stays_in_sync_sprite_heavy() {
     for rel in [
-        "tests/roms/sprint-2/oam_stress.nes",
+        "tests/roms/assorted/oam_stress.nes",
         "tests/roms/accuracycoin/AccuracyCoin.nes",
     ] {
         let rom = rom_at(rel);

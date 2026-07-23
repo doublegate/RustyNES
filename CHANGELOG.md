@@ -120,6 +120,46 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **Mapper modules are named for the board they emulate, not the sprint that
+  added them.** Eleven `sprintN.rs` files (27,631 lines, ~110 boards) named
+  after a point in the development calendar are replaced by board-named
+  modules, and every single-mapper file now carries its iNES mapper number as
+  an `mNNN_` prefix so the directory sorts by mapper: `m000_nrom.rs`,
+  `m004_mmc3.rs`, `m009_mmc2.rs`, `m069_sunsoft_fme7.rs`, `m085_vrc7.rs`, and
+  so on. Files that implement **one** shared core spanning many mapper IDs keep
+  a plain descriptive name, because no single number describes them —
+  `mmc3_clones.rs` (11 IDs), `multicart_discrete.rs` (27), `bmc_simple.rs` (7),
+  `kaiser.rs` (6), `sachen_8259.rs`, `ntdec.rs`, `waixing.rs`,
+  `sachen_discrete.rs`, `homebrew_boards.rs`, `jaleco_discrete.rs`.
+
+  Boards that were merely *adjacent* are now separate files even where a doc
+  argument could be made for pairing them: MMC2 and MMC4 share the tile-fetch
+  CHR-latch concept but not a line of code, so they are `m009_mmc2.rs` and
+  `m010_mmc4.rs`, consistent with the pre-existing `m001_mmc1.rs` /
+  `m004_mmc3.rs` / `m005_mmc5.rs`. Likewise VRC2 and VRC4, which share only the
+  small `vrc_a_bits` pin-rewiring helper — now duplicated per file, exactly as
+  the crate already duplicates `nametable_offset` across ~40 modules.
+
+  Every new module gains a hand-written `//!` preamble explaining what the
+  board *is* and why it is shaped that way — MMC2's mid-scanline CHR swap and
+  why Punch-Out!! needs it; why three mapper numbers describe one VRC4;
+  Bandai Oeka Kids latching CHR bits off the *PPU* address bus; why the FDS
+  conversion boards carry a free-running IRQ counter.
+
+  **This moves code; it does not change it.** Verified mechanically rather than
+  asserted: all **499** top-level items from the eleven sprint files and all
+  **431** from the pre-existing mapper files compare **byte-identical** in code
+  (comments excluded, since module docs were deliberately rewritten), with zero
+  missing and zero altered; the `parse()` dispatch table still resolves the
+  same **172** mapper IDs to the same constructors, an identical set. Test
+  count moves 696 → 701 only because five tests that each exercised two-to-four
+  different boards were split into per-board tests, so a failure now names the
+  board.
+
+  Also renamed for the same reason: `tests/roms/sprint-2/` →
+  `tests/roms/assorted/` (a mixed blargg/kevtris corpus, not a sprint), and
+  `m78.rs` → `m078_irem_jaleco78.rs` (every peer uses a vendor name).
+
 - **`PPU_SNAPSHOT_VERSION` 7 → 8 — this breaks existing `.rns` save states.**
   The `.rns` container is version-exact per section, so a pre-v8 save now fails
   to load with a clear `VersionMismatch` instead of silently misreading (ADR

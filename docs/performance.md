@@ -658,7 +658,7 @@ full-BG-every-frame) inputs; the headline number is the rendering path.
   loop (`crates/rustynes-apu/src/blip.rs`) was re-verified as still split into
   two contiguous SAXPY runs (auto-vectorizes; no change needed).
 - **F2 — MMC5 `cpu_read` hot-path short-circuit**
-  (`crates/rustynes-mappers/src/mmc5.rs`). PRG-ROM/RAM fetches at
+  (`crates/rustynes-mappers/src/m005_mmc5.rs`). PRG-ROM/RAM fetches at
   `$8000-$FFFF` dominate `cpu_read` (every opcode + operand fetch on an MMC5
   cart), while the register / ExRAM arms only fire on explicit `$5xxx`
   accesses. An early `if addr >= 0x8000 { return self.read_prg_window(addr); }`

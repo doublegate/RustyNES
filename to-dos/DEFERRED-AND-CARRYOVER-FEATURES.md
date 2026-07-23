@@ -286,10 +286,10 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
   CPU `T_last-1` IRQ-sample M2 sub-cycle phase; the integer 3-dots-per-cycle
   timebase **cannot represent** it. **The 17-rollback graveyard / hard target with
   a bounded-effort escape hatch** (fall back to by-design `#[ignore]` rather than
-  risk a 16th rollback of the sacred 100%). Site: `tests/mmc3.rs:64,167`. Target:
+  risk a 16th rollback of the sacred 100%). Site: `tests/m004_mmc3.rs:64,167`. Target:
   **v2.0.0 (escape-hatch-able)**.
 - `[ ]` **R2 — `mmc3_test_2/4` #2 reload-to-0 cadence + MMC6 variant** — same M2
-  sub-cycle axis as R1. Site: `tests/mmc3.rs:187,207`. Target: **v2.0.0
+  sub-cycle axis as R1. Site: `tests/m004_mmc3.rs:187,207`. Target: **v2.0.0
   (escape-hatch-able)**.
 - `[ ]` **R3 — `apu_reset/len_ctrs_enabled` (FAIL #3)** — needs A4's
   cycle-accurate reset. Site: `tests/apu_reset.rs:113`. Target: **v2.0.0**.
@@ -356,7 +356,7 @@ Mapper coverage is **168 families** on `main` (BestEffort, honesty-gated). Gaps
 are ROM-availability/coverage and a detection follow-up — none affect the oracle.
 
 - `[~]` **Next reusable-ASIC BMC/pirate cores (G1 continuation → ~170–185)** —
-  *(150 → 168 shipped in v1.7.0 beta.1 — `sprint12.rs`; the → ~170–185 continuation is a
+  *(150 → 168 shipped in v1.7.0 beta.1; the → ~170–185 continuation is a
   v1.8.9 beta.6 item where free dumps exist.)*
   FK23C / COOLBOY / MINDKIDS / Sachen / Waixing / Kaiser clusters, honesty-gated.
   The long-tail toward the full ~300–370 set continues incrementally. Source:

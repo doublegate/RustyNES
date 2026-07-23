@@ -5,7 +5,7 @@
 //! - `ram_after_reset.nes` — that internal RAM is *preserved* across a warm
 //!   RESET (only a power-cycle clears it).
 //!
-//! Both ROMs were already vendored under `tests/roms/sprint-2/` (see
+//! Both ROMs were already vendored under `tests/roms/assorted/` (see
 //! `tests/roms/LICENSES.md`) but were not wired into a test until Phase 7.
 //!
 //! ## Headless limitation
@@ -47,7 +47,7 @@ fn rom_path(rel: &str) -> PathBuf {
 }
 
 fn run(name: &str, max_frames: u64) -> rustynes_test_harness::NesTestResult {
-    let path = rom_path(&format!("sprint-2/{name}"));
+    let path = rom_path(&format!("assorted/{name}"));
     let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
     run_nes_blargg(&bytes, max_frames).unwrap_or_else(|e| panic!("rom must parse and run: {e}"))
 }

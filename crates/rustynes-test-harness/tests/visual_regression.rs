@@ -61,31 +61,31 @@ fn run_and_hash(rom: &str, frames: u64) -> String {
 
 #[test]
 fn full_palette_frame_60() {
-    let snap = run_and_hash("sprint-2/full_palette.nes", 60);
+    let snap = run_and_hash("assorted/full_palette.nes", 60);
     insta::assert_snapshot!("full_palette_frame_60", snap);
 }
 
 #[test]
 fn full_palette_frame_180() {
-    let snap = run_and_hash("sprint-2/full_palette.nes", 180);
+    let snap = run_and_hash("assorted/full_palette.nes", 180);
     insta::assert_snapshot!("full_palette_frame_180", snap);
 }
 
 #[test]
 fn flowing_palette_frame_60() {
-    let snap = run_and_hash("sprint-2/flowing_palette.nes", 60);
+    let snap = run_and_hash("assorted/flowing_palette.nes", 60);
     insta::assert_snapshot!("flowing_palette_frame_60", snap);
 }
 
 #[test]
 fn flowing_palette_frame_180() {
-    let snap = run_and_hash("sprint-2/flowing_palette.nes", 180);
+    let snap = run_and_hash("assorted/flowing_palette.nes", 180);
     insta::assert_snapshot!("flowing_palette_frame_180", snap);
 }
 
 #[test]
 fn flowing_palette_frame_300() {
-    let snap = run_and_hash("sprint-2/flowing_palette.nes", 300);
+    let snap = run_and_hash("assorted/flowing_palette.nes", 300);
     insta::assert_snapshot!("flowing_palette_frame_300", snap);
 }
 

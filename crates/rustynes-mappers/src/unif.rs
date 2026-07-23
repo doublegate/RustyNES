@@ -230,7 +230,7 @@ fn lookup_board(b: &str) -> Option<u16> {
         // --- v1.8.9 "Backlog" beta.6 UNIF board-map breadth: well-known board
         // names mapping to families RustyNES already implements. Cross-checked
         // against Mesen2 `UnifLoader.cpp` + FCEUX `unif.cpp`.
-        // NTDEC / TXC / discrete BMC (sprint13 + existing families).
+        // NTDEC / TXC / discrete BMC families.
         "11160" => 299,
         "N625092" => 221,
         "22211" => 132,
@@ -496,7 +496,7 @@ mod tests {
         // Every board added in the v1.8.9 "Backlog" beta.6 breadth pass must
         // resolve to a family RustyNES implements. Bare + UNL-/BMC-prefixed.
         let cases: &[(&str, u16)] = &[
-            // NTDEC / TXC / discrete BMC (sprint13 + existing).
+            // NTDEC / TXC / discrete BMC.
             ("11160", 299),
             ("N625092", 221),
             ("22211", 132),

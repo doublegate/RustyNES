@@ -373,7 +373,7 @@ mod tests {
 
     #[test]
     fn records_span_and_anchors() {
-        let bytes = rom("sprint-2/flowing_palette.nes");
+        let bytes = rom("assorted/flowing_palette.nes");
         let mut nes = Nes::from_rom(&bytes).expect("rom parses");
         let mut hv = HistoryViewer::new(1000, 10);
         for f in 0..50u64 {
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn budget_evicts_oldest_input_but_keeps_a_base_anchor() {
-        let bytes = rom("sprint-2/flowing_palette.nes");
+        let bytes = rom("assorted/flowing_palette.nes");
         let mut nes = Nes::from_rom(&bytes).expect("rom parses");
         let mut hv = HistoryViewer::new(20, 10);
         for f in 0..60u64 {
@@ -413,7 +413,7 @@ mod tests {
     /// fresh emulator and confirm the final framebuffer equals the live one.
     #[test]
     fn exported_clip_replays_bit_identically() {
-        let bytes = rom("sprint-2/flowing_palette.nes");
+        let bytes = rom("assorted/flowing_palette.nes");
         let mut nes = Nes::from_rom(&bytes).expect("rom parses");
         let mut hv = HistoryViewer::new(10_000, 10);
 
@@ -467,7 +467,7 @@ mod tests {
 
     #[test]
     fn clear_resets() {
-        let bytes = rom("sprint-2/flowing_palette.nes");
+        let bytes = rom("assorted/flowing_palette.nes");
         let mut nes = Nes::from_rom(&bytes).expect("rom parses");
         let mut hv = HistoryViewer::default();
         nes.run_frame();

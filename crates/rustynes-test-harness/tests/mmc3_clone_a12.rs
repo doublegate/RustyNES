@@ -121,7 +121,7 @@ fn make_clone(ctor: CloneCtor) -> Box<dyn Mapper> {
 }
 
 /// Build the reference plain MMC3 (Sharp / rev A) as a boxed `dyn Mapper`.
-/// Sharp is the project-default MMC3 revision (see `mmc3.rs`), and the
+/// Sharp is the project-default MMC3 revision (see `m004_mmc3.rs`), and the
 /// clone core models the revision-agnostic decrement-to-zero mechanism, so
 /// Sharp is the correct oracle for the non-zero-latch comparison.
 fn make_mmc3() -> Box<dyn Mapper> {

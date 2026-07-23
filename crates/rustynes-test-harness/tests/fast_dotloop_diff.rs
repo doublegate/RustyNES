@@ -199,9 +199,9 @@ const CORPUS: &[(&str, u32)] = &[
     // Rendering-DISABLED 64-colour backdrop-override demo: the fast path never
     // engages (the guard bails at `rendering_enabled()`), so this pins the
     // neutral / guard-bail case as byte-identical too.
-    ("sprint-2/flowing_palette.nes", 180),
+    ("assorted/flowing_palette.nes", 180),
     // Sprite-evaluation stress (OAM / secondary-OAM / overflow paths).
-    ("sprint-2/oam_stress.nes", 180),
+    ("assorted/oam_stress.nes", 180),
     // The PPU-timing gauntlet: sprite-0 hit, $2007 stress, ALE + Read, etc.
     ("accuracycoin/AccuracyCoin.nes", 240),
     // Banked MMC1 board (mapper 1) — A12/CHR-bank interaction with rendering.
@@ -234,7 +234,7 @@ fn fast_dotloop_is_byte_identical_under_oamaddr_corruption_revision() {
     // drive OAMADDR (`$2003`) writes during rendering and thus actually arm
     // #280's corruption on `Rp2c02G`.
     for &(rom, frames) in &[
-        ("sprint-2/oam_stress.nes", 180u32),
+        ("assorted/oam_stress.nes", 180u32),
         ("accuracycoin/AccuracyCoin.nes", 240),
         ("nestest/nestest.nes", 180),
         ("nes-test-roms/scanline/scanline.nes", 180),
@@ -370,7 +370,7 @@ fn idle_line_fast_path_matches_exact_under_vblank_io() {
 /// presence perturbing anything.
 #[test]
 fn fast_dotloop_off_equals_untouched() {
-    let rom = "sprint-2/flowing_palette.nes";
+    let rom = "assorted/flowing_palette.nes";
     let path = rom_path(rom);
     let bytes = fs::read(&path).unwrap();
 

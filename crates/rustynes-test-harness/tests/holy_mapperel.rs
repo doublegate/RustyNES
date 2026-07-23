@@ -82,7 +82,7 @@
 //!
 //! **MMC1 (`M1_*` = `1000` / `5000`).** MMC1 provides a *software WRAM
 //! write-protect* bit (`$E000` bit 4; SNROM adds a second `$A000` bit-4 layer).
-//! `RustyNES` does **not** model it: `crates/rustynes-mappers/src/mmc1.rs`
+//! `RustyNES` does **not** model it: `crates/rustynes-mappers/src/m001_mmc1.rs`
 //! reads and writes `$6000-$7FFF` `prg_ram` unconditionally, ignoring the
 //! disable bit. Holy Mapperel's disable sub-checks therefore fail — `1000` on
 //! SJROM (`$E000` layer = `MAPTEST_WRAMEN` `$10`), `5000` on SNROM (both
@@ -92,7 +92,7 @@
 //! game-compatibility hazard.
 //!
 //! **FME-7 (`M69_*` = `1000`).** FME-7 is *not* an "always-enabled WRAM" case.
-//! `crates/rustynes-mappers/src/sprint3.rs` **does** model the command-`$8`
+//! `crates/rustynes-mappers/src/m069_sunsoft_fme7.rs` **does** model the command-`$8`
 //! RAM-enable (bit 7, `$80`) and RAM-select (bit 6, `$40`) bits: it maps
 //! PRG-RAM at `$6000-$7FFF` only when *both* are set, and maps a PRG-ROM bank
 //! when RAM is deselected (bit 6 = 0). Its `1` nibble is a narrower gap in a

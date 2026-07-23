@@ -30,7 +30,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 DURATION="${1:-${SECONDS_OVERRIDE:-30}}"
-ROM="${ROM:-tests/roms/sprint-2/flowing_palette.nes}"
+ROM="${ROM:-tests/roms/assorted/flowing_palette.nes}"
 
 if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
     echo "perf_capture: no DISPLAY/WAYLAND_DISPLAY — skipping (needs a compositor)."

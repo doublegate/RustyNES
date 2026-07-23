@@ -1304,7 +1304,7 @@ without panicking (no `$6000` status protocol).
 | `instr_test_v5` | 18 | 18 | — | — | All 16 sub-ROMs + `all_instrs` + `official_only` aggregates. `all_instrs` / `official_only` exercise MMC1 banking. |
 | `instr_misc` | 5 | 5 | — | — | **Vendored + wired in Phase 7 (T-71-003).** blargg aggregate + 4 sub-ROMs (`01-abs_x_wrap`, `02-branch_wrap`, `03-dummy_reads`, `04-dummy_reads_apu`). MMC1. All strict-pass on the **full** lockstep `Nes` (`run_nes_blargg`) — `04-dummy_reads_apu` needs the real APU and cannot pass on the CPU-only `BlarggBus`. |
 | `instr_timing` | 2 | 2 | — | — | **Vendored + wired in Phase 7 (T-71-003).** blargg `1-instr_timing` + `2-branch_timing`. MMC1. Both strict-pass on the full `Nes` (the timing harness depends on APU frame-counter cadence). `1-instr_timing` completes ~frame 1016. |
-| `cpu_reset` | 2 | 1 | 2 | — | **Wired in Phase 7 (T-71-002).** ROMs were vendored at `sprint-2/cpu_reset_{registers,ram_after_reset}.nes` but unused. `cpu_reset_registers_power_on_state` strict-passes by asserting the ROM's power-on register dump `A X Y P S = 00 00 00 34 FD`. The two `_full_protocol` tests are `#[ignore]`'d — these are interactive ("Press reset AFTER this message disappears") and the headless `0x81`-handler can't supply the externally-timed reset; reset register/RAM semantics are covered by `Cpu::power_on` / `Nes::reset` unit tests. |
+| `cpu_reset` | 2 | 1 | 2 | — | **Wired in Phase 7 (T-71-002).** ROMs were vendored at `assorted/cpu_reset_{registers,ram_after_reset}.nes` but unused. `cpu_reset_registers_power_on_state` strict-passes by asserting the ROM's power-on register dump `A X Y P S = 00 00 00 34 FD`. The two `_full_protocol` tests are `#[ignore]`'d — these are interactive ("Press reset AFTER this message disappears") and the headless `0x81`-handler can't supply the externally-timed reset; reset register/RAM semantics are covered by `Cpu::power_on` / `Nes::reset` unit tests. |
 | `cpu_timing_test6` | 1 | 1 | — | — | NROM; runs through `nes_blargg.rs` (`cpu_timing_test_phase1_deferred`) and `blargg_cpu.rs` (boot-completes smoke). |
 | `branch_timing_tests` | 3 | 3 | — | — | `Branch_Basics`, `Backward_Branch`, `Forward_Branch`. |
 | `cpu_dummy_reads` | 1 | 1 | — | — | NROM. |
@@ -1315,8 +1315,8 @@ without panicking (no `$6000` status protocol).
 | `ppu_vbl_nmi` | 10 | 10 | — | — | All ten sub-ROMs (`01-vbl_basics` through `10-even_odd_timing`) pass strictly. |
 | `sprite_overflow_tests` | 5 | 5 | — | — | `1.Basics` through `5.Emulator`. |
 | `sprite_hit_tests` | 11 | 11 | — | — | blargg `sprite_hit_tests_2005.10.05`. `01.basics` through `11.edge_timing`. |
-| `oam_read` | 1 | 1 | — | — | `sprint-2/oam_read.nes`. |
-| `oam_stress` | 1 | 1 | — | — | `sprint-2/oam_stress.nes`. Long-running (~30 s NES time); test gives 3000-frame budget. |
+| `oam_read` | 1 | 1 | — | — | `assorted/oam_read.nes`. |
+| `oam_stress` | 1 | 1 | — | — | `assorted/oam_stress.nes`. Long-running (~30 s NES time); test gives 3000-frame budget. |
 | `apu_test` | 8 | 8 | — | — | `1-len_ctr` through `8-dmc_rates`. All sub-ROMs pass strictly including the IRQ-flag and jitter tests. |
 | `apu_mixer` | 4 | 4 | — | — | `square`, `triangle`, `noise`, `dmc`. Validates the lookup-table non-linear mixer. |
 | `pal_apu_tests` | 10 | 10 | 0 | — | **PAL-region APU oracle (v2.1.5).** blargg's PAL-calibrated APU length/frame-IRQ/timing rebuild, forced to PAL region. These 2005-era ROMs predate the `$6000` protocol (plain NROM, no PRG-RAM → `$6000` reads 0 forever), so the suite decodes the **on-screen** `PASSED`/`FAILED: #<n>` verdict via the `run_nes_screen` harness runner — correcting a prior *false* `$6000`-based oracle that vacuously reported all 10 as passing. **All 10 strict pass**: the three region-independent checks (`01.len_ctr`, `02.len_table`, `03.irq_flag`); the five PAL frame-counter-timing checks (`04.clock_jitter`, `05`/`06.len_timing_mode0`/`1`, `07.irq_flag_timing`, `08.irq_timing`) that flipped to PASS in v2.1.5 when the frame counter gained **region-gated PAL step positions** (2A07 sequencer at 8313/16627/24939/33252-33254 4-step, 8313/16627/24939/41565-41566 5-step); and `10.len_halt_timing` / `11.len_reload_timing` (were `FAILED: #3` / `#4`), closed in v2.1.5 by the **length halt/reload write-ordering** fix — the length counter now defers the halt (`new_halt`) and reload (`reload_val` + `previous_count`), promoted per CPU cycle in `Apu::tick_with_external` after the half-frame clock and before the mixer sample (mirrors `TetaNES`/Mesen2; see `docs/apu-2a03.md` + `docs/accuracy-ledger.md`). NTSC byte-identity preserved: the PAL positions are `Region::Pal`-only and the ordering fix settles in-cycle on non-coincident writes (NTSC/Dendy unchanged; AccuracyCoin 141/141, `apu_test` 8/8, `blargg_apu_2005` 11/11 exact). |
@@ -1422,9 +1422,9 @@ ROM dumps under `tests/roms/external/`, not committed):
 > RustyNES **v1.0.0 shipped 51 mapper families**; **v1.2.0 extended this to
 > 87**, **v1.3.0 "Bedrock" to 101**, **v1.4.0 "Fidelity" to 113**, and
 > **v1.5.0 "Lens" to 123**, **v1.6.0 "Studio" to 150** — the J.Y. Company ASIC
-> mappers (m90/209/211) + the UNIF loader + Workstream E's `sprint11` batch — and
+> mappers (m90/209/211) + the UNIF loader + Workstream E's MMC3-clone batch — and
 > **v1.7.0 "Forge" to 168** (Workstream G1's reusable-ASIC batch), and
-> **v1.8.9 "Backlog" beta.6 to 172** (the current count; the `sprint13`
+> **v1.8.9 "Backlog" beta.6 to 172** (the current count; the final NTDEC/TXC/BMC
 > NTDEC/TXC/BMC multicart batch — m193/204/221/299 — plus a UNIF board-map
 > breadth pass). See
 > `docs/mappers.md` §Mapper coverage matrix +
@@ -1437,12 +1437,12 @@ licensed library by title count) → **51 families at v1.0.0** → **87 families
 v1.2.0** → **101 families at v1.3.0 "Bedrock"** → **113 families at v1.4.0
 "Fidelity"** → **123 families at v1.5.0 "Lens"** → **150 families at v1.6.0
 "Studio"** (the J.Y. Company ASIC sweep 35/90/209/211 +
-Workstream E's `sprint11` batch: MMC3-clones, Sachen 8259 A/B/C, discrete
-multicarts) → **168 families at v1.7.0 "Forge"** (Workstream G1's `sprint12`
+Workstream E's batch: MMC3-clones, Sachen 8259 A/B/C, discrete
+multicarts) → **168 families at v1.7.0 "Forge"** (Workstream G1's reusable-ASIC
 reusable-ASIC batch: FK23C, COOLBOY/MINDKIDS, Sachen 9602/3011, Waixing
 164/253/286, Kaiser 56/142/303/305/306/312, and BMC multicarts
 261/289/320/336/349) → **172 families at v1.8.9 "Backlog" beta.6** (the current
-count; the `sprint13` NTDEC/TXC/BMC multicart batch — NTDEC TC-112 m193, BMC
+count; the final NTDEC/TXC/BMC multicart batch — NTDEC TC-112 m193, BMC
 2-in-1 m204, NTDEC N625092 m221, TXC/BMC-11160 m299 — plus a UNIF board-map
 breadth pass wiring well-known board aliases to already-implemented families),
 tiered for accuracy honesty:
@@ -1619,7 +1619,7 @@ before it landed. The "deferred to v2.0" language inside it is history, not a pl
    closed; it shares the same architectural surface as
    `cpu_interrupts_v2/{2..5}` above (CPU per-cycle IRQ sample point /
    bus poll location). `#[ignore]`'d strict probe + `_currently_fails`
-   companion in `crates/rustynes-test-harness/tests/mmc3.rs`.
+   companion in `crates/rustynes-test-harness/tests/m004_mmc3.rs`.
 
 CHANGELOG `[Unreleased]` → "Investigated and rolled back" documents
 **seven** prior code attempts (the original 4 from v0.9.0-rc prep,
