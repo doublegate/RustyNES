@@ -216,6 +216,31 @@ impl Mmc1 {
         }
     }
 
+    /// Is the `$6000-$7FFF` PRG-RAM window currently disabled?
+    ///
+    /// A2 (v2.2.3). MMC1 has **two** software write-protect layers and `RustyNES`
+    /// previously modelled neither, reading and writing `prg_ram`
+    /// unconditionally:
+    ///
+    /// * **`$E000` bit 4** — the PRG-RAM disable common to every MMC1 board.
+    ///   Set = RAM deselected (`/CE` deasserted).
+    /// * **SNROM's second layer** — on a board whose CHR is 8 KiB of RAM, the
+    ///   CHR bank register doubles as a PRG-RAM enable: `$A000` bit 4 is wired
+    ///   to the RAM's second enable. Only meaningful when `chr_is_ram`, which
+    ///   is how SNROM is distinguished from the CHR-ROM boards (SJROM etc.)
+    ///   that route those bits to real CHR banking instead.
+    ///
+    /// Holy Mapperel distinguishes the two: `M1_P128K_C32K` (SJROM, CHR-ROM)
+    /// reported `1000` — the `$E000` layer alone — while `M1_P128K_CR8K`
+    /// (SNROM, CHR-RAM) reported `5000`, both layers
+    /// (`MAPTEST_WRAMEN2 $40 | MAPTEST_WRAMEN $10`).
+    const fn prg_ram_disabled(&self) -> bool {
+        if self.prg & 0x10 != 0 {
+            return true;
+        }
+        self.chr_is_ram && (self.chr0 & 0x10) != 0
+    }
+
     /// Apply a completed 5-bit write to the appropriate internal register.
     const fn commit(&mut self, addr: u16, value: u8) {
         match addr & 0xE000 {
@@ -246,6 +271,17 @@ impl Mapper for Mmc1 {
         }
     }
 
+    /// A2: a disabled PRG-RAM window is not driven, so the databus floats.
+    ///
+    /// Same contract as the FME-7 fix: report the window unmapped and let the
+    /// bus preserve its open-bus latch, rather than inventing a byte here.
+    fn cpu_read_unmapped(&self, addr: u16) -> bool {
+        if matches!(addr, 0x6000..=0x7FFF) {
+            return self.prg_ram.is_empty() || self.prg_ram_disabled();
+        }
+        addr < 0x6000
+    }
+
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
@@ -264,6 +300,10 @@ impl Mapper for Mmc1 {
     fn cpu_write(&mut self, addr: u16, value: u8) {
         match addr {
             0x6000..=0x7FFF => {
+                // A2: a disabled window is write-protected (both layers).
+                if self.prg_ram_disabled() {
+                    return;
+                }
                 let idx = (addr - 0x6000) as usize;
                 if idx < self.prg_ram.len() {
                     self.prg_ram[idx] = value;
@@ -615,5 +655,76 @@ mod tests {
         assert_eq!(m2.ppu_read(0x2000), 0xDD);
         // PRG register should have round-tripped.
         assert_eq!(m2.cpu_read(0x8000), 1);
+    }
+
+    // ---------------------------------------------------------------
+    // A2 (v2.2.3): the two PRG-RAM write-protect layers.
+    // ---------------------------------------------------------------
+
+    /// `$E000` bit 4 is the disable common to every MMC1 board. Write-protect
+    /// AND read-float, on a CHR-ROM board where the SNROM layer is inert.
+    #[test]
+    fn mmc1_e000_bit4_write_protects_and_floats_prg_ram() {
+        let mut m = Mmc1::new(synth_prg(8), synth_chr(8), Mirroring::Vertical, 0).unwrap();
+        // Enabled by default: a write sticks and the window is mapped.
+        m.cpu_write(0x6000, 0xA5);
+        assert_eq!(m.cpu_read(0x6000), 0xA5);
+        assert!(
+            !m.cpu_read_unmapped(0x6000),
+            "enabled window must be mapped"
+        );
+
+        // $E000 bit 4 set -> RAM deselected.
+        write5(&mut m, 0xE000, 0x10);
+        assert!(m.cpu_read_unmapped(0x6000), "disabled window must float");
+        m.cpu_write(0x6000, 0x5A); // must be discarded
+
+        // Re-enable: the pre-disable byte survives, proving the write above
+        // was dropped rather than merely hidden by the float.
+        write5(&mut m, 0xE000, 0x00);
+        assert!(!m.cpu_read_unmapped(0x6000));
+        assert_eq!(
+            m.cpu_read(0x6000),
+            0xA5,
+            "write while disabled must not land"
+        );
+    }
+
+    /// SNROM's second layer: on a CHR-**RAM** board the CHR register's bit 4 is
+    /// wired to the RAM's other enable, so it disables PRG-RAM independently of
+    /// `$E000`. This is what separated Holy Mapperel's `5000` (SNROM) from
+    /// `1000` (SJROM).
+    #[test]
+    fn mmc1_snrom_chr_bit4_is_a_second_prg_ram_enable() {
+        // Empty CHR => chr_is_ram, i.e. an SNROM-class board.
+        let mut m = Mmc1::new(synth_prg(8), Box::new([]), Mirroring::Vertical, 0).unwrap();
+        m.cpu_write(0x6000, 0x3C);
+        assert_eq!(m.cpu_read(0x6000), 0x3C);
+
+        // $E000 stays ENABLED; only the CHR-register layer disables.
+        write5(&mut m, 0xA000, 0x10);
+        assert!(
+            m.cpu_read_unmapped(0x6000),
+            "SNROM: $A000 bit 4 alone must disable PRG-RAM"
+        );
+        m.cpu_write(0x6000, 0x99); // discarded
+
+        write5(&mut m, 0xA000, 0x00);
+        assert_eq!(m.cpu_read(0x6000), 0x3C);
+    }
+
+    /// The same CHR-register bit must NOT touch PRG-RAM on a CHR-ROM board —
+    /// there it is a real CHR bank select. This is the regression that would
+    /// break every SJROM/SUROM title if the layer were applied unconditionally.
+    #[test]
+    fn mmc1_chr_rom_board_ignores_the_snrom_layer() {
+        let mut m = Mmc1::new(synth_prg(8), synth_chr(8), Mirroring::Vertical, 0).unwrap();
+        m.cpu_write(0x6000, 0x77);
+        write5(&mut m, 0xA000, 0x10); // a CHR bank select, not a RAM enable
+        assert!(
+            !m.cpu_read_unmapped(0x6000),
+            "CHR-ROM board: $A000 bit 4 is CHR banking, must not gate PRG-RAM"
+        );
+        assert_eq!(m.cpu_read(0x6000), 0x77);
     }
 }

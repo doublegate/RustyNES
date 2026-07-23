@@ -61,8 +61,8 @@
 //! | ROM | Detected | Detailed | Class |
 //! |-----|----------|----------|-------|
 //! | `M0_*` (×2)         | 000 NROM           | `0000` | PASS |
-//! | `M1_P128K_C32K`     | 001 SJROM (MMC1)   | `1000` | WRAM residual |
-//! | `M1_P128K_CR8K`     | 001 SNROM (MMC1)   | `5000` | WRAM residual |
+//! | `M1_P128K_C32K`     | 001 SJROM (MMC1)   | `0000` | PASS (v2.2.3 A2) |
+//! | `M1_P128K_CR8K`     | 001 SNROM (MMC1)   | `0000` | PASS (v2.2.3 A2) |
 //! | `M2_P128K_CR8K_V`   | 002 UNROM          | `0000` | PASS |
 //! | `M3_P32K_C32K_H`    | 003 CNROM          | `0000` | PASS |
 //! | `M4_*` (×3)         | 004 T[N/S]ROM MMC3 | `0000` | PASS (incl. IRQ) |
@@ -80,16 +80,23 @@
 //! for MMC1 only; FME-7 does model its RAM-enable bits and fails a narrower,
 //! open-bus edge instead.
 //!
-//! **MMC1 (`M1_*` = `1000` / `5000`).** MMC1 provides a *software WRAM
-//! write-protect* bit (`$E000` bit 4; SNROM adds a second `$A000` bit-4 layer).
-//! `RustyNES` does **not** model it: `crates/rustynes-mappers/src/m001_mmc1.rs`
-//! reads and writes `$6000-$7FFF` `prg_ram` unconditionally, ignoring the
-//! disable bit. Holy Mapperel's disable sub-checks therefore fail — `1000` on
-//! SJROM (`$E000` layer = `MAPTEST_WRAMEN` `$10`), `5000` on SNROM (both
-//! layers, `MAPTEST_WRAMEN2 $40 | MAPTEST_WRAMEN $10`). This is a deliberate,
-//! widely-shared simplification: Holy Mapperel's own README notes FCEUX and
-//! `PowerPak` omit it too, and modelling MMC1 RAM-disable is a notorious
-//! game-compatibility hazard.
+//! **MMC1 (`M1_*` = `0000`, CLOSED in v2.2.3 A2).** MMC1 carries *two*
+//! software PRG-RAM write-protect layers and `RustyNES` modelled neither,
+//! reading and writing `$6000-$7FFF` unconditionally: the `$E000` bit-4
+//! disable common to every MMC1 board, and SNROM's second layer, where on a
+//! CHR-RAM board the CHR bank register's bit 4 is wired to the RAM's second
+//! enable. Hence the two different failures — `1000` on SJROM (the `$E000`
+//! layer alone, `MAPTEST_WRAMEN $10`) and `5000` on SNROM (both,
+//! `MAPTEST_WRAMEN2 $40 | MAPTEST_WRAMEN $10`).
+//!
+//! Both are now modelled, and a disabled window reports `cpu_read_unmapped`
+//! so the read floats to open bus rather than returning stale RAM. Holy
+//! Mapperel's own README notes FCEUX and `PowerPak` omit this and calls it a
+//! game-compatibility hazard, so it was validated before landing rather than
+//! assumed: the full commercial-ROM oracle passes **60/60** (including seven
+//! battery-backed MMC1 titles — Zelda, Metroid, Final Fantasy, Mega Man 2,
+//! Castlevania II, Ninja Gaiden, Kid Icarus, exactly the saves that break if
+//! the RAM enable is mismodelled) and the extended corpus **138/138**.
 //!
 //! **FME-7 (`M69_*` = `0000`, CLOSED in v2.2.3 A2).** FME-7 was never an
 //! "always-enabled WRAM" case. `m069_sunsoft_fme7.rs` models the command-`$8`
@@ -182,8 +189,8 @@ fn rom_dir() -> PathBuf {
 fn expect_label(stem: &str) -> &'static str {
     match stem {
         "M0_P32K_CR32K_V" | "M0_P32K_CR8K_V" => "PASS NROM(000) detail=0000",
-        "M1_P128K_C32K" => "WRAM-RESIDUAL SJROM/MMC1(001) detail=1000",
-        "M1_P128K_CR8K" => "WRAM-RESIDUAL SNROM/MMC1(001) detail=5000",
+        "M1_P128K_C32K" => "PASS SJROM/MMC1(001) detail=0000",
+        "M1_P128K_CR8K" => "PASS SNROM/MMC1(001) detail=0000",
         "M2_P128K_CR8K_V" => "PASS UNROM(002) detail=0000",
         "M3_P32K_C32K_H" => "PASS CNROM(003) detail=0000",
         "M4_P128K_CR32K" | "M4_P128K_CR8K" => "PASS TNROM/MMC3(004) detail=0000",

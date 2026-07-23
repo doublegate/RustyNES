@@ -142,10 +142,10 @@ const SUNSOFT5B_DC_BIAS: i32 = 0;
 /// corrected while the return type was `i16`; that, not the arithmetic, was
 /// the actual blocker.
 #[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
-const SUNSOFT5B_MIX_SCALE_NUM: i32 = 2549;
+pub(crate) const SUNSOFT5B_MIX_SCALE_NUM: i32 = 2549;
 /// Denominator of [`SUNSOFT5B_MIX_SCALE_NUM`].
 #[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
-const SUNSOFT5B_MIX_SCALE_DEN: i32 = 138;
+pub(crate) const SUNSOFT5B_MIX_SCALE_DEN: i32 = 138;
 
 /// One of the 5B's three square-wave tone channels.
 ///

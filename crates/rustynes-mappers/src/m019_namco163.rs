@@ -80,7 +80,7 @@ fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
 // deliberately not `#[cfg]`, so the items still compile and any future
 // non-audio caller keeps working.
 #[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
-const NAMCO163_MIX_SCALE: i32 = 261;
+pub(crate) const NAMCO163_MIX_SCALE: i32 = 261;
 
 /// Namco 163 on-cart wavetable synthesiser.
 ///

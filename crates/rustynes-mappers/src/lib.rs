@@ -1529,3 +1529,81 @@ mod tests {
         assert_eq!(cart.prg_rom.len(), 32 * 1024);
     }
 }
+
+/// Tripwire pinning every expansion-audio **level** constant.
+///
+/// ## Why this exists
+///
+/// Changing one of these constants changes the audio of every game on that
+/// board — correctly, when the change is a deliberate recalibration. The
+/// problem is *where the evidence of that lives*. The 60-ROM commercial oracle
+/// (`tests/external_real_games.rs`) hashes real cartridge audio and is the only
+/// gate that would notice, but it needs `--features commercial-roms` **and**
+/// local gitignored ROM dumps, so neither CI nor the default
+/// `--features test-roms` gate can run it. A golden vector nothing executes is
+/// not a gate.
+///
+/// That gap bit for real. `VRC6_MIX_SCALE` and all three MMC5 constants were
+/// recalibrated in v2.1.6 (`fd82485c`, 2026-07-11); the commercial-oracle
+/// snapshots had last been blessed on 2026-06-13, 28 days earlier. Six rows sat
+/// silently stale across several releases until someone ran the suite by hand.
+///
+/// This test **can** run in CI. It fails the moment a level constant moves,
+/// with instructions naming the suites that must be re-blessed in the same
+/// change. It asserts nothing about correctness — the oracles do that
+/// (`audio_expansion.rs`'s `level_db_*` decibel tests, `docs/apu-2a03.md`
+/// §Expansion-audio levels). Its only job is to make a silent change loud.
+///
+/// **If this test fails and the change was intentional:** update the value
+/// here, then re-bless BOTH `cargo test -p rustynes-test-harness --features
+/// test-roms --test audio_expansion` and `cargo test -p rustynes-test-harness
+/// --features test-roms,commercial-roms --test external_real_games` (the latter
+/// needs the local dumps; if you do not have them, say so in the PR rather than
+/// leaving the rows stale).
+#[cfg(test)]
+mod expansion_level_tripwire {
+    const RE_BLESS: &str = "expansion-audio level constant changed -- re-bless \
+        `audio_expansion` AND the gitignored `external_real_games` \
+        (--features commercial-roms) in this same change; see this module's docs";
+
+    #[test]
+    fn expansion_audio_levels_are_pinned() {
+        assert_eq!(crate::m024_vrc6::VRC6_MIX_SCALE, 979, "VRC6: {RE_BLESS}");
+        assert_eq!(
+            crate::m005_mmc5::MMC5_PULSE_SCALE,
+            650,
+            "MMC5 pulse: {RE_BLESS}"
+        );
+        assert_eq!(crate::m005_mmc5::MMC5_PCM_SCALE, 40, "MMC5 PCM: {RE_BLESS}");
+        assert_eq!(
+            crate::m019_namco163::NAMCO163_MIX_SCALE,
+            261,
+            "N163: {RE_BLESS}"
+        );
+        assert_eq!(
+            crate::m069_sunsoft_fme7::SUNSOFT5B_MIX_SCALE_NUM,
+            2549,
+            "5B numerator: {RE_BLESS}"
+        );
+        assert_eq!(
+            crate::m069_sunsoft_fme7::SUNSOFT5B_MIX_SCALE_DEN,
+            138,
+            "5B denominator: {RE_BLESS}"
+        );
+    }
+
+    /// `MMC5_MIX_BIAS` is derived from the two MMC5 scales, so it cannot drift
+    /// independently — but pin the derivation itself, since an edit to the
+    /// formula would move every MMC5 game's DC offset without touching a scale.
+    #[test]
+    fn mmc5_mix_bias_stays_the_midpoint_of_its_two_scales() {
+        assert_eq!(
+            crate::m005_mmc5::MMC5_MIX_BIAS,
+            i16::midpoint(
+                30 * crate::m005_mmc5::MMC5_PULSE_SCALE,
+                127 * crate::m005_mmc5::MMC5_PCM_SCALE
+            ),
+            "MMC5 bias formula: {RE_BLESS}"
+        );
+    }
+}
