@@ -254,6 +254,18 @@ const CHIPS: &[Chip] = &[
 /// `pub(crate)`) is a lowercase identifier followed by `:`. Doc comments,
 /// attributes, and nested type syntax (`[u8; 8]`, `Option<T>`) never match.
 fn struct_fields(src: &str, name: &str) -> Vec<String> {
+    // The chip source is embedded with `include_str!`, which captures the file
+    // with whatever line endings are on disk at compile time — and a Windows
+    // checkout without an `eol=lf` attribute for `.rs` gives CRLF. The struct
+    // terminator search below is LF-anchored (`\n}\n`), and `\r\n}\r\n` does not
+    // contain `\n}\n` (it is `\n}\r`), so a CRLF checkout made this panic with
+    // "unterminated struct body" on Windows only. Strip `\r` so every anchor and
+    // the line scan are line-ending-agnostic. (`writer_body`'s `\n    }` anchor
+    // survives inside `\r\n    }`, and `touches_field`'s `self.<field>` needle
+    // never spans a line break, so both already tolerate CRLF — but normalizing
+    // here removes the one path that did not.)
+    let src = src.replace('\r', "");
+    let src = src.as_str();
     let header = format!("pub struct {name} {{");
     let start = src
         .find(&header)
@@ -489,4 +501,36 @@ fn field_boundary_matching_rejects_prefixes() {
         "// mentions oam_bus_addr_h in prose",
         "oam_bus_addr_h"
     ));
+}
+
+#[test]
+fn struct_fields_tolerates_crlf_line_endings() {
+    // Regression pin for the Windows-only failure: `include_str!` captures the
+    // chip source with the on-disk line endings, and a checkout without an
+    // `eol=lf` attribute for `.rs` yields CRLF, whose struct terminator is
+    // `\r\n}\r\n`. This test feeds CRLF source explicitly so the parser stays
+    // line-ending-agnostic on every platform, not just where the audit happens
+    // to be checked out LF. The Linux CI runs it too, so the guarantee holds
+    // even though the original break only showed on Windows.
+    // A struct with more than the parser's `> 10` drift-guard threshold, so the
+    // sanity check inside `struct_fields` passes and only the line-ending
+    // behavior is under test. Doc comments and attributes are interleaved to
+    // exercise the same skip paths the real chip structs hit.
+    use std::fmt::Write as _;
+    let mut lf = String::from("pub struct Demo {\n");
+    for i in 0..12 {
+        let _ = write!(lf, "    /// field {i}\n    pub f{i}: u8,\n");
+    }
+    lf.push_str("}\n");
+    let crlf = lf.replace('\n', "\r\n");
+
+    let from_lf = struct_fields(&lf, "Demo");
+    let from_crlf = struct_fields(&crlf, "Demo");
+
+    let expected: Vec<String> = (0..12).map(|i| format!("f{i}")).collect();
+    assert_eq!(from_lf, expected, "LF parse baseline");
+    assert_eq!(
+        from_crlf, from_lf,
+        "CRLF source must yield the same fields as LF source",
+    );
 }
