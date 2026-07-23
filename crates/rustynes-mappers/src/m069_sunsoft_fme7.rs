@@ -693,6 +693,36 @@ impl Mapper for Fme7 {
         }
     }
 
+    /// A2: the RAM-selected-but-DISABLED `$6000-$7FFF` window floats.
+    ///
+    /// Command `$8` carries RAM-enable in bit 7 and RAM-select in bit 6. Three
+    /// of the four states already worked: both set maps PRG-RAM, and bit 6
+    /// clear maps a PRG-ROM bank (regardless of bit 7). The fourth --
+    /// **selected but not enabled** (bit 6 = 1, bit 7 = 0) -- drives *neither*
+    /// chip on real hardware: the RAM is addressed but its enable is deasserted,
+    /// and the ROM is deselected. The CPU databus is left floating, so the read
+    /// returns the open-bus latch.
+    ///
+    /// Previously this state fell through to the PRG-ROM bank, returning that
+    /// bank's tag byte. Holy Mapperel's `M69_*` WRAM sub-check requires the
+    /// floating read to be `>= 3` (a `$7F`-class open-bus byte); it read the
+    /// bank tag `1` instead and set `MAPTEST_WRAMEN`, which is the entire
+    /// `1000` WRAM nibble those two ROMs reported (`docs/accuracy-ledger.md`).
+    ///
+    /// Routed through `cpu_read_unmapped` rather than by returning a guessed
+    /// byte from `cpu_read`: that is the trait's existing contract for "not
+    /// wired to mapper-resident memory", and it makes the bus preserve the real
+    /// latch instead of clobbering it -- which is what open bus actually is.
+    fn cpu_read_unmapped(&self, addr: u16) -> bool {
+        if matches!(addr, 0x6000..=0x7FFF) {
+            return self.prg_ram_select && !self.prg_ram_enabled;
+        }
+        // Everything else keeps the stock behaviour: `$4020-$5FFF` unmapped
+        // (the FME-7 has no registers down there -- its IRQ control lives at
+        // `$8000`/`$A000`), `$8000-$FFFF` always mapped PRG-ROM.
+        addr < 0x6000
+    }
+
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {

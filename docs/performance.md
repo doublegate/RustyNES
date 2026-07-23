@@ -560,6 +560,133 @@ for a byte-identical escape hatch is not justified.
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
 
+### v2.2.3 P4 — every-cycle bus cost `cpu_clock` (decision: no change adopted)
+
+`<LockstepBus as Bus>::cpu_clock` is the second-hottest function at **22.43%**
+of frame self-time. The v2.0.0 substrate calls it once per CPU cycle and it
+unconditionally runs `drain_dma(None)`, `ppu.on_cpu_cycle()`, and
+`apu_advance_one()`; only `mapper.notify_cpu_cycle()` is capability-gated.
+The plan proposed an idle/capability early-out mirroring that gate.
+
+**`perf annotate` redirected the whole investigation.** The hot instructions
+inside `cpu_clock` are not bus bookkeeping — they are *floating point*:
+
+```text
+6.57%  vaddss  %xmm0,%xmm3,%xmm0
+4.97%  vaddss  0x4144(%rbx,%rax,4),%xmm2,%xmm0
+3.63%  vsubss  0x407c(%rbx),%xmm1,%xmm0
+3.37%  vmulss  0x4494(%rbx),%xmm0,%xmm0
+3.27%  vminss  %xmm0,%xmm1,%xmm1
+```
+
+That is the APU, inlined through `apu_advance_one`: the non-linear mixer's two
+table lookups, then `Blip::add_sample`'s finite-check / clamp / delta, then the
+phase advance. The DMA and PPU hooks the plan suspected are not the cost.
+
+**Both textbook optimizations are already implemented.** The per-channel UI gain
+already short-circuits at unity (`if g == 1.0 { v }` in `scale`), so the default
+build performs no gain arithmetic; and the FIR scatter is already guarded by
+`if delta != 0.0`, so a cycle whose mixed output is unchanged already skips the
+32-tap band-limited scatter. What remains per cycle is genuinely structural: you
+cannot know the delta is zero without computing the sample, and the phase
+advance **is** the output-sample clock, which must run on every CPU cycle.
+
+**A confounded probe, recorded because the trap is reusable.** The first attempt
+stubbed `mixed` to a constant and measured a 6.9-7.9% saving — apparently a huge
+win. It was an artifact: with `mixed` constant, LLVM proves `delta == 0.0` and
+deletes the entire FIR scatter, so the probe measured *band-limited synthesis*,
+not the mixer. Any probe that alters the value flowing into `add_sample` is
+measuring the synthesis path, whatever it looks like it is measuring. (Same
+class of error as the P2 contaminated A/B.)
+
+**The clean measurement.** Add a SECOND, `black_box`ed mixer evaluation whose
+result is discarded, leaving the value into `add_sample` — and therefore the FIR
+— completely untouched. The delta is then exactly one mixer evaluation plus its
+five `output()` reads:
+
+| build | wall clock (900 frames, 3 runs) | delta |
+|---|---|---|
+| baseline | 20.35 / 19.21 / 19.16 s | — |
+| + one discarded mixer call | 19.58 / 19.54 / 19.59 s | **+1.9%** |
+
+So the mixer and its channel reads cost **≤1.9%** of frame time. That is the
+hard ceiling on the one remaining lever — caching the mixed sample across cycles
+whose channel outputs are unchanged — and it would be realised only by a cache
+that never misses, before paying for the change-detection compare itself. It
+also needs new per-instance state, which under the v2.2.3 schema audit
+(`snapshot_schema_audit.rs`) is a save-state schema decision rather than a local
+optimization.
+
+**Below the 3% bar. No change adopted, nothing reverted** (the probes were
+throwaway). `cpu_clock` stays 22.43% because that 22.43% is the APU doing the
+work the accuracy model requires.
+
+### v2.2.3 P3 — `emit_pixel` bounds-check elision (decision: REJECTED, reverted)
+
+`Ppu::emit_pixel` is the third-hottest function in the emulator: **9.38% of
+frame self-time** in a fresh `perf record --call-graph=dwarf -F 999` over the
+committed 7-ROM PGO training corpus (`tick` 29.85%, `cpu_clock` 22.43%). It had
+never appeared in this document's hot-path table.
+
+**The hypothesis, from `perf annotate` rather than from reading the source.**
+The hottest instructions were not the pixel math. They clustered at the *stores*:
+
+```text
+5.37%  mov  %esi,(%rdx,%rax,1)      <- the framebuffer store
+5.33%  mov  0x1e8(%rdi,%rcx,4),%esi <- the rgba_lut load
+3.13%  mov  0x40(%rdi),%rdx         <- reload the buffer base pointer
+2.70%  lea  (%rsi,%r8,4),%rax       }
+2.15%  mov  0x38(%rdi),%rdx         } bounds-check machinery
+2.09%  cmp  %rdx,%rsi               }
+```
+
+`framebuffer: Box<[u8]>` and `index_framebuffer: Box<[u16]>` carry a **runtime**
+length, so the optimiser cannot prove either index in range and emits a bounds
+check plus a panic path for **every pixel** — 61,440 pixels per frame, twice
+each. The BG-shifter block by contrast was already auto-vectorised
+(`vpbroadcastw` / `vpand` / `vpcmpeqw` / `vmovmskps`) and is not the problem.
+
+**The candidate.** Change both fields to fixed-size boxed arrays
+(`Box<[u8; FRAMEBUFFER_LEN]>`, `Box<[u16; FRAMEBUFFER_PIXELS]>`) so the length
+becomes a compile-time constant, and clamp the pixel index once with a
+branchless `.min(FRAMEBUFFER_PIXELS - 1)` so the optimiser can discharge both
+checks. The clamp can never bind — `emit_pixel` is only reached for a visible
+dot (1..=256) on a visible scanline (0..=239) — so it is byte-identical, with a
+`debug_assert!` pinning the invariant. Public surface unchanged (`framebuffer()`
+still returns `&[u8]`).
+
+**Measured: it makes the shipped default SLOWER.** Same-runner Criterion A/B, a
+`git worktree` at HEAD benched against the working tree through one shared
+target dir:
+
+| workload | change | p | verdict |
+|---|---|---|---|
+| `nes_run_frame_nestest` (exact path) | −3.10% | 0.09 | no change — CI spans zero |
+| `nes_run_frame_flowing_palette` (exact) | +0.06% | 0.83 | no change |
+| **`nes_run_frame_nestest_fast`** | **+4.32%** | **0.00** | **regressed** |
+| **`nes_run_frame_flowing_palette_fast`** | **+3.35%** | **0.02** | **regressed** |
+
+The two `_fast` rows are the ones that matter: P1 promoted the fast dot path to
+the **default**, so those are the shipped configuration. Both regressed
+significantly. The only favourable number, −3.10% on the now-non-default exact
+path, is not statistically significant.
+
+**Reverted in full.** Two lessons worth keeping. First, `perf`'s self-time
+*percentage* is not a verdict: after the change `emit_pixel` measured **10.26%**,
+*higher* than the 9.38% before — a share, not a duration, and the program around
+it had changed. Only the wall-clock A/B settles it. Second, removing a bounds
+check is not free: the check was almost perfectly predicted, whereas the `cmov`
+that replaces it sits on the store's address dependency chain, and narrowing
+`Box<[T]>` to `Box<[T; N]>` shrinks `Ppu` and perturbs inlining and layout
+decisions across the whole hot loop. The theoretically-cheaper code lost.
+
+**What is left on the table.** The store cluster is real and still unaddressed;
+what has been ruled out is *this* way of attacking it. A structural change —
+making the framebuffer per-pixel (`[[u8; 4]]`) so the RGBA write and the
+index write share one index and one check — is the untried option, but it
+changes a public type consumed by the frontend, libretro, mobile and the tests,
+so it is a deliberate API decision rather than a micro-optimization.
+
 ### v2.2.3 P2 — specialized idle-line dot path (decision: implemented, gated OFF)
 
 A1 covers visible dots `1..=256` — 61,440 of the 89,342 NTSC dots (68.8%). The
