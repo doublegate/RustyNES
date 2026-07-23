@@ -1,21 +1,58 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.2.2** (2026-07-21) — **"Conduit"**, a **build,
-> distribution, and CI-integrity patch** on top of v2.2.1 (below). It takes the
-> libretro buildbot recipe from 1 of 10 jobs green to **all ten building**
-> (three rounds of diagnosis against a third-party pipeline we cannot push to or
-> re-run), hardens the GitHub Actions supply chain (`persist-credentials: false`
-> on all 19 checkouts, a fail-closed release-tag check, a SHA-pinned toolchain
-> action), and collapses the toolchain to a **single pinned source of truth** —
-> `rust-toolchain.toml` — with **no `nightly` on any build path** and zero
-> toolchain version literals under `.github/`. **Zero emulation-core changes**:
-> nothing under `crates/rustynes-{cpu,ppu,apu,mappers,core}` is touched, so the
-> deterministic `#![no_std]` chip stack, save-state / TAS / netplay-replay
-> formats, and every golden vector are untouched by construction — **AccuracyCoin
-> holds 141/141 (100.00%)**, unchanged since v2.2.0. The one behavioural
-> improvement reaching a shipped artifact: the libretro **tvOS** core is now
-> built with `panic = "abort"` like every other platform, instead of the
-> `panic = "unwind"` its previous `-Zbuild-std` path forced.
+> **Current release: v2.2.3** (2026-07-23) — **"Datum"**, a **performance and
+> accuracy-closure patch** on top of v2.2.2 (below), produced by a measure-first
+> appraisal that profiled the emulator and acted on what it found.
+>
+> **Performance.** The specialized PPU fast dot path is promoted to the
+> **default** and exposed to users for the first time — `Nes::set_fast_dotloop`
+> previously had **no caller outside the core**, so a **−11.3%** frame-time win
+> (fresh clean-host Criterion, reproducing v2.1.8's +12.3% by a different
+> method) shipped switched off and unreachable. It has been differential-tested
+> bit-identical every frame — framebuffer, palette-index framebuffer, audio,
+> CPU-cycle count and full core snapshot — since v2.1.8. Release builds now ship
+> **PGO-optimized** Linux binaries when the existing >3%-and-byte-identical gate
+> passes, falling back to the plain build otherwise; and CI gained a same-runner
+> **relative** frame-time regression gate, closing a hole where a 2.5x slowdown
+> passed the deliberately-loose absolute ceiling.
+>
+> **Two optimizations were measured and REJECTED**, documented in
+> `docs/performance.md` with their numbers per that file's convention. P3
+> (`emit_pixel` bounds-check elision) made the shipped default **slower**
+> (+4.32% / +3.35% on the two `_fast` workloads, p ≤ 0.02); P4 (`cpu_clock`)
+> found both textbook optimizations already implemented and the one remaining
+> lever capped at **≤1.9%**, below the 3% bar.
+>
+> **Accuracy — the last two Holy Mapperel residuals are closed**, so all 17 ROMs
+> now report `detail=0000` (was 15/17). MMC1's two software WRAM write-protect
+> layers (`$E000` bit 4 and SNROM's CHR-register layer) and FME-7's open bus on
+> the RAM-selected-but-disabled window are both modelled, routed through the
+> trait's existing `cpu_read_unmapped` contract. MMC1 is the change Holy
+> Mapperel's README calls a game-compatibility hazard, so it was validated
+> before landing: **60/60** commercial ROMs (including seven battery-backed MMC1
+> saves — Zelda, Metroid, Final Fantasy, Mega Man 2, Castlevania II, Ninja
+> Gaiden, Kid Icarus) and **138/138** extended.
+>
+> The **Sunsoft 5B absolute level** is calibrated against Mesen2, which required
+> widening `Mapper::mix_audio` to `i32` — the correct full-scale 5B tone
+> (`1882 * 18.471 = 34,761`) does not fit `i16`. A **save-state schema gap** is
+> fixed (`PPU_SNAPSHOT_VERSION` 8 carrying sprite-eval + OAM-bus state, plus an
+> APU v4 tail), which is what made AccuracyCoin report **141/141 through
+> run-ahead** as well as without it; a new standing field-vs-schema audit found
+> it and the two APU gaps mechanically. A **Zapper beam-relative light model**
+> lands opt-in / default-off (no pass-fail light-gun ROM exists to adjudicate
+> it). **AccuracyCoin holds 141/141 (100.00%)**, nestest 0-diff.
+>
+> Also: the eleven `sprintN.rs` mapper modules (27,631 lines, ~110 boards) are
+> renamed for the boards they emulate with `mNNN_` mapper-number prefixes,
+> verified content-preserving by a byte-for-byte item comparison (930 items, 0
+> altered) and an identical 172-ID dispatch table.
+>
+> The prior release, **v2.2.2** (2026-07-21) — **"Conduit"**, a **build,
+> distribution, and CI-integrity patch**: the libretro buildbot recipe from 1 of
+> 10 jobs green to **all ten building**, a GitHub Actions supply-chain hardening
+> pass, and the toolchain collapsed to a single pinned source of truth with no
+> `nightly` on any build path. Zero emulation-core changes.
 >
 > The prior release, **v2.2.1** (2026-07-15) — a **housekeeping patch** on top of
 > v2.2.0 "Capstone" (below): archives two batches of dev/research tooling (the
