@@ -78,6 +78,22 @@ cycle-accurate core later replaced.
 
 ### Added
 
+- **`ppu-idle-line-fast` cargo feature (default OFF)** — a second PPU dot-path
+  specialization covering *idle lines* (post-render 240 + vblank 242..=260;
+  6,820 of the 89,342 NTSC dots), where the per-dot body provably reduces to
+  three assignments. It is byte-identical — proven by `fast_dotloop_diff`,
+  extended with `idle_line_fast_path_matches_exact_under_vblank_io`, a
+  purpose-built NROM that hammers `$2000`/`$2001`/`$2006`/`$2007` throughout
+  vblank so the guard's fall-through arms are exercised rather than assumed.
+  It ships **off** because it does not clear the project's >3% adoption bar:
+  a same-session A/B (±0.7% noise floor) measures −1.3%/−1.5% on
+  rendering-*disabled* content but +0.2%/+0.4% on the rendering-heavy case that
+  dominates real play. Kept behind a compile-time flag rather than deleted —
+  the code is proven and becomes worthwhile if per-dot dispatch gets cheaper;
+  compile-time rather than runtime because the cost *is* the per-dot guard.
+  Full measurement, and the contaminated first A/B that nearly got it deleted,
+  in `docs/performance.md` §P2.
+
 - Desktop setting `[emulation] fast_dotloop` (Settings → Accuracy, labelled
   "performance, not accuracy") as an escape hatch for the fast-dot-path
   promotion under **Performance** above — there is no accuracy reason to

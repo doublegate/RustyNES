@@ -51,6 +51,28 @@ debug-hooks = []
 # the feature on or off — it only gates whether the diagnostic ring is captured.
 # See ADR 0030.
 ppu-octal-trace = []
+# v2.2.3 P2 — the specialized IDLE-LINE fast dot path (post-render line 240 +
+# vblank lines 242..=260, 6,820 of the 89,342 NTSC dots). Off by default: it is
+# byte-identical but does NOT clear the project's >3% adoption bar. Same-session
+# Criterion A/B, feature-off vs feature-on, against a ±0.7% noise floor:
+#
+#   nes_run_frame_nestest            +0.16%  (p=0.23, no change)
+#   nes_run_frame_nestest_fast       +0.41%  (p=0.01, marginally worse)
+#   nes_run_frame_flowing_palette    -1.31%
+#   nes_run_frame_flowing_palette_fast -1.55%
+#
+# i.e. a ~1.5% win only on rendering-DISABLED content, and neutral-to-slightly-
+# negative on the rendering-heavy case that actually dominates real play. The
+# guard runs on every dot A1's guard does not already claim to save work on idle
+# dots whose general path was already short-circuiting on a cached bool, so the
+# two roughly cancel. Retained rather than deleted: the code is proven
+# byte-identical (`fast_dotloop_diff`, incl. a vblank-I/O torture ROM), and the
+# shape becomes worthwhile if per-dot dispatch gets cheaper or the idle-line body
+# grows. Compile-time rather than runtime precisely BECAUSE the cost is the
+# per-dot guard — a runtime knob would still pay it when off.
+# See `docs/performance.md` §P2 for the full measurement, including the
+# contaminated first A/B and why it misled.
+ppu-idle-line-fast = []
 
 [dependencies]
 bitflags.workspace = true

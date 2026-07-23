@@ -715,6 +715,10 @@ impl Ppu {
         self.cached_visible = false;
         self.cached_pre_render = false;
         self.cached_render_line = false;
+        #[cfg(feature = "ppu-idle-line-fast")]
+        {
+            self.cached_idle_line = false;
+        }
         self.flags_cached_scanline = i16::MIN;
 
         // sanity: the schema-fixed sizes mean we should be at end of input now.

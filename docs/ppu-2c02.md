@@ -175,6 +175,15 @@ so this is a per-dot specialization only. Byte-identity across the full corpus
 (framebuffer + index buffer + audio + cycles + snapshot) is pinned by
 `crates/rustynes-test-harness/tests/fast_dotloop_diff.rs`.
 
+**Idle-line specialization (v2.2.3 P2, `ppu-idle-line-fast`, default OFF).** A
+second handler, `Ppu::tick_idle_line_fast`, covers *idle lines* — the
+post-render line plus every vblank line except the VBL-set line — where the
+per-dot body provably reduces to three rendering-flag assignments. It is
+byte-identical (same differential suite, plus a vblank-I/O torture ROM that
+forces the guard's fall-through arms), but measures below the >3% adoption bar,
+so it is compiled out by default and the general path continues to serve those
+dots. See `docs/performance.md` §P2.
+
 The "warm scanline-classification cache" in that guard
 (`cached_visible` / `cached_pre_render` / `cached_render_line`, keyed by
 `flags_cached_scanline`) is a pure function of `scanline` + `region`, so it is

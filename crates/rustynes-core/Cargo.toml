@@ -34,6 +34,9 @@ irq-timing-trace = ["std"]
 # inside `Ppu::tick`. Enable with
 # `cargo test --features ppu-state-trace ...`.
 ppu-state-trace = ["std", "rustynes-ppu/ppu-state-trace"]
+# v2.2.3 P2 — forward to `rustynes-ppu/ppu-idle-line-fast`. Off by default
+# (measured a regression; see that crate's manifest and `docs/performance.md`).
+ppu-idle-line-fast = ["rustynes-ppu/ppu-idle-line-fast"]
 # `cpu-boot-trace` enables the per-CPU-instruction boot-trace fixture
 # used by the Session-12 cold-boot divergence investigation. Off by
 # default (CI gate stays fast); enabled by

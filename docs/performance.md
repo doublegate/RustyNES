@@ -519,6 +519,75 @@ for a byte-identical escape hatch is not justified.
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
 
+### v2.2.3 P2 — specialized idle-line dot path (decision: implemented, gated OFF)
+
+A1 covers visible dots `1..=256` — 61,440 of the 89,342 NTSC dots (68.8%). The
+other **27,902 (31.2%)** still walk the full general per-dot body: visible dots
+257..=340 (20,400), vblank lines 241..=260 (6,820), pre-render (341). P2
+attacked the cheapest slice to prove correct: the **idle line** — post-render
+line 240 plus every vblank line except the VBL-set line 241, 20 of 262 lines.
+
+**Why it looked promising.** On an idle line the general body provably reduces
+to three assignments; every other branch is gated on `render_line`, `visible`,
+`pre_render`, `scanline == vblank_start_line()`, or a disturbance countdown.
+So ~30 predicates were being evaluated to perform three stores.
+
+**Implementation.** `Ppu::tick_idle_line_fast` behind a guard requiring a warm
+classification cache (new derived `cached_idle_line` flag), plus all three
+sub-dot countdowns idle. Byte-identical by construction on A1's terms, and
+pinned by `fast_dotloop_diff` — extended here with
+`idle_line_fast_path_matches_exact_under_vblank_io`, which drives a
+purpose-built NROM that hammers `$2000`/`$2001`/`$2006`/`$2007` for the length
+of vblank so the guard's fall-through arms are *exercised* rather than assumed
+(vblank is when real software does its PPU I/O, so this is the case that
+matters).
+
+**Measured — same-session Criterion A/B, feature-off vs feature-on**, noise
+floor ±0.7% (established by re-running an identical configuration against its
+own baseline: all four workloads `p > 0.05`):
+
+| Workload | Δ | |
+|---|---|---|
+| `nes_run_frame_nestest` | +0.16% | p = 0.23, no change |
+| `nes_run_frame_nestest_fast` | +0.41% | p = 0.01, marginally worse |
+| `nes_run_frame_flowing_palette` | **−1.31%** | small win |
+| `nes_run_frame_flowing_palette_fast` | **−1.55%** | small win |
+
+A ~1.5% win only on **rendering-disabled** content, neutral-to-slightly-negative
+on the rendering-heavy case that dominates real play. The guard runs on every dot
+A1's guard does not already claim — ~28k per frame, and all 89k when rendering is
+off, which is exactly why the rendering-disabled demo is where it pays — to save
+work on 6,820 idle dots whose general path was already short-circuiting on a
+cached bool. The two roughly cancel.
+
+**Decision: implemented, byte-identity proven, shipped OFF behind the
+`ppu-idle-line-fast` cargo feature.** It does not clear the >3% bar, so it does
+not displace the default — the same outcome the A2 SIMD blitter got, for the same
+reason. It is **compile-time** rather than a runtime knob precisely because the
+cost *is* the per-dot guard: a runtime flag would still pay it when disabled. With
+the feature off the field, the guard, and the handler are all absent, so the
+default build is unchanged.
+
+> **Methodology trap — worth not repeating.** The first A/B reported P2 as a
+> **+2% to +7.3% regression** and nearly got it deleted. That measurement was
+> contaminated: the "off" baseline was produced by short-circuiting the guard with
+> `if false && …` while leaving the new `cached_idle_line` field in the struct. The
+> field changed `Ppu`'s layout, and the layout — not the guard — moved
+> `flowing_palette` by ~3%. Only a genuine feature-off build (field absent)
+> compares like with like. **When A/B-ing a change that adds a struct field, the
+> baseline must not carry the field**; a `cfg` gate is the honest scaffold, an
+> `if false` is not.
+>
+> **Also learned:** the three assignments in `tick_idle_line_fast` are, given the
+> guard, provably redundant — deleting any one leaves the entire differential
+> suite green (verified). They are kept anyway: "same assignments, same order" is
+> checkable by reading twenty lines, whereas "these stores are dead" is a
+> reachability argument that must be re-derived whenever the guard moves. Note the
+> corollary for anyone extending this — a negative control that deletes a *dead*
+> store proves nothing. The control that actually discriminates is one that breaks
+> the *classification* (treating line 241 as idle makes all four differential
+> tests fail, including the new torture case).
+
 ### v1.4.0 Workstream F — measure-first micro-opt pass (core)
 
 All changes are zero-behavior / zero-synthesis: bit-identical framebuffer +

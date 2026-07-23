@@ -164,8 +164,13 @@ const CHIPS: &[Chip] = &[
                 "derived: recomputed from `scanline` + `region`; invalidated on restore",
             ),
             (
+                "cached_idle_line",
+                "derived: recomputed from `scanline` + `region` (not visible, not \
+                 pre-render, not the VBL-set line); invalidated on restore",
+            ),
+            (
                 "flags_cached_scanline",
-                "derived: the cache key for the three `cached_*` flags; reset to the \
+                "derived: the cache key for the four `cached_*` flags; reset to the \
                  `Ppu::new` sentinel on restore so a warm key cannot survive a timeline change",
             ),
             (
