@@ -237,21 +237,7 @@ const CHIPS: &[Chip] = &[
                  IRQ path, or any determinism-relevant state",
             ),
         ],
-        known_gaps: &[
-            (
-                "reset_4017_delay",
-                "live: countdown to the scheduled warm-reset `$4017` re-write (v2.0.0 beta.3 \
-                 A4). A snapshot taken in the few CPU cycles between `Apu::reset` arming it \
-                 and `tick_with_external` consuming it restores 0 and drops the re-write. \
-                 Narrow window and no known symptom, but it is the same class as the v5/v6/v8 \
-                 PPU tails and wants an `APU_SNAPSHOT_VERSION` tail of its own.",
-            ),
-            (
-                "reset_4017_value",
-                "live: the retained `$4017` value the scheduled reset re-write will issue \
-                 (see `reset_4017_delay`)",
-            ),
-        ],
+        known_gaps: &[],
     },
 ];
 
@@ -427,13 +413,20 @@ fn known_gaps_are_exactly_as_recorded() {
     // closing a gap fails this test (delete the entry) and opening a new one
     // fails it too (the field lands in `every_chip_field_is_serialized_...`
     // first). Neither can happen silently.
+    //
+    // Currently EMPTY, and that is the interesting state: the list's only two
+    // entries — the APU's `reset_4017_delay` / `reset_4017_value` scheduled
+    // warm-reset `$4017` re-write, which this audit surfaced — were closed by
+    // the `APU_SNAPSHOT_VERSION` v4 tail. Every field of every audited chip is
+    // now either serialized or derived/config with a written reason. A future
+    // entry here is a deliberate, documented admission, not a default.
     let recorded: Vec<(&str, &str)> = CHIPS
         .iter()
         .flat_map(|c| c.known_gaps.iter().map(|(f, _)| (c.label, *f)))
         .collect();
     assert_eq!(
         recorded,
-        vec![("Apu", "reset_4017_delay"), ("Apu", "reset_4017_value"),],
+        Vec::<(&str, &str)>::new(),
         "the set of known save-state gaps changed — update this list, and say so in the \
          CHANGELOG if one was closed",
     );

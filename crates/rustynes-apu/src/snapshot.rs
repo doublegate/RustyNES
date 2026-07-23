@@ -49,7 +49,37 @@ use crate::triangle::Triangle;
 ///   the v2 -> v3 migration may show a 1-cycle transient where a
 ///   reloaded inhibited state has the CPU IRQ line deasserted as the
 ///   FC step re-establishes it — acceptable.
-pub const APU_SNAPSHOT_VERSION: u8 = 3;
+/// - v4 (2026-07-22): appends the scheduled warm-reset `$4017` re-write
+///   (`reset_4017_delay` + `reset_4017_value`, 2 bytes). [`Apu::reset`] arms
+///   the countdown at 2 and `tick_with_external` decrements it once per CPU
+///   cycle, issuing `FrameCounter::write` when it hits zero (the v2.0.0
+///   beta.3 A4 cycle-accurate reset, calibrated against blargg
+///   `4017_timing`). Both fields were previously unserialized, so a snapshot
+///   taken inside that 2-cycle window restored `delay = 0` and dropped the
+///   re-write entirely — the restored frame counter then kept the sequencer
+///   phase the re-write was supposed to reset. This is the same class as the
+///   PPU's v5 / v6 / v8 tails (ADR 0030 / ADR 0034): live mid-frame state
+///   absent from the schema, invisible to any straight-`run_frame` test and
+///   reachable only through a snapshot/restore round trip. Surfaced by the
+///   standing schema audit
+///   (`crates/rustynes-test-harness/tests/snapshot_schema_audit.rs`) rather
+///   than by a user-visible symptom.
+///
+///   v1..=3 blobs upconvert with both at `0` — "no re-write pending", which
+///   is the resting value and therefore correct for any pre-v4 state not
+///   captured inside the 2-cycle arming window (and for one that was, the
+///   bytes simply do not exist to recover).
+///
+///   Unlike this module's earlier *trailing-optional* tails (the v1.x DMC-DMA
+///   scheduling bytes and the W3-Stage-4 block, both detected by
+///   `has_remaining`), this one is version-gated. Trailing-optional makes two
+///   different blob lengths both valid at one version, which is workable but
+///   leaves the format ambiguous; a version gate does not. The bump costs no
+///   additional compatibility here because the same change already bumps
+///   `PPU_SNAPSHOT_VERSION` to 8 (ADR 0034), and `rustynes_core`'s `.rns`
+///   container is version-exact per section — pre-existing save states are
+///   already rejected at the PPU section.
+pub const APU_SNAPSHOT_VERSION: u8 = 4;
 
 /// Errors returned by [`Apu::restore`].
 #[derive(Debug, Error)]
@@ -586,6 +616,16 @@ impl Apu {
             w.bool(self.dmc_edge_arm_suppress);
         }
 
+        // === v4 (2026-07-22) scheduled warm-reset `$4017` re-write ===
+        // Armed by `Apu::reset` (delay = 2, value = the frame counter's last
+        // `$4017`), consumed one CPU cycle at a time in `tick_with_external`.
+        // Live for only those 2 cycles, but a snapshot landing in them used to
+        // restore `delay = 0` and silently cancel the re-write. Version-gated
+        // rather than trailing-optional — see the `APU_SNAPSHOT_VERSION`
+        // rustdoc for why this tail breaks with the convention above it.
+        w.u8(self.reset_4017_delay);
+        w.u8(self.reset_4017_value);
+
         w.buf
     }
 
@@ -605,7 +645,7 @@ impl Apu {
         // by synthesising a schedule; v2 migrates to v3 by setting
         // `irq_line_active = irq_flag` (the IRQ-line and $4015 bit 6
         // coincided under the v1/v2 conflated model).
-        if version != 1 && version != 2 && version != APU_SNAPSHOT_VERSION {
+        if !matches!(version, 1..=APU_SNAPSHOT_VERSION) {
             return Err(ApuSnapshotError::UnsupportedVersion(version));
         }
         self.region = region_from_u8(r.u8()?)?;
@@ -684,6 +724,19 @@ impl Apu {
         // `put_cycle`/`parity_seed` came from the blob only when the tail was
         // present; the bus re-seeds the boot alignment otherwise.
         self.restored_parity_tail = had_stage4_tail;
+
+        // === v4 scheduled warm-reset `$4017` re-write ===
+        // See the matching block in [`Apu::snapshot`]. Version-gated, so a v4
+        // blob must carry both bytes (a short one reports `Truncated`, which is
+        // the honest error). v1..=3 blobs upconvert to "no re-write pending" —
+        // the resting value, and what a pre-v4 restore left behind.
+        if version >= 4 {
+            self.reset_4017_delay = r.u8()?;
+            self.reset_4017_value = r.u8()?;
+        } else {
+            self.reset_4017_delay = 0;
+            self.reset_4017_value = 0;
+        }
 
         Ok(())
     }
@@ -806,15 +859,18 @@ mod tests {
 
     #[test]
     fn pre_stage4_blob_without_tail_upconverts() {
-        // Build a current blob, then truncate the Stage-4 tail (21 bytes:
-        // bool + u64 + u8 + bool + u8 + bool + bool + bool + u8 + bool*5)
-        // to simulate a pre-Stage-4 save.
+        // Build a current blob, then strip BOTH the v4 reset-`$4017` tail
+        // (2 bytes, version-gated) and the Stage-4 tail (21 bytes: bool + u64 +
+        // u8 + bool + u8 + bool + bool + bool + u8 + bool*5) to simulate a
+        // pre-Stage-4 save, rewriting the version byte to v3 so the v4 gate
+        // does not then demand bytes that are no longer there.
         let mut a = Apu::new(Region::Ntsc, 44_100);
         // Make the DMC "active" so the delayed-4015 upconvert is observable.
         a.dmc.sample_length = 16;
         a.dmc.bytes_remaining = 8;
         let mut blob = a.snapshot();
-        blob.truncate(blob.len() - 21);
+        blob.truncate(blob.len() - (2 + 21));
+        blob[0] = 3;
         let mut b = Apu::new(Region::Ntsc, 44_100);
         b.restore(&blob).unwrap();
         assert!(
@@ -826,6 +882,91 @@ mod tests {
             assert!(b.dmc_delayed_status);
             assert!(b.dmc_status_applied);
         }
+    }
+
+    #[test]
+    fn v4_round_trips_the_scheduled_reset_4017_rewrite() {
+        // The countdown and its payload are live for the 2 CPU cycles between
+        // `Apu::reset` arming them and `tick_with_external` firing the write.
+        let mut a = Apu::new(Region::Ntsc, 44_100);
+        a.reset_4017_delay = 2;
+        a.reset_4017_value = 0x80;
+        let blob = a.snapshot();
+        assert_eq!(
+            blob[0], APU_SNAPSHOT_VERSION,
+            "blob carries current version"
+        );
+
+        let mut b = Apu::new(Region::Pal, 48_000);
+        b.restore(&blob).unwrap();
+        assert_eq!(b.reset_4017_delay, 2);
+        assert_eq!(b.reset_4017_value, 0x80);
+    }
+
+    #[test]
+    fn pre_v4_blob_upconverts_reset_4017_to_no_pending_rewrite() {
+        // v1..=3 blobs have no reset-`$4017` bytes; they must restore as
+        // "nothing scheduled" — the resting state, and what a pre-v4 restore
+        // left behind. Synthesize one by stripping the 2-byte tail and
+        // rewriting the version byte.
+        let mut a = Apu::new(Region::Ntsc, 44_100);
+        a.reset_4017_delay = 2;
+        a.reset_4017_value = 0x80;
+        let mut blob = a.snapshot();
+        blob.truncate(blob.len() - 2);
+        blob[0] = 3;
+
+        let mut b = Apu::new(Region::Ntsc, 44_100);
+        b.reset_4017_delay = 1; // must be overwritten, not left stale
+        b.reset_4017_value = 0xC0;
+        b.restore(&blob).expect("v3 blob must upconvert");
+        assert_eq!(b.reset_4017_delay, 0);
+        assert_eq!(b.reset_4017_value, 0);
+    }
+
+    #[test]
+    fn a_reset_survives_a_snapshot_restore_taken_mid_countdown() {
+        // The behavioural pin, not just a field round trip: a save/restore
+        // landing inside the arming window must still deliver the `$4017`
+        // re-write on the same cycle a straight run would. Before the v4 tail
+        // the restored APU dropped it, so the frame counter kept the sequencer
+        // phase the re-write exists to reset.
+        let mut plain = Apu::new(Region::Ntsc, 44_100);
+        plain.write_register(0x4017, 0x80); // mode 5-step, so the re-write is observable
+        plain.reset();
+        assert_eq!(plain.reset_4017_delay, 2, "reset arms the countdown");
+
+        // Round-trip through a snapshot taken with the countdown live.
+        let mut restored = Apu::new(Region::Pal, 48_000);
+        restored.restore(&plain.snapshot()).unwrap();
+
+        // Advance far enough for the whole chain to play out: the countdown
+        // fires at t=2, `FrameCounter::write` then schedules its own 3/4-cycle
+        // maturation, and only when THAT lands does the sequencer restart. Ten
+        // cycles clears it with margin. (Four does not — the write has fired
+        // but its effect has not yet matured, and both sides still look alike.)
+        for _ in 0..10 {
+            plain.tick_with_external(0.0);
+            restored.tick_with_external(0.0);
+        }
+        assert_eq!(
+            restored.reset_4017_delay, plain.reset_4017_delay,
+            "countdown diverged across the round trip"
+        );
+        // `frame_counter.cycle` is the discriminating observable. `mode` is not:
+        // `reset_rewrite_4017` retains bit 7, so the re-write always restores the
+        // mode already in effect and the field reads the same either way.
+        // Without the v4 tail the restored APU never issues the write, so its
+        // sequencer keeps counting instead of restarting.
+        assert_eq!(
+            restored.frame_counter.cycle, plain.frame_counter.cycle,
+            "the scheduled $4017 re-write did not survive the round trip — the \
+             restored sequencer never restarted"
+        );
+        assert_eq!(
+            restored.frame_counter.reset_in, plain.frame_counter.reset_in,
+            "frame-counter reset maturation diverged across the round trip"
+        );
     }
 
     #[test]

@@ -189,6 +189,22 @@ disabled); the channel registers — including the halt/duty bits — survive.
 This closes plan-residual R4 (`apu_reset/4017_written`): all six blargg
 `apu_reset` ROMs pass strictly.
 
+**Save-state coverage (`APU_SNAPSHOT_VERSION` v4).** The scheduled re-write is
+live state for the two CPU cycles between `Apu::reset` arming it and
+`tick_with_external` firing it, so `reset_4017_delay` + `reset_4017_value` are
+serialized. They were not before v4: a snapshot landing in that window restored
+`delay = 0`, cancelling the re-write, and the restored frame counter kept the
+sequencer phase the re-write exists to reset. The window is narrow and no
+user-visible symptom was ever attributed to it — unlike the PPU's v5/v6/v8
+tails, this one was found by the standing schema audit
+(`crates/rustynes-test-harness/tests/snapshot_schema_audit.rs`) rather than by a
+bug report. Pinned behaviourally by
+`a_reset_survives_a_snapshot_restore_taken_mid_countdown`, which compares
+`frame_counter.cycle` across a mid-countdown round trip; note that
+`frame_counter.mode` cannot serve as the oracle, since `reset_rewrite_4017`
+retains bit 7 and the re-write therefore restores the mode already in effect.
+v1..=3 blobs upconvert to "no re-write pending", the resting value.
+
 ### DMC channel
 
 - **Memory reader**: when sample buffer is empty and bytes-remaining > 0, request DMA. Bus halts CPU and reads 1 byte from `$C000-$FFFF`. Halt cost: 3 or 4 CPU cycles per `ref-docs/research-report.md` §DMA. Read advances address (wraps `$8000` after `$FFFF`) and decrements bytes-remaining.

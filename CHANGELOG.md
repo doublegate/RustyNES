@@ -66,13 +66,20 @@ cycle-accurate core later replaced.
   own upconvert defaults, i.e. by the bug itself) and matches on word
   boundaries; both properties are pinned by their own tests, and the writer
   scoping was confirmed by negative control.
-- Two pre-existing APU save-state gaps the audit surfaced are now recorded
-  rather than unnoticed: `reset_4017_delay` / `reset_4017_value`, the scheduled
-  warm-reset `$4017` re-write. A snapshot taken in the few CPU cycles between
-  `Apu::reset` arming the countdown and `tick_with_external` consuming it
-  restores 0 and drops the re-write. Narrow window, no known symptom, and no
-  behavior change here — they are pinned in the audit's `known_gaps` list so
-  closing them (or opening another) cannot happen silently.
+- **`APU_SNAPSHOT_VERSION` 3 → 4** — serializes the scheduled warm-reset
+  `$4017` re-write (`reset_4017_delay` + `reset_4017_value`, 2 bytes), the
+  first gap the schema audit above found on its own rather than after a bug
+  report. `Apu::reset` arms the countdown at 2 and `tick_with_external`
+  decrements it once per CPU cycle, issuing the frame-counter write on zero; a
+  snapshot taken inside that 2-cycle window used to restore `delay = 0` and
+  cancel the re-write, leaving the restored sequencer in the phase the
+  re-write exists to reset. Narrow window and no symptom was ever attributed
+  to it, but it is the same class as the PPU's v5/v6/v8 tails. Pinned
+  behaviourally, not just as a field round trip, by
+  `a_reset_survives_a_snapshot_restore_taken_mid_countdown`. v1..=3 blobs
+  upconvert to "no re-write pending". No additional compatibility cost: the
+  `.rns` container is version-exact per section and the PPU v8 tail in this
+  same change already rejects pre-existing save states.
 - Antigravity PR reviewer (`.github/workflows/antigravity-review.yml` +
   `scripts/agy-review.sh`): an automated first-pass code review on a self-hosted
   runner, driven by the `agy` CLI's OAuth session (Google AI Ultra, no metered
