@@ -73,8 +73,8 @@ log "reviewing ${REPO}#${PR}"
 
 # Remove every temp file on exit. Pre-declared so the trap is safe under `set -u` even if the
 # script exits before a given file is created.
-diff_file= meta_file= prompt_file= out_file= raw= body_file=
-trap 'rm -f "$diff_file" "$meta_file" "$prompt_file" "$out_file" "$raw" "$body_file"' EXIT
+diff_file= diff_err= meta_file= prompt_file= out_file= raw= body_file=
+trap 'rm -f "$diff_file" "$diff_err" "$meta_file" "$prompt_file" "$out_file" "$raw" "$body_file"' EXIT
 
 # --- metadata first, because the fork gate depends on it -----------------------
 # FAIL-CLOSED. The old form fell back to `{}` when `gh pr view` failed, which was
@@ -107,8 +107,27 @@ case "$is_fork" in
 esac
 
 # --- fetch the diff ------------------------------------------------------------
+# `gh pr diff` can fail for two very different reasons and they must not be
+# conflated. A genuine error (auth, network, bad PR) is fatal. But GitHub's API
+# also refuses any diff over **20,000 lines** with HTTP 406, and that is not an
+# error condition -- it just means this PR is too large to review through the
+# API. A reviewer that cannot see the diff must not claim a verdict, but it also
+# must not fail the build: a red check that means "the PR was big" is noise that
+# trains people to ignore the check. Skip cleanly instead.
+#
+# Note this is upstream of the MAX_DIFF_BYTES truncation below, which can only
+# shrink a diff we already have.
 diff_file="$(mktemp)"
-gh pr diff "$PR" --repo "$REPO" > "$diff_file" || { log "gh pr diff failed"; exit 1; }
+diff_err="$(mktemp)"
+if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2> "$diff_err"; then
+  if grep -qi 'diff exceeded the maximum number of lines' "$diff_err"; then
+    log "PR #${PR} exceeds GitHub's 20,000-line diff API limit; skipping review"
+    log "  (not a failure -- the diff cannot be fetched, so there is nothing to review)"
+    exit 0
+  fi
+  log "gh pr diff failed:"; sed 's/^/  /' "$diff_err" >&2
+  exit 1
+fi
 
 if ! have_text "$diff_file"; then log "empty diff; nothing to review"; exit 0; fi
 
