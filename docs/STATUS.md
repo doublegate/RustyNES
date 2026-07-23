@@ -1,6 +1,32 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.2.3** (2026-07-23) — **"Datum"**, a **performance and
+> **Current release: v2.2.4** (2026-07-24) — **"Cartridge"**, a **libretro /
+> RetroArch distribution** cut whose purpose is that the RustyNES core builds and
+> installs cleanly through the Libretro buildbot
+> (<https://git.libretro.com/libretro/RustyNES>) for in-RetroArch use. **Zero
+> emulation-core changes** — the deterministic `#![no_std]` chip stack,
+> save-state / TAS / netplay formats, and every golden vector are byte-identical
+> to v2.2.3, so **AccuracyCoin holds 141/141 (100.00%)** and nestest is 0-diff by
+> construction. `crates/rustynes-libretro` wraps `rustynes-core` and so inherits
+> every v2.2.3 change automatically (the fast-dot-path default; the
+> `PPU_SNAPSHOT_VERSION` 8 / APU v4 save-state schema, handled transparently
+> because `get_serialize_size` / `on_serialize` size and emit the *current*
+> snapshot via `Nes::snapshot_core_into`, not a fixed layout; the
+> `Mapper::mix_audio` i32 widening; the Zapper model; the `mNNN_` mapper rename),
+> and both buildbot cross-ABIs the CI early-warning gate models —
+> `x86_64-pc-windows-gnu` and `aarch64-linux-android` — `cargo check --release -p
+> rustynes-libretro` clean. The concrete change is a **`rustynes_libretro.info`
+> metadata correction**: **`disk_control` `false` → `true`** (the real fix — the
+> FDS multi-side Disk Control interface has been wired since the buildbot recipe
+> landed, but was advertised as absent, hiding multi-disk FDS swapping from
+> RetroArch's Quick Menu), `display_version` `v1.0.0` → `v2.2.4`, and the mapper
+> count `168` → `172`. Libretro **core options** (region / overscan / palette /
+> accuracy toggles) remain unexposed — `core_options = "false"` is accurate, a
+> documented future enhancement rather than a v2.2.4 gap. The Antigravity PR
+> reviewer standardization onto the shared template rides along. On top of
+> **v2.2.3** (below):
+>
+> > **v2.2.3** (2026-07-23) — **"Datum"**, a **performance and
 > accuracy-closure patch** on top of v2.2.2 (below), produced by a measure-first
 > appraisal that profiled the emulator and acted on what it found.
 >

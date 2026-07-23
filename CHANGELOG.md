@@ -14,6 +14,56 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.2.4] - 2026-07-24 - "Cartridge" (libretro core builds/installs for RetroArch)
+
+A **libretro / RetroArch distribution** cut. Its purpose is that the RustyNES
+core builds and installs cleanly through the Libretro buildbot
+(<https://git.libretro.com/libretro/RustyNES>) so RetroArch users can pull it
+from the in-app core downloader. **Zero emulation-core changes**, so
+AccuracyCoin holds **141/141 (100.00%)**, nestest is 0-diff, and the `#![no_std]`
+chip stack, save-state / TAS / netplay formats, and every golden vector are
+byte-identical to v2.2.3 by construction.
+
+### Libretro / distribution
+
+- **The libretro core is confirmed complete and up-to-date with every recent
+  change, and builds for the buildbot ABIs.** `crates/rustynes-libretro` wraps
+  `rustynes-core`, so it inherits the v2.2.3 work automatically and required no
+  code change to carry it: the fast PPU dot path (now the core default) is
+  active; the `PPU_SNAPSHOT_VERSION` 8 + APU v4 save-state schema is transparent
+  because `get_serialize_size` / `on_serialize` size and emit the *current*
+  snapshot via `Nes::snapshot_core_into` rather than a hardcoded layout; the
+  `Mapper::mix_audio` i32 widening, the Zapper model, and the `mNNN_` mapper
+  rename are all below the crate's public dependency surface. Both buildbot
+  cross-ABIs the GitHub early-warning gate models — `x86_64-pc-windows-gnu` and
+  `aarch64-linux-android` — `cargo check --release -p rustynes-libretro`
+  clean.
+- **`rustynes_libretro.info` metadata corrected** (the file RetroArch's core
+  downloader reads to learn the core's capabilities):
+  - **`disk_control` `false` → `true`** — the real fix. The FDS multi-side Disk
+    Control interface (`enable_disk_control_interface()` + the
+    `on_set_eject_state` / `on_get_image_index` / … callback trampolines) has
+    been wired since the buildbot recipe landed, but the `.info` advertised it
+    as absent, so RetroArch's Quick Menu → Disk Control never surfaced multi-disk
+    FDS swapping.
+  - `display_version` `v1.0.0` → `v2.2.4` (stale since the v1.0.0 era).
+  - Description mapper count `168` → `172`, and a note that FDS multi-disk
+    swapping runs through the Disk Control interface.
+- Documented follow-up: libretro **core options** (region / overscan / palette /
+  accuracy toggles) remain unexposed. `core_options = "false"` is accurate, not
+  stale — a deliberate future enhancement, not a v2.2.4 gap.
+
+### Tooling
+
+- **The Antigravity PR reviewer is standardized onto the shared template**
+  (`scripts/agy-review.sh` + `.github/workflows/antigravity-review.yml`), the
+  same canonical version now installed across RustyNES / RustySNES / RustyN64.
+  It carries the large-diff handling (a diff too big to inline goes to `agy` as
+  a file), the 20,000-line `gh pr diff` API-limit local-`git diff` fallback, the
+  `isCrossRepository` fork gate, fail-closed metadata, default-branch checkout
+  with `persist-credentials: false`, and the `synchronize` auto-re-review
+  trigger.
+
 ## [2.2.3] - 2026-07-23 - "Datum" (fast dot path promoted + PGO shipped + the last two mapper residuals closed)
 
 ### Performance
