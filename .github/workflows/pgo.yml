@@ -8,8 +8,18 @@ name: PGO
 # the workspace twice plus a multi-ROM training sweep — far too slow for the PR
 # gate (that's the fast `bench` job in ci.yml). It runs ONLY on:
 #   * workflow_dispatch  — manual, from the Actions tab; and
-#   * push of a release tag (v*) — alongside release.yml, so a release can
-#     consider shipping the PGO binary.
+#   * workflow_call      — invoked BY `release.yml`, which ships the promoted
+#                          binary as the Linux release asset (see below).
+#
+# WHY NOT `push: tags` ANY MORE (v2.2.3). It used to also trigger on a `v*` tag
+# push, "alongside release.yml, so a release can consider shipping the PGO
+# binary" — except nothing ever consumed the result, so the gate computed a
+# promotable artifact that was then thrown away. `release.yml` now calls this
+# workflow directly and uses its output. Keeping the tag trigger as well would
+# start a SECOND, redundant 90-minute run for every manually-pushed tag (the
+# auto-release path pushes tags with GITHUB_TOKEN, which does not re-trigger
+# `on: push`, so that path would have been fine — but a hand-pushed tag would
+# double up). One entry point per tag is the whole point.
 #
 # PROMOTION GATE (both conditions, AND):
 #   1. FASTER  — the PGO `full_frame` criterion mean must beat the plain-release
@@ -42,9 +52,26 @@ on:
         required: false
         default: false
         type: boolean
-  push:
-    tags:
-      - "v*"
+  # Invoked by `release.yml` on a version tag. The caller consumes
+  # `outputs.promotable` + `outputs.artifact` to ship the PGO binary as the
+  # Linux release asset when the gate passes.
+  workflow_call:
+    inputs:
+      frames:
+        description: "Training frames per ROM (default 3600 = 60 s NTSC each)."
+        required: false
+        default: "3600"
+        type: string
+    outputs:
+      promotable:
+        description: "'true' when the PGO build cleared BOTH the >3% speedup bar and the byte-identical determinism oracle."
+        value: ${{ jobs.pgo.outputs.promotable }}
+      speedup_pct:
+        description: "Measured full_frame speedup of PGO vs plain release, in percent."
+        value: ${{ jobs.pgo.outputs.speedup_pct }}
+      artifact:
+        description: "Name of the uploaded PGO-binary artifact (empty unless promotable)."
+        value: ${{ jobs.pgo.outputs.artifact }}
 
 # Never cancel an in-flight PGO run; let each finish so its A/B numbers + the
 # determinism proof land in the log.
@@ -72,6 +99,10 @@ jobs:
     outputs:
       promotable: ${{ steps.gate.outputs.promotable }}
       speedup_pct: ${{ steps.gate.outputs.speedup_pct }}
+      # Empty unless promotable — the upload step below is gated on the same
+      # condition, so a caller that downloads this name only ever does so when
+      # the artifact actually exists.
+      artifact: ${{ steps.triple.outputs.artifact }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -110,8 +141,15 @@ jobs:
       # runs `pgo_trainer` over the committed corpus, then
       # `cargo pgo optimize build -- -p rustynes-frontend`. The optimized
       # `rustynes` binary lands at target/<triple>/release/rustynes.
+      # `inputs.frames` (NOT `github.event.inputs.frames`): the latter is
+      # populated only for `workflow_dispatch` and is empty on `workflow_call`,
+      # which would silently drop the caller's value. The `inputs.` context
+      # covers both triggers. Bound through `env:` rather than interpolated
+      # into the command string.
       - name: PGO instrument + train + optimized rebuild
-        run: scripts/pgo/run.sh "${{ github.event.inputs.frames || '3600' }}"
+        env:
+          PGO_FRAMES: ${{ inputs.frames || '3600' }}
+        run: scripts/pgo/run.sh "$PGO_FRAMES"
 
       # ---- Stage 3: PGO full_frame bench (A/B vs the `plain` baseline) ---
       - name: PGO full_frame bench
@@ -125,8 +163,15 @@ jobs:
       # the golden-framebuffer visual_regression suite + the APU mixer/volume
       # audio suites all assert byte-exact values — if PGO codegen perturbed any
       # framebuffer/audio/cycle hash, this fails and blocks promotion.
+      # `continue-on-error` so a determinism DIVERGENCE is a gate verdict, not a
+      # job crash: the gate step below already reads `oracle_ok` and treats an
+      # unset value as FAIL, which is what the workflow header has always
+      # claimed ("a failure of either is informational"). Without this the job
+      # died here and the gate never ran — and now that `release.yml` calls this
+      # workflow, that would redden a release whose assets are perfectly fine.
       - name: Determinism oracle (test-roms, PGO-optimized codegen)
         id: oracle
+        continue-on-error: true
         run: |
           set -o pipefail
           cargo pgo optimize test -- --workspace --release --features test-roms \
@@ -167,8 +212,19 @@ jobs:
       # ---- Stage 6: upload the PGO binary ONLY when promotable ----------
       - name: Resolve target triple
         id: triple
+        env:
+          PROMOTABLE: ${{ steps.gate.outputs.promotable }}
         run: |
-          echo "triple=$(rustc -vV | sed -n 's/host: //p')" >> "$GITHUB_OUTPUT"
+          triple="$(rustc -vV | sed -n 's/host: //p')"
+          echo "triple=${triple}" >> "$GITHUB_OUTPUT"
+          # Publish the artifact NAME only when the gate promoted, so the
+          # caller's `if:` and its `download-artifact` name agree by
+          # construction rather than by two places staying in sync.
+          if [ "$PROMOTABLE" = "true" ]; then
+            echo "artifact=rustynes-pgo-${triple}" >> "$GITHUB_OUTPUT"
+          else
+            echo "artifact=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload promoted PGO binary
         if: steps.gate.outputs.promotable == 'true'
@@ -185,9 +241,16 @@ jobs:
   bolt:
     name: BOLT post-link (linux, best-effort)
     needs: pgo
+    # Explicit opt-in ONLY. Previously this ran whenever the PGO stage promoted
+    # and the event was not a workflow_dispatch-without-run_bolt — which, now
+    # that `release.yml` calls this workflow, would fire BOLT on every release
+    # and add ~90 minutes for an artifact nothing consumes (the release ships
+    # the PGO binary, not the BOLT one). BOLT stays the opt-in experiment it
+    # has always been in practice.
     if: >-
       needs.pgo.outputs.promotable == 'true' &&
-      (github.event_name != 'workflow_dispatch' || github.event.inputs.run_bolt == 'true')
+      github.event_name == 'workflow_dispatch' &&
+      inputs.run_bolt == true
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -219,7 +282,9 @@ jobs:
       # pgo job are intentionally not BOLT-instrumentable post-strip).
       - name: PGO instrument + train + optimized rebuild
         if: steps.bolt_probe.outputs.have_bolt == 'true'
-        run: scripts/pgo/run.sh "${{ github.event.inputs.frames || '3600' }}"
+        env:
+          PGO_FRAMES: ${{ inputs.frames || '3600' }}
+        run: scripts/pgo/run.sh "$PGO_FRAMES"
 
       - name: Plain baseline bench
         if: steps.bolt_probe.outputs.have_bolt == 'true'
@@ -231,9 +296,11 @@ jobs:
 
       - name: BOLT instrument + optimize
         if: steps.bolt_probe.outputs.have_bolt == 'true'
+        env:
+          PGO_FRAMES: ${{ inputs.frames || '3600' }}
         run: |
           cargo pgo bolt build -- -p rustynes-frontend
-          scripts/pgo/run.sh "${{ github.event.inputs.frames || '3600' }}"
+          scripts/pgo/run.sh "$PGO_FRAMES"
           cargo pgo bolt optimize -- -p rustynes-frontend
 
       - name: BOLT full_frame bench + gate

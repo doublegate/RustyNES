@@ -788,7 +788,23 @@ per-PR pipeline: an instrument + train + optimized-rebuild cycle compiles the
 workspace twice plus a multi-ROM sweep, far too slow for the PR gate (that's the
 fast absolute-ceiling `bench` job in `ci.yml`). The `PGO` workflow triggers on
 **`workflow_dispatch`** (Actions tab → *Run workflow*; optional `frames` and
-`run_bolt` inputs) and on **push of a release tag (`v*`)**.
+`run_bolt` inputs) and via **`workflow_call` from `release.yml`** on a version
+tag.
+
+> **v2.2.3 — the promoted binary now actually ships.** Until this release the
+> workflow also triggered directly on a `v*` tag push "so a release can consider
+> shipping the PGO binary" — but nothing ever consumed the result: the gate ran,
+> promoted an artifact, and the release attached the plain build regardless. The
+> measured win never reached a single user. `release.yml` now *calls* this
+> workflow and replaces the `x86_64-unknown-linux-gnu` asset with the promoted
+> binary. The standalone tag trigger was removed at the same time, so a
+> hand-pushed tag no longer starts two 90-minute PGO runs.
+>
+> **Scope: linux-x86_64 only.** PGO training must *run* the instrumented binary,
+> so every additional target needs its own native runner doing a full train
+> cycle (~90 min each). macOS-aarch64 and Windows keep shipping plain release
+> builds; extending PGO to them is a separate decision with a real cost, not a
+> freebie.
 
 Its stages:
 
@@ -818,14 +834,37 @@ Its stages:
   no fast-math), but the gate **proves** it rather than assuming it: any
   framebuffer/audio/cycle-hash difference fails the stage and blocks promotion.
 
-A failed gate is informational — it never blocks a release; `release.yml` ships
-the plain-release binary independently.
+A failed gate is informational — it never blocks a release. The determinism
+stage carries a **step-level** `continue-on-error`, so a divergence produces a
+`promotable=false` verdict rather than a dead job, and the asset-replacement
+job (gated on `needs.pgo.outputs.promotable == 'true'`) is simply skipped,
+leaving the plain-release asset that `build` already attached exactly where it
+is.
+
+Note that `continue-on-error` **cannot** be applied to the caller job: GitHub
+does not allow it on a reusable-workflow `uses:` job (only `name`, `uses`,
+`with`, `secrets`, `needs`, `if`, `permissions`), and `actionlint` flags it as a
+syntax error. The tolerance therefore has to live inside the called workflow.
+An *infrastructure* failure (runner died, `cargo-pgo` unavailable) still marks
+the run red — deliberately, since a broken PGO pipeline should be visible — but
+the release assets are correct either way.
+
+**Sequencing.** `build` attaches the plain Linux archive in ~10 minutes; the PGO
+job takes up to 90. For that window the release carries the plain binary and is
+then upgraded in place via `gh release upload --clobber` under the *same* asset
+name (so download links do not change shape). The alternative — withholding the
+whole release until PGO finishes — was rejected: a complete, downloadable
+release an hour sooner is worth more than avoiding an in-place swap.
 
 #### BOLT (Linux post-link, optional)
 
 A second Linux-only `bolt` job runs behind the **same > 3% + byte-identical
 gate**, only after the PGO stage has already promoted (`needs.pgo.outputs.promotable
-== 'true'`), and on `workflow_dispatch` only when the `run_bolt` input is true.
+== 'true'`), and **only** on an explicit `workflow_dispatch` with `run_bolt:
+true`. (Before v2.2.3 its condition admitted any non-dispatch event, which —
+once `release.yml` began calling this workflow — would have fired BOLT on every
+release, adding ~90 minutes for an artifact nothing consumes, since the release
+ships the PGO binary and not the BOLT one.)
 It is **best-effort**: it probes for `llvm-bolt` (PATH, then `apt-get install
 bolt`) and skips cleanly if unavailable, so the workflow never hard-fails on a
 runner image without BOLT. When present it chains `cargo pgo bolt build` →
@@ -839,7 +878,8 @@ extra ~2% on top of PGO).
 # Manual (from a checkout with the gh CLI):
 gh workflow run PGO.yml                     # default 3600 frames/ROM, no BOLT
 gh workflow run PGO.yml -f frames=7200 -f run_bolt=true
-# Or push a release tag (runs alongside release.yml):
+# Or push a release tag — `release.yml` calls PGO and ships the promoted
+# binary as the linux-x86_64 asset when the gate passes:
 git tag v1.2.0 && git push origin v1.2.0
 ```
 

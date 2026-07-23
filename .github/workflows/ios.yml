@@ -60,7 +60,21 @@ jobs:
           # toolchain with a POSIX-safe pipeline: prefer the canonical `Xcode_26.app`,
           # else the lexically-highest `Xcode_26.x.app` (26.0–26.9 order correctly under
           # plain `sort`). Using `sort -V` here would wrongly fall back on a real runner.
-          xc=$(ls -d /Applications/Xcode_26.app /Applications/Xcode_26.*.app 2>/dev/null | sort | tail -1 || true)
+          #
+          # Shell globbing rather than `ls -d` (shellcheck SC2012). The ordering is
+          # load-bearing and unchanged: both patterns are emitted together, filtered
+          # to real directories, then `sort | tail -1` picks the last. That still
+          # prefers `Xcode_26.app` over `Xcode_26.<n>.app`, because after the common
+          # `Xcode_26.` prefix `a` (0x61) sorts above any digit — the canonical app
+          # is the lexically-highest name, not the first. A non-matching glob expands
+          # to the literal pattern, which the `-d` test discards.
+          xc=$(
+            printf '%s\n' /Applications/Xcode_26.app /Applications/Xcode_26.*.app \
+              | while IFS= read -r d; do
+                  [ -d "$d" ] && printf '%s\n' "$d"
+                done \
+              | sort | tail -1
+          )
           if [ -n "$xc" ]; then
             sudo xcode-select -s "$xc/Contents/Developer"
             echo "Selected $xc"

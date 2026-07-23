@@ -76,6 +76,57 @@ cycle-accurate core later replaced.
   both serialized, so this adds no bytes; it stops a cache filled under one
   timeline from satisfying the fast dot path's staleness guard under another.
 
+- **Release builds now ship the PGO binary on `x86_64-unknown-linux-gnu`.** The
+  `PGO` workflow has computed a profile-guided-optimized build behind a
+  >3%-faster **and** byte-identical gate since v1.2.0 — but nothing consumed the
+  result: it ran on the release tag, promoted an artifact, and `release.yml`
+  attached the plain build regardless, so the measured win never reached a
+  single user. `release.yml` now *calls* the PGO workflow and replaces the Linux
+  asset with the promoted binary under the same asset name.
+
+  A PGO gate verdict — slower than the 3% bar, or an oracle divergence — never
+  blocks or reddens a release: the determinism step is now step-level
+  `continue-on-error`, so the gate reports `promotable=false`, and the
+  replacement job is skipped, leaving the plain asset the build matrix already
+  attached. (A PGO *infrastructure* failure does still mark the run red, which
+  is intended — a broken PGO pipeline should be visible. The release assets are
+  correct regardless.) `continue-on-error` cannot be used on the caller job
+  itself: GitHub disallows it on a reusable-workflow `uses:` job, which
+  `actionlint` catches. Because the plain archive lands in ~10 minutes and PGO
+  takes up to 90, the release is complete and downloadable immediately and is
+  then upgraded in place — deliberately preferred over withholding the whole
+  release for an hour and a half.
+
+  Scope is **linux-x86_64 only**: PGO training has to *run* the instrumented
+  binary, so each further target needs its own native runner doing a full
+  ~90-minute train cycle. macOS-aarch64 and Windows keep shipping plain
+  release builds.
+
+  Two latent bugs were fixed in passing, both of which this wiring would have
+  tripped over: the PGO workflow read `github.event.inputs.frames`, which is
+  empty on `workflow_call` and would have silently dropped the caller's value
+  (now `inputs.frames`); and the BOLT job's condition admitted any non-dispatch
+  event, so it would have fired on every release, adding ~90 minutes for an
+  artifact nothing consumes (now explicit `workflow_dispatch` + `run_bolt`
+  only). The workflow's own `push: tags` trigger was removed so a hand-pushed
+  tag no longer starts two 90-minute PGO runs.
+
+- **`actionlint` is now clean across every workflow** (it was not before, which
+  is how the invalid `continue-on-error` above was caught). Two pre-existing
+  findings fixed:
+  - `ios.yml` used `ls -d … | sort | tail -1` to pick an Xcode 26 toolchain
+    (shellcheck SC2012). Replaced with shell globbing, preserving the ordering
+    exactly — including the non-obvious part, that `Xcode_26.app` outranks
+    `Xcode_26.<n>.app` because `a` sorts above any digit after the shared
+    prefix. Verified equivalent against six synthetic runner layouts (canonical
+    only, canonical + point releases, point releases only, none, unrelated
+    versions, and the documented 26.9/26.10 lexical bound).
+  - The `agy` self-hosted runner label in `antigravity-review.yml` was reported
+    as unknown. Declared in a new `.github/actionlint.yaml`, which is the
+    mechanism actionlint's own diagnostic points at; the alternative (a hosted
+    label) is not available, since that runner holds the `agy` CLI's OAuth
+    session.
+
 ### Added
 
 - **`ppu-idle-line-fast` cargo feature (default OFF)** — a second PPU dot-path
