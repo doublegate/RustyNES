@@ -42,7 +42,11 @@ if ! [ "$MAX_PROMPT_BYTES" -le "$ARG_SIZE_CEILING" ] 2>/dev/null; then
 fi
 STYLE_GUIDE="${STYLE_GUIDE:-.github/agy-review.md}"  # repo-relative; loaded if present
                                            # (dedicated name -- avoids colliding with GEMINI.md/AGENTS.md)
-LOG="${RUNNER_TEMP:-/tmp}/agy-review.log"
+# Per-run log path. A FIXED name would collide between concurrent jobs whenever
+# RUNNER_TEMP is unset (local runs fall back to /tmp, which is shared) -- and a
+# predictable /tmp path is a symlink/file-tampering target. The run-id / PID
+# suffix keeps it unique per run.
+LOG="${RUNNER_TEMP:-/tmp}/agy-review-${GITHUB_RUN_ID:-$$}.log"
 AGY_LOCK="${AGY_LOCK:-$HOME/.gemini/antigravity-cli/.agy-review.lock}"
 AGY_LOCK_WAIT="${AGY_LOCK_WAIT:-600}"      # seconds to wait for the agy lock before proceeding
 AGY_RETRIES="${AGY_RETRIES:-3}"            # attempts to get a usable agy response
@@ -103,7 +107,7 @@ trap cleanup EXIT
 # FAIL-CLOSED. A `{}` fallback was harmless when the only field read was the title,
 # but is NOT harmless now that isCrossRepository gates whether an untrusted diff
 # reaches agy: a lookup failure must never be indistinguishable from "same-repo".
-diff_file="$(mktemp)"; meta_file="$(mktemp)"
+diff_file="$(mktemp)"; meta_file="$(mktemp)"; diff_err="$(mktemp)"
 gh pr view "$PR" --repo "$REPO" --json title,isCrossRepository,baseRefName > "$meta_file" \
   || { log "gh pr view failed; refusing to review without knowing the PR's head repo"; exit 1; }
 
@@ -147,7 +151,8 @@ esac
 # the one fetch rather than a persisted credential, so a `persist-credentials:
 # false` checkout stays intact; a hand-run without GH_TOKEN falls through to git's
 # ambient credential helper.
-diff_err="$(mktemp)"
+# ($diff_err was allocated alongside $diff_file / $meta_file above, so the cleanup
+# trap never references it before it exists.)
 if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2>"$diff_err"; then
   if grep -qi 'diff exceeded the maximum number of lines' "$diff_err"; then
     base_ref="$(jq -r '.baseRefName // empty' "$meta_file")"
@@ -285,13 +290,21 @@ fi
 # Byte truncation (here or in the MAX_DIFF_BYTES cap above) can slice a multi-byte UTF-8 sequence.
 # agy is a Rust binary and std::env::args() PANICS on a non-UTF-8 argument, which would reintroduce
 # an instant startup failure -- exactly the class of bug this guard exists to prevent. Drop any
-# invalid/partial sequences when iconv is available (glibc + macOS ship it); a no-op when clean.
+# invalid/partial sequences with iconv (glibc + macOS ship it), and fall back to python3 (present on
+# every CI runner) if iconv is absent, so a no-iconv host can't leave a split sequence in the prompt.
+# Explicit branches, not `&& mv || rm`: that idiom masks an mv failure and would then feed agy the
+# original (possibly split) bytes. A successful sanitize must replace the file; a failed mv is fatal
+# (set -e); a failed/absent sanitizer leaves the original and we proceed (it may already be clean, and
+# any residual invalid byte now surfaces via the captured stderr rather than a silent instant crash).
 if command -v iconv >/dev/null 2>&1; then
-  # Explicit branches, not `&& mv || rm`: that idiom masks an mv failure and would then feed agy the
-  # original (possibly split) bytes. A successful iconv must replace the file; a failed mv is fatal
-  # (set -e), a failed iconv leaves the original and we proceed (it may already be clean, and any
-  # residual invalid byte now surfaces via the captured stderr rather than a silent instant crash).
   if iconv -c -f UTF-8 -t UTF-8 "$prompt_file" > "$prompt_file.utf8" 2>/dev/null; then
+    mv "$prompt_file.utf8" "$prompt_file"
+  else
+    rm -f "$prompt_file.utf8"
+  fi
+elif command -v python3 >/dev/null 2>&1; then
+  if python3 -c 'import sys; sys.stdout.buffer.write(open(sys.argv[1],"rb").read().decode("utf-8","ignore").encode("utf-8"))' \
+       "$prompt_file" > "$prompt_file.utf8" 2>/dev/null; then
     mv "$prompt_file.utf8" "$prompt_file"
   else
     rm -f "$prompt_file.utf8"
