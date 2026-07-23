@@ -1261,6 +1261,28 @@ impl Nes {
         self.bus.set_zapper(port, x, y, trigger);
     }
 
+    /// A3 (v2.2.3): enable the **beam-relative** Zapper light model.
+    ///
+    /// Default **off**. See [`crate::bus::LockstepBus::set_zapper_temporal_light`]
+    /// for the model; in short, the light bit becomes a function of where the
+    /// CRT beam is at the moment of the read (dark before the beam paints the
+    /// aim row, lit for the ~19-26-scanline photodiode hold, dark after)
+    /// instead of one answer for the whole frame.
+    ///
+    /// Deterministic either way: the temporal answer is a pure function of
+    /// framebuffer + aim + current scanline and holds no extra state, so it
+    /// adds nothing to serialize and cannot desync a save state or a netplay
+    /// rollback.
+    pub const fn set_zapper_temporal_light(&mut self, on: bool) {
+        self.bus.set_zapper_temporal_light(on);
+    }
+
+    /// Whether the beam-relative Zapper light model is enabled (A3).
+    #[must_use]
+    pub const fn zapper_temporal_light(&self) -> bool {
+        self.bus.zapper_temporal_light()
+    }
+
     /// Drive the Famicom built-in **microphone** (read on `$4016` bit 2).
     ///
     /// The hardwired second Famicom controller carries a push-to-talk mic that
@@ -3532,5 +3554,19 @@ mod tests {
         assert_eq!(nes.nsf_current_song(), 0);
         nes.nsf_set_song(1); // no-op, must not panic or reset spuriously
         assert_eq!(nes.nsf_current_song(), 0);
+    }
+
+    /// A3 (v2.2.3): the beam-relative Zapper model is OFF by default, so the
+    /// shipped `$4017` byte is exactly what the frame-granular model produced.
+    #[test]
+    fn zapper_temporal_light_is_off_by_default() {
+        let mut nes = Nes::from_rom(&synth_nrom(16, 8)).expect("nrom builds");
+        assert!(!nes.zapper_temporal_light(), "A3 must default OFF");
+        nes.set_zapper(1, 100, 120, false);
+        // Toggling it on and back off must restore the default exactly.
+        nes.set_zapper_temporal_light(true);
+        assert!(nes.zapper_temporal_light());
+        nes.set_zapper_temporal_light(false);
+        assert!(!nes.zapper_temporal_light());
     }
 }

@@ -43,6 +43,54 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **The last two Holy Mapperel mapper residuals are closed — all 17 ROMs now
+  report `detail=0000`** (was 15/17). Both were single missing register states,
+  not bank-reachability defects.
+
+  **MMC1 software WRAM write-protect.** MMC1 has *two* PRG-RAM write-protect
+  layers and RustyNES modelled neither, reading and writing `$6000-$7FFF`
+  unconditionally: the `$E000` bit-4 disable common to every board, and SNROM's
+  second layer, where on a CHR-**RAM** board the CHR bank register's bit 4 is
+  wired to the RAM's other enable. That is exactly what Holy Mapperel measured —
+  `1000` on SJROM (one layer) versus `5000` on SNROM (both). The SNROM layer is
+  gated on `chr_is_ram`, since on a CHR-ROM board those bits are real CHR
+  banking; getting that wrong would break every SJROM/SUROM title, so it carries
+  its own negative-control test.
+
+  Holy Mapperel's README calls this a game-compatibility hazard and notes FCEUX
+  and PowerPak decline to model it, so it was validated before landing rather
+  than assumed: the commercial-ROM oracle passes **60/60** — including seven
+  battery-backed MMC1 saves (Zelda, Metroid, Final Fantasy, Mega Man 2,
+  Castlevania II, Ninja Gaiden, Kid Icarus), precisely the titles that corrupt if
+  the RAM enable is wrong — and the extended corpus **138/138**. No regression,
+  so it ships on by default.
+
+  **FME-7 open bus on the RAM-selected-but-disabled window.** Command `$8`
+  bit 6 = 1 with bit 7 = 0 drives neither the RAM nor the ROM chip, so the
+  databus floats; RustyNES fell through to the PRG-ROM bank and returned its tag
+  byte. Both fixes route through `Mapper::cpu_read_unmapped`, the trait's
+  existing "not wired to mapper-resident memory" contract, so the bus preserves
+  the open-bus latch instead of clobbering it.
+
+  Each was negative-controlled by decoding the ROM's on-screen result to ASCII
+  and confirming that reverting flips the digit back — the harness's `detail=`
+  string is a hand-maintained classification, not a measurement.
+
+- **Seven commercial-oracle audio rows had gone silently stale; re-blessed with
+  their provenance recorded.** They failed on `audio_fnv1a64` alone — frames,
+  cycles, sample counts and every framebuffer checkpoint byte-identical. The
+  MMC5 (×3) and VRC6 (×3) rows had been stale since **v2.1.6**, when
+  `VRC6_MIX_SCALE` and all three MMC5 level constants were recalibrated: those
+  snapshots were last blessed 2026-06-13, 28 days earlier. The FME-7 row moved
+  with this line's own 5B level calibration.
+
+  Root cause was structural — the suite needs `--features commercial-roms` **and**
+  local gitignored ROM dumps, so neither CI nor the default gate can run it, and
+  a golden vector nothing executes only accumulates drift. A new
+  `expansion_level_tripwire` unit test (which CI *does* run) pins every
+  expansion-audio level constant and fails with instructions naming both suites
+  that must be re-blessed in the same change.
+
 - Sunsoft 5B audio register file (`$07` mixer, `$08-$0A` volumes, envelope
   period/shape/output, live mix value) is now surfaced in the FME-7 mapper
   debug window (`Nes::mapper_info()`). Added while diagnosing the snapshot-window
@@ -269,6 +317,22 @@ cycle-accurate core later replaced.
     session.
 
 ### Added
+
+- **Zapper beam-relative light model (A3), default off.** The photodiode's
+  ~19-26-scanline hold is now modelled: `Nes::set_zapper_temporal_light` makes
+  the light bit a function of where the CRT beam is at the moment of the
+  `$4016`/`$4017` read — dark before the beam paints the aim row, lit for the
+  hold, dark once drained. The frame-granular model structurally cannot express
+  this; it returns one answer for the entire frame.
+
+  It holds **no extra state** — light is derived on demand from
+  `(framebuffer, aim, scanline)` — so it adds nothing to serialize and cannot
+  desync a save state or a netplay rollback, and both models share one aperture
+  test so they differ only in *when* they sample. It stays opt-in because no
+  redistributable pass/fail light-gun ROM exists to adjudicate it, and the
+  supported titles re-poll every frame and are satisfied by either model:
+  promoting it would change output with no oracle able to confirm the change is
+  an improvement.
 
 - **`ppu-idle-line-fast` cargo feature (default OFF)** — a second PPU dot-path
   specialization covering *idle lines* (post-render 240 + vblank 242..=260;

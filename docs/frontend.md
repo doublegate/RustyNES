@@ -1157,10 +1157,31 @@ the default (no-device) input path stays byte-identical:
   hardens detection against sub-pixel aim error and PPU edge noise while
   remaining a deterministic, pure function of the presented framebuffer (no
   save-state change). The finer ~19-26-scanline photodiode temporal hold is
-  below the per-frame sample resolution used here; supported light-gun titles
-  re-poll every frame, so frame-granular aperture sampling suffices. A full
-  per-dot temporal integration against the beam position is a documented future
-  refinement.
+  below the per-frame sample resolution of the default model; supported
+  light-gun titles re-poll every frame, so frame-granular aperture sampling
+  suffices for them.
+
+  **v2.2.3 A3 — the beam-relative temporal model (opt-in).** That refinement has
+  now landed as `Nes::set_zapper_temporal_light`, **default off**. With it on,
+  the light bit is derived from where the CRT beam is at the moment of the
+  `$4016`/`$4017` read rather than from the completed frame: dark before the
+  beam paints the aim row (this frame has not drawn it yet), lit for the
+  `ZAPPER_LIGHT_HOLD_SCANLINES` photodiode hold, dark once the capacitor
+  drains. The frame-granular model structurally cannot express this — it returns
+  the same answer at every scanline of the frame.
+
+  It holds **no extra state**: light is derived on demand from
+  `(framebuffer, aim, scanline)`, so it adds nothing to serialize and cannot
+  desync a save state or a netplay rollback. Both models share one aperture
+  test, so they can differ only in *when* they sample, never in what counts as
+  light. One consequence is physically correct rather than a compromise: the
+  aperture rows *below* the beam still hold the previous frame's pixels, which
+  is exactly what the sensor sees.
+
+  It stays opt-in because there is **no pass/fail light-gun test ROM** to
+  adjudicate it. Promoting it would change output with no oracle able to confirm
+  the change is an improvement — the project's standing bar (`docs/testing-strategy.md`)
+  is that an accuracy change is oracle-proven or default-off.
 
 **Browser save-states + movies (wasm)** (v1.4.0 Workstream E). The browser
 build reaches native QoL parity for two persistence features:

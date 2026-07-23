@@ -434,6 +434,10 @@ pub struct LockstepBus {
     /// the default + Four Score reads and the determinism contract are
     /// unaffected unless a device is explicitly attached.
     expansion_device: [Option<crate::input_device::InputDevice>; 2],
+    /// A3 (v2.2.3), default **off**: serve a Zapper's light bit from the
+    /// beam-relative temporal model instead of the frame-granular one. See
+    /// [`Bus::set_zapper_temporal_light`].
+    zapper_temporal_light: bool,
     /// Famicom built-in **microphone** signal (v2.2.0 "Capstone"). The hardwired
     /// second Famicom controller carries a push-to-talk microphone whose state is
     /// read on **`$4016` bit 2** (not `$4017`) — games such as *The Legend of
@@ -854,6 +858,7 @@ impl LockstepBus {
             vs_4016_bit1: false,
             vs_4016_bit1_dirty: false,
             expansion_device: [None, None],
+            zapper_temporal_light: false,
             famicom_mic: false,
             nt_mirroring_override: None,
             #[cfg(feature = "debug-hooks")]
@@ -1621,6 +1626,39 @@ impl LockstepBus {
             0 | 1 => self.controllers[port].set_buttons(buttons),
             _ => self.controllers34[port - 2].set_buttons(buttons),
         }
+    }
+
+    /// Attach (or replace) a non-standard overlay device on `port` (0 =
+    /// `$4016`, 1 = `$4017`). Pass `None` to unplug the device and return the
+    /// port to the standard controller / Four Score path (byte-identical).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `port` is not in `0..=1`.
+    /// A3 (v2.2.3): enable the **beam-relative** Zapper light model.
+    ///
+    /// Default **off**, which keeps the frame-granular model and therefore
+    /// byte-identical output on every shipped build.
+    ///
+    /// With it on, the light bit is derived from where the CRT beam is at the
+    /// moment of the `$4016`/`$4017` read rather than from the completed frame:
+    /// dark before the beam paints the aim row, lit while the photodiode holds
+    /// (~19-26 scanlines), dark once it drains. That is what real hardware
+    /// does, and the frame model structurally cannot express it — it returns
+    /// one answer for the whole frame.
+    ///
+    /// Opt-in rather than promoted because there is **no pass/fail light-gun
+    /// test ROM** to adjudicate it: the supported titles re-poll every frame and
+    /// are satisfied by either model, so promoting it would change output with
+    /// no oracle able to confirm the change is an improvement.
+    pub const fn set_zapper_temporal_light(&mut self, on: bool) {
+        self.zapper_temporal_light = on;
+    }
+
+    /// Whether the beam-relative Zapper light model is enabled (A3).
+    #[must_use]
+    pub const fn zapper_temporal_light(&self) -> bool {
+        self.zapper_temporal_light
     }
 
     /// Attach (or replace) a non-standard overlay device on `port` (0 =
@@ -2446,7 +2484,7 @@ impl LockstepBus {
     /// advancing the shift register. Four Score off → just
     /// `controllers[port].read()`; on → the multiplexed 24-read sequence
     /// (primary pad → secondary pad → signature → 1s).
-    const fn read_port(&mut self, port: usize) -> u8 {
+    fn read_port(&mut self, port: usize) -> u8 {
         // v1.6.0 Workstream A3 (`TAStudio` lag log): any read of $4016/$4017
         // counts as the game polling input this frame. Output-only; gated.
         #[cfg(feature = "debug-hooks")]
@@ -2458,6 +2496,16 @@ impl LockstepBus {
         // bits 3/4) instead of the standard D0 shift-register bit. The
         // standard controller is still strobed (in `commit_controller_strobe`)
         // so detaching the device restores byte-identical behavior.
+        // A3 (v2.2.3, opt-in): serve the Zapper's light bit from the
+        // beam-relative model. `read_at_scanline` takes `&self` and the PPU is a
+        // different field, so these are disjoint borrows. Off by default, so the
+        // shipped path below is byte-identical.
+        if self.zapper_temporal_light
+            && let Some(crate::input_device::InputDevice::Zapper(z)) = &self.expansion_device[port]
+        {
+            let sl = u16::try_from(self.ppu.scanline()).unwrap_or(0);
+            return z.read_at_scanline(self.ppu.framebuffer(), sl);
+        }
         if let Some(d) = &mut self.expansion_device[port] {
             return d.read();
         }
