@@ -37,7 +37,22 @@ def safe(value: object) -> str:
 
 def main() -> None:
     doc = json.load(sys.stdin)
-    threads = doc["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+
+    # A GraphQL response can carry `errors` with a null (or partial) `data`, and
+    # `gh api graphql` exits 0 in that case. Blindly indexing into `data` then
+    # dies with a bare KeyError/TypeError that hides the real cause (a bad token,
+    # a renamed field, a rate limit). Surface the API error instead.
+    if doc.get("errors"):
+        msgs = "; ".join(safe(e.get("message", e)) for e in doc["errors"])
+        raise SystemExit(f"GraphQL error(s): {msgs}")
+
+    pr = (((doc.get("data") or {}).get("repository") or {}).get("pullRequest"))
+    if pr is None:
+        raise SystemExit(
+            "GraphQL response has no repository/pullRequest data "
+            "(check the owner/repo/pr arguments and token scope)"
+        )
+    threads = (pr.get("reviewThreads") or {}).get("nodes") or []
     shown = 0
     for thread in threads:
         if thread["isResolved"]:

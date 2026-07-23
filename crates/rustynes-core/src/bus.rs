@@ -2531,7 +2531,23 @@ impl LockstepBus {
     }
 
     /// Side-effect-free companion to [`Self::read_port`] (debugger peek).
-    const fn peek_port(&self, port: usize) -> u8 {
+    fn peek_port(&self, port: usize) -> u8 {
+        // Mirror the temporal-Zapper branch in `read_port` so a debugger peek
+        // shows the same `$4016`/`$4017` byte the CPU would receive. Without
+        // this, with `zapper_temporal_light` on, `peek_port` fell through to the
+        // overlay's frame-granular `peek()` and could disagree with the live
+        // read. `peek` is non-mutating and all of `scanline()` / `framebuffer()`
+        // / `read_at_scanline` / `read_before_visible` take `&self`, so this is a
+        // pure read; it costs `peek_port` its `const` (try_from/match are not
+        // const here), which nothing relied on. Off by default → byte-identical.
+        if self.zapper_temporal_light
+            && let Some(crate::input_device::InputDevice::Zapper(z)) = &self.expansion_device[port]
+        {
+            return u16::try_from(self.ppu.scanline()).map_or_else(
+                |_| z.read_before_visible(),
+                |sl| z.read_at_scanline(self.ppu.framebuffer(), sl),
+            );
+        }
         if let Some(d) = &self.expansion_device[port] {
             return d.peek();
         }
