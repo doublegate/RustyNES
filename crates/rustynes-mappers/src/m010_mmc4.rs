@@ -54,7 +54,7 @@ pub struct Mmc4 {
     mirroring: Mirroring,
     /// 8 KiB WRAM at $6000-$7FFF (battery-backed on most MMC4 carts).
     /// T-60-003c (2026-05-17) — same root cause as the VRC2/4/6 WRAM
-    /// fix in `vrc2_vrc4.rs`. Fire Emblem Gaiden was stuck-at-uniform-
+    /// fix in `m022_vrc2.rs` / `m021_vrc4.rs`. Fire Emblem Gaiden was stuck-at-uniform-
     /// gray for the same reason (read its save magic from WRAM at
     /// boot, got 0, stalled in save-validation).
     prg_ram: Box<[u8]>,
@@ -168,7 +168,7 @@ impl Mapper for Mmc4 {
             // Fire Emblem Gaiden + Famicom Wars) include 8 KiB battery-
             // backed WRAM at $6000-$7FFF. Pre-fix returned 0; FE
             // Gaiden's save-validation path stalled. Same root cause
-            // as the VRC2/4/6 fix in vrc2_vrc4.rs / vrc6.rs.
+            // as the VRC2/4/6 fix in m022_vrc2.rs / m021_vrc4.rs / m024_vrc6.rs.
             0x6000..=0x7FFF => self.prg_ram[(addr - 0x6000) as usize % self.prg_ram.len()],
             0x8000..=0xFFFF => {
                 let off = self.prg_offset(addr);

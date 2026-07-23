@@ -22,7 +22,7 @@
 //! reloaded from the latch (8-bit mode reloads only the low 8 bits). Writing
 //! `$C000` with E set reloads all 16 bits regardless of mode.
 //!
-//! Reuses the VRC CPU-cycle IRQ family pattern (`vrc2_vrc4.rs`).
+//! Reuses the VRC CPU-cycle IRQ family pattern (`m021_vrc4.rs`).
 
 #![allow(
     clippy::cast_possible_truncation,

@@ -6,7 +6,7 @@
 //!
 //! | Bit | Chip          | Synth core (reused verbatim)               |
 //! |-----|---------------|--------------------------------------------|
-//! | 0   | VRC6          | [`crate::vrc6`] `Vrc6Pulse` / `Vrc6Saw`  |
+//! | 0   | VRC6          | [`crate::m024_vrc6`] `Vrc6Pulse` / `Vrc6Saw`  |
 //! | 1   | VRC7 (OPLL)   | [`rustynes_apu::Opll`]                      |
 //! | 2   | FDS           | [`crate::fds`] `FdsAudio`                   |
 //! | 3   | MMC5          | [`crate::m005_mmc5`] `Mmc5Audio`                 |
@@ -44,8 +44,8 @@
 use crate::fds::FdsAudio;
 use crate::m005_mmc5::{MMC5_MIX_BIAS, MMC5_PCM_SCALE, MMC5_PULSE_SCALE, Mmc5Audio};
 use crate::m019_namco163::Namco163Audio;
+use crate::m024_vrc6::{VRC6_MIX_SCALE, Vrc6Pulse, Vrc6Saw};
 use crate::m069_sunsoft_fme7::Sunsoft5BAudio;
-use crate::vrc6::{VRC6_MIX_SCALE, Vrc6Pulse, Vrc6Saw};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -59,7 +59,7 @@ const EXP_5B: u8 = 0x20;
 
 /// VRC6 audio sub-state: the two pulse channels + sawtooth + the `$9003`
 /// global control byte (halt + frequency-scale shift). Mirrors the live
-/// state the [`crate::vrc6`] `Vrc6` mapper keeps; the clock/output math
+/// state the [`crate::m024_vrc6`] `Vrc6` mapper keeps; the clock/output math
 /// is reused verbatim from that mapper's channel cores.
 #[derive(Default)]
 struct Vrc6Exp {

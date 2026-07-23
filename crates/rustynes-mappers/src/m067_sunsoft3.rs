@@ -31,7 +31,7 @@
 //! `$C800` write toggle so the next `$C800` write is the high byte. Writes to
 //! `$D800` do NOT acknowledge the IRQ; only `$8000` (and its mirrors) ack.
 //!
-//! Reuses the CPU-cycle IRQ family pattern (`vrc2_vrc4.rs`, `m073_vrc3.rs`).
+//! Reuses the CPU-cycle IRQ family pattern (`m021_vrc4.rs`, `m073_vrc3.rs`).
 
 #![allow(
     clippy::cast_possible_truncation,

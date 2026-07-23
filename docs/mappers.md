@@ -453,7 +453,7 @@ A12 falling-edge IRQ + per-board outer-bank transform), the Sachen 8259 A/B/C
 2 KiB-CHR variants (141/138/139 — siblings of the existing 8259D mapper 137),
 and discrete unlicensed / FDS-conversion / multicart boards
 (42/50 with CPU-cycle IRQs, 46/51/57/104/120/290/301 hook-free). Mapper 35 is
-the J.Y. Company single-game "extended" board folded into `jy_asic.rs` (same
+the J.Y. Company single-game "extended" board folded into `m035_jy_asic.rs` (same
 silicon as 209). The v1.7.0 batch ports the next reusable-ASIC
 BMC/pirate cores: the Waixing **FK23C** 8/16 Mbit BMC (176, `$5000` config +
 MMC3 surface + A12 IRQ), **COOLBOY / MINDKIDS** (268, MMC3 + four `$6000` outer

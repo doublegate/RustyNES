@@ -32,7 +32,7 @@
 //! the 16-bit reload value into the counter. `$9005`/`$9006` set the reload
 //! value only (note `$9005` is the HIGH byte).
 //!
-//! Reuses the CPU-cycle IRQ family pattern (`vrc2_vrc4.rs`, `m073_vrc3.rs`).
+//! Reuses the CPU-cycle IRQ family pattern (`m021_vrc4.rs`, `m073_vrc3.rs`).
 
 #![allow(
     clippy::cast_possible_truncation,

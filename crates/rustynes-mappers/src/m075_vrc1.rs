@@ -7,7 +7,7 @@
 //! different registers.
 //!
 //! Unlike VRC2/VRC4/VRC6/VRC7 there is no IRQ counter and no on-cart audio;
-//! see `vrc2_vrc4.rs`, `m073_vrc3.rs`, `vrc6.rs`, `m085_vrc7.rs` for those.
+//! see `m022_vrc2.rs`, `m021_vrc4.rs`, `m073_vrc3.rs`, `m024_vrc6.rs`, `m085_vrc7.rs` for those.
 //!
 //! See `docs/mappers.md` §Mapper coverage matrix.
 

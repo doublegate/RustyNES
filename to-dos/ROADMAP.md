@@ -332,8 +332,9 @@ master-clock work (current AccuracyCoin **100.00%**). They are not live TODOs.
   WRAM read/write paths. Reads returned 0; writes silently dropped.
   Konami's save-bearing titles stalled in save-validation. Fixes:
   - commit `895e426`: VRC2/VRC4/VRC6 8 KiB `prg_ram` field added +
-    read/write paths in `crates/rustynes-mappers/src/vrc2_vrc4.rs` +
-    `vrc6.rs`. Flipped Esper Dream 2, Mouryou Senki Madara,
+    read/write paths in `crates/rustynes-mappers/src/m022_vrc2.rs` +
+    `m021_vrc4.rs` +
+    `m024_vrc6.rs`. Flipped Esper Dream 2, Mouryou Senki Madara,
     Ganbare Goemon 2.
   - commit `42f31ff`: MMC4 same pattern in
     `crates/rustynes-mappers/src/mmc2_mmc4.rs`. Flipped Fire Emblem Gaiden.

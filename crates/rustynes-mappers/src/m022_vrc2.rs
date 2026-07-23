@@ -5,11 +5,11 @@
 //! address lines to a different pair of CPU address pins, so the same write
 //! reaches a different register depending on the board. That rewiring is the
 //! only real difference between the mapper numbers, and it is isolated in
-//! [`vrc_a_bits`] (duplicated in `vrc4.rs`, as the crate duplicates its
+//! [`vrc_a_bits`] (duplicated in `m021_vrc4.rs`, as the crate duplicates its
 //! other small shared helpers rather than coupling board modules).
 //!
 //! VRC2 exposes a one-byte CHR latch and, unlike VRC4, has **no IRQ counter**
-//! and no on-cart audio. Its siblings: `vrc4.rs`, `m073_vrc3.rs`,
+//! and no on-cart audio. Its siblings: `m021_vrc4.rs`, `m073_vrc3.rs`,
 //! `m024_vrc6.rs`, `m085_vrc7.rs`, `m075_vrc1.rs`.
 //!
 //! See `docs/mappers.md` §Mapper coverage matrix.

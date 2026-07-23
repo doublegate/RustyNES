@@ -1164,7 +1164,7 @@ impl Mapper for Unrom512M30 {
         // Mask the register indices to their live-invariant widths so a
         // corrupted / hand-edited save-state can't seed an out-of-range value
         // (mirrors the write-latch masks; same defensive treatment as the
-        // JY-ASIC `chr_latch` clamp in `jy_asic.rs`). The read paths already
+        // JY-ASIC `chr_latch` clamp in `m035_jy_asic.rs`). The read paths already
         // wrap with `% count`, so this is belt-and-suspenders, not a panic fix.
         self.prg_bank = data[1] & 0x1F;
         self.chr_bank = data[2] & 0x03;

@@ -163,7 +163,7 @@ fn level_db_apu() {
 fn level_db_vrc6a() {
     // VRC6a (Akumajou Densetsu pinout): a full-volume VRC6 square is ~1.5× the
     // 2A03 pulse (Mesen2 weights VRC6 `output*15` internally × `*5` mixer =
-    // `15*15*5/746.9 ≈ 1.506`). See `VRC6_MIX_SCALE` in `vrc6.rs`.
+    // `15*15*5/746.9 ≈ 1.506`). See `VRC6_MIX_SCALE` in `m024_vrc6.rs`.
     assert_ratio("db_vrc6a.nes", 1.506, 0.04);
 }
 

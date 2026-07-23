@@ -35,14 +35,12 @@ extern crate std;
 
 use alloc::{boxed::Box, string::ToString};
 
-mod bandai_fcg;
 mod bmc_simple;
 mod cartridge;
 mod fds;
 mod header;
 mod homebrew_boards;
 mod jaleco_discrete;
-mod jy_asic;
 mod kaiser;
 mod m000_nrom;
 mod m001_mmc1;
@@ -55,12 +53,16 @@ mod m009_mmc2;
 mod m010_mmc4;
 mod m011_color_dreams;
 mod m013_cprom;
+mod m016_bandai_fcg;
 mod m018_jaleco_ss88006;
 mod m019_namco163;
+mod m021_vrc4;
 mod m022_vrc2;
+mod m024_vrc6;
 mod m032_irem_g101;
 mod m033_taito_tc0190;
 mod m034_bnrom_nina001;
+mod m035_jy_asic;
 mod m036_txc_policeman;
 mod m038_bitcorp38;
 mod m039_subor39;
@@ -86,6 +88,7 @@ mod m080_taito_x1_005;
 mod m082_taito_x1_017;
 mod m085_vrc7;
 mod m087_jaleco87;
+mod m088_namco118;
 mod m089_sunsoft2;
 mod m093_sunsoft3r;
 mod m094_un1rom;
@@ -120,7 +123,6 @@ mod m513_sachen_9602;
 mod mapper;
 mod mmc3_clones;
 mod multicart_discrete;
-mod namco118;
 mod nsf;
 mod nsf_expansion;
 mod ntdec;
@@ -128,11 +130,8 @@ mod sachen_8259;
 mod sachen_discrete;
 mod tier;
 mod unif;
-mod vrc4;
-mod vrc6;
 mod waixing;
 
-pub use bandai_fcg::{BandaiFcg, FcgVariant};
 pub use bmc_simple::{new_m164, new_m261, new_m286, new_m289, new_m320, new_m336, new_m349};
 pub use cartridge::{Cartridge, ConsoleType, Mirroring, Region, RomError, VsPpuPalette, VsPpuType};
 pub use fds::{
@@ -142,7 +141,6 @@ pub use fds::{
 pub use header::{Header, parse_header, serialize_header};
 pub use homebrew_boards::{Action53M28, Cufrom29, Gtrom111, Inl31, MagicFloor218, Unrom512M30};
 pub use jaleco_discrete::{Jaleco72, Jaleco86, Jaleco92, Jaleco101, Jaleco140};
-pub use jy_asic::{JyAsic, JyBoard};
 pub use kaiser::{new_m56, new_m142, new_m303, new_m305, new_m306, new_m312};
 pub use m000_nrom::Nrom;
 pub use m001_mmc1::Mmc1;
@@ -155,12 +153,16 @@ pub use m009_mmc2::Mmc2;
 pub use m010_mmc4::Mmc4;
 pub use m011_color_dreams::ColorDreams;
 pub use m013_cprom::Cprom;
+pub use m016_bandai_fcg::{BandaiFcg, FcgVariant};
 pub use m018_jaleco_ss88006::JalecoSs88006;
 pub use m019_namco163::Namco163;
+pub use m021_vrc4::Vrc4;
 pub use m022_vrc2::Vrc2;
+pub use m024_vrc6::Vrc6;
 pub use m032_irem_g101::IremG101;
 pub use m033_taito_tc0190::TaitoTc0190;
 pub use m034_bnrom_nina001::{M34, M34Variant};
+pub use m035_jy_asic::{JyAsic, JyBoard};
 pub use m036_txc_policeman::Txc36;
 pub use m038_bitcorp38::Bitcorp38;
 pub use m039_subor39::Subor39;
@@ -186,6 +188,7 @@ pub use m080_taito_x1_005::TaitoX1005;
 pub use m082_taito_x1_017::TaitoX1017;
 pub use m085_vrc7::Vrc7;
 pub use m087_jaleco87::Jaleco87;
+pub use m088_namco118::{Namco118, Namco118Board};
 pub use m089_sunsoft2::Sunsoft2;
 pub use m093_sunsoft3r::Sunsoft3r;
 pub use m094_un1rom::Un1rom94;
@@ -232,7 +235,6 @@ pub use multicart_discrete::{
     Multicart231, Multicart233, new_m46, new_m51, new_m57, new_m104, new_m120, new_m204, new_m290,
     new_m299, new_m301,
 };
-pub use namco118::{Namco118, Namco118Board};
 pub use nsf::{Nsf, NsfMapper, is_nsf, parse_nsf};
 pub use ntdec::{Ntdec63, Ntdec81, Ntdec174, Ntdec2722M40, NtdecAsder112, new_m193, new_m221};
 pub use sachen_8259::{Sachen8259, Sachen8259M137, Sachen8259Variant};
@@ -242,8 +244,6 @@ pub use sachen_discrete::{
 };
 pub use tier::{MapperTier, mapper_tier};
 pub use unif::{UnifError, UnifImage, board_to_mapper, parse_unif, unif_to_ines};
-pub use vrc4::Vrc4;
-pub use vrc6::Vrc6;
 pub use waixing::{Waixing178, Waixing242, WaixingFs304M162, new_m253};
 
 /// Returns the crate version string.

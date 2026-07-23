@@ -1,6 +1,6 @@
 //! Namcot 3446 (mapper 76).
 //!
-//! A cut-down relative of the Namco 118 (`namco118.rs`): the same register-pair
+//! A cut-down relative of the Namco 118 (`m088_namco118.rs`): the same register-pair
 //! protocol -- write a register index to the even address, then its value to
 //! the odd one -- but with a reduced bank layout and no IRQ. It is the shape
 //! Namco used for cheaper cartridges before the MMC3-class boards took over.
