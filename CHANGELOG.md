@@ -14,6 +14,33 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Performance
+
+- **The specialized PPU fast dot path is now the default (`~11%` faster on
+  rendering-heavy content).** `Ppu::tick` is the emulator's hottest function
+  (32.8% of frame self-time in a fresh profile of the 7-ROM training corpus);
+  v2.1.8 added `tick_visible_render_fast`, a straight-line handler for the
+  common undisturbed visible background dot, and shipped it **off** as that
+  roadmap's highest-risk item, pending "maintainer review and a clean-host
+  Criterion confirmation". Both conditions are now met, so it defaults on.
+
+  Clean-host `full_frame`: `nes_run_frame_nestest` **4.4343 ms → 3.9331 ms
+  (−11.3%)**; the rendering-disabled `flowing_palette` workload is unchanged
+  (−0.07%, noise — its guard bails at `rendering_enabled()`). This reproduces
+  v2.1.8's interleaved +12.3% measurement by a different method.
+
+  **Byte-identical, and not newly so:** `fast_dotloop_diff.rs` has compared both
+  paths' framebuffer + palette-index framebuffer + audio + CPU-cycle count +
+  full core snapshot *every frame* since v2.1.8. Re-verified with the new
+  default across the whole `--features test-roms` suite — **2219 passed / 0
+  failed** (the pre-promotion 2218 plus exactly the one config test added
+  alongside; no test changed its verdict); AccuracyCoin 141/141, nestest
+  0-diff, `visual_regression` and the APU oracles unmoved.
+
+  Until now the win was **unreachable in practice**: `Nes::set_fast_dotloop` had
+  no callers outside the core and its tests, so no shipped frontend
+  configuration could turn it on.
+
 ### Fixed
 
 - **Run-ahead cost three AccuracyCoin tests.** The PPU save-state carried
@@ -50,6 +77,16 @@ cycle-accurate core later replaced.
   timeline from satisfying the fast dot path's staleness guard under another.
 
 ### Added
+
+- Desktop setting `[emulation] fast_dotloop` (Settings → Accuracy, labelled
+  "performance, not accuracy") as an escape hatch for the fast-dot-path
+  promotion under **Performance** above — there is no accuracy reason to
+  disable it. Defaulted through `default_fast_dotloop()`
+  rather than `#[serde(default)]` so an existing on-disk config loads as `true`
+  instead of silently opting the user out of an ~11% speedup; pinned by
+  `emulation_fast_dotloop_defaults_on_for_pre_v2_2_3_configs`. The libretro core
+  and the mobile bridge inherit the win from the core default and deliberately
+  gain no new option — neither exposes a comparable knob today.
 
 - **Save-state schema audit as a standing test**
   (`crates/rustynes-test-harness/tests/snapshot_schema_audit.rs`). Every field

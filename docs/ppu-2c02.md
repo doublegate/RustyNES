@@ -142,15 +142,17 @@ the default keeps both deterministic (all-zero).
 - **Dots 321..=336** — first two BG tiles of next scanline.
 - **Dots 337..=340** — two extra NT fetches (purpose debated; preserve them so MMC5's frame-end detection works).
 
-### Fast dot path vs exact dot path (v2.1.8 A1, opt-in, default-OFF)
+### Fast dot path vs exact dot path (v2.1.8 A1; default since v2.2.3)
 
 `Ppu::tick` is the emulator's single hottest function (~46% of frame self-time;
-`docs/performance.md`). Behind a **default-OFF runtime knob**
-(`Nes::set_fast_dotloop`) the per-dot FSM splits into two paths:
+`docs/performance.md`). Behind a runtime knob (`Nes::set_fast_dotloop`,
+**default ON since v2.2.3**; default-OFF for v2.1.8 .. v2.2.2) the per-dot FSM
+splits into two paths:
 
-- **Exact path** (the shipped default, and the always-correct fallback): the
-  fully-general per-dot body described throughout this document — every event
-  and quirk checked on every dot.
+- **Exact path** (the always-correct fallback, and the shipped default through
+  v2.2.2): the fully-general per-dot body described throughout this document —
+  every event and quirk checked on every dot. Still taken for every dot the
+  guard below does not admit, which is ~31% of them.
 - **Fast path** (`Ppu::tick_visible_render_fast`): a specialized straight-line
   handler for the *common clean* dot — a **visible scanline, dots `1..=256`,
   rendering stably enabled, and no sub-dot disturbance** (no `$2006` copy-V or

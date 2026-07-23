@@ -969,18 +969,38 @@ pub struct Ppu {
 
     /// v2.1.8 A1 — enable the specialized straight-line per-dot fast path for
     /// the common visible-scanline BG-render window (see [`Self::tick`] and
-    /// `docs/performance.md`). A **default-OFF runtime knob** (like
-    /// `extra_scanlines` / `oam_decay`): when `false` (the shipped default)
-    /// the tick FSM takes the fully-general per-dot path and the frame is
-    /// byte-identical to a build without this field. When `true`, visible
-    /// scanline dots `1..=256` whose per-dot state is provably "undisturbed"
-    /// (no pending `$2006` copy-V, no PPUMASK write-delay, no PPUDATA state
-    /// machine in flight, no armed/pending OAM-corruption, warm scanline
-    /// classification cache, stable rendering-enable) are dispatched to
+    /// `docs/performance.md`). When `true`, visible scanline dots `1..=256`
+    /// whose per-dot state is provably "undisturbed" (no pending `$2006`
+    /// copy-V, no PPUMASK write-delay, no PPUDATA state machine in flight, no
+    /// armed/pending OAM-corruption, warm scanline classification cache,
+    /// stable rendering-enable) are dispatched to
     /// [`Self::tick_visible_render_fast`], which executes the identical
     /// helper sequence with the statically-dead event/bookkeeping branches
     /// pruned. Any disturbance drops instantly back to the exact path.
     /// **Not serialized** — a frontend/config knob re-applied on restore.
+    ///
+    /// **Default `true` since the v2.2.3 performance pass (was default-OFF for
+    /// v2.1.8 .. v2.2.2).** A1 shipped this off deliberately: it was that
+    /// roadmap's highest-risk item, and keeping it off left the shipped build
+    /// byte-identical while the differential test and the oracle suites proved
+    /// correctness. Both conditions A1 named for promotion are now met —
+    ///
+    /// * **byte-identity**, held continuously since v2.1.8 by
+    ///   `crates/rustynes-test-harness/tests/fast_dotloop_diff.rs`, which runs
+    ///   a ROM corpus through BOTH paths and asserts identical framebuffer,
+    ///   palette-index framebuffer, audio, CPU-cycle count and full core
+    ///   snapshot **every frame** (so the fast path has never been unproven —
+    ///   only unshipped); and
+    /// * **a clean-host Criterion confirmation** of the win: `full_frame`
+    ///   `nes_run_frame_nestest` 4.4343 ms -> 3.9331 ms, **-11.3%**, on a quiet
+    ///   host, reproducing A1's interleaved +12.3% measurement. The
+    ///   rendering-disabled `flowing_palette` workload is unchanged (-0.07%,
+    ///   noise) because its guard bails at `rendering_enabled()`.
+    ///
+    /// Promotion changes the *default*, not the behaviour: the frame the fast
+    /// path produces is the frame the exact path produces, by construction and
+    /// by test. `false` still selects the fully-general per-dot path and
+    /// remains the fallback for any future doubt.
     pub(crate) fast_dotloop: bool,
 
     /// Optional per-PPU-dot state trace (Session-10 observability
@@ -1196,7 +1216,11 @@ impl Ppu {
             frame_ntsc_phase: 0,
             extra_scanlines: 0,
             extra_lines_remaining: 0,
-            fast_dotloop: false,
+            // v2.2.3 performance pass: promoted to the default (was `false`
+            // through v2.2.2). Byte-identical to the exact path by
+            // construction and by `fast_dotloop_diff.rs`; -11.3% on the
+            // rendering-heavy `full_frame` bench. See the field's rustdoc.
+            fast_dotloop: true,
             #[cfg(feature = "ppu-state-trace")]
             state_trace: None,
             #[cfg(feature = "hd-pack")]
@@ -1289,8 +1313,10 @@ impl Ppu {
     }
 
     /// v2.1.8 A1 — enable/disable the specialized visible-scanline fast dot
-    /// path. Default OFF (byte-identical to a build without the field). See
-    /// [`Self::fast_dotloop`] and `docs/performance.md`.
+    /// path. **Default ON since the v2.2.3 performance pass** (was OFF through
+    /// v2.2.2); either setting produces the identical frame, so this selects a
+    /// code path, not a behaviour. See [`Self::fast_dotloop`] and
+    /// `docs/performance.md`.
     pub const fn set_fast_dotloop(&mut self, enabled: bool) {
         self.fast_dotloop = enabled;
     }
@@ -3169,7 +3195,8 @@ impl Ppu {
     /// v2.1.8 A1 — the specialized straight-line body for a "clean" visible
     /// BG-render dot: a visible scanline, `dot` in `1..=256`, rendering stably
     /// enabled, and no sub-dot disturbance in flight. Dispatched from
-    /// [`Self::tick`] behind the default-OFF [`Self::fast_dotloop`] guard.
+    /// [`Self::tick`] behind the [`Self::fast_dotloop`] guard (default ON
+    /// since v2.2.3).
     ///
     /// This executes the *exact same* helper sequence the general per-dot path
     /// runs for such a dot — in the same order — with every event and

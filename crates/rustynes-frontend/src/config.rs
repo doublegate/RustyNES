@@ -1670,10 +1670,16 @@ pub struct EnhancementsConfig {
 ///
 /// Unlike [`EnhancementsConfig`] (non-accuracy "improvement" modes that are never
 /// applied while the oracle runs), these make emulation *more* faithful to real
-/// hardware and DO feed the deterministic core when enabled. Every field is
-/// off/neutral by default, so a pre-v2.1.4 config (no `[emulation]` section) loads
-/// **byte-identical** to today's behaviour.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+/// hardware and DO feed the deterministic core when enabled. Every *accuracy*
+/// field is off/neutral by default, so a pre-v2.1.4 config (no `[emulation]`
+/// section) loads **byte-identical** to today's behaviour.
+///
+/// [`Self::fast_dotloop`] is the one field that is NOT an accuracy knob: it
+/// selects a PPU code path that produces the identical frame either way, and it
+/// defaults **on**. It lives here because it is pushed into the core through the
+/// same `apply_ppu_hardware_config` path as the rest, not because it changes
+/// emulation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 // These are independent, orthogonal accuracy toggles (each maps to a distinct
 // core knob), not a state machine — a bitfield/enum would only obscure the
 // serde config surface. v2.1.7 P5 pushed the count past the 3-bool lint.
@@ -1716,6 +1722,50 @@ pub struct EmulationConfig {
     /// Ignored when randomization is off.
     #[serde(default)]
     pub power_on_ram_seed: u64,
+
+    /// v2.1.8 A1 / v2.2.3 — use the specialized visible-scanline fast dot path
+    /// (`Nes::set_fast_dotloop`). **On by default**, and unlike every other
+    /// field here it is **not an accuracy knob**: the fast path runs the same
+    /// helper sequence as the general path with statically-dead branches
+    /// pruned, so it emits the identical framebuffer, audio and cycle count —
+    /// pinned bit-for-bit every frame by `fast_dotloop_diff`. It is ~11% faster
+    /// on rendering-heavy content and neutral when rendering is disabled.
+    ///
+    /// Exposed as a setting only as an escape hatch: if a future change ever
+    /// made the two paths disagree, turning this off selects the
+    /// fully-general per-dot path without a rebuild. There is no accuracy
+    /// reason to disable it.
+    ///
+    /// Defaulted through `default_fast_dotloop` rather than `#[serde(default)]`
+    /// so an existing config written before this key existed loads as `true`
+    /// (the shipped default) instead of silently opting the user out.
+    #[serde(default = "default_fast_dotloop")]
+    pub fast_dotloop: bool,
+}
+
+/// Serde + [`Default`] value for [`EmulationConfig::fast_dotloop`] — `true`.
+///
+/// A named function because `bool`'s `Default` is `false`, which would both
+/// deserialize a pre-v2.2.3 config to the wrong value and make
+/// `EmulationConfig::default()` disagree with the core's own default.
+const fn default_fast_dotloop() -> bool {
+    true
+}
+
+impl Default for EmulationConfig {
+    /// Hand-written rather than derived: every accuracy field is `false`/`0`
+    /// (the byte-identical baseline), but [`Self::fast_dotloop`] must default
+    /// to `true` to match the core, which `#[derive(Default)]` cannot express.
+    fn default() -> Self {
+        Self {
+            oam_decay: false,
+            ppu_oamaddr_corruption: false,
+            blargg_power_up_palette: false,
+            randomize_power_on_ram: false,
+            power_on_ram_seed: 0,
+            fast_dotloop: default_fast_dotloop(),
+        }
+    }
 }
 
 /// `[retroachievements]` section (v2.7.0).
@@ -2514,6 +2564,43 @@ debug_overlay = "Backquote"
         let s = toml::to_string_pretty(&cfg).unwrap();
         let back: Config = toml::from_str(&s).unwrap();
         assert_eq!(cfg, back);
+    }
+
+    #[test]
+    fn emulation_fast_dotloop_defaults_on_for_pre_v2_2_3_configs() {
+        // The subtle case this guards: `fast_dotloop` is the one `[emulation]`
+        // field whose default is `true`, so a plain `#[serde(default)]` (bool ->
+        // false) would silently opt every existing user OUT of the fast path on
+        // upgrade — a ~11% slowdown, invisible because both paths render
+        // identically. Cover all three shapes an on-disk config can take.
+
+        // 1. A pre-v2.2.3 `[emulation]` section that predates the key.
+        let older: EmulationConfig = toml::from_str("oam_decay = true\n").unwrap();
+        assert!(older.fast_dotloop, "missing key must default ON");
+        assert!(older.oam_decay, "sibling keys still parse");
+
+        // 2. No `[emulation]` section at all (pre-v2.1.4).
+        let absent: EmulationConfig = toml::from_str("").unwrap();
+        assert!(absent.fast_dotloop, "empty section must default ON");
+
+        // 3. An explicit opt-out must survive a round trip — the escape hatch
+        //    is worthless if it silently reverts.
+        let off = EmulationConfig {
+            fast_dotloop: false,
+            ..EmulationConfig::default()
+        };
+        let back: EmulationConfig = toml::from_str(&toml::to_string_pretty(&off).unwrap()).unwrap();
+        assert!(!back.fast_dotloop, "explicit opt-out must round-trip");
+
+        // 4. `Default` must agree with serde, and with the core's own default.
+        assert!(EmulationConfig::default().fast_dotloop);
+        // The accuracy knobs stay off — promotion must not have disturbed them.
+        let d = EmulationConfig::default();
+        assert!(!d.oam_decay);
+        assert!(!d.ppu_oamaddr_corruption);
+        assert!(!d.blargg_power_up_palette);
+        assert!(!d.randomize_power_on_ram);
+        assert_eq!(d.power_on_ram_seed, 0);
     }
 
     #[test]

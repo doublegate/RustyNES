@@ -2169,16 +2169,19 @@ impl Nes {
     /// common "clean" visible BG-render dots (visible scanline, dots `1..=256`,
     /// rendering stably enabled, no sub-dot disturbance) to a straight-line
     /// handler that runs the identical helper sequence with the statically-dead
-    /// event branches pruned. **Off by default** and **byte-identical** to a
-    /// build without it — proven bit-for-bit by the differential test
-    /// (`fast_dotloop_diff`) and the full `AccuracyCoin` / visual-regression /
-    /// nestest oracle. A frontend/config knob, NOT part of the save-state.
+    /// event branches pruned. **On by default since v2.2.3** (OFF through
+    /// v2.2.2) and **byte-identical** to the exact path — proven bit-for-bit
+    /// every frame by the differential test (`fast_dotloop_diff`) and the full
+    /// `AccuracyCoin` / visual-regression / nestest oracle, and measured at
+    /// **-11.3%** on the rendering-heavy `full_frame` bench. Setting it `false`
+    /// selects the fully-general per-dot path and remains the fallback. A
+    /// frontend/config knob, NOT part of the save-state.
     pub const fn set_fast_dotloop(&mut self, enabled: bool) {
         self.bus.set_fast_dotloop(enabled);
     }
 
     /// v2.1.8 A1 — whether the visible-scanline fast dot path is enabled
-    /// (`false` = default, byte-identical to a build without it).
+    /// (`true` = default since v2.2.3; both settings produce identical frames).
     #[must_use]
     pub const fn fast_dotloop(&self) -> bool {
         self.bus.fast_dotloop()

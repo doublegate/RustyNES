@@ -5654,6 +5654,12 @@ impl App {
             nes.set_ppu_revision(revision);
             nes.set_power_up_palette(palette);
             nes.set_power_on_ram(ram);
+            // v2.2.3 — the specialized PPU fast dot path. Unlike the three
+            // knobs above this is a performance selector, not an accuracy
+            // model: both paths emit the identical frame (pinned every frame
+            // by `fast_dotloop_diff`), so pushing it here is purely about
+            // honouring the user's escape hatch. Default on.
+            nes.set_fast_dotloop(self.config.emulation.fast_dotloop);
         }
     }
 
@@ -9256,6 +9262,13 @@ impl ApplicationHandler<AppEvent> for App {
                 // into the core under the emu lock. Off (default) = byte-identical.
                 if settings.oam_decay {
                     self.apply_oam_decay();
+                }
+                // v2.2.3 — PPU fast-dot-path toggle live-apply. Routed through
+                // `apply_ppu_hardware_config` (which pushes the whole
+                // `[emulation]` PPU knob set); re-pushing the other three is
+                // idempotent. Either setting emits the identical frame.
+                if settings.fast_dotloop {
+                    self.apply_ppu_hardware_config();
                 }
                 // v1.0.0 — act on a Save-States manager Save / Load click this
                 // frame, routing through the existing slot handlers; a Save

@@ -468,13 +468,56 @@ the vast majority of the time, so the representative effect is the +12.3% figure
 Criterion `full_frame` baselines this pass (stock, same host): `nes_run_frame_nestest`
 ~4.26 ms, `nes_run_frame_flowing_palette` ~2.55 ms, `ppu_tick_one_frame` ~541 µs.
 
-**Decision: shipped default-OFF (opt-in).** The optimization is a pure,
+**Decision (v2.1.8): shipped default-OFF (opt-in).** The optimization is a pure,
 byte-identical speedup, so per this file's convention it *could* be the default.
 It is nonetheless kept **default-OFF** for this cut — it is the roadmap's single
 highest-risk item, and shipping it off keeps the default build unchanged and
 byte-identical while the differential test + oracle prove correctness and the
 A/B proves the win. Recommended for promotion to default after maintainer review
 and a clean-host Criterion confirmation.
+
+**Decision (v2.2.3): PROMOTED TO DEFAULT.** Both conditions the v2.1.8 decision
+named are now met, so the knob defaults to ON and the shipped build takes the
+fast path.
+
+*Clean-host Criterion confirmation* (quiet host, stock `cargo bench -p
+rustynes-core --bench full_frame`, no concurrent build load — the contamination
+that forced v2.1.8's interleaved harness):
+
+| Workload (rendering state) | exact (OFF) | fast (ON) | Δ |
+|---|---|---|---|
+| `nes_run_frame_nestest` (rendering **enabled**) | 4.4343 ms | 3.9331 ms | **−11.3%** |
+| `nes_run_frame_flowing_palette` (rendering **disabled**) | 2.6741 ms | 2.6723 ms | −0.07% (noise) |
+
+This independently reproduces v2.1.8's interleaved +12.3% / neutral pair on a
+different measurement method, and clears the standing **>3% + byte-identical**
+bar. The rendering-disabled demo is unchanged because its guard bails at
+`rendering_enabled()`; real games render nearly all the time, so −11.3% is the
+representative figure.
+
+*Byte-identity* was never in question and is not newly asserted here: it has been
+held continuously since v2.1.8 by `fast_dotloop_diff.rs`, which runs both paths
+over the corpus and compares framebuffer + palette-index framebuffer + audio +
+CPU-cycle count + full core snapshot **every frame**. Promotion was re-verified
+against the whole `--features test-roms` suite with the new default in place:
+**2218 passed / 0 failed**, identical to the pre-promotion tally — AccuracyCoin
+141/141, nestest 0-diff, `visual_regression` and the APU oracles unmoved.
+
+*User surface.* The desktop frontend exposes it as
+`[emulation] fast_dotloop` (Settings → Accuracy, labelled "performance, not
+accuracy"), defaulted through `default_fast_dotloop()` rather than
+`#[serde(default)]` so an existing on-disk config loads as `true` instead of
+silently opting the user out — pinned by
+`emulation_fast_dotloop_defaults_on_for_pre_v2_2_3_configs`. It is an escape
+hatch, not a tuning knob: there is no accuracy reason to turn it off.
+`rustynes-libretro` and `rustynes-mobile` inherit the win from the core default
+and deliberately gain **no** new option — neither exposes any comparable knob
+today (libretro's `CoreOptions` impl is empty), and adding each crate's first one
+for a byte-identical escape hatch is not justified.
+
+**Prior to this, the win was unreachable in practice:** `Nes::set_fast_dotloop`
+had zero callers outside the core and its tests, so no shipped configuration of
+any frontend could enable it.
 
 ### v1.4.0 Workstream F — measure-first micro-opt pass (core)
 

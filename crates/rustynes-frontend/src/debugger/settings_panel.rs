@@ -129,6 +129,10 @@ pub struct SettingsApply {
     /// the new `[emulation] oam_decay` into the core under the emu lock. Off (the
     /// default) is byte-identical to a decay-free core.
     pub oam_decay: bool,
+    /// v2.2.3 — the PPU fast-dot-path toggle changed; the app re-pushes the
+    /// `[emulation]` PPU knobs into the core under the emu lock. Both settings
+    /// emit the identical frame, so this only honours the user's escape hatch.
+    pub fast_dotloop: bool,
 }
 
 impl SettingsApply {
@@ -153,6 +157,7 @@ impl SettingsApply {
             || self.shader_stack
             || self.palette_select
             || self.oam_decay
+            || self.fast_dotloop
     }
 }
 
@@ -1816,6 +1821,29 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
         save_config(config);
     }
 
+    // v2.2.3 — the specialized PPU fast dot path. NOT an accuracy toggle: both
+    // paths emit the identical framebuffer/audio/cycle count (pinned every frame
+    // by `fast_dotloop_diff`), so this is a performance selector with an escape
+    // hatch, defaulted on. Grouped under Accuracy because it is pushed through
+    // the same core-knob path, and labelled to say plainly that it is not one.
+    if ui
+        .checkbox(
+            &mut config.emulation.fast_dotloop,
+            "Fast PPU dot path (performance, not accuracy)",
+        )
+        .on_hover_text(
+            "Run the specialized straight-line handler for undisturbed visible \
+             background dots. Emits the identical frame either way (verified \
+             bit-for-bit every frame) and is ~11% faster on rendering-heavy \
+             games. Leave on unless you are diagnosing a suspected PPU \
+             difference.",
+        )
+        .changed()
+    {
+        state.apply.fast_dotloop = true;
+        save_config(config);
+    }
+
     ui.add_space(8.0);
     enhancements_section(ui, state, config);
 
@@ -1829,6 +1857,10 @@ pub fn advanced_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
         config.emulation = crate::config::EmulationConfig::default();
         state.apply.rewind_enabled = true;
         state.apply.oam_decay = true;
+        // `EmulationConfig::default()` restores `fast_dotloop = true`, so the
+        // reset must re-push it too (a user who had turned it off gets the
+        // default back live, not on next launch).
+        state.apply.fast_dotloop = true;
         save_config(config);
     }
 }
