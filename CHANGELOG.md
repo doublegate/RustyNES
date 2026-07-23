@@ -51,6 +51,28 @@ cycle-accurate core later replaced.
 
 ### Added
 
+- **Save-state schema audit as a standing test**
+  (`crates/rustynes-test-harness/tests/snapshot_schema_audit.rs`). Every field
+  of `Ppu` / `Cpu` / `Apu` must be touched by that chip's `snapshot` writer or
+  appear on an exclusion list with a written reason. The same bug has now
+  shipped three times — a live mid-frame field added to a chip struct without
+  the serializer (the v5 ALE fetch state, the v6 sprite-shifter/OAM-corruption
+  state, the v8 sprite-evaluation FSM) — because no straight-`run_frame` test
+  can see an incomplete schema; only run-ahead, netplay rollback and TAS
+  seeking round-trip mid-frame. This audit is a text diff over `include_str!`'d
+  sources: no ROM, no emulation, runs in the default `cargo test` job, and
+  would have caught all three at the commit that introduced them. It scopes the
+  search to the writer body (a whole-file search is satisfied by `restore`'s
+  own upconvert defaults, i.e. by the bug itself) and matches on word
+  boundaries; both properties are pinned by their own tests, and the writer
+  scoping was confirmed by negative control.
+- Two pre-existing APU save-state gaps the audit surfaced are now recorded
+  rather than unnoticed: `reset_4017_delay` / `reset_4017_value`, the scheduled
+  warm-reset `$4017` re-write. A snapshot taken in the few CPU cycles between
+  `Apu::reset` arming the countdown and `tick_with_external` consuming it
+  restores 0 and drops the re-write. Narrow window, no known symptom, and no
+  behavior change here — they are pinned in the audit's `known_gaps` list so
+  closing them (or opening another) cannot happen silently.
 - Antigravity PR reviewer (`.github/workflows/antigravity-review.yml` +
   `scripts/agy-review.sh`): an automated first-pass code review on a self-hosted
   runner, driven by the `agy` CLI's OAuth session (Google AI Ultra, no metered
