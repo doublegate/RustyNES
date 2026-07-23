@@ -18,13 +18,30 @@ AGY_BIN="${AGY_BIN:-agy}"
 command -v "$AGY_BIN" >/dev/null 2>&1 || AGY_BIN="$HOME/.local/bin/agy"
 AGY_MODEL="${AGY_MODEL:-}"                 # empty = agy's configured default (Gemini 3.x Pro)
 AGY_EFFORT="${AGY_EFFORT:-high}"           # low|medium|high
+# Recorded BEFORE defaulting so the large-diff path can raise the timeout without ever
+# overriding a value the caller asked for explicitly.
+agy_print_timeout_explicit="${AGY_PRINT_TIMEOUT:+set}"
 AGY_PRINT_TIMEOUT="${AGY_PRINT_TIMEOUT:-5m}"
-MAX_DIFF_BYTES="${MAX_DIFF_BYTES:-90000}"  # truncate very large diffs (~90 KB)
+# Separate budget for the on-disk handoff below. An inlined diff arrives with the prompt
+# and 5m is ample; a handed-off diff has to be READ first, one tool call per part, before
+# reasoning even starts. Timing that out would reproduce the failure this replaces -- an
+# empty or partial review of a large PR -- so large PRs get proportionally longer.
+AGY_PRINT_TIMEOUT_LARGE="${AGY_PRINT_TIMEOUT_LARGE:-25m}"
+MAX_DIFF_BYTES="${MAX_DIFF_BYTES:-90000}"  # inline-embedding budget for the diff (~90 KB)
 # Hard ceiling on the ASSEMBLED prompt. The prompt reaches agy as one argv string, and
 # Linux caps a single argument at MAX_ARG_STRLEN = 32 * PAGE_SIZE = 128 KiB regardless of
 # ARG_MAX; exceeding it fails the exec with E2BIG. Capping only the diff is not enough --
 # the boilerplate and the style guide ride in the same string.
 MAX_PROMPT_BYTES="${MAX_PROMPT_BYTES:-120000}"
+# Above MAX_DIFF_BYTES the diff is HANDED OFF ON DISK instead of being truncated (see
+# "hand the diff off on disk" below). agy is an agent with file-reading tools, so the
+# argv ceiling bounds only what can be *inlined* -- it is not a bound on what can be
+# reviewed. Parts are sized so each is a comfortable single read for the agent.
+AGY_DIFF_PART_BYTES="${AGY_DIFF_PART_BYTES:-150000}"
+# Work dir for the on-disk handoff. Kept INSIDE the checkout deliberately: it is then
+# part of agy's own workspace, so the read needs no --add-dir and no sandbox exception.
+# Untracked, gitignored (`.agy-review-work/`), and removed on exit.
+AGY_WORK_DIR="${AGY_WORK_DIR:-.agy-review-work}"
 STYLE_GUIDE="${STYLE_GUIDE:-.github/agy-review.md}"  # repo-relative; loaded if present
                                            # (dedicated name -- avoids colliding with GEMINI.md/AGENTS.md)
 # Per-run log path. A fixed name would collide between concurrent jobs whenever
@@ -74,7 +91,21 @@ log "reviewing ${REPO}#${PR}"
 # Remove every temp file on exit. Pre-declared so the trap is safe under `set -u` even if the
 # script exits before a given file is created.
 diff_file= diff_err= meta_file= prompt_file= out_file= raw= body_file=
-trap 'rm -f "$diff_file" "$diff_err" "$meta_file" "$prompt_file" "$out_file" "$raw" "$body_file"' EXIT
+# Set when the large-diff fallback creates refs/agy/* so the trap can remove them.
+agy_refs_created=
+# Set when the on-disk diff handoff creates $AGY_WORK_DIR inside the checkout.
+agy_work_created=
+cleanup() {
+  rm -f "$diff_file" "$diff_err" "$meta_file" "$prompt_file" "$out_file" "$raw" "$body_file"
+  # Guarded on the flag, not on directory existence: this must never remove a path
+  # that was already there when the script started.
+  [ -n "$agy_work_created" ] && rm -rf "$AGY_WORK_DIR" || true
+  if [ -n "$agy_refs_created" ] && [ -n "${PR:-}" ]; then
+    git update-ref -d "refs/agy/pr-${PR}" 2>/dev/null || true
+    git update-ref -d "refs/agy/base-${PR}" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
 
 # --- metadata first, because the fork gate depends on it -----------------------
 # FAIL-CLOSED. The old form fell back to `{}` when `gh pr view` failed, which was
@@ -82,7 +113,7 @@ trap 'rm -f "$diff_file" "$diff_err" "$meta_file" "$prompt_file" "$out_file" "$r
 # isCrossRepository gates whether an untrusted diff reaches agy. A lookup failure must
 # never be indistinguishable from "same-repo".
 meta_file="$(mktemp)"
-gh pr view "$PR" --repo "$REPO" --json title,isCrossRepository > "$meta_file" \
+gh pr view "$PR" --repo "$REPO" --json title,isCrossRepository,baseRefName > "$meta_file" \
   || { log "gh pr view failed; refusing to review without knowing the PR's head repo"; exit 1; }
 
 # THE FORK GATE (see the trust model at the agy invocation below). The workflow `if:`
@@ -121,21 +152,98 @@ diff_file="$(mktemp)"
 diff_err="$(mktemp)"
 if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2> "$diff_err"; then
   if grep -qi 'diff exceeded the maximum number of lines' "$diff_err"; then
-    log "PR #${PR} exceeds GitHub's 20,000-line diff API limit; skipping review"
-    log "  (not a failure -- the diff cannot be fetched, so there is nothing to review)"
-    exit 0
+    # GitHub's API refuses any diff over 20,000 lines with HTTP 406. That is a
+    # limit of the *transport*, not a reason to skip the review -- a large PR is
+    # precisely the one worth reviewing. Fall back to computing the diff locally,
+    # which has no such ceiling; MAX_DIFF_BYTES below then trims it to the prompt
+    # budget exactly as it does for any other large diff.
+    #
+    # SECURITY: this fetches the PR's objects but NEVER checks them out. The
+    # working tree stays on the default branch, so the reviewer scripts and style
+    # guide still come from `main` and a PR cannot rewrite its own reviewer. The
+    # PR's content is treated exactly as the API diff was: read-only bytes that
+    # become prompt text and are never executed. `refs/agy/*` are private
+    # namespaces so this cannot clobber a real branch, and are deleted on exit.
+    #
+    # Auth goes through `http.extraheader` for this one command rather than a
+    # persisted credential, keeping the repo-wide `persist-credentials: false`
+    # rule intact.
+    base_ref="$(jq -r '.baseRefName' "$meta_file")"
+    if [ -z "$base_ref" ] || [ "$base_ref" = "null" ]; then
+      log "diff exceeds the API limit and the base branch is unknown; cannot fall back"
+      exit 1
+    fi
+    log "diff exceeds GitHub's 20,000-line API limit; falling back to a local git diff"
+    pr_ref="refs/agy/pr-${PR}"
+    base_local="refs/agy/base-${PR}"
+    agy_refs_created=1
+    #
+    # Two auth shapes, tried in order, because the same script runs in two places.
+    # `AUTHORIZATION: bearer` is the form Actions' GITHUB_TOKEN accepts and is tried
+    # first, since that is the path that matters in CI. It does NOT work for a personal
+    # token from `gh auth token` ("remote: invalid credentials"), so a hand-run on a
+    # developer box falls through to a plain fetch using whatever credential helper git
+    # is already configured with. Neither path persists anything into .git/config.
+    fetch_refspecs=( "+refs/pull/${PR}/head:${pr_ref}" "+refs/heads/${base_ref}:${base_local}" )
+    if [ -n "${GH_TOKEN:-}" ] \
+       && git -c "http.extraheader=AUTHORIZATION: bearer ${GH_TOKEN}" fetch --no-tags --quiet \
+              origin "${fetch_refspecs[@]}" 2>/dev/null; then
+      :
+    elif git fetch --no-tags --quiet origin "${fetch_refspecs[@]}"; then
+      log "fetched PR refs using git's ambient credentials (token header not accepted)"
+    else
+      log "could not fetch PR #${PR} refs for the local diff fallback"
+      exit 1
+    fi
+    merge_base="$(git merge-base "$base_local" "$pr_ref")" || {
+      log "could not compute the merge base for PR #${PR}"; exit 1; }
+    git diff "$merge_base" "$pr_ref" > "$diff_file" || {
+      log "local git diff failed for PR #${PR}"; exit 1; }
+    log "local diff: $(wc -l < "$diff_file") lines, $(wc -c < "$diff_file") bytes"
+  else
+    log "gh pr diff failed:"; sed 's/^/  /' "$diff_err" >&2
+    exit 1
   fi
-  log "gh pr diff failed:"; sed 's/^/  /' "$diff_err" >&2
-  exit 1
 fi
 
 if ! have_text "$diff_file"; then log "empty diff; nothing to review"; exit 0; fi
 
+# --- decide how the diff reaches agy: inlined, or handed off on disk ------------
+# A diff larger than the argv budget used to be TRUNCATED, which silently produced a
+# review of the first ~90 KB while reading as a review of the whole PR. That is worse
+# than no review: it is a confident verdict over an arbitrary prefix. The argv ceiling
+# is a limit on what can be *inlined*, not on what agy can *read* -- it has file tools
+# -- so large diffs are written into agy's own workspace and the prompt points at them.
+# Truncation now happens only if the on-disk handoff itself cannot be set up.
 truncated=""
-if [ "$(wc -c < "$diff_file")" -gt "$MAX_DIFF_BYTES" ]; then
-  head -c "$MAX_DIFF_BYTES" "$diff_file" > "$diff_file.cut" && mv "$diff_file.cut" "$diff_file"
-  truncated=$'\n\n> Note: the diff was truncated to '"${MAX_DIFF_BYTES}"$' bytes for this review.'
-  log "diff truncated to ${MAX_DIFF_BYTES} bytes"
+diff_bytes="$(wc -c < "$diff_file")"
+diff_parts=()
+if [ "$diff_bytes" -le "$MAX_DIFF_BYTES" ]; then
+  log "diff is ${diff_bytes} bytes; inlining it in the prompt"
+else
+  log "diff is ${diff_bytes} bytes; handing it off on disk (over the ${MAX_DIFF_BYTES}-byte inline budget)"
+  rm -rf "$AGY_WORK_DIR"
+  mkdir -p "$AGY_WORK_DIR"
+  agy_work_created=1
+  # Split rather than pointing at one 2+ MB file: a single read of that size is at the
+  # mercy of whatever per-read cap the agent applies, and a silent cap is exactly the
+  # failure this replaces. Fixed-size parts make coverage explicit -- the prompt lists
+  # every part with its line count, so an incomplete read is visible in the output.
+  split -b "$AGY_DIFF_PART_BYTES" -d -a 3 \
+        --additional-suffix=.diff "$diff_file" "$AGY_WORK_DIR/pr-${PR}.part-"
+  while IFS= read -r part; do diff_parts+=("$part"); done \
+    < <(find "$AGY_WORK_DIR" -maxdepth 1 -name "pr-${PR}.part-*.diff" | sort)
+  if [ "${#diff_parts[@]}" -eq 0 ]; then
+    log "on-disk handoff produced no parts; falling back to truncating the diff"
+    head -c "$MAX_DIFF_BYTES" "$diff_file" > "$diff_file.cut" && mv "$diff_file.cut" "$diff_file"
+    truncated=$'\n\n> Note: the diff was truncated to '"${MAX_DIFF_BYTES}"$' bytes for this review.'
+  else
+    log "wrote ${#diff_parts[@]} diff part(s) to ${AGY_WORK_DIR}/"
+    if [ -z "$agy_print_timeout_explicit" ]; then
+      AGY_PRINT_TIMEOUT="$AGY_PRINT_TIMEOUT_LARGE"
+      log "print timeout raised to ${AGY_PRINT_TIMEOUT} for the on-disk handoff"
+    fi
+  fi
 fi
 
 # --- build the prompt ----------------------------------------------------------
@@ -161,8 +269,34 @@ EOF
   if [ -n "$style" ]; then
     printf '\n--- PROJECT STYLE GUIDE (enforce these) ---\n%s\n' "$style"
   fi
-  printf '\n--- UNIFIED DIFF ---\n'
-  cat "$diff_file"
+  if [ "${#diff_parts[@]}" -gt 0 ]; then
+    # On-disk handoff. The diff is too large to inline, so it is in your workspace.
+    # State the part count and per-part line counts explicitly: that turns "did the
+    # reviewer actually read all of it" from an assumption into something checkable.
+    printf '\n--- UNIFIED DIFF (ON DISK -- YOU MUST READ IT) ---\n'
+    printf 'This PR is too large to inline (%s bytes). The complete unified diff has been\n' "$diff_bytes"
+    printf 'written into your workspace, split into %s sequential parts:\n\n' "${#diff_parts[@]}"
+    for part in "${diff_parts[@]}"; do
+      printf '  %s  (%s lines, %s bytes)\n' "$part" "$(wc -l < "$part")" "$(wc -c < "$part")"
+    done
+    cat <<'EOF'
+
+Read EVERY part, in order, before writing anything. They are consecutive slices of one
+file, so a hunk header can be split across a part boundary -- treat the concatenation as
+the diff, not each part as a standalone unit.
+
+Do not review from filenames, paths, or part sizes. Do not extrapolate from a sample. If
+you could not read some part, say so explicitly at the top of your review and scope your
+verdict to what you did read -- an honest partial review is useful, a confident review of
+an unread diff is not.
+
+Begin your output with a line of the form:
+  <!-- coverage: read N/M parts -->
+EOF
+  else
+    printf '\n--- UNIFIED DIFF ---\n'
+    cat "$diff_file"
+  fi
 } > "$prompt_file"
 
 # Enforce the single-argument ceiling on the WHOLE prompt (see MAX_PROMPT_BYTES above).
@@ -172,6 +306,16 @@ if [ "$(wc -c < "$prompt_file")" -gt "$MAX_PROMPT_BYTES" ]; then
   head -c "$MAX_PROMPT_BYTES" "$prompt_file" > "$prompt_file.cut" && mv "$prompt_file.cut" "$prompt_file"
   truncated=$'\n\n> Note: the review prompt was truncated to '"${MAX_PROMPT_BYTES}"$' bytes (single-argument limit).'
   log "prompt truncated to ${MAX_PROMPT_BYTES} bytes"
+fi
+
+# Escape hatch for verifying the diff-acquisition and prompt-assembly path (including the
+# large-PR fallbacks) without spending an agy run or posting to the PR. Prints the
+# assembled prompt to stdout and stops before the agy invocation.
+if [ -n "${AGY_DRY_RUN:-}" ]; then
+  log "AGY_DRY_RUN set: printing the assembled prompt and exiting before agy runs"
+  log "prompt: $(wc -c < "$prompt_file") bytes; diff parts: ${#diff_parts[@]}"
+  cat "$prompt_file"
+  exit 0
 fi
 
 # --- run agy headless, under a PTY (works around agy issue #76: -p drops --------

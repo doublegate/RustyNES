@@ -281,3 +281,9 @@ WARP.md
 # Game Genie header-robust re-key: NES 2.0 DB is a build-time input, never committed
 scripts/gg/nes20db.xml
 scripts/gg/__pycache__/
+
+# Antigravity PR reviewer: scratch workspace for the on-disk diff handoff. When a PR's
+# diff is too large to inline in the prompt, scripts/agy-review.sh writes it here so agy
+# can READ it with its file tools instead of the review being truncated to the argv
+# ceiling. Created and removed within a single run; never committed.
+/.agy-review-work/
