@@ -98,7 +98,52 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///   behaviourally identical. v1..=6 blobs upconvert by stamping every row as
 ///   freshly-touched at the live cycle (age 0), i.e. the rest state — correct for
 ///   any pre-v7 save. Not a *load-break* — a pre-v7 `.rns` still restores.
-pub const PPU_SNAPSHOT_VERSION: u8 = 7;
+/// - v8 (run-ahead sprite-evaluation fix): appends the per-dot **sprite-evaluation
+///   FSM** (`sprite_eval_read_latch`, `_n`, `_m`, `_found`, `_sec_idx`,
+///   `_copying`, `_done`, `_overflow_search`, `_zero_found`, `_first_iter`), the
+///   parallel **OAM-data-bus model** (`oam_bus_copybuffer`, `oam_bus_secondary[32]`,
+///   `oam_bus_addr_h`, `oam_bus_addr_l`, `oam_bus_secondary_addr`,
+///   `oam_bus_copy_done`, `oam_bus_sprite_in_range`, `oam_bus_overflow_counter`),
+///   and the secondary-OAM clear-window write pointer `oam2_addr`. 50 bytes.
+///
+///   These are the mid-scanline working registers of dots 65..=256: the eval pass
+///   walks primary OAM through `_n`/`_m`, stages each byte through
+///   `sprite_eval_read_latch`, and commits in-range sprites into `secondary_oam`
+///   at `_sec_idx`. `secondary_oam` itself was already serialized — but the
+///   *pointers and phase* driving it were not, so a snapshot taken with an eval
+///   pass in flight restored a full secondary-OAM buffer alongside a
+///   power-on-default FSM. The frontend's run-ahead (`snapshot_core_into` →
+///   N frames → `restore_quiet`, every visible frame, and ON BY DEFAULT at
+///   `run_ahead = 1`) hit this every frame: the hidden frames advanced the FSM
+///   and the rollback left that advance behind. Measured effect on the
+///   `AccuracyCoin` battery: 141/141 headless but 138/141 through the desktop
+///   frontend, failing exactly `Sprite Evaluation :: Arbitrary Sprite zero`
+///   (error 2), `Sprite Evaluation :: Misaligned OAM behavior` (error 1), and
+///   `PPU Behavior :: Rendering Flag Behavior` (error 2). Same bug class as the
+///   v6 tail (which closed the Wizards & Warriors half-blank playfield), a
+///   different uncovered field set.
+///
+///   Mesen2 serializes the same set — `_spriteIndex`, `_sprite0Added`,
+///   `_sprite0Visible`, `_oamCopybuffer`, `_secondaryOamAddr`, `_spriteInRange`,
+///   `_oamCopyDone`, `_overflowBugCounter` (`Core/NES/NesPpu.cpp`
+///   `NesPpu<T>::Serialize`) — independent confirmation that this is live state,
+///   not derived.
+///
+///   v1..=7 blobs upconvert to the constructor defaults (`0xFF` for the two read
+///   latches, `[0xFF; 32]` for the parallel secondary OAM, `0`/`false` elsewhere)
+///   — the at-rest state, and exactly what a pre-v8 restore left behind. NOTE
+///   that `rustynes_core`'s `.rns` container is version-EXACT per section, so an
+///   existing save state fails to load with a clear `VersionMismatch` rather than
+///   silently misreading (ADR 0028); the in-function upconvert path serves direct
+///   `Ppu::restore` callers.
+///
+///   Also on restore (ALL versions): the scanline-classification cache
+///   (`cached_visible` / `cached_pre_render` / `cached_render_line`, keyed by
+///   `flags_cached_scanline`) is INVALIDATED rather than serialized. It is a pure
+///   function of `scanline` + `region`, both of which are serialized, so
+///   recomputing it is equivalent and cheaper than carrying derived bytes — the
+///   same choice Mesen2 makes in its `if(!s.IsSaving())` post-load fixup block.
+pub const PPU_SNAPSHOT_VERSION: u8 = 8;
 
 const CIRAM_LEN: usize = 0x800;
 const OAM_LEN: usize = 0x100;
@@ -218,7 +263,7 @@ impl R<'_> {
 impl Ppu {
     /// Encode the PPU's mutable state into a versioned binary blob.
     // A flat, linear field-by-field encoder with per-version tail appends (v1
-    // through v7); splitting it would only scatter the schema that is clearest read
+    // through v8); splitting it would only scatter the schema that is clearest read
     // top-to-bottom against the matching `restore` reader.
     #[allow(clippy::too_many_lines)]
     #[must_use]
@@ -383,6 +428,36 @@ impl Ppu {
             w.u64(now.wrapping_sub(ts));
         }
 
+        // v8: the per-dot sprite-evaluation FSM + the parallel OAM-data-bus
+        // model + the clear-window secondary-OAM write pointer. `secondary_oam`
+        // (the buffer) was always serialized; these are the POINTERS AND PHASE
+        // that fill it, and without them a mid-eval snapshot restored a full
+        // buffer next to a reset walker. See the `PPU_SNAPSHOT_VERSION` rustdoc
+        // for the run-ahead failure this closes and the Mesen2 cross-check.
+        {
+            w.u8(self.sprite_eval_read_latch);
+            w.u8(self.sprite_eval_n);
+            w.u8(self.sprite_eval_m);
+            w.u8(self.sprite_eval_found);
+            w.u8(self.sprite_eval_sec_idx);
+            w.u8(u8::from(self.sprite_eval_copying));
+            w.u8(u8::from(self.sprite_eval_done));
+            w.u8(u8::from(self.sprite_eval_overflow_search));
+            w.u8(u8::from(self.sprite_eval_zero_found));
+            w.u8(u8::from(self.sprite_eval_first_iter));
+
+            w.u8(self.oam_bus_copybuffer);
+            w.bytes(&self.oam_bus_secondary);
+            w.u8(self.oam_bus_addr_h);
+            w.u8(self.oam_bus_addr_l);
+            w.u8(self.oam_bus_secondary_addr);
+            w.u8(u8::from(self.oam_bus_copy_done));
+            w.u8(u8::from(self.oam_bus_sprite_in_range));
+            w.u8(self.oam_bus_overflow_counter);
+
+            w.u8(self.oam2_addr);
+        }
+
         w.buf
     }
 
@@ -392,11 +467,11 @@ impl Ppu {
     ///
     /// Returns [`PpuSnapshotError`] on a malformed blob.
     // A flat, linear field-by-field decoder with per-version tail branches (v1
-    // through v6); splitting it would only scatter the schema that is clearest
+    // through v8); splitting it would only scatter the schema that is clearest
     // read top-to-bottom against the matching `snapshot` writer.
     #[allow(clippy::too_many_lines)]
     pub fn restore(&mut self, data: &[u8]) -> Result<(), PpuSnapshotError> {
-        // A valid v1..=6 snapshot always contains these fixed-size blocks (the
+        // A valid v1..=8 snapshot always contains these fixed-size blocks (the
         // framebuffer, read unconditionally below at every version, dominates);
         // the version-specific tails only add to this. This is a *conservative
         // lower bound* — it deliberately omits the ~40 scalar register/latch
@@ -413,7 +488,7 @@ impl Ppu {
         }
         let mut r = R { src: data, pos: 0 };
         let version = r.u8()?;
-        if !matches!(version, 1..=7) {
+        if !matches!(version, 1..=8) {
             return Err(PpuSnapshotError::UnsupportedVersion(version));
         }
         self.region = region_from_u8(r.u8()?)?;
@@ -579,6 +654,68 @@ impl Ppu {
         } else {
             self.oam_decay_cycles = [now; 32];
         }
+
+        // v8: the per-dot sprite-evaluation FSM + parallel OAM-data-bus model +
+        // the clear-window secondary-OAM pointer. Pre-v8 blobs lack it; upconvert
+        // to the constructor defaults, which is precisely the state a pre-v8
+        // restore left these fields in (they simply kept whatever the instance
+        // already held — for a fresh `Ppu`, these values).
+        if version >= 8 {
+            self.sprite_eval_read_latch = r.u8()?;
+            self.sprite_eval_n = r.u8()?;
+            self.sprite_eval_m = r.u8()?;
+            self.sprite_eval_found = r.u8()?;
+            self.sprite_eval_sec_idx = r.u8()?;
+            self.sprite_eval_copying = r.u8()? != 0;
+            self.sprite_eval_done = r.u8()? != 0;
+            self.sprite_eval_overflow_search = r.u8()? != 0;
+            self.sprite_eval_zero_found = r.u8()? != 0;
+            self.sprite_eval_first_iter = r.u8()? != 0;
+
+            self.oam_bus_copybuffer = r.u8()?;
+            r.bytes_into(&mut self.oam_bus_secondary)?;
+            self.oam_bus_addr_h = r.u8()?;
+            self.oam_bus_addr_l = r.u8()?;
+            self.oam_bus_secondary_addr = r.u8()?;
+            self.oam_bus_copy_done = r.u8()? != 0;
+            self.oam_bus_sprite_in_range = r.u8()? != 0;
+            self.oam_bus_overflow_counter = r.u8()?;
+
+            self.oam2_addr = r.u8()?;
+        } else {
+            self.sprite_eval_read_latch = 0xFF;
+            self.sprite_eval_n = 0;
+            self.sprite_eval_m = 0;
+            self.sprite_eval_found = 0;
+            self.sprite_eval_sec_idx = 0;
+            self.sprite_eval_copying = false;
+            self.sprite_eval_done = false;
+            self.sprite_eval_overflow_search = false;
+            self.sprite_eval_zero_found = false;
+            self.sprite_eval_first_iter = false;
+
+            self.oam_bus_copybuffer = 0xFF;
+            self.oam_bus_secondary = [0xFF; 32];
+            self.oam_bus_addr_h = 0;
+            self.oam_bus_addr_l = 0;
+            self.oam_bus_secondary_addr = 0;
+            self.oam_bus_copy_done = false;
+            self.oam_bus_sprite_in_range = false;
+            self.oam_bus_overflow_counter = 0;
+
+            self.oam2_addr = 0;
+        }
+
+        // Derived-cache fixup (every version): the scanline-classification cache
+        // is a pure function of `scanline` + `region`, so it is recomputed rather
+        // than carried. Resetting the key to the `Ppu::new` sentinel forces the
+        // next `tick` to refill it from the restored scanline; leaving a warm key
+        // behind would let a cache filled under a different timeline satisfy the
+        // `scanline == flags_cached_scanline` guard on the fast dot path.
+        self.cached_visible = false;
+        self.cached_pre_render = false;
+        self.cached_render_line = false;
+        self.flags_cached_scanline = i16::MIN;
 
         // sanity: the schema-fixed sizes mean we should be at end of input now.
         if r.pos != data.len() {
@@ -747,10 +884,12 @@ mod tests {
         // (6 bytes: u8 `octal_latch` + u16 `address_bus` + u8 `ale_armed` + u8
         // `pattern_latch_stale` + u8 `copy_v_delay`), the v6 render-state
         // tail (14 bytes: [u8;8] `spr_halted` + u8 `prev_rendering_enabled` + u8
-        // `rendering_enabled_delayed` + u8*4 `oam_corruption_*`), AND the v7
-        // OAM-decay tail (256 bytes: [u64;32] relative-age `oam_decay_cycles`) —
-        // 301 bytes total, none of which a v1 blob carried.
-        v1.extend_from_slice(&v2[at + 4..v2.len() - 301]);
+        // `rendering_enabled_delayed` + u8*4 `oam_corruption_*`), the v7
+        // OAM-decay tail (256 bytes: [u64;32] relative-age `oam_decay_cycles`),
+        // AND the v8 sprite-evaluation tail (50 bytes: u8*5 + bool*5 eval FSM,
+        // then u8 + [u8;32] + u8*3 + bool*2 + u8 OAM-data-bus model, then u8
+        // `oam2_addr`) — 351 bytes total, none of which a v1 blob carried.
+        v1.extend_from_slice(&v2[at + 4..v2.len() - 351]);
         v1[0] = 1; // version byte -> v1
 
         let mut q = Ppu::new(PpuRegion::Ntsc);
@@ -792,6 +931,87 @@ mod tests {
     fn snapshot_is_deterministic() {
         let p = Ppu::new(PpuRegion::Ntsc);
         assert_eq!(p.snapshot(), p.snapshot());
+    }
+
+    #[test]
+    fn snapshot_round_trips_sprite_evaluation_state() {
+        // v8: a snapshot taken with a sprite-evaluation pass in flight (dots
+        // 65..=256) must restore the FSM's pointers and phase, not just the
+        // `secondary_oam` buffer they fill. Before this tail, run-ahead's
+        // per-frame snapshot/restore silently reset the walker while keeping the
+        // buffer, costing three AccuracyCoin tests on the desktop frontend.
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.sprite_eval_read_latch = 0x5A;
+        p.sprite_eval_n = 37;
+        p.sprite_eval_m = 2;
+        p.sprite_eval_found = 6;
+        p.sprite_eval_sec_idx = 25;
+        p.sprite_eval_copying = true;
+        p.sprite_eval_done = false;
+        p.sprite_eval_overflow_search = true;
+        p.sprite_eval_zero_found = true;
+        p.sprite_eval_first_iter = false;
+        p.oam_bus_copybuffer = 0xC3;
+        p.oam_bus_secondary = [0x11; 32];
+        p.oam_bus_secondary[7] = 0x99;
+        p.oam_bus_addr_h = 41;
+        p.oam_bus_addr_l = 3;
+        p.oam_bus_secondary_addr = 18;
+        p.oam_bus_copy_done = true;
+        p.oam_bus_sprite_in_range = true;
+        p.oam_bus_overflow_counter = 5;
+        p.oam2_addr = 12;
+
+        let blob = p.snapshot();
+        assert_eq!(
+            blob[0], PPU_SNAPSHOT_VERSION,
+            "blob carries current version"
+        );
+
+        let mut q = Ppu::new(PpuRegion::Ntsc);
+        q.restore(&blob).unwrap();
+        assert_eq!(q.sprite_eval_read_latch, 0x5A);
+        assert_eq!(q.sprite_eval_n, 37);
+        assert_eq!(q.sprite_eval_m, 2);
+        assert_eq!(q.sprite_eval_found, 6);
+        assert_eq!(q.sprite_eval_sec_idx, 25);
+        assert!(q.sprite_eval_copying);
+        assert!(!q.sprite_eval_done);
+        assert!(q.sprite_eval_overflow_search);
+        assert!(q.sprite_eval_zero_found);
+        assert!(!q.sprite_eval_first_iter);
+        assert_eq!(q.oam_bus_copybuffer, 0xC3);
+        assert_eq!(q.oam_bus_secondary[7], 0x99);
+        assert_eq!(q.oam_bus_secondary[0], 0x11);
+        assert_eq!(q.oam_bus_addr_h, 41);
+        assert_eq!(q.oam_bus_addr_l, 3);
+        assert_eq!(q.oam_bus_secondary_addr, 18);
+        assert!(q.oam_bus_copy_done);
+        assert!(q.oam_bus_sprite_in_range);
+        assert_eq!(q.oam_bus_overflow_counter, 5);
+        assert_eq!(q.oam2_addr, 12);
+    }
+
+    #[test]
+    fn restore_invalidates_the_scanline_classification_cache() {
+        // The cache is derived (a pure function of `scanline` + `region`) and so
+        // deliberately NOT serialized. Restore must therefore reset its KEY to
+        // the `Ppu::new` sentinel: a warm key inherited from another timeline
+        // would otherwise satisfy the fast dot path's
+        // `scanline == flags_cached_scanline` guard against a stale value.
+        let p = Ppu::new(PpuRegion::Ntsc);
+        let blob = p.snapshot();
+
+        let mut q = Ppu::new(PpuRegion::Ntsc);
+        q.cached_visible = true;
+        q.cached_pre_render = true;
+        q.cached_render_line = true;
+        q.flags_cached_scanline = 42;
+        q.restore(&blob).unwrap();
+        assert!(!q.cached_visible);
+        assert!(!q.cached_pre_render);
+        assert!(!q.cached_render_line);
+        assert_eq!(q.flags_cached_scanline, i16::MIN);
     }
 
     #[test]
@@ -885,11 +1105,12 @@ mod tests {
         // A v6 blob lacks the OAM-decay tail; the v7 reader must upconvert it by
         // stamping every row as freshly-touched at the live cycle (age 0), which is
         // the rest state (decay is off in any pre-v7 build, so the array is inert).
-        // Synthesize a v6 blob by snapshotting v7 and truncating the 256-byte tail
-        // + rewriting the version byte.
+        // Synthesize a v6 blob by snapshotting the current version and truncating
+        // BOTH the v8 sprite-evaluation tail (50 bytes) and the v7 OAM-decay tail
+        // (256 bytes), then rewriting the version byte.
         let p = Ppu::new(PpuRegion::Ntsc);
-        let v7 = p.snapshot();
-        let mut v6 = v7[..v7.len() - 256].to_vec();
+        let cur = p.snapshot();
+        let mut v6 = cur[..cur.len() - (50 + 256)].to_vec();
         v6[0] = 6;
 
         let mut q = Ppu::new(PpuRegion::Ntsc);

@@ -14,6 +14,41 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Run-ahead cost three AccuracyCoin tests.** The PPU save-state carried
+  `secondary_oam` but not the sprite-evaluation FSM that fills it — the
+  `sprite_eval_*` pointers and phase flags, the parallel OAM-data-bus model
+  (`oam_bus_*`), and the clear-window write pointer `oam2_addr`. The frontend's
+  run-ahead (`[input] run_ahead`, **default 1**) snapshots and restores the core
+  once per visible frame, so every frame restored a full secondary-OAM buffer
+  next to a reset walker. The battery measured 141/141 headless but **138/141**
+  through the desktop app, failing `Sprite Evaluation :: Arbitrary Sprite zero`
+  (error 2), `Sprite Evaluation :: Misaligned OAM behavior` (error 1), and
+  `PPU Behavior :: Rendering Flag Behavior` (error 2). Serializing that state in
+  a new `PPU_SNAPSHOT_VERSION` **v8** tail (50 bytes) restores **141/141 with
+  run-ahead on**, at depth 1 and 2. Same bug class as the v6 tail (Wizards &
+  Warriors), a different uncovered field set; Mesen2 serializes the equivalent
+  fields. Netplay rollback and TAS seeking take the same round trip and get the
+  same fix. New regression net:
+  `crates/rustynes-test-harness/tests/accuracycoin_runahead.rs` reruns the whole
+  battery through the run-ahead cycle and names any test it costs.
+
+### Changed
+
+- **`PPU_SNAPSHOT_VERSION` 7 → 8 — this breaks existing `.rns` save states.**
+  The `.rns` container is version-exact per section, so a pre-v8 save now fails
+  to load with a clear `VersionMismatch` instead of silently misreading (ADR
+  0028). Accepted deliberately: the alternative is loading states that restore
+  a broken sprite-evaluation FSM. Movies (`.rnm`) and netplay are unaffected —
+  both re-derive state from a fresh power-on. `Ppu::restore` still upconverts
+  v1..=7 blobs for direct callers.
+- The scanline-classification cache (`cached_visible` / `cached_pre_render` /
+  `cached_render_line`, keyed by `flags_cached_scanline`) is now invalidated on
+  every restore rather than left warm. It is derived from `scanline` + `region`,
+  both serialized, so this adds no bytes; it stops a cache filled under one
+  timeline from satisfying the fast dot path's staleness guard under another.
+
 ### Added
 
 - Antigravity PR reviewer (`.github/workflows/antigravity-review.yml` +
