@@ -2979,11 +2979,18 @@ impl LockstepBus {
         self.ppu.on_cpu_cycle();
         self.mapper.notify_cpu_cycle();
         // Sample the mapper's audio extension AFTER notify_cpu_cycle has
-        // advanced its oscillators. `Mapper::mix_audio` returns i16; we
-        // scale to approximately the same [-0.5, 0.5] range as the APU
-        // mixer's own output. Mappers without on-cart audio return 0,
-        // which scales to 0.0 -- a no-op for the standard cartridges.
-        let mapper_sample = f32::from(self.mapper.mix_audio()) / 65536.0;
+        // advanced its oscillators. `Mapper::mix_audio` returns i32 (widened
+        // from i16 in v2.2.3 so the Sunsoft 5B's ~3.6x full-volume level is
+        // representable); we scale to approximately the same [-0.5, 0.5] range
+        // as the APU mixer's own output. Mappers without on-cart audio return
+        // 0, which scales to 0.0 -- a no-op for the standard cartridges.
+        //
+        // `as f32` rather than `f32::from`: there is no lossless From<i32> for
+        // f32. The cast is exact for every value any board actually produces
+        // (|sample| well under 2^24, where f32 is still integer-exact); the
+        // widening exists to raise a ~32k ceiling to ~16.7M, not to use it.
+        #[allow(clippy::cast_precision_loss)]
+        let mapper_sample = self.mapper.mix_audio() as f32 / 65536.0;
         self.apu.tick_with_external(mapper_sample);
         // Fan-out the APU frame-counter events to any on-cart audio
         // extension that shares the 2A03 frame-counter cadence (MMC5).
@@ -4083,8 +4090,9 @@ impl LockstepBus {
     /// and boards without the frame hook have the default no-op. Skipping
     /// both saves two virtual calls + an f32 divide per CPU cycle.
     fn apu_advance_one(&mut self) {
+        #[allow(clippy::cast_precision_loss)] // see `mix_audio`'s call site above
         let mapper_sample = if self.mapper_caps.audio {
-            f32::from(self.mapper.mix_audio()) / 65536.0
+            self.mapper.mix_audio() as f32 / 65536.0
         } else {
             0.0
         };

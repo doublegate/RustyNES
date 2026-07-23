@@ -1057,10 +1057,12 @@ impl FdsAudio {
     /// not advance, so a clock is a no-op (mirrors the gated path so the
     /// shared NSF expansion router can call `clock()` unconditionally).
     #[cfg(not(feature = "mapper-audio"))]
+    #[allow(clippy::needless_pass_by_ref_mut, clippy::unused_self)]
     pub(crate) fn clock(&mut self) {}
 
     /// Feature-off shim: silence when `mapper-audio` is disabled.
     #[cfg(not(feature = "mapper-audio"))]
+    #[allow(clippy::unused_self)]
     pub(crate) fn output(&self) -> i16 {
         0
     }
@@ -2325,8 +2327,8 @@ impl Mapper for Fds {
     }
 
     #[cfg(feature = "mapper-audio")]
-    fn mix_audio(&mut self) -> i16 {
-        self.audio.output()
+    fn mix_audio(&mut self) -> i32 {
+        i32::from(self.audio.output())
     }
 
     fn current_mirroring(&self) -> Mirroring {

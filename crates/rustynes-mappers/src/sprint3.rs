@@ -765,6 +765,13 @@ pub(crate) const VRC6_MIX_SCALE: i16 = 979;
 /// (each of `n` voices only drives `1/n` of the output). Before v2.1.6 this was
 /// `64` (≈1.48x — ~12 dB too quiet, an outlier no reference matched). See
 /// `docs/apu-2a03.md` §Expansion-audio levels.
+// Every item below is expansion-audio support: fully implemented and
+// exercised whenever `mapper-audio` is on (the default build is
+// dead-code-warning clean), but unreachable when the feature compiles the
+// audio subsystem out. `allow(dead_code)` ONLY in that configuration —
+// deliberately not `#[cfg]`, so the items still compile and any future
+// non-audio caller keeps working.
+#[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
 const NAMCO163_MIX_SCALE: i32 = 261;
 
 /// VRC6 audio pulse channel state (`$9000-$9002` for pulse 1, `$A000-$A002`
@@ -906,6 +913,7 @@ pub struct Vrc6 {
     saw: Vrc6Saw,
 }
 
+#[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
 impl Vrc6 {
     /// Construct a new VRC6 mapper.
     ///
@@ -1237,7 +1245,7 @@ impl Mapper for Vrc6 {
     }
 
     #[cfg(feature = "mapper-audio")]
-    fn mix_audio(&mut self) -> i16 {
+    fn mix_audio(&mut self) -> i32 {
         // Three channels: pulse1 (4-bit, 0..=15), pulse2 (4-bit, 0..=15),
         // sawtooth (5-bit, 0..=31). Sum is in 0..=61.
         //
@@ -1251,7 +1259,7 @@ impl Mapper for Vrc6 {
         let saw = i16::from(self.saw.output());
         // Center at zero: subtract approx half the peak (~30), then scale by
         // [`VRC6_MIX_SCALE`] for a hardware-accurate level vs the 2A03 pulse.
-        ((p1 + p2 + saw) - 30) * VRC6_MIX_SCALE
+        i32::from(((p1 + p2 + saw) - 30) * VRC6_MIX_SCALE)
     }
 
     fn irq_pending(&self) -> bool {
@@ -1884,11 +1892,11 @@ impl Mapper for Vrc7 {
     /// 13-bit DAC scaled to 14-bit signed via `<< 1` in the
     /// `lookup_exp_table` final stage).
     #[cfg(feature = "mapper-audio")]
-    fn mix_audio(&mut self) -> i16 {
+    fn mix_audio(&mut self) -> i32 {
         if self.audio.silenced {
             0
         } else {
-            self.last_opll_sample
+            i32::from(self.last_opll_sample)
         }
     }
 
@@ -2064,23 +2072,24 @@ impl Mapper for Vrc7 {
 /// summed at maximum volume stay comfortably inside the `i16` headroom the
 /// APU mixer expects.
 ///
-/// NOTE (v2.1.6 accuracy ledger): the *shape* of this table matches Mesen2's
-/// 5B DAC (each step is `1.1885^2 ≈ 1.4126x`, the +1.5 dB×2 logarithmic law;
-/// `LUT[12] = 668`, `LUT[15] = 1882`, cross-checked against Mesen2's
-/// `Sunsoft5bAudio::_volumeLut` `[63, 177]` and tetanes), but the *absolute*
-/// level is intentionally headroom-limited and NOT calibrated to the `db_5b`
-/// comparison ROM. To hit the Mesen2 `db_5b` level a **volume-12** 5B square
-/// (what the ROM compares) would sit at ~1.27x the 2A03 pulse — which alone is
-/// representable — but the DAC shape then puts a **volume-15** tone at
-/// ~3.56x (`×1.4126³`), whose unipolar swing `≈ 3.56 × 0.14882 × 65536 ≈ 34.7k`
-/// exceeds `i16::MAX` for even one channel through the bus's `/65536`
-/// external-audio contract, and three simultaneous full-volume tones (Gimmick!,
-/// Hebereke) overflow it several-fold. Representing the full 5B dynamic range
-/// at the hardware level therefore needs a wider (i32/f32) expansion-mix path —
-/// a cross-cutting `Mapper::mix_audio` signature change deferred as a
-/// documented gap (see `docs/accuracy-ledger.md` §Expansion-audio levels).
-/// The RELATIVE levels between volume steps ARE hardware-accurate and are
-/// pinned by the `sunsoft5b_volume_dac_follows_logarithmic_step_law` test.
+/// This table is the DAC **shape** only — each step is `1.1885^2 ≈ 1.4126x`,
+/// the +1.5 dB×2 logarithmic law; `LUT[12] = 668`, `LUT[15] = 1882`,
+/// cross-checked against Mesen2's `Sunsoft5bAudio::_volumeLut` `[63, 177]` and
+/// tetanes. The absolute mixer **level** lives in
+/// [`SUNSOFT5B_MIX_SCALE_NUM`], deliberately separate so each can be pinned by
+/// its own oracle: the shape by
+/// `sunsoft5b_volume_dac_follows_logarithmic_step_law` (a unit test on these
+/// ratios), the level by `level_db_5b` (the `db_5b` comparison ROM).
+///
+/// Our entries are a finer scaling of the same law than Mesen2's `uint8_t`
+/// table, which truncates hard at the bottom (its `LUT[1]` is `1`). Keeping the
+/// finer table preserves the step ratios that the unit test asserts.
+///
+/// HISTORY (v2.1.6 → v2.2.3): the absolute level used to be an explicit,
+/// documented gap — not because the value was unknown but because
+/// `Mapper::mix_audio` returned `i16` and the correct value does not fit. A1
+/// widened that return to `i32` and calibrated the level; see
+/// [`SUNSOFT5B_MIX_SCALE_NUM`] and `docs/accuracy-ledger.md`.
 ///
 /// Per the NESdev "Sunsoft 5B audio" page, the chip's DAC has a 1.5 dB
 /// step on the 5-bit signal.  Because the wiki specifies that envelope
@@ -2088,19 +2097,65 @@ impl Mapper for Vrc7 {
 /// `e=1` mapping to silence), a 16-entry table indexed by the 4-bit
 /// equivalent is sufficient — equivalent to a 32-entry table where each
 /// even/odd pair shares the same amplitude.
-const SUNSOFT5B_LOG_VOL: [i16; 16] = [
+#[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
+const SUNSOFT5B_LOG_VOL: [i32; 16] = [
     0, 15, 21, 30, 42, 59, 84, 119, 168, 237, 335, 473, 668, 944, 1333, 1882,
 ];
 
-/// Mixed centering bias: subtracted from the linear sum before emitting
-/// the i16 sample.  We use a *constant zero* — the APU mixer's chained
+/// Mixed centering bias: subtracted from the scaled linear sum before emitting
+/// the i32 sample.  We use a *constant zero* — the APU mixer's chained
 /// high-pass filters (90 Hz / 440 Hz, see `rustynes-apu::mixer::OnePole`)
 /// remove any steady DC component downstream, and the 5B's linear sum
-/// can swing from 0 (all channels muted) up to ~5.6 k (three channels at
-/// peak volume + tone high), well within `i16` headroom.  Keeping the
+/// can swing from 0 (all channels muted) up to ~104 k (three channels at
+/// peak volume + tone high, post-[`SUNSOFT5B_MIX_SCALE_NUM`]).  Keeping the
 /// constant named here makes a future numerical bias easy to add if
 /// AccuracyCoin's mixed-output tests ever ask for it.
-const SUNSOFT5B_DC_BIAS: i16 = 0;
+#[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
+const SUNSOFT5B_DC_BIAS: i32 = 0;
+
+/// v2.2.3 (A1) — absolute mixer level for the 5B, as a rational
+/// `NUM / DEN = 2549 / 138 ≈ 18.471`.
+///
+/// [`SUNSOFT5B_LOG_VOL`] carries the DAC *shape* (the +1.5 dB x2 law); this
+/// carries the *level*, the same split `VRC6_MIX_SCALE` /
+/// `NAMCO163_MIX_SCALE` / the MMC5 `650/40` pair use. Separating them is what
+/// lets the shape stay pinned by its own unit test while the level is pinned
+/// by a ROM oracle.
+///
+/// **Target, derived from Mesen2 (the project's accuracy bar) rather than from
+/// our own prior numbers.** In `NesSoundMixer::GetOutputVolume` a full-volume
+/// 2A03 square is `(95.88 * 5000) / (8128/15 + 100) = 746.9` units, and the 5B
+/// is summed with weight `* 15` over `Sunsoft5bAudio::_volumeLut`
+/// (`= (uint8_t)1.1885^(2i)`, so `LUT[12] = 63`, `LUT[15] = 177`). The
+/// `db_5b` ROM compares a **volume-12** 5B square against that square:
+///
+/// ```text
+///   volume 12: 63 * 15 / 746.9 = 1.265x   <- the db_5b oracle target
+///   volume 15: 177 * 15 / 746.9 = 3.554x  <- full-scale, the i16 blocker
+/// ```
+///
+/// This independently reproduces the ~1.27x / ~3.56x figures the accuracy
+/// ledger recorded when the calibration was deferred. The NESdev wiki and the
+/// in-repo technical references describe the chip but pin no absolute level —
+/// expansion-audio levels are a mixer convention, not a hardware spec, which
+/// is why the reference emulator is the oracle here.
+///
+/// The scale itself is measured, not computed: with the shape table above and
+/// the bus's `/65536` contract, `db_5b` measured `0.0685x` before this change,
+/// so `1.2652 / 0.0685 = 18.471`. That is the same measure-then-fix method
+/// `NAMCO163_MIX_SCALE` used for its ~12 dB correction.
+///
+/// **This is why `Mapper::mix_audio` had to widen to `i32` first.** A
+/// volume-15 tone now reaches `1882 * 18.471 = 34,761` — already past
+/// `i16::MAX` for ONE channel — and three simultaneous full-volume tones
+/// (Gimmick!, Hebereke) reach ~104 k, 3.2x over. The level could not be
+/// corrected while the return type was `i16`; that, not the arithmetic, was
+/// the actual blocker.
+#[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
+const SUNSOFT5B_MIX_SCALE_NUM: i32 = 2549;
+/// Denominator of [`SUNSOFT5B_MIX_SCALE_NUM`].
+#[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
+const SUNSOFT5B_MIX_SCALE_DEN: i32 = 138;
 
 /// One of the 5B's three square-wave tone channels.
 ///
@@ -2123,6 +2178,7 @@ struct Sunsoft5BTone {
     level: u8,
 }
 
+#[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
 impl Sunsoft5BTone {
     /// Effective half-period, in CPU clocks (`max(period, 1) * 16`).
     fn half_period(&self) -> u32 {
@@ -2165,6 +2221,7 @@ impl Default for Sunsoft5BNoise {
     }
 }
 
+#[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
 impl Sunsoft5BNoise {
     fn half_period(&self) -> u32 {
         u32::from(self.period.max(1)) * 16
@@ -2216,6 +2273,7 @@ struct Sunsoft5BEnvelope {
     holding: bool,
 }
 
+#[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
 impl Sunsoft5BEnvelope {
     /// Effective step interval in CPU clocks.
     fn step_period(&self) -> u32 {
@@ -2316,7 +2374,24 @@ pub(crate) struct Sunsoft5BAudio {
     envelope: Sunsoft5BEnvelope,
 }
 
+#[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
 impl Sunsoft5BAudio {
+    /// Raw value of one of the 16 PSG registers (`$00-$0F`), for the debug
+    /// window. Read-only — no side effects, unlike a real `$E000` access.
+    pub(crate) fn reg(&self, idx: usize) -> u8 {
+        self.regs[idx & 0x0F]
+    }
+
+    /// Current 16-bit envelope period (`$0B` low | `$0C` high), for debug.
+    pub(crate) const fn envelope_period(&self) -> u16 {
+        self.envelope.period
+    }
+
+    /// Current 5-bit envelope output level (0..=31), for debug.
+    pub(crate) fn envelope_output(&self) -> u8 {
+        self.envelope.output()
+    }
+
     pub(crate) fn write_addr(&mut self, value: u8) {
         // Per the wiki, writes with the high nibble nonzero are inhibited.
         // The simplest faithful model is to mask the latch to 4 bits and
@@ -2402,7 +2477,7 @@ impl Sunsoft5BAudio {
     /// Linear-summed audio output, scaled to ~i16 with the same headroom
     /// VRC6 leaves for the APU mixer.
     #[cfg(feature = "mapper-audio")]
-    pub(crate) fn mix(&self) -> i16 {
+    pub(crate) fn mix(&self) -> i32 {
         let mut sum: i32 = 0;
         for (ch, tone) in [&self.tone_a, &self.tone_b, &self.tone_c]
             .iter()
@@ -2419,24 +2494,31 @@ impl Sunsoft5BAudio {
             let noise_factor = !self.noise_enabled(ch) || self.noise.level() != 0;
             if tone_factor && noise_factor {
                 let v = self.volume(ch) as usize & 0x0F;
-                sum += i32::from(SUNSOFT5B_LOG_VOL[v]);
+                sum += SUNSOFT5B_LOG_VOL[v];
             }
         }
-        // Centre on zero so the BLEP buffer doesn't see a steady DC offset
-        // for an idle (all-channels-on-with-fixed-volume) cartridge.  Cast
-        // is safe: sum <= 3 * 1882 = 5646, DC bias = 3 * (1882/2) = 2823.
-        (sum - i32::from(SUNSOFT5B_DC_BIAS)) as i16
+        // Scale the shape table to the hardware-relative level (see
+        // `SUNSOFT5B_MIX_SCALE_NUM`), then centre on zero so the BLEP buffer
+        // doesn't see a steady DC offset for an idle
+        // (all-channels-on-with-fixed-volume) cartridge. No cast: v2.2.3
+        // widened `Mapper::mix_audio` to i32 precisely so the 5B's full
+        // three-channel swing (~104 k) is representable rather than clamped.
+        // The multiply precedes the divide so the integer division loses at
+        // most 1 part in ~12,000 on a volume-12 tone.
+        sum * SUNSOFT5B_MIX_SCALE_NUM / SUNSOFT5B_MIX_SCALE_DEN - SUNSOFT5B_DC_BIAS
     }
 
     /// Feature-off shim: the generators do not advance with `mapper-audio`
     /// disabled (mirrors the gated path so the shared NSF expansion router
     /// can clock unconditionally).
     #[cfg(not(feature = "mapper-audio"))]
+    #[allow(clippy::needless_pass_by_ref_mut, clippy::unused_self)]
     pub(crate) fn clock(&mut self) {}
 
     /// Feature-off shim: silence when `mapper-audio` is disabled.
     #[cfg(not(feature = "mapper-audio"))]
-    pub(crate) fn mix(&self) -> i16 {
+    #[allow(clippy::unused_self)]
+    pub(crate) fn mix(&self) -> i32 {
         0
     }
 
@@ -2743,7 +2825,7 @@ impl Mapper for Fme7 {
     }
 
     #[cfg(feature = "mapper-audio")]
-    fn mix_audio(&mut self) -> i16 {
+    fn mix_audio(&mut self) -> i32 {
         self.audio.mix()
     }
 
@@ -2784,6 +2866,36 @@ impl Mapper for Fme7 {
             "prg_ram".into(),
             format!("en={} sel={}", self.prg_ram_enabled, self.prg_ram_select),
         ));
+        // v2.2.3 — surface the Sunsoft 5B audio register file. The 5B is the
+        // only part of this board with no other debug window, and its state is
+        // exactly what you need to answer "why is this cart silent?" — the
+        // mixer/enable byte ($07) and the three volume bytes ($08-$0A, bit 4 =
+        // envelope mode) decide whether anything sounds at all.
+        #[cfg(feature = "mapper-audio")]
+        {
+            let a = &self.audio;
+            info.extra
+                .push(("5b_mixer($07)".into(), format!("{:#04x}", a.reg(0x07))));
+            info.extra.push((
+                "5b_vol(A,B,C)".into(),
+                format!(
+                    "{:#04x} {:#04x} {:#04x}",
+                    a.reg(0x08),
+                    a.reg(0x09),
+                    a.reg(0x0A)
+                ),
+            ));
+            info.extra.push((
+                "5b_env".into(),
+                format!(
+                    "period={:#06x} shape={:#04x} out={}",
+                    a.envelope_period(),
+                    a.reg(0x0D),
+                    a.envelope_output()
+                ),
+            ));
+            info.extra.push(("5b_mix".into(), format!("{}", a.mix())));
+        }
         info
     }
 
@@ -3174,8 +3286,23 @@ impl Namco163Audio {
         ((sum / i32::from(n)) * NAMCO163_MIX_SCALE) as i16
     }
 
+    /// Feature-off shim: the wavetable generator does not advance with
+    /// `mapper-audio` disabled.
+    ///
+    /// Mirrors the gated `clock` above so the shared NSF expansion router
+    /// (`nsf_expansion::NsfExpansion::clock`) can call it unconditionally, the
+    /// same arrangement `Sunsoft5BAudio` and `FdsAudio` already had. Its
+    /// absence broke `--no-default-features` outright: the router clocks every
+    /// present chip with no `cfg` of its own, so with the feature off this was
+    /// a hard `E0599` — the N163 was the one chip in the router missing the
+    /// shim, and `mix` alone was not enough.
+    #[cfg(not(feature = "mapper-audio"))]
+    #[allow(clippy::needless_pass_by_ref_mut, clippy::unused_self)]
+    pub(crate) fn clock(&mut self) {}
+
     /// `mix_audio` shim for the no-audio build.
     #[cfg(not(feature = "mapper-audio"))]
+    #[allow(clippy::unused_self)]
     pub(crate) fn mix(&self) -> i16 {
         0
     }
@@ -3458,11 +3585,11 @@ impl Mapper for Namco163 {
     }
 
     #[cfg(feature = "mapper-audio")]
-    fn mix_audio(&mut self) -> i16 {
+    fn mix_audio(&mut self) -> i32 {
         if self.sound_disabled {
             return 0;
         }
-        self.audio.mix()
+        i32::from(self.audio.mix())
     }
 
     fn irq_pending(&self) -> bool {
@@ -4230,9 +4357,10 @@ mod tests {
     #[test]
     #[cfg(feature = "mapper-audio")]
     fn sunsoft5b_volume_dac_follows_logarithmic_step_law() {
-        // The `db_5b` relative-level accuracy criterion RustyNES *can* verify
-        // exactly (the absolute level is an honest i16-headroom deferral — see
-        // docs/accuracy-ledger.md): the 5B volume DAC is logarithmic, ~+3 dB
+        // The DAC SHAPE criterion. (The absolute LEVEL is a separate concern
+        // with its own oracle — `level_db_5b` against the `db_5b` ROM, wired in
+        // v2.2.3 A1; it used to be an i16-headroom deferral.) The 5B volume DAC
+        // is logarithmic, ~+3 dB
         // (×1.1885² ≈ ×1.4125) per 4-bit step, matching Mesen2's
         // `Sunsoft5bAudio` `_volumeLut` (LUT[12]=63, LUT[15]=177) and tetanes.
         assert_eq!(SUNSOFT5B_LOG_VOL[0], 0, "silence at volume 0");
@@ -4619,7 +4747,8 @@ mod tests {
         // Each OPLL sample = 36 CPU cycles. 16,384 CPU cycles = ~455
         // OPLL samples = ~9 ms of audio. Damp → Attack happens within
         // a few hundred OPLL samples for any non-saturated AR.
-        let mut peak_abs: u16 = 0;
+        // u32: `mix_audio` widened to i32 in v2.2.3 (A1).
+        let mut peak_abs: u32 = 0;
         for _ in 0..16_384 {
             m.notify_cpu_cycle();
             let s = m.mix_audio();

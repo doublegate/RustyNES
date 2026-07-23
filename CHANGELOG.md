@@ -43,6 +43,63 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- Sunsoft 5B audio register file (`$07` mixer, `$08-$0A` volumes, envelope
+  period/shape/output, live mix value) is now surfaced in the FME-7 mapper
+  debug window (`Nes::mapper_info()`). Added while diagnosing the snapshot-window
+  gap below — the 5B was the only part of that board with no debug view, and its
+  mixer/volume bytes are exactly what answer "why is this cart silent?".
+
+- **Sunsoft 5B expansion audio was ~23 dB too quiet; now calibrated.** The 5B's
+  logarithmic DAC *shape* has been hardware-exact since v2.1.6, but its
+  *absolute level* was a documented gap — for one reason only: `Mapper::mix_audio`
+  returned `i16`, and the correct full-scale tone is `1882 × 18.471 = 34,761`,
+  past `i16::MAX` for a **single** channel (three simultaneous tones, as in
+  Gimmick! / Hebereke, reach ~104 k — 3.2× over). The blocker was the type, not
+  the value.
+
+  The trait return is widened to **`i32`** and the level calibrated by
+  `SUNSOFT5B_MIX_SCALE_NUM/DEN = 2549/138 ≈ 18.471`. `db_5b` measured
+  **0.0685×** before and **1.2651×** after, against a target derived from Mesen2
+  rather than from our own prior numbers: `LUT[12]=63 × mixer weight 15 / 746.9
+  = 1.265` (full scale `3.554`), independently reproducing the figures the
+  accuracy ledger recorded when the work was deferred. Now asserted by a new
+  `level_db_5b` oracle, so shape and level are each pinned by their own test.
+
+  Every other board returns exactly the values it always did — the widening is
+  representational. AccuracyCoin 141/141, the other 24 audio-expansion tests,
+  and the APU oracles are unchanged.
+
+  One consequence had to be chased down rather than left: `NsfExpansion::mix`
+  summed the chips into an `i16` **with a clamp**, which was harmless while
+  every chip fitted — but a calibrated 5B reaches ~104 k at full scale, so an
+  NSF 5B tune would have *clipped* where the identical cartridge 5B path does
+  not. Since the entire point of `nsf_expansion` is that an NSF tune sounds
+  bit-for-bit like the cartridge, that function is now `i32` and unclamped.
+
+- **The expansion-audio snapshot layer was blind to expansion audio.** Snapshots
+  captured 120 frames, but these ROMs hold a 2A03 reference tone first and do
+  not switch the expansion chip in until ~frame 560 — so the "load-bearing audio
+  sentinel" hashed boot and the reference section and never observed the chip
+  under test. Found by accident: the 5B level change above is **18.5×** and all
+  six 5B snapshots stayed byte-identical.
+
+  The capture window now spans the expansion segment (660 frames, reusing
+  `DB_FRAMES`), and all 19 snapshots are re-blessed accordingly — the hash
+  changes are the window extension plus, for the 5B ROMs, the level fix.
+  Verified by perturbation rather than assumed: a **one-unit** scale change
+  (0.04%) now fails **all six** 5B snapshots, where an 18.5× change previously
+  failed none.
+
+  Reaching all six needed per-ROM windows, not just a bigger shared one.
+  Instrumenting the 5B register file (new `5b_*` rows in the FME-7 debug
+  window, `Nes::mapper_info()`) measured each ROM's first non-zero 5B output:
+  `db_5b` ~540, `envelope_5b` ~420, but **`noise_5b` ~900** and **`sweep_5b`
+  ~4740** (~79 s). Neither late ROM is broken and neither awaits input —
+  `noise_5b` enables noise on channel A about 15 s in, and `sweep_5b` runs a
+  slow volume sweep holding mixer `$3F` (the "both bits set ⇒ constant output
+  at volume" case). They simply outlast the shared window, so they now get
+  `NOISE_5B_FRAMES` / `SWEEP_5B_FRAMES` of their own.
+
 - **Run-ahead cost three AccuracyCoin tests.** The PPU save-state carried
   `secondary_oam` but not the sprite-evaluation FSM that fills it — the
   `sprite_eval_*` pointers and phase flags, the parallel OAM-data-bus model
@@ -131,6 +188,29 @@ cycle-accurate core later replaced.
   with exit 0** rather than inventing a verdict when no base is resolvable
   (shallow clone, root commit, new branch, `workflow_dispatch`). The `bench` job
   now checks out with `fetch-depth: 0` so the normal case does not skip.
+
+- **`rustynes-mappers` with `mapper-audio` compiled OUT was broken, and is now
+  gated in CI.** `Namco163Audio` was missing the feature-off `clock()` shim that
+  the NSF expansion router calls unconditionally, so the whole configuration
+  failed to build with a hard `E0599`. Nothing noticed because nothing built it:
+  every other feature gate turns features *on*, and the `no_std` job is
+  `-p rustynes-core`, which keeps `mapper-audio` on.
+
+  The shim is added (matching the pattern FDS and Sunsoft 5B already had), and
+  `cargo clippy -p rustynes-mappers --no-default-features --all-targets -D
+  warnings` joins the `lint` job so the subtraction case cannot rot again.
+
+  Two follow-ons the newly-compiling config exposed, neither of which is
+  unfinished work — the default build is dead-code-warning clean and every item
+  has real call sites (`effective_period_p/_s` drive VRC6 period computation,
+  `half_period` reloads the 5B tone/noise counters). They are audio-support
+  items that are simply unreachable once the subsystem is compiled out, so they
+  carry `#[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]` rather
+  than `#[cfg]` — they still compile, so any future non-audio caller keeps
+  working. The feature-off shims themselves also needed narrow
+  `clippy::unused_self` / `needless_pass_by_ref_mut` allows: a shim must keep
+  the gated signature so the unconditional caller compiles, which is exactly
+  what those lints object to.
 
 - **`actionlint` is now clean across every workflow** (it was not before, which
   is how the invalid `continue-on-error` above was caught). Two pre-existing

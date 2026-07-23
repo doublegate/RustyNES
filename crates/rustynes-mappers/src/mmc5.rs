@@ -1450,7 +1450,7 @@ impl Mapper for Mmc5 {
     }
 
     #[cfg(feature = "mapper-audio")]
-    fn mix_audio(&mut self) -> i16 {
+    fn mix_audio(&mut self) -> i32 {
         // Two pulse outputs (each 0..=15) plus one 7-bit PCM level.
         //
         // PCM is silenced when `$5010` bit 0 = 1 (read-mode) -- the chip
@@ -1478,7 +1478,7 @@ impl Mapper for Mmc5 {
         // constants are shared with the NSF path so they can't drift.
         let pulse_mix = (p1 + p2) * MMC5_PULSE_SCALE; // 0..=19500
         let pcm_mix = pcm * MMC5_PCM_SCALE; // 0..=5080
-        (pulse_mix + pcm_mix) - MMC5_MIX_BIAS
+        i32::from((pulse_mix + pcm_mix) - MMC5_MIX_BIAS)
     }
 
     fn notify_scanline_start(&mut self) {

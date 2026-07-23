@@ -304,6 +304,7 @@ impl Vrc7Exp {
     }
 
     #[cfg(not(feature = "mapper-audio"))]
+    #[allow(clippy::needless_pass_by_ref_mut, clippy::unused_self)]
     fn clock(&mut self) {}
 
     #[cfg(feature = "mapper-audio")]
@@ -312,6 +313,7 @@ impl Vrc7Exp {
     }
 
     #[cfg(not(feature = "mapper-audio"))]
+    #[allow(clippy::unused_self)]
     fn mix(&self) -> i16 {
         0
     }
@@ -444,8 +446,16 @@ impl NsfExpansion {
         }
     }
 
-    /// Sum every present chip's output into one signed sample.
-    pub(crate) fn mix(&self) -> i16 {
+    /// Sum every live expansion chip into one sample.
+    ///
+    /// **`i32`, and no longer clamped, as of v2.2.3 (A1).** It used to return
+    /// `i16` and `clamp` into it, which was harmless while every chip fitted —
+    /// but the calibrated Sunsoft 5B reaches ~104 k at full scale (three tones
+    /// at volume 15), so an NSF 5B tune would have CLIPPED where the identical
+    /// cartridge 5B path does not. The whole point of `nsf_expansion` is that
+    /// an NSF tune sounds bit-for-bit like the cartridge, so the clamp had to
+    /// go with the widening rather than silently diverge the two paths.
+    pub(crate) fn mix(&self) -> i32 {
         let mut sum: i32 = 0;
         if let Some(c) = self.vrc6.as_ref() {
             sum += i32::from(c.mix());
@@ -463,9 +473,11 @@ impl NsfExpansion {
             sum += i32::from(c.mix());
         }
         if let Some(c) = self.s5b.as_ref() {
-            sum += i32::from(c.mix());
+            // No conversion: `Sunsoft5BAudio::mix` returns i32 as of v2.2.3 (A1),
+            // because the calibrated 5B level overflows i16 at full scale.
+            sum += c.mix();
         }
-        sum.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+        sum
     }
 
     /// Serialize the NSF save-state expansion tail: a single presence byte that

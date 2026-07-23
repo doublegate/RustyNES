@@ -26,10 +26,17 @@
 //! | `db_mmc5`  | MMC5 square / APU square           | ~ 1.000      |
 //! | `db_n163`  | N163 1-ch square / APU square      | ~ 6.02       |
 //!
-//! `db_5b` and `db_vrc7` do NOT have a `level_db_*` assertion — their absolute
-//! levels are honest documented gaps (the i16 `mix_audio` contract can't
-//! represent the 5B's ~3.6x full-volume level; the VRC7 OPLL level metric is
-//! patch-/waveform-dependent and not cleanly oracle-pinned), so they stay
+//! | `db_5b`    | 5B vol-12 square / APU square      | ~ 1.265      |
+//!
+//! `db_5b` gained its assertion in v2.2.3 (A1). It had been a documented gap
+//! for one reason only: `Mapper::mix_audio` returned `i16`, and the corrected
+//! level puts a full-scale 5B tone at `1882 * 18.471 = 34,761` — past
+//! `i16::MAX` for a single channel. Widening the return type to `i32` is what
+//! unblocked it; the level was then measured (`0.0685x`, ~23 dB too quiet) and
+//! corrected to the Mesen2-derived `63 * 15 / 746.9 = 1.265`.
+//!
+//! `db_vrc7` still has NO `level_db_*` assertion — the OPLL level metric is
+//! patch-/waveform-dependent and not cleanly oracle-pinned, so it stays
 //! snapshot-guarded only. The VRC7 instrument patch ROM is instead verified
 //! byte-for-byte against the canonical Nuke.YKT dump by a `rustynes_apu::opll`
 //! unit test (the real `patch_vrc7` criterion); the 5B logarithmic volume DAC
@@ -45,6 +52,23 @@
 //! audio path surfaces as an audio-hash change. A snapshot must be re-blessed
 //! only when the new output is provably MORE accurate (measured vs the ROM
 //! target), documented in the commit.
+//!
+//! **That claim was FALSE until v2.2.3** — see [`SNAPSHOT_FRAMES`]. The capture
+//! ran 120 frames while these ROMs do not switch the expansion chip in until
+//! ~frame 560, so the hashes covered boot and the 2A03 reference tone and never
+//! observed the chip under test. It was caught by accident: the A1 change moved
+//! the Sunsoft 5B level by 18.5x and every 5B snapshot stayed byte-identical.
+//! The window now spans the expansion segment, so the sentinel guards what its
+//! name says. Verified by perturbation, not assumed: a **one-unit** change to
+//! `SUNSOFT5B_MIX_SCALE_NUM` — a 0.04% level change — now fails **all six** 5B
+//! snapshots (`db_5b`, `clip_5b`, `envelope_5b`, `phase_5b`, `noise_5b`,
+//! `sweep_5b`), where an 18.5x change previously failed none.
+//!
+//! Getting the last two took per-ROM windows rather than a bigger shared one:
+//! `noise_5b` and `sweep_5b` start much later than the rest (frames ~900 and
+//! ~4740 — see `NOISE_5B_FRAMES` / `SWEEP_5B_FRAMES`), which is why a single
+//! 660-frame window still missed them. Neither is broken and neither awaits
+//! input; that was measured off the 5B register file, not guessed.
 //!
 //! Determinism: the whole core is deterministic, so both the `(fb, cycles,
 //! audio)` capture and the per-frame peak envelope are byte-stable run-to-run
@@ -158,6 +182,23 @@ fn level_db_mmc5() {
 }
 
 #[test]
+fn level_db_5b() {
+    // Sunsoft 5B, the ROM's volume-12 square: ~1.265× the 2A03 pulse. Derived
+    // from Mesen2 rather than from our own prior numbers — in
+    // `NesSoundMixer::GetOutputVolume` a full-volume APU square is
+    // `(95.88 * 5000) / (8128/15 + 100) = 746.9` units and the 5B is summed at
+    // weight `* 15` over `_volumeLut = (uint8_t)1.1885^(2i)` (`LUT[12] = 63`),
+    // giving `63 * 15 / 746.9 = 1.265`. Full scale (`LUT[15] = 177`) is
+    // `3.554×`, which is what made this uncalibratable while `Mapper::mix_audio`
+    // returned `i16`. See `SUNSOFT5B_MIX_SCALE_NUM` in `sprint3.rs`.
+    //
+    // This is the v2.2.3 A1 fix: the level was a documented gap (measured
+    // `0.0685×`, ~23 dB too quiet) purely because the return type could not
+    // hold the corrected value.
+    assert_ratio("db_5b.nes", 1.265, 0.04);
+}
+
+#[test]
 fn level_db_n163() {
     // Namco 163, 1-channel mode: ~6.0× the 2A03 pulse — the Mesen2 `*20`
     // weight on the un-attenuated `(sample-8)*volume` channel (no reference
@@ -178,19 +219,59 @@ fn capture(rom: &str, frames: u64) -> String {
     snapshot_line_full(&rel, frames, fb, cycles, samples, audio)
 }
 
-/// Generate one `insta` snapshot test per ROM. 120 frames (~2 s NES time)
-/// captures the boot + first tones and produces a representative audio buffer;
+/// Frames captured per snapshot.
+///
+/// **Was 120 through v2.2.2, which made this whole layer blind to expansion
+/// audio.** These ROMs hold an APU reference tone first and only switch the
+/// expansion chip in around frame 560 (see [`EXP_WINDOW`]) — more than 4x past
+/// a 120-frame capture. The snapshots therefore hashed boot + the 2A03
+/// reference section and never once observed the chip under test.
+///
+/// That was not a theoretical gap. The v2.2.3 A1 change altered the Sunsoft 5B
+/// output level by **18.5x**, and all six 5B snapshots stayed byte-identical.
+/// A sentinel that cannot see an 18x change in the thing it guards is not a
+/// sentinel. [`DB_FRAMES`] covers the expansion window, so the capture uses it.
+const SNAPSHOT_FRAMES: u64 = DB_FRAMES;
+
+/// Generate one `insta` snapshot test per ROM. [`SNAPSHOT_FRAMES`] (~11 s NES
+/// time) covers boot, the APU reference tone AND the expansion-chip section;
 /// combined with the level oracle above, the snapshot is a byte-exact
 /// regression sentinel for the whole APU + expansion-mixer path.
 macro_rules! audio_expansion_test {
+    // Default window ([`SNAPSHOT_FRAMES`]).
     ($name:ident, $rom:literal) => {
+        audio_expansion_test!($name, $rom, SNAPSHOT_FRAMES);
+    };
+    // Explicit window, for ROMs whose chip section starts later (see
+    // `LATE-STARTING ROMS` below).
+    ($name:ident, $rom:literal, $frames:expr) => {
         #[test]
         fn $name() {
-            let snap = capture($rom, 120);
+            let snap = capture($rom, $frames);
             insta::assert_snapshot!(concat!("audio_expansion_", stringify!($name)), snap);
         }
     };
 }
+
+// LATE-STARTING ROMS — measured, not guessed.
+//
+// Instrumenting the 5B register file (`Nes::mapper_info()`, `5b_*` rows added
+// to the FME-7 debug window in v2.2.3) over a long run gives each ROM's first
+// non-zero 5B output:
+//
+//   db_5b        frame ~540   (matches the pinned EXP_WINDOW)
+//   envelope_5b  frame ~420
+//   noise_5b     frame ~900   -> needs more than SNAPSHOT_FRAMES
+//   sweep_5b     frame ~4740  -> needs far more
+//
+// Neither late ROM is broken and neither needs input: `noise_5b` enables noise
+// on channel A (mixer `$37`, volume 12) about 15 s in, and `sweep_5b` runs a
+// slow volume sweep from about 79 s in, holding mixer `$3F` — the wiki's
+// "both bits 1 => constant output at volume" case — while modulating the
+// volume registers directly. They simply take longer than the shared window,
+// so they get their own.
+const NOISE_5B_FRAMES: u64 = 1_200;
+const SWEEP_5B_FRAMES: u64 = 5_400;
 
 // Decibel-comparison family (db_*): reference + per-chip square comparisons.
 // The db_apu/db_vrc6a/db_vrc6b/db_mmc5/db_n163 LEVELS are additionally
@@ -232,8 +313,8 @@ audio_expansion_test!(test_n163_longwave, "test_n163_longwave.nes");
 // deep amplifier-model gap; `noise_5b`/`sweep_5b`/`envelope_5b`/`phase_5b` are
 // pure listening/filter-characterization ROMs — all regression-guard only.
 audio_expansion_test!(clip_5b, "clip_5b.nes");
-audio_expansion_test!(noise_5b, "noise_5b.nes");
-audio_expansion_test!(sweep_5b, "sweep_5b.nes");
+audio_expansion_test!(noise_5b, "noise_5b.nes", NOISE_5B_FRAMES);
+audio_expansion_test!(sweep_5b, "sweep_5b.nes", SWEEP_5B_FRAMES);
 audio_expansion_test!(envelope_5b, "envelope_5b.nes");
 audio_expansion_test!(phase_5b, "phase_5b.nes");
 

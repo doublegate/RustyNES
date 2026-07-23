@@ -209,6 +209,20 @@ jobs:
       # cfg-gated-code coverage gap (#11a) without a per-feature matrix.
       - name: clippy (full — every native feature)
         run: cargo clippy -p rustynes-frontend --all-targets --features full -- -D warnings
+      # `rustynes-mappers` with `mapper-audio` OFF. Every combo above turns
+      # features ON; this is the only gate that compiles a feature OUT, and the
+      # subtraction is where the rot happens: this configuration was outright
+      # BROKEN — a hard `E0599`, because `Namco163Audio` was missing the
+      # feature-off `clock()` shim that the NSF expansion router calls
+      # unconditionally — and nothing noticed, because nothing built it. The
+      # `no_std` job below is `-p rustynes-core`, which keeps `mapper-audio` on.
+      #
+      # The feature's contract (see the crate manifest) is that with audio off
+      # the register decoders stay live — so save states from an audio-enabled
+      # build still load — while the oscillators freeze. That asymmetry is
+      # exactly what a compile-only gate protects.
+      - name: clippy (mappers — mapper-audio compiled OUT)
+        run: cargo clippy -p rustynes-mappers --no-default-features --all-targets -- -D warnings
 
   # Cross-platform behaviour: full `cargo test` on stable across the three
   # shipped OSes. The previous ubuntu / 1.96 MSRV *test* entry is dropped — the
