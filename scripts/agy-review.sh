@@ -13,6 +13,12 @@
 # See ../README.md for setup, the issue #76 PTY workaround, and the ToS caveat.
 set -euo pipefail
 
+# Helpers are defined FIRST: the configuration block below calls log() from the MAX_PROMPT_BYTES
+# clamp, so log() must already exist. (Defined later, a clamp that fires would die with
+# `log: command not found` under set -e instead of warning — a latent misconfiguration trap.)
+log() { printf '[agy-review] %s\n' "$*" >&2; }
+have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
+
 # --- configuration (all env-overridable from the workflow) ---------------------
 AGY_BIN="${AGY_BIN:-agy}"
 command -v "$AGY_BIN" >/dev/null 2>&1 || AGY_BIN="$HOME/.local/bin/agy"
@@ -36,8 +42,13 @@ MAX_PROMPT_BYTES="${MAX_PROMPT_BYTES:-125000}" # hard ceiling on the INLINED pro
 ARG_SIZE_CEILING=128000                     # hard cap: a configured MAX_PROMPT_BYTES above the
                                            # MAX_ARG_STRLEN-derived safe bound would defeat the guard
                                            # and re-expose E2BIG, so clamp any override down to it.
-if ! [ "$MAX_PROMPT_BYTES" -le "$ARG_SIZE_CEILING" ] 2>/dev/null; then
-  log "MAX_PROMPT_BYTES='${MAX_PROMPT_BYTES}' invalid or above the ${ARG_SIZE_CEILING}-byte ceiling; clamping"
+# Require a POSITIVE integer at or below the ceiling. The `-gt 0` half is load-bearing, not
+# cosmetic: a negative override (e.g. MAX_PROMPT_BYTES=-1) satisfies `-le "$ARG_SIZE_CEILING"`,
+# so without it the clamp is skipped and the `head -c "$MAX_PROMPT_BYTES"` prompt cap below runs
+# as GNU `head -c -1` (print all-but-last-byte) — silently defeating the E2BIG backstop. A
+# non-numeric value trips the `2>/dev/null` and is clamped too.
+if ! { [ "$MAX_PROMPT_BYTES" -gt 0 ] && [ "$MAX_PROMPT_BYTES" -le "$ARG_SIZE_CEILING" ]; } 2>/dev/null; then
+  log "MAX_PROMPT_BYTES='${MAX_PROMPT_BYTES}' invalid, non-positive, or above the ${ARG_SIZE_CEILING}-byte ceiling; clamping"
   MAX_PROMPT_BYTES="$ARG_SIZE_CEILING"
 fi
 STYLE_GUIDE="${STYLE_GUIDE:-.github/agy-review.md}"  # repo-relative; loaded if present
@@ -52,9 +63,6 @@ AGY_LOCK_WAIT="${AGY_LOCK_WAIT:-600}"      # seconds to wait for the agy lock be
 AGY_RETRIES="${AGY_RETRIES:-3}"            # attempts to get a usable agy response
 AGY_RETRY_DELAY="${AGY_RETRY_DELAY:-15}"   # base backoff seconds between retries (grows per attempt)
 MARKER="<!-- antigravity-pr-review -->"
-
-log() { printf '[agy-review] %s\n' "$*" >&2; }
-have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
 
 REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY not set}"
 
@@ -306,15 +314,19 @@ fi
 # original (possibly split) bytes. A successful sanitize must replace the file; a failed mv is fatal
 # (set -e); a failed/absent sanitizer leaves the original and we proceed (it may already be clean, and
 # any residual invalid byte now surfaces via the captured stderr rather than a silent instant crash).
+# The `[ -s ... ]` guard is deliberate: the prompt is always non-empty here (boilerplate at
+# minimum), so a sanitizer that exits 0 but emits ZERO bytes is a malfunction, and mv-ing that
+# empty file over $prompt_file would wipe the prompt and hand agy nothing. Replace only on a
+# non-empty result; otherwise discard it and proceed with the original (already likely clean).
 if command -v iconv >/dev/null 2>&1; then
-  if iconv -c -f UTF-8 -t UTF-8 "$prompt_file" > "$prompt_file.utf8" 2>/dev/null; then
+  if iconv -c -f UTF-8 -t UTF-8 "$prompt_file" > "$prompt_file.utf8" 2>/dev/null && [ -s "$prompt_file.utf8" ]; then
     mv "$prompt_file.utf8" "$prompt_file"
   else
     rm -f "$prompt_file.utf8"
   fi
 elif command -v python3 >/dev/null 2>&1; then
   if python3 -c 'import sys; sys.stdout.buffer.write(open(sys.argv[1],"rb").read().decode("utf-8","ignore").encode("utf-8"))' \
-       "$prompt_file" > "$prompt_file.utf8" 2>/dev/null; then
+       "$prompt_file" > "$prompt_file.utf8" 2>/dev/null && [ -s "$prompt_file.utf8" ]; then
     mv "$prompt_file.utf8" "$prompt_file"
   else
     rm -f "$prompt_file.utf8"
