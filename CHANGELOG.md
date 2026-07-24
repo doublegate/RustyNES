@@ -14,6 +14,79 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.2.4] - 2026-07-24 - "Cartridge" (libretro core builds/installs for RetroArch)
+
+A **libretro / RetroArch distribution** cut. Its purpose is that the RustyNES
+core builds and installs cleanly through the Libretro buildbot
+(<https://git.libretro.com/libretro/RustyNES>) so RetroArch users can pull it
+from the in-app core downloader. **Zero emulation-core changes**, so
+AccuracyCoin holds **141/141 (100.00%)**, nestest is 0-diff, and the `#![no_std]`
+chip stack, save-state / TAS / netplay formats, and every golden vector are
+byte-identical to v2.2.3 by construction.
+
+### Libretro / distribution
+
+- **The libretro core is confirmed complete and up-to-date with every recent
+  change, and builds for the buildbot ABIs.** `crates/rustynes-libretro` wraps
+  `rustynes-core`, so it inherits the v2.2.3 work automatically and required no
+  code change to carry it: the fast PPU dot path (now the core default) is
+  active; the `PPU_SNAPSHOT_VERSION` 8 + APU v4 save-state schema is transparent
+  because `get_serialize_size` / `on_serialize` size and emit the *current*
+  snapshot via `Nes::snapshot_core_into` rather than a hardcoded layout; the
+  `Mapper::mix_audio` i32 widening, the Zapper model, and the `mNNN_` mapper
+  rename are all below the crate's public dependency surface. Both buildbot
+  cross-ABIs the GitHub early-warning gate models — `x86_64-pc-windows-gnu` and
+  `aarch64-linux-android` — `cargo check --release -p rustynes-libretro`
+  clean.
+- **`rustynes_libretro.info` metadata corrected** (the file RetroArch's core
+  downloader reads to learn the core's capabilities):
+  - **`disk_control` `false` → `true`** — the real fix. The FDS multi-side Disk
+    Control interface (`enable_disk_control_interface()` + the
+    `on_set_eject_state` / `on_get_image_index` / … callback trampolines) has
+    been wired since the buildbot recipe landed, but the `.info` advertised it
+    as absent, so RetroArch's Quick Menu → Disk Control never surfaced multi-disk
+    FDS swapping.
+  - `display_version` `v1.0.0` → `v2.2.4` (stale since the v1.0.0 era).
+  - Description mapper count `168` → `172`, and a note that FDS multi-disk
+    swapping runs through the Disk Control interface.
+- Documented follow-up: libretro **core options** (region / overscan / palette /
+  accuracy toggles) remain unexposed. `core_options = "false"` is accurate, not
+  stale — a deliberate future enhancement, not a v2.2.4 gap.
+
+### Tooling
+
+- **The Antigravity PR reviewer is standardized onto the shared template**
+  (`scripts/agy-review.sh` + `.github/workflows/antigravity-review.yml`), the
+  same canonical version now installed across RustyNES / RustySNES / RustyN64.
+  It carries the large-diff handling (a diff too big to inline goes to `agy` as
+  a file), the 20,000-line `gh pr diff` API-limit local-`git diff` fallback, the
+  `isCrossRepository` fork gate, fail-closed metadata, default-branch checkout
+  with `persist-credentials: false`, and the `synchronize` auto-re-review
+  trigger.
+- **Reviewer security hardening (found by the reviewer itself).** The
+  Antigravity reviewer, run against this PR, flagged five security regressions
+  the standardized template had relative to RustyNES's prior version — all
+  fixed: `printf '%q '`-escaped `script(1)` fallback (was a raw `${flags[*]}` in
+  `sh -c` — command injection), an author-scoped comment-deletion filter (was
+  marker-only — arbitrary comment deletion), removal of the unscoped SQLite
+  conversation-store fallback (a shared-runner data-leak vector), stripping
+  `GH_TOKEN` / `GITHUB_TOKEN` from `agy`'s environment (`env -u`), and the
+  `issue_comment` author-association re-check restored in the script.
+- **Large-diff handoff made readable (found by the reviewer, fixed on the
+  runner).** The reviewer files a diff too large to inline into a gitignored
+  working-tree scratch dir (`.agy-review-work/`, relocated from `.git/` after the
+  reviewer flagged the hidden-dir read risk) and tells `agy` to read it — but
+  that on-disk handoff never actually worked: `agy`'s sandboxed file tool
+  resolves relative paths against its own workspace root, not the shell CWD, so
+  the file came back "does not exist" and the review was empty. Latent until a
+  diff first crossed the ~90 KB inline budget (below it the diff is inlined and
+  the file path is never exercised). Root cause and fix proven on the live `agy`
+  runner with a three-way probe under the exact review flags: the prompt now
+  hands `agy` an **absolute** path, and `--add-dir "$PWD"` adds the checkout to
+  `agy`'s sandbox workspace — but only in file-handoff mode, so an inline review
+  keeps zero filesystem access. All changes ride the canonical template so the
+  three consuming repos stay in sync.
+
 ## [2.2.3] - 2026-07-23 - "Datum" (fast dot path promoted + PGO shipped + the last two mapper residuals closed)
 
 ### Performance
