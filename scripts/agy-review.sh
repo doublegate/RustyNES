@@ -91,11 +91,15 @@ log "reviewing ${REPO}#${PR}"
 
 # Remove every temp file on exit. Pre-declared so the trap is safe under `set -u` even if the
 # script exits before a given file is created.
-diff_file= diff_err= meta_file= prompt_file= out_file= raw= body_file= agy_diff_file=
+diff_file= diff_err= meta_file= prompt_file= out_file= raw= body_file= agy_diff_file= agy_work_dir=
 # Set when the large-diff fallback below creates refs/agy/* so the trap can remove them.
 agy_refs_created=
 cleanup() {
   rm -f "$diff_file" "$diff_err" "$meta_file" "$prompt_file" "$out_file" "$raw" "$body_file" "$agy_diff_file"
+  # Remove the gitignored diff-handoff scratch dir once its file is gone. `rmdir` only unlinks an
+  # empty dir, so a concurrent run's file (a different $$) is never clobbered; a non-empty dir is
+  # gitignored and harmless if left behind.
+  [ -n "$agy_work_dir" ] && rmdir "$agy_work_dir" 2>/dev/null || true
   if [ -n "$agy_refs_created" ] && [ -n "${PR:-}" ]; then
     git update-ref -d "refs/agy/pr-${PR}" 2>/dev/null || true
     git update-ref -d "refs/agy/base-${PR}" 2>/dev/null || true
@@ -252,15 +256,15 @@ case "$AGY_DIFF_MODE" in
 esac
 
 if [ "$use_file" = "1" ]; then
-  # agy's CWD is the repo checkout, so a file written under it is readable by its file tool. Prefer
-  # `.git/` -- git never lists it in `git status`, so the transient diff can't show up as working-tree
-  # pollution if agy inspects repo state -- and fall back to the repo root when `.git` is not a real
-  # directory (a worktree/submodule gitfile). Either way the path is CWD-relative for the prompt.
-  if [ -d "$PWD/.git" ]; then
-    diff_name=".git/agy-review-diff.$$.patch"
-  else
-    diff_name=".agy-review-diff.$$.patch"
-  fi
+  # agy's CWD is the repo checkout, so a file written under it is readable by its file tool. Write it
+  # into a dedicated, gitignored scratch dir (`.agy-review-work/`, listed in .gitignore) rather than
+  # `.git/` (a sandbox may deny tool access to the hidden `.git` dir) or the repo root (an untracked
+  # `.patch` there pollutes `git status` if agy inspects repo state). Being gitignored, the dir never
+  # shows as working-tree pollution; the EXIT trap removes the file and the (now-empty) dir. The path
+  # is CWD-relative for the prompt.
+  agy_work_dir="$PWD/.agy-review-work"
+  mkdir -p "$agy_work_dir"
+  diff_name=".agy-review-work/agy-review-diff.$$.patch"
   agy_diff_file="$PWD/$diff_name"
   cp "$diff_file" "$agy_diff_file"
   {
