@@ -8,7 +8,11 @@ name: Antigravity PR Review
 
 on:
   pull_request:
-    types: [opened, reopened]
+    # `synchronize` auto-re-reviews on every push to a same-repo PR. It is safe
+    # under the default-branch checkout below: the reviewer always runs from the
+    # default branch, and the PR only supplies the diff (data fed to agy), never
+    # the reviewer code.
+    types: [opened, reopened, synchronize]
   issue_comment:
     types: [created]
 
@@ -29,7 +33,9 @@ jobs:
     #    otherwise get a runner.
     #  - issue_comment: only `/agy-review` from someone with write access
     #    (OWNER/MEMBER/COLLABORATOR), so a stranger cannot trigger execution by
-    #    commenting. `scripts/agy-review.sh` re-checks this defensively.
+    #    commenting. `scripts/agy-review.sh` re-checks the fork status defensively,
+    #    because the `issue_comment` payload carries no head-repo field for the `if:`
+    #    to gate on — a trusted commenter is not the same as a trusted diff.
     if: >-
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository) ||
@@ -55,7 +61,7 @@ jobs:
       # for a diff over GitHub's 20,000-line API limit, from a local `git diff` of fetched
       # objects) — never from the checked-out working tree, which stays on the default
       # branch throughout. Consequence worth knowing: a PR that edits the reviewer or the
-      # style guide is reviewed by the version already on main.
+      # style guide is reviewed by the version already on the default branch until it merges.
       - name: Check out repo (for the style guide + scripts)
         uses: actions/checkout@v7
         with:
@@ -64,11 +70,10 @@ jobs:
           # needs on demand, so a full history clone would be paid on every run for a path
           # most runs never take.
           fetch-depth: 1
-          # Repo-wide rule (PR #319): no checkout persists credentials. The large-diff
-          # fallback does perform an authenticated fetch, but supplies the token per
-          # command via `http.extraheader` rather than persisting it into .git/config —
-          # which is the point of the rule, since agy executes with the repo as its
-          # workspace.
+          # No checkout should persist credentials: agy executes with the repo as its
+          # workspace, so a token left in .git/config would be reachable by anything the
+          # review runs. The large-diff fallback still performs an authenticated fetch, but
+          # supplies the token per command via `http.extraheader` rather than persisting it.
           persist-credentials: false
 
       - name: Run Antigravity review
@@ -77,13 +82,13 @@ jobs:
           # --- optional overrides (uncomment to change) ---
           # AGY_MODEL: gemini-3-pro        # default: agy's configured model
           AGY_EFFORT: high                 # low|medium|high
-          # INLINE diff budget — not a cap on what gets reviewed. The prompt reaches agy
-          # as a SINGLE argv string, and Linux caps one argument at
-          # MAX_ARG_STRLEN = 32 * PAGE_SIZE = 128 KiB (a separate, much lower ceiling than
-          # ARG_MAX). 90 KB leaves room for the instruction boilerplate + style guide.
-          # A diff over this is NOT truncated: it is written into agy's workspace in parts
-          # and read with agy's file tools, so PR size no longer bounds review coverage.
-          MAX_DIFF_BYTES: "90000"
+          # AGY_DIFF_MODE: auto            # auto|inline|file — how the diff reaches agy. `auto`
+          #                                # (default) inlines a small diff and hands a large one to
+          #                                # agy as a file, so PR size never truncates the review.
+          # MAX_DIFF_BYTES: "5000000"      # sanity cap on a pathological diff (5 MB). Do NOT lower
+          #                                # this to bound the review: it truncates the diff BEFORE the
+          #                                # file handoff, so a low value defeats the large-PR path.
+          # MAX_PROMPT_BYTES: "125000"     # inline/file threshold + hard backstop on the argv prompt
           # STYLE_GUIDE: .github/agy-review.md   # style guide, loaded if present
         run: |
           chmod +x scripts/agy-review.sh scripts/_agy_print.sh
