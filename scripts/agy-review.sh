@@ -260,8 +260,14 @@ if [ "$use_file" = "1" ]; then
   # into a dedicated, gitignored scratch dir (`.agy-review-work/`, listed in .gitignore) rather than
   # `.git/` (a sandbox may deny tool access to the hidden `.git` dir) or the repo root (an untracked
   # `.patch` there pollutes `git status` if agy inspects repo state). Being gitignored, the dir never
-  # shows as working-tree pollution; the EXIT trap removes the file and the (now-empty) dir. The path
-  # is CWD-relative for the prompt.
+  # shows as working-tree pollution; the EXIT trap removes the file and the (now-empty) dir.
+  #
+  # The prompt hands agy an ABSOLUTE path, and the run below adds "$PWD" to agy's workspace via
+  # --add-dir. Both are load-bearing and were proven on the live runner: agy's sandboxed file tool
+  # does NOT resolve a relative path against the shell CWD (it uses its own workspace root), so a
+  # relative `.agy-review-work/...` comes back "does not exist on the filesystem" — the exact
+  # large-diff review failure this fixes. An absolute path resolves on its own, and --add-dir makes
+  # the checkout part of the sandbox workspace; using both is belt-and-suspenders.
   agy_work_dir="$PWD/.agy-review-work"
   mkdir -p "$agy_work_dir"
   diff_name=".agy-review-work/agy-review-diff.$$.patch"
@@ -269,11 +275,11 @@ if [ "$use_file" = "1" ]; then
   cp "$diff_file" "$agy_diff_file"
   {
     printf '\n--- UNIFIED DIFF (in a file) ---\n'
-    printf 'The full unified diff for this PR is in the file `%s` in your current working directory\n' "$diff_name"
+    printf 'The full unified diff for this PR is in the file at the absolute path `%s`\n' "$agy_diff_file"
     printf '(it is too large to inline). Read that file IN FULL with your file-reading tool first, then\n'
     printf 'produce the review above from its actual contents. Do not review from the PR title alone.\n'
   } >> "$prompt_file"
-  log "diff is ${diff_bytes} bytes (> ${inline_budget}-byte inline budget); handing it to agy as ${diff_name}"
+  log "diff is ${diff_bytes} bytes (> ${inline_budget}-byte inline budget); handing it to agy as ${agy_diff_file}"
 else
   # Forced inline (AGY_DIFF_MODE=inline) on an over-budget diff: the MAX_PROMPT_BYTES guard below
   # still prevents E2BIG by truncating, but warn since `auto` would have filed it in full instead.
@@ -332,6 +338,12 @@ fi
 # --- run agy headless, under a PTY (works around agy issue #76: -p drops --------
 #     stdout when stdout is not a TTY, e.g. piped/redirected/subprocess) ---------
 flags=( --print-timeout "$AGY_PRINT_TIMEOUT" --sandbox --dangerously-skip-permissions )
+# In file-handoff mode agy must read the on-disk diff, and --sandbox otherwise confines its file
+# tool to its own workspace root (NOT the shell CWD) — so add the checkout to the workspace. Only in
+# file mode: an inline review reads nothing from disk, so it keeps zero filesystem access (narrower
+# prompt-injection surface for the common path). Proven necessary on the live runner: without this
+# (and the absolute path above) the large-diff handoff file reads back as "does not exist".
+[ "${use_file:-0}" = "1" ] && flags+=( --add-dir "$PWD" )
 
 # Strip the repo tokens from agy's own environment. agy runs under
 # --dangerously-skip-permissions and ingests an untrusted diff (prompt-injection
