@@ -72,6 +72,20 @@ byte-identical to v2.2.3 by construction.
   conversation-store fallback (a shared-runner data-leak vector), stripping
   `GH_TOKEN` / `GITHUB_TOKEN` from `agy`'s environment (`env -u`), and the
   `issue_comment` author-association re-check restored in the script.
+- **Large-diff handoff made readable (found by the reviewer, fixed on the
+  runner).** The reviewer files a diff too large to inline into a gitignored
+  working-tree scratch dir (`.agy-review-work/`, relocated from `.git/` after the
+  reviewer flagged the hidden-dir read risk) and tells `agy` to read it — but
+  that on-disk handoff never actually worked: `agy`'s sandboxed file tool
+  resolves relative paths against its own workspace root, not the shell CWD, so
+  the file came back "does not exist" and the review was empty. Latent until a
+  diff first crossed the ~90 KB inline budget (below it the diff is inlined and
+  the file path is never exercised). Root cause and fix proven on the live `agy`
+  runner with a three-way probe under the exact review flags: the prompt now
+  hands `agy` an **absolute** path, and `--add-dir "$PWD"` adds the checkout to
+  `agy`'s sandbox workspace — but only in file-handoff mode, so an inline review
+  keeps zero filesystem access. All changes ride the canonical template so the
+  three consuming repos stay in sync.
 
 ## [2.2.3] - 2026-07-23 - "Datum" (fast dot path promoted + PGO shipped + the last two mapper residuals closed)
 
