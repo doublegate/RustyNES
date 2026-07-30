@@ -30,18 +30,28 @@ have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
 #   (1) the text carries agy's interactive-login signature — the accounts.google.com OAuth
 #       endpoint URL, or one of agy's literal login-prompt lines; AND
 #   (2) the text is NOT a structured review. The reviewer prompt (instruction HEAD below)
-#       MANDATES a "### Blocking issues" section in every review (agy writes "None found."
-#       when there are none), which agy's raw login flow never contains.
+#       MANDATES a "### Blocking issues" section HEADER in every review (agy writes "None
+#       found." when there are none), which agy's raw login flow never contains.
 # Condition (2) is the fix for the false-positive agy's own review of the sync PRs flagged as
 # BLOCKING: a review that legitimately QUOTES these strings — e.g. one reviewing THIS script,
-# whose diff contains them, or a PR that implements OAuth — still has its "Blocking issues"
-# section, so it is correctly kept and posted. Only the raw login flow (signature present,
-# review structure absent) is rejected. The coupling to "Blocking issues" is deliberate: if the
-# prompt's mandated sections below ever change, update this sentinel in the same edit.
+# whose diff contains them, or a PR that implements OAuth — still has its "### Blocking issues"
+# section header, so it is correctly kept and posted. Only the raw login flow (signature
+# present, review structure absent) is rejected.
+#
+# The condition-(2) match is LINE-ANCHORED to the Markdown section header (`^## … Blocking
+# issues`), NOT a loose case-insensitive substring. agy's second-round review flagged the loose
+# form as BLOCKING: an unanchored `grep -qi 'Blocking issues'` would disarm the guard if the
+# phrase merely appeared in prose or an error line alongside an OAuth URL (a false NEGATIVE =
+# a leak). Anchoring to the header form fails SAFE — ambiguous text without a real header is
+# treated as a possible login flow and blocked, while a genuine review's header always matches.
+# The coupling to this header is deliberate: if the prompt's mandated sections below ever
+# change, update this sentinel in the same edit.
 is_auth_prompt() {
   [ -s "$1" ] || return 1
-  # A structured review — even one quoting the auth strings — is never the raw login flow.
-  grep -qiE 'Blocking issues' "$1" && return 1
+  # A structured review has a real "### Blocking issues" section header at line start; the raw
+  # login flow is plain text with none. Anchored + case-sensitive so the phrase in prose/errors
+  # cannot disarm the guard. `#{2,4}` tolerates agy emitting ## … #### for the header level.
+  grep -qE '^#{2,4}[[:space:]]+Blocking issues' "$1" && return 1
   grep -qiE \
     'accounts\.google\.com/o/oauth2|paste the authorization code|Authentication required\. Please visit|Waiting for authentication|authentication failed or timed out' \
     "$1"
