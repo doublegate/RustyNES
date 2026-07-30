@@ -353,11 +353,26 @@ jobs:
       matrix:
         # Only the buildbot triples a LINUX runner can model faithfully.
         #
-        # `rust-libretro-sys` runs bindgen, and bindgen needs a real sysroot for
-        # the target it parses `libretro.h` under. Two of the four buildbot ABI
-        # families can supply one here and two cannot:
+        # `rust-libretro-sys` runs bindgen, and bindgen needs headers for the
+        # target it parses `libretro.h` under. Three of the buildbot ABI
+        # families can supply them here; the Apple family cannot:
         #   * MinGW-Windows — no glibc involved at all (and `.cargo/config.toml`
         #     points its bindgen at the MSVC triple), so it parses cleanly.
+        #   * Linux-aarch64 (glibc) — needs the aarch64 glibc HEADERS (not a
+        #     linker). bindgen parses `libretro.h` under `--target aarch64`, and
+        #     glibc's `stdint.h` pulls in `bits/libc-header-start.h` — an
+        #     arch-split header a stock x86_64 runner ships only for x86_64, so
+        #     clang dies exactly like the Apple note below (`bits/libc-header-
+        #     start.h` not found). The step below installs `gcc-aarch64-linux-gnu`
+        #     (for its `libc6-dev-arm64-cross` headers under
+        #     `/usr/aarch64-linux-gnu/include`) and points bindgen there via
+        #     `--sysroot`. Still check-only: that package's cross linker / `STRIP`
+        #     are unused here — they matter only at the buildbot's link/package
+        #     step. This is the PR-time rehearsal of the `.gitlab-ci.yml`
+        #     `libretro-build-linux-aarch64` job (added in #331). (An Arch dev host
+        #     masks the need — its glibc headers are not arch-split, so a local
+        #     `cargo check` passes without the sysroot; the Debian-multiarch runner
+        #     does not, which is exactly the blind spot this gate exists to catch.)
         #   * Android — ubuntu-latest ships an NDK, whose sysroot is wired up
         #     below exactly as `cargo ndk` does it on the buildbot.
         #   * Apple (macOS/iOS) — DELIBERATELY EXCLUDED. There is no Apple SDK
@@ -368,9 +383,10 @@ jobs:
         #     rehearsal. Doing it properly needs a macOS runner, which this repo
         #     reserves for full (non-PR) runs; see the `test` job's `setup`-driven
         #     OS matrix. The Apple legs share this crate's entire dependency
-        #     graph with the two legs below, so the marginal coverage is small.
+        #     graph with the three legs below, so the marginal coverage is small.
         target:
           - x86_64-pc-windows-gnu
+          - aarch64-unknown-linux-gnu
           - aarch64-linux-android
     steps:
       # `cargo check` runs build scripts and proc macros from the checkout — on
@@ -396,6 +412,19 @@ jobs:
         if: matrix.target == 'aarch64-linux-android'
         run: |
           echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot" >> "$GITHUB_ENV"
+      # Provision the aarch64 glibc headers for bindgen (see the matrix note).
+      # `gcc-aarch64-linux-gnu` pulls `libc6-dev-arm64-cross`, which lands the
+      # aarch64 glibc headers under `/usr/aarch64-linux-gnu/include`; `--sysroot`
+      # sends clang there instead of the host's x86_64-only `/usr/include`, and
+      # the explicit `-isystem` guarantees the include dir is on the search path
+      # regardless of how the sysroot lays out `usr/include`. The cross linker in
+      # that package is unused — this gate is `cargo check` only.
+      - name: Provision the aarch64 glibc headers for bindgen
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -yq gcc-aarch64-linux-gnu
+          echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include" >> "$GITHUB_ENV"
       # Deliberately NOT the composite action's `targets:` input. That routes
       # through `dtolnay/rust-toolchain`, which installs the target for the
       # channel IT pins (stable) — while `rust-toolchain.toml` then switches
