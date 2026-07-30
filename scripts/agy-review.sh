@@ -18,43 +18,43 @@ set -euo pipefail
 # `log: command not found` under set -e instead of warning — a latent misconfiguration trap.)
 log() { printf '[agy-review] %s\n' "$*" >&2; }
 have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
-# True when a captured agy output is its interactive Google OAuth login flow rather than a
-# review — i.e. agy's cached session has lapsed on the runner, so `--print` emitted the login
-# prompt (a live-shaped OAuth URL + "paste the authorization code here") instead of a review.
-# That text is non-empty, so have_text() alone would treat it as a valid review and POST it —
-# leaking an OAuth URL + phishing-shaped auth prompt into a public PR comment (exactly the
-# incident this guards against). Used twice: to reject such a capture in the retry loop, and as
-# a final hard block before posting (defense in depth).
+# Guarding against a leak of agy's interactive Google OAuth login flow. When agy's cached
+# session lapses on the runner, `--print` emits the login prompt (a live OAuth URL + "paste the
+# authorization code here") instead of a review; that text is non-empty, so have_text() alone
+# would treat it as a valid review and POST it — leaking the URL into a public PR comment (the
+# incident this guards against).
 #
-# TWO conditions, BOTH required, so a genuine review is never suppressed:
-#   (1) the text carries agy's interactive-login signature — the accounts.google.com OAuth
-#       endpoint URL, or one of agy's literal login-prompt lines; AND
-#   (2) the text is NOT a structured review. The reviewer prompt (instruction HEAD below)
-#       MANDATES a "### Blocking issues" section HEADER in every review (agy writes "None
-#       found." when there are none), which agy's raw login flow never contains.
-# Condition (2) is the fix for the false-positive agy's own review of the sync PRs flagged as
-# BLOCKING: a review that legitimately QUOTES these strings — e.g. one reviewing THIS script,
-# whose diff contains them, or a PR that implements OAuth — still has its "### Blocking issues"
-# section header, so it is correctly kept and posted. Only the raw login flow (signature
-# present, review structure absent) is rejected.
-#
-# The condition-(2) match is LINE-ANCHORED to the Markdown section header (`^## … Blocking
-# issues`), NOT a loose case-insensitive substring. agy's second-round review flagged the loose
-# form as BLOCKING: an unanchored `grep -qi 'Blocking issues'` would disarm the guard if the
-# phrase merely appeared in prose or an error line alongside an OAuth URL (a false NEGATIVE =
-# a leak). Anchoring to the header form fails SAFE — ambiguous text without a real header is
-# treated as a possible login flow and blocked, while a genuine review's header always matches.
-# The coupling to this header is deliberate: if the prompt's mandated sections below ever
-# change, update this sentinel in the same edit.
+# The guard keys on the ONE artifact that reliably distinguishes agy's login flow from any
+# review: a live Google OAuth *authorization URL* (scheme + host + endpoint path). This choice
+# is deliberate and is the convergence point of several rounds of agy's own adversarial review:
+#   * It does NOT false-positive on reviewing the reviewer or on an OAuth-related PR. A code
+#     review quotes this script's BARE regex ("accounts.google.com/o/oauth2", no scheme) or
+#     discusses auth in prose; neither contains the "https://…/o/oauth2/" URL form. (Earlier
+#     signature/prompt-phrase heuristics wrongly flagged such reviews.)
+#   * It needs NO "is this a review?" exemption, so it CANNOT be disarmed by a section header
+#     (or the phrase "blocking issues") appearing in the same output as a URL — a false
+#     NEGATIVE would be a leak. (Earlier "### Blocking issues" exemptions had exactly this hole,
+#     and were also brittle to header case / trailing punctuation.)
+# So this is both necessary (agy's login flow always prints the URL) and sufficient (nothing
+# else legitimately carries a live authorization URL), with no heuristic that flips between
+# false-positive and false-negative.
+OAUTH_URL_RE='https?://accounts\.google\.com/o/oauth2/'
+
+# Layer-3 hard guard (UNCONDITIONAL): true if a text contains a live OAuth authorization URL.
+# Used to refuse posting ANY assembled body that carries one — no exemptions, whatever upstream
+# does to the body. This is the actual security guarantee: a public PR comment must never
+# contain such a URL.
+oauth_url_present() { [ -s "$1" ] && grep -qE "$OAUTH_URL_RE" "$1"; }
+
+# Layer-1 lapse detector: agy printed its login flow instead of a review, so its session has
+# lapsed. Primary signal is the live URL (always present in the flow); the secondary matches
+# agy's terminal failure line so a lapse is still recognized if the URL scrolled out of the
+# captured tail. This only gates the retry / clean-exit UX — a Layer-1 false positive merely
+# skips a review (recoverable), never a leak; the unconditional Layer 3 above is the guarantee.
 is_auth_prompt() {
   [ -s "$1" ] || return 1
-  # A structured review has a real "### Blocking issues" section header at line start; the raw
-  # login flow is plain text with none. Anchored + case-sensitive so the phrase in prose/errors
-  # cannot disarm the guard. `#{2,4}` tolerates agy emitting ## … #### for the header level.
-  grep -qE '^#{2,4}[[:space:]]+Blocking issues' "$1" && return 1
-  grep -qiE \
-    'accounts\.google\.com/o/oauth2|paste the authorization code|Authentication required\. Please visit|Waiting for authentication|authentication failed or timed out' \
-    "$1"
+  oauth_url_present "$1" && return 0
+  grep -qiE 'authentication failed or timed out' "$1"
 }
 
 # --- configuration (all env-overridable from the workflow) ---------------------
@@ -528,12 +528,14 @@ gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
       fi
     done
 
-# Final hard guard — the last line of defense. Layer 1 (the retry loop) already rejects an
-# auth-prompt capture, but a public PR comment must NEVER carry a live-shaped OAuth URL or a
-# "paste the authorization code" prompt, whatever any upstream change does to the body. If the
-# assembled body trips the auth-prompt signature, fail the job instead of leaking it.
-if is_auth_prompt "$body_file"; then
-  log "refusing to post: the assembled comment body contains an agy auth prompt / OAuth URL. Re-authenticate agy on the runner host."
+# Final hard guard — the last line of defense, and UNCONDITIONAL. Layer 1 (the retry loop)
+# already rejects a lapsed-session capture, but a public PR comment must NEVER carry a live
+# OAuth authorization URL, whatever any upstream change does to the body — and with no "looks
+# like a review" exemption that a header alongside a URL could disarm. Uses oauth_url_present
+# (not is_auth_prompt): a genuine review that merely discusses auth or quotes this script's bare
+# regex has no live URL and posts normally; only an actual authorization URL blocks the post.
+if oauth_url_present "$body_file"; then
+  log "refusing to post: the assembled comment body contains a live OAuth authorization URL. Re-authenticate agy on the runner host."
   exit 1
 fi
 
