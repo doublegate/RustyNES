@@ -29,7 +29,7 @@ have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
 # is deliberate and is the convergence point of several rounds of agy's own adversarial review:
 #   * It does NOT false-positive on reviewing the reviewer or on an OAuth-related PR. A code
 #     review quotes this script's BARE regex ("accounts.google.com/o/oauth2", no scheme) or
-#     discusses auth in prose; neither contains the "https://…/o/oauth2/" URL form. (Earlier
+#     discusses auth in prose; neither contains the "https://…/o/oauth2" URL form. (Earlier
 #     signature/prompt-phrase heuristics wrongly flagged such reviews.)
 #   * It needs NO "is this a review?" exemption, so it CANNOT be disarmed by a section header
 #     (or the phrase "blocking issues") appearing in the same output as a URL — a false
@@ -38,24 +38,22 @@ have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
 # So this is both necessary (agy's login flow always prints the URL) and sufficient (nothing
 # else legitimately carries a live authorization URL), with no heuristic that flips between
 # false-positive and false-negative.
-OAUTH_URL_RE='https?://accounts\.google\.com/o/oauth2/'
+#
+# The regex requires the scheme (`https?://`) and the host + `/o/oauth2` endpoint prefix, but
+# deliberately NOT a trailing slash: agy round-4 flagged that a `.../o/oauth2/` requirement
+# would miss a URL emitted as `.../o/oauth2?client_id=…` or bare `.../o/oauth2` (a leak). The
+# scheme is what keeps a review's bare-pattern quote from matching, so dropping the trailing
+# slash loses no safety.
+OAUTH_URL_RE='https?://accounts\.google\.com/o/oauth2'
 
-# Layer-3 hard guard (UNCONDITIONAL): true if a text contains a live OAuth authorization URL.
-# Used to refuse posting ANY assembled body that carries one — no exemptions, whatever upstream
-# does to the body. This is the actual security guarantee: a public PR comment must never
-# contain such a URL.
-oauth_url_present() { [ -s "$1" ] && grep -qE "$OAUTH_URL_RE" "$1"; }
-
-# Layer-1 lapse detector: agy printed its login flow instead of a review, so its session has
-# lapsed. Primary signal is the live URL (always present in the flow); the secondary matches
-# agy's terminal failure line so a lapse is still recognized if the URL scrolled out of the
-# captured tail. This only gates the retry / clean-exit UX — a Layer-1 false positive merely
-# skips a review (recoverable), never a leak; the unconditional Layer 3 above is the guarantee.
-is_auth_prompt() {
-  [ -s "$1" ] || return 1
-  oauth_url_present "$1" && return 0
-  grep -qiE 'authentication failed or timed out' "$1"
-}
+# The single guard, used at BOTH the retry-loop capture (Layer 1) and the assembled body before
+# posting (Layer 3): true iff a text contains a live OAuth authorization URL. There is no
+# separate heuristic and no "is this a review?" exemption — earlier a secondary "authentication
+# failed or timed out" substring fallback was tried, but agy round-4 flagged it (correctly) as
+# broad enough to abort a genuine review that merely discusses auth-timeout handling. The live
+# URL is always present in a real login flow, so it alone is both necessary and sufficient; a
+# lapse is detected AND a leak is blocked by the same unconditional check.
+oauth_url_present() { [ -s "$1" ] && grep -qiE "$OAUTH_URL_RE" "$1"; }
 
 # --- configuration (all env-overridable from the workflow) ---------------------
 AGY_BIN="${AGY_BIN:-agy}"
@@ -450,13 +448,14 @@ for (( attempt=1; attempt<=AGY_RETRIES; attempt++ )); do
   # normalize CRs without sed -i (avoid in-place edit footguns)
   tr -d '\r' < "$out_file" > "$out_file.clean" && mv "$out_file.clean" "$out_file"
 
-  # If agy emitted its interactive OAuth login flow, its cached Google session has lapsed on this
-  # runner and there is NO review — just a live-shaped OAuth URL + "paste the authorization code"
-  # prompt. That must never reach a public PR comment (noise, phishing-shaped, and it advertises
-  # that the runner's auth dropped). Treat it as a hard, NON-retryable failure: re-auth is a human
-  # action on the runner host, so retrying only thrashes the backoff for a minute. Blank the
-  # capture so no later path (have_text / body assembly) can ever post it, flag it, and stop.
-  if is_auth_prompt "$out_file"; then
+  # If the capture carries a live OAuth authorization URL, agy's cached Google session has lapsed
+  # on this runner and there is NO review — just its interactive login flow (the OAuth URL + a
+  # "paste the authorization code" prompt). That must never reach a public PR comment (noise,
+  # phishing-shaped, and it advertises that the runner's auth dropped). Treat it as a hard,
+  # NON-retryable failure: re-auth is a human action on the runner host, so retrying only thrashes
+  # the backoff for a minute. Blank the capture so no later path (have_text / body assembly) can
+  # ever post it, flag it, and stop.
+  if oauth_url_present "$out_file"; then
     log "agy is NOT authenticated on this runner: it printed its interactive Google OAuth login flow instead of a review. Refusing to post it (it carries an OAuth URL). Re-authenticate agy on the runner host, then re-run with '/agy-review'."
     : > "$out_file"
     auth_failed=1
@@ -531,9 +530,9 @@ gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
 # Final hard guard — the last line of defense, and UNCONDITIONAL. Layer 1 (the retry loop)
 # already rejects a lapsed-session capture, but a public PR comment must NEVER carry a live
 # OAuth authorization URL, whatever any upstream change does to the body — and with no "looks
-# like a review" exemption that a header alongside a URL could disarm. Uses oauth_url_present
-# (not is_auth_prompt): a genuine review that merely discusses auth or quotes this script's bare
-# regex has no live URL and posts normally; only an actual authorization URL blocks the post.
+# like a review" exemption that a header alongside a URL could disarm. A genuine review that
+# merely discusses auth or quotes this script's bare regex has no live URL and posts normally;
+# only an actual authorization URL blocks the post.
 if oauth_url_present "$body_file"; then
   log "refusing to post: the assembled comment body contains a live OAuth authorization URL. Re-authenticate agy on the runner host."
   exit 1
