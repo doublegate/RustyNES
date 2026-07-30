@@ -18,6 +18,20 @@ set -euo pipefail
 # `log: command not found` under set -e instead of warning — a latent misconfiguration trap.)
 log() { printf '[agy-review] %s\n' "$*" >&2; }
 have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
+# True when a captured agy output is its interactive Google OAuth login flow rather than a
+# review — i.e. agy's cached session has lapsed on the runner, so `--print` emitted the login
+# prompt (a live-shaped OAuth URL + "paste the authorization code here") instead of a review.
+# That text is non-empty, so have_text() alone would treat it as a valid review and POST it —
+# leaking an OAuth URL + phishing-shaped auth prompt into a public PR comment (exactly the
+# incident this guards against). Keyed on agy's own runtime prompt strings and the
+# accounts.google.com OAuth-endpoint URL, none of which a genuine code review emits, so a review
+# that merely discusses "authentication" is not misclassified. Used twice: to reject such a
+# capture in the retry loop, and as a final hard block before posting (defense in depth).
+is_auth_prompt() {
+  [ -s "$1" ] && grep -qiE \
+    'accounts\.google\.com/o/oauth2|paste the authorization code|Authentication required\. Please visit|Waiting for authentication|authentication failed or timed out' \
+    "$1"
+}
 
 # --- configuration (all env-overridable from the workflow) ---------------------
 AGY_BIN="${AGY_BIN:-agy}"
@@ -100,6 +114,9 @@ log "reviewing ${REPO}#${PR}"
 # Remove every temp file on exit. Pre-declared so the trap is safe under `set -u` even if the
 # script exits before a given file is created.
 diff_file= diff_err= meta_file= prompt_file= out_file= raw= body_file= agy_diff_file= agy_work_dir=
+# Set to 1 if agy printed its interactive OAuth login flow instead of a review (lapsed session);
+# gates the no-post abort below. Pre-declared so `${auth_failed:-0}` is set-u-safe on every path.
+auth_failed=0
 # Set when the large-diff fallback below creates refs/agy/* so the trap can remove them.
 agy_refs_created=
 cleanup() {
@@ -409,6 +426,19 @@ for (( attempt=1; attempt<=AGY_RETRIES; attempt++ )); do
   # normalize CRs without sed -i (avoid in-place edit footguns)
   tr -d '\r' < "$out_file" > "$out_file.clean" && mv "$out_file.clean" "$out_file"
 
+  # If agy emitted its interactive OAuth login flow, its cached Google session has lapsed on this
+  # runner and there is NO review — just a live-shaped OAuth URL + "paste the authorization code"
+  # prompt. That must never reach a public PR comment (noise, phishing-shaped, and it advertises
+  # that the runner's auth dropped). Treat it as a hard, NON-retryable failure: re-auth is a human
+  # action on the runner host, so retrying only thrashes the backoff for a minute. Blank the
+  # capture so no later path (have_text / body assembly) can ever post it, flag it, and stop.
+  if is_auth_prompt "$out_file"; then
+    log "agy is NOT authenticated on this runner: it printed its interactive Google OAuth login flow instead of a review. Refusing to post it (it carries an OAuth URL). Re-authenticate agy on the runner host, then re-run with '/agy-review'."
+    : > "$out_file"
+    auth_failed=1
+    break
+  fi
+
   # NOTE: there is deliberately no SQLite-conversation-store fallback here. agy's
   # store is keyed by mtime, not session, and on a shared/multi-user runner the
   # most-recent `.db` can belong to an UNRELATED concurrent local `agy` session --
@@ -423,6 +453,14 @@ for (( attempt=1; attempt<=AGY_RETRIES; attempt++ )); do
   fi
 done
 exec 9>&- 2>/dev/null || true    # release the agy lock so the next queued job proceeds
+
+# Lapsed-auth abort takes precedence over the generic empty-output path: it is a specific,
+# actionable cause (re-auth agy on the runner), not a transient backend blip, and we already
+# blanked $out_file above so nothing is postable. Exit non-zero WITHOUT posting anything.
+if [ "${auth_failed:-0}" = "1" ]; then
+  log "aborting without posting: agy requires re-authentication on the runner host (no review was produced)."
+  exit 1
+fi
 
 if ! have_text "$out_file"; then
   log "no review output after ${AGY_RETRIES} attempt(s). Check $LOG and confirm 'agy -p \"hi\"' works for this user."
@@ -465,6 +503,15 @@ gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
         log "warning: could not delete prior review comment ${cid}; a duplicate may result"
       fi
     done
+
+# Final hard guard — the last line of defense. Layer 1 (the retry loop) already rejects an
+# auth-prompt capture, but a public PR comment must NEVER carry a live-shaped OAuth URL or a
+# "paste the authorization code" prompt, whatever any upstream change does to the body. If the
+# assembled body trips the auth-prompt signature, fail the job instead of leaking it.
+if is_auth_prompt "$body_file"; then
+  log "refusing to post: the assembled comment body contains an agy auth prompt / OAuth URL. Re-authenticate agy on the runner host."
+  exit 1
+fi
 
 gh pr comment "$PR" --repo "$REPO" --body-file "$body_file"
 log "posted review to ${REPO}#${PR}"
