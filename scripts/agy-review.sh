@@ -411,16 +411,23 @@ here="$(cd "$(dirname "$0")" && pwd)"
 # Serialize agy across concurrent review jobs on this host. agy runs a SINGLETON
 # local language-server + conversation store per user, so two `--print` calls at
 # once collide (one reports the backend "unavailable"). flock makes jobs queue
-# instead of failing. Best-effort: if the lock can't be taken, proceed anyway.
-if command -v flock >/dev/null 2>&1; then
-  # Create the lock dir first: a failed `exec 9>` redirection is a FATAL shell error (it aborts
-  # before the `|| log` fallback can run), so ensure the parent exists on a fresh runner. `>>` opens
-  # for append rather than truncating the lockfile — flock uses the fd, not the contents.
-  mkdir -p "$(dirname "$AGY_LOCK")" 2>/dev/null || true
-  exec 9>>"$AGY_LOCK" 2>/dev/null \
-    && flock -w "$AGY_LOCK_WAIT" 9 \
-    || log "agy lock unavailable or timed out (${AGY_LOCK_WAIT}s); proceeding unserialized"
-fi
+# instead of failing. FAIL CLOSED: if flock is missing, or the lock can't be
+# taken/times out, exit rather than let two agy processes race each other --
+# a fail-open here made the exact collision this lock exists to prevent still
+# reachable (one run can burn the whole ${AGY_RETRIES}x${AGY_LOCK_WAIT}s wait).
+command -v flock >/dev/null 2>&1 || {
+  log "flock is required to serialize agy; refusing to run unserialized"
+  exit 1
+}
+# Create the lock dir first: a failed `exec 9>` redirection is a FATAL shell error (it aborts
+# before the `|| log` fallback can run), so ensure the parent exists on a fresh runner. `>>` opens
+# for append rather than truncating the lockfile — flock uses the fd, not the contents.
+mkdir -p "$(dirname "$AGY_LOCK")"
+exec 9>>"$AGY_LOCK"
+flock -w "$AGY_LOCK_WAIT" 9 || {
+  log "agy lock timed out after ${AGY_LOCK_WAIT}s"
+  exit 1
+}
 
 # Retry the whole agy attempt on empty/failed output: transient "agy is down"
 # (backend rate-limit / local-server contention) usually clears within seconds.
@@ -512,31 +519,39 @@ body_file="$(mktemp)"
   printf '\n\n<sub>Automated first-pass review by `agy` on a self-hosted runner -- not a human review.</sub>\n'
 } > "$body_file"
 
-# --- replace any prior review comment, then post fresh -------------------------
+# Final hard guard — the last line of defense, and UNCONDITIONAL, run BEFORE anything is
+# deleted or posted. Layer 1 (the retry loop) already rejects a lapsed-session capture, but
+# a public PR comment must NEVER carry a live OAuth authorization URL, whatever any upstream
+# change does to the body — and with no "looks like a review" exemption that a header
+# alongside a URL could disarm. A genuine review that merely discusses auth or quotes this
+# script's bare regex has no live URL and posts normally; only an actual authorization URL
+# blocks the post.
+if oauth_url_present "$body_file"; then
+  log "refusing to post: the assembled comment body contains a live OAuth authorization URL. Re-authenticate agy on the runner host."
+  exit 1
+fi
+
+# --- post fresh, THEN replace any prior review comment --------------------------
+# Publish-before-delete, deliberately: if this ordering were reversed and posting failed
+# afterward (a transient gh/API error), the PR would be left with NO review comment at all
+# instead of the still-valid prior one. Posting first means a failure here can only ever
+# leave a harmless duplicate, never a silent loss of the last review.
+gh pr comment "$PR" --repo "$REPO" --body-file "$body_file"
+log "posted review to ${REPO}#${PR}"
+
 # A failed delete is logged, not swallowed: silently ignoring it would let a transient API/perms
-# error leave the old comment in place AND post a new one, so runs accumulate duplicates.
+# error leave the old comment in place alongside the new one, so runs accumulate duplicates.
 # The author filter is load-bearing, not cosmetic: without it, ANY user could put the
 # marker (an HTML comment) in a PR comment and have this bot delete arbitrary comments on
-# the next run. Only ever delete OUR OWN bot's prior review comments.
+# the next run. Only ever delete OUR OWN bot's prior review comments -- and only ones from
+# BEFORE this run (the just-posted comment's own id is excluded so it can never delete itself).
+new_comment_id="$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+    --jq '[.[] | select(.user.type == "Bot" and .user.login == "github-actions[bot]") | select(.body | contains("'"${MARKER}"'"))] | last | .id' 2>/dev/null)"
 gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
-    --jq ".[] | select(.user.type == \"Bot\" and .user.login == \"github-actions[bot]\") | select(.body | contains(\"${MARKER}\")) | .id" 2>/dev/null \
+    --jq ".[] | select(.user.type == \"Bot\" and .user.login == \"github-actions[bot]\") | select(.body | contains(\"${MARKER}\")) | select(.id != ${new_comment_id:-0}) | .id" 2>/dev/null \
   | while read -r cid; do
       [ -n "$cid" ] || continue
       if ! gh api -X DELETE "repos/${REPO}/issues/comments/${cid}" >/dev/null 2>&1; then
         log "warning: could not delete prior review comment ${cid}; a duplicate may result"
       fi
     done
-
-# Final hard guard — the last line of defense, and UNCONDITIONAL. Layer 1 (the retry loop)
-# already rejects a lapsed-session capture, but a public PR comment must NEVER carry a live
-# OAuth authorization URL, whatever any upstream change does to the body — and with no "looks
-# like a review" exemption that a header alongside a URL could disarm. A genuine review that
-# merely discusses auth or quotes this script's bare regex has no live URL and posts normally;
-# only an actual authorization URL blocks the post.
-if oauth_url_present "$body_file"; then
-  log "refusing to post: the assembled comment body contains a live OAuth authorization URL. Re-authenticate agy on the runner host."
-  exit 1
-fi
-
-gh pr comment "$PR" --repo "$REPO" --body-file "$body_file"
-log "posted review to ${REPO}#${PR}"
