@@ -23,12 +23,26 @@ have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
 # prompt (a live-shaped OAuth URL + "paste the authorization code here") instead of a review.
 # That text is non-empty, so have_text() alone would treat it as a valid review and POST it —
 # leaking an OAuth URL + phishing-shaped auth prompt into a public PR comment (exactly the
-# incident this guards against). Keyed on agy's own runtime prompt strings and the
-# accounts.google.com OAuth-endpoint URL, none of which a genuine code review emits, so a review
-# that merely discusses "authentication" is not misclassified. Used twice: to reject such a
-# capture in the retry loop, and as a final hard block before posting (defense in depth).
+# incident this guards against). Used twice: to reject such a capture in the retry loop, and as
+# a final hard block before posting (defense in depth).
+#
+# TWO conditions, BOTH required, so a genuine review is never suppressed:
+#   (1) the text carries agy's interactive-login signature — the accounts.google.com OAuth
+#       endpoint URL, or one of agy's literal login-prompt lines; AND
+#   (2) the text is NOT a structured review. The reviewer prompt (instruction HEAD below)
+#       MANDATES a "### Blocking issues" section in every review (agy writes "None found."
+#       when there are none), which agy's raw login flow never contains.
+# Condition (2) is the fix for the false-positive agy's own review of the sync PRs flagged as
+# BLOCKING: a review that legitimately QUOTES these strings — e.g. one reviewing THIS script,
+# whose diff contains them, or a PR that implements OAuth — still has its "Blocking issues"
+# section, so it is correctly kept and posted. Only the raw login flow (signature present,
+# review structure absent) is rejected. The coupling to "Blocking issues" is deliberate: if the
+# prompt's mandated sections below ever change, update this sentinel in the same edit.
 is_auth_prompt() {
-  [ -s "$1" ] && grep -qiE \
+  [ -s "$1" ] || return 1
+  # A structured review — even one quoting the auth strings — is never the raw login flow.
+  grep -qiE 'Blocking issues' "$1" && return 1
+  grep -qiE \
     'accounts\.google\.com/o/oauth2|paste the authorization code|Authentication required\. Please visit|Waiting for authentication|authentication failed or timed out' \
     "$1"
 }
