@@ -100,6 +100,22 @@ AGY_RETRIES="${AGY_RETRIES:-3}"            # attempts to get a usable agy respon
 AGY_RETRY_DELAY="${AGY_RETRY_DELAY:-15}"   # base backoff seconds between retries (grows per attempt)
 MARKER="<!-- antigravity-pr-review -->"
 
+# The jq program that picks which prior review comments to delete. Named, and exercised directly
+# by `scripts/agy-review-selftest.sh`, because this filter has now been wrong TWICE in ways
+# nothing observed: first the just-posted comment was not excluded (so it deleted itself), then
+# jq's `--arg` was handed to `gh api`, which has no such flag (so the whole step died silently and
+# stale comments accumulated). Both were invisible from the outside — the review still posted.
+#
+# The two `select`s that matter: the AUTHOR filter (without it, any user could put the marker in a
+# comment and have this bot delete arbitrary comments) and the ID exclusion (without it, the run
+# deletes the comment it just published).
+SELECT_STALE_JQ='.[]
+  | select(.user.type == "Bot" and .user.login == "github-actions[bot]")
+  | select(.body | contains($marker))
+  | select(.id != $new_id)
+  | .id'
+readonly SELECT_STALE_JQ
+
 REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY not set}"
 
 # --- resolve the PR number from the triggering event --------------------------
@@ -411,16 +427,30 @@ here="$(cd "$(dirname "$0")" && pwd)"
 # Serialize agy across concurrent review jobs on this host. agy runs a SINGLETON
 # local language-server + conversation store per user, so two `--print` calls at
 # once collide (one reports the backend "unavailable"). flock makes jobs queue
-# instead of failing. Best-effort: if the lock can't be taken, proceed anyway.
-if command -v flock >/dev/null 2>&1; then
-  # Create the lock dir first: a failed `exec 9>` redirection is a FATAL shell error (it aborts
-  # before the `|| log` fallback can run), so ensure the parent exists on a fresh runner. `>>` opens
-  # for append rather than truncating the lockfile — flock uses the fd, not the contents.
-  mkdir -p "$(dirname "$AGY_LOCK")" 2>/dev/null || true
-  exec 9>>"$AGY_LOCK" 2>/dev/null \
-    && flock -w "$AGY_LOCK_WAIT" 9 \
-    || log "agy lock unavailable or timed out (${AGY_LOCK_WAIT}s); proceeding unserialized"
+# instead of failing. FAIL CLOSED: if flock is missing, or the lock can't be
+# taken/times out, exit rather than let two agy processes race each other --
+# a fail-open here made the exact collision this lock exists to prevent still
+# reachable (one run can burn the whole ${AGY_RETRIES}x${AGY_LOCK_WAIT}s wait).
+command -v flock >/dev/null 2>&1 || {
+  log "flock is required to serialize agy; refusing to run unserialized"
+  exit 1
+}
+# Create the lock dir first: a failed `exec 9>` redirection is a FATAL shell error (it aborts
+# before the `|| log` fallback can run), so ensure the parent exists on a fresh runner. `>>` opens
+# for append rather than truncating the lockfile — flock uses the fd, not the contents.
+# Validated before use: an empty `AGY_LOCK` (an env override set to "") would make `dirname`
+# yield "." and the redirection below fail with an obscure shell error, at the one point where a
+# clear message matters -- this is the guard that keeps two agy runs off each other.
+if [ -z "$AGY_LOCK" ]; then
+  log "AGY_LOCK is empty; refusing to run unserialized"
+  exit 1
 fi
+mkdir -p "$(dirname "$AGY_LOCK")"
+exec 9>>"$AGY_LOCK"
+flock -w "$AGY_LOCK_WAIT" 9 || {
+  log "agy lock timed out after ${AGY_LOCK_WAIT}s"
+  exit 1
+}
 
 # Retry the whole agy attempt on empty/failed output: transient "agy is down"
 # (backend rate-limit / local-server contention) usually clears within seconds.
@@ -512,31 +542,77 @@ body_file="$(mktemp)"
   printf '\n\n<sub>Automated first-pass review by `agy` on a self-hosted runner -- not a human review.</sub>\n'
 } > "$body_file"
 
-# --- replace any prior review comment, then post fresh -------------------------
-# A failed delete is logged, not swallowed: silently ignoring it would let a transient API/perms
-# error leave the old comment in place AND post a new one, so runs accumulate duplicates.
-# The author filter is load-bearing, not cosmetic: without it, ANY user could put the
-# marker (an HTML comment) in a PR comment and have this bot delete arbitrary comments on
-# the next run. Only ever delete OUR OWN bot's prior review comments.
-gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
-    --jq ".[] | select(.user.type == \"Bot\" and .user.login == \"github-actions[bot]\") | select(.body | contains(\"${MARKER}\")) | .id" 2>/dev/null \
-  | while read -r cid; do
-      [ -n "$cid" ] || continue
-      if ! gh api -X DELETE "repos/${REPO}/issues/comments/${cid}" >/dev/null 2>&1; then
-        log "warning: could not delete prior review comment ${cid}; a duplicate may result"
-      fi
-    done
-
-# Final hard guard — the last line of defense, and UNCONDITIONAL. Layer 1 (the retry loop)
-# already rejects a lapsed-session capture, but a public PR comment must NEVER carry a live
-# OAuth authorization URL, whatever any upstream change does to the body — and with no "looks
-# like a review" exemption that a header alongside a URL could disarm. A genuine review that
-# merely discusses auth or quotes this script's bare regex has no live URL and posts normally;
-# only an actual authorization URL blocks the post.
+# Final hard guard — the last line of defense, and UNCONDITIONAL, run BEFORE anything is
+# deleted or posted. Layer 1 (the retry loop) already rejects a lapsed-session capture, but
+# a public PR comment must NEVER carry a live OAuth authorization URL, whatever any upstream
+# change does to the body — and with no "looks like a review" exemption that a header
+# alongside a URL could disarm. A genuine review that merely discusses auth or quotes this
+# script's bare regex has no live URL and posts normally; only an actual authorization URL
+# blocks the post.
 if oauth_url_present "$body_file"; then
   log "refusing to post: the assembled comment body contains a live OAuth authorization URL. Re-authenticate agy on the runner host."
   exit 1
 fi
 
-gh pr comment "$PR" --repo "$REPO" --body-file "$body_file"
+# --- post fresh, THEN replace any prior review comment --------------------------
+# Publish-before-delete, deliberately: if this ordering were reversed and posting failed
+# afterward (a transient gh/API error), the PR would be left with NO review comment at all
+# instead of the still-valid prior one. Posting first means a failure here can only ever
+# leave a harmless duplicate, never a silent loss of the last review.
+# The posted comment's id comes from the POST itself, not from a read-back. `gh pr comment`
+# prints the new comment's URL, whose trailing `#issuecomment-<id>` is authoritative the instant
+# it returns. Re-querying the comment list to find "the newest one with our marker" raced with
+# GitHub's own read replication: right after posting, the list can still omit it, and then the
+# exclusion below matched nothing and the script deleted the comment it had just published --
+# turning publish-before-delete into publish-then-destroy, the exact failure the ordering exists
+# to prevent.
+if ! post_output="$(gh pr comment "$PR" --repo "$REPO" --body-file "$body_file" 2>&1)"; then
+  # Nothing is deleted when the post fails: the prior review comment is still the best
+  # information the PR has, and removing it would leave no review at all.
+  log "failed to post review to ${REPO}#${PR}: ${post_output}"
+  exit 1
+fi
 log "posted review to ${REPO}#${PR}"
+new_comment_id="$(printf '%s\n' "$post_output" | sed -n 's/.*#issuecomment-\([0-9][0-9]*\).*/\1/p' | tail -n 1)"
+
+# A failed delete is logged, not swallowed: silently ignoring it would let a transient API/perms
+# error leave the old comment in place alongside the new one, so runs accumulate duplicates.
+# The author filter is load-bearing, not cosmetic: without it, ANY user could put the
+# marker (an HTML comment) in a PR comment and have this bot delete arbitrary comments on
+# the next run. Only ever delete OUR OWN bot's prior review comments -- and only ones from
+# BEFORE this run (the just-posted comment's own id is excluded so it can never delete itself).
+if [ -z "$new_comment_id" ]; then
+  # FAIL CLOSED. Without a known id there is no way to tell the new comment from the old ones,
+  # and the safe direction is unambiguous: a leftover duplicate is noise, deleting the review
+  # that was just posted is data loss.
+  log "warning: could not determine the posted comment id; leaving prior review comments in place"
+else
+  # `--arg`/`--argjson` rather than shell interpolation into the filter: the marker is an HTML
+  # comment today, but a quote or a backslash in it would otherwise break the jq program itself
+  # rather than simply not matching.
+  #
+  # Those are JQ flags, so the JSON is fetched raw and piped into a real `jq` — `gh api` has no
+  # `--arg`/`--argjson` of its own and rejects them. Handing them to `gh api --jq` made it exit
+  # non-zero on every run; with the old `2>/dev/null` swallowing the message and `set -o pipefail`
+  # in force, the script then died *after* posting, so the stale comments were never deleted and
+  # the job went red for a reason nothing printed. stderr is kept this time for exactly that
+  # reason. (`--paginate` without `--jq` emits one JSON array per page; `jq` reads that stream
+  # fine, applying `.[]` to each.)
+  stale_ids="$(
+    gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+      | jq -r --arg marker "$MARKER" --argjson new_id "$new_comment_id" "$SELECT_STALE_JQ"
+  )" || {
+    log "warning: could not list prior review comments; leaving them in place"
+    stale_ids=""
+  }
+  while read -r cid; do
+    [ -n "$cid" ] || continue
+    if ! gh api -X DELETE "repos/${REPO}/issues/comments/${cid}" >/dev/null 2>&1; then
+      log "warning: could not delete prior review comment ${cid}; a duplicate may result"
+    fi
+  done <<< "$stale_ids"
+fi
+
+# The delete loop above is the last real work; end on a defined status so a stray non-zero from
+# it can never be mistaken for "the review failed" once the comment is already published.
+exit 0
