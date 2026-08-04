@@ -139,6 +139,10 @@ pub fn show(
         detached,
         "input_display",
         "Input Display",
+        super::WindowCfg {
+            resizable: Some(false),
+            ..Default::default()
+        },
         open,
         |ui| {
             // P1 standard pad.

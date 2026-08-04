@@ -127,33 +127,45 @@ pub fn show(
     nes: &mut Nes,
 ) {
     let ppu = nes.ppu_snapshot();
-    super::detachable_window(ctx, detached, "ppu", "PPU", open, |ui| {
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut state.tab, Tab::Registers, "Registers");
-            ui.selectable_value(&mut state.tab, Tab::Patterns, "Patterns");
-            ui.selectable_value(&mut state.tab, Tab::Nametables, "Nametables");
-            ui.selectable_value(&mut state.tab, Tab::Palette, "Palette");
-            ui.selectable_value(&mut state.tab, Tab::Scanline, "Scanline trace");
-        });
-        // v1.7.0 "Forge" Workstream A1 — editing master toggle. Off by
-        // default → the panel is read-only (byte-identical with no edits
-        // queued). On → the Palette / Nametables / Patterns tabs expose
-        // their writeback editors, which queue gated post-frame pokes.
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut state.a1.enabled, "Edit (writeback)");
-            if state.a1.enabled {
-                ui.weak("edits apply after the next frame via the gated poke path");
+    super::detachable_window(
+        ctx,
+        detached,
+        "ppu",
+        "PPU",
+        super::WindowCfg {
+            default_pos: Some([336.0, 64.0]),
+            default_size: Some([480.0, 420.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut state.tab, Tab::Registers, "Registers");
+                ui.selectable_value(&mut state.tab, Tab::Patterns, "Patterns");
+                ui.selectable_value(&mut state.tab, Tab::Nametables, "Nametables");
+                ui.selectable_value(&mut state.tab, Tab::Palette, "Palette");
+                ui.selectable_value(&mut state.tab, Tab::Scanline, "Scanline trace");
+            });
+            // v1.7.0 "Forge" Workstream A1 — editing master toggle. Off by
+            // default → the panel is read-only (byte-identical with no edits
+            // queued). On → the Palette / Nametables / Patterns tabs expose
+            // their writeback editors, which queue gated post-frame pokes.
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut state.a1.enabled, "Edit (writeback)");
+                if state.a1.enabled {
+                    ui.weak("edits apply after the next frame via the gated poke path");
+                }
+            });
+            ui.separator();
+            match state.tab {
+                Tab::Registers => regs_tab(ui, &ppu),
+                Tab::Patterns => patterns_tab(ui, ctx, state, nes),
+                Tab::Nametables => nametables_tab(ui, ctx, state, nes, &ppu),
+                Tab::Palette => palette_tab(ui, ctx, state, nes),
+                Tab::Scanline => scanline_tab(ui, nes),
             }
-        });
-        ui.separator();
-        match state.tab {
-            Tab::Registers => regs_tab(ui, &ppu),
-            Tab::Patterns => patterns_tab(ui, ctx, state, nes),
-            Tab::Nametables => nametables_tab(ui, ctx, state, nes, &ppu),
-            Tab::Palette => palette_tab(ui, ctx, state, nes),
-            Tab::Scanline => scanline_tab(ui, nes),
-        }
-    });
+        },
+    );
 }
 
 fn regs_tab(ui: &mut egui::Ui, ppu: &rustynes_core::PpuDebugView) {

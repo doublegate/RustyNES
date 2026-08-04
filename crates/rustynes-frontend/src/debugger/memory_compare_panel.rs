@@ -283,6 +283,11 @@ pub fn show(
         detached,
         "memory_compare",
         "Memory Compare",
+        super::WindowCfg {
+            default_pos: Some([336.0, 480.0]),
+            default_size: Some([360.0, 540.0]),
+            ..Default::default()
+        },
         open,
         |ui| {
             // ---------------- RAM Search ----------------

@@ -465,258 +465,272 @@ pub fn show(
     // UI (the eval needs `&mut Nes` + `&state`).
     let watch_values = state.eval_watch_rows(nes);
 
-    super::detachable_window(ctx, detached, "watch", "Watch / Breakpoints", open, |ui| {
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut state.armed, "Armed");
-            ui.weak("(observational — replays the frame's exec/access logs)");
-        });
-        ui.separator();
+    super::detachable_window(
+        ctx,
+        detached,
+        "watch",
+        "Watch / Breakpoints",
+        super::WindowCfg {
+            default_size: Some([460.0, 520.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut state.armed, "Armed");
+                ui.weak("(observational — replays the frame's exec/access logs)");
+            });
+            ui.separator();
 
-        // --- Conditional breakpoints (C1) ---
-        egui::CollapsingHeader::new("Conditional breakpoints")
-            .default_open(true)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("addr:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.bp_lo_text)
-                            .desired_width(56.0)
-                            .hint_text("$8000"),
-                    );
-                    ui.label("..");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.bp_hi_text)
-                            .desired_width(56.0)
-                            .hint_text("(opt)"),
-                    );
-                    ui.label("if:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.bp_cond_text)
-                            .desired_width(140.0)
-                            .hint_text("a == 0 (opt)"),
-                    );
-                    if ui.button("Add").clicked() {
-                        add_breakpoint(state);
-                    }
-                });
-                let mut remove = None;
-                for (i, bp) in state.breakpoints.iter_mut().enumerate() {
+            // --- Conditional breakpoints (C1) ---
+            egui::CollapsingHeader::new("Conditional breakpoints")
+                .default_open(true)
+                .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut bp.enabled, "");
-                        let range = if bp.lo == bp.hi {
-                            format!("${:04X}", bp.lo)
-                        } else {
-                            format!("${:04X}..${:04X}", bp.lo, bp.hi)
-                        };
-                        ui.monospace(range);
-                        if let Some(label) = symbols.label(bp.lo) {
-                            ui.colored_label(Color32::from_rgb(0x90, 0xC0, 0xF0), label);
-                        }
-                        if !bp.cond_src.is_empty() {
-                            let col = if bp.cond_error {
-                                Color32::from_rgb(0xE0, 0x50, 0x50)
-                            } else {
-                                Color32::from_rgb(0xC0, 0xC0, 0x60)
-                            };
-                            ui.colored_label(col, format!("if {}", bp.cond_src));
-                        }
-                        ui.weak(format!("hits={}", bp.hits));
-                        if ui.small_button("x").clicked() {
-                            remove = Some(i);
+                        ui.label("addr:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.bp_lo_text)
+                                .desired_width(56.0)
+                                .hint_text("$8000"),
+                        );
+                        ui.label("..");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.bp_hi_text)
+                                .desired_width(56.0)
+                                .hint_text("(opt)"),
+                        );
+                        ui.label("if:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.bp_cond_text)
+                                .desired_width(140.0)
+                                .hint_text("a == 0 (opt)"),
+                        );
+                        if ui.button("Add").clicked() {
+                            add_breakpoint(state);
                         }
                     });
-                }
-                if let Some(i) = remove {
-                    state.breakpoints.remove(i);
-                }
-            });
-
-        // --- Read/write/exec watchpoints (C1) ---
-        egui::CollapsingHeader::new("Watchpoints (R/W/X)")
-            .default_open(true)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt("wp_kind")
-                        .selected_text(match state.wp_kind {
-                            WatchKind::Read => "Read",
-                            WatchKind::Write => "Write",
-                            WatchKind::Exec => "Exec",
-                        })
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut state.wp_kind, WatchKind::Read, "Read");
-                            ui.selectable_value(&mut state.wp_kind, WatchKind::Write, "Write");
-                            ui.selectable_value(&mut state.wp_kind, WatchKind::Exec, "Exec");
+                    let mut remove = None;
+                    for (i, bp) in state.breakpoints.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut bp.enabled, "");
+                            let range = if bp.lo == bp.hi {
+                                format!("${:04X}", bp.lo)
+                            } else {
+                                format!("${:04X}..${:04X}", bp.lo, bp.hi)
+                            };
+                            ui.monospace(range);
+                            if let Some(label) = symbols.label(bp.lo) {
+                                ui.colored_label(Color32::from_rgb(0x90, 0xC0, 0xF0), label);
+                            }
+                            if !bp.cond_src.is_empty() {
+                                let col = if bp.cond_error {
+                                    Color32::from_rgb(0xE0, 0x50, 0x50)
+                                } else {
+                                    Color32::from_rgb(0xC0, 0xC0, 0x60)
+                                };
+                                ui.colored_label(col, format!("if {}", bp.cond_src));
+                            }
+                            ui.weak(format!("hits={}", bp.hits));
+                            if ui.small_button("x").clicked() {
+                                remove = Some(i);
+                            }
                         });
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.wp_lo_text)
-                            .desired_width(56.0)
-                            .hint_text("$0300"),
-                    );
-                    ui.label("..");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.wp_hi_text)
-                            .desired_width(56.0)
-                            .hint_text("(opt)"),
-                    );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.wp_cond_text)
-                            .desired_width(120.0)
-                            .hint_text("value!=0 (opt)"),
-                    );
-                    if ui.button("Add").clicked() {
-                        add_watchpoint(state);
+                    }
+                    if let Some(i) = remove {
+                        state.breakpoints.remove(i);
                     }
                 });
-                let mut remove = None;
-                for (i, wp) in state.watchpoints.iter_mut().enumerate() {
+
+            // --- Read/write/exec watchpoints (C1) ---
+            egui::CollapsingHeader::new("Watchpoints (R/W/X)")
+                .default_open(true)
+                .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut wp.enabled, "");
-                        ui.colored_label(Color32::from_rgb(0x80, 0xD0, 0xF0), wp.kind.label());
-                        let range = if wp.lo == wp.hi {
-                            format!("${:04X}", wp.lo)
-                        } else {
-                            format!("${:04X}..${:04X}", wp.lo, wp.hi)
-                        };
-                        ui.monospace(range);
-                        if !wp.cond_src.is_empty() {
-                            let col = if wp.cond_error {
-                                Color32::from_rgb(0xE0, 0x50, 0x50)
+                        egui::ComboBox::from_id_salt("wp_kind")
+                            .selected_text(match state.wp_kind {
+                                WatchKind::Read => "Read",
+                                WatchKind::Write => "Write",
+                                WatchKind::Exec => "Exec",
+                            })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut state.wp_kind, WatchKind::Read, "Read");
+                                ui.selectable_value(&mut state.wp_kind, WatchKind::Write, "Write");
+                                ui.selectable_value(&mut state.wp_kind, WatchKind::Exec, "Exec");
+                            });
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.wp_lo_text)
+                                .desired_width(56.0)
+                                .hint_text("$0300"),
+                        );
+                        ui.label("..");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.wp_hi_text)
+                                .desired_width(56.0)
+                                .hint_text("(opt)"),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.wp_cond_text)
+                                .desired_width(120.0)
+                                .hint_text("value!=0 (opt)"),
+                        );
+                        if ui.button("Add").clicked() {
+                            add_watchpoint(state);
+                        }
+                    });
+                    let mut remove = None;
+                    for (i, wp) in state.watchpoints.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut wp.enabled, "");
+                            ui.colored_label(Color32::from_rgb(0x80, 0xD0, 0xF0), wp.kind.label());
+                            let range = if wp.lo == wp.hi {
+                                format!("${:04X}", wp.lo)
                             } else {
-                                Color32::from_rgb(0xC0, 0xC0, 0x60)
+                                format!("${:04X}..${:04X}", wp.lo, wp.hi)
                             };
-                            ui.colored_label(col, format!("if {}", wp.cond_src));
-                        }
-                        ui.weak(format!("hits={}", wp.hits));
-                        if ui.small_button("x").clicked() {
-                            remove = Some(i);
-                        }
-                    });
-                }
-                if let Some(i) = remove {
-                    state.watchpoints.remove(i);
-                }
-            });
-
-        // --- Watch window (C4) ---
-        egui::CollapsingHeader::new("Watch window")
-            .default_open(true)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.watch_add_text)
-                            .desired_width(220.0)
-                            .hint_text("{$00} | [$0300] | a"),
-                    );
-                    if ui.button("Add").clicked() {
-                        add_watch_row(state);
+                            ui.monospace(range);
+                            if !wp.cond_src.is_empty() {
+                                let col = if wp.cond_error {
+                                    Color32::from_rgb(0xE0, 0x50, 0x50)
+                                } else {
+                                    Color32::from_rgb(0xC0, 0xC0, 0x60)
+                                };
+                                ui.colored_label(col, format!("if {}", wp.cond_src));
+                            }
+                            ui.weak(format!("hits={}", wp.hits));
+                            if ui.small_button("x").clicked() {
+                                remove = Some(i);
+                            }
+                        });
+                    }
+                    if let Some(i) = remove {
+                        state.watchpoints.remove(i);
                     }
                 });
-                let mut remove = None;
-                for (i, (src, val, err)) in watch_values.iter().enumerate() {
+
+            // --- Watch window (C4) ---
+            egui::CollapsingHeader::new("Watch window")
+                .default_open(true)
+                .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.monospace(src);
-                        ui.label("=");
-                        if *err {
-                            ui.colored_label(Color32::from_rgb(0xE0, 0x50, 0x50), val);
-                        } else {
-                            ui.monospace(val);
-                        }
-                        if ui.small_button("x").clicked() {
-                            remove = Some(i);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.watch_add_text)
+                                .desired_width(220.0)
+                                .hint_text("{$00} | [$0300] | a"),
+                        );
+                        if ui.button("Add").clicked() {
+                            add_watch_row(state);
                         }
                     });
-                }
-                if let Some(i) = remove {
-                    state.watch_rows.remove(i);
-                }
-            });
+                    let mut remove = None;
+                    for (i, (src, val, err)) in watch_values.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.monospace(src);
+                            ui.label("=");
+                            if *err {
+                                ui.colored_label(Color32::from_rgb(0xE0, 0x50, 0x50), val);
+                            } else {
+                                ui.monospace(val);
+                            }
+                            if ui.small_button("x").clicked() {
+                                remove = Some(i);
+                            }
+                        });
+                    }
+                    if let Some(i) = remove {
+                        state.watch_rows.remove(i);
+                    }
+                });
 
-        // --- Conditional trace (C4) ---
-        egui::CollapsingHeader::new("Conditional trace")
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut state.trace_enabled, "Record");
-                    if ui.button("Clear").clicked() {
-                        state.trace_rows.clear();
+            // --- Conditional trace (C4) ---
+            egui::CollapsingHeader::new("Conditional trace")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut state.trace_enabled, "Record");
+                        if ui.button("Clear").clicked() {
+                            state.trace_rows.clear();
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("format:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.trace_format_src)
+                                .desired_width(260.0)
+                                .hint_text("{pc}: A={a}"),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("when:");
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut state.trace_cond_src)
+                                .desired_width(220.0)
+                                .hint_text("(opt) pc >= $8000"),
+                        );
+                        if resp.changed() {
+                            recompile_trace_cond(state);
+                        }
+                    });
+                    if state.trace_cond_error {
+                        ui.colored_label(
+                            Color32::from_rgb(0xE0, 0x50, 0x50),
+                            "condition parse error",
+                        );
                     }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("format:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.trace_format_src)
-                            .desired_width(260.0)
-                            .hint_text("{pc}: A={a}"),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("when:");
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut state.trace_cond_src)
-                            .desired_width(220.0)
-                            .hint_text("(opt) pc >= $8000"),
-                    );
-                    if resp.changed() {
-                        recompile_trace_cond(state);
-                    }
-                });
-                if state.trace_cond_error {
-                    ui.colored_label(Color32::from_rgb(0xE0, 0x50, 0x50), "condition parse error");
-                }
-                ui.weak(
-                    "Tokens: {a}{x}{y}{s}{p}{pc}{scanline}{cycle}{frame}, \
+                    ui.weak(
+                        "Tokens: {a}{x}{y}{s}{p}{pc}{scanline}{cycle}{frame}, \
                      {[addr]}, {{addr}}.",
-                );
-                egui::ScrollArea::vertical()
-                    .id_salt("trace_rows")
-                    .max_height(120.0)
-                    .auto_shrink([false, false])
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        for r in &state.trace_rows {
-                            ui.monospace(r);
-                        }
-                    });
+                    );
+                    egui::ScrollArea::vertical()
+                        .id_salt("trace_rows")
+                        .max_height(120.0)
+                        .auto_shrink([false, false])
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            for r in &state.trace_rows {
+                                ui.monospace(r);
+                            }
+                        });
+                });
+
+            ui.separator();
+
+            // --- Hit log ---
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Hits").strong());
+                if ui.button("Clear").clicked() {
+                    state.hits.clear();
+                }
             });
-
-        ui.separator();
-
-        // --- Hit log ---
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Hits").strong());
-            if ui.button("Clear").clicked() {
-                state.hits.clear();
-            }
-        });
-        ui.weak(
-            "Per-access tokens (value/address/isRead/isWrite/isExec) are \
+            ui.weak(
+                "Per-access tokens (value/address/isRead/isWrite/isExec) are \
              exact; register/PPU/[addr] tokens reflect end-of-frame state \
              (observational replay).",
-        );
-        egui::ScrollArea::vertical()
-            .id_salt("hit_log")
-            .auto_shrink([false, false])
-            .stick_to_bottom(true)
-            .show(ui, |ui| {
-                if state.hits.is_empty() {
-                    ui.weak("(no hits — add a breakpoint/watchpoint and run)");
-                }
-                for h in &state.hits {
-                    let label = symbols
-                        .label(h.addr)
-                        .map_or_else(String::new, |l| format!("  <{l}>"));
-                    let line = if h.has_value {
-                        format!(
-                            "f{:<6} [{}] ${:04X} = ${:02X}{}",
-                            h.frame, h.tag, h.addr, h.value, label
-                        )
-                    } else {
-                        format!("f{:<6} [{}] ${:04X}{}", h.frame, h.tag, h.addr, label)
-                    };
-                    ui.monospace(line);
-                }
-            });
-    });
+            );
+            egui::ScrollArea::vertical()
+                .id_salt("hit_log")
+                .auto_shrink([false, false])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    if state.hits.is_empty() {
+                        ui.weak("(no hits — add a breakpoint/watchpoint and run)");
+                    }
+                    for h in &state.hits {
+                        let label = symbols
+                            .label(h.addr)
+                            .map_or_else(String::new, |l| format!("  <{l}>"));
+                        let line = if h.has_value {
+                            format!(
+                                "f{:<6} [{}] ${:04X} = ${:02X}{}",
+                                h.frame, h.tag, h.addr, h.value, label
+                            )
+                        } else {
+                            format!("f{:<6} [{}] ${:04X}{}", h.frame, h.tag, h.addr, label)
+                        };
+                        ui.monospace(line);
+                    }
+                });
+        },
+    );
 }
 
 fn add_breakpoint(state: &mut WatchPanelState) {

@@ -65,50 +65,61 @@ pub fn show(
     nes: &mut Nes,
     symbols: &SymbolMap,
 ) {
-    super::detachable_window(ctx, detached, "trace", "Trace", open, |ui| {
-        ui.horizontal(|ui| {
-            let mut on = nes.trace_enabled();
-            if ui.checkbox(&mut on, "Record").changed() {
-                nes.set_trace_enabled(on);
-            }
-            if ui.button("Clear").clicked() {
-                nes.clear_trace();
-                state.export_status = None;
-            }
-            ui.label(format!("{} recs", nes.trace_len()));
-            // Export the full ring to a text file (native only — no
-            // filesystem on wasm). A one-shot debug dump.
-            #[cfg(not(target_arch = "wasm32"))]
-            if ui.button("Export…").clicked() {
-                state.export_status = Some(export_trace(nes, symbols));
-            }
-        });
-        if let Some(s) = &state.export_status {
-            ui.weak(s);
-        }
-        ui.separator();
-
-        // Live tail: the most-recent TAIL_ROWS records, disassembled.
-        let tail = nes.trace_tail_vec(TAIL_ROWS);
-        let lines: Vec<String> = tail
-            .iter()
-            .map(|r| {
-                let d = disasm_one(nes, r.pc);
-                fmt_rec(&d, r, symbols.label(r.pc))
-            })
-            .collect();
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .stick_to_bottom(true)
-            .show(ui, |ui| {
-                if lines.is_empty() {
-                    ui.weak("(no records — enable Record and run a frame)");
+    super::detachable_window(
+        ctx,
+        detached,
+        "trace",
+        "Trace",
+        super::WindowCfg {
+            default_size: Some([460.0, 360.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
+            ui.horizontal(|ui| {
+                let mut on = nes.trace_enabled();
+                if ui.checkbox(&mut on, "Record").changed() {
+                    nes.set_trace_enabled(on);
                 }
-                for line in &lines {
-                    ui.monospace(line);
+                if ui.button("Clear").clicked() {
+                    nes.clear_trace();
+                    state.export_status = None;
+                }
+                ui.label(format!("{} recs", nes.trace_len()));
+                // Export the full ring to a text file (native only — no
+                // filesystem on wasm). A one-shot debug dump.
+                #[cfg(not(target_arch = "wasm32"))]
+                if ui.button("Export…").clicked() {
+                    state.export_status = Some(export_trace(nes, symbols));
                 }
             });
-    });
+            if let Some(s) = &state.export_status {
+                ui.weak(s);
+            }
+            ui.separator();
+
+            // Live tail: the most-recent TAIL_ROWS records, disassembled.
+            let tail = nes.trace_tail_vec(TAIL_ROWS);
+            let lines: Vec<String> = tail
+                .iter()
+                .map(|r| {
+                    let d = disasm_one(nes, r.pc);
+                    fmt_rec(&d, r, symbols.label(r.pc))
+                })
+                .collect();
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    if lines.is_empty() {
+                        ui.weak("(no records — enable Record and run a frame)");
+                    }
+                    for line in &lines {
+                        ui.monospace(line);
+                    }
+                });
+        },
+    );
 }
 
 /// Write the entire trace ring to `<temp>/rustynes-trace.log`. Returns a status

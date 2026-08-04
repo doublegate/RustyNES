@@ -246,16 +246,35 @@ pub enum ChipPanel {
     HeaderEditor,
 }
 
+/// First-open geometry for a docked tool [`egui::Window`]. egui persists a
+/// window's actual position/size by id after the first open, so these only seed
+/// the *first* appearance — but that seeding is what lays the debugger panels out
+/// in their designed workspace positions instead of egui's default overlap
+/// cascade. Each field is `Option`: `None` leaves egui's default (so a panel that
+/// only ever wanted the defaults passes `WindowCfg::default()`); `resizable: None`
+/// keeps egui's default (resizable), `Some(false)` pins a fixed-size panel.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct WindowCfg {
+    pub default_pos: Option<[f32; 2]>,
+    pub default_size: Option<[f32; 2]>,
+    pub default_width: Option<f32>,
+    pub min_width: Option<f32>,
+    pub resizable: Option<bool>,
+}
+
 /// v2.2.9 "Studio II": render a tool window that the user can **detach** into its
 /// own floating OS window — the fix for the "every new window is stuck inside the
 /// main window" report (Windows 10).
 ///
 /// `detached` holds the set of currently-floating panel ids; `id` is this panel's
-/// stable key. Docked, it is a normal [`egui::Window`] with a small "⧉ Detach"
+/// stable key. Docked, it is a normal [`egui::Window`] seeded with `cfg` (the
+/// panel's prior first-open position / size / resizability) and a small "⧉ Detach"
 /// button. Detached, it renders in a real OS viewport (`show_viewport_immediate`,
 /// the same mechanism [`basic_bot_panel`] already uses) with a "⧉ Reattach"
-/// button; the OS window's close button reattaches too. **Native-only** — egui
-/// multi-viewport needs winit multi-window, so on wasm it always renders docked.
+/// button; the OS window's close button reattaches too — the OS window manager
+/// sizes/places the detached window, so `cfg` applies to the docked form only.
+/// **Native-only** — egui multi-viewport needs winit multi-window, so on wasm it
+/// always renders docked.
 ///
 /// `add_contents` is the panel body; it captures whatever it needs (`&Nes`, panel
 /// state, …) and is called exactly once per frame, in whichever branch is active.
@@ -268,6 +287,7 @@ pub(crate) fn detachable_window(
     detached: &mut std::collections::HashSet<&'static str>,
     id: &'static str,
     title: &str,
+    cfg: WindowCfg,
     open: &mut bool,
     mut add_contents: impl FnMut(&mut egui::Ui),
 ) {
@@ -304,15 +324,29 @@ pub(crate) fn detachable_window(
         return;
     }
     let mut win_open = *open;
-    egui::Window::new(title)
-        .open(&mut win_open)
-        .show(ctx, |ui| {
-            #[cfg(not(target_arch = "wasm32"))]
-            if ui.small_button("\u{29c9} Detach").clicked() {
-                detached.insert(id);
-            }
-            add_contents(ui);
-        });
+    let mut win = egui::Window::new(title).open(&mut win_open);
+    if let Some(p) = cfg.default_pos {
+        win = win.default_pos(p);
+    }
+    if let Some(s) = cfg.default_size {
+        win = win.default_size(s);
+    }
+    if let Some(w) = cfg.default_width {
+        win = win.default_width(w);
+    }
+    if let Some(m) = cfg.min_width {
+        win = win.min_width(m);
+    }
+    if let Some(r) = cfg.resizable {
+        win = win.resizable(r);
+    }
+    win.show(ctx, |ui| {
+        #[cfg(not(target_arch = "wasm32"))]
+        if ui.small_button("\u{29c9} Detach").clicked() {
+            detached.insert(id);
+        }
+        add_contents(ui);
+    });
     *open = win_open;
 }
 

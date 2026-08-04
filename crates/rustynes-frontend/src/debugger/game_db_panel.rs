@@ -148,101 +148,112 @@ pub fn show(
     nes: &mut Nes,
     crc: Option<u32>,
 ) {
-    super::detachable_window(ctx, detached, "game_db", "ROM Database", open, |ui| {
-        let Some(crc) = crc else {
-            ui.label("No cartridge loaded (FDS / NSF images have no CRC entry).");
-            return;
-        };
-        // Reload the buffers when the loaded ROM changes.
-        if state.loaded_crc != Some(crc) {
-            state.load_from_db(crc);
-        }
+    super::detachable_window(
+        ctx,
+        detached,
+        "game_db",
+        "ROM Database",
+        super::WindowCfg {
+            resizable: Some(false),
+            ..Default::default()
+        },
+        open,
+        |ui| {
+            let Some(crc) = crc else {
+                ui.label("No cartridge loaded (FDS / NSF images have no CRC entry).");
+                return;
+            };
+            // Reload the buffers when the loaded ROM changes.
+            if state.loaded_crc != Some(crc) {
+                state.load_from_db(crc);
+            }
 
-        ui.label(format!("ROM CRC32: {crc:08X}"));
-        ui.separator();
+            ui.label(format!("ROM CRC32: {crc:08X}"));
+            ui.separator();
 
-        egui::Grid::new("game_db_edit")
-            .num_columns(2)
-            .show(ui, |ui| {
-                ui.label("Title");
-                ui.text_edit_singleline(&mut state.title);
-                ui.end_row();
+            egui::Grid::new("game_db_edit")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    ui.label("Title");
+                    ui.text_edit_singleline(&mut state.title);
+                    ui.end_row();
 
-                ui.label("Mirroring");
-                egui::ComboBox::from_id_salt("gdb_mirroring")
-                    .selected_text(mirroring_label(state.mirroring))
-                    .show_ui(ui, |ui| {
-                        for (val, label) in MIRRORINGS {
-                            ui.selectable_value(&mut state.mirroring, *val, *label);
+                    ui.label("Mirroring");
+                    egui::ComboBox::from_id_salt("gdb_mirroring")
+                        .selected_text(mirroring_label(state.mirroring))
+                        .show_ui(ui, |ui| {
+                            for (val, label) in MIRRORINGS {
+                                ui.selectable_value(&mut state.mirroring, *val, *label);
+                            }
+                        });
+                    ui.end_row();
+
+                    ui.label("Region");
+                    egui::ComboBox::from_id_salt("gdb_region")
+                        .selected_text(region_label(state.region))
+                        .show_ui(ui, |ui| {
+                            for (val, label) in REGIONS {
+                                ui.selectable_value(&mut state.region, *val, *label);
+                            }
+                        });
+                    ui.end_row();
+
+                    ui.label("Mapper");
+                    ui.text_edit_singleline(&mut state.mapper);
+                    ui.end_row();
+
+                    ui.label("Submapper");
+                    ui.text_edit_singleline(&mut state.submapper);
+                    ui.end_row();
+                });
+
+            ui.separator();
+            ui.label(
+                egui::RichText::new(
+                    "Mirroring applies immediately. Region / mapper / submapper apply \
+                 on the next ROM load (reopen the ROM).",
+                )
+                .small()
+                .weak(),
+            );
+
+            ui.horizontal(|ui| {
+                if ui.button("Save & Apply").clicked() {
+                    let entry = state.to_entry(crc);
+                    match game_db::upsert_user_entry(entry.clone()) {
+                        Ok(()) => {
+                            nes.set_mirroring_override(entry.mirroring);
+                            state.status = Some("Saved to user overrides.".to_string());
                         }
-                    });
-                ui.end_row();
-
-                ui.label("Region");
-                egui::ComboBox::from_id_salt("gdb_region")
-                    .selected_text(region_label(state.region))
-                    .show_ui(ui, |ui| {
-                        for (val, label) in REGIONS {
-                            ui.selectable_value(&mut state.region, *val, *label);
+                        Err(e) => state.status = Some(format!("Save failed: {e}")),
+                    }
+                }
+                if ui.button("Reset to Default").clicked() {
+                    match game_db::remove_user_entry(crc) {
+                        Ok(()) => {
+                            state.load_from_db(crc);
+                            // Re-apply whatever the vendored base specifies (or clear).
+                            nes.set_mirroring_override(state.mirroring);
+                            state.status = Some("Reverted to the vendored default.".to_string());
                         }
-                    });
-                ui.end_row();
-
-                ui.label("Mapper");
-                ui.text_edit_singleline(&mut state.mapper);
-                ui.end_row();
-
-                ui.label("Submapper");
-                ui.text_edit_singleline(&mut state.submapper);
-                ui.end_row();
+                        Err(e) => state.status = Some(format!("Reset failed: {e}")),
+                    }
+                }
             });
 
-        ui.separator();
-        ui.label(
-            egui::RichText::new(
-                "Mirroring applies immediately. Region / mapper / submapper apply \
-                 on the next ROM load (reopen the ROM).",
-            )
-            .small()
-            .weak(),
-        );
-
-        ui.horizontal(|ui| {
-            if ui.button("Save & Apply").clicked() {
-                let entry = state.to_entry(crc);
-                match game_db::upsert_user_entry(entry.clone()) {
-                    Ok(()) => {
-                        nes.set_mirroring_override(entry.mirroring);
-                        state.status = Some("Saved to user overrides.".to_string());
-                    }
-                    Err(e) => state.status = Some(format!("Save failed: {e}")),
-                }
+            if let Some(msg) = &state.status {
+                ui.label(egui::RichText::new(msg).small());
             }
-            if ui.button("Reset to Default").clicked() {
-                match game_db::remove_user_entry(crc) {
-                    Ok(()) => {
-                        state.load_from_db(crc);
-                        // Re-apply whatever the vendored base specifies (or clear).
-                        nes.set_mirroring_override(state.mirroring);
-                        state.status = Some("Reverted to the vendored default.".to_string());
-                    }
-                    Err(e) => state.status = Some(format!("Reset failed: {e}")),
-                }
-            }
-        });
 
-        if let Some(msg) = &state.status {
-            ui.label(egui::RichText::new(msg).small());
-        }
-
-        // v1.7.0 "Forge" Workstream H4 — Vs. System / arcade DIP-switch
-        // editor. Only meaningful for a Vs. cart; for a normal NES game the
-        // section is hidden (DIPs read through `$4016`/`$4017`'s upper bits
-        // are inert on a standard controller). Edits persist into the
-        // per-game `<rom>.json` overlay (config-dir, keyed by CRC) and apply
-        // live via the same `set_vs_dip` core setter the load path uses.
-        dip_switch_section(ui, state, nes, crc);
-    });
+            // v1.7.0 "Forge" Workstream H4 — Vs. System / arcade DIP-switch
+            // editor. Only meaningful for a Vs. cart; for a normal NES game the
+            // section is hidden (DIPs read through `$4016`/`$4017`'s upper bits
+            // are inert on a standard controller). Edits persist into the
+            // per-game `<rom>.json` overlay (config-dir, keyed by CRC) and apply
+            // live via the same `set_vs_dip` core setter the load path uses.
+            dip_switch_section(ui, state, nes, crc);
+        },
+    );
 }
 
 /// Render the Vs. System DIP-switch editor for the loaded ROM (no-op for a

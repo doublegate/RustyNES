@@ -77,26 +77,38 @@ pub fn show(
     state.noise.push(f32::from(apu.noise) / 15.0);
     state.dmc.push(f32::from(apu.dmc) / 127.0);
 
-    super::detachable_window(ctx, detached, "apu", "APU", open, |ui| {
-        ui.horizontal(|ui| {
-            ui.monospace(format!(
-                "P1 {:>2}  P2 {:>2}  TRI {:>2}  NSE {:>2}  DMC {:>3}",
-                apu.pulse1, apu.pulse2, apu.triangle, apu.noise, apu.dmc
-            ));
-            if apu.frame_irq {
-                ui.colored_label(egui::Color32::YELLOW, "FRAME-IRQ");
-            }
-            if apu.dmc_irq {
-                ui.colored_label(egui::Color32::ORANGE, "DMC-IRQ");
-            }
-        });
-        ui.separator();
-        scope(ui, "Pulse 1", &state.pulse1, egui::Color32::LIGHT_BLUE);
-        scope(ui, "Pulse 2", &state.pulse2, egui::Color32::LIGHT_GREEN);
-        scope(ui, "Triangle", &state.triangle, egui::Color32::LIGHT_YELLOW);
-        scope(ui, "Noise", &state.noise, egui::Color32::LIGHT_RED);
-        scope(ui, "DMC", &state.dmc, egui::Color32::WHITE);
-    });
+    super::detachable_window(
+        ctx,
+        detached,
+        "apu",
+        "APU",
+        super::WindowCfg {
+            default_pos: Some([560.0, 480.0]),
+            default_size: Some([420.0, 360.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
+            ui.horizontal(|ui| {
+                ui.monospace(format!(
+                    "P1 {:>2}  P2 {:>2}  TRI {:>2}  NSE {:>2}  DMC {:>3}",
+                    apu.pulse1, apu.pulse2, apu.triangle, apu.noise, apu.dmc
+                ));
+                if apu.frame_irq {
+                    ui.colored_label(egui::Color32::YELLOW, "FRAME-IRQ");
+                }
+                if apu.dmc_irq {
+                    ui.colored_label(egui::Color32::ORANGE, "DMC-IRQ");
+                }
+            });
+            ui.separator();
+            scope(ui, "Pulse 1", &state.pulse1, egui::Color32::LIGHT_BLUE);
+            scope(ui, "Pulse 2", &state.pulse2, egui::Color32::LIGHT_GREEN);
+            scope(ui, "Triangle", &state.triangle, egui::Color32::LIGHT_YELLOW);
+            scope(ui, "Noise", &state.noise, egui::Color32::LIGHT_RED);
+            scope(ui, "DMC", &state.dmc, egui::Color32::WHITE);
+        },
+    );
 }
 
 fn scope(ui: &mut egui::Ui, label: &str, ring: &ScopeRing, color: egui::Color32) {

@@ -200,51 +200,62 @@ pub fn show(
 ) {
     // Cloned so the closure below can also borrow the checkbox mutably.
     let v = state.view.clone();
-    super::detachable_window(ctx, detached, "perf", "Performance", open, |ui| {
-        ui.label(format!(
-            "target: {:.3} ms/frame   pacing: {}   present mode: {}{}",
-            v.target_ms,
-            v.pacing,
-            v.present_mode,
-            if v.present_mode_fell_back {
-                "  (FALLBACK)"
-            } else {
-                ""
-            }
-        ));
-        ui.separator();
+    super::detachable_window(
+        ctx,
+        detached,
+        "perf",
+        "Performance",
+        super::WindowCfg {
+            default_pos: Some([480.0, 64.0]),
+            resizable: Some(false),
+            ..Default::default()
+        },
+        open,
+        |ui| {
+            ui.label(format!(
+                "target: {:.3} ms/frame   pacing: {}   present mode: {}{}",
+                v.target_ms,
+                v.pacing,
+                v.present_mode,
+                if v.present_mode_fell_back {
+                    "  (FALLBACK)"
+                } else {
+                    ""
+                }
+            ));
+            ui.separator();
 
-        egui::Grid::new("perf-intervals")
-            .num_columns(6)
-            .spacing([12.0, 2.0])
-            .striped(true)
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("interval (ms)").strong());
-                ui.label(egui::RichText::new("mean").strong());
-                ui.label(egui::RichText::new("p50").strong());
-                ui.label(egui::RichText::new("p95").strong());
-                ui.label(egui::RichText::new("p99").strong());
-                ui.label(egui::RichText::new("max").strong());
-                ui.end_row();
-                stats_row(ui, "produced", &v.produced, v.target_ms);
-                stats_row(ui, "presented", &v.presented, v.target_ms);
-                // The produce cost is a budget, not a cadence — color it
-                // against the full frame budget the same way.
-                stats_row(ui, "produce cost", &v.produce_cost, v.target_ms);
-            });
+            egui::Grid::new("perf-intervals")
+                .num_columns(6)
+                .spacing([12.0, 2.0])
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("interval (ms)").strong());
+                    ui.label(egui::RichText::new("mean").strong());
+                    ui.label(egui::RichText::new("p50").strong());
+                    ui.label(egui::RichText::new("p95").strong());
+                    ui.label(egui::RichText::new("p99").strong());
+                    ui.label(egui::RichText::new("max").strong());
+                    ui.end_row();
+                    stats_row(ui, "produced", &v.produced, v.target_ms);
+                    stats_row(ui, "presented", &v.presented, v.target_ms);
+                    // The produce cost is a budget, not a cadence — color it
+                    // against the full frame budget the same way.
+                    stats_row(ui, "produce cost", &v.produce_cost, v.target_ms);
+                });
 
-        // feature K — the live frame-time sparkline (presented = bright,
-        // produced = faint, with the frame-deadline reference line).
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("frame time").strong());
-            ui.label(
-                egui::RichText::new("presented")
-                    .small()
-                    .color(egui::Color32::from_rgb(0x60, 0xC0, 0xF0)),
-            )
-            .on_hover_text(
-                "Present-to-present cadence, timestamped at the \
+            // feature K — the live frame-time sparkline (presented = bright,
+            // produced = faint, with the frame-deadline reference line).
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("frame time").strong());
+                ui.label(
+                    egui::RichText::new("presented")
+                        .small()
+                        .color(egui::Color32::from_rgb(0x60, 0xC0, 0xF0)),
+                )
+                .on_hover_text(
+                    "Present-to-present cadence, timestamped at the \
                      RedrawRequested (display-refresh) signal — the display's \
                      visible frame interval. A small, steady offset from \
                      \"produced\" is the NTSC 60.0988 Hz emulation rate beating \
@@ -252,140 +263,141 @@ pub fn show(
                      now measured at the refresh signal, not after \
                      surface.present(), so it no longer folds in GPU-submit / \
                      vsync jitter.)",
-            );
-            ui.label(
-                egui::RichText::new("produced")
-                    .small()
-                    .color(egui::Color32::from_rgb(0x50, 0x70, 0xC0)),
-            );
-        });
-        frame_time_graph(
-            ui,
-            &v.recent_presented_ms,
-            &v.recent_produced_ms,
-            v.target_ms,
-        );
-
-        ui.separator();
-        // v1.5.0 "Lens" Workstream H5 — surface the worst recent present
-        // gap alongside the anomaly counters so a one-off scheduling stall
-        // (the 50-128 ms `produced_max` spikes the perf log caught) is
-        // visible in the panel, not just the CSV.
-        let present_gap = v.presented.max_ms;
-        let gap_warn = v.target_ms > 0.0 && present_gap > v.target_ms * 1.5;
-        ui.horizontal(|ui| {
-            ui.label(format!(
-                "pacer: catch-up bursts {}   snap-forwards {}   present gap (max) ",
-                v.catchup_bursts, v.snap_forwards
-            ));
-            if gap_warn {
-                ui.colored_label(
-                    egui::Color32::from_rgb(0xF0, 0xC0, 0x40),
-                    format!("{present_gap:.1} ms"),
                 );
-            } else {
-                ui.label(format!("{present_gap:.1} ms"));
-            }
-        });
-        // v1.3.0 Workstream B — present/produce mismatch, the NTSC-vs-refresh
-        // beat diagnostic (the data for deciding whether the deeper B3 pacer
-        // work is worth it). Under display-sync both stay ~0; under
-        // wall-clock they tick slowly (≈ one every ~10 s for 60.0988 vs
-        // 60.000 Hz). A bunched run of either is the visible judder.
-        ui.label(format!(
-            "present beat: dup frames {}   dropped frames {}",
-            v.presented_dups, v.produced_dropped
-        ))
-        .on_hover_text(
-            "Diagnostic for the residual frame-pacing beat. \"dup frames\" = \
+                ui.label(
+                    egui::RichText::new("produced")
+                        .small()
+                        .color(egui::Color32::from_rgb(0x50, 0x70, 0xC0)),
+                );
+            });
+            frame_time_graph(
+                ui,
+                &v.recent_presented_ms,
+                &v.recent_produced_ms,
+                v.target_ms,
+            );
+
+            ui.separator();
+            // v1.5.0 "Lens" Workstream H5 — surface the worst recent present
+            // gap alongside the anomaly counters so a one-off scheduling stall
+            // (the 50-128 ms `produced_max` spikes the perf log caught) is
+            // visible in the panel, not just the CSV.
+            let present_gap = v.presented.max_ms;
+            let gap_warn = v.target_ms > 0.0 && present_gap > v.target_ms * 1.5;
+            ui.horizontal(|ui| {
+                ui.label(format!(
+                    "pacer: catch-up bursts {}   snap-forwards {}   present gap (max) ",
+                    v.catchup_bursts, v.snap_forwards
+                ));
+                if gap_warn {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(0xF0, 0xC0, 0x40),
+                        format!("{present_gap:.1} ms"),
+                    );
+                } else {
+                    ui.label(format!("{present_gap:.1} ms"));
+                }
+            });
+            // v1.3.0 Workstream B — present/produce mismatch, the NTSC-vs-refresh
+            // beat diagnostic (the data for deciding whether the deeper B3 pacer
+            // work is worth it). Under display-sync both stay ~0; under
+            // wall-clock they tick slowly (≈ one every ~10 s for 60.0988 vs
+            // 60.000 Hz). A bunched run of either is the visible judder.
+            ui.label(format!(
+                "present beat: dup frames {}   dropped frames {}",
+                v.presented_dups, v.produced_dropped
+            ))
+            .on_hover_text(
+                "Diagnostic for the residual frame-pacing beat. \"dup frames\" = \
                  presents that repeated the previous frame (producer slower than \
                  the display); \"dropped frames\" = produced frames superseded \
                  before being shown (producer faster). For NES 60.0988 Hz on a \
                  60.000 Hz display, expect ~one tick every ~10 s under wall-clock \
                  pacing and ~none under display-sync. A steady slow tick is the \
                  inherent rate beat (harmless); a sudden burst is visible judder.",
-        );
-        if let Some(gpu) = v.gpu_ms {
-            ui.label(format!("gpu pass: {gpu:.3} ms (1-3 frames stale)"));
-        }
+            );
+            if let Some(gpu) = v.gpu_ms {
+                ui.label(format!("gpu pass: {gpu:.3} ms (1-3 frames stale)"));
+            }
 
-        ui.separator();
-        let a = &v.audio;
-        if a.sample_rate == 0 {
-            ui.label("audio: (no native stream)");
-        } else {
-            ui.label(format!(
-                "audio: {:.1} ms queued ({} samples @ {} Hz)",
-                a.queued_ms(),
-                a.queued_samples,
-                a.sample_rate
-            ));
-            let health = |ui: &mut egui::Ui, label: &str, n: u64| {
-                if n == 0 {
-                    ui.label(format!("{label}: 0"));
-                } else {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(0xE0, 0x40, 0x40),
-                        format!("{label}: {n}"),
-                    );
-                }
-            };
-            ui.horizontal(|ui| {
-                health(ui, "underruns", a.underruns);
-                ui.separator();
-                health(ui, "overrun-dropped samples", a.overrun_dropped);
-            });
-            // v1.5.0 "Lens" Workstream H8/H4 — the DRC servo ratio + the
-            // latency setpoint it tracks (previously panel-invisible). At
-            // equilibrium queued ≈ target and ratio ≈ 1.0; a persistent
-            // ratio at the band edge means the servo is fighting a drift.
-            if v.audio_latency_target_ms > 0.0 {
+            ui.separator();
+            let a = &v.audio;
+            if a.sample_rate == 0 {
+                ui.label("audio: (no native stream)");
+            } else {
                 ui.label(format!(
-                    "drc ratio: {:.4}   latency target: {:.0} ms",
-                    v.drc_ratio, v.audio_latency_target_ms
-                ))
-                .on_hover_text(
-                    "Dynamic-rate-control servo. The resampler nudges the \
+                    "audio: {:.1} ms queued ({} samples @ {} Hz)",
+                    a.queued_ms(),
+                    a.queued_samples,
+                    a.sample_rate
+                ));
+                let health = |ui: &mut egui::Ui, label: &str, n: u64| {
+                    if n == 0 {
+                        ui.label(format!("{label}: 0"));
+                    } else {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(0xE0, 0x40, 0x40),
+                            format!("{label}: {n}"),
+                        );
+                    }
+                };
+                ui.horizontal(|ui| {
+                    health(ui, "underruns", a.underruns);
+                    ui.separator();
+                    health(ui, "overrun-dropped samples", a.overrun_dropped);
+                });
+                // v1.5.0 "Lens" Workstream H8/H4 — the DRC servo ratio + the
+                // latency setpoint it tracks (previously panel-invisible). At
+                // equilibrium queued ≈ target and ratio ≈ 1.0; a persistent
+                // ratio at the band edge means the servo is fighting a drift.
+                if v.audio_latency_target_ms > 0.0 {
+                    ui.label(format!(
+                        "drc ratio: {:.4}   latency target: {:.0} ms",
+                        v.drc_ratio, v.audio_latency_target_ms
+                    ))
+                    .on_hover_text(
+                        "Dynamic-rate-control servo. The resampler nudges the \
                          sample rate within ±0.5% (widened on high-refresh \
                          displays) so the queued audio tracks the latency \
                          target instead of drifting into underruns/overruns.",
-                );
+                    );
+                }
             }
-        }
 
-        // v1.5.0 "Lens" Workstream H8 — run-ahead + rewind state (formerly
-        // CSV-only / panel-invisible).
-        ui.separator();
-        ui.label(format!(
-            "run-ahead: {} frame(s){}    rewind: {}{}",
-            v.run_ahead,
-            if v.run_ahead_throttled {
-                " (throttled)"
-            } else {
-                ""
-            },
-            if v.rewind_enabled { "on" } else { "off" },
-            if v.rewind_enabled {
-                format!(", {} frames buffered", v.rewind_frames)
-            } else {
-                String::new()
-            },
-        ));
-
-        // v2.8.0 — opt-in interval CSV logging of everything this panel
-        // shows (plus the run configuration in the file header), for
-        // offline performance analysis. Native-only (file I/O).
-        #[cfg(not(target_arch = "wasm32"))]
-        {
+            // v1.5.0 "Lens" Workstream H8 — run-ahead + rewind state (formerly
+            // CSV-only / panel-invisible).
             ui.separator();
-            ui.checkbox(&mut state.logging, "Logging").on_hover_text(
-                "Append a CSV row of these stats every second to \
+            ui.label(format!(
+                "run-ahead: {} frame(s){}    rewind: {}{}",
+                v.run_ahead,
+                if v.run_ahead_throttled {
+                    " (throttled)"
+                } else {
+                    ""
+                },
+                if v.rewind_enabled { "on" } else { "off" },
+                if v.rewind_enabled {
+                    format!(", {} frames buffered", v.rewind_frames)
+                } else {
+                    String::new()
+                },
+            ));
+
+            // v2.8.0 — opt-in interval CSV logging of everything this panel
+            // shows (plus the run configuration in the file header), for
+            // offline performance analysis. Native-only (file I/O).
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ui.separator();
+                ui.checkbox(&mut state.logging, "Logging").on_hover_text(
+                    "Append a CSV row of these stats every second to \
                          perf-logs/ (with the game + configuration in the \
                          header). Session-only; off by default.",
-            );
-            if let Some(note) = &state.log_note {
-                ui.label(egui::RichText::new(note).weak().small());
+                );
+                if let Some(note) = &state.log_note {
+                    ui.label(egui::RichText::new(note).weak().small());
+                }
             }
-        }
-    });
+        },
+    );
 }

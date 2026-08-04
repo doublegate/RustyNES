@@ -269,6 +269,11 @@ pub fn show(
         detached,
         "documentation",
         "Documentation",
+        super::WindowCfg {
+            default_width: Some(760.0),
+            min_width: Some(560.0),
+            ..Default::default()
+        },
         open,
         |ui| {
             body(ui, state);

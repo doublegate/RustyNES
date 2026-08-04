@@ -102,64 +102,75 @@ pub fn show(
     state: &mut EventPanelState,
     nes: &mut Nes,
 ) {
-    super::detachable_window(ctx, detached, "event", "Event Viewer", open, |ui| {
-        ui.horizontal(|ui| {
-            let mut on = nes.event_logging();
-            if ui.checkbox(&mut on, "Record").changed() {
-                nes.set_event_logging(on);
+    super::detachable_window(
+        ctx,
+        detached,
+        "event",
+        "Event Viewer",
+        super::WindowCfg {
+            default_size: Some([700.0, 640.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
+            ui.horizontal(|ui| {
+                let mut on = nes.event_logging();
+                if ui.checkbox(&mut on, "Record").changed() {
+                    nes.set_event_logging(on);
+                }
+                ui.separator();
+                ui.weak("Reads are blue, writes are red. Full PPU frame: 341x312.");
+            });
+            ui.horizontal(|ui| {
+                ui.colored_label(READ_COLOR, "PPU read");
+                ui.colored_label(write_tint(EventKind::PpuWrite), "PPU write");
+                ui.colored_label(write_tint(EventKind::ApuWrite), "APU write");
+                ui.colored_label(write_tint(EventKind::MapperWrite), "mapper write");
+            });
+
+            // Flatten the borrow out of `nes` up front.
+            let frame = nes.ppu_snapshot().frame;
+            let events: Vec<Ev> = nes
+                .events()
+                .iter()
+                .map(|e| Ev {
+                    kind: e.kind,
+                    scanline: e.scanline,
+                    dot: e.dot,
+                    addr: e.addr,
+                    value: e.value,
+                })
+                .collect();
+
+            ui.horizontal(|ui| {
+                ui.label(format!("Events: {}", events.len()));
+                ui.separator();
+                ui.label(format!("Frame {frame}"));
+            });
+            ui.separator();
+
+            if state.last_frame != Some(frame) {
+                // The frame advanced: the previous selection indexed a different
+                // frame's events, so drop it rather than highlight an unrelated one.
+                state.selected = None;
+                state.last_frame = Some(frame);
             }
+
+            if events.is_empty() || state.selected.is_some_and(|i| i >= events.len()) {
+                // No capture, or the capture changed under us (frame advanced) —
+                // drop the stale selection rather than index out of bounds.
+                state.selected = None;
+            }
+
+            draw_heatmap(ui, state, &events);
             ui.separator();
-            ui.weak("Reads are blue, writes are red. Full PPU frame: 341x312.");
-        });
-        ui.horizontal(|ui| {
-            ui.colored_label(READ_COLOR, "PPU read");
-            ui.colored_label(write_tint(EventKind::PpuWrite), "PPU write");
-            ui.colored_label(write_tint(EventKind::ApuWrite), "APU write");
-            ui.colored_label(write_tint(EventKind::MapperWrite), "mapper write");
-        });
+            event_table(ui, state, &events);
 
-        // Flatten the borrow out of `nes` up front.
-        let frame = nes.ppu_snapshot().frame;
-        let events: Vec<Ev> = nes
-            .events()
-            .iter()
-            .map(|e| Ev {
-                kind: e.kind,
-                scanline: e.scanline,
-                dot: e.dot,
-                addr: e.addr,
-                value: e.value,
-            })
-            .collect();
-
-        ui.horizontal(|ui| {
-            ui.label(format!("Events: {}", events.len()));
-            ui.separator();
-            ui.label(format!("Frame {frame}"));
-        });
-        ui.separator();
-
-        if state.last_frame != Some(frame) {
-            // The frame advanced: the previous selection indexed a different
-            // frame's events, so drop it rather than highlight an unrelated one.
-            state.selected = None;
-            state.last_frame = Some(frame);
-        }
-
-        if events.is_empty() || state.selected.is_some_and(|i| i >= events.len()) {
-            // No capture, or the capture changed under us (frame advanced) —
-            // drop the stale selection rather than index out of bounds.
-            state.selected = None;
-        }
-
-        draw_heatmap(ui, state, &events);
-        ui.separator();
-        event_table(ui, state, &events);
-
-        if !nes.event_logging() {
-            ui.weak("(enable Record, then run/step a frame)");
-        }
-    });
+            if !nes.event_logging() {
+                ui.weak("(enable Record, then run/step a frame)");
+            }
+        },
+    );
 }
 
 /// Draw the read/write heatmap with hover tooltip + click-to-select.
