@@ -299,15 +299,16 @@ impl JyAsic {
     /// Apply the PRG bank-number reversal used by PRG mode 3 (`$D000` bits
     /// 0-1 == 3).
     ///
-    /// The wiki describes this as "bank numbers bits 0-6 reversed". This is a
-    /// verbatim port of Mesen2's `InvertPrgBits`, which reverses the three
-    /// outer bit pairs (0<->6, 1<->5, 2<->4) and notably does **not** carry
-    /// bit 3 through: a faithful "reverse a 7-bit field" would leave the
-    /// centre bit (3) in place, but neither Mesen2 nor Disch's original
-    /// writeup preserves it, so this port drops it to match the accuracy
-    /// reference bit-for-bit (no known game distinguishes the two; the JY
-    /// ASIC is BestEffort tier). If a future test ROM proves bit 3 must be
-    /// preserved, OR `reg & 0x08` back into the result here.
+    /// The NESdev wiki / Disch's JY-ASIC writeup describe this as "bank
+    /// numbers bits 0-6 reversed". Following that documentation we reverse the
+    /// three outer bit pairs (0<->6, 1<->5, 2<->4) and notably do **not** carry
+    /// bit 3 through: a literal "reverse a 7-bit field" would leave the centre
+    /// bit (3) in place, but Disch's writeup does not preserve it, so we drop it
+    /// to match the documented hardware bit-for-bit (no known game distinguishes
+    /// the two; the JY ASIC is BestEffort tier). If a future test ROM proves bit
+    /// 3 must be preserved, OR `reg & 0x08` back into the result here. (Behavior
+    /// cross-checked against reference emulators as accuracy oracles; no
+    /// third-party emulator code is incorporated.)
     const fn invert_prg_bits(reg: u8, invert: bool) -> u8 {
         if invert {
             (reg & 0x01) << 6

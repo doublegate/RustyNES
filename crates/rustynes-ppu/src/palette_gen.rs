@@ -3,7 +3,8 @@
 //! The hand-authored [`crate::NES_PALETTE`] is one artist's calibration of a
 //! Sony PVM reference. This module instead *synthesizes* the 64-entry base
 //! palette from a model of the 2C02's composite-video output, following the
-//! Bisqwit / ares (`fc/ppu/color.cpp`) approach: for each of the 64 colors,
+//! Bisqwit composite-palette method published on the nesdev wiki: for each of
+//! the 64 colors,
 //! integrate the PPU's two-level chroma square wave over the 12 subcarrier
 //! phases of one pixel, demodulate to YIQ, and convert to RGB through the FCC
 //! matrix with a gamma correction. The result is deterministic, parameterized
@@ -28,9 +29,10 @@
 //! ## Model reference
 //!
 //! The waveform constants (the eight composite voltage levels, the
-//! sync/black/white references, and the FCC YIQ→RGB matrix) are Bisqwit's
+//! sync/black/white references, and the FCC YIQ→RGB matrix) are from Bisqwit's
 //! canonical NES palette generator as published on the nesdev wiki ("NTSC
-//! video"); ares' `PPU::Color` uses the same integration. The `hue` parameter
+//! video") and cross-checked against ares as a behavioral oracle. The `hue`
+//! parameter
 //! is a global tint in subcarrier-phase units (each unit = 30°); grays are
 //! hue-independent because a constant signal integrates to zero chroma.
 

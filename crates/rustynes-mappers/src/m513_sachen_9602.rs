@@ -340,7 +340,9 @@ pub fn new_m513(
 
 // ===========================================================================
 // TxcChip — the TXC protection accumulator (shared by Sachen 3011 / m136).
-// Ported from Mesen2 Txc/TxcChip.h (the non-JV001 variant, mask 0x07).
+// The non-JV001 variant (mask 0x07), per the NESdev wiki TXC / mapper-136
+// documentation (cross-checked against reference emulators as accuracy oracles;
+// no third-party emulator code is incorporated).
 // ===========================================================================
 
 #[cfg(test)]

@@ -14,20 +14,21 @@
 //! These are opt-in: the shipped default presentation (plain blit / the existing
 //! CRT) is unchanged, so the default framebuffer stays byte-identical.
 
-/// CRT-Royale — single-pass WGSL port.
+/// CRT-Royale-style look — independent single-pass WGSL reimplementation.
 ///
 /// Gaussian luminance-scaled beam, selectable phosphor mask, gamma-correct
 /// scanlines, barrel curvature. See the file header for the model and the
 /// shared CRT-stack uniform layout.
 pub const CRT_ROYALE_WGSL: &str = include_str!("crt_royale.wgsl");
 
-/// crt-guest-advanced / guest-dr-venom — single-pass WGSL port (power-shaped
-/// beam, halation glow, selectable mask, curvature).
+/// crt-guest-advanced-style look — independent single-pass WGSL reimplementation
+/// (power-shaped beam, halation glow, selectable mask, curvature).
 pub const CRT_GUEST_WGSL: &str = include_str!("crt_guest.wgsl");
 
-/// Sony Megatron — single-pass WGSL port (per-subpixel phosphor lighting,
-/// selectable mask, gamma-correct beam, an HDR headroom hook with SDR Reinhard
-/// tone-map fallback).
+/// Sony-Megatron-style look — independent single-pass WGSL reimplementation.
+///
+/// Per-subpixel phosphor lighting, selectable mask, gamma-correct beam, an HDR
+/// headroom hook with SDR Reinhard tone-map fallback.
 pub const MEGATRON_WGSL: &str = include_str!("megatron.wgsl");
 
 /// Raw NTSC signal-decode pass (P4).

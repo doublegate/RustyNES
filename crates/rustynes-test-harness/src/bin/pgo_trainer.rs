@@ -1,9 +1,9 @@
 //! v2.8.0 Phase 4 — the PGO training workload (see `scripts/pgo/run.sh`).
 //!
-//! Adapted from Mesen2's `PGOHelper`: sweep a ROM corpus at maximum speed
+//! An independent PGO training harness: sweep a ROM corpus at maximum speed
 //! (no limiter, no audio device, no display) with scripted input that
 //! pushes games past their title screens (Start held on a 4-of-7-frame
-//! cycle — Mesen2's exact trick — plus a rotating d-pad/A mix so movement
+//! cycle — a common title-skip trick — plus a rotating d-pad/A mix so movement
 //! and collision code paths get profiled too).
 //!
 //! Corpus: a committed CC0/MIT/zlib spread covering the hot configurations

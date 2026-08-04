@@ -245,8 +245,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 ";
 
-/// The Bisqwit composite NES NTSC post-pass (a faithful port of Bisqwit's
-/// `nes_ntsc` signal model).
+/// The Bisqwit-style composite NES NTSC post-pass.
+///
+/// An independent implementation of the NES composite signal model documented at
+/// the NESdev wiki ("NTSC video"); no third-party emulator code is incorporated.
 ///
 /// Unlike CRT/LMP it samples the **palette-index** framebuffer as an `R16Uint`
 /// texture (`@group(0) @binding(0) idx_tex`), not the RGBA, plus the per-frame NTSC

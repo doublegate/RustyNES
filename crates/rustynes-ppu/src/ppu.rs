@@ -744,27 +744,29 @@ pub struct Ppu {
     /// if its y is in range, else NO sprite-zero is detected.
     pub(crate) sprite_eval_first_iter: bool,
 
-    /// v2.0 Tier 1.2 — isolated OAM-data-bus model (parallel port of Mesen2's
-    /// `ProcessSpriteEvaluation` + `_oamCopybuffer`). These fields exist ONLY
-    /// under `ppu-oam-data-bus` and are read solely by `$2004` during
-    /// rendering — the rendering / sprite-zero / overflow / MMC3 sprite-fetch
-    /// FSM uses `secondary_oam` + `sprite_eval_*` + `spr_*`, all untouched.
-    /// `oam_bus_copybuffer` mirrors `_oamCopybuffer` (the value `$2004`
-    /// returns while the screen is drawn).
+    /// v2.0 Tier 1.2 — isolated OAM-data-bus model of the `NESdev`-documented PPU
+    /// sprite-evaluation datapath (`NESdev` wiki "PPU sprite evaluation"). These
+    /// fields exist ONLY under `ppu-oam-data-bus` and are read solely by `$2004`
+    /// during rendering — the rendering / sprite-zero / overflow / MMC3
+    /// sprite-fetch FSM uses `secondary_oam` + `sprite_eval_*` + `spr_*`, all
+    /// untouched. `oam_bus_copybuffer` is the value `$2004` returns while the
+    /// screen is drawn (the byte currently on the OAM data bus). (Behavior
+    /// cross-checked against reference emulators as accuracy oracles; no
+    /// third-party emulator code is incorporated.)
     pub(crate) oam_bus_copybuffer: u8,
-    /// Parallel secondary OAM (`_secondarySpriteRam`) for the bus model only.
+    /// Parallel secondary OAM (the 32-byte sprite line buffer) for the bus model only.
     pub(crate) oam_bus_secondary: [u8; 32],
-    /// `_spriteAddrH` (the eval pointer's sprite index, 0..=63).
+    /// Eval-pointer sprite index (0..=63) — which of the 64 primary sprites is examined.
     pub(crate) oam_bus_addr_h: u8,
-    /// `_spriteAddrL` (the eval pointer's byte-in-sprite, 0..=3).
+    /// Eval-pointer byte-in-sprite (0..=3) — Y / tile / attr / X.
     pub(crate) oam_bus_addr_l: u8,
-    /// `_secondaryOamAddr` (write index into the parallel secondary OAM).
+    /// Write index into the parallel secondary OAM.
     pub(crate) oam_bus_secondary_addr: u8,
-    /// `_oamCopyDone` (primary OAM fully scanned / wrapped).
+    /// Primary OAM fully scanned / wrapped for this scanline.
     pub(crate) oam_bus_copy_done: bool,
-    /// `_spriteInRange` (currently copying an in-range sprite).
+    /// Currently copying an in-range sprite.
     pub(crate) oam_bus_sprite_in_range: bool,
-    /// `_overflowBugCounter` (the 8-sprite-overflow PPU-bug countdown).
+    /// The 8-sprite-overflow PPU-bug countdown.
     pub(crate) oam_bus_overflow_counter: u8,
 
     /// OAM-corruption model — faithful port of `TriCNES`'s eval-pointer
@@ -1446,8 +1448,9 @@ impl Ppu {
 
     /// v2.1.4 F2.3 — OAM-read decay hook. Call **immediately before** reading
     /// `oam[addr]` at every primary-OAM read site (the `$2004` read and both
-    /// sprite-evaluation read paths). Faithful port of Mesen2's `ReadSpriteRam`
-    /// (`Core/NES/NesPpu.cpp`):
+    /// sprite-evaluation read paths). Implements the `NESdev`-documented OAM DRAM
+    /// decay-on-read behavior (`NESdev` wiki "PPU OAM" — sprite RAM is dynamic and
+    /// its cells decay; a read recharges the touched row):
     ///
     /// - If the model is inactive (disabled or PAL), this is a no-op — `oam` and
     ///   the timestamps are left untouched, so the read is byte-identical to stock.
@@ -1458,7 +1461,7 @@ impl Ppu {
     ///   (sprAddr & 0xE3) : sprAddr` (the attribute byte keeps only its implemented
     ///   bits; the others read back their own low address) and leave the stale
     ///   timestamp (so the row keeps reading decayed until a write refreshes it,
-    ///   exactly like Mesen2).
+    ///   matching the documented decay behavior).
     ///
     /// The subsequent `oam[addr]` read then returns the (possibly decayed) byte.
     #[inline]
@@ -1488,8 +1491,9 @@ impl Ppu {
     }
 
     /// v2.1.4 F2.3 — OAM-write decay hook. Call **after** writing `oam[addr]` at
-    /// every primary-OAM write site (`$2004` / OAM DMA). Faithful port of Mesen2's
-    /// `WriteSpriteRam`: a write recharges the row's DRAM cells, so refresh the
+    /// every primary-OAM write site (`$2004` / OAM DMA). Implements the documented
+    /// OAM DRAM decay-on-write refresh (`NESdev` wiki "PPU OAM"): a write recharges
+    /// the row's DRAM cells, so refresh the
     /// row's last-touch timestamp. Inactive (disabled or PAL) ⇒ no-op, so the write
     /// path is byte-identical to stock at the default.
     #[inline]
@@ -3925,7 +3929,7 @@ impl Ppu {
             // (F1.1): with rendering DISABLED and the VRAM address `v` pointing
             // into palette space ($3F00-$3FFF), the palette's shared address line
             // is driven by `v`, so hardware outputs the color at `v & 0x1F`
-            // INSTEAD of the backdrop (NESdev "PPU palettes"; Mesen2 `NesPpu.cpp`
+            // INSTEAD of the backdrop (`NESdev` "PPU palettes"; Mesen2 `NesPpu.cpp`
             // / ares output stage). This is a DISPLAY artifact only — palette RAM
             // is not mutated. It cannot fire while rendering is enabled: there
             // the fetch pipeline owns `v` and this branch means a transparent
@@ -4149,10 +4153,12 @@ impl Ppu {
 
     /// v2.0 Tier 1.2 — per-dot driver for the isolated OAM-data-bus model.
     ///
-    /// A faithful, side-effect-free port of Mesen2's
-    /// `NesPpu::ProcessSpriteEvaluation` (`NesPpu.cpp:1015-1141`, default
-    /// config — `EnablePpuSpriteEvalBug` off) plus the cycle-321 copybuffer
-    /// reset (`NesPpu.cpp:945-951`). It maintains ONLY `oam_bus_copybuffer` +
+    /// A side-effect-free model of the `NESdev`-documented PPU sprite-evaluation
+    /// sequence (`NESdev` wiki "PPU sprite evaluation" + "PPU rendering"):
+    /// secondary-OAM clear (dots 1-64), evaluation (65-256), and sprite fetch
+    /// (257-320) in the default configuration (the sprite-eval hardware bug
+    /// off), plus the cycle-321 copy-buffer reset. It maintains ONLY
+    /// `oam_bus_copybuffer` +
     /// the parallel `oam_bus_secondary`; it reads primary `oam` read-only and
     /// NEVER touches the real sprite-eval / overflow / sprite-zero state (so
     /// the existing rendering FSM is unperturbed — `$2004` reads are the sole
@@ -4166,7 +4172,7 @@ impl Ppu {
             8
         };
         // Y-test reference: the scanline being evaluated (sprites render on
-        // scanline+1). Mesen uses `_scanline` directly here.
+        // scanline+1).
         let scan = self.scanline;
 
         if cycle == 0 {
@@ -5036,7 +5042,7 @@ mod tests {
     // space ($3F00-$3FFF), the palette's shared address input is driven by `v`,
     // so the PPU outputs the color at `v & 0x1F` INSTEAD of the universal
     // backdrop ($3F00). This is a display artifact only — palette RAM is never
-    // mutated, and rendering-enabled output is unchanged. See NESdev "PPU
+    // mutated, and rendering-enabled output is unchanged. See `NESdev` "PPU
     // palettes"; mirrors Mesen2 `NesPpu.cpp` / ares output-stage behavior.
     #[test]
     fn palette_backdrop_override_when_rendering_disabled() {

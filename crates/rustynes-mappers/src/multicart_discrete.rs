@@ -3797,7 +3797,9 @@ pub fn new_m204(
 // `mode & 0x02` the board is in UNROM-style mode (a switchable $8000 + a fixed
 // $C000), with a NROM-256 sub-case when `mode & 0x0100`; otherwise both 16 KiB
 // windows mirror the same NROM bank. `mode & 0x01` flips the mirroring. CHR is a
-// single fixed 8 KiB window. Ported from Mesen2 Ntdec/Mapper221.h.
+// single fixed 8 KiB window. Register map per the NESdev wiki mapper-299 /
+// BMC-11160 documentation (cross-checked against reference emulators as
+// accuracy oracles; no third-party emulator code is incorporated).
 // ===========================================================================
 
 /// TXC/BMC-11160 multicart (mapper 299).

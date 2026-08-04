@@ -196,7 +196,9 @@ pub const HEAD_SEEK_BYTES_PER_CYCLE: u32 = 8;
 /// long so the BIOS re-read loop always observes the not-ready -> ready edge.
 pub const HEAD_SEEK_SETTLE_CYCLES: u32 = 512;
 
-/// Per-game FDS timing quirk, modelled on `puNES` `fds.c`'s per-CRC drive table.
+/// Per-game FDS timing quirk: a per-CRC drive-timing table (the concept
+/// cross-checked against `puNES` as an oracle; no third-party emulator code is
+/// incorporated).
 ///
 /// A small, additive set of knobs keyed off the disk-image CRC-32 (see
 /// [`quirk_for_crc`]). Most titles run on the nominal timing and have no entry;
@@ -238,7 +240,7 @@ pub fn quirk_for_crc(crc: u32) -> FdsQuirk {
     // position model (the [`HEAD_RESEEK_CYCLES`] re-seek window opened on every
     // motor-restart rewind) is what actually closes the Kid Icarus side-B
     // post-registration replay — that fix is title-independent and needs no
-    // table entry. This table is the puNES-`fds.c`-style *framework* for the
+    // table entry. This table is a per-CRC *framework* (of the kind puNES uses) for the
     // residual minority of titles whose replay loop wants extra not-ready slack
     // beyond the nominal window.
     //

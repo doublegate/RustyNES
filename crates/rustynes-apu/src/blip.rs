@@ -6,8 +6,11 @@
 //! per-CPU-cycle mixer output and produces band-limited samples at the
 //! host audio rate (default 44.1 kHz).
 //!
-//! The technique is the same one used by Shay Green's `blip_buf` (BSD/MIT)
-//! and Mesen2's mixer:
+//! The technique is band-limited step (BLEP) synthesis — the same general
+//! approach popularized by Shay Green's `blip_buf` and used by many emulators.
+//! This is an independent implementation (our polyphase kernel in
+//! [`crate::blip_kernel`] uses a finer 32-phase resolution than `blip_buf`); no
+//! `blip_buf` code is incorporated:
 //!
 //! - Pre-compute a polyphase windowed-sinc kernel ([`crate::blip_kernel`])
 //!   keyed by `PHASES = 32` sub-output-sample fractional offsets, with

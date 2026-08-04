@@ -1,6 +1,20 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.2.4** (2026-07-24) — **"Cartridge"**, a **libretro /
+> **Current release: v2.2.5** (2026-08-03) — **"Colophon"**, a **provenance,
+> licensing, and documentation-integrity** release with **zero emulation-core
+> changes** (so **AccuracyCoin holds 141/141 (100.00%)**, nestest 0-diff, and the
+> `#![no_std]` chip stack, save-state / TAS / netplay formats, and every golden
+> vector are byte-identical to v2.2.4 by construction). It reworded in-source
+> comments that had mischaracterized publicly-documented hardware-behavior
+> implementations as "ports of" copyleft emulators (Mesen2, puNES); rewrote
+> `NOTICE` to disclose the behavioral-oracle use of GPL emulators (no code
+> incorporated) and to attribute the incorporated permissive components (emu2413,
+> TriCNES, rcheevos — MIT), the bundled fonts and test ROMs, and the CRT-shader /
+> NTSC-filter visual influences as independent reimplementations; added
+> `docs/originality-and-provenance.md`; and added an AI-assistance disclosure to
+> the README (with a misleading comparison graphic removed and a mislabeled
+> screenshot caption fixed). On top of **v2.2.4** (2026-07-24) — **"Cartridge"**,
+> a **libretro /
 > RetroArch distribution** cut whose purpose is that the RustyNES core builds and
 > installs cleanly through the Libretro buildbot
 > (<https://git.libretro.com/libretro/RustyNES>) for in-RetroArch use. **Zero

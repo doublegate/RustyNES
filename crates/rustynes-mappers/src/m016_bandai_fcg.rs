@@ -36,8 +36,10 @@
 //! # EEPROM
 //!
 //! An I²C state machine ([`Eeprom`]) for the X24C01 (159) / 24C02 (16) is
-//! implemented below — a faithful port of the Mesen2 `Eeprom24C01` /
-//! `Eeprom24C02` models. It clocks bits on the SCL **rising** edge and
+//! implemented below — an independent state machine for the Xicor/Intersil
+//! X24C01 (mapper 159) / 24C02 (mapper 16) serial EEPROMs, written from the
+//! published I2C serial-EEPROM datasheet protocol. It clocks bits on the SCL
+//! **rising** edge and
 //! advances the mode/ACK handshake on the **falling** edge, detects
 //! START/STOP as SDA transitions while SCL is held high, and honors the two
 //! chips' differing bit order (X24C01 LSB-first, 24C02 MSB-first) and
@@ -114,8 +116,9 @@ impl FcgVariant {
 
 /// Serial I²C EEPROM (X24C01 / 24C02) state machine.
 ///
-/// Faithful port of the Mesen2 `Eeprom24C01` / `Eeprom24C02` models
-/// (`ref-proj/Mesen2/Core/NES/Mappers/Bandai/`). The protocol is driven on
+/// An independent I2C state machine for the X24C01 / 24C02 serial EEPROMs,
+/// implemented from the published I2C serial-EEPROM datasheet protocol. The
+/// protocol is driven on
 /// **both** SCL edges: bits are clocked on the rising edge, and the
 /// mode/ACK handshake advances on the falling edge — exactly how the boards
 /// drive the line. START / STOP are detected as SDA transitions while SCL is

@@ -18,13 +18,17 @@ engine + the ported desktop-UX shell + production polish) → **`v1.1.0`
 (+ the `v1.4.1` patch) **→ `v1.5.0` "Lens" → `v1.6.0` "Studio" → `v1.7.0`
 "Forge"** (+ the `v1.7.1` patch) **→ `v1.8.0` … `v1.8.9` "Atlas"** (the Android
 platform train) **→ `v1.9.0` … `v1.9.9` "Workshop"** (the iOS/iPadOS TestFlight
-train) **→ `v1.10.0` "Arcade"** (the native Libretro core) — the additive,
-off-by-default feature/platform releases on that core, of which **`v1.10.0`
-"Arcade" is the current shipped tag**. The forward path then lands the real
-**RustyNES `v2.0.0` "Timebase"** (the one-clock/every-cycle-bus-access
-scheduler collapse, ADR 0002/0029) — **code-complete on `main` as of
-2026-07-03, tag pending** — then the **v2.0.1 → v2.1.0** mobile-finalization
-train that launches the Android + iOS apps jointly at **v2.1.0**, and beyond.
+train) **→ `v1.10.0` "Arcade"** (the native Libretro core) — all additive,
+off-by-default feature/platform releases on the v1.0.0 core. The forward path
+then landed the breaking **RustyNES `v2.0.0` "Timebase"** (the
+one-clock/every-cycle-bus-access scheduler collapse, ADR 0002/0029, shipped
+2026-07-03), the **v2.0.1 → v2.0.9 "Harbor"** mobile-finalization train, the
+**v2.1.0 → v2.1.10 "Fathom"** accuracy line, the **v2.2.0 "Capstone"** milestone
+that closed the "deepen the existing project" run, and the maintenance /
+distribution / provenance patches **v2.2.1 → v2.2.5** — of which **`v2.2.5`
+"Colophon" (provenance, licensing, and documentation integrity) is the current
+shipped tag**. The **joint Google Play + Apple App Store + AltStore PAL + F-Droid
+launch** (activating `rustynes-monetization`) is the future **`v2.3.0`**.
 Where the detailed sections below carry the inbound engine's own `v1.x`/`v2.x`
 tags, read them as upstream engine history (its v2.0–v2.8 line), which maps
 onto the integration stages roughly as: engine v1.0.0 → RustyNES v0.9.0;

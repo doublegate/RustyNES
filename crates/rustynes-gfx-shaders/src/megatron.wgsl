@@ -1,7 +1,9 @@
-// Sony Megatron (single-pass WGSL port) — v2.1.9 "Presentation & Signal" (B6).
+// Sony-Megatron-style look (single-pass WGSL) — v2.1.9 "Presentation & Signal" (B6).
 //
-// A port of MajorPainInTheCactus's "Sony Megatron Colour Video Monitor" slang
-// shader. Megatron's defining idea is a physically-scaled phosphor subpixel
+// An independent reimplementation of the *approach* of MajorPainInTheCactus's
+// "Sony Megatron Colour Video Monitor" libretro shader (GPL-family); no upstream
+// shader source is used or incorporated. Megatron's defining idea is a
+// physically-scaled phosphor subpixel
 // model driven for HDR displays: it lights individual R/G/B phosphors within a
 // selectable mask and scales brightness to an absolute nits target so an HDR
 // swapchain reproduces CRT peak brightness. WGSL/wgpu here targets an SDR

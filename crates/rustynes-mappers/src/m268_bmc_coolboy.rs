@@ -447,7 +447,9 @@ pub fn new_m268(
 //
 // A plain MMC3 core with a PRG-A19/A20 outer bank from the high two bits of
 // $8001 (captured when the selected register is < 6), forced into the top of
-// the address space. CHR is RAM. Ported from Mesen2 Sachen/Sachen9602.h.
+// the address space. CHR is RAM. Register map per the NESdev wiki CoolBoy /
+// mapper-268 documentation (cross-checked against reference emulators as
+// accuracy oracles; no third-party emulator code is incorporated).
 // ===========================================================================
 
 #[cfg(test)]

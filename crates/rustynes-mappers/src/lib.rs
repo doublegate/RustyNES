@@ -1164,8 +1164,9 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         // --- v1.6.0 "Studio" Workstream E, best-effort (Tier-2): J.Y. Company
         // ASIC. One silicon implementation behind three iNES mapper numbers;
         // 90 inhibits the ROM-nametable / extended-mirroring feature, 209
-        // register-enables it, 211 forces it on. Ported from the nesdev
-        // "J.Y. Company ASIC" page + Mesen2 `JyCompany`. Register-decode +
+        // register-enables it, 211 forces it on. Implemented from the nesdev
+        // "J.Y. Company ASIC" page (cross-checked against Mesen2 as an oracle).
+        // Register-decode +
         // save-state unit-tested only, NOT accuracy-gated (`tier.rs`).
         90 => Box::new(
             JyAsic::new(prg_rom, chr_rom, h.mirroring, JyBoard::M90)

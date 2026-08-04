@@ -112,10 +112,11 @@ const SUNSOFT5B_DC_BIAS: i32 = 0;
 /// lets the shape stay pinned by its own unit test while the level is pinned
 /// by a ROM oracle.
 ///
-/// **Target, derived from Mesen2 (the project's accuracy bar) rather than from
-/// our own prior numbers.** In `NesSoundMixer::GetOutputVolume` a full-volume
+/// **Target, calibrated against Mesen2 (the project's accuracy bar) as an
+/// oracle rather than against our own prior numbers.** Using the standard
+/// blargg nonlinear-mixer approximation (nesdev "APU Mixer"), a full-volume
 /// 2A03 square is `(95.88 * 5000) / (8128/15 + 100) = 746.9` units, and the 5B
-/// is summed with weight `* 15` over `Sunsoft5bAudio::_volumeLut`
+/// is summed with weight `* 15` over the documented 5B log-DAC volume table
 /// (`= (uint8_t)1.1885^(2i)`, so `LUT[12] = 63`, `LUT[15] = 177`). The
 /// `db_5b` ROM compares a **volume-12** 5B square against that square:
 ///
