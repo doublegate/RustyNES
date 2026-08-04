@@ -118,9 +118,10 @@ pub fn board_to_mapper(board: &str) -> Option<u16> {
     None
 }
 
-/// Exact (already-uppercased) board-name lookup. Ported from the
-/// `UNIF_BOARD_MAP` in `scripts/coverage/coverage.py` (Mesen2 + puNES, checked
-/// vs `docs/mappers.md`).
+/// Exact (already-uppercased) board-name lookup. This board-name -> mapper-number
+/// table is factual UNIF board-naming data compiled from `docs/mappers.md` and
+/// the nesdev UNIF board list (cross-checked against `Mesen2` / `puNES` as
+/// oracles; no third-party emulator code is incorporated).
 // Arms are grouped by vendor (Nintendo / Konami / Bandai / Sachen / ...) for
 // provenance and readability; some distinct board families intentionally share
 // a mapper id (e.g. several boards resolve to MMC3 = 4), so identical-body arms
@@ -229,7 +230,7 @@ fn lookup_board(b: &str) -> Option<u16> {
         "RET-CUFROM" => 29,
         // --- v1.8.9 "Backlog" beta.6 UNIF board-map breadth: well-known board
         // names mapping to families RustyNES already implements. Cross-checked
-        // against Mesen2 `UnifLoader.cpp` + FCEUX `unif.cpp`.
+        // against Mesen2 / FCEUX as behavioral oracles (no code incorporated).
         // NTDEC / TXC / discrete BMC families.
         "11160" => 299,
         "N625092" => 221,

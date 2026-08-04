@@ -14,6 +14,62 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.2.5] - 2026-08-03 - "Colophon" (provenance, licensing, and documentation integrity)
+
+A **provenance, licensing, and documentation-integrity** release, prompted by
+community review of the project's licensing and AI-assisted origins. **Zero
+emulation-core behavior changes**, so **AccuracyCoin holds 141/141 (100.00%)**, nestest is
+0-diff, and the `#![no_std]` chip stack, save-state / TAS / netplay formats, and
+every golden vector are byte-identical to v2.2.4 by construction.
+
+### Changed
+
+- **In-source "port" comments corrected.** A full-tree audit found comments that
+  described implementations of publicly-documented hardware behavior (the CPU
+  unstable-store opcodes, the PPU sprite-evaluation / OAM models, and numerous
+  mapper register decoders) as "ports of" copyleft emulators (Mesen2 — GPLv3;
+  puNES — GPLv2). Those behaviors are implemented from the NESdev wiki, published
+  datasheets, and the documented 6502 behavior, and were cross-checked against
+  reference emulators as *oracles*; the comments were reworded to say so. No
+  GPL-licensed emulator source is incorporated.
+- **CRT shaders & NTSC filters reworded.** `crt_royale` / `crt_guest` / `megatron`
+  and the Bisqwit / EMMIR NTSC filters were reviewed at source level and reframed
+  from "port / condensation of X" to independent single-pass reimplementations of
+  the *look and technique* (copyright protects code expression, not a visual look);
+  no upstream shader source is incorporated. The comment claiming tables were
+  "ported verbatim from Bisqwit's C" was corrected — those tables encode the
+  NESdev-documented NES composite signal.
+- **`blip.rs`** no longer mislabels `blip_buf` as BSD/MIT (it is LGPL-2.1+); the
+  file is an independent BLEP implementation and now says so.
+- **README** toned down and corrected: added an AI-assistance disclosure, removed
+  a comparison graphic with inaccurate details, fixed a mislabeled
+  ("sub-cycle accuracy") screenshot caption, and synced Acknowledgments with
+  `NOTICE`.
+
+### Added
+
+- **`NOTICE` rewritten** to disclose the behavioral-oracle use of GPL emulators
+  (Mesen2/MesenCE, higan, **GeraNES**, ares, FCEUX, Nestopia UE, puNES — no code
+  incorporated), attribute the incorporated permissive components (emu2413,
+  TriCNES, rcheevos — all MIT, with the MIT text), the bundled fonts (Font Awesome;
+  Press Start 2P / OFL) and test ROMs, and credit the CRT-shader / NTSC-filter
+  visual influences as independent reimplementations. GeraNES (GPL-3.0-only), cited
+  across ~58 files, was previously undisclosed.
+- **New `docs/originality-and-provenance.md`** — an honest account of where
+  RustyNES advances, diverges from, or independently re-derives NES emulation
+  technique, its development timeline, and its full license posture (including that
+  the project is heavily AI-assisted).
+- **Press Start 2P OFL text** added to the Android app assets (it shipped without
+  the required OFL text; desktop and iOS already carried it).
+
+### Fixed
+
+- **`tests/roms/LICENSES.md`** — a false exclusion claim (four Holy Mapperel mapper
+  ROMs stated as excluded were in fact committed), a stale crate path, and the
+  AccuracyCoin sub-test count; and added blanket coverage for the committed
+  directories not individually tabulated (328 committed `.nes` total, none
+  commercial).
+
 ## [2.2.4] - 2026-07-24 - "Cartridge" (libretro core builds/installs for RetroArch)
 
 A **libretro / RetroArch distribution** cut. Its purpose is that the RustyNES

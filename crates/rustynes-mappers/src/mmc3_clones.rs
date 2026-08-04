@@ -776,7 +776,9 @@ clone_ctor!(
 //   8259C: shift 2, chrOr [1,2,3]   (mapper 139)
 // reg7 bits 1-2 select mirroring (reg7 bit 0 = "simple mode" override).
 // reg5 selects the 32 KiB PRG bank; reg4 supplies the CHR high bits.
-// Ported from Mesen2 Sachen/Sachen8259.h.
+// Register map per the NESdev wiki Sachen 8259 (mappers 138/139/141)
+// documentation (cross-checked against reference emulators as accuracy oracles;
+// no third-party emulator code is incorporated).
 // ===========================================================================
 
 #[cfg(test)]

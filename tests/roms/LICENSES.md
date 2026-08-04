@@ -117,10 +117,11 @@ These ROMs are cartridge-PCB-assembly tests that detect the mapper via
 mirroring tests, then size PRG/CHR and exercise bank reachability.
 Output is **visual** (on-screen text + Morse-coded audio beeps), not
 the blargg `$6000` status protocol — so the integration tests in
-`crates/nes-test-harness/tests/holy_mapperel.rs` are smoke gates.
+`crates/rustynes-test-harness/tests/holy_mapperel.rs` are smoke gates.
 
-We exclude `M28*`, `M78.3*`, `M118*`, `M180*` because the project does
-not implement those mappers (per `docs/STATUS.md` §"Mapper coverage").
+The Holy Mapperel ROMs for mappers 28, 78.3, 118, and 180 are also committed
+under `extra/mappers/` (same Damian Yerrick zlib license) for manual
+investigation; see "Additional committed test-ROM directories" below.
 
 ## DPCM Letterbox (Damian Yerrick / Tepples)
 
@@ -153,7 +154,9 @@ deterministic frame-hash visual smoke (no input) in
 | `AccuracyCoin/sub-tests/frame-counter-irq.nes` | derived from `AccuracyCoin.asm` (suite 13 / test 2 — `TEST_FrameCounterIRQ`) | NROM (0) | derivative of Chris Siebert | MIT (inherits) |
 | `AccuracyCoin/sub-tests/apu-reg-activation.nes` | derived from `AccuracyCoin.asm` (suite 13 / test 6 — `TEST_APURegActivation`) | NROM (0) | derivative of Chris Siebert | MIT (inherits) |
 
-The four sub-test ROMs under `AccuracyCoin/sub-tests/` are derivative
+The sub-test ROMs under `AccuracyCoin/sub-tests/` (26 in total; the four
+with dedicated Rust regression tests are tabulated above, and the rest follow
+the identical build + MIT-inheritance pattern) are derivative
 works produced by patching the upstream `AccuracyCoin.asm` source to
 jump directly into a single target test at boot (bypassing both the
 menu-screen and the full-battery loop). They are built by
@@ -163,7 +166,7 @@ script; the patched `AutomaticallyRunEveryTestInROM` routine is
 streamlined to "set Y=suite_idx, X=test_idx, JSR RunTest, halt" and the
 boot path's `InfiniteLoop` spin is redirected to enter that wrapper
 immediately. Each sub-test ROM reaches its target test by frame ~30 on
-RustyNES (verified via `crates/nes-test-harness/src/bin/
+RustyNES (verified via `crates/rustynes-test-harness/src/bin/
 validate_sub_test_rom.rs`), unblocking the Session-22 Mesen2 wall-time
 oracle blocker for the v1.0.0-final Phase 3 / Phase 4 work.
 
@@ -172,15 +175,12 @@ fetched 2026-05-10). Upstream `LICENSE` file is the MIT License
 ("Copyright (c) 2025 Chris Siebert"); the full text is vendored
 alongside the .nes file.
 
-AccuracyCoin is a single-NROM-cartridge battery of ~139 NES accuracy
-tests. The ROM is **interactive** — pass/fail results are reported
-visually (on-screen "PASS"/"FAIL" + hex error codes) and the user
-navigates the test menu with D-Pad + A + Start. There is no `$6000`
-status protocol, so the integration test in
-`crates/nes-test-harness/tests/accuracycoin.rs` is a boot-without-crash
-smoke gate only. v1.0.0 will need a pixel-decoding harness to extract
-the pass rate (currently un-measured; the ≥ 90% bar is documented in
-`docs/STATUS.md` §"Version policy").
+AccuracyCoin is a single-NROM-cartridge battery of NES accuracy tests. The ROM is
+**interactive** — pass/fail results are reported visually (on-screen "PASS"/"FAIL"
+plus hex error codes) with no `$6000` status protocol. The integration test in
+`crates/rustynes-test-harness/tests/accuracycoin.rs` decodes the per-test result
+state from RAM and asserts the measured pass rate, which RustyNES holds at
+**141/141 (100.00%)** (see `docs/STATUS.md`).
 
 ## "full palette" ROMs
 
@@ -254,6 +254,31 @@ Verifies MMC1's behaviour with respect to PPU A12 transitions — a
 quirk that affects mappers (like MMC3) that depend on A12 for IRQ
 counter clocking. The MMC1 path is the control case (no A12-based
 IRQ). Sourced from `MMC1_A12/` in `nes-test-roms`.
+
+## Additional committed test-ROM directories (blanket coverage)
+
+Beyond the individually-tabulated suites above, the repository commits the
+directories below under `tests/roms/`. All are public-domain or permissive
+homebrew from the same authors and aggregator already documented in this file;
+none is commercial software.
+
+- `nes-test-roms/` (89 `.nes` committed): the committed subset of the working
+  clone of `christopherpow/nes-test-roms`, the public-domain/permissive aggregator
+  named in this file's header. Each suite retains its own author and license (blargg,
+  kevtris, tepples, Damian Yerrick, NewRisingSun, bbbradsmith, and others); the
+  suites RustyNES actively gates are tabulated in the sections above.
+- `extra/` (56 `.nes`: `apu/` 19, `cpu/` 3, `mappers/` 23, `ppu/` 11): a curated
+  overflow of the same suites — additional blargg APU/CPU/PPU tests (public
+  domain), Damian Yerrick Holy Mapperel variants (zlib, including the mapper 28
+  / 78.3 / 118 / 180 boards), and related homebrew — kept out of the
+  actively-gated set but retained for manual investigation.
+- `AccuracyCoin/sub-tests/` (26 `.nes`): the boot-into-one-test derivatives of
+  `AccuracyCoin.asm` described above, all MIT (inheriting upstream).
+
+The authoritative running total is 328 committed `.nes` files under
+`tests/roms/` (per `git ls-files`; excluding the gitignored `tests/roms/external/`
+and any untracked clone contents); no commercial
+ROM is among them.
 
 ## Notes
 

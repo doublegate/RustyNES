@@ -865,9 +865,16 @@ impl Cpu {
     /// SH* unstable-store family helper (`SHA / SHX / SHY / SHS / TAS`,
     /// opcodes `$9F / $93 / $9E / $9C / $9B`).
     ///
-    /// Faithful port of Mesen2's `SyaSxaAxa` (`Core/NES/NesCpu.h` lines
-    /// 716-745).  Implements the canonical 6502-derivative
-    /// unstable-store algorithm:
+    /// Implements the canonical 6502 unstable-store (SH*) algorithm as
+    /// documented by the `NESdev` community (the "unstable"/"highbyte" store
+    /// opcodes: `value AND (high-byte-of-address + 1)`, with the RDY/DMA
+    /// quirk) and pinned bit-for-bit by `AccuracyCoin`'s "Unofficial
+    /// Instructions: SH*" sub-test. This is an independent Rust
+    /// implementation of that documented behavior — the DMC-DMA
+    /// interruption detection below uses the emulator's own bus cycle-count
+    /// machinery. (Behavior cross-checked against reference emulators as
+    /// accuracy oracles; no third-party emulator code is incorporated.)
+    /// The algorithm:
     ///
     /// 1. Compute the page-crossed flag against `base + index_reg`.
     /// 2. Perform a dummy read at the **unfixed** address

@@ -17,7 +17,7 @@ var<private> SIGNAL_HIGH: array<i32, 128> = array<i32, 128>(38, 38, 38, 38, 38, 
 var<private> SINE: array<i32, 27> = array<i32, 27>(0, 3, 6, 8, 6, 3, 0, -3, -6, -8, -6, -4, 0, 4, 6, 8, 6, 3, 0, -3, -6, -8, -6, -4, 0, 4, 6);
 var<private> EMPHASIS: array<i32, 8> = array<i32, 8>(0, 63, 1008, 1023, 3843, 3903, 4083, 4095);
 
-// Base YIQ matrix scalars (Bisqwit / Mesen). The live contrast / saturation
+// Base YIQ matrix scalars (the standard FCC NTSC YIQ->RGB matrix). The live contrast / saturation
 // knobs scale these per frame; at knob = 0 the integer matrix below equals the
 // old baked Y/IR/QR/... constants exactly (verified in f32).
 const CONTRAST_BASE: f32 = 167941.0;

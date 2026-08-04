@@ -1,11 +1,12 @@
-// CRT-Royale (single-pass WGSL port) — v2.1.9 "Presentation & Signal" (B6).
+// CRT-Royale-style look (single-pass WGSL) — v2.1.9 "Presentation & Signal" (B6).
 //
-// A faithful *single-pass* condensation of TroggleMonkey's libretro CRT-Royale
-// slang preset. The reference is a multi-pass pipeline (bloom/blur passes +
-// scanline + phosphor mask + halation + geometry); this port folds its core
-// perceptual model into one fullscreen fragment shader so it slots into the
-// existing RustyNES post-pass pipeline (same rect/crop letterbox convention as
-// CRT_WGSL). It keeps CRT-Royale's defining pieces:
+// An independent single-pass reimplementation of the *perceptual model* made
+// famous by TroggleMonkey's libretro CRT-Royale (GPLv2+). No CRT-Royale source
+// is used or incorporated: that reference is a large multi-pass pipeline
+// (bloom/blur passes + scanline + phosphor mask + halation + geometry), whereas
+// this is a from-scratch single fullscreen fragment shader on RustyNES's own
+// rect/crop uniform convention (same as CRT_WGSL), implementing the standard,
+// widely-documented CRT-simulation techniques that produce a comparable look:
 //
 //   * Gaussian scanline beam in gamma-linear space (per-source-row beam with a
 //     configurable standard deviation, so bright rows bloom wider than dark

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.2.4-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.2.5-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -23,6 +23,16 @@ scheduling at PPU-dot resolution on a master-clock-precise timebase — clearing
 `nestest` with **zero diff**. (As of v2.0.3 every assigned test passes, including the
 two newest upstream PPU tests, "ALE + Read" and "Hybrid Addresses", via the promoted
 2-cycle-ALE fetch model — ADR 0030.)
+
+> **Development note — AI-assisted:** RustyNES is heavily AI-assisted software,
+> built with LLM tooling under a human-directed, test-driven workflow (public
+> test ROMs as the oracle, a `no_std` core, and continuous CI). See
+> [`docs/originality-and-provenance.md`](docs/originality-and-provenance.md) for
+> what that means for originality and licensing, and the
+> [Acknowledgments](#acknowledgments) for the references and components it builds
+> on. Accuracy claims are meant to be *checked* by running the public suites, not
+> taken on faith; comparisons to other emulators are comparisons, not a claim of
+> being "better."
 
 Beyond reference accuracy, RustyNES is a complete, modern emulation platform:
 **172 mapper families** covering the vast majority of the commercial library (plus a
@@ -676,17 +686,25 @@ Read" and "Hybrid Addresses", now pass on the shipped default.
 > headline unit-test number. When a doc and a passing test ROM disagree, **the ROM
 > wins** — that is the project's definition of "cycle-accurate."
 
+RustyNES's accuracy claims are meant to be *checked*, not taken on faith: run the
+public suites yourself (AccuracyCoin, nestest, blargg, Holy Mapperel — see
+[Compatibility & Accuracy](#compatibility-and-accuracy)). Any comparison to
+another emulator is exactly that — a comparison against a reference RustyNES was
+measured against (e.g. Mesen2 / higan / ares — see the [Acknowledgments](#acknowledgments)) —
+and is **not** a claim that RustyNES is "better." For an honest
+account of where the project advances, diverges from, or independently re-derives
+NES emulation technique (and its license posture), see
+[`docs/originality-and-provenance.md`](docs/originality-and-provenance.md).
+
+### Super Mario Bros. on RustyNES
+
+The screenshot below is an early-milestone image — Super Mario Bros. at "first
+light," among the first commercial titles to render during development. It
+predates much of the current accuracy work and is kept as a representative
+gameplay shot, not a claim about any particular sub-system.
+
 <p align="center">
-  <img src="images/RustyNES_Emu-Compare.png" alt="RustyNES Emulator Accuracy Comparison" width="800">
-</p>
-
-### Sub-cycle accuracy in action
-
-The screenshot below shows Super Mario Bros. at first light — correct background
-rendering, palette, and timing straight from the master-clock scheduler.
-
-<p align="center">
-  <img src="images/RustyNES-Screen_SMB_FirstLight.png" alt="Super Mario Bros. first light on RustyNES" width="512">
+  <img src="images/RustyNES-Screen_SMB_FirstLight.png" alt="Super Mario Bros. running on RustyNES" width="512">
 </p>
 
 ---
@@ -775,34 +793,46 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.2.4 "Cartridge"**, a **libretro / RetroArch
-distribution** cut. Its purpose is that the RustyNES core builds and installs
-cleanly through the Libretro buildbot
-([git.libretro.com/libretro/RustyNES](https://git.libretro.com/libretro/RustyNES))
-so RetroArch users can pull it from the in-app core downloader.
+RustyNES's current release is **v2.2.5 "Colophon"**, a **provenance, licensing,
+and documentation-integrity** release. It carries **zero emulation-core
+behavior changes** — so **AccuracyCoin holds 141/141 (100.00%)**, nestest is 0-diff, and
+the `#![no_std]` chip stack, save-state / TAS / netplay formats, and every golden
+vector are byte-identical to v2.2.4 by construction. Instead it corrects how the
+project *describes its own provenance*, prompted by community review:
 
-**Zero emulation-core changes**, so **AccuracyCoin holds 141/141 (100.00%)**,
-nestest is 0-diff, and the `#![no_std]` chip stack, save-state / TAS / netplay
-formats, and every golden vector are byte-identical to v2.2.3 by construction.
-`crates/rustynes-libretro` wraps `rustynes-core`, so it inherits every v2.2.3
-change automatically (the fast dot path default; the `PPU_SNAPSHOT_VERSION` 8 /
-APU v4 save-state schema, handled transparently because the serialize path sizes
-and emits the *current* snapshot via `Nes::snapshot_core_into`; the
-`Mapper::mix_audio` i32 widening; the Zapper model; the `mNNN_` mapper rename),
-and both buildbot cross-ABIs the CI gate models — `x86_64-pc-windows-gnu` and
-`aarch64-linux-android` — build clean.
+- A full-tree audit reworded in-source comments that had mischaracterized
+  implementations of publicly-documented hardware behavior as "ports of" copyleft
+  emulators (Mesen2, puNES). Those behaviors are implemented from the NESdev wiki,
+  datasheets, and the documented 6502 behavior, and cross-checked against
+  reference emulators as *oracles* — the comments now say exactly that.
+- `NOTICE` was rewritten to disclose that GPL-licensed emulators (Mesen2/MesenCE,
+  higan, GeraNES, ares, FCEUX, Nestopia UE, puNES) were used only as behavioral
+  oracles (no code incorporated); to attribute the genuinely incorporated
+  permissive components (emu2413, TriCNES, rcheevos — all MIT), the bundled fonts,
+  and the bundled test ROMs; and to credit the CRT-shader / NTSC-filter *visual
+  influences* (CRT-Royale, crt-guest-advanced, Sony Megatron, EMMIR's NTSC-CRT,
+  Bisqwit) as independent reimplementations.
+- The CRT shaders and NTSC filters were reviewed at source level and reworded from
+  "port / condensation of X" to independent single-pass reimplementations of the
+  *look and technique* — copyright protects code expression, not a visual look, and
+  no upstream shader source is incorporated.
+- A new [`docs/originality-and-provenance.md`](docs/originality-and-provenance.md)
+  gives an honest account of where RustyNES advances, diverges from, or
+  independently re-derives NES emulation technique, and its license posture —
+  including that the project is heavily AI-assisted.
+- The README (this file), `tests/roms/LICENSES.md`, and related docs were corrected
+  for accuracy: an AI-assistance disclosure was added, a comparison graphic with
+  inaccurate details was removed, and a mislabeled screenshot caption was fixed.
 
-The concrete work is a **`rustynes_libretro.info` metadata correction** (the file
-RetroArch's core downloader reads): **`disk_control` `false` → `true`** — the
-real fix, since the FDS multi-side Disk Control interface has been wired since
-the buildbot recipe landed but was advertised as absent, hiding multi-disk FDS
-swapping from RetroArch's Quick Menu; plus `display_version` `v1.0.0` → `v2.2.4`
-and the mapper count `168` → `172`. Libretro **core options** (region / overscan
-/ palette / accuracy toggles) remain a documented future enhancement
-(`core_options = "false"` is accurate, not stale). The Antigravity PR reviewer
-standardization onto the shared template rides along.
+It follows **v2.2.4 "Cartridge"**, a **libretro / RetroArch distribution** cut so
+RetroArch users can pull the core from the in-app downloader via the Libretro
+buildbot ([git.libretro.com/libretro/RustyNES](https://git.libretro.com/libretro/RustyNES));
+its concrete work was a `rustynes_libretro.info` metadata correction
+(**`disk_control` `false` → `true`**, exposing multi-disk FDS swapping in
+RetroArch's Quick Menu; `display_version` `v1.0.0` → `v2.2.4`; mapper count
+`168` → `172`), with zero emulation-core changes.
 
-It follows **v2.2.3 "Datum"**, a performance and accuracy-closure patch: the
+Earlier, **v2.2.3 "Datum"**, a performance and accuracy-closure patch: the
 specialized PPU fast dot path (**−11.3%** on rendering-heavy content,
 differential-tested bit-identical since v2.1.8) promoted to the **default** and
 exposed to users for the first time; PGO-optimized Linux release binaries when
@@ -959,6 +989,19 @@ RustyNES stands on the shoulders of giants:
 - **[RetroAchievements](https://retroachievements.org/)** and the
   **[`rcheevos`](https://github.com/RetroAchievements/rcheevos)** library that powers
   the achievement integration.
+- **[emu2413](https://github.com/digital-sound-antiques/emu2413)** (Mitsutaka
+  Okazaki, MIT) — the YM2413 / OPLL model behind VRC7 audio — and
+  **[TriCNES](https://github.com/100thCoin/TriCNES)** (Chris Siebert, MIT), the
+  transistor-level emulator whose PPU / DMA models RustyNES ports and also uses as
+  a golden oracle. **GeraNES**, FCEUX, Nestopia UE, and puNES served as additional
+  behavioral oracles.
+- The community CRT shaders and NTSC filters whose *looks* RustyNES independently
+  reimplements — **CRT-Royale** (TroggleMonkey), **crt-guest-advanced** (guest.r),
+  **Sony Megatron** (MajorPainInTheCactus),
+  **[NTSC-CRT](https://github.com/LMP88959/NTSC-CRT)** (EMMIR), and **Bisqwit**'s
+  NES composite model — plus the **Press Start 2P** (OFL) and **Font Awesome**
+  fonts. Full attribution and the complete license posture are in
+  [`NOTICE`](NOTICE).
 
 ---
 
@@ -971,7 +1014,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {2.2.0},
+  version = {2.2.5},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (141/141), nestest 0-diff; 172 mapper families,

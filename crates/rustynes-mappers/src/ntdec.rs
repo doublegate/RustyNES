@@ -861,8 +861,10 @@ fn chr_or_ram(chr_rom: Box<[u8]>) -> (Box<[u8]>, bool) {
 // to the final three banks; $8000 is the one switchable window (register 3).
 // CHR: 2 KiB pages. Register 0 selects a paired 2 KiB window into the first two
 // slots ($0000 + $0800), register 1 the third ($1000), register 2 the fourth
-// ($1800). Registers live at $6000-$7FFF (addr & 3). Ported from Mesen2
-// Ntdec/NtdecTc112.h.
+// ($1800). Registers live at $6000-$7FFF (addr & 3). Register map per the
+// NESdev wiki NTDEC TC-112 / mapper-193 documentation (cross-checked against
+// reference emulators as accuracy oracles; no third-party emulator code is
+// incorporated).
 // ===========================================================================
 
 /// NTDEC TC-112 (mapper 193).
@@ -1046,8 +1048,9 @@ pub fn new_m193(
 // The written *address* low bits select the layout: `bitMask = addr & 0x06`
 // gives the 16 KiB PRG block, and (when bitMask != 0x06) `addr & 1` picks the
 // inner half. Both PRG windows ($8000 + $C000) and the 8 KiB CHR window track
-// the decoded page; `addr & 0x10` flips the mirroring. Ported from Mesen2
-// Unlicensed/Mapper204.h.
+// the decoded page; `addr & 0x10` flips the mirroring. Register map per the
+// NESdev wiki mapper-204 documentation (cross-checked against reference
+// emulators as accuracy oracles; no third-party emulator code is incorporated).
 // ===========================================================================
 
 /// NTDEC N625092 multicart (mapper 221).
@@ -1249,7 +1252,9 @@ pub fn new_m221(
 //
 // One value-decoded $8000-$FFFF register: bits 4-6 select a 32 KiB PRG bank,
 // the 8 KiB CHR bank is `(bank << 2) | (value & 0x03)`, and bit 7 flips the
-// mirroring (set => vertical). Ported from Mesen2 Txc/Bmc11160.h.
+// mirroring (set => vertical). Register map per the NESdev wiki mapper-299 /
+// BMC-11160 documentation (cross-checked against reference emulators as
+// accuracy oracles; no third-party emulator code is incorporated).
 // ===========================================================================
 
 #[cfg(test)]

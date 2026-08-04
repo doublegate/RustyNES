@@ -2,9 +2,11 @@
 
 //! LMP88959-style composite NTSC/PAL filter — wgsl post-pass (v1.6.0 "Studio" I1).
 //!
-//! A self-contained composite-NTSC look modelled on EMMIR's well-known
-//! `NTSC-CRT` / `LMP88959` algorithm (a single-pass encode-then-decode of the
-//! RGB image through a simulated composite signal). Unlike the Bisqwit
+//! A self-contained composite-NTSC look — an independent implementation modelled
+//! on the technique of EMMIR's (LMP88959) well-known `NTSC-CRT` project
+//! (<https://github.com/LMP88959/NTSC-CRT>; free use, credit appreciated; no
+//! code incorporated) — a single-pass encode-then-decode of the RGB image
+//! through a simulated composite signal. Unlike the Bisqwit
 //! [`crate::ntsc_bisqwit`] filter — which consumes the `R16Uint` palette-index
 //! texture and must be the *first* pass — this one is a pure **RGBA post-pass**:
 //! it samples the already-rendered framebuffer, so it composes anywhere in the

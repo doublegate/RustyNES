@@ -14,16 +14,16 @@
 //!
 //! # Algorithmic reference
 //!
-//! - `/home/parobek/Code/OSS_Public-Projects/RustyNES/ref-proj/Mesen2/Core/Shared/Utilities/emu2413.{h,cpp}`
-//!   — the canonical C source (Mesen2 vendors it verbatim from upstream)
+//! - `emu2413 v1.5.9` (<https://github.com/digital-sound-antiques/emu2413>,
+//!   MIT, Mitsutaka Okazaki) — the canonical upstream MIT C source
 //! - nesdev wiki `VRC7_audio.md` — register surface + chip-level behaviour
 //! - nesdev wiki `User_Ben_Boldt_YM2413_Patches.md` — patch ROM analysis
 //!
 //! # License posture
 //!
-//! emu2413 is MIT-licensed at upstream; this Rust port is a clean-room
-//! reimplementation guided by the C source's algorithm. We preserve
-//! the upstream MIT notice in `NOTICE` at the repo root (see ADR-0005).
+//! emu2413 is MIT-licensed at upstream; this is a pure-Rust port of that C
+//! source, distributed under the same MIT license. We preserve the upstream
+//! MIT notice in `NOTICE` at the repo root (see ADR-0006).
 //!
 //! # Determinism
 //!

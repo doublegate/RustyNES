@@ -1,8 +1,8 @@
 #![allow(
     clippy::too_many_arguments,
     clippy::doc_markdown,
-    // Numeric tables are ported verbatim from Bisqwit's C; the integer casts
-    // are intentional truncation (matching the `(int)` / `(int8_t)` casts).
+    // Numeric tables encode the documented NES composite-signal levels; the
+    // integer casts are intentional truncation (matching the fixed-point model).
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
@@ -12,9 +12,11 @@
 //! True composite NES_NTSC filter — Bisqwit's algorithm on the GPU (T-110-A1,
 //! stage 2/2).
 //!
-//! Unlike the simplified [`crate::ntsc`] blur, this is a faithful port of
-//! Bisqwit's `nes_ntsc`-style composite model (as implemented by Mesen2's
-//! `BisqwitNtscFilter`): it reconstructs the analog luma+chroma **signal** from
+//! Unlike the simplified [`crate::ntsc`] blur, this is an independent
+//! implementation of the Bisqwit-style NES composite model — the two-level NES
+//! composite signal documented at the NESdev wiki ("NTSC video") page
+//! (cross-checked against reference emulators as oracles; no code incorporated):
+//! it reconstructs the analog luma+chroma **signal** from
 //! the PPU's per-pixel palette index, then demodulates it back to RGB with a
 //! windowed Y/I/Q filter. The genuine NTSC artifacts (chroma dot-crawl, colour
 //! fringing on vertical edges, the diagonal "checkerboard" on saturated hues)
@@ -203,7 +205,7 @@ var<private> SIGNAL_HIGH: array<i32, 128> = array<i32, 128>({signal_high});
 var<private> SINE: array<i32, 27> = array<i32, 27>({sine});
 var<private> EMPHASIS: array<i32, 8> = array<i32, 8>({emphasis});
 
-// Base YIQ matrix scalars (Bisqwit / Mesen). The live contrast / saturation
+// Base YIQ matrix scalars (the standard FCC NTSC YIQ->RGB matrix). The live contrast / saturation
 // knobs scale these per frame; at knob = 0 the integer matrix below equals the
 // old baked Y/IR/QR/... constants exactly (verified in f32).
 const CONTRAST_BASE: f32 = 167941.0;

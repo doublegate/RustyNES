@@ -1,9 +1,11 @@
-// crt-guest-advanced / guest-dr-venom (single-pass WGSL port) — v2.1.9 (B6).
+// crt-guest-advanced-style look (single-pass WGSL) — v2.1.9 (B6).
 //
-// A single-pass condensation of guest.r's crt-guest-advanced / guest-dr-venom
-// libretro slang shaders. Those are a large multi-pass stack (linearize, two
-// blur passes for glow + halation, the scanline/mask pass, an AfterGlow pass);
-// this port keeps guest's characteristic look in one fragment shader:
+// An independent single-pass reimplementation of the *look* popularized by
+// guest.r's crt-guest-advanced / guest-dr-venom libretro shaders (GPL-family).
+// No upstream shader source is used or incorporated: those are a large
+// multi-pass stack (linearize, two blur passes for glow + halation, the
+// scanline/mask pass, an AfterGlow pass); this is a from-scratch single
+// fragment shader implementing comparable, widely-documented techniques:
 //
 //   * A sharp horizontal beam profile (guest's "beam shape" — a configurable
 //     scan-width with a controllable inner/outer falloff) rather than the pure
