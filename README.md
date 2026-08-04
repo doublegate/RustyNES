@@ -802,7 +802,7 @@ release: VRC6 recalibrated to the field/NESdev consensus (a VRC6 pulse ≈ a 2A0
 byte-identical (**AccuracyCoin 141/141**, nestest 0-diff); the base BLEP is a verified
 81.6 dB-SFDR band-limited decimator. It builds on **v2.2.6 "Almanac"**, the
 **de-monetization and provenance** release that opened the **v2.2.6 → v2.3.0** line
-addressing NESdev-forum feedback. It carries **zero emulation-core behavior changes** — so **AccuracyCoin holds
+addressing NESdev-forum feedback. **v2.2.6** carried **zero emulation-core behavior changes** — so **AccuracyCoin holds
 141/141 (100.00%)**, nestest is 0-diff, and the `#![no_std]` chip stack, save-state / TAS
 / netplay formats, and every golden vector are byte-identical by construction. What it
 does:

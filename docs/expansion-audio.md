@@ -29,9 +29,11 @@ incompatible Nuked-OPLL.
 ## Relative levels (v2.1.6 "Expansion Audio", VRC6 recalibrated v2.2.7)
 
 Each chip's `mix_audio()` is scaled so its full-volume output sits at the
-loudness the hardware and **Mesen2** (RustyNES's accuracy bar) produce relative
-to the 2A03 pulse, measured by the bbbradsmith `db_*` decibel-comparison ROMs and
-asserted by the `audio_expansion.rs` `level_db_*` oracle. VRC6 (≈1.0, v2.2.7),
+loudness the **hardware** produces relative to the 2A03 pulse — calibrated against
+the reference-emulator field (Mesen2 was RustyNES's historical accuracy bar, but
+VRC6 was recalibrated *away* from it in v2.2.7 because Mesen2 is the loud outlier
+for VRC6; see below), measured by the bbbradsmith `db_*` decibel-comparison ROMs
+and asserted by the `audio_expansion.rs` `level_db_*` oracle. VRC6 (≈1.0, v2.2.7),
 MMC5 (≈1.0, "equivalent to the APU") and Namco 163 1-channel (≈6.02) are the
 pinned corrections. **VRC6 was recalibrated in v2.2.7 "Timbre II"**: the v2.1.6
 target (≈1.506) mirrored Mesen2's specifically louder `×5` mixer weight, but a
@@ -39,13 +41,14 @@ NESdev-forum report plus a cross-reference across eleven reference emulators and
 the NESdev wiki found Mesen2 to be the loud outlier — the wiki states the VRC6
 pulse channels are roughly loudness-equivalent to the 2A03's, and rustico /
 tetanes / BizHawk each encode that equivalence exactly — so the target moved to
-≈1.0 and `VRC6_MIX_SCALE` moved 979 → 650 (`m024_vrc6.rs`). Two levels are
-**honest documented gaps**: the Sunsoft 5B absolute level (its log-DAC *shape*
-is hardware-exact, but a full-volume tone would overflow the `i16` `mix_audio`
-contract — a wider mix path is deferred), and the VRC7 FM absolute level (the FM
-synth is implemented and its instrument ROM is verified canonical, but its
-patch/feedback-dependent pseudo-sine output is not cleanly oracle-pinned, so
-`db_vrc7` stays a byte-exact snapshot regression guard). Separately, v2.2.7 also
+≈1.0 and `VRC6_MIX_SCALE` moved 979 → 650 (`m024_vrc6.rs`). One level remains an
+**honest documented gap**: the VRC7 FM absolute level (the FM synth is implemented
+and its instrument ROM is verified canonical, but its patch/feedback-dependent
+pseudo-sine output is not cleanly oracle-pinned, so `db_vrc7` stays a byte-exact
+snapshot regression guard). (The Sunsoft 5B absolute level was itself an
+`i16`-`mix_audio`-contract gap until **v2.2.3** widened the trait return to `i32`
+and pinned it via `level_db_5b`; its log-DAC *shape* is hardware-exact and, since
+v2.2.7, its envelope uses the exact 5-bit 1.5 dB/step DAC — see below.) Separately, v2.2.7 also
 completed the Sunsoft 5B **envelope** DAC: the envelope-mode volume now indexes
 a 32-level, 1.5 dB/step table (`SUNSOFT5B_LOG_VOL32`) instead of truncating to
 the 4-bit, 3 dB/step approximation, matching nestopia / rustico; the fixed
