@@ -20,8 +20,11 @@ A **presentation-fidelity** release addressing the NESdev-forum feedback on
 gamma-aware resampling and bilinear-soft scanlines. **Presentation-only — nothing
 here touches the emulation core**, so the pre-shader framebuffer, save-states, and
 every golden vector are byte-identical (AccuracyCoin 141/141, nestest 0-diff), and
-the **shipped native default is byte-identical** to v2.2.7 (the new behavior is
-gated behind `aux = 0`). The base BLEP audio and the advanced CRT stacks
+the **shipped native default is byte-identical** to v2.2.7 (the native sRGB
+surface passes `aux = 0`, which selects the exact pre-v2.2.8 scanline profile;
+the new linear-light + sharper-scanline path activates only for a non-zero
+`aux`, set on the WebGL2 non-sRGB path and when the scanline knob is raised).
+The base BLEP audio and the advanced CRT stacks
 (royale/guest/megatron, already gamma-correct) are untouched.
 
 > **Visual verification pending.** These are shader/appearance changes; naga
