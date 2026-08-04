@@ -81,6 +81,22 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
     return out;
 }
 
+// The exact IEC 61966-2-1 sRGB transfer pair (piecewise: a linear segment below
+// the breakpoint, a 2.4-exponent power segment above), NOT a plain pow(2.2)
+// approximation. This is what a hardware sRGB texture/surface applies, so the
+// WebGL2 aux.y = 1 round-trip matches the native sRGB path bit-for-bit instead of
+// drifting in the shadows where the two curves diverge most.
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(hi, lo, c <= vec3<f32>(0.04045));
+}
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+    let lo = c * 12.92;
+    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
+    return select(hi, lo, c <= vec3<f32>(0.0031308));
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Letterbox bars -> black.
@@ -101,7 +117,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // light -> skip the round-trip and stay byte-identical to the pre-v2.2.8 output.
     let linearize = u.aux.y > 0.5;
     if (linearize) {
-        rgb = pow(rgb, vec3<f32>(2.2));
+        rgb = srgb_to_linear(rgb);
     }
 
     let scan_amt = u.params.x;
@@ -148,7 +164,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     rgb = clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     if (linearize) {
-        rgb = pow(rgb, vec3<f32>(1.0 / 2.2));
+        rgb = linear_to_srgb(rgb);
     }
     return vec4<f32>(rgb, 1.0);
 }

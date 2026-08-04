@@ -39,14 +39,20 @@ The base BLEP audio and the advanced CRT stacks
   leaves it linear (`aux.y = 0`, output byte-identical). On a plain UNORM path
   (**WebGL2**, which does neither) the shader now sRGB-decodes on read and
   re-encodes before output (`aux.y = 1`) — fixing a real browser-only gamma bug so
-  a scanline valley is 50% of the *linear* luminance, not the encoded value.
+  a scanline valley is 50% of the *linear* luminance, not the encoded value. The
+  round-trip uses the **exact IEC 61966-2-1 piecewise sRGB transfer** (the
+  `0.04045` / `0.0031308` breakpoints + a 2.4 exponent), not a `pow(2.2)`
+  approximation, so the WebGL2 result matches the hardware sRGB surface the native
+  path uses bit-for-bit.
 - **Sharper scanlines (`aux.x`, default 0.5).** The scanline profile blends from
   the original soft parabola (0) to a narrow Gaussian beam (1) for crisp vertical
   boundaries instead of the linear-sampler blur — the sharper scanlines the
   feedback asked for. Only visible when scanlines are enabled; `aux.x = 0`
-  reproduces the pre-v2.2.8 profile exactly. Wired on both the desktop
-  (`rustynes-frontend`) and Android (`rustynes-android`) hosts via the shared
-  16-float CRT uniform (`rect + crop + params + aux`).
+  reproduces the pre-v2.2.8 profile exactly. Wired on the desktop
+  (`rustynes-frontend`), Android (`rustynes-android`), and iOS Metal
+  (`rustynes-ios`) hosts via the shared 16-float CRT uniform
+  (`rect + crop + params + aux`) — all three set `aux` identically for the
+  scanline/CRT filters, so the corrected profile is consistent across platforms.
 
 ## [2.2.7] - 2026-08-04 - "Timbre II" (expansion-audio fidelity: VRC6 + Sunsoft 5B)
 
