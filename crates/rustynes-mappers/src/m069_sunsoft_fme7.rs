@@ -81,15 +81,38 @@ fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
 /// widened that return to `i32` and calibrated the level; see
 /// [`SUNSOFT5B_MIX_SCALE_NUM`] and `docs/accuracy-ledger.md`.
 ///
-/// Per the NESdev "Sunsoft 5B audio" page, the chip's DAC has a 1.5 dB
-/// step on the 5-bit signal.  Because the wiki specifies that envelope
-/// level `e` is equivalent to 4-bit volume `e >> 1` (with both `e=0` and
-/// `e=1` mapping to silence), a 16-entry table indexed by the 4-bit
-/// equivalent is sufficient — equivalent to a 32-entry table where each
-/// even/odd pair shares the same amplitude.
+/// Per the NESdev "Sunsoft 5B audio" page, the chip's DAC has a **1.5 dB step
+/// on the 5-bit signal** — "some emulator implementations based on the
+/// AY-3-8910 instead treat it as a 4-bit signal with a 3 dB per step curve",
+/// which the wiki flags as the *approximation*, not the exact behavior.
+///
+/// A channel driven by its **fixed 4-bit volume** register genuinely steps
+/// 3 dB (it selects every other level of the 5-bit DAC), so this 16-entry
+/// table — the 4-bit projection — is exact for fixed-volume tones. A channel
+/// driven by the **envelope generator** produces the full 5-bit level and must
+/// use the 32-entry [`SUNSOFT5B_LOG_VOL32`] table for the true 1.5 dB/step
+/// resolution (v2.2.7 "Timbre II": before, the envelope was reduced to 4-bit
+/// via `e >> 1`, collapsing it onto this coarser 3 dB curve — the approximation
+/// the wiki names; nestopia and rustico use the exact 5-bit DAC, which this now
+/// matches). The odd entries of `SUNSOFT5B_LOG_VOL32` equal this table exactly.
 #[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
 const SUNSOFT5B_LOG_VOL: [i32; 16] = [
     0, 15, 21, 30, 42, 59, 84, 119, 168, 237, 335, 473, 668, 944, 1333, 1882,
+];
+
+/// Exact **5-bit, 1.5 dB/step** logarithmic DAC (v2.2.7 "Timbre II") — the
+/// NESdev-authoritative Sunsoft-5B envelope curve, matching nestopia / rustico.
+/// Indexed by the envelope generator's full 5-bit output (0..=31). Each step is
+/// `×1.1885` (= +1.5 dB); the finest quantization is the same 1882-scaled law as
+/// [`SUNSOFT5B_LOG_VOL`], so the two never drift. Per the wiki, envelope levels
+/// `e=0` and `e=1` both map to silence. The **odd** entries reproduce the 4-bit
+/// [`SUNSOFT5B_LOG_VOL`] table exactly (`LOG_VOL32[2v+1] == LOG_VOL[v]`), so a
+/// fixed-volume channel and an envelope channel resting on the same level agree
+/// to the bit — guaranteed by the `log_vol32_odd_entries_match_4bit` unit test.
+#[cfg_attr(not(feature = "mapper-audio"), allow(dead_code))]
+const SUNSOFT5B_LOG_VOL32: [i32; 32] = [
+    0, 0, 13, 15, 18, 21, 25, 30, 35, 42, 50, 59, 71, 84, 100, 119, 141, 168, 199, 237, 282, 335,
+    398, 473, 562, 668, 794, 944, 1122, 1333, 1584, 1882,
 ];
 
 /// Mixed centering bias: subtracted from the scaled linear sum before emitting
@@ -439,17 +462,21 @@ impl Sunsoft5BAudio {
         (mixer >> (ch * 2 + 1)) & 1 == 0
     }
 
-    /// Resolve the 4-bit equivalent volume for channel `ch` (0/1/2 for
-    /// A/B/C), honoring the per-channel envelope-mode bit.
-    fn volume(&self, ch: u8) -> u8 {
+    /// Resolve channel `ch`'s DAC amplitude (0/1/2 for A/B/C), honoring the
+    /// per-channel envelope-mode bit.
+    ///
+    /// Fixed-volume mode indexes the 4-bit [`SUNSOFT5B_LOG_VOL`] table (exact
+    /// 3 dB/step for a 4-bit register). Envelope mode indexes the full 5-bit
+    /// [`SUNSOFT5B_LOG_VOL32`] table for the NESdev-exact **1.5 dB/step**
+    /// resolution (v2.2.7 "Timbre II"; previously the 5-bit envelope was
+    /// truncated to 4-bit via `>> 1`, i.e. the wiki-named 3 dB approximation).
+    /// `env=0`/`env=1` both map to silence; `env=31` is full scale.
+    fn amplitude(&self, ch: u8) -> i32 {
         let reg = self.regs[0x08 + ch as usize];
         if reg & 0x10 != 0 {
-            // Envelope mode: 5-bit env mapped to 4-bit equivalent via `>>1`
-            // per the NESdev table (env=0/1 both -> silent; env=2 -> vol 1;
-            // env=31 -> vol 15).
-            self.envelope.output() >> 1
+            SUNSOFT5B_LOG_VOL32[self.envelope.output() as usize & 0x1F]
         } else {
-            reg & 0x0F
+            SUNSOFT5B_LOG_VOL[(reg & 0x0F) as usize]
         }
     }
 
@@ -484,8 +511,7 @@ impl Sunsoft5BAudio {
             let tone_factor = !self.tone_enabled(ch) || tone.level != 0;
             let noise_factor = !self.noise_enabled(ch) || self.noise.level() != 0;
             if tone_factor && noise_factor {
-                let v = self.volume(ch) as usize & 0x0F;
-                sum += SUNSOFT5B_LOG_VOL[v];
+                sum += self.amplitude(ch);
             }
         }
         // Scale the shape table to the hardware-relative level (see
@@ -1112,30 +1138,51 @@ mod tests {
         // contribution range.
         assert_eq!(SUNSOFT5B_LOG_VOL[0], 0);
         assert!(SUNSOFT5B_LOG_VOL[15] > SUNSOFT5B_LOG_VOL[14]);
-        // The volume() helper applies the envelope-mode select bit.
+        // amplitude() applies the envelope-mode select bit and returns the DAC
+        // value (not the 4-bit index).
         let mut a = Sunsoft5BAudio::default();
         a.regs[0x08] = 0x0F; // fixed volume = 15.
-        assert_eq!(a.volume(0), 15);
+        assert_eq!(a.amplitude(0), SUNSOFT5B_LOG_VOL[15]);
         a.regs[0x08] = 0x00; // fixed volume = 0.
-        assert_eq!(a.volume(0), 0);
+        assert_eq!(a.amplitude(0), 0);
     }
 
     #[test]
     fn sunsoft5b_envelope_mode_routes_envelope_into_channel() {
-        // Setting bit 4 of $08/$09/$0A switches that channel from fixed
-        // volume to envelope mode.  In envelope mode the 4-bit volume
-        // equivalent is env >> 1 (per the NESdev table).
+        // Setting bit 4 of $08/$09/$0A switches that channel from fixed volume
+        // to envelope mode. In envelope mode (v2.2.7 "Timbre II") the FULL 5-bit
+        // envelope level indexes the exact 1.5 dB/step SUNSOFT5B_LOG_VOL32 DAC —
+        // no longer truncated to 4-bit via `>> 1`.
         let mut a = Sunsoft5BAudio::default();
         a.regs[0x08] = 0x10; // envelope mode, fixed-volume bits ignored.
-        a.envelope.level = 30; // 4-bit equivalent = 15.
-        assert_eq!(a.volume(0), 15);
-        a.envelope.level = 6;
-        assert_eq!(a.volume(0), 3);
+        a.envelope.level = 31; // full scale.
+        assert_eq!(a.amplitude(0), SUNSOFT5B_LOG_VOL32[31]);
+        a.envelope.level = 6; // an even (previously-truncated) level.
+        assert_eq!(a.amplitude(0), SUNSOFT5B_LOG_VOL32[6]);
         a.envelope.level = 1;
-        assert_eq!(a.volume(0), 0); // env 0 and 1 both -> 0.
-        // Switching back to fixed mode honors $08 bits 3-0 again.
+        assert_eq!(a.amplitude(0), 0); // env 0 and 1 both -> silence.
+        a.envelope.level = 0;
+        assert_eq!(a.amplitude(0), 0);
+        // Switching back to fixed mode honors $08 bits 3-0 again (4-bit DAC).
         a.regs[0x08] = 0x07;
-        assert_eq!(a.volume(0), 7);
+        assert_eq!(a.amplitude(0), SUNSOFT5B_LOG_VOL[7]);
+    }
+
+    #[test]
+    fn log_vol32_odd_entries_match_4bit() {
+        // The 4-bit fixed-volume table is exactly the odd levels of the 5-bit
+        // envelope DAC, so a fixed-volume channel and an envelope channel
+        // resting on the same level agree to the bit.
+        for v in 0..16 {
+            assert_eq!(SUNSOFT5B_LOG_VOL32[2 * v + 1], SUNSOFT5B_LOG_VOL[v]);
+        }
+        // Envelope levels 0 and 1 are both silence (per the NESdev wiki).
+        assert_eq!(SUNSOFT5B_LOG_VOL32[0], 0);
+        assert_eq!(SUNSOFT5B_LOG_VOL32[1], 0);
+        // A strictly increasing log ramp above the silent floor.
+        for e in 3..32 {
+            assert!(SUNSOFT5B_LOG_VOL32[e] > SUNSOFT5B_LOG_VOL32[e - 1]);
+        }
     }
 
     #[cfg(feature = "mapper-audio")]

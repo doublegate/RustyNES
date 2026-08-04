@@ -14,6 +14,38 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.2.7] - 2026-08-04 - "Timbre II" (expansion-audio fidelity: VRC6 + Sunsoft 5B)
+
+An **expansion-audio accuracy** release addressing NESdev-forum feedback. Driven by a
+measure-first cross-reference of VRC6 and Sunsoft 5B against **11 reference emulators**
+(Mesen2/MesenCE, ares, higan, nestopia, fceux, tetanes, rustico, GeraNES, puNES, BizHawk)
+plus the NESdev wiki — because a Mesen2-only comparison hides where Mesen2 itself is the
+outlier. **The base 2A03 output is byte-identical** (these are expansion-only changes:
+`mix_audio()==0` for non-expansion mappers), so **AccuracyCoin holds 141/141 (100.00%)**,
+nestest is 0-diff, and blargg/kevtris are unchanged. The base BLEP decimator was
+independently verified excellent (SFDR **81.6 dB**, `rustynes-apu` spectral test).
+
+### Changed
+
+- **VRC6 level recalibrated to the field/hardware consensus** — a full-volume VRC6 pulse
+  is now **≈1.0×** a 2A03 pulse (was ~1.506×). `VRC6_MIX_SCALE` 979 → 650. The prior
+  1.506× mirrored **Mesen2's specifically louder mixer convention** (Mesen2 weights VRC6
+  `×5`); a reviewer flagged VRC6 as too loud, and the cross-reference confirmed Mesen2 is
+  the loud outlier: the NESdev wiki says the VRC6 pulses are "roughly equivalent to the
+  pulse channels of the 2A03", and rustico / tetanes / BizHawk encode a VRC6 pulse == a
+  2A03 pulse *exactly* (ares/higan/nestopia reach the same via `sum/61`). The `db_vrc6a/b`
+  oracle target moved 1.506 → 1.000 and the two snapshots were re-blessed (audio-only —
+  framebuffer + cycle count byte-identical). VRC6's per-channel balance (linear
+  `pulse+pulse+saw`, saw 0–31 vs pulse 0–15) was already correct and is unchanged.
+- **Sunsoft 5B envelope now uses the exact 5-bit 1.5 dB/step DAC** — the envelope-mode
+  amplitude path indexes a new 32-level `SUNSOFT5B_LOG_VOL32` table (×1.1885/step = +1.5 dB,
+  matching nestopia/rustico) at full 5-bit resolution, instead of truncating the envelope
+  to 4-bit (the wiki-named 3 dB approximation). Fixed 4-bit volume tones (already correct
+  3 dB/step) and the 5B absolute level (1.265×) are unchanged; the odd entries of the
+  32-level table equal the 4-bit table exactly (guarded by a new unit test). Extant 5B
+  test-ROM snapshots stay byte-identical; envelope-modulated 5B music now gets the exact
+  curve.
+
 ## [2.2.6] - 2026-08-04 - "Almanac" (de-monetization + provenance accuracy)
 
 A **de-monetization and provenance** release. RustyNES is now permanently
