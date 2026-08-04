@@ -1189,7 +1189,7 @@ const ABOUT_GUI_BODY: &str = "\
 RustyNES - a cycle-accurate Nintendo Entertainment System emulator
 written in pure Rust (winit + wgpu + cpal + egui).
 
-  License ...... MIT OR Apache-2.0
+  License ...... GPL-3.0-or-later
   Author ....... DoubleGate
   Accuracy ..... AccuracyCoin 98.58% (139/141); nestest 0-diff;
                  blargg / kevtris suites green.

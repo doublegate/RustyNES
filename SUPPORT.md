@@ -106,7 +106,7 @@ A: See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines. We welcom
 
 **Q: Is RustyNES open source?**
 
-A: Yes! RustyNES is dual-licensed under MIT/Apache-2.0. You're free to use, modify, and distribute it according to those licenses.
+A: Yes! RustyNES is licensed under GPL-3.0-or-later. You're free to use, modify, and distribute it under the terms of that license (including making source available for derivatives).
 
 ### Technical Questions
 

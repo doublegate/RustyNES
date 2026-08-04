@@ -51,7 +51,7 @@ RustyNES is well past v1.0.0. The current release is **v2.0.4 "Harbor"** (2026-0
 
 - The chip stack is `#![no_std]` + `alloc`, cross-compiled in CI to `thumbv7em-none-eabihf`.
 - CI gates: `fmt`, `clippy --all-targets -D warnings` (incl. wasm32), `doc` (warnings-as-errors), multi-platform tests (Linux/macOS/Windows), MSRV pin (1.86), a frame-time regression bench, and a wasm size budget.
-- Dual-licensed MIT OR Apache-2.0.
+- Licensed GPL-3.0-or-later (RustyNES is a derivative work of GPL emulators; see docs/originality-and-provenance.md).
 
 ---
 

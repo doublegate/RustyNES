@@ -14,19 +14,47 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [2.2.9] - 2026-08-04 - "Studio II" (TAS/movie wiring + detachable tool windows)
+## [2.2.9] - 2026-08-04 - "Studio II" (relicense to GPLv3 + TAS/movie wiring + detachable tool windows)
 
-The fourth step of the **v2.2.6 → v2.3.0** NESdev-remediation line, addressing
-three forum items: TAStudio piano-roll edits that never reached the emulator,
-`.bk2` movies that imported but did not play back correctly, and tool windows
-trapped inside the main OS window on Windows 10. **Frontend-only — nothing here
-touches the emulation core**, so the deterministic chip stack, save-states, and
-every golden vector are byte-identical (AccuracyCoin 141/141, nestest 0-diff).
+The fourth step of the **v2.2.6 → v2.3.0** NESdev-remediation line. Its headline
+is a **licensing and provenance correction**: RustyNES is **relicensed to
+GPL-3.0-or-later** because it is a derivative work of GPL emulators. It also
+addresses three forum items — TAStudio piano-roll edits that never reached the
+emulator, `.bk2` movies that imported but did not play back, and tool windows
+trapped inside the main OS window on Windows 10. The code changes are
+frontend-only, so the deterministic chip stack, save-states, and every golden
+vector are byte-identical (AccuracyCoin 141/141, nestest 0-diff).
 
 > **Windowing needs an on-device check.** Detached tool windows use egui
 > multi-viewport (real OS windows); the mechanism compiles and clippy-passes on
 > native + wasm, but the multi-window behavior itself is best confirmed on a
 > desktop (ideally the Windows 10 host from the report).
+
+### Changed — License: MIT/Apache-2.0 → GPL-3.0-or-later
+
+- **RustyNES is relicensed to GPL-3.0-or-later** (ADR 0036). A NESdev community
+  review established that the project **incorporates and is derived from code from
+  GPL-licensed emulators** — principally **Mesen2** (GPL-3.0-or-later: CPU unstable
+  stores, the PPU sprite-evaluation/OAM model, ~15 mapper boards, the Bisqwit NTSC
+  filter tables, EEPROM models, the UNIF tables, the debug-symbol importer, the PGO
+  harness) and, for several mappers and the FDS drive model, **puNES / FCEUX /
+  Nestopia** (GPL-2.0-or-later: JV001/mapper-147 bit-for-bit, the FDS per-CRC drive
+  table, UNIF handling). This is derivation, not oracle use — the project's own
+  pre-v2.2.5 comments said so ("Faithful port of Mesen2's …", "Ported bit-for-bit
+  from puNES `JV001.c`") — which makes RustyNES a derivative work distributable only
+  under the GPL.
+- **The v2.2.5 "no GPL source incorporated" / MIT-Apache position was wrong and is
+  withdrawn.** `LICENSE` is now the GPLv3 text; `LICENSE-MIT` / `LICENSE-APACHE` are
+  removed; the workspace + `rustynes-cheevos` `license` fields and the `cargo-deny`
+  allow-list are updated.
+- **Credit is given, per subsystem.** `docs/originality-and-provenance.md` is
+  rewritten to lead with the file-by-file derivation table and the derivative-work
+  declaration; `NOTICE` attributes every GPL upstream and the code derived from it.
+  The scattered "port of" comments are **not** restored (they were imprecise and are
+  superseded by the complete audited record), but the derivation is now stated
+  plainly and completely. Incorporated permissive components (emu2413/MIT,
+  TriCNES/MIT, rcheevos/MIT, blip_buf/LGPL-2.1-or-later, fonts) are GPL-compatible
+  and keep their notices. Zero emulation-core behavior change.
 
 ### Fixed
 

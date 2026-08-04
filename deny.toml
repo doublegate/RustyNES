@@ -40,8 +40,13 @@ ignore = [
 
 [licenses]
 version = 2
-# Allow dual-licensed MIT/Apache-2.0 (standard Rust licensing) plus compatible OSI/FSF licenses
+# RustyNES itself is GPL-3.0-or-later (it incorporates code derived from GPL
+# emulators — Mesen2 GPLv3, puNES/FCEUX/Nestopia GPLv2-or-later; see
+# docs/originality-and-provenance.md and NOTICE). The permissive entries below
+# remain allowed because they cover the third-party *dependency* graph, all of
+# which is GPLv3-compatible.
 allow = [
+    "GPL-3.0-or-later", # RustyNES's own crates (derivative work of GPL emulators)
     "MIT",
     "Apache-2.0",
     "Unicode-3.0",  # Used by unicode-ident crate
