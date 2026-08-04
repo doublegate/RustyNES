@@ -24,15 +24,31 @@
 /// 2. **Aperture mask** — a subtle RGB phosphor grille keyed off the output column
 ///    (`params.y` = intensity), with a small brightness compensation.
 ///
-/// Uniform layout (12 `f32`): `rect` (letterbox: x,y = scale, z,w = offset),
+/// Uniform layout (16 `f32`): `rect` (letterbox: x,y = scale, z,w = offset),
 /// `crop` (overscan: x = v-scale, y = v-offset, z = u-scale, w = u-offset),
-/// `params` (x = scanline, y = mask, z,w unused). Setting `params` to (0,0) and
-/// `crop` to (1,0,1,0) yields a plain letterboxed blit.
+/// `params` (x = scanline, y = mask, z = source rows, w unused), and `aux`
+/// (v2.2.8 "Aperture II": x = scanline sharpness 0..1, y = linearize flag,
+/// z,w unused). Setting `params` to (0,0,0,0) and `crop` to (1,0,1,0) yields a
+/// plain letterboxed blit; `aux = (0,0,0,0)` preserves the pre-v2.2.8 look
+/// exactly (soft parabola, no explicit gamma round-trip).
+///
+/// **Gamma (aux.y).** The scanline + mask *darkening* is perceptually correct
+/// only in linear light. On an sRGB-format input texture + surface (native) the
+/// sampler already decodes to linear and the surface re-encodes on write, so
+/// `aux.y = 0` (the math is already linear — leave it). On a plain UNORM path
+/// (e.g. WebGL2, which does neither) set `aux.y = 1`: the shader sRGB-decodes on
+/// read and re-encodes before returning, so the darkening happens in linear
+/// light there too.
+///
+/// **Sharpness (aux.x).** `0` = the original soft parabola (unchanged); rising
+/// toward `1` blends to a narrow Gaussian beam so the vertical boundaries
+/// between source rows are crisp instead of blurred by the linear sampler.
 pub const CRT_WGSL: &str = r"
 struct Uniforms {
     rect: vec4<f32>,   // letterbox transform (same shape + math as gfx.wgsl)
     crop: vec4<f32>,   // overscan crop: x=v-scale, y=v-offset, z=u-scale, w=u-offset
-    params: vec4<f32>, // x = scanline intensity, y = mask intensity, z,w unused
+    params: vec4<f32>, // x = scanline intensity, y = mask intensity, z = rows, w unused
+    aux: vec4<f32>,    // x = scanline sharpness (0..1), y = linearize flag, z,w unused
 };
 
 @group(0) @binding(0) var nes_tex: texture_2d<f32>;
@@ -75,21 +91,45 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let suv = vec2<f32>(in.uv.x * u.crop.z + u.crop.w, in.uv.y * u.crop.x + u.crop.y);
     var rgb = textureSample(nes_tex, nes_smp, suv).rgb;
 
+    // v2.2.8 'Aperture II': do the scanline + mask *darkening* in LINEAR light so a
+    // scanline valley at 50% is 50% of the LINEAR luminance (perceptually correct),
+    // not 50% of the gamma-encoded value. aux.y = 1 (a plain UNORM path, e.g. WebGL2)
+    // means the sampler handed us gamma-encoded values and the surface will not
+    // encode on write -> decode here, re-encode before returning. aux.y = 0 (an
+    // sRGB texture + surface, e.g. native) means the sampler already decoded to
+    // linear and the surface re-encodes on write, so the math is already in linear
+    // light -> skip the round-trip and stay byte-identical to the pre-v2.2.8 output.
+    let linearize = u.aux.y > 0.5;
+    if (linearize) {
+        rgb = pow(rgb, vec3<f32>(2.2));
+    }
+
     let scan_amt = u.params.x;
     let mask_amt = u.params.y;
 
     // Scanlines in source-row space. The row count is params.z (so the host can
     // expose a 'number of scanlines' control); fall back to the NES's 240 rows when
     // unset (params.z < 1, e.g. the desktop, which leaves it 0 -> unchanged).
-    // Parabolic profile: 1.0 at the row centre, (1 - scan_amt) at the row boundary.
+    //
+    // aux.x = sharpness (0..1). At 0 this is EXACTLY the original soft parabola
+    // (1.0 at the row centre, (1 - scan_amt) at the boundary), so aux = 0 preserves
+    // the pre-v2.2.8 look. Rising toward 1 blends to a narrow Gaussian beam so the
+    // vertical boundaries between source rows are crisp instead of blurred by the
+    // linear sampler -- the sharper scanlines the NESdev-forum feedback asked for.
     let rows = select(240.0, u.params.z, u.params.z >= 1.0);
     let src_y = suv.y * rows;
     let d = fract(src_y) - 0.5;
-    let scan = (1.0 - scan_amt) + scan_amt * (1.0 - 4.0 * d * d);
+    let sharpness = clamp(u.aux.x, 0.0, 1.0);
+    let parabola = 1.0 - 4.0 * d * d;
+    let sigma = mix(0.30, 0.10, sharpness);
+    let gaussian = exp(-(d * d) / (2.0 * sigma * sigma));
+    let profile = mix(parabola, gaussian, sharpness);
+    let scan = (1.0 - scan_amt) + scan_amt * profile;
     rgb = rgb * scan;
 
     // Aperture grille: tint output columns in an R/G/B triad. Each channel is
-    // attenuated on the two columns where it is not the dominant phosphor.
+    // attenuated on the two columns where it is not the dominant phosphor. (In
+    // linear light now, so the tint is perceptually even.)
     let col = i32(floor(in.pos.x)) % 3;
     var mask = vec3<f32>(1.0 - mask_amt, 1.0 - mask_amt, 1.0 - mask_amt);
     if (col == 0) {
@@ -106,7 +146,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let comp = 1.0 + 0.5 * (scan_amt + mask_amt);
     rgb = rgb * comp;
 
-    return vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    rgb = clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    if (linearize) {
+        rgb = pow(rgb, vec3<f32>(1.0 / 2.2));
+    }
+    return vec4<f32>(rgb, 1.0);
 }
 ";
 

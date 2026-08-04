@@ -39,7 +39,8 @@ struct Uniforms {
     crop: [f32; 4],
     // CRT: (scanline, mask, _, _). NTSC: (saturation, sharpness, tint, phase).
     params: [f32; 4],
-    // NTSC only: x = PAL mode. Padding for the CRT shader (which reads 12 floats).
+    // CRT (v2.2.8): x = scanline sharpness, y = gamma-linearize flag.
+    // LMP-NTSC: x = PAL mode. Bisqwit: picture knobs.
     aux: [f32; 4],
 }
 
@@ -441,10 +442,23 @@ impl AndroidGfx {
             (1.0, screen_aspect / IMG_ASPECT) // letterbox
         };
         // For CRT/scanline/LMP-NTSC the `params` come straight from the per-filter
-        // sliders (aux unused). For Bisqwit (filter 4) `params.x` is the per-frame
-        // videoPhase and the picture knobs (contrast/sat/bright/hue) ride in `aux`.
+        // sliders. For Bisqwit (filter 4) `params.x` is the per-frame videoPhase and
+        // the picture knobs (contrast/sat/bright/hue) ride in `aux`.
+        //
+        // v2.2.8 "Aperture II": the CRT/scanline pass (filters 1, 2) now reads
+        // `aux.x` = scanline sharpness and `aux.y` = a gamma-linearize flag (1 on a
+        // plain UNORM surface so the shader keeps the darkening in linear light; 0 on
+        // an sRGB surface where the sampler/surface already convert). Filters 0 (none)
+        // and 3 (LMP-NTSC) keep `aux = 0` (LMP-NTSC's PAL flag rides its own path).
+        let crt_linearize = if self.config.format.is_srgb() {
+            0.0
+        } else {
+            1.0
+        };
         let (params, aux) = if self.filter == 4 {
             ([f32::from(self.ntsc_phase), 0.0, 0.0, 0.0], self.params)
+        } else if self.filter == 1 || self.filter == 2 {
+            (self.params, [0.5, crt_linearize, 0.0, 0.0])
         } else {
             (self.params, [0.0, 0.0, 0.0, 0.0])
         };

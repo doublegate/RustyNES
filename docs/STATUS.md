@@ -1,6 +1,10 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.2.7** (2026-08-04) — **"Timbre II"**, an **expansion-audio
+> **Current release: v2.2.8** (2026-08-04) — **"Aperture II"**, a **presentation-fidelity**
+> release (gamma-correct scanlines in linear light + a WebGL2 gamma fix + a sharper
+> Gaussian scanline profile; presentation-only, so the pre-shader framebuffer +
+> AccuracyCoin 141/141 are byte-identical and the shipped native default is unchanged —
+> visual verification pending). Built on **v2.2.7** — **"Timbre II"**, an **expansion-audio
 > fidelity** release (2nd of the v2.2.6 → v2.3.0 NESdev-remediation line): **VRC6
 > recalibrated to ~1.0× a 2A03 pulse** (the NESdev / field consensus — rustico/tetanes/
 > BizHawk encode 1.0× exactly; Mesen2's ~1.5× was the loud outlier a reviewer flagged;

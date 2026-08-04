@@ -122,6 +122,16 @@ pub struct CrtFilter {
     scanline: f32,
     /// Aperture-mask intensity (fixed-subtle for the MVP).
     mask: f32,
+    /// v2.2.8 "Aperture II": scanline beam sharpness (aux.x, 0 = the original soft
+    /// parabola .. 1 = a crisp Gaussian beam for sharp vertical boundaries). Only
+    /// visible when `scanline > 0`.
+    sharpness: f32,
+    /// v2.2.8: gamma round-trip flag (aux.y). `1.0` when the surface is a plain
+    /// UNORM (e.g. WebGL2) so the shader must sRGB-decode/encode around the
+    /// scanline+mask darkening to keep it in linear light; `0.0` on an sRGB
+    /// surface where the sampler + surface already handle the gamma conversion
+    /// (so the shipped native output stays byte-identical).
+    linearize: f32,
 }
 
 impl CrtFilter {
@@ -216,13 +226,19 @@ impl CrtFilter {
         });
         let scanline = scanline.clamp(0.0, 1.0);
         let mask = 0.10; // subtle fixed grille for the MVP.
+        // v2.2.8: crisper scanlines by default (only visible when scanline > 0), and
+        // the gamma round-trip flag derived from the surface's color space (sRGB ->
+        // 0 = leave linear; plain UNORM/WebGL2 -> 1 = decode/encode in the shader).
+        let sharpness = 0.5;
+        let linearize = if surface_format.is_srgb() { 0.0 } else { 1.0 };
         let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("crt-uniforms"),
-            // rect (identity letterbox) + crop (none) + params (scanline, mask).
+            // rect + crop + params (scanline, mask, rows, _) + aux (sharpness, linearize, _, _).
             contents: bytemuck::cast_slice(&[
                 1.0f32, 1.0, 0.0, 0.0, // rect
                 1.0, 0.0, 1.0, 0.0, // crop (v-scale, v-off, u-scale, u-off)
                 scanline, mask, 0.0, 0.0, // params
+                sharpness, linearize, 0.0, 0.0, // aux
             ]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -251,6 +267,8 @@ impl CrtFilter {
             bind_group,
             scanline,
             mask,
+            sharpness,
+            linearize,
         }
     }
 
@@ -274,7 +292,7 @@ impl CrtFilter {
         par_correction: bool,
         overscan: crate::config::Overscan,
     ) {
-        // rect (4) + crop (4) from the shared helper, then the CRT params (4).
+        // rect (4) + crop (4) from the shared helper, then params (4) + aux (4).
         let lb = crate::gfx::letterbox_uniform(width, height, par_correction, overscan);
         let uniform = [
             lb[0],
@@ -287,6 +305,10 @@ impl CrtFilter {
             lb[7],
             self.scanline,
             self.mask,
+            0.0,
+            0.0,
+            self.sharpness,
+            self.linearize,
             0.0,
             0.0,
         ];
