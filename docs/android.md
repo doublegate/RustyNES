@@ -83,7 +83,10 @@ and rendering decisions (UniFFI bridge plus the hybrid wgpu/Compose host).
   Android cross-play stays valid.
 - **No commercial ROMs are ever bundled.** ROM bytes come exclusively from the
   Storage Access Framework document picker (no path, raw bytes → `Nes::from_rom`).
-  The app declares no storage/network permissions and collects nothing.
+  The **`foss`** build declares no storage/network permissions and collects nothing;
+  the **`play`** build adds only the optional free Google Play services (Play Games,
+  Cast, Play Integrity, in-app update, cloud save), which use the network and
+  Google-account data — with no ads, no tracking, and no billing.
 
 ## Prerequisites
 
