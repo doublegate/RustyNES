@@ -21,8 +21,8 @@
 //! | ROM        | comparison                        | target ratio |
 //! |------------|-----------------------------------|--------------|
 //! | `db_apu`   | APU triangle / APU square         | ~ 0.524      |
-//! | `db_vrc6a` | VRC6 square / APU square           | ~ 1.506      |
-//! | `db_vrc6b` | VRC6 square / APU square (Madara)  | ~ 1.506      |
+//! | `db_vrc6a` | VRC6 square / APU square           | ~ 1.000      |
+//! | `db_vrc6b` | VRC6 square / APU square (Madara)  | ~ 1.000      |
 //! | `db_mmc5`  | MMC5 square / APU square           | ~ 1.000      |
 //! | `db_n163`  | N163 1-ch square / APU square      | ~ 6.02       |
 //!
@@ -161,16 +161,18 @@ fn level_db_apu() {
 
 #[test]
 fn level_db_vrc6a() {
-    // VRC6a (Akumajou Densetsu pinout): a full-volume VRC6 square is ~1.5× the
-    // 2A03 pulse (Mesen2 weights VRC6 `output*15` internally × `*5` mixer =
-    // `15*15*5/746.9 ≈ 1.506`). See `VRC6_MIX_SCALE` in `m024_vrc6.rs`.
-    assert_ratio("db_vrc6a.nes", 1.506, 0.04);
+    // VRC6a (Akumajou Densetsu pinout): a full-volume VRC6 square is ~1.0× the
+    // 2A03 pulse. Recalibrated in v2.2.7 "Timbre II" from the prior Mesen2-derived
+    // ~1.506× (Mesen2 weights VRC6 louder) to the NESdev / bbbradsmith-`db_vrc6` /
+    // wider-field consensus that a VRC6 pulse ≈ a 2A03 pulse (rustico / tetanes /
+    // BizHawk encode exactly 1.0×). See `VRC6_MIX_SCALE` (= 650) in `m024_vrc6.rs`.
+    assert_ratio("db_vrc6a.nes", 1.0, 0.04);
 }
 
 #[test]
 fn level_db_vrc6b() {
     // VRC6b (Madara pinout): identical audio path to VRC6a, same target.
-    assert_ratio("db_vrc6b.nes", 1.506, 0.04);
+    assert_ratio("db_vrc6b.nes", 1.0, 0.04);
 }
 
 #[test]

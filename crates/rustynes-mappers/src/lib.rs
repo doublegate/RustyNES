@@ -1569,7 +1569,7 @@ mod expansion_level_tripwire {
 
     #[test]
     fn expansion_audio_levels_are_pinned() {
-        assert_eq!(crate::m024_vrc6::VRC6_MIX_SCALE, 979, "VRC6: {RE_BLESS}");
+        assert_eq!(crate::m024_vrc6::VRC6_MIX_SCALE, 650, "VRC6: {RE_BLESS}");
         assert_eq!(
             crate::m005_mmc5::MMC5_PULSE_SCALE,
             650,

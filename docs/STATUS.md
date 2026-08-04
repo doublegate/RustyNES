@@ -1,6 +1,14 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.2.6** (2026-08-04) — **"Almanac"**, a **de-monetization and
+> **Current release: v2.2.7** (2026-08-04) — **"Timbre II"**, an **expansion-audio
+> fidelity** release (2nd of the v2.2.6 → v2.3.0 NESdev-remediation line): **VRC6
+> recalibrated to ~1.0× a 2A03 pulse** (the NESdev / field consensus — rustico/tetanes/
+> BizHawk encode 1.0× exactly; Mesen2's ~1.5× was the loud outlier a reviewer flagged;
+> `VRC6_MIX_SCALE` 979 → 650, `db_vrc6a/b` oracle 1.506 → 1.0), and the **Sunsoft 5B
+> envelope moved to the exact 5-bit 1.5 dB/step DAC** (`SUNSOFT5B_LOG_VOL32`, matching
+> nestopia/rustico, instead of the 4-bit 3 dB approximation). Expansion-only: the base
+> 2A03 output is byte-identical (**AccuracyCoin 141/141**, nestest 0-diff; base BLEP
+> verified at 81.6 dB SFDR). Built on **v2.2.6** — **"Almanac"**, a **de-monetization and
 > provenance** release opening the **v2.2.6 → v2.3.0** NESdev-remediation line, with
 > **zero emulation-core behavior changes** (so **AccuracyCoin holds 141/141 (100.00%)**,
 > nestest 0-diff, and the `#![no_std]` chip stack, save-state / TAS / netplay formats,

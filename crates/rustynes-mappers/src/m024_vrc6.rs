@@ -54,24 +54,34 @@ fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
 /// Linear scale applied to the summed VRC6 channel output (see
 /// [`Vrc6::mix_audio`]).
 ///
-/// Calibrated so a single full-volume (15) VRC6 pulse reaches ~1.5x the
-/// amplitude of a single full-volume 2A03 pulse — the level the bbbradsmith
-/// `db_vrc6` decibel-comparison ROM and the Mesen2 mixer characterize (Mesen2
-/// `NesSoundMixer::GetOutputVolume` weights VRC6 at `output * 5` against a
-/// 2A03 pulse DAC of `95.88*5000/(8128/15+100) ≈ 746.9`, giving `15*15*5 /
-/// 746.9 ≈ 1.506`). Concretely, one pulse toggling 0↔15 swings the mixer by
-/// `15 * 979 = 14685` raw units; divided by the bus's `/65536` external-audio
-/// normalization that is `0.2241`, versus the 2A03 pulse's `pulse_table[15] ≈
-/// 0.1488` — a ratio of `1.506`. The full three-channel peak stays in range:
-/// `(61 - 30) * 979 = 30349 < i16::MAX`, so a loud Akumajou-Densetsu / Madara
-/// passage never clips. Before v2.1.6 this was `256` (≈0.39x the 2A03 pulse —
-/// ~11.7 dB too quiet). See `docs/apu-2a03.md` §Expansion-audio levels.
+/// Calibrated (v2.2.7 "Timbre II") so a single full-volume (15) VRC6 pulse
+/// reaches ~**1.0x** the amplitude of a single full-volume 2A03 pulse — the
+/// level the NESdev wiki ("at maximum volume, the pulse channels of the VRC6
+/// are roughly *equivalent* to the pulse channels of the 2A03"), the bbbradsmith
+/// `db_vrc6` decibel-comparison ROM's matched-level intent, and the wider
+/// reference field all corroborate: rustico, tetanes, and BizHawk each encode a
+/// VRC6 pulse == a 2A03 pulse *exactly*, and ares/higan/nestopia reach the same
+/// target via a `sum/61` normalization. Concretely, one pulse toggling 0↔15
+/// swings the mixer by `15 * 650 = 9750` raw units; divided by the bus's
+/// `/65536` external-audio normalization that is `0.1488`, matching the 2A03
+/// pulse's `pulse_table[15] ≈ 0.1488` — a ratio of `1.00`. The full
+/// three-channel peak stays in range: `(61 - 30) * 650 = 20150 < i16::MAX`, so a
+/// loud Akumajou-Densetsu / Madara passage never clips.
+///
+/// **History:** before v2.2.7 this was `979` (~1.506x the 2A03 pulse), which
+/// mirrored Mesen2's specifically *louder* mixer convention (Mesen2 weights VRC6
+/// at `output * 5` in `NesSoundMixer::GetOutputVolume`). A NESdev-forum reviewer
+/// flagged the VRC6 balance as too loud; a cross-check against the whole
+/// `ref-proj/` field (see the cross-reference in the v2.2.7 notes) confirmed
+/// Mesen2 is the loud outlier and the field/hardware consensus is 1.0x. Before
+/// v2.1.6 it was `256` (≈0.39x — ~11.7 dB too quiet). See `docs/apu-2a03.md`
+/// §Expansion-audio levels.
 ///
 /// `pub(crate)` so the NSF-playback path (`crate::nsf_expansion::Vrc6Exp::mix`)
 /// references the SAME constant as the cartridge path — the two mixers can
 /// never drift apart, guaranteeing an NSF VRC6 tune stays level-matched to a
 /// VRC6 cartridge.
-pub(crate) const VRC6_MIX_SCALE: i16 = 979;
+pub(crate) const VRC6_MIX_SCALE: i16 = 650;
 
 /// VRC6 audio pulse channel state (`$9000-$9002` for pulse 1, `$A000-$A002`
 /// for pulse 2). Period is 12-bit, decrements every CPU cycle. On
@@ -548,11 +558,12 @@ impl Mapper for Vrc6 {
         // Three channels: pulse1 (4-bit, 0..=15), pulse2 (4-bit, 0..=15),
         // sawtooth (5-bit, 0..=31). Sum is in 0..=61.
         //
-        // Per nesdev "VRC6 audio": the three channels are summed digitally,
-        // so a linear sum is the canonical mix. The [`VRC6_MIX_SCALE`] = 979
-        // factor makes a single full-volume pulse ~1.5x the 2A03 pulse (the
-        // hardware/Mesen2/`db_vrc6` level); the full three-channel peak
-        // `(61 - 30) * 979 = 30349` stays below `i16::MAX`.
+        // Per nesdev "VRC6 audio": the three channels are summed digitally
+        // (a 6-bit DAC over two 4-bit pulses + the high 5 bits of the saw), so a
+        // linear sum is the canonical mix. The [`VRC6_MIX_SCALE`] = 650 factor
+        // makes a single full-volume pulse ~1.0x the 2A03 pulse (the NESdev /
+        // field / `db_vrc6` consensus level); the full three-channel peak
+        // `(61 - 30) * 650 = 20150` stays below `i16::MAX`.
         let p1 = i16::from(self.pulse1.output());
         let p2 = i16::from(self.pulse2.output());
         let saw = i16::from(self.saw.output());
@@ -831,8 +842,8 @@ mod tests {
         // Tick once so the oscillator advances past the timer == 0 reload.
         m.clock_audio();
         let s = m.mix_audio();
-        // Centering subtracts ~30 from a 0..=61 sum, scales by 979 (v2.1.6).
-        // With only p1 = 15 contributing, s = (15 - 30) * 979 = -14685.
+        // Centering subtracts ~30 from a 0..=61 sum, scales by 650 (v2.2.7).
+        // With only p1 = 15 contributing, s = (15 - 30) * 650 = -9750.
         assert!(s < 0, "mix_audio with only p1 must be below center");
     }
 
@@ -840,11 +851,11 @@ mod tests {
     #[test]
     fn vrc6_mix_audio_silent_when_disabled() {
         let m = Vrc6::new(synth(8), synth_chr(8), 24, Mirroring::Vertical).unwrap();
-        // All channels disabled -> outputs 0 -> sum 0 -> mix = (0 - 30) * 979.
+        // All channels disabled -> outputs 0 -> sum 0 -> mix = (0 - 30) * 650.
         // Confirm we land at the documented "center - offset" position.
         let mut m = m;
         let s = m.mix_audio();
-        assert_eq!(s, -29370);
+        assert_eq!(s, -19500);
     }
 
     #[test]
