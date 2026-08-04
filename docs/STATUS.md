@@ -1881,15 +1881,17 @@ own semantic-version line starting at **v1.0.0**.
 > `DualSystem` libretro presentation, and v2.2.0 closed the run (the netplay matchmaking / lobby
 > stack + the FDS medium model + a peripherals & quality/security pass — cargo-fuzz targets 3 → 8,
 > a `Movie::deserialize` OOM-DoS fix, a read-only Tools → ROM Info browser) — all
-> NTSC-byte-identical, AccuracyCoin 141/141 throughout. The **JOINT mobile store launch** (Google Play + Apple App
-> Store + AltStore PAL + F-Droid) is the
-> future **v2.3.0** (moved from the earlier v2.1.0 / v2.2.0 targets). RustyNES is
-> permanently open-source and income-free (ADR 0035): the mobile apps ship as free
-> FOSS apps with no ads, no tracking, and no paid unlock. The **`foss` / `play` flavor
-> split** (ADR 0025) is kept, but now distinguishes only the pure-AOSP build from
-> optional free Google Play services (achievements, Cast, Integrity, in-app update,
-> cloud save) — no billing, no ad SDK. See
-> `to-dos/plans/v2.0.x-mobile-finalization-plan.md`.
+> NTSC-byte-identical, AccuracyCoin 141/141 throughout. RustyNES is permanently
+> open-source and income-free (ADR 0035): all planned monetization is removed and the
+> mobile apps ship as **free FOSS apps** with no ads, no tracking, and no paid unlock.
+> The freed **v2.3.0** slot is repurposed as the accuracy capstone of the v2.2.6 →
+> v2.3.0 line (NOT a store launch — the earlier v2.1.0 / v2.2.0 / v2.3.0 store-launch
+> targets are retired). A **free** store listing (Google Play / Apple App Store /
+> AltStore PAL / F-Droid) is a possible **later**, unversioned step with no monetization
+> attached. The **`foss` / `play` flavor split** (ADR 0025) is kept, but now
+> distinguishes only the pure-AOSP build from optional free Google Play services
+> (achievements, Cast, Integrity, in-app update, cloud save) — no billing, no ad SDK.
+> See `to-dos/plans/v2.0.x-mobile-finalization-plan.md`.
 
 | Version | Status | Bar |
 |---------|--------|-----|

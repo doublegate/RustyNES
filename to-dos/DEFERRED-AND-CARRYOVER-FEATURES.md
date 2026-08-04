@@ -89,7 +89,9 @@
 > `play` flavor were dropped — RustyNES is permanently open-source and income-free
 > (ADR 0035), so both flavors ship free with no ads, no tracking, and no paid unlock.
 > The `rustynes-monetization` crate built in v1.8.9 has since been removed entirely.
-> Target: **v2.0.1–v2.0.4 (lands by the joint store launch)**.
+> Status: the flavor split lands with the mobile finalization train; there is **no
+> fixed store-launch timeline** — any free store listing is a later, unversioned step
+> (ADR 0035).
 
 ---
 

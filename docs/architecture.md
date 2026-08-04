@@ -38,7 +38,7 @@ Rejected: catch-up sacrifices sub-cycle PPU edge cases that the project exists t
 The `no_std`-friendly chip stack + the glue core form the deterministic
 emulation foundation; the remaining crates are additive host/platform/tooling
 layers that never perturb the core's per-frame output (the determinism contract
-below). The current workspace is 16 crates:
+below). The current workspace is 15 crates:
 
 ```text
 crates/
