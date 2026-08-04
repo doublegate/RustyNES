@@ -46,3 +46,29 @@ The fixed render order is: stack → CRT → Bisqwit → NTSC → direct blit
 The shared WGSL lives in `crates/rustynes-gfx-shaders`. See
 [`frontend.md`](frontend.md) for the full pipeline, the CRT / scanline passes,
 and the preset / import machinery.
+
+### Base scanline pass — gamma + sharpness (v2.2.8 "Aperture II")
+
+The base CRT/scanline pass (`CRT_WGSL`) reads a 16-float uniform
+(`rect + crop + params + aux`). Two `aux` slots were added in v2.2.8:
+
+- **`aux.y` — gamma round-trip.** The scanline + aperture-mask *darkening* must
+  happen in **linear light** to be perceptually correct. On the native path (an
+  sRGB texture + sRGB surface) the sampler decodes and the surface re-encodes, so
+  the math is already linear and `aux.y = 0` (the shipped native output is
+  byte-identical to pre-v2.2.8). On a plain UNORM path (**WebGL2**, which does
+  neither) the host sets `aux.y = 1` and the shader sRGB-decodes on read /
+  re-encodes before output — fixing a browser-only gamma error. The decode/encode
+  use the **exact IEC 61966-2-1 piecewise sRGB transfer** (`srgb_to_linear` /
+  `linear_to_srgb` in `CRT_WGSL`: a linear segment below `0.04045` / `0.0031308`,
+  a 2.4-exponent power segment above), i.e. the same curve a hardware sRGB surface
+  applies — not a `pow(2.2)` approximation — so the WebGL2 path matches the native
+  sRGB path where the two curves would otherwise diverge (the shadows).
+- **`aux.x` — scanline sharpness (0..1, default 0.5).** The profile blends from
+  the original soft parabola (0) to a narrow Gaussian beam (1) for crisp vertical
+  row boundaries instead of the linear-sampler blur. `aux.x = 0` reproduces the
+  pre-v2.2.8 profile exactly; it is only visible when scanlines are enabled.
+
+The advanced CRT stacks (CRT-Royale / Guest / Megatron) were already gamma-correct
+via their own `gamma_in`/`gamma_out` knobs and are unchanged. Both the desktop
+(`crt.rs`) and Android (`gfx.rs`) hosts feed the same `aux`.

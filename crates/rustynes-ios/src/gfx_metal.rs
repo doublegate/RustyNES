@@ -489,11 +489,27 @@ impl MetalGfx {
 
     fn write_uniforms(&self) {
         let (sx, sy) = self.letterbox_scale();
-        // For CRT/scanline/LMP-NTSC the `params` come straight from the per-filter
-        // sliders (aux unused). For Bisqwit (filter 4) `params.x` is the per-frame
-        // videoPhase and the picture knobs ride in `aux`.
+        // The v2.2.8 CRT/scanline uniform carries two extra knobs in `aux`:
+        // `aux.x` = scanline sharpness (0.5 blends the soft parabola toward a
+        // narrower Gaussian beam) and `aux.y` = a gamma-linearize flag — 1 on a
+        // non-sRGB surface where the sampler won't sRGB-decode for us, else 0. The
+        // native Metal surface is sRGB, so `crt_linearize` is 0 here and the CRT /
+        // scanline output stays byte-identical to pre-v2.2.8. This mirrors the
+        // desktop (`crt.rs`) and Android (`gfx.rs`) hosts so all three platforms
+        // get the same gamma-correct, sharper scanlines.
+        let crt_linearize = if self.config.format.is_srgb() {
+            0.0
+        } else {
+            1.0
+        };
+        // For CRT (2) / scanline (1) the `params` come from the per-filter sliders
+        // and `aux` carries the sharpness + gamma flag. For Bisqwit (filter 4)
+        // `params.x` is the per-frame videoPhase and the picture knobs ride in
+        // `aux`. None (0) and LMP-NTSC (3) leave `aux = 0`.
         let (params, aux) = if self.filter == 4 {
             ([f32::from(self.ntsc_phase), 0.0, 0.0, 0.0], self.params)
+        } else if self.filter == 1 || self.filter == 2 {
+            (self.params, [0.5, crt_linearize, 0.0, 0.0])
         } else {
             (self.params, [0.0, 0.0, 0.0, 0.0])
         };

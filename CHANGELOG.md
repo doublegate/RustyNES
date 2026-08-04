@@ -14,6 +14,46 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.2.8] - 2026-08-04 - "Aperture II" (gamma-aware scanlines + sharper CRT)
+
+A **presentation-fidelity** release addressing the NESdev-forum feedback on
+gamma-aware resampling and bilinear-soft scanlines. **Presentation-only — nothing
+here touches the emulation core**, so the pre-shader framebuffer, save-states, and
+every golden vector are byte-identical (AccuracyCoin 141/141, nestest 0-diff), and
+the **shipped native default is byte-identical** to v2.2.7 (the native sRGB
+surface passes `aux = 0`, which selects the exact pre-v2.2.8 scanline profile;
+the new linear-light + sharper-scanline path activates only for a non-zero
+`aux`, set on the WebGL2 non-sRGB path and when the scanline knob is raised).
+The base BLEP audio and the advanced CRT stacks
+(royale/guest/megatron, already gamma-correct) are untouched.
+
+> **Visual verification pending.** These are shader/appearance changes; naga
+> validates that the WGSL compiles and the native/wasm builds are clean, but the
+> on-screen result must be confirmed on a real display + a browser (WebGL2).
+
+### Changed
+
+- **Gamma-correct scanlines + aperture mask (base CRT pass, `CRT_WGSL`).** The
+  scanline/mask *darkening* now happens in **linear light**. On the native path
+  (sRGB texture + surface) the sampler/surface already convert, so the shader
+  leaves it linear (`aux.y = 0`, output byte-identical). On a plain UNORM path
+  (**WebGL2**, which does neither) the shader now sRGB-decodes on read and
+  re-encodes before output (`aux.y = 1`) — fixing a real browser-only gamma bug so
+  a scanline valley is 50% of the *linear* luminance, not the encoded value. The
+  round-trip uses the **exact IEC 61966-2-1 piecewise sRGB transfer** (the
+  `0.04045` / `0.0031308` breakpoints + a 2.4 exponent), not a `pow(2.2)`
+  approximation, so the WebGL2 result matches the hardware sRGB surface the native
+  path uses bit-for-bit.
+- **Sharper scanlines (`aux.x`, default 0.5).** The scanline profile blends from
+  the original soft parabola (0) to a narrow Gaussian beam (1) for crisp vertical
+  boundaries instead of the linear-sampler blur — the sharper scanlines the
+  feedback asked for. Only visible when scanlines are enabled; `aux.x = 0`
+  reproduces the pre-v2.2.8 profile exactly. Wired on the desktop
+  (`rustynes-frontend`), Android (`rustynes-android`), and iOS Metal
+  (`rustynes-ios`) hosts via the shared 16-float CRT uniform
+  (`rect + crop + params + aux`) — all three set `aux` identically for the
+  scanline/CRT filters, so the corrected profile is consistent across platforms.
+
 ## [2.2.7] - 2026-08-04 - "Timbre II" (expansion-audio fidelity: VRC6 + Sunsoft 5B)
 
 An **expansion-audio accuracy** release addressing NESdev-forum feedback. Driven by a
