@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the Kaiser boards are derived from Mesen2 (GPL-3.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Kaiser boards: `KS202` (mapper 56), `KS7017` (142), `KS7031` (303),
 //! `KS7016` (305), `KS7013B` (306) and relatives.
 //!

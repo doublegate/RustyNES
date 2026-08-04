@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the Bandai FCG serial-EEPROM handling (`Eeprom24C01` / `Eeprom24C02`) is derived from Mesen2 (GPL-3.0-or-later), `Core/NES/Mappers/Bandai/`. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Bandai FCG (iNES mappers 16 and 159) implementation.
 //!
 //! Covers the Bandai FCG-1/FCG-2 and LZ93D50 ASICs. Banking: a 16 KiB

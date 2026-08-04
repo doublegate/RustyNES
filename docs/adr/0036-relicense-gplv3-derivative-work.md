@@ -59,12 +59,13 @@ license the project was entitled to offer.
    attributes each GPL upstream and the code derived from it; the README license and
    provenance text are corrected. The false "no GPL code incorporated" / "not a port"
    claims are withdrawn.
-3. **Do not restore the scattered "port of" comments.** They were imprecise
-   (individual file/line references that drift) and are superseded by the complete,
-   audited derivation table in the provenance doc. Attribution lives in
-   `docs/originality-and-provenance.md` + `NOTICE`, which is the more reliable record.
-   (This is a deliberate choice by the maintainer; the requirement it satisfies is
-   accurate, discoverable attribution, which the centralized record provides.)
+3. **Mark the source, accurately.** Each derived source file carries an
+   `SPDX-License-Identifier: GPL-3.0-or-later` header and a specific provenance note
+   naming its upstream file/function (e.g. Mesen2 `NesPpu.cpp`, puNES `JV001.c`) and
+   pointing to the §1 table. The old scattered, imprecise per-line "port of" comments
+   are not restored verbatim — the SPDX + provenance headers plus the centralized
+   audited table in `docs/originality-and-provenance.md` + `NOTICE` are their
+   accurate, discoverable replacement.
 4. **Keep the genuinely-original claims, correctly scoped.** The crate topology,
    determinism contract, CI accuracy-honesty gates, and measure-first performance
    record remain the project's own work — but they describe architecture *around*

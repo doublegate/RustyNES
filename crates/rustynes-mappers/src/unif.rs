@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the UNIF board-name tables are derived from Mesen2 (`UnifLoader.cpp`, GPL-3.0-or-later) and FCEUX (`unif.cpp`, GPL-2.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! UNIF (`.unf` / `.unif`) cartridge-container parser (v1.6.0 Workstream E2).
 //!
 //! UNIF is a chunked container that, unlike iNES, carries **no mapper number** —

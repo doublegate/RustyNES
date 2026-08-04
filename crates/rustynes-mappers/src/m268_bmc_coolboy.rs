@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the CoolBoy MMC3-variant banking is derived from Mesen2 (GPL-3.0-or-later), `Mmc3Variants/MMC3_Coolboy.h`, and the FCEUX banking transforms (GPL-2.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! `COOLBOY` / `MINDKIDS` (mapper 268).
 //!
 //! Another MMC3-core-plus-outer-registers pirate ASIC, closely related to the

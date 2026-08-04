@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: this is the Bisqwit NES composite-NTSC model; its numeric coefficient tables were ported verbatim via Mesen2's `BisqwitNtscFilter` (Mesen2: GPL-3.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 #![allow(
     clippy::too_many_arguments,
     clippy::doc_markdown,

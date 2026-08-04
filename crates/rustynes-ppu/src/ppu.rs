@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: this PPU contains code derived from Mesen2 (GPL-3.0-or-later): the sprite-evaluation FSM and OAM-data-bus model, `Core/NES/NesPpu.cpp` (`ProcessSpriteEvaluation` / `ReadSpriteRam`); it also incorporates models ported from TriCNES (MIT) — the ALE / octal-latch address-multiplex and the OAM-corruption behavior. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! 2C02 PPU core: state, register surface, scanline counter, NMI signaling.
 //!
 //! See `docs/ppu-2c02.md`. Background and sprite *rendering* (per-dot tile

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the JY Company ASIC register decode is derived from Mesen2 (GPL-3.0-or-later), `JyCompany`, alongside the NESdev "J.Y. Company ASIC" documentation. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! J.Y. Company ASIC (iNES mappers 90 / 209 / 211) implementation.
 //!
 //! 晶太 (J.Y. Company)'s proprietary ASIC backs their later single-game

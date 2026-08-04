@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the per-CRC FDS drive-timing table is derived from puNES (GPL-2.0-or-later), `src/core/fds.c`. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Famicom Disk System (FDS) — Stage 1 foundation (v2.2.0).
 //!
 //! This module implements the `.fds` container parser and the FDS RAM-adapter

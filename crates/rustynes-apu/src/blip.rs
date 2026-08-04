@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the band-limited (BLEP) synthesis is derived from blip_buf by Shay Green (Blargg), LGPL-2.1-or-later (GPLv3-compatible). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Band-limited synthesis for the APU's audio output.
 //!
 //! # What this is

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the NTDEC boards are derived from Mesen2 (GPL-3.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! NTDEC boards decoded from the address bus: mappers 63 and 174.
 //!
 //! NTDEC's multicart designs consistently push the bank selection into the

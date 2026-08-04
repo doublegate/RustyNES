@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: this crate root contains code derived from puNES (GPL-2.0-or-later) — the JV001 security chip / mapper 147, ported from `JV001.c` / `mapper_147.c` — and from FCEUX / Mesen2 for UNIF board dispatch. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Cartridge file format (iNES + NES 2.0) parsing and mapper implementations.
 //!
 //! See `docs/mappers.md` and `docs/cartridge-format.md` for the implementation

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the 6502/2A03 core is RustyNES's own, but the unstable-store opcode group (SHA/SHX/SHY/SHS/TAS — the `SyaSxaAxa` family) is derived from Mesen2 (GPL-3.0-or-later), `Core/NES/NesCpu.h`. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Ricoh 2A03 CPU (6502 derivative without BCD mode).
 //!
 //! See `docs/cpu-6502.md` for the spec. The implementation here matches:

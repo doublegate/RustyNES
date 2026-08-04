@@ -241,11 +241,15 @@ like sweeping this under the rug:
   cross-checks" and asserted "No GPL-licensed emulator source is incorporated."
   **That assertion was false**, and the rewording obscured the provenance rather
   than clarifying it.
-- v2.2.9 corrects this the right way: it does **not** restore the scattered "port
-  of" comments (they were imprecise and are superseded by the complete, audited
-  derivation table in §1), but it (a) relicenses the project to GPL-3.0-or-later,
-  (b) states plainly that other emulators' code was incorporated during
-  implementation, and (c) credits every derived-from source here and in `NOTICE`.
+- v2.2.9 corrects this the right way: it (a) relicenses the project to
+  GPL-3.0-or-later, (b) states plainly that other emulators' code was incorporated
+  during implementation, (c) credits every derived-from source here and in
+  `NOTICE`, and (d) marks each derived source file with an accurate
+  `SPDX-License-Identifier: GPL-3.0-or-later` header and a specific provenance note
+  (naming its upstream file/function) that points back to the §1 table. The old
+  scattered, imprecise per-line "port of" comments are not restored verbatim — the
+  SPDX + provenance headers plus this audited table are their accurate,
+  discoverable replacement.
 
 Responsibility for what the AI tooling put into this codebase, and for the earlier
 mislabeling, rests with the project. This document is the correction of record.

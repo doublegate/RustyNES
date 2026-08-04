@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the discrete Sachen / Txc boards are derived from Mesen2 (GPL-3.0-or-later), `Sachen/Sachen8259.h` / `Txc/TxcChip.h`. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Sachen discrete boards addressed in the `$4100-$5FFF` expansion window:
 //! mappers 133, 145 and 146.
 //!

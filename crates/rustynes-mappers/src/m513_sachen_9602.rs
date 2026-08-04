@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the Sachen 9602 board is derived from Mesen2 (GPL-3.0-or-later), `Sachen/Sachen9602.h`. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Sachen `9602` (mapper 513).
 //!
 //! An MMC3-derived Sachen ASIC with an outer PRG bank register, later and

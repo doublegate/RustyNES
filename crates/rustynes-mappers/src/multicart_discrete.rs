@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: discrete multicart boards (e.g. NTDEC Mapper 221, Txc Bmc11160) are derived from Mesen2 (GPL-3.0-or-later), `Ntdec/Mapper221.h` / `Txc/Bmc11160.h`. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Discrete-logic multicart boards addressed by their iNES mapper number:
 //! K-1029 / Contra Function 16 (mapper 15), and the 20-in-1 / Super 700-in-1
 //! style boards on mappers 61 and 62.

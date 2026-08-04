@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the Mesen debug-symbol (.mlb / .dbg) importer is derived from Mesen2 (GPL-3.0-or-later), `DbgImporter` / `NesDbgImporter`. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! v1.7.0 "Forge" Workstream C (C3) — ca65 / cc65 `.dbg` source-line mapping.
 //!
 //! The existing [`crate::symbols::SymbolMap`] (v1.4.0) carries symbol *names*

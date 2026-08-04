@@ -50,11 +50,14 @@ vector are byte-identical (AccuracyCoin 141/141, nestest 0-diff).
 - **Credit is given, per subsystem.** `docs/originality-and-provenance.md` is
   rewritten to lead with the file-by-file derivation table and the derivative-work
   declaration; `NOTICE` attributes every GPL upstream and the code derived from it.
-  The scattered "port of" comments are **not** restored (they were imprecise and are
-  superseded by the complete audited record), but the derivation is now stated
-  plainly and completely. Incorporated permissive components (emu2413/MIT,
-  TriCNES/MIT, rcheevos/MIT, blip_buf/LGPL-2.1-or-later, fonts) are GPL-compatible
-  and keep their notices. Zero emulation-core behavior change.
+  Each derived source file now carries an accurate `SPDX-License-Identifier:
+  GPL-3.0-or-later` header plus a specific provenance note naming its upstream
+  (e.g. Mesen2 `NesPpu.cpp`, puNES `JV001.c`) and pointing to the audited record.
+  The old scattered, imprecise per-line "port of" comments are not restored — the
+  SPDX + provenance headers are their accurate replacement. Incorporated permissive
+  components (emu2413/MIT, TriCNES/MIT, rcheevos/MIT, blip_buf/LGPL-2.1-or-later,
+  fonts) are GPL-compatible and keep their notices. Zero emulation-core behavior
+  change.
 
 ### Fixed
 

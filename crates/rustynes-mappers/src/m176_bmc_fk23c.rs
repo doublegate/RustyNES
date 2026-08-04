@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the BMC-FK23C banking is derived from Mesen2 (GPL-3.0-or-later), `Waixing/Fk23C.h`. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! `FK23C` / `BMC-FK23C` (mapper 176) -- the most widely reused pirate ASIC.
 //!
 //! An MMC3 core wrapped in four outer registers at `$5000-$5FFF` that can
