@@ -204,11 +204,12 @@ a `schedule:` cron (the 1st of every other month, ~60-day cadence) re-builds +
 re-uploads so external testers don't lapse — TestFlight builds expire 90 days
 after upload.
 
-A **dormant freemium gate** (`ios/RustyNES/Entitlements.swift`, v1.9.1) is wired
-app-wide but fully unlocked through the v1.9.x train; it is the present-but-inert
-seam the v2.1.0 launch points at the shared `rustynes-monetization` crate (the full
-StoreKit 2 / RevenueCat scaffolding lands at v1.9.8 "Horizon"). Entitlement state
-never reaches the deterministic core.
+A dormant freemium gate (`ios/RustyNES/Entitlements.swift`, added v1.9.1) was wired
+app-wide but fully unlocked through the v1.9.x train. RustyNES is permanently
+open-source and income-free (ADR 0035): that gate, the StoreKit 2 / RevenueCat
+scaffolding it anticipated, and the `appStore` monetization build channel have
+since been removed entirely — the app ships fully unlocked with no entitlement
+state at all.
 
 ## App Store posture (§4.7) — feasible and precedented
 

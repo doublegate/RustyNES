@@ -229,9 +229,9 @@ CI deploys the `wasm-winit` build to GitHub Pages
 ## Android Build
 
 The Android app cross-compiles the `rustynes-mobile` UniFFI bridge +
-`rustynes-android` JNI glue + `rustynes-monetization` ad-policy crate via
-`cargo ndk`, then builds the Jetpack Compose shell with Gradle (AGP 9.2.1 /
-Gradle 9.4.1 / compileSdk 37 / targetSdk 36 / minSdk 26). See
+`rustynes-android` JNI glue via `cargo ndk`, then builds the Jetpack Compose
+shell with Gradle (AGP 9.2.1 / Gradle 9.4.1 / compileSdk 37 / targetSdk 36 /
+minSdk 26). See
 [`../android.md`](../android.md) for the full setup.
 
 ---

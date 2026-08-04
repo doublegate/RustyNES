@@ -65,8 +65,7 @@ crates/
 ├── rustynes-gfx-shaders/    # Shared WGSL presentation shaders (desktop + Android, no copy-paste drift) (v1.8.4).
 ├── rustynes-hdpack/         # HD-pack loader + compositor + HD audio, extracted for the mobile bridge (v1.8.5).
 ├── rustynes-mobile/         # Shared UniFFI mobile bridge (consumed by rustynes-android / a future iOS crate) (v1.8.0).
-├── rustynes-android/        # Android JNI platform glue (cfg-gated) (v1.8.0).
-└── rustynes-monetization/   # Mobile-only ad/unlock policy (never touches the deterministic core).
+└── rustynes-android/        # Android JNI platform glue (cfg-gated) (v1.8.0).
 ```
 
 `rustynes-core` re-exports the public types from `rustynes-cpu`, `rustynes-ppu`, `rustynes-apu`, `rustynes-mappers` so that consumers (frontend, test harness, embedders) need only depend on `rustynes-core`.

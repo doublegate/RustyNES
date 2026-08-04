@@ -17,7 +17,6 @@ import java.security.MessageDigest
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -126,15 +125,6 @@ class MainActivity : AppCompatActivity() {
      *  (needs the application Context) and registered/unregistered in onResume/onPause. */
     private lateinit var gamepad: GamepadManager
 
-    /** Freemium entitlement (Workstream M); created in onCreate. */
-    private lateinit var license: LicenseManager
-
-    /** v2.0.3 "Harbor" (ADR 0025): the ad-supported / freemium monetization façade. Real in
-     *  the `play` flavor (AppLovin MAX + RevenueCat over the shared Rust AdPolicy core), a
-     *  no-op twin in `foss` (every feature free, no ads, no gate) — so this construction and
-     *  every call below is behaviourally inert in the byte-identical FOSS build. */
-    private lateinit var monetization: MonetizationGate
-
     /** Play Games Services v2 (Workstreams D+E): sign-in + achievements + leaderboards.
      *  Created in onCreate; all calls no-op behind the default-off PGS_ENABLED flag.
      *  DISTINCT from RetroAchievements (rustynes-ra, v1.8.6). */
@@ -145,7 +135,7 @@ class MainActivity : AppCompatActivity() {
     lateinit var cloudSave: CloudSaveManager
         private set
 
-    /** Play Integrity anti-tamper client over Billing (Workstream L); no-op behind the
+    /** Play Integrity anti-tamper client (Workstream L); no-op behind the
      *  default-off PLAY_INTEGRITY_ENABLED flag + a real cloud project number. */
     private lateinit var integrity: IntegrityManager
 
@@ -207,25 +197,11 @@ class MainActivity : AppCompatActivity() {
         // backup/restore or a prefs edit stays authoritative. System (empty tag) clears
         // any override and follows the device / per-app system language.
         applyPersistedLocale()
-        license = LicenseManager(applicationContext)
-        // v1.8.8 "Atlas" (Workstream J): the Play Billing `startConnection()` is
-        // DEFERRED off the cold-start path to the first foreground (onResume) — it
-        // does network/IPC and is not needed to draw the first frame (BillingClient is
-        // designed to init lazily). The local entitlement cache is read synchronously
-        // in the LicenseManager ctor, so the demo gate is already correct before connect.
         gamepad = GamepadManager(applicationContext, emulator)
-        // v2.0.3 "Harbor" (ADR 0025): construct the monetization façade and open an app
-        // session (drives the core's first-session budget / interstitial suppression). The
-        // SDK init (AppLovin / RevenueCat) runs once, guarded, inside the first
-        // onActivityCreated call below — so it is on the launch path here; posting it off the
-        // first-frame critical path is a tracked v2.0.9 refinement. All inert in FOSS.
-        monetization = MonetizationGate(applicationContext)
-        monetization.beginSession()
-        monetization.onActivityCreated(this)
         registerThermalBackoff()
         // v1.8.8 "Atlas" (Workstreams D+E+L): Play services managers. All are cheap
-        // no-op shells when their gates (PGS_ENABLED / PLAY_INTEGRITY_ENABLED /
-        // PLAY_BUILD) are off — the default build constructs them but they do nothing.
+        // no-op shells when their gates (PGS_ENABLED / PLAY_INTEGRITY_ENABLED) are
+        // off — the default build constructs them but they do nothing.
         playGames = PlayGamesManager(applicationContext)
         cloudSave = CloudSaveManager(applicationContext, playGames)
         integrity = IntegrityManager(applicationContext)
@@ -268,14 +244,8 @@ class MainActivity : AppCompatActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    // v2.0.3 "Harbor" (ADR 0025): layer the monetization run-out paywall +
-                    // countdown over the emulator. `RunOutOverlay` draws NOTHING in the FOSS
-                    // twin (no paywall, no ads), so this Box is visually/behaviourally inert
-                    // in the byte-identical FOSS build; in `play` it surfaces the countdown
-                    // and, at run-out, the rewarded-ad / Full-Version / offline-grace modal.
                     Box(modifier = Modifier.fillMaxSize()) {
-                        EmulatorScreen(emulator, gamepad, license, settings)
-                        monetization.RunOutOverlay(onResume = { emulator.paused = false })
+                        EmulatorScreen(emulator, gamepad, settings)
                     }
                 }
             }
@@ -284,27 +254,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Guards the one-time deferred Billing connect (v1.8.8 WS J cold-start deferral). */
-    private var billingConnected = false
-
     override fun onResume() {
         super.onResume()
-        // v1.8.8 "Atlas" (Workstream J): connect to Play Billing on the FIRST foreground
-        // (kept off onCreate / the cold-start path). Subsequent resumes just re-verify.
-        if (BuildConfig.PLAY_BUILD && ::license.isInitialized) {
-            if (!billingConnected) {
-                license.connect()
-                billingConnected = true
-            }
-            // Re-verify entitlement against Play on each foreground (a purchase made
-            // elsewhere, a refund, or a restore reflects here).
-            license.refreshEntitlement()
-        }
         // Start listening for controller hot-plug + enumerate connected pads.
         if (::gamepad.isInitialized) gamepad.register()
-        // v2.0.3 "Harbor" (ADR 0025): re-verify the monetization entitlement on foreground
-        // (a purchase/refund made elsewhere reflects here). No-op in the FOSS twin.
-        if (::monetization.isInitialized) monetization.onResume(this)
         // v1.8.8 "Atlas" (Workstream L): Play-services foreground work, all off the
         // cold-start path (first/each resume). Each no-ops on sideload / behind its flag.
         if (::playUpdates.isInitialized && !updateChecked) {
@@ -314,7 +267,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (::playUpdates.isInitialized) playUpdates.resumeStalledUpdate()
         // Warm the Play Integrity Standard token provider (no-op without the flag + a
-        // real cloud project number). Defense-in-depth over Billing; never blocks.
+        // real cloud project number). Advisory-only health signal; never blocks.
         if (::integrity.isInitialized) integrity.prepareToken()
         // Confirm PGS sign-in state (PGS v2 auto-signs-in; refresh the flag silently).
         // The PGS v2 client factories need an Activity — bind this one (held weakly).
@@ -357,9 +310,6 @@ class MainActivity : AppCompatActivity() {
         // v1.8.8 "Atlas" (Workstreams D+E): clear the weakly-held Activity so PGS can't
         // touch a destroyed Activity.
         if (::playGames.isInitialized) playGames.attachActivity(null)
-        // v2.0.3 "Harbor" (ADR 0025): drop the monetization gate's Activity reference. No-op
-        // in the FOSS twin.
-        if (::monetization.isInitialized) monetization.onDestroy()
     }
 
     /** v1.8.8 "Atlas" (Workstream L): finish a downloaded flexible update (restarts the
@@ -473,18 +423,14 @@ class MainActivity : AppCompatActivity() {
     private fun onPauseSaveState() {
         val ctrl = emulator.controller
         val sha = emulator.romSha
-        // RetroAchievements progress sidecar (v1.8.6) is persisted unconditionally —
-        // it is unlock progress, not a save-state, so the freemium gate below does
-        // not apply. A no-op when no RA session / game is loaded (empty blob).
+        // RetroAchievements progress sidecar (v1.8.6). A no-op when no RA session /
+        // game is loaded (empty blob).
         if (ctrl != null && sha != null) {
             runCatching {
                 val blob = ctrl.raSerializeProgress()
                 if (blob.isNotEmpty()) RaProgressStore.save(this, sha, blob)
             }
         }
-        // Save-on-background is a paid feature in the Play build; sideload builds
-        // (PLAY_BUILD=false) always persist. The demo never persists state.
-        if (BuildConfig.PLAY_BUILD && (!::license.isInitialized || !license.isUnlocked)) return
         if (ctrl != null && sha != null) {
             runCatching { SaveStateStore.save(this, sha, SaveStateStore.AUTO_SLOT, ctrl.saveState()) }
             // v1.8.8 "Atlas" (Workstream D): mirror the auto-resume slot to the cloud as
@@ -699,7 +645,6 @@ private fun loadRom(
     bytes: ByteArray,
     uri: Uri?,
     name: String?,
-    unlocked: Boolean,
     settings: AppSettings,
 ): String {
     val ctrl = NesController(bytes, 48_000u)
@@ -711,12 +656,9 @@ private fun loadRom(
     GameConfig.filter(context, sha)?.let { f ->
         settings.filter = VideoFilter.entries.getOrElse(f) { VideoFilter.None }
     }
-    // Auto-resume the on-background save-state is a paid feature; the demo always
-    // cold-boots the ROM.
-    if (unlocked) {
-        SaveStateStore.load(context, sha, SaveStateStore.AUTO_SLOT)?.let { blob ->
-            runCatching { ctrl.loadState(blob) }
-        }
+    // Auto-resume the on-background save-state for this ROM if one is present.
+    SaveStateStore.load(context, sha, SaveStateStore.AUTO_SLOT)?.let { blob ->
+        runCatching { ctrl.loadState(blob) }
     }
     if (uri != null) {
         runCatching {
@@ -868,15 +810,12 @@ private class AudioPlayer(sampleRate: Int) {
 private fun EmulatorScreen(
     emulator: EmulatorHandle,
     gamepad: GamepadManager,
-    license: LicenseManager,
     settings: AppSettings,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val activity = context as? Activity
     // v1.8.8 "Atlas" (Workstream F/H): the typed host for PiP + deep-link + capture.
     val host = context as? MainActivity
-    // Freemium is active only in the Play build; sideload/dev builds are unlimited.
-    val unlocked = !BuildConfig.PLAY_BUILD || license.isUnlocked
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
     // v1.8.8 "Atlas" (Workstream H): true while we are in the PiP window — drives the
     // controls/HUD hide so only the gameplay picture shows in the floating window.
@@ -951,9 +890,6 @@ private fun EmulatorScreen(
     var boxArtPreview by remember { mutableStateOf<BoxArtPreview?>(null) }
     // Folder batch-import progress (null = idle): (done, total).
     var importProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-    // Demo session clock: seconds remaining this launch (full unlock = no limit).
-    var demoSecondsLeft by remember { mutableStateOf(DEMO_SESSION_SECONDS) }
-    var demoExpired by remember { mutableStateOf(false) }
     // Settings are created at the theme root and passed in (v1.8.3).
     // Drive the audio-mute flag from the persisted setting.
     LaunchedEffect(settings.muted) { emulator.muted = settings.muted }
@@ -1146,7 +1082,7 @@ private fun EmulatorScreen(
                 val name = displayName(context, uri)
                 val bytes = (context.contentResolver.openInputStream(uri)
                     ?: throw java.io.IOException("can't open ROM stream")).use { it.readBytes() }
-                status = loadRom(context, emulator, bytes, uri, name, unlocked, settings)
+                status = loadRom(context, emulator, bytes, uri, name, settings)
                 recents = RomLibrary.recents(context)
             }.onFailure { status = "Failed to load ROM: ${it.message}" }
         }
@@ -1478,7 +1414,7 @@ private fun EmulatorScreen(
             val uri = Uri.parse(rom.uri)
             val bytes = (context.contentResolver.openInputStream(uri)
                 ?: throw java.io.IOException("can't open recent ROM stream")).use { it.readBytes() }
-            status = loadRom(context, emulator, bytes, uri, rom.name, unlocked, settings)
+            status = loadRom(context, emulator, bytes, uri, rom.name, settings)
             recents = RomLibrary.recents(context)
             libraryVersion++
         }.onFailure { status = "Can't open ${rom.name}: ${it.message}" }
@@ -1496,7 +1432,7 @@ private fun EmulatorScreen(
             val uri = Uri.parse(entry.uri)
             val bytes = (context.contentResolver.openInputStream(uri)
                 ?: throw java.io.IOException("can't open ROM stream")).use { it.readBytes() }
-            status = loadRom(context, emulator, bytes, uri, entry.name, unlocked, settings)
+            status = loadRom(context, emulator, bytes, uri, entry.name, settings)
             recents = RomLibrary.recents(context)
             libraryVersion++
         }.onFailure { status = "Can't open ${entry.name}: ${it.message}" }
@@ -1604,8 +1540,7 @@ private fun EmulatorScreen(
             // just-pulled state into the LIVE controller — otherwise the user silently
             // keeps playing the stale (pre-pull) state. So on a successful pull, re-read
             // the (now-updated) local auto-slot and apply it, but only if the SAME ROM is
-            // still loaded and auto-resume is allowed (unlocked; the demo cold-boots and
-            // never auto-loads, so it must not be force-loaded here either).
+            // still loaded.
             host.cloudSave.pullSlot(
                 sha,
                 SaveStateStore.AUTO_SLOT,
@@ -1614,7 +1549,7 @@ private fun EmulatorScreen(
                 onDone = { pulled ->
                     if (pulled) {
                         host.playGames.unlock(PgsIds.ACH_FIRST_CLOUD_SYNC)
-                        if (unlocked && emulator.romSha == sha) {
+                        if (emulator.romSha == sha) {
                             scope.launch {
                                 val blob = withContext(Dispatchers.IO) {
                                     SaveStateStore.load(context, sha, SaveStateStore.AUTO_SLOT)
@@ -1646,26 +1581,6 @@ private fun EmulatorScreen(
             DeepLink.ACTION_LIBRARY -> { /* idle screen already shows the library */ }
         }
         host.deepLinkState.value = null
-    }
-
-    // Demo countdown: tick once per second while a ROM is running, unpaused, and
-    // not yet unlocked; on expiry, pause the emulator and raise the unlock sheet.
-    // Purchasing (unlocked -> true) cancels the limit immediately.
-    LaunchedEffect(unlocked) {
-        if (unlocked) {
-            demoExpired = false
-            return@LaunchedEffect
-        }
-        while (true) {
-            kotlinx.coroutines.delay(1000)
-            if (emulator.controller != null && !emulator.paused && !demoExpired) {
-                demoSecondsLeft -= 1
-                if (demoSecondsLeft <= 0) {
-                    demoExpired = true
-                    emulator.paused = true
-                }
-            }
-        }
     }
 
     // RetroAchievements auto-login (v1.8.6): on first composition, if RA is enabled
@@ -1706,7 +1621,7 @@ private fun EmulatorScreen(
             val auto = java.io.File(context.getExternalFilesDir(null), "autoload.nes")
             if (auto.exists()) {
                 runCatching {
-                    status = loadRom(context, emulator, auto.readBytes(), null, "autoload", unlocked, settings)
+                    status = loadRom(context, emulator, auto.readBytes(), null, "autoload", settings)
                 }.onFailure { status = "Autoload failed: ${it.message}" }
             }
         }
@@ -2034,10 +1949,7 @@ private fun EmulatorScreen(
                     modifier = Modifier.focusRequester(menuFocusRequester),
                 ) { Text(stringResource(R.string.action_open)) }
             }
-            // Save-states are a paid feature; the demo hides the manager.
-            if (unlocked) {
-                OutlinedButton(onClick = { showStates = true }) { Text(stringResource(R.string.action_states)) }
-            }
+            OutlinedButton(onClick = { showStates = true }) { Text(stringResource(R.string.action_states)) }
             OutlinedButton(onClick = { emulator.controller?.reset() }) { Text(stringResource(R.string.action_reset)) }
             OutlinedButton(onClick = {
                 paused = !paused
@@ -2106,29 +2018,6 @@ private fun EmulatorScreen(
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx -> chromecast.mediaRouteButton(ctx) },
                 )
-            }
-            // Demo: an always-visible unlock affordance + the session countdown.
-            if (!unlocked) {
-                // v2.0.1 (ADR 0025): read the flavor-neutral `priceLabel` façade rather
-                // than the Google `ProductDetails` directly, so this src/main file links
-                // no `com.android.billingclient.*` and compiles in the FOSS flavor.
-                val price = license.priceLabel
-                Button(onClick = { activity?.let { license.purchase(it) } }) {
-                    Text(stringResource(R.string.action_unlock, price))
-                }
-                val mins = demoSecondsLeft / 60
-                val secs = demoSecondsLeft % 60
-                Text(
-                    stringResource(R.string.demo_remaining, mins, secs),
-                    color = Color.Gray,
-                )
-            }
-            // Debug-only (and only meaningful when the freemium is active, i.e. a
-            // PLAY_BUILD debug build): simulate the Full Unlock without Play.
-            if (BuildConfig.DEBUG && BuildConfig.PLAY_BUILD) {
-                OutlinedButton(onClick = { license.debugForceUnlocked(!unlocked) }) {
-                    Text(if (unlocked) "DBG:demo" else "DBG:unlock")
-                }
             }
             }
         } // end control bar (toggled by the RustyNES pill)
@@ -2420,16 +2309,6 @@ private fun EmulatorScreen(
         )
     }
 
-    // Demo-expired gate: a blocking sheet over everything with Unlock + Restore.
-    if (!unlocked && demoExpired) {
-        DemoExpiredOverlay(
-            // v2.0.1 (ADR 0025): flavor-neutral price façade (see the demo unlock button).
-            price = license.priceLabel,
-            onUnlock = { activity?.let { license.purchase(it) } },
-            onRestore = { license.refreshEntitlement() },
-        )
-    }
-
     // Emulation loop: run frames + render audio on a background dispatcher, then
     // publish each frame to Compose. Pacing is audio-clocked when sound is present
     // (the blocking AudioTrack write paces the loop to real time) with a wall-clock
@@ -2691,34 +2570,6 @@ private fun packRgbaToArgb(rgba: ByteArray, out: IntArray) {
     }
 }
 
-
-/** Blocking sheet shown when the free 10-minute demo session expires. */
-@Composable
-private fun DemoExpiredOverlay(price: String, onUnlock: () -> Unit, onRestore: () -> Unit) {
-    Box(
-        modifier = Modifier.fillMaxSize().background(Color(0xE6000000)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            modifier = Modifier.padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text("Demo time's up", color = Color.White)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Unlock the full version to keep playing — save states, resume, " +
-                    "and in-cart battery saves included.",
-                color = Color.LightGray,
-            )
-            Spacer(Modifier.height(20.dp))
-            Button(onClick = onUnlock) { Text("Unlock $price") }
-            Spacer(Modifier.height(8.dp))
-            androidx.compose.material3.TextButton(onClick = onRestore) {
-                Text("Restore purchase")
-            }
-        }
-    }
-}
 
 // The on-screen controls now live in `VirtualController.kt` — a single multi-touch
 // Canvas (the old per-button `TouchOverlay`/`PadButton` registered one input at a

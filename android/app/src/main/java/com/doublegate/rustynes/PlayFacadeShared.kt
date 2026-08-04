@@ -4,28 +4,20 @@ package com.doublegate.rustynes
  * Shared, flavor-neutral declarations for the `foss` / `play` façade split (v2.0.1,
  * ADR 0025).
  *
- * Everything here is **pure Kotlin / AOSP** — no `com.google.*`, no
- * `com.android.billingclient.*`, no ads — so it lives in `src/main` and is visible to
- * BOTH the `foss` and `play` source sets. The Google-Play-specific glue (Billing,
- * Play Games, Play Integrity, Cast framework, in-app update/review) lives in
- * `src/play/`; the byte-for-byte-API-compatible no-op stand-ins live in `src/foss/`.
+ * Everything here is **pure Kotlin / AOSP** — no `com.google.*`, no ads, no billing —
+ * so it lives in `src/main` and is visible to BOTH the `foss` and `play` source sets.
+ * The Google-Play-specific glue (Play Games, Play Integrity, Cast framework, in-app
+ * update/review — all free, no monetization) lives in `src/play/`; the
+ * byte-for-byte-API-compatible no-op stand-ins live in `src/foss/`.
+ *
+ * RustyNES is permanently open-source and income-free (ADR 0035): there is no Billing,
+ * no ads, no freemium, and no paid unlock in any flavor.
  *
  * These declarations moved OUT of the proprietary glue files (which are now
  * `play`-only) precisely because `MainActivity` (a `src/main` file) references them —
  * had they stayed in `src/play/` the `foss` variant would not compile. Their values
  * are channel-independent, so a single definition serves both flavors.
  */
-
-/**
- * Free-tier demo session length: 8 minutes (shortened in debug for testing).
- *
- * Read by `MainActivity`'s demo countdown, so it must be visible in both flavors. In
- * the `foss` build there is no Billing / freemium at all (`PLAY_BUILD == false`), so
- * the demo gate is inert and this value is never actually counted down against; it is
- * kept here only to satisfy the shared reference. The `play` freemium (Workstream M)
- * is the sole consumer that matters.
- */
-val DEMO_SESSION_SECONDS: Int = if (BuildConfig.DEBUG) 60 else 480
 
 /**
  * Play Games Services achievement / leaderboard ids (v1.8.8 "Atlas", Workstream E).
@@ -67,8 +59,8 @@ object PgsIds {
  * A pure enum with no Google dependency, so it is shared. On-device this is always
  * [UNKNOWN]: the `play` `IntegrityManager` cannot decrypt the token locally (that is
  * the maintainer's server endpoint), and the `foss` `IntegrityManager` façade never
- * requests a token at all. The app treats UNKNOWN as "no signal" — Billing remains the
- * entitlement truth, so nothing is ever revoked on the strength of this.
+ * requests a token at all. The app treats UNKNOWN as "no signal"; nothing is gated on
+ * it (there is no entitlement to revoke — every feature is free).
  */
 enum class IntegrityVerdict {
     /** Verdict not yet available (flag off, no cloud project, no server endpoint, or

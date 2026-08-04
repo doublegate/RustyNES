@@ -4,11 +4,18 @@ Date: 2026-06-23
 
 ## Status
 
-Accepted (planned for **v2.1.0** — the joint mobile store launch). The decision is
-locked now; the implementation is a v2.1.0 deliverable (see
-`to-dos/plans/v2.0.x-mobile-finalization-plan.md`). Until then the Android app stays
-single-flavor and the proprietary SDKs ride along dormant behind their `BuildConfig`
-flags, as today.
+**Superseded by [ADR 0035](0035-rustynes-is-permanently-non-commercial.md) (v2.2.6).**
+RustyNES is now permanently open-source and income-free, so the monetization portion of
+this ADR — the `play` flavor's Play Billing freemium unlock (`LicenseManager`) and its
+AppLovin MAX / RevenueCat ad layer — is removed. The `foss`/`play` **flavor split itself
+is retained** (it still distinguishes the pure-AOSP F-Droid build from the build carrying
+the *free* Google-Play services below), but every ad/billing element it once gated is
+gone. Read the rest of this ADR as historical context for the flavor mechanism, not as a
+description of a shipping monetization plan.
+
+The original status (now historical): Accepted (planned for the joint mobile store
+launch); the Android app stayed single-flavor with the proprietary SDKs dormant behind
+`BuildConfig` flags until then.
 
 ## Context
 

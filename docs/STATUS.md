@@ -1,10 +1,22 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.2.5** (2026-08-03) — **"Colophon"**, a **provenance,
+> **Current release: v2.2.6** (2026-08-04) — **"Almanac"**, a **de-monetization and
+> provenance** release opening the **v2.2.6 → v2.3.0** NESdev-remediation line, with
+> **zero emulation-core behavior changes** (so **AccuracyCoin holds 141/141 (100.00%)**,
+> nestest 0-diff, and the `#![no_std]` chip stack, save-state / TAS / netplay formats,
+> and every golden vector are byte-identical by construction). It removes all planned
+> monetization — **RustyNES is permanently open-source and income-free (ADR 0035)**: the
+> `rustynes-monetization` crate, `docs/monetization/`, and the Android/iOS billing / ad /
+> freemium / paywall layers are deleted; the native apps are kept as **free FOSS apps**
+> (no ads, no tracking, no paid unlock), retaining the free Google-Play services and the
+> `foss`/`play` split. It also discloses (per ADR 0030) that the PPU hybrid-address
+> *timing* was calibrated to TriCNES (reproducing the Rad Racer artifact), flagged for a
+> documentation-derived rework in v2.3.0.
+>
+> The prior release, **v2.2.5** (2026-08-03) — **"Colophon"**, a **provenance,
 > licensing, and documentation-integrity** release with **zero emulation-core
-> behavior changes** (so **AccuracyCoin holds 141/141 (100.00%)**, nestest 0-diff, and the
-> `#![no_std]` chip stack, save-state / TAS / netplay formats, and every golden
-> vector are byte-identical to v2.2.4 by construction). It reworded in-source
+> behavior changes** (AccuracyCoin 141/141, nestest 0-diff, byte-identical to v2.2.4 by
+> construction), reworded in-source
 > comments that had mischaracterized publicly-documented hardware-behavior
 > implementations as "ports of" copyleft emulators (Mesen2, puNES); rewrote
 > `NOTICE` to disclose the behavioral-oracle use of GPL emulators (no code
@@ -529,9 +541,9 @@
 > submission** (that is the future v2.1.0 joint launch); the **on-device closeout is a
 > maintainer / v2.0.9 step** — the actual Play Console listing upload, signing with the
 > real keystore, the internal/closed testing track, the crash-free-rate + ANR gate on
-> real hardware, live monetization runtime verification, and the deferred per-feature
-> gate migration (keep the existing `LicenseManager` freemium gates — do **not** rewire
-> them to the monetization `feature_enabled` façade without on-device validation). See
+> real hardware, and the deferred per-feature gate migration described in the historical
+> `LicenseManager` / monetization-façade plan below (that monetization work was later
+> removed entirely — RustyNES is permanently open-source and income-free, ADR 0035). See
 > `CHANGELOG.md` `[2.0.4]` + `to-dos/plans/v2.0.4-android-rc-plan.md`.
 >
 > **Earlier in the train: v2.0.3 "Harbor" ("Keel")** (2026-07-08) — the third release of the v2.0.x
@@ -563,7 +575,9 @@
 > `MonetizationGate` with AppLovin MAX + RevenueCat 8.10.0, `feature_enabled` gating,
 > run-out paywall + countdown, session/progress/offline-grace; a no-op `foss` twin so
 > the F-Droid artifact stays behaviour-identical; both flavors assemble, monetization
-> behaviourally dormant pending v2.0.9 on-device verify) and a **host-localizable
+> behaviourally dormant pending v2.0.9 on-device verify — this monetization glue was
+> later removed entirely; RustyNES is permanently open-source and income-free, ADR
+> 0035) and a **host-localizable
 > mobile bridge-warning** API (`rustynes-mobile` `HostWarning` enum +
 > `drain_warning_codes()`; `drain_warnings()` preserved). No store submission (that is
 > the future v2.1.0 joint launch); Android continues as GitHub-sideload. See
@@ -625,9 +639,10 @@
 > moved to `playImplementation`, the six Google-touching glue classes moved to `src/play/`
 > with **no-op façades in `src/foss/`** (so `foss` links zero Google SDKs), the Play
 > manifest meta-data moved to `src/play/AndroidManifest.xml`, and the
-> `installDebug`→`installFossDebug` alias. Ad / RevenueCat glue stays dormant; the ad
-> wiring, on-device dual-flavor verification, and F-Droid submission are the v2.1.0 step.
-> See `docs/android.md` + `to-dos/v1.8.x-on-device-verification.md`. android.yml CI (the
+> `installDebug`→`installFossDebug` alias. Ad / RevenueCat glue stayed dormant and was
+> later removed entirely (ADR 0035 — RustyNES is permanently open-source and
+> income-free); on-device dual-flavor verification and F-Droid submission remain a
+> forward step. See `docs/android.md` + `to-dos/v1.8.x-on-device-verification.md`. android.yml CI (the
 > NDK cross-build + both-flavor Gradle package) is the compile gate for this change.
 >
 > **The preceding release: v2.0.0 "Timebase"** (2026-07-03) — the **one-clock,
@@ -706,8 +721,9 @@
 > P1–P4** + remap, and optional haptics. The preceding **v1.9.1 "Patch"** — a
 > TestFlight **build-refresh
 > cron** (builds expire 90 days after upload) + a **dormant freemium-gate scaffold**
-> (`ios/RustyNES/Entitlements.swift`, fully unlocked through v1.9.x; the
-> present-but-inert seam the v2.1.0 monetization wiring drops into). The preceding
+> (`ios/RustyNES/Entitlements.swift`, fully unlocked through v1.9.x — this scaffold
+> and the monetization wiring it anticipated were later removed entirely; RustyNES
+> is permanently open-source and income-free, ADR 0035). The preceding
 > **v1.9.0 "Sunrise"** (2026-06-25) — the first **iOS / iPadOS**
 > release: the foundation slice of the v1.9.0 → v1.9.9 TestFlight train (mirroring
 > the Android v1.8.0 → v1.8.9 arc), a native **SwiftUI** shell over the
@@ -731,15 +747,18 @@
 > HD-pack form, including `<addition>` and the CHR-RAM tileData-hash conditions), a
 > Game Genie database, NSF waveform-viz depth, mapper breadth **168 → 172 families**
 > (m193/204/221/299 + ~35 UNIF board aliases), plus the 13-PR Dependabot
-> consolidation and the dormant `rustynes-monetization` build-out. All additive /
-> off-by-default, so the shipped / native / `no_std` / wasm core stays byte-identical
+> consolidation and the dormant `rustynes-monetization` build-out (that crate was
+> later removed entirely; RustyNES is permanently open-source and income-free, ADR
+> 0035). All additive / off-by-default, so the shipped / native / `no_std` / wasm core stays byte-identical
 > and AccuracyCoin holds 100% (139/139). The preceding **v1.8.8 "Atlas"** (2026-06-20)
 > was the Google-Play-launch +
 > Android-native-excellence increment on the first **platform** (not accuracy) release
 > line **v1.8.0 "Android"**: a complete Android app (shared `rustynes-mobile` UniFFI
 > bridge + `rustynes-android` platform crate + a Jetpack Compose shell; audio /
 > touch+gamepad input / save-states+SRAM+recent-ROMs / pause-FF-mute /
-> foldable+immersive UI; a freemium $2.99 Play unlock + an 8-minute demo — interim
+> foldable+immersive UI; a freemium $2.99 Play unlock + an 8-minute demo (this
+> monetization model was later removed entirely; RustyNES is permanently
+> open-source and income-free, ADR 0035) — interim
 > builds are full-featured via `PLAY_BUILD=false`), verified on a Galaxy Z Fold 7
 > (SMB / Zelda / AccuracyCoin). **v1.8.8** modernizes the toolchain to the **Android 16
 > / API 36 target mandate** (AGP 9.2.1 / Gradle 9.4.1 / compileSdk 37 / targetSdk 36,
@@ -847,7 +866,8 @@ lifecycle), **v1.9.3 "Workshop-lite"** the settings / save-state-slots / onboard
 release, **v1.9.2
 "Input"** the input release (multi-touch pad, Android-parity NES-001 render +
 glyph-identical fonts, GameController P1–P4 + remap, haptics), **v1.9.1 "Patch"** an
-iOS-line patch (TestFlight build-refresh cron + a dormant freemium-gate scaffold), and
+iOS-line patch (TestFlight build-refresh cron + a dormant freemium-gate scaffold,
+later removed entirely per ADR 0035), and
 **v1.9.0 "Sunrise"** the first iOS /
 iPadOS release (a native SwiftUI shell + the new `rustynes-ios` Metal/CoreAudio shim);
 on the **v1.8.x "Android"** line **v1.8.9 "Backlog"** was the
@@ -1794,7 +1814,9 @@ the blockquote at the top + `CHANGELOG.md` `[1.8.9]` — plus the 13-PR Dependab
 consolidation (jni 0.21 → 0.22, zip 2 → 8.6, naga 25 → 29, sha1 / md-5 0.10 → 0.11,
 pollster 0.3 → 0.4, android_logger 0.14 → 0.15, lz4_flex 0.11 → 0.13, plus the GitHub
 Actions bumps) and the **monetization build-out** (the new, dormant
-`rustynes-monetization` crate — the shared ad-supported / freemium policy core); the
+`rustynes-monetization` crate — the shared ad-supported / freemium policy core; this
+crate and all monetization work were later removed entirely — RustyNES is
+permanently open-source and income-free, ADR 0035); the
 emulation core stays byte-identical and AccuracyCoin holds 100% (139/139). The
 table below is the **engine-lineage** version history
 — the internal engine line whose increments produced the v1.0.0 technology. Its
@@ -1860,11 +1882,13 @@ own semantic-version line starting at **v1.0.0**.
 > stack + the FDS medium model + a peripherals & quality/security pass — cargo-fuzz targets 3 → 8,
 > a `Movie::deserialize` OOM-DoS fix, a read-only Tools → ROM Info browser) — all
 > NTSC-byte-identical, AccuracyCoin 141/141 throughout. The **JOINT mobile store launch** (Google Play + Apple App
-> Store + AltStore PAL + F-Droid), and with it the `rustynes-monetization` activation, is the
-> future **v2.3.0** (moved from the earlier v2.1.0 / v2.2.0 targets). The monetization model
-> is ad-supported with a **$3.99** premium unlock (AppLovin MAX + RevenueCat, a reward-ad
-> +11-minute × 2 demo extension, 6 premium features) under a **`foss` / `play` flavor split**
-> (ADR 0025); the shared policy core is the `rustynes-monetization` crate. See
+> Store + AltStore PAL + F-Droid) is the
+> future **v2.3.0** (moved from the earlier v2.1.0 / v2.2.0 targets). RustyNES is
+> permanently open-source and income-free (ADR 0035): the mobile apps ship as free
+> FOSS apps with no ads, no tracking, and no paid unlock. The **`foss` / `play` flavor
+> split** (ADR 0025) is kept, but now distinguishes only the pure-AOSP build from
+> optional free Google Play services (achievements, Cast, Integrity, in-app update,
+> cloud save) — no billing, no ad SDK. See
 > `to-dos/plans/v2.0.x-mobile-finalization-plan.md`.
 
 | Version | Status | Bar |

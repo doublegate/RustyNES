@@ -4,8 +4,9 @@
 > deferred to v2.1.0.** The v1.8.x line keeps shipping as **GitHub-sideload** builds,
 > but the Play production launch is held until after **v2.0.0 "Timebase"** — the
 > Android app is finalized across **v2.0.1–v2.0.4** on the v2.0.0 core and launched
-> **jointly with iOS at v2.1.0**. The monetization / Play-Store material in this doc
-> describes that eventual v2.1.0 launch; it is not a near-term step. See
+> **jointly with iOS at v2.1.0**. RustyNES is permanently open-source and income-free
+> (ADR 0035): the Play-Store launch material in this doc describes a free-app launch,
+> not a near-term step. See
 > [`to-dos/plans/v2.0.x-mobile-finalization-plan.md`](../to-dos/plans/v2.0.x-mobile-finalization-plan.md).
 >
 > **Status: v1.8.0 "Android" — a working emulator, verified on hardware.** The
@@ -136,8 +137,8 @@ gradle wrapper --gradle-version 8.11.1   # first time, materialises ./gradlew
 > **`foss`** flavor (default) and a **`play`** flavor, so AGP names the variant tasks
 > per-flavor (`assembleFossDebug`, `bundlePlayRelease`, …). The bare `installDebug` is kept as
 > an alias to `installFossDebug` so the existing dev/CI command is undisturbed; the aggregate
-> `assembleDebug` / `bundleRelease` anchors still fan out to both flavors. See "Distribution
-> flavors" under Monetization below.
+> `assembleDebug` / `bundleRelease` anchors still fan out to both flavors. See "No
+> monetization (ADR 0035)" below.
 
 `minSdk 26` (AAudio floor), `targetSdk 35` (Play mandate), `compileSdk 35`. Ship
 ABI is `arm64-v8a`; `x86_64` is included for the emulator. The release build runs
@@ -156,64 +157,25 @@ A guaranteed sideload / F-Droid + GitHub-Releases channel is maintained so the
 project never depends solely on Play (also the home for the optional egui-debugger
 power-user build).
 
-## Monetization (freemium $2.99 unlock)
+## No monetization (ADR 0035)
 
-> **Model under revision (2026-06-23).** An **ad-supported** freemium model — **AppLovin
-> MAX** ads on the free tier removed by a **RevenueCat** `premium` entitlement, a one-time
-> **"Full Version / Remove Ads" ($3.99)** unlock — has been harvested into the repo as the
-> chosen **v2.1.0-launch** monetization, superseding the $2.99-no-ads model described below.
-> The shared policy core is `crates/rustynes-monetization` (`AdPolicy`) and the full design
-> set is [`monetization/`](monetization/) (start at its `README.md`). The $2.99
-> `LicenseManager` below remains the **current sideload-build behavior**; the freemium /
-> ad layer ships **default-off behind `PLAY_BUILD`** and is flipped on at the v2.1.0 joint
-> launch. The free-tier persistence gates (save-states / resume / SRAM) are **identical**
-> across both models; the change is ads + the $3.99 price + the RevenueCat provider.
->
-> **`foss` / `play` flavor split (ADR 0025) — structural start landed in v2.0.1.** The build
-> splits into a **`foss`** flavor (default — no Google SDKs, no ads, no tracking; the
-> **F-Droid** + GitHub-sideload artifact) and a **`play`** flavor (all the proprietary SDKs —
-> Billing, Cast, Play Games, Integrity, update/review **+ AppLovin + RevenueCat** at v2.1.0 —
-> for **Google Play**). F-Droid requires a Google-/ad-free build, so this is the only way to
-> reach that channel. **v2.0.1 landed the structural split:** the `distribution` flavor
-> dimension, per-flavor `PLAY_BUILD`, every proprietary SDK moved to `playImplementation`, the
-> six Google-touching glue classes moved to `src/play/` with **no-op façades in `src/foss/`**
-> (so `foss` links zero Google SDKs and `MainActivity` calls a flavor-neutral façade), the
-> Cast/Play-Games manifest meta-data moved to `src/play/AndroidManifest.xml`, and the
-> `installDebug`→`installFossDebug` alias. The **ad / RevenueCat glue stays dormant** — that
-> wiring, plus the on-device verification of both flavors and the F-Droid submission, is the
-> v2.1.0 step. Already wired in v1.8.9 (dormant): the `rustynes-monetization` crate's `.so` +
-> UniFFI bindings (our own clean Rust core). See
-> [`../to-dos/plans/v2.0.x-mobile-finalization-plan.md`](../to-dos/plans/v2.0.x-mobile-finalization-plan.md).
+RustyNES is permanently open-source and income-free — see
+[ADR 0035](adr/0035-rustynes-is-permanently-non-commercial.md). The Android app is a
+**free download** with every feature unconditionally available: no ads, no tracking,
+no demo/time gate, no in-app purchase, and no paid unlock. There is no `LicenseManager`
+paywall, no `full_unlock` product, and no freemium ad layer — the app that was
+previously planned as an ad-supported / one-time-unlock freemium model (an earlier
+`docs/monetization/` design set and the `rustynes-monetization` crate) was never
+shipped to a store, and that plan and crate have since been removed entirely.
 
-The app is a **free download** with a single **one-time, non-consumable in-app
-purchase** — "Full Unlock", product id `full_unlock`, **$2.99 USD** — via Play
-Billing (Workstream M, `LicenseManager`). The free tier is a time-limited demo:
-
-- a **10-minute play session per launch** (60 s in debug builds for testing),
-- **save-states disabled** (Save/Load hidden),
-- **save-on-background / auto-resume disabled**, and
-- **on-cart battery-backed SRAM never persisted** across a close.
-
-Everything else — full emulation accuracy, video, audio, input, pause/fast-forward,
-the ROM library — is identical to the paid tier. The emulated framebuffer/audio is
-byte-identical in demo and paid; every gate is host policy over persistence + a
-session clock, so the core, the `.rns` format, and AccuracyCoin are untouched.
-
-**Maintainer-manual Play Console setup (can't be CI-self-certified):**
-
-1. In the Play Console → Monetize → Products → **In-app products**, create a
-   **managed product** with id **`full_unlock`**, set its price to **$2.99**, and
-   activate it.
-2. Upload a build to a **closed/internal test track** and add a
-   **license-tested** account — the Play purchase flow only runs for an app
-   distributed through Play, not a sideloaded APK.
-3. Verify: buy → the demo timer + Unlock button disappear and Save/Load appear;
-   reinstall → "Restore purchase" (or the automatic `queryPurchasesAsync` on
-   launch) re-grants the entitlement (a non-consumable is owned forever).
-
-A `BuildConfig.DEBUG`-only `DBG:unlock` toggle in the control bar exercises the
-gating + timer + unlock UI on a sideloaded build without Play (the gating logic is
-verified that way; only the real billing transaction needs the Console).
+**`foss` / `play` flavor split (ADR 0025, amended by ADR 0035).** The build still
+splits into a **`foss`** flavor (default — no Google SDKs; the **F-Droid** +
+GitHub-sideload artifact) and a **`play`** flavor (optional free Google Play
+services — Play Games achievements, Cast, Play Integrity, in-app update, cloud
+save). Both flavors are free with identical gameplay features; the `play` flavor
+carries no billing or ad SDKs. See
+[`../to-dos/plans/v2.0.x-mobile-finalization-plan.md`](../to-dos/plans/v2.0.x-mobile-finalization-plan.md)
+for the historical planning record.
 
 ## CI
 
@@ -233,7 +195,7 @@ alignment** on the shipped arm64 `.so`, and best-effort-bundles the AAB. It is
 | **E** Save-states / SRAM / auto-resume / persistable ROM library | **Done** — save/load on-device |
 | **F** QoL (pause / fast-forward / mute) + responsive/foldable/immersive UI | **Done** — on-device |
 | **G** Play packaging (release AAB, signing config, distribution) | Release AAB verified (R8, arm64-only); signing is maintainer-manual |
-| **M** Freemium $2.99 unlock + 10-min demo gating | **Done** — gating/timer/overlay on-device; Play product maintainer-manual |
+| **M** Freemium $2.99 unlock + 10-min demo gating | Removed entirely (ADR 0035) — RustyNES is permanently open-source and income-free; every feature ships unconditionally available |
 | **B** wgpu `SurfaceView` + surface-loss lifecycle | **Next increment** (Bitmap blit ships now) |
 | **F** shaders / palettes / per-game DB / TAS UI | **Next increment** (depends on B for shaders) |
 

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.2.5-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.2.6-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -102,8 +102,8 @@ platform for NES emulation.
 | **HD Audio** *(v1.6.0)* | HD-pack `<bgm>` / `<sfx>` OGG tracks triggered through the `$4100` register, mixed on top of the produced APU buffer (default-off `hd-pack`) |
 | **Shader Ecosystem** *(v1.6.0)* | LMP88959 NTSC/PAL, hqNx / xBRZ upscalers, and a constrained `.slangp` / `.cgp` preset import on the composable ShaderStack |
 | **Writable + Programmable** *(v1.7.0)* | Editing-capable debug tools (palette / nametable / CHR / OAM writeback, an iNES / NES 2.0 header editor, an inline 6502 assembler), a scriptable `tastudio.*` Lua API, host IPC automation (`script-ipc`), `.dbg` source maps, Zwinder tiered rewind, audio depth (stereo / reverb / 20-band EQ), web parity, and an i18n framework |
-| **Android App** *(v1.8.x)* | A complete native Android app on the byte-identical core — a multi-touch + hardware-controller (P1–P4) UI, wgpu `SurfaceView` rendering, save-states, Lua, RetroAchievements, direct-IP / CGNAT-TURN netplay, and a box-art ROM library (GitHub-sideload now; Google Play at v2.3.0) |
-| **iOS / iPadOS App** *(v1.9.x)* | A complete native iOS app on the byte-identical core — a native SwiftUI shell over Metal (`wgpu`), multi-touch + GameController support, iCloud save-state sync, room-code rollback netplay, RetroAchievements, and the full TAStudio power-user suite (TestFlight now; App Store at v2.3.0) |
+| **Android App** *(v1.8.x)* | A complete native Android app on the byte-identical core — a multi-touch + hardware-controller (P1–P4) UI, wgpu `SurfaceView` rendering, save-states, Lua, RetroAchievements, direct-IP / CGNAT-TURN netplay, and a box-art ROM library (GitHub-sideload now; free Google Play listing possible later) |
+| **iOS / iPadOS App** *(v1.9.x)* | A complete native iOS app on the byte-identical core — a native SwiftUI shell over Metal (`wgpu`), multi-touch + GameController support, iCloud save-state sync, room-code rollback netplay, RetroAchievements, and the full TAStudio power-user suite (TestFlight now; free App Store listing possible later) |
 | **Libretro Core** *(v1.10.0)* | A complete, cycle-accurate Libretro core (the `rustynes_libretro` shared library — `.so` / `.dylib` / `.dll` by platform) integrating RustyNES seamlessly into RetroArch with RetroAchievements, dynamic audio sync, and deterministic rollback/save-state support |
 | **One-Clock Timebase** *(v2.0.0)* | A single canonical cycle counter with every CPU cycle a real bus access and a split-around-the-access PPU catch-up, replacing the five-counter dot-lockstep scheduler; the release's designated breaking-behavior change (ADR 0002 / ADR 0029) |
 | **Vs. DualSystem** *(v2.0.0 core · v2.1.2 desktop)* | Core-level emulation of the two-CPU/two-PPU Vs. arcade cabinet boards (Tennis, Baseball, Wrecking Crew, Balloon Fight) via a shared-WRAM + cross-wired `$4016`/IRQ convergence model — now presented on desktop as a composed **two-screen** view (side-by-side / stacked) with both consoles cross-wired |
@@ -401,10 +401,13 @@ UniFFI bridge, a **`rustynes-android`** JNI layer, and a Jetpack **Compose** she
   EN/ES i18n, screenshot / MP4 capture, Picture-in-Picture, widgets, and accessibility
   (high-contrast + Okabe-Ito).
 
-The apps ship now as **GitHub-Releases / sideload**, full-featured; the Google Play
-production launch — with an ad-supported-freemium model and the `foss` / `play` flavor
-split — is **deferred to the v2.3.0 joint store launch** (see [Roadmap](#roadmap)).
-Details in [`docs/android.md`](docs/android.md).
+The apps ship now as **GitHub-Releases / sideload**, full-featured; a possible
+**free** Google Play / F-Droid listing — a free app with the `foss` / `play` flavor
+split distinguishing pure-AOSP builds from optional free Google Play services
+(achievements, Cast, Integrity, in-app update, cloud save) — is a **later** step with
+no fixed version (see [Roadmap](#roadmap)). RustyNES is permanently open-source and
+income-free (ADR 0035): no ads, no tracking, no paid unlock. Details in
+[`docs/android.md`](docs/android.md).
 
 ### iOS / iPadOS *(v1.9.x)*
 
@@ -413,9 +416,9 @@ RustyNES runs as a native **iOS / iPadOS app** on the byte-identical core (maint
 - **Rendering + audio** — Metal via `wgpu` with the same full WGSL shader pipelines (CRT, NTSC, Bisqwit) and ProMotion pacing, plus a low-latency CoreAudio hot path.
 - **Input** — multi-touch on-screen pad (NES-001 style), responsive sizing, GameController framework for P1–P4 (hot-plug), and Core Haptics.
 - **Connectivity & Tooling** — room-code netplay (CGNAT/TURN) and LAN rollback, RetroAchievements, iCloud save-state sync (CloudKit), Lua console, and power-user tooling (TAS `.rnm` movies, `.pal` palettes, `.zip` ROMs, HD-pack loading).
-- **Platform polish** — ReplayKit capture, Game Center, accessibility, EN/ES i18n, 4-slot save-state manager, and the dormant StoreKit `foss`/App-Store seam.
+- **Platform polish** — ReplayKit capture, Game Center, accessibility, EN/ES i18n, and a 4-slot save-state manager. (No monetization — the app is free; see [ADR 0035](docs/adr/0035-rustynes-is-permanently-non-commercial.md).)
 
-The apps are currently distributed via **TestFlight**; the App Store launch is deferred to the **v2.3.0** joint store launch (see [Roadmap](#roadmap)). Details in [`docs/ios.md`](docs/ios.md).
+The apps are currently distributed via **TestFlight**; a future **free** App Store listing (no ads, no purchase) is possible but has no fixed version. Details in [`docs/ios.md`](docs/ios.md).
 
 ---
 
@@ -620,15 +623,14 @@ in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs
 | `rustynes-hdpack`        | HD-pack loader + compositor + HD audio (shared desktop + mobile) |
 | `rustynes-mobile`        | UniFFI bridge for the mobile platforms (Android, and v1.9.0 iOS) |
 | `rustynes-android`       | Android JNI glue over the mobile bridge                      |
-| `rustynes-monetization`  | `AdPolicy` ad-supported-freemium policy core (v2.3.0; dormant) |
 | `rustynes-test-harness`  | Integration tests and the accuracy / commercial-ROM oracles |
 
 ### Project layout
 
 ```text
 crates/        Cargo workspace: the crates above
-docs/          Implementation specs, ADRs, the user guide, the monetization
-               design set, STATUS.md (single source of truth), and release notes
+docs/          Implementation specs, ADRs, the user guide,
+               STATUS.md (single source of truth), and release notes
 deploy/        Docker / compose for the browser-netplay signaling server + STUN/TURN
 ref-docs/      Deep-research NES hardware reference
 tests/         Integration tests + vendored CC0 / MIT / zlib test ROMs (no commercial ROMs)
@@ -736,7 +738,7 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | **Android (arm64)** | Supported (v1.8.x; GitHub-Releases / sideload — see [`docs/android.md`](docs/android.md)) |
 | **Linux ARM64**     | Supported (cross-compile) |
 | **Libretro Core**   | Supported (RetroArch via `rustynes-libretro`) |
-| **iOS / iPadOS**    | Supported (v1.9.x TestFlight; App Store at v2.3.0) |
+| **iOS / iPadOS**    | Supported (v1.9.x TestFlight; free App Store listing possible later) |
 
 ### System requirements
 
@@ -793,12 +795,29 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.2.5 "Colophon"**, a **provenance, licensing,
-and documentation-integrity** release. It carries **zero emulation-core
-behavior changes** — so **AccuracyCoin holds 141/141 (100.00%)**, nestest is 0-diff, and
-the `#![no_std]` chip stack, save-state / TAS / netplay formats, and every golden
-vector are byte-identical to v2.2.4 by construction. Instead it corrects how the
-project *describes its own provenance*, prompted by community review:
+RustyNES's current release is **v2.2.6 "Almanac"**, a **de-monetization and
+provenance** release that opens the **v2.2.6 → v2.3.0** line addressing NESdev-forum
+feedback. It carries **zero emulation-core behavior changes** — so **AccuracyCoin holds
+141/141 (100.00%)**, nestest is 0-diff, and the `#![no_std]` chip stack, save-state / TAS
+/ netplay formats, and every golden vector are byte-identical by construction. What it
+does:
+
+- **RustyNES is now permanently open-source and income-free (ADR 0035).** All planned
+  monetization is removed — the `rustynes-monetization` crate, the `docs/monetization/`
+  design set, and the Android/iOS billing, ad, freemium/demo, and paywall layers. The
+  native apps are **kept as free FOSS apps**: no ads, no tracking, no paid unlock, every
+  feature available. The free Google-Play *services* (Play Games achievements, Cast,
+  Integrity, in-app update, cloud save) and the `foss`/`play` split are retained.
+- **Provenance accuracy.** `NOTICE` and
+  [`docs/originality-and-provenance.md`](docs/originality-and-provenance.md) now disclose
+  honestly that the PPU octal-latch / hybrid-address *timing* was calibrated to TriCNES's
+  per-dot behavior (beyond black-box oracle use), which reproduces a TriCNES-specific
+  artifact that mis-renders mid-render `$2006` writes (e.g. Rad Racer) — flagged for a
+  documentation-derived rework in v2.3.0 (ADR 0030).
+
+The prior release, **v2.2.5 "Colophon"** (a **provenance, licensing, and
+documentation-integrity** release, also zero-core-change), corrected how the project
+*describes its own provenance*, prompted by community review:
 
 - A full-tree audit reworded in-source comments that had mischaracterized
   implementations of publicly-documented hardware behavior as "ports of" copyleft
@@ -903,10 +922,14 @@ launch:
   performance, features, and quality (the v2.1.5 "Regression Net & Residual" work — a
   Holy Mapperel mapper bank-reachability + IRQ regression net wired into CI — is already
   under way in `[Unreleased]`).
-- **v2.3.0** — the **joint mobile store launch** (Google Play + Apple App Store + F-Droid +
-  AltStore PAL), turning on the `foss` / `play` flavor split (ADR 0025) and the
-  ad-supported-freemium monetization (AppLovin MAX + RevenueCat, a one-time **$3.99**
-  unlock).
+- **v2.2.6 → v2.3.0** — the **de-monetization + NESdev-remediation** line. v2.2.6
+  "Almanac" removes all monetization (RustyNES is permanently open-source and
+  income-free, ADR 0035; the apps stay free FOSS — no ads, no tracking, no paid
+  unlock), and v2.2.7 → v2.3.0 address the NESdev-forum feedback (audio aliasing /
+  VRC6 / Sunsoft 5B; gamma-aware resampling + scanlines; TAStudio + `.bk2` + floating
+  windows; and the PPU left-edge + hybrid-address accuracy capstone). A **free** mobile
+  store listing (Google Play / F-Droid / App Store) is a possible **later**, unversioned
+  step with no monetization attached.
 
 The exact per-release scope beyond v2.1.4 is planning, not a shipped promise — see the
 roadmap for the current framing.
@@ -1014,7 +1037,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {2.2.5},
+  version = {2.2.6},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (141/141), nestest 0-diff; 172 mapper families,

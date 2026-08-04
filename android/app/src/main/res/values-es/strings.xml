@@ -55,8 +55,6 @@
     <string name="library_no_art_found">No se encontró carátula para %1$s. Elige una imagen.</string>
     <string name="library_importing">Importando %1$d de %2$d…</string>
     <string name="library_imported_count">%1$d juegos importados</string>
-    <string name="action_unlock">Desbloquear %1$s</string>
-    <string name="demo_remaining">Demo · %1$d:%2$02d</string>
     <string name="status_open_rom">Abre una ROM .nes para empezar</string>
     <string name="status_no_rom">Sin ROM cargada</string>
     <string name="casting_to">Enviando a %1$s</string>

@@ -125,10 +125,12 @@ save-states + the four slots + CloudKit-synced states, `.rnm` TAS movies / impor
 cross-platform save + netplay parity must be re-validated on the new core. iOS host
 re-port lands v2.0.5–v2.0.8; dual-app readiness v2.0.9.
 
-**Distribution / monetization (v2.1.0, joint with Android):** launch the App-Store
-channel plus AltStore PAL, and wire `Entitlements.swift`'s dormant `StoreManager` to
-`rustynes-monetization` (StoreKit 2 + RevenueCat + AppLovin MAX, ATT). Dormant /
-fully-unlocked through v1.9.x.
+**Distribution (v2.1.0, joint with Android):** launch the App-Store channel plus
+AltStore PAL as a free app. RustyNES is permanently open-source and income-free (ADR
+0035): `Entitlements.swift`'s dormant `StoreManager`, the `rustynes-monetization`
+crate it anticipated wiring to (StoreKit 2 + RevenueCat + AppLovin MAX, ATT), and the
+`appStore` monetization build channel have since been removed entirely — no
+entitlement gating of any kind, on any build, through this release or beyond.
 
 **Maintainer-manual (not CI-certifiable):** Apple Developer account + bundle ID, fastlane
 match signing + App Store Connect API key, app icon / launch art, and the full on-device

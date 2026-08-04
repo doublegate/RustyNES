@@ -116,6 +116,23 @@ re-derived the physical mechanism from die-level evidence, converging with some
 references and diverging from others on the strength of the hardware model rather
 than by following any single one of them.
 
+**An honest caveat on the calibration (added v2.2.6).** The framing above understates
+one dependency, and a NESdev reviewer (Fiskbit) was right to flag it. Beyond using
+TriCNES as a pass/fail oracle for the two AccuracyCoin tests, RustyNES calibrated the
+octal-latch *timing itself* against TriCNES's per-dot trace — specifically the
+delayed-`CopyV` countdown (`COPY_V_DELAY = 4`), tuned to match TriCNES rather than
+derived from an independent hardware measurement. That went beyond black-box oracle
+use: it is behavioral calibration to one specific emulator's model. The consequence is
+concrete — TriCNES's hybrid-address handling was itself imperfect (it has since been
+revised upstream), and RustyNES inherited a matching artifact that mis-renders games
+performing mid-render `$2006` writes (e.g. **Rad Racer**'s road/horizon split). This is
+disclosed here rather than glossed. The **v2.3.0 "Datum II"** release reworks the
+hybrid-address model to be derived from public hardware documentation and validated
+against real-game behavior (Rad Racer) — not calibrated to any single emulator — behind
+the project's standard default-off-flag / oracle-gated guardrails (see ADR 0030). No
+TriCNES code was ever incorporated (it is MIT-licensed regardless); the issue was
+behavioral fidelity, and the remedy is to make the behavior documentation-derived.
+
 ### 2.3 The sprite-evaluation FSM and OAM data bus (ADR 0034)
 
 RustyNES models the PPU's sprite-evaluation datapath as an explicit per-dot state

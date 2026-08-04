@@ -8,9 +8,9 @@
 //  the emulator paused. Optional `.sym` / `.mlb` / `.nl` symbol files annotate the
 //  disassembly (parsed host-side; see SymbolMap.swift).
 //
-//  Gated OFF the App-Store build via `BuildChannel`: this developer surface is
-//  reachable only on the FOSS / TestFlight channel (ADR 0027 distribution seam).
-//  The in-game menu entry and this sheet are both conditional on `BuildChannel.isFoss`.
+//  Reachable through `BuildChannel.isFoss` (RustyNES is a single free, open-source
+//  channel, so this developer surface is always available). The in-game menu entry
+//  and this sheet are both conditional on `BuildChannel.isFoss`.
 //
 
 import SwiftUI

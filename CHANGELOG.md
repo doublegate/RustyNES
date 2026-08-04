@@ -14,6 +14,49 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.2.6] - 2026-08-04 - "Almanac" (de-monetization + provenance accuracy)
+
+A **de-monetization and provenance** release. RustyNES is now permanently
+open-source and **income/profit-free forever** (ADR 0035): all planned
+monetization is removed and the native Android/iOS apps are kept as **free FOSS
+apps** — no ads, no tracking, no paid unlock, every feature available. **Zero
+emulation-core behavior changes** — the `#![no_std]` chip stack, save-state / TAS
+/ netplay formats, and every golden vector are byte-identical, so **AccuracyCoin
+holds 141/141 (100.00%)** and nestest is 0-diff by construction.
+
+### Removed
+
+- The `rustynes-monetization` crate and `docs/monetization/` are deleted and the
+  workspace member removed (no emulation crate ever depended on it). The Android
+  paid layer (Play Billing `LicenseManager`, the AppLovin MAX / RevenueCat
+  `MonetizationGate` + ad gates, the demo/paywall UI + strings, AdMob/AppLovin
+  manifest entries, and the billing/ad Gradle deps + BuildConfig keys + the
+  monetization cargo/uniffi tasks) is removed; `MainActivity` no longer gates any
+  feature behind an unlock/demo. The iOS paid layer (the StoreKit `StoreManager`,
+  the `appStore` monetization build channel, billing entitlements) is removed.
+
+### Changed
+
+- The `foss` / `play` Android flavor split is retained but now only distinguishes
+  the pure-AOSP build from the build carrying the *free* Google-Play services
+  (Play Games achievements, Cast, Integrity, in-app update, cloud save) — no ads,
+  no billing. Nightly Rust is now used only by `cargo fuzz`.
+- ROADMAP / `docs/STATUS.md` / version plans reframed to the OSS/income-free
+  position; the freed v2.3.0 slot is repurposed for accuracy/fidelity work.
+- **Provenance accuracy (ADR 0035 + ADR 0030):** `NOTICE` and
+  `docs/originality-and-provenance.md` now disclose honestly that the PPU
+  octal-latch / hybrid-address *timing* was calibrated to TriCNES's per-dot
+  behavior (beyond black-box oracle use), which reproduced a TriCNES-specific
+  artifact that mis-renders mid-render `$2006` writes (e.g. Rad Racer). This is
+  scheduled to be reworked to be documentation-derived in v2.3.0.
+
+### Added
+
+- **ADR 0035** "RustyNES is permanently non-commercial (no monetization)";
+  **ADR 0025** marked Superseded and **ADR 0027** amended (its App-Store §4.7
+  ROM-compliance rules stay — valid for a free app; the ad/ATT/StoreKit-unlock
+  clauses are removed).
+
 ## [2.2.5] - 2026-08-03 - "Colophon" (provenance, licensing, and documentation integrity)
 
 A **provenance, licensing, and documentation-integrity** release, prompted by
