@@ -70,121 +70,113 @@ fn fmt_size(bytes: usize) -> String {
 /// FDS / NSF file).
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     _state: &mut RomInfoPanelState,
     nes: &Nes,
     crc: Option<u32>,
     crc_full: Option<u32>,
 ) {
-    let mut win_open = *open;
-    egui::Window::new("ROM Info")
-        .open(&mut win_open)
-        .resizable(false)
-        .show(ctx, |ui| {
-            // --- Identity / provenance keys ---
-            ui.heading("Identity");
-            egui::Grid::new("rom_info_identity")
-                .num_columns(2)
-                .striped(true)
-                .show(ui, |ui| {
-                    // Title comes from the vendored per-game DB (if listed).
-                    let title = crc
-                        .and_then(game_db::entry_for_crc)
-                        .map(|e| e.title)
-                        .filter(|t| !t.is_empty());
-                    ui.label("Title (game DB)");
-                    ui.label(title.as_deref().unwrap_or("(not in database)"));
-                    ui.end_row();
+    super::detachable_window(ctx, detached, "rom_info", "ROM Info", open, |ui| {
+        // --- Identity / provenance keys ---
+        ui.heading("Identity");
+        egui::Grid::new("rom_info_identity")
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                // Title comes from the vendored per-game DB (if listed).
+                let title = crc
+                    .and_then(game_db::entry_for_crc)
+                    .map(|e| e.title)
+                    .filter(|t| !t.is_empty());
+                ui.label("Title (game DB)");
+                ui.label(title.as_deref().unwrap_or("(not in database)"));
+                ui.end_row();
 
-                    ui.label("CRC32 (game-DB key)");
-                    ui.label(
-                        crc.map_or_else(
-                            || "(no cartridge CRC)".to_string(),
-                            |c| format!("{c:08X}"),
-                        ),
-                    );
-                    ui.end_row();
+                ui.label("CRC32 (game-DB key)");
+                ui.label(
+                    crc.map_or_else(|| "(no cartridge CRC)".to_string(), |c| format!("{c:08X}")),
+                );
+                ui.end_row();
 
-                    ui.label("CRC32 (No-Intro, full file)");
-                    ui.label(
-                        crc_full
-                            .map_or_else(|| "(unavailable)".to_string(), |c| format!("{c:08X}")),
-                    );
-                    ui.end_row();
+                ui.label("CRC32 (No-Intro, full file)");
+                ui.label(
+                    crc_full.map_or_else(|| "(unavailable)".to_string(), |c| format!("{c:08X}")),
+                );
+                ui.end_row();
 
-                    let (hi, lo) = sha256_hex(nes.rom_sha256());
-                    ui.label("SHA-256");
-                    ui.vertical(|ui| {
-                        ui.monospace(hi);
-                        ui.monospace(lo);
-                    });
-                    ui.end_row();
+                let (hi, lo) = sha256_hex(nes.rom_sha256());
+                ui.label("SHA-256");
+                ui.vertical(|ui| {
+                    ui.monospace(hi);
+                    ui.monospace(lo);
                 });
+                ui.end_row();
+            });
 
-            ui.separator();
+        ui.separator();
 
-            // --- Decoded cartridge header (straight off the running Nes) ---
-            ui.heading("Cartridge");
-            egui::Grid::new("rom_info_cart")
-                .num_columns(2)
-                .striped(true)
-                .show(ui, |ui| {
-                    ui.label("Mapper");
-                    // Show the DB's recorded mapper alongside the active one when
-                    // they differ (a header override in effect).
-                    let active = nes.mapper_id();
-                    let db_mapper = crc.and_then(game_db::entry_for_crc).and_then(|e| e.mapper);
-                    match db_mapper {
-                        Some(m) if m != active => {
-                            ui.label(format!("{active} (DB: {m})"));
-                        }
-                        _ => {
-                            ui.label(active.to_string());
-                        }
+        // --- Decoded cartridge header (straight off the running Nes) ---
+        ui.heading("Cartridge");
+        egui::Grid::new("rom_info_cart")
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label("Mapper");
+                // Show the DB's recorded mapper alongside the active one when
+                // they differ (a header override in effect).
+                let active = nes.mapper_id();
+                let db_mapper = crc.and_then(game_db::entry_for_crc).and_then(|e| e.mapper);
+                match db_mapper {
+                    Some(m) if m != active => {
+                        ui.label(format!("{active} (DB: {m})"));
                     }
-                    ui.end_row();
-
-                    ui.label("Region");
-                    ui.label(format!("{:?}", nes.region()));
-                    ui.end_row();
-
-                    ui.label("PRG ROM");
-                    ui.label(fmt_size(nes.prg_rom_len()));
-                    ui.end_row();
-
-                    let chr = nes.chr_rom_len();
-                    ui.label("CHR");
-                    ui.label(if chr == 0 {
-                        "CHR-RAM (no CHR ROM)".to_string()
-                    } else {
-                        fmt_size(chr)
-                    });
-                    ui.end_row();
-
-                    // Mirroring / submapper from the DB entry, when present.
-                    if let Some(entry) = crc.and_then(game_db::entry_for_crc) {
-                        if let Some(m) = entry.mirroring {
-                            ui.label("Mirroring (DB)");
-                            ui.label(format!("{m:?}"));
-                            ui.end_row();
-                        }
-                        if let Some(sm) = entry.submapper {
-                            ui.label("Submapper (DB)");
-                            ui.label(sm.to_string());
-                            ui.end_row();
-                        }
+                    _ => {
+                        ui.label(active.to_string());
                     }
+                }
+                ui.end_row();
+
+                ui.label("Region");
+                ui.label(format!("{:?}", nes.region()));
+                ui.end_row();
+
+                ui.label("PRG ROM");
+                ui.label(fmt_size(nes.prg_rom_len()));
+                ui.end_row();
+
+                let chr = nes.chr_rom_len();
+                ui.label("CHR");
+                ui.label(if chr == 0 {
+                    "CHR-RAM (no CHR ROM)".to_string()
+                } else {
+                    fmt_size(chr)
                 });
+                ui.end_row();
 
-            ui.separator();
-            ui.label(
-                egui::RichText::new(
-                    "Read-only. Metadata from the vendored per-game database + the \
+                // Mirroring / submapper from the DB entry, when present.
+                if let Some(entry) = crc.and_then(game_db::entry_for_crc) {
+                    if let Some(m) = entry.mirroring {
+                        ui.label("Mirroring (DB)");
+                        ui.label(format!("{m:?}"));
+                        ui.end_row();
+                    }
+                    if let Some(sm) = entry.submapper {
+                        ui.label("Submapper (DB)");
+                        ui.label(sm.to_string());
+                        ui.end_row();
+                    }
+                }
+            });
+
+        ui.separator();
+        ui.label(
+            egui::RichText::new(
+                "Read-only. Metadata from the vendored per-game database + the \
                      cartridge header. Edit corrections in Tools -> ROM Database.",
-                )
-                .small()
-                .weak(),
-            );
-        });
-    *open = win_open;
+            )
+            .small()
+            .weak(),
+        );
+    });
 }

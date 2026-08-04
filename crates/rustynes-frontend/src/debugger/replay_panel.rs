@@ -78,171 +78,171 @@ fn fmt_time(frames: usize, hz: u32) -> String {
 }
 
 #[allow(clippy::too_many_lines)]
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut ReplayPanelState) {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    state: &mut ReplayPanelState,
+) {
     let status = state.status;
     let info = state.info.clone();
-    egui::Window::new("Replay / TAS")
-        .open(open)
-        .default_size([340.0, 300.0])
-        .resizable(true)
-        .show(ctx, |ui| {
-            // --- Mode + progress ---
-            let (mode_txt, mode_col) = match status.mode {
-                MovieMode::Idle => ("Idle", egui::Color32::GRAY),
-                MovieMode::Recording => ("Recording", egui::Color32::from_rgb(0xE0, 0x40, 0x40)),
-                MovieMode::Playing => ("Playing", egui::Color32::from_rgb(0x40, 0xC0, 0x40)),
-            };
-            ui.horizontal(|ui| {
-                ui.strong("Mode:");
-                ui.colored_label(mode_col, mode_txt);
-            });
+    super::detachable_window(ctx, detached, "replay", "Replay / TAS", open, |ui| {
+        // --- Mode + progress ---
+        let (mode_txt, mode_col) = match status.mode {
+            MovieMode::Idle => ("Idle", egui::Color32::GRAY),
+            MovieMode::Recording => ("Recording", egui::Color32::from_rgb(0xE0, 0x40, 0x40)),
+            MovieMode::Playing => ("Playing", egui::Color32::from_rgb(0x40, 0xC0, 0x40)),
+        };
+        ui.horizontal(|ui| {
+            ui.strong("Mode:");
+            ui.colored_label(mode_col, mode_txt);
+        });
 
-            match status.mode {
-                MovieMode::Recording => {
-                    ui.label(format!("Recorded: {} frames", status.cursor));
-                }
-                MovieMode::Playing => {
-                    let pct = if status.total == 0 {
-                        0.0
-                    } else {
-                        status.cursor as f32 / status.total as f32
-                    };
-                    ui.add(
-                        egui::ProgressBar::new(pct)
-                            .text(format!("{} / {}", status.cursor, status.total)),
-                    );
-                }
-                MovieMode::Idle => {
-                    ui.weak("No movie loaded. Record (F6) or play (F7) a .rnm movie.");
-                }
+        match status.mode {
+            MovieMode::Recording => {
+                ui.label(format!("Recorded: {} frames", status.cursor));
             }
+            MovieMode::Playing => {
+                let pct = if status.total == 0 {
+                    0.0
+                } else {
+                    status.cursor as f32 / status.total as f32
+                };
+                ui.add(
+                    egui::ProgressBar::new(pct)
+                        .text(format!("{} / {}", status.cursor, status.total)),
+                );
+            }
+            MovieMode::Idle => {
+                ui.weak("No movie loaded. Record (F6) or play (F7) a .rnm movie.");
+            }
+        }
 
-            ui.separator();
+        ui.separator();
 
-            // --- Timebase ---
-            egui::Grid::new("replay_timebase")
-                .num_columns(2)
-                .show(ui, |ui| {
-                    ui.strong("Region");
-                    ui.label(format!("{} (~{} Hz)", info.region, info.region_hz));
-                    ui.end_row();
+        // --- Timebase ---
+        egui::Grid::new("replay_timebase")
+            .num_columns(2)
+            .show(ui, |ui| {
+                ui.strong("Region");
+                ui.label(format!("{} (~{} Hz)", info.region, info.region_hz));
+                ui.end_row();
 
-                    match status.mode {
-                        MovieMode::Recording => {
-                            ui.strong("Elapsed");
-                            ui.label(fmt_time(status.cursor, info.region_hz));
-                            ui.end_row();
-                        }
-                        MovieMode::Playing => {
-                            ui.strong("Time");
-                            ui.label(format!(
-                                "{} / {}",
-                                fmt_time(status.cursor, info.region_hz),
-                                fmt_time(status.total, info.region_hz)
-                            ));
-                            ui.end_row();
-                        }
-                        MovieMode::Idle => {}
-                    }
-                });
-
-            ui.separator();
-
-            // --- Device topology ---
-            ui.strong("Port topology");
-            egui::Grid::new("replay_topology")
-                .num_columns(2)
-                .show(ui, |ui| {
-                    if info.four_score {
-                        ui.label("Adapter");
-                        ui.label("Four Score (P1..P4)");
+                match status.mode {
+                    MovieMode::Recording => {
+                        ui.strong("Elapsed");
+                        ui.label(fmt_time(status.cursor, info.region_hz));
                         ui.end_row();
                     }
-                    ui.label("Port 1");
-                    ui.label(info.port1);
-                    ui.end_row();
-                    ui.label("Port 2");
-                    ui.label(info.port2);
-                    ui.end_row();
-                });
-
-            ui.separator();
-
-            // --- Controls ---
-            ui.horizontal(|ui| {
-                let rec = status.mode == MovieMode::Recording;
-                if ui
-                    .button(if rec { "⏹ Stop Rec" } else { "⏺ Record" })
-                    .on_hover_text("Toggle TAS recording (F6)")
-                    .clicked()
-                {
-                    state.request = Some(ReplayRequest::RecordToggle);
-                }
-                let playing = status.mode == MovieMode::Playing;
-                if ui
-                    .button(if playing { "⏹ Stop Play" } else { "▶ Play" })
-                    .on_hover_text("Toggle TAS playback (F7)")
-                    .clicked()
-                {
-                    state.request = Some(ReplayRequest::PlayToggle);
-                }
-                if ui
-                    .add_enabled(
-                        status.mode != MovieMode::Idle,
-                        egui::Button::new("⑂ Branch"),
-                    )
-                    .on_hover_text("Branch the current state into a new recording (F8)")
-                    .clicked()
-                {
-                    state.request = Some(ReplayRequest::Branch);
+                    MovieMode::Playing => {
+                        ui.strong("Time");
+                        ui.label(format!(
+                            "{} / {}",
+                            fmt_time(status.cursor, info.region_hz),
+                            fmt_time(status.total, info.region_hz)
+                        ));
+                        ui.end_row();
+                    }
+                    MovieMode::Idle => {}
                 }
             });
 
-            // --- Seek (playback only) ---
-            if status.mode == MovieMode::Playing && status.total > 0 {
-                ui.add_space(4.0);
-                ui.label("Seek");
-                // Keep the slider tracking the live cursor unless the user is
-                // dragging it.
-                let last = status.total.saturating_sub(1);
-                // Track the live playback cursor unless the user is dragging the
-                // slider (otherwise the thumb stays pinned where it was last set).
-                if !state.seek_dragging {
-                    state.seek_target = status.cursor.min(last);
+        ui.separator();
+
+        // --- Device topology ---
+        ui.strong("Port topology");
+        egui::Grid::new("replay_topology")
+            .num_columns(2)
+            .show(ui, |ui| {
+                if info.four_score {
+                    ui.label("Adapter");
+                    ui.label("Four Score (P1..P4)");
+                    ui.end_row();
                 }
-                let resp =
-                    ui.add(egui::Slider::new(&mut state.seek_target, 0..=last).text("frame"));
-                if resp.dragged() {
-                    state.seek_dragging = true;
-                }
-                if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
-                    state.request = Some(ReplayRequest::Seek(state.seek_target));
-                    state.seek_dragging = false;
-                }
-                ui.horizontal(|ui| {
-                    if ui.button("⏮ Start").clicked() {
-                        state.seek_target = 0;
-                        state.request = Some(ReplayRequest::Seek(0));
-                    }
-                    if ui.button("◀ -10").clicked() {
-                        let t = status.cursor.saturating_sub(10);
-                        state.seek_target = t;
-                        state.request = Some(ReplayRequest::Seek(t));
-                    }
-                    if ui.button("+1 ▶").clicked() {
-                        let t = (status.cursor + 1).min(status.total);
-                        state.seek_target = t.min(last);
-                        state.request = Some(ReplayRequest::Seek(t));
-                    }
-                    if ui.button("+10 ▶▶").clicked() {
-                        let t = (status.cursor + 10).min(status.total);
-                        state.seek_target = t.min(last);
-                        state.request = Some(ReplayRequest::Seek(t));
-                    }
-                });
-                ui.weak("Seeking re-derives state by replaying inputs — bit-identical.");
+                ui.label("Port 1");
+                ui.label(info.port1);
+                ui.end_row();
+                ui.label("Port 2");
+                ui.label(info.port2);
+                ui.end_row();
+            });
+
+        ui.separator();
+
+        // --- Controls ---
+        ui.horizontal(|ui| {
+            let rec = status.mode == MovieMode::Recording;
+            if ui
+                .button(if rec { "⏹ Stop Rec" } else { "⏺ Record" })
+                .on_hover_text("Toggle TAS recording (F6)")
+                .clicked()
+            {
+                state.request = Some(ReplayRequest::RecordToggle);
+            }
+            let playing = status.mode == MovieMode::Playing;
+            if ui
+                .button(if playing { "⏹ Stop Play" } else { "▶ Play" })
+                .on_hover_text("Toggle TAS playback (F7)")
+                .clicked()
+            {
+                state.request = Some(ReplayRequest::PlayToggle);
+            }
+            if ui
+                .add_enabled(
+                    status.mode != MovieMode::Idle,
+                    egui::Button::new("⑂ Branch"),
+                )
+                .on_hover_text("Branch the current state into a new recording (F8)")
+                .clicked()
+            {
+                state.request = Some(ReplayRequest::Branch);
             }
         });
+
+        // --- Seek (playback only) ---
+        if status.mode == MovieMode::Playing && status.total > 0 {
+            ui.add_space(4.0);
+            ui.label("Seek");
+            // Keep the slider tracking the live cursor unless the user is
+            // dragging it.
+            let last = status.total.saturating_sub(1);
+            // Track the live playback cursor unless the user is dragging the
+            // slider (otherwise the thumb stays pinned where it was last set).
+            if !state.seek_dragging {
+                state.seek_target = status.cursor.min(last);
+            }
+            let resp = ui.add(egui::Slider::new(&mut state.seek_target, 0..=last).text("frame"));
+            if resp.dragged() {
+                state.seek_dragging = true;
+            }
+            if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+                state.request = Some(ReplayRequest::Seek(state.seek_target));
+                state.seek_dragging = false;
+            }
+            ui.horizontal(|ui| {
+                if ui.button("⏮ Start").clicked() {
+                    state.seek_target = 0;
+                    state.request = Some(ReplayRequest::Seek(0));
+                }
+                if ui.button("◀ -10").clicked() {
+                    let t = status.cursor.saturating_sub(10);
+                    state.seek_target = t;
+                    state.request = Some(ReplayRequest::Seek(t));
+                }
+                if ui.button("+1 ▶").clicked() {
+                    let t = (status.cursor + 1).min(status.total);
+                    state.seek_target = t.min(last);
+                    state.request = Some(ReplayRequest::Seek(t));
+                }
+                if ui.button("+10 ▶▶").clicked() {
+                    let t = (status.cursor + 10).min(status.total);
+                    state.seek_target = t.min(last);
+                    state.request = Some(ReplayRequest::Seek(t));
+                }
+            });
+            ui.weak("Seeking re-derives state by replaying inputs — bit-identical.");
+        }
+    });
 }
 
 #[cfg(test)]

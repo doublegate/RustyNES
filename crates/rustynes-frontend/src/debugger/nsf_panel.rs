@@ -72,7 +72,13 @@ impl NsfPanelState {
     clippy::cast_precision_loss,
     clippy::too_many_lines
 )]
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes: &mut Nes) {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    state: &mut NsfPanelState,
+    nes: &mut Nes,
+) {
     let total = nes.nsf_song_count();
     // v1.5.0 C3 — sample the live per-channel DAC levels (read-only) so the
     // scope appends one column per redraw.
@@ -103,125 +109,119 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes
     state.master.push((p1 + p2 + tri + noi + dmc + ext) / 6.0);
     let expansion = nes.expansion_audio_chip();
 
-    egui::Window::new("NSF Player")
-        .open(open)
-        .default_size([340.0, 440.0])
-        .resizable(true)
-        .show(ctx, |ui| {
-            if total == 0 {
-                ui.weak("No NSF loaded.");
-                return;
+    super::detachable_window(ctx, detached, "nsf", "NSF Player", open, |ui| {
+        if total == 0 {
+            ui.weak("No NSF loaded.");
+            return;
+        }
+
+        // A `fn` (not a closure) so the borrowed `&str` return lifetime elides
+        // to the input — no per-frame heap allocation in the UI render loop.
+        fn show_or_dash(s: &str) -> &str {
+            if s.is_empty() { "—" } else { s }
+        }
+        egui::Grid::new("nsf_meta").num_columns(2).show(ui, |ui| {
+            ui.strong("Title");
+            ui.label(show_or_dash(&state.title));
+            ui.end_row();
+            ui.strong("Artist");
+            ui.label(show_or_dash(&state.artist));
+            ui.end_row();
+            ui.strong("Copyright");
+            ui.label(show_or_dash(&state.copyright));
+            ui.end_row();
+        });
+        ui.separator();
+
+        let current = nes.nsf_current_song();
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(format!("Track {} / {total}", current + 1)).strong());
+        });
+        ui.horizontal(|ui| {
+            // saturating prev/next; selection restarts the track via init.
+            if ui
+                .add_enabled(current > 0, egui::Button::new("⏮ Prev"))
+                .clicked()
+            {
+                nes.nsf_set_song(current - 1);
             }
-
-            // A `fn` (not a closure) so the borrowed `&str` return lifetime elides
-            // to the input — no per-frame heap allocation in the UI render loop.
-            fn show_or_dash(s: &str) -> &str {
-                if s.is_empty() { "—" } else { s }
+            if ui
+                .add_enabled(current + 1 < total, egui::Button::new("Next ⏭"))
+                .clicked()
+            {
+                nes.nsf_set_song(current + 1);
             }
-            egui::Grid::new("nsf_meta").num_columns(2).show(ui, |ui| {
-                ui.strong("Title");
-                ui.label(show_or_dash(&state.title));
-                ui.end_row();
-                ui.strong("Artist");
-                ui.label(show_or_dash(&state.artist));
-                ui.end_row();
-                ui.strong("Copyright");
-                ui.label(show_or_dash(&state.copyright));
-                ui.end_row();
-            });
-            ui.separator();
-
-            let current = nes.nsf_current_song();
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(format!("Track {} / {total}", current + 1)).strong());
-            });
-            ui.horizontal(|ui| {
-                // saturating prev/next; selection restarts the track via init.
-                if ui
-                    .add_enabled(current > 0, egui::Button::new("⏮ Prev"))
-                    .clicked()
-                {
-                    nes.nsf_set_song(current - 1);
-                }
-                if ui
-                    .add_enabled(current + 1 < total, egui::Button::new("Next ⏭"))
-                    .clicked()
-                {
-                    nes.nsf_set_song(current + 1);
-                }
-                if ui.button("⟲ Restart").clicked() {
-                    nes.nsf_set_song(current);
-                }
-            });
-
-            // A direct track picker for files with many songs.
-            if total > 1 {
-                ui.add_space(4.0);
-                let mut sel = current;
-                let last = total - 1;
-                if ui
-                    .add(egui::Slider::new(&mut sel, 0..=last).text("song index"))
-                    .changed()
-                {
-                    nes.nsf_set_song(sel);
-                }
+            if ui.button("⟲ Restart").clicked() {
+                nes.nsf_set_song(current);
             }
+        });
 
-            ui.separator();
+        // A direct track picker for files with many songs.
+        if total > 1 {
+            ui.add_space(4.0);
+            let mut sel = current;
+            let last = total - 1;
+            if ui
+                .add(egui::Slider::new(&mut sel, 0..=last).text("song index"))
+                .changed()
+            {
+                nes.nsf_set_song(sel);
+            }
+        }
 
-            // --- v1.5.0 C3 — per-channel waveform scope ---
-            ui.strong("Channel scope");
-            scope(ui, "Pulse 1", &state.pulse1, egui::Color32::LIGHT_BLUE);
-            scope(ui, "Pulse 2", &state.pulse2, egui::Color32::LIGHT_GREEN);
-            scope(ui, "Triangle", &state.triangle, egui::Color32::LIGHT_YELLOW);
-            scope(ui, "Noise", &state.noise, egui::Color32::LIGHT_RED);
-            scope(ui, "DMC", &state.dmc, egui::Color32::WHITE);
-            // v1.8.9 — master (mixed) scope + per-channel peak VU meters.
+        ui.separator();
+
+        // --- v1.5.0 C3 — per-channel waveform scope ---
+        ui.strong("Channel scope");
+        scope(ui, "Pulse 1", &state.pulse1, egui::Color32::LIGHT_BLUE);
+        scope(ui, "Pulse 2", &state.pulse2, egui::Color32::LIGHT_GREEN);
+        scope(ui, "Triangle", &state.triangle, egui::Color32::LIGHT_YELLOW);
+        scope(ui, "Noise", &state.noise, egui::Color32::LIGHT_RED);
+        scope(ui, "DMC", &state.dmc, egui::Color32::WHITE);
+        // v1.8.9 — master (mixed) scope + per-channel peak VU meters.
+        ui.add_space(2.0);
+        scope(
+            ui,
+            "Master (mix)",
+            &state.master,
+            egui::Color32::from_rgb(0xFF, 0xC0, 0x40),
+        );
+        ui.add_space(2.0);
+        ui.strong("Levels");
+        vu_meter(ui, "P1 ", state.pulse1.peak(), egui::Color32::LIGHT_BLUE);
+        vu_meter(ui, "P2 ", state.pulse2.peak(), egui::Color32::LIGHT_GREEN);
+        vu_meter(
+            ui,
+            "Tri",
+            state.triangle.peak(),
+            egui::Color32::LIGHT_YELLOW,
+        );
+        vu_meter(ui, "Noi", state.noise.peak(), egui::Color32::LIGHT_RED);
+        vu_meter(ui, "DMC", state.dmc.peak(), egui::Color32::WHITE);
+        if let Some(chip) = expansion {
             ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.label("Expansion:");
+                ui.colored_label(egui::Color32::from_rgb(0xC0, 0x90, 0xF0), chip);
+            });
+            // v2.1.6 — the expansion chip's own scope + VU (raw contribution).
             scope(
                 ui,
-                "Master (mix)",
-                &state.master,
-                egui::Color32::from_rgb(0xFF, 0xC0, 0x40),
+                chip,
+                &state.external,
+                egui::Color32::from_rgb(0xC0, 0x90, 0xF0),
             );
-            ui.add_space(2.0);
-            ui.strong("Levels");
-            vu_meter(ui, "P1 ", state.pulse1.peak(), egui::Color32::LIGHT_BLUE);
-            vu_meter(ui, "P2 ", state.pulse2.peak(), egui::Color32::LIGHT_GREEN);
             vu_meter(
                 ui,
-                "Tri",
-                state.triangle.peak(),
-                egui::Color32::LIGHT_YELLOW,
+                "Ext",
+                state.external.peak(),
+                egui::Color32::from_rgb(0xC0, 0x90, 0xF0),
             );
-            vu_meter(ui, "Noi", state.noise.peak(), egui::Color32::LIGHT_RED);
-            vu_meter(ui, "DMC", state.dmc.peak(), egui::Color32::WHITE);
-            if let Some(chip) = expansion {
-                ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    ui.label("Expansion:");
-                    ui.colored_label(egui::Color32::from_rgb(0xC0, 0x90, 0xF0), chip);
-                });
-                // v2.1.6 — the expansion chip's own scope + VU (raw contribution).
-                scope(
-                    ui,
-                    chip,
-                    &state.external,
-                    egui::Color32::from_rgb(0xC0, 0x90, 0xF0),
-                );
-                vu_meter(
-                    ui,
-                    "Ext",
-                    state.external.peak(),
-                    egui::Color32::from_rgb(0xC0, 0x90, 0xF0),
-                );
-                ui.weak("Expansion channels are summed into the master mix above.");
-            }
+            ui.weak("Expansion channels are summed into the master mix above.");
+        }
 
-            ui.add_space(4.0);
-            ui.weak("Audio plays through the standard APU; NSF files carry no video.");
-            ui.weak(
-                "Tempo \u{2248} NTSC 60 Hz (vblank-driven); non-60 Hz tunes play slightly off.",
-            );
-        });
+        ui.add_space(4.0);
+        ui.weak("Audio plays through the standard APU; NSF files carry no video.");
+        ui.weak("Tempo \u{2248} NTSC 60 Hz (vblank-driven); non-60 Hz tunes play slightly off.");
+    });
 }

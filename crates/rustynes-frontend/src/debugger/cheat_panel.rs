@@ -137,6 +137,7 @@ impl CheatPanelState {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut CheatPanelState,
     nes: &mut Nes,
@@ -144,14 +145,9 @@ pub fn show(
     rom_crcs: &[u32],
 ) {
     let mut changed = false;
-    egui::Window::new("Cheats (Game Genie)")
-        .open(open)
-        .default_pos([560.0, 64.0])
-        .default_size([420.0, 380.0])
-        .resizable(true)
-        .show(ctx, |ui| {
-            changed = body(ui, state, rom_crcs);
-        });
+    super::detachable_window(ctx, detached, "cheat", "Cheats (Game Genie)", open, |ui| {
+        changed = body(ui, state, rom_crcs);
+    });
     // v1.0.0 (UX3 BUG-3) — re-sync the live core to the panel's enabled set on
     // EVERY frame the panel is open, not just when the list `changed`. The core
     // could have silently lost the codes between edits (a Reset / Power-Cycle, a
@@ -173,19 +169,15 @@ pub fn show(
 #[cfg(target_arch = "wasm32")]
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut CheatPanelState,
     nes: &mut Nes,
     rom_crcs: &[u32],
 ) {
-    egui::Window::new("Cheats (Game Genie)")
-        .open(open)
-        .default_pos([560.0, 64.0])
-        .default_size([420.0, 380.0])
-        .resizable(true)
-        .show(ctx, |ui| {
-            let _ = body(ui, state, rom_crcs);
-        });
+    super::detachable_window(ctx, detached, "cheat", "Cheats (Game Genie)", open, |ui| {
+        let _ = body(ui, state, rom_crcs);
+    });
     // v1.0.0 (UX3 BUG-3) — every-frame resync (see the native variant above).
     resync_nes(state, nes);
 }

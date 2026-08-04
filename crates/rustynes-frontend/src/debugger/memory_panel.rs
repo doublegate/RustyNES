@@ -227,198 +227,193 @@ impl MemoryPanelState {
 
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut MemoryPanelState,
     nes: &mut Nes,
     counter: &mut MemoryAccessCounter,
 ) {
-    egui::Window::new("Memory")
-        .open(open)
-        .default_pos([336.0, 480.0])
-        .default_size([520.0, 520.0])
-        .resizable(true)
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                for d in [Domain::Cpu, Domain::Ppu, Domain::Oam] {
-                    if ui.selectable_label(state.domain == d, d.label()).clicked()
-                        && state.domain != d
-                    {
-                        state.domain = d;
-                        state.editing = None;
-                        state.origin = 0;
-                    }
-                }
-                ui.separator();
-                ui.label("goto:");
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut state.goto_text)
-                        .desired_width(56.0)
-                        .hint_text("$1234"),
-                );
-                if r.lost_focus()
-                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                    && let Some(addr) = parse_hex16(&state.goto_text)
+    super::detachable_window(ctx, detached, "memory", "Memory", open, |ui| {
+        ui.horizontal(|ui| {
+            for d in [Domain::Cpu, Domain::Ppu, Domain::Oam] {
+                if ui.selectable_label(state.domain == d, d.label()).clicked() && state.domain != d
                 {
-                    state.origin = (addr & 0xFFF0).min((state.domain.max_addr() as u16) & 0xFFF0);
+                    state.domain = d;
+                    state.editing = None;
+                    state.origin = 0;
                 }
-                if ui.button("-").clicked() {
-                    state.origin = state.origin.wrapping_sub(256);
-                }
-                if ui.button("+").clicked() {
-                    let next = u32::from(state.origin) + 256;
-                    if next <= state.domain.max_addr() {
-                        state.origin = next as u16;
-                    }
-                }
-            });
-
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut state.heatmap, "Access heatmap")
-                    .on_hover_text(
-                        "Tint bytes by read (blue) / write (red) in the last frame \
-                         (CPU bus; arms the debug-hooks access log).",
-                    );
-                ui.separator();
-                ui.label("find:");
-                let fr = ui.add(
-                    egui::TextEdit::singleline(&mut state.find_text)
-                        .desired_width(120.0)
-                        .hint_text("DE AD BE EF"),
-                );
-                let go = (fr.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                    || ui.button("Find").clicked();
-                if go {
-                    state.run_find(nes);
-                }
-                if let Some(s) = &state.find_status {
-                    ui.weak(s);
-                }
-            });
-
-            if state.domain.writable() {
-                ui.weak(
-                    "Click a byte in $0000-$1FFF (work RAM) to poke it (Enter to write). \
-                     Right-click toggles freeze. Bytes outside work RAM are read-only.",
-                );
-            } else {
-                ui.weak("Read-only domain (no deterministic poke path).");
             }
             ui.separator();
+            ui.label("goto:");
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut state.goto_text)
+                    .desired_width(56.0)
+                    .hint_text("$1234"),
+            );
+            if r.lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                && let Some(addr) = parse_hex16(&state.goto_text)
+            {
+                state.origin = (addr & 0xFFF0).min((state.domain.max_addr() as u16) & 0xFFF0);
+            }
+            if ui.button("-").clicked() {
+                state.origin = state.origin.wrapping_sub(256);
+            }
+            if ui.button("+").clicked() {
+                let next = u32::from(state.origin) + 256;
+                if next <= state.domain.max_addr() {
+                    state.origin = next as u16;
+                }
+            }
+        });
 
-            // Pending edits collected during the immutable-ish render, applied
-            // after so we don't fight the `nes` borrow inside the closures.
-            let mut poke: Option<(u16, u8)> = None;
-            let mut toggle_freeze: Option<u16> = None;
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut state.heatmap, "Access heatmap")
+                .on_hover_text(
+                    "Tint bytes by read (blue) / write (red) in the last frame \
+                         (CPU bus; arms the debug-hooks access log).",
+                );
+            ui.separator();
+            ui.label("find:");
+            let fr = ui.add(
+                egui::TextEdit::singleline(&mut state.find_text)
+                    .desired_width(120.0)
+                    .hint_text("DE AD BE EF"),
+            );
+            let go = (fr.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                || ui.button("Find").clicked();
+            if go {
+                state.run_find(nes);
+            }
+            if let Some(s) = &state.find_status {
+                ui.weak(s);
+            }
+        });
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                let rows: u16 = 16;
-                let max = state.domain.max_addr();
-                for r in 0..rows {
-                    let row_addr = state.origin.wrapping_add(r * 16);
-                    if u32::from(row_addr) > max {
-                        break;
-                    }
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 3.0;
-                        ui.monospace(format!("{row_addr:04X} "));
-                        let mut ascii = String::with_capacity(16);
-                        for c in 0..16u16 {
-                            let addr = row_addr.wrapping_add(c);
-                            if u32::from(addr) > max {
-                                break;
-                            }
-                            let byte = state.read_byte(nes, addr);
-                            ascii.push(if (0x20..0x7F).contains(&byte) {
-                                byte as char
-                            } else {
-                                '.'
-                            });
+        if state.domain.writable() {
+            ui.weak(
+                "Click a byte in $0000-$1FFF (work RAM) to poke it (Enter to write). \
+                     Right-click toggles freeze. Bytes outside work RAM are read-only.",
+            );
+        } else {
+            ui.weak("Read-only domain (no deterministic poke path).");
+        }
+        ui.separator();
 
-                            // If this cell is being edited, draw the text box.
-                            if let Some((eaddr, buf)) = state.editing.as_mut()
-                                && *eaddr == addr
-                            {
-                                let resp = ui.add(
-                                    egui::TextEdit::singleline(buf)
-                                        .desired_width(22.0)
-                                        .font(egui::TextStyle::Monospace),
-                                );
-                                resp.request_focus();
-                                if resp.lost_focus() {
-                                    if ui.input(|i| i.key_pressed(egui::Key::Enter))
-                                        && let Some(v) = parse_byte(buf)
-                                    {
-                                        poke = Some((addr, v));
-                                    }
-                                    state.editing = None;
+        // Pending edits collected during the immutable-ish render, applied
+        // after so we don't fight the `nes` borrow inside the closures.
+        let mut poke: Option<(u16, u8)> = None;
+        let mut toggle_freeze: Option<u16> = None;
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            let rows: u16 = 16;
+            let max = state.domain.max_addr();
+            for r in 0..rows {
+                let row_addr = state.origin.wrapping_add(r * 16);
+                if u32::from(row_addr) > max {
+                    break;
+                }
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 3.0;
+                    ui.monospace(format!("{row_addr:04X} "));
+                    let mut ascii = String::with_capacity(16);
+                    for c in 0..16u16 {
+                        let addr = row_addr.wrapping_add(c);
+                        if u32::from(addr) > max {
+                            break;
+                        }
+                        let byte = state.read_byte(nes, addr);
+                        ascii.push(if (0x20..0x7F).contains(&byte) {
+                            byte as char
+                        } else {
+                            '.'
+                        });
+
+                        // If this cell is being edited, draw the text box.
+                        if let Some((eaddr, buf)) = state.editing.as_mut()
+                            && *eaddr == addr
+                        {
+                            let resp = ui.add(
+                                egui::TextEdit::singleline(buf)
+                                    .desired_width(22.0)
+                                    .font(egui::TextStyle::Monospace),
+                            );
+                            resp.request_focus();
+                            if resp.lost_focus() {
+                                if ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                    && let Some(v) = parse_byte(buf)
+                                {
+                                    poke = Some((addr, v));
                                 }
-                                continue;
+                                state.editing = None;
                             }
+                            continue;
+                        }
 
-                            // Otherwise a clickable label, tinted by freeze /
-                            // heatmap state.
-                            let frozen = state.frozen.contains_key(&addr);
-                            let mut text = egui::RichText::new(format!("{byte:02X}")).monospace();
-                            if frozen {
-                                text = text.background_color(FROZEN_TINT).color(Color32::BLACK);
-                            } else if state.heatmap
-                                && state.domain == Domain::Cpu
-                                && let Some(f) = state.access.get(&addr)
-                            {
-                                if f.write {
-                                    text = text.color(WRITE_TINT);
-                                } else if f.read {
-                                    text = text.color(READ_TINT);
-                                }
-                            }
-                            // Only $0000-$1FFF work RAM is actually pokeable;
-                            // a click elsewhere would be a silent no-op, so it
-                            // is not made editable / freezable.
-                            let editable = state.domain.addr_writable(addr);
-                            let resp = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
-                            if resp.clicked() && editable {
-                                state.editing = Some((addr, format!("{byte:02X}")));
-                            }
-                            if resp.secondary_clicked() && editable {
-                                toggle_freeze = Some(addr);
+                        // Otherwise a clickable label, tinted by freeze /
+                        // heatmap state.
+                        let frozen = state.frozen.contains_key(&addr);
+                        let mut text = egui::RichText::new(format!("{byte:02X}")).monospace();
+                        if frozen {
+                            text = text.background_color(FROZEN_TINT).color(Color32::BLACK);
+                        } else if state.heatmap
+                            && state.domain == Domain::Cpu
+                            && let Some(f) = state.access.get(&addr)
+                        {
+                            if f.write {
+                                text = text.color(WRITE_TINT);
+                            } else if f.read {
+                                text = text.color(READ_TINT);
                             }
                         }
-                        ui.monospace(format!("  {ascii}"));
-                    });
-                }
-            });
-
-            // Apply the deferred edits (borrow of `nes` is free here).
-            if let Some((addr, v)) = poke {
-                nes.poke_ram(addr, v);
-                // Keep a freeze in sync if this byte is frozen.
-                if let Some(slot) = state.frozen.get_mut(&addr) {
-                    *slot = v;
-                }
-            }
-            if let Some(addr) = toggle_freeze
-                && state.frozen.remove(&addr).is_none()
-            {
-                let v = nes.cpu_bus_peek(addr);
-                state.frozen.insert(addr, v);
-            }
-
-            if !state.frozen.is_empty() {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label(format!("frozen: {}", state.frozen.len()));
-                    if ui.small_button("clear frozen").clicked() {
-                        state.frozen.clear();
+                        // Only $0000-$1FFF work RAM is actually pokeable;
+                        // a click elsewhere would be a silent no-op, so it
+                        // is not made editable / freezable.
+                        let editable = state.domain.addr_writable(addr);
+                        let resp = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
+                        if resp.clicked() && editable {
+                            state.editing = Some((addr, format!("{byte:02X}")));
+                        }
+                        if resp.secondary_clicked() && editable {
+                            toggle_freeze = Some(addr);
+                        }
                     }
+                    ui.monospace(format!("  {ascii}"));
                 });
             }
-
-            // v1.7.0 "Forge" Workstream C (C2) — the per-address read/write/exec
-            // access-counter + uninitialized-read detector, shown for the 16
-            // addresses currently in view. Self-contained so it merges cleanly.
-            ui.separator();
-            access_counter::show_access_counter_section(ui, counter, state.origin);
         });
+
+        // Apply the deferred edits (borrow of `nes` is free here).
+        if let Some((addr, v)) = poke {
+            nes.poke_ram(addr, v);
+            // Keep a freeze in sync if this byte is frozen.
+            if let Some(slot) = state.frozen.get_mut(&addr) {
+                *slot = v;
+            }
+        }
+        if let Some(addr) = toggle_freeze
+            && state.frozen.remove(&addr).is_none()
+        {
+            let v = nes.cpu_bus_peek(addr);
+            state.frozen.insert(addr, v);
+        }
+
+        if !state.frozen.is_empty() {
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(format!("frozen: {}", state.frozen.len()));
+                if ui.small_button("clear frozen").clicked() {
+                    state.frozen.clear();
+                }
+            });
+        }
+
+        // v1.7.0 "Forge" Workstream C (C2) — the per-address read/write/exec
+        // access-counter + uninitialized-read detector, shown for the 16
+        // addresses currently in view. Self-contained so it merges cleanly.
+        ui.separator();
+        access_counter::show_access_counter_section(ui, counter, state.origin);
+    });
 }
 
 fn parse_hex16(s: &str) -> Option<u16> {

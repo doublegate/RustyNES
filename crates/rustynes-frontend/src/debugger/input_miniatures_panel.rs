@@ -129,14 +129,18 @@ pub struct InputMiniaturesPanelState;
 /// Render the "Input Display" window (v1.7.0 "Forge" beta.5, #51).
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     _state: &mut InputMiniaturesPanelState,
     snap: &MiniaturesSnapshot,
 ) {
-    egui::Window::new("Input Display")
-        .open(open)
-        .resizable(false)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "input_display",
+        "Input Display",
+        open,
+        |ui| {
             // P1 standard pad.
             label(ui, "P1");
             draw_pad(ui, snap.pads.first().copied().unwrap_or_default());
@@ -158,7 +162,8 @@ pub fn show(
                 }
                 exp => draw_expansion(ui, exp),
             }
-        });
+        },
+    );
 }
 
 /// A device label line.

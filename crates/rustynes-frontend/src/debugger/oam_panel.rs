@@ -70,83 +70,84 @@ fn parse_byte(s: &str) -> Option<u8> {
     u8::from_str_radix(t, 16).ok()
 }
 
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut OamPanelState, nes: &mut Nes) {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    state: &mut OamPanelState,
+    nes: &mut Nes,
+) {
     let oam = nes.oam();
     let ppu = nes.ppu_snapshot();
-    egui::Window::new("OAM")
-        .open(open)
-        .default_pos([16.0, 480.0])
-        .default_size([520.0, 460.0])
-        .resizable(true)
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "{} sprites — {}",
-                    64,
-                    if ppu.sprite_size_16 { "8x16" } else { "8x8" }
-                ));
-                // v1.7.0 "Forge" Workstream A1 — editing master toggle. Off by
-                // default → read-only (byte-identical with no edits queued).
-                ui.checkbox(&mut state.a1.enabled, "Edit (writeback)");
-            });
-            ui.separator();
-            // Sprite list (scrollable). While editing, each row is clickable to
-            // select the sprite for the editor below.
-            let editing = state.a1.enabled;
-            egui::ScrollArea::vertical()
-                .id_salt("oam-list")
-                .max_height(240.0)
-                .show(ui, |ui| {
-                    for i in 0..64usize {
-                        let off = i * 4;
-                        let y = oam[off];
-                        let tile = oam[off + 1];
-                        let attr = oam[off + 2];
-                        let x = oam[off + 3];
-                        let palette = attr & 0x03;
-                        let priority = if attr & 0x20 != 0 { "bg" } else { "fg" };
-                        let flip = match attr & 0xC0 {
-                            0x40 => "h",
-                            0x80 => "v",
-                            0xC0 => "hv",
-                            _ => "-",
-                        };
-                        let text = format!(
-                            "#{i:02}  x={x:3} y={y:3}  tile=${tile:02X}  pal={palette}  pri={priority}  flip={flip}"
-                        );
-                        if editing {
-                            let selected = state.a1.sel == Some(i as u8);
-                            if ui
-                                .selectable_label(selected, egui::RichText::new(text).monospace())
-                                .clicked()
-                            {
-                                state.a1.sel = Some(i as u8);
-                                state.a1.bytes = [
-                                    format!("{y:02X}"),
-                                    format!("{tile:02X}"),
-                                    format!("{attr:02X}"),
-                                    format!("{x:02X}"),
-                                ];
-                            }
-                        } else {
-                            ui.monospace(text);
-                        }
-                    }
-                });
-            if editing {
-                oam_editor(ui, &mut state.a1);
-            }
-            ui.separator();
-            // Visual: render the 64 sprites onto a 8x8 grid of 16x16 cells
-            // (one tile each — we don't fetch the full 8x16 in this view).
-            let rgba = render_sprite_grid(nes, &oam, ppu.sprite_pattern_base);
-            let image = ColorImage::from_rgba_unmultiplied([128, 128], &rgba);
-            let handle = state.visual_tex.get_or_insert_with(|| {
-                ctx.load_texture("oam-grid", image.clone(), egui::TextureOptions::NEAREST)
-            });
-            handle.set(image, egui::TextureOptions::NEAREST);
-            ui.image((handle.id(), egui::vec2(256.0, 256.0)));
+    super::detachable_window(ctx, detached, "oam", "OAM", open, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(format!(
+                "{} sprites — {}",
+                64,
+                if ppu.sprite_size_16 { "8x16" } else { "8x8" }
+            ));
+            // v1.7.0 "Forge" Workstream A1 — editing master toggle. Off by
+            // default → read-only (byte-identical with no edits queued).
+            ui.checkbox(&mut state.a1.enabled, "Edit (writeback)");
         });
+        ui.separator();
+        // Sprite list (scrollable). While editing, each row is clickable to
+        // select the sprite for the editor below.
+        let editing = state.a1.enabled;
+        egui::ScrollArea::vertical()
+            .id_salt("oam-list")
+            .max_height(240.0)
+            .show(ui, |ui| {
+                for i in 0..64usize {
+                    let off = i * 4;
+                    let y = oam[off];
+                    let tile = oam[off + 1];
+                    let attr = oam[off + 2];
+                    let x = oam[off + 3];
+                    let palette = attr & 0x03;
+                    let priority = if attr & 0x20 != 0 { "bg" } else { "fg" };
+                    let flip = match attr & 0xC0 {
+                        0x40 => "h",
+                        0x80 => "v",
+                        0xC0 => "hv",
+                        _ => "-",
+                    };
+                    let text = format!(
+                        "#{i:02}  x={x:3} y={y:3}  tile=${tile:02X}  pal={palette}  pri={priority}  flip={flip}"
+                    );
+                    if editing {
+                        let selected = state.a1.sel == Some(i as u8);
+                        if ui
+                            .selectable_label(selected, egui::RichText::new(text).monospace())
+                            .clicked()
+                        {
+                            state.a1.sel = Some(i as u8);
+                            state.a1.bytes = [
+                                format!("{y:02X}"),
+                                format!("{tile:02X}"),
+                                format!("{attr:02X}"),
+                                format!("{x:02X}"),
+                            ];
+                        }
+                    } else {
+                        ui.monospace(text);
+                    }
+                }
+            });
+        if editing {
+            oam_editor(ui, &mut state.a1);
+        }
+        ui.separator();
+        // Visual: render the 64 sprites onto a 8x8 grid of 16x16 cells
+        // (one tile each — we don't fetch the full 8x16 in this view).
+        let rgba = render_sprite_grid(nes, &oam, ppu.sprite_pattern_base);
+        let image = ColorImage::from_rgba_unmultiplied([128, 128], &rgba);
+        let handle = state.visual_tex.get_or_insert_with(|| {
+            ctx.load_texture("oam-grid", image.clone(), egui::TextureOptions::NEAREST)
+        });
+        handle.set(image, egui::TextureOptions::NEAREST);
+        ui.image((handle.id(), egui::vec2(256.0, 256.0)));
+    });
 }
 
 /// v1.7.0 "Forge" Workstream A1 — the sprite-byte editor (Y / tile / attr / X).

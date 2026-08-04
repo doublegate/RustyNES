@@ -258,16 +258,22 @@ fn is_unreleased_heading(head: &str) -> bool {
 }
 
 /// Render the Documentation window. `open` toggles visibility.
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut DocPanelState) {
-    egui::Window::new("Documentation")
-        .open(open)
-        .resizable(true)
-        .default_width(760.0)
-        .default_height(540.0)
-        .min_width(560.0)
-        .show(ctx, |ui| {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    state: &mut DocPanelState,
+) {
+    super::detachable_window(
+        ctx,
+        detached,
+        "documentation",
+        "Documentation",
+        open,
+        |ui| {
             body(ui, state);
-        });
+        },
+    );
 }
 
 fn body(ui: &mut egui::Ui, state: &mut DocPanelState) {

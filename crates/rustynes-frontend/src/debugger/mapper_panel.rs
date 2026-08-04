@@ -38,125 +38,126 @@ fn fmt_size(bytes: usize) -> String {
     }
 }
 
-pub fn show(ctx: &egui::Context, open: &mut bool, _state: &mut MapperPanelState, nes: &Nes) {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    _state: &mut MapperPanelState,
+    nes: &Nes,
+) {
     let info = nes.mapper_info();
-    egui::Window::new("Mapper")
-        .open(open)
-        .default_pos([16.0, 720.0])
-        .default_size([440.0, 460.0])
-        .resizable(true)
-        .show(ctx, |ui| {
-            // --- Identity ---
-            let submap = if info.submapper == 0 {
-                String::new()
-            } else {
-                format!(".{}", info.submapper)
-            };
-            ui.label(
-                egui::RichText::new(format!(
-                    "Mapper #{}{submap} — {}",
-                    info.mapper_id, info.name
-                ))
-                .strong(),
-            );
-            ui.horizontal(|ui| {
-                if !info.tier.is_empty() {
-                    ui.label(format!("Tier: {}", info.tier));
-                    ui.separator();
-                }
-                ui.label(format!("Mirroring: {}", info.mirroring));
-            });
-
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    // --- ROM / RAM sizes + bank counts ---
-                    ui.separator();
-                    ui.label(egui::RichText::new("ROM / RAM").strong());
-                    egui::Grid::new("mapper-sizes")
-                        .num_columns(2)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            // PRG-ROM with its 16 KiB / 8 KiB bank counts.
-                            ui.label("PRG-ROM");
-                            ui.monospace(format!(
-                                "{}  ({} x 16K, {} x 8K)",
-                                fmt_size(info.prg_rom_size),
-                                info.prg_rom_size / 0x4000,
-                                info.prg_rom_size / 0x2000
-                            ));
-                            ui.end_row();
-                            if info.chr_rom_size > 0 {
-                                ui.label("CHR-ROM");
-                                ui.monospace(format!(
-                                    "{}  ({} x 1K)",
-                                    fmt_size(info.chr_rom_size),
-                                    info.chr_rom_size / 0x400
-                                ));
-                                ui.end_row();
-                            }
-                            if info.chr_ram_size > 0 {
-                                ui.label("CHR-RAM");
-                                ui.monospace(fmt_size(info.chr_ram_size));
-                                ui.end_row();
-                            }
-                            ui.label("PRG-RAM");
-                            ui.monospace(format!(
-                                "{}{}",
-                                fmt_size(info.prg_ram_size),
-                                if info.has_battery {
-                                    "  (battery / NVRAM)"
-                                } else {
-                                    ""
-                                }
-                            ));
-                            ui.end_row();
-                        });
-
-                    // --- Hardware features (IRQ + expansion audio) ---
-                    if !info.irq_kind.is_empty() || info.expansion_audio.is_some() {
-                        ui.separator();
-                        ui.label(egui::RichText::new("Hardware").strong());
-                        if !info.irq_kind.is_empty() {
-                            ui.monospace(format!("       IRQ = {}", info.irq_kind));
-                        }
-                        if let Some(chip) = info.expansion_audio {
-                            ui.monospace(format!("     Audio = {chip}"));
-                        }
-                    }
-
-                    // --- Live bank mapping (PRG window $8000-$FFFF) ---
-                    if !info.prg_banks.is_empty() {
-                        ui.separator();
-                        ui.label(egui::RichText::new("PRG banks ($8000-$FFFF)").strong());
-                        for (k, v) in &info.prg_banks {
-                            ui.monospace(format!("{k:>10} = {v}"));
-                        }
-                    }
-                    // --- Live bank mapping (CHR window $0000-$1FFF) ---
-                    if !info.chr_banks.is_empty() {
-                        ui.separator();
-                        ui.label(egui::RichText::new("CHR banks ($0000-$1FFF)").strong());
-                        for (k, v) in &info.chr_banks {
-                            ui.monospace(format!("{k:>10} = {v}"));
-                        }
-                    }
-                    // --- IRQ counter live state ---
-                    if !info.irq_state.is_empty() {
-                        ui.separator();
-                        ui.label(egui::RichText::new("IRQ counter").strong());
-                        for (k, v) in &info.irq_state {
-                            ui.monospace(format!("{k:>10} = {v}"));
-                        }
-                    }
-                    // --- Extra (register last-write log, mode flags, ...) ---
-                    if !info.extra.is_empty() {
-                        ui.separator();
-                        ui.label(egui::RichText::new("Registers / state").strong());
-                        for (k, v) in &info.extra {
-                            ui.monospace(format!("{k:>10} = {v}"));
-                        }
-                    }
-                });
+    super::detachable_window(ctx, detached, "mapper", "Mapper", open, |ui| {
+        // --- Identity ---
+        let submap = if info.submapper == 0 {
+            String::new()
+        } else {
+            format!(".{}", info.submapper)
+        };
+        ui.label(
+            egui::RichText::new(format!(
+                "Mapper #{}{submap} — {}",
+                info.mapper_id, info.name
+            ))
+            .strong(),
+        );
+        ui.horizontal(|ui| {
+            if !info.tier.is_empty() {
+                ui.label(format!("Tier: {}", info.tier));
+                ui.separator();
+            }
+            ui.label(format!("Mirroring: {}", info.mirroring));
         });
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // --- ROM / RAM sizes + bank counts ---
+                ui.separator();
+                ui.label(egui::RichText::new("ROM / RAM").strong());
+                egui::Grid::new("mapper-sizes")
+                    .num_columns(2)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        // PRG-ROM with its 16 KiB / 8 KiB bank counts.
+                        ui.label("PRG-ROM");
+                        ui.monospace(format!(
+                            "{}  ({} x 16K, {} x 8K)",
+                            fmt_size(info.prg_rom_size),
+                            info.prg_rom_size / 0x4000,
+                            info.prg_rom_size / 0x2000
+                        ));
+                        ui.end_row();
+                        if info.chr_rom_size > 0 {
+                            ui.label("CHR-ROM");
+                            ui.monospace(format!(
+                                "{}  ({} x 1K)",
+                                fmt_size(info.chr_rom_size),
+                                info.chr_rom_size / 0x400
+                            ));
+                            ui.end_row();
+                        }
+                        if info.chr_ram_size > 0 {
+                            ui.label("CHR-RAM");
+                            ui.monospace(fmt_size(info.chr_ram_size));
+                            ui.end_row();
+                        }
+                        ui.label("PRG-RAM");
+                        ui.monospace(format!(
+                            "{}{}",
+                            fmt_size(info.prg_ram_size),
+                            if info.has_battery {
+                                "  (battery / NVRAM)"
+                            } else {
+                                ""
+                            }
+                        ));
+                        ui.end_row();
+                    });
+
+                // --- Hardware features (IRQ + expansion audio) ---
+                if !info.irq_kind.is_empty() || info.expansion_audio.is_some() {
+                    ui.separator();
+                    ui.label(egui::RichText::new("Hardware").strong());
+                    if !info.irq_kind.is_empty() {
+                        ui.monospace(format!("       IRQ = {}", info.irq_kind));
+                    }
+                    if let Some(chip) = info.expansion_audio {
+                        ui.monospace(format!("     Audio = {chip}"));
+                    }
+                }
+
+                // --- Live bank mapping (PRG window $8000-$FFFF) ---
+                if !info.prg_banks.is_empty() {
+                    ui.separator();
+                    ui.label(egui::RichText::new("PRG banks ($8000-$FFFF)").strong());
+                    for (k, v) in &info.prg_banks {
+                        ui.monospace(format!("{k:>10} = {v}"));
+                    }
+                }
+                // --- Live bank mapping (CHR window $0000-$1FFF) ---
+                if !info.chr_banks.is_empty() {
+                    ui.separator();
+                    ui.label(egui::RichText::new("CHR banks ($0000-$1FFF)").strong());
+                    for (k, v) in &info.chr_banks {
+                        ui.monospace(format!("{k:>10} = {v}"));
+                    }
+                }
+                // --- IRQ counter live state ---
+                if !info.irq_state.is_empty() {
+                    ui.separator();
+                    ui.label(egui::RichText::new("IRQ counter").strong());
+                    for (k, v) in &info.irq_state {
+                        ui.monospace(format!("{k:>10} = {v}"));
+                    }
+                }
+                // --- Extra (register last-write log, mode flags, ...) ---
+                if !info.extra.is_empty() {
+                    ui.separator();
+                    ui.label(egui::RichText::new("Registers / state").strong());
+                    for (k, v) in &info.extra {
+                        ui.monospace(format!("{k:>10} = {v}"));
+                    }
+                }
+            });
+    });
 }

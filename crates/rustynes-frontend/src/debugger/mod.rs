@@ -246,6 +246,76 @@ pub enum ChipPanel {
     HeaderEditor,
 }
 
+/// v2.2.9 "Studio II": render a tool window that the user can **detach** into its
+/// own floating OS window — the fix for the "every new window is stuck inside the
+/// main window" report (Windows 10).
+///
+/// `detached` holds the set of currently-floating panel ids; `id` is this panel's
+/// stable key. Docked, it is a normal [`egui::Window`] with a small "⧉ Detach"
+/// button. Detached, it renders in a real OS viewport (`show_viewport_immediate`,
+/// the same mechanism [`basic_bot_panel`] already uses) with a "⧉ Reattach"
+/// button; the OS window's close button reattaches too. **Native-only** — egui
+/// multi-viewport needs winit multi-window, so on wasm it always renders docked.
+///
+/// `add_contents` is the panel body; it captures whatever it needs (`&Nes`, panel
+/// state, …) and is called exactly once per frame, in whichever branch is active.
+// On wasm the detached-viewport branch and the "Detach" button are `#[cfg]`'d
+// out (egui multi-viewport is unavailable there), so `detached` is never mutated
+// — `&mut` reads as needless. Keep the native signature and allow it on wasm.
+#[cfg_attr(target_arch = "wasm32", allow(clippy::needless_pass_by_ref_mut))]
+pub(crate) fn detachable_window(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    id: &'static str,
+    title: &str,
+    open: &mut bool,
+    mut add_contents: impl FnMut(&mut egui::Ui),
+) {
+    // `detached` and `id` drive the detached-viewport branch and the "Detach"
+    // button, both native-only. On wasm every use is `#[cfg]`'d out, so mark them
+    // used to keep `-D warnings` (unused_variables) green there without desyncing
+    // the native signature.
+    #[cfg(target_arch = "wasm32")]
+    let _ = (&detached, id);
+    #[cfg(not(target_arch = "wasm32"))]
+    if detached.contains(id) {
+        let mut reattach = false;
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of(id),
+            egui::ViewportBuilder::default().with_title(title),
+            |vctx, _class| {
+                // A full-window Area hosts the body (mirrors `basic_bot_panel`,
+                // avoiding the deprecated context-level `CentralPanel::show`).
+                egui::Area::new(egui::Id::new(id)).show(vctx, |ui| {
+                    if ui.button("\u{29c9} Reattach to main window").clicked() {
+                        reattach = true;
+                    }
+                    ui.separator();
+                    add_contents(ui);
+                });
+                if vctx.input(|i| i.viewport().close_requested()) {
+                    reattach = true;
+                }
+            },
+        );
+        if reattach {
+            detached.remove(id);
+        }
+        return;
+    }
+    let mut win_open = *open;
+    egui::Window::new(title)
+        .open(&mut win_open)
+        .show(ctx, |ui| {
+            #[cfg(not(target_arch = "wasm32"))]
+            if ui.small_button("\u{29c9} Detach").clicked() {
+                detached.insert(id);
+            }
+            add_contents(ui);
+        });
+    *open = win_open;
+}
+
 /// State of the debugger overlay.
 pub struct DebuggerOverlay {
     /// egui frontend state (window-event integration).
@@ -354,6 +424,11 @@ pub struct DebuggerOverlay {
     /// v1.5.0 I10 — whether the Documentation window is open (native-only).
     #[cfg(not(target_arch = "wasm32"))]
     show_documentation: bool,
+    /// v2.2.9 "Studio II": the set of tool panels the user has "detached" to their
+    /// own floating OS window (keyed by the panel's stable id). Empty by default;
+    /// on wasm it stays empty (multi-viewport is native-only). See
+    /// [`detachable_window`].
+    detached_panels: std::collections::HashSet<&'static str>,
     /// Game Genie cheat panel state (v1.6.0).
     cheat_ui: cheat_panel::CheatPanelState,
     /// ROM-database editor panel state (v1.2.0 Workstream B, B4).
@@ -564,6 +639,7 @@ impl DebuggerOverlay {
             doc_ui: doc_panel::DocPanelState::default(),
             #[cfg(not(target_arch = "wasm32"))]
             show_documentation: false,
+            detached_panels: std::collections::HashSet::new(),
             cheat_ui: cheat_panel::CheatPanelState::default(),
             game_db_ui: game_db_panel::GameDbPanelState::default(),
             rom_info_ui: rom_info_panel::RomInfoPanelState,
@@ -1361,10 +1437,22 @@ impl DebuggerOverlay {
             }
         }
         if self.show_ppu {
-            ppu_panel::show(ctx, &mut self.show_ppu, &mut self.ppu_ui, nes);
+            ppu_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_ppu,
+                &mut self.ppu_ui,
+                nes,
+            );
         }
         if self.show_oam {
-            oam_panel::show(ctx, &mut self.show_oam, &mut self.oam_ui, nes);
+            oam_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_oam,
+                &mut self.oam_ui,
+                nes,
+            );
         }
         // v1.7.0 "Forge" Workstream A2 — Cartridge Info / header editor. Edits a
         // ROM file on disk (not `nes`), so it needs no emulator borrow.
@@ -1377,7 +1465,13 @@ impl DebuggerOverlay {
             );
         }
         if self.show_apu {
-            apu_panel::show(ctx, &mut self.show_apu, &mut self.apu_ui, nes);
+            apu_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_apu,
+                &mut self.apu_ui,
+                nes,
+            );
         }
         if self.show_memory {
             // v2.7.0 — the Memory panel is a RAM hex viewer (a potential
@@ -1405,6 +1499,7 @@ impl DebuggerOverlay {
                 // driven by the overlay-owned counter.
                 memory_panel::show(
                     ctx,
+                    &mut self.detached_panels,
                     &mut self.show_memory,
                     &mut self.memory_ui,
                     nes,
@@ -1435,6 +1530,7 @@ impl DebuggerOverlay {
             } else {
                 memory_compare_panel::show(
                     ctx,
+                    &mut self.detached_panels,
                     &mut self.show_memory_compare,
                     &mut self.memory_compare_ui,
                     nes,
@@ -1444,6 +1540,7 @@ impl DebuggerOverlay {
         if self.show_trace {
             trace_panel::show(
                 ctx,
+                &mut self.detached_panels,
                 &mut self.show_trace,
                 &mut self.trace_ui,
                 nes,
@@ -1453,6 +1550,7 @@ impl DebuggerOverlay {
         if self.show_watch {
             watch_panel::show(
                 ctx,
+                &mut self.detached_panels,
                 &mut self.show_watch,
                 &mut self.watch_ui,
                 nes,
@@ -1460,16 +1558,34 @@ impl DebuggerOverlay {
             );
         }
         if self.show_events {
-            event_panel::show(ctx, &mut self.show_events, &mut self.event_ui, nes);
+            event_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_events,
+                &mut self.event_ui,
+                nes,
+            );
         }
         if self.show_nsf {
-            nsf_panel::show(ctx, &mut self.show_nsf, &mut self.nsf_ui, nes);
+            nsf_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_nsf,
+                &mut self.nsf_ui,
+                nes,
+            );
         }
         if self.show_script {
             script_panel::show(ctx, &mut self.show_script, &mut self.script_ui, nes);
         }
         if self.show_mapper {
-            mapper_panel::show(ctx, &mut self.show_mapper, &mut self.mapper_ui, nes);
+            mapper_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_mapper,
+                &mut self.mapper_ui,
+                nes,
+            );
         }
     }
 
@@ -1497,6 +1613,7 @@ impl DebuggerOverlay {
         if self.show_audio_mixer {
             audio_mixer::show(
                 ctx,
+                &mut self.detached_panels,
                 &mut self.show_audio_mixer,
                 &mut self.audio_mixer_ui,
                 config,
@@ -1691,6 +1808,7 @@ impl DebuggerOverlay {
             // panel (standard pads + every expansion peripheral).
             input_miniatures_panel::show(
                 ctx,
+                &mut self.detached_panels,
                 &mut self.show_input_display,
                 &mut self.input_display_ui,
                 &self.input_display,
@@ -1699,7 +1817,12 @@ impl DebuggerOverlay {
         if self.show_replay {
             // v1.5.0 "Lens" C2 — control + read-out surface; reads the pushed
             // status snapshot, not `nes`, so it renders in the always-on path.
-            replay_panel::show(ctx, &mut self.show_replay, &mut self.replay_ui);
+            replay_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_replay,
+                &mut self.replay_ui,
+            );
         }
         if self.show_tas {
             // v1.6.0 "Studio" A2 — renders the editor model read-only and queues
@@ -1730,6 +1853,7 @@ impl DebuggerOverlay {
                 #[cfg(not(target_arch = "wasm32"))]
                 cheat_panel::show(
                     ctx,
+                    &mut self.detached_panels,
                     &mut self.show_cheat,
                     &mut self.cheat_ui,
                     nes,
@@ -1737,7 +1861,14 @@ impl DebuggerOverlay {
                     rom_crcs,
                 );
                 #[cfg(target_arch = "wasm32")]
-                cheat_panel::show(ctx, &mut self.show_cheat, &mut self.cheat_ui, nes, rom_crcs);
+                cheat_panel::show(
+                    ctx,
+                    &mut self.detached_panels,
+                    &mut self.show_cheat,
+                    &mut self.cheat_ui,
+                    nes,
+                    rom_crcs,
+                );
             }
         }
         if self.show_game_db
@@ -1745,6 +1876,7 @@ impl DebuggerOverlay {
         {
             game_db_panel::show(
                 ctx,
+                &mut self.detached_panels,
                 &mut self.show_game_db,
                 &mut self.game_db_ui,
                 nes,
@@ -1759,6 +1891,7 @@ impl DebuggerOverlay {
             // (v2.2.0 "Capstone".)
             rom_info_panel::show(
                 ctx,
+                &mut self.detached_panels,
                 &mut self.show_rom_info,
                 &mut self.rom_info_ui,
                 nes,
@@ -1773,14 +1906,24 @@ impl DebuggerOverlay {
             netplay_panel::show(ctx, &mut self.show_netplay, &mut self.netplay_ui, config);
         }
         if self.show_perf {
-            perf_panel::show(ctx, &mut self.show_perf, &mut self.perf_ui);
+            perf_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_perf,
+                &mut self.perf_ui,
+            );
         }
         // v1.5.0 "Lens" Workstream I10 — the in-app Documentation browser
         // (native-only; reuses the `cli::HELP_TOPICS` registry). It reads no
         // `nes`, so it renders in the always-on path like the other doc windows.
         #[cfg(not(target_arch = "wasm32"))]
         if self.show_documentation {
-            doc_panel::show(ctx, &mut self.show_documentation, &mut self.doc_ui);
+            doc_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_documentation,
+                &mut self.doc_ui,
+            );
         }
         if self.show_cheevos {
             #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]

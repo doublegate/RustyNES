@@ -140,6 +140,7 @@ impl AudioMixerState {
 #[allow(clippy::too_many_lines)]
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut AudioMixerState,
     config: &mut Config,
@@ -175,135 +176,130 @@ pub fn show(
 
     let mut changed = false;
 
-    egui::Window::new("Audio Mixer")
-        .open(open)
-        .default_size([360.0, 460.0])
-        .resizable(true)
-        .show(ctx, |ui| {
-            let audio = &mut config.audio;
+    super::detachable_window(ctx, detached, "audio_mixer", "Audio Mixer", open, |ui| {
+        let audio = &mut config.audio;
 
-            // --- Master scope ---
-            ui.strong("Master (base mix)");
-            scope(
-                ui,
-                "",
-                &state.master,
-                egui::Color32::from_rgb(0xFF, 0xC0, 0x40),
-            );
-            ui.separator();
+        // --- Master scope ---
+        ui.strong("Master (base mix)");
+        scope(
+            ui,
+            "",
+            &state.master,
+            egui::Color32::from_rgb(0xFF, 0xC0, 0x40),
+        );
+        ui.separator();
 
-            // --- Presets ---
-            ui.horizontal_wrapped(|ui| {
-                ui.label("Preset:");
-                if ui
-                    .button("Authentic (HVC-001)")
-                    .on_hover_text("Unity gains — byte-identical to the raw core mix")
-                    .clicked()
-                {
-                    audio.channel_gain = PRESET_AUTHENTIC;
-                    changed = true;
-                }
-                if ui
-                    .button("Balanced")
-                    .on_hover_text("Mesen-style rebalance: tames a hot expansion chip vs the 2A03")
-                    .clicked()
-                {
-                    audio.channel_gain = PRESET_BALANCED;
-                    changed = true;
-                }
-                if ui
-                    .button("Expansion boost")
-                    .on_hover_text("Pushes the on-cart expansion chip forward")
-                    .clicked()
-                {
-                    audio.channel_gain = PRESET_EXPANSION_BOOST;
-                    changed = true;
-                }
-            });
-            ui.add_space(4.0);
-
-            // --- Per-channel mix rows: mute | name | gain slider | VU ---
-            ui.strong("Mix balance");
-            egui::Grid::new("mixer_rows")
-                .num_columns(4)
-                .spacing([8.0, 4.0])
-                .striped(true)
-                .show(ui, |ui| {
-                    for (i, desc) in BASE_CHANNELS.iter().enumerate() {
-                        let peak = base_peak(state, i);
-                        changed |= channel_row(ui, desc, audio, peak, true);
-                        ui.end_row();
-                    }
-                    // Expansion row — enabled only when the board has on-cart audio.
-                    let label = chip.unwrap_or("Expansion (none loaded)");
-                    let ext_desc = ChannelDesc { label, ..EXPANSION };
-                    changed |=
-                        channel_row(ui, &ext_desc, audio, state.external.peak(), chip.is_some());
-                    ui.end_row();
-                });
-
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                if ui.button("Reset to unity").clicked() {
-                    audio.channel_gain = PRESET_AUTHENTIC;
-                    audio.channel_mask = 0x3F;
-                    changed = true;
-                }
-                ui.weak("Gains 0.0 – 2.0; unity = authentic hardware.");
-            });
-
-            ui.separator();
-
-            // --- Collapsible per-channel scopes ---
-            egui::CollapsingHeader::new("Per-channel scopes")
-                .default_open(state.scopes_open)
-                .show(ui, |ui| {
-                    scope(
-                        ui,
-                        BASE_CHANNELS[0].label,
-                        &state.pulse1,
-                        BASE_CHANNELS[0].color,
-                    );
-                    scope(
-                        ui,
-                        BASE_CHANNELS[1].label,
-                        &state.pulse2,
-                        BASE_CHANNELS[1].color,
-                    );
-                    scope(
-                        ui,
-                        BASE_CHANNELS[2].label,
-                        &state.triangle,
-                        BASE_CHANNELS[2].color,
-                    );
-                    scope(
-                        ui,
-                        BASE_CHANNELS[3].label,
-                        &state.noise,
-                        BASE_CHANNELS[3].color,
-                    );
-                    scope(
-                        ui,
-                        BASE_CHANNELS[4].label,
-                        &state.dmc,
-                        BASE_CHANNELS[4].color,
-                    );
-                    if let Some(name) = chip {
-                        scope(ui, name, &state.external, EXPANSION.color);
-                    }
-                });
-
-            ui.add_space(4.0);
-            ui.weak(
-                "The mix is a frontend UI overlay: it re-weights the core's own \
-                 samples for your speakers only. Save-states, movies, and netplay \
-                 stay byte-identical regardless of these sliders.",
-            );
-
-            if nes.as_deref().is_none() {
-                ui.weak("Load a ROM or NSF to see live channel levels.");
+        // --- Presets ---
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Preset:");
+            if ui
+                .button("Authentic (HVC-001)")
+                .on_hover_text("Unity gains — byte-identical to the raw core mix")
+                .clicked()
+            {
+                audio.channel_gain = PRESET_AUTHENTIC;
+                changed = true;
+            }
+            if ui
+                .button("Balanced")
+                .on_hover_text("Mesen-style rebalance: tames a hot expansion chip vs the 2A03")
+                .clicked()
+            {
+                audio.channel_gain = PRESET_BALANCED;
+                changed = true;
+            }
+            if ui
+                .button("Expansion boost")
+                .on_hover_text("Pushes the on-cart expansion chip forward")
+                .clicked()
+            {
+                audio.channel_gain = PRESET_EXPANSION_BOOST;
+                changed = true;
             }
         });
+        ui.add_space(4.0);
+
+        // --- Per-channel mix rows: mute | name | gain slider | VU ---
+        ui.strong("Mix balance");
+        egui::Grid::new("mixer_rows")
+            .num_columns(4)
+            .spacing([8.0, 4.0])
+            .striped(true)
+            .show(ui, |ui| {
+                for (i, desc) in BASE_CHANNELS.iter().enumerate() {
+                    let peak = base_peak(state, i);
+                    changed |= channel_row(ui, desc, audio, peak, true);
+                    ui.end_row();
+                }
+                // Expansion row — enabled only when the board has on-cart audio.
+                let label = chip.unwrap_or("Expansion (none loaded)");
+                let ext_desc = ChannelDesc { label, ..EXPANSION };
+                changed |= channel_row(ui, &ext_desc, audio, state.external.peak(), chip.is_some());
+                ui.end_row();
+            });
+
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui.button("Reset to unity").clicked() {
+                audio.channel_gain = PRESET_AUTHENTIC;
+                audio.channel_mask = 0x3F;
+                changed = true;
+            }
+            ui.weak("Gains 0.0 – 2.0; unity = authentic hardware.");
+        });
+
+        ui.separator();
+
+        // --- Collapsible per-channel scopes ---
+        egui::CollapsingHeader::new("Per-channel scopes")
+            .default_open(state.scopes_open)
+            .show(ui, |ui| {
+                scope(
+                    ui,
+                    BASE_CHANNELS[0].label,
+                    &state.pulse1,
+                    BASE_CHANNELS[0].color,
+                );
+                scope(
+                    ui,
+                    BASE_CHANNELS[1].label,
+                    &state.pulse2,
+                    BASE_CHANNELS[1].color,
+                );
+                scope(
+                    ui,
+                    BASE_CHANNELS[2].label,
+                    &state.triangle,
+                    BASE_CHANNELS[2].color,
+                );
+                scope(
+                    ui,
+                    BASE_CHANNELS[3].label,
+                    &state.noise,
+                    BASE_CHANNELS[3].color,
+                );
+                scope(
+                    ui,
+                    BASE_CHANNELS[4].label,
+                    &state.dmc,
+                    BASE_CHANNELS[4].color,
+                );
+                if let Some(name) = chip {
+                    scope(ui, name, &state.external, EXPANSION.color);
+                }
+            });
+
+        ui.add_space(4.0);
+        ui.weak(
+            "The mix is a frontend UI overlay: it re-weights the core's own \
+             samples for your speakers only. Save-states, movies, and netplay \
+             stay byte-identical regardless of these sliders.",
+        );
+
+        if nes.as_deref().is_none() {
+            ui.weak("Load a ROM or NSF to see live channel levels.");
+        }
+    });
 
     // --- Apply + persist any change (after the egui pass, no lock held here) ---
     if changed {
