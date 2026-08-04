@@ -25,9 +25,9 @@
       is functionality-only and "Data Not Linked" in the App Store nutrition label.
       ROMs are never uploaded.
 
-  ATT / ads: NONE in any v1.9.x build. App Tracking Transparency + the ad SDK are a
-  v2.1.0 App-Store-flavor (appstore channel, ADR 0027) addition; NSPrivacyTracking
-  stays false and the tracking-domains array stays empty here.
+  ATT / ads: NONE, ever. RustyNES is permanently open-source and income-free
+  (ADR 0035) — there is no advertising, no in-app purchase, and no tracking in any
+  build. NSPrivacyTracking stays false and the tracking-domains array stays empty.
 
   v2.0.7 "Trim" re-audit (against the v2.0.6 crash-reporting addition): the opt-in
   crash reporter (CrashReporter.swift) collects NO new data type and adds NO new

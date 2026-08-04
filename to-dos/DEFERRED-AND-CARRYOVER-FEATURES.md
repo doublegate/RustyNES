@@ -15,7 +15,8 @@
 > **Current state (2026-06-23).** v1.7.0 "Forge" (+ the v1.7.1 patch) and the full
 > Android train **v1.8.0 … v1.8.8 "Atlas"** have since **shipped**; **v1.8.9** is
 > now in development (Dependabot consolidation #180, the dormant
-> `rustynes-monetization` crate, a held UX fix). Mapper coverage is **168
+> `rustynes-monetization` crate — later removed entirely per ADR 0035, RustyNES
+> is permanently open-source and income-free — a held UX fix). Mapper coverage is **168
 > families**. Most of the v1.7.0 H reach/polish items that this file lists as
 > "beta.5 / not yet on `main`" (audio depth, per-game `<rom>.json` overrides + DIP
 > editor + lag counter, web/wasm parity, i18n, spectator netplay, browser-RA HUD,
@@ -79,15 +80,18 @@
 > v2.1.0 line item. See
 > [v2.0.x mobile finalization](plans/v2.0.x-mobile-finalization-plan.md).
 >
-> **`foss` / `play` Android flavor split (v2.1.0, ADR 0025).** Split the Android build into
+> **`foss` / `play` Android flavor split (ADR 0025).** Split the Android build into
 > a **`foss`** flavor (default — no Google SDKs, no ads, no tracking; the **F-Droid** +
-> sideload artifact) and a **`play`** flavor (all proprietary SDKs — Billing / Cast / Play
-> Games / Integrity / update-review **+ AppLovin + RevenueCat** — for Google Play). F-Droid
-> requires a Google-/ad-free build, so the flavor is the only way to reach that channel. The
-> five existing proprietary subsystems move behind `src/play/` façades (no-op in `src/foss/`),
-> with an `installDebug` alias; both flavors verified on-device at v2.0.9. **Done in v1.8.9
-> (dormant):** the clean `rustynes-monetization` crate `.so` + UniFFI bindings are wired into
-> the Android build. Target: **v2.0.1–v2.0.4 (lands by v2.1.0)**.
+> sideload artifact) and a **`play`** flavor (optional free Google Play services —
+> Cast / Play Games / Integrity / update-review — for Google Play). F-Droid
+> requires a Google-/ad-free build, so the flavor is the only way to reach that channel.
+> Billing and the AppLovin + RevenueCat monetization glue originally planned for the
+> `play` flavor were dropped — RustyNES is permanently open-source and income-free
+> (ADR 0035), so both flavors ship free with no ads, no tracking, and no paid unlock.
+> The `rustynes-monetization` crate built in v1.8.9 has since been removed entirely.
+> Status: the flavor split lands with the mobile finalization train; there is **no
+> fixed store-launch timeline** — any free store listing is a later, unversioned step
+> (ADR 0035).
 
 ---
 

@@ -13,31 +13,33 @@ import com.google.android.play.core.integrity.StandardIntegrityManager.StandardI
 import com.google.android.play.core.integrity.StandardIntegrityManager.StandardIntegrityTokenRequest
 
 /**
- * Play Integrity API client (v1.8.8 "Atlas", Workstream L) — the anti-tamper /
- * anti-piracy layer that confirms a genuine, uncompromised, Play-recognized binary
- * BEFORE honoring/restoring the Full Unlock. (SafetyNet Attestation was turned down
- * January 2025; Play Integrity is the modern replacement.)
+ * Play Integrity API client (v1.8.8 "Atlas", Workstream L) — an optional device /
+ * app-integrity signal that confirms a genuine, uncompromised, Play-recognized binary.
+ * (SafetyNet Attestation was turned down January 2025; Play Integrity is the modern
+ * replacement.)
+ *
+ * RustyNES is permanently open-source and income-free, so there is nothing to gate on
+ * this: it carries NO billing, NO in-app purchase, and NO paywall. The client is a
+ * pure, informational health signal that the app NEVER blocks function on.
  *
  * PREPPED BEHIND A DEFAULT-OFF FLAG. Nothing here touches the Integrity SDK unless
  * [BuildConfig.PLAY_INTEGRITY_ENABLED] is true AND a non-zero
  * [BuildConfig.INTEGRITY_CLOUD_PROJECT_NUMBER] is set. With the flag off (the default,
  * and on every sideload build), [request] is a cheap no-op.
  *
- * ## Defense-in-depth, NOT the entitlement source of truth
- * **Play Billing stays the source of truth** for the $2.99 Full Unlock
- * (`queryPurchasesAsync` in [LicenseManager]). Integrity is a LAYER over it: a failed
- * or absent verdict must NEVER revoke a legitimate purchase — at worst it is a signal
- * the maintainer's server can weigh when deciding whether to honor a *restore*. The
- * app never blocks function on the verdict.
+ * ## Advisory only, never a gate
+ * A failed or absent verdict must NEVER restrict any feature — every feature is free
+ * and unconditional. At most the verdict is a signal a maintainer's server could log.
+ * The app never blocks function on it.
  *
  * ## Why the verdict handler is a STUB (maintainer ops)
  * Play Integrity returns an **encrypted, signed token**. Decrypting + verifying it
  * requires the maintainer's **linked Google Cloud project + a server endpoint** (the
  * verdict is meant to be evaluated server-side; never trusted on-device). This client
  * requests the token and hands the opaque string to [onToken]; the
- * `MEETS_DEVICE_INTEGRITY` / `PLAY_RECOGNIZED` / `appLicensingVerdict == LICENSED`
- * checks live in that server, which the maintainer wires up. The on-device
- * [evaluateStub] is a clearly-marked placeholder that returns [IntegrityVerdict.UNKNOWN].
+ * `MEETS_DEVICE_INTEGRITY` / `PLAY_RECOGNIZED` checks live in that server, which the
+ * maintainer wires up. The on-device [evaluateStub] is a clearly-marked placeholder
+ * that returns [IntegrityVerdict.UNKNOWN].
  *
  * Uses the **Standard** request (warmed [prepareToken], replay-protected, few-hundred-
  * ms) per the Play Integrity guidance, not the deprecated Classic request.
@@ -79,9 +81,9 @@ class IntegrityManager(context: Context) {
 
     /**
      * Request an integrity token for a [requestHash] (bind it to the action being
-     * protected, e.g. a Full-Unlock restore; the server replays this hash). [onToken]
-     * receives the opaque, encrypted token string for the maintainer's server to
-     * decrypt + evaluate. No-op (does not call back) when not configured / not warmed.
+     * checked; the server replays this hash). [onToken] receives the opaque, encrypted
+     * token string for the maintainer's server to decrypt + evaluate. No-op (does not
+     * call back) when not configured / not warmed.
      */
     fun request(requestHash: String, onToken: (String) -> Unit) {
         if (!configured()) return
@@ -104,10 +106,10 @@ class IntegrityManager(context: Context) {
     /**
      * MAINTAINER-OPS STUB. The real verdict is produced by decrypting [token] on the
      * maintainer's server (the linked Cloud project's verdict-decryption endpoint) and
-     * checking `MEETS_DEVICE_INTEGRITY` + `PLAY_RECOGNIZED` + `appLicensingVerdict`.
-     * On-device we cannot (and must not) decrypt it, so this always returns
-     * [IntegrityVerdict.UNKNOWN]. The app treats UNKNOWN as "no signal" — Billing
-     * remains the entitlement truth, so nothing is revoked.
+     * checking `MEETS_DEVICE_INTEGRITY` + `PLAY_RECOGNIZED`. On-device we cannot (and
+     * must not) decrypt it, so this always returns [IntegrityVerdict.UNKNOWN]. The app
+     * treats UNKNOWN as "no signal" and never restricts any feature — every feature is
+     * free and unconditional.
      *
      * To wire it up, the maintainer POSTs [token] to their endpoint and maps the
      * decrypted verdict back to GENUINE / TAMPERED here.

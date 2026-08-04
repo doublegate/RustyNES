@@ -49,10 +49,11 @@ android {
         versionName = "2.0.4"
         // No abiFilters here — set per buildType so release ships arm64 only
         // while debug keeps x86_64 for the emulator.
-        // PLAY_BUILD moved to the `distribution` product flavors below (v2.0.1, ADR
-        // 0025): it is now `false` for `foss` and `true` for `play`, so the flag is
-        // a compile-time property of the channel rather than a defaultConfig default.
-        // It still gates the freemium (demo timer + persistence locks + Billing).
+        // PLAY_BUILD is set per-flavor below (`false` for `foss`, `true` for `play`),
+        // so the channel is a compile-time property. RustyNES is permanently
+        // open-source and income-free, so this flag NO LONGER gates any monetization —
+        // it only distinguishes the Play-services channel for the non-billing helpers
+        // (e.g. PlayUpdates skips its in-app update/review work on the `foss` channel).
         // CHROMECAST_ENABLED gates the experimental Cast Application Framework
         // (CAF) sender path (v1.8.7, #38) — a ~20-30fps SPECTATOR mirror to a
         // custom Web Receiver, distinct from the primary low-latency Presentation
@@ -70,12 +71,11 @@ android {
         // Play Console and flips this on. DISTINCT from RetroAchievements (rustynes-ra,
         // v1.8.6) which stays untouched. See CloudSave.kt + PlayGames.kt.
         buildConfigField("boolean", "PGS_ENABLED", "false")
-        // v1.8.8 "Atlas" (Workstream L): Play Integrity anti-tamper layer OVER Billing
-        // (Billing remains the entitlement source of truth). Default false: no token
-        // request, no verdict handling, zero behavior change. The verdict DECRYPTION
-        // requires a linked Google Cloud project + a server endpoint (maintainer ops),
-        // so the on-device handler is a documented stub until that lands. A failed/
-        // absent verdict must NEVER revoke a legitimate purchase. See Integrity.kt.
+        // v1.8.8 "Atlas" (Workstream L): Play Integrity anti-tamper layer. Default
+        // false: no token request, no verdict handling, zero behavior change. The
+        // verdict DECRYPTION requires a linked Google Cloud project + a server endpoint
+        // (maintainer ops), so the on-device handler is a documented stub until that
+        // lands. See Integrity.kt.
         buildConfigField("boolean", "PLAY_INTEGRITY_ENABLED", "false")
         // v1.8.8 "Atlas" (Workstream L): the maintainer's linked Google Cloud project
         // NUMBER for Play Integrity's PrepareIntegrityTokenRequest. 0L = unset (the
@@ -84,20 +84,17 @@ android {
     }
 
     // v2.0.1 (ADR 0025): the `distribution` product-flavor split. Two channels off
-    // the one byte-identical Timebase core:
-    //   - `foss` (default) — the pure-Rust emulator ONLY: no Google Play SDKs, no
-    //     ads, no tracking. This is the F-Droid + GitHub-Releases sideload artifact.
-    //     Its `src/foss/` source set supplies no-op façades for every proprietary
-    //     subsystem so `MainActivity` links without any `com.google.*` /
-    //     `com.android.billingclient.*` dependency (moved to `playImplementation`).
-    //   - `play` — everything proprietary (Billing, Cast framework, Play Games v2,
-    //     Play Integrity, in-app update/review; AppLovin/RevenueCat ads land here at
-    //     v2.1.0). Google Play only.
+    // the one byte-identical Timebase core. RustyNES is permanently open-source and
+    // income-free — there is NO billing, NO ads, and NO tracking in either channel;
+    // the split now distinguishes only the non-monetization Google Play services.
+    //   - `foss` (default) — the pure-Rust emulator ONLY: no Google Play SDKs. This is
+    //     the F-Droid + GitHub-Releases sideload artifact. Its `src/foss/` source set
+    //     supplies no-op façades for every proprietary subsystem so `MainActivity`
+    //     links without any `com.google.*` dependency (moved to `playImplementation`).
+    //   - `play` — the optional Google Play services (Cast framework, Play Games v2,
+    //     Play Integrity, in-app update/review, cloud save), all free. Google Play only.
     // PLAY_BUILD is set per-flavor; the per-feature runtime gates (PGS_ENABLED, …)
     // stay in defaultConfig as the in-`play` toggles the maintainer flips at launch.
-    // NOTE: this is the STRUCTURAL start of the split (v2.0.1). The monetization ad
-    // glue is still dormant (ADR 0025); only the existing proprietary SDK groups are
-    // flavor-scoped here.
     flavorDimensions += "distribution"
     productFlavors {
         create("foss") {
@@ -108,29 +105,6 @@ android {
         create("play") {
             dimension = "distribution"
             buildConfigField("boolean", "PLAY_BUILD", "true")
-            // v2.0.3 (ADR 0025): the monetization SDK identifiers, PLAY-FLAVOR ONLY so the
-            // `foss` artifact carries no ad-unit / SDK keys at all. Sourced from gradle
-            // properties (keep real keys out of source control — inject via
-            // `~/.gradle/gradle.properties` or CI secrets); each defaults to "" so a keyless
-            // build still compiles + links (the AppLovin / RevenueCat SDKs simply no-op /
-            // fail-soft with an empty key, which is correct for a dormant build). Consumed by
-            // MonetizationGate / AdGate / RewardedGate / RcBilling via BuildConfig.*.
-            buildConfigField(
-                "String", "APPLOVIN_SDK_KEY",
-                "\"${providers.gradleProperty("applovinSdkKey").orNull ?: ""}\"",
-            )
-            buildConfigField(
-                "String", "REVENUECAT_API_KEY",
-                "\"${providers.gradleProperty("revenueCatGoogleKey").orNull ?: ""}\"",
-            )
-            buildConfigField(
-                "String", "MAX_INTERSTITIAL_AD_UNIT_ID",
-                "\"${providers.gradleProperty("maxInterstitialAdUnitId").orNull ?: ""}\"",
-            )
-            buildConfigField(
-                "String", "MAX_REWARDED_AD_UNIT_ID",
-                "\"${providers.gradleProperty("maxRewardedAdUnitId").orNull ?: ""}\"",
-            )
         }
     }
 
@@ -194,20 +168,11 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
-            // v2.0.3 (ADR 0025): the RevenueCat local-QA tester unlock is compiled OUT of
-            // every release build (including the closed-test track, which is a release
-            // build) — RcBilling.testerUnlockEnabled() is `DEBUG && TESTER_UNLOCK`, so this
-            // false makes it a constant `false` and no unlock can leak to a store build.
-            buildConfigField("boolean", "TESTER_UNLOCK", "false")
         }
         debug {
             applicationIdSuffix = ".debug"
             // Debug keeps x86_64 too so it installs on the emulator / CI.
             ndk { abiFilters += builtAbis }
-            // v2.0.3 (ADR 0025): allow the debug-only RevenueCat tester unlock (still
-            // additionally gated on BuildConfig.DEBUG inside RcBilling). Play-flavor only in
-            // effect; the foss build never reads it.
-            buildConfigField("boolean", "TESTER_UNLOCK", "true")
         }
     }
 
@@ -299,10 +264,6 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
                 "build", "--release",
                 "-p", "rustynes-mobile",
                 "-p", "rustynes-android",
-                // v1.8.9 build-out: the monetization AdPolicy core (our own clean Rust —
-                // NO Google SDKs, NO ads). Wired in dormant; nothing calls it yet (the
-                // AppLovin/RevenueCat glue is the v2.1.0 `play`-flavor step, ADR 0025).
-                "-p", "rustynes-monetization",
             ),
     )
 }
@@ -322,25 +283,7 @@ val uniffiBindgen by tasks.registering(Exec::class) {
     )
 }
 
-// Generate the Kotlin bindings for the monetization AdPolicy core (a second, separate
-// UniFFI crate → its own `com.doublegate.rustynes.monetization.ffi` package, written into
-// the same generated dir already on the main source set). Its bindgen bin needs the crate's
-// `cli` feature (unlike rustynes-mobile, which enables uniffi/cli unconditionally).
-val uniffiBindgenMonetization by tasks.registering(Exec::class) {
-    group = "rust"
-    description = "Generate Kotlin bindings for the rustynes-monetization AdPolicy core via UniFFI."
-    dependsOn(cargoNdkBuild)
-    workingDir = workspaceRoot
-    val lib = workspaceRoot.resolve("target/aarch64-linux-android/release/librustynes_monetization.so")
-    commandLine(
-        "cargo", "run", "-q", "-p", "rustynes-monetization", "--features", "cli",
-        "--bin", "uniffi-bindgen", "--",
-        "generate", "--library", lib.absolutePath,
-        "--language", "kotlin", "--out-dir", uniffiGenDir.absolutePath,
-    )
-}
-
-tasks.named("preBuild") { dependsOn(uniffiBindgen, uniffiBindgenMonetization) }
+tasks.named("preBuild") { dependsOn(uniffiBindgen) }
 
 dependencies {
     // v1.8.8 "Atlas": Compose BOM 2025.09.01 (material3 1.4.0 — the stable M3 set
@@ -404,15 +347,11 @@ dependencies {
     // UniFFI's generated Kotlin loads the cdylib through JNA; the `@aar`
     // classifier pulls the Android-native JNA dispatcher.
     implementation("net.java.dev.jna:jna:5.18.1@aar")
-    // Play Billing — the one-time "Full Unlock" IAP (Workstream M, freemium model).
-    // Pinned at 8.0.0 here: Billing 9.x is an API-breaking major (the v1.8.8 Play
-    // launch / Workstream P revisits the entitlement code), and this Atlas-foundation
-    // pass is presentation/Gradle only — bumping it would touch Billing.kt/LicenseManager.
-    // v2.0.1 (ADR 0025): PLAY-FLAVOR ONLY. `playImplementation` keeps these
-    // proprietary Google-Play SDKs out of the `foss` (F-Droid/sideload) artifact
-    // entirely — the `foss` variant links none of them (its `src/foss/` no-op
-    // façades stand in), so the clean channel has no Play Services / Billing / ads.
-    "playImplementation"("com.android.billingclient:billing-ktx:8.0.0")
+    // v2.0.1 (ADR 0025): the optional Google Play services below are PLAY-FLAVOR ONLY.
+    // `playImplementation` keeps these proprietary Google-Play SDKs out of the `foss`
+    // (F-Droid/sideload) artifact entirely — the `foss` variant links none of them (its
+    // `src/foss/` no-op façades stand in), so the clean channel has no Play Services.
+    // RustyNES carries no billing and no ads in either channel.
     // Cast Application Framework sender (v1.8.7, #38). Linked but DORMANT: it does
     // nothing until CastContext is initialized, which only happens behind the
     // default-off BuildConfig.CHROMECAST_ENABLED flag (see ChromecastSender.kt).
@@ -426,10 +365,10 @@ dependencies {
     // also reads the manifest <meta-data app_id>, which is a maintainer-supplied
     // placeholder (@string/game_services_project_id) until the Play Games project lands.
     "playImplementation"("com.google.android.gms:play-services-games-v2:21.0.0")
-    // v1.8.8 "Atlas" (Workstream L): Play Integrity API — the anti-tamper layer over
-    // Billing. 1.6.0 (SafetyNet Attestation was turned down Jan 2025; this is the modern
-    // replacement). Linked but DORMANT: no token is requested until behind the default-
-    // off BuildConfig.PLAY_INTEGRITY_ENABLED flag (see Integrity.kt). Verdict decryption
+    // v1.8.8 "Atlas" (Workstream L): Play Integrity API — the anti-tamper layer. 1.6.0
+    // (SafetyNet Attestation was turned down Jan 2025; this is the modern replacement).
+    // Linked but DORMANT: no token is requested until behind the default-off
+    // BuildConfig.PLAY_INTEGRITY_ENABLED flag (see Integrity.kt). Verdict decryption
     // needs the maintainer's linked Cloud project + server endpoint.
     "playImplementation"("com.google.android.play:integrity:1.6.0")
     // v1.8.8 "Atlas" (Workstream L): in-app updates (flexible) + in-app review. 2.1.0
@@ -438,19 +377,6 @@ dependencies {
     // install, so they are safe to call unconditionally (still flavor-gated for clarity).
     "playImplementation"("com.google.android.play:app-update-ktx:2.1.0")
     "playImplementation"("com.google.android.play:review-ktx:2.0.2")
-    // v2.0.3 "Harbor" (ADR 0025, Workstream step 5): the monetization SDKs — PLAY-FLAVOR
-    // ONLY, so the `foss` (F-Droid / GitHub-Releases) artifact links neither the ad
-    // mediation SDK nor the store SDK and stays clean / ad-free / tracking-free.
-    //   - AppLovin MAX 13 — the interstitial + rewarded mediation used by AdGate /
-    //     RewardedGate. Hosted on AppLovin's own Maven repo (added in settings.gradle.kts).
-    //   - RevenueCat 8 — the "premium / remove-ads" entitlement source of truth (RcBilling),
-    //     pushed into the shared Rust AdPolicy core. On Maven Central.
-    // Both are DORMANT behaviourally in the shipped default (no live keys, no ad units, and
-    // MonetizationGate's paywall only ever draws once a free budget is exhausted, which the
-    // core never reports without a configured session). The glue is structural (ADR 0025):
-    // the maintainer flips it live at v2.1.0 with real keys + Play Console products.
-    "playImplementation"("com.applovin:applovin-sdk:13.0.1")
-    "playImplementation"("com.revenuecat.purchases:purchases:8.10.0")
     // v1.8.8 "Atlas" (Workstream J): pull the generated Baseline + Startup Profiles
     // from the Macrobenchmark module. The baselineprofile plugin wires the produced
     // `baseline-prof.txt` / `startup-prof.txt` into this variant's merged assets.

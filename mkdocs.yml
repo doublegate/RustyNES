@@ -157,14 +157,13 @@ nav:
       - Build & Tooling: build-and-tooling.md
 
 # Engineering-only material excluded from the built site entirely: audit logs,
-# ADRs, monetization scaffolding, release-note archives, internal readiness
-# records, salvage manifests, and the frozen dev/testing/tooling trees.
+# ADRs, release-note archives, internal readiness records, salvage manifests,
+# and the frozen dev/testing/tooling trees.
 exclude_docs: |
   adr/
   archive/
   audit/
   dev/
-  monetization/
   release-notes/
   testing/
   tooling/

@@ -84,8 +84,9 @@ web/wasm parity + i18n + mapper breadth → **168 families** (v1.7.0/v1.7.1); an
 the **Android app** (v1.8.0 … v1.8.8 "Atlas").
 
 **In development — v1.8.9:** the 13-PR Dependabot consolidation (#180), the
-dormant `rustynes-monetization` crate build-out (activates the v2.1.0 freemium
-model), and a held UX fix.
+dormant `rustynes-monetization` crate build-out (later removed entirely — see
+ADR 0035; RustyNES is permanently open-source and income-free), and a held UX
+fix.
 
 Genuine remaining post-v1.8.8 items (see `ROADMAP.md` for detail):
 
@@ -97,9 +98,10 @@ Genuine remaining post-v1.8.8 items (see `ROADMAP.md` for detail):
   (v1.8.x GitHub-sideload) + iOS (v1.9.0 TestFlight) interim, then the app-store
   launches deferred to **after v2.0.0** and shipped jointly at **v2.1.0** —
   **Google Play + Apple App Store + F-Droid** (Android final v2.0.1–v2.0.4, iOS
-  final v2.0.5–v2.0.8, both-apps readiness v2.0.9). v2.1.0 also lands the
-  ad-supported freemium monetization (AppLovin MAX + RevenueCat, a $3.99
-  remove-ads unlock) and the `foss`/`play` Android flavor split (ADR 0025). See
+  final v2.0.5–v2.0.8, both-apps readiness v2.0.9). The joint launch also lands
+  the `foss`/`play` Android flavor split (ADR 0025) — free Google Play services
+  vs. pure AOSP, no ads/billing on either flavor; RustyNES is permanently
+  open-source and income-free (ADR 0035). See
   [`plans/v2.0.x-mobile-finalization-plan.md`](plans/v2.0.x-mobile-finalization-plan.md).
 - The externally-blocked **RetroAchievements account-allowlisting** pass (a
   request to the RA team, not a code change).

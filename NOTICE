@@ -66,6 +66,13 @@ permission notice are reproduced below.
   oracle at crates/rustynes-test-harness/golden/tricnes/tricnes-full-src/.
   https://github.com/100thCoin/TriCNES  (commit 9199870)
       Copyright (c) 2025 Chris Siebert
+  Note (v2.2.6): the octal-latch / hybrid-address *timing* was calibrated to
+  TriCNES's per-dot behavior rather than derived independently from hardware
+  documentation, which reproduced a TriCNES-specific artifact (mis-rendering
+  mid-render $2006 writes, e.g. Rad Racer). This is disclosed in
+  docs/originality-and-provenance.md sec. 2.2 and is being reworked to be
+  documentation-derived in v2.3.0 (see ADR 0030). TriCNES is MIT, so this is a
+  behavioral-fidelity note, not a licensing one.
 
 * rcheevos v12.3.0 -- RetroAchievements client runtime, vendored at
   crates/rustynes-cheevos/vendor/rcheevos/ (compiled only under the optional

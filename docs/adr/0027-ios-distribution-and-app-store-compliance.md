@@ -4,8 +4,16 @@ Date: 2026-06-25
 
 ## Status
 
-Accepted (the v1.9.0 → v1.9.9 iOS train + the v2.1.0 joint launch). Extends ADR
-0025 (the Android `foss` / `play` flavor split) to iOS.
+**Amended by [ADR 0035](0035-rustynes-is-permanently-non-commercial.md) (v2.2.6).**
+RustyNES is now permanently open-source and income-free: the **monetization portions of
+this ADR are removed** — the ad-bearing App-Store flavor, the App Tracking Transparency
+(ATT) prompt (which existed only for the ad SDK), and the StoreKit 2 "$3.99 / Remove Ads"
+unlock. The **§4.7 ROM-import / user-content-only compliance rules remain in force** —
+they are valid and necessary for a *free* NES-emulator app on the App Store, independent
+of any monetization. Read the monetization-wiring passages below as historical context.
+
+The original status (now historical): Accepted (the v1.9.0 → v1.9.9 iOS train + the joint
+launch). Extends ADR 0025 (the Android `foss` / `play` flavor split) to iOS.
 
 ## Context
 

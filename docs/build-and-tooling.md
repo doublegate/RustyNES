@@ -7,7 +7,7 @@
 - **Rust edition**: 2024.
 - **MSRV (minimum supported Rust version)**: 1.96.0. Pinned via `rust-toolchain.toml`. (Bumped from 1.86 in v1.3.0 "Bedrock" to unblock the edition-2024 + egui 0.34.3 / wgpu 29 / rfd 0.17.2 dependency tier.)
 - **Channel**: the pinned `1.96.0` stable release — *not* a floating `stable`. `rust-toolchain.toml` is the single source of truth: every GitHub Actions job resolves its toolchain from that file (`.github/actions/rust-setup` parses the `channel` and fails closed if it cannot), the libretro buildbot builds all ten of its jobs on it, and local builds pick it up automatically as a directory override. There is no `toolchain:` version literal anywhere in `.github/`, so bumping the pin is a one-line edit here — but read the `-C ar` warning in `rust-toolchain.toml` before bumping to 1.97 or newer.
-- **Nightly** is used for exactly two things, both outside CI and neither a gate: `cargo fuzz`, which requires it for the sanitizer flags it threads through `rustc` (`cargo +nightly fuzz run <target>` — see `fuzz/README.md`), and the dormant `rustynes-monetization` crate's standalone `uniffi-bindgen` helper, which needs it for metadata discovery. No build, test, lint, docs, release, or packaging path uses nightly.
+- **Nightly** is used for exactly one thing, outside CI and not a gate: `cargo fuzz`, which requires it for the sanitizer flags it threads through `rustc` (`cargo +nightly fuzz run <target>` — see `fuzz/README.md`). No build, test, lint, docs, release, or packaging path uses nightly.
 - **Targets supported**: `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`. Tier 2: `aarch64-unknown-linux-gnu`. Cross-compile targets declared in `rust-toolchain.toml` (auto-installed): `thumbv7em-none-eabihf` (the `no_std` chip-stack gate) and `wasm32-unknown-unknown` (browser). Android arm64/arm/x86_64 via `cargo ndk` (see `docs/android.md`). The `x86_64-apple-darwin` release target was retired (ADR 0009).
 
 ## Workspace layout
@@ -29,7 +29,6 @@ crates/
 ├── rustynes-hdpack/             # HD-pack loader + compositor + HD audio
 ├── rustynes-mobile/             # shared mobile UniFFI bridge (Android + future iOS)
 ├── rustynes-android/            # cfg-gated Android JNI / wgpu-SurfaceView / AAudio glue
-├── rustynes-monetization/       # mobile-only UniFFI ad-policy crate (never touches the core)
 ├── rustynes-frontend/           # rustynes binary (winit + wgpu + cpal + egui)
 └── rustynes-test-harness/       # test ROM runner, golden log compare
 tests/                      # workspace-level integration tests
@@ -107,7 +106,7 @@ See `Cargo.toml` files per crate. Key choices:
 - **`winit`** + **`wgpu`** 29 + **`naga`** 29 + **`cpal`** + **`egui`** 0.34.3 + **`rfd`** 0.17.2 + **`gilrs`** for the frontend.
 - **`mlua`** 0.11 (vendored Lua 5.4, native scripting) / **`piccolo`** 0.3.3 (pure-Rust wasm Lua backend, ADR 0012) — mutually exclusive.
 - **`zip`** 8, **`sha1`** / **`md-5`** 0.11 (movie / interchange hashing).
-- Android: **`jni`** 0.22, **`pollster`** 0.4, **`android_logger`** 0.15, **`uniffi`** 0.31 (the `rustynes-mobile` / `rustynes-android` / `rustynes-monetization` crates).
+- Android: **`jni`** 0.22, **`pollster`** 0.4, **`android_logger`** 0.15, **`uniffi`** 0.31 (the `rustynes-mobile` / `rustynes-android` crates).
 - **`criterion`** + **`proptest`** + **`insta`** as dev-deps.
 
 No runtime async (`tokio`/`async-std`) in the emulator core — it is synchronous; the cpal callback runs on its own thread without async. (Netplay signaling uses a small blocking `tungstenite` worker in the frontend, outside the deterministic core.)
@@ -158,7 +157,7 @@ cargo build -p rustynes-core --target thumbv7em-none-eabihf --no-default-feature
   entirely on documentation-only pushes (`paths-ignore`), and cancels
   superseded PR runs (`concurrency`).
 - `workflows/android.yml` — `cargo ndk` cross-compiles `rustynes-mobile` +
-  `rustynes-android` + `rustynes-monetization`, generates the UniFFI Kotlin
+  `rustynes-android`, generates the UniFFI Kotlin
   bindings, and runs the Gradle build (AGP 9.2.1 / Gradle 9.4.1 / compileSdk 37
   / targetSdk 36 / minSdk 26). See `docs/android.md`.
 - `workflows/release.yml` — tag-triggered (`v*`), builds the per-platform
