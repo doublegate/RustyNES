@@ -14,6 +14,45 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.2.9] - 2026-08-04 - "Studio II" (TAS/movie wiring + detachable tool windows)
+
+The fourth step of the **v2.2.6 → v2.3.0** NESdev-remediation line, addressing
+three forum items: TAStudio piano-roll edits that never reached the emulator,
+`.bk2` movies that imported but did not play back correctly, and tool windows
+trapped inside the main OS window on Windows 10. **Frontend-only — nothing here
+touches the emulation core**, so the deterministic chip stack, save-states, and
+every golden vector are byte-identical (AccuracyCoin 141/141, nestest 0-diff).
+
+> **Windowing needs an on-device check.** Detached tool windows use egui
+> multi-viewport (real OS windows); the mechanism compiles and clippy-passes on
+> native + wasm, but the multi-window behavior itself is best confirmed on a
+> desktop (ideally the Windows 10 host from the report).
+
+### Fixed
+
+- **TAStudio piano-roll edits now drive the emulator.** `App::handle_tas_requests`
+  applied `TasRequest::SetInput` to the `TasEditor::input_log` only and never
+  re-seeked the `Nes`, so a cell edit was invisible until an unrelated seek. It
+  now marks the buffer dirty and re-derives through `TasEditor::seek` after the
+  batch — the same path the scripting bridge (`apply_tas_commands`) already used.
+- **`.bk2` playback honors the movie's `LogKey` column order.** The importer
+  mapped controller columns by a fixed built-in order and ignored the `LogKey:`
+  header, so real BizHawk movies whose columns are ordered differently drove the
+  wrong buttons. `bk2_interop` now parses the actual `LogKey:` order (falling back
+  to the standard order when absent), and import parse errors surface on the
+  on-screen status bar instead of only `eprintln!`.
+
+### Added
+
+- **Detachable / floating tool windows (native).** A shared `detachable_window`
+  helper gives each debugger/tool panel a "⧉ Detach" button that pops it out into
+  a real OS window (`show_viewport_immediate`) with a "⧉ Reattach" affordance;
+  17 panels are routed through it (PPU, OAM, APU, Memory, Event Viewer, NSF,
+  Mapper, Watch, Trace, Cheats, ROM Database, Performance, Documentation, Input
+  Display, Audio Mixer, Replay/TAS, Memory Compare, ROM Info). Native-only —
+  egui multi-viewport needs winit multi-window, so on wasm panels stay docked in
+  an `egui::Window` (unchanged), verified clippy-clean on both wasm feature sets.
+
 ## [2.2.8] - 2026-08-04 - "Aperture II" (gamma-aware scanlines + sharper CRT)
 
 A **presentation-fidelity** release addressing the NESdev-forum feedback on

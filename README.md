@@ -795,7 +795,13 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.2.8 "Aperture II"**, a **presentation-fidelity**
+RustyNES's current release is **v2.2.9 "Studio II"**, a **frontend quality-of-life**
+release (4th of the v2.2.6 → v2.3.0 NESdev-remediation line): TAStudio piano-roll edits
+now drive the emulator, `.bk2` movies play back honoring their `LogKey` column order, and
+tool windows can **detach into real OS windows** (fixing the Windows-10 trapped-window
+report). Frontend-only, so the deterministic core is untouched (**AccuracyCoin 141/141**,
+nestest 0-diff); the multi-window behavior awaits an on-device check. It builds on
+**v2.2.8 "Aperture II"**, a **presentation-fidelity**
 release: gamma-correct scanlines (linear-light darkening + a WebGL2 gamma fix) and a
 sharper Gaussian scanline profile for crisp vertical boundaries. Presentation-only —
 the pre-shader framebuffer is byte-identical (**AccuracyCoin 141/141**) and the shipped

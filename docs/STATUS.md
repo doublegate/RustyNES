@@ -1,6 +1,13 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.2.8** (2026-08-04) — **"Aperture II"**, a **presentation-fidelity**
+> **Current release: v2.2.9** (2026-08-04) — **"Studio II"**, a frontend
+> quality-of-life release (4th of the v2.2.6 → v2.3.0 NESdev-remediation line):
+> TAStudio piano-roll edits now drive the emulator, `.bk2` movies play back
+> honoring their `LogKey` column order, and tool windows can **detach into real
+> OS windows** (fixing the Windows-10 trapped-window report). Frontend-only, so
+> the deterministic core is untouched (**AccuracyCoin 141/141**, nestest 0-diff);
+> the multi-window behavior awaits an on-device check. Built on
+> **v2.2.8** (2026-08-04) — **"Aperture II"**, a **presentation-fidelity**
 > release (gamma-correct scanlines in linear light + a WebGL2 gamma fix + a sharper
 > Gaussian scanline profile; presentation-only, so the pre-shader framebuffer +
 > AccuracyCoin 141/141 are byte-identical and the shipped native default is unchanged —

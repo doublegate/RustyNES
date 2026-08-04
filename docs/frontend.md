@@ -1740,12 +1740,17 @@ All additive + frontend-only; the core stays byte-identical.
   subtitle track at the region's frame rate (NTSC's 60.0988 fps stays
   drift-free), for muxing into an A/V dump (`movie_srt::markers_to_srt`).
 
+Detachable / floating tool windows shipped in **v2.2.9 "Studio II"** — the
+shared `detachable_window` helper (`debugger/mod.rs`) pops any of 17 tool panels
+out into a real OS window via `ctx.show_viewport_immediate`, with a Reattach
+affordance; native-only (egui multi-viewport needs winit multi-window, so wasm
+keeps the docked `egui::Window`).
+
 **Deferred (noted for a follow-up):** Virtual Pad (clickable on-screen
 controller → `SharedInput`), input Macros feeding the piano-roll pattern-paint,
-BasicBot (savestate-anchored brute-force search), multi-monitor / detachable
-egui multi-viewport tool windows, A/V dump codec/sync depth, FDS Firmware
-Manager (BIOS hash-verify), Multi-Disk Bundler, and a first-class headless Batch
-Runner. The shipped subset (spectator + Genie encoder + `.tbl` + `.srt`) is the
+BasicBot (savestate-anchored brute-force search), A/V dump codec/sync depth,
+FDS Firmware Manager (BIOS hash-verify), Multi-Disk Bundler, and a first-class
+headless Batch Runner. The shipped subset (spectator + Genie encoder + `.tbl` + `.srt`) is the
 self-contained, fully-tested core; the deferred items are larger and more
 cross-cutting (most touch `app.rs`/the emu thread heavily, which a parallel-merge
 cut keeps minimal).
