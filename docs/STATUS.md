@@ -2,7 +2,7 @@
 
 > **Current release: v2.2.5** (2026-08-03) — **"Colophon"**, a **provenance,
 > licensing, and documentation-integrity** release with **zero emulation-core
-> changes** (so **AccuracyCoin holds 141/141 (100.00%)**, nestest 0-diff, and the
+> behavior changes** (so **AccuracyCoin holds 141/141 (100.00%)**, nestest 0-diff, and the
 > `#![no_std]` chip stack, save-state / TAS / netplay formats, and every golden
 > vector are byte-identical to v2.2.4 by construction). It reworded in-source
 > comments that had mischaracterized publicly-documented hardware-behavior

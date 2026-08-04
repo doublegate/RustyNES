@@ -7,7 +7,7 @@ under a committed corpus is under a public-domain / CC0 / MIT / BSD /
 zlib / equivalently-permissive license. Full provenance and licensing
 is in [`LICENSES.md`](./LICENSES.md).
 
-The integration tests in `crates/nes-test-harness/tests/` consume these
+The integration tests in `crates/rustynes-test-harness/tests/` consume these
 files directly. The full workspace test count (510 + 6 `#[ignore]`'d
 expected-fails across 34 suites with `--features test-roms`) is gated
 on this corpus.
@@ -22,7 +22,7 @@ on this corpus.
 | [`holy_mapperel/`](./holy_mapperel/) | Damian Yerrick's "Holy Mapperel" cartridge-PCB-assembly tests (mapper-detection + bank-reachability). 17 ROMs covering mappers 0, 1, 2, 3, 4, 7, 9, 10, 34, 66, 69. | Damian Yerrick / tepples | zlib |
 | [`mmc5/`](./mmc5/) | MMC5 (mapper 5) accuracy suite from `christopherpow/nes-test-roms`: split-screen, ExRAM modes, scanline IRQ. | Various (aggregator) | Public domain |
 | [`accuracycoin/`](./accuracycoin/) | Chris Siebert's 144-test single-NROM AccuracyCoin battery — the **single source of truth** for the v0.9.x → v1.0.0 quality bar. | Chris Siebert (100thCoin) | MIT |
-| [`AccuracyCoin/`](./AccuracyCoin/) | The upstream `SOURCE_CATALOG.tsv` (144 test-name catalog parsed by the RAM-direct decoder) plus a copy of `AccuracyCoin.nes` for symmetry. The test catalog is `include_str!`ed by `nes-test-harness::accuracy_coin_catalog`. | Chris Siebert | MIT |
+| [`AccuracyCoin/`](./AccuracyCoin/) | The upstream `SOURCE_CATALOG.tsv` (144 test-name catalog parsed by the RAM-direct decoder) plus a copy of `AccuracyCoin.nes` for symmetry. The test catalog is `include_str!`ed by `rustynes-test-harness::accuracy_coin_catalog`. | Chris Siebert | MIT |
 | [`audio-tests/`](./audio-tests/) | Brad Smith (`bbbradsmith`)'s `nes-audio-tests` corpus — expansion-audio relative-loudness comparisons, VRC7 / N163 / FME-7 / MMC5 audio quirks, APU DAC linearity. Covers mappers 5, 19, 24, 26, 69, 85. | Brad Smith | "Freely redistributed and modified for any purpose" (effectively PD) |
 | [`m22/`](./m22/) | NewRisingSun's VRC2 (mapper 22) CHR-banking smoke test. | NewRisingSun (aggregated in `christopherpow/nes-test-roms`) | Public domain (aggregator) |
 | [`mmc1_a12/`](./mmc1_a12/) | tepples's MMC1 + PPU A12 transition test (control case for the MMC3 A12-IRQ axis). | tepples (aggregated) | Public domain (aggregator) |
@@ -85,10 +85,10 @@ cargo test --workspace
 cargo test --workspace --features test-roms
 
 # Single corpus:
-cargo test -p nes-test-harness --features test-roms blargg
-cargo test -p nes-test-harness --features test-roms mmc3
-cargo test -p nes-test-harness --features test-roms accuracy_coin
-cargo test -p nes-test-harness --features test-roms,commercial-roms external_real_games
+cargo test -p rustynes-test-harness --features test-roms blargg
+cargo test -p rustynes-test-harness --features test-roms mmc3
+cargo test -p rustynes-test-harness --features test-roms accuracy_coin
+cargo test -p rustynes-test-harness --features test-roms,commercial-roms external_real_games
 ```
 
 The `commercial-roms` feature is gated separately precisely because it

@@ -795,7 +795,7 @@ and the Material-for-MkDocs documentation handbook at
 
 RustyNES's current release is **v2.2.5 "Colophon"**, a **provenance, licensing,
 and documentation-integrity** release. It carries **zero emulation-core
-changes** — so **AccuracyCoin holds 141/141 (100.00%)**, nestest is 0-diff, and
+behavior changes** — so **AccuracyCoin holds 141/141 (100.00%)**, nestest is 0-diff, and
 the `#![no_std]` chip stack, save-state / TAS / netplay formats, and every golden
 vector are byte-identical to v2.2.4 by construction. Instead it corrects how the
 project *describes its own provenance*, prompted by community review:

@@ -18,7 +18,7 @@ cycle-accurate core later replaced.
 
 A **provenance, licensing, and documentation-integrity** release, prompted by
 community review of the project's licensing and AI-assisted origins. **Zero
-emulation-core changes**, so **AccuracyCoin holds 141/141 (100.00%)**, nestest is
+emulation-core behavior changes**, so **AccuracyCoin holds 141/141 (100.00%)**, nestest is
 0-diff, and the `#![no_std]` chip stack, save-state / TAS / netplay formats, and
 every golden vector are byte-identical to v2.2.4 by construction.
 
@@ -66,8 +66,9 @@ every golden vector are byte-identical to v2.2.4 by construction.
 
 - **`tests/roms/LICENSES.md`** — a false exclusion claim (four Holy Mapperel mapper
   ROMs stated as excluded were in fact committed), a stale crate path, and the
-  AccuracyCoin sub-test count; added blanket coverage for the ~150
-  previously-undocumented committed test ROMs (502 total, none commercial).
+  AccuracyCoin sub-test count; and added blanket coverage for the committed
+  directories not individually tabulated (328 committed `.nes` total, none
+  commercial).
 
 ## [2.2.4] - 2026-07-24 - "Cartridge" (libretro core builds/installs for RetroArch)
 

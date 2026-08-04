@@ -175,15 +175,12 @@ fetched 2026-05-10). Upstream `LICENSE` file is the MIT License
 ("Copyright (c) 2025 Chris Siebert"); the full text is vendored
 alongside the .nes file.
 
-AccuracyCoin is a single-NROM-cartridge battery of ~139 NES accuracy
-tests. The ROM is **interactive** — pass/fail results are reported
-visually (on-screen "PASS"/"FAIL" + hex error codes) and the user
-navigates the test menu with D-Pad + A + Start. There is no `$6000`
-status protocol, so the integration test in
-`crates/rustynes-test-harness/tests/accuracycoin.rs` is a boot-without-crash
-smoke gate only. v1.0.0 will need a pixel-decoding harness to extract
-the pass rate (currently un-measured; the ≥ 90% bar is documented in
-`docs/STATUS.md` §"Version policy").
+AccuracyCoin is a single-NROM-cartridge battery of NES accuracy tests. The ROM is
+**interactive** — pass/fail results are reported visually (on-screen "PASS"/"FAIL"
+plus hex error codes) with no `$6000` status protocol. The integration test in
+`crates/rustynes-test-harness/tests/accuracycoin.rs` decodes the per-test result
+state from RAM and asserts the measured pass rate, which RustyNES holds at
+**141/141 (100.00%)** (see `docs/STATUS.md`).
 
 ## "full palette" ROMs
 
@@ -265,9 +262,9 @@ directories below under `tests/roms/`. All are public-domain or permissive
 homebrew from the same authors and aggregator already documented in this file;
 none is commercial software.
 
-- `nes-test-roms/` (263 `.nes`): the working clone of
-  `christopherpow/nes-test-roms`, the public-domain/permissive aggregator named
-  in this file's header. Each suite retains its own author and license (blargg,
+- `nes-test-roms/` (89 `.nes` committed): the committed subset of the working
+  clone of `christopherpow/nes-test-roms`, the public-domain/permissive aggregator
+  named in this file's header. Each suite retains its own author and license (blargg,
   kevtris, tepples, Damian Yerrick, NewRisingSun, bbbradsmith, and others); the
   suites RustyNES actively gates are tabulated in the sections above.
 - `extra/` (56 `.nes`: `apu/` 19, `cpu/` 3, `mappers/` 23, `ppu/` 11): a curated
@@ -278,8 +275,9 @@ none is commercial software.
 - `AccuracyCoin/sub-tests/` (26 `.nes`): the boot-into-one-test derivatives of
   `AccuracyCoin.asm` described above, all MIT (inheriting upstream).
 
-The authoritative running total is 502 committed `.nes` files under
-`tests/roms/` (excluding the gitignored `tests/roms/external/`); no commercial
+The authoritative running total is 328 committed `.nes` files under
+`tests/roms/` (per `git ls-files`; excluding the gitignored `tests/roms/external/`
+and any untracked clone contents); no commercial
 ROM is among them.
 
 ## Notes
