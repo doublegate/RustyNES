@@ -93,6 +93,7 @@ component is "or-later" and no incorporated component is v3-only.
 - **Ongoing audit.** If further GPL-derived code is found, it is added to the
   provenance table and `NOTICE`, not reworded away. The license does not change again
   for that; GPL-3.0-or-later already covers it.
-- **Accuracy unaffected.** This is a licensing/documentation change with zero
-  emulation-core behavior change: AccuracyCoin holds 141/141 and nestest is 0-diff by
-  construction.
+- **Accuracy unaffected.** This is a licensing/documentation change with no
+  emulation-core code change, and the release checks verify it: AccuracyCoin passes
+  141/141 and nestest is 0-diff. `docs/STATUS.md` is authoritative for the pass
+  counts.

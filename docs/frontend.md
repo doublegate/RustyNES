@@ -1740,11 +1740,19 @@ All additive + frontend-only; the core stays byte-identical.
   subtitle track at the region's frame rate (NTSC's 60.0988 fps stays
   drift-free), for muxing into an A/V dump (`movie_srt::markers_to_srt`).
 
-Detachable / floating tool windows shipped in **v2.2.9 "Studio II"** — the
-shared `detachable_window` helper (`debugger/mod.rs`) pops any of 17 tool panels
-out into a real OS window via `ctx.show_viewport_immediate`, with a Reattach
-affordance; native-only (egui multi-viewport needs winit multi-window, so wasm
-keeps the docked `egui::Window`).
+A detach / pop-out affordance for tool windows shipped in **v2.2.9 "Studio II"** —
+the shared `detachable_window` helper (`debugger/mod.rs`) pops any of 18 tool
+panels out via `ctx.show_viewport_immediate`, with a Reattach affordance and its
+prior first-open geometry (a `WindowCfg`); native-only (wasm keeps the docked
+`egui::Window`). **Honest scope:** the frontend is currently a single-viewport
+`egui_winit` integration (one `take_egui_input` / `handle_platform_output` for the
+main window, no `viewport_output` handling, `embed_viewports` left at its default
+`true`), so `show_viewport_immediate` renders the panel **embedded in the main
+window** rather than a separate OS window. True OS-window detach — the Windows-10
+trapped-window fix — requires wiring multi-viewport into the render loop
+(`set_embed_viewports(false)`, per-`ViewportId` winit windows + egui states +
+wgpu surfaces, and routing their events); the affordance and geometry plumbing are
+in place for when that lands. Tracked as follow-up.
 
 **Deferred (noted for a follow-up):** Virtual Pad (clickable on-screen
 controller → `SharedInput`), input Macros feeding the piano-roll pattern-paint,

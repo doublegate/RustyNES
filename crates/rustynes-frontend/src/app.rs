@@ -3034,11 +3034,22 @@ impl App {
                     input_dirty = true;
                 }
                 TasRequest::CreateBranch => {
-                    // create_branch / load_branch reseat the `Nes` themselves.
+                    // Flush any pending SetInput/InsertFrame/StampMacro edits into
+                    // the `Nes` (replay to the cursor) BEFORE snapshotting the
+                    // branch, so the branch captures the edited state rather than a
+                    // stale one; then create_branch reseats the `Nes` itself.
+                    if input_dirty {
+                        ed.seek(nes, ed.cursor());
+                    }
                     input_dirty = false;
                     ed.create_branch(nes);
                 }
                 TasRequest::LoadBranch(i) => {
+                    // Same ordering: flush pending edits before the load restores a
+                    // (different) branch's snapshot, so nothing is silently dropped.
+                    if input_dirty {
+                        ed.seek(nes, ed.cursor());
+                    }
                     input_dirty = false;
                     ed.load_branch(i, nes);
                 }

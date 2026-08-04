@@ -300,24 +300,40 @@ pub(crate) fn detachable_window(
     #[cfg(not(target_arch = "wasm32"))]
     if detached.contains(id) {
         let mut reattach = false;
-        ctx.show_viewport_immediate(
-            egui::ViewportId::from_hash_of(id),
-            egui::ViewportBuilder::default().with_title(title),
-            |vctx, _class| {
-                // A full-window Area hosts the body (mirrors `basic_bot_panel`,
-                // avoiding the deprecated context-level `CentralPanel::show`).
-                egui::Area::new(egui::Id::new(id)).show(vctx, |ui| {
-                    if ui.button("\u{29c9} Reattach to main window").clicked() {
-                        reattach = true;
-                    }
-                    ui.separator();
-                    add_contents(ui);
-                });
-                if vctx.input(|i| i.viewport().close_requested()) {
+        // Seed the viewport with the same first-open geometry the docked window
+        // uses, so a detached panel keeps its size / position / resizability.
+        let mut vb = egui::ViewportBuilder::default().with_title(title);
+        if let Some(s) = cfg.default_size {
+            vb = vb.with_inner_size(s);
+        }
+        if let Some(p) = cfg.default_pos {
+            vb = vb.with_position(p);
+        }
+        if let Some(r) = cfg.resizable {
+            vb = vb.with_resizable(r);
+        }
+        // NOTE: `show_viewport_immediate` only produces a separate OS window when
+        // the egui integration enables multi-viewport (`set_embed_viewports(false)`
+        // + per-viewport winit windows). RustyNES's frontend is currently a
+        // single-viewport `egui_winit` integration, so egui renders this viewport
+        // EMBEDDED in the main window. True OS-window detach (the Windows-10
+        // trapped-window fix) requires wiring multi-viewport into the render loop
+        // — tracked as follow-up work; the affordance + geometry are in place for
+        // when it lands.
+        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(id), vb, |vctx, _class| {
+            // A full-window Area hosts the body (mirrors `basic_bot_panel`,
+            // avoiding the deprecated context-level `CentralPanel::show`).
+            egui::Area::new(egui::Id::new(id)).show(vctx, |ui| {
+                if ui.button("\u{29c9} Reattach to main window").clicked() {
                     reattach = true;
                 }
-            },
-        );
+                ui.separator();
+                add_contents(ui);
+            });
+            if vctx.input(|i| i.viewport().close_requested()) {
+                reattach = true;
+            }
+        });
         if reattach {
             detached.remove(id);
         }

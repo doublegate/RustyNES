@@ -361,12 +361,21 @@ type PadColumnMaps = (Vec<Option<Buttons>>, Vec<Option<Buttons>>);
 fn parse_log_key(log_key: &str) -> PadColumnMaps {
     let trimmed = log_key.trim();
     let body = trimmed.strip_prefix("LogKey:").unwrap_or(trimmed);
-    // `#`-separated groups; the field before the first `#` is empty (dropped).
-    let groups: Vec<&str> = body.split('#').filter(|g| !g.is_empty()).collect();
+    // The body opens with a single `#` delimiter, then `#`-separated groups.
+    // Strip ONLY that leading delimiter and split without dropping empties: an
+    // empty console group (`##P1...`) must keep its slot so P1/P2 don't shift
+    // left into it. groups[0] = console, groups[1] = P1, groups[2] = P2.
+    let body = body.strip_prefix('#').unwrap_or(body);
+    let groups: Vec<&str> = body.split('#').collect();
     let cols = |g: Option<&&str>| -> Vec<Option<Buttons>> {
         let mapped: Vec<Option<Buttons>> = g.map_or_else(Vec::new, |grp| {
-            grp.split('|')
-                .filter(|c| !c.is_empty())
+            // Strip only the trailing `|` delimiter each group carries; keep
+            // interior empty columns (`P1 Up||P1 A`) so a button's column index
+            // stays aligned with the frame-value index (else `A` would map to the
+            // empty column's slot and a frame `U.A` would replay as `Up` alone).
+            grp.strip_suffix('|')
+                .unwrap_or(grp)
+                .split('|')
                 .map(button_for_column)
                 .collect()
         });
@@ -642,6 +651,42 @@ mod tests {
             m2.frames[0].p1,
             Buttons::A,
             "column 7 = A pressed; the 9th (Mic) col is ignored"
+        );
+    }
+
+    #[test]
+    fn log_key_preserves_empty_columns_and_groups() {
+        // v2.2.9 fix: empty interior `LogKey` fields must KEEP their positions,
+        // or later columns/groups shift left and buttons re-map silently.
+        //
+        // Empty interior COLUMN (`P1 Up||P1 A`): the empty middle column is a real
+        // slot, so `A` stays at column index 2. A frame `U.A` must press Up (col 0)
+        // and A (col 2); the pre-fix filter dropped the empty column, mapping A to
+        // index 1 so `U.A` replayed as Up alone.
+        let empty_col = "[Input]\n\
+            LogKey:#Reset|Power|#P1 Up||P1 A|\n\
+            |..|U.A|\n\
+            [/Input]\n";
+        let (m, _) = import_bk2("Platform NES\n", empty_col, TEST_SHA).expect("import empty-col");
+        assert_eq!(
+            m.frames[0].p1,
+            Buttons::UP | Buttons::A,
+            "empty middle column keeps its slot: Up (col 0) + A (col 2) both press"
+        );
+
+        // Empty CONSOLE group (`##P1…`): must not shift P1's map into the dropped
+        // console slot. The pre-fix filter dropped the empty group, promoting P1
+        // into the console position and losing it entirely.
+        let empty_console = "[Input]\n\
+            LogKey:##P1 Up|P1 Down|P1 Left|P1 Right|P1 Start|P1 Select|P1 B|P1 A|\n\
+            ||U.......|\n\
+            [/Input]\n";
+        let (m2, _) =
+            import_bk2("Platform NES\n", empty_console, TEST_SHA).expect("import empty-console");
+        assert_eq!(
+            m2.frames[0].p1,
+            Buttons::UP,
+            "empty console group keeps its slot; P1 col 0 = Up still maps to P1"
         );
     }
 

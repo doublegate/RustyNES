@@ -76,13 +76,21 @@ vector are byte-identical (AccuracyCoin 141/141, nestest 0-diff).
 ### Added
 
 - **Detachable / floating tool windows (native).** A shared `detachable_window`
-  helper gives each debugger/tool panel a "⧉ Detach" button that pops it out into
-  a real OS window (`show_viewport_immediate`) with a "⧉ Reattach" affordance;
-  17 panels are routed through it (PPU, OAM, APU, Memory, Event Viewer, NSF,
-  Mapper, Watch, Trace, Cheats, ROM Database, Performance, Documentation, Input
-  Display, Audio Mixer, Replay/TAS, Memory Compare, ROM Info). Native-only —
-  egui multi-viewport needs winit multi-window, so on wasm panels stay docked in
-  an `egui::Window` (unchanged), verified clippy-clean on both wasm feature sets.
+  helper gives each debugger/tool panel a "⧉ Detach" button (and a "⧉ Reattach"
+  affordance) that pops it out via egui's `show_viewport_immediate`; 18 panels are
+  routed through it (PPU, OAM, APU, Memory, Event Viewer, NSF, Mapper, Watch,
+  Trace, Cheats, ROM Database, Performance, Documentation, Input Display, Audio
+  Mixer, Replay/TAS, Memory Compare, ROM Info), each preserving its prior
+  first-open geometry via a `WindowCfg`. Native-only (wasm stays docked in an
+  `egui::Window`, unchanged), clippy-clean on both wasm feature sets.
+  - **Known limitation (honest scope).** RustyNES's frontend is currently a
+    *single-viewport* `egui_winit` integration, so `show_viewport_immediate`
+    renders the detached panel **embedded in the main window** rather than as a
+    separate OS window — i.e. this does **not** yet fully resolve the Windows-10
+    "trapped inside the main window" report. True OS-window detach requires wiring
+    multi-viewport (`set_embed_viewports(false)` + per-viewport winit windows) into
+    the render loop; the affordance, `WindowCfg` geometry, and `ViewportBuilder`
+    plumbing are in place for when that lands. Tracked as follow-up.
 
 ## [2.2.8] - 2026-08-04 - "Aperture II" (gamma-aware scanlines + sharper CRT)
 

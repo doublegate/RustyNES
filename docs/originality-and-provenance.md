@@ -253,3 +253,7 @@ like sweeping this under the rug:
 
 Responsibility for what the AI tooling put into this codebase, and for the earlier
 mislabeling, rests with the project. This document is the correction of record.
+
+A full forensic reconstruction of **how and why** this happened — the timeline, the
+models involved, the root causes, and what is and is not recoverable from the logs —
+is in [`provenance-failure-postmortem.md`](provenance-failure-postmortem.md).
