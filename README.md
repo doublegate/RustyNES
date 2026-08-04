@@ -690,7 +690,8 @@ RustyNES's accuracy claims are meant to be *checked*, not taken on faith: run th
 public suites yourself (AccuracyCoin, nestest, blargg, Holy Mapperel — see
 [Compatibility & Accuracy](#compatibility-and-accuracy)). Any comparison to
 another emulator is exactly that — a comparison against a reference RustyNES was
-measured on — and is **not** a claim that RustyNES is "better." For an honest
+measured against (e.g. Mesen2 / higan / ares — see the [Acknowledgments](#acknowledgments)) —
+and is **not** a claim that RustyNES is "better." For an honest
 account of where the project advances, diverges from, or independently re-derives
 NES emulation technique (and its license posture), see
 [`docs/originality-and-provenance.md`](docs/originality-and-provenance.md).

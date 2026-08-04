@@ -21,9 +21,9 @@
 //!
 //! # License posture
 //!
-//! emu2413 is MIT-licensed at upstream; this Rust port is a clean-room
-//! reimplementation guided by the C source's algorithm. We preserve
-//! the upstream MIT notice in `NOTICE` at the repo root (see ADR-0006).
+//! emu2413 is MIT-licensed at upstream; this is a pure-Rust port of that C
+//! source, distributed under the same MIT license. We preserve the upstream
+//! MIT notice in `NOTICE` at the repo root (see ADR-0006).
 //!
 //! # Determinism
 //!

@@ -247,7 +247,7 @@ release additive or default-off on the shipped core, verified NTSC-byte-identica
 decision record for all of this is `docs/adr/` (0001 through 0034 as of writing),
 backed by over a hundred implementation-audit logs under `docs/audit/` (about
 113 at time of writing). The
-current release is v2.2.4 "Cartridge"; `docs/STATUS.md` is the source of truth for
+current release is v2.2.5 "Colophon" (this release); `docs/STATUS.md` is the source of truth for
 per-suite counts.
 
 ---

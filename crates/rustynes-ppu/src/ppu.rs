@@ -4156,8 +4156,9 @@ impl Ppu {
     /// A side-effect-free model of the `NESdev`-documented PPU sprite-evaluation
     /// sequence (`NESdev` wiki "PPU sprite evaluation" + "PPU rendering"):
     /// secondary-OAM clear (dots 1-64), evaluation (65-256), and sprite fetch
-    /// (257-320) in the default configuration (the sprite-eval hardware bug
-    /// off), plus the cycle-321 copy-buffer reset. It maintains ONLY
+    /// (257-320) in the default configuration (the optional OAMADDR sprite-eval
+    /// corruption glitch disabled; the 8-sprite overflow bug is still modeled),
+    /// plus the cycle-321 copy-buffer reset. It maintains ONLY
     /// `oam_bus_copybuffer` +
     /// the parallel `oam_bus_secondary`; it reads primary `oam` read-only and
     /// NEVER touches the real sprite-eval / overflow / sprite-zero state (so

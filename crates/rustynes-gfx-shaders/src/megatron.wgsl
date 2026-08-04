@@ -7,7 +7,7 @@
 // model driven for HDR displays: it lights individual R/G/B phosphors within a
 // selectable mask and scales brightness to an absolute nits target so an HDR
 // swapchain reproduces CRT peak brightness. WGSL/wgpu here targets an SDR
-// swapchain by default, so this port keeps Megatron's *structure* — per-subpixel
+// swapchain by default, so this reimplementation keeps Megatron's *structure* — per-subpixel
 // phosphor lighting, mask selection, gamma-correct scanline beam, and an
 // exposed peak/paper-white ratio — but tone-maps the result back into [0,1]
 // with a Reinhard curve (`aux.w` controls the HDR headroom the tone-map
