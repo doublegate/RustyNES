@@ -1935,6 +1935,13 @@ impl Ppu {
         // (≈ 1,073,447 CPU cycles at NTSC, rounded to one million).  This is
         // conservative but well within the window the `ppu_open_bus` test
         // cares about.
+        // NOTE (v2.3.2 G5): reformulating this as a deadline comparison instead
+        // of a per-cycle decrement was measured by DELETING the loop outright —
+        // the ceiling any reformulation could reach — and the ceiling is ZERO.
+        // ~29,780 calls/frame sounds expensive; it is three predictable
+        // compare-and-decrement steps on data already in L1, which an
+        // out-of-order core absorbs entirely. Do not re-attempt; see
+        // `docs/performance.md`.
         let mut i = 0;
         while i < 3 {
             if self.open_bus_decay[i] > 0 {
@@ -3990,6 +3997,15 @@ impl Ppu {
         // Parallel palette-index output for the `NES_NTSC` composite filter
         // (T-110-A1). Same `(emphasis << 6) | colour` value, in index space;
         // `off` is the RGBA byte offset, so `off >> 2` is the pixel index.
+        // NOTE (v2.3.2 G4): making this store conditional on a consumer wanting
+        // it was measured by deleting it outright — the ceiling any opt-in gate
+        // could reach — and the ceiling is ZERO on the shipped configuration.
+        // `perf` attributes ~0.78% to this line, but a line's sample share is not
+        // its marginal cost: this is a sequential `u16` store the store buffer
+        // absorbs off the critical path, so removing it frees nothing and the
+        // samples simply redistribute. Not worth the correctness hazard of
+        // gating a buffer the NTSC filter, the mobile API, `fast_dotloop_diff`
+        // and a unit test all read. See `docs/performance.md`.
         self.index_framebuffer[off >> 2] = lut_idx as u16;
 
         // v1.2.0 C3 (hd-pack): record the CHR tile that produced this pixel,

@@ -661,6 +661,64 @@ for a byte-identical escape hatch is not justified.
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
 
+### v2.3.2 G4/G5/G6 — three "obvious waste" items, all ceiling-zero (decision: REJECTED)
+
+Measured by **ceiling probe**: rather than engineer each optimization and then
+discover it was worthless, delete the work outright — knowingly breaking
+correctness — and measure the upper bound any real implementation could reach.
+Where the ceiling is zero, the engineering is moot and no correctness hazard is
+ever introduced. This turned three multi-hour items into three benchmark runs.
+
+| item | what the ceiling probe deleted | per-frame volume | ceiling |
+| --- | --- | ---: | ---: |
+| **G4** (plan item 8) | the `index_framebuffer` store in `emit_pixel` | 61,440 `u16` stores | **zero** |
+| **G5** (plan item 6) | the whole open-bus decay loop in `on_cpu_cycle` | ~29,780 calls | **zero** |
+| **G6** (plan item 2) | the ALE/read fetch-address recomputation | ~30,720 recomputes | **zero** |
+
+In every case the shipped `_fast` workloads were flat and the apparent movement
+on `nestest` was matched or exceeded by the run's own A/B/A control:
+
+| item | candidate `nestest` | control `nestest` |
+| --- | ---: | ---: |
+| G4 | −0.82% (p = 0.01) | −0.88% (p = 0.01) |
+| G5 | −0.49% (p = 0.06) | −0.51% (p = 0.05) |
+| G6 run 1 | −0.89% (p = 0.00) | −0.16% (p = 0.37) |
+| G6 run 2 | −0.96% (p = 0.00) | **−1.17% (p = 0.00)** |
+
+G6 is the instructive one. Run 1 looked like the campaign's first genuine win —
+**−0.51% at p = 0.00 on `nestest_fast`, a shipped configuration, with a clean
+control on that workload**. Run 2 measured the same probe at **+0.01%
+(p = 0.96)**, and its `nestest` control drifted −1.17%, larger than the
+candidate's own −0.96%. Under the relaxed sub-3% adoption bar, run 1 alone would
+have been adopted. The mandatory second run is what stopped it.
+
+Note also that `nestest` is the FIRST workload criterion benches, so it absorbs
+the most warm-up, and it is where drift shows up most consistently across every
+run in this campaign. Treat a `nestest`-only result with particular suspicion.
+
+**Why there is nothing to reclaim.** Three different mechanisms, one conclusion:
+
+- **G4** — a line's profile share is not its marginal cost. `perf` attributes
+  ~0.78% to that store, but it is a sequential `u16` write the store buffer
+  absorbs off the critical path; deleting it frees nothing and the samples simply
+  redistribute onto neighbours.
+- **G5** — ~29,780 calls/frame sounds expensive but is three perfectly predicted
+  compare-and-decrement steps on L1-resident data, which an out-of-order core
+  hides entirely under other latency.
+- **G6** — the recomputation is real, but it is not on the critical path either.
+
+**G6 was also not adoptable at any speed**, which the ceiling result makes moot
+but is worth recording. The read half re-derives the fetch address for
+`observe_a12_addr`; `ale_splice` takes the read address's high bits from
+`address_bus` (latched at the ALE dot) and its low bits from `octal_latch`, so
+the recomputed value exists *specifically* to drive A12. On hardware only A7–A0
+pass through the 74LS373, so the PPU drives the current full address during the
+read cycle and A12 follows it. Caching would freeze A12 to the ALE dot, shifting
+MMC3 IRQ timing whenever a `$2000`/`$2005`/`$2006` write lands between the two
+dots. The plan item read two identical-looking expressions and inferred
+redundancy; they are identical only in the common case and are *meant* to be able
+to differ.
+
 ### v2.3.2 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as
