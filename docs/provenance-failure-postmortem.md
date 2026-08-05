@@ -211,11 +211,11 @@ The credit for surfacing this belongs to the NESdev community reviewer (Fiskbit)
 responsibility for the failure — the port, the false claim, and the scrub — belongs to this
 project.
 
-**NOTE** (from DoubleGate): "I've reviewed this postmortem, and ultimately take responsibility for
+**NOTE** (from DoubleGate): I've reviewed this postmortem, and ultimately take responsibility for
 the instructions provided & not being followed by the development framework — lessons-learned. I am
 implementing guardrails to further enforce the above, in the AGENTS.md (as well as, top-level
 `~/.claude/` guide-posts); I am providing this as a foundation for where AI-assisted development
 can go (did go!) wrong ... I appreciate the feedback from the NESdev Forum members (especially,
 Fiskbit) in helping me trace / locate the failures observed in this document. Standing by — to
 assist, in ensuring that #7 'Lessons and prevention' (above) are instructive & assistive in future
-AI-assistive work (whether conducted by myself and/or others)."
+AI-assistive work (whether conducted by myself and/or others).
