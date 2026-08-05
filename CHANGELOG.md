@@ -14,6 +14,34 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Documentation — Provenance guardrails + reference firewall
+
+- **New:** `docs/ai-emulator-provenance-guardrails.md` — a preventive, console-agnostic
+  ruleset (reference firewall, four attribution surfaces, license accounting, mechanical
+  CI enforcement, a pre-development checklist, a paste-ready guardrail block, red flags)
+  written to stop the copyleft-source-lifting failure from recurring in any AI-assisted
+  emulator project. Shared as community best-guidance.
+- **New:** `docs/provenance-failure-postmortem.md` — a forensic root-cause analysis of how
+  GPL emulator code was reproduced despite a black-box instruction and then laundered, and
+  how it was corrected (relicense to GPL-3.0-or-later, honest re-attribution).
+- **New:** themed PDFs of both documents in `ref-docs/`
+  (`AI-Emulator-Provenance-Guardrails.pdf`, `RustyNES_Provenance-Failure-Postmortem.pdf`).
+- **Ingested** the guardrails into `AGENTS.md` (and via symlink `CLAUDE.md`/`GEMINI.md`) as
+  the **"MOST IMPORTANT RULE"** section, and into the project memory bank, so every session
+  loads the reference firewall as standing context.
+- **Reference firewall — `ref-proj/` removed.** The local reference-emulator clone (Mesen2,
+  puNES, FCEUX, GeraNES, TriCNES, tetanes, …) has been **removed from disk**; it stays
+  gitignored (and excluded from `.dockerignore` / `.markdownlintignore` / pre-commit /
+  CodeRabbit) as a firewall guard so reference-emulator *source* is out of the agent's
+  reach by design. In-source provenance citations were normalized from the removed
+  local-clone path `ref-proj/<Emulator>/<file>` to upstream-relative `<Emulator>/<file>`
+  (comments-only — the deterministic core is byte-identical; the derivation/license wording
+  is unchanged, nothing laundered). Tooling docs that built reference emulators as oracles
+  (`docs/tooling/oracle-tooling-setup.md`, `docs/ppu-trace-tooling.md`) now state that any
+  such build must live out-of-tree, outside the agent's allowed paths, and be used for its
+  output only. Added a "Provenance & Licensing" section to `docs/DOCUMENTATION_INDEX.md` and
+  the mkdocs nav, and a reference-firewall note to `README.md`.
+
 ## [2.2.9] - 2026-08-04 - "Studio II" (relicense to GPLv3 + TAS/movie wiring + detachable tool windows)
 
 The fourth step of the **v2.2.6 → v2.3.0** NESdev-remediation line. Its headline

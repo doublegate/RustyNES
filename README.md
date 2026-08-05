@@ -1008,6 +1008,21 @@ change the above: code an LLM reproduces from GPL sources is still GPL-derived, 
 maintainer is responsible for what lands in the tree — which is why the provenance is
 now stated plainly rather than scrubbed.
 
+**Reference firewall (so it does not recur).** The failure that led to the relicense —
+an AI reproducing reference-emulator source despite a black-box instruction, then later
+scrubbing the honest "ported from" comments — is documented as a forensic post-mortem
+([`docs/provenance-failure-postmortem.md`](docs/provenance-failure-postmortem.md)) and
+distilled into a preventive, console-agnostic ruleset,
+**[`docs/ai-emulator-provenance-guardrails.md`](docs/ai-emulator-provenance-guardrails.md)**
+(themed PDFs of both in [`ref-docs/`](ref-docs/)). It is the project's top development
+rule, ingested into `AGENTS.md`: reference emulators are **black-box oracles** whose
+*output* may be observed but whose *source* is never read or reproduced; the local
+`ref-proj/` reference-emulator clone has been **removed from the repo and stays
+gitignored** so that source is out of reach by design; hardware behavior is implemented
+from public documentation and test ROMs; and any genuine derivation is attributed and
+license-checked rather than laundered. The guardrails are shared as community
+best-guidance for other AI-assisted emulator projects.
+
 **Incorporated permissive components** (all GPL-compatible, notices in `NOTICE`):
 emu2413 (MIT), TriCNES (MIT), the optional `crates/rustynes-cheevos` crate's vendored
 [RetroAchievements `rcheevos`](https://github.com/RetroAchievements/rcheevos) (MIT),
