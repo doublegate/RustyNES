@@ -217,5 +217,5 @@ implementing guardrails to further enforce the above, in the AGENTS.md (as well 
 `~/.claude/` guide-posts); I am providing this as a foundation for where AI-assisted development
 can go (did go!) wrong ... I appreciate the feedback from the NESdev Forum members (especially,
 Fiskbit) in helping me trace / locate the failures observed in this document. Standing by — to
-assist, in ensuring that #7 'Lessons and prevention' (above) are instructive & assistive in future
+assist, in ensuring that **7. Lessons and prevention** (above) are instructive & assistive in future
 AI-assistive work (whether conducted by myself and/or others).
