@@ -45,7 +45,7 @@ Authoritative companions: [`NOTICE`](../NOTICE) (the legal attribution file),
 The table below is the honest derivation record, rebuilt from the in-source
 comments as they stood **before** the v2.2.5 rewording (recoverable from the git
 history of that change) and cross-checked against the upstream sources at the time
-(the local `ref-proj/` reference-emulator clone, since **removed from the repo and
+(the local reference-emulator clone, since **removed from the repo and
 the agent's reach** per the reference firewall — see
 `docs/ai-emulator-provenance-guardrails.md`; the citations name each upstream
 project + file so the record stands without the local clone). Each

@@ -1,16 +1,23 @@
 # AccuracyCoin oracle tooling — setup + regeneration
 
-> **⚠️ REFERENCE FIREWALL (read first).** The `ref-proj/` reference-emulator clone has been **removed
-> from the repo and from the agent's reach** and stays gitignored — see the "MOST IMPORTANT RULE"
-> section of `AGENTS.md` and `docs/ai-emulator-provenance-guardrails.md`. Reference emulators are
-> **black-box oracles**: you may *build and run* them to capture their **output** (per-cycle traces,
-> framebuffers, audio) and diff RustyNES against it, but you may **never open, read, or reproduce
-> their source into RustyNES**. Any local Mesen2 / TriCNES build used for the oracle traces below
-> **must live outside this repo and outside the agent's allowed paths** (a sibling directory the tool
-> sandbox does not expose); the `ref-proj/...` paths that appear below are historical and no longer
-> resolve. The committed, self-contained artifacts (`crates/rustynes-test-harness/golden/`, the
-> AccuracyCoin sub-test ROMs) are the firewall-compliant way to reproduce a cross-diff without the
-> reference source in reach.
+> **⚠️ REFERENCE FIREWALL (read first).** The removed local reference-emulator clone (formerly under
+> the gitignored reference-projects directory) is gone from the repo and the agent's reach — see the
+> "MOST IMPORTANT RULE" section of `AGENTS.md` and `docs/ai-emulator-provenance-guardrails.md`. The
+> firewall applies to the **copyleft** references — **Mesen2, puNES, FCEUX, GeraNES (GPL)**: those are
+> **black-box oracles** whose *output* (per-cycle traces, framebuffers, audio) you may capture and diff
+> against, but whose **source you must never open, read, or reproduce into RustyNES**, and any local
+> build of them used for the oracle traces below **must live outside this repo and outside the agent's
+> allowed paths** (a sibling directory the tool sandbox does not expose). The removed-clone paths that
+> appear below are historical and no longer resolve.
+>
+> **TriCNES is the deliberate exception, and it is not a firewall violation.** TriCNES is **MIT**, so
+> its full upstream source is *intentionally vendored in-repo* at
+> `crates/rustynes-test-harness/golden/tricnes/tricnes-full-src/` (with its `LICENSE`, attributed in
+> `NOTICE` + `docs/originality-and-provenance.md` §1) as a genuinely-incorporated permissive component —
+> which is exactly what makes the cross-diff harness self-contained. The committed golden vectors under
+> `crates/rustynes-test-harness/golden/` (plus the AccuracyCoin sub-test ROMs) remain the preferred
+> path because they need no live emulator at all; the vendored MIT TriCNES source is the permissible
+> in-repo fallback. Neither requires the copyleft references to be in reach.
 
 The v2.0 accuracy push (toward 139/139) cross-diffs RustyNES's per-cycle bus stream against two
 reference emulators. `/tmp` is wiped on reboot (CachyOS) — this is the recipe to regenerate.
@@ -79,12 +86,15 @@ built from source**, vendored self-contained in this repo (TriCNES is MIT — Ch
   `tests/roms/AccuracyCoin/sub-tests/` — incl. `iflag-latency.nes`, `dma-open-bus.nes`,
   `dmc-bus-conflicts.nes`, `internal-data-bus.nes`, `fc-4step.nes` (added 2026-06-08).
 
-> **Reference-emulator note (updated 2026-08-04 — firewall):** the repo's `ref-proj/` clone has been
-> **removed entirely** and must not be re-created inside the working tree (it stays gitignored). If a
-> Mesen2 / TriCNES build is genuinely needed to *regenerate* an oracle trace, keep it **out of tree,
+> **Reference-emulator note (updated 2026-08-04 — firewall):** the removed local reference-emulator
+> clone has been **deleted entirely** and must not be re-created inside the working tree (it stays
+> gitignored). The out-of-tree rule is for the **copyleft** references: if a **Mesen2** build (or
+> puNES / FCEUX / GeraNES) is genuinely needed to *regenerate* an oracle trace, keep it **out of tree,
 > outside the agent's allowed paths** — build and run it there, capture only its **output**, and diff.
-> The in-repo `tricnes-harness-src` above (committed golden vectors) makes the cross-diff oracle
-> self-contained without any reference source in reach, which is the preferred path.
+> **TriCNES is MIT and is the deliberate exception:** its harness + full source are vendored in-repo
+> (§2a) under their own permissive license, so a TriCNES trace can be regenerated from the in-tree
+> `tricnes-harness-src` with no out-of-tree source at all. The committed golden vectors above make the
+> cross-diff oracle self-contained without *any* live emulator, which is the preferred path.
 
 ## 3. PPU sub-dot oracles (Phase 6)
 
