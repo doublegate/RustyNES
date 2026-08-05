@@ -205,6 +205,54 @@ resolvable: a shallow clone, a root commit, a brand-new branch whose
 all. The job checks out with `fetch-depth: 0` precisely so the normal case does
 *not* skip.
 
+#### v2.3.1 — the gate declines to conclude on a contended host
+
+The common-mode cancellation above holds only while the two back-to-back runs
+see a comparable machine. On a contended host they do not, and the delta stops
+measuring the code. **v2.3.0 P1 is the worked example: profiled on a busy
+machine it read +2%; re-measured quiet, the same commit was −5.13%.** The number
+was not merely imprecise — it had the wrong sign.
+
+The gate therefore reads criterion's own artifacts (`sample.json` +
+`tukey.json`) for both runs and reports two figures per bench:
+
+- **robust CV** — `1.4826 × MAD / median`. This is the **trigger**. Unlike
+  stddev it is not itself dragged around by the outliers being measured, so it
+  stays a usable yardstick on exactly the contended runs that matter.
+- **outlier %** — criterion's own "Found N outliers among M measurements",
+  recovered as a number. Reported as evidence only, deliberately **not** the
+  trigger.
+
+**Outlier % looks like the obvious signal and is a trap.** Criterion's fences
+are IQR-derived, so a benchmark whose bulk is unusually *tight* flags a large
+outlier fraction from tiny absolute excursions. Measured against this repo's own
+saved baselines while building the gate:
+
+| bench | outliers | robust CV |
+| --- | --- | --- |
+| `nes_run_frame_flowing_palette_fast` | **30.0%** | **0.19%** |
+| `nes_run_frame_nestest` | 20.0% | 0.58% |
+| `nes_run_frame_flowing_palette` | 6.0% | 1.18% |
+| `nes_run_frame_nestest_fast` | **0.0%** | **2.79%** |
+
+The two signals do not merely disagree, they invert: the run with the most
+outliers is the quietest in the set, and the run with none is the noisiest.
+Gating on outlier % would have refused a verdict on the best measurement here.
+
+The CV threshold is derived, not picked: a gate cannot adjudicate an effect it
+cannot resolve, so the host counts as contended once `3 × CV` exceeds
+`BENCH_MAX_REGRESSION_PCT` — once the noise band is wide enough to swallow the
+very regression being tested for. At the default 10% limit that is a **3.33%**
+CV, overridable via `BENCH_MAX_NOISE_CV_PCT`.
+
+When contended the gate emits **NO VERDICT** (exit 0, loudly) rather than a pass
+or a fail. A clean delta on a noisy host is not evidence that nothing regressed,
+any more than a dirty one is evidence that something did — reporting either
+would be manufacturing a conclusion from data that cannot support one. The one
+exception: a delta beyond **3× the measured CV** still FAILs, because contention
+inflates a measurement but does not invent a 40% one. Gate 1's absolute ceiling
+applies throughout, so declining never leaves a branch ungated.
+
 For an ad-hoc local comparison, criterion baselines directly:
 
 ```bash
