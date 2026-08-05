@@ -154,7 +154,13 @@ This guarantees that save/load round-trips and a re-played input sequence produc
 
 ## Performance targets
 
-- Frame cost (single-thread, no rendering): ≤ 2 ms on a 2018-era laptop x86_64 (Skylake-era).
+> These are the original **design-phase aspirations**, not gates. The frame-cost
+> figure was not met and is knowingly accepted — the implemented cycle-accurate
+> core measures **~3.9 ms** (nestest) / **~2.5 ms** (flowing palette), ~23% of the
+> 16.639 ms NTSC budget. See `docs/performance.md` §Targets for the measured
+> numbers and why the main optimization levers were measured and rejected.
+
+- Frame cost (single-thread, no rendering): ≤ 2 ms on a 2018-era laptop x86_64 (Skylake-era) — **aspirational; ~3.9 ms measured and accepted**.
 - Frame cost including wgpu present + cpal callback: ≤ 5 ms (well under the 16.67 ms budget for 60 fps NTSC).
 - Audio callback: lock-free SPSC ring buffer; never block the audio thread.
 
