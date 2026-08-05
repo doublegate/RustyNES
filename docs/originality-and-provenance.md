@@ -65,16 +65,16 @@ distributing the combined work under GPL-3.0-or-later.
 | `crates/rustynes-frontend/src/ntsc_bisqwit.rs` | Bisqwit; Mesen2 | Bisqwit `nes_ntsc`-style composite model as implemented by Mesen2's `BisqwitNtscFilter`; **numeric tables ported verbatim** | GPL-3.0-or-later (Mesen2) |
 | `crates/rustynes-gfx-shaders/src/crt_stack.rs`, `src/lib.rs` | CRT-Royale, crt-guest-advanced, Sony Megatron | single-pass WGSL reimplementations of those shaders (see §6) | GPL-2.0-or-later / permissive |
 | `crates/rustynes-mappers/src/m016_bandai_fcg.rs` | Mesen2 | `Eeprom24C01` / `Eeprom24C02`, `Core/NES/Mappers/Bandai/` | GPL-3.0-or-later |
-| `crates/rustynes-mappers/src/m035_jy_asic.rs` | Mesen2 | `JyCompany` register decode | GPL-3.0-or-later |
+| `crates/rustynes-mappers/src/m035_jy_asic.rs` | Mesen2 | `JyCompany` register decode, `InvertPrgBits` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m069_sunsoft_fme7.rs` | Mesen2 / Nestopia | Sunsoft 5B audio + FME-7 | GPL-3.0-or-later / GPL-2.0-or-later |
-| `crates/rustynes-mappers/src/m176_bmc_fk23c.rs` | Mesen2 | `Waixing/Fk23C.h` | GPL-3.0-or-later |
+| `crates/rustynes-mappers/src/m176_bmc_fk23c.rs` | Mesen2 | `Waixing/Fk23C.h`, `Mmc3Variants/MMC3_Coolboy.h` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m268_bmc_coolboy.rs` | Mesen2 / FCEUX | `Mmc3Variants/MMC3_Coolboy.h` banking | GPL-3.0-or-later / GPL-2.0-or-later |
-| `crates/rustynes-mappers/src/m513_sachen_9602.rs` | Mesen2 | `Sachen/Sachen9602.h` | GPL-3.0-or-later |
-| `crates/rustynes-mappers/src/mmc3_clones.rs` | Mesen2 | `Waixing/Mapper253.h`, `InvertPrgBits`, MMC3 variants | GPL-3.0-or-later |
+| `crates/rustynes-mappers/src/m513_sachen_9602.rs` | Mesen2 | `Sachen/Sachen9602.h`, `Txc/TxcChip.h` | GPL-3.0-or-later |
+| `crates/rustynes-mappers/src/mmc3_clones.rs` | Mesen2 | `Waixing/Mapper253.h`, `Sachen/Sachen8259.h`, `InvertPrgBits`, MMC3 variants | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/multicart_discrete.rs` | Mesen2 | `Ntdec/Mapper221.h`, `Txc/Bmc11160.h` | GPL-3.0-or-later |
-| `crates/rustynes-mappers/src/ntdec.rs` | Mesen2 | NTDEC boards | GPL-3.0-or-later |
+| `crates/rustynes-mappers/src/ntdec.rs` | Mesen2 | NTDEC boards, `Txc/Bmc11160.h` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/sachen_discrete.rs` | Mesen2 | `Sachen/Sachen8259.h`, `Txc/TxcChip.h` | GPL-3.0-or-later |
-| `crates/rustynes-mappers/src/kaiser.rs` | Mesen2 | Kaiser boards | GPL-3.0-or-later |
+| `crates/rustynes-mappers/src/kaiser.rs` | Mesen2 | Kaiser boards, `Waixing/Mapper253.h` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/fds.rs` | puNES | `fds.c` per-CRC drive-timing table | GPL-2.0-or-later |
 | `crates/rustynes-mappers/src/lib.rs` (mapper 147 / JV001, UNIF dispatch) | puNES; FCEUX | `JV001.c` / `mapper_147.c` (**ported bit-for-bit**); UNIF board handling | GPL-2.0-or-later |
 | `crates/rustynes-mappers/src/unif.rs` | Mesen2; FCEUX | `UnifLoader.cpp` + `unif.cpp` board-name tables | GPL-3.0-or-later / GPL-2.0-or-later |
