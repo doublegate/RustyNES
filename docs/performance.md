@@ -661,6 +661,48 @@ for a byte-identical escape hatch is not justified.
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
 
+### v2.3.2 G1 — idle-line fast path, re-measured (decision: REJECTED again, stays default-OFF)
+
+The v2.3.2 campaign predicted the default-OFF `ppu-idle-line-fast` path
+(§P2, max −1.55%, below the bar) "becomes worthwhile if per-dot dispatch gets
+cheaper", and v2.3.0 P1 made per-dot dispatch cheaper by −5.13%. Re-measured on
+that basis. Criterion change analysis, host CPU-pinned (`taskset -c 2-5`),
+2 s warm-up / 10 s measurement, feature-OFF baseline vs feature-ON:
+
+| bench | change | p | verdict |
+| --- | ---: | ---: | --- |
+| `nes_run_frame_nestest` | −0.94% | 0.00 | small win |
+| `nes_run_frame_flowing_palette` | **+0.98%** | 0.02 | small **regression** |
+| `nes_run_frame_nestest_fast` | −0.36% | 0.29 | no change |
+| `nes_run_frame_flowing_palette_fast` | +0.84% | 0.06 | no change |
+
+**Rejected.** Nothing approaches the >3% bar, the two workloads disagree in
+sign, and — decisively — **both `_fast` variants report no change, and those are
+the shipped configuration** (`fast_dotloop` became the default in v2.2.3). The
+feature stays implemented and default-OFF on exactly the terms §P2 set.
+
+Worth recording that this re-measurement **disagrees in sign with §P2** on
+`flowing_palette` (−1.31% then, +0.98% now). Neither is wrong so much as both are
+inside the noise for an effect this size. The consistent finding across two
+independent sessions is that the idle-line path moves the shipped configuration
+by less than ±1.5%, with an unstable sign — which is what "does not clear the
+bar" means in practice.
+
+**Method note, which cost a wrong intermediate conclusion.** The first pass
+adjudicated this from point-estimate ratios plus the v2.3.1 contention heuristic
+(host contended when `3 × robustCV` exceeds the effect being tested). That
+heuristic is correct for the CI *regression* gate, where the question is whether
+one delta could be noise — but it is the wrong statistic for an adoption
+decision taken from 100-sample means, where the relevant quantity is the
+confidence interval and the standard error falls as `CV / √n` (≈0.2% here, not
+2%). Applied to an adoption decision it demanded a quiet host that no desktop
+provides and would have refused every verdict in this campaign.
+
+**Adoption decisions are adjudicated by criterion's `--baseline` change analysis
+(change interval + p-value), as §P2/§P3/§P4 already did.** The v2.3.1 gate keeps
+its 3×CV rule for the job it was built for. Two different questions, two
+different statistics; conflating them is what produced the wrong first read.
+
 ### v2.3.0 P1 — per-dot sprite-eval / OAM-bus call cost (decision: ADOPTED)
 
 The v2.3.0 frontend-stutter investigation re-profiled the core on a quiet machine
