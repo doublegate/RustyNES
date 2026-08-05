@@ -333,4 +333,26 @@ fn accuracycoin_pass_rate_meets_floor() {
         summary.pass_with_code,
         summary.assigned(),
     );
+
+    // v2.3.0 "Datum II" regression guard: beyond the coarse honesty floor above,
+    // the shipped headless build has held a FULL 141/141 (zero failing tests)
+    // since v2.0.3, when the promoted 2-cycle-ALE / delayed-`CopyV` PPU model
+    // closed the two hybrid-address tests ("ALE + Read" $0491, "Hybrid Addresses"
+    // $0492) under the `PPU Misc.` suite (ADR 0030). The 60% floor is far too
+    // coarse to catch a single-test regression — e.g. neutralizing `COPY_V_DELAY`
+    // drops exactly the Hybrid Addresses test to 140/141 (99.29%), which still
+    // clears 60% silently (verified during the v2.3.0 investigation). Pin the
+    // exact state instead: zero failing tests. The two hybrid-address tests are
+    // the usual canaries for a `COPY_V_DELAY` / octal-latch regression. This is
+    // the CI-runnable, in-repo (MIT AccuracyCoin ROM) guard for that behavior.
+    // If an intentional, reviewed accuracy change moves the count, update this
+    // assertion in the same change (docs-as-spec) and re-bless.
+    assert!(
+        failing.is_empty(),
+        "AccuracyCoin regressed from the shipped 141/141: {} failing test(s) (listed above). \
+         The two hybrid-address tests under `PPU Misc.` are the usual canaries for a \
+         COPY_V_DELAY / octal-latch regression — see ADR 0030. If this is an intentional, \
+         reviewed accuracy change, update this guard in the same commit.",
+        failing.len(),
+    );
 }
