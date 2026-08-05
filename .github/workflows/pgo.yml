@@ -266,13 +266,62 @@ jobs:
       - name: Install cargo-pgo
         run: cargo install cargo-pgo --locked
 
+      # Probe for llvm-bolt by LOCATING THE BINARY, never by trusting a package
+      # manager's exit code.
+      #
+      # The previous form did `apt-get install -y bolt` and set have_bolt=true if
+      # that succeeded. On Ubuntu the package named `bolt` is the **Thunderbolt 3
+      # device manager** — an unrelated project that happens to own the name. apt
+      # installed it, exited 0, the probe reported success, and the stage then
+      # died on `Cannot find llvm-bolt: cannot find binary path` (run
+      # 31006334399). A "best-effort" job that is supposed to SKIP when the tool
+      # is missing instead failed the whole run.
+      #
+      # LLVM ships the binary as `llvm-bolt` (apt.llvm.org's `bolt-<N>` packages)
+      # or versioned under /usr/lib/llvm-<N>/bin, so search all of those and
+      # export the directory on PATH for `cargo pgo`, which resolves `llvm-bolt`
+      # by name. Verifying the binary exists is what makes the skip honest.
       - name: Probe for llvm-bolt
         id: bolt_probe
         run: |
-          if command -v llvm-bolt >/dev/null 2>&1; then
+          # NOT `set -e`: this step probes for things that are allowed to be
+          # absent. A missing tool must SKIP the stage, not fail the run.
+          set -uo pipefail
+          find_bolt() {
+            if command -v llvm-bolt >/dev/null 2>&1; then
+              dirname "$(command -v llvm-bolt)"; return 0
+            fi
+            for v in 21 20 19 18 17 16; do
+              if command -v "llvm-bolt-$v" >/dev/null 2>&1; then
+                # cargo-pgo looks for the UNVERSIONED name; give it one.
+                sudo ln -sf "$(command -v "llvm-bolt-$v")" /usr/local/bin/llvm-bolt
+                echo /usr/local/bin; return 0
+              fi
+              if [ -x "/usr/lib/llvm-$v/bin/llvm-bolt" ]; then
+                sudo ln -sf "/usr/lib/llvm-$v/bin/llvm-bolt" /usr/local/bin/llvm-bolt
+                echo /usr/local/bin; return 0
+              fi
+            done
+            return 1
+          }
+
+          bolt_dir="$(find_bolt || true)"
+          if [ -z "${bolt_dir}" ]; then
+            # Try to install it, then LOOK AGAIN — an install succeeding proves
+            # nothing about which project's `bolt` landed on disk.
+            sudo apt-get update >/dev/null 2>&1 || true
+            for pkg in llvm-bolt bolt-19 bolt-18 bolt-17 llvm-19-tools llvm-18-tools; do
+              sudo apt-get install -y --no-install-recommends "$pkg" >/dev/null 2>&1 || continue
+              bolt_dir="$(find_bolt || true)"
+              [ -n "${bolt_dir}" ] && break
+            done
+          fi
+
+          if [ -n "${bolt_dir}" ]; then
+            echo "${bolt_dir}" >> "$GITHUB_PATH"
             echo "have_bolt=true" >> "$GITHUB_OUTPUT"
-          elif sudo apt-get update && sudo apt-get install -y --no-install-recommends bolt; then
-            echo "have_bolt=true" >> "$GITHUB_OUTPUT"
+            echo "llvm-bolt found: $(command -v llvm-bolt || echo "${bolt_dir}/llvm-bolt")" \
+              >> "$GITHUB_STEP_SUMMARY"
           else
             echo "have_bolt=false" >> "$GITHUB_OUTPUT"
             echo "llvm-bolt unavailable on this runner — skipping BOLT stage." >> "$GITHUB_STEP_SUMMARY"
