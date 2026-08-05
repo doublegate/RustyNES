@@ -8,9 +8,20 @@ Set quantitative performance targets, identify expected hot paths, and lay out t
 
 ## Targets
 
-| Metric | Target | Stretch |
+> **These are DESIGN-PHASE targets, written before the cycle-accurate core
+> existed — they are aspirations, not gates.** The frame-cost row in particular
+> was never met and is knowingly accepted: the implemented core measures
+> **~3.9 ms** (`nes_run_frame_nestest_fast`) / **~2.5 ms** (`flowing_palette`)
+> on a 2020 desktop (see "Measured" below and the v2.0.1 table). The gate that
+> actually runs in CI is the **relative, same-runner regression check** (§CI
+> gate), not this table. Do not treat ≤ 2 ms as a goal to optimize toward by
+> trading away accuracy — the dominant costs are work the accuracy model
+> requires (APU BLEP synthesis in `cpu_clock`; the per-dot loop in `Ppu::tick`),
+> and the obvious levers were measured and **rejected** (v2.2.3 P3/P4 below).
+
+| Metric | Target (aspirational) | Stretch |
 |--------|--------|---------|
-| Frame cost (NTSC, headless core) | ≤ 2 ms on 2018-era x86_64 (Skylake) | ≤ 1 ms |
+| Frame cost (NTSC, headless core) | ≤ 2 ms on 2018-era x86_64 (Skylake) — **not met; ~3.9 ms accepted** | ≤ 1 ms |
 | Frame cost (full frontend) | ≤ 5 ms | ≤ 3 ms |
 | Cold-start to first frame | ≤ 100 ms | ≤ 50 ms |
 | Save state size (uncompressed) | ≤ 64 KB typical | — |
@@ -559,6 +570,44 @@ for a byte-identical escape hatch is not justified.
 **Prior to this, the win was unreachable in practice:** `Nes::set_fast_dotloop`
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
+
+### v2.3.0 P1 — per-dot sprite-eval / OAM-bus call cost (decision: ADOPTED)
+
+The v2.3.0 frontend-stutter investigation re-profiled the core on a quiet machine
+(2% outliers, vs 39% on the first noisy attempt — a reminder that a contended
+machine invalidates the baseline before it invalidates the conclusion). Excluding
+~17% of samples belonging to criterion's own harness (rayon plumbing, `libm exp`,
+its sorts), self-time split **PPU ~53% / CPU+bus ~39%**, with two per-dot helpers
+outside every previously-examined lever: `tick_sprite_eval_per_dot` **4.45%** and
+`tick_oam_bus` **3.22%**.
+
+`perf annotate` (the same instrument that redirected P4) found the actual cost was
+not the state machines themselves:
+
+- In `tick_sprite_eval_per_dot` the two hottest instructions in the whole body were
+  its own `push %rax` (5.35%) and `ret` (5.41%) — **pure call overhead**. It is
+  invoked once per *eligible* dot from the fast dot path — visible dots 1..=256
+  with rendering enabled, up to 61,440/frame (not all 89,342: idle lines and
+  rendering-disabled paths bypass it) — and LLVM had
+  declined to inline it.
+- `tick_oam_bus` derived `sprite_height` (a `PpuCtrl` test) and the y-test
+  reference `scan` **before** its dot-0 early-out, computing and discarding both.
+
+Two byte-identical changes: add `#[inline]` to `tick_sprite_eval_per_dot`, and
+hoist the `cycle == 0` early-out above the two derivations in `tick_oam_bus`.
+
+| Workload | before | after | change (95% CI, p) |
+|---|---|---|---|
+| `nes_run_frame_nestest_fast` | 3.8987 ms | **3.7830 ms** | **−5.13%** (−5.60…−4.60, p = 0.00) |
+| `nes_run_frame_flowing_palette_fast` | 2.7314 ms | **2.6354 ms** | **−3.51%** (−3.93…−3.10, p = 0.00) |
+
+Both clear the **>3%** adoption bar on both workloads. Byte-identity verified:
+AccuracyCoin **141/141** (the exact-count gate), nestest golden **0-diff**, and
+`rustynes-ppu` unit tests 91/91. **Adopted.**
+
+Note what this does *not* change: the core is still ~3.8 ms, not the aspirational
+≤ 2 ms (see §Targets). The remaining bulk is work the accuracy model requires, and
+the levers below were already measured and rejected.
 
 ### v2.2.3 P4 — every-cycle bus cost `cpu_clock` (decision: no change adopted)
 

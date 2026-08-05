@@ -58,10 +58,25 @@ distributable as GPL-3.0-or-later.
 Reference emulators consulted as behavioral oracles (no code derived)
 --------------------------------------------------------------------------------
 
-Separately from the derived code above, these were run only to observe and
+Separately from the derived code above, these were used to observe and
 cross-check documented hardware behavior (no code incorporated):
 
-* GeraNES -- GPL-3.0-only -- oracle / cross-check for several mapper boards.
+* GeraNES -- GPL-3.0-only -- reference / cross-check for several mapper boards
+  and some frontend UI conventions. Its source was consulted (not purely
+  black-box) as a cross-reference to confirm publicly-documented behavior -- the
+  nesdev-wiki bus-conflict / address-decode masks and RetroArch's public
+  `#pragma parameter` shader-UI convention -- but no GeraNES code was copied: the
+  RustyNES implementations are independent Rust of that documented behavior.
+  The maintainers' ASSESSMENT is that only the unprotectable documented behavior
+  was relied on (not GeraNES's copyrightable expression), and therefore that no
+  GPL-3.0-only code is incorporated and the project's "or-later" grant is
+  unaffected. That is a position supported by a two-sided review, NOT a
+  certification: whether a given coincidence is the single correct expression of
+  a documented fact is a legal judgement, and this project does not self-certify
+  license cleanliness. Offered for human and expert review; a qualified reviewer
+  who disagrees should be treated as authoritative. See
+  docs/originality-and-provenance.md sec. 3 for the evidence and the residual
+  uncertainties.
 * higan -- GPL-3.0-or-later -- scheduler-structure reference / oracle.
 * ares -- BSD-2-Clause / Apache-2.0 -- palette-integration reference and oracle.
 
@@ -89,18 +104,31 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
   https://github.com/digital-sound-antiques/emu2413
       Copyright (c) 2020 Mitsutaka Okazaki -- MIT
 
-* TriCNES -- transistor-level NES emulator by the AccuracyCoin author; its
+* TriCNES -- cycle-accurate C# NES emulator by the AccuracyCoin author, built
+  around a detailed sub-cycle CPU/PPU/APU/DMA state machine (the author
+  describes it as written "for playing back TASes" with "a focus on
+  test-driven accuracy"); its
   PPU address/data-multiplex (ALE / octal-latch), OAM-corruption, and per-cycle
   DMA-dispatch models are ported into RustyNES (crates/rustynes-ppu,
   rustynes-cpu, rustynes-core), and its full source is vendored as a golden
   oracle at crates/rustynes-test-harness/golden/tricnes/tricnes-full-src/.
   https://github.com/100thCoin/TriCNES  (commit 9199870)
       Copyright (c) 2025 Chris Siebert -- MIT
-  Note (v2.2.6): the octal-latch / hybrid-address *timing* was calibrated to
-  TriCNES's per-dot behavior rather than derived independently, which reproduced
-  a TriCNES-specific artifact (mis-rendering mid-render $2006 writes, e.g. Rad
-  Racer). See docs/originality-and-provenance.md sec. 4 and ADR 0030; being
-  reworked to be documentation-derived in v2.3.0. TriCNES is MIT.
+  Note (v2.2.6 -> resolved v2.3.0): v2.2.6 disclosed that the octal-latch /
+  hybrid-address *timing* had been calibrated to TriCNES's per-dot behavior
+  rather than derived independently, and flagged a suspected TriCNES-specific
+  artifact (mid-render $2006 writes mis-rendering, e.g. Rad Racer) for a v2.3.0
+  rework. v2.3.0 investigated it against the authoritative in-repo oracle: the
+  model passes the AccuracyCoin "Hybrid Addresses" / "ALE + Read" tests
+  (141/141 -- disabling the delayed-CopyV drops exactly that test to 140/141),
+  and Rad Racer's road/horizon renders cleanly. The suspected artifact does NOT
+  reproduce: it lived in the pre-v2.0.3 "+1 coarse-X" approximation, superseded
+  by the 2-cycle-ALE / delayed-CopyV model promoted in v2.0.3 (ADR 0030). The
+  current behavior is therefore documentation/oracle-derived -- it matches the
+  NESdev-documented delayed-`CopyV`-during-render timing and is pinned by the
+  MIT AccuracyCoin test ROM plus an exact-141/141 CI gate. TriCNES (MIT) remains
+  the original cross-reference; its source is vendored with attribution. See
+  docs/originality-and-provenance.md sec. 4 and ADR 0030.
 
 * rcheevos v12.3.0 -- RetroAchievements client runtime, vendored at
   crates/rustynes-cheevos/vendor/rcheevos/ (compiled only under the optional

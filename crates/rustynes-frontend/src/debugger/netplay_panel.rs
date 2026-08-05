@@ -220,6 +220,7 @@ impl NetplayPanelState {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut NetplayPanelState,
     config: &mut crate::config::Config,
@@ -229,14 +230,22 @@ pub fn show(
         &config.netplay.last_join_address,
         config.netplay.num_players,
     );
-    egui::Window::new("Netplay")
-        .open(open)
-        .default_pos([600.0, 96.0])
-        .default_size([400.0, 320.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "netplay",
+        "Netplay",
+        super::WindowCfg {
+            default_pos: Some([600.0, 96.0]),
+            default_size: Some([400.0, 320.0]),
+            resizable: Some(true),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             body(ui, state, config);
-        });
+        },
+    );
 }
 
 /// wasm32 variant: netplay needs `std::net`, which is absent in the browser,
@@ -244,16 +253,24 @@ pub fn show(
 #[cfg(target_arch = "wasm32")]
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     _state: &mut NetplayPanelState,
     _config: &mut crate::config::Config,
 ) {
-    egui::Window::new("Netplay")
-        .open(open)
-        .default_pos([600.0, 96.0])
-        .default_size([320.0, 120.0])
-        .resizable(false)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "netplay",
+        "Netplay",
+        super::WindowCfg {
+            default_pos: Some([600.0, 96.0]),
+            default_size: Some([320.0, 120.0]),
+            resizable: Some(false),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             ui.label(egui::RichText::new("Use the \"Netplay (browser)\" panel").strong());
             ui.label(
                 "This UDP netplay panel is native-only (a browser cannot open a \
@@ -269,7 +286,8 @@ pub fn show(
                 )
                 .weak(),
             );
-        });
+        },
+    );
 }
 
 #[cfg(not(target_arch = "wasm32"))]

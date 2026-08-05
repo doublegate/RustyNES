@@ -577,6 +577,13 @@ pub struct App {
     clipboard: Option<arboard::Clipboard>,
     /// Sprint 5-3 debugger overlay (lazily constructed alongside `Gfx`).
     debugger: Option<DebuggerOverlay>,
+    /// v2.3.0 "Datum II" — the true multi-viewport tool-window manager: one real OS
+    /// window (with its own egui stack + wgpu surface) per detached panel. Empty
+    /// until the user detaches a panel; reconciled against
+    /// [`DebuggerOverlay::detached_panels`] each event-loop iteration. Native-only
+    /// (wasm keeps tool panels docked).
+    #[cfg(not(target_arch = "wasm32"))]
+    detached: crate::detached::DetachedManager,
     /// v1.1.0 beta.3 (Workstream E) — the Lua scripting engine (native, behind
     /// the `scripting` feature). `None` until a script is loaded. Lives on the
     /// winit thread (mlua is `!Send`); pumped once per redraw under the emu lock.
@@ -885,6 +892,8 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             clipboard: None,
             debugger: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            detached: crate::detached::DetachedManager::default(),
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
             script: None,
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
@@ -1016,6 +1025,8 @@ impl App {
             input,
             config,
             debugger: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            detached: crate::detached::DetachedManager::default(),
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
             script: None,
             #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
@@ -4095,7 +4106,9 @@ impl App {
     /// "Load from Slot" out under this same condition (`ui_shell::rom_interactive`
     /// = `rom && !replay_locked`), but the hotkey + `MenuAction` dispatch must
     /// honour it too — otherwise the greyed item is bypassable via the bound key.
-    /// Mirrors `GeraNES` `replayInteractionLocked` / `replayRecordingActive`.
+    /// Behaviour-parity note: the `GeraNES` reference emulator applies an
+    /// equivalent replay-interaction lockout (observed as a black-box oracle; no
+    /// code derived from it).
     fn replay_interaction_locked(&self) -> bool {
         let emu = self.emu.lock();
         emu.movie.is_recording() || emu.movie.is_playing()
@@ -6620,7 +6633,23 @@ impl App {
     // the native body + the `about_to_wait` caller, so allow the lint there.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::needless_pass_by_ref_mut))]
     fn pace_frames(&mut self, event_loop: &ActiveEventLoop) {
-        if self.emu.lock().nes.is_none() {
+        // v2.3.0 "Datum II" (perf) — answer "is a ROM loaded?" WITHOUT taking the
+        // emulator mutex. This runs on every `about_to_wait` iteration (a tight spin
+        // in the wall-clock `Poll` regime), and the emulation thread holds that mutex
+        // for its whole latch+produce region — so the old unconditional
+        // `self.emu.lock()` here could block the UI thread for up to a full produce
+        // (~4 ms), every iteration. `EmuControl::has_rom` is the same fact as a
+        // lock-free atomic, written by `App` at the very points it starts/stops the
+        // thread. When no emulation thread exists (feature off, or not yet spawned)
+        // fall back to the original locked read so behaviour is unchanged there.
+        #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+        let no_rom = match self.emu_thread.as_ref() {
+            Some(thread) => !thread.control().has_rom(),
+            None => self.emu.lock().nes.is_none(),
+        };
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "emu-thread")))]
+        let no_rom = self.emu.lock().nes.is_none();
+        if no_rom {
             // v1.0.0 — no ROM yet: keep the always-on UX shell (menu/status
             // bar/welcome modal) drawing + interactive. Re-render at ~30 Hz via
             // `WaitUntil` (so status toasts fade smoothly) rather than an
@@ -6797,6 +6826,20 @@ impl App {
     /// the debugger + the raw-cheat pull.
     #[cfg(not(target_arch = "wasm32"))]
     fn post_produce_housekeeping(&mut self) {
+        // v2.3.0 "Datum II" — refresh detached tool windows once per produced
+        // frame, but only those whose content actually changes: `Live` panels
+        // every frame, `Throttled` panels at ~10 Hz, and static `OnInteraction`
+        // panels not at all here (they repaint from egui's own repaint request on
+        // interaction). Keeps a wall of detached panels cheap.
+        //
+        // This lives HERE rather than in `on_emu_frame` because that function is
+        // compiled only under the `emu-thread` feature. The synchronous
+        // production paths (`pace_frames`, the display-sync redraw) run this
+        // function instead, so anchoring the tick to `on_emu_frame` froze every
+        // detached window's `Live`/`Throttled` refresh in an `emu-thread`-off
+        // build. `post_produce_housekeeping` is the one point both regimes share.
+        self.detached.request_redraw_tick();
+
         // v2.2.0 — persist the FDS writable disk if it changed this frame.
         // Cheap when clean / non-FDS (a `disk_is_dirty()` check only).
         self.flush_fds_save();
@@ -7863,6 +7906,160 @@ fn netplay_status_view(s: &crate::netplay_ui::NetplayStatus) -> crate::debugger:
     }
 }
 
+/// v2.3.0 "Datum II" — the multi-viewport tool-window detach plumbing (native).
+///
+/// These methods keep the detached-window set (`self.detached`) in sync with the
+/// debugger's "detached panels" set and drive one render per detached window per
+/// frame. All of it is native-only: wasm is single-canvas and keeps panels docked.
+#[cfg(not(target_arch = "wasm32"))]
+impl App {
+    /// Handle a window event addressed to a DETACHED tool window (routed here from
+    /// [`ApplicationHandler::window_event`] before the main-window path runs).
+    fn handle_detached_window_event(&mut self, window_id: WindowId, event: &WindowEvent) {
+        // Feed the window's own egui integration first (pointer / keyboard / focus);
+        // `repaint` is true when that input changed something egui needs to redraw.
+        let repaint = self.detached.on_window_event(window_id, event);
+        match event {
+            // The OS window's close button reattaches the panel to the main window:
+            // drop it from the debugger's detached set, then close the window (the
+            // panel reappears docked next frame).
+            WindowEvent::CloseRequested => {
+                if let Some(pid) = self.detached.panel_of(window_id)
+                    && let Some(dbg) = self.debugger.as_mut()
+                {
+                    dbg.detached_panels_mut().remove(pid);
+                }
+                self.detached.close(window_id);
+            }
+            WindowEvent::Resized(sz) => {
+                if let Some(gfx) = self.gfx.as_ref() {
+                    self.detached
+                        .resize(window_id, sz.width, sz.height, &gfx.device);
+                }
+            }
+            WindowEvent::RedrawRequested => self.render_detached_window(window_id),
+            // Any other event (pointer / keyboard / focus): repaint ONLY if egui
+            // asked to, so an idle detached window does not spin. The per-frame live
+            // refresh is driven from `on_emu_frame`, not from here.
+            _ => {
+                if repaint {
+                    self.detached.request_redraw(window_id);
+                }
+            }
+        }
+    }
+
+    /// Render one detached tool window: lock the emulator, then re-run the single
+    /// target panel into that window's own egui context/surface.
+    fn render_detached_window(&mut self, window_id: WindowId) {
+        let Some(target) = self.detached.panel_of(window_id) else {
+            return;
+        };
+        // Bind disjoint `self` fields to locals so the borrow checker sees the
+        // detached-manager render (`&mut self.detached`) and the panel body's
+        // borrows (`self.debugger` / `self.config` / `self.emu`) as non-overlapping.
+        let Some(gfx) = self.gfx.as_ref() else {
+            return;
+        };
+        let device = &gfx.device;
+        let queue = &gfx.queue;
+        let Some(dbg) = self.debugger.as_mut() else {
+            return;
+        };
+        let config = &mut self.config;
+        // Phase 1 — run the panel UI while holding the emulator lock (the panel body
+        // borrows `&mut Nes`). The lock is scoped to JUST this block.
+        let prepared = {
+            let mut emu = self.emu.lock();
+            let mut nes = emu.nes.as_mut();
+            self.detached.render_ui(window_id, |ui| {
+                dbg.render_detached_body(ui, target, nes.as_deref_mut(), config);
+            })
+        };
+        // Phase 2 — paint + present with the emulator lock RELEASED, so the
+        // vsync-blocking present never stalls the emulation thread (this is the fix
+        // for the "slows to a crawl, worse per detached window" report).
+        if let Some(prepared) = prepared {
+            self.detached.present(window_id, device, queue, prepared);
+        }
+    }
+
+    /// Reconcile the open detached windows against the debugger's detached-panel
+    /// set: open a real OS window for each newly-detached panel and close the
+    /// window of any panel that was reattached. Cheap and idempotent; called once
+    /// per event-loop iteration from [`ApplicationHandler::about_to_wait`].
+    fn reconcile_detached(&mut self, event_loop: &ActiveEventLoop) {
+        // FAST PATH (perf): this runs on EVERY `about_to_wait` iteration — which in
+        // the wall-clock `Poll` regime is a tight spin — so it must not allocate when
+        // nothing changed, which is essentially always. Compare set sizes and
+        // membership without building anything; only the rare real transition
+        // (a panel just detached or reattached) falls through to the slow path.
+        match self.debugger.as_ref() {
+            Some(dbg) => {
+                let want = dbg.detached_panels();
+                if want.len() == self.detached.len() && self.detached.all_panels_in(want) {
+                    return;
+                }
+            }
+            // No debugger: nothing can be detached, so just close any strays.
+            None => {
+                if self.detached.is_empty() {
+                    return;
+                }
+            }
+        }
+
+        let desired: Vec<&'static str> = self
+            .debugger
+            .as_ref()
+            .map(|d| d.detached_panels().iter().copied().collect())
+            .unwrap_or_default();
+        // Open windows for panels detached since the last reconcile.
+        //
+        // On failure the panel is REATTACHED rather than left pending. Without
+        // that, `id` stays in the debugger's detached set while `has_panel(id)`
+        // stays false, so this loop retries the failing create on every single
+        // `about_to_wait` iteration — thousands of times a second, each one
+        // writing a line to stderr. Dropping it back to docked degrades to the
+        // pre-v2.3.0 behaviour (the panel still works, just in-window), reports
+        // once, and cannot spin.
+        let mut failed: Vec<&'static str> = Vec::new();
+        for &id in &desired {
+            if !self.detached.has_panel(id) {
+                let (title, default_size) = crate::debugger::detached_window_meta(id);
+                // Prefer the size captured from the docked window at detach time
+                // (exact match); fall back to the per-panel default.
+                let size = crate::debugger::take_detached_size(id).unwrap_or(default_size);
+                let refresh = crate::debugger::detached_refresh(id);
+                if let Some(gfx) = self.gfx.as_ref()
+                    && let Err(e) = self
+                        .detached
+                        .create(event_loop, gfx, id, title, size, refresh)
+                {
+                    eprintln!(
+                        "rustynes: failed to open detached window for '{id}': {e} \
+                         (panel stays docked)"
+                    );
+                    failed.push(id);
+                }
+            }
+        }
+        if !failed.is_empty()
+            && let Some(dbg) = self.debugger.as_mut()
+        {
+            for id in failed {
+                dbg.detached_panels_mut().remove(id);
+            }
+        }
+        // Close windows for panels reattached since the last reconcile.
+        for id in self.detached.detached_ids() {
+            if !desired.contains(&id) {
+                self.detached.close_by_panel(id);
+            }
+        }
+    }
+}
+
 impl ApplicationHandler<AppEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gfx.is_some() {
@@ -7983,9 +8180,19 @@ impl ApplicationHandler<AppEvent> for App {
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
+        window_id: WindowId,
         event: WindowEvent,
     ) {
+        // v2.3.0 "Datum II" — a detached tool window owns its own egui stack +
+        // surface, so route its events to the detached manager and never fall
+        // through to the main window's handler.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.detached.contains_window(window_id) {
+            self.handle_detached_window_event(window_id, &event);
+            return;
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = window_id;
         // Forward to the debugger overlay first; if it consumed the event
         // (e.g. egui textbox focus) we still let the system bindings see
         // it so global hotkeys keep working.
@@ -8582,14 +8789,21 @@ impl ApplicationHandler<AppEvent> for App {
                         );
                         hd_dims = Some((w, h));
                     }
-                    // v1.7.1 (#154 review) — re-acquire the lock to hand the debugger
-                    // pass a live `&mut Nes`. The composite is already done (above,
-                    // unlocked), so the lock is now held only across the egui /
-                    // `render_shell` pass — the same discipline the rest of the shell
-                    // follows. This `guard` stays alive until after the present call.
-                    let mut guard = self.emu.lock();
-                    let emu = &mut *guard;
-                    let nes_for_render = emu.nes.as_mut();
+                    // v2.3.0 "Datum II" (perf) — the emulator lock is NOT taken here.
+                    // It is acquired below, scoped to phase 1 (the egui UI build, the
+                    // only part needing `&mut Nes`) and released before phase 2 (the
+                    // GPU work).
+                    //
+                    // Through v2.2.9 a guard taken at this point stayed alive "until
+                    // after the present call", so this branch owned the emulator mutex
+                    // across `Surface::get_current_texture` — a blocking wait for a
+                    // free swapchain image, up to a full display refresh — plus the
+                    // encode, submit, and present. Whenever the overlay or any
+                    // `nes`-reading tool panel was open, the emulation thread parked on
+                    // `emu.lock()` in `drive_wallclock` / `drive_one` for that entire
+                    // window and could not produce a frame: the measured cause of the
+                    // stutter and the high produced-interval p99 (worse per additional
+                    // detached window, each of which added its own acquisition).
                     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                     let script_draws = &self.script_draws;
                     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
@@ -8635,11 +8849,11 @@ impl ApplicationHandler<AppEvent> for App {
                     let virtual_pad = &mut self.virtual_pad;
                     let index_arg = want_index.then_some(self.present_index_staging.as_slice());
                     let video_phase = self.present_phase;
-                    let overlay = |device: &wgpu::Device,
-                                   queue: &wgpu::Queue,
-                                   encoder: &mut wgpu::CommandEncoder,
-                                   view: &wgpu::TextureView,
-                                   size: (u32, u32)| {
+                    // ---- PHASE 1 — build the egui UI under a SCOPED emulator lock ----
+                    // `run_shell_ui` is the only phase that needs `&mut Nes`, so the
+                    // guard lives exactly as long as this block and is released before
+                    // any GPU work happens.
+                    let prepared = {
                         #[cfg(target_arch = "wasm32")]
                         let extra = |ctx: &egui::Context, cfg: &mut crate::config::Config| {
                             crate::wasm_lobby::show(ctx, wasm_lobby, cfg);
@@ -8676,19 +8890,36 @@ impl ApplicationHandler<AppEvent> for App {
                                 script_overscan,
                             );
                         };
-                        shell_out = debugger.render_shell(
-                            device,
-                            queue,
-                            encoder,
+                        let mut guard = self.emu.lock();
+                        let nes_for_render = guard.nes.as_mut();
+                        let (out, prepared) = debugger.run_shell_ui(
                             &window,
-                            view,
-                            size,
                             nes_for_render,
                             config,
                             ui_shell,
                             &shell_frame,
                             extra,
                         );
+                        shell_out = out;
+                        prepared
+                    };
+                    // ---- PHASE 2 — paint it, with the emulator lock RELEASED ----
+                    // Runs inside `Gfx`'s render (after the blocking swapchain
+                    // acquire), so the emulation thread is free to produce throughout.
+                    //
+                    // Debug builds arm a marker for the whole phase: any
+                    // `EmuHandle::lock` reached from here trips a `debug_assert`,
+                    // so a future panel that re-locks inside the paint path fails
+                    // loudly instead of silently restoring the stall this split
+                    // removed. Zero cost in release.
+                    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                    let _gpu_phase = crate::emu::GpuPhaseGuard::enter();
+                    let overlay = move |device: &wgpu::Device,
+                                        queue: &wgpu::Queue,
+                                        encoder: &mut wgpu::CommandEncoder,
+                                        view: &wgpu::TextureView,
+                                        size: (u32, u32)| {
+                        debugger.paint_shell(device, queue, encoder, view, size, prepared);
                     };
                     // v1.7.1 (#3) — present the upscaled HD buffer when a pack
                     // composited this redraw (the deep-overlay panels still draw on
@@ -9478,6 +9709,14 @@ impl ApplicationHandler<AppEvent> for App {
             event_loop.exit();
             return;
         }
+        // v2.3.0 "Datum II" — keep the detached tool windows in sync with the
+        // debugger's detached-panel set (open a real OS window for a newly-detached
+        // panel, close a reattached one). NOTE: the live per-frame repaint is driven
+        // from `on_emu_frame` (once per produced emulator frame), NOT here — issuing
+        // `request_redraw` every `about_to_wait` iteration made the detached windows
+        // spin at max rate and starved emulation ("slows to a crawl").
+        #[cfg(not(target_arch = "wasm32"))]
+        self.reconcile_detached(event_loop);
         // Wall-clock pacer. Native: produce up to one frame (with bounded
         // catch-up) and stay on `Poll`; the actual present happens on the
         // resulting `RedrawRequested`. wasm32: this is a no-op keep-alive

@@ -58,6 +58,17 @@ use rustynes_test_harness::accuracy_coin_catalog;
 ///   measured `75.93%` via framebuffer measures `64.03%` via RAM.
 const MIN_PASS_RATE: f64 = 0.60;
 
+/// v2.3.0 "Datum II" — the exact number of AccuracyCoin tests the shipped
+/// headless build passes, held since v2.0.3 promoted the 2-cycle-ALE /
+/// delayed-`CopyV` PPU model (ADR 0030).
+///
+/// Asserted alongside "zero failing" so that a battery which *under-executes*
+/// (early bail, skipped suite, decoder that stops assigning cells) fails as
+/// loudly as one that regresses — an empty failing list is not by itself
+/// evidence of success. Re-bless this together with `docs/STATUS.md` if an
+/// upstream ROM update changes the catalog.
+const EXPECTED_PASS_COUNT: u32 = 141;
+
 #[test]
 #[allow(clippy::too_many_lines)]
 fn accuracycoin_pass_rate_meets_floor() {
@@ -329,6 +340,48 @@ fn accuracycoin_pass_rate_meets_floor() {
         "AccuracyCoin RAM pass rate {:.2}% below {:.2}% floor ({} pass + {} pass_with_code of {} assigned)",
         ram_pct * 100.0,
         MIN_PASS_RATE * 100.0,
+        summary.pass,
+        summary.pass_with_code,
+        summary.assigned(),
+    );
+
+    // v2.3.0 "Datum II" regression guard: beyond the coarse honesty floor above,
+    // the shipped headless build has held a FULL 141/141 (zero failing tests)
+    // since v2.0.3, when the promoted 2-cycle-ALE / delayed-`CopyV` PPU model
+    // closed the two hybrid-address tests ("ALE + Read" $0491, "Hybrid Addresses"
+    // $0492) under the `PPU Misc.` suite (ADR 0030). The 60% floor is far too
+    // coarse to catch a single-test regression — e.g. neutralizing `COPY_V_DELAY`
+    // drops exactly the Hybrid Addresses test to 140/141 (99.29%), which still
+    // clears 60% silently (verified during the v2.3.0 investigation). Pin the
+    // exact state instead: zero failing tests. The two hybrid-address tests are
+    // the usual canaries for a `COPY_V_DELAY` / octal-latch regression. This is
+    // the CI-runnable, in-repo (MIT AccuracyCoin ROM) guard for that behavior.
+    // If an intentional, reviewed accuracy change moves the count, update this
+    // assertion in the same change (docs-as-spec) and re-bless.
+    assert!(
+        failing.is_empty(),
+        "AccuracyCoin regressed from the shipped 141/141: {} failing test(s) (listed above). \
+         The two hybrid-address tests under `PPU Misc.` are the usual canaries for a \
+         COPY_V_DELAY / octal-latch regression — see ADR 0030. If this is an intentional, \
+         reviewed accuracy change, update this guard in the same commit.",
+        failing.len(),
+    );
+
+    // ...and pin the POSITIVE count too. `failing.is_empty()` alone only proves
+    // nothing reported Fail/Unknown — a battery that silently ran fewer tests
+    // (an early bail, a skipped suite, a decoder that stopped assigning cells)
+    // produces an empty failing list and would slip through, which is exactly the
+    // "absent looks like success" shape this guard exists to prevent. Assert the
+    // exact expected number of passes so under-execution fails as loudly as
+    // regression.
+    let passed = summary.pass + summary.pass_with_code;
+    assert_eq!(
+        passed,
+        EXPECTED_PASS_COUNT,
+        "AccuracyCoin passed {passed} tests, expected exactly {EXPECTED_PASS_COUNT} \
+         ({} pass + {} pass_with_code of {} assigned). A LOWER count with an empty failing \
+         list means the battery under-executed rather than regressed; a HIGHER count means \
+         the upstream ROM grew and this guard plus docs/STATUS.md must be re-blessed together.",
         summary.pass,
         summary.pass_with_code,
         summary.assigned(),

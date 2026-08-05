@@ -302,16 +302,24 @@ impl SettingsPanelState {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut SettingsPanelState,
     config: &mut Config,
 ) {
-    egui::Window::new("Settings")
-        .open(open)
-        .default_pos([560.0, 64.0])
-        .default_size([420.0, 420.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "settings",
+        "Settings",
+        super::WindowCfg {
+            default_pos: Some([560.0, 64.0]),
+            default_size: Some([420.0, 420.0]),
+            resizable: Some(true),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             body(ui, state, config);
             ui.separator();
             ui.horizontal(|ui| {
@@ -325,7 +333,8 @@ pub fn show(
             if !state.status.is_empty() {
                 ui.label(state.status.clone());
             }
-        });
+        },
+    );
 }
 
 /// wasm32 variant: identical UI but no filesystem persistence (the panel
@@ -333,20 +342,29 @@ pub fn show(
 #[cfg(target_arch = "wasm32")]
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut SettingsPanelState,
     config: &mut Config,
 ) {
-    egui::Window::new("Settings")
-        .open(open)
-        .default_pos([560.0, 64.0])
-        .default_size([420.0, 420.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "settings",
+        "Settings",
+        super::WindowCfg {
+            default_pos: Some([560.0, 64.0]),
+            default_size: Some([420.0, 420.0]),
+            resizable: Some(true),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             body(ui, state, config);
             ui.separator();
             ui.label("(config save unavailable on web — changes are in-memory only)");
-        });
+        },
+    );
 }
 
 /// The full settings body: graphics / audio / rewind sections, rendered one
@@ -1041,8 +1059,9 @@ fn paint_palette_preview(ui: &mut egui::Ui, base: &[[u8; 3]; 64]) {
     }
 }
 
-/// v1.2.0 C2 — the composable shader-stack editor + preset bank UI (mirrors
-/// `GeraNES`' `ShaderWindowUI.inl`).
+/// v1.2.0 C2 — the composable shader-stack editor + preset bank UI (a
+/// shader-parameter UI in the style of the `GeraNES` reference emulator's,
+/// independently built on egui).
 ///
 /// Lives inside a collapsing header so it does not clutter the Graphics tab.
 /// Every mutation flags `state.apply.shader_stack` so the app rebuilds the live

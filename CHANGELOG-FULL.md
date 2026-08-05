@@ -217,7 +217,8 @@ the future v2.1.0 joint launch); Android continues as GitHub-sideload.
   "Option 2 = proven-correct Mesen2 recipe" premise was false; the correct oracle is
   **TriCNES** (`ref-proj/TriCNES/Emulator.cs`, MIT, commit `9199870` — the
   AccuracyCoin author's own emulator), which models the multiplexed AD/A bus + octal
-  latch at transistor level and does drive `$2F19` / `$0FFF`; and (2) **a whole-dot
+  latch at the pin/sub-cycle level and does drive `$2F19` / `$0FFF` (corrected in
+  v2.3.0: TriCNES is a cycle-accurate C# emulator, not transistor-level); and (2) **a whole-dot
   port of TriCNES's octal latch suffices** — the full 2-cycle-ALE fetch refactor
   (v2.0.1's Option 1) was not required. The maintainer's **refine-then-promote**
   decision is recorded: ship flag-off in v2.0.2 (shipped stays honest 139/141),

@@ -55,13 +55,25 @@ struct Loaded {
 }
 
 /// Render the Cartridge Info / header-editor window.
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut HeaderEditorState) {
-    egui::Window::new("Cartridge Info / Header")
-        .open(open)
-        .default_pos([120.0, 80.0])
-        .default_size([420.0, 460.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    state: &mut HeaderEditorState,
+) {
+    super::detachable_window(
+        ctx,
+        detached,
+        "header_editor",
+        "Cartridge Info / Header",
+        super::WindowCfg {
+            default_pos: Some([120.0, 80.0]),
+            default_size: Some([420.0, 460.0]),
+            resizable: Some(true),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             if ui.button("Open ROM file...").clicked() {
                 open_file(state);
             }
@@ -87,7 +99,8 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut HeaderEditorState)
                 ui.separator();
                 ui.weak(&state.status);
             }
-        });
+        },
+    );
 }
 
 /// The read-only Cartridge Info pane (the small subset, shipped first).

@@ -20,8 +20,6 @@ pub struct BasicBotPanel {
     seed: u64,
     /// A status / error line.
     status: String,
-    /// v1.8.9 — detached into its own OS window (egui multi-viewport).
-    detached: bool,
     /// v1.8.9 — "Run search" was clicked this frame; the caller runs it after the
     /// render (so `nes` never has to be captured by the viewport callback).
     run_requested: bool,
@@ -36,7 +34,6 @@ impl Default for BasicBotPanel {
             attempts: 200,
             seed: 0x1234_5678,
             status: String::new(),
-            detached: false,
             run_requested: false,
         }
     }
@@ -46,37 +43,27 @@ impl Default for BasicBotPanel {
 /// held lock; the search is disabled otherwise.
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut BasicBotPanel,
     nes: Option<&mut Nes>,
 ) {
     let can_run = nes.is_some();
-    if state.detached {
-        // v1.8.9 multi-viewport — render in a real OS window via egui's
-        // `show_viewport_immediate`. The body takes only `can_run` (a `Copy` bool),
-        // never `nes`, so the FnMut callback captures nothing that has to move.
-        ctx.show_viewport_immediate(
-            egui::ViewportId::from_hash_of("rustynes_basic_bot"),
-            egui::ViewportBuilder::default()
-                .with_title("BasicBot")
-                .with_inner_size([340.0, 320.0]),
-            |vctx, _class| {
-                // A full-window Area hosts the body without the deprecated
-                // context-level `CentralPanel::show`.
-                egui::Area::new(egui::Id::new("basic_bot_detached"))
-                    .show(vctx, |ui| body(ui, state, can_run));
-                // The OS window's close button reattaches to the docked panel.
-                if vctx.input(|i| i.viewport().close_requested()) {
-                    state.detached = false;
-                }
-            },
-        );
-    } else {
-        egui::Window::new("BasicBot")
-            .open(open)
-            .default_width(320.0)
-            .show(ctx, |ui| body(ui, state, can_run));
-    }
+    // v2.3.0 "Datum II" — routed through the shared detach helper, replacing the
+    // panel's own bespoke `show_viewport_immediate` (which merely EMBEDDED on the
+    // single-viewport integration). Detach/reattach is now the shared OS-window path.
+    super::detachable_window(
+        ctx,
+        detached,
+        "basic_bot",
+        "BasicBot",
+        super::WindowCfg {
+            default_width: Some(320.0),
+            ..Default::default()
+        },
+        open,
+        |ui| body(ui, state, can_run),
+    );
     // Run the search AFTER the render — `nes` is free here (not captured by any
     // closure), so it moves into `run_search` directly, no reborrow needed.
     if std::mem::take(&mut state.run_requested) {
@@ -87,8 +74,6 @@ pub fn show(
 /// The panel body (config + Run), shared by the docked window and the detached OS
 /// viewport. A click sets `run_requested`; [`show`] runs the search after rendering.
 fn body(ui: &mut egui::Ui, state: &mut BasicBotPanel, can_run: bool) {
-    ui.checkbox(&mut state.detached, "Detach to its own window");
-    ui.separator();
     ui.horizontal(|ui| {
         ui.label("Target $");
         ui.add(egui::TextEdit::singleline(&mut state.addr_hex).desired_width(60.0));

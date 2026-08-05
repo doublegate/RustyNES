@@ -14,7 +14,7 @@
 //! see also `sachen_8259.rs` for the comparable Sachen family.
 //!
 //! A best-effort (Tier-2) board: register-decode correctness verified against
-//! the `GeraNES` reference (`GeraNES/src/GeraNES/Mappers/Mapper0NN.h`)
+//! the `GeraNES` reference emulator (cross-referenced, not copied)
 //! and the nesdev wiki, with no commercial-oracle ROM in the tree. Banking math
 //! is direct slice indexing and every bank select wraps with `% count`, so a
 //! register write can never index out of bounds -- required for the `#![no_std]`

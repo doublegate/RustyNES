@@ -170,7 +170,8 @@ impl Mapper for Txc132 {
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x4100..=0x5FFF => {
-                // GeraNES decodes the read on (addr & 0x0103) == 0x0100.
+                // The read is decoded on (addr & 0x0103) == 0x0100
+                // (cross-referenced against the `GeraNES` reference emulator).
                 if (addr & 0x0103) == 0x0100 {
                     self.txc.read() & 0x0F
                 } else {

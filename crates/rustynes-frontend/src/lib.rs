@@ -40,6 +40,11 @@ pub mod cheats;
 pub mod cli;
 pub mod config;
 pub mod debugger;
+// v2.3.0 "Datum II" — true multi-viewport tool-window detach: each detached tool
+// panel gets its own real OS window with a private egui stack. Native-only (wasm
+// is single-canvas and keeps panels docked).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod detached;
 // v2.8.0 Phase 5 — the emulation core extracted from `App` (per-frame
 // produce state; the boundary the emulation thread spawns onto).
 pub mod emu;

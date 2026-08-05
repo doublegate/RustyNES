@@ -131,10 +131,56 @@ this project previously mislabeled the second as the first.
 | puNES | GPL-2.0-or-later | Derivation (§1) **and** oracle |
 | FCEUX | GPL-2.0-or-later | Derivation (§1) **and** oracle |
 | Nestopia UE | GPL-2.0-or-later | Derivation (§1, FME-7/5B) **and** oracle |
-| GeraNES | GPL-3.0-only | Oracle / cross-check only (no code derived) |
+| GeraNES | GPL-3.0-only | Reference / cross-check: source consulted to confirm publicly-documented behavior; no code copied (see note) |
 | higan | GPL-3.0-or-later | Scheduler-structure reference / oracle |
 | ares | BSD-2-Clause / Apache-2.0 | Palette-integration reference (§1) / oracle |
 | TriCNES | MIT | Incorporated (§5) **and** timing-calibration reference (§4) |
+
+**GeraNES specifically (honest note).** Some in-source comments previously cited
+GeraNES *source* files, functions, and even quoted a line (e.g. a mapper
+bus-conflict `data &= readPrg(addr)` in `Mapper093.h`) — which means GeraNES's
+source was consulted as a cross-reference during development, not purely
+black-box observation. Every behavior so cross-referenced is independently
+documented: the nesdev wiki for the mapper bus-conflict / address-decode masks
+(the affected comments already cite `INES_Mapper_089/093`), and RetroArch's
+public `#pragma parameter` specification for the shader-parameter UI. The
+RustyNES implementations are independent Rust (`value & self.read_prg(addr)`, not
+the C++ line). On the evidence below, the maintainers' **assessment** is that only
+unprotectable, publicly-documented *behavior* was relied on rather than GeraNES's
+copyrightable *expression*, and therefore that no GPL-3.0-only code is
+incorporated and the project's GPL-3.0-or-later grant is unconstrained. That is a
+position supported by the record, **not a certification** — see the caveat at the
+end of this section. The comments have been reworded to state the relationship
+accurately and to drop the now-removed source-path citations (the local
+reference-emulator tree was deleted from disk; see the reference firewall in
+`AGENTS.md`).
+
+This was verified two-sided at the maintainer's direction: the GeraNES source
+(`gracioni/GeraNES`) for `Mapper089.h` / `Mapper093.h` was compared against
+RustyNES's `m089_sunsoft2.rs` / `m093_sunsoft3r.rs` *and* against the nesdev wiki
+(`INES_Mapper_089` `[CPPP MCCC]`, `INES_Mapper_093` `[.PPP ...E]`, both marked
+"BUS CONFLICTS"). The operations that coincide with GeraNES — the bus-conflict
+`written & rom_byte` mask and the bit-field extractions (`(v >> 4) & 0x07`, etc.)
+— are exactly the nesdev-documented register layouts, i.e. the single correct
+expression of the documented hardware (merger doctrine). No arbitrary,
+non-hardware-dictated choice coincides (identifiers, decomposition, and idiom are
+independent Rust), which is the signature distinguishing documented-fact
+convergence from copying.
+
+**Status, not a verdict.** The paragraphs above record what was examined and what
+was found; they are deliberately not a clearance. This project's provenance rules
+(`docs/ai-emulator-provenance-guardrails.md`) forbid self-certifying license
+cleanliness, and for good reason: the original provenance failure was caught by an
+outside NESdev reviewer, not by the project's own tooling or by the AI assistance
+that produced the code. Two specific residual uncertainties are worth naming.
+First, whether a given coincidence is "the single correct expression of a
+documented fact" is ultimately a legal judgement about merger and scenes-a-faire,
+not something a code comparison settles. Second, the review covered the files the
+in-source comments pointed at; it does not prove the absence of consultation
+elsewhere. This assessment is therefore offered **for human and expert review**,
+and a qualified reviewer who disagrees should be treated as authoritative over it.
+The remedy in that case is the same one v2.2.9 already applied once — relicense
+and attribute, never quietly reword.
 
 Because the license of the derived-from GPL code governs regardless of how any
 one file was used, the whole project is GPL-3.0-or-later; the oracle/derivation
@@ -169,13 +215,21 @@ earlier document did.
 - **Measure-first performance with published rejections.** `docs/performance.md`
   records optimizations that were measured and *rejected* with their numbers — an
   unusual discipline that is genuinely the project's own.
-- **The 2-cycle-ALE octal-latch PPU model and its honest caveat (ADR 0030).** The
-  physical octal-latch model was an independent modeling choice, but — as already
-  disclosed in v2.2.6 and retained here — its *timing* was calibrated to TriCNES
-  (MIT) rather than derived from an independent measurement, which is why RustyNES
-  reproduced TriCNES's Rad Racer hybrid-address artifact. The v2.3.0 "Datum II"
-  work reworks this to be documentation-derived. TriCNES is MIT-licensed, so this
-  is an attribution/fidelity matter, not a GPL one.
+- **The 2-cycle-ALE octal-latch PPU model, verified correct (ADR 0030).** The
+  physical octal-latch model was an independent modeling choice; v2.2.6 disclosed
+  that its *timing* had been calibrated to TriCNES (MIT) rather than derived
+  independently, and flagged a suspected TriCNES-specific Rad Racer hybrid-address
+  artifact for a v2.3.0 rework. **v2.3.0 "Datum II" investigated it and found the
+  suspected artifact does not reproduce in the shipped build:** the model passes
+  the authoritative in-repo AccuracyCoin "Hybrid Addresses" / "ALE + Read" tests
+  (141/141 — disabling the delayed-`CopyV` drops exactly that test to 140/141),
+  and Rad Racer's road/horizon renders cleanly. The artifact lived in the
+  pre-v2.0.3 "+1 coarse-X" approximation, which the promoted 2-cycle-ALE /
+  delayed-`CopyV` model *superseded*. The current behavior is therefore
+  documentation/oracle-derived — it matches the NESdev-documented
+  delayed-`CopyV`-during-render timing and is pinned by the MIT AccuracyCoin ROM
+  plus an exact-141/141 CI gate. TriCNES (MIT) is retained as the original
+  cross-reference; this is an attribution/fidelity matter, not a GPL one.
 
 ---
 

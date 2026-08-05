@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments, clippy::doc_markdown)]
 
-//! Composable post-process shader stack (v1.2.0 C2, GeraNES `ShaderPass`-inspired).
+//! Composable post-process shader stack (v1.2.0 C2, following the RetroArch
+//! multi-pass shader-preset model, as the `GeraNES` reference emulator also does).
 //!
 //! This module turns the frontend's single-select post-process filter (the
 //! mutually-exclusive CRT / NTSC / composite-rt chain in [`crate::gfx`]) into a
@@ -34,9 +35,9 @@
 //! // #pragma parameter <name> "<label>" <default> <min> <max> <step>
 //! ```
 //!
-//! [`parse_pragma_parameters`] parses them (mirroring GeraNES'
-//! `parseShaderParameters` in `ShaderWindowUI.inl`) to drive generic egui
-//! sliders, and the per-pass parameter overrides persist in the config.
+//! [`parse_pragma_parameters`] parses them (following RetroArch's documented
+//! `#pragma parameter` convention) to drive generic egui sliders, and the
+//! per-pass parameter overrides persist in the config.
 
 use std::collections::BTreeMap;
 
@@ -44,7 +45,7 @@ use serde::{Deserialize, Serialize};
 
 /// One tunable parameter declared by a shader via a `#pragma parameter` header.
 ///
-/// Mirrors GeraNES' `ShaderPass::Parameter` (RetroArch's parameter convention):
+/// Follows RetroArch's documented `#pragma parameter` convention:
 /// `#pragma parameter <name> "<label>" <default> <min> <max> <step>`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShaderParam {
@@ -72,8 +73,8 @@ pub struct ShaderParam {
 /// ```
 ///
 /// `min`/`max`/`step` are optional and default to `0.0` / `1.0` / `0.01` when
-/// absent. Malformed lines are skipped. This mirrors GeraNES'
-/// `parseShaderParameters` (`GeraNESApp.ShaderWindowUI.inl`).
+/// absent. Malformed lines are skipped. This follows RetroArch's documented
+/// `#pragma parameter` convention.
 #[must_use]
 pub fn parse_pragma_parameters(src: &str) -> Vec<ShaderParam> {
     let mut out = Vec::new();

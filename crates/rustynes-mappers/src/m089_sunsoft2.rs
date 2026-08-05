@@ -133,8 +133,10 @@ impl Mapper for Sunsoft2 {
     fn cpu_write(&mut self, addr: u16, value: u8) {
         if (0x8000..=0xFFFF).contains(&addr) {
             // The Sunsoft-2 board has **bus conflicts** (nesdev INES_Mapper_089
-            // marks the register "BUS CONFLICTS"; GeraNES `Mapper089::writePrg`
-            // does `data &= readPrg(addr)`). The register shares the address
+            // marks the register "BUS CONFLICTS"; the AND-with-ROM-byte masking
+            // was also cross-referenced against the `GeraNES` reference
+            // emulator — documented behavior, independently expressed here, no
+            // code copied). The register shares the address
             // space with PRG-ROM, so a store drives the written byte ANDed with
             // the ROM byte already present at that address. *Tenka no Goikenban:
             // Mito Koumon* relies on this — without the mask the raw value

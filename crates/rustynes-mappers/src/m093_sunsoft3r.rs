@@ -118,9 +118,11 @@ impl Mapper for Sunsoft3r {
             // disagreed. The register shares the address space with PRG-ROM, so
             // a store drives the written byte ANDed with the ROM byte already at
             // that address. Same treatment as the sibling Sunsoft-2 board in
-            // `m089_sunsoft2.rs`, and matching the designated reference
-            // `GeraNES/src/GeraNES/Mappers/Mapper093.h`, whose
-            // `writePrg` opens with `data &= readPrg(addr);`.
+            // `m089_sunsoft2.rs`. The AND-with-ROM-byte masking is the
+            // nesdev-documented bus-conflict behavior and was cross-referenced
+            // against the `GeraNES` reference emulator; the Rust below is an
+            // independent expression of that documented behavior (no code
+            // copied).
             // Decode every field from the masked value.
             let value = value & self.read_prg(addr);
             // [.PPP ...E]: bits 4-6 = 16K PRG bank, bit 0 = CHR-RAM enable.

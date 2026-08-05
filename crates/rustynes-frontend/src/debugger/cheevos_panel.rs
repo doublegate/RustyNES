@@ -290,20 +290,29 @@ impl CheevosPanelState {
 #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut CheevosPanelState,
     config: &crate::config::Config,
     badges: &mut super::badge_cache::BadgeCache,
 ) {
     state.seed(&config.retroachievements.username);
-    egui::Window::new("RetroAchievements")
-        .open(open)
-        .default_pos([560.0, 96.0])
-        .default_size([420.0, 460.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "cheevos",
+        "RetroAchievements",
+        super::WindowCfg {
+            default_pos: Some([560.0, 96.0]),
+            default_size: Some([420.0, 460.0]),
+            resizable: Some(true),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             body(ui, state, badges);
-        });
+        },
+    );
 }
 
 /// Variant compiled when the feature is OFF (or on wasm32): an informational
@@ -311,23 +320,32 @@ pub fn show(
 #[cfg(not(all(not(target_arch = "wasm32"), feature = "retroachievements")))]
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     _state: &mut CheevosPanelState,
     _config: &crate::config::Config,
 ) {
-    egui::Window::new("RetroAchievements")
-        .open(open)
-        .default_pos([560.0, 96.0])
-        .default_size([340.0, 130.0])
-        .resizable(false)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "cheevos",
+        "RetroAchievements",
+        super::WindowCfg {
+            default_pos: Some([560.0, 96.0]),
+            default_size: Some([340.0, 130.0]),
+            resizable: Some(false),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             ui.label(egui::RichText::new("RetroAchievements not built").strong());
             ui.label(
                 "This build was compiled without the `retroachievements` \
                  feature (it is off by default and native-only). Rebuild with \
                  `--features retroachievements` to enable achievement tracking.",
             );
-        });
+        },
+    );
 }
 
 /// v2.7.1 — draw one achievement's badge icon, falling back to the text badge

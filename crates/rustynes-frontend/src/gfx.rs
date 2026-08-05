@@ -284,6 +284,17 @@ pub struct Gfx {
     /// Reference-counted handle to the underlying winit window. Held to
     /// keep the surface valid for as long as we render.
     pub window: Arc<Window>,
+    /// v2.3.0 "Datum II" — the wgpu instance is retained so additional
+    /// per-window surfaces can be created for detached tool windows
+    /// (true multi-viewport OS-window detach). `create_surface` needs the
+    /// live instance; the main path never touches it after init.
+    #[cfg(not(target_arch = "wasm32"))]
+    instance: wgpu::Instance,
+    /// v2.3.0 "Datum II" — the adapter is retained so a detached-window
+    /// surface can be configured against the same GPU (format / alpha /
+    /// present-mode capabilities). Shared, read-only after init.
+    #[cfg(not(target_arch = "wasm32"))]
+    adapter: wgpu::Adapter,
     /// Surface configuration (width + height, current present mode, ...).
     surface: wgpu::Surface<'static>,
     /// Wgpu device — pub so the debugger overlay + ntsc filter can share
@@ -725,6 +736,10 @@ impl Gfx {
 
         Ok(Self {
             window,
+            #[cfg(not(target_arch = "wasm32"))]
+            instance,
+            #[cfg(not(target_arch = "wasm32"))]
+            adapter,
             surface,
             device,
             queue,
@@ -751,6 +766,74 @@ impl Gfx {
             #[cfg(not(target_arch = "wasm32"))]
             dual_blit: None,
         })
+    }
+
+    /// v2.3.0 "Datum II" — create a wgpu surface + configuration for a
+    /// *detached* tool window (the true multi-viewport / OS-window detach).
+    ///
+    /// This reuses the main window's [`wgpu::Instance`] and [`wgpu::Adapter`]
+    /// (retained in `Gfx` for exactly this purpose) plus the shared
+    /// [`wgpu::Device`]/[`wgpu::Queue`], so every OS window renders on ONE GPU
+    /// context. Sharing the device is not merely an optimization: each
+    /// detached window builds its own [`egui_wgpu::Renderer`], and an egui
+    /// renderer's textures/buffers must live on the same device its render
+    /// pass targets — a second device would force cross-device texture copies
+    /// egui does not support. The returned surface is `'static` because the
+    /// caller holds the backing `Arc<Window>` alive for the surface's whole
+    /// lifetime inside the `DetachedManager`.
+    ///
+    /// Native-only: wasm is single-canvas and keeps tool panels docked.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn create_detached_surface(
+        &self,
+        window: Arc<Window>,
+    ) -> Result<(wgpu::Surface<'static>, wgpu::SurfaceConfiguration), GfxError> {
+        let size = window.inner_size();
+        let surface = self
+            .instance
+            .create_surface(window)
+            .map_err(|e| GfxError::Surface(e.to_string()))?;
+        let caps = surface.get_capabilities(&self.adapter);
+        // The retained adapter was selected with `compatible_surface` pointing at
+        // the MAIN window's surface, so it is not *guaranteed* to be able to
+        // present to this newly created one. When it cannot, wgpu reports empty
+        // capability vectors — and indexing `[0]` would panic the whole emulator
+        // while merely opening a tool window. Fail this one detached window
+        // instead; `DetachedManager::create` already turns the error into a log
+        // line and the panel falls back to docked.
+        let Some(&first_format) = caps.formats.first() else {
+            return Err(GfxError::Surface(
+                "retained adapter reports no supported formats for the detached surface".into(),
+            ));
+        };
+        let Some(&alpha_mode) = caps.alpha_modes.first() else {
+            return Err(GfxError::Surface(
+                "retained adapter reports no supported alpha modes for the detached surface".into(),
+            ));
+        };
+        // Prefer an sRGB surface format so egui's linear->sRGB present encode
+        // matches the main window; fall back to whatever the surface offers.
+        let format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(wgpu::TextureFormat::is_srgb)
+            .unwrap_or(first_format);
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: size.width.max(1),
+            height: size.height.max(1),
+            // Detached tool windows are UI chrome, not the paced emulation
+            // surface, so plain vsync (`Fifo`, guaranteed-supported) is right:
+            // they do not beat against the wall-clock frame pacer.
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode,
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&self.device, &config);
+        Ok((surface, config))
     }
 
     /// v2.8.0 Phase 2 — live present-mode switch for the pacing matrix

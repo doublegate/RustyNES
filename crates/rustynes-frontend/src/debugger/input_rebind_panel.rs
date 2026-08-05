@@ -369,18 +369,27 @@ impl InputPanelState {
 
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut InputPanelState,
     config: &mut Config,
 ) {
-    egui::Window::new("Input bindings")
-        .open(open)
-        .default_pos([560.0, 64.0])
-        .default_size([460.0, 520.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "input",
+        "Input bindings",
+        super::WindowCfg {
+            default_pos: Some([560.0, 64.0]),
+            default_size: Some([460.0, 520.0]),
+            resizable: Some(true),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             body(ui, state, config);
-        });
+        },
+    );
 }
 
 /// The input-rebind window body, reusable from the always-on UX shell's

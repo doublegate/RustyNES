@@ -3,9 +3,9 @@ display_name = "Nintendo - NES / Famicom (RustyNES)"
 authors = "DoubleGate"
 supported_extensions = "nes|fds"
 corename = "RustyNES"
-license = "GPL-3.0-or-later"
+license = "GPLv3"
 permissions = ""
-display_version = "v2.2.9"
+display_version = "v2.3.0"
 categories = "Emulator"
 
 # Hardware Information

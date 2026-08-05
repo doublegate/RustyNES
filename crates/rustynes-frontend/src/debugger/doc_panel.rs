@@ -936,7 +936,7 @@ the Debug menu opens its window on the spot; the tool windows are
 independent of one another.
 
 The devtools are output-only and never perturb emulation, so the
-determinism contract and AccuracyCoin (98.58%, 139/141) are unaffected.
+determinism contract and AccuracyCoin (100%, 141/141) are unaffected.
 
 Sub-pages (also in the sidebar tree):
   - [[CPU & disassembly|dt-cpu]]
@@ -1191,11 +1191,11 @@ written in pure Rust (winit + wgpu + cpal + egui).
 
   License ...... GPL-3.0-or-later
   Author ....... DoubleGate
-  Accuracy ..... AccuracyCoin 98.58% (139/141); nestest 0-diff;
+  Accuracy ..... AccuracyCoin 100% (141/141); nestest 0-diff;
                  blargg / kevtris suites green.
   Frontend ..... always-on egui shell, dedicated emulation thread,
                  display-sync pacing, lock-free audio ring.
-  Features ..... 150 mapper families, FDS, Vs. System / PlayChoice-10,
+  Features ..... 172 mapper families, FDS, Vs. System / PlayChoice-10,
                  rollback netplay, RetroAchievements, TAS movies + the
                  TAStudio editor, save-states, rewind, run-ahead, Lua
                  scripting + automation, HD packs, A/V recording.

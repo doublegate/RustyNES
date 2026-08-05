@@ -7,7 +7,7 @@
 //! A discrete-logic board in the shape of the stock mappers (`NROM`, `CNROM`,
 //! `UxROM`, `GxROM`, `AxROM`): bank-select latch registers, no IRQ, no on-cart
 //! audio. Banking / mirroring semantics are cross-checked against the
-//! `GeraNES` reference (`GeraNES/src/GeraNES/Mappers/Mapper0NN.h`)
+//! `GeraNES` reference emulator (cross-referenced, not copied)
 //! and the nesdev wiki, and validated by register-decode + save-state unit
 //! tests.
 //!

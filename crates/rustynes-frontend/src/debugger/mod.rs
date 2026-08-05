@@ -262,22 +262,125 @@ pub(crate) struct WindowCfg {
     pub resizable: Option<bool>,
 }
 
-/// v2.2.9 "Studio II": render a tool window that the user can **detach** into its
-/// own floating OS window — the fix for the "every new window is stuck inside the
-/// main window" report (Windows 10).
+// v2.3.0 "Datum II" — thread-local "render target" for the multi-viewport detach.
+//
+// When a detached OS window renders, it re-runs the SAME panel dispatch
+// (`chip_panels` / `tool_panels`) that the main window uses, but with this cell set
+// to the panel id it hosts. `detachable_window` then renders content ONLY for the
+// matching id (filling the OS window) and non-matching panels early-return, so one
+// dispatch pass paints exactly one panel per window. `None` (the default) is the
+// main-window pass, where every panel renders normally and detached ones render
+// nothing docked. See the `crate::detached` module.
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    static DETACH_TARGET: std::cell::Cell<Option<&'static str>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// The current detached render target (`None` on the main-window pass).
+#[cfg(not(target_arch = "wasm32"))]
+fn current_detach_target() -> Option<&'static str> {
+    DETACH_TARGET.with(std::cell::Cell::get)
+}
+
+// v2.3.0 — set by `detachable_window` when it actually paints the detached
+// target. `render_detached_body` reads it after the dispatch to detect an
+// ORPHANED window: a panel whose `show_*` flag was cleared while it was detached
+// is never dispatched at all (every call site is `if self.show_x { ... }`), so
+// nothing removes it from `detached_panels` and the OS window would linger,
+// titled but empty, with no Reattach button. That is reachable without touching
+// the window — `clear_tas_editor` fires on every ROM load / close / power cycle,
+// and hardcore mode suppresses the Memory panels the same way.
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    static DETACH_PAINTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// wasm has no detached windows, so the target is always `None`; this stub keeps
+/// the gated panel call-sites free of `cfg` noise.
+#[cfg(target_arch = "wasm32")]
+fn current_detach_target() -> Option<&'static str> {
+    None
+}
+
+/// RAII guard that sets [`DETACH_TARGET`] for the duration of one detached render
+/// and restores `None` on drop (even if the panel body panics).
+#[cfg(not(target_arch = "wasm32"))]
+struct DetachTargetGuard;
+
+#[cfg(not(target_arch = "wasm32"))]
+impl DetachTargetGuard {
+    fn new(target: &'static str) -> Self {
+        DETACH_TARGET.with(|c| c.set(Some(target)));
+        DETACH_PAINTED.with(|c| c.set(false));
+        Self
+    }
+
+    /// Whether the target panel actually painted during this pass.
+    fn painted() -> bool {
+        DETACH_PAINTED.with(std::cell::Cell::get)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for DetachTargetGuard {
+    fn drop(&mut self) {
+        DETACH_TARGET.with(|c| c.set(None));
+    }
+}
+
+// v2.3.0 — captured docked size (egui points) of a panel at the moment it was
+// detached, so its new OS window opens at the SAME footprint the docked window had
+// rather than a static guess. `detachable_window` writes here on a Detach click;
+// `App` drains it in `reconcile_detached` when it creates the window. A thread-local
+// (both the write and the drain run on the winit thread) avoids threading a size map
+// through all 18 panel `show()` signatures.
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    static DETACH_SIZES: std::cell::RefCell<std::collections::HashMap<&'static str, [f32; 2]>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Take (and clear) a just-detached panel's captured docked size.
+///
+/// Rounded to whole pixels. `None` if the size was not captured (e.g. the panel was
+/// detached programmatically), in which case the caller uses its default from
+/// [`detached_window_meta`].
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn take_detached_size(id: &'static str) -> Option<(u32, u32)> {
+    DETACH_SIZES.with(|m| {
+        m.borrow_mut()
+            .remove(id)
+            // Guard against a degenerate first-frame rect; clamp to a sane minimum.
+            .map(|[w, h]| (w.max(160.0).round() as u32, h.max(120.0).round() as u32))
+    })
+}
+
+/// v2.3.0 "Datum II": render a tool window that the user can **detach** into its
+/// own real floating OS window — the fix for the "every new window is stuck inside
+/// the main window" report (Windows 10).
 ///
 /// `detached` holds the set of currently-floating panel ids; `id` is this panel's
-/// stable key. Docked, it is a normal [`egui::Window`] seeded with `cfg` (the
-/// panel's prior first-open position / size / resizability) and a small "⧉ Detach"
-/// button. Detached, it renders in a real OS viewport (`show_viewport_immediate`,
-/// the same mechanism [`basic_bot_panel`] already uses) with a "⧉ Reattach"
-/// button; the OS window's close button reattaches too — the OS window manager
-/// sizes/places the detached window, so `cfg` applies to the docked form only.
-/// **Native-only** — egui multi-viewport needs winit multi-window, so on wasm it
-/// always renders docked.
+/// stable key. This function runs in one of two passes, selected by the
+/// [`current_detach_target`] thread-local:
+///
+/// - **Main-window pass** (`target == None`): if `id` is docked, render the normal
+///   [`egui::Window`] seeded with `cfg` (first-open position / size / resizability)
+///   plus a small "⧉ Detach" button that adds `id` to `detached`. If `id` is
+///   detached, render NOTHING here — it now lives in its own OS window, which the
+///   [`crate::detached::DetachedManager`] created when `App` reconciled the
+///   `detached` set.
+/// - **Detached pass** (`target == Some(t)`): render content ONLY when `id == t`,
+///   as a [`egui::CentralPanel`] filling that OS window, with a "⧉ Reattach"
+///   button (the OS window's close button reattaches too, handled in `App`).
+///   Non-matching panels early-return so one dispatch paints exactly one panel.
+///
+/// **Native-only** detach — on wasm (`target` always `None`, no `detached` inserts)
+/// it always renders docked.
 ///
 /// `add_contents` is the panel body; it captures whatever it needs (`&Nes`, panel
-/// state, …) and is called exactly once per frame, in whichever branch is active.
+/// state, …) and is called at most once per invocation, in whichever branch runs.
 // On wasm the detached-viewport branch and the "Detach" button are `#[cfg]`'d
 // out (egui multi-viewport is unavailable there), so `detached` is never mutated
 // — `&mut` reads as needless. Keep the native signature and allow it on wasm.
@@ -298,46 +401,62 @@ pub(crate) fn detachable_window(
     #[cfg(target_arch = "wasm32")]
     let _ = (&detached, id);
     #[cfg(not(target_arch = "wasm32"))]
-    if detached.contains(id) {
-        let mut reattach = false;
-        // Seed the viewport with the same first-open geometry the docked window
-        // uses, so a detached panel keeps its size / position / resizability.
-        let mut vb = egui::ViewportBuilder::default().with_title(title);
-        if let Some(s) = cfg.default_size {
-            vb = vb.with_inner_size(s);
-        }
-        if let Some(p) = cfg.default_pos {
-            vb = vb.with_position(p);
-        }
-        if let Some(r) = cfg.resizable {
-            vb = vb.with_resizable(r);
-        }
-        // NOTE: `show_viewport_immediate` only produces a separate OS window when
-        // the egui integration enables multi-viewport (`set_embed_viewports(false)`
-        // + per-viewport winit windows). RustyNES's frontend is currently a
-        // single-viewport `egui_winit` integration, so egui renders this viewport
-        // EMBEDDED in the main window. True OS-window detach (the Windows-10
-        // trapped-window fix) requires wiring multi-viewport into the render loop
-        // — tracked as follow-up work; the affordance + geometry are in place for
-        // when it lands.
-        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(id), vb, |vctx, _class| {
-            // A full-window Area hosts the body (mirrors `basic_bot_panel`,
-            // avoiding the deprecated context-level `CentralPanel::show`).
-            egui::Area::new(egui::Id::new(id)).show(vctx, |ui| {
-                if ui.button("\u{29c9} Reattach to main window").clicked() {
-                    reattach = true;
-                }
-                ui.separator();
-                add_contents(ui);
-            });
-            if vctx.input(|i| i.viewport().close_requested()) {
-                reattach = true;
+    match current_detach_target() {
+        // Detached render pass: this OS window hosts exactly one panel. Paint the
+        // matching one to FILL the window with the same themed background the docked
+        // panel has; every other panel's call early-returns so a single dispatch
+        // produces a single window's content. A context-level `Area` + a
+        // central-panel `Frame` is used (not `CentralPanel`, whose egui-0.35 `show`
+        // needs a `&mut Ui` this function does not receive); `set_min_size(screen)`
+        // makes it span the whole window and a `ScrollArea` keeps oversized panels
+        // scrollable. The theme + zoom are applied to this window's context in
+        // `render_detached_body`, so the frame fill / widget colours match the main
+        // window rather than egui's bare defaults.
+        Some(target) => {
+            if id != target {
+                return;
             }
-        });
-        if reattach {
-            detached.remove(id);
+            // Record that the hosted panel produced content this pass; an
+            // unpainted target means its `show_*` flag was cleared and the window
+            // must be reattached rather than left as an empty orphan.
+            DETACH_PAINTED.with(|c| c.set(true));
+            let mut reattach = false;
+            let screen = ctx.content_rect();
+            egui::Area::new(egui::Id::new(("detached", id)))
+                .fixed_pos(screen.min)
+                .show(ctx, |ui| {
+                    ui.set_min_size(screen.size());
+                    egui::Frame::central_panel(ui.style()).show(ui, |ui| {
+                        ui.set_min_size(ui.available_size());
+                        if ui
+                            .button(format!(
+                                "{} Reattach to main window",
+                                crate::icons::glyph::COMPRESS
+                            ))
+                            .clicked()
+                        {
+                            reattach = true;
+                        }
+                        ui.separator();
+                        egui::ScrollArea::both()
+                            .auto_shrink([false, false])
+                            .show(ui, add_contents);
+                    });
+                });
+            if reattach {
+                // `App` reconciles the `detached` set next iteration and closes the
+                // now-orphaned OS window (the panel reappears docked).
+                detached.remove(id);
+            }
+            return;
         }
-        return;
+        // Main-window pass: a detached panel lives in its own OS window, so render
+        // nothing docked for it here.
+        None => {
+            if detached.contains(id) {
+                return;
+            }
+        }
     }
     let mut win_open = *open;
     let mut win = egui::Window::new(title).open(&mut win_open);
@@ -356,14 +475,142 @@ pub(crate) fn detachable_window(
     if let Some(r) = cfg.resizable {
         win = win.resizable(r);
     }
-    win.show(ctx, |ui| {
+    // Only the native build has a Detach affordance, so the click flag (and the
+    // response we read the docked size from) are native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut detach_clicked = false;
+    let resp = win.show(ctx, |ui| {
+        // v2.3.0 — a "pop out into its own OS window" affordance. egui does not let
+        // us add a button to the native window's title bar, so it sits as a small
+        // top-row control (the `EXPAND` FA glyph, rendered via the installed Font
+        // Awesome fallback font — a reliable glyph, unlike the earlier `⧉`).
         #[cfg(not(target_arch = "wasm32"))]
-        if ui.small_button("\u{29c9} Detach").clicked() {
-            detached.insert(id);
+        if ui
+            .small_button(format!("{} Detach", crate::icons::glyph::EXPAND))
+            .on_hover_text("Pop this panel out into its own window")
+            .clicked()
+        {
+            detach_clicked = true;
         }
         add_contents(ui);
     });
+    #[cfg(not(target_arch = "wasm32"))]
+    if detach_clicked {
+        // Capture the docked window's current size so the OS window opens matching it.
+        if let Some(r) = &resp {
+            let sz = r.response.rect.size();
+            DETACH_SIZES.with(|m| m.borrow_mut().insert(id, [sz.x, sz.y]));
+        }
+        detached.insert(id);
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = &resp;
     *open = win_open;
+}
+
+/// v2.3.0 "Datum II" — the OS-window title and default inner size for a detachable
+/// tool panel, keyed by its stable `detachable_window` id.
+///
+/// `App` calls this when it reconciles the debugger's detached-panel set and needs
+/// to spawn a real window (see [`crate::detached::DetachedManager::create`]). The
+/// user can freely resize the window afterward; these are only the first-open
+/// dimensions. Unknown ids fall back to the id text and a neutral size. Keyed by
+/// the `detachable_window` panel id.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn detached_window_meta(id: &'static str) -> (&'static str, (u32, u32)) {
+    // Sizes track each panel's docked `WindowCfg::default_size` (see the panel
+    // modules) plus a small allowance for the OS title bar + the reattach row, so a
+    // detached window opens at roughly the panel's docked footprint rather than one
+    // uniform oversized default.
+    match id {
+        "cpu" => ("CPU", (340, 400)),
+        "ppu" => ("PPU Viewer", (500, 480)),
+        "oam" => ("OAM / Sprites", (540, 520)),
+        "apu" => ("APU", (440, 420)),
+        "memory" => ("Memory", (540, 580)),
+        "memory_compare" => ("Memory Compare", (400, 600)),
+        "trace" => ("Trace Logger", (480, 420)),
+        "watch" => ("Watch / Breakpoints", (480, 580)),
+        "event" => ("Event Viewer", (720, 700)),
+        "nsf" => ("NSF Player", (380, 500)),
+        "mapper" => ("Mapper", (460, 520)),
+        "audio_mixer" => ("Audio Mixer", (400, 520)),
+        "input_display" => ("Input Display", (560, 320)),
+        "replay" => ("Replay", (380, 360)),
+        "cheat" => ("Cheats", (460, 440)),
+        "game_db" => ("Game Database", (560, 480)),
+        "rom_info" => ("ROM Info", (520, 520)),
+        "perf" => ("Performance", (560, 440)),
+        "documentation" => ("Documentation", (780, 560)),
+        "header_editor" => ("Cartridge Info / Header", (440, 500)),
+        "script" => ("Lua Script", (440, 380)),
+        "basic_bot" => ("BasicBot", (360, 420)),
+        "input" => ("Input bindings", (480, 560)),
+        "tas" => ("TAStudio", (480, 560)),
+        "settings" => ("Settings", (440, 480)),
+        "netplay" => ("Netplay", (420, 380)),
+        "cheevos" => ("RetroAchievements", (440, 500)),
+        _ => (id, (520, 440)),
+    }
+}
+
+/// v2.3.0 "Datum II" — how often a detached tool window needs to repaint.
+///
+/// Repainting a detached window costs a brief emulator-lock hold (its panel body
+/// reads `&Nes`) plus a GPU frame, so a static panel repainting every frame is pure
+/// waste; classifying panels lets us spend that cost only where the display actually
+/// changes per frame.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DetachedRefresh {
+    /// Continuously-updating live state (registers, RAM, scopes, timing) — repaint
+    /// every produced emulator frame (~60 Hz).
+    Live,
+    /// Slowly-changing status (mapper registers, netplay link health, a playback
+    /// cursor) — repaint at a throttled ~10 Hz.
+    Throttled,
+    /// Static content (a cheat list, ROM metadata, settings) — repaint ONLY when the
+    /// user interacts with the window (driven by egui's repaint flag), never on the
+    /// emulator's frame clock.
+    OnInteraction,
+}
+
+/// Classify a detachable panel's [`DetachedRefresh`] tier by its stable id.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn detached_refresh(id: &'static str) -> DetachedRefresh {
+    use DetachedRefresh::{Live, OnInteraction, Throttled};
+    match id {
+        // Live per-frame state.
+        "cpu" | "ppu" | "oam" | "apu" | "memory" | "memory_compare" | "event" | "trace"
+        | "watch" | "perf" | "audio_mixer" | "input_display" => Live,
+        // Slowly-changing status / playback progress.
+        "mapper" | "nsf" | "replay" | "netplay" | "cheevos" | "tas" => Throttled,
+        // Static / edit-driven panels (cheat, rom_info, game_db, header_editor,
+        // settings, documentation, script, basic_bot) and anything unknown.
+        _ => OnInteraction,
+    }
+}
+
+/// v2.3.0 "Datum II" — the tessellated output of one shell egui pass.
+///
+/// Carried from [`DebuggerOverlay::run_shell_ui`] (which needs `&mut Nes`, so the
+/// caller holds the emulator lock) to [`DebuggerOverlay::paint_shell`] (pure GPU
+/// work, lock released).
+///
+/// Splitting the frame at this boundary is what keeps the emulation thread off the
+/// emulator mutex while the winit thread blocks in `Surface::get_current_texture`
+/// and presents: those can each cost most of a display refresh, and holding the
+/// lock across them stalled frame production every rendered frame whenever the
+/// overlay or a `nes`-reading tool panel was open.
+pub struct PreparedShell {
+    /// Tessellated draw commands for this frame.
+    clipped: Vec<egui::ClippedPrimitive>,
+    /// Textures egui wants uploaded/freed this frame.
+    textures_delta: egui::TexturesDelta,
+    /// egui's points-to-pixels scale for this frame.
+    pixels_per_point: f32,
 }
 
 /// State of the debugger overlay.
@@ -479,6 +726,15 @@ pub struct DebuggerOverlay {
     /// on wasm it stays empty (multi-viewport is native-only). See
     /// [`detachable_window`].
     detached_panels: std::collections::HashSet<&'static str>,
+    /// v2.3.0 — last theme applied to each detached window's own egui context.
+    ///
+    /// Each detached window has a private `egui::Context`, so the main window's
+    /// `last_theme` cache cannot speak for it; without per-window tracking the
+    /// only correct-looking option is to call `apply_theme` every frame, which
+    /// rebuilds a full `Visuals` and calls `set_visuals` per window per frame.
+    /// This mirrors `last_theme`, keyed by panel id.
+    #[cfg(not(target_arch = "wasm32"))]
+    detached_themes: std::collections::HashMap<&'static str, crate::config::AppTheme>,
     /// Game Genie cheat panel state (v1.6.0).
     cheat_ui: cheat_panel::CheatPanelState,
     /// ROM-database editor panel state (v1.2.0 Workstream B, B4).
@@ -690,6 +946,8 @@ impl DebuggerOverlay {
             #[cfg(not(target_arch = "wasm32"))]
             show_documentation: false,
             detached_panels: std::collections::HashSet::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            detached_themes: std::collections::HashMap::new(),
             cheat_ui: cheat_panel::CheatPanelState::default(),
             game_db_ui: game_db_panel::GameDbPanelState::default(),
             rom_info_ui: rom_info_panel::RomInfoPanelState,
@@ -1442,6 +1700,78 @@ impl DebuggerOverlay {
         self.tool_panels(ui.ctx(), Some(nes), config);
     }
 
+    /// v2.3.0 "Datum II" — render ONE detached tool panel into its own OS window.
+    ///
+    /// Called by [`crate::detached::DetachedManager::render_ui`] with that
+    /// window's own egui `Ui`. It sets the thread-local render target to `target`
+    /// for the duration (via `DetachTargetGuard`, restored on drop), then re-runs
+    /// the SAME panel dispatch the main window uses: `detachable_window` paints
+    /// only the matching panel, while every non-detachable panel and the
+    /// `RetroAchievements` HUD is suppressed by the `main_pass` gate in
+    /// `chip_panels` / `tool_panels`. Because the dispatch is re-run
+    /// fresh in this window's own frame, the panel's `&mut Nes` borrow is valid here
+    /// with no stashed closure and no `unsafe`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn render_detached_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        target: &'static str,
+        mut nes: Option<&mut Nes>,
+        config: &mut Config,
+    ) {
+        let _guard = DetachTargetGuard::new(target);
+        // v2.3.0 — this window has its OWN egui context, created bare. Apply the
+        // same theme, UI zoom, and locale the main window applies each frame (see
+        // `render_shell`) so the detached panel's background fill, widget colours,
+        // scaling, and text match the docked panel instead of egui's raw defaults —
+        // the fix for "shading / colouring / layout not maintained once detached".
+        //
+        // `apply_theme` rebuilds a whole `Visuals` and calls `set_visuals`, so it
+        // is gated on an actual change exactly as `render_shell` gates it: the
+        // theme is per-window state here, tracked in `detached_themes`, because
+        // each detached context needs its own first-apply even when the main
+        // window's cached theme is already current.
+        let ctx = ui.ctx().clone();
+        if self.detached_themes.get(target) != Some(&config.ui.theme) {
+            crate::ui_shell::apply_theme(&ctx, config.ui.theme);
+            self.detached_themes.insert(target, config.ui.theme);
+        }
+        // Both of these are no-ops when the value is unchanged, so they are cheap
+        // to call unconditionally (matching `render_shell`).
+        ctx.set_zoom_factor(config.ui.clamped_zoom_factor());
+        crate::i18n::set_locale(config.ui.locale);
+        if let Some(n) = nes.as_deref_mut() {
+            self.chip_panels(&*ui, n);
+        }
+        self.tool_panels(ui.ctx(), nes, config);
+
+        // Orphan check: if the hosted panel never painted, its `show_*` flag was
+        // cleared while detached (ROM load clears `show_tas`; hardcore mode
+        // suppresses the Memory panels), so nothing else would ever drop it from
+        // the detached set. Reattach it — `App::reconcile_detached` closes the now
+        // unwanted OS window on the next iteration.
+        if !DetachTargetGuard::painted() {
+            self.detached_panels.remove(target);
+            self.detached_themes.remove(target);
+        }
+    }
+
+    /// The set of tool-panel ids the user has detached to their own OS window
+    /// (v2.3.0). `App` reconciles this against the live
+    /// [`crate::detached::DetachedManager`] each iteration.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[must_use]
+    pub fn detached_panels(&self) -> &std::collections::HashSet<&'static str> {
+        &self.detached_panels
+    }
+
+    /// Mutable access to the detached-panel set so `App` can reattach a panel when
+    /// its OS window is closed (v2.3.0).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn detached_panels_mut(&mut self) -> &mut std::collections::HashSet<&'static str> {
+        &mut self.detached_panels
+    }
+
     /// v1.0.0 — the chip-inspection UI: the CPU / PPU / OAM / APU / Memory /
     /// Mapper windows. These all read `&mut Nes` and only render when the deep
     /// overlay is visible. v1.7.0 "Forge" beta.5 (#55) removed the toolbar HUD
@@ -1452,6 +1782,11 @@ impl DebuggerOverlay {
         // `ctx` (floating windows), so only the context handle is needed.
         let ctx = root_ui.ctx().clone();
         let ctx = &ctx;
+        // v2.3.0 "Datum II" — in a detached render pass only the target panel may
+        // draw (routed through `detachable_window`, which self-filters by id); the
+        // non-detachable chip panels below render only in the main-window pass so
+        // they never leak into another panel's OS window.
+        let main_pass = current_detach_target().is_none();
         // v1.7.0 "Forge" beta.5 (#55) — the `debugger_top` toolbar HUD was
         // removed: every panel now opens from the always-on menu bar, and the
         // live read-outs it carried (frame/cycle, fps, movie/disk/netplay
@@ -1470,9 +1805,11 @@ impl DebuggerOverlay {
         if self.show_cpu {
             // v1.7.0 "Forge" Workstream C — the CPU panel also renders the Call
             // Stack section (C1) + source-line annotations (C3); a clicked step
-            // verb is queued on the tracker.
+            // verb is queued on the tracker. v2.3.0 — detachable, so no `main_pass`
+            // gate: `detachable_window` self-filters by the render target.
             let step = cpu_panel::show(
                 ctx,
+                &mut self.detached_panels,
                 &mut self.show_cpu,
                 &mut self.cpu_ui,
                 nes,
@@ -1510,6 +1847,7 @@ impl DebuggerOverlay {
         if self.show_header_editor {
             header_editor::show(
                 ctx,
+                &mut self.detached_panels,
                 &mut self.show_header_editor,
                 &mut self.header_editor_ui,
             );
@@ -1523,7 +1861,10 @@ impl DebuggerOverlay {
                 nes,
             );
         }
-        if self.show_memory {
+        // v2.3.0 — allow the Memory panel in a detached pass ONLY when NOT in
+        // hardcore mode: in hardcore the detached window renders nothing (the RAM
+        // viewer stays disabled), while the main pass still shows the placeholder.
+        if self.show_memory && (main_pass || !self.hardcore_active) {
             // v2.7.0 — the Memory panel is a RAM hex viewer (a potential
             // RAM-watch cheat surface), so it is disabled in hardcore mode.
             if self.hardcore_active {
@@ -1557,7 +1898,7 @@ impl DebuggerOverlay {
                 );
             }
         }
-        if self.show_memory_compare {
+        if self.show_memory_compare && (main_pass || !self.hardcore_active) {
             // A cheat-hunting (RAM-search) tool — disabled in hardcore mode for
             // the same reason as the Memory viewer + cheat panel.
             if self.hardcore_active {
@@ -1626,7 +1967,13 @@ impl DebuggerOverlay {
             );
         }
         if self.show_script {
-            script_panel::show(ctx, &mut self.show_script, &mut self.script_ui, nes);
+            script_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_script,
+                &mut self.script_ui,
+                nes,
+            );
         }
         if self.show_mapper {
             mapper_panel::show(
@@ -1645,12 +1992,18 @@ impl DebuggerOverlay {
     /// overlay is visible, so the menu bar can surface them directly. Panels
     /// that read `nes` (Cheats) no-op when `nes` is `None`.
     fn tool_panels(&mut self, ctx: &egui::Context, mut nes: Option<&mut Nes>, config: &mut Config) {
+        // v2.3.0 "Datum II" — a detached render pass paints only its one target
+        // panel (via `detachable_window`, which self-filters); the non-detachable
+        // tool panels + the RetroAchievements HUD below render only in the
+        // main-window pass so they never leak into a tool's OS window.
+        let main_pass = current_detach_target().is_none();
         // v1.8.9 — BasicBot input-search control panel. Renders with the optional
         // `nes` (reborrowed so the rest of the panels still get it); the search is
         // disabled when no ROM is loaded.
         if self.show_basic_bot {
             basic_bot_panel::show(
                 ctx,
+                &mut self.detached_panels,
                 &mut self.show_basic_bot,
                 &mut self.basic_bot_ui,
                 nes.as_deref_mut(),
@@ -1675,7 +2028,7 @@ impl DebuggerOverlay {
         // open. The app expires them after a few seconds. v2.7.1 — an
         // achievement-unlock toast also shows its badge image (left of the text)
         // once the badge cache has fetched + decoded it.
-        {
+        if main_pass {
             let toasts = self.cheevos_ui.status().toasts.clone();
             if !toasts.is_empty() {
                 // v2.7.1 — lazily create + poll the badge cache so unlock-toast
@@ -1743,7 +2096,7 @@ impl DebuggerOverlay {
         // already decodes. They read the inert pushed status snapshot (no `nes`
         // and no feature gate), so they render in every build configuration;
         // when the `retroachievements` feature is off the vectors are empty.
-        {
+        if main_pass {
             let status = self.cheevos_ui.status();
 
             // Active challenge indicators + the transient progress indicator,
@@ -1851,7 +2204,13 @@ impl DebuggerOverlay {
         }
 
         if self.show_input {
-            input_rebind_panel::show(ctx, &mut self.show_input, &mut self.input_ui, config);
+            input_rebind_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_input,
+                &mut self.input_ui,
+                config,
+            );
         }
         if self.show_input_display {
             // v1.7.0 "Forge" beta.5 (#51) — the consolidated "Input Display"
@@ -1879,6 +2238,7 @@ impl DebuggerOverlay {
             // edits/seeks as `TasRequest`s the app applies under the emu lock.
             tastudio_panel::show(
                 ctx,
+                &mut self.detached_panels,
                 &mut self.show_tas,
                 &mut self.tas_ui,
                 self.tas_editor.as_ref(),
@@ -1950,10 +2310,22 @@ impl DebuggerOverlay {
             );
         }
         if self.show_settings {
-            settings_panel::show(ctx, &mut self.show_settings, &mut self.settings_ui, config);
+            settings_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_settings,
+                &mut self.settings_ui,
+                config,
+            );
         }
         if self.show_netplay {
-            netplay_panel::show(ctx, &mut self.show_netplay, &mut self.netplay_ui, config);
+            netplay_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_netplay,
+                &mut self.netplay_ui,
+                config,
+            );
         }
         if self.show_perf {
             perf_panel::show(
@@ -1986,6 +2358,7 @@ impl DebuggerOverlay {
                 badges.poll(ctx);
                 cheevos_panel::show(
                     ctx,
+                    &mut self.detached_panels,
                     &mut self.show_cheevos,
                     &mut self.cheevos_ui,
                     config,
@@ -1993,7 +2366,13 @@ impl DebuggerOverlay {
                 );
             }
             #[cfg(not(all(not(target_arch = "wasm32"), feature = "retroachievements")))]
-            cheevos_panel::show(ctx, &mut self.show_cheevos, &mut self.cheevos_ui, config);
+            cheevos_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_cheevos,
+                &mut self.cheevos_ui,
+                config,
+            );
         }
     }
 
@@ -2094,21 +2473,26 @@ impl DebuggerOverlay {
     ///
     /// `nes` is `Option` so the shell renders even before a ROM is loaded; the
     /// debugger panels are skipped while it is `None`.
+    /// v2.3.0 "Datum II" — **phase 1** of the shell frame: run the egui UI.
+    ///
+    /// This is the ONLY phase that needs `&mut Nes`, so the caller holds the
+    /// emulator lock across just this call and drops it before
+    /// [`Self::paint_shell`]. Previously the whole shell frame (egui build **plus**
+    /// the blocking swapchain acquire, GPU encode, and present) ran inside one
+    /// emulator-lock hold, so every rendered frame with the overlay or a
+    /// `nes`-reading tool panel open parked the emulation thread on `emu.lock()`
+    /// for up to a full display refresh — the root cause of the stutter / high
+    /// produced-interval p99. See [`PreparedShell`].
     #[allow(clippy::too_many_arguments)]
-    pub fn render_shell<F: FnOnce(&egui::Context, &mut Config)>(
+    pub fn run_shell_ui<F: FnOnce(&egui::Context, &mut Config)>(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
         window: &Arc<Window>,
-        view: &wgpu::TextureView,
-        surface_size: (u32, u32),
         nes: Option<&mut Nes>,
         config: &mut Config,
         shell: &mut UiShell,
         shell_frame: &ShellFrame<'_>,
         extra_ui: F,
-    ) -> ShellOutput {
+    ) -> (ShellOutput, PreparedShell) {
         // v1.7.1 — re-derive visibility from the live chip-panel state BEFORE
         // the egui pass so closing the last chip panel hides the overlay again
         // (see `recompute_visible`); otherwise `visible` would latch on forever
@@ -2248,15 +2632,40 @@ impl DebuggerOverlay {
 
         let pixels_per_point = ctx.pixels_per_point();
         let clipped = ctx.tessellate(output.shapes, pixels_per_point);
+        (
+            shell_out,
+            PreparedShell {
+                clipped,
+                textures_delta: output.textures_delta,
+                pixels_per_point,
+            },
+        )
+    }
+
+    /// v2.3.0 "Datum II" — **phase 2** of the shell frame: paint the prepared egui
+    /// output into `view`.
+    ///
+    /// Pure GPU work — it never touches the emulator, so the caller MUST have
+    /// dropped the emulator lock before calling this (it runs after the blocking
+    /// swapchain acquire inside [`crate::gfx::Gfx`]'s render path).
+    pub fn paint_shell(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        surface_size: (u32, u32),
+        prepared: PreparedShell,
+    ) {
         let screen_desc = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [surface_size.0.max(1), surface_size.1.max(1)],
-            pixels_per_point,
+            pixels_per_point: prepared.pixels_per_point,
         };
-        for (id, image) in output.textures_delta.set {
+        for (id, image) in prepared.textures_delta.set {
             self.renderer.update_texture(device, queue, id, &image);
         }
         self.renderer
-            .update_buffers(device, queue, encoder, &clipped, &screen_desc);
+            .update_buffers(device, queue, encoder, &prepared.clipped, &screen_desc);
         {
             let mut rp = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2276,11 +2685,39 @@ impl DebuggerOverlay {
                     multiview_mask: None,
                 })
                 .forget_lifetime();
-            self.renderer.render(&mut rp, &clipped, &screen_desc);
+            self.renderer
+                .render(&mut rp, &prepared.clipped, &screen_desc);
         }
-        for id in output.textures_delta.free {
+        for id in prepared.textures_delta.free {
             self.renderer.free_texture(&id);
         }
+    }
+
+    /// Convenience wrapper running both shell phases back-to-back.
+    ///
+    /// Used by the common (debugger-hidden) present path, which already copies the
+    /// framebuffer under a brief lock and renders with the emulator lock RELEASED —
+    /// so there is nothing to gain from splitting the phases there. The
+    /// overlay-visible path calls [`Self::run_shell_ui`] / [`Self::paint_shell`]
+    /// separately so the lock never spans the GPU work.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_shell<F: FnOnce(&egui::Context, &mut Config)>(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        window: &Arc<Window>,
+        view: &wgpu::TextureView,
+        surface_size: (u32, u32),
+        nes: Option<&mut Nes>,
+        config: &mut Config,
+        shell: &mut UiShell,
+        shell_frame: &ShellFrame<'_>,
+        extra_ui: F,
+    ) -> ShellOutput {
+        let (shell_out, prepared) =
+            self.run_shell_ui(window, nes, config, shell, shell_frame, extra_ui);
+        self.paint_shell(device, queue, encoder, view, surface_size, prepared);
         shell_out
     }
 }

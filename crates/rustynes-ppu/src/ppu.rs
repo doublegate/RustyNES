@@ -503,7 +503,8 @@ pub struct Ppu {
     // to the inactive rest defaults), NOT an ADR-0028 save-state format-epoch break.
     //
     // Ported from TriCNES (`TriCNES/Emulator.cs`, MIT, commit 9199870),
-    // the AccuracyCoin author's own transistor-level emulator, which is the
+    // the AccuracyCoin author's own cycle-accurate C# emulator (a detailed
+    // sub-cycle CPU/PPU/APU/DMA state machine), which is the
     // ground-truth oracle for the "ALE + Read" / "Hybrid Addresses" tests (the
     // vendored Mesen2 build does NOT pass them — see the ADR 0030 campaign audit).
     //
@@ -4173,6 +4174,13 @@ impl Ppu {
     /// scanlines (0-239) when rendering is enabled.
     fn tick_oam_bus(&mut self) {
         let cycle = self.dot;
+        // v2.3.0 (perf) — take the dot-0 early-out BEFORE deriving the sprite
+        // height and y-test reference; both were computed unconditionally and
+        // then discarded on this dot. Byte-identical: neither value is observable
+        // on the path that returns here.
+        if cycle == 0 {
+            return;
+        }
         let sprite_height: i16 = if self.ctrl.contains(PpuCtrl::SPRITE_SIZE_16) {
             16
         } else {
@@ -4181,10 +4189,6 @@ impl Ppu {
         // Y-test reference: the scanline being evaluated (sprites render on
         // scanline+1).
         let scan = self.scanline;
-
-        if cycle == 0 {
-            return;
-        }
         if cycle < 65 {
             // Secondary-OAM clear (cycles 1-64): the bus carries $FF and the
             // parallel secondary OAM is filled with $FF, 1 byte per 2 dots.
@@ -4307,6 +4311,14 @@ impl Ppu {
         }
     }
 
+    // v2.3.0 (perf) — called once per ELIGIBLE dot on the fast dot path (visible
+    // dots 1..=256 with rendering enabled: up to 61,440/frame, not all 89,342 —
+    // idle lines and rendering-disabled paths bypass it entirely);
+    // `perf annotate` showed its own prologue/epilogue (`push`/`ret`) as the two
+    // hottest instructions in the body, i.e. pure call overhead LLVM had declined
+    // to remove. `inline` lets it be folded into the dot loop. Byte-identical (an
+    // inlining hint changes no behavior); adopted only if it clears the >3% bar.
+    #[inline]
     pub(crate) fn tick_sprite_eval_per_dot(&mut self) {
         // Y-test reference line for sprite evaluation. Per nesdev
         // "PPU OAM" (Byte 0): "The first scanline that the sprite is
