@@ -1,6 +1,6 @@
 # RustyNES Version Plan
 
-**Current release: v2.2.9 "Studio II"**, with **v2.3.0 "Datum II"** (the PPU-accuracy capstone of the v2.2.6 → v2.3.0 line) in progress — all on the **v2.0.0 "Timebase"** MAJOR base (the one-clock / every-cycle-bus-access scheduler rewrite). **v1.0.0** was the first stable, production cut. As of **v2.2.9**, RustyNES is **GPL-3.0-or-later** — a derivative work of GPL-licensed emulators (ADR 0036); a licensing correction, **not** a SemVer break (no public-API or save-state change). `docs/STATUS.md` is the authoritative current-state record; `CHANGELOG.md` carries the full per-release history.
+**Current release: v2.3.0 "Datum II"** — the capstone that **closes** the v2.2.6 → v2.3.0 line (true multi-viewport OS-window detach, the emulator-lock frame-pacing fix, a −5.1% byte-identical PPU optimization, and both forum-reported accuracy items verified already-correct) — all on the **v2.0.0 "Timebase"** MAJOR base (the one-clock / every-cycle-bus-access scheduler rewrite). **v1.0.0** was the first stable, production cut. As of **v2.2.9**, RustyNES is **GPL-3.0-or-later** — a derivative work of GPL-licensed emulators (ADR 0036); a licensing correction, **not** a SemVer break (no public-API or save-state change). `docs/STATUS.md` is the authoritative current-state record; `CHANGELOG.md` carries the full per-release history.
 
 RustyNES follows [Semantic Versioning 2.0.0](https://semver.org/).
 
@@ -55,7 +55,7 @@ The cycle-accurate engine was integrated as the core in a sequence of documentar
 | **v0.9.7** | Performance pass (display-sync pacing, dedicated emu thread, audio DRC, run-ahead) |
 | **v1.0.0** | Production cut — engine + ported desktop UX shell + documentation synthesis |
 
-> **Engine lineage note.** The deep technical history under `docs/` (the `v2.0` master-clock refactor, ADRs, audit logs, the long accuracy program) describes the **upstream engine lineage**. Those old "v1.x"/"v2.x" anchors are engineering history, **not** RustyNES release versions. RustyNES's own release line is v0.1.0 → v0.8.6 → (documentary v0.9.0–v0.9.7) → **v1.0.0** → the v1.1.0–v1.10.0 additive feature line → **v2.0.0 "Timebase"** (the designated MAJOR break) → the v2.0.x "Harbor" line → the v2.1.x "Fathom" accuracy line → the v2.2.x line (current: **v2.2.9 "Studio II"**; **v2.3.0 "Datum II"** in progress).
+> **Engine lineage note.** The deep technical history under `docs/` (the `v2.0` master-clock refactor, ADRs, audit logs, the long accuracy program) describes the **upstream engine lineage**. Those old "v1.x"/"v2.x" anchors are engineering history, **not** RustyNES release versions. RustyNES's own release line is v0.1.0 → v0.8.6 → (documentary v0.9.0–v0.9.7) → **v1.0.0** → the v1.1.0–v1.10.0 additive feature line → **v2.0.0 "Timebase"** (the designated MAJOR break) → the v2.0.x "Harbor" line → the v2.1.x "Fathom" accuracy line → the v2.2.x line → **v2.3.0 "Datum II"** (current).
 
 ### Post-1.0 release line (v1.1.0 → current)
 
@@ -75,7 +75,8 @@ The 1.x line was **additive / off-by-default** — every release stayed byte-ide
 | **v2.2.0 "Capstone"** | Milestone cut closing the v2.1.5 → v2.2.0 "deepen the project" run — netplay matchmaking/lobby + FDS medium model + peripherals & quality/security pass |
 | **v2.2.1 – v2.2.5** | Housekeeping (v2.2.1); build / distribution / CI-integrity — libretro buildbot + supply-chain hardening (v2.2.2 "Conduit"); performance + accuracy-closure (v2.2.3 "Datum"); libretro/RetroArch distribution (v2.2.4 "Cartridge"); provenance / licensing / documentation integrity (v2.2.5 "Colophon") |
 | **v2.2.6 – v2.2.9** | The **de-monetization + NESdev-remediation** line — RustyNES made permanently open-source and income-free (v2.2.6 "Almanac", ADR 0035); expansion-audio fidelity (v2.2.7 "Timbre II"); gamma-correct presentation (v2.2.8 "Aperture II"); TAS/movie wiring + detachable tool windows + the **relicense to GPL-3.0-or-later** (v2.2.9 "Studio II", ADR 0036) |
-| **v2.2.9 "Studio II"** (current) | Head of the v2.x line — see `CHANGELOG.md` `[2.2.9]` |
+| **v2.2.9 "Studio II"** | TAS/movie wiring + the GPL-3.0-or-later relicense — see `CHANGELOG.md` `[2.2.9]` |
+| **v2.3.0 "Datum II"** (current) | Head of the v2.x line; closes the v2.2.6 → v2.3.0 remediation line — see `CHANGELOG.md` `[2.3.0]` |
 | **v2.3.0 "Datum II"** (in progress) | PPU-accuracy capstone — SMB left-edge + hybrid-address (Rad Racer) verified correct against the AccuracyCoin oracle and locked with an exact-141/141 regression gate; hybrid-address provenance finalized (doc/oracle-derived) |
 
 > **Forward path.** The v2.0.x "Harbor", v2.1.x "Fathom", and v2.2.x lines have all shipped; the active line is **v2.2.6 → v2.3.0** (the PPU-accuracy capstone). RustyNES is **permanently open-source and income-free** (ADR 0035): the earlier "joint Google Play + App Store + AltStore + F-Droid launch" is **withdrawn** — any store listing is a **free** app with **no monetization** (no ads, tracking, or paid unlock), an unversioned later step. `to-dos/ROADMAP.md` is the authoritative forward roadmap.

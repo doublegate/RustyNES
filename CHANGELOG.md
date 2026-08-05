@@ -14,36 +14,95 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-### v2.3.0 "Datum II" (in progress) — PPU-accuracy capstone
+## [2.3.0] - 2026-08-05 - "Datum II" (PPU-accuracy capstone + true multi-viewport tool windows)
 
-- **SMB left-edge + hybrid-address (Rad Racer) verified correct.** Both
-  forum-reported accuracy concerns were investigated under systematic-debugging
-  discipline (reproduce before fixing) and found *already correct* in the shipped
-  build — resolved earlier by the v2.0.0 "Timebase" rewrite / v2.0.3 2-cycle-ALE
-  promotion, predating the report. SMB's leftmost background column renders real
-  content (matches the blessed golden the 60-ROM oracle byte-locks); the
-  hybrid-address model passes the authoritative AccuracyCoin "Hybrid Addresses"
-  test and renders Rad Racer's road/horizon cleanly. See ADR 0030's v2.3.0 update.
+Closes the **v2.2.6 → v2.3.0 NESdev-remediation line**. Both remaining
+forum-reported accuracy concerns were investigated and found *already correct*;
+the release's substance turned out to be elsewhere — real OS-window tool panels,
+and a frame-pacing defect that had been degrading every session with a debugger
+panel open.
+
+### Added
+
+- **True multi-viewport tool-window detach.** Every tool panel can now pop out
+  into a *real OS window* (native), finally resolving the Windows-10
+  "trapped window" report. v2.2.9's affordance only *embedded* the panel, because
+  `show_viewport_immediate` needs a multi-viewport integration to produce a real
+  window. The new `rustynes-frontend/src/detached.rs` gives each detached panel
+  its own winit window + egui context/state/renderer + wgpu surface, sharing the
+  main device — **with no `unsafe`**, unlike eframe's immediate-viewport path
+  (which erases an `ActiveEventLoop` lifetime into a `'static` thread-local).
+  The nine panels that predated the shared helper (CPU, Cartridge Info, Lua
+  Script, BasicBot, Input bindings, TAStudio, Settings, Netplay,
+  RetroAchievements) were converted, so *all* tool windows are detachable.
+  Detached windows inherit the main window's theme, zoom, and locale, and open at
+  the size their docked window actually had. wasm keeps panels docked.
+
+### Fixed
+
+- **Frame stutter / high produced-interval p99 whenever a debugger or tool panel
+  was open.** The overlay-visible render path held the emulator mutex "until
+  after the present call" — and the *blocking* `Surface::get_current_texture`
+  runs before the egui pass — so the winit thread owned the lock across a
+  swapchain wait, the whole egui build, the encode and the present, while the
+  emulation thread sat parked on `emu.lock()` unable to produce a frame.
+  `render_shell` is split into `run_shell_ui` (locked, needs `&mut Nes`) and
+  `paint_shell` (unlocked GPU work); the guard now covers only the UI build.
+- **`pace_frames` took the emulator mutex on every `about_to_wait` iteration** —
+  a tight spin in the wall-clock regime — which could block the UI thread for a
+  full produce (~4 ms) each time. It now reads the lock-free `EmuControl::has_rom`
+  atomic, falling back to the locked read only when no emulation thread exists.
 
 ### Changed
 
+- **PPU per-dot helpers optimized: −5.13% / −3.51% frame cost** (nestest /
+  flowing-palette, both clearing the project's >3% adoption bar, p = 0.00).
+  `perf annotate` showed `tick_sprite_eval_per_dot`'s own `push`/`ret` were the
+  two hottest instructions in its body — pure call overhead across 89,342
+  calls/frame — and that `tick_oam_bus` derived values it discarded before its
+  dot-0 early-out. Byte-identical: AccuracyCoin **141/141**, nestest 0-diff, PPU
+  units 91/91. Documented as `v2.3.0 P1` in `docs/performance.md`.
+- **Detached panels repaint on per-panel tiers** — Live (60 Hz) for
+  continuously-changing state, Throttled (~10 Hz) for status, and
+  interaction-only for static panels (Cheats, ROM Info, Settings) — so a wall of
+  open tool windows costs almost nothing while idle.
 - **AccuracyCoin gate pinned to an exact 141/141.** The gate asserted only a
   coarse 60% floor — too loose to catch a single-test regression (an A/B probe
   disabling the delayed-`CopyV` dropped exactly the Hybrid Addresses test to
-  140/141 yet still cleared 60%). It now also asserts zero failing tests, so a
-  `COPY_V_DELAY` / octal-latch (or any AccuracyCoin) regression fails CI — the
-  CI-runnable, in-repo regression guard for the hybrid-address behavior.
-- **Hybrid-address provenance finalized.** `NOTICE` and
-  `docs/originality-and-provenance.md` §4 (and ADR 0030) updated from
-  "TriCNES-calibrated, being reworked" to "verified correct,
-  documentation/oracle-derived" — it matches the NESdev-documented delayed-`CopyV`
-  timing and the MIT AccuracyCoin ROM; TriCNES (MIT) is the original cross-reference.
-- **Documentation refresh.** `README.md` (Current Release / Roadmap / Highlights /
-  Features tightened; Acknowledgments corrected for the GPL relicense; ADR range →
-  0036), the `CHANGELOG.md` bloated entries condensed to the file's "few tight
-  highlights" intent, and `VERSION-PLAN.md` brought current through v2.3.0
-  (version table + de-monetization forward path). Superseded the stale
-  "`fast_dotloop` recommended for promotion" doc lines (it was promoted in v2.2.3).
+  140/141 yet still cleared 60%). It now also asserts zero failing tests.
+- **The `≤ 2 ms` frame-cost figure is now labeled a design-phase aspiration, not
+  a gate.** It was written before the cycle-accurate core existed; the core
+  measures ~3.8 ms (~23% of the NTSC budget) and that is knowingly accepted. The
+  remaining bulk is accuracy-required work, and the obvious levers were already
+  measured and *rejected* (`emit_pixel` elision and the SIMD blitter were both
+  **slower**). Recorded so no contributor optimizes toward it by trading accuracy.
+- **libretro core license declared as `GPLv3`**, matching the notation mesen /
+  melonDS / bsnes use (SPDX `GPL-3.0-or-later` stays in the Cargo metadata).
+
+### Verified (no change required)
+
+- **SMB left-edge and the hybrid-address (Rad Racer) render.** Both were
+  investigated under reproduce-before-fixing discipline and found *already
+  correct* in the shipped build — resolved by the v2.0.0 "Timebase" rewrite and
+  the v2.0.3 2-cycle-ALE promotion, predating the report. SMB's leftmost
+  background column renders real content; the hybrid-address model passes the
+  authoritative AccuracyCoin test and renders Rad Racer cleanly. See ADR 0030's
+  v2.3.0 update.
+
+### Documentation
+
+- **Hybrid-address provenance finalized** — `NOTICE`, `docs/originality-and-provenance.md`
+  §4 and ADR 0030 move from "TriCNES-calibrated, being reworked" to "verified
+  correct, documentation/oracle-derived".
+- **TriCNES is no longer described as "transistor-level"** — it is a
+  cycle-accurate C# emulator with a sub-cycle state machine. The term properly
+  denotes die-derived simulations (`Visual2C02` / `phantom2c02`), which the repo
+  cites correctly. Corrected in source, `NOTICE`, README, ADR 0030, and the
+  published v2.0.2 / v2.2.5 release notes.
+- **GeraNES reference comments corrected** — dangling source-file paths and a
+  quoted C++ line were reworded to state honestly that its source was consulted
+  as a cross-reference for nesdev-documented behavior, with no code copied
+  (verified two-sided against the upstream source and the nesdev register maps).
 
 ## [2.2.9] - 2026-08-04 - "Studio II" (relicense to GPLv3 + TAS/movie wiring + detachable tool windows)
 

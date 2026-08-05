@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.2.9-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.3.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -668,22 +668,25 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.2.9 "Studio II"** — a **frontend quality-of-life**
-release, the fourth step of the v2.2.6 → v2.3.0 NESdev-remediation line. TAStudio
-piano-roll edits now drive the emulator, `.bk2` movies play back honoring their `LogKey`
-column order, and tool windows gain a **detach / pop-out** affordance. The detach is
-native-only and **currently embeds** the panel in the main window rather than opening a
-separate OS window — the frontend is a single-viewport `egui_winit` integration, so the
-Windows-10 "trapped window" report is **not yet fully resolved**; true OS-window detach
-(multi-viewport render-loop wiring) is a v2.3.0 follow-up. All frontend-only, so the
-deterministic core is untouched: **AccuracyCoin 141/141 (100%)**, nestest 0-diff.
+RustyNES's current release is **v2.3.0 "Datum II"** — the capstone that closes the
+v2.2.6 → v2.3.0 NESdev-remediation line. Tool panels now open as **real OS windows**
+(the v2.2.9 affordance only *embedded* them, so the Windows-10 "trapped window" report
+is now genuinely resolved), and every tool window is detachable. Profiling that work
+uncovered a **frame-pacing defect** that had been degrading any session with a debugger
+panel open: the render path held the emulator lock across the blocking swapchain wait
+and present, stalling frame production — now split so the lock covers only the UI build.
+The PPU's per-dot helpers also got **−5.13% / −3.51%** frame cost, byte-identically.
+Both remaining forum-reported accuracy items (SMB left edge, the Rad Racer
+hybrid-address render) were investigated and found **already correct**. **AccuracyCoin
+141/141 (100%)**, nestest 0-diff — now enforced as an *exact* count, not a 60% floor.
 
-The **v2.2.6 → v2.3.0** line is a de-monetization + NESdev-remediation run on the v2.0.0
+The **v2.2.6 → v2.3.0** line was a de-monetization + NESdev-remediation run on the v2.0.0
 "Timebase" one-clock scheduler: v2.2.6 "Almanac" made RustyNES permanently open-source and
 income-free (ADR 0035; the apps stay free FOSS — no ads, tracking, or paid unlock), and
-v2.2.7 "Timbre II" / v2.2.8 "Aperture II" / v2.2.9 "Studio II" address forum-reported
-audio, presentation, and TAS/movie/windowing items — each additive or default-off, so the
-shipped core stays byte-identical. The same cycle-accurate core powers the desktop,
+v2.2.7 "Timbre II" / v2.2.8 "Aperture II" / v2.2.9 "Studio II" / v2.3.0 "Datum II" address
+forum-reported audio, presentation, TAS/movie/windowing, and PPU-accuracy items — the core
+staying byte-identical except where a change is an intentional, oracle-gated accuracy fix.
+The same cycle-accurate core powers the desktop,
 browser, Android, iOS, and Libretro builds. Full per-version detail — every release back
 through v2.0.0 "Timebase" and the v1.x line — is in [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -693,18 +696,19 @@ through v2.0.0 "Timebase" and the v1.x line — is in [`CHANGELOG.md`](CHANGELOG
 
 ## Roadmap
 
-The active line is **v2.2.6 → v2.3.0** — de-monetization (ADR 0035) plus a pass through
-NESdev-forum feedback, all on the v2.0.0 "Timebase" core:
+The **v2.2.6 → v2.3.0** line — de-monetization (ADR 0035) plus a pass through
+NESdev-forum feedback, all on the v2.0.0 "Timebase" core — is now **complete**:
 
 - **Shipped:** v2.2.6 "Almanac" (de-monetization; permanently open-source and income-free),
   v2.2.7 "Timbre II" (VRC6 / Sunsoft 5B expansion-audio fidelity), v2.2.8 "Aperture II"
-  (gamma-correct scanlines), and v2.2.9 "Studio II" (TAStudio wiring, `.bk2` playback,
-  tool-window detach).
-- **Next — v2.3.0 "Datum II":** the PPU horizontal-alignment + hybrid-address accuracy
-  capstone — reworking the TriCNES-calibrated hybrid-address timing to be
-  documentation-derived (fixing the Rad Racer mis-render), verifying / fixing the SMB
-  left-edge column, and adding true multi-viewport OS-window detach — all while holding
+  (gamma-correct scanlines), v2.2.9 "Studio II" (TAStudio wiring, `.bk2` playback,
+  tool-window detach), and **v2.3.0 "Datum II"** — true multi-viewport OS-window detach,
+  the emulator-lock frame-pacing fix, a −5.1% PPU optimization, and the PPU-accuracy
+  capstone (both forum-reported items verified already-correct), holding
   **AccuracyCoin 141/141**.
+- **Next:** no line is locked. Candidates include a free-app store launch (no
+  monetization, per ADR 0035), further frontend performance work, and continued
+  mapper / accuracy breadth. See [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md).
 
 A **free** mobile store listing (Google Play / F-Droid / App Store) is a possible later,
 unversioned step with **no** monetization attached (ADR 0035). Per-release scope beyond the
@@ -848,7 +852,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {2.2.9},
+  version = {2.3.0},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (141/141), nestest 0-diff; 172 mapper families,

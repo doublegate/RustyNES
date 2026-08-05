@@ -1,12 +1,21 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.2.9** (2026-08-04) — **"Studio II"**, a frontend
-> quality-of-life release (4th of the v2.2.6 → v2.3.0 NESdev-remediation line):
-> TAStudio piano-roll edits now drive the emulator, `.bk2` movies play back
-> honoring their `LogKey` column order, and tool windows can **detach into real
-> OS windows** (fixing the Windows-10 trapped-window report). Frontend-only, so
-> the deterministic core is untouched (**AccuracyCoin 141/141**, nestest 0-diff);
-> the multi-window behavior awaits an on-device check. Built on
+> **Current release: v2.3.0** (2026-08-05) — **"Datum II"**, the capstone closing
+> the v2.2.6 → v2.3.0 NESdev-remediation line. Tool panels now open as **real OS
+> windows** (v2.2.9's affordance only *embedded* them, so the Windows-10
+> trapped-window report is now genuinely fixed) and every tool window is
+> detachable. Profiling that work found a **frame-pacing defect** predating it —
+> the render path held the emulator lock across the blocking swapchain wait and
+> present, stalling frame production whenever a debugger panel was open — now
+> split so the lock covers only the UI build. The PPU's per-dot helpers gained
+> **−5.13% / −3.51%** frame cost, byte-identically (`v2.3.0 P1`). Both remaining
+> forum-reported accuracy items (SMB left edge, Rad Racer hybrid-address) were
+> investigated and found **already correct**. **AccuracyCoin 141/141**, nestest
+> 0-diff — now enforced as an *exact* count rather than a 60% floor. Built on
+> **v2.2.9** (2026-08-04) — **"Studio II"**, a frontend quality-of-life release:
+> TAStudio piano-roll edits drive the emulator and `.bk2` movies play back
+> honoring their `LogKey` column order; its tool-window detach **embedded** the
+> panel rather than opening a separate OS window (resolved in v2.3.0). Built on
 > **v2.2.8** (2026-08-04) — **"Aperture II"**, a **presentation-fidelity**
 > release (gamma-correct scanlines in linear light + a WebGL2 gamma fix + a sharper
 > Gaussian scanline profile; presentation-only, so the pre-shader framebuffer +
