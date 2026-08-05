@@ -201,6 +201,12 @@ construction"; the porting is proven by the code and comments themselves.
    license claims in `CLAUDE.md`/memory deserve the same scrutiny as code, because agents treat
    them as ground truth.
 
+These lessons are operationalized as a ready-to-ingest, enforceable ruleset — the reference
+firewall, the four attribution surfaces, the license arithmetic, the CI checks, a pre-development
+checklist, and a paste-ready guardrail block for `CLAUDE.md` / `AGENTS.md` — in
+[`ai-emulator-provenance-guardrails.md`](ai-emulator-provenance-guardrails.md), written to be
+adopted **before** development starts (by this project or any other).
+
 The credit for surfacing this belongs to the NESdev community reviewer (Fiskbit) and staff. The
 responsibility for the failure — the port, the false claim, and the scrub — belongs to this
 project.
