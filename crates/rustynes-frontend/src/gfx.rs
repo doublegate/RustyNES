@@ -794,6 +794,23 @@ impl Gfx {
             .create_surface(window)
             .map_err(|e| GfxError::Surface(e.to_string()))?;
         let caps = surface.get_capabilities(&self.adapter);
+        // The retained adapter was selected with `compatible_surface` pointing at
+        // the MAIN window's surface, so it is not *guaranteed* to be able to
+        // present to this newly created one. When it cannot, wgpu reports empty
+        // capability vectors — and indexing `[0]` would panic the whole emulator
+        // while merely opening a tool window. Fail this one detached window
+        // instead; `DetachedManager::create` already turns the error into a log
+        // line and the panel falls back to docked.
+        let Some(&first_format) = caps.formats.first() else {
+            return Err(GfxError::Surface(
+                "retained adapter reports no supported formats for the detached surface".into(),
+            ));
+        };
+        let Some(&alpha_mode) = caps.alpha_modes.first() else {
+            return Err(GfxError::Surface(
+                "retained adapter reports no supported alpha modes for the detached surface".into(),
+            ));
+        };
         // Prefer an sRGB surface format so egui's linear->sRGB present encode
         // matches the main window; fall back to whatever the surface offers.
         let format = caps
@@ -801,7 +818,7 @@ impl Gfx {
             .iter()
             .copied()
             .find(wgpu::TextureFormat::is_srgb)
-            .unwrap_or(caps.formats[0]);
+            .unwrap_or(first_format);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -811,7 +828,7 @@ impl Gfx {
             // surface, so plain vsync (`Fifo`, guaranteed-supported) is right:
             // they do not beat against the wall-clock frame pacer.
             present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: caps.alpha_modes[0],
+            alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };

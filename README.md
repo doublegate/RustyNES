@@ -408,8 +408,8 @@ Everything has a keyboard shortcut, but nothing requires one.
   the region label, Vs. Insert Coin / FDS Swap Disk Side when relevant), Tools
   (Cheats, TAS Movies, the **TAStudio** piano-roll editor, the **Audio Mixer**, **Record
   A/V**, Netplay, RetroAchievements, a read-only **ROM Info** browser, and the **Performance
-  Monitor** — opened as floating panels; native panels also offer a **Detach** button, which
-  currently pops the panel out *within* the main window rather than as a separate OS window),
+  Monitor** — opened as floating panels; on native, every tool panel also offers a **Detach**
+  button that pops it out into a real, separate OS window you can move to another monitor),
   View (Settings, Theme, 8:7 Pixel Aspect,
   Hide Overscan, Fullscreen, Window Size 1x–4x, Show FPS, Pause When Unfocused, Show
   Menu Bar), Debug (the debugger overlay + per-chip panels), and Help (Keyboard

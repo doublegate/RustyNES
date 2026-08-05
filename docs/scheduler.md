@@ -160,7 +160,7 @@ This guarantees that save/load round-trips and a re-played input sequence produc
 > 16.639 ms NTSC budget. See `docs/performance.md` §Targets for the measured
 > numbers and why the main optimization levers were measured and rejected.
 
-- Frame cost (single-thread, no rendering): ≤ 2 ms on a 2018-era laptop x86_64 (Skylake-era) — **aspirational; ~3.9 ms measured and accepted**.
+- Frame cost (single-thread, headless core — no frontend, no present): ≤ 2 ms on a 2018-era laptop x86_64 (Skylake-era) — **aspirational; ~3.8 ms measured and accepted** (`nes_run_frame_nestest`, which renders; the render-light `flowing_palette` workload measures ~2.6 ms).
 - Frame cost including wgpu present + cpal callback: ≤ 5 ms (well under the 16.67 ms budget for 60 fps NTSC).
 - Audio callback: lock-free SPSC ring buffer; never block the audio thread.
 

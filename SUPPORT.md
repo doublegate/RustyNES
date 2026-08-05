@@ -9,7 +9,7 @@ Thank you for using RustyNES! This document provides guidance on how to get help
 1. **Check the Documentation**
    - [README.md](README.md) - Project overview and quick start
    - [docs/](docs/) - Comprehensive documentation
-   - [ROADMAP.md](ROADMAP.md) - Current development status
+   - [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md) - Current development status (the root `ROADMAP.md` is a pre-1.0 historical snapshot)
    - [FAQ](#frequently-asked-questions) - Common questions (below)
 
 2. **Search Existing Resources**
@@ -94,7 +94,7 @@ A: RustyNES is a cycle-accurate NES emulator written in pure Rust, clearing the 
 
 **Q: Can I use RustyNES now?**
 
-A: Yes. RustyNES is well past its first stable release — the current release is **v2.3.0 "Datum II"** (the capstone closing the v2.2.6 → v2.3.0 line atop the v2.0.0 "Timebase" one-clock scheduler rewrite), a complete, playable desktop application plus native Android / iOS / Libretro builds and a browser build. See [ROADMAP.md](ROADMAP.md) for what shipped and the forward directions.
+A: Yes. RustyNES is well past its first stable release — the current release is **v2.3.0 "Datum II"** (the capstone closing the v2.2.6 → v2.3.0 line atop the v2.0.0 "Timebase" one-clock scheduler rewrite), a complete, playable desktop application plus native Android / iOS / Libretro builds and a browser build. See [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md) for what shipped and the forward directions.
 
 **Q: How accurate is RustyNES?**
 
@@ -116,11 +116,11 @@ A: Native Windows, Linux, and macOS, plus a WebAssembly / GitHub Pages browser b
 
 **Q: What ROMs are supported?**
 
-A: iNES and NES 2.0 ROM formats across **51 mapper families** (including expansion audio), the Famicom Disk System (real-BIOS boot), and Vs. System / PlayChoice-10 arcade hardware. Additional mapper families are added demand-driven; see [ROADMAP.md](ROADMAP.md).
+A: iNES and NES 2.0 ROM formats across **172 mapper families** (including expansion audio) plus the UNIF (`.unf`) container, the Famicom Disk System (real-BIOS boot), and Vs. System / PlayChoice-10 arcade hardware. Additional mapper families are added demand-driven; see [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md).
 
 **Q: Does RustyNES support [feature]?**
 
-A: The feature set includes rollback netplay (2–4 players), RetroAchievements (opt-in), TAS movie record/playback, save-states, rewind, run-ahead, Game Genie + raw-RAM cheats, an egui debugger, Lua scripting, a TAS editor, HD packs, and shader/NTSC filters — plus native Android / iOS / Libretro builds. Check the [ROADMAP.md](ROADMAP.md) for delivered milestones and forward directions.
+A: The feature set includes rollback netplay (2–4 players), RetroAchievements (opt-in), TAS movie record/playback, save-states, rewind, run-ahead, Game Genie + raw-RAM cheats, an egui debugger, Lua scripting, a TAS editor, HD packs, and shader/NTSC filters — plus native Android / iOS / Libretro builds. Check [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md) for delivered milestones and forward directions.
 
 **Q: Can I embed RustyNES in my project?**
 

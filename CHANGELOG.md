@@ -102,7 +102,8 @@ panel open.
 - **GeraNES reference comments corrected** — dangling source-file paths and a
   quoted C++ line were reworded to state honestly that its source was consulted
   as a cross-reference for nesdev-documented behavior, with no code copied
-  (verified two-sided against the upstream source and the nesdev register maps).
+  (reviewed two-sided against the upstream source and the nesdev register maps).
+  Recorded as an assessment for expert review, not a self-certification.
 
 ## [2.2.9] - 2026-08-04 - "Studio II" (relicense to GPLv3 + TAS/movie wiring + detachable tool windows)
 
@@ -416,9 +417,12 @@ byte-identical to v2.2.3 by construction.
 
 ## [2.2.3] - 2026-07-23 - "Datum" (fast dot path promoted + PGO shipped + the last two mapper residuals closed)
 
-A performance and accuracy-closure patch. Zero shipped-default behavior change on the
-deterministic core — **AccuracyCoin 141/141, nestest 0-diff**, `visual_regression` and
-the APU oracles unmoved.
+A performance and accuracy-closure patch. No *regression* on the deterministic core —
+**AccuracyCoin 141/141, nestest 0-diff**, `visual_regression` and the APU oracles unmoved.
+(This release does change shipped-default behavior by design: the fast PPU dot path became
+the default, two Holy Mapperel mapper residuals were closed, the Sunsoft 5B level was
+calibrated, and the save-state schema gained `PPU_SNAPSHOT_VERSION` 8 + an APU v4 tail —
+each an intentional, oracle-gated change, detailed below.)
 
 ### Performance
 

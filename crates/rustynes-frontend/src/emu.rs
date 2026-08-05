@@ -105,9 +105,64 @@ impl EmuHandle {
     /// thread must not wedge the other (the core's state is a plain value;
     /// the next frame either works or panics identically).
     pub fn lock(&self) -> std::sync::MutexGuard<'_, EmuCore> {
+        #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+        debug_assert!(
+            !gpu_phase_active(),
+            "EmuHandle::lock() called from the GPU phase of a frame. v2.3.0 split the \
+             shell render into `run_shell_ui` (holds this lock) and `paint_shell` (must \
+             not), because holding it across the blocking swapchain acquire + present \
+             parked the emulation thread for up to a full display refresh every frame. \
+             Re-locking inside the paint/overlay path silently reintroduces that stall \
+             with no other symptom than the stutter coming back."
+        );
         self.inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+// v2.3.0 "Datum II" — debug-only guard for the phase-1/phase-2 lock-scope
+// invariant introduced when `render_shell` was split.
+//
+// The split is load-bearing for frame pacing but is enforced by nothing except
+// care: today the native `extra` closure deliberately uses the `ss_dir` / `ss_sha`
+// values snapshotted *before* the pass precisely so it need not re-lock, and a
+// future panel that re-locked inside the paint path would compile fine, pass every
+// test, and quietly restore the stall. This makes that mistake fail loudly in debug
+// builds. Zero cost in release (`debug_assertions` off) and never compiled on wasm,
+// which has no emulation thread to starve.
+#[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+thread_local! {
+    static GPU_PHASE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// True while the calling thread is inside a frame's GPU phase.
+#[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+#[must_use]
+pub fn gpu_phase_active() -> bool {
+    GPU_PHASE.with(std::cell::Cell::get)
+}
+
+/// RAII marker for the GPU phase of a frame — construct it around the
+/// paint/encode/present region so any `EmuHandle::lock` inside trips the
+/// debug assertion above.
+#[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+pub struct GpuPhaseGuard;
+
+#[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+impl GpuPhaseGuard {
+    /// Enter the GPU phase.
+    #[must_use]
+    pub fn enter() -> Self {
+        GPU_PHASE.with(|c| c.set(true));
+        Self
+    }
+}
+
+#[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+impl Drop for GpuPhaseGuard {
+    fn drop(&mut self) {
+        GPU_PHASE.with(|c| c.set(false));
     }
 }
 

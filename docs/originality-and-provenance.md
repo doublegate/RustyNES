@@ -145,11 +145,13 @@ documented: the nesdev wiki for the mapper bus-conflict / address-decode masks
 (the affected comments already cite `INES_Mapper_089/093`), and RetroArch's
 public `#pragma parameter` specification for the shader-parameter UI. The
 RustyNES implementations are independent Rust (`value & self.read_prg(addr)`, not
-the C++ line), and **no GeraNES code was copied**. Because only unprotectable,
-publicly-documented *behavior* was relied on — not GeraNES's copyrightable
-*expression* — this does not incorporate GPL-3.0-only code and does not constrain
-the project's GPL-3.0-or-later grant. The comments have been reworded to state
-this accurately and to drop the now-removed source-path citations (the local
+the C++ line). On the evidence below, the maintainers' **assessment** is that only
+unprotectable, publicly-documented *behavior* was relied on rather than GeraNES's
+copyrightable *expression*, and therefore that no GPL-3.0-only code is
+incorporated and the project's GPL-3.0-or-later grant is unconstrained. That is a
+position supported by the record, **not a certification** — see the caveat at the
+end of this section. The comments have been reworded to state the relationship
+accurately and to drop the now-removed source-path citations (the local
 reference-emulator tree was deleted from disk; see the reference firewall in
 `AGENTS.md`).
 
@@ -163,8 +165,22 @@ RustyNES's `m089_sunsoft2.rs` / `m093_sunsoft3r.rs` *and* against the nesdev wik
 expression of the documented hardware (merger doctrine). No arbitrary,
 non-hardware-dictated choice coincides (identifiers, decomposition, and idiom are
 independent Rust), which is the signature distinguishing documented-fact
-convergence from copying. Conclusion: no GeraNES code is copied; GPL-3.0-or-later
-stands.
+convergence from copying.
+
+**Status, not a verdict.** The paragraphs above record what was examined and what
+was found; they are deliberately not a clearance. This project's provenance rules
+(`docs/ai-emulator-provenance-guardrails.md`) forbid self-certifying license
+cleanliness, and for good reason: the original provenance failure was caught by an
+outside NESdev reviewer, not by the project's own tooling or by the AI assistance
+that produced the code. Two specific residual uncertainties are worth naming.
+First, whether a given coincidence is "the single correct expression of a
+documented fact" is ultimately a legal judgement about merger and scenes-a-faire,
+not something a code comparison settles. Second, the review covered the files the
+in-source comments pointed at; it does not prove the absence of consultation
+elsewhere. This assessment is therefore offered **for human and expert review**,
+and a qualified reviewer who disagrees should be treated as authoritative over it.
+The remedy in that case is the same one v2.2.9 already applied once — relicense
+and attribute, never quietly reword.
 
 Because the license of the derived-from GPL code governs regardless of how any
 one file was used, the whole project is GPL-3.0-or-later; the oracle/derivation

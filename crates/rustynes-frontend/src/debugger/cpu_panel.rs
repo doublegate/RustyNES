@@ -97,6 +97,12 @@ const FLAG_NAMES: [&str; 8] = ["N", "V", "_", "B", "D", "I", "Z", "C"];
 /// (the caller queues it on the tracker + keeps the emulator running until it is
 /// satisfied).
 #[must_use]
+// The argument list is the panel's read-only view of debugger state: the egui
+// context, the detached-panel set, the open flag, panel state, the live `Nes`,
+// and four independent read-only sources (symbols + their status, the callstack,
+// the source map + its status). Bundling them into a struct would add a type
+// whose only purpose is to be destructured here, and would still borrow the same
+// disjoint fields of `DebuggerOverlay` at the call site.
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ctx: &egui::Context,

@@ -307,7 +307,8 @@ impl EmuControl {
     /// UI thread could block for up to a full produce (~4 ms) whenever the emulation
     /// thread happened to hold the lock — per iteration, in a spin loop. This atomic
     /// is written by `App` at the same points it starts/stops the thread, so it is
-    /// the authoritative answer and costs one relaxed-acquire load.
+    /// the authoritative answer and costs one `Acquire` load, which pairs with the
+    /// `Release` store in `set_has_rom`.
     #[must_use]
     pub fn has_rom(&self) -> bool {
         self.has_rom.load(Ordering::Acquire)

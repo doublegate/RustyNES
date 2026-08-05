@@ -67,10 +67,16 @@ cross-check documented hardware behavior (no code incorporated):
   nesdev-wiki bus-conflict / address-decode masks and RetroArch's public
   `#pragma parameter` shader-UI convention -- but no GeraNES code was copied: the
   RustyNES implementations are independent Rust of that documented behavior.
-  Because only the unprotectable documented behavior was relied on (not GeraNES's
-  copyrightable expression), no GPL-3.0-only code is incorporated and the
-  project's "or-later" grant is unaffected. See
-  docs/originality-and-provenance.md sec. 3.
+  The maintainers' ASSESSMENT is that only the unprotectable documented behavior
+  was relied on (not GeraNES's copyrightable expression), and therefore that no
+  GPL-3.0-only code is incorporated and the project's "or-later" grant is
+  unaffected. That is a position supported by a two-sided review, NOT a
+  certification: whether a given coincidence is the single correct expression of
+  a documented fact is a legal judgement, and this project does not self-certify
+  license cleanliness. Offered for human and expert review; a qualified reviewer
+  who disagrees should be treated as authoritative. See
+  docs/originality-and-provenance.md sec. 3 for the evidence and the residual
+  uncertainties.
 * higan -- GPL-3.0-or-later -- scheduler-structure reference / oracle.
 * ares -- BSD-2-Clause / Apache-2.0 -- palette-integration reference and oracle.
 

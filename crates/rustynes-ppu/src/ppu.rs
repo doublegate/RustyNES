@@ -4311,7 +4311,9 @@ impl Ppu {
         }
     }
 
-    // v2.3.0 (perf) — called once per dot (89,342×/frame) on the fast dot path;
+    // v2.3.0 (perf) — called once per ELIGIBLE dot on the fast dot path (visible
+    // dots 1..=256 with rendering enabled: up to 61,440/frame, not all 89,342 —
+    // idle lines and rendering-disabled paths bypass it entirely);
     // `perf annotate` showed its own prologue/epilogue (`push`/`ret`) as the two
     // hottest instructions in the body, i.e. pure call overhead LLVM had declined
     // to remove. `inline` lets it be folded into the dot loop. Byte-identical (an

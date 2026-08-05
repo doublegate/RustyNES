@@ -299,6 +299,24 @@ impl DetachedManager {
         let output = ctx.run_ui(raw, build);
         w.state
             .handle_platform_output(&w.window, output.platform_output);
+
+        // Honour egui's own repaint request. `run_ui` reports, per viewport, how
+        // long it is willing to wait before the next frame; a ZERO delay means it
+        // wants another frame immediately — a hover highlight or active-widget
+        // colour mid-transition, a spinner, a text cursor blink.
+        //
+        // This matters most for the `OnInteraction` refresh tier, which is the one
+        // tier that never re-arms from the emulator frame clock. Without this, an
+        // animation that egui started would stop partway and only resume on the
+        // next user input, leaving the widget stuck in a half-lit state.
+        if output
+            .viewport_output
+            .values()
+            .any(|v| v.repaint_delay.is_zero())
+        {
+            w.window.request_redraw();
+        }
+
         Some(PreparedDetachedFrame {
             shapes: output.shapes,
             textures_delta: output.textures_delta,

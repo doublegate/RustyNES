@@ -586,7 +586,9 @@ not the state machines themselves:
 
 - In `tick_sprite_eval_per_dot` the two hottest instructions in the whole body were
   its own `push %rax` (5.35%) and `ret` (5.41%) — **pure call overhead**. It is
-  invoked once per dot (89,342×/frame) from the fast dot path, and LLVM had
+  invoked once per *eligible* dot from the fast dot path — visible dots 1..=256
+  with rendering enabled, up to 61,440/frame (not all 89,342: idle lines and
+  rendering-disabled paths bypass it) — and LLVM had
   declined to inline it.
 - `tick_oam_bus` derived `sprite_height` (a `PpuCtrl` test) and the y-test
   reference `scan` **before** its dot-0 early-out, computing and discarding both.

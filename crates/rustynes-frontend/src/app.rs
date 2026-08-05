@@ -3995,12 +3995,6 @@ impl App {
         if let Some(gfx) = self.gfx.as_ref() {
             gfx.window.request_redraw();
         }
-        // v2.3.0 "Datum II" — refresh detached tool windows once per produced frame,
-        // but only those whose content actually changes: `Live` panels every frame,
-        // `Throttled` panels at ~10 Hz, and static `OnInteraction` panels not at all
-        // here (they repaint on interaction). Keeps a wall of detached panels cheap.
-        #[cfg(not(target_arch = "wasm32"))]
-        self.detached.request_redraw_tick();
     }
 
     /// Act on the UI-thread side effects a core produce surfaced (RA status
@@ -4112,7 +4106,9 @@ impl App {
     /// "Load from Slot" out under this same condition (`ui_shell::rom_interactive`
     /// = `rom && !replay_locked`), but the hotkey + `MenuAction` dispatch must
     /// honour it too — otherwise the greyed item is bypassable via the bound key.
-    /// Mirrors the `GeraNES` reference emulator's replay-interaction lockout.
+    /// Behaviour-parity note: the `GeraNES` reference emulator applies an
+    /// equivalent replay-interaction lockout (observed as a black-box oracle; no
+    /// code derived from it).
     fn replay_interaction_locked(&self) -> bool {
         let emu = self.emu.lock();
         emu.movie.is_recording() || emu.movie.is_playing()
@@ -6830,6 +6826,20 @@ impl App {
     /// the debugger + the raw-cheat pull.
     #[cfg(not(target_arch = "wasm32"))]
     fn post_produce_housekeeping(&mut self) {
+        // v2.3.0 "Datum II" — refresh detached tool windows once per produced
+        // frame, but only those whose content actually changes: `Live` panels
+        // every frame, `Throttled` panels at ~10 Hz, and static `OnInteraction`
+        // panels not at all here (they repaint from egui's own repaint request on
+        // interaction). Keeps a wall of detached panels cheap.
+        //
+        // This lives HERE rather than in `on_emu_frame` because that function is
+        // compiled only under the `emu-thread` feature. The synchronous
+        // production paths (`pace_frames`, the display-sync redraw) run this
+        // function instead, so anchoring the tick to `on_emu_frame` froze every
+        // detached window's `Live`/`Throttled` refresh in an `emu-thread`-off
+        // build. `post_produce_housekeeping` is the one point both regimes share.
+        self.detached.request_redraw_tick();
+
         // v2.2.0 — persist the FDS writable disk if it changed this frame.
         // Cheap when clean / non-FDS (a `disk_is_dirty()` check only).
         self.flush_fds_save();
@@ -8896,6 +8906,14 @@ impl ApplicationHandler<AppEvent> for App {
                     // ---- PHASE 2 — paint it, with the emulator lock RELEASED ----
                     // Runs inside `Gfx`'s render (after the blocking swapchain
                     // acquire), so the emulation thread is free to produce throughout.
+                    //
+                    // Debug builds arm a marker for the whole phase: any
+                    // `EmuHandle::lock` reached from here trips a `debug_assert`,
+                    // so a future panel that re-locks inside the paint path fails
+                    // loudly instead of silently restoring the stall this split
+                    // removed. Zero cost in release.
+                    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                    let _gpu_phase = crate::emu::GpuPhaseGuard::enter();
                     let overlay = move |device: &wgpu::Device,
                                         queue: &wgpu::Queue,
                                         encoder: &mut wgpu::CommandEncoder,
