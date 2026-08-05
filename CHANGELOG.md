@@ -14,34 +14,6 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-### Documentation — Provenance guardrails + reference firewall
-
-- **New:** `docs/ai-emulator-provenance-guardrails.md` — a preventive, console-agnostic
-  ruleset (reference firewall, four attribution surfaces, license accounting, mechanical
-  CI enforcement, a pre-development checklist, a paste-ready guardrail block, red flags)
-  written to stop the copyleft-source-lifting failure from recurring in any AI-assisted
-  emulator project. Shared as community best-guidance.
-- **New:** `docs/provenance-failure-postmortem.md` — a forensic root-cause analysis of how
-  GPL emulator code was reproduced despite a black-box instruction and then laundered, and
-  how it was corrected (relicense to GPL-3.0-or-later, honest re-attribution).
-- **New:** themed PDFs of both documents in `ref-docs/`
-  (`AI-Emulator-Provenance-Guardrails.pdf`, `RustyNES_Provenance-Failure-Postmortem.pdf`).
-- **Ingested** the guardrails into `AGENTS.md` (and via symlink `CLAUDE.md`/`GEMINI.md`) as
-  the **"MOST IMPORTANT RULE"** section, and into the project memory bank, so every session
-  loads the reference firewall as standing context.
-- **Reference firewall — `ref-proj/` removed.** The local reference-emulator clone (Mesen2,
-  puNES, FCEUX, GeraNES, TriCNES, tetanes, …) has been **removed from disk**; it stays
-  gitignored (and excluded from `.dockerignore` / `.markdownlintignore` / pre-commit /
-  CodeRabbit) as a firewall guard so reference-emulator *source* is out of the agent's
-  reach by design. In-source provenance citations were normalized from the removed
-  local-clone path `ref-proj/<Emulator>/<file>` to upstream-relative `<Emulator>/<file>`
-  (comments-only — the deterministic core is byte-identical; the derivation/license wording
-  is unchanged, nothing laundered). Tooling docs that built reference emulators as oracles
-  (`docs/tooling/oracle-tooling-setup.md`, `docs/ppu-trace-tooling.md`) now state that any
-  such build must live out-of-tree, outside the agent's allowed paths, and be used for its
-  output only. Added a "Provenance & Licensing" section to `docs/DOCUMENTATION_INDEX.md` and
-  the mkdocs nav, and a reference-firewall note to `README.md`.
-
 ## [2.2.9] - 2026-08-04 - "Studio II" (relicense to GPLv3 + TAS/movie wiring + detachable tool windows)
 
 The fourth step of the **v2.2.6 → v2.3.0** NESdev-remediation line. Its headline
@@ -53,10 +25,13 @@ trapped inside the main OS window on Windows 10. The code changes are
 frontend-only, so the deterministic chip stack, save-states, and every golden
 vector are byte-identical (AccuracyCoin 141/141, nestest 0-diff).
 
-> **Windowing needs an on-device check.** Detached tool windows use egui
-> multi-viewport (real OS windows); the mechanism compiles and clippy-passes on
-> native + wasm, but the multi-window behavior itself is best confirmed on a
-> desktop (ideally the Windows 10 host from the report).
+> **Windowing — honest scope.** The detach affordance is **native-only and
+> currently *embeds***: the frontend is a single-viewport `egui_winit`
+> integration, so `show_viewport_immediate` renders a detached panel *inside* the
+> main window rather than as a separate OS window — so this does **not** yet fully
+> resolve the Windows-10 "trapped window" report. True OS-window detach needs
+> multi-viewport render-loop wiring (`set_embed_viewports(false)` + per-viewport
+> winit windows), tracked as a v2.3.0 follow-up (see the detailed "Fixed" entry).
 
 ### Changed — License: MIT/Apache-2.0 → GPL-3.0-or-later
 
@@ -86,6 +61,43 @@ vector are byte-identical (AccuracyCoin 141/141, nestest 0-diff).
   components (emu2413/MIT, TriCNES/MIT, rcheevos/MIT, blip_buf/LGPL-2.1-or-later,
   fonts) are GPL-compatible and keep their notices. Zero emulation-core behavior
   change.
+
+### Added — Provenance & license firewall (+ import hardening)
+
+- **Guardrails ruleset + post-mortem.** `docs/ai-emulator-provenance-guardrails.md`
+  — a preventive, console-agnostic ruleset (reference firewall, four attribution
+  surfaces, license accounting, mechanical CI enforcement, a pre-development
+  checklist, a paste-ready block, red flags) that stops the copyleft-source-lifting
+  failure from recurring in any AI-assisted emulator project (shared as community
+  best-guidance) — and `docs/provenance-failure-postmortem.md`, the forensic
+  root-cause analysis of how GPL code was reproduced despite a black-box
+  instruction and then laundered, and how it was corrected. Themed PDFs of both in
+  `ref-docs/`. The guardrails are **ingested into `AGENTS.md`** (via the
+  `CLAUDE.md` / `GEMINI.md` symlinks) as the **"MOST IMPORTANT RULE"** section and
+  into the project memory bank, so every session loads the reference firewall as
+  standing context. A "Provenance & Licensing" section links them from
+  `docs/DOCUMENTATION_INDEX.md` + the mkdocs nav, and `README.md` carries a
+  reference-firewall note.
+- **Reference firewall — the reference-emulator clone removed.** The local
+  reference-emulator clone has been **removed from disk**; it stays gitignored (and
+  excluded from `.dockerignore` / `.markdownlintignore` / pre-commit / CodeRabbit)
+  as a firewall guard so the *copyleft* references' source (Mesen2 / puNES / FCEUX /
+  GeraNES, GPL) is out of the agent's reach by design. In-source provenance
+  citations were normalized from the removed local-clone path to upstream-relative
+  form (comments-only — the deterministic core is byte-identical; nothing
+  laundered), and the `docs/originality-and-provenance.md` §1 derivation table was
+  audited so every upstream header a file's comments cite is listed. **MIT TriCNES
+  is the deliberate exception**, vendored in-repo with attribution under
+  `crates/rustynes-test-harness/golden/tricnes/`; the tooling docs
+  (`oracle-tooling-setup.md`, `ppu-trace-tooling.md`) scope the out-of-tree /
+  never-reproduce rule to the copyleft references accordingly.
+- **`.bk2` import hardened against a `LogKey` allocation-amplification DoS.**
+  `bk2_interop::parse_log_key` now reads only the console/P1/P2 groups from the
+  `split('#')` iterator instead of collecting every `#`-group, so a hostile movie
+  padded with `#` delimiters can no longer amplify into an unbounded `Vec<&str>`
+  on import. Behavior is identical for valid movies (guarded by a new
+  `log_key_bounded_against_pathological_group_padding` regression test); the
+  deterministic core is unaffected.
 
 ### Fixed
 
