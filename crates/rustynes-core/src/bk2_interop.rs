@@ -366,8 +366,15 @@ fn parse_log_key(log_key: &str) -> PadColumnMaps {
     // empty console group (`##P1...`) must keep its slot so P1/P2 don't shift
     // left into it. groups[0] = console, groups[1] = P1, groups[2] = P2.
     let body = body.strip_prefix('#').unwrap_or(body);
-    let groups: Vec<&str> = body.split('#').collect();
-    let cols = |g: Option<&&str>| -> Vec<Option<Buttons>> {
+    // Read ONLY the three groups we consume (console, P1, P2) straight from the
+    // split iterator rather than collecting every `#`-group: a hostile `.bk2`
+    // padded with `#` delimiters would otherwise allocate one `&str` slot per
+    // empty group (~16 bytes each) and could exhaust memory on import. `split`
+    // still yields empty groups, so `next()` preserves the empty console slot
+    // (`##P1...`) and keeps P1/P2 from shifting left into it.
+    let mut groups = body.split('#');
+    let _console = groups.next(); // groups[0] = console (unused)
+    let cols = |g: Option<&str>| -> Vec<Option<Buttons>> {
         let mapped: Vec<Option<Buttons>> = g.map_or_else(Vec::new, |grp| {
             // Strip only the trailing `|` delimiter each group carries; keep
             // interior empty columns (`P1 Up||P1 A`) so a button's column index
@@ -387,8 +394,8 @@ fn parse_log_key(log_key: &str) -> PadColumnMaps {
             default_pad_columns()
         }
     };
-    // groups[0] = console; groups[1] = P1; groups[2] = P2.
-    (cols(groups.get(1)), cols(groups.get(2)))
+    // groups[1] = P1; groups[2] = P2, read in order from the same iterator.
+    (cols(groups.next()), cols(groups.next()))
 }
 
 /// Parse the `Input Log.txt` member into the per-frame [`FrameInput`] stream.
@@ -769,6 +776,30 @@ mod tests {
             ),
             Err(Bk2Error::Unsupported(_))
         ));
+    }
+
+    #[test]
+    fn log_key_bounded_against_pathological_group_padding() {
+        // Hardening regression (v2.2.9): `parse_log_key` reads only the console,
+        // P1, and P2 groups straight from the `split('#')` iterator instead of
+        // collecting every `#`-group, so a hostile `.bk2` padded with a large
+        // number of `#` delimiters cannot amplify into an unbounded `Vec<&str>`
+        // on import. The trailing empty groups must be ignored and P1/P2 must
+        // still map correctly.
+        let mut log = String::from("[Input]\nLogKey:#Reset|Power|#P1 Up|P1 A|#P2 Up|P2 A|");
+        log.push_str(&"#".repeat(100_000)); // pathological trailing delimiters
+        log.push_str("\n|..|U.|.A|\n[/Input]\n");
+        let (m, _) = import_bk2("Platform NES\n", &log, TEST_SHA).expect("import padded LogKey");
+        assert_eq!(
+            m.frames[0].p1,
+            Buttons::UP,
+            "P1 col 0 = Up maps despite trailing `#` padding"
+        );
+        assert_eq!(
+            m.frames[0].p2,
+            Buttons::A,
+            "P2 col 1 = A maps despite trailing `#` padding"
+        );
     }
 
     #[test]
