@@ -661,6 +661,102 @@ for a byte-identical escape hatch is not justified.
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
 
+### v2.3.2 G7/G8/G9/G10 — inline hints, typed indices, capability gate, adapter hoist (decision: all REJECTED)
+
+The last four campaign items. With G1–G6 the score is **ten measured, ten
+rejected**, which is itself the release's finding — see the summary below.
+
+**G7 (plan item 1) — `#[inline]` on `bus.rs`.** The plan called this "the highest
+expected value in the plan" because `bus.rs` carries **zero** `#[inline]` hints
+across 5,349 lines. True, but only **three** of its functions survive codegen as
+symbols: `cpu_clock` (18.32%), `raw_cpu_read` (2.45%), `apply_genie` (0.12%). The
+specifically-named `run_ppu_to`, `apu_advance_one`, and the twelve
+`PpuBusAdapter` forwarders emit **no symbol at all** — fat LTO already inlines
+every one, so hinting them instructs the compiler to do what it has done.
+
+Hinting the two that genuinely are not inlined, measured separately because they
+are opposite bets:
+
+| candidate | `nestest` | control | verdict |
+| --- | ---: | ---: | --- |
+| `#[inline]` on both | **+0.60%** (p = 0.02) | −0.10% (p = 0.72) | **regression** |
+| `#[inline]` on `raw_cpu_read` only | −0.98% (p = 0.00) | −0.76% (p = 0.01) | drift |
+
+Hinting the large function *hurts* — `cpu_clock` contains the entire inlined APU,
+and duplicating it at every call site costs more in I-cache than the call saved,
+the same mechanism that made v2.2.3 P3 slower. Hinting the small one does
+nothing. All non-`nestest` workloads flat throughout.
+
+**This weakens, without disproving, G3's hypothesis** that v2.3.0 P1's −5.13%
+came from its `#[inline]` rather than its code motion. P1's hint was on a small
+per-dot *PPU* function, structurally unlike either function here, so the
+hypothesis is untested rather than refuted — but two attempts to find an
+inline-hint win on this core have now failed, and it should not be repeated as
+though it were established.
+
+**G8 (plan item 10) — `oam` / `ciram` as fixed arrays.** Both are `Box<[u8]>`
+indexed with `& 0xFF` / `& 0x07FF`, so the bounds check is provably dead but the
+type does not say so; `[u8; 0x100]` / `[u8; 0x800]` encode the length statically
+and elide it with no `unsafe`. The swap is four lines — surrounding code coerces
+arrays to slices transparently. Result: `nestest` −0.61% (p = 0.05) against a
+control of **−0.78% (p = 0.01)**, everything else flat. The checks really were
+removed; removing them bought nothing. Matches v2.2.3 P3 on the same shape.
+
+**G9 (plan item 3) — capability-gate `bg_split_state`.** Ceiling probe skipped the
+per-fetch mapper dispatch outright. Three workloads flat;
+`flowing_palette_fast` moved +0.54% (p = 0.03) with a **control of +0.81%
+(p = 0.00)** on that same workload. Ceiling zero, consistent with the 0.09% the
+symbol carries in the profile.
+
+**G10 (plan item 4) — hoist `PpuBusAdapter` out of the dot loop. Not implementable
+under this campaign's constraints, and pointless if it were.** The plan reads the
+per-dot construction as an oversight defeating vtable hoisting. It is forced: the
+adapter holds `mapper: self.mapper.as_mut()`, and `self.sample_nmi_edge()` runs
+in the same loop taking `&mut self`. Hoisting would hold a mutable borrow of
+`self.mapper` across a call needing all of `self` — rejected by the borrow
+checker. With **no `unsafe` in the chip stack** (the standing constraint), it
+cannot be done without restructuring `sample_nmi_edge` onto disjoint fields. And
+the profile says there is nothing to win: no `PpuBusAdapter` symbol survives
+codegen, its three field moves already inlined into callers measured at zero.
+
+---
+
+#### Campaign summary: why ten of ten were rejected
+
+Ten items, ten rejections, via **six distinct mechanisms** — the diversity is the
+point, because it means this is not one bad assumption repeated:
+
+| mechanism | items |
+| --- | --- |
+| LLVM already performs the transformation | G3 (sink dead derivations) |
+| the premise is factually false | G2 (`repr(Rust)` ignores source order), G7 (already inlined) |
+| the work is real but free — absorbed off the critical path | G4 (store buffer), G5 (predicted branches), G6 (recompute) |
+| the elision is real but buys nothing | G8 (bounds checks) |
+| the target is too small to matter | G9 (0.09%) |
+| forbidden by the ownership model | G10 (borrow checker) |
+
+The unifying finding: **the per-dot loop has no incidental overhead left to
+reclaim.** Its ~3.78 ms is spent on work the accuracy model requires, and the
+core is issue-limited on that work rather than on the bookkeeping the campaign
+targeted. This corroborates the existing record rather than contradicting it —
+`emit_pixel` bounds-check elision measured *slower* (P3), the SIMD blitter
+measured *slower* (v2.1.8 A2), and the APU mixer lever capped at ≤1.9% (P4).
+
+Two methodological results outlast the items themselves:
+
+1. **The A/B/A order-bias control** (added in G2) fired on essentially every
+   subsequent run and is the only reason G6 was not adopted on a −0.51%
+   (p = 0.00) reading of a *shipped* configuration that measured +0.01%
+   (p = 0.96) on re-run.
+2. **Ceiling probes** — delete the work, knowingly breaking correctness, and
+   measure the upper bound before building anything. G4, G5, G6 and G9 were each
+   settled by one benchmark run instead of a day of engineering; G4 alone would
+   have meant threading an opt-in flag through four consumers for a zero gain.
+
+The remaining levers are structural, not micro-architectural: v2.3.3's frontend
+copy chain (three full 720 KiB memcpys per displayed frame) and snapshot slimming
+(~250 KB per run-ahead frame) are whole-buffer costs, not instruction-level ones.
+
 ### v2.3.2 G4/G5/G6 — three "obvious waste" items, all ceiling-zero (decision: REJECTED)
 
 Measured by **ceiling probe**: rather than engineer each optimization and then
