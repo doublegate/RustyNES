@@ -661,6 +661,61 @@ for a byte-identical escape hatch is not justified.
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
 
+### v2.3.2 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
+
+The campaign's highest-ranked *code* item, and the same transformation shape as
+the adopted v2.3.0 P1. Two sites compute values they then discard:
+
+- `tick_sprite_eval_per_dot` derives `next_line` and `sprite_height` on entry,
+  but the `match self.dot` consumes them only in the `65..=256` arm — dead on
+  dots 0, 1..=64 and 257..=340, i.e. **149 of 341 dots**.
+- `tick_oam_bus` derives `sprite_height` and `scan` above the `cycle < 65`
+  secondary-OAM-clear path that discards both — dead across a quarter of every
+  visible line. (v2.3.0 P1 had already moved the `cycle == 0` return above them.)
+
+Both were sunk to their single point of use — in the sprite-eval case, inside the
+`if !self.sprite_eval_done` guard, tighter than the match arm. All inputs are
+pure reads of `scanline` / `region` / `ctrl`, so byte-identical by construction.
+
+**Correctness verified before measuring:** AccuracyCoin **100.00% over 141
+assigned tests**, `visual_regression` 9/9 (golden framebuffers — the direct
+byte-identity evidence), full `--features test-roms` workspace suite green,
+clippy clean at `-D warnings`.
+
+**Two independent A/B runs, and the order-bias control is the story:**
+
+| workload | run 1 candidate | run 2 candidate |
+| --- | ---: | ---: |
+| `nestest` | −0.56% (p = 0.00) | −0.05% (p = 0.84) |
+| `flowing_palette` | +0.20% (p = 0.33) | −0.17% (p = 0.17) |
+| `nestest_fast` *(shipped)* | −0.03% (p = 0.91) | −0.14% (p = 0.48) |
+| `flowing_palette_fast` *(shipped)* | −0.01% (p = 0.95) | +0.01% (p = 0.96) |
+
+Run 1's `nestest` −0.56% at p = 0.00 looks like a small real win. It is not, and
+the A/B/A control proves it directly rather than by argument: **run 2's control —
+the reference benched against itself, with no code difference whatsoever —
+reported `nestest` at −0.59%, p = 0.00.** The drift and the "effect" are the same
+size, on the same workload, at the same significance. Run 1's control had already
+flagged a −0.39% (p = 0.03) drift on `nestest_fast`.
+
+**Rejected and reverted.** Both shipped `_fast` variants are flat across both
+runs (p ≥ 0.48, intervals straddling zero).
+
+**Why it does nothing — the generalizable finding.** LLVM already sinks pure,
+side-effect-free computations past branches that do not use them. At
+`opt-level = 3` with fat LTO, writing the sink by hand tells codegen nothing it
+had not already worked out. The source change made explicit what the optimizer
+was doing anyway.
+
+This reframes **v2.3.0 P1**, which bundled an `#[inline]` with a hoist of exactly
+this shape and measured −5.13%. The two were never separated. G3 is evidence that
+the hoist half contributes ~nothing, which points at the `#[inline]` — a change
+to the *inliner's cost model*, something LLVM cannot infer — as the actual source
+of that win. Recorded as a hypothesis, not a conclusion: it was not re-measured
+in isolation.
+
+Both sites keep a comment marking the attempt so it is not re-tried.
+
 ### v2.3.2 G2 — `Ppu` field layout (decision: REJECTED — and it exposed a harness bug)
 
 The campaign item asked to reorder `Ppu`'s 114 fields by access frequency,

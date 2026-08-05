@@ -4187,6 +4187,11 @@ impl Ppu {
         if cycle == 0 {
             return;
         }
+        // NOTE (v2.3.2 G3): pushing these two below the `cycle < 65` early-out
+        // as well — they are dead across the dots 1..=64 clear window — was
+        // measured and produced NO change on any workload across two runs. LLVM
+        // already sinks pure computations past branches that do not use them.
+        // Do not re-attempt as a performance change; see `docs/performance.md`.
         let sprite_height: i16 = if self.ctrl.contains(PpuCtrl::SPRITE_SIZE_16) {
             16
         } else {
@@ -4339,6 +4344,12 @@ impl Ppu {
         // this by using -1 as the y-test reference, which makes
         // `-1 - y < 0` for all OAM y values, so the y-test always
         // fails at pre-render and scanline 0 sees no sprites.
+        //
+        // NOTE (v2.3.2 G3): sinking these two to their single use site in the
+        // `65..=256` arm — they are dead on 149 of 341 dots — was measured and
+        // produced NO change on any workload across two runs. LLVM already sinks
+        // pure computations past branches that do not use them. Do not re-attempt
+        // as a performance change; see `docs/performance.md`.
         let next_line: i16 = if self.scanline == self.region.prerender_line() {
             -1
         } else {

@@ -45,8 +45,13 @@
 #
 # ## Reading the result
 #
-# criterion prints, per workload, `change: [lo mid hi] (p = ...)`. Adopt only
-# when the change is negative, the WHOLE interval clears -3%, and p < 0.05.
+# criterion prints, per workload, `change: [lo mid hi] (p = ...)`, and the run
+# ends with an A/B/A order-bias control plus the full adoption rule.
+#
+# The bar is EVIDENCE QUALITY, not effect size (maintainer decision, v2.3.2): a
+# consistent, reproduced, statistically clean gain is adoptable even below 3%.
+# What is NOT negotiable is the second independent run -- a single run has
+# already produced a p=0.00 result on all four workloads that was pure artifact.
 # A mixed-sign result across workloads is a rejection, not an average.
 #
 # Record the outcome in docs/performance.md either way -- including rejections
@@ -179,15 +184,24 @@ so whatever it reports is drift from position-in-the-run alone. If it is not
 "No change" on every workload, the candidate numbers above carry at least that
 much systematic error and a small result is not interpretable.
 
-Then adopt only if the candidate change is negative, the WHOLE interval clears
--3%, and p < 0.05. Mixed signs across workloads is a rejection, not an average.
-The `_fast` workloads are the SHIPPED configuration (fast_dotloop is default-on
-since v2.2.3) -- a change that only moves the non-fast variants moves nothing
-a user runs.
+ADOPTION RULE (maintainer decision, v2.3.2): a consistent, well-established gain
+is adoptable even below 3%. The old flat ">3%" bar existed to stop noise-chasing,
+not because 2% is worthless -- so the burden moved from EFFECT SIZE to EVIDENCE
+QUALITY. Adopt when ALL of:
 
-A single run is not a result. Anything below ~5% should be reproduced by a
-second independent run before it is believed: v2.3.2 G2 produced a textbook
--2% at p=0.00 on all four workloads that vanished entirely on re-measurement.
+  * reproduced by a SECOND INDEPENDENT RUN (not a re-read of the same run);
+  * p < 0.05 on the workloads that moved;
+  * the order-bias control reports no drift;
+  * the sign is consistent across workloads -- mixed signs is a rejection, never
+    something to average;
+  * the shipped `_fast` variants move (fast_dotloop is default-on since v2.2.3,
+    so a change that only moves the non-fast variants moves nothing a user runs).
+
+The second run is not optional ceremony. v2.3.2 G2 produced a textbook -1.84%..
+-2.75% at p=0.00 on ALL FOUR workloads, from an order-bias artifact; it measured
+as exactly zero on re-run. Under a size-only bar that would have been rejected
+for being under 3%. Under an evidence-based bar it is rejected for the right
+reason -- it was never real.
 
 Record the outcome in docs/performance.md either way, rejections included.
 EOF
