@@ -438,3 +438,37 @@ defaults (`0`/`false`) — the state a save taken at a fetch boundary always hol
 save-states still load (per the ADR 0028 spirit; the rendered output for the two titles above
 is the only user-visible change, an intentional accuracy improvement, not a format break).
 The netplay determinism battery (all 16 tests) passes with the v5 tail.
+
+## Update — 2026-08-05 (v2.3.0 "Datum II" — hybrid-address model verified correct; the suspected Rad Racer artifact does NOT reproduce)
+
+v2.2.6 disclosed (this ADR; `NOTICE`; `docs/originality-and-provenance.md` §4) that the octal-latch
+/ hybrid-address *timing* had been calibrated to TriCNES rather than derived independently, and
+flagged a suspected TriCNES-specific artifact — mid-render `$2006` writes mis-rendering, e.g. Rad
+Racer's road/horizon split — for a v2.3.0 rework. v2.3.0 investigated it under systematic-debugging
+discipline (reproduce before fixing) and reached an evidence-based conclusion: **there is nothing
+to rework — the shipped model is correct on both the authoritative oracle and the game.**
+
+- **AccuracyCoin (the authoritative in-repo oracle, MIT):** the shipped default (`COPY_V_DELAY = 4`,
+  the delayed-`CopyV` model promoted in v2.0.3) holds **141/141** — the two hybrid-address tests
+  ("ALE + Read" `$0491`, "Hybrid Addresses" `$0492`) under `PPU Misc.` pass. An A/B probe
+  neutralizing the delay (`COPY_V_DELAY = 0`) drops **exactly** the Hybrid Addresses test to
+  **140/141** (99.29%), confirming the delay is load-bearing and the current value accuracy-correct.
+  Mesen2 is *not* an authority here — per this ADR it reads `0x0A` (fails these tests); TriCNES and
+  RustyNES pass them.
+- **Rad Racer (headless render):** the road/horizon renders cleanly at `COPY_V_DELAY = 4`; the A/B
+  `COPY_V_DELAY = 0` render is *more* distorted (wider/flatter road, mislocated horizon) on the same
+  game state (the delay only affects the PPU `v` register mid-render, not game logic). The shipped
+  default is therefore both the accuracy-correct and the visually-correct model.
+
+Root cause of the (now-stale) concern: the artifact lived in the **pre-v2.0.3 `+1 coarse-X`
+reconstruction approximation**, which the promoted 2-cycle-ALE / delayed-`CopyV` model *superseded*
+(v2.0.3 update above). The forum report predates that promotion.
+
+Disposition: **no code change.** The model is confirmed documentation/oracle-derived — it matches
+the NESdev-documented delayed-`CopyV`-during-render timing (`PPU_rendering.xhtml`) and the
+AccuracyCoin ROM's expectations; TriCNES (MIT, vendored) is retained as the original
+cross-reference. Provenance updated in `NOTICE` and `docs/originality-and-provenance.md` §4 (from
+"TriCNES-calibrated, being reworked" to "verified correct, oracle/doc-derived"). To lock it, the
+AccuracyCoin gate was tightened from a coarse 60% floor to an **exact 141/141** (zero failing tests)
+in `crates/rustynes-test-harness/tests/accuracycoin.rs`, so a `COPY_V_DELAY` / octal-latch
+regression now fails CI — closing the gap that let the delay=0 probe (140/141) clear the old floor.

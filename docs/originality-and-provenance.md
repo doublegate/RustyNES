@@ -169,13 +169,21 @@ earlier document did.
 - **Measure-first performance with published rejections.** `docs/performance.md`
   records optimizations that were measured and *rejected* with their numbers — an
   unusual discipline that is genuinely the project's own.
-- **The 2-cycle-ALE octal-latch PPU model and its honest caveat (ADR 0030).** The
-  physical octal-latch model was an independent modeling choice, but — as already
-  disclosed in v2.2.6 and retained here — its *timing* was calibrated to TriCNES
-  (MIT) rather than derived from an independent measurement, which is why RustyNES
-  reproduced TriCNES's Rad Racer hybrid-address artifact. The v2.3.0 "Datum II"
-  work reworks this to be documentation-derived. TriCNES is MIT-licensed, so this
-  is an attribution/fidelity matter, not a GPL one.
+- **The 2-cycle-ALE octal-latch PPU model, verified correct (ADR 0030).** The
+  physical octal-latch model was an independent modeling choice; v2.2.6 disclosed
+  that its *timing* had been calibrated to TriCNES (MIT) rather than derived
+  independently, and flagged a suspected TriCNES-specific Rad Racer hybrid-address
+  artifact for a v2.3.0 rework. **v2.3.0 "Datum II" investigated it and found the
+  suspected artifact does not reproduce in the shipped build:** the model passes
+  the authoritative in-repo AccuracyCoin "Hybrid Addresses" / "ALE + Read" tests
+  (141/141 — disabling the delayed-`CopyV` drops exactly that test to 140/141),
+  and Rad Racer's road/horizon renders cleanly. The artifact lived in the
+  pre-v2.0.3 "+1 coarse-X" approximation, which the promoted 2-cycle-ALE /
+  delayed-`CopyV` model *superseded*. The current behavior is therefore
+  documentation/oracle-derived — it matches the NESdev-documented
+  delayed-`CopyV`-during-render timing and is pinned by the MIT AccuracyCoin ROM
+  plus an exact-141/141 CI gate. TriCNES (MIT) is retained as the original
+  cross-reference; this is an attribution/fidelity matter, not a GPL one.
 
 ---
 
