@@ -131,10 +131,40 @@ this project previously mislabeled the second as the first.
 | puNES | GPL-2.0-or-later | Derivation (§1) **and** oracle |
 | FCEUX | GPL-2.0-or-later | Derivation (§1) **and** oracle |
 | Nestopia UE | GPL-2.0-or-later | Derivation (§1, FME-7/5B) **and** oracle |
-| GeraNES | GPL-3.0-only | Oracle / cross-check only (no code derived) |
+| GeraNES | GPL-3.0-only | Reference / cross-check: source consulted to confirm publicly-documented behavior; no code copied (see note) |
 | higan | GPL-3.0-or-later | Scheduler-structure reference / oracle |
 | ares | BSD-2-Clause / Apache-2.0 | Palette-integration reference (§1) / oracle |
 | TriCNES | MIT | Incorporated (§5) **and** timing-calibration reference (§4) |
+
+**GeraNES specifically (honest note).** Some in-source comments previously cited
+GeraNES *source* files, functions, and even quoted a line (e.g. a mapper
+bus-conflict `data &= readPrg(addr)` in `Mapper093.h`) — which means GeraNES's
+source was consulted as a cross-reference during development, not purely
+black-box observation. Every behavior so cross-referenced is independently
+documented: the nesdev wiki for the mapper bus-conflict / address-decode masks
+(the affected comments already cite `INES_Mapper_089/093`), and RetroArch's
+public `#pragma parameter` specification for the shader-parameter UI. The
+RustyNES implementations are independent Rust (`value & self.read_prg(addr)`, not
+the C++ line), and **no GeraNES code was copied**. Because only unprotectable,
+publicly-documented *behavior* was relied on — not GeraNES's copyrightable
+*expression* — this does not incorporate GPL-3.0-only code and does not constrain
+the project's GPL-3.0-or-later grant. The comments have been reworded to state
+this accurately and to drop the now-removed source-path citations (the local
+reference-emulator tree was deleted from disk; see the reference firewall in
+`AGENTS.md`).
+
+This was verified two-sided at the maintainer's direction: the GeraNES source
+(`gracioni/GeraNES`) for `Mapper089.h` / `Mapper093.h` was compared against
+RustyNES's `m089_sunsoft2.rs` / `m093_sunsoft3r.rs` *and* against the nesdev wiki
+(`INES_Mapper_089` `[CPPP MCCC]`, `INES_Mapper_093` `[.PPP ...E]`, both marked
+"BUS CONFLICTS"). The operations that coincide with GeraNES — the bus-conflict
+`written & rom_byte` mask and the bit-field extractions (`(v >> 4) & 0x07`, etc.)
+— are exactly the nesdev-documented register layouts, i.e. the single correct
+expression of the documented hardware (merger doctrine). No arbitrary,
+non-hardware-dictated choice coincides (identifiers, decomposition, and idiom are
+independent Rust), which is the signature distinguishing documented-fact
+convergence from copying. Conclusion: no GeraNES code is copied; GPL-3.0-or-later
+stands.
 
 Because the license of the derived-from GPL code governs regardless of how any
 one file was used, the whole project is GPL-3.0-or-later; the oracle/derivation

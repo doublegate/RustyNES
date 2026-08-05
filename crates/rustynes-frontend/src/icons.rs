@@ -1,8 +1,8 @@
 //! `FontAwesome` menu icons (v1.2.0 Workstream H3).
 //!
 //! Adds Font Awesome 6 Free **Solid** glyphs in front of the menu-bar labels,
-//! mirroring the `GeraNES` `withMenuIcon` model (an icon before each top menu and
-//! its items). This is a pure cosmetic layer: the glyphs are font codepoints
+//! following the common icon-before-each-menu-item convention (as the `GeraNES`
+//! reference emulator also does). This is a pure cosmetic layer: the glyphs are font codepoints
 //! prepended to existing labels, so if the font fails to register the labels
 //! still render as plain text (egui falls back to the proportional font for any
 //! glyph the icon font lacks) — it never crashes.
@@ -41,8 +41,8 @@ const FA_FAMILY: &str = "fa-solid";
 
 /// Font Awesome 6 Free **Solid** glyph codepoints used by the menu bar.
 ///
-/// Each is the Unicode scalar value of a FA Solid icon (the same glyphs `GeraNES`
-/// uses in `FontAwesomeIcons.h`). They live in the Unicode Private Use Area, so
+/// Each is the Unicode scalar value of a FA Solid icon (the same well-known FA
+/// glyphs the `GeraNES` reference emulator uses for its menus). They live in the Unicode Private Use Area, so
 /// they never collide with real text and degrade to a missing-glyph box (or
 /// nothing) if the font is unavailable.
 pub mod glyph {

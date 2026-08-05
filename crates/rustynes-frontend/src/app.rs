@@ -4095,7 +4095,7 @@ impl App {
     /// "Load from Slot" out under this same condition (`ui_shell::rom_interactive`
     /// = `rom && !replay_locked`), but the hotkey + `MenuAction` dispatch must
     /// honour it too — otherwise the greyed item is bypassable via the bound key.
-    /// Mirrors `GeraNES` `replayInteractionLocked` / `replayRecordingActive`.
+    /// Mirrors the `GeraNES` reference emulator's replay-interaction lockout.
     fn replay_interaction_locked(&self) -> bool {
         let emu = self.emu.lock();
         emu.movie.is_recording() || emu.movie.is_playing()

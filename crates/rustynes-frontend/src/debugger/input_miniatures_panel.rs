@@ -14,8 +14,8 @@
 //! / Bandai Hyper Shot) — with real-time button / axis feedback. With the Four
 //! Score it shows all four standard pads (multitap).
 //!
-//! Reference: `GeraNES/.../GeraNESApp.InputMiniaturesOverlayUI.inl`
-//! (UX/layout intent only; this is an independent Rust/egui reimplementation).
+//! Reference: the `GeraNES` reference emulator's input-miniatures overlay
+//! (UX/layout intent only; an independent Rust/egui reimplementation, no code copied).
 //!
 //! Frontend-only: it reads the same live host-side input snapshot the emulator
 //! is fed (pushed each frame via

@@ -58,10 +58,19 @@ distributable as GPL-3.0-or-later.
 Reference emulators consulted as behavioral oracles (no code derived)
 --------------------------------------------------------------------------------
 
-Separately from the derived code above, these were run only to observe and
+Separately from the derived code above, these were used to observe and
 cross-check documented hardware behavior (no code incorporated):
 
-* GeraNES -- GPL-3.0-only -- oracle / cross-check for several mapper boards.
+* GeraNES -- GPL-3.0-only -- reference / cross-check for several mapper boards
+  and some frontend UI conventions. Its source was consulted (not purely
+  black-box) as a cross-reference to confirm publicly-documented behavior -- the
+  nesdev-wiki bus-conflict / address-decode masks and RetroArch's public
+  `#pragma parameter` shader-UI convention -- but no GeraNES code was copied: the
+  RustyNES implementations are independent Rust of that documented behavior.
+  Because only the unprotectable documented behavior was relied on (not GeraNES's
+  copyrightable expression), no GPL-3.0-only code is incorporated and the
+  project's "or-later" grant is unaffected. See
+  docs/originality-and-provenance.md sec. 3.
 * higan -- GPL-3.0-or-later -- scheduler-structure reference / oracle.
 * ares -- BSD-2-Clause / Apache-2.0 -- palette-integration reference and oracle.
 

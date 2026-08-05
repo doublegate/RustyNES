@@ -517,15 +517,18 @@ impl UiShell {
         let keys = config.input.system.clone();
 
         // v1.2.0 Workstream H1 — per-item contextual enable predicates derived
-        // from the live frame state, mirroring GeraNES `MenuUI.inl`:
+        // from the live frame state, mirroring the `GeraNES` reference
+        // emulator's menu-gating behavior:
         //
         // - `rom_change_restricted`: while a netplay session is active the
         //   loaded ROM must not change under the rollback session — disables
-        //   Open ROM / Open Recent (GeraNES `netplayRomChangeRestricted`).
+        //   Open ROM / Open Recent (the `GeraNES` reference emulator restricts
+        //   ROM changes during netplay the same way).
         // - `replay_locked`: while a TAS movie is recording OR playing back, the
         //   session owns the input/state timeline — disables load-state and the
         //   reset/power-cycle/disk actions that would desync the replay
-        //   (GeraNES `replayInteractionLocked` / `replayRecordingActive`). The
+        //   (matching the `GeraNES` reference emulator's replay-interaction
+        //   lockout). The
         //   per-item Record/Play gating below additionally distinguishes the
         //   recording-vs-playing case (you can't Record over a Playback, etc.).
         //
@@ -659,8 +662,8 @@ impl UiShell {
                         }
                         // (H1) Load-state restores the timeline — forbidden while a
                         // movie is recording (rewrites the recording) OR playing
-                        // back (desyncs playback). Mirrors GeraNES
-                        // `replayRecordingActive` / `replayInteractionLocked`.
+                        // back (desyncs playback). Mirrors the `GeraNES`
+                        // reference emulator's replay recording/interaction lockout.
                         if accel_enabled(
                             ui,
                             rom_interactive,
@@ -1228,8 +1231,9 @@ impl UiShell {
                         }
                     }
                     // (H1) Opening the Netplay panel is locked while a replay
-                    // (TAS movie) owns the session. Mirrors GeraNES Netplay
-                    // gating (`!replayInteractionLocked`).
+                    // (TAS movie) owns the session. Mirrors the `GeraNES`
+                    // reference emulator's Netplay gating (no replay-interaction
+                    // lockout active).
                     #[cfg(not(target_arch = "wasm32"))]
                     if ui
                         .add_enabled(

@@ -1041,8 +1041,9 @@ fn paint_palette_preview(ui: &mut egui::Ui, base: &[[u8; 3]; 64]) {
     }
 }
 
-/// v1.2.0 C2 — the composable shader-stack editor + preset bank UI (mirrors
-/// `GeraNES`' `ShaderWindowUI.inl`).
+/// v1.2.0 C2 — the composable shader-stack editor + preset bank UI (a
+/// shader-parameter UI in the style of the `GeraNES` reference emulator's,
+/// independently built on egui).
 ///
 /// Lives inside a collapsing header so it does not clutter the Graphics tab.
 /// Every mutation flags `state.apply.shader_stack` so the app rebuilds the live
