@@ -6,7 +6,7 @@
 //! and whether each held this frame — ADR 0014), the base (stock) vs final
 //! (composited) colour, and a blend slider for an original/mod preview value.
 //!
-//! Reference: `ref-proj/GeraNES/.../GeraNESApp.ModPixelInspectorWindowUI.inl`
+//! Reference: `GeraNES/.../GeraNESApp.ModPixelInspectorWindowUI.inl`
 //! (UX intent only; an independent Rust/egui reimplementation).
 //!
 //! Builds on the v1.4.0 HD-pack tile-source export + the v1.5.0

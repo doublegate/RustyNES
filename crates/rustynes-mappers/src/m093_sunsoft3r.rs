@@ -119,7 +119,7 @@ impl Mapper for Sunsoft3r {
             // a store drives the written byte ANDed with the ROM byte already at
             // that address. Same treatment as the sibling Sunsoft-2 board in
             // `m089_sunsoft2.rs`, and matching the designated reference
-            // `ref-proj/GeraNES/src/GeraNES/Mappers/Mapper093.h`, whose
+            // `GeraNES/src/GeraNES/Mappers/Mapper093.h`, whose
             // `writePrg` opens with `data &= readPrg(addr);`.
             // Decode every field from the masked value.
             let value = value & self.read_prg(addr);

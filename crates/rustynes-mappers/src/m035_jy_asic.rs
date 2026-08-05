@@ -26,7 +26,7 @@
 //!
 //! This port follows the nesdev "J.Y. Company ASIC" page
 //! (`nesdev_wiki/J_Y__Company_ASIC.xhtml`) and the Mesen2 `JyCompany`
-//! implementation (`ref-proj/Mesen2/Core/NES/Mappers/JyCompany/JyCompany.h`).
+//! implementation (`Mesen2/Core/NES/Mappers/JyCompany/JyCompany.h`).
 //!
 //! # Registers
 //!

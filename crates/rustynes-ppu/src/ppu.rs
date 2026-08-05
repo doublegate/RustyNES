@@ -502,7 +502,7 @@ pub struct Ppu {
     // for netplay-rollback determinism. That bump is ADDITIVE (pre-v5 blobs upconvert
     // to the inactive rest defaults), NOT an ADR-0028 save-state format-epoch break.
     //
-    // Ported from TriCNES (`ref-proj/TriCNES/Emulator.cs`, MIT, commit 9199870),
+    // Ported from TriCNES (`TriCNES/Emulator.cs`, MIT, commit 9199870),
     // the AccuracyCoin author's own transistor-level emulator, which is the
     // ground-truth oracle for the "ALE + Read" / "Hybrid Addresses" tests (the
     // vendored Mesen2 build does NOT pass them — see the ADR 0030 campaign audit).

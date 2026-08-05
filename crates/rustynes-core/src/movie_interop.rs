@@ -1,7 +1,7 @@
 //! FCEUX `.fm2` movie interop: import + export of FCEUX's plain-text TAS
 //! movie format to and from the native [`Movie`] type.
 //!
-//! `.fm2` is ASCII text (see `ref-proj/fceux/documentation/fm2.txt`): a block
+//! `.fm2` is ASCII text (see `fceux/documentation/fm2.txt`): a block
 //! of `key value` header lines (the first of which must be `version 3`),
 //! followed by an input-log section whose every line begins and ends with a
 //! `|` (pipe). The movie length is implicit -- it is the number of input-log

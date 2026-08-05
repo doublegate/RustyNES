@@ -72,7 +72,7 @@ fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
 /// mirrored Mesen2's specifically *louder* mixer convention (Mesen2 weights VRC6
 /// at `output * 5` in `NesSoundMixer::GetOutputVolume`). A NESdev-forum reviewer
 /// flagged the VRC6 balance as too loud; a cross-check against the whole
-/// `ref-proj/` field (see the cross-reference in the v2.2.7 notes) confirmed
+/// field of reference emulators (see the cross-reference in the v2.2.7 notes) confirmed
 /// Mesen2 is the loud outlier and the field/hardware consensus is 1.0x. Before
 /// v2.1.6 it was `256` (≈0.39x — ~11.7 dB too quiet). See `docs/apu-2a03.md`
 /// §Expansion-audio levels.
