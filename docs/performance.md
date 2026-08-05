@@ -178,6 +178,48 @@ release), not per-PR-push.
    runner**, in one job sharing one target dir, and fails if HEAD is more than
    `BENCH_MAX_REGRESSION_PCT` (default 10%) slower.
 
+### v2.3.1 — where a frame actually goes (and why the symbol profile lies)
+
+`scripts/perf/frame_breakdown.sh` profiles `frame_probe` and buckets samples by
+**source file**, which follows inlined code back to the crate that wrote it.
+Measured on nestest, 1500 frames at 1500 Hz, quiet host:
+
+| subsystem | % of frame | top source files |
+| --- | ---: | --- |
+| PPU (`rustynes-ppu`) | **52.1%** | `ppu.rs` 51.7% |
+| APU (`rustynes-apu`) | **18.7%** | `apu.rs` 8.4%, `frame_counter.rs` 2.1%, `blip.rs` 2.1% |
+| CPU (`rustynes-cpu`) | 10.1% | `cpu.rs` 9.4%, `status.rs` 0.7% |
+| Bus / scheduler coupling | 9.9% | `bus.rs` 9.9% |
+| std inlined at emulator call sites | 6.7% | `range.rs` 1.9%, `uint_macros.rs` 1.6% |
+| Mappers | 2.5% | `m000_nrom.rs` 1.4%, `mapper.rs` 0.8% |
+
+**The symbol-level profile does not contain the APU at all.** Under
+`lto = "fat"` + `codegen-units = 1` the APU is inlined wholesale into
+`<LockstepBus as Bus>::cpu_clock`, so `perf report --no-children` shows
+`Ppu::tick` 31%, `cpu_clock` 18%, `emit_pixel` 10% — and **zero**
+`rustynes_apu::` symbols at any percent limit. Roughly **a fifth of the frame is
+attributed to the wrong subsystem** by the naive view. `perf report --inline`
+does not help: measured, it produces output byte-identical to the non-inline
+report, because those frames are not recoverable as call frames.
+
+This corrects the working figure used when the v2.3.x campaign was scoped
+("PPU ~53%, CPU+bus ~39%"): the PPU share holds, but the CPU+bus share is really
+CPU 10% + APU 19% + coupling 10%, and the CPU proper is a third of what it
+appeared to be. Note this does *not* reopen §P4 — that experiment measured the
+one remaining APU lever at a **≤1.9% ceiling** and its conclusion stands. The APU
+being large and the APU being *reducible* are different claims; only the first is
+established here.
+
+`std inlined at emulator call sites` is real emulator work whose source path
+belongs to the standard library. It is reported as its own line rather than
+redistributed proportionally, which would invent precision the data does not
+contain.
+
+Source attribution needs DWARF, which `[profile.release]` does not emit, so the
+script rebuilds the probe with `CARGO_PROFILE_RELEASE_DEBUG=2`. Debuginfo does
+not change codegen, and the script prints the probe's own frame cost so that
+assumption is checkable against a stock release build rather than asserted.
+
 **Why gate 2 exists.** The ceiling answers "is the emulator still real-time?",
 not "did this change make it worse". On the ~4 ms/frame the core actually runs
 at, a change could get **2.5x slower and still pass** — the gate would sleep
