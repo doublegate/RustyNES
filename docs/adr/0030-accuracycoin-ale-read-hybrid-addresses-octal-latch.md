@@ -223,8 +223,12 @@ The dedicated campaign this ADR called for landed on branch
    build does NOT pass these two tests** (both result bytes read `0x0A` = corruption not
    reproduced), so "Option 2 = proven-correct Mesen2 recipe" was false. The correct oracle
    is **TriCNES** (`TriCNES/Emulator.cs`, MIT, commit `9199870` — the AccuracyCoin
-   author's own emulator), which models the multiplexed AD/A bus + octal latch at transistor
-   level and does drive `$2F19` / `$0FFF`. The campaign audit
+   author's own emulator), which models the multiplexed AD/A bus + octal latch at the
+   pin/sub-cycle level and does drive `$2F19` / `$0FFF`. (Corrected in v2.3.0: earlier
+   revisions of this ADR called TriCNES "transistor level". It is not — it is a
+   cycle-accurate C# emulator with a detailed sub-cycle state machine. "Transistor
+   level" properly describes die-derived simulations such as `Visual2C02` /
+   `phantom2c02`.) The campaign audit
    (`docs/audit/v2.0.2-octal-latch-campaign-2026-07-08.md`) records the decisive finding.
 
 2. **A whole-dot port of TriCNES's octal latch suffices** — the full 2-cycle-ALE fetch

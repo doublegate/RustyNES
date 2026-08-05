@@ -98,7 +98,10 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
   https://github.com/digital-sound-antiques/emu2413
       Copyright (c) 2020 Mitsutaka Okazaki -- MIT
 
-* TriCNES -- transistor-level NES emulator by the AccuracyCoin author; its
+* TriCNES -- cycle-accurate C# NES emulator by the AccuracyCoin author, built
+  around a detailed sub-cycle CPU/PPU/APU/DMA state machine (the author
+  describes it as written "for playing back TASes" with "a focus on
+  test-driven accuracy"); its
   PPU address/data-multiplex (ALE / octal-latch), OAM-corruption, and per-cycle
   DMA-dispatch models are ported into RustyNES (crates/rustynes-ppu,
   rustynes-cpu, rustynes-core), and its full source is vendored as a golden

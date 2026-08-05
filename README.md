@@ -825,7 +825,8 @@ RustyNES stands on the shoulders of giants:
 - **[emu2413](https://github.com/digital-sound-antiques/emu2413)** (Mitsutaka
   Okazaki, MIT) — the YM2413 / OPLL model behind VRC7 audio — and
   **[TriCNES](https://github.com/100thCoin/TriCNES)** (Chris Siebert, MIT), the
-  transistor-level emulator whose PPU / DMA models RustyNES ports (MIT-licensed, its
+  cycle-accurate C# emulator (a detailed sub-cycle CPU/PPU/APU/DMA state machine)
+  whose PPU / DMA models RustyNES ports (MIT-licensed, its
   source vendored in-repo with attribution) and also uses as a golden oracle.
   **GeraNES** (GPL-3.0-only) served as a behavioral oracle — consulted, not incorporated.
 - The community CRT shaders and NTSC filters whose *looks* RustyNES independently
