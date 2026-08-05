@@ -1,6 +1,6 @@
 # RustyNES Version Plan
 
-**Current release: v2.0.4 "Harbor"** — the head of the v2.0.x "Harbor" mobile-finalization train, atop the **v2.0.0 "Timebase"** MAJOR cut (the one-clock / every-cycle-bus-access scheduler rewrite). **v1.0.0** was the first stable, production cut. `docs/STATUS.md` is the authoritative current-state record; `CHANGELOG.md` carries the full per-release history.
+**Current release: v2.2.9 "Studio II"**, with **v2.3.0 "Datum II"** (the PPU-accuracy capstone of the v2.2.6 → v2.3.0 line) in progress — all on the **v2.0.0 "Timebase"** MAJOR base (the one-clock / every-cycle-bus-access scheduler rewrite). **v1.0.0** was the first stable, production cut. As of **v2.2.9**, RustyNES is **GPL-3.0-or-later** — a derivative work of GPL-licensed emulators (ADR 0036); a licensing correction, **not** a SemVer break (no public-API or save-state change). `docs/STATUS.md` is the authoritative current-state record; `CHANGELOG.md` carries the full per-release history.
 
 RustyNES follows [Semantic Versioning 2.0.0](https://semver.org/).
 
@@ -55,7 +55,7 @@ The cycle-accurate engine was integrated as the core in a sequence of documentar
 | **v0.9.7** | Performance pass (display-sync pacing, dedicated emu thread, audio DRC, run-ahead) |
 | **v1.0.0** | Production cut — engine + ported desktop UX shell + documentation synthesis |
 
-> **Engine lineage note.** The deep technical history under `docs/` (the `v2.0` master-clock refactor, ADRs, audit logs, the long accuracy program) describes the **upstream engine lineage**. Those old "v1.x"/"v2.x" anchors are engineering history, **not** RustyNES release versions. RustyNES's own release line is v0.1.0 → v0.8.6 → (documentary v0.9.0–v0.9.7) → **v1.0.0** → the v1.1.0–v1.10.0 additive feature line → **v2.0.0 "Timebase"** (the designated MAJOR break) → the v2.0.x "Harbor" line (current: **v2.0.4**).
+> **Engine lineage note.** The deep technical history under `docs/` (the `v2.0` master-clock refactor, ADRs, audit logs, the long accuracy program) describes the **upstream engine lineage**. Those old "v1.x"/"v2.x" anchors are engineering history, **not** RustyNES release versions. RustyNES's own release line is v0.1.0 → v0.8.6 → (documentary v0.9.0–v0.9.7) → **v1.0.0** → the v1.1.0–v1.10.0 additive feature line → **v2.0.0 "Timebase"** (the designated MAJOR break) → the v2.0.x "Harbor" line → the v2.1.x "Fathom" accuracy line → the v2.2.x line (current: **v2.2.9 "Studio II"**; **v2.3.0 "Datum II"** in progress).
 
 ### Post-1.0 release line (v1.1.0 → current)
 
@@ -70,9 +70,15 @@ The 1.x line was **additive / off-by-default** — every release stayed byte-ide
 | **v2.0.0 "Timebase"** | **Designated MAJOR break** — one-clock / every-cycle-bus-access scheduler rewrite; `.rns`/`.rnm` epochs bump (ADR 0028); core-level Vs. `DualSystem` support. AccuracyCoin 100% (139/139) |
 | **v2.0.1 "Harbor"** | First Android re-port onto Timebase + AccuracyCoin oracle re-sync (catalog → 146 rows / 141 assigned tests; briefly 139/141) |
 | **v2.0.2 – v2.0.3 "Harbor"** | 2-cycle-ALE PPU fetch model promoted to the unconditional default → **AccuracyCoin 100.00% (141/141)** ("ALE + Read" + "Hybrid Addresses" now pass) |
-| **v2.0.4 "Harbor"** (current) | Android release candidate — host-only RC scaffolding; core byte-identical to v2.0.3 |
+| **v2.0.4 – v2.0.9 "Harbor"** | Mobile finalization on Timebase — Android release candidate (v2.0.4), iOS re-port + polish + App-Store floor (v2.0.5–v2.0.8), both-apps readiness (v2.0.9); host-only, core byte-identical to v2.0.3 |
+| **v2.1.0 – v2.1.10 "Fathom"** | Accuracy / display / audio / creator-tools line — palette-backdrop + mapper-tier completion (v2.1.0), the W&W game-DB freeze fix (v2.1.1), display fidelity (v2.1.2 "Prism"), QoL (v2.1.3 "Codex"), accuracy hardening (v2.1.4 "Caliper"), regression net (v2.1.5 "Vernier"), expansion audio (v2.1.6 "Timbre"), hardware revisions (v2.1.7 "Stepping"), performance (v2.1.8 "Tempo"), presentation + CRT shaders (v2.1.9 "Aperture"), creator tools + web parity (v2.1.10 "Loom") — all NTSC byte-identical, **141/141** |
+| **v2.2.0 "Capstone"** | Milestone cut closing the v2.1.5 → v2.2.0 "deepen the project" run — netplay matchmaking/lobby + FDS medium model + peripherals & quality/security pass |
+| **v2.2.1 – v2.2.5** | Housekeeping (v2.2.1); build / distribution / CI-integrity — libretro buildbot + supply-chain hardening (v2.2.2 "Conduit"); performance + accuracy-closure (v2.2.3 "Datum"); libretro/RetroArch distribution (v2.2.4 "Cartridge"); provenance / licensing / documentation integrity (v2.2.5 "Colophon") |
+| **v2.2.6 – v2.2.9** | The **de-monetization + NESdev-remediation** line — RustyNES made permanently open-source and income-free (v2.2.6 "Almanac", ADR 0035); expansion-audio fidelity (v2.2.7 "Timbre II"); gamma-correct presentation (v2.2.8 "Aperture II"); TAS/movie wiring + detachable tool windows + the **relicense to GPL-3.0-or-later** (v2.2.9 "Studio II", ADR 0036) |
+| **v2.2.9 "Studio II"** (current) | Head of the v2.x line — see `CHANGELOG.md` `[2.2.9]` |
+| **v2.3.0 "Datum II"** (in progress) | PPU-accuracy capstone — SMB left-edge + hybrid-address (Rad Racer) verified correct against the AccuracyCoin oracle and locked with an exact-141/141 regression gate; hybrid-address provenance finalized (doc/oracle-derived) |
 
-> **Forward path.** The remaining v2.0.x "Harbor" steps — **v2.0.5 → v2.0.8** iOS finalization → **v2.0.9** both-apps readiness — lead to **v2.1.0**, the joint Google Play + Apple App Store + AltStore PAL + F-Droid launch. `to-dos/ROADMAP.md` is the authoritative forward roadmap.
+> **Forward path.** The v2.0.x "Harbor", v2.1.x "Fathom", and v2.2.x lines have all shipped; the active line is **v2.2.6 → v2.3.0** (the PPU-accuracy capstone). RustyNES is **permanently open-source and income-free** (ADR 0035): the earlier "joint Google Play + App Store + AltStore + F-Droid launch" is **withdrawn** — any store listing is a **free** app with **no monetization** (no ads, tracking, or paid unlock), an unversioned later step. `to-dos/ROADMAP.md` is the authoritative forward roadmap.
 
 ## Versioning guidelines
 
@@ -87,7 +93,7 @@ The 1.x line was **additive / off-by-default** — every release stayed byte-ide
 
 ## Accuracy milestones (met)
 
-- `nestest` 0-diff, blargg / kevtris suites green, **AccuracyCoin 100.00% (141/141)** on the current v2.0.x line (139/139 at the v1.0.0 cut, before the v2.0.1 oracle re-sync grew the catalog to 141 assigned tests), and a byte-identical 60-ROM commercial regression oracle. `docs/STATUS.md` is the authoritative pass-count source.
+- `nestest` 0-diff, blargg / kevtris suites green, **AccuracyCoin 100.00% (141/141)** throughout the v2.x line (139/139 at the v1.0.0 cut, before the v2.0.1 oracle re-sync grew the catalog to 141 assigned tests), and a byte-identical 60-ROM commercial regression oracle. As of v2.3.0 the AccuracyCoin gate is pinned to an **exact 141/141** (zero failing tests), so a single-test regression — e.g. in the hybrid-address model — fails CI. `docs/STATUS.md` is the authoritative pass-count source.
 
 ## Git tagging
 

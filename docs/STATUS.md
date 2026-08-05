@@ -267,8 +267,9 @@
 > validated byte-for-byte equal by `simd_equals_scalar_byte_identical` over the full `0..512`
 > domain; a memory-bound LUT gather, so the SIMD path is within noise of scalar and **scalar stays
 > the default**, documented honestly) plus a **wasm size / startup pass** (3.99 MiB gzip).
-> **Shipped default-OFF** (recommended for promotion after maintainer review + a clean-host
-> Criterion confirmation). See `CHANGELOG.md` `[2.1.8]` + `.github/release-notes/v2.1.8.md`.
+> **Shipped default-OFF in v2.1.8; PROMOTED TO DEFAULT in v2.2.3** once the maintainer-review +
+> clean-host Criterion confirmation it named were met (−11.3% frame time, differential-tested
+> byte-identical). See `CHANGELOG.md` `[2.1.8]` / `[2.2.3]` + `.github/release-notes/v2.1.8.md`.
 >
 > **Earlier in the Fathom line: v2.1.7 "Fathom" ("Stepping")** (2026-07-12) — a
 > **hardware-revisions & DMA-frontier** cut, every knob **opt-in and default-off** so the
