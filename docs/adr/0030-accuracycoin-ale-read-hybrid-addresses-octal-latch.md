@@ -55,7 +55,7 @@ address**:
   value ($FF), so the next pattern fetch reads `{new PAR high 6}:{stale low 8}` (`$0F03` →
   `$0FFF`), producing eight visible pixels over a transparent tile.
 
-### Reference-emulator survey (`ref-proj/`)
+### Reference-emulator survey
 
 - **Mesen2** (passes AccuracyCoin 100%) models neither a literal octal latch nor a 2-cycle
   access. Both behaviors emerge from one persistent `_ppuBusAddress` (the last address the
@@ -166,7 +166,7 @@ long-term branch — regardless of whether Option 2 succeeds** (per the maintain
   the **MMC3 IRQ suite** (A12 timing is fetch-address-derived — the most likely silent
   breakage), **sprite-zero-hit** tests, the **60-ROM commercial byte-identity oracle**, and
   the **≤2 ms/frame** perf budget.
-- Use the vendored `ref-proj/Mesen2` (already carrying RustyNES oracle-logging hooks) as a
+- Use an out-of-tree Mesen2 build (carrying RustyNES oracle-logging hooks) as a
   **per-cycle bus-stream cross-diff oracle**, not just a pass/fail check.
 
 ## Consequences
@@ -207,7 +207,7 @@ AccuracyCoin re-sync baseline — **139/141, nestest 0-diff, AccuracyCoin otherw
 so the non-converging experiments never touch the shipped core. This empirically **confirms
 this ADR's central thesis**: the fix is not reachable by a bounded fork of either shape; it
 needs a **dedicated Timebase-scale campaign** that models the per-cycle PPU bus *inside* the
-one-clock scheduler (ADR 0029), calibrated against the vendored `ref-proj/Mesen2` per-cycle
+one-clock scheduler (ADR 0029), calibrated against an out-of-tree Mesen2 per-cycle
 bus-stream cross-diff oracle and gated on the full regression battery. Until that campaign is
 scheduled, **139/141 is the honest v2.0.1 baseline** and both flags remain default-off
 experiments. The two draft branches are retained as the starting point for that campaign.
@@ -222,7 +222,7 @@ The dedicated campaign this ADR called for landed on branch
 1. **The oracle was wrong.** The per-cycle bus cross-diff proved the vendored **Mesen2
    build does NOT pass these two tests** (both result bytes read `0x0A` = corruption not
    reproduced), so "Option 2 = proven-correct Mesen2 recipe" was false. The correct oracle
-   is **TriCNES** (`ref-proj/TriCNES/Emulator.cs`, MIT, commit `9199870` — the AccuracyCoin
+   is **TriCNES** (`TriCNES/Emulator.cs`, MIT, commit `9199870` — the AccuracyCoin
    author's own emulator), which models the multiplexed AD/A bus + octal latch at transistor
    level and does drive `$2F19` / `$0FFF`. The campaign audit
    (`docs/audit/v2.0.2-octal-latch-campaign-2026-07-08.md`) records the decisive finding.

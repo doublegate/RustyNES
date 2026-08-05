@@ -196,7 +196,7 @@ maintenance entanglement with C build tooling.
 - emu2413 v1.5.9 — Mitsutaka Okazaki, MIT —
   <https://github.com/digital-sound-antiques/emu2413>
 - emu2413 vendored in Mesen2 —
-  `/home/parobek/Code/OSS_Public-Projects/RustyNES/ref-proj/Mesen2/Core/Shared/Utilities/emu2413.{h,cpp}`
+  Mesen2's `Core/Shared/Utilities/emu2413.{h,cpp}`
 - nesdev wiki "VRC7 audio" —
   <https://www.nesdev.org/wiki/VRC7_audio>
 - Sprint 1.1 + 1.2 commits on `origin/main` —

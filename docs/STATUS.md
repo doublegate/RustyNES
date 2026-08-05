@@ -630,7 +630,7 @@
 > (`docs/audit/v2.0.2-octal-latch-campaign-2026-07-08.md`) corrected two ADR 0030
 > premises: **Mesen2 does NOT pass these tests** (both bytes read `0x0A` = corruption
 > not reproduced — the correct oracle is TriCNES, the AccuracyCoin author's own MIT
-> emulator, `ref-proj/TriCNES`, commit `9199870`), and **a whole-dot port suffices**
+> emulator, TriCNES (upstream), commit `9199870`), and **a whole-dot port suffices**
 > (the full 2-cycle-ALE refactor was not required). **Promotion to default (shipped
 > 141/141) is the deliberate v2.0.3 step** — after the Hybrid path's `+1 coarse-X`
 > approximation is reworked to a first-principles latch-carry model and gated on the

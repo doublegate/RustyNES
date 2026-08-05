@@ -1,11 +1,24 @@
 # AccuracyCoin oracle tooling — setup + regeneration
 
+> **⚠️ REFERENCE FIREWALL (read first).** The `ref-proj/` reference-emulator clone has been **removed
+> from the repo and from the agent's reach** and stays gitignored — see the "MOST IMPORTANT RULE"
+> section of `AGENTS.md` and `docs/ai-emulator-provenance-guardrails.md`. Reference emulators are
+> **black-box oracles**: you may *build and run* them to capture their **output** (per-cycle traces,
+> framebuffers, audio) and diff RustyNES against it, but you may **never open, read, or reproduce
+> their source into RustyNES**. Any local Mesen2 / TriCNES build used for the oracle traces below
+> **must live outside this repo and outside the agent's allowed paths** (a sibling directory the tool
+> sandbox does not expose); the `ref-proj/...` paths that appear below are historical and no longer
+> resolve. The committed, self-contained artifacts (`crates/rustynes-test-harness/golden/`, the
+> AccuracyCoin sub-test ROMs) are the firewall-compliant way to reproduce a cross-diff without the
+> reference source in reach.
+
 The v2.0 accuracy push (toward 139/139) cross-diffs RustyNES's per-cycle bus stream against two
 reference emulators. `/tmp` is wiped on reboot (CachyOS) — this is the recipe to regenerate.
 
 ## 1. Mesen2 unified per-cycle oracle (artifact-free cell trace)
 
-Mesen2 working tree: `/home/parobek/Code/OSS_Public-Projects/RustyNES/ref-proj/Mesen2`.
+Mesen2 working tree: an **out-of-tree** build outside the repo and the agent's allowed paths
+(historically `ref-proj/Mesen2`, now removed — build/run it elsewhere and capture output only).
 
 A patch adds an **artifact-free per-cycle channel** to `Core/NES/NesCpu.cpp`: globals `g_cellTrace`/
 `g_cellTraceStart`/`g_cellTraceEnd` (~line 104), env init reading `MESEN_CELL_TRACE_OUT` +
@@ -34,9 +47,9 @@ oracle is sound).
 ## 2. TriCNES — the gold oracle (AccuracyCoin author's own emulator)
 
 TriCNES (Chris "100th_Coin" Siebert) passes the full 139-test battery → higher authority than Mesen
-for these exact tests. Closed-source Windows binary:
-`/home/parobek/Code/OSS_Public-Projects/RustyNES/ref-proj/TriCNES/TriCNES/TriCNES.exe`
-(from `/home/parobek/Downloads/TriCNES_v1.0.1.zip`; upstream `github.com/100thCoin/TriCNES`).
+for these exact tests. Windows binary run **out-of-tree** (historically `ref-proj/TriCNES/.../TriCNES.exe`,
+now removed; obtain from `TriCNES_v1.0.1.zip`, upstream `github.com/100thCoin/TriCNES`) — run it
+outside the repo and capture its output only.
 
 Runs under `wine` (`/usr/bin/wine`) as a live ground-truth oracle for observable behavior
 (screen/result bytes). For the *model* (the "why"), use the reverse-engineered docs:
@@ -66,12 +79,12 @@ built from source**, vendored self-contained in this repo (TriCNES is MIT — Ch
   `tests/roms/AccuracyCoin/sub-tests/` — incl. `iflag-latency.nes`, `dma-open-bus.nes`,
   `dmc-bus-conflicts.nes`, `internal-data-bus.nes`, `fc-4step.nes` (added 2026-06-08).
 
-> **Reference-emulator note:** this repo's own `ref-proj/` is intentionally **empty** — the Mesen2 and
-> TriCNES source trees live in the sibling v1 project at
-> `/home/parobek/Code/OSS_Public-Projects/RustyNES/ref-proj/{Mesen2,TriCNES}` (persistent on `/home`,
-> survive reboot; Mesen2 `Core/NES/NesCpu.cpp` etc. cited throughout the audit docs). They do **not**
-> need re-cloning for the resume. The in-repo `tricnes-harness-src` above makes the cross-diff oracle
-> self-contained regardless.
+> **Reference-emulator note (updated 2026-08-04 — firewall):** the repo's `ref-proj/` clone has been
+> **removed entirely** and must not be re-created inside the working tree (it stays gitignored). If a
+> Mesen2 / TriCNES build is genuinely needed to *regenerate* an oracle trace, keep it **out of tree,
+> outside the agent's allowed paths** — build and run it there, capture only its **output**, and diff.
+> The in-repo `tricnes-harness-src` above (committed golden vectors) makes the cross-diff oracle
+> self-contained without any reference source in reach, which is the preferred path.
 
 ## 3. PPU sub-dot oracles (Phase 6)
 
