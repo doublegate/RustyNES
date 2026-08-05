@@ -8005,6 +8005,15 @@ impl App {
             .map(|d| d.detached_panels().iter().copied().collect())
             .unwrap_or_default();
         // Open windows for panels detached since the last reconcile.
+        //
+        // On failure the panel is REATTACHED rather than left pending. Without
+        // that, `id` stays in the debugger's detached set while `has_panel(id)`
+        // stays false, so this loop retries the failing create on every single
+        // `about_to_wait` iteration — thousands of times a second, each one
+        // writing a line to stderr. Dropping it back to docked degrades to the
+        // pre-v2.3.0 behaviour (the panel still works, just in-window), reports
+        // once, and cannot spin.
+        let mut failed: Vec<&'static str> = Vec::new();
         for &id in &desired {
             if !self.detached.has_panel(id) {
                 let (title, default_size) = crate::debugger::detached_window_meta(id);
@@ -8017,8 +8026,19 @@ impl App {
                         .detached
                         .create(event_loop, gfx, id, title, size, refresh)
                 {
-                    eprintln!("rustynes: failed to open detached window for '{id}': {e}");
+                    eprintln!(
+                        "rustynes: failed to open detached window for '{id}': {e} \
+                         (panel stays docked)"
+                    );
+                    failed.push(id);
                 }
+            }
+        }
+        if !failed.is_empty()
+            && let Some(dbg) = self.debugger.as_mut()
+        {
+            for id in failed {
+                dbg.detached_panels_mut().remove(id);
             }
         }
         // Close windows for panels reattached since the last reconcile.

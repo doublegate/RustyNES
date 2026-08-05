@@ -324,16 +324,36 @@ impl DetachedManager {
         };
         let ctx = w.state.egui_ctx().clone();
 
+        // Apply egui's texture delta BEFORE anything that can bail out.
+        //
+        // The delta is ONE-SHOT: egui hands over each created/updated texture
+        // exactly once and then forgets it. Skipping a frame's `set` list (as an
+        // early `return` on a lost swapchain would) means the font atlas and any
+        // newly-created image never reach the renderer, and every later frame
+        // draws with a texture id the renderer has never seen — the window stays
+        // blank or garbled for the rest of its life, long after the transient
+        // surface error cleared. Uploading first costs nothing on the happy path
+        // and makes a skipped present merely a dropped frame.
+        for (tid, image) in prepared.textures_delta.set {
+            w.renderer.update_texture(device, queue, tid, &image);
+        }
+
         // Acquire the swapchain image (wgpu 29 `CurrentSurfaceTexture` enum), with
-        // the same reconfigure-on-lost / skip-otherwise policy as `Gfx`.
+        // the same reconfigure-on-lost / skip-otherwise policy as `Gfx`. Frees are
+        // deferred to the end so a bail-out cannot drop a texture the next frame
+        // still references.
         let frame = match w.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 w.surface.configure(device, &w.config);
+                Self::free_textures(&mut w.renderer, prepared.textures_delta.free);
                 return;
             }
-            _ => return,
+            _ => {
+                Self::free_textures(&mut w.renderer, prepared.textures_delta.free);
+                return;
+            }
         };
         let view = frame
             .texture
@@ -348,9 +368,6 @@ impl DetachedManager {
             size_in_pixels: [w.config.width.max(1), w.config.height.max(1)],
             pixels_per_point,
         };
-        for (tid, image) in prepared.textures_delta.set {
-            w.renderer.update_texture(device, queue, tid, &image);
-        }
         w.renderer
             .update_buffers(device, queue, &mut encoder, &clipped, &screen_desc);
         {
@@ -379,10 +396,19 @@ impl DetachedManager {
                 .forget_lifetime();
             w.renderer.render(&mut rp, &clipped, &screen_desc);
         }
-        for tid in prepared.textures_delta.free {
-            w.renderer.free_texture(&tid);
-        }
+        Self::free_textures(&mut w.renderer, prepared.textures_delta.free);
         queue.submit(Some(encoder.finish()));
         frame.present();
+    }
+
+    /// Release the textures egui retired this frame.
+    ///
+    /// Factored out so every exit path from [`Self::present`] — including the
+    /// swapchain bail-outs — runs it exactly once. Leaking these would grow GPU
+    /// memory for the window's lifetime.
+    fn free_textures(renderer: &mut egui_wgpu::Renderer, free: Vec<egui::TextureId>) {
+        for tid in free {
+            renderer.free_texture(&tid);
+        }
     }
 }

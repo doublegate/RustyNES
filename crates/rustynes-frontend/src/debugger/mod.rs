@@ -283,6 +283,19 @@ fn current_detach_target() -> Option<&'static str> {
     DETACH_TARGET.with(std::cell::Cell::get)
 }
 
+// v2.3.0 — set by `detachable_window` when it actually paints the detached
+// target. `render_detached_body` reads it after the dispatch to detect an
+// ORPHANED window: a panel whose `show_*` flag was cleared while it was detached
+// is never dispatched at all (every call site is `if self.show_x { ... }`), so
+// nothing removes it from `detached_panels` and the OS window would linger,
+// titled but empty, with no Reattach button. That is reachable without touching
+// the window — `clear_tas_editor` fires on every ROM load / close / power cycle,
+// and hardcore mode suppresses the Memory panels the same way.
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    static DETACH_PAINTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// wasm has no detached windows, so the target is always `None`; this stub keeps
 /// the gated panel call-sites free of `cfg` noise.
 #[cfg(target_arch = "wasm32")]
@@ -299,7 +312,13 @@ struct DetachTargetGuard;
 impl DetachTargetGuard {
     fn new(target: &'static str) -> Self {
         DETACH_TARGET.with(|c| c.set(Some(target)));
+        DETACH_PAINTED.with(|c| c.set(false));
         Self
+    }
+
+    /// Whether the target panel actually painted during this pass.
+    fn painted() -> bool {
+        DETACH_PAINTED.with(std::cell::Cell::get)
     }
 }
 
@@ -397,6 +416,10 @@ pub(crate) fn detachable_window(
             if id != target {
                 return;
             }
+            // Record that the hosted panel produced content this pass; an
+            // unpainted target means its `show_*` flag was cleared and the window
+            // must be reattached rather than left as an empty orphan.
+            DETACH_PAINTED.with(|c| c.set(true));
             let mut reattach = false;
             let screen = ctx.content_rect();
             egui::Area::new(egui::Id::new(("detached", id)))
@@ -703,6 +726,15 @@ pub struct DebuggerOverlay {
     /// on wasm it stays empty (multi-viewport is native-only). See
     /// [`detachable_window`].
     detached_panels: std::collections::HashSet<&'static str>,
+    /// v2.3.0 — last theme applied to each detached window's own egui context.
+    ///
+    /// Each detached window has a private `egui::Context`, so the main window's
+    /// `last_theme` cache cannot speak for it; without per-window tracking the
+    /// only correct-looking option is to call `apply_theme` every frame, which
+    /// rebuilds a full `Visuals` and calls `set_visuals` per window per frame.
+    /// This mirrors `last_theme`, keyed by panel id.
+    #[cfg(not(target_arch = "wasm32"))]
+    detached_themes: std::collections::HashMap<&'static str, crate::config::AppTheme>,
     /// Game Genie cheat panel state (v1.6.0).
     cheat_ui: cheat_panel::CheatPanelState,
     /// ROM-database editor panel state (v1.2.0 Workstream B, B4).
@@ -914,6 +946,8 @@ impl DebuggerOverlay {
             #[cfg(not(target_arch = "wasm32"))]
             show_documentation: false,
             detached_panels: std::collections::HashSet::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            detached_themes: std::collections::HashMap::new(),
             cheat_ui: cheat_panel::CheatPanelState::default(),
             game_db_ui: game_db_panel::GameDbPanelState::default(),
             rom_info_ui: rom_info_panel::RomInfoPanelState,
@@ -1691,14 +1725,35 @@ impl DebuggerOverlay {
         // `render_shell`) so the detached panel's background fill, widget colours,
         // scaling, and text match the docked panel instead of egui's raw defaults —
         // the fix for "shading / colouring / layout not maintained once detached".
+        //
+        // `apply_theme` rebuilds a whole `Visuals` and calls `set_visuals`, so it
+        // is gated on an actual change exactly as `render_shell` gates it: the
+        // theme is per-window state here, tracked in `detached_themes`, because
+        // each detached context needs its own first-apply even when the main
+        // window's cached theme is already current.
         let ctx = ui.ctx().clone();
-        crate::ui_shell::apply_theme(&ctx, config.ui.theme);
+        if self.detached_themes.get(target) != Some(&config.ui.theme) {
+            crate::ui_shell::apply_theme(&ctx, config.ui.theme);
+            self.detached_themes.insert(target, config.ui.theme);
+        }
+        // Both of these are no-ops when the value is unchanged, so they are cheap
+        // to call unconditionally (matching `render_shell`).
         ctx.set_zoom_factor(config.ui.clamped_zoom_factor());
         crate::i18n::set_locale(config.ui.locale);
         if let Some(n) = nes.as_deref_mut() {
             self.chip_panels(&*ui, n);
         }
         self.tool_panels(ui.ctx(), nes, config);
+
+        // Orphan check: if the hosted panel never painted, its `show_*` flag was
+        // cleared while detached (ROM load clears `show_tas`; hardcore mode
+        // suppresses the Memory panels), so nothing else would ever drop it from
+        // the detached set. Reattach it — `App::reconcile_detached` closes the now
+        // unwanted OS window on the next iteration.
+        if !DetachTargetGuard::painted() {
+            self.detached_panels.remove(target);
+            self.detached_themes.remove(target);
+        }
     }
 
     /// The set of tool-panel ids the user has detached to their own OS window
