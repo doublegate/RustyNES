@@ -452,8 +452,9 @@ pub fn new_m268(
 // A plain MMC3 core with a PRG-A19/A20 outer bank from the high two bits of
 // $8001 (captured when the selected register is < 6), forced into the top of
 // the address space. CHR is RAM. Register map per the NESdev wiki CoolBoy /
-// mapper-268 documentation (cross-checked against reference emulators as
-// accuracy oracles; no third-party emulator code is incorporated).
+// mapper-268 documentation; the banking implementation is derived from Mesen2's
+// `Mmc3Variants/MMC3_Coolboy.h` (GPL-3.0-or-later) and the FCEUX transforms
+// (GPL-2.0-or-later). See NOTICE + docs/originality-and-provenance.md §1.
 // ===========================================================================
 
 #[cfg(test)]

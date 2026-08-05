@@ -26,8 +26,10 @@
 //! For every `line` record we resolve each referenced span to its CPU address
 //! range and record `address → (file, line)` for every byte in range. Lines
 //! with no spans (e.g. macro / comment lines) carry no address and are skipped.
-//! This is an independent importer for the same ca65/cc65 `.dbg` debug-info file
-//! format that other emulators' symbol importers also read.
+//! Provenance: this importer mirrors — and is derived from — Mesen2's
+//! `DbgImporter` / `NesDbgImporter` (GPL-3.0-or-later); the ca65/cc65 `.dbg`
+//! debug-info format it reads is a documented cc65-toolchain format that other
+//! emulators' importers also read. See docs/originality-and-provenance.md (Section 1).
 //!
 //! ## Output-only
 //!

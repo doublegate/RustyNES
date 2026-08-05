@@ -40,9 +40,10 @@
 //! # EEPROM
 //!
 //! An I²C state machine ([`Eeprom`]) for the X24C01 (159) / 24C02 (16) is
-//! implemented below — an independent state machine for the Xicor/Intersil
-//! X24C01 (mapper 159) / 24C02 (mapper 16) serial EEPROMs, written from the
-//! published I2C serial-EEPROM datasheet protocol. It clocks bits on the SCL
+//! implemented below. Provenance: it is **derived from Mesen2's `Eeprom24C01` /
+//! `Eeprom24C02`** (`Core/NES/Mappers/Bandai/`, GPL-3.0-or-later); the I2C
+//! protocol it models is the published Xicor/Intersil X24C01 / 24C02 datasheet.
+//! See NOTICE and docs/originality-and-provenance.md (Section 1). It clocks bits on the SCL
 //! **rising** edge and
 //! advances the mode/ACK handshake on the **falling** edge, detects
 //! START/STOP as SDA transitions while SCL is held high, and honors the two

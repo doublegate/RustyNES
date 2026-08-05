@@ -449,9 +449,10 @@ impl Mapper for Sachen146 {
 
 /// The TXC JV001 scrambling-accumulator chip (mapper 147). Distinct from the
 /// non-JV001 `TxcChip` in `txc.rs` (different register/output bit positions).
-/// The JV001 pre/post-scramble is a fixed hardware bit-permutation, implemented
-/// from the nesdev wiki mapper-147 board notes and cross-checked against `puNES`
-/// as a behavioral oracle (no third-party emulator code is incorporated).
+/// The JV001 pre/post-scramble is a fixed hardware bit-permutation. Provenance:
+/// derived from puNES's `JV001.c` / `mapper_147.c` (GPL-2.0-or-later) — the
+/// bit-permutation is also documented in the nesdev wiki mapper-147 board notes.
+/// See NOTICE and docs/originality-and-provenance.md (Section 1).
 #[derive(Clone, Copy)]
 struct Jv001Chip {
     accumulator: u8,
@@ -1464,8 +1465,8 @@ mod tests {
 
     #[test]
     fn m147_jv001_protection_read_and_bank_decode() {
-        // JV001 scramble per the nesdev wiki mapper-147 board notes (cross-checked
-        // against puNES as an oracle). The board pre-scrambles
+        // JV001 scramble derived from puNES `JV001.c` (GPL-2.0-or-later; also
+        // documented in the nesdev wiki mapper-147 board notes). The board pre-scrambles
         // writes ((v&3)<<6)|((v&0xFC)>>2) and post-scrambles reads
         // ((v&0x3F)<<2)|((v&0xC0)>>6); the chip resets with invert=0xFF.
         let mut m =

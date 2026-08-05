@@ -100,8 +100,8 @@ fn check_prg(prg: &[u8], id: u16) -> Result<(), MapperError> {
 // register-decode-faithful BestEffort port: the MMC3 PRG/CHR layout plus the
 // FK23C $5000 banking modes (0-2 MMC3, 3 = 32 KiB, 4 = whole-256 KiB) and the
 // $5001/$5002 outer PRG/CHR base bits. Register map per the NESdev wiki FK23C /
-// mapper-176 documentation (cross-checked against reference emulators as
-// accuracy oracles; no third-party emulator code is incorporated).
+// mapper-176 documentation; the banking implementation is derived from Mesen2's
+// `Waixing/Fk23C.h` (GPL-3.0-or-later). See NOTICE + docs/originality-and-provenance.md §1.
 // ===========================================================================
 
 /// Waixing FK23C 8/16 Mbit BMC ASIC (mapper 176).
@@ -549,10 +549,11 @@ pub fn new_m176(
 //
 // An MMC3 core wrapped by four $6000-$7FFF outer-bank registers that supply
 // PRG/CHR base bits + a wider/narrower mask + an extended-bank mode. The
-// COOLBOY/MINDKIDS banking transforms are a register-decode BestEffort model
-// implemented from the nesdev wiki COOLBOY / mapper-268 board notes
-// (cross-checked against FCEUX/Mesen2 as behavioral oracles; no third-party
-// emulator code is incorporated).
+// COOLBOY/MINDKIDS banking transforms are a register-decode BestEffort model;
+// the register map is per the nesdev wiki COOLBOY / mapper-268 board notes, and
+// the implementation is derived from Mesen2's `Mmc3Variants/MMC3_Coolboy.h`
+// (GPL-3.0-or-later) and the FCEUX banking transforms (GPL-2.0-or-later).
+// See NOTICE + docs/originality-and-provenance.md §1.
 // ===========================================================================
 
 #[cfg(test)]

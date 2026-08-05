@@ -310,9 +310,11 @@ impl JyAsic {
     /// bit (3) in place, but Disch's writeup does not preserve it, so we drop it
     /// to match the documented hardware bit-for-bit (no known game distinguishes
     /// the two; the JY ASIC is BestEffort tier). If a future test ROM proves bit
-    /// 3 must be preserved, OR `reg & 0x08` back into the result here. (Behavior
-    /// cross-checked against reference emulators as accuracy oracles; no
-    /// third-party emulator code is incorporated.)
+    /// 3 must be preserved, OR `reg & 0x08` back into the result here.
+    ///
+    /// Provenance: `invert_prg_bits` is derived from Mesen2's `InvertPrgBits`
+    /// (GPL-3.0-or-later); the register map is documented on the NESdev wiki.
+    /// See NOTICE and docs/originality-and-provenance.md (Section 1).
     const fn invert_prg_bits(reg: u8, invert: bool) -> u8 {
         if invert {
             (reg & 0x01) << 6

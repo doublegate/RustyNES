@@ -754,9 +754,11 @@ pub struct Ppu {
     /// during rendering — the rendering / sprite-zero / overflow / MMC3
     /// sprite-fetch FSM uses `secondary_oam` + `sprite_eval_*` + `spr_*`, all
     /// untouched. `oam_bus_copybuffer` is the value `$2004` returns while the
-    /// screen is drawn (the byte currently on the OAM data bus). (Behavior
-    /// cross-checked against reference emulators as accuracy oracles; no
-    /// third-party emulator code is incorporated.)
+    /// screen is drawn (the byte currently on the OAM data bus).
+    ///
+    /// Provenance: the OAM-data-bus and sprite-evaluation model is **derived
+    /// from Mesen2's `NesPpu.cpp`** (`ProcessSpriteEvaluation` / `ReadSpriteRam`),
+    /// GPL-3.0-or-later. See NOTICE and docs/originality-and-provenance.md (Section 1).
     pub(crate) oam_bus_copybuffer: u8,
     /// Parallel secondary OAM (the 32-byte sprite line buffer) for the bus model only.
     pub(crate) oam_bus_secondary: [u8; 32],

@@ -3802,8 +3802,8 @@ pub fn new_m204(
 // $C000), with a NROM-256 sub-case when `mode & 0x0100`; otherwise both 16 KiB
 // windows mirror the same NROM bank. `mode & 0x01` flips the mirroring. CHR is a
 // single fixed 8 KiB window. Register map per the NESdev wiki mapper-299 /
-// BMC-11160 documentation (cross-checked against reference emulators as
-// accuracy oracles; no third-party emulator code is incorporated).
+// BMC-11160 documentation; the implementation is derived from Mesen2's
+// `Txc/Bmc11160.h` (GPL-3.0-or-later). See NOTICE + docs/originality-and-provenance.md §1.
 // ===========================================================================
 
 /// TXC/BMC-11160 multicart (mapper 299).

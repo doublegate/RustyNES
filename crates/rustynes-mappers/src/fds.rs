@@ -200,9 +200,9 @@ pub const HEAD_SEEK_BYTES_PER_CYCLE: u32 = 8;
 /// long so the BIOS re-read loop always observes the not-ready -> ready edge.
 pub const HEAD_SEEK_SETTLE_CYCLES: u32 = 512;
 
-/// Per-game FDS timing quirk: a per-CRC drive-timing table (the concept
-/// cross-checked against `puNES` as an oracle; no third-party emulator code is
-/// incorporated).
+/// Per-game FDS timing quirk: a per-CRC drive-timing table derived from puNES's
+/// `src/core/fds.c` per-CRC drive table (GPL-2.0-or-later).
+/// See NOTICE and docs/originality-and-provenance.md (Section 1).
 ///
 /// A small, additive set of knobs keyed off the disk-image CRC-32 (see
 /// [`quirk_for_crc`]). Most titles run on the nominal timing and have no entry;
