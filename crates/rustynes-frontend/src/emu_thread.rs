@@ -300,6 +300,19 @@ impl EmuControl {
         self.has_rom.store(on, Ordering::Release);
     }
 
+    /// Whether a ROM is currently loaded, read lock-free.
+    ///
+    /// v2.3.0 "Datum II" (perf): the winit thread's `pace_frames` needs this on
+    /// EVERY `about_to_wait` iteration. Reading it from the emulator mutex meant the
+    /// UI thread could block for up to a full produce (~4 ms) whenever the emulation
+    /// thread happened to hold the lock — per iteration, in a spin loop. This atomic
+    /// is written by `App` at the same points it starts/stops the thread, so it is
+    /// the authoritative answer and costs one relaxed-acquire load.
+    #[must_use]
+    pub fn has_rom(&self) -> bool {
+        self.has_rom.load(Ordering::Acquire)
+    }
+
     /// Set the active regime + per-region frame duration (from
     /// `App::resolve_pacing`).
     pub fn set_regime(&self, regime: u8, frame: Duration) {

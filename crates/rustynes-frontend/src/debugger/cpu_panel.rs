@@ -97,8 +97,10 @@ const FLAG_NAMES: [&str; 8] = ["N", "V", "_", "B", "D", "I", "Z", "C"];
 /// (the caller queues it on the tracker + keeps the emulator running until it is
 /// satisfied).
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut CpuPanelState,
     nes: &mut Nes,
@@ -110,12 +112,21 @@ pub fn show(
 ) -> Option<StepRequest> {
     let mut step_request = None;
     let cpu = nes.cpu_snapshot();
-    egui::Window::new("CPU")
-        .open(open)
-        .default_pos([8.0, 64.0])
-        .default_size([320.0, 360.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    // v2.3.0 "Datum II" — routed through the shared detach helper so the CPU window
+    // can pop out into its own OS window (native) like the other debugger panels.
+    super::detachable_window(
+        ctx,
+        detached,
+        "cpu",
+        "CPU",
+        super::WindowCfg {
+            default_pos: Some([8.0, 64.0]),
+            default_size: Some([320.0, 360.0]),
+            resizable: Some(true),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             ui.horizontal(|ui| {
                 ui.monospace(format!("A={:02X}", cpu.a));
                 ui.monospace(format!("X={:02X}", cpu.x));
@@ -327,7 +338,8 @@ pub fn show(
                         ui.label(rt);
                     }
                 });
-        });
+        },
+    );
     step_request
 }
 

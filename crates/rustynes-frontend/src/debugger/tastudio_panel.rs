@@ -222,15 +222,23 @@ const FUTURE_PAD: usize = 8;
 #[allow(clippy::too_many_lines)]
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut TasStudioPanelState,
     editor: Option<&TasEditor>,
 ) {
-    egui::Window::new("TAStudio")
-        .open(open)
-        .default_size([460.0, 520.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "tas",
+        "TAStudio",
+        super::WindowCfg {
+            default_size: Some([460.0, 520.0]),
+            resizable: Some(true),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             let Some(editor) = editor else {
                 ui.weak("No TAStudio session. Load a ROM and open TAStudio from Tools.");
                 return;
@@ -251,7 +259,8 @@ pub fn show(
             macros(ui, state, editor);
             ui.separator();
             grid(ui, state, editor);
-        });
+        },
+    );
 }
 
 /// v1.8.9 — the input-macro / pattern bank: record a pattern from the cursor and

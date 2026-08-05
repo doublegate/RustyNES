@@ -99,12 +99,25 @@ impl ScriptPanelState {
 
 /// Render the script console.
 #[allow(clippy::needless_pass_by_ref_mut)] // uniform chip-panel signature.
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut ScriptPanelState, _nes: &mut Nes) {
-    egui::Window::new("Lua Script")
-        .open(open)
-        .default_size([420.0, 320.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    state: &mut ScriptPanelState,
+    _nes: &mut Nes,
+) {
+    super::detachable_window(
+        ctx,
+        detached,
+        "script",
+        "Lua Script",
+        super::WindowCfg {
+            default_size: Some([420.0, 320.0]),
+            resizable: Some(true),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             if !state.available {
                 ui.colored_label(
                     egui::Color32::from_rgb(230, 180, 80),
@@ -153,5 +166,6 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut ScriptPanelState, 
                         ui.monospace(line);
                     }
                 });
-        });
+        },
+    );
 }

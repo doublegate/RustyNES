@@ -122,8 +122,10 @@ pub mod glyph {
     pub const PALETTE: char = '\u{f53f}';
     /// `tv` — display / aspect / overscan / window size.
     pub const TV: char = '\u{f26c}';
-    /// `expand` — fullscreen.
+    /// `expand` — fullscreen / pop a tool panel out into its own OS window.
     pub const EXPAND: char = '\u{f065}';
+    /// `compress` — reattach a detached tool panel back into the main window.
+    pub const COMPRESS: char = '\u{f066}';
     /// `bars` — show/hide menu bar.
     pub const BARS: char = '\u{f0c9}';
     /// `bug` — top-level Debug menu / CPU debugger.
