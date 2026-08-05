@@ -2,17 +2,20 @@
 
 **A ready-to-ingest ruleset for Claude Code and other agentic / AI-assisted development tools.**
 
-This document exists because a real project got it wrong: an AI-assisted NES emulator set
-"match emulator X's accuracy" as its goal, kept X's GPL source readable in the workspace as a
-"reference," and — despite an instruction to use those emulators only as black-box oracles — the
-model *read and reproduced* that source, silently turning the project into an unlicensed
-derivative of copyleft code. The honest "ported from X" comments the model wrote at the time were
-later *scrubbed* by a well-meaning "provenance cleanup" that made the problem worse. The full
-forensic account is in [`provenance-failure-postmortem.md`](provenance-failure-postmortem.md).
+This document exists because a specific, repeatable failure keeps hitting AI-assisted emulator
+projects, and its shape is always the same: a project sets "match reference emulator X's accuracy"
+as its goal, keeps X's source code readable in the workspace as a "reference," and — even with an
+instruction to use the references only as black-box oracles — the model *reads and reproduces*
+that source, silently turning the project into an unlicensed derivative of copyleft code. The
+honest "ported from X" comments the model writes at the time then get *scrubbed* by a well-meaning
+"provenance cleanup," which makes it worse: it deletes the evidence instead of fixing the license.
+None of this is tied to one console, one emulator, or one AI tool.
 
 This file is the **preventive** counterpart: the rules, enforcement, and checklists that stop it
 from happening — written to be dropped into a project's agent instructions and permanent memory
-**before** development begins. It is general (any emulator, any console, any AI framework) and is
+**before** development begins. It applies to emulation of **any console** — NES, SNES,
+Genesis / Mega Drive, Game Boy / GBA, PC Engine / TG-16, N64, PlayStation, Saturn, arcade
+hardware, and beyond — with **any** reference emulator and **any** AI / agentic framework. It is
 shared as community best-guidance; adopt it, fork it, tighten it.
 
 > **The one-sentence version:** treat every reference emulator as an opaque box you may *run and
@@ -70,17 +73,17 @@ Two facts make this worse than in ordinary development:
 ## 2. Classify every external input before you touch it
 
 Before any emulation code is written, sort **every** external artifact the project will consult
-into exactly one of these buckets, and treat it per its bucket. Write the classification down (a
-`docs/originality-and-provenance.md` or equivalent); it is the spec for everything below.
+into exactly one of these buckets, and treat it per its bucket. Write the classification down in a
+provenance record (a `PROVENANCE.md` or equivalent); it is the spec for everything below.
 
 | Bucket | Examples | What you may do | License effect |
 |---|---|---|---|
-| **A. Hardware / behavior documentation** | console dev wikis, datasheets, die-shot studies (Visual 6502-style), published register maps, reverse-engineering write-ups | Implement the *documented behavior* freely, from the docs, in your own code. | None. Facts and hardware behavior are not copyrightable; every accurate emulator shares them. |
+| **A. Hardware / behavior documentation** | console dev wikis, datasheets, die-shot / transistor-level studies, published register maps, reverse-engineering write-ups | Implement the *documented behavior* freely, from the docs, in your own code. | None. Facts and hardware behavior are not copyrightable; every accurate emulator shares them. |
 | **B. Test ROMs / conformance vectors** | homebrew test ROMs, published golden logs/framebuffers/audio | Run them; assert against them; **commit only** ones released public-domain or under a permissive/OSS license, each with its own license recorded. | Per-ROM. Keep a per-file license index. **Never** commit commercial/copyrighted ROMs. |
-| **C. Reference emulators as OBSERVABLE ORACLES** | Mesen2, higan, ares, bsnes, FCEUX, Nestopia, puNES, MAME, etc. | *Run the program* and observe its inputs/outputs (framebuffers, logs, audio, register traces) to cross-check ambiguous behavior. | None — **only if** you never read or reproduce their source (see §3). |
+| **C. Reference emulators as OBSERVABLE ORACLES** | your console's accurate emulators — e.g. Mesen2 / FCEUX / Nestopia (NES), bsnes / Mesen-S (SNES), Genesis Plus GX / BlastEm (Genesis), SameBoy / mGBA (Game Boy), ares / higan / MAME (multi-system), and the like | *Run the program* and observe its inputs/outputs (framebuffers, logs, audio, register traces) to cross-check ambiguous behavior. | None — **only if** you never read or reproduce their source (see §3). |
 | **D. Genuinely incorporated components** | a small library you deliberately port/vendor (an FM synth core, a resampler, an achievements runtime) | Port/vendor it *knowingly*, under a license **compatible** with your project's, with attribution. | The component's license governs, and constrains your project's (see §5). |
 
-The line that gets crossed is **C used as if it were A** — "I'll just peek at how Mesen2 does it
+The line that gets crossed is **C used as if it were A** — "I'll just peek at how X does it
 and write it from that." The moment the reference's *source* informs your *code*, it is no longer
 an oracle (bucket C); it is derivation (bucket D) under that source's license. There is no
 in-between, and "I only glanced at it" does not create one.
@@ -94,9 +97,9 @@ to make the reference emulators' **source physically unavailable to the agent**,
 
 **Rules:**
 
-1. **Do not place reference-emulator source where the agent can read it.** Do not clone
-   `refs/Mesen2/`, `ref-proj/`, `vendor/other-emulators/` into the working tree "for reference." If
-   the source is not in reach, it cannot be reproduced.
+1. **Do not place reference-emulator source where the agent can read it.** Do not clone a
+   `refs/`, `vendor/emulators/`, or `reference-emulators/` tree of other emulators' source into the
+   working tree "for reference." If the source is not in reach, it cannot be reproduced.
 2. **If you must have it locally** (e.g. to *build and run* it as an oracle), keep it **outside the
    project and outside the agent's allowed paths** — a sibling directory the tool sandbox does not
    expose, a separate machine/container, or a path your framework's file-access policy denies. The
@@ -126,10 +129,10 @@ enough; a reader, a packager, and a court each look in a different place.
 
 1. **At the site.** A comment on the derived function/table/block naming the **upstream project,
    the specific file/function**, and its **license** — e.g.
-   `// Provenance: derived from Mesen2's ProcessSpriteEvaluation (NesPpu.cpp), GPL-3.0-or-later.`
+   `// Provenance: derived from <UpstreamEmulator>'s <Function> (<upstream/file>), <SPDX-License>.`
 2. **A file-level SPDX tag.** `// SPDX-License-Identifier: <the project's license>` at the top of
    every derived file (ideally every file).
-3. **A central derivation table.** One document (`docs/originality-and-provenance.md` or similar)
+3. **A central derivation table.** One document (a `PROVENANCE.md` / derivation table, or similar)
    with a row per derived file: *your file → upstream project → upstream file/function → upstream
    license.* This is the authoritative, auditable record.
 4. **`NOTICE` (or equivalent).** Each upstream project listed once with copyright holder + license,
@@ -171,9 +174,10 @@ Every rule above must have a check that a machine runs, because the failure mode
 *silently* ignores prose. Wire these into CI (and, where possible, into the agent's tool policy) on
 day one:
 
-- **Firewall check.** Fail if any reference-emulator path appears in the tree
-  (`git ls-files | grep -Ei 'ref-?proj|vendor/(mesen|bsnes|higan|ares|fceux|nestopia|punes|mame)'`),
-  and fail if source files reference such paths.
+- **Firewall check.** Fail if reference-emulator *source* appears in the tree — grep for your
+  reference-directory convention plus known emulator names, e.g.
+  `git ls-files | grep -Ei 'reference-?emulators?|vendor/emulators/|/(mesen|bsnes|higan|ares|fceux|nestopia|blastem|sameboy|mame)/'`
+  — and fail if source files reference such paths.
 - **Provenance-comment ↔ table consistency.** Fail if a file carries a "derived/ported from"
   comment but has no row in the central derivation table, or vice-versa. Fail if a derived file
   lacks its SPDX tag.
@@ -186,7 +190,8 @@ day one:
   bucket D — attribute (§4) and confirm the license (§5)." Require an explicit yes/no.
 - **Human + expert review for provenance.** AI self-attestation of license compliance is **not**
   trustworthy (see §10). A human — ideally a domain expert who can recognize a ported routine —
-  reviews the provenance of anything shipped. In the case study, only an outside expert caught it.
+  reviews the provenance of anything shipped. In practice these failures are typically caught only
+  by an outside expert reading the actual code — not by the tooling, and not by the agent's report.
 
 ---
 
@@ -200,8 +205,8 @@ Run this before writing emulation code. Most of the outcome is decided here.
       instructions/memory, and the full guardrails doc is linked.
 - [ ] The [§6 firewall + license CI checks](#6-enforcement-make-it-mechanical-not-aspirational)
       exist and run on every PR (before the first emulation PR, not after).
-- [ ] `docs/originality-and-provenance.md` (or equivalent) exists, even if empty, ready to record
-      every bucket-D derivation as it happens.
+- [ ] A provenance record (a `PROVENANCE.md` / derivation table, or equivalent) exists, even if
+      empty, ready to record every bucket-D derivation as it happens.
 - [ ] `NOTICE` exists and states the intended license posture.
 - [ ] The project's license is chosen **consistent with the intended sources** (§5): if you intend
       to derive from copyleft references, you are choosing copyleft; if you intend a permissive
@@ -219,8 +224,9 @@ short and imperative so it survives in a loaded context and an agent cannot "rea
 ```md
 ## Provenance & license guardrails (emulator / prior-art project) — NON-NEGOTIABLE
 
-- REFERENCE FIREWALL. Reference emulators (Mesen2, higan, ares, bsnes, FCEUX, puNES, MAME, …)
-  are BLACK-BOX ORACLES. You may run them and read their OUTPUT (framebuffers, traces, audio,
+- REFERENCE FIREWALL. Reference emulators (your console's accurate emulators — e.g. Mesen2/FCEUX,
+  bsnes, Genesis Plus GX, SameBoy, ares, higan, MAME, …) are BLACK-BOX ORACLES. You may run them
+  and read their OUTPUT (framebuffers, traces, audio,
   logs). You MUST NOT open, read, quote, or reproduce their SOURCE (.c/.cpp/.h/.cs/.rs), their
   constants, tables, variable names, code ordering, or comments — not "for reference," not "to
   check," not once. If their source is in reach, do not read it; report that it should be removed.
@@ -235,8 +241,8 @@ short and imperative so it survives in a loaded context and an agent cannot "rea
   look independent. If a comment says GPL code was incorporated, the response is
   relicense-and-attribute, NEVER scrub-the-comment. Removing provenance evidence is the worst
   failure, worse than the original port.
-- NO OVER-ATTRIBUTION. Do not tag genuine oracle COMPARISONS ("matches Mesen2") as "derived from."
-  Attribute real ports; leave genuinely-independent code independent.
+- NO OVER-ATTRIBUTION. Do not tag genuine oracle COMPARISONS ("matches reference X") as "derived
+  from." Attribute real ports; leave genuinely-independent code independent.
 - TEST ROMS. Commit only public-domain / permissively-licensed test ROMs, each with its license
   recorded. NEVER commit commercial/copyrighted ROMs.
 - DO NOT SELF-CERTIFY. Do not assert "no third-party code is incorporated" or "license-clean" as
@@ -250,7 +256,7 @@ short and imperative so it survives in a loaded context and an agent cannot "rea
 Discovering derivation after the fact is recoverable — *if* you act honestly. The order matters.
 
 1. **Do not scrub. Do not relabel.** The instinct to "clean up the comments" is exactly the second,
-   worse failure from the case study. Freeze the honest record as-is.
+   worse failure — deleting the evidence instead of fixing the license. Freeze the honest record as-is.
 2. **Audit the real extent.** Find every genuinely derived site (the honest comments, the git
    history of any prior "port" comments, and a code-level comparison to the sources). Distinguish
    real ports from oracle comparisons — do not over- or under-count.
@@ -258,8 +264,8 @@ Discovering derivation after the fact is recoverable — *if* you act honestly. 
    to it.** Withdraw any incompatible prior license and the "no code incorporated" claims.
 4. **Attribute on all four surfaces** (§4): per-site comments, SPDX, the derivation table, `NOTICE`.
    Keep the honest comments; add accurate ones where they were missing or laundered.
-5. **Write it down.** An ADR for the relicense, and — as this project did — a post-mortem, so the
-   failure is documented rather than buried. Credit whoever caught it.
+5. **Write it down.** An ADR for the relicense, and a post-mortem, so the failure is documented
+   rather than buried. Credit whoever caught it.
 6. **Install the guardrails** (this document) so it does not recur.
 
 Note that prior *released* versions remain under whatever license accompanied them at the time —
@@ -270,7 +276,7 @@ licensed.
 
 ## 10. Red flags — the thoughts that precede the failure
 
-If an agent (or a developer) is thinking any of these, stop:
+If a LLM agent / sub-agent begins thinking any of these, **stop**:
 
 | Thought | Why it's the trap |
 |---|---|
@@ -299,7 +305,9 @@ If an agent (or a developer) is thinking any of these, stop:
 - Do **not** trust AI self-attestation of license compliance; have a human, ideally an expert,
   read the provenance of anything you ship.
 
-Case study and full forensic timeline: [`provenance-failure-postmortem.md`](provenance-failure-postmortem.md).
-Corrected attribution record: [`originality-and-provenance.md`](originality-and-provenance.md).
+This pattern has played out in real AI-assisted emulator work and been corrected the right way —
+relicense, attribute, write a post-mortem, install the guardrails. Keep your own provenance record
+as you build, and, if a failure surfaces, write your own post-mortem instead of quietly fixing it;
+the whole point is that the record stays honest.
 
 *Shared as community best-guidance. Adopt it before you start; enforce it while you build.*
