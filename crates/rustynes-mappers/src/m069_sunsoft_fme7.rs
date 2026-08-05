@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the Sunsoft FME-7 / 5B audio detail is derived from Mesen2 (GPL-3.0-or-later) and cross-referenced with Nestopia UE (GPL-2.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Sunsoft FME-7 (mapper 69) -- banking, the CPU-cycle IRQ counter, and the
 //! on-cart Sunsoft 5B audio chip.
 //!

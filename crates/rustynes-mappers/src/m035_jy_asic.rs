@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the JY Company ASIC register decode is derived from Mesen2 (GPL-3.0-or-later), `JyCompany`, alongside the NESdev "J.Y. Company ASIC" documentation. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! J.Y. Company ASIC (iNES mappers 90 / 209 / 211) implementation.
 //!
 //! 晶太 (J.Y. Company)'s proprietary ASIC backs their later single-game
@@ -22,7 +26,7 @@
 //!
 //! This port follows the nesdev "J.Y. Company ASIC" page
 //! (`nesdev_wiki/J_Y__Company_ASIC.xhtml`) and the Mesen2 `JyCompany`
-//! implementation (`ref-proj/Mesen2/Core/NES/Mappers/JyCompany/JyCompany.h`).
+//! implementation (`Mesen2/Core/NES/Mappers/JyCompany/JyCompany.h`).
 //!
 //! # Registers
 //!
@@ -306,9 +310,11 @@ impl JyAsic {
     /// bit (3) in place, but Disch's writeup does not preserve it, so we drop it
     /// to match the documented hardware bit-for-bit (no known game distinguishes
     /// the two; the JY ASIC is BestEffort tier). If a future test ROM proves bit
-    /// 3 must be preserved, OR `reg & 0x08` back into the result here. (Behavior
-    /// cross-checked against reference emulators as accuracy oracles; no
-    /// third-party emulator code is incorporated.)
+    /// 3 must be preserved, OR `reg & 0x08` back into the result here.
+    ///
+    /// Provenance: `invert_prg_bits` is derived from Mesen2's `InvertPrgBits`
+    /// (GPL-3.0-or-later); the register map is documented on the NESdev wiki.
+    /// See NOTICE and docs/originality-and-provenance.md (Section 1).
     const fn invert_prg_bits(reg: u8, invert: bool) -> u8 {
         if invert {
             (reg & 0x01) << 6

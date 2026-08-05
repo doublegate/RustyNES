@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: this is the Bisqwit NES composite-NTSC model; its numeric coefficient tables were ported verbatim via Mesen2's `BisqwitNtscFilter` (Mesen2: GPL-3.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 #![allow(
     clippy::too_many_arguments,
     clippy::doc_markdown,
@@ -12,10 +16,11 @@
 //! True composite NES_NTSC filter — Bisqwit's algorithm on the GPU (T-110-A1,
 //! stage 2/2).
 //!
-//! Unlike the simplified [`crate::ntsc`] blur, this is an independent
-//! implementation of the Bisqwit-style NES composite model — the two-level NES
-//! composite signal documented at the NESdev wiki ("NTSC video") page
-//! (cross-checked against reference emulators as oracles; no code incorporated):
+//! Unlike the simplified [`crate::ntsc`] blur, this reconstructs the Bisqwit-style
+//! NES composite model. Provenance: the numeric coefficient tables were **ported
+//! verbatim from Bisqwit's C via Mesen2's `BisqwitNtscFilter`** (GPL-3.0-or-later);
+//! the two-level composite-signal shape is documented at the NESdev wiki
+//! ("NTSC video"). See NOTICE and docs/originality-and-provenance.md (Section 1):
 //! it reconstructs the analog luma+chroma **signal** from
 //! the PPU's per-pixel palette index, then demodulates it back to RGB with a
 //! windowed Y/I/Q filter. The genuine NTSC artifacts (chroma dot-crawl, colour

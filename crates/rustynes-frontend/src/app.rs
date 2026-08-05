@@ -127,6 +127,7 @@ use crate::gfx::{Gfx, NES_H, NES_W};
 use crate::input::{InputState, SysAction};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::save_state;
+use crate::ui_shell::StatusMessage;
 
 /// v1.3.0 Sprint 1.4 — winit custom user-event type, used by both
 /// native and wasm32 (native simply never sends one).
@@ -1203,8 +1204,7 @@ impl App {
             self.present_hd_tiles.clear();
             self.present_chr_snapshot.clear();
         }
-        self.ui
-            .set_status(crate::ui_shell::StatusMessage::info("ROM closed"));
+        self.ui.set_status(StatusMessage::info("ROM closed"));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1757,7 +1757,7 @@ impl App {
             return;
         }
         self.hd_pack_builder = Some(crate::hdpack_builder::HdPackBuilder::new());
-        self.ui.set_status(crate::ui_shell::StatusMessage::info(
+        self.ui.set_status(StatusMessage::info(
             "HD-Pack Builder recording — play through the scenes you want to capture".to_string(),
         ));
     }
@@ -1781,7 +1781,7 @@ impl App {
             dialog = dialog.set_directory(d);
         }
         let Some(dir) = dialog.pick_folder() else {
-            self.ui.set_status(crate::ui_shell::StatusMessage::info(
+            self.ui.set_status(StatusMessage::info(
                 "HD-Pack Builder save cancelled".to_string(),
             ));
             return;
@@ -2015,8 +2015,7 @@ impl App {
             }
         }
         if let Some(msg) = hotplug {
-            self.ui
-                .set_status(crate::ui_shell::StatusMessage::info(msg));
+            self.ui.set_status(StatusMessage::info(msg));
         }
     }
 
@@ -2078,7 +2077,6 @@ impl App {
     /// (the wasm build has no filesystem; the menu item is gated out there).
     #[cfg(not(target_arch = "wasm32"))]
     fn take_screenshot(&mut self) {
-        use crate::ui_shell::StatusMessage;
         // Copy the framebuffer under a brief lock; the encode + write run with
         // the guard dropped.
         let frame = {
@@ -2143,7 +2141,6 @@ impl App {
     /// error path is handled with a toast — it never panics.
     #[cfg(not(target_arch = "wasm32"))]
     fn screenshot_to_clipboard(&mut self) {
-        use crate::ui_shell::StatusMessage;
         // Copy the framebuffer under a brief lock; the clipboard set runs with
         // the guard dropped.
         let frame = {
@@ -2249,8 +2246,6 @@ impl App {
     #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
     fn handle_av_record_toggle(&mut self) {
         use crate::av_record::{AvParams, AvRecorder};
-        use crate::ui_shell::StatusMessage;
-
         // Stop path: take the recorder out under a brief lock, then finalize
         // with the guard dropped (the ffmpeg wait can block).
         if self.av_recording_active() {
@@ -2530,9 +2525,15 @@ impl App {
     /// running ROM's SHA-256 is stamped onto the imported movie as its
     /// authoritative identity (the external formats carry only MD5 / SHA-1).
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_movie_import(&self) {
+    fn handle_movie_import(&mut self) {
+        // v2.2.9 "Studio II": every outcome now lands on the on-screen status line
+        // (was `eprintln!` to a terminal nobody sees — the "imported a `.bk2` and
+        // nothing happened, with no error" NESdev-forum report). A malformed /
+        // wrong-order / savestate-anchored movie now tells the user *why*.
         if self.netplay.is_active() {
-            eprintln!("rustynes: leave netplay before importing a movie");
+            self.ui.set_status(StatusMessage::info(
+                "Leave netplay before importing a movie",
+            ));
             return;
         }
         let Some(path) = rfd::FileDialog::new()
@@ -2548,7 +2549,9 @@ impl App {
         let rom_sha = {
             let guard = self.emu.lock();
             let Some(nes) = guard.nes.as_ref() else {
-                eprintln!("rustynes: movie import: no ROM loaded");
+                drop(guard);
+                self.ui
+                    .set_status(StatusMessage::info("Load a ROM before importing a movie"));
                 return;
             };
             *nes.rom_sha256()
@@ -2556,26 +2559,31 @@ impl App {
         let movie = match Self::parse_movie_file(&path, rom_sha) {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("rustynes: movie import failed {}: {e}", path.display());
+                self.ui
+                    .set_status(StatusMessage::info(format!("Movie import failed: {e}")));
                 return;
             }
         };
-        let mut guard = self.emu.lock();
-        let emu = &mut *guard;
-        let Some(nes) = emu.nes.as_mut() else {
-            return;
-        };
-        if let Err(e) = movie.seek_to_start(nes) {
-            eprintln!("rustynes: movie import seek failed (wrong ROM?): {e}");
-            return;
-        }
         let total = movie.len();
-        emu.movie.start_playback(movie);
-        emu.next_frame_time = Some(Instant::now());
-        eprintln!(
-            "rustynes: imported movie playing ({total} frames) from {}",
-            path.display()
-        );
+        {
+            let mut guard = self.emu.lock();
+            let emu = &mut *guard;
+            let Some(nes) = emu.nes.as_mut() else {
+                return;
+            };
+            if let Err(e) = movie.seek_to_start(nes) {
+                drop(guard);
+                self.ui.set_status(StatusMessage::info(format!(
+                    "Movie import failed (wrong ROM?): {e}"
+                )));
+                return;
+            }
+            emu.movie.start_playback(movie);
+            emu.next_frame_time = Some(Instant::now());
+        }
+        self.ui.set_status(StatusMessage::success(format!(
+            "Movie playing ({total} frames)"
+        )));
     }
 
     /// Parse a `.fm2` / `.bk2` movie file into a [`Movie`], stamping `rom_sha` as
@@ -2728,7 +2736,6 @@ impl App {
     /// reports and returns.
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_movie_export_subtitles(&mut self) {
-        use crate::ui_shell::StatusMessage;
         let markers: Vec<(u64, String)> = self
             .debugger
             .as_ref()
@@ -2999,25 +3006,57 @@ impl App {
         else {
             return;
         };
+        // v2.2.9 "Studio II": track whether any edit mutated the input log /
+        // timeline before the cursor, so we can re-derive the running `Nes` with a
+        // SINGLE deterministic re-seek after the batch (drag-paint emits many
+        // `SetInput`s per frame; per-edit seeks would replay repeatedly). This
+        // mirrors the scripting path (`apply_tas_commands`).
+        let mut input_dirty = false;
         for edit in edits {
             match edit {
-                TasRequest::Seek(f) => ed.seek(nes, f),
+                TasRequest::Seek(f) => {
+                    // An explicit seek re-derives the `Nes` itself and subsumes any
+                    // pending edit re-seek.
+                    input_dirty = false;
+                    ed.seek(nes, f);
+                }
                 TasRequest::SetInput { frame, input } => {
-                    ed.set_input(frame, input);
+                    input_dirty |= ed.set_input(frame, input);
                 }
                 TasRequest::SetMarker { frame, label } => ed.set_marker(frame, label),
                 TasRequest::RemoveMarker(f) => ed.remove_marker(f),
-                TasRequest::InsertFrame(f) => ed.insert_frame(f),
-                TasRequest::DeleteFrame(f) => ed.delete_frame(f),
+                TasRequest::InsertFrame(f) => {
+                    ed.insert_frame(f);
+                    input_dirty = true;
+                }
+                TasRequest::DeleteFrame(f) => {
+                    ed.delete_frame(f);
+                    input_dirty = true;
+                }
                 TasRequest::CreateBranch => {
+                    // Flush any pending SetInput/InsertFrame/StampMacro edits into
+                    // the `Nes` (replay to the cursor) BEFORE snapshotting the
+                    // branch, so the branch captures the edited state rather than a
+                    // stale one; then create_branch reseats the `Nes` itself.
+                    if input_dirty {
+                        ed.seek(nes, ed.cursor());
+                    }
+                    input_dirty = false;
                     ed.create_branch(nes);
                 }
                 TasRequest::LoadBranch(i) => {
+                    // Same ordering: flush pending edits before the load restores a
+                    // (different) branch's snapshot, so nothing is silently dropped.
+                    if input_dirty {
+                        ed.seek(nes, ed.cursor());
+                    }
+                    input_dirty = false;
                     ed.load_branch(i, nes);
                 }
                 TasRequest::DeleteBranch(i) => ed.delete_branch(i),
                 TasRequest::StampMacro { start, frames } => {
                     ed.stamp_macro(start, &frames);
+                    input_dirty = true;
                 }
                 // v2.1.10 "Creator Tools" (B8) — set / move / clear the
                 // force-greenzone range. The forced frames are captured as the
@@ -3026,6 +3065,15 @@ impl App {
                 // Handled in the first pass (outside the lock — they open dialogs).
                 TasRequest::SaveProject | TasRequest::LoadProject => {}
             }
+        }
+        // Flush the batched input/timeline edits with one deterministic re-seek so
+        // a piano-roll edit is immediately reflected in the running emulator and the
+        // displayed frame. Without this, `SetInput` only mutated the editor's
+        // input_log and the `Nes` never re-derived — the "TAStudio inputs do not
+        // seem to be connected up to the rest of the program" report from NESdev.
+        if input_dirty {
+            let cursor = ed.cursor();
+            ed.seek(nes, cursor);
         }
     }
 
@@ -3957,10 +4005,9 @@ impl App {
             if let Some(d) = self.debugger.as_mut() {
                 d.open_chip_panel(crate::debugger::ChipPanel::Cpu);
             }
-            self.ui
-                .set_status(crate::ui_shell::StatusMessage::info(format!(
-                    "Breakpoint hit at ${pc:04X} — paused"
-                )));
+            self.ui.set_status(StatusMessage::info(format!(
+                "Breakpoint hit at ${pc:04X} — paused"
+            )));
         }
         // v1.4.0 Workstream D (D2) — an event-driven breakpoint fired: pause +
         // open the CPU debugger and report the kind + timing context.
@@ -3969,16 +4016,15 @@ impl App {
             if let Some(d) = self.debugger.as_mut() {
                 d.open_chip_panel(crate::debugger::ChipPanel::Cpu);
             }
-            self.ui
-                .set_status(crate::ui_shell::StatusMessage::info(format!(
-                    "Event breakpoint: {} (${:04X}) — frame {} cyc {} sl {} dot {} — paused",
-                    hit.kind.label(),
-                    hit.addr,
-                    hit.frame,
-                    hit.cycle,
-                    hit.scanline,
-                    hit.dot
-                )));
+            self.ui.set_status(StatusMessage::info(format!(
+                "Event breakpoint: {} (${:04X}) — frame {} cyc {} sl {} dot {} — paused",
+                hit.kind.label(),
+                hit.addr,
+                hit.frame,
+                hit.cycle,
+                hit.scanline,
+                hit.dot
+            )));
         }
         #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
         {
@@ -4545,9 +4591,7 @@ impl App {
             d.load_symbols(&name, &text, format);
             d.open_chip_panel(crate::debugger::ChipPanel::Cpu);
             self.ui
-                .set_status(crate::ui_shell::StatusMessage::info(format!(
-                    "Loaded symbols from {name}"
-                )));
+                .set_status(StatusMessage::info(format!("Loaded symbols from {name}")));
         }
         // v1.5.0 B4 — push the freshly-loaded labels into a running Lua script's
         // `sym:` query tables (no-op if no script is loaded). The dev/TAS symbol
@@ -4581,10 +4625,9 @@ impl App {
         if let Some(d) = self.debugger.as_mut() {
             d.load_source_map(&name, &text);
             d.open_chip_panel(crate::debugger::ChipPanel::Cpu);
-            self.ui
-                .set_status(crate::ui_shell::StatusMessage::info(format!(
-                    "Loaded source map from {name}"
-                )));
+            self.ui.set_status(StatusMessage::info(format!(
+                "Loaded source map from {name}"
+            )));
         }
     }
 
@@ -4989,9 +5032,8 @@ impl App {
             if let Some(d) = self.debugger.as_mut() {
                 d.open_chip_panel(crate::debugger::ChipPanel::Cpu);
             }
-            self.ui.set_status(crate::ui_shell::StatusMessage::info(
-                "Step complete — paused".to_owned(),
-            ));
+            self.ui
+                .set_status(StatusMessage::info("Step complete — paused".to_owned()));
         } else if step_still_pending && self.ui.paused {
             // The step verb isn't satisfied yet: keep advancing frame-by-frame
             // (the user is paused; this drives the step to completion without
@@ -5820,7 +5862,6 @@ impl App {
     /// rate, so a non-1.0 speed forces wall-clock), and rebases the pacer so
     /// the change takes effect without a catch-up burst.
     fn set_speed(&mut self, speed: f32) {
-        use crate::ui_shell::StatusMessage;
         let speed = speed.clamp(0.05, 16.0);
         self.speed = speed;
         {
@@ -5875,7 +5916,6 @@ impl App {
     /// path this flips the thread's atomic gate; on the synchronous native +
     /// wasm paths the produce loop checks `self.ui.paused` directly.
     fn set_paused(&mut self, paused: bool) {
-        use crate::ui_shell::StatusMessage;
         // v1.0.0 (BUG-4) — refuse to pause during a netplay session (it would
         // stall the rollback loop and desync the peer). Resume is always honored.
         if paused && self.netplay_is_active() {
@@ -5992,9 +6032,8 @@ impl App {
                 if self.ra_hardcore_blocks() {
                     self.toast_hardcore("Load state disabled (hardcore)");
                 } else if self.replay_interaction_locked() {
-                    self.ui.set_status(crate::ui_shell::StatusMessage::info(
-                        "Load state disabled during movie",
-                    ));
+                    self.ui
+                        .set_status(StatusMessage::info("Load state disabled during movie"));
                 } else {
                     #[cfg(not(target_arch = "wasm32"))]
                     self.handle_load_state(self.active_save_slot);
@@ -9276,7 +9315,6 @@ impl ApplicationHandler<AppEvent> for App {
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(req) = self.save_states_ui.take_request() {
                     use crate::save_states_ui::SaveStateRequest;
-                    use crate::ui_shell::StatusMessage;
                     match req {
                         SaveStateRequest::Save(slot) => {
                             self.handle_save_state(slot);
@@ -9307,7 +9345,6 @@ impl ApplicationHandler<AppEvent> for App {
                 // shows; a Load is replay-locked like every other load path.
                 #[cfg(target_arch = "wasm32")]
                 if let Some(req) = crate::wasm_save_states::take_request() {
-                    use crate::ui_shell::StatusMessage;
                     use crate::wasm_save_states::SlotRequest;
                     match req {
                         SlotRequest::Save(slot) => {

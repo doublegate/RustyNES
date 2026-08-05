@@ -398,7 +398,7 @@ A cycle-accurate NES / Famicom emulator written in pure Rust. The frontend is
 winit + wgpu + cpal + egui; the chip stack (CPU / PPU / APU / mappers) is
 no_std + alloc and fuzzable in isolation.
 
-  License .... MIT OR Apache-2.0
+  License .... GPL-3.0-or-later
   Author ..... DoubleGate <parobek@gmail.com>
   Repo ....... https://github.com/doublegate/RustyNES
   Web demo ... https://doublegate.github.io/RustyNES/

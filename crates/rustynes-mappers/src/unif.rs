@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the UNIF board-name tables are derived from Mesen2 (`UnifLoader.cpp`, GPL-3.0-or-later) and FCEUX (`unif.cpp`, GPL-2.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! UNIF (`.unf` / `.unif`) cartridge-container parser (v1.6.0 Workstream E2).
 //!
 //! UNIF is a chunked container that, unlike iNES, carries **no mapper number** —
@@ -118,10 +122,11 @@ pub fn board_to_mapper(board: &str) -> Option<u16> {
     None
 }
 
-/// Exact (already-uppercased) board-name lookup. This board-name -> mapper-number
-/// table is factual UNIF board-naming data compiled from `docs/mappers.md` and
-/// the nesdev UNIF board list (cross-checked against `Mesen2` / `puNES` as
-/// oracles; no third-party emulator code is incorporated).
+/// Exact (already-uppercased) board-name lookup. The board-name -> mapper-number
+/// mapping is largely factual UNIF board-naming data (from `docs/mappers.md` and
+/// the nesdev UNIF board list), but this table was derived from Mesen2's
+/// `UnifLoader.cpp` (GPL-3.0-or-later) and FCEUX's `unif.cpp` (GPL-2.0-or-later).
+/// See NOTICE and docs/originality-and-provenance.md (Section 1).
 // Arms are grouped by vendor (Nintendo / Konami / Bandai / Sachen / ...) for
 // provenance and readability; some distinct board families intentionally share
 // a mapper id (e.g. several boards resolve to MMC3 = 4), so identical-body arms
@@ -229,8 +234,9 @@ fn lookup_board(b: &str) -> Option<u16> {
         "MAGICFLOOR" => 218,
         "RET-CUFROM" => 29,
         // --- v1.8.9 "Backlog" beta.6 UNIF board-map breadth: well-known board
-        // names mapping to families RustyNES already implements. Cross-checked
-        // against Mesen2 / FCEUX as behavioral oracles (no code incorporated).
+        // names mapping to families RustyNES already implements. Derived from
+        // Mesen2's `UnifLoader.cpp` (GPL-3.0-or-later) + FCEUX's `unif.cpp`
+        // (GPL-2.0-or-later); see NOTICE + docs/originality-and-provenance.md §1.
         // NTDEC / TXC / discrete BMC families.
         "11160" => 299,
         "N625092" => 221,

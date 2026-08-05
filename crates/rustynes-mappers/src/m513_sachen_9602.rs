@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the Sachen 9602 board is derived from Mesen2 (GPL-3.0-or-later), `Sachen/Sachen9602.h`. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Sachen `9602` (mapper 513).
 //!
 //! An MMC3-derived Sachen ASIC with an outer PRG bank register, later and
@@ -340,9 +344,9 @@ pub fn new_m513(
 
 // ===========================================================================
 // TxcChip — the TXC protection accumulator (shared by Sachen 3011 / m136).
-// The non-JV001 variant (mask 0x07), per the NESdev wiki TXC / mapper-136
-// documentation (cross-checked against reference emulators as accuracy oracles;
-// no third-party emulator code is incorporated).
+// The non-JV001 variant (mask 0x07), register map per the NESdev wiki TXC /
+// mapper-136 documentation; the implementation is derived from Mesen2's
+// `Txc/TxcChip.h` (GPL-3.0-or-later). See NOTICE + docs/originality-and-provenance.md §1.
 // ===========================================================================
 
 #[cfg(test)]

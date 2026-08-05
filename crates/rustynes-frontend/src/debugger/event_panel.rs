@@ -95,12 +95,24 @@ const fn dir_word(kind: EventKind) -> &'static str {
 
 /// Render the graphical PPU Event Viewer.
 #[allow(clippy::many_single_char_names)] // local geometric coords (w/h/x/y/p).
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut EventPanelState, nes: &mut Nes) {
-    egui::Window::new("Event Viewer")
-        .open(open)
-        .default_size([700.0, 640.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    state: &mut EventPanelState,
+    nes: &mut Nes,
+) {
+    super::detachable_window(
+        ctx,
+        detached,
+        "event",
+        "Event Viewer",
+        super::WindowCfg {
+            default_size: Some([700.0, 640.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             ui.horizontal(|ui| {
                 let mut on = nes.event_logging();
                 if ui.checkbox(&mut on, "Record").changed() {
@@ -157,7 +169,8 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut EventPanelState, n
             if !nes.event_logging() {
                 ui.weak("(enable Record, then run/step a frame)");
             }
-        });
+        },
+    );
 }
 
 /// Draw the read/write heatmap with hover tooltip + click-to-select.

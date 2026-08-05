@@ -63,7 +63,13 @@ impl ScopeRing {
     }
 }
 
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut ApuPanelState, nes: &mut Nes) {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    state: &mut ApuPanelState,
+    nes: &mut Nes,
+) {
     let apu = nes.apu_snapshot();
     state.pulse1.push(f32::from(apu.pulse1) / 15.0);
     state.pulse2.push(f32::from(apu.pulse2) / 15.0);
@@ -71,12 +77,18 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut ApuPanelState, nes
     state.noise.push(f32::from(apu.noise) / 15.0);
     state.dmc.push(f32::from(apu.dmc) / 127.0);
 
-    egui::Window::new("APU")
-        .open(open)
-        .default_pos([560.0, 480.0])
-        .default_size([420.0, 360.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "apu",
+        "APU",
+        super::WindowCfg {
+            default_pos: Some([560.0, 480.0]),
+            default_size: Some([420.0, 360.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             ui.horizontal(|ui| {
                 ui.monospace(format!(
                     "P1 {:>2}  P2 {:>2}  TRI {:>2}  NSE {:>2}  DMC {:>3}",
@@ -95,7 +107,8 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut ApuPanelState, nes
             scope(ui, "Triangle", &state.triangle, egui::Color32::LIGHT_YELLOW);
             scope(ui, "Noise", &state.noise, egui::Color32::LIGHT_RED);
             scope(ui, "DMC", &state.dmc, egui::Color32::WHITE);
-        });
+        },
+    );
 }
 
 fn scope(ui: &mut egui::Ui, label: &str, ring: &ScopeRing, color: egui::Color32) {

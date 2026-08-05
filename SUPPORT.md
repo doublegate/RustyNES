@@ -94,7 +94,7 @@ A: RustyNES is a cycle-accurate NES emulator written in pure Rust, clearing the 
 
 **Q: Can I use RustyNES now?**
 
-A: Yes. RustyNES is well past its first stable release — the current release is **v2.0.4 "Harbor"** (the head of the v2.0.x mobile-finalization train atop the v2.0.0 "Timebase" one-clock scheduler rewrite), a complete, playable desktop application plus native Android / iOS / Libretro builds and a browser build. See [ROADMAP.md](ROADMAP.md) for what shipped and the forward directions.
+A: Yes. RustyNES is well past its first stable release — the current release is **v2.2.9 "Studio II"** (the head of the v2.2.6 → v2.3.0 line atop the v2.0.0 "Timebase" one-clock scheduler rewrite), a complete, playable desktop application plus native Android / iOS / Libretro builds and a browser build. See [ROADMAP.md](ROADMAP.md) for what shipped and the forward directions.
 
 **Q: How accurate is RustyNES?**
 
@@ -106,7 +106,7 @@ A: See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines. We welcom
 
 **Q: Is RustyNES open source?**
 
-A: Yes! RustyNES is dual-licensed under MIT/Apache-2.0. You're free to use, modify, and distribute it according to those licenses.
+A: Yes! RustyNES is licensed under GPL-3.0-or-later. You're free to use, modify, and distribute it under the terms of that license (including making source available for derivatives).
 
 ### Technical Questions
 

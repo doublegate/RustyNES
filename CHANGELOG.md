@@ -14,6 +14,124 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.2.9] - 2026-08-04 - "Studio II" (relicense to GPLv3 + TAS/movie wiring + detachable tool windows)
+
+The fourth step of the **v2.2.6 → v2.3.0** NESdev-remediation line. Its headline
+is a **licensing and provenance correction**: RustyNES is **relicensed to
+GPL-3.0-or-later** because it is a derivative work of GPL emulators. It also
+addresses three forum items — TAStudio piano-roll edits that never reached the
+emulator, `.bk2` movies that imported but did not play back, and tool windows
+trapped inside the main OS window on Windows 10. The code changes are
+frontend-only, so the deterministic chip stack, save-states, and every golden
+vector are byte-identical (AccuracyCoin 141/141, nestest 0-diff).
+
+> **Windowing — honest scope.** The detach affordance is **native-only and
+> currently *embeds***: the frontend is a single-viewport `egui_winit`
+> integration, so `show_viewport_immediate` renders a detached panel *inside* the
+> main window rather than as a separate OS window — so this does **not** yet fully
+> resolve the Windows-10 "trapped window" report. True OS-window detach needs
+> multi-viewport render-loop wiring (`set_embed_viewports(false)` + per-viewport
+> winit windows), tracked as a v2.3.0 follow-up (see the detailed "Fixed" entry).
+
+### Changed — License: MIT/Apache-2.0 → GPL-3.0-or-later
+
+- **RustyNES is relicensed to GPL-3.0-or-later** (ADR 0036). A NESdev community
+  review established that the project **incorporates and is derived from code from
+  GPL-licensed emulators** — principally **Mesen2** (GPL-3.0-or-later: CPU unstable
+  stores, the PPU sprite-evaluation/OAM model, ~15 mapper boards, the Bisqwit NTSC
+  filter tables, EEPROM models, the UNIF tables, the debug-symbol importer, the PGO
+  harness) and, for several mappers and the FDS drive model, **puNES / FCEUX /
+  Nestopia** (GPL-2.0-or-later: JV001/mapper-147 bit-for-bit, the FDS per-CRC drive
+  table, UNIF handling). This is derivation, not oracle use — the project's own
+  pre-v2.2.5 comments said so ("Faithful port of Mesen2's …", "Ported bit-for-bit
+  from puNES `JV001.c`") — which makes RustyNES a derivative work distributable only
+  under the GPL.
+- **The v2.2.5 "no GPL source incorporated" / MIT-Apache position was wrong and is
+  withdrawn.** `LICENSE` is now the GPLv3 text; `LICENSE-MIT` / `LICENSE-APACHE` are
+  removed; the workspace + `rustynes-cheevos` `license` fields and the `cargo-deny`
+  allow-list are updated.
+- **Credit is given, per subsystem.** `docs/originality-and-provenance.md` is
+  rewritten to lead with the file-by-file derivation table and the derivative-work
+  declaration; `NOTICE` attributes every GPL upstream and the code derived from it.
+  Each derived source file now carries an accurate `SPDX-License-Identifier:
+  GPL-3.0-or-later` header plus a specific provenance note naming its upstream
+  (e.g. Mesen2 `NesPpu.cpp`, puNES `JV001.c`) and pointing to the audited record.
+  The old scattered, imprecise per-line "port of" comments are not restored — the
+  SPDX + provenance headers are their accurate replacement. Incorporated permissive
+  components (emu2413/MIT, TriCNES/MIT, rcheevos/MIT, blip_buf/LGPL-2.1-or-later,
+  fonts) are GPL-compatible and keep their notices. Zero emulation-core behavior
+  change.
+
+### Added — Provenance & license firewall (+ import hardening)
+
+- **Guardrails ruleset + post-mortem.** `docs/ai-emulator-provenance-guardrails.md`
+  — a preventive, console-agnostic ruleset (reference firewall, four attribution
+  surfaces, license accounting, mechanical CI enforcement, a pre-development
+  checklist, a paste-ready block, red flags) that stops the copyleft-source-lifting
+  failure from recurring in any AI-assisted emulator project (shared as community
+  best-guidance) — and `docs/provenance-failure-postmortem.md`, the forensic
+  root-cause analysis of how GPL code was reproduced despite a black-box
+  instruction and then laundered, and how it was corrected. Themed PDFs of both in
+  `ref-docs/`. The guardrails are **ingested into `AGENTS.md`** (via the
+  `CLAUDE.md` / `GEMINI.md` symlinks) as the **"MOST IMPORTANT RULE"** section and
+  into the project memory bank, so every session loads the reference firewall as
+  standing context. A "Provenance & Licensing" section links them from
+  `docs/DOCUMENTATION_INDEX.md` + the mkdocs nav, and `README.md` carries a
+  reference-firewall note.
+- **Reference firewall — the reference-emulator clone removed.** The local
+  reference-emulator clone has been **removed from disk**; it stays gitignored (and
+  excluded from `.dockerignore` / `.markdownlintignore` / pre-commit / CodeRabbit)
+  as a firewall guard so the *copyleft* references' source (Mesen2 / puNES / FCEUX /
+  GeraNES, GPL) is out of the agent's reach by design. In-source provenance
+  citations were normalized from the removed local-clone path to upstream-relative
+  form (comments-only — the deterministic core is byte-identical; nothing
+  laundered), and the `docs/originality-and-provenance.md` §1 derivation table was
+  audited so every upstream header a file's comments cite is listed. **MIT TriCNES
+  is the deliberate exception**, vendored in-repo with attribution under
+  `crates/rustynes-test-harness/golden/tricnes/`; the tooling docs
+  (`oracle-tooling-setup.md`, `ppu-trace-tooling.md`) scope the out-of-tree /
+  never-reproduce rule to the copyleft references accordingly.
+- **`.bk2` import hardened against a `LogKey` allocation-amplification DoS.**
+  `bk2_interop::parse_log_key` now reads only the console/P1/P2 groups from the
+  `split('#')` iterator instead of collecting every `#`-group, so a hostile movie
+  padded with `#` delimiters can no longer amplify into an unbounded `Vec<&str>`
+  on import. Behavior is identical for valid movies (guarded by a new
+  `log_key_bounded_against_pathological_group_padding` regression test); the
+  deterministic core is unaffected.
+
+### Fixed
+
+- **TAStudio piano-roll edits now drive the emulator.** `App::handle_tas_requests`
+  applied `TasRequest::SetInput` to the `TasEditor::input_log` only and never
+  re-seeked the `Nes`, so a cell edit was invisible until an unrelated seek. It
+  now marks the buffer dirty and re-derives through `TasEditor::seek` after the
+  batch — the same path the scripting bridge (`apply_tas_commands`) already used.
+- **`.bk2` playback honors the movie's `LogKey` column order.** The importer
+  mapped controller columns by a fixed built-in order and ignored the `LogKey:`
+  header, so real BizHawk movies whose columns are ordered differently drove the
+  wrong buttons. `bk2_interop` now parses the actual `LogKey:` order (falling back
+  to the standard order when absent), and import parse errors surface on the
+  on-screen status bar instead of only `eprintln!`.
+
+### Added
+
+- **Detachable / floating tool windows (native).** A shared `detachable_window`
+  helper gives each debugger/tool panel a "⧉ Detach" button (and a "⧉ Reattach"
+  affordance) that pops it out via egui's `show_viewport_immediate`; 18 panels are
+  routed through it (PPU, OAM, APU, Memory, Event Viewer, NSF, Mapper, Watch,
+  Trace, Cheats, ROM Database, Performance, Documentation, Input Display, Audio
+  Mixer, Replay/TAS, Memory Compare, ROM Info), each preserving its prior
+  first-open geometry via a `WindowCfg`. Native-only (wasm stays docked in an
+  `egui::Window`, unchanged), clippy-clean on both wasm feature sets.
+  - **Known limitation (honest scope).** RustyNES's frontend is currently a
+    *single-viewport* `egui_winit` integration, so `show_viewport_immediate`
+    renders the detached panel **embedded in the main window** rather than as a
+    separate OS window — i.e. this does **not** yet fully resolve the Windows-10
+    "trapped inside the main window" report. True OS-window detach requires wiring
+    multi-viewport (`set_embed_viewports(false)` + per-viewport winit windows) into
+    the render loop; the affordance, `WindowCfg` geometry, and `ViewportBuilder`
+    plumbing are in place for when that lands. Tracked as follow-up.
+
 ## [2.2.8] - 2026-08-04 - "Aperture II" (gamma-aware scanlines + sharper CRT)
 
 A **presentation-fidelity** release addressing the NESdev-forum feedback on

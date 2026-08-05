@@ -1,6 +1,13 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.2.8** (2026-08-04) — **"Aperture II"**, a **presentation-fidelity**
+> **Current release: v2.2.9** (2026-08-04) — **"Studio II"**, a frontend
+> quality-of-life release (4th of the v2.2.6 → v2.3.0 NESdev-remediation line):
+> TAStudio piano-roll edits now drive the emulator, `.bk2` movies play back
+> honoring their `LogKey` column order, and tool windows can **detach into real
+> OS windows** (fixing the Windows-10 trapped-window report). Frontend-only, so
+> the deterministic core is untouched (**AccuracyCoin 141/141**, nestest 0-diff);
+> the multi-window behavior awaits an on-device check. Built on
+> **v2.2.8** (2026-08-04) — **"Aperture II"**, a **presentation-fidelity**
 > release (gamma-correct scanlines in linear light + a WebGL2 gamma fix + a sharper
 > Gaussian scanline profile; presentation-only, so the pre-shader framebuffer +
 > AccuracyCoin 141/141 are byte-identical and the shipped native default is unchanged —
@@ -623,7 +630,7 @@
 > (`docs/audit/v2.0.2-octal-latch-campaign-2026-07-08.md`) corrected two ADR 0030
 > premises: **Mesen2 does NOT pass these tests** (both bytes read `0x0A` = corruption
 > not reproduced — the correct oracle is TriCNES, the AccuracyCoin author's own MIT
-> emulator, `ref-proj/TriCNES`, commit `9199870`), and **a whole-dot port suffices**
+> emulator, TriCNES (upstream), commit `9199870`), and **a whole-dot port suffices**
 > (the full 2-cycle-ALE refactor was not required). **Promotion to default (shipped
 > 141/141) is the deliberate v2.0.3 step** — after the Hybrid path's `+1 coarse-X`
 > approximation is reworked to a first-principles latch-carry model and gated on the

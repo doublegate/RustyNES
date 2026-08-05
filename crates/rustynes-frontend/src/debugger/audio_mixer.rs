@@ -140,6 +140,7 @@ impl AudioMixerState {
 #[allow(clippy::too_many_lines)]
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut AudioMixerState,
     config: &mut Config,
@@ -175,11 +176,17 @@ pub fn show(
 
     let mut changed = false;
 
-    egui::Window::new("Audio Mixer")
-        .open(open)
-        .default_size([360.0, 460.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "audio_mixer",
+        "Audio Mixer",
+        super::WindowCfg {
+            default_size: Some([360.0, 460.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             let audio = &mut config.audio;
 
             // --- Master scope ---
@@ -296,14 +303,15 @@ pub fn show(
             ui.add_space(4.0);
             ui.weak(
                 "The mix is a frontend UI overlay: it re-weights the core's own \
-                 samples for your speakers only. Save-states, movies, and netplay \
-                 stay byte-identical regardless of these sliders.",
+             samples for your speakers only. Save-states, movies, and netplay \
+             stay byte-identical regardless of these sliders.",
             );
 
             if nes.as_deref().is_none() {
                 ui.weak("Load a ROM or NSF to see live channel levels.");
             }
-        });
+        },
+    );
 
     // --- Apply + persist any change (after the egui pass, no lock held here) ---
     if changed {

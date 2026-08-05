@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: these are single-pass WGSL reimplementations of the CRT-Royale (TroggleMonkey, GPL-2.0-or-later), crt-guest-advanced (guest.r), and Sony Megatron (MajorPainInTheCactus) shader looks. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Marquee CRT shader stack + raw-signal decode (v2.1.9 "Presentation & Signal").
 //!
 //! New presentation shaders added in the v2.1.9 B6 (CRT stack) and P4 (raw

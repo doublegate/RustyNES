@@ -45,6 +45,20 @@ The core "spec" docs — kept in sync with the code in the same PR as a change.
 
 ---
 
+## Provenance & licensing
+
+RustyNES is **GPL-3.0-or-later**, a derivative work of GPL emulators used beyond black-box oracles. These documents are the authoritative provenance/licensing record — **read the guardrails first; it is the project's most important development rule.**
+
+| Document | Topic |
+|----------|-------|
+| [ai-emulator-provenance-guardrails.md](ai-emulator-provenance-guardrails.md) | **The reference firewall + provenance/attribution ruleset** — ingested into `AGENTS.md` as the top rule; PDF in `ref-docs/`. Reference emulators are black-box oracles (never read their source); the local reference-emulator clone is removed + firewall-gitignored; if you derive, attribute + keep the license compatible; never launder. |
+| [originality-and-provenance.md](originality-and-provenance.md) | The honest §1 derivation table (RustyNES file → upstream emulator/file → license) + the incorporated-permissive-components and visual-influence records. |
+| [provenance-failure-postmortem.md](provenance-failure-postmortem.md) | Forensic root-cause analysis of how GPL code was reproduced despite a black-box instruction and later laundered; the correction (relicense + re-attribute). PDF in `ref-docs/`. |
+| [adr/0036-relicense-gplv3-derivative-work.md](adr/0036-relicense-gplv3-derivative-work.md) | The relicense decision (MIT/Apache → GPL-3.0-or-later). |
+| Root `NOTICE`, `LICENSE` | Upstream attributions + the project license. |
+
+---
+
 ## Subdirectories
 
 | Directory | Contents |

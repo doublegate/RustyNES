@@ -185,7 +185,7 @@
 
     <!-- ===== About dialog ===== -->
     <string name="about_close">Close</string>
-    <string name="about_body">RustyNES — a cycle-accurate Nintendo Entertainment System emulator written in pure Rust.\n\nLicense: MIT OR Apache-2.0\nAuthor: DoubleGate\nAccuracy: AccuracyCoin 100%% (139/139); nestest 0-diff; blargg / kevtris suites green.\n\nFeatures: 168 mapper families, the Famicom Disk System, Vs. System / PlayChoice-10, rollback netplay, RetroAchievements, TAS movies + the TAStudio editor, save-states, rewind, run-ahead, Lua scripting + automation, HD packs, and A/V recording — all on a strict bit-determinism contract.</string>
+    <string name="about_body">RustyNES — a cycle-accurate Nintendo Entertainment System emulator written in pure Rust.\n\nLicense: GPL-3.0-or-later\nAuthor: DoubleGate\nAccuracy: AccuracyCoin 100%% (141/141); nestest 0-diff; blargg / kevtris suites green.\n\nFeatures: 172 mapper families, the Famicom Disk System, Vs. System / PlayChoice-10, rollback netplay, RetroAchievements, TAS movies + the TAStudio editor, save-states, rewind, run-ahead, Lua scripting + automation, HD packs, and A/V recording — all on a strict bit-determinism contract.</string>
 
     <!-- ===== First-run onboarding dialogs ===== -->
     <string name="onboarding_continue">Continue…</string>

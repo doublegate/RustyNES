@@ -70,17 +70,24 @@ fn fmt_size(bytes: usize) -> String {
 /// FDS / NSF file).
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     _state: &mut RomInfoPanelState,
     nes: &Nes,
     crc: Option<u32>,
     crc_full: Option<u32>,
 ) {
-    let mut win_open = *open;
-    egui::Window::new("ROM Info")
-        .open(&mut win_open)
-        .resizable(false)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "rom_info",
+        "ROM Info",
+        super::WindowCfg {
+            resizable: Some(false),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             // --- Identity / provenance keys ---
             ui.heading("Identity");
             egui::Grid::new("rom_info_identity")
@@ -185,6 +192,6 @@ pub fn show(
                 .small()
                 .weak(),
             );
-        });
-    *open = win_open;
+        },
+    );
 }

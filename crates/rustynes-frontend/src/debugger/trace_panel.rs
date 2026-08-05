@@ -59,16 +59,23 @@ fn fmt_rec(disasm: &str, r: &TraceRec, label: Option<&str>) -> String {
 /// with its loaded label.
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut TracePanelState,
     nes: &mut Nes,
     symbols: &SymbolMap,
 ) {
-    egui::Window::new("Trace")
-        .open(open)
-        .default_size([460.0, 360.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "trace",
+        "Trace",
+        super::WindowCfg {
+            default_size: Some([460.0, 360.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             ui.horizontal(|ui| {
                 let mut on = nes.trace_enabled();
                 if ui.checkbox(&mut on, "Record").changed() {
@@ -111,7 +118,8 @@ pub fn show(
                         ui.monospace(line);
                     }
                 });
-        });
+        },
+    );
 }
 
 /// Write the entire trace ring to `<temp>/rustynes-trace.log`. Returns a status

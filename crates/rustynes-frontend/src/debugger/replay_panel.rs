@@ -78,14 +78,25 @@ fn fmt_time(frames: usize, hz: u32) -> String {
 }
 
 #[allow(clippy::too_many_lines)]
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut ReplayPanelState) {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    state: &mut ReplayPanelState,
+) {
     let status = state.status;
     let info = state.info.clone();
-    egui::Window::new("Replay / TAS")
-        .open(open)
-        .default_size([340.0, 300.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "replay",
+        "Replay / TAS",
+        super::WindowCfg {
+            default_size: Some([340.0, 300.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             // --- Mode + progress ---
             let (mode_txt, mode_col) = match status.mode {
                 MovieMode::Idle => ("Idle", egui::Color32::GRAY),
@@ -242,7 +253,8 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut ReplayPanelState) 
                 });
                 ui.weak("Seeking re-derives state by replaying inputs — bit-identical.");
             }
-        });
+        },
+    );
 }
 
 #[cfg(test)]

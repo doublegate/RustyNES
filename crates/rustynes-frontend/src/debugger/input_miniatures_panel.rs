@@ -14,7 +14,7 @@
 //! / Bandai Hyper Shot) — with real-time button / axis feedback. With the Four
 //! Score it shows all four standard pads (multitap).
 //!
-//! Reference: `ref-proj/GeraNES/.../GeraNESApp.InputMiniaturesOverlayUI.inl`
+//! Reference: `GeraNES/.../GeraNESApp.InputMiniaturesOverlayUI.inl`
 //! (UX/layout intent only; this is an independent Rust/egui reimplementation).
 //!
 //! Frontend-only: it reads the same live host-side input snapshot the emulator
@@ -129,14 +129,22 @@ pub struct InputMiniaturesPanelState;
 /// Render the "Input Display" window (v1.7.0 "Forge" beta.5, #51).
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     _state: &mut InputMiniaturesPanelState,
     snap: &MiniaturesSnapshot,
 ) {
-    egui::Window::new("Input Display")
-        .open(open)
-        .resizable(false)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "input_display",
+        "Input Display",
+        super::WindowCfg {
+            resizable: Some(false),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             // P1 standard pad.
             label(ui, "P1");
             draw_pad(ui, snap.pads.first().copied().unwrap_or_default());
@@ -158,7 +166,8 @@ pub fn show(
                 }
                 exp => draw_expansion(ui, exp),
             }
-        });
+        },
+    );
 }
 
 /// A device label line.

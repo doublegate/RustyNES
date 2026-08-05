@@ -187,7 +187,17 @@ flamegraph.svg
 # Large local NESdev wiki mirror (~208M, reference only).
 /nesdev_wiki/
 
-# --- Reference projects (external cloned repos) ---
+# --- Reference projects (external cloned repos) — REFERENCE FIREWALL ---
+# ref-proj/ held local clones of reference emulators used ONLY as black-box
+# behavioral oracles. Their licenses are project-specific: Mesen2, puNES, FCEUX,
+# and GeraNES are copyleft (GPL), and reproducing that source makes RustyNES a
+# derivative work (which it now is, GPL-3.0-or-later); TriCNES is MIT. The
+# directory has been REMOVED from disk and stays ignored here as a firewall guard
+# so the copyleft source can never re-enter the working tree. Do NOT re-clone
+# reference-emulator source into the repo; implement hardware behavior from
+# docs/test ROMs. (The MIT TriCNES source is instead deliberately vendored, with
+# attribution, under crates/rustynes-test-harness/golden/tricnes/.) See
+# docs/ai-emulator-provenance-guardrails.md and the "MOST IMPORTANT RULE" of AGENTS.md.
 /ref-proj/
 
 # --- Temporary files ---

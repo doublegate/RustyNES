@@ -72,7 +72,13 @@ impl NsfPanelState {
     clippy::cast_precision_loss,
     clippy::too_many_lines
 )]
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes: &mut Nes) {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    state: &mut NsfPanelState,
+    nes: &mut Nes,
+) {
     let total = nes.nsf_song_count();
     // v1.5.0 C3 — sample the live per-channel DAC levels (read-only) so the
     // scope appends one column per redraw.
@@ -103,11 +109,17 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes
     state.master.push((p1 + p2 + tri + noi + dmc + ext) / 6.0);
     let expansion = nes.expansion_audio_chip();
 
-    egui::Window::new("NSF Player")
-        .open(open)
-        .default_size([340.0, 440.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "nsf",
+        "NSF Player",
+        super::WindowCfg {
+            default_size: Some([340.0, 440.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             if total == 0 {
                 ui.weak("No NSF loaded.");
                 return;
@@ -223,5 +235,6 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut NsfPanelState, nes
             ui.weak(
                 "Tempo \u{2248} NTSC 60 Hz (vblank-driven); non-60 Hz tunes play slightly off.",
             );
-        });
+        },
+    );
 }

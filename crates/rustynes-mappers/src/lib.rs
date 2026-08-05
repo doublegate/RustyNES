@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: this crate root contains code derived from puNES (GPL-2.0-or-later) — the JV001 security chip / mapper 147, ported from `JV001.c` / `mapper_147.c` — and from FCEUX / Mesen2 for UNIF board dispatch. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Cartridge file format (iNES + NES 2.0) parsing and mapper implementations.
 //!
 //! See `docs/mappers.md` and `docs/cartridge-format.md` for the implementation
@@ -1164,8 +1168,9 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         // --- v1.6.0 "Studio" Workstream E, best-effort (Tier-2): J.Y. Company
         // ASIC. One silicon implementation behind three iNES mapper numbers;
         // 90 inhibits the ROM-nametable / extended-mirroring feature, 209
-        // register-enables it, 211 forces it on. Implemented from the nesdev
-        // "J.Y. Company ASIC" page (cross-checked against Mesen2 as an oracle).
+        // register-enables it, 211 forces it on. The register-decode is derived
+        // from Mesen2's `JyCompany` (GPL-3.0-or-later) and the nesdev "J.Y.
+        // Company ASIC" page. See NOTICE + docs/originality-and-provenance.md §1.
         // Register-decode +
         // save-state unit-tested only, NOT accuracy-gated (`tier.rs`).
         90 => Box::new(

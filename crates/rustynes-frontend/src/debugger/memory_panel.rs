@@ -227,17 +227,24 @@ impl MemoryPanelState {
 
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut MemoryPanelState,
     nes: &mut Nes,
     counter: &mut MemoryAccessCounter,
 ) {
-    egui::Window::new("Memory")
-        .open(open)
-        .default_pos([336.0, 480.0])
-        .default_size([520.0, 520.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "memory",
+        "Memory",
+        super::WindowCfg {
+            default_pos: Some([336.0, 480.0]),
+            default_size: Some([520.0, 520.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             ui.horizontal(|ui| {
                 for d in [Domain::Cpu, Domain::Ppu, Domain::Oam] {
                     if ui.selectable_label(state.domain == d, d.label()).clicked()
@@ -418,7 +425,8 @@ pub fn show(
             // addresses currently in view. Self-contained so it merges cleanly.
             ui.separator();
             access_counter::show_access_counter_section(ui, counter, state.origin);
-        });
+        },
+    );
 }
 
 fn parse_hex16(s: &str) -> Option<u16> {

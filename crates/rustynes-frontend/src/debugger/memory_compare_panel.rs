@@ -273,16 +273,23 @@ fn read_le_nes(nes: &mut Nes, addr: u16, size: Size) -> u32 {
 
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut MemoryComparePanelState,
     nes: &mut Nes,
 ) {
-    egui::Window::new("Memory Compare")
-        .open(open)
-        .default_pos([336.0, 480.0])
-        .default_size([360.0, 540.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "memory_compare",
+        "Memory Compare",
+        super::WindowCfg {
+            default_pos: Some([336.0, 480.0]),
+            default_size: Some([360.0, 540.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             // ---------------- RAM Search ----------------
             ui.label(egui::RichText::new("RAM Search").strong());
             ui.horizontal(|ui| {
@@ -474,7 +481,8 @@ pub fn show(
             if let Some(i) = remove {
                 state.watches.remove(i);
             }
-        });
+        },
+    );
 }
 
 /// Parse a `$`/`0x`/decimal/bare-hex value (up to 32-bit) for the search

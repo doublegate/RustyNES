@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.2.8-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.2.9-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -795,7 +795,13 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.2.8 "Aperture II"**, a **presentation-fidelity**
+RustyNES's current release is **v2.2.9 "Studio II"**, a **frontend quality-of-life**
+release (4th of the v2.2.6 → v2.3.0 NESdev-remediation line): TAStudio piano-roll edits
+now drive the emulator, `.bk2` movies play back honoring their `LogKey` column order, and
+tool windows can **detach into real OS windows** (fixing the Windows-10 trapped-window
+report). Frontend-only, so the deterministic core is untouched (**AccuracyCoin 141/141**,
+nestest 0-diff); the multi-window behavior awaits an on-device check. It builds on
+**v2.2.8 "Aperture II"**, a **presentation-fidelity**
 release: gamma-correct scanlines (linear-light darkening + a WebGL2 gamma fix) and a
 sharper Gaussian scanline profile for crisp vertical boundaries. Presentation-only —
 the pre-shader framebuffer is byte-identical (**AccuracyCoin 141/141**) and the shipped
@@ -985,16 +991,42 @@ if you need guidance.
 
 ## License
 
-RustyNES is dual-licensed under your choice of:
+RustyNES is licensed **[GPL-3.0-or-later](LICENSE)**.
 
-- **[MIT License](LICENSE-MIT)** — permissive, allows commercial use.
-- **[Apache License 2.0](LICENSE-APACHE)** — permissive with a patent grant.
+**Why GPLv3, and provenance.** RustyNES is a **derivative work** of GPL-licensed NES
+emulators: it incorporates code derived from **Mesen2** (GPL-3.0-or-later) and, for
+several mappers and the FDS drive model, from **puNES**, **FCEUX**, and **Nestopia UE**
+(GPL-2.0-or-later). An earlier version of this project incorrectly described that code
+as "oracle cross-checks" and licensed it MIT/Apache-2.0; that was wrong. Following a
+NESdev community review, the project is relicensed GPL-3.0-or-later and the derivation
+is credited per subsystem in **[`docs/originality-and-provenance.md`](docs/originality-and-provenance.md)**
+and **[`NOTICE`](NOTICE)** (see also ADR 0036). Contributions are accepted under
+GPL-3.0-or-later.
 
-Unless you state otherwise, any contribution you submit is dual-licensed as above.
+**AI-assistance disclosure.** RustyNES is heavily AI-assisted software. That does not
+change the above: code an LLM reproduces from GPL sources is still GPL-derived, and the
+maintainer is responsible for what lands in the tree — which is why the provenance is
+now stated plainly rather than scrubbed.
 
-**Vendored third-party code:** the optional `crates/rustynes-cheevos` crate vendors the
-[RetroAchievements `rcheevos`](https://github.com/RetroAchievements/rcheevos) library
-under its MIT license (retained verbatim alongside the sources).
+**Reference firewall (so it does not recur).** The failure that led to the relicense —
+an AI reproducing reference-emulator source despite a black-box instruction, then later
+scrubbing the honest "ported from" comments — is documented as a forensic post-mortem
+([`docs/provenance-failure-postmortem.md`](docs/provenance-failure-postmortem.md)) and
+distilled into a preventive, console-agnostic ruleset,
+**[`docs/ai-emulator-provenance-guardrails.md`](docs/ai-emulator-provenance-guardrails.md)**
+(themed PDFs of both in [`ref-docs/`](ref-docs/)). It is the project's top development
+rule, ingested into `AGENTS.md`: reference emulators are **black-box oracles** whose
+*output* may be observed but whose *source* is never read or reproduced; the local
+`ref-proj/` reference-emulator clone has been **removed from the repo and stays
+gitignored** so that source is out of reach by design; hardware behavior is implemented
+from public documentation and test ROMs; and any genuine derivation is attributed and
+license-checked rather than laundered. The guardrails are shared as community
+best-guidance for other AI-assisted emulator projects.
+
+**Incorporated permissive components** (all GPL-compatible, notices in `NOTICE`):
+emu2413 (MIT), TriCNES (MIT), the optional `crates/rustynes-cheevos` crate's vendored
+[RetroAchievements `rcheevos`](https://github.com/RetroAchievements/rcheevos) (MIT),
+blip_buf (LGPL-2.1-or-later), and the bundled fonts.
 
 **Test ROMs** under `tests/roms/` are individually CC0, MIT, or zlib licensed. **No
 commercial Nintendo ROMs are included, and they will never be bundled** — dumps for the
@@ -1047,7 +1079,7 @@ If you use RustyNES in academic research, please cite:
   author  = {RustyNES Contributors},
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
-  version = {2.2.8},
+  version = {2.2.9},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
              AccuracyCoin 100\% (141/141), nestest 0-diff; 172 mapper families,

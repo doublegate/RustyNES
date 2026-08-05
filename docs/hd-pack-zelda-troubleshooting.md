@@ -192,7 +192,7 @@ dungeon BG render in Mesen?
 | CHR snapshot (8 KiB) | `crates/rustynes-frontend/src/emu.rs` — `capture_hd_chr`; `crates/rustynes-frontend/src/app.rs` — `present_chr_snapshot` |
 | Pixel Inspector panel | `crates/rustynes-frontend/src/debugger/hd_pixel_panel.rs` |
 | HD-pack spec / parity status | `docs/adr/0014-hd-pack-conditions-and-backgrounds.md`, ADR 0018 (real Mesen tile format), `docs/ppu-2c02.md` (HD-pack tile-source export) |
-| Mesen2 reference | `ref-proj/Mesen2/Core/NES/HdPacks/` |
+| Mesen2 reference | Mesen2's `Core/NES/HdPacks/` (out-of-tree) |
 
 ## Captured readings
 

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: this PPU contains code derived from Mesen2 (GPL-3.0-or-later): the sprite-evaluation FSM and OAM-data-bus model, `Core/NES/NesPpu.cpp` (`ProcessSpriteEvaluation` / `ReadSpriteRam`); it also incorporates models ported from TriCNES (MIT) — the ALE / octal-latch address-multiplex and the OAM-corruption behavior. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! 2C02 PPU core: state, register surface, scanline counter, NMI signaling.
 //!
 //! See `docs/ppu-2c02.md`. Background and sprite *rendering* (per-dot tile
@@ -498,7 +502,7 @@ pub struct Ppu {
     // for netplay-rollback determinism. That bump is ADDITIVE (pre-v5 blobs upconvert
     // to the inactive rest defaults), NOT an ADR-0028 save-state format-epoch break.
     //
-    // Ported from TriCNES (`ref-proj/TriCNES/Emulator.cs`, MIT, commit 9199870),
+    // Ported from TriCNES (`TriCNES/Emulator.cs`, MIT, commit 9199870),
     // the AccuracyCoin author's own transistor-level emulator, which is the
     // ground-truth oracle for the "ALE + Read" / "Hybrid Addresses" tests (the
     // vendored Mesen2 build does NOT pass them — see the ADR 0030 campaign audit).
@@ -750,9 +754,11 @@ pub struct Ppu {
     /// during rendering — the rendering / sprite-zero / overflow / MMC3
     /// sprite-fetch FSM uses `secondary_oam` + `sprite_eval_*` + `spr_*`, all
     /// untouched. `oam_bus_copybuffer` is the value `$2004` returns while the
-    /// screen is drawn (the byte currently on the OAM data bus). (Behavior
-    /// cross-checked against reference emulators as accuracy oracles; no
-    /// third-party emulator code is incorporated.)
+    /// screen is drawn (the byte currently on the OAM data bus).
+    ///
+    /// Provenance: the OAM-data-bus and sprite-evaluation model is **derived
+    /// from Mesen2's `NesPpu.cpp`** (`ProcessSpriteEvaluation` / `ReadSpriteRam`),
+    /// GPL-3.0-or-later. See NOTICE and docs/originality-and-provenance.md (Section 1).
     pub(crate) oam_bus_copybuffer: u8,
     /// Parallel secondary OAM (the 32-byte sprite line buffer) for the bus model only.
     pub(crate) oam_bus_secondary: [u8; 32],

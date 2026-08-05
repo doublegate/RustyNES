@@ -38,14 +38,26 @@ fn fmt_size(bytes: usize) -> String {
     }
 }
 
-pub fn show(ctx: &egui::Context, open: &mut bool, _state: &mut MapperPanelState, nes: &Nes) {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    _state: &mut MapperPanelState,
+    nes: &Nes,
+) {
     let info = nes.mapper_info();
-    egui::Window::new("Mapper")
-        .open(open)
-        .default_pos([16.0, 720.0])
-        .default_size([440.0, 460.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "mapper",
+        "Mapper",
+        super::WindowCfg {
+            default_pos: Some([16.0, 720.0]),
+            default_size: Some([440.0, 460.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             // --- Identity ---
             let submap = if info.submapper == 0 {
                 String::new()
@@ -158,5 +170,6 @@ pub fn show(ctx: &egui::Context, open: &mut bool, _state: &mut MapperPanelState,
                         }
                     }
                 });
-        });
+        },
+    );
 }

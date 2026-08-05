@@ -2115,7 +2115,7 @@ fn about_window(ctx: &egui::Context, open: &mut bool) {
                     "https://github.com/doublegate/RustyNES",
                 );
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new("MIT OR Apache-2.0").weak());
+                ui.label(egui::RichText::new("GPL-3.0-or-later").weak());
                 ui.add_space(4.0);
             });
         });

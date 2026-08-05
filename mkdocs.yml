@@ -116,6 +116,10 @@ nav:
       - Project Status: STATUS.md
       - Architecture: architecture.md
       - Glossary: glossary.md
+  - Provenance & Licensing:
+      - Originality & Provenance: originality-and-provenance.md
+      - AI Emulator Provenance Guardrails: ai-emulator-provenance-guardrails.md
+      - Provenance Failure Post-Mortem: provenance-failure-postmortem.md
   - Emulation Core:
       - CPU (6502): cpu-6502.md
       - PPU (2C02): ppu-2c02.md

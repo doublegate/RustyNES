@@ -318,15 +318,96 @@ fn parse_header(header: &str) -> Result<Bk2Meta, Bk2Error> {
     Ok(meta)
 }
 
+/// The standard-controller column map (`U D L R S s B A`), used as the fallback
+/// when a `LogKey:` group is absent or unrecognized. Each slot maps an input-line
+/// character *position* to the [`Buttons`] flag it drives.
+fn default_pad_columns() -> Vec<Option<Buttons>> {
+    PAD_COLUMNS.iter().map(|(_, b)| Some(*b)).collect()
+}
+
+/// Map a `LogKey:` column *name* (e.g. `"P1 Up"`, `"Up"`, `"A"`, `"Select"`) to
+/// the NES standard-controller button it drives. The `"Pn "` port label (or any
+/// other prefix) is ignored — only the final word matters. Columns that are not
+/// standard-controller buttons (`"Reset"`, `"Power"`, `"FDS Insert Disk"`, mic,
+/// …) return `None`: they still occupy a character position in the input line but
+/// drive nothing `RustyNES` models.
+fn button_for_column(name: &str) -> Option<Buttons> {
+    match name.trim().rsplit(' ').next().unwrap_or("") {
+        "Up" | "U" => Some(Buttons::UP),
+        "Down" | "D" => Some(Buttons::DOWN),
+        "Left" | "L" => Some(Buttons::LEFT),
+        "Right" | "R" => Some(Buttons::RIGHT),
+        "Start" | "S" => Some(Buttons::START),
+        "Select" | "s" => Some(Buttons::SELECT),
+        "B" => Some(Buttons::B),
+        "A" => Some(Buttons::A),
+        _ => None,
+    }
+}
+
+/// Per-port `(P1, P2)` position→button column maps parsed from a `LogKey:`.
+type PadColumnMaps = (Vec<Option<Buttons>>, Vec<Option<Buttons>>);
+
+/// Parse the `LogKey:` declaration into per-port position→button column maps.
+///
+/// The `LogKey` is `#`-separated controller groups, each a `|`-separated column
+/// list: `LogKey:#Reset|Power|#P1 Up|P1 Down|…|P1 A|#P2 Up|…|`. Group 1 is the
+/// console (dropped), group 2 is P1, group 3 is P2. Reading the *declared* order
+/// (rather than assuming the fixed `U D L R S s B A`) is what lets a `.bk2`
+/// authored with a different column order or extra columns play back correctly
+/// (the NESdev-forum "`.bk2` did not play back" report). A group that yields no
+/// recognized buttons falls back to [`default_pad_columns`], so a truncated or
+/// exotic `LogKey` still maps a standard controller.
+fn parse_log_key(log_key: &str) -> PadColumnMaps {
+    let trimmed = log_key.trim();
+    let body = trimmed.strip_prefix("LogKey:").unwrap_or(trimmed);
+    // The body opens with a single `#` delimiter, then `#`-separated groups.
+    // Strip ONLY that leading delimiter and split without dropping empties: an
+    // empty console group (`##P1...`) must keep its slot so P1/P2 don't shift
+    // left into it. groups[0] = console, groups[1] = P1, groups[2] = P2.
+    let body = body.strip_prefix('#').unwrap_or(body);
+    // Read ONLY the three groups we consume (console, P1, P2) straight from the
+    // split iterator rather than collecting every `#`-group: a hostile `.bk2`
+    // padded with `#` delimiters would otherwise allocate one `&str` slot per
+    // empty group (~16 bytes each) and could exhaust memory on import. `split`
+    // still yields empty groups, so `next()` preserves the empty console slot
+    // (`##P1...`) and keeps P1/P2 from shifting left into it.
+    let mut groups = body.split('#');
+    let _console = groups.next(); // groups[0] = console (unused)
+    let cols = |g: Option<&str>| -> Vec<Option<Buttons>> {
+        let mapped: Vec<Option<Buttons>> = g.map_or_else(Vec::new, |grp| {
+            // Strip only the trailing `|` delimiter each group carries; keep
+            // interior empty columns (`P1 Up||P1 A`) so a button's column index
+            // stays aligned with the frame-value index (else `A` would map to the
+            // empty column's slot and a frame `U.A` would replay as `Up` alone).
+            grp.strip_suffix('|')
+                .unwrap_or(grp)
+                .split('|')
+                .map(button_for_column)
+                .collect()
+        });
+        // If nothing in this group is a recognized controller button, the LogKey
+        // was truncated/exotic — fall back to the fixed standard order.
+        if mapped.iter().any(Option::is_some) {
+            mapped
+        } else {
+            default_pad_columns()
+        }
+    };
+    // groups[1] = P1; groups[2] = P2, read in order from the same iterator.
+    (cols(groups.next()), cols(groups.next()))
+}
+
 /// Parse the `Input Log.txt` member into the per-frame [`FrameInput`] stream.
 ///
-/// The first non-blank line inside `[Input]` must be a `LogKey:` declaration.
-/// Every subsequent `|`-delimited line up to `[/Input]` is one frame; the first
-/// `|`-group is the console-buttons group (Reset / Power, parsed but dropped),
-/// then one group per controller port. Only P1 and P2 are mapped.
+/// The first non-blank line inside `[Input]` must be a `LogKey:` declaration,
+/// which supplies the per-port column order. Every subsequent `|`-delimited line
+/// up to `[/Input]` is one frame; the first `|`-group is the console-buttons group
+/// (parsed but dropped), then one group per controller port. Only P1 and P2 are
+/// mapped.
 fn parse_input_log(input_log: &str) -> Result<Vec<FrameInput>, Bk2Error> {
     let mut frames = Vec::new();
-    let mut saw_log_key = false;
+    let mut columns: Option<PadColumnMaps> = None;
     let mut frame_line_no = 0usize;
     for raw in input_log.lines() {
         let line = raw.strip_suffix('\r').unwrap_or(raw);
@@ -335,27 +416,31 @@ fn parse_input_log(input_log: &str) -> Result<Vec<FrameInput>, Bk2Error> {
             continue;
         }
         if trimmed.starts_with("LogKey:") {
-            saw_log_key = true;
+            columns = Some(parse_log_key(trimmed));
             continue;
         }
         if line.starts_with('|') {
-            if !saw_log_key {
-                return Err(Bk2Error::MissingLogKey);
-            }
+            let cols = columns.as_ref().ok_or(Bk2Error::MissingLogKey)?;
             frame_line_no += 1;
-            frames.push(parse_input_line(line, frame_line_no)?);
+            frames.push(parse_input_line(line, &cols.0, &cols.1, frame_line_no)?);
         }
         // Any other line (comments / unknown sections) is ignored.
     }
-    if !saw_log_key {
+    if columns.is_none() {
         return Err(Bk2Error::MissingLogKey);
     }
     Ok(frames)
 }
 
-/// Parse a single `|`-delimited input-log line into a [`FrameInput`]. The first
-/// group is the console-buttons group (dropped); groups 2 and 3 are P1 and P2.
-fn parse_input_line(line: &str, line_no: usize) -> Result<FrameInput, Bk2Error> {
+/// Parse a single `|`-delimited input-log line into a [`FrameInput`] using the
+/// per-port column maps from the `LogKey`. The first group is the console-buttons
+/// group (dropped); groups 2 and 3 are P1 and P2.
+fn parse_input_line(
+    line: &str,
+    p1_cols: &[Option<Buttons>],
+    p2_cols: &[Option<Buttons>],
+    line_no: usize,
+) -> Result<FrameInput, Bk2Error> {
     if !line.ends_with('|') {
         return Err(Bk2Error::Malformed {
             line: line_no,
@@ -371,8 +456,8 @@ fn parse_input_line(line: &str, line_no: usize) -> Result<FrameInput, Bk2Error> 
             reason: "input-log line must start with `|`",
         });
     }
-    // Console-buttons group (Reset / Power); parsed-and-dropped — FrameInput has
-    // no reset bit, mirroring the `.fm2` path.
+    // Console-buttons group (Reset / Power / …); parsed-and-dropped — FrameInput
+    // has no reset bit, mirroring the `.fm2` path.
     if groups.next().is_none() {
         return Err(Bk2Error::Malformed {
             line: line_no,
@@ -381,7 +466,7 @@ fn parse_input_line(line: &str, line_no: usize) -> Result<FrameInput, Bk2Error> 
     }
     // P1 then P2 (extra controller groups, if any, are dropped).
     let p1 = match groups.next() {
-        Some(g) => parse_pad(g, line_no)?,
+        Some(g) => parse_pad(g, p1_cols, line_no)?,
         None => {
             return Err(Bk2Error::Malformed {
                 line: line_no,
@@ -392,28 +477,38 @@ fn parse_input_line(line: &str, line_no: usize) -> Result<FrameInput, Bk2Error> 
     // P2 is optional (a 1-player movie); default to released when absent or an
     // empty trailing field.
     let p2 = match groups.next() {
-        Some(g) if !g.is_empty() => parse_pad(g, line_no)?,
+        Some(g) if !g.is_empty() => parse_pad(g, p2_cols, line_no)?,
         _ => Buttons::empty(),
     };
     Ok(FrameInput::new(p1, p2))
 }
 
-/// Parse one eight-character `U D L R S s B A` gamepad group into [`Buttons`].
-fn parse_pad(group: &str, line_no: usize) -> Result<Buttons, Bk2Error> {
+/// Parse one gamepad group into [`Buttons`] using its port's `LogKey` column map.
+///
+/// Each character *position* is the column at that index of `columns`; a pressed
+/// marker (any char other than space or `.`) sets that column's button (columns
+/// that map to `None` — non-controller buttons — are consumed but ignored). The
+/// group may be *longer* than the map (extra trailing columns we don't model are
+/// tolerated) but not shorter (a truncated line is structurally malformed).
+fn parse_pad(
+    group: &str,
+    columns: &[Option<Buttons>],
+    line_no: usize,
+) -> Result<Buttons, Bk2Error> {
     let bytes = group.as_bytes();
-    if bytes.len() != 8 {
+    if bytes.len() < columns.len() {
         return Err(Bk2Error::Malformed {
             line: line_no,
-            reason: "gamepad group must be exactly 8 characters",
+            reason: "gamepad group shorter than its LogKey column count",
         });
     }
     let mut buttons = Buttons::empty();
-    for (i, &b) in bytes.iter().enumerate() {
-        // Space or '.' = released; any other character = pressed. The column
-        // *position* selects the button (BizHawk uses the mnemonic letter, but
-        // we tolerate any pressed marker).
-        if b != b' ' && b != b'.' {
-            buttons |= PAD_COLUMNS[i].1;
+    for (i, col) in columns.iter().enumerate() {
+        if let Some(flag) = col {
+            let b = bytes[i];
+            if b != b' ' && b != b'.' {
+                buttons |= *flag;
+            }
         }
     }
     Ok(buttons)
@@ -529,6 +624,80 @@ mod tests {
     }
 
     #[test]
+    fn log_key_column_order_is_honored() {
+        // v2.2.9 "Studio II": a `.bk2` whose P1 columns are declared in a
+        // NON-standard order must map by the `LogKey` order, not the fixed
+        // `U D L R S s B A` positions. Here column 0 = A and column 1 = B, so a
+        // press at character position 0 is A and at position 1 is B — the opposite
+        // of the standard layout. This is the fix for the "`.bk2` did not play
+        // back" report (a movie whose buttons all mapped to the wrong bits).
+        let log = "[Input]\n\
+            LogKey:#Reset|Power|#P1 A|P1 B|P1 Up|P1 Down|P1 Left|P1 Right|P1 Start|P1 Select|\n\
+            |..|A.......|\n\
+            |..|.B......|\n\
+            [/Input]\n";
+        let (m, _) = import_bk2("Platform NES\n", log, TEST_SHA).expect("import");
+        assert_eq!(
+            m.frames[0].p1,
+            Buttons::A,
+            "position 0 = LogKey column 0 = A"
+        );
+        assert_eq!(
+            m.frames[1].p1,
+            Buttons::B,
+            "position 1 = LogKey column 1 = B"
+        );
+        // A pad group LONGER than the modeled columns (extra buttons like a mic)
+        // is tolerated: extra trailing chars are ignored, no malformed error.
+        let extra = "[Input]\n\
+            LogKey:#Reset|Power|#P1 Up|P1 Down|P1 Left|P1 Right|P1 Start|P1 Select|P1 B|P1 A|P1 Mic|\n\
+            |..|.......AX|\n\
+            [/Input]\n";
+        let (m2, _) = import_bk2("Platform NES\n", extra, TEST_SHA).expect("import extra-col");
+        assert_eq!(
+            m2.frames[0].p1,
+            Buttons::A,
+            "column 7 = A pressed; the 9th (Mic) col is ignored"
+        );
+    }
+
+    #[test]
+    fn log_key_preserves_empty_columns_and_groups() {
+        // v2.2.9 fix: empty interior `LogKey` fields must KEEP their positions,
+        // or later columns/groups shift left and buttons re-map silently.
+        //
+        // Empty interior COLUMN (`P1 Up||P1 A`): the empty middle column is a real
+        // slot, so `A` stays at column index 2. A frame `U.A` must press Up (col 0)
+        // and A (col 2); the pre-fix filter dropped the empty column, mapping A to
+        // index 1 so `U.A` replayed as Up alone.
+        let empty_col = "[Input]\n\
+            LogKey:#Reset|Power|#P1 Up||P1 A|\n\
+            |..|U.A|\n\
+            [/Input]\n";
+        let (m, _) = import_bk2("Platform NES\n", empty_col, TEST_SHA).expect("import empty-col");
+        assert_eq!(
+            m.frames[0].p1,
+            Buttons::UP | Buttons::A,
+            "empty middle column keeps its slot: Up (col 0) + A (col 2) both press"
+        );
+
+        // Empty CONSOLE group (`##P1…`): must not shift P1's map into the dropped
+        // console slot. The pre-fix filter dropped the empty group, promoting P1
+        // into the console position and losing it entirely.
+        let empty_console = "[Input]\n\
+            LogKey:##P1 Up|P1 Down|P1 Left|P1 Right|P1 Start|P1 Select|P1 B|P1 A|\n\
+            ||U.......|\n\
+            [/Input]\n";
+        let (m2, _) =
+            import_bk2("Platform NES\n", empty_console, TEST_SHA).expect("import empty-console");
+        assert_eq!(
+            m2.frames[0].p1,
+            Buttons::UP,
+            "empty console group keeps its slot; P1 col 0 = Up still maps to P1"
+        );
+    }
+
+    #[test]
     fn pal_flag_maps_to_region() {
         let text = "Platform NES\nPAL 1\n";
         let log = "[Input]\nLogKey:x\n|..|........|........|\n[/Input]\n";
@@ -607,6 +776,30 @@ mod tests {
             ),
             Err(Bk2Error::Unsupported(_))
         ));
+    }
+
+    #[test]
+    fn log_key_bounded_against_pathological_group_padding() {
+        // Hardening regression (v2.2.9): `parse_log_key` reads only the console,
+        // P1, and P2 groups straight from the `split('#')` iterator instead of
+        // collecting every `#`-group, so a hostile `.bk2` padded with a large
+        // number of `#` delimiters cannot amplify into an unbounded `Vec<&str>`
+        // on import. The trailing empty groups must be ignored and P1/P2 must
+        // still map correctly.
+        let mut log = String::from("[Input]\nLogKey:#Reset|Power|#P1 Up|P1 A|#P2 Up|P2 A|");
+        log.push_str(&"#".repeat(100_000)); // pathological trailing delimiters
+        log.push_str("\n|..|U.|.A|\n[/Input]\n");
+        let (m, _) = import_bk2("Platform NES\n", &log, TEST_SHA).expect("import padded LogKey");
+        assert_eq!(
+            m.frames[0].p1,
+            Buttons::UP,
+            "P1 col 0 = Up maps despite trailing `#` padding"
+        );
+        assert_eq!(
+            m.frames[0].p2,
+            Buttons::A,
+            "P2 col 1 = A maps despite trailing `#` padding"
+        );
     }
 
     #[test]

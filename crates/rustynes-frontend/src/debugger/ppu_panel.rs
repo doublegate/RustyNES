@@ -119,14 +119,26 @@ impl PpuPanelState {
 }
 
 /// Render the PPU panel.
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut PpuPanelState, nes: &mut Nes) {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    state: &mut PpuPanelState,
+    nes: &mut Nes,
+) {
     let ppu = nes.ppu_snapshot();
-    egui::Window::new("PPU")
-        .open(open)
-        .default_pos([336.0, 64.0])
-        .default_size([480.0, 420.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "ppu",
+        "PPU",
+        super::WindowCfg {
+            default_pos: Some([336.0, 64.0]),
+            default_size: Some([480.0, 420.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut state.tab, Tab::Registers, "Registers");
                 ui.selectable_value(&mut state.tab, Tab::Patterns, "Patterns");
@@ -152,7 +164,8 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut PpuPanelState, nes
                 Tab::Palette => palette_tab(ui, ctx, state, nes),
                 Tab::Scanline => scanline_tab(ui, nes),
             }
-        });
+        },
+    );
 }
 
 fn regs_tab(ui: &mut egui::Ui, ppu: &rustynes_core::PpuDebugView) {

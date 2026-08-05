@@ -124,7 +124,7 @@ jobs:
           stage="rustynes-${{ steps.tag.outputs.tag }}-${{ matrix.target }}"
           mkdir -p "$stage"
           cp "target/${{ matrix.target }}/release/${{ matrix.bin_name }}" "$stage/"
-          cp README.md LICENSE-MIT LICENSE-APACHE NOTICE CHANGELOG.md "$stage/"
+          cp README.md LICENSE NOTICE CHANGELOG.md "$stage/"
           echo "stage=${stage}" >> "$GITHUB_ENV"
 
       - name: Create archive (tar.gz)
@@ -247,7 +247,7 @@ jobs:
           cp pgo-bin/rustynes "$stage/rustynes"
           chmod +x "$stage/rustynes"
           strip "$stage/rustynes"
-          cp README.md LICENSE-MIT LICENSE-APACHE NOTICE CHANGELOG.md "$stage/"
+          cp README.md LICENSE NOTICE CHANGELOG.md "$stage/"
           tar -czf "${stage}.tar.gz" "$stage"
           echo "asset=${stage}.tar.gz" >> "$GITHUB_ENV"
 

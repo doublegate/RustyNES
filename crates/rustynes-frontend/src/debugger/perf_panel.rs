@@ -192,14 +192,26 @@ fn stats_row(ui: &mut egui::Ui, label: &str, s: &IntervalStats, target_ms: f32) 
 // On wasm the "Logging" checkbox block is compiled out, leaving `state`
 // never written — keep the signature uniform across targets.
 #[cfg_attr(target_arch = "wasm32", allow(clippy::needless_pass_by_ref_mut))]
-pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut PerfPanelState) {
+pub fn show(
+    ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
+    open: &mut bool,
+    state: &mut PerfPanelState,
+) {
     // Cloned so the closure below can also borrow the checkbox mutably.
     let v = state.view.clone();
-    egui::Window::new("Performance")
-        .open(open)
-        .default_pos([480.0, 64.0])
-        .resizable(false)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "perf",
+        "Performance",
+        super::WindowCfg {
+            default_pos: Some([480.0, 64.0]),
+            resizable: Some(false),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             ui.label(format!(
                 "target: {:.3} ms/frame   pacing: {}   present mode: {}{}",
                 v.target_ms,
@@ -386,5 +398,6 @@ pub fn show(ctx: &egui::Context, open: &mut bool, state: &mut PerfPanelState) {
                     ui.label(egui::RichText::new(note).weak().small());
                 }
             }
-        });
+        },
+    );
 }

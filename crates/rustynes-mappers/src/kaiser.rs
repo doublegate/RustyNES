@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the Kaiser boards are derived from Mesen2 (GPL-3.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Kaiser boards: `KS202` (mapper 56), `KS7017` (142), `KS7031` (303),
 //! `KS7016` (305), `KS7013B` (306) and relatives.
 //!
@@ -606,9 +610,9 @@ kaiser_ctor!(
 // Per-1 KiB CHR low/high registers ($B000-$E00C), a CHR-RAM escape (CHR reg
 // value 4/5 + a force-ROM toggle on slot 0 via $88/$C8), two 8 KiB PRG selects
 // ($8010/$A010), $9400 mirroring, and a /114-scaled CPU-cycle IRQ ($F000 etc.).
-// Register map per the NESdev wiki mapper-253 documentation (cross-checked
-// against reference emulators as accuracy oracles; no third-party emulator
-// code is incorporated).
+// Register map per the NESdev wiki mapper-253 documentation; the implementation
+// is derived from Mesen2's `Waixing/Mapper253.h` (GPL-3.0-or-later).
+// See NOTICE + docs/originality-and-provenance.md §1.
 // ===========================================================================
 
 #[cfg(test)]

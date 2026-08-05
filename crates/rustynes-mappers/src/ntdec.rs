@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the NTDEC boards are derived from Mesen2 (GPL-3.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! NTDEC boards decoded from the address bus: mappers 63 and 174.
 //!
 //! NTDEC's multicart designs consistently push the bank selection into the
@@ -10,7 +14,7 @@
 //! see also `sachen_8259.rs` for the comparable Sachen family.
 //!
 //! A best-effort (Tier-2) board: register-decode correctness verified against
-//! the `GeraNES` reference (`ref-proj/GeraNES/src/GeraNES/Mappers/Mapper0NN.h`)
+//! the `GeraNES` reference (`GeraNES/src/GeraNES/Mappers/Mapper0NN.h`)
 //! and the nesdev wiki, with no commercial-oracle ROM in the tree. Banking math
 //! is direct slice indexing and every bank select wraps with `% count`, so a
 //! register write can never index out of bounds -- required for the `#![no_std]`
@@ -862,9 +866,9 @@ fn chr_or_ram(chr_rom: Box<[u8]>) -> (Box<[u8]>, bool) {
 // CHR: 2 KiB pages. Register 0 selects a paired 2 KiB window into the first two
 // slots ($0000 + $0800), register 1 the third ($1000), register 2 the fourth
 // ($1800). Registers live at $6000-$7FFF (addr & 3). Register map per the
-// NESdev wiki NTDEC TC-112 / mapper-193 documentation (cross-checked against
-// reference emulators as accuracy oracles; no third-party emulator code is
-// incorporated).
+// NESdev wiki NTDEC TC-112 / mapper-193 documentation; the implementation is
+// derived from Mesen2's NTDEC mapper source (GPL-3.0-or-later).
+// See NOTICE + docs/originality-and-provenance.md §1.
 // ===========================================================================
 
 /// NTDEC TC-112 (mapper 193).
@@ -1049,8 +1053,9 @@ pub fn new_m193(
 // gives the 16 KiB PRG block, and (when bitMask != 0x06) `addr & 1` picks the
 // inner half. Both PRG windows ($8000 + $C000) and the 8 KiB CHR window track
 // the decoded page; `addr & 0x10` flips the mirroring. Register map per the
-// NESdev wiki mapper-204 documentation (cross-checked against reference
-// emulators as accuracy oracles; no third-party emulator code is incorporated).
+// NESdev wiki mapper-204 documentation; the implementation is derived from
+// Mesen2's NTDEC mapper source (GPL-3.0-or-later).
+// See NOTICE + docs/originality-and-provenance.md §1.
 // ===========================================================================
 
 /// NTDEC N625092 multicart (mapper 221).
@@ -1253,8 +1258,8 @@ pub fn new_m221(
 // One value-decoded $8000-$FFFF register: bits 4-6 select a 32 KiB PRG bank,
 // the 8 KiB CHR bank is `(bank << 2) | (value & 0x03)`, and bit 7 flips the
 // mirroring (set => vertical). Register map per the NESdev wiki mapper-299 /
-// BMC-11160 documentation (cross-checked against reference emulators as
-// accuracy oracles; no third-party emulator code is incorporated).
+// BMC-11160 documentation; the implementation is derived from Mesen2's
+// `Txc/Bmc11160.h` (GPL-3.0-or-later). See NOTICE + docs/originality-and-provenance.md §1.
 // ===========================================================================
 
 #[cfg(test)]

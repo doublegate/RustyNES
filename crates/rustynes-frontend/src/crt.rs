@@ -16,7 +16,7 @@
 //!    brightness compensation so the picture does not get too dark.
 //!
 //! Not a curvature/bloom-heavy shader — a clean, cheap scanline+grille that fits
-//! the existing pipeline. Reference: `ref-proj/tetanes` CRT-EasyMode (LibRetro).
+//! the existing pipeline. Reference: `tetanes` CRT-EasyMode (LibRetro).
 //!
 //! Performance: 1 texture tap per surface pixel (cheaper than NTSC's 7).
 

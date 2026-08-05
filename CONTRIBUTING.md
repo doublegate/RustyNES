@@ -227,7 +227,7 @@ The repository ships test ROMs (`tests/roms/`) that are individually CC0 or publ
 
 ## License
 
-By contributing to RustyNES, you agree that your contributions will be dual-licensed under both the [MIT License](LICENSE-MIT) and the [Apache License 2.0](LICENSE-APACHE).
+By contributing to RustyNES, you agree that your contributions will be licensed under the [GNU General Public License v3.0 or later](LICENSE).
 
 ---
 

@@ -77,7 +77,7 @@ already on GitHub / committed at `.github/release-notes/`); all `*.diff` /
 `280_ppu.diff` / `changelog.diff` / `roadmap.diff` / `versionplan.diff` (merged
 into git history); all `*-baseline*.md` (transient doc-sync comparison snapshots);
 thread `.json` dumps (transient API responses); `/tmp/holy-mapperel` git clone
-(already vendored at `ref-proj/holy-mapperel-v0.02` + `tests/roms/holy_mapperel`);
+(already in-repo at `tests/roms/holy_mapperel`);
 `/tmp/rustynes-mkdocs-test` (6 MB) + `/tmp/rustynes-hm` (4 MB) build/test scratch;
 vendored `libretro-database/` + `mkdocs-venv/` upstream/venv scripts.
 

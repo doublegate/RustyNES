@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the band-limited (BLEP) synthesis is derived from blip_buf by Shay Green (Blargg), LGPL-2.1-or-later (GPLv3-compatible). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Band-limited synthesis for the APU's audio output.
 //!
 //! # What this is
@@ -8,9 +12,10 @@
 //!
 //! The technique is band-limited step (BLEP) synthesis — the same general
 //! approach popularized by Shay Green's `blip_buf` and used by many emulators.
-//! This is an independent implementation (our polyphase kernel in
-//! [`crate::blip_kernel`] uses a finer 32-phase resolution than `blip_buf`); no
-//! `blip_buf` code is incorporated:
+//! Provenance: the band-limited-step technique is **derived from Shay Green's
+//! `blip_buf`** (LGPL-2.1-or-later, which is GPLv3-compatible); our polyphase
+//! kernel in [`crate::blip_kernel`] uses a finer 32-phase resolution than
+//! `blip_buf`. See NOTICE and docs/originality-and-provenance.md (Section 1):
 //!
 //! - Pre-compute a polyphase windowed-sinc kernel ([`crate::blip_kernel`])
 //!   keyed by `PHASES = 32` sub-output-sample fractional offsets, with

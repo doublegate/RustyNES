@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: this PGO corpus-sweep harness is derived from Mesen2's `PGOHelper` (GPL-3.0-or-later). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! v2.8.0 Phase 4 — the PGO training workload (see `scripts/pgo/run.sh`).
 //!
 //! An independent PGO training harness: sweep a ROM corpus at maximum speed

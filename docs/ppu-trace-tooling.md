@@ -1,5 +1,14 @@
 # Per-PPU-Dot State-Trace Tooling
 
+> **⚠️ REFERENCE FIREWALL (read first).** The Mesen2 oracle patches described below (a Lua
+> `PpuCycle` event, per-cycle trace channels) are **instrumentation of a reference emulator to
+> capture its output**, not code to bring into RustyNES. The `ref-proj/` clone they reference has
+> been **removed from the repo and the agent's reach** (gitignored). If you genuinely need to
+> regenerate one of these oracle traces, build the patched reference emulator **out of tree, outside
+> the agent's allowed paths**, capture only its output, and diff — never open or reproduce its source
+> into RustyNES. See the "MOST IMPORTANT RULE" section of `AGENTS.md` and
+> `docs/ai-emulator-provenance-guardrails.md`.
+
 Operator's guide for the Session-10 PPU observability tooling, with
 Session-11 corrections applied. For the design rationale see
 `docs/adr/0005-ppu-state-trace.md`. For the broader Cascade A
@@ -260,9 +269,10 @@ For the v1.0.0-final brief
 Phase 0), a small Mesen2 C++ patch lands a new
 `EventType::PpuCycle` event that Lua scripts can register for to
 get TRUE per-PPU-cycle granularity (89342 events per NTSC frame).
-The patch is local to the working clone of upstream Mesen2 at
-`~/Code/OSS_Public-Projects/RustyNES/ref-proj/Mesen2/` and lives
-in two files:
+The patch is local to an **out-of-tree** working clone of upstream
+Mesen2 (kept outside the repo and the agent's allowed paths;
+historically `ref-proj/Mesen2/`, now removed) and lives in two
+files:
 
 1. `Core/Shared/EventType.h` — adds `PpuCycle` to the `EventType`
    enum (positioned between `CodeBreak` and the
@@ -276,7 +286,7 @@ in two files:
 Build with the standard upstream invocation:
 
 ```bash
-cd ~/Code/OSS_Public-Projects/RustyNES/ref-proj/Mesen2
+cd /path/to/out-of-tree/Mesen2   # outside the repo + the agent's reach
 # Touch all .cpp files that #include the EventType.h chain so
 # magic_enum re-runs at compile time:
 find Core -name "*.cpp" | xargs grep -l "ScriptingContext\.h\|EventType\.h" | xargs touch
@@ -306,12 +316,13 @@ non-negligible (~10 µs/call); plan for ~1-5 effective FPS under
 capture against the custom-sub-test ROMs that boot to target
 test by frame ≤ 400.
 
-The patch is **NOT** upstreamed — it lives only in the local
-ref-proj clone. CI builds of RustyNES do not depend on a
-patched Mesen2; the per-PPU-cycle oracle is invoked only by
-investigator-side manual runs during accuracy-fix development.
-Documented as Approach C so future investigators can re-apply
-the same two-file patch if the ref-proj clone is refreshed.
+The patch is **NOT** upstreamed — it lives only in the
+out-of-tree Mesen2 clone (never inside this repo). CI builds of
+RustyNES do not depend on a patched Mesen2; the per-PPU-cycle
+oracle is invoked only by investigator-side manual runs during
+accuracy-fix development. Documented as Approach C so future
+investigators can re-apply the same two-file patch to their own
+out-of-tree Mesen2 build.
 
 ---
 

@@ -1,63 +1,93 @@
-RustyNES v1.0.0
-Copyright 2026 DoubleGate
+RustyNES
+Copyright 2026 DoubleGate (parobek@gmail.com)
 
-This product includes software developed by DoubleGate (parobek@gmail.com)
+RustyNES is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+RustyNES is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details. You
+should have received a copy of the GNU General Public License along with
+RustyNES (see the LICENSE file); if not, see <https://www.gnu.org/licenses/>.
 
-    http://www.apache.org/licenses/LICENSE-2.0
+RustyNES is licensed GPL-3.0-or-later because it is a DERIVATIVE WORK of
+GPL-licensed NES emulators: it incorporates code derived from Mesen2
+(GPL-3.0-or-later) and, for several mappers and the FDS drive model, from puNES,
+FCEUX, and Nestopia UE (all GPL-2.0-or-later). The complete per-file derivation
+record is in docs/originality-and-provenance.md (Section 1). An earlier version
+of this file incorrectly stated that no GPL emulator source was incorporated and
+licensed the project MIT/Apache-2.0; that was wrong and is corrected here.
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+--------------------------------------------------------------------------------
+Code derived from GPL-licensed emulators
+--------------------------------------------------------------------------------
+
+The following upstream emulators' code was ported, adapted, or closely modeled
+into RustyNES. This is derivation, not oracle use, and is why RustyNES is
+GPL-3.0-or-later. See docs/originality-and-provenance.md Section 1 for the
+file-by-file table (source file, function, and line references).
+
+* Mesen2 / MesenCE -- Copyright Sour et al. -- GPL-3.0-or-later
+  https://github.com/SourMesen/Mesen2
+  Derived: CPU unstable-store opcodes (NesCpu.h); the PPU sprite-evaluation FSM
+  and OAM-data-bus model (NesPpu.cpp ProcessSpriteEvaluation / ReadSpriteRam);
+  ~15 mapper board implementations (Bandai EEPROM, JY Company, Waixing, Sachen,
+  Txc, NTDEC, Kaiser, MMC3 variants, FK23C, CoolBoy); the Bisqwit NTSC filter as
+  Mesen2 implements it; the UNIF board tables; the debug-symbol importer
+  (DbgImporter); and the PGO training harness (PGOHelper).
+
+* puNES -- Copyright FHorse -- GPL-2.0-or-later
+  https://github.com/FHorse/puNES
+  Derived: the JV001 security chip / mapper 147 (ported bit-for-bit from JV001.c
+  / mapper_147.c) and the per-CRC FDS drive-timing table (fds.c).
+
+* FCEUX -- Copyright the FCEUX team -- GPL-2.0-or-later
+  https://github.com/TASEmulators/fceux
+  Derived: UNIF board handling (unif.cpp) and several mapper banking transforms.
+
+* Nestopia UE -- Copyright Martin Freij et al. -- GPL-2.0-or-later
+  Derived: Sunsoft FME-7 / 5B audio detail (cross-referenced with Mesen2).
+
+All of the above grant "version N or (at your option) any later version," so the
+GPL-2.0-or-later material upgrades cleanly to v3 and the combined work is
+distributable as GPL-3.0-or-later.
+
+--------------------------------------------------------------------------------
+Reference emulators consulted as behavioral oracles (no code derived)
+--------------------------------------------------------------------------------
+
+Separately from the derived code above, these were run only to observe and
+cross-check documented hardware behavior (no code incorporated):
+
+* GeraNES -- GPL-3.0-only -- oracle / cross-check for several mapper boards.
+* higan -- GPL-3.0-or-later -- scheduler-structure reference / oracle.
+* ares -- BSD-2-Clause / Apache-2.0 -- palette-integration reference and oracle.
+
+(Mesen2, puNES, FCEUX, and Nestopia were used as oracles too, but because code
+was also derived from them they are listed above under derivation.)
 
 --------------------------------------------------------------------------------
 Hardware documentation
 --------------------------------------------------------------------------------
 
-This project draws on the Nintendo Entertainment System hardware reverse-
-engineering work documented at the NESdev community wiki
-(https://www.nesdev.org/wiki/) and the Visual 6502 / Visual 2C02 projects
-(http://www.visual6502.org/). No code from those projects is incorporated;
-the documentation is referenced for hardware behavior specification.
-
-The chip, mapper, and peripheral behaviors implemented in RustyNES are written
-from that public hardware documentation (the NESdev wiki, Disch's mapper
-write-ups, Brad Taylor's 2C02 technical reference, published Xicor/Intersil I2C
-serial-EEPROM and Yamaha YM2413 datasheets, and the documented 6502 unofficial-
-opcode behavior) and pinned against public, permissively-licensed test ROMs
-(see tests/roms/LICENSES.md).
+Behaviors not covered above are written from public hardware documentation: the
+NESdev community wiki (https://www.nesdev.org/wiki/), the Visual 6502 / Visual
+2C02 die studies (http://www.visual6502.org/), Disch's mapper write-ups, Brad
+Taylor's 2C02 technical reference, published Xicor/Intersil I2C serial-EEPROM and
+Yamaha YM2413 datasheets, and the documented 6502 unofficial-opcode behavior,
+pinned against public test ROMs (tests/roms/LICENSES.md). No code from those
+documentation projects is incorporated.
 
 --------------------------------------------------------------------------------
-Reference emulators (behavioral oracles only -- no code incorporated)
+Incorporated third-party components (permissively licensed, GPL-compatible)
 --------------------------------------------------------------------------------
-
-During development, several existing NES emulators were consulted as behavioral
-oracles / accuracy references -- that is, to observe and cross-check documented
-hardware behavior when reconciling ambiguous test-ROM results. Among these are
-Mesen2 and MesenCE (GPLv3), higan (GPLv3), GeraNES (GPLv3), ares (ISC), and
-FCEUX and Nestopia UE and puNES (GPLv2). NO SOURCE
-CODE from any GPL-licensed emulator is incorporated into RustyNES; where an
-in-source comment references one of these projects it does so only to record
-that its runtime behavior was used as a cross-check for a behavior RustyNES
-implements independently from the hardware documentation above.
-
---------------------------------------------------------------------------------
-Incorporated third-party components (permissively licensed)
---------------------------------------------------------------------------------
-
-The following third-party works ARE incorporated (as a Rust port or as vendored
-source) under their permissive licenses. Their copyright notices and the MIT
-permission notice are reproduced below.
 
 * emu2413 v1.5.9 -- Yamaha YM2413 (OPLL) FM synthesizer, used for VRC7 audio.
   Rust port in crates/rustynes-apu/src/opll.rs.
   https://github.com/digital-sound-antiques/emu2413
-      Copyright (c) 2020 Mitsutaka Okazaki
+      Copyright (c) 2020 Mitsutaka Okazaki -- MIT
 
 * TriCNES -- transistor-level NES emulator by the AccuracyCoin author; its
   PPU address/data-multiplex (ALE / octal-latch), OAM-corruption, and per-cycle
@@ -65,26 +95,23 @@ permission notice are reproduced below.
   rustynes-cpu, rustynes-core), and its full source is vendored as a golden
   oracle at crates/rustynes-test-harness/golden/tricnes/tricnes-full-src/.
   https://github.com/100thCoin/TriCNES  (commit 9199870)
-      Copyright (c) 2025 Chris Siebert
+      Copyright (c) 2025 Chris Siebert -- MIT
   Note (v2.2.6): the octal-latch / hybrid-address *timing* was calibrated to
-  TriCNES's per-dot behavior rather than derived independently from hardware
-  documentation, which reproduced a TriCNES-specific artifact (mis-rendering
-  mid-render $2006 writes, e.g. Rad Racer). This is disclosed in
-  docs/originality-and-provenance.md sec. 2.2 and is being reworked to be
-  documentation-derived in v2.3.0 (see ADR 0030). TriCNES is MIT, so this is a
-  behavioral-fidelity note, not a licensing one.
+  TriCNES's per-dot behavior rather than derived independently, which reproduced
+  a TriCNES-specific artifact (mis-rendering mid-render $2006 writes, e.g. Rad
+  Racer). See docs/originality-and-provenance.md sec. 4 and ADR 0030; being
+  reworked to be documentation-derived in v2.3.0. TriCNES is MIT.
 
 * rcheevos v12.3.0 -- RetroAchievements client runtime, vendored at
   crates/rustynes-cheevos/vendor/rcheevos/ (compiled only under the optional
   `retroachievements` feature).
   https://github.com/RetroAchievements/rcheevos
-      Copyright (c) 2018 RetroAchievements.org
+      Copyright (c) 2018 RetroAchievements.org -- MIT
 
-The Font Awesome Free glyphs bundled with the frontend are covered by their own
-license at crates/rustynes-frontend/assets/fonts/LICENSE-FontAwesome.txt.
+* blip_buf -- band-limited synthesis, basis of crates/rustynes-apu/src/blip.rs.
+      Copyright (c) Shay Green (Blargg) -- LGPL-2.1-or-later (GPLv3-compatible)
 
-All three components above (emu2413, TriCNES, rcheevos) are distributed under the
-MIT License:
+The MIT License text (for emu2413, TriCNES, rcheevos):
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to deal
@@ -116,40 +143,37 @@ Bundled fonts
   android/app/src/main/assets/PressStart2P-OFL.txt (Android).
 
 --------------------------------------------------------------------------------
-Visual influences (independently reimplemented -- no code incorporated)
+Video shaders and NTSC filters
 --------------------------------------------------------------------------------
 
 RustyNES's optional CRT shader stack (crates/rustynes-gfx-shaders/) and NTSC
-filters (crates/rustynes-frontend/src/ntsc_bisqwit.rs, ntsc_lmp88959.rs) are
-independent, single-pass WGSL / Rust reimplementations of the *visual looks and
-techniques* of the projects below. No source code from any of them is
-incorporated: copyright protects code expression, not a visual look or a
-rendering technique, and these are from-scratch shaders on RustyNES's own
-uniform / pipeline conventions. They are credited here as the visual influences
-they reproduce:
+filters (crates/rustynes-frontend/src/ntsc_bisqwit.rs, ntsc_lmp88959.rs):
 
-* CRT-Royale -- TroggleMonkey -- GPLv2+ (libretro) -- CRT phosphor/scanline look
-* crt-guest-advanced / guest-dr-venom -- guest.r -- GPL-family (libretro)
-* Sony Megatron Colour Video Monitor -- MajorPainInTheCactus -- GPL-family (libretro)
-* NTSC-CRT -- EMMIR (LMP88959) -- free use, credit appreciated --
-  https://github.com/LMP88959/NTSC-CRT
-* Bisqwit's NES composite-NTSC model -- the underlying two-level NES composite
-  signal is the hardware model documented at the NESdev wiki ("NTSC video"); the
-  RustyNES tables encode that documented model.
+* The Bisqwit NTSC filter's numeric coefficient tables were ported verbatim (via
+  Mesen2's implementation) and are therefore GPL-derived (listed above and in
+  docs/originality-and-provenance.md Section 1). The two-level NES composite
+  signal shape is documented at the NESdev wiki ("NTSC video").
+* The CRT shaders (CRT-Royale -- TroggleMonkey, GPL-2.0-or-later;
+  crt-guest-advanced -- guest.r; Sony Megatron -- MajorPainInTheCactus) are
+  single-pass WGSL reimplementations of the upstream multi-pass looks. Whether or
+  not that reimplementation is a derivative work of the shader code, the whole
+  project is GPL-3.0-or-later, so these are covered; they are credited as the
+  looks they reproduce.
+* NTSC-CRT -- EMMIR (LMP88959) -- https://github.com/LMP88959/NTSC-CRT --
+  free use, credit appreciated.
 
 --------------------------------------------------------------------------------
 Bundled test ROMs
 --------------------------------------------------------------------------------
 
 The ROMs committed under tests/roms/ are public-domain or permissively-licensed
-homebrew test programs, catalogued per-author with their individual licenses in
-tests/roms/LICENSES.md. No commercial Nintendo software is bundled. The
-permissive works whose licenses require their notices be preserved include:
+homebrew test programs, catalogued per-author in tests/roms/LICENSES.md. No
+commercial Nintendo software is bundled. Notices that must be preserved include:
 
-* AccuracyCoin -- Chris Siebert (100thCoin) -- MIT -- the upstream MIT LICENSE is
-  vendored at tests/roms/accuracycoin/LICENSE.
-* Holy Mapperel and other Damian Yerrick test ROMs -- zlib -- the upstream
-  notices are preserved with the ROMs (see tests/roms/LICENSES.md).
+* AccuracyCoin -- Chris Siebert (100thCoin) -- MIT -- upstream LICENSE vendored at
+  tests/roms/accuracycoin/LICENSE.
+* Holy Mapperel and other Damian Yerrick test ROMs -- zlib -- notices preserved
+  with the ROMs (see tests/roms/LICENSES.md).
 
 blargg's and kevtris's suites are public domain. See tests/roms/LICENSES.md for
 the full per-ROM provenance.

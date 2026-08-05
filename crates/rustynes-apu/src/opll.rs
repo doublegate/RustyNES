@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: this is a Rust port of emu2413 (the Yamaha YM2413 / OPLL FM core) by Mitsutaka Okazaki, MIT-licensed. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Yamaha YM2413 (OPLL) FM synthesizer — pure-Rust port of
 //! [`emu2413 v1.5.9`](https://github.com/digital-sound-antiques/emu2413)
 //! (MIT, Mitsutaka Okazaki) for the VRC7 mapper.

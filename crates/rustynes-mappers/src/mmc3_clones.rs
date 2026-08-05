@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: several MMC3-clone boards (e.g. Waixing Mapper 253 and the `InvertPrgBits` transform) are derived from Mesen2 (GPL-3.0-or-later), `Waixing/Mapper253.h` and the MMC3-variant sources. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! MMC3-clone ASICs: mappers 44, 49, 52, 115, 134, 189, 205, 238, 245, 348,
 //! 366 and relatives.
 //!
@@ -777,8 +781,8 @@ clone_ctor!(
 // reg7 bits 1-2 select mirroring (reg7 bit 0 = "simple mode" override).
 // reg5 selects the 32 KiB PRG bank; reg4 supplies the CHR high bits.
 // Register map per the NESdev wiki Sachen 8259 (mappers 138/139/141)
-// documentation (cross-checked against reference emulators as accuracy oracles;
-// no third-party emulator code is incorporated).
+// documentation; the implementation is derived from Mesen2's `Sachen/Sachen8259.h`
+// (GPL-3.0-or-later). See NOTICE + docs/originality-and-provenance.md §1.
 // ===========================================================================
 
 #[cfg(test)]

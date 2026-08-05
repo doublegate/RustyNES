@@ -455,6 +455,7 @@ impl WatchPanelState {
 /// loaded labels.
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut WatchPanelState,
     nes: &mut Nes,
@@ -464,11 +465,17 @@ pub fn show(
     // UI (the eval needs `&mut Nes` + `&state`).
     let watch_values = state.eval_watch_rows(nes);
 
-    egui::Window::new("Watch / Breakpoints")
-        .open(open)
-        .default_size([460.0, 520.0])
-        .resizable(true)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "watch",
+        "Watch / Breakpoints",
+        super::WindowCfg {
+            default_size: Some([460.0, 520.0]),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             ui.horizontal(|ui| {
                 ui.checkbox(&mut state.armed, "Armed");
                 ui.weak("(observational — replays the frame's exec/access logs)");
@@ -671,7 +678,7 @@ pub fn show(
                     }
                     ui.weak(
                         "Tokens: {a}{x}{y}{s}{p}{pc}{scanline}{cycle}{frame}, \
-                         {[addr]}, {{addr}}.",
+                     {[addr]}, {{addr}}.",
                     );
                     egui::ScrollArea::vertical()
                         .id_salt("trace_rows")
@@ -696,8 +703,8 @@ pub fn show(
             });
             ui.weak(
                 "Per-access tokens (value/address/isRead/isWrite/isExec) are \
-                 exact; register/PPU/[addr] tokens reflect end-of-frame state \
-                 (observational replay).",
+             exact; register/PPU/[addr] tokens reflect end-of-frame state \
+             (observational replay).",
             );
             egui::ScrollArea::vertical()
                 .id_salt("hit_log")
@@ -722,7 +729,8 @@ pub fn show(
                         ui.monospace(line);
                     }
                 });
-        });
+        },
+    );
 }
 
 fn add_breakpoint(state: &mut WatchPanelState) {

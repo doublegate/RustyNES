@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: discrete multicart boards (e.g. NTDEC Mapper 221, Txc Bmc11160) are derived from Mesen2 (GPL-3.0-or-later), `Ntdec/Mapper221.h` / `Txc/Bmc11160.h`. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
 //! Discrete-logic multicart boards addressed by their iNES mapper number:
 //! K-1029 / Contra Function 16 (mapper 15), and the 20-in-1 / Super 700-in-1
 //! style boards on mappers 61 and 62.
@@ -10,7 +14,7 @@
 //! it is why these decode paths look address-driven rather than value-driven.
 //!
 //! A best-effort (Tier-2) board: register-decode correctness verified against
-//! the `GeraNES` reference (`ref-proj/GeraNES/src/GeraNES/Mappers/Mapper0NN.h`)
+//! the `GeraNES` reference (`GeraNES/src/GeraNES/Mappers/Mapper0NN.h`)
 //! and the nesdev wiki, with no commercial-oracle ROM in the tree. Banking math
 //! is direct slice indexing and every bank select wraps with `% count`, so a
 //! register write can never index out of bounds -- required for the `#![no_std]`
@@ -3798,8 +3802,8 @@ pub fn new_m204(
 // $C000), with a NROM-256 sub-case when `mode & 0x0100`; otherwise both 16 KiB
 // windows mirror the same NROM bank. `mode & 0x01` flips the mirroring. CHR is a
 // single fixed 8 KiB window. Register map per the NESdev wiki mapper-299 /
-// BMC-11160 documentation (cross-checked against reference emulators as
-// accuracy oracles; no third-party emulator code is incorporated).
+// BMC-11160 documentation; the implementation is derived from Mesen2's
+// `Txc/Bmc11160.h` (GPL-3.0-or-later). See NOTICE + docs/originality-and-provenance.md §1.
 // ===========================================================================
 
 /// TXC/BMC-11160 multicart (mapper 299).

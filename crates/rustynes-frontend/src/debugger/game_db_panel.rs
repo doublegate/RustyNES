@@ -142,16 +142,23 @@ fn region_label(r: Option<Region>) -> &'static str {
 /// Render the ROM-database editor window.
 pub fn show(
     ctx: &egui::Context,
+    detached: &mut std::collections::HashSet<&'static str>,
     open: &mut bool,
     state: &mut GameDbPanelState,
     nes: &mut Nes,
     crc: Option<u32>,
 ) {
-    let mut win_open = *open;
-    egui::Window::new("ROM Database")
-        .open(&mut win_open)
-        .resizable(false)
-        .show(ctx, |ui| {
+    super::detachable_window(
+        ctx,
+        detached,
+        "game_db",
+        "ROM Database",
+        super::WindowCfg {
+            resizable: Some(false),
+            ..Default::default()
+        },
+        open,
+        |ui| {
             let Some(crc) = crc else {
                 ui.label("No cartridge loaded (FDS / NSF images have no CRC entry).");
                 return;
@@ -204,7 +211,7 @@ pub fn show(
             ui.label(
                 egui::RichText::new(
                     "Mirroring applies immediately. Region / mapper / submapper apply \
-                     on the next ROM load (reopen the ROM).",
+                 on the next ROM load (reopen the ROM).",
                 )
                 .small()
                 .weak(),
@@ -245,8 +252,8 @@ pub fn show(
             // per-game `<rom>.json` overlay (config-dir, keyed by CRC) and apply
             // live via the same `set_vs_dip` core setter the load path uses.
             dip_switch_section(ui, state, nes, crc);
-        });
-    *open = win_open;
+        },
+    );
 }
 
 /// Render the Vs. System DIP-switch editor for the loaded ROM (no-op for a
