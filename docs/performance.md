@@ -661,6 +661,63 @@ for a byte-identical escape hatch is not justified.
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
 
+### v2.3.2 G2 — `Ppu` field layout (decision: REJECTED — and it exposed a harness bug)
+
+The campaign item asked to reorder `Ppu`'s 114 fields by access frequency,
+noting the ~15 hot ones are "scattered, with a 2 KiB `rgba_lut` sitting between
+the palette state and the framebuffer pointer", and called it "pure reordering —
+byte-identical by construction".
+
+**The premise is void.** `Ppu` is `#[repr(Rust)]`, so declaration order does not
+determine memory layout; rustc is free to reorder and does. Probed offsets:
+
+```text
+ 488  rgba_lut (2048 B)  … ends 2536
+2570  v      2574  dot    2576  scanline   2578  bg_shift_lo
+2580  bg_shift_hi        2582  at_shift_lo 2584  at_shift_hi
+2586  flags_cached_scanline          <- 17 bytes, one cache line
+2828  x
+```
+
+rustc sorts by alignment, which packs every hot `u16`/`i16` scalar contiguously
+into a single cache line and puts the 2 KiB LUT *before* the whole hot cluster —
+the opposite of what the item describes. Source reordering cannot move any of it.
+
+Measured anyway, in the only form that can change layout — `#[repr(C)]`, which
+forces declaration order — plus a variant moving the 256-byte `oam_decay_cycles`
+(dead unless OAM decay is enabled, default-off) out from between the scroll
+registers and the per-dot render state:
+
+| run | candidate | result |
+| --- | --- | --- |
+| 1 | `repr(C)` | −1.84% … −2.75%, **p = 0.00 on all four** |
+| 2 | `repr(C)` + cold field moved to end | no change on 3 of 4 (p ≥ 0.31) |
+| 3 | `repr(C)` again | **no change on all four** (p ≥ 0.11) |
+
+**Run 1 was wrong, and run 3 is why.** The same candidate that produced a
+textbook −2% at p = 0.00 on every workload produced nothing on re-measurement.
+Nothing about the code changed between them.
+
+**Root cause — a systematic bias in `ab_check.sh`, now fixed.** The reference was
+always benched FIRST and the candidate SECOND. Anything that makes the host
+monotonically faster over the life of a run — page-cache warming, governor
+ramping, a background job finishing, boost/thermal settling — is therefore
+indistinguishable from "the candidate is faster". Run 1 followed a period of
+heavy local activity (test runs, `perf record`, worktree builds); the machine was
+still settling while the reference was measured and had settled by the candidate.
+
+The fix is an **A/B/A order-bias control**: the reference is now re-benched a
+third time, last, against its own first run. Whatever that reports is pure
+position-in-the-run drift and is the noise floor the candidate must be read
+against. The script also now states that a single run is not a result and that
+anything under ~5% needs an independent second run — with this experiment as the
+cautionary example.
+
+**Item rejected.** No reproducible effect from any layout change tried. That is
+also the physically sensible answer: `Ppu` is ~2,856 bytes and stays L1-resident
+across a frame, so field layout has little left to buy. Layout is not where this
+emulator's remaining time is.
+
 ### v2.3.2 G1 — idle-line fast path, re-measured (decision: REJECTED again, stays default-OFF)
 
 The v2.3.2 campaign predicted the default-OFF `ppu-idle-line-fast` path

@@ -598,6 +598,12 @@ pub struct Ppu {
     /// after a rollback/restore rebased that counter. Storing `now - timestamp`
     /// (and reconstructing `now - age` on load, relative to the live counter) keeps
     /// a run-ahead / netplay `snapshot`→`restore` byte-identical to the forward run.
+    ///
+    /// Field POSITION here is not performance-relevant, and this was measured
+    /// rather than assumed (v2.3.2 G2, `docs/performance.md`): neither adding
+    /// `#[repr(C)]` nor moving this 256-byte cold array to the end of the struct
+    /// produced a reproducible change on any workload. `Ppu` is ~2.8 KB and stays
+    /// L1-resident across a frame, so layout has little left to buy.
     pub(crate) oam_decay_cycles: [u64; 32],
     /// Master enable for the OAM-decay model. **`false` by default** — a frontend /
     /// config knob (re-applied on load like `region` / `active_palette`), NOT part

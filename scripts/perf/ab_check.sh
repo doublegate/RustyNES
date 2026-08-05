@@ -140,13 +140,54 @@ feat_args=()
     | grep -E "^nes_run_frame|time:|change:|Performance has|No change" \
     | sed 's/^/  /'
 
+# ---- ORDER-BIAS CONTROL (A/B/A) -------------------------------------------
+# The reference is always benched FIRST, so anything that makes the machine
+# monotonically faster over the life of the run — page cache warming, CPU
+# governor ramping, a background job finishing, thermal/boost settling — is
+# indistinguishable from "the candidate is faster". This is not hypothetical:
+# v2.3.2 G2's first run reported a clean −1.84%..−2.75% (p=0.00 on all four
+# workloads) for a `#[repr(C)]` layout change that, re-measured, showed no
+# effect at all. The candidate had not improved; the machine had.
+#
+# So bench the REFERENCE a second time, last, against its own first run. Any
+# change reported below is pure position-in-the-run bias and is the noise floor
+# the candidate's numbers must be read against. Ideally it is "No change" on
+# every workload; if it is not, the candidate result above is worth exactly as
+# much as this drift is small.
+echo
+echo "==> Order-bias control: re-benching the REFERENCE against itself, last"
+echo
+if [[ -n "${FEATURES}" ]]; then
+    "${PIN[@]}" cargo bench -p rustynes-core --bench full_frame -- \
+        "${bench_args[@]}" --baseline ab_ref 2>&1 \
+        | grep -E "^nes_run_frame|change:|Performance has|No change" \
+        | sed 's/^/  /'
+else
+    (
+        cd "${work}/base"
+        "${PIN[@]}" cargo bench -p rustynes-core --bench full_frame -- \
+            "${bench_args[@]}" --baseline ab_ref
+    ) 2>&1 \
+        | grep -E "^nes_run_frame|change:|Performance has|No change" \
+        | sed 's/^/  /'
+fi
+
 cat <<'EOF'
 
-Adopt only if the change is negative, the WHOLE interval clears -3%, and
-p < 0.05. Mixed signs across workloads is a rejection, not an average. The
-`_fast` workloads are the SHIPPED configuration (fast_dotloop is default-on
+READ THE ORDER-BIAS CONTROL FIRST. It re-benches the reference against itself,
+so whatever it reports is drift from position-in-the-run alone. If it is not
+"No change" on every workload, the candidate numbers above carry at least that
+much systematic error and a small result is not interpretable.
+
+Then adopt only if the candidate change is negative, the WHOLE interval clears
+-3%, and p < 0.05. Mixed signs across workloads is a rejection, not an average.
+The `_fast` workloads are the SHIPPED configuration (fast_dotloop is default-on
 since v2.2.3) -- a change that only moves the non-fast variants moves nothing
 a user runs.
+
+A single run is not a result. Anything below ~5% should be reproduced by a
+second independent run before it is believed: v2.3.2 G2 produced a textbook
+-2% at p=0.00 on all four workloads that vanished entirely on re-measurement.
 
 Record the outcome in docs/performance.md either way, rejections included.
 EOF
