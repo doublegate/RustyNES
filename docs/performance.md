@@ -1515,27 +1515,95 @@ name (so download links do not change shape). The alternative — withholding th
 whole release until PGO finishes — was rejected: a complete, downloadable
 release an hour sooner is worth more than avoiding an in-place swap.
 
-#### BOLT (Linux post-link, optional)
+#### BOLT (Linux post-link) — evaluated, gate DISABLED, deferred (v2.3.1)
 
-A second Linux-only `bolt` job runs behind the **same > 3% + byte-identical
-gate**, only after the PGO stage has already promoted (`needs.pgo.outputs.promotable
-== 'true'`), and **only** on an explicit `workflow_dispatch` with `run_bolt:
-true`. (Before v2.2.3 its condition admitted any non-dispatch event, which —
-once `release.yml` began calling this workflow — would have fired BOLT on every
-release, adding ~90 minutes for an artifact nothing consumes, since the release
-ships the PGO binary and not the BOLT one.)
-It is **best-effort**: it probes for `llvm-bolt` (PATH, then `apt-get install
-bolt`) and skips cleanly if unavailable, so the workflow never hard-fails on a
-runner image without BOLT. When present it chains `cargo pgo bolt build` →
-re-train → `cargo pgo bolt optimize`, re-benches, re-runs the oracle, and uploads
-the BOLT binary only if it too clears > 3% and stays byte-identical (a possible
-extra ~2% on top of PGO).
+**Status: BOLT builds and optimizes correctly; its promotion gate is disabled;
+BOLT itself is UNMEASURED and deferred.** This section records why, because the
+gate that used to sit here reported a number that was not real.
+
+A second Linux-only `bolt` job runs after the PGO stage has promoted
+(`needs.pgo.outputs.promotable == 'true'`), and **only** on an explicit
+`workflow_dispatch` with `run_bolt: true`. (Before v2.2.3 its condition admitted
+any non-dispatch event, which — once `release.yml` began calling this workflow —
+would have fired BOLT on every release for an artifact nothing consumes.) It
+still chains `cargo pgo bolt build` → re-train → `cargo pgo bolt optimize` and
+uploads the resulting binary for manual evaluation. What it no longer does is
+claim a speedup.
+
+##### Three defects, each hiding the next
+
+Getting BOLT to run at all took three dispatches, and each fix revealed the next
+problem — the earlier failure had been masking it.
+
+1. **The probe trusted a package manager.** It ran
+   `apt-get install -y bolt` and set `have_bolt=true` on exit 0. On Ubuntu the
+   package named `bolt` is the **Thunderbolt 3 device manager** — an unrelated
+   project that owns the name. apt installed it, exited 0, and the stage then
+   died on `Cannot find llvm-bolt`. A job whose entire contract is *skip cleanly
+   when the tool is missing* failed the run instead. Fixed by locating the
+   binary rather than inferring it.
+2. **The probe checked the binary but not the runtime.** With the tool found,
+   the stage ran the whole analysis — 12,816 functions, 356,056 instrumentation
+   counters — and then died on
+   `BOLT-ERROR: library not found: /usr/lib/libbolt_rt_instr.a`.
+   `llvm-bolt --instrument` links a runtime archive it resolves relative to its
+   own prefix, which Ubuntu's packaging does not put there. This is the same
+   mistake one level down: verifying one necessary condition and treating it as
+   sufficient. Fixed by verifying the runtime too and linking it into place.
+3. **The gate measured a binary BOLT had never touched — and reported success.**
+   With 1 and 2 fixed, BOLT genuinely instrumented and optimized for the first
+   time, which finally exposed this. `cargo pgo bolt optimize` accepts **no
+   cargo subcommand** (its usage is `[OPTIONS] [-- <CARGO_ARGS>...]`), unlike
+   `cargo pgo optimize` on the PGO side which accepts `bench`/`test`. Both BOLT
+   steps had been written by analogy with the PGO stage, so both were rejected:
+   `unexpected argument 'bench' found` and `unexpected argument 'test' found`.
+
+   The determinism step failed loudly. **The bench step did not:** it swallowed
+   the error with `|| cargo bench …`, fell back to a plain non-BOLT build,
+   computed a ratio against the plain baseline, and wrote it to the job summary
+   as *"BOLT speedup vs plain release"*. It compared plain against plain and
+   reported **success**. Had that ratio happened to land above 3%, the gate
+   would have promoted a BOLT binary on a measurement containing no BOLT.
+
+##### Why fixing the CLI would not have been enough
+
+BOLT optimizes the **`rustynes` frontend binary**. The gate benches
+`rustynes-core`'s `full_frame` criterion bench — a *separate* binary BOLT never
+touches. Even spelled correctly, the step would measure something unrelated to
+its subject. Measuring BOLT honestly requires a harness that runs **inside** the
+optimized artifact (`frame_probe` built as part of it, emitting framebuffer
+hashes for the determinism half), which is a design change rather than a fix.
+
+Both steps are therefore **disabled** (`if: false`) with this reasoning inline in
+the workflow, rather than patched. A gate that cannot measure its subject is
+worse than no gate, and defect 3 shows this one could actively mislead.
+
+##### Why it is deferred rather than rebuilt
+
+- **PGO already captures the win: measured 6.43% faster and byte-identical on
+  run 31067782333, promoted, and shipping as the Linux release asset.** That is
+  the profile-driven layout benefit, taken at compile time.
+- **BOLT's mechanism targets a bottleneck this workload does not have.** Its
+  gains come from instruction-cache and iTLB pressure in large-code-footprint
+  programs — compilers, databases, browsers. RustyNES's hot path is `Ppu::tick`,
+  `cpu_clock`, `emit_pixel` and a few fetch helpers: comfortably L1i-resident.
+  The v2.3.1 campaign established the loop is **issue-limited on work the
+  accuracy model requires**, not front-end-limited.
+- **The cost is several ~90-minute CI iterations plus new harness code**, for a
+  speculative marginal gain on top of PGO, in BOLT's weakest case.
+
+If it is ever revisited, start with the cheap half: BOLT-optimize `frame_probe`
+rather than the frontend binary, run it, and compare against a plain build. That
+answers the question without rebuilding the gate.
 
 #### How to trigger
 
 ```bash
 # Manual (from a checkout with the gh CLI):
 gh workflow run PGO.yml                     # default 3600 frames/ROM, no BOLT
+# `run_bolt=true` still builds + optimizes a BOLT binary and uploads it for
+# manual evaluation, but its promotion gate is DISABLED — it produces no
+# speedup claim (see "BOLT ... deferred" above).
 gh workflow run PGO.yml -f frames=7200 -f run_bolt=true
 # Or push a release tag — `release.yml` calls PGO and ships the promoted
 # binary as the linux-x86_64 asset when the gate passes:
