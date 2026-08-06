@@ -96,7 +96,11 @@ MAX_REGRESSION_PCT="${BENCH_MAX_REGRESSION_PCT:-10}"
 # Default derived from the regression limit rather than picked: the gate declines
 # once the noise band (3x CV) is wide enough to swallow the effect it is testing
 # for. Overridable, but the derivation is the point.
-MAX_NOISE_CV_PCT="${BENCH_MAX_NOISE_CV_PCT:-$(python3 -c "print(f'{${MAX_REGRESSION_PCT} / 3:.2f}')")}"
+# Derived with awk, which treats the value as DATA. The obvious form
+# interpolates ${MAX_REGRESSION_PCT} into inline Python source, so a non-numeric
+# BENCH_MAX_REGRESSION_PCT would either break parsing or execute as code.
+MAX_NOISE_CV_PCT="${BENCH_MAX_NOISE_CV_PCT:-$(awk -v r="${MAX_REGRESSION_PCT}" \
+    'BEGIN { if (r + 0 <= 0) { print "3.33" } else { printf "%.2f", (r + 0) / 3 } }')}"
 MEASUREMENT_TIME="${BENCH_MEASUREMENT_TIME:-3}"
 BENCH_IDS=(nes_run_frame_nestest nes_run_frame_flowing_palette)
 

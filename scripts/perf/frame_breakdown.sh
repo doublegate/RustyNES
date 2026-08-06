@@ -56,11 +56,14 @@
 # ## Debuginfo
 #
 # Source attribution needs DWARF, which `[profile.release]` does not emit, so the
-# probe is rebuilt with `CARGO_PROFILE_RELEASE_DEBUG=2`. Debuginfo does not
-# change codegen — inlining, layout, and instruction selection are identical, and
-# the script asserts this by reporting the probe's own frame cost, which should
-# match a non-debuginfo build within noise. The profile is therefore faithful to
-# the shipped binary.
+# probe is rebuilt with `CARGO_PROFILE_RELEASE_DEBUG=2`. Debuginfo adds DWARF
+# sections without changing codegen — inlining, layout and instruction selection
+# are identical — so the profile is faithful to the shipped binary.
+#
+# The script PRINTS the debuginfo probe's frame cost, but that is CONTEXT, not a
+# verification of the claim above: it never builds a stock probe, so it has
+# nothing to compare against. To check the claim, run `frame_probe` from a plain
+# `cargo build --release` and compare medians yourself.
 #
 # ## Usage
 #
@@ -122,7 +125,8 @@ probe="${ROOT}/target/release/frame_probe"
 # Report the probe's own cost first. This is both context for the percentages
 # and the check that the debuginfo build did not perturb the thing being
 # measured — it should match a stock release build within the probe's own CV.
-echo "==> Frame cost (debuginfo build — compare against a stock release build)"
+echo "==> Frame cost of the DEBUGINFO probe (context only — no stock build is"
+echo "    made here to compare against; see the header note)"
 "${probe}" --rom "${ROM}" --frames 400 | sed 's/^/    /'
 
 echo

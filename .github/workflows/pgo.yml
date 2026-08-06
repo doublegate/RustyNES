@@ -291,16 +291,24 @@ jobs:
             if command -v llvm-bolt >/dev/null 2>&1; then
               dirname "$(command -v llvm-bolt)"; return 0
             fi
-            for v in 21 20 19 18 17 16; do
-              if command -v "llvm-bolt-$v" >/dev/null 2>&1; then
-                # cargo-pgo looks for the UNVERSIONED name; give it one.
-                sudo ln -sf "$(command -v "llvm-bolt-$v")" /usr/local/bin/llvm-bolt
-                echo /usr/local/bin; return 0
-              fi
-              if [ -x "/usr/lib/llvm-$v/bin/llvm-bolt" ]; then
-                sudo ln -sf "/usr/lib/llvm-$v/bin/llvm-bolt" /usr/local/bin/llvm-bolt
-                echo /usr/local/bin; return 0
-              fi
+            # ENUMERATE the versioned installs rather than probing a fixed
+            # version window. A hard-coded `for v in 21 .. 16` silently reports
+            # have_bolt=false on any image shipping a version outside it, which
+            # looks identical to "BOLT is not installed" — the failure mode this
+            # whole probe exists to eliminate. Globs that match nothing expand to
+            # the literal pattern, which the `-x` test rejects.
+            #
+            # cargo-pgo resolves the UNVERSIONED name, so a versioned hit gets a
+            # symlink. The `|| return 1` and the executability re-check are
+            # load-bearing: without them a FAILED symlink still echoed a
+            # directory and returned 0, reporting a usable BOLT that is not
+            # there — the same "assume it worked" bug, one level down.
+            for cand in /usr/bin/llvm-bolt-* /usr/local/bin/llvm-bolt-* \
+                        /usr/lib/llvm-*/bin/llvm-bolt; do
+              [ -x "${cand}" ] || continue
+              sudo ln -sf "${cand}" /usr/local/bin/llvm-bolt || return 1
+              [ -x /usr/local/bin/llvm-bolt ] || return 1
+              echo /usr/local/bin; return 0
             done
             return 1
           }
@@ -310,7 +318,11 @@ jobs:
             # Try to install it, then LOOK AGAIN — an install succeeding proves
             # nothing about which project's `bolt` landed on disk.
             sudo apt-get update >/dev/null 2>&1 || true
-            for pkg in llvm-bolt bolt-19 bolt-18 bolt-17 llvm-19-tools llvm-18-tools; do
+            # Candidate package names only — the loop re-probes after EACH one
+            # and stops at the first that actually yields a binary, so an
+            # unlisted name costs a skip, never a false positive.
+            for pkg in llvm-bolt bolt-21 bolt-20 bolt-19 bolt-18 bolt-17 \
+                       llvm-21-tools llvm-20-tools llvm-19-tools llvm-18-tools; do
               sudo apt-get install -y --no-install-recommends "$pkg" >/dev/null 2>&1 || continue
               bolt_dir="$(find_bolt || true)"
               [ -n "${bolt_dir}" ] && break

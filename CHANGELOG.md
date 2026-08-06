@@ -14,6 +14,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-08-06 - "Plumb Line" (measurement apparatus + ten measured rejections)
+
 ### Performance
 
 - **No emulation-core changes. Ten hot-path optimization candidates were

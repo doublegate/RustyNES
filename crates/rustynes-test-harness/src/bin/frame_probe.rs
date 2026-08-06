@@ -148,6 +148,31 @@ fn probe(bytes: &[u8], warmup: u32, frames: u32) -> Result<Vec<f64>, String> {
     Ok(samples)
 }
 
+/// Parse a `u32` CLI count, exiting with a usage error rather than falling back
+/// to a default. `require_positive` additionally rejects zero.
+///
+/// A measurement tool must not quietly substitute a different input than the one
+/// it was asked for — the number it prints would then describe a run the caller
+/// never requested. Concretely, `--frames 0` previously parsed, produced an
+/// empty sample set, and reported a 0.00% CV ("host: QUIET"), a 0 ms median and
+/// an infinite realtime multiplier: a confident-looking measurement of nothing.
+/// Exit code 2 marks a usage error, distinct from a probe that ran.
+fn parse_count(value: Option<&str>, flag: &str, require_positive: bool) -> u32 {
+    let Some(raw) = value else {
+        eprintln!("frame_probe: {flag} requires a value");
+        std::process::exit(2);
+    };
+    let Ok(n) = raw.parse::<u32>() else {
+        eprintln!("frame_probe: {flag} expects a non-negative integer, got {raw:?}");
+        std::process::exit(2);
+    };
+    if require_positive && n == 0 {
+        eprintln!("frame_probe: {flag} must be greater than zero");
+        std::process::exit(2);
+    }
+    n
+}
+
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -164,8 +189,15 @@ fn main() {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--frames" => frames = args.next().and_then(|v| v.parse().ok()).unwrap_or(frames),
-            "--warmup" => warmup = args.next().and_then(|v| v.parse().ok()).unwrap_or(warmup),
+            // Reject rather than silently fall back to the default. `--frames 0`
+            // used to be accepted and produced an empty sample set, which then
+            // reported a 0.00% CV ("host: QUIET"), a 0 ms median, and an
+            // infinite realtime multiplier — a confident-looking measurement of
+            // nothing, which is the exact failure mode this probe exists to
+            // avoid. A typo'd `--frames 60O` deserves the same treatment.
+            "--frames" => frames = parse_count(args.next().as_deref(), "--frames", true),
+            // Warmup MAY legitimately be zero, so only the parse is enforced.
+            "--warmup" => warmup = parse_count(args.next().as_deref(), "--warmup", false),
             "--rom" => {
                 if let Some(p) = args.next() {
                     roms.push(PathBuf::from(p));
