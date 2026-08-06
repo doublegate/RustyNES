@@ -352,28 +352,46 @@ jobs:
           scripts/pgo/run.sh "$PGO_FRAMES"
           cargo pgo bolt optimize -- -p rustynes-frontend
 
+      # DISABLED (v2.3.1) — these two steps cannot measure what they claim, and
+      # one of them silently reported a fabricated number. Run 31067782333 is the
+      # evidence: the probe and runtime fixes above made BOLT genuinely work
+      # (instrument + optimize both succeeded for the first time), which finally
+      # exposed what the gate downstream was doing.
+      #
+      # 1. `cargo pgo bolt optimize` takes NO cargo subcommand. Its usage is
+      #    `cargo pgo bolt optimize [OPTIONS] [-- <CARGO_ARGS>...]`, unlike
+      #    `cargo pgo optimize` (the PGO side) which does accept `bench`/`test`.
+      #    Both steps were written by analogy with the PGO stage and both are
+      #    rejected: `unexpected argument 'bench' found` / `'test' found`.
+      #
+      # 2. The bench step swallowed that with `|| cargo bench ...`, so it fell
+      #    back to a PLAIN (non-BOLT) build, computed a speedup against the plain
+      #    baseline, and wrote it to the summary as "BOLT speedup vs plain
+      #    release". It compared plain against plain. The step reported SUCCESS.
+      #    Had that ratio landed above the 3% bar, the gate would have promoted a
+      #    BOLT binary on a measurement containing no BOLT.
+      #
+      # 3. Even with the CLI corrected, the design does not hold: BOLT optimizes
+      #    the `rustynes` FRONTEND binary, while the gate benches
+      #    `rustynes-core`'s `full_frame` criterion bench — a different binary
+      #    BOLT never touched. Measuring BOLT honestly needs a harness that runs
+      #    inside the optimized artifact (`frame_probe` built as part of it), not
+      #    a core bench built separately.
+      #
+      # Left disabled rather than patched: a gate that cannot measure its subject
+      # is worse than no gate, and #2 shows this one could actively mislead. The
+      # instrument/optimize steps above still prove BOLT runs end to end, and the
+      # artifact is still produced. Re-enable behind a harness that benches the
+      # BOLT-optimized binary itself.
       - name: BOLT full_frame bench + gate
-        if: steps.bolt_probe.outputs.have_bolt == 'true'
+        if: false
         run: |
-          cargo pgo bolt optimize bench -- -p rustynes-core --bench full_frame -- \
-            --warm-up-time 1 --measurement-time 5 --save-baseline bolt || \
-            cargo bench -p rustynes-core --bench full_frame -- \
-              --warm-up-time 1 --measurement-time 5 --save-baseline bolt
-          bolt_est="target/criterion/nes_run_frame_nestest/bolt/estimates.json"
-          bolt_ns="$(python3 -c "import json,sys;print(int(json.load(open(sys.argv[1]))['mean']['point_estimate']))" "$bolt_est")"
-          speedup="$(python3 -c "print(f'{(1 - ${bolt_ns}/${BASE_NS})*100:.2f}')")"
-          {
-            echo "### BOLT post-link gate"
-            echo "BOLT speedup vs plain release: ${speedup}% (threshold > ${PGO_MIN_SPEEDUP_PCT}%)"
-          } >> "$GITHUB_STEP_SUMMARY"
-          python3 -c "import sys; sys.exit(0 if ${speedup} > ${PGO_MIN_SPEEDUP_PCT} else 1)" || {
-            echo "BOLT did not beat the > ${PGO_MIN_SPEEDUP_PCT}% bar — not promoting." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          }
+          echo "disabled — see the comment above (run 31067782333)"
 
       - name: Determinism oracle (BOLT codegen)
-        if: steps.bolt_probe.outputs.have_bolt == 'true'
-        run: cargo pgo bolt optimize test -- --workspace --release --features test-roms
+        if: false
+        run: |
+          echo "disabled — see the comment above (run 31067782333)"
 
       - name: Upload BOLT binary
         if: steps.bolt_probe.outputs.have_bolt == 'true'
