@@ -122,9 +122,9 @@ CARGO_PROFILE_RELEASE_DEBUG=2 \
 
 probe="${ROOT}/target/release/frame_probe"
 
-# Report the probe's own cost first. This is both context for the percentages
-# and the check that the debuginfo build did not perturb the thing being
-# measured — it should match a stock release build within the probe's own CV.
+# Report the probe's own cost first, as context for the percentages below. It is
+# NOT a check that debuginfo left the measurement undisturbed — no stock build is
+# made here, so there is nothing to compare it against. See the header.
 echo "==> Frame cost of the DEBUGINFO probe (context only — no stock build is"
 echo "    made here to compare against; see the header note)"
 "${probe}" --rom "${ROM}" --frames 400 | sed 's/^/    /'

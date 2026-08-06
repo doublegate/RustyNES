@@ -7,8 +7,10 @@
 > LTO inlines it into `cpu_clock`), an adoption A/B with an **A/B/A order-bias
 > control**, and a relative gate that declines to conclude on a contended host.
 > **Ten core hot-path optimization candidates were measured and all ten
-> rejected** through six distinct mechanisms — the per-dot loop has no incidental
-> overhead left to reclaim. **No emulation-core changes: AccuracyCoin holds at
+> rejected** through six distinct mechanisms — none of the ten yielded a
+> shippable improvement. (Two leads the campaign surfaced remain **unmeasured**:
+> the APU at 18.7% of frame, and `range.rs` inlined inside `Ppu::tick` at 1.52%.)
+> **No emulation-core changes: AccuracyCoin holds at
 > exactly 141/141 and nestest is 0-diff.** Built on **v2.3.0** (2026-08-05) —
 > **"Datum II"**, the capstone closing
 > the v2.2.6 → v2.3.0 NESdev-remediation line. Tool panels now open as **real OS
