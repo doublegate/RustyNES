@@ -103,21 +103,22 @@ MAX_NOISE_CV_PCT="${BENCH_MAX_NOISE_CV_PCT:-$(awk -v r="${MAX_REGRESSION_PCT}" \
     'BEGIN { if (r + 0 <= 0) { print "3.33" } else { printf "%.2f", (r + 0) / 3 } }')}"
 # An OVERRIDE is copied verbatim, so validate it here rather than letting a value
 # like `3oops` reach the python comparison below and die mid-run with a traceback
-# after both benches have already been paid for.
-case "${MAX_NOISE_CV_PCT}" in
-    ''|*[!0-9.]*|*.*.*)
-        echo "bench_relative_check: BENCH_MAX_NOISE_CV_PCT must be a number," \
-             "got '${MAX_NOISE_CV_PCT}'" >&2
-        exit 2
-        ;;
-esac
-case "${MAX_REGRESSION_PCT}" in
-    ''|*[!0-9.]*|*.*.*)
-        echo "bench_relative_check: BENCH_MAX_REGRESSION_PCT must be a number," \
-             "got '${MAX_REGRESSION_PCT}'" >&2
-        exit 2
-        ;;
-esac
+# after both benches have already been paid for — the most expensive possible
+# moment to discover a bad argument.
+#
+# Both a character check AND a digit check are needed. Rejecting only
+# `*[!0-9.]*` / `*.*.*` still admits a bare `.` (one dot, no other characters),
+# which `float()` cannot parse; requiring at least one digit closes that.
+require_number() {
+    case "$2" in
+        ''|*[!0-9.]*|*.*.*) ;;      # empty / non-numeric char / more than one dot
+        *[0-9]*) return 0 ;;        # has a digit and survived the above: valid
+    esac
+    echo "bench_relative_check: $1 must be a number, got '$2'" >&2
+    exit 2
+}
+require_number BENCH_MAX_NOISE_CV_PCT "${MAX_NOISE_CV_PCT}"
+require_number BENCH_MAX_REGRESSION_PCT "${MAX_REGRESSION_PCT}"
 MEASUREMENT_TIME="${BENCH_MEASUREMENT_TIME:-3}"
 BENCH_IDS=(nes_run_frame_nestest nes_run_frame_flowing_palette)
 
