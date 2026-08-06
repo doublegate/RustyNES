@@ -14,6 +14,48 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Performance
+
+- **No emulation-core changes. Ten hot-path optimization candidates were
+  measured and all ten rejected**, through six distinct mechanisms: LLVM already
+  performed the transformation; the item's premise was factually false; the work
+  was real but absorbed off the critical path; the elision was real but bought
+  nothing; the target was too small to matter; the ownership model forbids it.
+  Full numbers, controls and reasoning are in `docs/performance.md`
+  (entries G1–G10). **AccuracyCoin remains at exactly 141/141 and nestest
+  0-diff**, verified after every experimental probe was reverted.
+- New measurement tooling, all of which found something the previous apparatus
+  could not:
+  - `crates/rustynes-test-harness/src/bin/frame_probe.rs` — harness-free
+    steady-state frame cost, with no criterion in the process image (criterion's
+    own rayon/`exp`/sort work had been ~17% of every profile).
+  - `scripts/perf/frame_breakdown.sh` — per-subsystem attribution by **source
+    file**, which recovers work the symbol profile hides. It shows the **APU at
+    18.7% of frame time**, invisible under `perf report` because fat LTO inlines
+    it wholesale into `cpu_clock` (`perf report --inline` does not recover it).
+  - `scripts/perf/ab_check.sh` — adoption A/B with an **A/B/A order-bias
+    control**: the reference is benched a third time, last, against its own first
+    run, so drift from position-in-the-run is reported rather than mistaken for a
+    result.
+- `scripts/bench_relative_check.sh` now declines to emit a verdict when the host
+  was too noisy to resolve the effect it tests for, keyed on a robust
+  MAD-based coefficient of variation.
+
+### Fixed
+
+- **The PGO workflow's BOLT probe reported success without BOLT present.** It ran
+  `apt-get install bolt` and trusted the exit status — but on Ubuntu that package
+  is the *Thunderbolt 3 device manager*, an unrelated project that owns the name.
+  The stage then failed on the tool it had just "confirmed", instead of skipping
+  as its best-effort contract intends. The probe now locates the actual
+  `llvm-bolt` binary and reports honestly when it is absent.
+
+### Documentation
+
+- `docs/performance.md` records every rejected experiment with its numbers, its
+  order-bias control, and the mechanism behind the null result — including two
+  near-misses that a single measurement would have adopted.
+
 ## [2.3.0] - 2026-08-05 - "Datum II" (PPU-accuracy capstone + true multi-viewport tool windows)
 
 Closes the **v2.2.6 → v2.3.0 NESdev-remediation line**. Both remaining
