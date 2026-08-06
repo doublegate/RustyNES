@@ -14,6 +14,58 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **Frontend: the framebuffer is no longer re-uploaded when it has not changed.**
+  In `Mailbox` present mode the frontend presents faster than the emulator
+  produces — measured across the captures in `perf-logs/`, four of six runs show
+  137–156 duplicate presents per second against ~60 produced frames, so roughly
+  70% of presents were re-sending pixels the GPU texture already held (~35 MB/s
+  of redundant staging and copy traffic). The upload is now gated on an FNV-1a
+  hash of the frame. No visual change; no frame-time change is claimed.
+- **Frontend: the status bar's mapper label is cached at ROM load.** It was
+  rebuilt every displayed frame from `Nes::mapper_info()` — which constructs a
+  whole debug structure (MMC3's runs ~25 `format!` calls and four `Vec`
+  allocations) — inside the emulator lock, keeping only the name. Measured at
+  1,367 ns/frame, i.e. 0.008% of a frame: this is allocation hygiene, not an
+  optimization.
+
+### Fixed
+
+- **`scripts/perf/perf_log_check.py` crashed on valid captures.** A run ended
+  mid-write (how every timed capture ends) yields a short final row, which
+  `csv.DictReader` fills with `None`; `float(None)` raises `TypeError`, which the
+  bare `except ValueError` did not catch.
+- **The perf-log gate ignored the metric that matters.** It tracked only
+  `produced_max_ms` against a 150 ms threshold — nine times the NTSC frame
+  budget, and a single sample. A capture peaking at 128.9 ms with 62 catch-up
+  bursts passed every threshold it tracked. `produced_p99_ms` and
+  `presented_p99_ms` (present in the CSV since v1.5.0, read by nothing) are now
+  gated at 22 ms.
+- **The BOLT stage could not find its runtime, then measured the wrong binary.**
+  The probe verified the `llvm-bolt` binary but not the `libbolt_rt_instr.a`
+  runtime it links against, so instrumentation died after running a full
+  analysis. With that fixed, the gate itself proved unsound: `cargo pgo bolt
+  optimize` takes no cargo subcommand, and the bench step's `|| cargo bench …`
+  fallback then measured a **plain, non-BOLT** build and reported it as "BOLT
+  speedup vs plain release". Both gate steps are disabled with the reasoning
+  inline — BOLT optimizes the frontend binary while the gate benched the core's
+  criterion bench, so it could not measure its subject even spelled correctly.
+  The artifact upload likewise published the PGO binary under a BOLT name and now
+  uploads `rustynes-bolt-optimized`. **BOLT is deferred and explicitly
+  unmeasured**; PGO (measured 6.43% faster and byte-identical) remains the
+  shipping optimization. See `docs/performance.md`.
+
+### Performance
+
+- **The frontend optimization items were measured before being built, and all
+  three are under 0.1% of a frame** — the framebuffer copy chain 13.2 µs
+  (0.079%), `perf.view()` for a closed panel 16.2 µs (0.098%), and the
+  `mapper_info()` storm 1.4 µs (0.008%). Every claim in the plan was factually
+  true and verified in source; they are simply small. The core needs ~3.78 ms of
+  the 16.639 ms budget, so the frontend runs with ~12.8 ms of slack and mean
+  frame time was never the constraint. See `docs/performance.md` (v2.3.3 F1).
+
 ## [2.3.2] - 2026-08-11 - "Lucid" (pixel provenance + replay attestation)
 
 ### Added
