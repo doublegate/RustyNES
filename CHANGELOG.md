@@ -14,8 +14,6 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [Unreleased]
-
 ### Changed
 
 - **Frontend: the framebuffer is no longer re-uploaded when it has not changed.**
@@ -112,7 +110,6 @@ cycle-accurate core later replaced.
   order-bias control, and the mechanism behind the null result — including two
   near-misses that a single measurement would have adopted.
 
-||||||| parent of 931690f8 (docs(changelog): record the v2.3.1/v2.3.2 work under [Unreleased])
 ## [2.3.0] - 2026-08-05 - "Datum II" (PPU-accuracy capstone + true multi-viewport tool windows)
 
 Closes the **v2.2.6 → v2.3.0 NESdev-remediation line**. Both remaining
