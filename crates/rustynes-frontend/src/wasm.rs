@@ -163,7 +163,7 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
             );
             match nes_result {
                 Ok(nes) => {
-                    EMU.with(|emu| emu.borrow_mut().nes = Some(nes));
+                    EMU.with(|emu| emu.borrow_mut().set_nes(nes));
                     wasm_audio::clear_ring();
                     log(&format!("ROM loaded ({} bytes). Running.", bytes.len()));
                 }

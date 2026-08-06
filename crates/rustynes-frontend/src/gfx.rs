@@ -306,6 +306,24 @@ pub struct Gfx {
     /// `width`/`height`/`format`.
     pub config: wgpu::SurfaceConfiguration,
     nes_texture: wgpu::Texture,
+    /// v2.3.2 F4 — identity of the pixels currently resident in [`Self::nes_texture`],
+    /// so an unchanged framebuffer is not re-uploaded.
+    ///
+    /// In `Mailbox` present mode the frontend presents far faster than the
+    /// emulator produces: measured across the captures in `perf-logs/`, four of
+    /// six runs show **137-156 duplicate presents per second** against ~60
+    /// produced frames, i.e. roughly 70% of presents re-upload pixels the texture
+    /// already holds — about 35 MB/s of pointless staging-belt and GPU-copy
+    /// traffic. (Two captures show zero; it depends entirely on present mode.)
+    ///
+    /// Keyed on a cheap FNV-1a hash of the frame rather than a caller-supplied
+    /// "is it dirty" flag: a flag has to be correct at every call site and goes
+    /// stale silently as a frozen image, whereas a content hash cannot disagree
+    /// with the content. `None` means "nothing uploaded yet", which always uploads.
+    ///
+    /// This is hygiene, not a measured frame-time win — see `docs/performance.md`
+    /// v2.3.2 F1/F4.
+    nes_texture_key: Option<u64>,
     /// v1.1.0 beta.1 (T-110-A1) — `R16Uint` palette-index source for the true
     /// composite `NES_NTSC` filter; uploaded only while `ntsc_bisqwit` is active.
     index_texture: wgpu::Texture,
@@ -392,6 +410,23 @@ struct DynBlit {
     uniforms: wgpu::Buffer,
     width: u32,
     height: u32,
+}
+
+/// FNV-1a over a frame buffer — the identity key for [`Gfx::nes_texture_key`].
+///
+/// Chosen for being branch-free, allocation-free and vectorisable by the
+/// autovectoriser; it guards a redundant 245,760-byte upload, so it only has to
+/// be cheaper than that copy, which it is by a wide margin. Collisions would
+/// show a stale frame, but at 64 bits over a 240 KiB buffer the probability is
+/// negligible against the alternative (a caller-supplied dirty flag that goes
+/// stale silently whenever a new call site forgets it).
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
 }
 
 impl Gfx {
@@ -745,6 +780,7 @@ impl Gfx {
             queue,
             config,
             nes_texture,
+            nes_texture_key: None,
             index_texture,
             bind_group,
             uniforms,
@@ -1172,7 +1208,14 @@ impl Gfx {
                 },
             );
         }
-        if fb_ok {
+        // v2.3.2 F4 — skip the upload when the texture already holds these exact
+        // pixels. The hash is over 245,760 bytes and is far cheaper than the
+        // staging copy plus GPU transfer it avoids; on a duplicate present it is
+        // the only work done here.
+        let fb_key = fnv1a64(framebuffer);
+        let fb_fresh = self.nes_texture_key != Some(fb_key);
+        if fb_ok && fb_fresh {
+            self.nes_texture_key = Some(fb_key);
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.nes_texture,
