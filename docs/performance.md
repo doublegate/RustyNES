@@ -661,7 +661,7 @@ for a byte-identical escape hatch is not justified.
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
 
-### v2.3.2 G7/G8/G9/G10 — inline hints, typed indices, capability gate, adapter hoist (decision: all REJECTED)
+### v2.3.1 G7/G8/G9/G10 — inline hints, typed indices, capability gate, adapter hoist (decision: all REJECTED)
 
 The last four campaign items. With G1–G6 the score is **ten measured, ten
 rejected**, which is itself the release's finding — see the summary below.
@@ -721,7 +721,7 @@ codegen, its three field moves already inlined into callers measured at zero.
 
 ---
 
-#### Campaign summary: why ten of ten were rejected
+#### Core-hot-path campaign summary: why ten of ten were rejected
 
 Ten items, ten rejections, via **six distinct mechanisms** — the diversity is the
 point, because it means this is not one bad assumption repeated:
@@ -757,7 +757,7 @@ The remaining levers are structural, not micro-architectural: v2.3.3's frontend
 copy chain (three full 720 KiB memcpys per displayed frame) and snapshot slimming
 (~250 KB per run-ahead frame) are whole-buffer costs, not instruction-level ones.
 
-### v2.3.2 G4/G5/G6 — three "obvious waste" items, all ceiling-zero (decision: REJECTED)
+### v2.3.1 G4/G5/G6 — three "obvious waste" items, all ceiling-zero (decision: REJECTED)
 
 Measured by **ceiling probe**: rather than engineer each optimization and then
 discover it was worthless, delete the work outright — knowingly breaking
@@ -815,7 +815,7 @@ dots. The plan item read two identical-looking expressions and inferred
 redundancy; they are identical only in the common case and are *meant* to be able
 to differ.
 
-### v2.3.2 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
+### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as
 the adopted v2.3.0 P1. Two sites compute values they then discard:
@@ -870,7 +870,7 @@ in isolation.
 
 Both sites keep a comment marking the attempt so it is not re-tried.
 
-### v2.3.2 G2 — `Ppu` field layout (decision: REJECTED — and it exposed a harness bug)
+### v2.3.1 G2 — `Ppu` field layout (decision: REJECTED — and it exposed a harness bug)
 
 The campaign item asked to reorder `Ppu`'s 114 fields by access frequency,
 noting the ~15 hot ones are "scattered, with a 2 KiB `rgba_lut` sitting between
@@ -927,9 +927,9 @@ also the physically sensible answer: `Ppu` is ~2,856 bytes and stays L1-resident
 across a frame, so field layout has little left to buy. Layout is not where this
 emulator's remaining time is.
 
-### v2.3.2 G1 — idle-line fast path, re-measured (decision: REJECTED again, stays default-OFF)
+### v2.3.1 G1 — idle-line fast path, re-measured (decision: REJECTED again, stays default-OFF)
 
-The v2.3.2 campaign predicted the default-OFF `ppu-idle-line-fast` path
+The v2.3.x campaign predicted the default-OFF `ppu-idle-line-fast` path
 (§P2, max −1.55%, below the bar) "becomes worthwhile if per-dot dispatch gets
 cheaper", and v2.3.0 P1 made per-dot dispatch cheaper by −5.13%. Re-measured on
 that basis. Criterion change analysis, host CPU-pinned (`taskset -c 2-5`),

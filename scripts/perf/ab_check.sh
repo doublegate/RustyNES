@@ -16,7 +16,7 @@
 #                            and the standard error falls as CV/sqrt(n). Applying
 #                            the 3xCV rule here demands a quiet host no desktop
 #                            provides and refuses every verdict -- a mistake made
-#                            once, in v2.3.2 G1, and recorded in
+#                            once, in v2.3.1 G1, and recorded in
 #                            docs/performance.md so it is not repeated.
 #
 # So this script defers to criterion's own `--baseline` change analysis, which
@@ -48,7 +48,7 @@
 # criterion prints, per workload, `change: [lo mid hi] (p = ...)`, and the run
 # ends with an A/B/A order-bias control plus the full adoption rule.
 #
-# The bar is EVIDENCE QUALITY, not effect size (maintainer decision, v2.3.2): a
+# The bar is EVIDENCE QUALITY, not effect size (maintainer decision, v2.3.1): a
 # consistent, reproduced, statistically clean gain is adoptable even below 3%.
 # What is NOT negotiable is the second independent run -- a single run has
 # already produced a p=0.00 result on all four workloads that was pure artifact.
@@ -150,7 +150,7 @@ feat_args=()
 # monotonically faster over the life of the run — page cache warming, CPU
 # governor ramping, a background job finishing, thermal/boost settling — is
 # indistinguishable from "the candidate is faster". This is not hypothetical:
-# v2.3.2 G2's first run reported a clean −1.84%..−2.75% (p=0.00 on all four
+# v2.3.1 G2's first run reported a clean −1.84%..−2.75% (p=0.00 on all four
 # workloads) for a `#[repr(C)]` layout change that, re-measured, showed no
 # effect at all. The candidate had not improved; the machine had.
 #
@@ -184,7 +184,7 @@ so whatever it reports is drift from position-in-the-run alone. If it is not
 "No change" on every workload, the candidate numbers above carry at least that
 much systematic error and a small result is not interpretable.
 
-ADOPTION RULE (maintainer decision, v2.3.2): a consistent, well-established gain
+ADOPTION RULE (maintainer decision, v2.3.1): a consistent, well-established gain
 is adoptable even below 3%. The old flat ">3%" bar existed to stop noise-chasing,
 not because 2% is worthless -- so the burden moved from EFFECT SIZE to EVIDENCE
 QUALITY. Adopt when ALL of:
@@ -197,7 +197,7 @@ QUALITY. Adopt when ALL of:
   * the shipped `_fast` variants move (fast_dotloop is default-on since v2.2.3,
     so a change that only moves the non-fast variants moves nothing a user runs).
 
-The second run is not optional ceremony. v2.3.2 G2 produced a textbook -1.84%..
+The second run is not optional ceremony. v2.3.1 G2 produced a textbook -1.84%..
 -2.75% at p=0.00 on ALL FOUR workloads, from an order-bias artifact; it measured
 as exactly zero on re-run. Under a size-only bar that would have been rejected
 for being under 3%. Under an evidence-based bar it is rejected for the right

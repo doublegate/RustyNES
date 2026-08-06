@@ -600,7 +600,7 @@ pub struct Ppu {
     /// a run-ahead / netplay `snapshot`→`restore` byte-identical to the forward run.
     ///
     /// Field POSITION here is not performance-relevant, and this was measured
-    /// rather than assumed (v2.3.2 G2, `docs/performance.md`): neither adding
+    /// rather than assumed (v2.3.1 G2, `docs/performance.md`): neither adding
     /// `#[repr(C)]` nor moving this 256-byte cold array to the end of the struct
     /// produced a reproducible change on any workload. `Ppu` is ~2.8 KB and stays
     /// L1-resident across a frame, so layout has little left to buy.
@@ -1935,7 +1935,7 @@ impl Ppu {
         // (≈ 1,073,447 CPU cycles at NTSC, rounded to one million).  This is
         // conservative but well within the window the `ppu_open_bus` test
         // cares about.
-        // NOTE (v2.3.2 G5): reformulating this as a deadline comparison instead
+        // NOTE (v2.3.1 G5): reformulating this as a deadline comparison instead
         // of a per-cycle decrement was measured by DELETING the loop outright —
         // the ceiling any reformulation could reach — and the ceiling is ZERO.
         // ~29,780 calls/frame sounds expensive; it is three predictable
@@ -3997,7 +3997,7 @@ impl Ppu {
         // Parallel palette-index output for the `NES_NTSC` composite filter
         // (T-110-A1). Same `(emphasis << 6) | colour` value, in index space;
         // `off` is the RGBA byte offset, so `off >> 2` is the pixel index.
-        // NOTE (v2.3.2 G4): making this store conditional on a consumer wanting
+        // NOTE (v2.3.1 G4): making this store conditional on a consumer wanting
         // it was measured by deleting it outright — the ceiling any opt-in gate
         // could reach — and the ceiling is ZERO on the shipped configuration.
         // `perf` attributes ~0.78% to this line, but a line's sample share is not
@@ -4203,7 +4203,7 @@ impl Ppu {
         if cycle == 0 {
             return;
         }
-        // NOTE (v2.3.2 G3): pushing these two below the `cycle < 65` early-out
+        // NOTE (v2.3.1 G3): pushing these two below the `cycle < 65` early-out
         // as well — they are dead across the dots 1..=64 clear window — was
         // measured and produced NO change on any workload across two runs. LLVM
         // already sinks pure computations past branches that do not use them.
@@ -4361,7 +4361,7 @@ impl Ppu {
         // `-1 - y < 0` for all OAM y values, so the y-test always
         // fails at pre-render and scanline 0 sees no sprites.
         //
-        // NOTE (v2.3.2 G3): sinking these two to their single use site in the
+        // NOTE (v2.3.1 G3): sinking these two to their single use site in the
         // `65..=256` arm — they are dead on 149 of 341 dots — was measured and
         // produced NO change on any workload across two runs. LLVM already sinks
         // pure computations past branches that do not use them. Do not re-attempt
