@@ -173,6 +173,14 @@ fn parse_count(value: Option<&str>, flag: &str, require_positive: bool) -> u32 {
     n
 }
 
+/// Workspace root, resolved from the **compile-time** manifest directory.
+///
+/// This is only used to locate the DEFAULT ROM corpus. `CARGO_MANIFEST_DIR` is
+/// baked in at build time, so a binary copied away from its build tree resolves
+/// to a path that no longer exists — which is why the default-corpus loop below
+/// reports each missing ROM by path and then exits non-zero with
+/// `no ROMs measured`, rather than silently measuring an empty set. Pass
+/// `--rom <path>` explicitly when running a relocated binary.
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

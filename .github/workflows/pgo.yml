@@ -287,30 +287,47 @@ jobs:
           # NOT `set -e`: this step probes for things that are allowed to be
           # absent. A missing tool must SKIP the stage, not fail the run.
           set -uo pipefail
-          find_bolt() {
+          # PURE discovery: echoes the path of an llvm-bolt binary, or nothing.
+          # It does not install, symlink, or otherwise touch the host — a probe
+          # that mutates state as a side effect of looking is hard to reason
+          # about and hard to re-run. Linking is a separate, explicit step below.
+          #
+          # ENUMERATE the versioned installs rather than probing a fixed version
+          # window: a hard-coded `for v in 21 .. 16` reports "not found" on any
+          # image shipping a version outside it, indistinguishable from "BOLT is
+          # not installed" — the failure mode this whole probe exists to
+          # eliminate. Globs that match nothing expand to the literal pattern,
+          # which the `-x` test rejects.
+          find_bolt_bin() {
             if command -v llvm-bolt >/dev/null 2>&1; then
-              dirname "$(command -v llvm-bolt)"; return 0
+              command -v llvm-bolt; return 0
             fi
-            # ENUMERATE the versioned installs rather than probing a fixed
-            # version window. A hard-coded `for v in 21 .. 16` silently reports
-            # have_bolt=false on any image shipping a version outside it, which
-            # looks identical to "BOLT is not installed" — the failure mode this
-            # whole probe exists to eliminate. Globs that match nothing expand to
-            # the literal pattern, which the `-x` test rejects.
-            #
-            # cargo-pgo resolves the UNVERSIONED name, so a versioned hit gets a
-            # symlink. The `|| return 1` and the executability re-check are
-            # load-bearing: without them a FAILED symlink still echoed a
-            # directory and returned 0, reporting a usable BOLT that is not
-            # there — the same "assume it worked" bug, one level down.
             for cand in /usr/bin/llvm-bolt-* /usr/local/bin/llvm-bolt-* \
                         /usr/lib/llvm-*/bin/llvm-bolt; do
               [ -x "${cand}" ] || continue
-              sudo ln -sf "${cand}" /usr/local/bin/llvm-bolt || return 1
-              [ -x /usr/local/bin/llvm-bolt ] || return 1
-              echo /usr/local/bin; return 0
+              printf '%s\n' "${cand}"; return 0
             done
             return 1
+          }
+
+          # cargo-pgo resolves the UNVERSIONED name, so a versioned hit needs a
+          # symlink. Kept separate from discovery, and reporting failure rather
+          # than assuming success: without the `|| return 1` and the
+          # executability re-check, a FAILED link still yielded a directory and
+          # a success status — the same "assume it worked" bug, one level down.
+          link_bolt() {
+            _bin="$1"
+            case "${_bin}" in
+              */llvm-bolt) dirname "${_bin}"; return 0 ;;   # already unversioned
+            esac
+            sudo ln -sf "${_bin}" /usr/local/bin/llvm-bolt || return 1
+            [ -x /usr/local/bin/llvm-bolt ] || return 1
+            echo /usr/local/bin
+          }
+
+          find_bolt() {
+            _found="$(find_bolt_bin)" || return 1
+            link_bolt "${_found}"
           }
 
           bolt_dir="$(find_bolt || true)"
