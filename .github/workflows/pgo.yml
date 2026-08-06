@@ -266,13 +266,91 @@ jobs:
       - name: Install cargo-pgo
         run: cargo install cargo-pgo --locked
 
+      # Probe for llvm-bolt by LOCATING THE BINARY, never by trusting a package
+      # manager's exit code.
+      #
+      # The previous form did `apt-get install -y bolt` and set have_bolt=true if
+      # that succeeded. On Ubuntu the package named `bolt` is the **Thunderbolt 3
+      # device manager** — an unrelated project that happens to own the name. apt
+      # installed it, exited 0, the probe reported success, and the stage then
+      # died on `Cannot find llvm-bolt: cannot find binary path` (run
+      # 31006334399). A "best-effort" job that is supposed to SKIP when the tool
+      # is missing instead failed the whole run.
+      #
+      # LLVM ships the binary as `llvm-bolt` (apt.llvm.org's `bolt-<N>` packages)
+      # or versioned under /usr/lib/llvm-<N>/bin, so search all of those and
+      # export the directory on PATH for `cargo pgo`, which resolves `llvm-bolt`
+      # by name. Verifying the binary exists is what makes the skip honest.
       - name: Probe for llvm-bolt
         id: bolt_probe
         run: |
-          if command -v llvm-bolt >/dev/null 2>&1; then
+          # NOT `set -e`: this step probes for things that are allowed to be
+          # absent. A missing tool must SKIP the stage, not fail the run.
+          set -uo pipefail
+          # PURE discovery: echoes the path of an llvm-bolt binary, or nothing.
+          # It does not install, symlink, or otherwise touch the host — a probe
+          # that mutates state as a side effect of looking is hard to reason
+          # about and hard to re-run. Linking is a separate, explicit step below.
+          #
+          # ENUMERATE the versioned installs rather than probing a fixed version
+          # window: a hard-coded `for v in 21 .. 16` reports "not found" on any
+          # image shipping a version outside it, indistinguishable from "BOLT is
+          # not installed" — the failure mode this whole probe exists to
+          # eliminate. Globs that match nothing expand to the literal pattern,
+          # which the `-x` test rejects.
+          find_bolt_bin() {
+            if command -v llvm-bolt >/dev/null 2>&1; then
+              command -v llvm-bolt; return 0
+            fi
+            for cand in /usr/bin/llvm-bolt-* /usr/local/bin/llvm-bolt-* \
+                        /usr/lib/llvm-*/bin/llvm-bolt; do
+              [ -x "${cand}" ] || continue
+              printf '%s\n' "${cand}"; return 0
+            done
+            return 1
+          }
+
+          # cargo-pgo resolves the UNVERSIONED name, so a versioned hit needs a
+          # symlink. Kept separate from discovery, and reporting failure rather
+          # than assuming success: without the `|| return 1` and the
+          # executability re-check, a FAILED link still yielded a directory and
+          # a success status — the same "assume it worked" bug, one level down.
+          link_bolt() {
+            _bin="$1"
+            case "${_bin}" in
+              */llvm-bolt) dirname "${_bin}"; return 0 ;;   # already unversioned
+            esac
+            sudo ln -sf "${_bin}" /usr/local/bin/llvm-bolt || return 1
+            [ -x /usr/local/bin/llvm-bolt ] || return 1
+            echo /usr/local/bin
+          }
+
+          find_bolt() {
+            _found="$(find_bolt_bin)" || return 1
+            link_bolt "${_found}"
+          }
+
+          bolt_dir="$(find_bolt || true)"
+          if [ -z "${bolt_dir}" ]; then
+            # Try to install it, then LOOK AGAIN — an install succeeding proves
+            # nothing about which project's `bolt` landed on disk.
+            sudo apt-get update >/dev/null 2>&1 || true
+            # Candidate package names only — the loop re-probes after EACH one
+            # and stops at the first that actually yields a binary, so an
+            # unlisted name costs a skip, never a false positive.
+            for pkg in llvm-bolt bolt-21 bolt-20 bolt-19 bolt-18 bolt-17 \
+                       llvm-21-tools llvm-20-tools llvm-19-tools llvm-18-tools; do
+              sudo apt-get install -y --no-install-recommends "$pkg" >/dev/null 2>&1 || continue
+              bolt_dir="$(find_bolt || true)"
+              [ -n "${bolt_dir}" ] && break
+            done
+          fi
+
+          if [ -n "${bolt_dir}" ]; then
+            echo "${bolt_dir}" >> "$GITHUB_PATH"
             echo "have_bolt=true" >> "$GITHUB_OUTPUT"
-          elif sudo apt-get update && sudo apt-get install -y --no-install-recommends bolt; then
-            echo "have_bolt=true" >> "$GITHUB_OUTPUT"
+            echo "llvm-bolt found: $(command -v llvm-bolt || echo "${bolt_dir}/llvm-bolt")" \
+              >> "$GITHUB_STEP_SUMMARY"
           else
             echo "have_bolt=false" >> "$GITHUB_OUTPUT"
             echo "llvm-bolt unavailable on this runner — skipping BOLT stage." >> "$GITHUB_STEP_SUMMARY"
@@ -303,33 +381,61 @@ jobs:
           scripts/pgo/run.sh "$PGO_FRAMES"
           cargo pgo bolt optimize -- -p rustynes-frontend
 
+      # DISABLED (v2.3.1) — these two steps cannot measure what they claim, and
+      # one of them silently reported a fabricated number. Run 31067782333 is the
+      # evidence: the probe and runtime fixes above made BOLT genuinely work
+      # (instrument + optimize both succeeded for the first time), which finally
+      # exposed what the gate downstream was doing.
+      #
+      # 1. `cargo pgo bolt optimize` takes NO cargo subcommand. Its usage is
+      #    `cargo pgo bolt optimize [OPTIONS] [-- <CARGO_ARGS>...]`, unlike
+      #    `cargo pgo optimize` (the PGO side) which does accept `bench`/`test`.
+      #    Both steps were written by analogy with the PGO stage and both are
+      #    rejected: `unexpected argument 'bench' found` / `'test' found`.
+      #
+      # 2. The bench step swallowed that with `|| cargo bench ...`, so it fell
+      #    back to a PLAIN (non-BOLT) build, computed a speedup against the plain
+      #    baseline, and wrote it to the summary as "BOLT speedup vs plain
+      #    release". It compared plain against plain. The step reported SUCCESS.
+      #    Had that ratio landed above the 3% bar, the gate would have promoted a
+      #    BOLT binary on a measurement containing no BOLT.
+      #
+      # 3. Even with the CLI corrected, the design does not hold: BOLT optimizes
+      #    the `rustynes` FRONTEND binary, while the gate benches
+      #    `rustynes-core`'s `full_frame` criterion bench — a different binary
+      #    BOLT never touched. Measuring BOLT honestly needs a harness that runs
+      #    inside the optimized artifact (`frame_probe` built as part of it), not
+      #    a core bench built separately.
+      #
+      # Left disabled rather than patched: a gate that cannot measure its subject
+      # is worse than no gate, and #2 shows this one could actively mislead. The
+      # instrument/optimize steps above still prove BOLT runs end to end, and the
+      # artifact is still produced. Re-enable behind a harness that benches the
+      # BOLT-optimized binary itself.
       - name: BOLT full_frame bench + gate
-        if: steps.bolt_probe.outputs.have_bolt == 'true'
+        if: false
         run: |
-          cargo pgo bolt optimize bench -- -p rustynes-core --bench full_frame -- \
-            --warm-up-time 1 --measurement-time 5 --save-baseline bolt || \
-            cargo bench -p rustynes-core --bench full_frame -- \
-              --warm-up-time 1 --measurement-time 5 --save-baseline bolt
-          bolt_est="target/criterion/nes_run_frame_nestest/bolt/estimates.json"
-          bolt_ns="$(python3 -c "import json,sys;print(int(json.load(open(sys.argv[1]))['mean']['point_estimate']))" "$bolt_est")"
-          speedup="$(python3 -c "print(f'{(1 - ${bolt_ns}/${BASE_NS})*100:.2f}')")"
-          {
-            echo "### BOLT post-link gate"
-            echo "BOLT speedup vs plain release: ${speedup}% (threshold > ${PGO_MIN_SPEEDUP_PCT}%)"
-          } >> "$GITHUB_STEP_SUMMARY"
-          python3 -c "import sys; sys.exit(0 if ${speedup} > ${PGO_MIN_SPEEDUP_PCT} else 1)" || {
-            echo "BOLT did not beat the > ${PGO_MIN_SPEEDUP_PCT}% bar — not promoting." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          }
+          echo "disabled — see the comment above (run 31067782333)"
 
       - name: Determinism oracle (BOLT codegen)
-        if: steps.bolt_probe.outputs.have_bolt == 'true'
-        run: cargo pgo bolt optimize test -- --workspace --release --features test-roms
+        if: false
+        run: |
+          echo "disabled — see the comment above (run 31067782333)"
 
+      # The artifact must be the BOLT output, not whatever `rustynes` happens to
+      # be sitting in target/. `path: target/**/release/rustynes` matched the
+      # PGO binary that `scripts/pgo/run.sh` had already written, so an artifact
+      # named `rustynes-pgo-bolt` contained NO BOLT — the same mislabelling as
+      # the bench gate above, which reported a plain build as a BOLT speedup.
+      #
+      # `cargo pgo bolt optimize` writes `rustynes-bolt-optimized` alongside the
+      # plain binary. `if-no-files-found: error` rather than `warn`: if the file
+      # is absent the correct outcome is a visible failure, not a quietly empty
+      # artifact that looks like a successful BOLT build.
       - name: Upload BOLT binary
         if: steps.bolt_probe.outputs.have_bolt == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: rustynes-pgo-bolt
-          path: target/**/release/rustynes
-          if-no-files-found: warn
+          name: rustynes-bolt-optimized
+          path: target/**/release/rustynes-bolt-optimized
+          if-no-files-found: error

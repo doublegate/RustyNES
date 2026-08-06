@@ -178,6 +178,48 @@ release), not per-PR-push.
    runner**, in one job sharing one target dir, and fails if HEAD is more than
    `BENCH_MAX_REGRESSION_PCT` (default 10%) slower.
 
+### v2.3.1 — where a frame actually goes (and why the symbol profile lies)
+
+`scripts/perf/frame_breakdown.sh` profiles `frame_probe` and buckets samples by
+**source file**, which follows inlined code back to the crate that wrote it.
+Measured on nestest, 1500 frames at 1500 Hz, quiet host:
+
+| subsystem | % of frame | top source files |
+| --- | ---: | --- |
+| PPU (`rustynes-ppu`) | **52.1%** | `ppu.rs` 51.7% |
+| APU (`rustynes-apu`) | **18.7%** | `apu.rs` 8.4%, `frame_counter.rs` 2.1%, `blip.rs` 2.1% |
+| CPU (`rustynes-cpu`) | 10.1% | `cpu.rs` 9.4%, `status.rs` 0.7% |
+| Bus / scheduler coupling | 9.9% | `bus.rs` 9.9% |
+| std inlined at emulator call sites | 6.7% | `range.rs` 1.9%, `uint_macros.rs` 1.6% |
+| Mappers | 2.5% | `m000_nrom.rs` 1.4%, `mapper.rs` 0.8% |
+
+**The symbol-level profile does not contain the APU at all.** Under
+`lto = "fat"` + `codegen-units = 1` the APU is inlined wholesale into
+`<LockstepBus as Bus>::cpu_clock`, so `perf report --no-children` shows
+`Ppu::tick` 31%, `cpu_clock` 18%, `emit_pixel` 10% — and **zero**
+`rustynes_apu::` symbols at any percent limit. Roughly **a fifth of the frame is
+attributed to the wrong subsystem** by the naive view. `perf report --inline`
+does not help: measured, it produces output byte-identical to the non-inline
+report, because those frames are not recoverable as call frames.
+
+This corrects the working figure used when the v2.3.x campaign was scoped
+("PPU ~53%, CPU+bus ~39%"): the PPU share holds, but the CPU+bus share is really
+CPU 10% + APU 19% + coupling 10%, and the CPU proper is a third of what it
+appeared to be. Note this does *not* reopen §P4 — that experiment measured the
+one remaining APU lever at a **≤1.9% ceiling** and its conclusion stands. The APU
+being large and the APU being *reducible* are different claims; only the first is
+established here.
+
+`std inlined at emulator call sites` is real emulator work whose source path
+belongs to the standard library. It is reported as its own line rather than
+redistributed proportionally, which would invent precision the data does not
+contain.
+
+Source attribution needs DWARF, which `[profile.release]` does not emit, so the
+script rebuilds the probe with `CARGO_PROFILE_RELEASE_DEBUG=2`. Debuginfo does
+not change codegen, and the script prints the probe's own frame cost so that
+assumption is checkable against a stock release build rather than asserted.
+
 **Why gate 2 exists.** The ceiling answers "is the emulator still real-time?",
 not "did this change make it worse". On the ~4 ms/frame the core actually runs
 at, a change could get **2.5x slower and still pass** — the gate would sleep
@@ -204,6 +246,54 @@ resolvable: a shallow clone, a root commit, a brand-new branch whose
 `github.event.before` is all-zeros, or a `workflow_dispatch` with no base at
 all. The job checks out with `fetch-depth: 0` precisely so the normal case does
 *not* skip.
+
+#### v2.3.1 — the gate declines to conclude on a contended host
+
+The common-mode cancellation above holds only while the two back-to-back runs
+see a comparable machine. On a contended host they do not, and the delta stops
+measuring the code. **v2.3.0 P1 is the worked example: profiled on a busy
+machine it read +2%; re-measured quiet, the same commit was −5.13%.** The number
+was not merely imprecise — it had the wrong sign.
+
+The gate therefore reads criterion's own artifacts (`sample.json` +
+`tukey.json`) for both runs and reports two figures per bench:
+
+- **robust CV** — `1.4826 × MAD / median`. This is the **trigger**. Unlike
+  stddev it is not itself dragged around by the outliers being measured, so it
+  stays a usable yardstick on exactly the contended runs that matter.
+- **outlier %** — criterion's own "Found N outliers among M measurements",
+  recovered as a number. Reported as evidence only, deliberately **not** the
+  trigger.
+
+**Outlier % looks like the obvious signal and is a trap.** Criterion's fences
+are IQR-derived, so a benchmark whose bulk is unusually *tight* flags a large
+outlier fraction from tiny absolute excursions. Measured against this repo's own
+saved baselines while building the gate:
+
+| bench | outliers | robust CV |
+| --- | --- | --- |
+| `nes_run_frame_flowing_palette_fast` | **30.0%** | **0.19%** |
+| `nes_run_frame_nestest` | 20.0% | 0.58% |
+| `nes_run_frame_flowing_palette` | 6.0% | 1.18% |
+| `nes_run_frame_nestest_fast` | **0.0%** | **2.79%** |
+
+The two signals do not merely disagree, they invert: the run with the most
+outliers is the quietest in the set, and the run with none is the noisiest.
+Gating on outlier % would have refused a verdict on the best measurement here.
+
+The CV threshold is derived, not picked: a gate cannot adjudicate an effect it
+cannot resolve, so the host counts as contended once `3 × CV` exceeds
+`BENCH_MAX_REGRESSION_PCT` — once the noise band is wide enough to swallow the
+very regression being tested for. At the default 10% limit that is a **3.33%**
+CV, overridable via `BENCH_MAX_NOISE_CV_PCT`.
+
+When contended the gate emits **NO VERDICT** (exit 0, loudly) rather than a pass
+or a fail. A clean delta on a noisy host is not evidence that nothing regressed,
+any more than a dirty one is evidence that something did — reporting either
+would be manufacturing a conclusion from data that cannot support one. The one
+exception: a delta beyond **3× the measured CV** still FAILs, because contention
+inflates a measurement but does not invent a 40% one. Gate 1's absolute ceiling
+applies throughout, so declining never leaves a branch ungated.
 
 For an ad-hoc local comparison, criterion baselines directly:
 
@@ -570,6 +660,314 @@ for a byte-identical escape hatch is not justified.
 **Prior to this, the win was unreachable in practice:** `Nes::set_fast_dotloop`
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
+
+### v2.3.1 G7/G8/G9/G10 — inline hints, typed indices, capability gate, adapter hoist (decision: all REJECTED)
+
+The last four campaign items. With G1–G6 the score is **ten measured, ten
+rejected**, which is itself the release's finding — see the summary below.
+
+**G7 (plan item 1) — `#[inline]` on `bus.rs`.** The plan called this "the highest
+expected value in the plan" because `bus.rs` carries **zero** `#[inline]` hints
+across 5,349 lines. True, but only **three** of its functions survive codegen as
+symbols: `cpu_clock` (18.32%), `raw_cpu_read` (2.45%), `apply_genie` (0.12%). The
+specifically-named `run_ppu_to`, `apu_advance_one`, and the twelve
+`PpuBusAdapter` forwarders emit **no symbol at all** — fat LTO already inlines
+every one, so hinting them instructs the compiler to do what it has done.
+
+Hinting the two that genuinely are not inlined, measured separately because they
+are opposite bets:
+
+| candidate | `nestest` | control | verdict |
+| --- | ---: | ---: | --- |
+| `#[inline]` on both | **+0.60%** (p = 0.02) | −0.10% (p = 0.72) | **regression** |
+| `#[inline]` on `raw_cpu_read` only | −0.98% (p = 0.00) | −0.76% (p = 0.01) | drift |
+
+Hinting the large function *hurts* — `cpu_clock` contains the entire inlined APU,
+and duplicating it at every call site costs more in I-cache than the call saved,
+the same mechanism that made v2.2.3 P3 slower. Hinting the small one does
+nothing. All non-`nestest` workloads flat throughout.
+
+**This weakens, without disproving, G3's hypothesis** that v2.3.0 P1's −5.13%
+came from its `#[inline]` rather than its code motion. P1's hint was on a small
+per-dot *PPU* function, structurally unlike either function here, so the
+hypothesis is untested rather than refuted — but two attempts to find an
+inline-hint win on this core have now failed, and it should not be repeated as
+though it were established.
+
+**G8 (plan item 10) — `oam` / `ciram` as fixed arrays.** Both are `Box<[u8]>`
+indexed with `& 0xFF` / `& 0x07FF`, so the bounds check is provably dead but the
+type does not say so; `[u8; 0x100]` / `[u8; 0x800]` encode the length statically
+and elide it with no `unsafe`. The swap is four lines — surrounding code coerces
+arrays to slices transparently. Result: `nestest` −0.61% (p = 0.05) against a
+control of **−0.78% (p = 0.01)**, everything else flat. The checks really were
+removed; removing them bought nothing. Matches v2.2.3 P3 on the same shape.
+
+**G9 (plan item 3) — capability-gate `bg_split_state`.** Ceiling probe skipped the
+per-fetch mapper dispatch outright. Three workloads flat;
+`flowing_palette_fast` moved +0.54% (p = 0.03) with a **control of +0.81%
+(p = 0.00)** on that same workload. Ceiling zero, consistent with the 0.09% the
+symbol carries in the profile.
+
+**G10 (plan item 4) — hoist `PpuBusAdapter` out of the dot loop. Not implementable
+under this campaign's constraints, and pointless if it were.** The plan reads the
+per-dot construction as an oversight defeating vtable hoisting. It is forced: the
+adapter holds `mapper: self.mapper.as_mut()`, and `self.sample_nmi_edge()` runs
+in the same loop taking `&mut self`. Hoisting would hold a mutable borrow of
+`self.mapper` across a call needing all of `self` — rejected by the borrow
+checker. With **no `unsafe` in the chip stack** (the standing constraint), it
+cannot be done without restructuring `sample_nmi_edge` onto disjoint fields. And
+the profile says there is nothing to win: no `PpuBusAdapter` symbol survives
+codegen, its three field moves already inlined into callers measured at zero.
+
+---
+
+#### Core-hot-path campaign summary: why ten of ten were rejected
+
+Ten items, ten rejections, via **six distinct mechanisms** — the diversity is the
+point, because it means this is not one bad assumption repeated:
+
+| mechanism | items |
+| --- | --- |
+| LLVM already performs the transformation | G3 (sink dead derivations) |
+| the premise is factually false | G2 (`repr(Rust)` ignores source order), G7 (already inlined) |
+| the work is real but free — absorbed off the critical path | G4 (store buffer), G5 (predicted branches), G6 (recompute) |
+| the elision is real but buys nothing | G8 (bounds checks) |
+| the target is too small to matter | G9 (0.09%) |
+| forbidden by the ownership model | G10 (borrow checker) |
+
+The unifying finding: **the per-dot loop has no incidental overhead left to
+reclaim.** Its ~3.78 ms is spent on work the accuracy model requires, and the
+core is issue-limited on that work rather than on the bookkeeping the campaign
+targeted. This corroborates the existing record rather than contradicting it —
+`emit_pixel` bounds-check elision measured *slower* (P3), the SIMD blitter
+measured *slower* (v2.1.8 A2), and the APU mixer lever capped at ≤1.9% (P4).
+
+Two methodological results outlast the items themselves:
+
+1. **The A/B/A order-bias control** (added in G2) fired on essentially every
+   subsequent run and is the only reason G6 was not adopted on a −0.51%
+   (p = 0.00) reading of a *shipped* configuration that measured +0.01%
+   (p = 0.96) on re-run.
+2. **Ceiling probes** — delete the work, knowingly breaking correctness, and
+   measure the upper bound before building anything. G4, G5, G6 and G9 were each
+   settled by one benchmark run instead of a day of engineering; G4 alone would
+   have meant threading an opt-in flag through four consumers for a zero gain.
+
+The remaining levers are structural, not micro-architectural: v2.3.3's frontend
+copy chain (three full 720 KiB memcpys per displayed frame) and snapshot slimming
+(~250 KB per run-ahead frame) are whole-buffer costs, not instruction-level ones.
+
+### v2.3.1 G4/G5/G6 — three "obvious waste" items, all ceiling-zero (decision: REJECTED)
+
+Measured by **ceiling probe**: rather than engineer each optimization and then
+discover it was worthless, delete the work outright — knowingly breaking
+correctness — and measure the upper bound any real implementation could reach.
+Where the ceiling is zero, the engineering is moot and no correctness hazard is
+ever introduced. This turned three multi-hour items into three benchmark runs.
+
+| item | what the ceiling probe deleted | per-frame volume | ceiling |
+| --- | --- | ---: | ---: |
+| **G4** (plan item 8) | the `index_framebuffer` store in `emit_pixel` | 61,440 `u16` stores | **zero** |
+| **G5** (plan item 6) | the whole open-bus decay loop in `on_cpu_cycle` | ~29,780 calls | **zero** |
+| **G6** (plan item 2) | the ALE/read fetch-address recomputation | ~30,720 recomputes | **zero** |
+
+In every case the shipped `_fast` workloads were flat and the apparent movement
+on `nestest` was matched or exceeded by the run's own A/B/A control:
+
+| item | candidate `nestest` | control `nestest` |
+| --- | ---: | ---: |
+| G4 | −0.82% (p = 0.01) | −0.88% (p = 0.01) |
+| G5 | −0.49% (p = 0.06) | −0.51% (p = 0.05) |
+| G6 run 1 | −0.89% (p = 0.00) | −0.16% (p = 0.37) |
+| G6 run 2 | −0.96% (p = 0.00) | **−1.17% (p = 0.00)** |
+
+G6 is the instructive one. Run 1 looked like the campaign's first genuine win —
+**−0.51% at p = 0.00 on `nestest_fast`, a shipped configuration, with a clean
+control on that workload**. Run 2 measured the same probe at **+0.01%
+(p = 0.96)**, and its `nestest` control drifted −1.17%, larger than the
+candidate's own −0.96%. Under the relaxed sub-3% adoption bar, run 1 alone would
+have been adopted. The mandatory second run is what stopped it.
+
+Note also that `nestest` is the FIRST workload criterion benches, so it absorbs
+the most warm-up, and it is where drift shows up most consistently across every
+run in this campaign. Treat a `nestest`-only result with particular suspicion.
+
+**Why there is nothing to reclaim.** Three different mechanisms, one conclusion:
+
+- **G4** — a line's profile share is not its marginal cost. `perf` attributes
+  ~0.78% to that store, but it is a sequential `u16` write the store buffer
+  absorbs off the critical path; deleting it frees nothing and the samples simply
+  redistribute onto neighbours.
+- **G5** — ~29,780 calls/frame sounds expensive but is three perfectly predicted
+  compare-and-decrement steps on L1-resident data, which an out-of-order core
+  hides entirely under other latency.
+- **G6** — the recomputation is real, but it is not on the critical path either.
+
+**G6 was also not adoptable at any speed**, which the ceiling result makes moot
+but is worth recording. The read half re-derives the fetch address for
+`observe_a12_addr`; `ale_splice` takes the read address's high bits from
+`address_bus` (latched at the ALE dot) and its low bits from `octal_latch`, so
+the recomputed value exists *specifically* to drive A12. On hardware only A7–A0
+pass through the 74LS373, so the PPU drives the current full address during the
+read cycle and A12 follows it. Caching would freeze A12 to the ALE dot, shifting
+MMC3 IRQ timing whenever a `$2000`/`$2005`/`$2006` write lands between the two
+dots. The plan item read two identical-looking expressions and inferred
+redundancy; they are identical only in the common case and are *meant* to be able
+to differ.
+
+### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
+
+The campaign's highest-ranked *code* item, and the same transformation shape as
+the adopted v2.3.0 P1. Two sites compute values they then discard:
+
+- `tick_sprite_eval_per_dot` derives `next_line` and `sprite_height` on entry,
+  but the `match self.dot` consumes them only in the `65..=256` arm — dead on
+  dots 0, 1..=64 and 257..=340, i.e. **149 of 341 dots**.
+- `tick_oam_bus` derives `sprite_height` and `scan` above the `cycle < 65`
+  secondary-OAM-clear path that discards both — dead across a quarter of every
+  visible line. (v2.3.0 P1 had already moved the `cycle == 0` return above them.)
+
+Both were sunk to their single point of use — in the sprite-eval case, inside the
+`if !self.sprite_eval_done` guard, tighter than the match arm. All inputs are
+pure reads of `scanline` / `region` / `ctrl`, so byte-identical by construction.
+
+**Correctness verified before measuring:** AccuracyCoin **100.00% over 141
+assigned tests**, `visual_regression` 9/9 (golden framebuffers — the direct
+byte-identity evidence), full `--features test-roms` workspace suite green,
+clippy clean at `-D warnings`.
+
+**Two independent A/B runs, and the order-bias control is the story:**
+
+| workload | run 1 candidate | run 2 candidate |
+| --- | ---: | ---: |
+| `nestest` | −0.56% (p = 0.00) | −0.05% (p = 0.84) |
+| `flowing_palette` | +0.20% (p = 0.33) | −0.17% (p = 0.17) |
+| `nestest_fast` *(shipped)* | −0.03% (p = 0.91) | −0.14% (p = 0.48) |
+| `flowing_palette_fast` *(shipped)* | −0.01% (p = 0.95) | +0.01% (p = 0.96) |
+
+Run 1's `nestest` −0.56% at p = 0.00 looks like a small real win. It is not, and
+the A/B/A control proves it directly rather than by argument: **run 2's control —
+the reference benched against itself, with no code difference whatsoever —
+reported `nestest` at −0.59%, p = 0.00.** The drift and the "effect" are the same
+size, on the same workload, at the same significance. Run 1's control had already
+flagged a −0.39% (p = 0.03) drift on `nestest_fast`.
+
+**Rejected and reverted.** Both shipped `_fast` variants are flat across both
+runs (p ≥ 0.48, intervals straddling zero).
+
+**Why it does nothing — the generalizable finding.** LLVM already sinks pure,
+side-effect-free computations past branches that do not use them. At
+`opt-level = 3` with fat LTO, writing the sink by hand tells codegen nothing it
+had not already worked out. The source change made explicit what the optimizer
+was doing anyway.
+
+This reframes **v2.3.0 P1**, which bundled an `#[inline]` with a hoist of exactly
+this shape and measured −5.13%. The two were never separated. G3 is evidence that
+the hoist half contributes ~nothing, which points at the `#[inline]` — a change
+to the *inliner's cost model*, something LLVM cannot infer — as the actual source
+of that win. Recorded as a hypothesis, not a conclusion: it was not re-measured
+in isolation.
+
+Both sites keep a comment marking the attempt so it is not re-tried.
+
+### v2.3.1 G2 — `Ppu` field layout (decision: REJECTED — and it exposed a harness bug)
+
+The campaign item asked to reorder `Ppu`'s 114 fields by access frequency,
+noting the ~15 hot ones are "scattered, with a 2 KiB `rgba_lut` sitting between
+the palette state and the framebuffer pointer", and called it "pure reordering —
+byte-identical by construction".
+
+**The premise is void.** `Ppu` is `#[repr(Rust)]`, so declaration order does not
+determine memory layout; rustc is free to reorder and does. Probed offsets:
+
+```text
+ 488  rgba_lut (2048 B)  … ends 2536
+2570  v      2574  dot    2576  scanline   2578  bg_shift_lo
+2580  bg_shift_hi        2582  at_shift_lo 2584  at_shift_hi
+2586  flags_cached_scanline          <- 17 bytes, one cache line
+2828  x
+```
+
+rustc sorts by alignment, which packs every hot `u16`/`i16` scalar contiguously
+into a single cache line and puts the 2 KiB LUT *before* the whole hot cluster —
+the opposite of what the item describes. Source reordering cannot move any of it.
+
+Measured anyway, in the only form that can change layout — `#[repr(C)]`, which
+forces declaration order — plus a variant moving the 256-byte `oam_decay_cycles`
+(dead unless OAM decay is enabled, default-off) out from between the scroll
+registers and the per-dot render state:
+
+| run | candidate | result |
+| --- | --- | --- |
+| 1 | `repr(C)` | −1.84% … −2.75%, **p = 0.00 on all four** |
+| 2 | `repr(C)` + cold field moved to end | no change on 3 of 4 (p ≥ 0.31) |
+| 3 | `repr(C)` again | **no change on all four** (p ≥ 0.11) |
+
+**Run 1 was wrong, and run 3 is why.** The same candidate that produced a
+textbook −2% at p = 0.00 on every workload produced nothing on re-measurement.
+Nothing about the code changed between them.
+
+**Root cause — a systematic bias in `ab_check.sh`, now fixed.** The reference was
+always benched FIRST and the candidate SECOND. Anything that makes the host
+monotonically faster over the life of a run — page-cache warming, governor
+ramping, a background job finishing, boost/thermal settling — is therefore
+indistinguishable from "the candidate is faster". Run 1 followed a period of
+heavy local activity (test runs, `perf record`, worktree builds); the machine was
+still settling while the reference was measured and had settled by the candidate.
+
+The fix is an **A/B/A order-bias control**: the reference is now re-benched a
+third time, last, against its own first run. Whatever that reports is pure
+position-in-the-run drift and is the noise floor the candidate must be read
+against. The script also now states that a single run is not a result and that
+anything under ~5% needs an independent second run — with this experiment as the
+cautionary example.
+
+**Item rejected.** No reproducible effect from any layout change tried. That is
+also the physically sensible answer: `Ppu` is ~2,856 bytes and stays L1-resident
+across a frame, so field layout has little left to buy. Layout is not where this
+emulator's remaining time is.
+
+### v2.3.1 G1 — idle-line fast path, re-measured (decision: REJECTED again, stays default-OFF)
+
+The v2.3.x campaign predicted the default-OFF `ppu-idle-line-fast` path
+(§P2, max −1.55%, below the bar) "becomes worthwhile if per-dot dispatch gets
+cheaper", and v2.3.0 P1 made per-dot dispatch cheaper by −5.13%. Re-measured on
+that basis. Criterion change analysis, host CPU-pinned (`taskset -c 2-5`),
+2 s warm-up / 10 s measurement, feature-OFF baseline vs feature-ON:
+
+| bench | change | p | verdict |
+| --- | ---: | ---: | --- |
+| `nes_run_frame_nestest` | −0.94% | 0.00 | small win |
+| `nes_run_frame_flowing_palette` | **+0.98%** | 0.02 | small **regression** |
+| `nes_run_frame_nestest_fast` | −0.36% | 0.29 | no change |
+| `nes_run_frame_flowing_palette_fast` | +0.84% | 0.06 | no change |
+
+**Rejected.** Nothing approaches the >3% bar, the two workloads disagree in
+sign, and — decisively — **both `_fast` variants report no change, and those are
+the shipped configuration** (`fast_dotloop` became the default in v2.2.3). The
+feature stays implemented and default-OFF on exactly the terms §P2 set.
+
+Worth recording that this re-measurement **disagrees in sign with §P2** on
+`flowing_palette` (−1.31% then, +0.98% now). Neither is wrong so much as both are
+inside the noise for an effect this size. The consistent finding across two
+independent sessions is that the idle-line path moves the shipped configuration
+by less than ±1.5%, with an unstable sign — which is what "does not clear the
+bar" means in practice.
+
+**Method note, which cost a wrong intermediate conclusion.** The first pass
+adjudicated this from point-estimate ratios plus the v2.3.1 contention heuristic
+(host contended when `3 × robustCV` exceeds the effect being tested). That
+heuristic is correct for the CI *regression* gate, where the question is whether
+one delta could be noise — but it is the wrong statistic for an adoption
+decision taken from 100-sample means, where the relevant quantity is the
+confidence interval and the standard error falls as `CV / √n` (≈0.2% here, not
+2%). Applied to an adoption decision it demanded a quiet host that no desktop
+provides and would have refused every verdict in this campaign.
+
+**Adoption decisions are adjudicated by criterion's `--baseline` change analysis
+(change interval + p-value), as §P2/§P3/§P4 already did.** The v2.3.1 gate keeps
+its 3×CV rule for the job it was built for. Two different questions, two
+different statistics; conflating them is what produced the wrong first read.
 
 ### v2.3.0 P1 — per-dot sprite-eval / OAM-bus call cost (decision: ADOPTED)
 

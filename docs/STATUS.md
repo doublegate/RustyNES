@@ -1,6 +1,18 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.3.0** (2026-08-05) — **"Datum II"**, the capstone closing
+> **Current release: v2.3.1** (2026-08-06) — **"Plumb Line"**, the measurement
+> release. The performance apparatus was made trustworthy and then used: a
+> harness-free frame probe, per-source-file subsystem attribution (which recovers
+> the **APU at 18.7% of frame time**, invisible in the symbol profile because fat
+> LTO inlines it into `cpu_clock`), an adoption A/B with an **A/B/A order-bias
+> control**, and a relative gate that declines to conclude on a contended host.
+> **Ten core hot-path optimization candidates were measured and all ten
+> rejected** through six distinct mechanisms — none of the ten yielded a
+> shippable improvement. (Two leads the campaign surfaced remain **unmeasured**:
+> the APU at 18.7% of frame, and `range.rs` inlined inside `Ppu::tick` at 1.52%.)
+> **No emulation-core changes: AccuracyCoin holds at
+> exactly 141/141 and nestest is 0-diff.** Built on **v2.3.0** (2026-08-05) —
+> **"Datum II"**, the capstone closing
 > the v2.2.6 → v2.3.0 NESdev-remediation line. Tool panels now open as **real OS
 > windows** (v2.2.9's affordance only *embedded* them, so the Windows-10
 > trapped-window report is now genuinely fixed) and every tool window is

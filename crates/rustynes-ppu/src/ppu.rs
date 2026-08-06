@@ -598,6 +598,12 @@ pub struct Ppu {
     /// after a rollback/restore rebased that counter. Storing `now - timestamp`
     /// (and reconstructing `now - age` on load, relative to the live counter) keeps
     /// a run-ahead / netplay `snapshot`→`restore` byte-identical to the forward run.
+    ///
+    /// Field POSITION here is not performance-relevant, and this was measured
+    /// rather than assumed (v2.3.1 G2, `docs/performance.md`): neither adding
+    /// `#[repr(C)]` nor moving this 256-byte cold array to the end of the struct
+    /// produced a reproducible change on any workload. `Ppu` is ~2.8 KB and stays
+    /// L1-resident across a frame, so layout has little left to buy.
     pub(crate) oam_decay_cycles: [u64; 32],
     /// Master enable for the OAM-decay model. **`false` by default** — a frontend /
     /// config knob (re-applied on load like `region` / `active_palette`), NOT part
@@ -1929,6 +1935,13 @@ impl Ppu {
         // (≈ 1,073,447 CPU cycles at NTSC, rounded to one million).  This is
         // conservative but well within the window the `ppu_open_bus` test
         // cares about.
+        // NOTE (v2.3.1 G5): reformulating this as a deadline comparison instead
+        // of a per-cycle decrement was measured by DELETING the loop outright —
+        // the ceiling any reformulation could reach — and the ceiling is ZERO.
+        // ~29,780 calls/frame sounds expensive; it is three predictable
+        // compare-and-decrement steps on data already in L1, which an
+        // out-of-order core absorbs entirely. Do not re-attempt; see
+        // `docs/performance.md`.
         let mut i = 0;
         while i < 3 {
             if self.open_bus_decay[i] > 0 {
@@ -3984,6 +3997,15 @@ impl Ppu {
         // Parallel palette-index output for the `NES_NTSC` composite filter
         // (T-110-A1). Same `(emphasis << 6) | colour` value, in index space;
         // `off` is the RGBA byte offset, so `off >> 2` is the pixel index.
+        // NOTE (v2.3.1 G4): making this store conditional on a consumer wanting
+        // it was measured by deleting it outright — the ceiling any opt-in gate
+        // could reach — and the ceiling is ZERO on the shipped configuration.
+        // `perf` attributes ~0.78% to this line, but a line's sample share is not
+        // its marginal cost: this is a sequential `u16` store the store buffer
+        // absorbs off the critical path, so removing it frees nothing and the
+        // samples simply redistribute. Not worth the correctness hazard of
+        // gating a buffer the NTSC filter, the mobile API, `fast_dotloop_diff`
+        // and a unit test all read. See `docs/performance.md`.
         self.index_framebuffer[off >> 2] = lut_idx as u16;
 
         // v1.2.0 C3 (hd-pack): record the CHR tile that produced this pixel,
@@ -4181,6 +4203,11 @@ impl Ppu {
         if cycle == 0 {
             return;
         }
+        // NOTE (v2.3.1 G3): pushing these two below the `cycle < 65` early-out
+        // as well — they are dead across the dots 1..=64 clear window — was
+        // measured and produced NO change on any workload across two runs. LLVM
+        // already sinks pure computations past branches that do not use them.
+        // Do not re-attempt as a performance change; see `docs/performance.md`.
         let sprite_height: i16 = if self.ctrl.contains(PpuCtrl::SPRITE_SIZE_16) {
             16
         } else {
@@ -4333,6 +4360,12 @@ impl Ppu {
         // this by using -1 as the y-test reference, which makes
         // `-1 - y < 0` for all OAM y values, so the y-test always
         // fails at pre-render and scanline 0 sees no sprites.
+        //
+        // NOTE (v2.3.1 G3): sinking these two to their single use site in the
+        // `65..=256` arm — they are dead on 149 of 341 dots — was measured and
+        // produced NO change on any workload across two runs. LLVM already sinks
+        // pure computations past branches that do not use them. Do not re-attempt
+        // as a performance change; see `docs/performance.md`.
         let next_line: i16 = if self.scanline == self.region.prerender_line() {
             -1
         } else {

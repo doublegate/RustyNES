@@ -119,6 +119,16 @@ name = "dump_battery_ram"
 path = "src/bin/dump_battery_ram.rs"
 required-features = ["test-roms"]
 
+# v2.3.1 "Plumb Line" — harness-free steady-state frame-cost probe. Profile THIS
+# instead of the criterion bench: a `perf record` of the bench binary attributes
+# ~17% of samples to criterion itself (rayon plumbing, libm exp, its sorts),
+# which skews every per-function percentage. Reports median/p99/CV plus an
+# explicit host-quiet verdict, because a number measured on a contended machine
+# is worse than no number — it looks like data.
+[[bin]]
+name = "frame_probe"
+path = "src/bin/frame_probe.rs"
+
 # v2.0.0 beta.2 (A2 scoping) — burn-loop histogram probe: prints the
 # per-opcode busless-cycle counts (`Cpu::burn_histogram`) that the
 # every-cycle-bus-access conversion must turn into dummy reads. See
