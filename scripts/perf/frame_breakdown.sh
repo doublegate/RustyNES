@@ -47,10 +47,15 @@
 #   * `lib.rs` and `snapshot.rs` genuinely cannot be attributed from a basename,
 #     so they land in UNATTRIBUTED and are printed rather than guessed at.
 #
-# Inlined **standard library** code (`range.rs`, `option.rs`, `cmp.rs`,
-# `uint_macros.rs`, …) is emulator work performed at emulator call sites, but it
-# carries std's source path, so it cannot be assigned to a subsystem. It is
-# reported as its own line. It is NOT redistributed proportionally across the
+# Anything whose basename is not owned by a workspace emulation crate lands in
+# **NONWORKSPACE-INLINED** — reported as "std + deps inlined at call sites". In
+# practice that is dominated by the standard library (`range.rs`, `option.rs`,
+# `cmp.rs`, `uint_macros.rs`, …), but it also catches inlined third-party crates
+# (`bitflags`, `bytemuck`, `smallvec`, …), so the label deliberately does not say
+# "std" alone. All of it is emulator work performed at emulator call sites that
+# carries someone else's source path and cannot be assigned to a subsystem.
+#
+# It is reported on its own line and NOT redistributed proportionally across the
 # buckets — that would invent precision the data does not contain.
 #
 # ## Debuginfo
@@ -137,13 +142,17 @@ perf record -q -F "${FREQ}" -e cycles:u -o "${work}/perf.data" -- \
 # Build the basename -> subsystem map from the tree, so adding a source file
 # never silently falls into UNATTRIBUTED and the map cannot drift from reality.
 : > "${work}/map.txt"
-for crate in cpu ppu apu mappers core; do
+# `test-harness` is included so the probe's OWN driver loop (frame_probe.rs)
+# is reported as HARNESS rather than falling through to the non-workspace
+# bucket, where it would be indistinguishable from inlined std/dependency code.
+for crate in cpu ppu apu mappers core test-harness; do
     case "${crate}" in
         cpu) bucket=CPU ;;
         ppu) bucket=PPU ;;
         apu) bucket=APU ;;
         mappers) bucket=MAPPERS ;;
         core) bucket=COUPLING ;;
+        test-harness) bucket=HARNESS ;;
         *) bucket=UNATTRIBUTED ;;
     esac
     find "crates/rustynes-${crate}/src" -name '*.rs' -printf '%f\n' 2>/dev/null \
@@ -183,7 +192,7 @@ def bucket_for(fname):
     claims = owners.get(fname)
     if not claims:
         # Not one of ours: inlined std/core, or a dependency.
-        return "STD-INLINED"
+        return "NONWORKSPACE-INLINED"
     if len(claims) == 1:
         return next(iter(claims))
     return "UNATTRIBUTED"
@@ -201,14 +210,16 @@ for line in open(report_path):
     grand += pct
     detail[b].append((pct, fname))
 
-ORDER = ["PPU", "CPU", "APU", "COUPLING", "MAPPERS", "STD-INLINED", "UNATTRIBUTED"]
+ORDER = ["PPU", "CPU", "APU", "COUPLING", "MAPPERS", "HARNESS",
+         "NONWORKSPACE-INLINED", "UNATTRIBUTED"]
 LABEL = {
     "PPU": "PPU (rustynes-ppu)",
     "CPU": "CPU (rustynes-cpu)",
     "APU": "APU (rustynes-apu)",
     "COUPLING": "Bus / scheduler coupling",
     "MAPPERS": "Mappers",
-    "STD-INLINED": "std inlined at emulator call sites",
+    "HARNESS": "probe driver (not emulator work)",
+    "NONWORKSPACE-INLINED": "std + deps inlined at call sites",
     "UNATTRIBUTED": "unattributed (ambiguous basename)",
 }
 
@@ -230,9 +241,9 @@ print("    inlined across crate boundaries is credited to the crate that wrote")
 print("    it. A symbol-level profile of this binary shows NO rustynes_apu at")
 print("    all — the APU is inlined into cpu_clock and only source attribution")
 print("    recovers it.")
-print("  * 'std inlined at emulator call sites' is real emulator work whose")
-print("    source path belongs to the standard library. It is reported rather")
-print("    than redistributed across the buckets, which would invent precision.")
+print("  * 'std + deps inlined at call sites' is real emulator work whose source")
+print("    path belongs to the standard library OR to a third-party crate. It is")
+print("    reported rather than redistributed, which would invent precision.")
 print("  * The residual below 100% is perf's own per-file percent rounding.")
 PY
 

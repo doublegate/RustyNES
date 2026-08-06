@@ -422,10 +422,20 @@ jobs:
         run: |
           echo "disabled — see the comment above (run 31067782333)"
 
+      # The artifact must be the BOLT output, not whatever `rustynes` happens to
+      # be sitting in target/. `path: target/**/release/rustynes` matched the
+      # PGO binary that `scripts/pgo/run.sh` had already written, so an artifact
+      # named `rustynes-pgo-bolt` contained NO BOLT — the same mislabelling as
+      # the bench gate above, which reported a plain build as a BOLT speedup.
+      #
+      # `cargo pgo bolt optimize` writes `rustynes-bolt-optimized` alongside the
+      # plain binary. `if-no-files-found: error` rather than `warn`: if the file
+      # is absent the correct outcome is a visible failure, not a quietly empty
+      # artifact that looks like a successful BOLT build.
       - name: Upload BOLT binary
         if: steps.bolt_probe.outputs.have_bolt == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: rustynes-pgo-bolt
-          path: target/**/release/rustynes
-          if-no-files-found: warn
+          name: rustynes-bolt-optimized
+          path: target/**/release/rustynes-bolt-optimized
+          if-no-files-found: error

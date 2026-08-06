@@ -206,10 +206,16 @@ fn main() {
             "--frames" => frames = parse_count(args.next().as_deref(), "--frames", true),
             // Warmup MAY legitimately be zero, so only the parse is enforced.
             "--warmup" => warmup = parse_count(args.next().as_deref(), "--warmup", false),
+            // Same contract as the count flags: a flag with no value is a usage
+            // error, not a silent no-op. `--rom` with a missing path used to
+            // drop the flag and fall back to the DEFAULT corpus, so the probe
+            // measured something other than what was asked for and said nothing.
             "--rom" => {
-                if let Some(p) = args.next() {
-                    roms.push(PathBuf::from(p));
-                }
+                let Some(p) = args.next() else {
+                    eprintln!("frame_probe: --rom requires a path");
+                    std::process::exit(2);
+                };
+                roms.push(PathBuf::from(p));
             }
             "--help" | "-h" => {
                 println!(
@@ -220,7 +226,16 @@ fn main() {
                 );
                 return;
             }
-            other => eprintln!("frame_probe: ignoring unknown argument {other:?}"),
+            // A typo'd flag must NOT fall through to a default run. `--frmaes
+            // 400` previously printed a warning and then measured the default
+            // 600-frame corpus, reporting a number for a run nobody asked for —
+            // the same "measured something else and said nothing" failure the
+            // count-flag validation above exists to prevent.
+            other => {
+                eprintln!("frame_probe: unknown argument {other:?}");
+                eprintln!("frame_probe: see --help for accepted flags");
+                std::process::exit(2);
+            }
         }
     }
 
