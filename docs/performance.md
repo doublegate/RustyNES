@@ -661,6 +661,47 @@ for a byte-identical escape hatch is not justified.
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
 
+### v2.3.2 F1 — sizing the frontend items before building any of them
+
+The v2.3.2 "Grain" frontend campaign was scoped from code reading: three full
+720 KiB framebuffer memcpys per displayed frame, a `perf.view()` doing five heap
+allocations and three 600-element sorts every frame, and a `format!` storm under
+the emulator lock the plan called "the single easiest win in the plan". After the
+core campaign rejected ten of ten items, each was **measured first**.
+
+| item | the claim | measured cost | % of the 16.639 ms frame |
+| --- | --- | ---: | ---: |
+| 1 — framebuffer copy chain | "the largest *absolute* waste" | 13.2 µs (3 × 4.39 µs) | **0.079%** |
+| 4 — `perf.view()` for a closed panel | 5 heap `Vec`s + 3 sorts of ≤600 | 16.2 µs | **0.098%** |
+| 3 — `mapper_info()` per redraw | "the single easiest win" | 1.37 µs | **0.008%** |
+| | | **~31 µs** | **0.19%** |
+
+Every claim is factually true. `mapper_info()` really does run ~25 `format!`
+calls and four `Vec` allocations per displayed frame under `self.emu.lock()`,
+discarding everything but `.name`. The copy chain really is three full
+245,760-byte memcpys. They are simply *small*: **eliminating all three entirely
+would recover under a fifth of one percent of a frame.**
+
+**The denominator was the mistake, and it is worth stating plainly.** These items
+were ranked by how wasteful they *look* in source — "three 720 KiB memcpys" reads
+as enormous — without anyone dividing by the frame budget. A 245,760-byte memcpy
+costs 4.4 µs; there are 16,639 µs in a frame. Modern memory bandwidth makes
+whole-framebuffer copies cheap in a way that per-frame *counts* do not convey.
+
+**What this means for the frontend.** The core needs ~3.78 ms of the 16.639 ms
+budget, so the frontend runs with ~12.8 ms of slack. Mean frame time was never
+the constraint. The frontend's real failure mode is **p99 / stutter**, which is a
+question of *lock-hold windows and scheduling*, not throughput — and v2.3.0
+already fixed the dominant instance of it by splitting the emulator lock out of
+the blocking swapchain acquire and present. Shaving 31 µs of throughput off a
+path with 12.8 ms of slack cannot move a stutter metric.
+
+Items 1, 3 and 4 are therefore **not worth implementing for performance**. Item 3
+remains defensible as allocation hygiene (~1,500 allocations/second discarded),
+and item 2 (skipping the GPU upload when no new frame arrived) remains defensible
+as not doing obviously-pointless work — but neither is a performance claim, and
+neither should be described as one.
+
 ### v2.3.1 G7/G8/G9/G10 — inline hints, typed indices, capability gate, adapter hoist (decision: all REJECTED)
 
 The last four campaign items. With G1–G6 the score is **ten measured, ten
