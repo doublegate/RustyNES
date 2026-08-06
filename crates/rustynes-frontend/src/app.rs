@@ -1495,15 +1495,13 @@ impl App {
             // `nes` is dropped in the dual case.
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(vs) = dual_cabinet {
-                emu.nes = None;
-                emu.dual = Some(vs);
+                emu.set_dual(vs);
             } else {
-                emu.dual = None;
-                emu.nes = Some(nes);
+                emu.set_nes(nes);
             }
             #[cfg(target_arch = "wasm32")]
             {
-                emu.nes = Some(nes);
+                emu.set_nes(nes);
             }
         }
         // v1.6.0 "Studio" A2 — the new ROM invalidates any TAStudio session
@@ -7802,7 +7800,7 @@ impl App {
         // regime). Locks internally, so the cluster guard above is dropped.
         #[cfg(not(target_arch = "wasm32"))]
         self.resolve_pacing();
-        self.emu.lock().nes = Some(nes);
+        self.emu.lock().set_nes(nes);
         // v1.6.0 "Studio" A2 — a fresh ROM here invalidates any prior TAStudio
         // session (it anchored on the previous `Nes`).
         if let Some(d) = self.debugger.as_mut() {
@@ -8518,6 +8516,9 @@ impl ApplicationHandler<AppEvent> for App {
                     let rec = emu.movie.is_recording();
                     let play = emu.movie.is_playing();
                     let lag = emu.lag_frames();
+                    // v2.3.2 F3 — read the name cached at ROM load rather than
+                    // rebuilding it from `mapper_info()` here. See `EmuCore::mapper_name`.
+                    let mapper_name = emu.mapper_name.clone();
                     emu.nes.as_mut().map_or_else(
                         || {
                             (
@@ -8545,7 +8546,7 @@ impl ApplicationHandler<AppEvent> for App {
                                 nes.disk_side_count(),
                                 nes.inserted_disk_side(),
                                 nes.is_vs_system(),
-                                nes.mapper_info().name,
+                                mapper_name,
                                 region.to_string(),
                                 rec,
                                 play,
@@ -9381,7 +9382,7 @@ impl ApplicationHandler<AppEvent> for App {
                     if let Some(mut nes) = taken {
                         nes.set_four_score(self.config.input.four_score);
                         self.apply_vs_db(&mut nes);
-                        self.emu.lock().nes = Some(nes);
+                        self.emu.lock().set_nes(nes);
                     }
                     // v2.1.0 — the expansion-device menu selection also flags
                     // the bindings dirty; re-sync the attached device here.

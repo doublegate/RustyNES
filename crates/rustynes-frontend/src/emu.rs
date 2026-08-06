@@ -351,6 +351,24 @@ pub struct EmuCore {
     /// The running single-console emulator (None until a single-console ROM is
     /// loaded, or while a Vs. `DualSystem` cabinet is loaded — see [`Self::dual`]).
     pub nes: Option<Nes>,
+    /// v2.3.2 F3 — the loaded ROM's mapper display name, cached at load.
+    ///
+    /// The status bar renders this every displayed frame. Reading it from
+    /// `Nes::mapper_info()` instead costs **1,367 ns per frame measured**, because
+    /// `Mapper::debug_info()` builds a whole debug structure — MMC3's runs ~25
+    /// `format!` calls and four `Vec` allocations — of which the status bar keeps
+    /// only `.name` and drops the rest. That happened *inside* `self.emu.lock()`,
+    /// so it also widened the lock window the emulator thread contends for.
+    ///
+    /// This is **allocation hygiene, not an optimization**: 1.37 µs is 0.008% of
+    /// a 16.639 ms frame and no frame-time change is claimed or expected (see
+    /// `docs/performance.md` v2.3.2 F1). It removes ~1,500 discarded allocations
+    /// per second because there is no reason to make them, not because they were
+    /// costing anything measurable.
+    ///
+    /// Maintained by [`Self::set_nes`] / [`Self::set_dual`] / [`Self::clear_rom`]
+    /// so it cannot drift from `nes`; do not assign `nes` directly.
+    pub mapper_name: String,
     /// v2.1.2 F2.1 — a loaded Vs. `DualSystem` cabinet (two cross-wired consoles).
     /// Mutually exclusive with [`Self::nes`]: exactly one is `Some` while a ROM
     /// is loaded. Additive so the single-console produce/present/latch paths stay
@@ -478,11 +496,42 @@ pub struct EmuCore {
 }
 
 impl EmuCore {
+    /// Install a freshly-loaded single-console emulator, refreshing the cached
+    /// [`Self::mapper_name`] in the same step.
+    ///
+    /// **Assign through this, never `emu.nes = Some(..)` directly.** The cache is
+    /// only correct if every install refreshes it, and there are several install
+    /// sites (ROM load, reset-with-new-config, netplay session start, movie
+    /// load). Routing them through one setter makes that structural instead of a
+    /// convention four call sites have to remember.
+    pub fn set_nes(&mut self, nes: Nes) {
+        self.mapper_name = nes.mapper_info().name;
+        self.dual = None;
+        self.nes = Some(nes);
+    }
+
+    /// Install a Vs. `DualSystem` cabinet, refreshing the cached mapper name from
+    /// the MAIN console (the one whose status the shell reports).
+    pub fn set_dual(&mut self, dual: Box<rustynes_core::VsDualSystem>) {
+        self.mapper_name = dual.main().mapper_info().name;
+        self.nes = None;
+        self.dual = Some(dual);
+    }
+
+    /// Drop any loaded ROM and the cached name with it, so a stale mapper label
+    /// cannot outlive the ROM it described.
+    pub fn clear_rom(&mut self) {
+        self.nes = None;
+        self.dual = None;
+        self.mapper_name.clear();
+    }
+
     /// Empty core (no ROM).
     #[must_use]
     pub fn new() -> Self {
         Self {
             nes: None,
+            mapper_name: String::new(),
             dual: None,
             movie: MovieUi::default(),
             perf: PerfStats::default(),
