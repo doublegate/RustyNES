@@ -48,6 +48,33 @@ cycle-accurate core later replaced.
     are bit-identical either way, and the default build is unchanged —
     **AccuracyCoin holds at exactly 141/141** with nestest 0-diff.
   - Spec: `docs/pixel-provenance.md`.
+- **Pixel provenance, phase 2 — the per-pixel causal record** (`debug-hooks`,
+  default off). Every emitted pixel now records the layer that won the priority
+  decision, the exact `$3Fxx` palette address behind its color, and the
+  nametable / attribute / pattern addresses of the tile **actually on screen**.
+  Composes with phase 1: the palette index and nametable address are the keys
+  into the write-attribution store, so pixel → byte → writing instruction is one
+  chain.
+  - **`v` cannot answer the "which tile" question.** By the time a tile's pixels
+    reach the screen, `v` has advanced two tiles past it, so an address derived
+    from `v` at emit time is wrong for every pixel — and wrong in a way that
+    looks plausible. The addresses ride the same `latch` → `next` → `cur`
+    cascade that moves the pattern bytes through the shift registers.
+  - **A tile is defined when its PATTERN is fetched, not when its nametable byte
+    is read.** The PPU performs two dummy nametable fetches at dots 337-340,
+    which clobbered the pending tile and made pixels x=8..15 report the tile
+    belonging to x=16..23. Found by the test failing, not by review.
+  - The attribute address is carried rather than derived, because an MMC5
+    vertical split supplies one the standard `$23C0 | ...` arithmetic cannot
+    produce.
+  - The plan had been to widen the existing `hd-pack` `HdTileSource` gate; that
+    was the wrong shape (it carries Mesen HD-pack tile *keys*, not addresses, and
+    widening it would have pulled eight fetch-telemetry fields into every
+    `debug-hooks` build). A separate lazily-allocated record leaves `hd-pack`
+    byte-identical by construction rather than by review.
+  - Unarmed cost in `emit_pixel` is one predicted `bool` branch — same shape as
+    the bus's existing `event_logging` flag. **AccuracyCoin holds at exactly
+    141/141**, nestest 0-diff.
 
 ## [2.3.1] - 2026-08-06 - "Plumb Line" (measurement apparatus + ten measured rejections)
 

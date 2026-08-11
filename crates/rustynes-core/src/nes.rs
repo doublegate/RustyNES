@@ -845,6 +845,33 @@ impl Nes {
         self.bus.ppu.clear_write_attribution();
     }
 
+    /// v2.3.3 "Lucid" phase 2 — arm or disarm **per-pixel provenance**.
+    ///
+    /// While armed, every emitted pixel records the layer that won the priority
+    /// decision, the exact `$3Fxx` palette address behind its color, and the
+    /// nametable / attribute / pattern addresses of the tile **actually on
+    /// screen** — which `v` cannot answer, because by display time it has
+    /// advanced two tiles past the pixel.
+    ///
+    /// Composes with [`Self::set_write_attribution`]: provenance says which
+    /// bytes produced a pixel, attribution says which instruction wrote them.
+    /// Each is useful alone; together they are the full causal chain.
+    ///
+    /// Default off. Arming allocates
+    /// [`rustynes_ppu::PixelProvenanceFrame::HEAP_BYTES`]. Output-only, so
+    /// emulation is bit-identical either way.
+    #[cfg(feature = "debug-hooks")]
+    pub fn set_pixel_provenance(&mut self, enabled: bool) {
+        self.bus.ppu.set_pixel_provenance(enabled);
+    }
+
+    /// The current frame's per-pixel provenance, or `None` when not armed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn pixel_provenance(&self) -> Option<&rustynes_ppu::PixelProvenanceFrame> {
+        self.bus.ppu.pixel_provenance()
+    }
+
     /// v1.1.0 beta.3 (T-110-E2) — start/stop the Lua bus-access log. While on,
     /// the bus records this frame's CPU reads + writes (with values); the log is
     /// reset at each [`Self::run_frame`]. Default off; output-only. Enabled by
@@ -3350,6 +3377,205 @@ mod tests {
         // Disarming frees the store; re-arming starts clean.
         nes.set_write_attribution(false);
         assert!(nes.write_attribution().is_none());
+    }
+
+    /// v2.3.3 "Lucid" phase 2 — the per-pixel provenance oracle.
+    ///
+    /// Builds a screen out of a known nametable byte and a known palette, then
+    /// checks that the record for a background pixel names the addresses that
+    /// actually produced it. The load-bearing assertion is `nt_addr`: it must be
+    /// the address of the tile ON SCREEN, which is two tiles behind whatever `v`
+    /// holds at emit time — the single mistake this whole cascade exists to
+    /// prevent.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn pixel_provenance_names_the_displayed_tile_not_the_fetch_pointer() {
+        use rustynes_ppu::PixelLayer;
+
+        // NROM with CHR-RAM. The program:
+        //   * fills nametable $2000 with tile $01,
+        //   * writes a non-zero pattern for tile $01 into CHR-RAM,
+        //   * sets palette entry $3F01 to a known color,
+        //   * enables background rendering,
+        //   * spins.
+        //
+        // Assembled by hand below; addresses are named so the assertions can
+        // reference the instruction rather than a magic number.
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1; // 1x16KB PRG
+        bytes[5] = 0; // 0 CHR banks => CHR-RAM, so the pattern is writable
+        let prg = &mut bytes[16..16 + 16 * 1024];
+
+        #[rustfmt::skip]
+        let code: &[u8] = &[
+            // --- Delay ~328k cycles (~11 frames) BEFORE touching any PPU
+            // register. The PPU ignores $2000/$2001/$2005/$2006 writes for
+            // ~29,658 CPU cycles after reset; setup that runs inside that window
+            // has its $2006 address writes silently dropped, so every subsequent
+            // $2007 lands somewhere unintended. Found by this test failing.
+            0xA2, 0x00,                         // C000 LDX #$00
+            0xA0, 0x00,                         // C002 LDY #$00
+            0x88,                               // C004 DEY
+            0xD0, 0xFD,                         // C005 BNE $C004
+            0xCA,                               // C007 DEX
+            0xD0, 0xF8,                         // C008 BNE $C002
+            // --- CHR-RAM: tile $01 rows 0..7 low plane = $FF (all pixels idx 1)
+            0xA9, 0x00, 0x8D, 0x06, 0x20,       // C00A LDA #$00 / STA $2006
+            0xA9, 0x10, 0x8D, 0x06, 0x20,       // C00F LDA #$10 / STA $2006  -> $0010
+            0xA2, 0x08,                         // C014 LDX #$08
+            0xA9, 0xFF,                         // C016 LDA #$FF
+            0x8D, 0x07, 0x20,                   // C018 STA $2007  (8x low plane)
+            0xCA, 0xD0, 0xFA,                   // C01B DEX / BNE $C018
+            // --- palette: $3F00 = $0F (black), $3F01 = $16 (red)
+            0xA9, 0x3F, 0x8D, 0x06, 0x20,       // C01E LDA #$3F / STA $2006
+            0xA9, 0x00, 0x8D, 0x06, 0x20,       // C023 LDA #$00 / STA $2006  -> $3F00
+            0xA9, 0x0F, 0x8D, 0x07, 0x20,       // C028 LDA #$0F / STA $2007
+            0xA9, 0x16, 0x8D, 0x07, 0x20,       // C02D LDA #$16 / STA $2007
+            // --- nametable + attributes $2000..$23FF = $01
+            0xA9, 0x20, 0x8D, 0x06, 0x20,       // C032 LDA #$20 / STA $2006
+            0xA9, 0x00, 0x8D, 0x06, 0x20,       // C037 LDA #$00 / STA $2006  -> $2000
+            0xA0, 0x04,                         // C03C LDY #$04     (4 x 256)
+            0xA2, 0x00,                         // C03E LDX #$00
+            0xA9, 0x01,                         // C040 LDA #$01
+            0x8D, 0x07, 0x20,                   // C042 STA $2007
+            0xCA, 0xD0, 0xFA,                   // C045 DEX / BNE $C042
+            0x88, 0xD0, 0xF3,                   // C048 DEY / BNE $C03E
+            // --- enable BG: $2000 = $00 (BG pattern table $0000, NT $2000),
+            //     $2001 = $08 (show BG, but NOT the leftmost 8 px)
+            0xA9, 0x00, 0x8D, 0x00, 0x20,       // C04B LDA #$00 / STA $2000
+            0xA9, 0x08, 0x8D, 0x01, 0x20,       // C050 LDA #$08 / STA $2001
+            0x4C, 0x55, 0xC0,                   // C055 JMP $C055  (spin)
+        ];
+        prg[..code.len()].copy_from_slice(code);
+        let len = 16 * 1024;
+        prg[len - 4] = 0x00; // reset vector -> $C000
+        prg[len - 3] = 0xC0;
+
+        let mut nes = Nes::from_rom(&bytes).expect("parse");
+        // Enough frames for the delay loop, then the setup loops, to complete
+        // and for rendering to be running steadily.
+        for _ in 0..16 {
+            let _ = nes.run_frame();
+        }
+        assert!(nes.pixel_provenance().is_none(), "off by default");
+        nes.set_pixel_provenance(true);
+        let _ = nes.run_frame();
+
+        let prov = nes.pixel_provenance().expect("armed");
+
+        // Pixel (16, 0) sits in tile column 2 of row 0, i.e. nametable $2002.
+        let rec = prov.get(16, 0).expect("on-screen");
+        assert_eq!(
+            rec.layer,
+            PixelLayer::Background,
+            "the all-$FF pattern makes every BG pixel opaque"
+        );
+        assert_eq!(
+            rec.nt_addr, 0x2002,
+            "the record must name the tile ON SCREEN at x=16; `v` at emit time \
+             has already advanced two tiles past it, so a value near $2004 here \
+             would mean the cascade is not tracking the shifters"
+        );
+        assert_eq!(rec.at_addr, 0x23C0, "tile (2,0) -> attribute byte 0");
+        assert_eq!(rec.bg_idx, 1, "low plane $FF, high plane $00 -> index 1");
+        assert_eq!(rec.palette_addr, 0x3F01, "palette group 0, index 1");
+        assert_eq!(rec.palette_index, 1);
+        assert_eq!(rec.color, 0x16, "the red we wrote to $3F01");
+        assert_eq!(rec.scanline, 0);
+        assert_eq!(rec.dot, 17, "screen X is dot - 1");
+        assert_eq!(
+            rec.sprite_slot,
+            rustynes_ppu::SPRITE_SLOT_NONE,
+            "no sprites in this ROM"
+        );
+        // Fine-Y is 2, not 0, and that is correct: the ROM sets the scroll only
+        // via `$2006 = $20, $00`, which loads `v = t = $2000` — and bits 12-14 of
+        // a VRAM address ARE the fine-Y field, so `$2000` means fine-Y = 2. A ROM
+        // that wanted row 0 would have written `$2005` afterwards. The record
+        // reports what the hardware is actually displaying.
+        assert_eq!(rec.fine_y, 2, "$2006 = $2000 puts fine-Y at 2");
+        // Tile $01 base $0010, plus fine-Y 2.
+        assert_eq!(rec.pattern_addr, 0x0012);
+
+        // The cascade advances ONE TILE PER GROUP across the scanline — it is
+        // not a single address held for the whole line, and not skewed by the
+        // two dummy nametable fetches at dots 337-340.
+        for (x, want_nt) in [(0usize, 0x2000u16), (8, 0x2001), (24, 0x2003), (40, 0x2005)] {
+            assert_eq!(
+                prov.get(x, 0).expect("on-screen").nt_addr,
+                want_nt,
+                "tile column at x={x}"
+            );
+        }
+
+        // Off-screen queries answer `None` rather than clamping to a pixel the
+        // caller did not ask about.
+        assert_eq!(prov.get(256, 0), None);
+        assert_eq!(prov.get(0, 240), None);
+
+        nes.set_pixel_provenance(false);
+        assert!(nes.pixel_provenance().is_none());
+    }
+
+    /// The two halves compose: provenance gives the palette index, attribution
+    /// gives the instruction that wrote it. This is the end-to-end claim the
+    /// feature exists to support.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn provenance_and_attribution_compose_into_a_causal_chain() {
+        // Minimal ROM: set $3F00 (backdrop) to a known color from a known PC,
+        // then spin. Rendering stays off, so every pixel is the backdrop and the
+        // chain is unambiguous.
+        //   C000: LDA #$3F / STA $2006
+        //   C005: LDA #$00 / STA $2006      -> v = $3F00
+        //   C00A: LDA #$21 / STA $2007      <-- the palette write
+        //   C00F: JMP $C000
+        const STA_2007_PC: u16 = 0xC00C;
+        const COLOR: u8 = 0x21;
+
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1;
+        bytes[5] = 0;
+        let prg = &mut bytes[16..16 + 16 * 1024];
+        prg[0..18].copy_from_slice(&[
+            0xA9, 0x3F, 0x8D, 0x06, 0x20, // LDA #$3F / STA $2006
+            0xA9, 0x00, 0x8D, 0x06, 0x20, // LDA #$00 / STA $2006
+            0xA9, COLOR, 0x8D, 0x07, 0x20, // LDA #$21 / STA $2007
+            0x4C, 0x00, 0xC0, // JMP $C000
+        ]);
+        let len = 16 * 1024;
+        prg[len - 4] = 0x00;
+        prg[len - 3] = 0xC0;
+
+        let mut nes = Nes::from_rom(&bytes).expect("parse");
+        let _ = nes.run_frame();
+        nes.set_pixel_provenance(true);
+        nes.set_write_attribution(true);
+        for _ in 0..3 {
+            let _ = nes.run_frame();
+        }
+
+        // Step 1: which palette entry produced this pixel?
+        let rec = nes
+            .pixel_provenance()
+            .and_then(|p| p.get(100, 100))
+            .expect("armed and on-screen");
+        assert_eq!(rec.layer, rustynes_ppu::PixelLayer::Backdrop);
+        assert_eq!(rec.palette_index, 0, "the universal backdrop");
+        assert_eq!(rec.color, COLOR);
+
+        // Step 2: who wrote that palette entry?
+        let who = nes
+            .write_attribution()
+            .and_then(|a| a.palette(rec.palette_index as usize))
+            .expect("the STA $2007 wrote it");
+        assert_eq!(
+            who.pc, STA_2007_PC,
+            "the chain closes: pixel -> palette entry -> writing instruction"
+        );
+        assert_eq!(who.value, COLOR);
     }
 
     /// An OAM DMA burst moves 256 bytes but has exactly one cause. The store

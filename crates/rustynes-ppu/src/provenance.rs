@@ -218,6 +218,166 @@ impl Default for WriteAttribution {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Per-pixel provenance
+// ---------------------------------------------------------------------------
+
+/// Which layer won the priority decision at a pixel.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub enum PixelLayer {
+    /// Neither layer was opaque: the universal backdrop (`$3F00`), or the
+    /// palette-address override the PPU applies when rendering is disabled with
+    /// `v` pointing into palette space.
+    #[default]
+    Backdrop,
+    /// The background pattern won.
+    Background,
+    /// A sprite won — either because the background pixel was transparent or
+    /// because the sprite had front priority.
+    Sprite,
+}
+
+/// [`PixelProvenance::sprite_slot`] when no sprite won the pixel.
+pub const SPRITE_SLOT_NONE: u8 = 0xFF;
+
+/// [`PixelProvenance::pattern_addr`] when the pixel has no pattern behind it
+/// (backdrop), so a zero would be indistinguishable from a real `$0000` fetch.
+pub const PATTERN_ADDR_NONE: u16 = 0xFFFF;
+
+/// The causal record for one emitted pixel.
+///
+/// Recorded in `Ppu::emit_pixel` from state already computed there plus the
+/// per-tile address cascade described on `Ppu::prov_bg_cur`. Everything here is
+/// an address or a decision the hardware actually made; nothing is reconstructed
+/// after the fact, because a reconstruction would silently disagree with the
+/// emulator in exactly the corner cases a provenance panel exists to explain.
+///
+/// # Reading it
+///
+/// [`Self::palette_index`] indexes straight into
+/// [`WriteAttribution::palette`], and [`Self::nt_addr`] resolves (through the
+/// mapper's mirroring) to the CIRAM offset for [`WriteAttribution::ciram`] — so
+/// the two halves of this module compose into "this pixel is this color because
+/// instruction X wrote this palette entry and instruction Y wrote this nametable
+/// byte".
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub struct PixelProvenance {
+    /// PPU scanline the pixel was emitted on.
+    pub scanline: i16,
+    /// PPU dot the pixel was emitted at. Screen X is `dot - 1`.
+    pub dot: u16,
+    /// Which layer won.
+    pub layer: PixelLayer,
+    /// The exact palette-RAM address read for the final color, pre-mirroring —
+    /// so `$3F10` is reported as `$3F10` even though it reads `$3F00`.
+    pub palette_addr: u16,
+    /// Post-mirroring palette-RAM index of the final color. Indexes
+    /// [`WriteAttribution::palette`] directly.
+    pub palette_index: u8,
+    /// The 6-bit NES color the palette entry held, before emphasis.
+    pub color: u8,
+    /// `$2001` grayscale + emphasis bits in effect at this pixel
+    /// (`mask & 0xE1`), which is what turns [`Self::color`] into the RGBA
+    /// actually written.
+    pub color_mask: u8,
+    /// Nametable address of the background tile **being displayed** at this
+    /// pixel — not the address `v` currently holds, which has already advanced
+    /// two tiles ahead. See `Ppu::prov_bg_cur`.
+    pub nt_addr: u16,
+    /// Attribute address of the displayed background tile. Carried rather than
+    /// derived from [`Self::nt_addr`], because an MMC5 vertical split supplies
+    /// its own attribute address that the standard arithmetic cannot produce.
+    pub at_addr: u16,
+    /// CHR address of the pattern row feeding this pixel — the displayed
+    /// background tile's row, or the winning sprite's row.
+    /// [`PATTERN_ADDR_NONE`] for a backdrop pixel.
+    pub pattern_addr: u16,
+    /// Background pattern bits (0..=3) at this pixel. 0 is transparent.
+    pub bg_idx: u8,
+    /// Background attribute / palette group (0..=3).
+    pub bg_pal: u8,
+    /// Sprite pattern bits (0..=3) at this pixel. 0 is transparent.
+    pub spr_idx: u8,
+    /// Sprite palette group (0..=3).
+    pub spr_pal: u8,
+    /// Sprite slot (0..=7) of the winning sprite, or [`SPRITE_SLOT_NONE`].
+    ///
+    /// This is the secondary-OAM slot for the scanline, **not** the primary OAM
+    /// sprite number: sprite evaluation copies bytes from primary to secondary
+    /// OAM without retaining the source index, so the primary index is not
+    /// available at emit time. The panel matches the slot's Y/tile/attribute
+    /// against OAM rather than being handed an index the PPU never kept.
+    pub sprite_slot: u8,
+    /// `true` when the winning sprite had front priority over the background.
+    pub sprite_front: bool,
+    /// `true` when sprite 0 contributed an opaque pixel here — the condition the
+    /// sprite-0 hit flag is derived from.
+    pub sprite_zero: bool,
+    /// Fine-X scroll in effect (0..=7): which texel column of the displayed
+    /// background tile this pixel samples.
+    pub fine_x: u8,
+    /// Fine-Y (0..=7): which texel row of the displayed background tile.
+    pub fine_y: u8,
+}
+
+/// Screen width in pixels, and the stride of a [`PixelProvenanceFrame`].
+pub const SCREEN_W: usize = 256;
+/// Screen height in pixels.
+pub const SCREEN_H: usize = 240;
+
+/// One frame of [`PixelProvenance`], indexed by `y * SCREEN_W + x`.
+///
+/// Overwritten in place every frame, exactly like the framebuffer it shadows, so
+/// a query after `run_frame` describes the frame the user is looking at.
+#[derive(Clone, Debug)]
+pub struct PixelProvenanceFrame {
+    pixels: Box<[PixelProvenance]>,
+}
+
+impl PixelProvenanceFrame {
+    /// Heap cost of one armed frame, in bytes.
+    pub const HEAP_BYTES: usize = SCREEN_W * SCREEN_H * size_of::<PixelProvenance>();
+
+    /// Allocate a cleared frame.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            pixels: vec![PixelProvenance::default(); SCREEN_W * SCREEN_H].into_boxed_slice(),
+        }
+    }
+
+    /// The record for screen pixel `(x, y)`, or `None` if either coordinate is
+    /// off-screen. Returning `None` rather than clamping matters: a clamped
+    /// query would answer confidently about a pixel the caller did not ask for.
+    #[must_use]
+    pub fn get(&self, x: usize, y: usize) -> Option<PixelProvenance> {
+        if x >= SCREEN_W || y >= SCREEN_H {
+            return None;
+        }
+        Some(self.pixels[y * SCREEN_W + x])
+    }
+
+    /// Record a pixel. Out-of-range coordinates are dropped rather than
+    /// wrapping into an unrelated pixel.
+    pub fn set(&mut self, x: usize, y: usize, rec: PixelProvenance) {
+        if x < SCREEN_W && y < SCREEN_H {
+            self.pixels[y * SCREEN_W + x] = rec;
+        }
+    }
+
+    /// The whole frame, row-major.
+    #[must_use]
+    pub fn pixels(&self) -> &[PixelProvenance] {
+        &self.pixels
+    }
+}
+
+impl Default for PixelProvenanceFrame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

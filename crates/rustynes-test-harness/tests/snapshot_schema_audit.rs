@@ -213,6 +213,47 @@ const CHIPS: &[Chip] = &[
                 "dma_attrib_cycle",
                 "output-only: v2.3.3 write-attribution context; see `dma_attrib_pc`",
             ),
+            (
+                "prov_frame",
+                "output-only: v2.3.3 `debug-hooks` per-pixel provenance for the CURRENT frame, \
+                 never read by emulation. Overwritten in place by the next `run_frame` exactly \
+                 like the framebuffer it shadows, so there is nothing for a restore to carry",
+            ),
+            (
+                "prov_armed",
+                "derived: mirrors `prov_frame.is_some()`, set only by \
+                 `Ppu::set_pixel_provenance`; a host-side toggle, not machine state",
+            ),
+            (
+                "prov_nt_pending",
+                "output-only: v2.3.3 provenance address awaiting commit, overwritten by the \
+                 next nametable fetch — at most 8 dots after any restore",
+            ),
+            (
+                "prov_at_pending",
+                "output-only: v2.3.3 provenance address awaiting commit; see `prov_nt_pending`",
+            ),
+            (
+                "prov_bg_latch",
+                "output-only: v2.3.3 provenance address cascade, re-committed at every BG \
+                 pattern fetch. A restore mid-scanline can leave one tile group reporting the \
+                 pre-restore addresses; that is a telemetry gap of at most 8 pixels in one \
+                 frame, not emulation state, and serializing it would imply the record survives \
+                 a timeline change when the attribution store deliberately does not",
+            ),
+            (
+                "prov_bg_cur",
+                "output-only: v2.3.3 provenance address cascade; see `prov_bg_latch`",
+            ),
+            (
+                "prov_bg_next",
+                "output-only: v2.3.3 provenance address cascade; see `prov_bg_latch`",
+            ),
+            (
+                "prov_spr_addr",
+                "output-only: v2.3.3 per-slot sprite pattern address for provenance, rewritten \
+                 by every sprite-tile fetch (dots 257-320 of each scanline)",
+            ),
         ],
         known_gaps: &[],
     },

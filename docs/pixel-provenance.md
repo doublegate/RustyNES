@@ -1,8 +1,9 @@
 # Pixel provenance
 
-> **Status:** Phase 1 (write attribution) implemented. Phases 2-4 are specified
-> here and land in v2.3.3 "Lucid"; this document is the spec, so it is updated in
-> the same change as the code it describes.
+> **Status:** Phases 1 (write attribution) and 2 (per-pixel provenance)
+> implemented. Phases 3-4 are specified here and land in v2.3.3 "Lucid"; this
+> document is the spec, so it is updated in the same change as the code it
+> describes.
 
 ## What the feature answers
 
@@ -128,18 +129,81 @@ Every accessor masks its index, so a provenance query cannot panic on an
 out-of-range offset — a debugging convenience must never be able to take down the
 emulator it is inspecting.
 
-## Phase 2 — per-pixel provenance record (planned)
+## Phase 2 — per-pixel provenance record (implemented)
 
-`HdTileSource` (`crates/rustynes-ppu/src/ppu.rs`) already carries, per emitted
-pixel, the CHR address, palette, sprite-vs-background flag, flips, the four
-candidate sprites, and the CHR tile index. It is written in `emit_pixel` under
-`hd-pack`. Phase 2 widens that gate so the record is also populated under
-`debug-hooks`, extended with the emitting dot/scanline and the nametable and
-attribute source addresses.
+The plan was to widen the existing `hd-pack` `HdTileSource` gate. That turned out
+to be the wrong shape, and the reason is worth recording: `HdTileSource` carries
+Mesen-format HD-pack *keys* (`palette_colors` packed for tile identity, an
+absolute CHR-ROM tile index, the four covering sprites), and widening its gate
+would have dragged eight `hd-pack` fetch-telemetry fields into every `debug-hooks`
+build whether or not the panel was open. Provenance wants addresses, not keys.
 
-This is a gate widening, not a change to what HD packs see: the `hd-pack` path
-must stay byte-identical, and the framebuffer must stay bit-identical with
-`debug-hooks` on.
+So Phase 2 adds a **separate, lazily-allocated record** in the same shape as
+Phase 1's attribution store. `hd-pack` is untouched — byte-identical by
+construction rather than by careful review.
+
+### What each pixel records
+
+`PixelProvenance` (`crates/rustynes-ppu/src/provenance.rs`) holds the emitting
+scanline and dot, the winning layer (`Backdrop` / `Background` / `Sprite`), the
+exact `$3Fxx` palette address and its post-mirroring index, the resulting 6-bit
+color and the `$2001` grayscale/emphasis bits, the displayed tile's nametable /
+attribute / pattern addresses, both layers' pattern and palette indices, the
+winning sprite slot with its priority and sprite-0 flags, and fine-X / fine-Y.
+
+`palette_index` indexes `WriteAttribution::palette` directly, and `nt_addr`
+resolves through the mapper's mirroring to a CIRAM offset for
+`WriteAttribution::ciram` — so the two phases compose into the full chain. The
+test `provenance_and_attribution_compose_into_a_causal_chain` pins exactly that:
+pixel → palette entry → writing instruction.
+
+### The address cascade, and why `v` cannot answer
+
+By the time a tile's pixels reach the screen, `v` has advanced two tiles past it.
+Deriving the nametable address from `v` at emit time would be wrong for every
+pixel, and wrong in a way that looks plausible. So a `ProvBgAddrs { nt, at,
+pattern }` triple rides the same `latch` → `next` → `cur` cascade that moves the
+pattern bytes through the shift registers.
+
+Two findings came out of building it, both from the test failing first:
+
+- **The tile is defined when its PATTERN is fetched, not when its NT byte is
+  read.** The PPU performs two *dummy nametable fetches* at dots 337-340, after
+  the pre-render line's last real tile is fetched but before the visible line's
+  first reload consumes it. Writing the NT address straight into the latch let
+  those dummies overwrite the pending tile, so pixels x=8..15 reported the tile
+  belonging to x=16..23. The addresses are now held pending and committed in
+  `fetch_bg_lo`, which the dummy fetches never reach.
+- **The attribute address is carried, not derived.** An MMC5 vertical split
+  supplies its own attribute address that the standard `$23C0 | ...` arithmetic
+  cannot reproduce.
+
+`at` is carried for the same reason.
+
+### Cost
+
+Guarded on a plain `bool` (`Ppu::prov_armed`) rather than `Option::is_some()`:
+`emit_pixel` runs 61,440 times a frame and is one of the two hottest functions in
+the emulator, so the unarmed cost is one predicted branch on an already-hot cache
+line rather than a discriminant behind a pointer chase — the same shape as the
+bus's `event_logging` flag. Armed, a frame costs
+`PixelProvenanceFrame::HEAP_BYTES`.
+
+The one shipped-path change is in `emit_pixel`'s priority chain: it now yields
+the palette *address* and performs a single `read_palette` afterwards, instead of
+reading inline in each arm. `read_palette` is a pure read whose greyscale mask is
+untouched by the sprite-0-hit insert, so hoisting it is behaviour-preserving.
+
+### Not recorded, and why
+
+- **The primary OAM sprite number.** Sprite evaluation copies bytes from primary
+  to secondary OAM without retaining the source index, so it does not exist at
+  emit time. The record reports the secondary-OAM *slot*; the panel matches its
+  Y/tile/attribute against OAM rather than being handed an index the PPU never
+  kept.
+- **Sprites that lost the priority decision.** Phase 2 records the winner. The
+  `hd-pack` path already collects up to four covering sprites for its own
+  conditions; folding that in is a Phase 3 concern if the panel wants it.
 
 ## Phase 3 — the panel (planned)
 
@@ -177,10 +241,25 @@ replays and compares. A v2 `.rnm` must still load unchanged.
   save-state round-trip while the store stays armed.
 - `provenance::tests` — cycle 0 is a real record and not a sentinel; indices wrap
   rather than panic; last write wins; `clear` forgets everything.
+- `pixel_provenance_names_the_displayed_tile_not_the_fetch_pointer` — a
+  hand-assembled CHR-RAM ROM that fills a nametable and a palette, then asserts
+  the record for a background pixel names `$2002` (the tile on screen) and that
+  the cascade advances exactly one tile per 8-pixel group across the scanline.
+- `provenance_and_attribution_compose_into_a_causal_chain` — the end-to-end
+  claim: pixel → palette entry → the PC that wrote it.
 - AccuracyCoin **exactly 141/141**, nestest 0-diff, `visual_regression` green,
   with and without the feature.
 
-Both ROM-driven tests loop their write sequence and run several frames, because
-the PPU ignores `$2000/$2001/$2005/$2006` writes for ~29,658 CPU cycles after
-reset, and because the first `run_frame` after power-on returns on the
-already-latched frame-complete flag having executed almost nothing.
+### Traps these tests found, worth not rediscovering
+
+- The PPU ignores `$2000/$2001/$2005/$2006` writes for ~29,658 CPU cycles after
+  reset. Setup code that runs inside that window has its `$2006` address writes
+  silently dropped, so every following `$2007` lands somewhere unintended. Test
+  ROMs either loop their setup or delay past the window.
+- The first `run_frame` after power-on returns on the already-latched
+  frame-complete flag, having executed almost nothing.
+- `$2006 = $20, $00` sets `v = $2000`, and bits 12-14 of a VRAM address **are**
+  the fine-Y field — so that write leaves fine-Y at 2, not 0. A ROM that wants
+  row 0 must follow it with `$2005`. The provenance record reports what the
+  hardware is actually displaying, which is why this surfaced as a "wrong"
+  pattern address that turned out to be right.

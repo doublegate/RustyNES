@@ -1123,6 +1123,80 @@ pub struct Ppu {
     /// CPU cycle counterpart of [`Self::dma_attrib_pc`].
     #[cfg(feature = "debug-hooks")]
     pub(crate) dma_attrib_cycle: u64,
+
+    /// v2.3.3 "Lucid" phase 2 — per-pixel provenance for the current frame.
+    ///
+    /// `None` until armed, like [`Self::write_attrib`]. Overwritten in place
+    /// every frame, exactly like the framebuffer it shadows.
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) prov_frame: Option<Box<crate::provenance::PixelProvenanceFrame>>,
+    /// Fast "is provenance armed?" flag, mirroring `prov_frame.is_some()`.
+    ///
+    /// `emit_pixel` runs 61,440 times a frame and is one of the two hottest
+    /// functions in the emulator, so the per-pixel guard is a plain `bool` load
+    /// rather than an `Option<Box<..>>` discriminant behind a pointer. Same
+    /// shape as the bus's `event_logging` / `access_logging` flags.
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) prov_armed: bool,
+    /// Nametable address of the most recent NT fetch, awaiting commit.
+    ///
+    /// Held separately from [`Self::prov_bg_latch`] because the PPU performs two
+    /// **dummy nametable fetches** at dots 337-340, after the pre-render line's
+    /// last real tile has been fetched but before the visible line's first
+    /// reload consumes it. Writing the NT address straight into the latch let
+    /// those dummies overwrite the pending tile, so the first visible tile group
+    /// reported the address of the tile after it. A tile is defined when its
+    /// PATTERN is fetched — which the dummy fetches never do — so the pending
+    /// addresses are committed in `fetch_bg_lo`.
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) prov_nt_pending: u16,
+    /// Attribute address awaiting commit. See [`Self::prov_nt_pending`].
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) prov_at_pending: u16,
+    /// Addresses of the background tile most recently FETCHED (the tile two
+    /// slots ahead of the one on screen). Committed at pattern-fetch time;
+    /// promoted through `next` into `cur` by the same shift-register reloads
+    /// that move the pattern bytes, so the cascade stays tile-for-tile aligned
+    /// with what the shifters are emitting.
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) prov_bg_latch: ProvBgAddrs,
+    /// Addresses of the background tile currently BEING DISPLAYED — the one
+    /// `emit_pixel` must report.
+    ///
+    /// This cascade exists because `v` cannot answer the question: by the time a
+    /// tile's pixels reach the screen, `v` has already advanced two tiles past
+    /// it. Deriving the nametable address from `v` at emit time would be wrong
+    /// for every pixel, and wrong in a way that looks plausible.
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) prov_bg_cur: ProvBgAddrs,
+    /// Addresses of the next background tile (the shifters' low byte), promoted
+    /// into [`Self::prov_bg_cur`] on the per-tile boundary.
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) prov_bg_next: ProvBgAddrs,
+    /// Pattern address fetched per sprite slot, so a sprite pixel can report the
+    /// CHR row behind it. Mirrors the `hd-pack` `hd_spr_addr` capture, kept
+    /// separate so neither feature's telemetry depends on the other being on.
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) prov_spr_addr: [u16; 8],
+}
+
+/// The three VRAM addresses that produced one background tile.
+///
+/// Carried as a unit through the PPU's internal fetch → display cascade
+/// (`latch` → `next` → `cur`), so a promotion is one struct copy instead of
+/// three separate field moves that could drift out of step with each other.
+#[cfg(feature = "debug-hooks")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProvBgAddrs {
+    /// Nametable address the tile number came from.
+    pub nt: u16,
+    /// Attribute address the palette group came from. Carried rather than
+    /// derived, because an MMC5 vertical split supplies its own attribute
+    /// address that the standard `$23C0 | ...` arithmetic cannot produce.
+    pub at: u16,
+    /// CHR address of the pattern row (the low-plane address; the high plane is
+    /// `+8`).
+    pub pattern: u16,
 }
 
 /// v2.0 Phase 6 (`mc-ppu-subpos`): the analog `$2001` PPUMASK write delay.
@@ -1322,6 +1396,22 @@ impl Ppu {
             dma_attrib_pc: 0,
             #[cfg(feature = "debug-hooks")]
             dma_attrib_cycle: 0,
+            #[cfg(feature = "debug-hooks")]
+            prov_frame: None,
+            #[cfg(feature = "debug-hooks")]
+            prov_armed: false,
+            #[cfg(feature = "debug-hooks")]
+            prov_nt_pending: 0,
+            #[cfg(feature = "debug-hooks")]
+            prov_at_pending: 0,
+            #[cfg(feature = "debug-hooks")]
+            prov_bg_latch: ProvBgAddrs::default(),
+            #[cfg(feature = "debug-hooks")]
+            prov_bg_cur: ProvBgAddrs::default(),
+            #[cfg(feature = "debug-hooks")]
+            prov_bg_next: ProvBgAddrs::default(),
+            #[cfg(feature = "debug-hooks")]
+            prov_spr_addr: [0; 8],
         };
         // Clear status flags that match power-on per nesdev wiki: VBL is
         // unspecified on power-on. We start clear.
@@ -1944,6 +2034,36 @@ impl Ppu {
     pub const fn set_attrib_context(&mut self, pc: u16, cycle: u64) {
         self.attrib_pc = pc;
         self.attrib_cycle = cycle;
+    }
+
+    /// v2.3.3 "Lucid" phase 2 — arm or disarm per-pixel provenance capture.
+    ///
+    /// Arming allocates
+    /// [`crate::provenance::PixelProvenanceFrame::HEAP_BYTES`] and starts
+    /// recording, for every emitted pixel, the layer that won, the exact palette
+    /// address, and the nametable / attribute / pattern addresses of the tile
+    /// actually on screen. Disarming frees the frame.
+    ///
+    /// Independent of [`Self::set_write_attribution`]: this says *which bytes*
+    /// produced a pixel, that says *who wrote* those bytes. The panel wants
+    /// both, but each is useful alone and neither depends on the other.
+    ///
+    /// Output-only, so emulation is bit-identical either way.
+    #[cfg(feature = "debug-hooks")]
+    pub fn set_pixel_provenance(&mut self, enabled: bool) {
+        self.prov_frame = if enabled {
+            Some(Box::new(crate::provenance::PixelProvenanceFrame::new()))
+        } else {
+            None
+        };
+        self.prov_armed = enabled;
+    }
+
+    /// The current frame's per-pixel provenance, or `None` when not armed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn pixel_provenance(&self) -> Option<&crate::provenance::PixelProvenanceFrame> {
+        self.prov_frame.as_deref()
     }
 
     /// Freeze the current instruction context as the cause of an OAM DMA burst.
@@ -3639,6 +3759,14 @@ impl Ppu {
             self.ale_splice(nt_addr)
         };
         self.nt_latch = self.read_vram(bus, nt_addr);
+        // v2.3.3 "Lucid" — capture the address this tile's number came from. The
+        // SPLICED address, i.e. the one actually driven, so a hybrid-address
+        // corruption shows the address the hardware really read rather than the
+        // one it meant to. Telemetry only.
+        #[cfg(feature = "debug-hooks")]
+        {
+            self.prov_nt_pending = nt_addr;
+        }
         // Data phase: drive the byte just read back onto the multiplexed bus's low
         // 8 bits (AD7-0). Behavior-neutral (the next fetch's ALE overwrites it).
         self.ale_drive_data(self.nt_latch);
@@ -3665,6 +3793,13 @@ impl Ppu {
             // splice / consume the ALE arm so it can't leak to the next fetch.
             let at_addr = self.ale_splice(at_addr);
             let byte = self.read_vram(bus, at_addr);
+            // v2.3.3 "Lucid" — the split's own attribute address, which the
+            // standard `$23C0 | ...` arithmetic cannot reproduce. This branch is
+            // exactly why the record carries `at` instead of deriving it.
+            #[cfg(feature = "debug-hooks")]
+            {
+                self.prov_at_pending = at_addr;
+            }
             self.ale_drive_data(byte);
             let coarse_x = (split.nt_addr & 0x001F) as u8;
             let coarse_y = ((split.nt_addr >> 5) & 0x001F) as u8;
@@ -3677,6 +3812,11 @@ impl Ppu {
         // v2.0.3 (ADR 0030, Option 1) — 2-cycle-ALE read half (normal AT path).
         let at_addr = self.ale_splice(at_addr);
         let byte = self.read_vram(bus, at_addr);
+        // v2.3.3 "Lucid" — see the split branch above.
+        #[cfg(feature = "debug-hooks")]
+        {
+            self.prov_at_pending = at_addr;
+        }
         self.ale_drive_data(byte);
         // Pick the 2-bit attribute based on coarse-X[1] and coarse-Y[1].
         let coarse_x = (v & 0x1F) as u8;
@@ -3714,6 +3854,19 @@ impl Ppu {
         // tile-base latch below.
         let read_addr = self.ale_splice(addr);
         self.bg_lo_latch = self.read_vram(bus, read_addr);
+        // v2.3.3 "Lucid" — the pattern ROW address (fine-Y kept, unlike the
+        // `hd-pack` latch below which masks it off to get the 16-byte tile base):
+        // provenance answers "which CHR byte fed THIS pixel", which is a row, not
+        // a tile. The SPLICED address again, so a hybrid-address corruption shows
+        // what was really read.
+        #[cfg(feature = "debug-hooks")]
+        {
+            self.prov_bg_latch = ProvBgAddrs {
+                nt: self.prov_nt_pending,
+                at: self.prov_at_pending,
+                pattern: read_addr,
+            };
+        }
         self.ale_drive_data(self.bg_lo_latch);
         // v1.2.0 C3 (hd-pack): latch the 16-byte tile base (fine-Y masked off)
         // for this fetch group. Promoted into the `hd_bg_addr_*` queue at the
@@ -3925,6 +4078,20 @@ impl Ppu {
             self.hd_bg_addr_cur = self.hd_bg_addr_next;
             self.hd_bg_idx_cur = self.hd_bg_idx_next;
         }
+        // v2.3.3 "Lucid": same promotion for the provenance cascade.
+        //
+        // A/B'd rather than assumed. For the VISIBLE region this is redundant —
+        // every displayed tile passes through a `reload_bg_shift_regs` that
+        // overwrites `cur` from `next` anyway, and the provenance test passes
+        // identically with this removed. It is kept because this function is also
+        // called on the rendering-DISABLE edge (dots 329-336) to complete a
+        // frozen group's pending shift, and there pixels can be emitted from the
+        // shifters before any further reload — so mirroring the shift is what
+        // keeps the reported tile matching the one actually on screen.
+        #[cfg(feature = "debug-hooks")]
+        {
+            self.prov_bg_cur = self.prov_bg_next;
+        }
     }
 
     /// Reload the low bytes of the BG pattern and attribute shift
@@ -3961,6 +4128,13 @@ impl Ppu {
             self.hd_bg_addr_next = self.hd_bg_addr_latch;
             self.hd_bg_idx_cur = self.hd_bg_idx_next;
             self.hd_bg_idx_next = self.hd_bg_idx_latch;
+        }
+        // v2.3.3 "Lucid": same promotion for the provenance address cascade —
+        // one struct copy per stage, so the three addresses cannot drift apart.
+        #[cfg(feature = "debug-hooks")]
+        {
+            self.prov_bg_cur = self.prov_bg_next;
+            self.prov_bg_next = self.prov_bg_latch;
         }
     }
 
@@ -4047,7 +4221,7 @@ impl Ppu {
         let mut spr_pal: u8 = 0;
         let mut spr_priority_front = false;
         let mut spr_zero_pixel = false;
-        #[cfg(feature = "hd-pack")]
+        #[cfg(any(feature = "hd-pack", feature = "debug-hooks"))]
         let mut spr_slot: usize = 0;
         // v1.8.9 — every opaque sprite covering this pixel (slot indices), for the
         // HD-pack multi-sprite conditions. Collected but never consulted by the
@@ -4088,7 +4262,7 @@ impl Ppu {
                     spr_idx = val;
                     spr_pal = self.spr_attr[i] & 0x03;
                     spr_priority_front = (self.spr_attr[i] & 0x20) == 0;
-                    #[cfg(feature = "hd-pack")]
+                    #[cfg(any(feature = "hd-pack", feature = "debug-hooks"))]
                     {
                         spr_slot = i;
                     }
@@ -4105,7 +4279,15 @@ impl Ppu {
         }
 
         // Combine BG + sprite per priority.
-        let final_idx = if bg_idx == 0 && spr_idx == 0 {
+        //
+        // v2.3.3 "Lucid": the priority chain now yields the palette ADDRESS and
+        // the single `read_palette` happens after it, instead of each arm reading
+        // inline. Semantically identical, and it makes the address available to
+        // the provenance record below — so the panel reports the exact `$3Fxx`
+        // this pixel came from, including the `$3F10` family pre-mirroring and
+        // the rendering-disabled backdrop-override address, rather than
+        // re-deriving it from the priority result and getting the corners wrong.
+        let pal_addr: u16 = if bg_idx == 0 && spr_idx == 0 {
             // Universal background ($3F00) — EXCEPT the palette backdrop-override
             // (F1.1): with rendering DISABLED and the VRAM address `v` pointing
             // into palette space ($3F00-$3FFF), the palette's shared address line
@@ -4118,14 +4300,14 @@ impl Ppu {
             // $10/$14/$18/$1C mirror + greyscale, so the override is mirror- and
             // greyscale-correct with no extra handling.
             if !self.mask.rendering_enabled() && (self.v & 0x3F00) == 0x3F00 {
-                self.read_palette(0x3F00 | (self.v & 0x1F)) & 0x3F
+                0x3F00 | (self.v & 0x1F)
             } else {
-                self.read_palette(0x3F00) & 0x3F
+                0x3F00
             }
         } else if bg_idx == 0 {
-            self.read_palette(0x3F10 | (u16::from(spr_pal) << 2) | u16::from(spr_idx)) & 0x3F
+            0x3F10 | (u16::from(spr_pal) << 2) | u16::from(spr_idx)
         } else if spr_idx == 0 {
-            self.read_palette(0x3F00 | (u16::from(bg_pal) << 2) | u16::from(bg_idx)) & 0x3F
+            0x3F00 | (u16::from(bg_pal) << 2) | u16::from(bg_idx)
         } else {
             // Both opaque. Sprite-0 hit detection (constraints per nesdev).
             if spr_zero_pixel
@@ -4137,11 +4319,16 @@ impl Ppu {
                 self.status.insert(PpuStatus::SPRITE_ZERO_HIT);
             }
             if spr_priority_front {
-                self.read_palette(0x3F10 | (u16::from(spr_pal) << 2) | u16::from(spr_idx)) & 0x3F
+                0x3F10 | (u16::from(spr_pal) << 2) | u16::from(spr_idx)
             } else {
-                self.read_palette(0x3F00 | (u16::from(bg_pal) << 2) | u16::from(bg_idx)) & 0x3F
+                0x3F00 | (u16::from(bg_pal) << 2) | u16::from(bg_idx)
             }
         };
+        // One read at the end instead of one per arm. `read_palette` is a pure
+        // read (the greyscale mask it consults is not touched by the sprite-0-hit
+        // insert above), so hoisting it out of the branches is behaviour-
+        // preserving as well as what clippy's `branches_sharing_code` wants.
+        let final_idx = self.read_palette(pal_addr) & 0x3F;
 
         // Write RGBA8 to framebuffer.
         let off = ((pixel_y as usize) * 256 + pixel_x as usize) * 4;
@@ -4259,6 +4446,67 @@ impl Ppu {
                 }
             };
             self.hd_tile_source[off >> 2] = rec;
+        }
+
+        // v2.3.3 "Lucid" phase 2 — the per-pixel causal record.
+        //
+        // Guarded on a plain `bool` rather than `prov_frame.is_some()`: this runs
+        // 61,440 times a frame in one of the two hottest functions in the
+        // emulator, so the unarmed cost is one predicted branch on an already-hot
+        // cache line instead of an `Option` discriminant behind a pointer chase.
+        // Everything recorded is already computed above or carried in the
+        // fetch-time cascade — no new VRAM reads, no new arithmetic on the
+        // shipped path — so the framebuffer and all timing are byte-identical
+        // whether provenance is armed or not.
+        #[cfg(feature = "debug-hooks")]
+        if self.prov_armed {
+            use crate::provenance::{PATTERN_ADDR_NONE, PixelLayer, PixelProvenance};
+            // The same condition `final_idx` encoded above: a sprite is visible
+            // iff it is opaque AND (the BG is transparent OR it has front
+            // priority). Re-deriving it here rather than threading a flag keeps
+            // the shipped path free of a variable that only telemetry reads.
+            let shows_sprite = spr_idx != 0 && (bg_idx == 0 || spr_priority_front);
+            let layer = if shows_sprite {
+                PixelLayer::Sprite
+            } else if bg_idx != 0 {
+                PixelLayer::Background
+            } else {
+                PixelLayer::Backdrop
+            };
+            let rec = PixelProvenance {
+                scanline: self.scanline,
+                dot: self.dot,
+                layer,
+                palette_addr: pal_addr,
+                palette_index: u8::try_from(palette_index(pal_addr)).unwrap_or(0),
+                color: final_idx,
+                color_mask: self.mask.bits() & 0xE1,
+                // The DISPLAYED tile's addresses, from the cascade — `v` has
+                // already advanced two tiles past this pixel.
+                nt_addr: self.prov_bg_cur.nt,
+                at_addr: self.prov_bg_cur.at,
+                pattern_addr: match layer {
+                    PixelLayer::Sprite => self.prov_spr_addr[spr_slot],
+                    PixelLayer::Background => self.prov_bg_cur.pattern,
+                    PixelLayer::Backdrop => PATTERN_ADDR_NONE,
+                },
+                bg_idx,
+                bg_pal,
+                spr_idx,
+                spr_pal,
+                sprite_slot: if shows_sprite {
+                    u8::try_from(spr_slot).unwrap_or(0)
+                } else {
+                    crate::provenance::SPRITE_SLOT_NONE
+                },
+                sprite_front: spr_priority_front,
+                sprite_zero: spr_zero_pixel,
+                fine_x: fx,
+                fine_y: u8::try_from((self.v >> 12) & 7).unwrap_or(0),
+            };
+            if let Some(frame) = self.prov_frame.as_mut() {
+                frame.set(pixel_x as usize, pixel_y as usize, rec);
+            }
         }
 
         // Decrement sprite X-counters / shift sprite shift regs.
@@ -5043,10 +5291,21 @@ impl Ppu {
                 // sentinel (the common mappers share BG/sprite CHR banking).
                 self.hd_spr_idx[slot] = bus.chr_phys(addr_lo).map_or(HD_CHR_RAM, |o| o / 16);
             }
+            // v2.3.3 "Lucid": the sprite's pattern ROW address (in-tile row
+            // KEPT, unlike the `hd-pack` tile base above). Captured separately
+            // so neither feature's telemetry depends on the other being on.
+            #[cfg(feature = "debug-hooks")]
+            {
+                self.prov_spr_addr[slot] = addr_lo;
+            }
         } else {
             #[cfg(feature = "hd-pack")]
             {
                 self.hd_spr_addr[slot] = HD_TILE_NONE;
+            }
+            #[cfg(feature = "debug-hooks")]
+            {
+                self.prov_spr_addr[slot] = crate::provenance::PATTERN_ADDR_NONE;
             }
         }
         // Else: shift regs already cleared in tick_sprite_eval_per_dot.

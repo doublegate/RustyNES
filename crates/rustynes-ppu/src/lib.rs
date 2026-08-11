@@ -45,6 +45,8 @@ pub use palette::{
 };
 pub use palette_gen::{NtscPaletteParams, generate_base_palette};
 pub use ppu::MASK_WRITE_DELAY;
+#[cfg(feature = "debug-hooks")]
+pub use ppu::ProvBgAddrs;
 pub use ppu::octal_trace;
 pub use ppu::read2007_diag;
 pub use ppu::{FRAMEBUFFER_LEN, PaletteInit, Ppu, PpuRegion, PpuRevision};
@@ -53,6 +55,7 @@ pub use ppu::{HD_CHR_RAM, HD_TILE_NONE, HdSprite, HdTileSource};
 #[cfg(feature = "debug-hooks")]
 pub use provenance::{
     CIRAM_LEN as ATTRIB_CIRAM_LEN, OAM_LEN as ATTRIB_OAM_LEN, PALETTE_LEN as ATTRIB_PALETTE_LEN,
+    PATTERN_ADDR_NONE, PixelLayer, PixelProvenance, PixelProvenanceFrame, SPRITE_SLOT_NONE,
     WriteAttrib, WriteAttribution,
 };
 pub use raw_signal::{
