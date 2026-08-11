@@ -122,7 +122,7 @@ jobs:
           java-version: '17'
       - name: Resolve NDK
         run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
-      - uses: gradle/actions/setup-gradle@v6.2.0
+      - uses: gradle/actions/setup-gradle@v6.3.0
         with:
           # v6 extracted the default ("enhanced") Gradle User Home cache into the
           # closed-source `gradle-actions-caching` library (separate Terms of Use).
