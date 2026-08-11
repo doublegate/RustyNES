@@ -14,6 +14,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-08-11 - "Lucid" (pixel provenance + replay attestation)
+
 ### Added
 
 - **Pixel provenance, phase 1 — per-byte write attribution** (`debug-hooks`,
