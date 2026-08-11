@@ -143,6 +143,11 @@ impl MetalGfx {
                 power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                // wgpu 30: adapter-limit bucketing (a fingerprinting mitigation
+                // for hosts exposing wgpu to untrusted content). Not applicable
+                // here, and it would round our real limits down — `false` is the
+                // `Default`, stated explicitly because the field is required.
+                apply_limit_buckets: false,
             })
             .await
             .map_err(|e| format!("request_adapter: {e}"))?;
@@ -175,6 +180,11 @@ impl MetalGfx {
             width: width.max(1),
             height: height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
+            // wgpu 30 made the swapchain colour space explicit. `Auto` is the
+            // documented default, supported for every format in
+            // `SurfaceCapabilities::formats`, so it preserves the pre-bump
+            // behaviour exactly.
+            color_space: wgpu::SurfaceColorSpace::Auto,
             desired_maximum_frame_latency: 2,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
@@ -586,7 +596,7 @@ impl MetalGfx {
             },
         );
 
-        // wgpu 29 returns the `CurrentSurfaceTexture` enum, not a `Result`.
+        // wgpu returns the `CurrentSurfaceTexture` enum, not a `Result`.
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -638,7 +648,8 @@ impl MetalGfx {
             pass.draw(0..3, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        // wgpu 30 moved `present` from `SurfaceTexture` to `Queue`.
+        self.queue.present(frame);
     }
 
     /// Upload + present one HD-pack composited RGBA frame at `w`×`h` (v1.9.5).
@@ -788,6 +799,7 @@ impl MetalGfx {
             pass.draw(0..3, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        // wgpu 30 moved `present` from `SurfaceTexture` to `Queue`.
+        self.queue.present(frame);
     }
 }

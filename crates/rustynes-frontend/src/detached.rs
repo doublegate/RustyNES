@@ -335,7 +335,8 @@ impl DetachedManager {
         id: WindowId,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        prepared: PreparedDetachedFrame,
+        // `mut` for the `mem::take` of the texture deltas (egui 0.36 `Drop`).
+        mut prepared: PreparedDetachedFrame,
     ) {
         let Some(w) = self.windows.get_mut(&id) else {
             return;
@@ -352,11 +353,21 @@ impl DetachedManager {
         // blank or garbled for the rest of its life, long after the transient
         // surface error cleared. Uploading first costs nothing on the happy path
         // and makes a skipped present merely a dropped frame.
-        for (tid, image) in prepared.textures_delta.set {
-            w.renderer.update_texture(device, queue, tid, &image);
+        // egui 0.36: one texture id can carry MULTIPLE ordered deltas per frame
+        // (`SmallVec<[ImageDelta; 1]>`) — a whole-texture upload followed by
+        // partial patches. Apply every one, in order: taking only the first
+        // would silently drop partial updates and leave stale texels on screen.
+        // egui 0.36 gave `TexturesDelta` a `Drop` impl (it flags deltas that
+        // were never applied), so its fields can no longer be moved out.
+        // `mem::take` consumes them and leaves the delta empty — which is
+        // exactly the state it should be in once we have applied them.
+        for (tid, images) in std::mem::take(&mut prepared.textures_delta.set) {
+            for image in images {
+                w.renderer.update_texture(device, queue, tid, &image);
+            }
         }
 
-        // Acquire the swapchain image (wgpu 29 `CurrentSurfaceTexture` enum), with
+        // Acquire the swapchain image (the `CurrentSurfaceTexture` enum), with
         // the same reconfigure-on-lost / skip-otherwise policy as `Gfx`. Frees are
         // deferred to the end so a bail-out cannot drop a texture the next frame
         // still references.
@@ -365,11 +376,17 @@ impl DetachedManager {
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 w.surface.configure(device, &w.config);
-                Self::free_textures(&mut w.renderer, prepared.textures_delta.free);
+                Self::free_textures(
+                    &mut w.renderer,
+                    std::mem::take(&mut prepared.textures_delta.free),
+                );
                 return;
             }
             _ => {
-                Self::free_textures(&mut w.renderer, prepared.textures_delta.free);
+                Self::free_textures(
+                    &mut w.renderer,
+                    std::mem::take(&mut prepared.textures_delta.free),
+                );
                 return;
             }
         };
@@ -414,9 +431,13 @@ impl DetachedManager {
                 .forget_lifetime();
             w.renderer.render(&mut rp, &clipped, &screen_desc);
         }
-        Self::free_textures(&mut w.renderer, prepared.textures_delta.free);
+        Self::free_textures(
+            &mut w.renderer,
+            std::mem::take(&mut prepared.textures_delta.free),
+        );
         queue.submit(Some(encoder.finish()));
-        frame.present();
+        // wgpu 30 moved `present` from `SurfaceTexture` to `Queue`.
+        queue.present(frame);
     }
 
     /// Release the textures egui retired this frame.
@@ -424,7 +445,12 @@ impl DetachedManager {
     /// Factored out so every exit path from [`Self::present`] — including the
     /// swapchain bail-outs — runs it exactly once. Leaking these would grow GPU
     /// memory for the window's lifetime.
-    fn free_textures(renderer: &mut egui_wgpu::Renderer, free: Vec<egui::TextureId>) {
+    // egui 0.36 changed `TexturesDelta::free` from `Vec` to `HashSet`; taking
+    // `IntoIterator` keeps this helper indifferent to the container.
+    fn free_textures(
+        renderer: &mut egui_wgpu::Renderer,
+        free: impl IntoIterator<Item = egui::TextureId>,
+    ) {
         for tid in free {
             renderer.free_texture(&tid);
         }

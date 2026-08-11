@@ -256,7 +256,15 @@ impl GpuTimer {
             let buf_for_cb = buf.clone();
             buf.slice(..).map_async(wgpu::MapMode::Read, move |res| {
                 if res.is_ok() {
-                    let data = buf_for_cb.slice(..).get_mapped_range();
+                    // wgpu 30: `get_mapped_range` returns `Result`. This runs
+                    // inside the map-async callback on a buffer we just mapped
+                    // successfully (`res.is_ok()` above), so a failure here means
+                    // the range is unmappable — skip the sample rather than
+                    // unwrap and take the process down for a GPU timing stat.
+                    let Ok(data) = buf_for_cb.slice(..).get_mapped_range() else {
+                        buf_for_cb.unmap();
+                        return;
+                    };
                     let t0 = u64::from_le_bytes(data[0..8].try_into().expect("8 bytes"));
                     let t1 = u64::from_le_bytes(data[8..16].try_into().expect("8 bytes"));
                     drop(data);
@@ -437,6 +445,12 @@ impl Gfx {
                 power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                // wgpu 30: opt-in adapter-limit bucketing, a fingerprinting
+                // mitigation for hosts that expose wgpu to untrusted content
+                // (a browser). RustyNES is not such a host, and bucketing would
+                // round our real limits down, so leave it off — the `Default`
+                // value, stated explicitly because the field is not optional.
+                apply_limit_buckets: false,
             })
             .await
             .map_err(|_| GfxError::NoAdapter)?;
@@ -568,6 +582,13 @@ impl Gfx {
             view_formats: vec![],
             // v2.8.0 Phase 2 — configurable swapchain depth (`[graphics]
             // max_frame_latency`): 1 = lowest display latency, 2 = slack.
+            // wgpu 30 made the swapchain colour space explicit. `Auto` is the
+            // documented default and is supported for every format in
+            // `SurfaceCapabilities::formats`, so it preserves exactly the
+            // pre-bump behaviour: the surface keeps whatever the platform
+            // already chose. Picking anything else here would silently change
+            // how the shipped image is displayed.
+            color_space: wgpu::SurfaceColorSpace::Auto,
             desired_maximum_frame_latency: max_frame_latency.clamp(1, 2),
         };
         surface.configure(&device, &config);
@@ -830,6 +851,13 @@ impl Gfx {
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode,
             view_formats: vec![],
+            // wgpu 30 made the swapchain colour space explicit. `Auto` is the
+            // documented default and is supported for every format in
+            // `SurfaceCapabilities::formats`, so it preserves exactly the
+            // pre-bump behaviour: the surface keeps whatever the platform
+            // already chose. Picking anything else here would silently change
+            // how the shipped image is displayed.
+            color_space: wgpu::SurfaceColorSpace::Auto,
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&self.device, &config);
@@ -1194,7 +1222,7 @@ impl Gfx {
             );
         }
 
-        // wgpu 29: `get_current_texture` returns the `CurrentSurfaceTexture`
+        // `get_current_texture` returns the `CurrentSurfaceTexture`
         // enum instead of a `Result`. Map it to the same behaviour as before:
         // use the texture from `Success`/`Suboptimal`, reconfigure on
         // `Lost`/`Outdated`, and skip the frame for any other status.
@@ -1321,7 +1349,8 @@ impl Gfx {
         if let Some(t) = &mut self.gpu_timer {
             t.after_submit();
         }
-        frame.present();
+        // wgpu 30 moved `present` from `SurfaceTexture` to `Queue`.
+        self.queue.present(frame);
         Ok(())
     }
 
@@ -1392,7 +1421,7 @@ impl Gfx {
             )),
         );
 
-        // wgpu 29: `get_current_texture` returns the `CurrentSurfaceTexture`
+        // `get_current_texture` returns the `CurrentSurfaceTexture`
         // enum instead of a `Result`. Map it to the same behaviour as before:
         // use the texture from `Success`/`Suboptimal`, reconfigure on
         // `Lost`/`Outdated`, and skip the frame for any other status.
@@ -1446,7 +1475,8 @@ impl Gfx {
             (self.config.width, self.config.height),
         );
         self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        // wgpu 30 moved `present` from `SurfaceTexture` to `Queue`.
+        self.queue.present(frame);
         Ok(())
     }
 
@@ -1636,7 +1666,8 @@ impl Gfx {
             (self.config.width, self.config.height),
         );
         self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        // wgpu 30 moved `present` from `SurfaceTexture` to `Queue`.
+        self.queue.present(frame);
         Ok(())
     }
 

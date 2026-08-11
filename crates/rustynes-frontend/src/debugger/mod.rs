@@ -2443,7 +2443,9 @@ impl DebuggerOverlay {
         // `run_ui` takes an `FnMut`; `extra_ui` is `FnOnce`. The closure runs
         // exactly once, so move it through an `Option::take`.
         let mut extra_ui = Some(extra_ui);
-        let output = ctx.run_ui(raw_input, |ui| {
+        // `mut` so the texture deltas can be `mem::take`n below (egui 0.36 gave
+        // `TexturesDelta` a `Drop` impl, blocking a move-out).
+        let mut output = ctx.run_ui(raw_input, |ui| {
             self.ui(ui, nes, config);
             if let Some(extra_ui) = extra_ui.take() {
                 extra_ui(ui.ctx(), config);
@@ -2458,8 +2460,18 @@ impl DebuggerOverlay {
             size_in_pixels: [surface_size.0.max(1), surface_size.1.max(1)],
             pixels_per_point,
         };
-        for (id, image) in output.textures_delta.set {
-            self.renderer.update_texture(device, queue, id, &image);
+        // egui 0.36: one texture id can carry MULTIPLE ordered deltas per frame
+        // (`SmallVec<[ImageDelta; 1]>`) — a whole-texture upload followed by
+        // partial patches. Apply every one, in order: taking only the first
+        // would silently drop partial updates and leave stale texels on screen.
+        // egui 0.36 gave `TexturesDelta` a `Drop` impl (it flags deltas that
+        // were never applied), so its fields can no longer be moved out.
+        // `mem::take` consumes them and leaves the delta empty — which is
+        // exactly the state it should be in once we have applied them.
+        for (id, images) in std::mem::take(&mut output.textures_delta.set) {
+            for image in images {
+                self.renderer.update_texture(device, queue, id, &image);
+            }
         }
         self.renderer
             .update_buffers(device, queue, encoder, &clipped, &screen_desc);
@@ -2484,7 +2496,7 @@ impl DebuggerOverlay {
                 .forget_lifetime();
             self.renderer.render(&mut rp, &clipped, &screen_desc);
         }
-        for id in output.textures_delta.free {
+        for id in std::mem::take(&mut output.textures_delta.free) {
             self.renderer.free_texture(&id);
         }
     }
@@ -2686,14 +2698,25 @@ impl DebuggerOverlay {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         surface_size: (u32, u32),
-        prepared: PreparedShell,
+        // `mut` for the `mem::take` of the texture deltas (egui 0.36 `Drop`).
+        mut prepared: PreparedShell,
     ) {
         let screen_desc = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [surface_size.0.max(1), surface_size.1.max(1)],
             pixels_per_point: prepared.pixels_per_point,
         };
-        for (id, image) in prepared.textures_delta.set {
-            self.renderer.update_texture(device, queue, id, &image);
+        // egui 0.36: one texture id can carry MULTIPLE ordered deltas per frame
+        // (`SmallVec<[ImageDelta; 1]>`) — a whole-texture upload followed by
+        // partial patches. Apply every one, in order: taking only the first
+        // would silently drop partial updates and leave stale texels on screen.
+        // egui 0.36 gave `TexturesDelta` a `Drop` impl (it flags deltas that
+        // were never applied), so its fields can no longer be moved out.
+        // `mem::take` consumes them and leaves the delta empty — which is
+        // exactly the state it should be in once we have applied them.
+        for (id, images) in std::mem::take(&mut prepared.textures_delta.set) {
+            for image in images {
+                self.renderer.update_texture(device, queue, id, &image);
+            }
         }
         self.renderer
             .update_buffers(device, queue, encoder, &prepared.clipped, &screen_desc);
@@ -2719,7 +2742,7 @@ impl DebuggerOverlay {
             self.renderer
                 .render(&mut rp, &prepared.clipped, &screen_desc);
         }
-        for id in prepared.textures_delta.free {
+        for id in std::mem::take(&mut prepared.textures_delta.free) {
             self.renderer.free_texture(&id);
         }
     }
