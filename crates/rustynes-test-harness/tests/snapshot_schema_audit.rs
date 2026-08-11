@@ -187,6 +187,32 @@ const CHIPS: &[Chip] = &[
             ("hd_bg_idx_cur", "output-only: `hd-pack` fetch telemetry"),
             ("hd_bg_idx_next", "output-only: `hd-pack` fetch telemetry"),
             ("hd_spr_idx", "output-only: `hd-pack` fetch telemetry"),
+            (
+                "write_attrib",
+                "output-only: v2.3.3 `debug-hooks` per-byte write attribution, never read by \
+                 emulation. Deliberately NOT serialized — a restored state's bytes were not \
+                 written by any instruction this session ran, so carrying PCs across a restore \
+                 would report a timeline that no longer exists. `Nes::restore_inner` and \
+                 `Nes::power_cycle` clear it instead",
+            ),
+            (
+                "attrib_pc",
+                "output-only: v2.3.3 write-attribution context, re-pushed by `Nes::run_frame` \
+                 before every instruction, so a restore's stale value cannot survive one step",
+            ),
+            (
+                "attrib_cycle",
+                "output-only: v2.3.3 write-attribution context; see `attrib_pc`",
+            ),
+            (
+                "dma_attrib_pc",
+                "output-only: v2.3.3 write-attribution context latched at the `$4014` write; \
+                 re-latched by every subsequent OAM DMA trigger",
+            ),
+            (
+                "dma_attrib_cycle",
+                "output-only: v2.3.3 write-attribution context; see `dma_attrib_pc`",
+            ),
         ],
         known_gaps: &[],
     },

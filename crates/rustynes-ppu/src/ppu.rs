@@ -1082,6 +1082,47 @@ pub struct Ppu {
     /// Absolute CHR-ROM tile index per sprite slot (or [`HD_CHR_RAM`]).
     #[cfg(feature = "hd-pack")]
     pub(crate) hd_spr_idx: [u32; 8],
+
+    /// v2.3.3 "Lucid" — per-byte write attribution for CIRAM / OAM / palette RAM.
+    ///
+    /// `None` (the default) until the frontend arms it via
+    /// [`Self::set_write_attribution`], so an unarmed `debug-hooks` build pays one
+    /// `Option` test per PPU-memory write and no heap at all. Output-only
+    /// telemetry: nothing in the emulation path reads it, so an armed store is
+    /// bit-identical to an unarmed one. Deliberately NOT part of the save-state —
+    /// attribution describes writes *this session* performed, and a restored
+    /// state's bytes have no such history (see [`crate::provenance`]).
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) write_attrib: Option<Box<crate::provenance::WriteAttribution>>,
+    /// The `(pc, cycle)` of the CPU instruction currently executing, pushed down
+    /// by the bus before each `$2000-$3FFF` register write and before each OAM
+    /// DMA burst. Stamped into every attribution record made while it is set.
+    ///
+    /// The PPU cannot derive this itself: it never sees the CPU's program
+    /// counter, and the effective VRAM destination the bus would need to record
+    /// the attribution itself lives in the PPU's internal `v` register. Splitting
+    /// the two halves this way is what lets each side contribute only what it
+    /// actually knows.
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) attrib_pc: u16,
+    /// CPU cycle counterpart of [`Self::attrib_pc`].
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) attrib_cycle: u64,
+    /// The `(pc, cycle)` of the `STA $4014` that armed the in-flight OAM DMA.
+    ///
+    /// Separate from [`Self::attrib_pc`] because the burst does not run during
+    /// the triggering instruction: `$4014` only sets `dma_pending`, and the 513
+    /// or 514 DMA cycles are then stolen from the instructions that follow. By
+    /// the time the first byte lands, [`Self::attrib_pc`] has already advanced to
+    /// whichever instruction is being halted — an answer that is true about the
+    /// *timing* and wrong about the *cause*. The bus latches this pair at the
+    /// `$4014` write via [`Self::latch_dma_attrib_context`] so every byte of the
+    /// burst names the store that actually caused it.
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) dma_attrib_pc: u16,
+    /// CPU cycle counterpart of [`Self::dma_attrib_pc`].
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) dma_attrib_cycle: u64,
 }
 
 /// v2.0 Phase 6 (`mc-ppu-subpos`): the analog `$2001` PPUMASK write delay.
@@ -1271,6 +1312,16 @@ impl Ppu {
             hd_bg_idx_next: HD_CHR_RAM,
             #[cfg(feature = "hd-pack")]
             hd_spr_idx: [HD_CHR_RAM; 8],
+            #[cfg(feature = "debug-hooks")]
+            write_attrib: None,
+            #[cfg(feature = "debug-hooks")]
+            attrib_pc: 0,
+            #[cfg(feature = "debug-hooks")]
+            attrib_cycle: 0,
+            #[cfg(feature = "debug-hooks")]
+            dma_attrib_pc: 0,
+            #[cfg(feature = "debug-hooks")]
+            dma_attrib_cycle: 0,
         };
         // Clear status flags that match power-on per nesdev wiki: VBL is
         // unspecified on power-on. We start clear.
@@ -1845,6 +1896,71 @@ impl Ppu {
         &self.ciram
     }
 
+    /// v2.3.3 "Lucid" — arm or disarm per-byte write attribution.
+    ///
+    /// Arming allocates [`crate::provenance::WriteAttribution::HEAP_BYTES`] and
+    /// starts stamping every subsequent CIRAM / OAM / palette write with the
+    /// writing instruction's PC and cycle. Disarming frees the store outright, so
+    /// re-arming starts from a clean slate rather than resurrecting stale records
+    /// from a previous debugging session.
+    ///
+    /// Purely observational — nothing in the render or timing path reads it, so
+    /// output is bit-identical either way.
+    #[cfg(feature = "debug-hooks")]
+    pub fn set_write_attribution(&mut self, enabled: bool) {
+        self.write_attrib = if enabled {
+            Some(Box::new(crate::provenance::WriteAttribution::new()))
+        } else {
+            None
+        };
+    }
+
+    /// The write-attribution store, or `None` when not armed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn write_attribution(&self) -> Option<&crate::provenance::WriteAttribution> {
+        self.write_attrib.as_deref()
+    }
+
+    /// Forget every recorded attribution, keeping the store armed.
+    ///
+    /// The core calls this on power-cycle and on save-state restore: the restored
+    /// bytes were not written by any instruction this session ran, and reporting
+    /// the PCs that happened to write those offsets *before* the restore would be
+    /// a confidently wrong answer rather than an absent one.
+    #[cfg(feature = "debug-hooks")]
+    pub fn clear_write_attribution(&mut self) {
+        if let Some(attrib) = self.write_attrib.as_mut() {
+            attrib.clear();
+        }
+    }
+
+    /// Push down the `(pc, cycle)` of the CPU instruction whose write is about to
+    /// land, so the store site can stamp it. Called by the bus immediately before
+    /// a `$2000-$3FFF` register write and before an OAM DMA burst.
+    ///
+    /// A no-op when attribution is not armed, and never read by emulation.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_attrib_context(&mut self, pc: u16, cycle: u64) {
+        self.attrib_pc = pc;
+        self.attrib_cycle = cycle;
+    }
+
+    /// Freeze the current instruction context as the cause of an OAM DMA burst.
+    ///
+    /// Called by the bus from the `$4014` write, i.e. while
+    /// [`Self::set_attrib_context`] still holds the `STA $4014` itself.
+    ///
+    /// The burst cannot use the live context: `$4014` only arms the transfer, and
+    /// its 513 or 514 cycles are then stolen from the instructions that follow,
+    /// so by the time the first OAM byte lands the live context names whichever
+    /// instruction is being halted — true about the timing, wrong about the cause.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn latch_dma_attrib_context(&mut self) {
+        self.dma_attrib_pc = self.attrib_pc;
+        self.dma_attrib_cycle = self.attrib_cycle;
+    }
+
     /// v1.7.0 "Forge" Workstream A1 — debugger writeback: store one palette-RAM
     /// byte directly (`idx` masked to 0..32, value masked to the 6-bit palette
     /// width), reusing the same canonical mirroring/masking as the live
@@ -1918,6 +2034,21 @@ impl Ppu {
     /// hit OAM directly per nesdev.
     pub fn oam_dma_write(&mut self, value: u8) {
         self.oam[self.oam_addr as usize] = value;
+        // v2.3.3 "Lucid" — every byte of the burst is attributed to the ONE
+        // `STA $4014` that triggered it (the LATCHED context, not the live one:
+        // the burst steals cycles from the instructions AFTER the trigger, so
+        // the live context names the halted instruction rather than the cause).
+        // 256 bytes genuinely share one cause, and reporting anything else would
+        // invent a history the program does not have.
+        #[cfg(feature = "debug-hooks")]
+        if let Some(attrib) = self.write_attrib.as_mut() {
+            attrib.record_oam(
+                self.oam_addr,
+                self.dma_attrib_pc,
+                self.dma_attrib_cycle,
+                value,
+            );
+        }
         // v2.1.4 F2.3 — OAM-decay write hook (no-op at the default): the DMA byte
         // recharges the written row's DRAM cells, so refresh its timestamp. Mesen2
         // routes DMA writes through the same `WriteSpriteRam` refresh.
@@ -2410,6 +2541,14 @@ impl Ppu {
                     self.oam_addr = self.oam_addr.wrapping_add(4) & 0xFC;
                 } else {
                     self.oam[self.oam_addr as usize] = value;
+                    // v2.3.3 "Lucid" — attribute only the branch that actually
+                    // stores. The during-rendering branch above is BLOCKED by the
+                    // hardware quirk, so recording it would attribute a byte to an
+                    // instruction that demonstrably did not write it.
+                    #[cfg(feature = "debug-hooks")]
+                    if let Some(attrib) = self.write_attrib.as_mut() {
+                        attrib.record_oam(self.oam_addr, self.attrib_pc, self.attrib_cycle, value);
+                    }
                     // v2.1.4 F2.3 — OAM-decay write hook (no-op at the default):
                     // a direct `$2004` write refreshes the written row.
                     self.oam_decay_on_write(self.oam_addr);
@@ -2637,6 +2776,15 @@ impl Ppu {
             if !bus.write_nametable(nt_addr, value) {
                 let off = bus.nametable_address(nt_addr) as usize;
                 self.ciram[off & 0x07FF] = value;
+                // v2.3.3 "Lucid" — attribute the byte to the instruction that
+                // stored it. Recorded here rather than at the CPU-write boundary
+                // because only this site knows the resolved physical offset: the
+                // caller wrote `$2007`, and `v` plus the mapper's mirroring is
+                // what turned that into `off`.
+                #[cfg(feature = "debug-hooks")]
+                if let Some(attrib) = self.write_attrib.as_mut() {
+                    attrib.record_ciram(off, self.attrib_pc, self.attrib_cycle, value);
+                }
             }
         }
     }
@@ -2655,10 +2803,23 @@ impl Ppu {
         }
     }
 
-    const fn write_palette(&mut self, addr: u16, value: u8) {
+    // Const-promotable only when `debug-hooks` is off (the attribution branch
+    // below dereferences a `Box`, which is not const). Allowing the lint keeps
+    // ONE definition instead of two cfg'd copies of the same three lines.
+    #[allow(clippy::missing_const_for_fn)]
+    fn write_palette(&mut self, addr: u16, value: u8) {
         let idx = palette_index(addr);
         // Palette is 6-bit storage.
         self.palette_ram[idx] = value & 0x3F;
+        // v2.3.3 "Lucid" — record the MASKED value, so the attribution matches
+        // what a later read returns rather than what the CPU put on the bus.
+        // `idx` is post-mirroring, so an attribution looked up through `$3F10`
+        // and through `$3F00` resolves to the same record — correct, since they
+        // are the same byte.
+        #[cfg(feature = "debug-hooks")]
+        if let Some(attrib) = self.write_attrib.as_mut() {
+            attrib.record_palette(idx, self.attrib_pc, self.attrib_cycle, value & 0x3F);
+        }
     }
 
     /// Tick exactly one dot.

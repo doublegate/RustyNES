@@ -14,6 +14,41 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Pixel provenance, phase 1 — per-byte write attribution** (`debug-hooks`,
+  default off). Every byte of CIRAM, OAM, and palette RAM now remembers the
+  **program counter and CPU cycle of the instruction that last wrote it** — the
+  edge that lets the forthcoming provenance panel walk from a pixel on screen
+  back to the code that produced it. Nothing in RustyNES recorded this before:
+  the Trace Logger has the PC but no effect, the Event Viewer has the write and
+  its PPU position but not the PC or the resolved destination, and the memory
+  access counter has a cycle stamp but no PC.
+  - Recording is **split across the bus/PPU boundary**, because neither side
+    knows enough alone: the bus has the program counter and the PPU has the
+    effective destination (a `STA $2007` lands in a nametable or in palette RAM
+    depending on the PPU's internal `v`). `Nes::run_frame` pushes the executing
+    instruction's context down once per instruction, inside the block that
+    already performs the breakpoint check — so no new `CpuBus` hook was needed
+    and `rustynes-cpu` is untouched.
+  - **An OAM DMA burst is attributed to its trigger, not its victim.**
+    `STA $4014` only arms the transfer; its 513/514 cycles are stolen from the
+    instructions that follow, so the live context would name whichever
+    instruction was being halted — true about the timing, wrong about the cause.
+    The bus latches the triggering instruction, and all 256 bytes name it.
+  - Attribution is **invalidated on power-cycle and on both save-state restore
+    paths**: a restored state's bytes were not written by anything this session
+    ran, so the honest answer is "no record" rather than a PC from a timeline
+    that no longer exists.
+  - CHR writes are deliberately **not** attributed (mapper-owned, so a byte
+    offset is not a stable identity across a bank switch), nor is the
+    `$2004`-during-rendering write the hardware discards.
+  - Output-only and lazily allocated: unarmed it costs one `Option` test per PPU
+    memory write, armed it costs ~37 KiB. Framebuffer, audio, and cycle counts
+    are bit-identical either way, and the default build is unchanged —
+    **AccuracyCoin holds at exactly 141/141** with nestest 0-diff.
+  - Spec: `docs/pixel-provenance.md`.
+
 ## [2.3.1] - 2026-08-06 - "Plumb Line" (measurement apparatus + ten measured rejections)
 
 ### Performance

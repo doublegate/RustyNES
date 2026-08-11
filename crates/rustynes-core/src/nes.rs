@@ -498,6 +498,10 @@ impl Nes {
         // Cold-boot path: see comment in `from_rom`.
         self.cpu = Cpu::power_on();
         self.cpu.reset(&mut self.bus);
+        // v2.3.3 "Lucid" — a cold boot ends the history the attribution store
+        // describes. Keep the store armed (the user asked for it) but empty.
+        #[cfg(feature = "debug-hooks")]
+        self.bus.ppu.clear_write_attribution();
     }
 
     /// Run until the PPU finishes a frame. Returns the framebuffer slice.
@@ -580,6 +584,21 @@ impl Nes {
                 if self.exec_logging {
                     self.exec_log.push(self.cpu.pc);
                 }
+                // v2.3.3 "Lucid" — push this instruction's `(pc, cycle)` down to
+                // the PPU so any CIRAM / OAM / palette byte it goes on to write
+                // is stamped with the instruction that caused it. Done here, in
+                // the existing per-instruction debug block, rather than through a
+                // new `CpuBus` hook: `run_frame` already holds both halves, so
+                // this costs two stores and leaves `rustynes-cpu` untouched.
+                //
+                // Unconditional rather than gated on the store being armed: the
+                // "is it armed?" question lives behind a `Box` on the other side
+                // of a crate boundary, so testing it would cost about as much as
+                // the two stores it would skip, in a block that already runs a
+                // breakpoint scan per instruction.
+                self.bus
+                    .ppu
+                    .set_attrib_context(self.cpu.pc, self.cpu.cycles);
                 // T-110-C2 — cycle trace: record the about-to-execute
                 // instruction's CPU state (ring-capped, oldest dropped).
                 if self.trace_enabled {
@@ -627,6 +646,14 @@ impl Nes {
     pub fn step_instruction(&mut self) -> u8 {
         #[cfg(feature = "cpu-boot-trace")]
         self.cpu_boot_trace_record();
+        // v2.3.3 "Lucid" — mirror `run_frame`'s write-attribution context push,
+        // so single-stepping through a `$2007` store in the debugger attributes
+        // the byte to the stepped instruction and not to whatever `run_frame`
+        // last left latched.
+        #[cfg(feature = "debug-hooks")]
+        self.bus
+            .ppu
+            .set_attrib_context(self.cpu.pc, self.cpu.cycles);
         self.cpu.step(&mut self.bus)
     }
 
@@ -778,6 +805,44 @@ impl Nes {
     #[allow(clippy::missing_const_for_fn)] // slice deref is not const.
     pub fn events(&self) -> &[crate::bus::EventRec] {
         self.bus.events()
+    }
+
+    /// v2.3.3 "Lucid" — arm or disarm per-byte **write attribution** for the
+    /// PPU's own memories (CIRAM, OAM, palette RAM).
+    ///
+    /// While armed, every write to those memories is stamped with the program
+    /// counter and CPU cycle of the instruction that performed it, which is the
+    /// edge the pixel-provenance panel walks to answer "which instruction put
+    /// this byte here?". The Event Viewer records the CPU-side `$2000-$3FFF`
+    /// write and the memory-access counter records a cycle stamp, but neither
+    /// carries the PC *and* the resolved destination — see
+    /// [`rustynes_ppu::provenance`] for why the two halves are recorded on
+    /// opposite sides of the bus.
+    ///
+    /// Default off. Arming allocates
+    /// [`rustynes_ppu::WriteAttribution::HEAP_BYTES`]; disarming frees it.
+    /// Output-only, so emulation is bit-identical either way.
+    #[cfg(feature = "debug-hooks")]
+    pub fn set_write_attribution(&mut self, enabled: bool) {
+        self.bus.ppu.set_write_attribution(enabled);
+    }
+
+    /// The write-attribution store, or `None` when not armed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn write_attribution(&self) -> Option<&rustynes_ppu::WriteAttribution> {
+        self.bus.ppu.write_attribution()
+    }
+
+    /// Forget every recorded write attribution, keeping the store armed.
+    ///
+    /// Call this after a save-state restore or a power-cycle: the restored bytes
+    /// were not written by any instruction this session executed, and reporting
+    /// the PCs that wrote those offsets before the restore would be a
+    /// confidently wrong answer rather than an absent one.
+    #[cfg(feature = "debug-hooks")]
+    pub fn clear_write_attribution(&mut self) {
+        self.bus.ppu.clear_write_attribution();
     }
 
     /// v1.1.0 beta.3 (T-110-E2) — start/stop the Lua bus-access log. While on,
@@ -1828,6 +1893,16 @@ impl Nes {
         if clear_rewind && let Some(r) = &mut self.rewind {
             r.clear();
         }
+        // v2.3.3 "Lucid" — and it invalidates write attribution for the same
+        // reason, on BOTH restore paths. The restored bytes were not written by
+        // any instruction this session executed, so the PCs recorded against
+        // those offsets describe a timeline that no longer exists. Reporting
+        // them would be a confidently wrong answer; reporting nothing until the
+        // program writes again is the honest one. (Under run-ahead this fires
+        // once per displayed frame, leaving exactly the visible frame's writes —
+        // which is the timeline the user is looking at.)
+        #[cfg(feature = "debug-hooks")]
+        self.bus.ppu.clear_write_attribution();
         Ok(())
     }
 
@@ -3188,6 +3263,189 @@ mod tests {
         assert!(nes.events().len() <= 20_000, "bounded by EVENT_CAP");
         nes.set_event_logging(false);
         assert!(!nes.event_logging());
+    }
+
+    /// v2.3.3 "Lucid" Phase 1 — the write-attribution oracle.
+    ///
+    /// The claim under test is the whole point of the feature: for a byte in the
+    /// PPU's own memory, the store reports the PC of the instruction that put it
+    /// there. The ROM is written so the answer is known independently — a single
+    /// `STA $2007` at a fixed address — and the expectation is pinned to that
+    /// address rather than to whatever the implementation happens to record.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn write_attribution_names_the_instruction_that_wrote_a_nametable_byte() {
+        // NROM at $C000:
+        //   C000: A9 21     LDA #$21        ; VRAM addr hi
+        //   C002: 8D 06 20  STA $2006
+        //   C005: A9 08     LDA #$08        ; VRAM addr lo -> $2108
+        //   C007: 8D 06 20  STA $2006
+        //   C00A: A9 5A     LDA #$5A        ; the byte
+        //   C00C: 8D 07 20  STA $2007       <-- the write under test
+        //   C00F: 4C 00 C0  JMP $C000       ; loop the whole sequence
+        //
+        // The sequence LOOPS rather than spinning after one pass, and the test
+        // runs several frames, because the PPU ignores `$2000/$2001/$2005/$2006`
+        // writes for ~29,658 CPU cycles after reset (the documented post-reset
+        // mask window, `PpuRegion::post_reset_mask_cycles`). A single pass at
+        // power-on would have its two `$2006` stores dropped, leaving `v == 0`,
+        // and the `$2007` write would land in CHR space instead of a nametable.
+        const STA_2007_PC: u16 = 0xC00C;
+        const VRAM_ADDR: u16 = 0x2108;
+        const VALUE: u8 = 0x5A;
+
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1; // 1x16KB PRG
+        bytes[5] = 0; // no CHR bank appended
+        let prg = &mut bytes[16..16 + 16 * 1024];
+        prg[0..18].copy_from_slice(&[
+            0xA9, 0x21, // LDA #$21
+            0x8D, 0x06, 0x20, // STA $2006
+            0xA9, 0x08, // LDA #$08
+            0x8D, 0x06, 0x20, // STA $2006
+            0xA9, VALUE, // LDA #$5A
+            0x8D, 0x07, 0x20, // STA $2007
+            0x4C, 0x00, 0xC0, // JMP $C000
+        ]);
+        let len = 16 * 1024;
+        prg[len - 4] = 0x00; // reset vector lo
+        prg[len - 3] = 0xC0; // reset vector hi -> $C000
+
+        let mut nes = Nes::from_rom(&bytes).expect("parse");
+        assert!(
+            nes.write_attribution().is_none(),
+            "attribution is off by default"
+        );
+        nes.set_write_attribution(true);
+        // Three frames: one to clear the post-reset write-mask window, the rest
+        // so the loop's `$2006`/`$2007` sequence lands for real.
+        for _ in 0..3 {
+            let _ = nes.run_frame();
+        }
+
+        // Vertical mirroring is the header default here, so $2108 lands at
+        // CIRAM offset $0108. Resolve it the same way the PPU did rather than
+        // hardcoding the mapping, so the test survives a mirroring change.
+        let off = (VRAM_ADDR & 0x07FF) as usize;
+        let attrib = nes.write_attribution().expect("armed");
+        let rec = attrib
+            .ciram(off)
+            .expect("the STA $2007 wrote this CIRAM byte");
+        assert_eq!(
+            rec.pc, STA_2007_PC,
+            "the byte is attributed to the STA $2007, not to the $2006 stores \
+             that set the address or to the LDA that loaded the value"
+        );
+        assert_eq!(rec.value, VALUE);
+        // The byte really is there — attribution must describe a write that
+        // actually happened, not a write the tap merely observed being issued.
+        assert_eq!(nes.vram()[off], VALUE);
+        // And the cycle stamp is a real one from this run.
+        assert!(rec.cycle > 0, "cycle stamp taken from the executing CPU");
+
+        // An untouched byte reports nothing rather than a plausible-looking zero.
+        assert_eq!(attrib.ciram(off ^ 0x0400), None);
+
+        // Disarming frees the store; re-arming starts clean.
+        nes.set_write_attribution(false);
+        assert!(nes.write_attribution().is_none());
+    }
+
+    /// An OAM DMA burst moves 256 bytes but has exactly one cause. The store
+    /// must say so — attributing all 256 to the `STA $4014` that triggered them
+    /// rather than inventing a per-byte PC that no instruction ever had.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn oam_dma_attributes_all_256_bytes_to_the_triggering_store() {
+        // NROM at $C000:
+        //   C000: A9 02     LDA #$02
+        //   C002: 8D 14 40  STA $4014   <-- one instruction, 256 OAM bytes
+        //   C005: 4C 00 C0  JMP $C000
+        //
+        // `$4014` is not subject to the PPU's post-reset write-mask window, so
+        // this lands on the first pass; the loop just keeps it landing.
+        const STA_4014_PC: u16 = 0xC002;
+
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1;
+        bytes[5] = 0;
+        let prg = &mut bytes[16..16 + 16 * 1024];
+        prg[0..8].copy_from_slice(&[
+            0xA9, 0x02, // LDA #$02
+            0x8D, 0x14, 0x40, // STA $4014
+            0x4C, 0x00, 0xC0, // JMP $C000
+        ]);
+        let len = 16 * 1024;
+        prg[len - 4] = 0x00;
+        prg[len - 3] = 0xC0;
+
+        let mut nes = Nes::from_rom(&bytes).expect("parse");
+        // The first `run_frame` after power-on returns on the already-latched
+        // frame-complete flag, executing almost no instructions — the same
+        // warm-up the event-viewer tests need. Arm AFTER it, so the assertion
+        // below is about a frame that actually ran code.
+        let _ = nes.run_frame();
+        nes.set_write_attribution(true);
+        let _ = nes.run_frame();
+
+        let attrib = nes.write_attribution().expect("armed");
+        for idx in 0..=u8::MAX {
+            let rec = attrib
+                .oam(idx)
+                .unwrap_or_else(|| panic!("OAM byte {idx} unattributed after a full DMA burst"));
+            assert_eq!(
+                rec.pc, STA_4014_PC,
+                "OAM byte {idx} must name the STA $4014, not a synthesized PC"
+            );
+        }
+    }
+
+    /// A save-state restore must invalidate attribution: the restored bytes were
+    /// not written by anything this session ran, so the honest answer is "no
+    /// record", not the PC that wrote that offset on the abandoned timeline.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn write_attribution_is_invalidated_by_restore() {
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1;
+        bytes[5] = 0;
+        let prg = &mut bytes[16..16 + 16 * 1024];
+        // Same looping `$2006`/`$2007` ROM as the test above; see its comment for
+        // why it loops and why three frames are needed.
+        prg[0..18].copy_from_slice(&[
+            0xA9, 0x21, 0x8D, 0x06, 0x20, 0xA9, 0x08, 0x8D, 0x06, 0x20, 0xA9, 0x5A, 0x8D, 0x07,
+            0x20, 0x4C, 0x00, 0xC0,
+        ]);
+        let len = 16 * 1024;
+        prg[len - 4] = 0x00;
+        prg[len - 3] = 0xC0;
+
+        let mut nes = Nes::from_rom(&bytes).expect("parse");
+        nes.set_write_attribution(true);
+        for _ in 0..3 {
+            let _ = nes.run_frame();
+        }
+        let off = 0x0108usize;
+        assert!(
+            nes.write_attribution().and_then(|a| a.ciram(off)).is_some(),
+            "precondition: the write was attributed"
+        );
+
+        let snap = nes.snapshot();
+        nes.restore(&snap).expect("round-trip");
+        assert!(
+            nes.write_attribution().is_some(),
+            "the store stays armed across a restore"
+        );
+        assert_eq!(
+            nes.write_attribution().and_then(|a| a.ciram(off)),
+            None,
+            "but its records are dropped — they describe a timeline that the \
+             restore replaced"
+        );
     }
 
     #[cfg(feature = "debug-hooks")]
