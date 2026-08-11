@@ -75,6 +75,22 @@ cycle-accurate core later replaced.
   - Unarmed cost in `emit_pixel` is one predicted `bool` branch — same shape as
     the bus's existing `event_logging` flag. **AccuracyCoin holds at exactly
     141/141**, nestest 0-diff.
+- **Pixel provenance, phase 3 — the inspector panel.** New **Tools → Pixel
+  Provenance**: pin a screen pixel and read its whole causal chain — the dot and
+  scanline that emitted it, which layer won, the palette entry and the
+  instruction that wrote it, the background tile's nametable / attribute /
+  pattern addresses with their CIRAM offsets and writing instructions, and the
+  winning sprite's slot, priority, and OAM attribution.
+  - Detachable into its own OS window through the shared v2.3.0
+    `detachable_window` helper. Read-only over the emulator; its only side effect
+    is the two arming checkboxes, both default off and both determinism-neutral.
+  - PC → source-line resolution reuses the existing `.dbg` source map when one is
+    loaded. `Nes::ciram_offset_for_nametable_addr` resolves a nametable address
+    to the offset attribution is keyed on, sharing its mirroring resolution with
+    the PPU's own fetch path so a per-game mirroring override cannot make the two
+    disagree.
+  - Frontend-only, so the deterministic core is untouched: **AccuracyCoin holds
+    at exactly 141/141**, nestest 0-diff.
 
 ## [2.3.1] - 2026-08-06 - "Plumb Line" (measurement apparatus + ten measured rejections)
 

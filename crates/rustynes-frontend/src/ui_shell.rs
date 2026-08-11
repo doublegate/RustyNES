@@ -1337,6 +1337,24 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::RomInfo));
                         ui.close();
                     }
+                    // (H1) v2.3.3 "Lucid" — the pixel provenance inspector: the
+                    // causal chain from a screen pixel back to the tile, the
+                    // palette entry, and the instruction that wrote them. Needs a
+                    // loaded ROM to have any pixels to explain. NOT gated on the
+                    // frontend's `debug-hooks` alias: the frontend always pulls
+                    // `rustynes-core` with `debug-hooks` on (see its Cargo.toml),
+                    // so gating on the alias — which is off by default — would
+                    // ship the panel permanently unreachable.
+                    if ui
+                        .add_enabled(
+                            rom,
+                            egui::Button::new(ic(glyph::MAGNIFYING_GLASS_PLUS, "Pixel Provenance")),
+                        )
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::PixelProvenance));
+                        ui.close();
+                    }
                     // v1.3.0 menu reorg — HD-pack loader (v1.2.0 C3), folded in
                     // from the former standalone "Mod" menu as a Tools submenu;
                     // native + `hd-pack`-feature-gated. (H1) Load/unload needs a

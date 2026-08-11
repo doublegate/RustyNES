@@ -4131,10 +4131,36 @@ impl PpuBus for PpuBusAdapter<'_> {
         self.mapper.notify_vblank();
     }
     fn nametable_address(&self, addr: u16) -> u16 {
-        self.nt_override.map_or_else(
-            || self.mapper.nametable_address(addr),
-            |m| override_nt_addr(m, addr),
-        )
+        resolve_nt_addr(self.nt_override, &*self.mapper, addr)
+    }
+}
+
+/// Resolve a nametable address to a physical CIRAM offset, honouring the
+/// per-game mirroring override when one is set.
+///
+/// Factored out of [`PpuBusAdapter::nametable_address`] (v2.3.3 "Lucid") so
+/// [`LockstepBus::resolve_nametable_address`] can answer the same question
+/// without constructing an adapter. One definition, so the fetch path and the
+/// provenance panel cannot drift apart on a board with an override.
+fn resolve_nt_addr(
+    nt_override: Option<rustynes_mappers::Mirroring>,
+    mapper: &dyn Mapper,
+    addr: u16,
+) -> u16 {
+    nt_override.map_or_else(
+        || mapper.nametable_address(addr),
+        |m| override_nt_addr(m, addr),
+    )
+}
+
+impl LockstepBus {
+    /// Read-only nametable-address resolution for the pixel-provenance panel.
+    ///
+    /// Shares [`resolve_nt_addr`] with the PPU's own fetch path, so a board with
+    /// a per-game mirroring override reports the offset its fetches really use.
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) fn resolve_nametable_address(&self, addr: u16) -> u16 {
+        resolve_nt_addr(self.nt_mirroring_override, &*self.mapper, addr)
     }
 }
 

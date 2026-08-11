@@ -1,8 +1,8 @@
 # Pixel provenance
 
-> **Status:** Phases 1 (write attribution) and 2 (per-pixel provenance)
-> implemented. Phases 3-4 are specified here and land in v2.3.3 "Lucid"; this
-> document is the spec, so it is updated in the same change as the code it
+> **Status:** Phases 1-3 implemented (write attribution, per-pixel provenance,
+> the inspector panel). Phase 4 is specified here and lands in v2.3.3 "Lucid";
+> this document is the spec, so it is updated in the same change as the code it
 > describes.
 
 ## What the feature answers
@@ -205,21 +205,61 @@ untouched by the sprite-0-hit insert, so hoisting it is behaviour-preserving.
   `hd-pack` path already collects up to four covering sprites for its own
   conditions; folding that in is a Phase 3 concern if the panel wants it.
 
-## Phase 3 — the panel (planned)
+## Phase 3 — the inspector panel (implemented)
 
-`crates/rustynes-frontend/src/debugger/provenance_panel.rs`, assembled from parts
-that already exist rather than rebuilt:
+`crates/rustynes-frontend/src/debugger/provenance_panel.rs`, reached from
+**Tools → Pixel Provenance**, registered through the shared `detachable_window`
+helper so it inherits v2.3.0's multi-viewport pop-out.
 
-| reused for | from |
-|---|---|
-| per-pixel picking and hover readout | `debugger/hd_pixel_panel.rs` |
-| scanline x dot timeline rendering | `debugger/event_panel.rs` |
-| PC to source-line resolution | `debugger/source_map.rs` |
-| call context for the writing PC | `debugger/callstack.rs` |
-| expression and formatting helpers | `debugger/expr.rs` |
+The panel pins a screen coordinate and reports, in four sections:
 
-Registered through the shared `detachable_window` helper, so it inherits v2.3.0's
-multi-viewport pop-out.
+1. **Emitted** — scanline, dot, screen X, the winning layer, the palette colour
+   swatch, and the grayscale/emphasis bits in effect.
+2. **Palette** — the address pre-mirroring (so `$3F10` shows as `$3F10`, the
+   address the program used), the entry index, and the instruction that last
+   wrote it.
+3. **Background tile** — nametable and attribute addresses with their resolved
+   CIRAM offsets and the instructions that wrote those bytes, the palette group,
+   the pattern bits, fine scroll, and the pattern address. Shown for sprite
+   pixels too, since the background is what the sprite won priority *over*.
+4. **Sprite** — slot, priority, pattern bits and address, the sprite-0 flag, and
+   the instruction that wrote the slot's OAM bytes.
+
+Arming is in the panel: two checkboxes for the provenance frame and the
+attribution store, both default off. This is the panel's only side effect on the
+emulator, and both stores are determinism-neutral.
+
+### Reuse, and one thing deliberately not reused
+
+The coordinate-picker shape follows `hd_pixel_panel.rs`; PC → source-line
+resolution reuses `source_map.rs` (a bonus row, present only when the user has
+loaded a `.dbg`). The read-only-over-`&Nes` wiring — `show_*` flag, `*_ui` state,
+`ToolPanel` variant, `any_nes_tool_open` — follows `rom_info_panel.rs`.
+
+`event_panel.rs`'s scanline × dot timeline was **not** folded in. The record
+already carries its own scanline/dot, and a second timeline widget showing one
+point would be decoration rather than information.
+
+### Nametable address → CIRAM offset
+
+`Nes::ciram_offset_for_nametable_addr` resolves a PPU-space address to the offset
+`WriteAttribution::ciram` is keyed on, sharing `resolve_nt_addr` with the PPU's
+own fetch path so a board with a per-game mirroring override reports the offset
+its fetches really use. On boards with mapper-supplied nametable memory (MMC5
+ExRAM, 4-screen) some writes never reach internal CIRAM; the function still
+returns the standard-mirroring offset, because the only way to know whether the
+mapper absorbed a particular write is to *perform* one — `write_nametable` takes
+`&mut self` and has side effects. A missing attribution on such a board means
+"the mapper owns this byte", and the panel says so rather than showing nothing.
+
+### One wiring trap
+
+The panel is **not** gated on the frontend's `debug-hooks` feature. That feature
+is an alias: `rustynes-frontend` always pulls `rustynes-core` with `debug-hooks`
+on, so the core API is always present, but the alias itself is off by default.
+Gating on it would have shipped the panel permanently unreachable. Caught by the
+menu entry compiling against a nonexistent icon glyph without erroring — the
+whole block was being `cfg`'d out.
 
 ## Phase 4 — deterministic replay attestation (planned)
 

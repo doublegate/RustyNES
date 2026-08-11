@@ -872,6 +872,38 @@ impl Nes {
         self.bus.ppu.pixel_provenance()
     }
 
+    /// Resolve a PPU-space nametable address (`$2000-$3EFF`) to the physical
+    /// internal-CIRAM offset it reads, applying the mapper's mirroring and any
+    /// per-game mirroring override.
+    ///
+    /// This is what turns a [`rustynes_ppu::PixelProvenance::nt_addr`] into the
+    /// key [`rustynes_ppu::WriteAttribution::ciram`] is indexed by, so the
+    /// provenance panel can go from "this pixel's tile came from `$2002`" to
+    /// "and instruction X wrote that byte" without reimplementing mirroring.
+    ///
+    /// Returns `None` for an address outside the nametable window.
+    ///
+    /// # Boards with mapper-supplied nametable memory
+    ///
+    /// On `MMC5` (`ExRAM` nametables) and 4-screen boards, some nametable writes are
+    /// absorbed by the mapper via `PpuBus::write_nametable` and never reach
+    /// internal CIRAM. This function still returns the CIRAM offset the standard
+    /// mirroring would select, because the only way to know whether the mapper
+    /// absorbed a particular write is to *perform* one — `write_nametable` takes
+    /// `&mut self` and has side effects, and a read-only query has no business
+    /// inventing one. Callers should treat a missing attribution on such a board
+    /// as "the mapper owns this byte", which is what it means.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn ciram_offset_for_nametable_addr(&self, addr: u16) -> Option<usize> {
+        let a = addr & 0x3FFF;
+        if !(0x2000..0x3F00).contains(&a) {
+            return None;
+        }
+        let nt_addr = if a >= 0x3000 { a - 0x1000 } else { a };
+        Some((self.bus.resolve_nametable_address(nt_addr) as usize) & 0x07FF)
+    }
+
     /// v1.1.0 beta.3 (T-110-E2) — start/stop the Lua bus-access log. While on,
     /// the bus records this frame's CPU reads + writes (with values); the log is
     /// reset at each [`Self::run_frame`]. Default off; output-only. Enabled by
