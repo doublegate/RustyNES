@@ -1,9 +1,8 @@
 # Pixel provenance
 
-> **Status:** Phases 1-3 implemented (write attribution, per-pixel provenance,
-> the inspector panel). Phase 4 is specified here and lands in v2.3.3 "Lucid";
-> this document is the spec, so it is updated in the same change as the code it
-> describes.
+> **Status:** all four phases implemented (write attribution, per-pixel
+> provenance, the inspector panel, replay attestation). This document is the
+> spec, so it is updated in the same change as the code it describes.
 
 ## What the feature answers
 
@@ -261,14 +260,81 @@ Gating on it would have shipped the panel permanently unreachable. Caught by the
 menu entry compiling against a nonexistent icon glyph without erroring — the
 whole block was being `cfg`'d out.
 
-## Phase 4 — deterministic replay attestation (planned)
+## Phase 4 — deterministic replay attestation (implemented)
 
-Separate feature, same release, and it reuses the determinism contract rather
-than the provenance store. `.rnm` movies (`crates/rustynes-core/src/movie.rs`)
-already carry `rom_sha256`, region, start state, the input stream, and a re-record
-count at `MOVIE_FORMAT_VERSION = 2`. Phase 4 adds an **additive v3 tail** holding
-a rolling hash of per-frame core state, plus a `rustynes --verify <run>` path that
-replays and compares. A v2 `.rnm` must still load unchanged.
+A separate feature in the same release. It reuses the determinism contract rather
+than the provenance store: because the core re-derives every pixel from the same
+ROM plus the same inputs, a recorded hash of a run's output is something anyone
+else can independently re-derive.
+
+```console
+$ rustynes verify run.rnm --rom game.nes
+Verifying run.rnm against game.nes
+  150 frames to replay...
+VERIFIED: 150 frames reproduced exactly (hash 23248f1a4b49f4e6).
+```
+
+Exit codes are distinct on purpose: **0** verified, **1** mismatch or error,
+**3** the movie carries no attestation. A movie that makes no claim has not
+failed, and collapsing the two would leave a script unable to tell them apart.
+
+### No format version bump
+
+The plan called for a "v3 tail". It turned out not to be needed: `.rnm` already
+had a precedent for additive trailing fields — `rerecord_count` is read with
+`r.u32().unwrap_or(0)`, so a reader that stops earlier simply ignores it. The
+attestation is appended the same way behind an `ATTESTATION_MAGIC` marker, so
+`MOVIE_FORMAT_VERSION` stays at 2 and every existing movie round-trips unchanged.
+A pre-v2.3.3 reader parses an attested movie as a plain one; the test
+`attested_movie_stays_readable_as_a_plain_movie` pins that by truncating the tail
+and reparsing.
+
+### What is attested, and the mistake that shaped it
+
+Per frame: **the input applied, and the framebuffer it produced**, folded into
+one rolling hash, with a checkpoint every
+`ATTESTATION_CHECKPOINT_INTERVAL` (64) frames so a mismatch reports a 64-frame
+window rather than just a verdict.
+
+The first implementation hashed the framebuffer alone. An end-to-end tamper test
+then flipped a button bit in a movie recorded against a test ROM that never reads
+the controller — and `rustynes verify` confirmed the tampered movie as genuine.
+It was right to: the video output really was identical. But it made the wrong
+claim. Output alone does not pin the input stream, and a ROM that ignores input
+(a test ROM, an attract-mode demo, a cutscene) makes an output-only hash useless
+as evidence. Folding the input in makes the claim the honest one: *these inputs,
+applied to this ROM, produced this output.*
+`flipped_input_fails_even_when_the_rom_ignores_input` keeps it folded in.
+
+**Hashing the core snapshot instead** would be strictly stronger at detecting
+divergence, and was rejected: the snapshot schema is versioned and bumps between
+releases (`PPU_SNAPSHOT_VERSION` has reached 8), so every bump would silently
+invalidate every previously-recorded attestation. A 256x240 RGBA framebuffer is
+stable for as long as the NES is the NES, and an attestation is only worth
+recording if it can still be checked years later.
+
+**Audio is not covered.** Samples are drained by the host as they are produced,
+so the core cannot see a whole run's audio without the frontend cooperating.
+Saying so is better than implying coverage that is not there.
+
+### Recording, and the run-ahead interaction
+
+`MovieRecorder::enable_attestation()` arms it; `attest_frame()` folds in each
+completed frame. The frontend arms it automatically when recording starts —
+**unless run-ahead is on**, in which case it says so and records a plain movie.
+
+Run-ahead presents the frame *N* ahead of the persistent timeline, while a
+verification replay has no run-ahead and re-derives persistent frames. Attesting
+the presented image would record a hash nobody can reproduce. `emu.rs` therefore
+folds in frames only on the non-run-ahead path, and if run-ahead is toggled on
+mid-recording the attestation's frame count falls short of the input stream's —
+which `Movie::deserialize` detects and drops the tail for. The failure mode is
+"no attestation", never "a wrong one".
+
+Two other paths deliberately produce no attestation: a **history-viewer export**
+(the rewind ring stores state, not the per-frame video an attestation hashes) and
+a **TAStudio export** (an edited input stream has no single continuous run whose
+output could honestly be described).
 
 ## Verification
 

@@ -874,6 +874,16 @@ impl EmuCore {
                 // presented frame (uniform with the run-ahead path above).
                 #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
                 Self::capture_hd_chr(&mut self.hd_chr_snapshot, self.hd_capture, nes);
+                // v2.3.3 "Lucid" — fold this frame's output into the movie
+                // attestation. Deliberately ONLY on this path: the run-ahead
+                // branch above presents the frame N ahead of the persistent
+                // timeline, and a verification replay (which has no run-ahead)
+                // re-derives persistent frames — so attesting the presented image
+                // would record a hash nobody can reproduce. Skipping those frames
+                // leaves the attestation short, which `Movie::deserialize` detects
+                // and discards the tail for: the failure mode is "no attestation",
+                // never "a wrong one".
+                self.movie.after_frame(&self.present_fb);
 
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(audio) = sinks.audio.as_mut() {

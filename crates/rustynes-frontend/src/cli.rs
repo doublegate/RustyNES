@@ -135,6 +135,27 @@ pub enum CliCommand {
         #[arg(value_name = "SHELL", value_enum)]
         shell: clap_complete::Shell,
     },
+
+    /// Replay an attested `.rnm` movie and check it reproduces its recorded run.
+    ///
+    /// v2.3.3 "Lucid". Headless: no window, no audio, no host input — just the
+    /// deterministic core replaying the movie's inputs and re-deriving the
+    /// rolling hash of its video output. Anyone with the ROM and the `.rnm` can
+    /// run this and get the same answer, which is what makes an attestation
+    /// evidence rather than a claim.
+    ///
+    /// Exit codes: 0 verified, 1 mismatch or error, 3 the movie carries no
+    /// attestation (a distinct outcome from "it failed").
+    Verify {
+        /// The `.rnm` movie to verify.
+        #[arg(value_name = "MOVIE", value_hint = clap::ValueHint::FilePath)]
+        movie: PathBuf,
+
+        /// The ROM the movie was recorded against. Its SHA-256 must match the
+        /// hash stored in the movie.
+        #[arg(long, value_name = "ROM", value_hint = clap::ValueHint::FilePath)]
+        rom: PathBuf,
+    },
 }
 
 /// Parse `std::env::args`, returning the typed [`Cli`].

@@ -56,7 +56,105 @@ fn main() -> ExitCode {
             print_completions(shell);
             ExitCode::SUCCESS
         }
+        Some(CliCommand::Verify { movie, rom }) => run_verify(&movie, &rom),
         None => run_emulator(cli.rom),
+    }
+}
+
+/// `rustynes verify <MOVIE> --rom <ROM>` — replay an attested movie and report
+/// whether it reproduces its recorded run.
+///
+/// v2.3.3 "Lucid". Entirely headless: it constructs a bare `Nes`, replays the
+/// movie's input stream, and re-derives the rolling hash of the video output. No
+/// window, no audio device, no host input — so the answer depends only on the
+/// ROM, the movie, and the deterministic core, which is the whole point.
+///
+/// Exit codes are distinct on purpose: 0 verified, 1 mismatch or I/O error, 3
+/// "no attestation recorded". A movie that makes no claim has not failed, and
+/// collapsing the two would make a script unable to tell them apart.
+#[cfg(not(target_arch = "wasm32"))]
+fn run_verify(movie_path: &std::path::Path, rom_path: &std::path::Path) -> ExitCode {
+    use rustynes_core::{Movie, Nes, VerifyOutcome};
+
+    let movie_bytes = match std::fs::read(movie_path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("rustynes: cannot read {}: {e}", movie_path.display());
+            return ExitCode::from(1);
+        }
+    };
+    let rom_bytes = match std::fs::read(rom_path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("rustynes: cannot read {}: {e}", rom_path.display());
+            return ExitCode::from(1);
+        }
+    };
+    let movie = match Movie::deserialize(&movie_bytes) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!(
+                "rustynes: {} is not a valid movie: {e}",
+                movie_path.display()
+            );
+            return ExitCode::from(1);
+        }
+    };
+    let mut nes = match Nes::from_rom(&rom_bytes) {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("rustynes: cannot load {}: {e}", rom_path.display());
+            return ExitCode::from(1);
+        }
+    };
+
+    // Surface the pre-v2.0.0-timebase caveat rather than silently verifying
+    // across an engine boundary where bit-identical replay was never proven.
+    if rustynes_core::recorded_before_v2_timebase(&movie_bytes).unwrap_or(false) {
+        eprintln!(
+            "rustynes: warning — this movie was recorded before the v2.0.0 \"Timebase\"              engine change; exact reproduction across that boundary is unverified."
+        );
+    }
+
+    println!(
+        "Verifying {} against {}",
+        movie_path.display(),
+        rom_path.display()
+    );
+    println!("  {} frames to replay...", movie.len());
+    match movie.verify(&mut nes) {
+        Ok(VerifyOutcome::Match { frames, hash }) => {
+            println!("VERIFIED: {frames} frames reproduced exactly (hash {hash:016x}).");
+            ExitCode::SUCCESS
+        }
+        Ok(VerifyOutcome::Mismatch {
+            frames,
+            expected,
+            got,
+            first_bad_checkpoint,
+        }) => {
+            println!("MISMATCH after {frames} frames.");
+            println!("  claimed hash  {expected:016x}");
+            println!("  replayed hash {got:016x}");
+            match first_bad_checkpoint {
+                Some(idx) => {
+                    let interval = rustynes_core::ATTESTATION_CHECKPOINT_INTERVAL;
+                    let end = (u64::from(idx) + 1) * u64::from(interval) - 1;
+                    let start = end.saturating_sub(u64::from(interval) - 1);
+                    println!("  first divergence in frames {start}..={end}");
+                }
+                None => println!("  every checkpoint matched; divergence is after the last one"),
+            }
+            ExitCode::from(1)
+        }
+        Ok(VerifyOutcome::NotAttested) => {
+            println!("NOT ATTESTED: this movie carries no attestation to verify against.");
+            ExitCode::from(3)
+        }
+        Err(e) => {
+            eprintln!("rustynes: {e}");
+            ExitCode::from(1)
+        }
     }
 }
 

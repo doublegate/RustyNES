@@ -2397,7 +2397,19 @@ impl App {
                 eprintln!("rustynes: movie record: no ROM loaded");
                 return;
             };
-            emu.movie.start_recording_power_on(nes);
+            // v2.3.3 "Lucid" — arm a replay attestation unless run-ahead is on.
+            // Run-ahead presents the frame N ahead of the persistent timeline
+            // while a verification replay re-derives persistent frames, so an
+            // attestation recorded under it could never verify. Refusing up
+            // front is clearer than emitting one that gets silently dropped.
+            let attest = self.config.input.run_ahead == 0;
+            emu.movie.start_recording_power_on(nes, attest);
+            if !attest {
+                eprintln!(
+                    "rustynes: movie attestation skipped (run-ahead is enabled; \
+                     set it to 0 to record a verifiable movie)"
+                );
+            }
             // Reset frame pacing so the power-cycle's first frame is due now.
             emu.next_frame_time = Some(Instant::now());
             eprintln!("rustynes: movie recording started (power-on)");
@@ -2490,7 +2502,9 @@ impl App {
             eprintln!("rustynes: movie branch: no ROM loaded");
             return;
         };
-        emu.movie.start_recording_branch(nes);
+        // v2.3.3 "Lucid": see the power-on path for the run-ahead caveat.
+        let attest = self.config.input.run_ahead == 0;
+        emu.movie.start_recording_branch(nes, attest);
         eprintln!("rustynes: movie branch — recording from current state");
     }
 
@@ -3305,7 +3319,19 @@ impl App {
                 crate::wasm_io::log("movie record: no ROM loaded");
                 return;
             };
-            emu.movie.start_recording_power_on(nes);
+            // v2.3.3 "Lucid" — arm a replay attestation unless run-ahead is on.
+            // Run-ahead presents the frame N ahead of the persistent timeline
+            // while a verification replay re-derives persistent frames, so an
+            // attestation recorded under it could never verify. Refusing up
+            // front is clearer than emitting one that gets silently dropped.
+            let attest = self.config.input.run_ahead == 0;
+            emu.movie.start_recording_power_on(nes, attest);
+            if !attest {
+                eprintln!(
+                    "rustynes: movie attestation skipped (run-ahead is enabled; \
+                     set it to 0 to record a verifiable movie)"
+                );
+            }
             emu.next_frame_time = Some(Instant::now());
             crate::wasm_io::log("movie recording started (power-on)");
         }
@@ -3342,7 +3368,9 @@ impl App {
             crate::wasm_io::log("movie branch: no ROM loaded");
             return;
         };
-        emu.movie.start_recording_branch(nes);
+        // v2.3.3 "Lucid": see the power-on path for the run-ahead caveat.
+        let attest = self.config.input.run_ahead == 0;
+        emu.movie.start_recording_branch(nes, attest);
         crate::wasm_io::log("movie branch — recording from current state");
     }
 

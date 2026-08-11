@@ -194,6 +194,10 @@ pub fn import_bk2(
         frames,
         // Carry the `.bk2` rerecordCount through (saturating into the `.rnm` u32).
         rerecord_count: u32::try_from(meta.rerecord_count).unwrap_or(u32::MAX),
+        // An imported movie carries no attestation: the source format has no such
+        // field, and synthesizing one here would attest a run this build never
+        // performed. `Movie::verify` reports `NotAttested` for it, which is true.
+        attestation: None,
     };
     Ok((movie, meta))
 }
@@ -555,6 +559,7 @@ mod tests {
             start: StartPoint::PowerOn,
             frames: varied_frames(),
             rerecord_count: 0,
+            attestation: None,
         };
         let opts = Bk2ExportOpts {
             rerecord_count: 99,
@@ -588,6 +593,7 @@ mod tests {
                 FrameInput::new(Buttons::UP, Buttons::empty()),
             ],
             rerecord_count: 0,
+            attestation: None,
         };
         let text = export_bk2(&movie, &Bk2ExportOpts::default()).expect("export");
         let lines: Vec<&str> = text
@@ -711,6 +717,7 @@ mod tests {
             start: StartPoint::PowerOn,
             frames: vec![FrameInput::new(Buttons::empty(), Buttons::empty())],
             rerecord_count: 0,
+            attestation: None,
         };
         let out = export_bk2(&pal_movie, &Bk2ExportOpts::default()).expect("export");
         assert!(out.header.lines().any(|l| l == "PAL 1"));
@@ -820,6 +827,7 @@ mod tests {
             start: StartPoint::SaveState(vec![1, 2, 3]),
             frames: vec![],
             rerecord_count: 0,
+            attestation: None,
         };
         assert!(matches!(
             export_bk2(&movie, &Bk2ExportOpts::default()),

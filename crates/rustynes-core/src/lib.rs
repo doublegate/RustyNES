@@ -72,8 +72,9 @@ pub use legacy_movie::{
     LegacyMeta, LegacyMovieError, import_fcm, import_fmv, import_mc2, import_vmv,
 };
 pub use movie::{
-    BYTES_PER_FRAME, FrameInput, MOVIE_FORMAT_VERSION, MOVIE_MAGIC, Movie, MovieError, MoviePlayer,
-    MovieRecorder, StartPoint, recorded_before_v2_timebase,
+    ATTESTATION_CHECKPOINT_INTERVAL, ATTESTATION_MAGIC, ATTESTATION_VERSION, Attestation,
+    AttestationBuilder, BYTES_PER_FRAME, FrameInput, MOVIE_FORMAT_VERSION, MOVIE_MAGIC, Movie,
+    MovieError, MoviePlayer, MovieRecorder, StartPoint, VerifyOutcome, recorded_before_v2_timebase,
 };
 #[cfg(feature = "debug-hooks")]
 pub use nes::TraceRec;

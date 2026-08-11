@@ -91,6 +91,34 @@ cycle-accurate core later replaced.
     disagree.
   - Frontend-only, so the deterministic core is untouched: **AccuracyCoin holds
     at exactly 141/141**, nestest 0-diff.
+- **Deterministic replay attestation** — a `.rnm` movie can now carry a rolling
+  hash of its run that anyone else can independently re-derive:
+  `rustynes verify <movie.rnm> --rom <game.nes>`. Because the core re-derives
+  every pixel from the same ROM and inputs, a third party can replay the movie
+  and prove it is genuine and unmodified.
+  - **No format-version bump.** `.rnm` already had a precedent for additive
+    trailing fields (`rerecord_count`), so the attestation is appended the same
+    way behind a marker. `MOVIE_FORMAT_VERSION` stays at 2, every existing movie
+    round-trips unchanged, and a pre-v2.3.3 reader parses an attested movie as a
+    plain one.
+  - **The hash covers the input applied AND the framebuffer it produced.** The
+    first implementation hashed video alone — and an end-to-end tamper test then
+    confirmed a movie whose input log had been edited, because the ROM under test
+    never reads the controller so the video was identical. Output alone does not
+    pin the input stream. Folding the input in makes the claim the honest one:
+    *these inputs, applied to this ROM, produced this output.*
+  - A checkpoint every 64 frames localizes a mismatch to a 64-frame window rather
+    than reporting only a verdict. Exit codes are distinct: 0 verified, 1
+    mismatch, 3 not attested — a movie that makes no claim has not failed.
+  - Hashing the core snapshot would detect more, and was rejected: the snapshot
+    schema is versioned and bumps between releases, which would silently
+    invalidate every previously-recorded attestation. Audio is not covered, and
+    the docs say so rather than implying it.
+  - Recording arms automatically **unless run-ahead is on** — run-ahead presents
+    a frame ahead of the persistent timeline, so an attestation recorded under it
+    could never verify. If it is toggled on mid-recording the frame counts
+    diverge and the tail is dropped at load: the failure mode is "no
+    attestation", never "a wrong one".
 
 ## [2.3.1] - 2026-08-06 - "Plumb Line" (measurement apparatus + ten measured rejections)
 

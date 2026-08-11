@@ -194,6 +194,9 @@ pub fn import_fcm(
         start: StartPoint::PowerOn,
         frames,
         rerecord_count: u32::try_from(rerecord_count).unwrap_or(u32::MAX),
+        // Imported: no attestation (the source format has no such field, and
+        // synthesizing one would attest a run this build never performed).
+        attestation: None,
     };
     Ok((
         movie,
@@ -409,6 +412,9 @@ pub fn import_fmv(
         start: StartPoint::PowerOn,
         frames,
         rerecord_count: u32::try_from(rerecord_count).unwrap_or(u32::MAX),
+        // Imported: no attestation (the source format has no such field, and
+        // synthesizing one would attest a run this build never performed).
+        attestation: None,
     };
     Ok((
         movie,
@@ -527,6 +533,9 @@ pub fn import_vmv(
         start: StartPoint::PowerOn,
         frames,
         rerecord_count: u32::try_from(rerecord_count).unwrap_or(u32::MAX),
+        // Imported: no attestation (the source format has no such field, and
+        // synthesizing one would attest a run this build never performed).
+        attestation: None,
     };
     Ok((
         movie,
