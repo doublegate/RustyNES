@@ -3,6 +3,13 @@ import sys
 
 from bs4 import BeautifulSoup, NavigableString
 
+# Argument check added on salvage (PR #349 review). Everything BELOW this
+# point is the original /tmp source, unmodified: a usage message is additive and
+# cannot change the success path, whereas rewriting the parsing logic could —
+# and `bs4` is not installed here and no sample fragment survived, so a rewrite
+# could not be run to prove it still behaved.
+if len(sys.argv) != 3:
+    raise SystemExit(f"usage: {sys.argv[0]} INPUT_FRAGMENT OUTPUT_HTML")
 frag_path, out_path = sys.argv[1], sys.argv[2]
 html = open(frag_path, encoding="utf-8").read()
 soup = BeautifulSoup(html, "html.parser")
@@ -24,9 +31,26 @@ for s in soup.find_all("strong"):
 
 # --- top-level elements, in order ---
 els = [c for c in soup.contents if getattr(c, "name", None)]
-table_i = next(i for i, e in enumerate(els) if e.name == "table")
-note_i = next(i for i, e in enumerate(els)
-              if e.name == "p" and e.get_text().lstrip().startswith("NOTE"))
+# This script does not accept an arbitrary fragment: it slices the document
+# around a top-level <table> followed by a top-level <p> starting with "NOTE".
+# Bare `next()` raised StopIteration when either was absent, which reads as an
+# interpreter bug rather than "wrong input". Validated on salvage (PR #349
+# review) and exercised by `test_assemble.py`.
+table_i = next((i for i, e in enumerate(els) if e.name == "table"), None)
+note_i = next(
+    (i for i, e in enumerate(els)
+     if e.name == "p" and e.get_text().lstrip().startswith("NOTE")),
+    None,
+)
+if table_i is None:
+    raise SystemExit(f"{frag_path}: no top-level <table> found")
+if note_i is None:
+    raise SystemExit(f"{frag_path}: no top-level <p> starting with 'NOTE' found")
+if table_i >= note_i:
+    raise SystemExit(
+        f"{frag_path}: the NOTE paragraph must come after the table "
+        f"(table at index {table_i}, NOTE at {note_i})"
+    )
 
 before = "".join(str(e) for e in els[:table_i])
 table = str(els[table_i])

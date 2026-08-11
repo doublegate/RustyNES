@@ -128,5 +128,10 @@ scratchpad held no unique source beyond the three below.
 | `assemble.py` | `scripts/release-automation/` | HTML fragment → document (needs `bs4`). |
 | `guardrails_assemble.py` | `scripts/release-automation/` | same, for the provenance-guardrails doc. |
 
-SHA-256 verified identical to source after copy. See
+Each file was SHA-256 verified identical to its `/tmp` source **at the moment of
+copy** — that is the recovery evidence, and it covers the recovery only. All
+three have been edited since: `reflow.py` was fixed (hard-break and fence
+handling) and both `bs4` scripts gained input validation, in response to the
+PR #349 review. The files in the tree are therefore **not** byte-identical to the
+recovered artifacts, and nothing here claims they are. See
 `scripts/release-automation/README-doc-tools.md` for usage.

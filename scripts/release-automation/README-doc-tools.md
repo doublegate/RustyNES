@@ -7,8 +7,8 @@ rediscovered.
 
 | script | needs | what it does |
 | --- | --- | --- |
-| `reflow.py` | stdlib only | Unwraps hard-wrapped markdown into single full-width lines. |
-| `assemble.py` | `bs4` | Assembles a rendered HTML fragment into a full document. |
+| `reflow.py` | stdlib only | Unwraps hard-wrapped markdown into single full-width lines. Tests: `test_reflow.py` (16 cases). |
+| `assemble.py` | `bs4` | Assembles a rendered HTML fragment into a full document. Tests: `test_assemble.py` (input contract). |
 | `guardrails_assemble.py` | `bs4` | Same, for the provenance-guardrails doc: injects a title block and reddens a curated set of hard takeaways. |
 
 ## `reflow.py` — the one you will want again
@@ -30,23 +30,43 @@ publishing.
 
 ## The `bs4` pair
 
-`assemble.py` and `guardrails_assemble.py` take a rendered HTML fragment and
-produce a standalone document. They need BeautifulSoup, which is **not** a
-project dependency — install it in a throwaway venv rather than adding it to the
-repo:
+`assemble.py` and `guardrails_assemble.py` turn a rendered HTML fragment into a
+standalone document. They need BeautifulSoup, which is not a project dependency
+but **is** present on this machine (`bs4` 4.15.0):
 
 ```bash
+python3 scripts/release-automation/assemble.py frag.html out.html
+# or, on a machine without it:
 python3 -m venv /tmp/venv && /tmp/venv/bin/pip install beautifulsoup4
-/tmp/venv/bin/python scripts/release-automation/assemble.py frag.html out.html
 ```
 
 Both are specific to the one-time provenance/guardrails PDF build
 (`ref-docs/`) and are kept for reproducing those artifacts, not for routine use.
 
-**They are preserved verbatim and are not ruff-clean** (`SIM115` context
-managers, `UP031` percent-format). That is deliberate: `bs4` is not installed
-here and no sample fragment survives, so a lint rewrite could not be executed to
-prove it still behaved. Rewriting code you cannot run is a worse trade than a
-style nit. Clean them up the first time you actually need them, with a real
-input to test against. `reflow.py` — which *is* testable, being stdlib-only — was
-fixed and verified.
+### `assemble.py` does not accept an arbitrary fragment
+
+It slices the document around two required top-level elements, in this order:
+
+1. a `<table>`, and
+2. a `<p>` whose text starts with `NOTE`.
+
+Missing either — or a NOTE that precedes the table — is now a usage error with an
+actionable message rather than a `StopIteration` traceback. `test_assemble.py`
+covers each case.
+
+### On the `ruff` nits
+
+Both still carry `SIM115` (context managers) and `UP031` (percent-format) from
+their `/tmp` originals, and the transform bodies are otherwise unmodified. Only
+input validation was added on salvage, because that is additive and cannot change
+the success path. The transform itself is still not covered by a test: **no
+original rendered fragment survived**, so there is nothing to assert the output
+against beyond "it did not crash". Clean up the lint nits the first time you run
+one of these for real, with a genuine input to diff against.
+
+An earlier version of this file claimed `bs4` was not installed here. That was
+wrong, and it was half the stated reason for leaving these scripts untouched —
+corrected in the PR #349 review rather than left standing.
+
+`reflow.py` — stdlib-only and fully testable — has real coverage in
+`test_reflow.py`.

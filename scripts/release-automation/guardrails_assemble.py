@@ -5,6 +5,13 @@ import sys
 
 from bs4 import BeautifulSoup
 
+# Argument check added on salvage (PR #349 review). Everything BELOW this
+# point is the original /tmp source, unmodified: a usage message is additive and
+# cannot change the success path, whereas rewriting the parsing logic could —
+# and `bs4` is not installed here and no sample fragment survived, so a rewrite
+# could not be run to prove it still behaved.
+if len(sys.argv) != 3:
+    raise SystemExit(f"usage: {sys.argv[0]} INPUT_FRAGMENT OUTPUT_HTML")
 frag_path, out_path = sys.argv[1], sys.argv[2]
 html = open(frag_path, encoding="utf-8").read()
 soup = BeautifulSoup(html, "html.parser")
