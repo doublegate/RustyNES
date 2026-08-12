@@ -189,7 +189,7 @@ const CHIPS: &[Chip] = &[
             ("hd_spr_idx", "output-only: `hd-pack` fetch telemetry"),
             (
                 "write_attrib",
-                "output-only: v2.3.3 `debug-hooks` per-byte write attribution, never read by \
+                "output-only: v2.3.2 `debug-hooks` per-byte write attribution, never read by \
                  emulation. Deliberately NOT serialized — a restored state's bytes were not \
                  written by any instruction this session ran, so carrying PCs across a restore \
                  would report a timeline that no longer exists. `Nes::restore_inner` and \
@@ -197,27 +197,33 @@ const CHIPS: &[Chip] = &[
             ),
             (
                 "attrib_pc",
-                "output-only: v2.3.3 write-attribution context, re-pushed by `Nes::run_frame` \
+                "output-only: v2.3.2 write-attribution context, re-pushed by `Nes::run_frame` \
                  before every instruction, so a restore's stale value cannot survive one step",
             ),
             (
                 "attrib_cycle",
-                "output-only: v2.3.3 write-attribution context; see `attrib_pc`",
+                "output-only: v2.3.2 write-attribution context; see `attrib_pc`",
             ),
             (
                 "dma_attrib_pc",
-                "output-only: v2.3.3 write-attribution context latched at the `$4014` write; \
+                "output-only: v2.3.2 write-attribution context latched at the `$4014` write; \
                  re-latched by every subsequent OAM DMA trigger",
             ),
             (
                 "dma_attrib_cycle",
-                "output-only: v2.3.3 write-attribution context; see `dma_attrib_pc`",
+                "output-only: v2.3.2 write-attribution context; see `dma_attrib_pc`",
             ),
             (
                 "prov_frame",
-                "output-only: v2.3.3 `debug-hooks` per-pixel provenance for the CURRENT frame, \
-                 never read by emulation. Overwritten in place by the next `run_frame` exactly \
-                 like the framebuffer it shadows, so there is nothing for a restore to carry",
+                "output-only: v2.3.2 `debug-hooks` per-pixel provenance for the CURRENT frame, \
+                 never read by emulation. NOT serialized, and explicitly CLEARED on power-cycle \
+                 and both restore paths (`Ppu::clear_pixel_provenance`) — the same treatment as \
+                 `write_attrib`. An earlier version of this entry argued it needed neither, \
+                 because it is 'overwritten by the next `run_frame` like the framebuffer it \
+                 shadows'. That analogy is false and was corrected in review: the framebuffer IS \
+                 serialized and returns consistent with the restored state, whereas this frame is \
+                 not, so a restore landing mid-frame left pre-restore addresses for every pixel \
+                 above the current scanline with nothing marking them stale",
             ),
             (
                 "prov_armed",
@@ -226,16 +232,16 @@ const CHIPS: &[Chip] = &[
             ),
             (
                 "prov_nt_pending",
-                "output-only: v2.3.3 provenance address awaiting commit, overwritten by the \
+                "output-only: v2.3.2 provenance address awaiting commit, overwritten by the \
                  next nametable fetch — at most 8 dots after any restore",
             ),
             (
                 "prov_at_pending",
-                "output-only: v2.3.3 provenance address awaiting commit; see `prov_nt_pending`",
+                "output-only: v2.3.2 provenance address awaiting commit; see `prov_nt_pending`",
             ),
             (
                 "prov_bg_latch",
-                "output-only: v2.3.3 provenance address cascade, re-committed at every BG \
+                "output-only: v2.3.2 provenance address cascade, re-committed at every BG \
                  pattern fetch. A restore mid-scanline can leave one tile group reporting the \
                  pre-restore addresses; that is a telemetry gap of at most 8 pixels in one \
                  frame, not emulation state, and serializing it would imply the record survives \
@@ -243,15 +249,15 @@ const CHIPS: &[Chip] = &[
             ),
             (
                 "prov_bg_cur",
-                "output-only: v2.3.3 provenance address cascade; see `prov_bg_latch`",
+                "output-only: v2.3.2 provenance address cascade; see `prov_bg_latch`",
             ),
             (
                 "prov_bg_next",
-                "output-only: v2.3.3 provenance address cascade; see `prov_bg_latch`",
+                "output-only: v2.3.2 provenance address cascade; see `prov_bg_latch`",
             ),
             (
                 "prov_spr_addr",
-                "output-only: v2.3.3 per-slot sprite pattern address for provenance, rewritten \
+                "output-only: v2.3.2 per-slot sprite pattern address for provenance, rewritten \
                  by every sprite-tile fetch (dots 257-320 of each scanline)",
             ),
         ],

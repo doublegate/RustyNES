@@ -779,7 +779,15 @@ impl EmuCore {
         if rewinding {
             // Rewind is a live-only gesture; it never advances a movie
             // cursor or captures a frame.
-            let _ = nes.rewind_step_back();
+            // v2.3.2 "Lucid": a SUCCESSFUL rewind moves the emulator off the
+            // timeline any in-progress attestation describes, while the input
+            // log keeps its full prefix — so the frame counts stay consistent
+            // and `Movie::verify` would report `Mismatch` on an honest
+            // recording. Drop the attestation instead: "not attested" is the
+            // truthful outcome. (Review catch on PR #356.)
+            if nes.rewind_step_back() {
+                self.movie.invalidate_attestation();
+            }
             // v2.8.0 Phase 3 — refresh the presented framebuffer from the
             // restored state.
             self.present_fb.clear();
@@ -874,7 +882,7 @@ impl EmuCore {
                 // presented frame (uniform with the run-ahead path above).
                 #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
                 Self::capture_hd_chr(&mut self.hd_chr_snapshot, self.hd_capture, nes);
-                // v2.3.3 "Lucid" — fold this frame's output into the movie
+                // v2.3.2 "Lucid" — fold this frame's output into the movie
                 // attestation. Deliberately ONLY on this path: the run-ahead
                 // branch above presents the frame N ahead of the persistent
                 // timeline, and a verification replay (which has no run-ahead)

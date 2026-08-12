@@ -2397,7 +2397,7 @@ impl App {
                 eprintln!("rustynes: movie record: no ROM loaded");
                 return;
             };
-            // v2.3.3 "Lucid" — arm a replay attestation unless run-ahead is on.
+            // v2.3.2 "Lucid" — arm a replay attestation unless run-ahead is on.
             // Run-ahead presents the frame N ahead of the persistent timeline
             // while a verification replay re-derives persistent frames, so an
             // attestation recorded under it could never verify. Refusing up
@@ -2502,7 +2502,7 @@ impl App {
             eprintln!("rustynes: movie branch: no ROM loaded");
             return;
         };
-        // v2.3.3 "Lucid": see the power-on path for the run-ahead caveat.
+        // v2.3.2 "Lucid": see the power-on path for the run-ahead caveat.
         let attest = self.config.input.run_ahead == 0;
         emu.movie.start_recording_branch(nes, attest);
         eprintln!("rustynes: movie branch — recording from current state");
@@ -3319,7 +3319,7 @@ impl App {
                 crate::wasm_io::log("movie record: no ROM loaded");
                 return;
             };
-            // v2.3.3 "Lucid" — arm a replay attestation unless run-ahead is on.
+            // v2.3.2 "Lucid" — arm a replay attestation unless run-ahead is on.
             // Run-ahead presents the frame N ahead of the persistent timeline
             // while a verification replay re-derives persistent frames, so an
             // attestation recorded under it could never verify. Refusing up
@@ -3368,7 +3368,7 @@ impl App {
             crate::wasm_io::log("movie branch: no ROM loaded");
             return;
         };
-        // v2.3.3 "Lucid": see the power-on path for the run-ahead caveat.
+        // v2.3.2 "Lucid": see the power-on path for the run-ahead caveat.
         let attest = self.config.input.run_ahead == 0;
         emu.movie.start_recording_branch(nes, attest);
         crate::wasm_io::log("movie branch — recording from current state");

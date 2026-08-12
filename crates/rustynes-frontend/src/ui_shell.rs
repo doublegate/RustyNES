@@ -1337,7 +1337,7 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::RomInfo));
                         ui.close();
                     }
-                    // (H1) v2.3.3 "Lucid" — the pixel provenance inspector: the
+                    // (H1) v2.3.2 "Lucid" — the pixel provenance inspector: the
                     // causal chain from a screen pixel back to the tile, the
                     // palette entry, and the instruction that wrote them. Needs a
                     // loaded ROM to have any pixels to explain. NOT gated on the

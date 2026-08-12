@@ -138,7 +138,7 @@ pub enum CliCommand {
 
     /// Replay an attested `.rnm` movie and check it reproduces its recorded run.
     ///
-    /// v2.3.3 "Lucid". Headless: no window, no audio, no host input — just the
+    /// v2.3.2 "Lucid". Headless: no window, no audio, no host input — just the
     /// deterministic core replaying the movie's inputs and re-deriving the
     /// rolling hash of its video output. Anyone with the ROM and the `.rnm` can
     /// run this and get the same answer, which is what makes an attestation

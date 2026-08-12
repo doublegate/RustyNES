@@ -143,7 +143,7 @@ impl MovieUi {
     /// the recording starts from the exact state a replay reconstructs.
     /// Stops any in-progress playback. No-op if already recording.
     ///
-    /// v2.3.3 "Lucid": `attest` arms a replay attestation, so the saved `.rnm`
+    /// v2.3.2 "Lucid": `attest` arms a replay attestation, so the saved `.rnm`
     /// carries a rolling hash of its video output that anyone can re-derive with
     /// `rustynes verify`. Callers should pass `false` while run-ahead is active
     /// — see [`Self::after_frame`] for why.
@@ -194,7 +194,25 @@ impl MovieUi {
         self.playback = Some(Playback { movie, cursor: 0 });
     }
 
-    /// v2.3.3 "Lucid" — per-frame hook called AFTER `run_frame`, feeding the
+    /// v2.3.2 "Lucid" — drop the in-progress attestation, keeping the recording.
+    ///
+    /// Called when something rewinds the emulator underneath the recorder: a
+    /// successful `rewind_step_back` restores an EARLIER state while the input
+    /// log keeps its full prefix, so the frames already folded into the hash no
+    /// longer describe the run the input stream encodes. The frame counts stay
+    /// self-consistent, so nothing downstream would notice — `Movie::verify`
+    /// would simply report `Mismatch` on an honest recording.
+    ///
+    /// Dropping the attestation makes that outcome "not attested" instead of
+    /// "failed verification", which is the truthful one. The recording itself is
+    /// unaffected. (Review catch on PR #356.)
+    pub fn invalidate_attestation(&mut self) {
+        if let Some(rec) = self.recorder.as_mut() {
+            rec.disable_attestation();
+        }
+    }
+
+    /// v2.3.2 "Lucid" — per-frame hook called AFTER `run_frame`, feeding the
     /// completed frame's video output into the attestation.
     ///
     /// A no-op unless recording with attestation armed.

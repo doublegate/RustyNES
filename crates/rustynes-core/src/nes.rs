@@ -498,10 +498,13 @@ impl Nes {
         // Cold-boot path: see comment in `from_rom`.
         self.cpu = Cpu::power_on();
         self.cpu.reset(&mut self.bus);
-        // v2.3.3 "Lucid" — a cold boot ends the history the attribution store
-        // describes. Keep the store armed (the user asked for it) but empty.
+        // v2.3.2 "Lucid" — a cold boot ends the history both provenance stores
+        // describe. Keep them armed (the user asked for them) but empty.
         #[cfg(feature = "debug-hooks")]
-        self.bus.ppu.clear_write_attribution();
+        {
+            self.bus.ppu.clear_write_attribution();
+            self.bus.ppu.clear_pixel_provenance();
+        }
     }
 
     /// Run until the PPU finishes a frame. Returns the framebuffer slice.
@@ -584,7 +587,7 @@ impl Nes {
                 if self.exec_logging {
                     self.exec_log.push(self.cpu.pc);
                 }
-                // v2.3.3 "Lucid" — push this instruction's `(pc, cycle)` down to
+                // v2.3.2 "Lucid" — push this instruction's `(pc, cycle)` down to
                 // the PPU so any CIRAM / OAM / palette byte it goes on to write
                 // is stamped with the instruction that caused it. Done here, in
                 // the existing per-instruction debug block, rather than through a
@@ -646,7 +649,7 @@ impl Nes {
     pub fn step_instruction(&mut self) -> u8 {
         #[cfg(feature = "cpu-boot-trace")]
         self.cpu_boot_trace_record();
-        // v2.3.3 "Lucid" — mirror `run_frame`'s write-attribution context push,
+        // v2.3.2 "Lucid" — mirror `run_frame`'s write-attribution context push,
         // so single-stepping through a `$2007` store in the debugger attributes
         // the byte to the stepped instruction and not to whatever `run_frame`
         // last left latched.
@@ -807,7 +810,7 @@ impl Nes {
         self.bus.events()
     }
 
-    /// v2.3.3 "Lucid" — arm or disarm per-byte **write attribution** for the
+    /// v2.3.2 "Lucid" — arm or disarm per-byte **write attribution** for the
     /// PPU's own memories (CIRAM, OAM, palette RAM).
     ///
     /// While armed, every write to those memories is stamped with the program
@@ -834,6 +837,15 @@ impl Nes {
         self.bus.ppu.write_attribution()
     }
 
+    /// Forget the current frame's per-pixel provenance, keeping it armed.
+    ///
+    /// Called automatically on power-cycle and on both restore paths; exposed so
+    /// a host that rewinds by other means can do the same.
+    #[cfg(feature = "debug-hooks")]
+    pub fn clear_pixel_provenance(&mut self) {
+        self.bus.ppu.clear_pixel_provenance();
+    }
+
     /// Forget every recorded write attribution, keeping the store armed.
     ///
     /// Call this after a save-state restore or a power-cycle: the restored bytes
@@ -845,7 +857,7 @@ impl Nes {
         self.bus.ppu.clear_write_attribution();
     }
 
-    /// v2.3.3 "Lucid" phase 2 — arm or disarm **per-pixel provenance**.
+    /// v2.3.2 "Lucid" phase 2 — arm or disarm **per-pixel provenance**.
     ///
     /// While armed, every emitted pixel records the layer that won the priority
     /// decision, the exact `$3Fxx` palette address behind its color, and the
@@ -1952,7 +1964,7 @@ impl Nes {
         if clear_rewind && let Some(r) = &mut self.rewind {
             r.clear();
         }
-        // v2.3.3 "Lucid" — and it invalidates write attribution for the same
+        // v2.3.2 "Lucid" — and it invalidates write attribution for the same
         // reason, on BOTH restore paths. The restored bytes were not written by
         // any instruction this session executed, so the PCs recorded against
         // those offsets describe a timeline that no longer exists. Reporting
@@ -1960,8 +1972,18 @@ impl Nes {
         // program writes again is the honest one. (Under run-ahead this fires
         // once per displayed frame, leaving exactly the visible frame's writes —
         // which is the timeline the user is looking at.)
+        //
+        // The per-pixel provenance frame is cleared for the same reason, and it
+        // needs saying separately because the obvious analogy is wrong: the
+        // framebuffer IS serialized and comes back consistent with the restored
+        // state, while this frame is not. A restore landing mid-frame would
+        // otherwise leave pre-restore tile and palette addresses for every pixel
+        // above the current scanline, unmarked. (Review catch on PR #356.)
         #[cfg(feature = "debug-hooks")]
-        self.bus.ppu.clear_write_attribution();
+        {
+            self.bus.ppu.clear_write_attribution();
+            self.bus.ppu.clear_pixel_provenance();
+        }
         Ok(())
     }
 
@@ -3324,7 +3346,7 @@ mod tests {
         assert!(!nes.event_logging());
     }
 
-    /// v2.3.3 "Lucid" Phase 1 — the write-attribution oracle.
+    /// v2.3.2 "Lucid" Phase 1 — the write-attribution oracle.
     ///
     /// The claim under test is the whole point of the feature: for a byte in the
     /// PPU's own memory, the store reports the PC of the instruction that put it
@@ -3383,10 +3405,13 @@ mod tests {
             let _ = nes.run_frame();
         }
 
-        // Vertical mirroring is the header default here, so $2108 lands at
-        // CIRAM offset $0108. Resolve it the same way the PPU did rather than
-        // hardcoding the mapping, so the test survives a mirroring change.
-        let off = (VRAM_ADDR & 0x07FF) as usize;
+        // Resolve the address the way the emulator does, through the mapper's
+        // mirroring, rather than hardcoding `& 0x07FF`. The previous version of
+        // this line claimed to do that and then hardcoded it anyway (review
+        // catch on PR #356) — which would have masked a mirroring regression.
+        let off = nes
+            .ciram_offset_for_nametable_addr(VRAM_ADDR)
+            .expect("a nametable address resolves to a CIRAM offset");
         let attrib = nes.write_attribution().expect("armed");
         let rec = attrib
             .ciram(off)
@@ -3411,7 +3436,7 @@ mod tests {
         assert!(nes.write_attribution().is_none());
     }
 
-    /// v2.3.3 "Lucid" phase 2 — the per-pixel provenance oracle.
+    /// v2.3.2 "Lucid" phase 2 — the per-pixel provenance oracle.
     ///
     /// Builds a screen out of a known nametable byte and a known palette, then
     /// checks that the record for a background pixel names the addresses that

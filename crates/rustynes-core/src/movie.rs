@@ -193,6 +193,21 @@ pub struct Attestation {
 
 /// FNV-1a-style rolling hash over 64-bit words.
 ///
+/// # This is a tamper-EVIDENT digest, not a cryptographic one
+///
+/// 64-bit FNV-1a is not collision resistant, and its round function is
+/// invertible (`PRIME` is odd, so multiplication is a bijection mod 2^64). It
+/// reliably detects accidental divergence — a different build, a real
+/// nondeterminism bug, a truncated file — and casual edits, which is what
+/// [`Movie::verify`] is for. It does **not** resist a motivated forger: anyone
+/// who edits the movie can recompute the digest, and nothing here binds the
+/// record to an author.
+///
+/// Say "reproduces the recorded run", not "proves the run is genuine". Making a
+/// forgery-resistant claim would need a signature over the whole record with a
+/// key the verifier trusts, which is a different feature. Flagged in review on
+/// PR #356, where the surrounding prose had drifted into the stronger claim.
+///
 /// Written here rather than reused: the two existing `fnv1a64` helpers in this
 /// workspace are behind `rustynes-ppu`'s `ppu-state-trace` feature and in the
 /// test harness respectively, and neither is reachable from `no_std` core code
@@ -448,7 +463,7 @@ pub struct Movie {
     /// recording). Round-trips through `.rnm` (appended after the input stream,
     /// so older readers ignore it) and the `.fm2` / `.bk2` `rerecordCount` header.
     pub rerecord_count: u32,
-    /// Optional replay attestation (v2.3.3 "Lucid"): a rolling hash of the run's
+    /// Optional replay attestation (v2.3.2 "Lucid"): a rolling hash of the run's
     /// video output plus periodic checkpoints, letting a third party replay the
     /// movie and prove it reproduces the recorded run.
     ///
@@ -505,7 +520,7 @@ impl Movie {
         // builds — simply ignores it; deserialize below reads it when present and
         // defaults to 0 otherwise. No format-version bump needed.
         w.u32(self.rerecord_count);
-        // Optional attestation tail (v2.3.3 "Lucid"). Written only when present,
+        // Optional attestation tail (v2.3.2 "Lucid"). Written only when present,
         // so a movie without one is byte-for-byte what previous versions wrote.
         if let Some(att) = &self.attestation {
             w.u32(ATTESTATION_MAGIC);
@@ -612,7 +627,7 @@ impl Movie {
         // Optional trailing re-record count (v1.8.9). Absent in pre-v1.8.9 `.rnm`
         // files, which stop exactly at the input stream — default to 0.
         let rerecord_count = r.u32().unwrap_or(0);
-        // Optional attestation tail (v2.3.3 "Lucid"). Absent in every movie
+        // Optional attestation tail (v2.3.2 "Lucid"). Absent in every movie
         // recorded before it existed, and in any recorded without it — so a
         // missing or unrecognized marker yields `None` rather than an error.
         let attestation = read_attestation(&mut r, frames.len());
@@ -649,15 +664,22 @@ impl Movie {
         Ok(())
     }
 
-    /// v2.3.3 "Lucid" — replay this movie and check it reproduces its
+    /// v2.3.2 "Lucid" — replay this movie and check it reproduces its
     /// attestation.
     ///
     /// Seeks `nes` to the movie's start point, replays the whole input stream,
     /// and compares the resulting rolling hash (and every checkpoint along the
-    /// way) against what the movie recorded. This is the "prove this run is
-    /// genuine" path: anyone with the ROM and the `.rnm` can run it, and any
-    /// tampering with the input stream, the start point, or the claimed hash
-    /// shows up as a [`VerifyOutcome::Mismatch`].
+    /// way) against what the movie recorded. Anyone with the ROM and the `.rnm`
+    /// can run it and get the same answer, so an accidental divergence — a
+    /// different build, a nondeterminism bug, a corrupted file — or a casual
+    /// edit to the input stream, the start point, or the claimed hash shows up
+    /// as a [`VerifyOutcome::Mismatch`].
+    ///
+    /// **Reproducibility, not provenance.** The digest is a 64-bit FNV-1a
+    /// variant: tamper-evident, not forgery-resistant. A `Match` means "these inputs,
+    /// applied to this ROM, on a verifier configured like the recorder, produce
+    /// this video". It does not establish who produced the movie, and a
+    /// motivated forger can edit the movie and recompute the digest.
     ///
     /// Consumes real emulation time — it runs every frame of the movie.
     ///
@@ -691,7 +713,15 @@ impl Movie {
                 && first_bad_checkpoint.is_none()
             {
                 let idx = builder.frame_count() / ATTESTATION_CHECKPOINT_INTERVAL - 1;
-                if att.checkpoints.get(idx as usize) != Some(&builder.current_hash()) {
+                // Compare ONLY against a checkpoint the movie actually recorded.
+                // `get()` returning `None` means "no recorded value here", not
+                // "mismatch": treating absence as disagreement made a short
+                // checkpoint list report a divergence even when every hash the
+                // movie does carry — including the final one — matched. The
+                // final hash is the gate; the checkpoints only localize.
+                if let Some(&want) = att.checkpoints.get(idx as usize)
+                    && want != builder.current_hash()
+                {
                     first_bad_checkpoint = Some(idx);
                 }
             }
@@ -731,7 +761,7 @@ pub struct MovieRecorder {
     rom_sha256: [u8; 32],
     start: StartPoint,
     frames: Vec<FrameInput>,
-    /// v2.3.3 "Lucid" — optional attestation accumulator. `None` (the default)
+    /// v2.3.2 "Lucid" — optional attestation accumulator. `None` (the default)
     /// records a plain movie, byte-for-byte what previous versions produced.
     attestation: Option<AttestationBuilder>,
 }
@@ -796,7 +826,7 @@ impl MovieRecorder {
         self.frames.is_empty()
     }
 
-    /// v2.3.3 "Lucid" — start accumulating a replay attestation.
+    /// v2.3.2 "Lucid" — start accumulating a replay attestation.
     ///
     /// Call before the first frame. The caller must then call
     /// [`Self::attest_frame`] after every `run_frame`, in lockstep with
@@ -805,6 +835,16 @@ impl MovieRecorder {
     /// a mismatch, correctly but unhelpfully.
     pub fn enable_attestation(&mut self) {
         self.attestation = Some(AttestationBuilder::new());
+    }
+
+    /// Abandon an in-progress attestation, keeping the recording itself.
+    ///
+    /// For a host that rewinds or otherwise moves the emulator off the timeline
+    /// the accumulated hash describes. Once dropped it is not resumed: the
+    /// prefix already folded in cannot be un-folded, and a partial hash that
+    /// silently covers only part of the run would be worse than none.
+    pub fn disable_attestation(&mut self) {
+        self.attestation = None;
     }
 
     /// Fold this frame's video output into the attestation.
@@ -951,7 +991,7 @@ mod tests {
     use super::*;
     use alloc::vec;
 
-    // ----------------------------------------------------------------- v2.3.3
+    // ----------------------------------------------------------------- v2.3.2
     // Replay attestation ("Lucid" phase 4)
     // -------------------------------------------------------------------------
 
@@ -1143,6 +1183,107 @@ mod tests {
             parsed.attestation.is_none(),
             "a tail describing a different run must be dropped, not trusted"
         );
+    }
+
+    /// Drive `first_bad_checkpoint` to `Some(_)` — the path bug #12 lived on,
+    /// which no test previously exercised.
+    #[test]
+    fn a_corrupted_checkpoint_is_localized() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).expect("parse");
+        let mut rec = MovieRecorder::power_on(&nes);
+        rec.enable_attestation();
+        // Three checkpoint windows.
+        for _ in 0..(ATTESTATION_CHECKPOINT_INTERVAL * 3) {
+            rec.capture(&nes);
+            let fb = nes.run_frame().to_vec();
+            rec.attest_frame(&fb);
+        }
+        let mut movie = rec.finish();
+        assert_eq!(movie.attestation.as_ref().unwrap().checkpoints.len(), 3);
+
+        // Corrupt the SECOND checkpoint only. The final hash still matches, so
+        // the checkpoint comparison is the only thing that can catch this.
+        movie.attestation.as_mut().unwrap().checkpoints[1] ^= 0xFF;
+        let mut fresh = Nes::from_rom(&rom).expect("parse");
+        match movie.verify(&mut fresh).expect("verify runs") {
+            VerifyOutcome::Mismatch {
+                first_bad_checkpoint,
+                expected,
+                got,
+                ..
+            } => {
+                assert_eq!(
+                    first_bad_checkpoint,
+                    Some(1),
+                    "the SECOND checkpoint is the first bad one"
+                );
+                assert_eq!(expected, got, "the final hash still agrees");
+            }
+            other => panic!("a corrupted checkpoint must not verify, got {other:?}"),
+        }
+    }
+
+    /// A short checkpoint list must NOT manufacture a mismatch.
+    ///
+    /// Regression for bug #12: `checkpoints.get(idx)` returning `None` was
+    /// compared against `Some(&hash)` and read as disagreement, so an
+    /// attestation carrying fewer checkpoints than the replay produces failed
+    /// even when every hash it did record — and the final hash — matched.
+    #[test]
+    fn a_short_checkpoint_list_still_verifies() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).expect("parse");
+        let mut rec = MovieRecorder::power_on(&nes);
+        rec.enable_attestation();
+        for _ in 0..(ATTESTATION_CHECKPOINT_INTERVAL * 2) {
+            rec.capture(&nes);
+            let fb = nes.run_frame().to_vec();
+            rec.attest_frame(&fb);
+        }
+        let mut movie = rec.finish();
+        assert_eq!(movie.attestation.as_ref().unwrap().checkpoints.len(), 2);
+
+        // Drop the trailing checkpoint, leaving the final hash intact.
+        movie.attestation.as_mut().unwrap().checkpoints.pop();
+        let mut fresh = Nes::from_rom(&rom).expect("parse");
+        match movie.verify(&mut fresh).expect("verify runs") {
+            VerifyOutcome::Match { frames, .. } => {
+                assert_eq!(frames, ATTESTATION_CHECKPOINT_INTERVAL * 2);
+            }
+            other => panic!(
+                "a missing checkpoint is 'nothing recorded here', not a \
+                 disagreement; got {other:?}"
+            ),
+        }
+    }
+
+    /// A rewind mid-recording must drop the attestation rather than ship one
+    /// that describes a timeline the input log no longer encodes.
+    #[test]
+    fn disabling_attestation_mid_recording_yields_an_unattested_movie() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).expect("parse");
+        let mut rec = MovieRecorder::power_on(&nes);
+        rec.enable_attestation();
+        for _ in 0..4 {
+            rec.capture(&nes);
+            let fb = nes.run_frame().to_vec();
+            rec.attest_frame(&fb);
+        }
+        // What the frontend does on a successful `rewind_step_back`.
+        rec.disable_attestation();
+        for _ in 0..4 {
+            rec.capture(&nes);
+            let fb = nes.run_frame().to_vec();
+            rec.attest_frame(&fb);
+        }
+        let movie = rec.finish();
+        assert!(
+            movie.attestation.is_none(),
+            "a partial hash covering only part of the run is worse than none"
+        );
+        assert_eq!(movie.frames.len(), 8, "the recording itself is unaffected");
     }
 
     /// A movie with no attestation reports that, rather than passing or failing.

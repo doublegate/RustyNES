@@ -1,4 +1,4 @@
-//! v2.3.3 "Lucid" — per-byte **write attribution** for PPU-visible memory.
+//! v2.3.2 "Lucid" — per-byte **write attribution** for PPU-visible memory.
 //!
 //! # What this is for
 //!
@@ -369,6 +369,19 @@ impl PixelProvenanceFrame {
     #[must_use]
     pub fn pixels(&self) -> &[PixelProvenance] {
         &self.pixels
+    }
+
+    /// Forget every recorded pixel, keeping the allocation.
+    ///
+    /// Called on power-cycle and on save-state restore for the same reason
+    /// [`WriteAttribution::clear`] is: the records describe a timeline the
+    /// restore replaced. The framebuffer analogy does NOT excuse keeping them —
+    /// the framebuffer is serialized and comes back consistent with the restored
+    /// state, whereas this frame is not, so a restore landing mid-frame would
+    /// leave pre-restore addresses for every pixel above the current scanline
+    /// with nothing marking them stale.
+    pub fn clear(&mut self) {
+        self.pixels.fill(PixelProvenance::default());
     }
 }
 

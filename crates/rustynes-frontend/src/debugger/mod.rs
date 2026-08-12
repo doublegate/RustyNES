@@ -207,7 +207,7 @@ pub enum ToolPanel {
     /// v2.1.6 "Expansion Audio" — the Audio Mixer (per-source balance sliders +
     /// per-channel scopes / VU meters, incl. the on-cart expansion channel).
     AudioMixer,
-    /// v2.3.3 "Lucid" — the pixel provenance inspector: the causal chain from a
+    /// v2.3.2 "Lucid" — the pixel provenance inspector: the causal chain from a
     /// screen pixel back to the tile, palette entry, and writing instruction.
     /// The variant is unconditional so the menu IA + dispatch match stay
     /// exhaustive; the panel and its open path are `debug-hooks`-gated.
@@ -663,7 +663,7 @@ pub struct DebuggerOverlay {
     show_game_db: bool,
     /// Read-only ROM Info browser open flag (v2.2.0 "Capstone").
     show_rom_info: bool,
-    /// v2.3.3 "Lucid" — pixel provenance inspector.
+    /// v2.3.2 "Lucid" — pixel provenance inspector.
     show_provenance: bool,
     /// "Input Display" panel open flag (v1.7.0 "Forge" beta.5, #51; née the
     /// v1.5.0 A1 Input Miniatures overlay).
@@ -750,7 +750,7 @@ pub struct DebuggerOverlay {
     game_db_ui: game_db_panel::GameDbPanelState,
     /// Read-only ROM Info panel state (v2.2.0 "Capstone").
     rom_info_ui: rom_info_panel::RomInfoPanelState,
-    /// Pixel provenance inspector state (v2.3.3 "Lucid").
+    /// Pixel provenance inspector state (v2.3.2 "Lucid").
     provenance_ui: provenance_panel::ProvenancePanelState,
     /// CRC32 of the currently-loaded ROM (PRG+CHR, header-excluded), pushed by
     /// [`DebuggerOverlay::set_rom_crc`] at load. `None` for FDS / NSF / no ROM.
@@ -2311,7 +2311,7 @@ impl DebuggerOverlay {
         if self.show_provenance
             && let Some(nes) = nes.as_deref_mut()
         {
-            // v2.3.3 "Lucid" — the causal chain from a screen pixel back to the
+            // v2.3.2 "Lucid" — the causal chain from a screen pixel back to the
             // tile, the palette entry, and the instruction that wrote them.
             // Takes `&mut Nes` only to arm / disarm the two output-only stores
             // from its checkboxes; the report itself is read-only.

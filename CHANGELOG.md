@@ -97,18 +97,18 @@ cycle-accurate core later replaced.
   hash of its run that anyone else can independently re-derive:
   `rustynes verify <movie.rnm> --rom <game.nes>`. Because the core re-derives
   every pixel from the same ROM and inputs, a third party can replay the movie
-  and prove it is genuine and unmodified.
+  and confirm it reproduces bit-for-bit. The digest is **tamper-evident, not
+  forgery-resistant** (64-bit FNV-1a): it catches accidental divergence and
+  casual edits, not a motivated forger who recomputes it.
   - **No format-version bump.** `.rnm` already had a precedent for additive
     trailing fields (`rerecord_count`), so the attestation is appended the same
     way behind a marker. `MOVIE_FORMAT_VERSION` stays at 2, every existing movie
-    round-trips unchanged, and a pre-v2.3.3 reader parses an attested movie as a
+    round-trips unchanged, and a pre-v2.3.2 reader parses an attested movie as a
     plain one.
-  - **The hash covers the input applied AND the framebuffer it produced.** The
-    first implementation hashed video alone — and an end-to-end tamper test then
-    confirmed a movie whose input log had been edited, because the ROM under test
-    never reads the controller so the video was identical. Output alone does not
-    pin the input stream. Folding the input in makes the claim the honest one:
-    *these inputs, applied to this ROM, produced this output.*
+  - **The hash covers the input applied AND the framebuffer it produced**, so
+    the record states *these inputs, applied to this ROM, produce this video*.
+    Hashing video alone would not pin the input stream at all for a ROM that
+    ignores the controller.
   - A checkpoint every 64 frames localizes a mismatch to a 64-frame window rather
     than reporting only a verdict. Exit codes are distinct: 0 verified, 1
     mismatch, 3 not attested — a movie that makes no claim has not failed.

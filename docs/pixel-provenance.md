@@ -94,7 +94,8 @@ which is what surfaced the distinction.
 
 ### Lifetime and invalidation
 
-The store is cleared on **power-cycle** and on **both save-state restore paths**
+Both stores — write attribution and the per-pixel frame — are cleared on
+**power-cycle** and on **both save-state restore paths**
 (`Nes::restore` and `Nes::restore_quiet`). A restored state's bytes were not
 written by any instruction this session executed, so the PCs recorded against
 those offsets describe a timeline that no longer exists. Under run-ahead the
@@ -204,6 +205,20 @@ untouched by the sprite-0-hit insert, so hoisting it is behaviour-preserving.
   `hd-pack` path already collects up to four covering sprites for its own
   conditions; folding that in is a Phase 3 concern if the panel wants it.
 
+Because the primary index is absent, the panel shows **no write-attribution row
+for OAM**. `WriteAttribution::oam` is keyed on primary OAM byte addresses, so
+indexing it with a secondary slot would confidently name a different sprite's
+writer whenever evaluation skipped an earlier one. The first version of the panel
+did exactly that, a paragraph after documenting that the index does not exist;
+caught in review on PR #356.
+
+The per-pixel frame is also cleared on restore, for the same reason attribution
+is. The framebuffer analogy does not excuse skipping it: the framebuffer *is*
+serialized and returns consistent with the restored state, whereas this frame is
+not, so a restore landing mid-frame would leave pre-restore addresses for every
+pixel above the current scanline with nothing marking them stale. The first
+version of this document argued the opposite.
+
 ## Phase 3 — the inspector panel (implemented)
 
 `crates/rustynes-frontend/src/debugger/provenance_panel.rs`, reached from
@@ -278,6 +293,27 @@ Exit codes are distinct on purpose: **0** verified, **1** mismatch or error,
 **3** the movie carries no attestation. A movie that makes no claim has not
 failed, and collapsing the two would leave a script unable to tell them apart.
 
+### What a `Match` does and does not mean
+
+It means *these inputs, applied to this ROM, on a verifier configured like the
+recorder, produce this video*. Two limits are load-bearing:
+
+- **Tamper-evident, not forgery-resistant.** The digest is 64-bit FNV-1a: not
+  collision resistant, and its round function is invertible. It catches
+  accidental divergence and casual edits; a motivated forger can edit the movie
+  and recompute it. Establishing authorship would need a signature over the whole
+  record with a key the verifier trusts — a different feature.
+- **The verifier assumes a default core profile.** `rustynes verify` builds a
+  plain `Nes` from the ROM bytes. A recording made with Four Score, a PPU
+  die-revision or power-on RAM model, a per-game database override, or a
+  soft-patched ROM will not reproduce, and that mismatch is the profile's fault
+  rather than the movie's. The format carries no profile field, so the CLI states
+  the assumption up front instead of mis-blaming the movie. Recording-side
+  eligibility is follow-up work.
+
+Both were narrowed in review on PR #356, where the prose had drifted into
+"prove it is genuine and unmodified".
+
 ### No format version bump
 
 The plan called for a "v3 tail". It turned out not to be needed: `.rnm` already
@@ -285,7 +321,7 @@ had a precedent for additive trailing fields — `rerecord_count` is read with
 `r.u32().unwrap_or(0)`, so a reader that stops earlier simply ignores it. The
 attestation is appended the same way behind an `ATTESTATION_MAGIC` marker, so
 `MOVIE_FORMAT_VERSION` stays at 2 and every existing movie round-trips unchanged.
-A pre-v2.3.3 reader parses an attested movie as a plain one; the test
+A pre-v2.3.2 reader parses an attested movie as a plain one; the test
 `attested_movie_stays_readable_as_a_plain_movie` pins that by truncating the tail
 and reparsing.
 
@@ -330,6 +366,11 @@ folds in frames only on the non-run-ahead path, and if run-ahead is toggled on
 mid-recording the attestation's frame count falls short of the input stream's —
 which `Movie::deserialize` detects and drops the tail for. The failure mode is
 "no attestation", never "a wrong one".
+
+A successful **rewind during recording** also drops the attestation: a rewind
+restores an earlier state while the input log keeps its full prefix, so the frame
+counts stay self-consistent and `Movie::verify` would report `Mismatch` on an
+honest recording. "Not attested" is the truthful outcome.
 
 Two other paths deliberately produce no attestation: a **history-viewer export**
 (the rewind ring stores state, not the per-frame video an attestation hashes) and

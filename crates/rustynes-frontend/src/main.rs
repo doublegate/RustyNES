@@ -64,7 +64,7 @@ fn main() -> ExitCode {
 /// `rustynes verify <MOVIE> --rom <ROM>` — replay an attested movie and report
 /// whether it reproduces its recorded run.
 ///
-/// v2.3.3 "Lucid". Entirely headless: it constructs a bare `Nes`, replays the
+/// v2.3.2 "Lucid". Entirely headless: it constructs a bare `Nes`, replays the
 /// movie's input stream, and re-derives the rolling hash of the video output. No
 /// window, no audio device, no host input — so the answer depends only on the
 /// ROM, the movie, and the deterministic core, which is the whole point.
@@ -111,8 +111,17 @@ fn run_verify(movie_path: &std::path::Path, rom_path: &std::path::Path) -> ExitC
     // Surface the pre-v2.0.0-timebase caveat rather than silently verifying
     // across an engine boundary where bit-identical replay was never proven.
     if rustynes_core::recorded_before_v2_timebase(&movie_bytes).unwrap_or(false) {
+        // One `concat!` rather than a `\`-continued literal: the continuation
+        // form silently baked 14 alignment spaces into the middle of the
+        // sentence, which rendered as a gap in the terminal. Caught in review
+        // on PR #356.
         eprintln!(
-            "rustynes: warning — this movie was recorded before the v2.0.0 \"Timebase\"              engine change; exact reproduction across that boundary is unverified."
+            "{}",
+            concat!(
+                "rustynes: warning — this movie was recorded before the ",
+                "v2.0.0 \"Timebase\" engine change; exact reproduction across ",
+                "that boundary is unverified."
+            )
         );
     }
 
@@ -122,6 +131,17 @@ fn run_verify(movie_path: &std::path::Path, rom_path: &std::path::Path) -> ExitC
         rom_path.display()
     );
     println!("  {} frames to replay...", movie.len());
+    // The verifier builds a DEFAULT `Nes` from the ROM bytes. A recording made
+    // with a non-default core profile — Four Score, a PPU die-revision or
+    // power-on RAM model, a per-game database override, a soft-patched ROM —
+    // will not reproduce here, and would report a mismatch that is the profile's
+    // fault rather than the movie's. The format carries no profile field to
+    // check against, so the assumption is stated up front instead of silently
+    // mis-blaming the movie. (Review finding on PR #356; recording-side
+    // eligibility is tracked as follow-up.)
+    println!("  (replaying with a DEFAULT core profile — a recording made with");
+    println!("   Four Score, a PPU revision / power-on model, a game-database");
+    println!("   override, or a patched ROM will not reproduce here)");
     match movie.verify(&mut nes) {
         Ok(VerifyOutcome::Match { frames, hash }) => {
             println!("VERIFIED: {frames} frames reproduced exactly (hash {hash:016x}).");

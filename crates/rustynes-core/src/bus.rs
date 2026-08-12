@@ -4138,7 +4138,7 @@ impl PpuBus for PpuBusAdapter<'_> {
 /// Resolve a nametable address to a physical CIRAM offset, honouring the
 /// per-game mirroring override when one is set.
 ///
-/// Factored out of [`PpuBusAdapter::nametable_address`] (v2.3.3 "Lucid") so
+/// Factored out of [`PpuBusAdapter::nametable_address`] (v2.3.2 "Lucid") so
 /// [`LockstepBus::resolve_nametable_address`] can answer the same question
 /// without constructing an adapter. One definition, so the fetch path and the
 /// provenance panel cannot drift apart on a board with an override.
@@ -4336,7 +4336,7 @@ impl Bus for LockstepBus {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize] = value,
             0x2000..=0x3FFF => self.ppu_register_write(addr, value),
             REG_OAM_DMA => {
-                // v2.3.3 "Lucid" — freeze THIS instruction (the `STA $4014`) as
+                // v2.3.2 "Lucid" — freeze THIS instruction (the `STA $4014`) as
                 // the cause of the burst before it is armed. The 513/514 DMA
                 // cycles are stolen from the instructions that follow, so by the
                 // time the first OAM byte lands the live attribution context has

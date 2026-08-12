@@ -1,4 +1,4 @@
-//! Pixel provenance inspector (v2.3.3 "Lucid" phase 3).
+//! Pixel provenance inspector (v2.3.2 "Lucid" phase 3).
 //!
 //! Pick a screen pixel and read the full causal chain that produced it: the PPU
 //! dot and scanline that emitted it, which layer won the priority decision, the
@@ -256,7 +256,7 @@ fn report(ui: &mut egui::Ui, rec: &PixelProvenance, nes: &Nes, map: &SourceMap) 
 
     if rec.layer == PixelLayer::Sprite {
         ui.separator();
-        sprite_section(ui, rec, nes, map);
+        sprite_section(ui, rec);
     }
 }
 
@@ -339,9 +339,8 @@ fn background_section(ui: &mut egui::Ui, rec: &PixelProvenance, nes: &Nes, map: 
 }
 
 /// The winning sprite's slot, flags, and OAM attribution.
-fn sprite_section(ui: &mut egui::Ui, rec: &PixelProvenance, nes: &Nes, map: &SourceMap) {
+fn sprite_section(ui: &mut egui::Ui, rec: &PixelProvenance) {
     ui.heading("Sprite (winning layer)");
-    let attrib = nes.write_attribution();
     egui::Grid::new("prov_sprite")
         .num_columns(2)
         .striped(true)
@@ -374,25 +373,28 @@ fn sprite_section(ui: &mut egui::Ui, rec: &PixelProvenance, nes: &Nes, map: &Sou
             ui.monospace(format!("{}", rec.sprite_zero));
             ui.end_row();
 
-            // Attribution for the OAM bytes, when the slot is known. The four
-            // bytes of a sprite are usually written by one OAM DMA, so they
-            // normally share a PC — showing the Y byte's writer is the useful
-            // summary rather than four identical rows.
-            if rec.sprite_slot != SPRITE_SLOT_NONE {
-                let oam_base = rec.sprite_slot.saturating_mul(4);
-                attribution_row(
-                    ui,
-                    "OAM bytes written by",
-                    attrib.and_then(|a| a.oam(oam_base)),
-                    map,
-                );
-            }
+            // NO OAM attribution row here, deliberately.
+            //
+            // `WriteAttribution::oam` is indexed by PRIMARY OAM byte address,
+            // while `sprite_slot` is the per-scanline SECONDARY-OAM slot. Sprite
+            // evaluation copies only in-range sprites into secondary OAM, so
+            // slot N is not primary sprite N whenever any earlier sprite was
+            // skipped — and `slot * 4` would confidently name the instruction
+            // that wrote a DIFFERENT sprite.
+            //
+            // The record already documents that the primary index does not exist
+            // at emit time. Using the slot as if it did would be exactly the
+            // plausible-but-wrong answer this panel exists to avoid, so the row
+            // is omitted until the primary index is actually carried. Caught in
+            // review after the caveat below was written and then contradicted.
         });
     ui.weak(
         "The slot is the per-scanline secondary-OAM slot, not the primary OAM \
          sprite number: sprite evaluation does not retain the source index, so the \
          PPU never knows it. Match the slot's tile / attributes against the OAM \
-         viewer to identify the sprite.",
+         viewer to identify the sprite. For the same reason there is no \
+         \"written by\" row here — the attribution store is keyed on primary OAM, \
+         and indexing it with a secondary slot would name the wrong sprite.",
     );
 }
 

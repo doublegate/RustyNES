@@ -1083,7 +1083,7 @@ pub struct Ppu {
     #[cfg(feature = "hd-pack")]
     pub(crate) hd_spr_idx: [u32; 8],
 
-    /// v2.3.3 "Lucid" — per-byte write attribution for CIRAM / OAM / palette RAM.
+    /// v2.3.2 "Lucid" — per-byte write attribution for CIRAM / OAM / palette RAM.
     ///
     /// `None` (the default) until the frontend arms it via
     /// [`Self::set_write_attribution`], so an unarmed `debug-hooks` build pays one
@@ -1124,7 +1124,7 @@ pub struct Ppu {
     #[cfg(feature = "debug-hooks")]
     pub(crate) dma_attrib_cycle: u64,
 
-    /// v2.3.3 "Lucid" phase 2 — per-pixel provenance for the current frame.
+    /// v2.3.2 "Lucid" phase 2 — per-pixel provenance for the current frame.
     ///
     /// `None` until armed, like [`Self::write_attrib`]. Overwritten in place
     /// every frame, exactly like the framebuffer it shadows.
@@ -1410,8 +1410,13 @@ impl Ppu {
             prov_bg_cur: ProvBgAddrs::default(),
             #[cfg(feature = "debug-hooks")]
             prov_bg_next: ProvBgAddrs::default(),
+            // The "no pattern" sentinel, not 0 — 0 is a legitimate CHR address.
+            // Unreachable at emit time today (a sprite is only selected when
+            // `spr_idx != 0`, which implies a real fetch), but the adjacent
+            // `hd_spr_addr` uses its own sentinel for exactly this reason and a
+            // future reader should not have to re-derive why 0 was safe.
             #[cfg(feature = "debug-hooks")]
-            prov_spr_addr: [0; 8],
+            prov_spr_addr: [crate::provenance::PATTERN_ADDR_NONE; 8],
         };
         // Clear status flags that match power-on per nesdev wiki: VBL is
         // unspecified on power-on. We start clear.
@@ -1986,7 +1991,7 @@ impl Ppu {
         &self.ciram
     }
 
-    /// v2.3.3 "Lucid" — arm or disarm per-byte write attribution.
+    /// v2.3.2 "Lucid" — arm or disarm per-byte write attribution.
     ///
     /// Arming allocates [`crate::provenance::WriteAttribution::HEAP_BYTES`] and
     /// starts stamping every subsequent CIRAM / OAM / palette write with the
@@ -2036,7 +2041,7 @@ impl Ppu {
         self.attrib_cycle = cycle;
     }
 
-    /// v2.3.3 "Lucid" phase 2 — arm or disarm per-pixel provenance capture.
+    /// v2.3.2 "Lucid" phase 2 — arm or disarm per-pixel provenance capture.
     ///
     /// Arming allocates
     /// [`crate::provenance::PixelProvenanceFrame::HEAP_BYTES`] and starts
@@ -2064,6 +2069,19 @@ impl Ppu {
     #[must_use]
     pub fn pixel_provenance(&self) -> Option<&crate::provenance::PixelProvenanceFrame> {
         self.prov_frame.as_deref()
+    }
+
+    /// Forget every recorded pixel, keeping the frame armed.
+    ///
+    /// Mirrors [`Self::clear_write_attribution`], and for the same reason: a
+    /// restore lands mid-frame, so without this the panel would report tile and
+    /// palette addresses from the abandoned timeline for every pixel above the
+    /// current scanline, with nothing marking them stale.
+    #[cfg(feature = "debug-hooks")]
+    pub fn clear_pixel_provenance(&mut self) {
+        if let Some(frame) = self.prov_frame.as_mut() {
+            frame.clear();
+        }
     }
 
     /// Freeze the current instruction context as the cause of an OAM DMA burst.
@@ -2154,7 +2172,7 @@ impl Ppu {
     /// hit OAM directly per nesdev.
     pub fn oam_dma_write(&mut self, value: u8) {
         self.oam[self.oam_addr as usize] = value;
-        // v2.3.3 "Lucid" — every byte of the burst is attributed to the ONE
+        // v2.3.2 "Lucid" — every byte of the burst is attributed to the ONE
         // `STA $4014` that triggered it (the LATCHED context, not the live one:
         // the burst steals cycles from the instructions AFTER the trigger, so
         // the live context names the halted instruction rather than the cause).
@@ -2661,7 +2679,7 @@ impl Ppu {
                     self.oam_addr = self.oam_addr.wrapping_add(4) & 0xFC;
                 } else {
                     self.oam[self.oam_addr as usize] = value;
-                    // v2.3.3 "Lucid" — attribute only the branch that actually
+                    // v2.3.2 "Lucid" — attribute only the branch that actually
                     // stores. The during-rendering branch above is BLOCKED by the
                     // hardware quirk, so recording it would attribute a byte to an
                     // instruction that demonstrably did not write it.
@@ -2896,7 +2914,7 @@ impl Ppu {
             if !bus.write_nametable(nt_addr, value) {
                 let off = bus.nametable_address(nt_addr) as usize;
                 self.ciram[off & 0x07FF] = value;
-                // v2.3.3 "Lucid" — attribute the byte to the instruction that
+                // v2.3.2 "Lucid" — attribute the byte to the instruction that
                 // stored it. Recorded here rather than at the CPU-write boundary
                 // because only this site knows the resolved physical offset: the
                 // caller wrote `$2007`, and `v` plus the mapper's mirroring is
@@ -2931,7 +2949,7 @@ impl Ppu {
         let idx = palette_index(addr);
         // Palette is 6-bit storage.
         self.palette_ram[idx] = value & 0x3F;
-        // v2.3.3 "Lucid" — record the MASKED value, so the attribution matches
+        // v2.3.2 "Lucid" — record the MASKED value, so the attribution matches
         // what a later read returns rather than what the CPU put on the bus.
         // `idx` is post-mirroring, so an attribution looked up through `$3F10`
         // and through `$3F00` resolves to the same record — correct, since they
@@ -3759,7 +3777,7 @@ impl Ppu {
             self.ale_splice(nt_addr)
         };
         self.nt_latch = self.read_vram(bus, nt_addr);
-        // v2.3.3 "Lucid" — capture the address this tile's number came from. The
+        // v2.3.2 "Lucid" — capture the address this tile's number came from. The
         // SPLICED address, i.e. the one actually driven, so a hybrid-address
         // corruption shows the address the hardware really read rather than the
         // one it meant to. Telemetry only.
@@ -3793,7 +3811,7 @@ impl Ppu {
             // splice / consume the ALE arm so it can't leak to the next fetch.
             let at_addr = self.ale_splice(at_addr);
             let byte = self.read_vram(bus, at_addr);
-            // v2.3.3 "Lucid" — the split's own attribute address, which the
+            // v2.3.2 "Lucid" — the split's own attribute address, which the
             // standard `$23C0 | ...` arithmetic cannot reproduce. This branch is
             // exactly why the record carries `at` instead of deriving it.
             #[cfg(feature = "debug-hooks")]
@@ -3812,7 +3830,7 @@ impl Ppu {
         // v2.0.3 (ADR 0030, Option 1) — 2-cycle-ALE read half (normal AT path).
         let at_addr = self.ale_splice(at_addr);
         let byte = self.read_vram(bus, at_addr);
-        // v2.3.3 "Lucid" — see the split branch above.
+        // v2.3.2 "Lucid" — see the split branch above.
         #[cfg(feature = "debug-hooks")]
         {
             self.prov_at_pending = at_addr;
@@ -3854,7 +3872,7 @@ impl Ppu {
         // tile-base latch below.
         let read_addr = self.ale_splice(addr);
         self.bg_lo_latch = self.read_vram(bus, read_addr);
-        // v2.3.3 "Lucid" — the pattern ROW address (fine-Y kept, unlike the
+        // v2.3.2 "Lucid" — the pattern ROW address (fine-Y kept, unlike the
         // `hd-pack` latch below which masks it off to get the 16-byte tile base):
         // provenance answers "which CHR byte fed THIS pixel", which is a row, not
         // a tile. The SPLICED address again, so a hybrid-address corruption shows
@@ -4078,7 +4096,7 @@ impl Ppu {
             self.hd_bg_addr_cur = self.hd_bg_addr_next;
             self.hd_bg_idx_cur = self.hd_bg_idx_next;
         }
-        // v2.3.3 "Lucid": same promotion for the provenance cascade.
+        // v2.3.2 "Lucid": same promotion for the provenance cascade.
         //
         // A/B'd rather than assumed. For the VISIBLE region this is redundant —
         // every displayed tile passes through a `reload_bg_shift_regs` that
@@ -4129,7 +4147,7 @@ impl Ppu {
             self.hd_bg_idx_cur = self.hd_bg_idx_next;
             self.hd_bg_idx_next = self.hd_bg_idx_latch;
         }
-        // v2.3.3 "Lucid": same promotion for the provenance address cascade —
+        // v2.3.2 "Lucid": same promotion for the provenance address cascade —
         // one struct copy per stage, so the three addresses cannot drift apart.
         #[cfg(feature = "debug-hooks")]
         {
@@ -4280,7 +4298,7 @@ impl Ppu {
 
         // Combine BG + sprite per priority.
         //
-        // v2.3.3 "Lucid": the priority chain now yields the palette ADDRESS and
+        // v2.3.2 "Lucid": the priority chain now yields the palette ADDRESS and
         // the single `read_palette` happens after it, instead of each arm reading
         // inline. Semantically identical, and it makes the address available to
         // the provenance record below — so the panel reports the exact `$3Fxx`
@@ -4448,7 +4466,7 @@ impl Ppu {
             self.hd_tile_source[off >> 2] = rec;
         }
 
-        // v2.3.3 "Lucid" phase 2 — the per-pixel causal record.
+        // v2.3.2 "Lucid" phase 2 — the per-pixel causal record.
         //
         // Guarded on a plain `bool` rather than `prov_frame.is_some()`: this runs
         // 61,440 times a frame in one of the two hottest functions in the
@@ -5291,7 +5309,7 @@ impl Ppu {
                 // sentinel (the common mappers share BG/sprite CHR banking).
                 self.hd_spr_idx[slot] = bus.chr_phys(addr_lo).map_or(HD_CHR_RAM, |o| o / 16);
             }
-            // v2.3.3 "Lucid": the sprite's pattern ROW address (in-tile row
+            // v2.3.2 "Lucid": the sprite's pattern ROW address (in-tile row
             // KEPT, unlike the `hd-pack` tile base above). Captured separately
             // so neither feature's telemetry depends on the other being on.
             #[cfg(feature = "debug-hooks")]
