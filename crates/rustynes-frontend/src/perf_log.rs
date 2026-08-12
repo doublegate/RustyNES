@@ -215,7 +215,7 @@ fn open_log_file(dir: &Path, ctx: &PerfLogContext) -> std::io::Result<(BufWriter
 ///
 /// Split out of `columns` so that function stays inside the line budget as
 /// series are added (v2.3.3 added `wait`, `rui`, `rgpu`, `rtot`).
-const fn stats_names() -> [(&'static str, [&'static str; 5]); 7] {
+const fn stats_names() -> [(&'static str, [&'static str; 5]); 8] {
     [
         (
             "produced",
@@ -293,6 +293,16 @@ const fn stats_names() -> [(&'static str, [&'static str; 5]); 7] {
                 "rtot_max_ms",
             ],
         ),
+        (
+            "rwait",
+            [
+                "rwait_mean_ms",
+                "rwait_p50_ms",
+                "rwait_p95_ms",
+                "rwait_p99_ms",
+                "rwait_max_ms",
+            ],
+        ),
     ]
 }
 
@@ -312,6 +322,7 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
             "wait" => &v.produce_wait,
             "rui" => &v.render_ui,
             "rgpu" => &v.render_gpu,
+            "rwait" => &v.render_wait,
             "rtot" => &v.render_total,
             _ => &v.produce_cost,
         }
@@ -592,6 +603,7 @@ mod tests {
             "rui",
             "rgpu",
             "rtot",
+            "rwait",
         ] {
             for stat in ["mean_ms", "p50_ms", "p95_ms", "p99_ms", "max_ms"] {
                 let want = format!("{series}_{stat}");

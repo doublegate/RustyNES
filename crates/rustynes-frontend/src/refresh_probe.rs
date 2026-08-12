@@ -1,5 +1,5 @@
-//! v2.3.3 — empirical display-refresh measurement and integer-divisor
-//! selection for display-synchronised pacing.
+//! v2.3.3 — turning a display refresh into a display-synchronised pacing
+//! decision.
 //!
 //! # Why this exists
 //!
@@ -24,43 +24,33 @@
 //! beating against each other, with duplicates and drops accruing at the same
 //! time — the signature of a phase beat rather than a shortfall of work.
 //!
-//! This module removes both failure modes. [`RefreshProbe`] measures the real
-//! redraw cadence from observed redraw timestamps, so it works when the
-//! windowing API is silent; [`best_divisor`] then finds the integer `N` with
-//! `refresh / N` closest to the console rate, so a 120 Hz panel locks at
-//! `N = 2` and a 144 Hz panel is honestly rejected rather than half-working.
+//! This module removes the second failure mode: [`best_divisor`](crate::refresh_probe::best_divisor)
+//! finds the
+//! integer `N` with `refresh / N` closest to the console rate, so a 120 Hz
+//! panel locks at `N = 2` and a 144 Hz panel is honestly rejected rather than
+//! half-working. The first is removed by [`crate::wayland_presentation`],
+//! which asks the compositor for the number the windowing API would not give.
 //!
-//! # The measurement is only valid under Fifo
+//! # A note on where the refresh figure may come from
 //!
-//! A redraw interval measures the *display* only when redraws are clocked by
-//! the display. Under the wall-clock regime the present mode is Mailbox and
-//! redraws are requested by the producer, so sampling there would measure the
-//! emulator's 16.64 ms cadence and "discover" a 60 Hz panel on every host —
-//! confidently, and always wrongly. The caller must therefore put the surface
-//! in Fifo and drive continuous redraws for the duration of a probe; see
-//! `App::maybe_begin_refresh_probe`. This module cannot enforce that, so it is
-//! stated here and asserted by the caller's state machine.
+//! [`estimate_hz_from_intervals`](crate::refresh_probe::estimate_hz_from_intervals)
+//! deliberately takes a plain slice of periods
+//! and does not care who produced them. It originally served a redraw-interval
+//! probe, which was **removed** in v2.3.3: a redraw interval measures the
+//! *application*, not the display, and the two diverge exactly when the
+//! measurement matters (it returned 20.032 Hz on a 119.991 Hz panel while a
+//! heavy ROM ran at ~14 ms/frame). The estimator itself was never the flawed
+//! half — its input was — so it survives unchanged and now serves the
+//! compositor's own reports. `docs/performance.md` v2.3.3 F4 records the
+//! rejection with its numbers.
 
 use std::time::Duration;
 
-use web_time::Instant;
-
-/// Intervals collected before an estimate is offered.
-///
-/// At 60 Hz this is ~1.3 s and at 144 Hz ~0.55 s — long enough to average out
-/// compositor jitter and short enough that the one-off calibration is not
-/// perceptible.
-pub const TARGET_SAMPLES: usize = 80;
-
-/// Hard cap on retained samples, so a probe left running cannot grow without
-/// bound.
-const MAX_SAMPLES: usize = 240;
-
 /// Lower plausibility bound for a real display, in Hz.
 ///
-/// Anything outside the window is a measurement artefact (a stalled
-/// compositor, a minimised window, a debugger breakpoint) rather than a panel,
-/// and is rejected rather than acted on.
+/// Anything outside the window is an artefact (a stalled compositor, a
+/// minimised window, a debugger breakpoint) rather than a panel, and is
+/// rejected rather than acted on.
 const MIN_PLAUSIBLE_HZ: f64 = 20.0;
 /// Upper plausibility bound — see [`MIN_PLAUSIBLE_HZ`].
 const MAX_PLAUSIBLE_HZ: f64 = 400.0;
@@ -83,97 +73,46 @@ const STABILITY_BAND: f64 = 0.20;
 /// of *something*.
 pub const MAX_DIVISOR: u32 = 4;
 
-/// Collects redraw intervals and turns them into a refresh estimate.
+/// Turn a set of per-refresh periods in milliseconds into a refresh rate in Hz,
+/// or `None` if they do not describe a steady, plausible cadence.
 ///
-/// The estimator is the **median**, not the mean: a single long interval from
-/// a compositor hiccup or a scheduler stall shifts a mean enough to change the
+/// The estimator is the **median**, not the mean: a single long period from a
+/// compositor hiccup or a scheduler stall shifts a mean enough to change the
 /// chosen divisor, while the median ignores it. The stability quorum then
 /// rejects the case where the samples are not describing a steady cadence at
 /// all.
-#[derive(Debug, Default)]
-pub struct RefreshProbe {
-    /// Observed intervals in milliseconds.
-    samples_ms: Vec<f64>,
-    /// Previous redraw timestamp, or `None` before the first sample and after
-    /// a phase break.
-    last: Option<Instant>,
-}
-
-impl RefreshProbe {
-    /// Start (or restart) a probe, discarding anything already collected.
-    pub fn begin(&mut self) {
-        self.samples_ms.clear();
-        self.last = None;
+///
+/// Returning `None` is a first-class outcome, not an error path: the caller's
+/// correct response is to keep the wall-clock pacer, which is exactly what it
+/// was already doing.
+///
+/// `min_samples` is the caller's threshold, because how many reports are
+/// needed depends on what they are: an authoritative period from the
+/// compositor needs only enough to prove the output is not mid-change.
+#[must_use]
+pub fn estimate_hz_from_intervals(samples_ms: &[f64], min_samples: usize) -> Option<f64> {
+    if samples_ms.is_empty() || samples_ms.len() < min_samples {
+        return None;
     }
-
-    /// Forget the previous timestamp without discarding samples, so the gap
-    /// across an occlusion / minimise / ROM load is not recorded as a giant
-    /// interval.
-    pub const fn break_phase(&mut self) {
-        self.last = None;
+    let mut sorted = samples_ms.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let median = sorted[sorted.len() / 2];
+    if median <= 0.0 {
+        return None;
     }
-
-    /// Record a redraw at `now`. The first call after `begin` or
-    /// `break_phase` only establishes the baseline.
-    pub fn record(&mut self, now: Instant) {
-        if let Some(prev) = self.last
-            && self.samples_ms.len() < MAX_SAMPLES
-        {
-            self.samples_ms
-                .push(now.duration_since(prev).as_secs_f64() * 1000.0);
-        }
-        self.last = Some(now);
+    // Reject a cadence that is not actually steady — see STABILITY_QUORUM.
+    let lo = median * (1.0 - STABILITY_BAND);
+    let hi = median * (1.0 + STABILITY_BAND);
+    let within = sorted.iter().filter(|&&s| s >= lo && s <= hi).count();
+    #[allow(clippy::cast_precision_loss)] // bounded by the caller's sample cap.
+    let ratio = within as f64 / sorted.len() as f64;
+    if ratio < STABILITY_QUORUM {
+        return None;
     }
-
-    /// Number of intervals collected so far.
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.samples_ms.len()
-    }
-
-    /// Whether no intervals have been collected yet.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.samples_ms.is_empty()
-    }
-
-    /// Whether enough intervals have been collected to offer an estimate.
-    #[must_use]
-    pub const fn is_complete(&self) -> bool {
-        self.samples_ms.len() >= TARGET_SAMPLES
-    }
-
-    /// The measured refresh in Hz, or `None` if the samples do not describe a
-    /// steady, plausible cadence.
-    ///
-    /// Returning `None` is a first-class outcome, not an error path: the
-    /// caller's correct response is to keep the wall-clock pacer, which is
-    /// exactly what it was already doing.
-    #[must_use]
-    pub fn estimate_hz(&self) -> Option<f64> {
-        if self.samples_ms.len() < TARGET_SAMPLES {
-            return None;
-        }
-        let mut sorted = self.samples_ms.clone();
-        sorted.sort_by(f64::total_cmp);
-        let median = sorted[sorted.len() / 2];
-        if median <= 0.0 {
-            return None;
-        }
-        // Reject a cadence that is not actually steady — see STABILITY_QUORUM.
-        let lo = median * (1.0 - STABILITY_BAND);
-        let hi = median * (1.0 + STABILITY_BAND);
-        let within = sorted.iter().filter(|&&s| s >= lo && s <= hi).count();
-        #[allow(clippy::cast_precision_loss)] // bounded by MAX_SAMPLES.
-        let ratio = within as f64 / sorted.len() as f64;
-        if ratio < STABILITY_QUORUM {
-            return None;
-        }
-        let hz = 1000.0 / median;
-        (MIN_PLAUSIBLE_HZ..=MAX_PLAUSIBLE_HZ)
-            .contains(&hz)
-            .then_some(hz)
-    }
+    let hz = 1000.0 / median;
+    (MIN_PLAUSIBLE_HZ..=MAX_PLAUSIBLE_HZ)
+        .contains(&hz)
+        .then_some(hz)
 }
 
 /// The integer `N` such that presenting one emulated frame every `N` display
@@ -217,56 +156,44 @@ mod tests {
     /// against.
     const NTSC: f64 = 60.0988;
 
-    fn probe_at(interval_ms: f64, n: usize) -> RefreshProbe {
-        let mut p = RefreshProbe::default();
-        p.begin();
-        let base = Instant::now();
-        for i in 0..=n {
-            #[allow(clippy::cast_precision_loss)]
-            let t = base + Duration::from_secs_f64(interval_ms * i as f64 / 1000.0);
-            p.record(t);
-        }
-        p
+    /// Sample count the estimator tests use — the same order of magnitude as
+    /// [`crate::wayland_presentation`]'s real threshold.
+    const N: usize = 24;
+
+    fn steady(interval_ms: f64, n: usize) -> Vec<f64> {
+        vec![interval_ms; n]
     }
 
     #[test]
-    fn a_60hz_cadence_is_measured_as_60hz() {
-        let p = probe_at(1000.0 / 60.0, TARGET_SAMPLES);
-        let hz = p.estimate_hz().expect("steady cadence estimates");
+    fn a_60hz_cadence_is_estimated_as_60hz() {
+        let hz = estimate_hz_from_intervals(&steady(1000.0 / 60.0, N), N)
+            .expect("steady cadence estimates");
         assert!((hz - 60.0).abs() < 0.5, "got {hz}");
     }
 
     #[test]
-    fn a_120hz_cadence_is_measured_as_120hz() {
-        let p = probe_at(1000.0 / 120.0, TARGET_SAMPLES);
-        let hz = p.estimate_hz().expect("steady cadence estimates");
+    fn a_120hz_cadence_is_estimated_as_120hz() {
+        let hz = estimate_hz_from_intervals(&steady(1000.0 / 120.0, N), N)
+            .expect("steady cadence estimates");
         assert!((hz - 120.0).abs() < 1.0, "got {hz}");
     }
 
     #[test]
-    fn an_incomplete_probe_offers_no_estimate() {
-        let p = probe_at(1000.0 / 60.0, TARGET_SAMPLES / 2);
-        assert!(!p.is_complete());
-        assert!(p.estimate_hz().is_none());
+    fn too_few_samples_offer_no_estimate() {
+        assert!(estimate_hz_from_intervals(&steady(1000.0 / 60.0, N / 2), N).is_none());
+        assert!(estimate_hz_from_intervals(&[], N).is_none());
     }
 
     /// The whole point of the median + quorum: a cadence that is not steady
     /// must be refused rather than averaged into a confident wrong answer.
     #[test]
     fn an_unsteady_cadence_is_refused() {
-        let mut p = RefreshProbe::default();
-        p.begin();
-        let base = Instant::now();
-        let mut t = base;
-        for i in 0..=TARGET_SAMPLES {
-            // Alternate 8.3 ms and 33 ms — a compositor dropping frames.
-            let step = if i % 2 == 0 { 8.3 } else { 33.0 };
-            t += Duration::from_secs_f64(step / 1000.0);
-            p.record(t);
-        }
-        assert!(p.is_complete());
+        // Alternating 8.3 ms and 33 ms — a compositor dropping frames.
+        let samples: Vec<f64> = (0..N)
+            .map(|i| if i % 2 == 0 { 8.3 } else { 33.0 })
+            .collect();
         assert!(
-            p.estimate_hz().is_none(),
+            estimate_hz_from_intervals(&samples, N).is_none(),
             "unsteady cadence must not estimate"
         );
     }
@@ -274,25 +201,28 @@ mod tests {
     /// A few outliers must not move the estimate — the reason for a median.
     #[test]
     fn isolated_stalls_do_not_move_the_estimate() {
-        let mut p = RefreshProbe::default();
-        p.begin();
-        let mut t = Instant::now();
-        for i in 0..=TARGET_SAMPLES {
-            let step = if i % 40 == 39 { 100.0 } else { 1000.0 / 120.0 };
-            t += Duration::from_secs_f64(step / 1000.0);
-            p.record(t);
-        }
-        let hz = p.estimate_hz().expect("mostly-steady cadence estimates");
+        let samples: Vec<f64> = (0..N)
+            .map(|i| if i % 12 == 11 { 100.0 } else { 1000.0 / 120.0 })
+            .collect();
+        let hz = estimate_hz_from_intervals(&samples, N).expect("mostly-steady cadence estimates");
         assert!((hz - 120.0).abs() < 1.0, "got {hz}");
     }
 
+    /// A period outside the plausible window is an artefact, not a panel.
     #[test]
-    fn break_phase_drops_the_gap_not_the_samples() {
-        let mut p = probe_at(1000.0 / 60.0, 10);
-        let before = p.len();
-        p.break_phase();
-        p.record(Instant::now() + Duration::from_secs(5));
-        assert_eq!(p.len(), before, "the 5 s gap must not become a sample");
+    fn an_implausible_rate_is_refused() {
+        assert!(
+            estimate_hz_from_intervals(&steady(500.0, N), N).is_none(),
+            "2 Hz"
+        );
+        assert!(
+            estimate_hz_from_intervals(&steady(1.0, N), N).is_none(),
+            "1000 Hz"
+        );
+        assert!(
+            estimate_hz_from_intervals(&steady(0.0, N), N).is_none(),
+            "zero"
+        );
     }
 
     #[test]

@@ -775,13 +775,29 @@ present therefore no longer slows the console. The schedule is owned by the
 winit thread, *not* read through the emulator mutex: doing that on every
 refresh was measured at 36 ms `cost` p95 with the console at 35 Hz.
 
-When the windowing API reports no refresh at all — a compositor advertising no
-`wl_output`, which is not rare — `RefreshProbe` measures the cadence directly
-(median of 80 redraw intervals under Fifo, with a stability quorum that refuses
-an unsteady cadence rather than guessing). It samples only under Fifo with
-continuous redraws, because a redraw interval measures the *display* only when
-redraws are display-clocked; sampling under the wall-clock regime would measure
-the producer and "discover" a 60 Hz panel on every host.
+The refresh figure itself comes from an ordered pair of sources, recorded per
+capture in the perf-log header as `refresh_source`:
+
+| `refresh_source` | where it comes from | when |
+| --- | --- | --- |
+| `declared` | winit `current_monitor()` → `refresh_rate_millihertz()` | whenever the windowing API answers — exact, always preferred |
+| `presentation` | the Wayland compositor's `wp_presentation` `presented` event (`crates/rustynes-frontend/src/wayland_presentation.rs`) | when it does not |
+| `none` | — | neither available; pacing stays wall-clock |
+
+A compositor advertising no `wl_output` — which is not rare, and is the case on
+the KDE Wayland session this was developed against — makes `current_monitor()`
+return `None` for the whole session, not merely at startup. `wp_presentation`
+is a stable protocol whose `presented` event carries the refresh period
+outright, so it answers where the windowing API cannot, and it does not depend
+on an output global existing. It binds against winit's own connection and
+surface, polls non-blocking, and settles on one value per session.
+
+v2.3.3 briefly measured the refresh instead, from redraw intervals under Fifo.
+That was **removed**: a redraw interval measures the *application*, not the
+display, and the two diverge precisely when it matters — it reported 20.032 Hz
+on a 119.991 Hz panel while a heavy ROM ran at ~14 ms/frame. See
+`docs/performance.md` v2.3.3 F4. The median + stability-quorum estimator was
+never the flawed half and still runs, over the compositor's reports.
 
 Display-sync has an occlusion watchdog (emulation+audio keep running when
 the compositor throttles redraws) and a fallback to `wallclock` (sticky per

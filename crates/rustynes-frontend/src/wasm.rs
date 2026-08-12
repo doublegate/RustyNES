@@ -163,7 +163,13 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
             );
             match nes_result {
                 Ok(nes) => {
-                    EMU.with(|emu| emu.borrow_mut().set_nes(nes));
+                    // NOT `EmuCore::set_nes`: this is the canvas embed's own
+                    // `Emu`, which holds no mapper-name cache to refresh, so
+                    // there is nothing for a setter to keep consistent. (The
+                    // v2.3.2 F3 sweep rewrote this site along with the four
+                    // real `EmuCore` ones and broke the `wasm-canvas` build,
+                    // which no native feature combo compiles.)
+                    EMU.with(|emu| emu.borrow_mut().nes = Some(nes));
                     wasm_audio::clear_ring();
                     log(&format!("ROM loaded ({} bytes). Running.", bytes.len()));
                 }

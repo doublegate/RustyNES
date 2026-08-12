@@ -734,7 +734,7 @@ impl EmuCore {
     /// approaching the budget with run-ahead's 2x) still throttles
     /// correctly, while a deschedule spike no longer does.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn update_runahead_throttle(&mut self, produce_p50_ms: f32, samples: usize) {
+    pub fn update_runahead_throttle(&mut self, produce_p50_ms: f32, samples: usize, depth: u32) {
         if samples < 120 {
             return;
         }
@@ -745,9 +745,30 @@ impl EmuCore {
                 "rustynes: median produce cost {produce_p50_ms:.2} ms is too close to the \
                  {target:.2} ms frame budget — run-ahead disabled until it recovers."
             );
-        } else if self.runahead_throttled && produce_p50_ms < target * 0.40 {
-            self.runahead_throttled = false;
-            eprintln!("rustynes: produce cost recovered — run-ahead re-enabled.");
+        } else if self.runahead_throttled {
+            // v2.3.3 F6 — the release test must be in the SAME units as the
+            // engage test, i.e. cost *with run-ahead re-enabled*. Comparing the
+            // throttled (run-ahead-off) cost against a fixed 40% band compares
+            // two different quantities, and the 85%/40% gap does not span them
+            // — it sits BETWEEN them. At depth 2, cost is ~3x base with
+            // run-ahead on and 1x base with it off, so any ROM whose base cost
+            // lands between ~28% and 40% of budget engages at 3x, immediately
+            // reads under 40% at 1x, releases, and re-engages: a ~2 s
+            // oscillation (the median window). Each toggle shifts the displayed
+            // frame by the run-ahead depth, so the picture jumps forward N
+            // frames and back again — measured on Bad Dudes at three toggles
+            // per 45 s. Predicting the re-enabled cost makes the comparison
+            // honest and the hysteresis real.
+            // Depth is 0-3 (config-clamped), so the widening is exact.
+            let predicted_with_runahead =
+                produce_p50_ms * (f32::from(u8::try_from(depth).unwrap_or(3)) + 1.0);
+            if predicted_with_runahead < target * 0.70 {
+                self.runahead_throttled = false;
+                eprintln!(
+                    "rustynes: produce cost recovered ({produce_p50_ms:.2} ms, ~{predicted_with_runahead:.2} ms \
+                     with run-ahead) — run-ahead re-enabled."
+                );
+            }
         }
     }
 

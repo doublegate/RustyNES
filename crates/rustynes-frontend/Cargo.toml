@@ -474,3 +474,24 @@ criterion.workspace = true
 name = "gfx_blit"
 path = "benches/gfx_blit.rs"
 harness = false
+
+# === v2.3.3 — Wayland presentation-time refresh sourcing ===
+# `src/wayland_presentation.rs`: reads the display refresh period straight off
+# the compositor's `wp_presentation` `presented` event, for the (common) case
+# where winit reports no refresh because the compositor advertises no
+# `wl_output` global at all. See that module's preamble for why measuring
+# redraw intervals is not a substitute.
+#
+# The `cfg` is winit's OWN Wayland-backend predicate, verbatim, so these
+# dependencies exist on exactly the targets where there is a Wayland surface to
+# attach to — never on Windows, macOS, iOS, Android or either wasm build, whose
+# size budgets are therefore untouched. All three crates are already in the lock
+# via winit/sctk/rfd, so this adds no new third-party code to the build.
+#
+# `presentation-time` is a STABLE protocol
+# (`protocols/stable/presentation-time/presentation-time.xml`), so `client` is
+# the only feature needed — NOT `staging` or `unstable`.
+[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies]
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+raw-window-handle = "0.6"

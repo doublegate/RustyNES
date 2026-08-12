@@ -14,7 +14,42 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Frontend: the display refresh can now come from the Wayland compositor.**
+  A new `wayland_presentation` module reads the refresh period straight off
+  `wp_presentation`'s `presented` event — the compositor's own figure, which
+  does not depend on the `wl_output` global whose absence leaves winit's
+  `current_monitor()` answering `None` for an entire session. It binds against
+  winit's existing connection and surface, polls without blocking, and settles
+  on one value per session, so the pacing regime cannot oscillate. A declared
+  refresh still always wins; this only fills the gap where there is none.
+  Wayland-only and best-effort — every failure path returns `None` and leaves
+  X11, Windows and macOS on exactly the code they ran before. The perf-log
+  header gains `refresh_source` (`declared` | `presentation` | `none`), because
+  two captures with the same refresh from different sources are not the same
+  experiment. Measured over 16 asserted 45 s captures on four ROMs: display-sync
+  now engages and **holds every row of every run**, where Bad Dudes (MMC3) and
+  Bandit Kings (MMC5) previously never left the wall-clock pacer. Dropped frames
+  on Bad Dudes go from **114-186 per 45 s to 1-6**, audio underruns are 0
+  throughout, and console-rate error stays within 0.16%. One measure did not
+  improve and is recorded as open in `docs/performance.md` v2.3.3 F4: the
+  `produced` interval p95 sits at 27-33 ms, and the control run intended to
+  attribute it was confounded by capture order, so no cause is claimed.
+
 ### Changed
+
+- **Frontend: refresh measurement from redraw intervals is removed.** Shipped
+  earlier in this cycle as the fallback for a silent windowing API, it worked
+  on light ROMs and failed on the ones that needed it: a redraw interval
+  measures the *application*, not the display, so on a ~14 ms/frame commercial
+  ROM it reported **20.032 Hz on a 119.991 Hz panel** and display-sync
+  correctly refused to engage. No retry schedule fixes a signal measuring the
+  wrong quantity — three were tried — so the sampling half is deleted rather
+  than left disabled, and `wp_presentation` above replaces it. The median +
+  stability-quorum estimator was never the flawed half and is unchanged, now
+  shared by both callers along with its tests; `best_divisor`, the
+  phase/rate split and the console-rate fallback are untouched.
 
 - **Frontend perf gates: `cost_p95` and `produced_dropped` are reported, not
   enforced; a console-rate gate replaces them.** Both thresholds were derived
@@ -43,6 +78,31 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **Frontend: display-sync's occlusion watchdog never ran.** `about_to_wait`
+  early-returned with `ControlFlow::Wait` whenever the emulation thread drives
+  (the default build), and that return sat above the display-sync branch — so
+  the watchdog was unreachable in every shipped build. Display-sync is
+  self-driving from the present success path, so a compositor that stops
+  delivering frame callbacks (minimised or fully occluded window) left nothing
+  to re-arm the redraw and nothing scheduled to wake the loop, stopping
+  emulation and audio. The stall path is additionally guarded so it does not
+  produce frames on the winit thread while the emulation thread is also
+  producing.
+- **Frontend: the run-ahead throttle could not release without re-engaging.**
+  It engaged on produce cost measured *with* run-ahead (>85% of the frame
+  budget) but released on cost measured *without* it (<40%) — two different
+  quantities, with the hysteresis band sitting between the two states rather
+  than spanning them. At depth 2 any ROM whose base cost lands between ~28%
+  and 40% of budget oscillated on a ~2 s period, and each toggle shifts the
+  displayed frame by the run-ahead depth. Measured at three toggles per 45 s
+  on Bad Dudes. Release now predicts the re-enabled cost.
+- **Frontend: the display-sync produce phase was a marginal wall-clock test.**
+  It re-decided `now + slack >= next` on every refresh with `slack` at half a
+  *refresh*, putting the decision boundary 4.167 ms from an 8.334 ms grid, so
+  ordinary redraw jitter flipped it between adjacent refreshes. The phase now
+  comes from a refresh count, with the wall clock retained as rate guards in
+  both directions. Worth ~10% of the produced-interval p95; see
+  `docs/performance.md` v2.3.3 F6 for why that is reported as partial.
 - **Frontend: dropped frames and stutter traced to display pacing, and fixed.**
   On a 120 Hz host the emulator produced NTSC frames perfectly (`produced_mean`
   measured 16.64 ms in every capture) while the display-synchronised pacer never

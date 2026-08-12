@@ -184,6 +184,13 @@ pub struct RenderPerf {
     gpu: SampleRing,
     /// The whole `RedrawRequested` handler, end to end.
     total: SampleRing,
+    /// v2.3.3 F8 — the BLOCKING present alone (swapchain acquire + present).
+    ///
+    /// Split out because `total` conflates work with waiting: under Fifo a
+    /// present that blocks until vblank is correct behaviour, not a stall, so
+    /// a 16 ms `total` p95 could mean either and the metric could not say
+    /// which. Render WORK is `total - wait`.
+    wait: SampleRing,
 }
 
 impl RenderPerf {
@@ -202,10 +209,20 @@ impl RenderPerf {
         self.total.push(d.as_secs_f32() * 1000.0);
     }
 
-    /// `(ui, gpu, total)` summaries.
+    /// Record the blocking present (vblank wait included).
+    pub fn record_wait(&mut self, d: Duration) {
+        self.wait.push(d.as_secs_f32() * 1000.0);
+    }
+
+    /// `(ui, gpu, total, wait)` summaries.
     #[must_use]
-    pub fn stats(&self) -> (IntervalStats, IntervalStats, IntervalStats) {
-        (self.ui.stats(), self.gpu.stats(), self.total.stats())
+    pub fn stats(&self) -> (IntervalStats, IntervalStats, IntervalStats, IntervalStats) {
+        (
+            self.ui.stats(),
+            self.gpu.stats(),
+            self.total.stats(),
+            self.wait.stats(),
+        )
     }
 
     /// Drop all samples (new ROM / regime change).
@@ -291,7 +308,9 @@ impl PerfStats {
     }
 
     /// Record how long the producer was blocked on the emulator mutex before
-    /// it could begin the frame. See [`PerfStats::produce_wait`].
+    /// it could begin the frame, separately from the work itself — the split
+    /// that showed the measured wait is 0.00 ms at every percentile. Surfaced
+    /// as `PerfView::produce_wait`.
     pub fn record_produce_wait(&mut self, d: Duration) {
         self.produce_wait.push(d.as_secs_f32() * 1000.0);
     }
@@ -358,13 +377,15 @@ pub struct PerfView {
     pub presented: IntervalStats,
     /// `produce_one_frame` wall-cost stats (work only, from v2.3.3).
     pub produce_cost: IntervalStats,
-    /// v2.3.3 — emulator-mutex blocking stats for the producer. See
-    /// [`PerfStats::produce_wait`].
+    /// v2.3.3 — emulator-mutex blocking stats for the producer, recorded by
+    /// `PerfStats::record_produce_wait`.
     pub produce_wait: IntervalStats,
     /// v2.3.3 — egui shell build cost (winit thread). See [`RenderPerf`].
     pub render_ui: IntervalStats,
     /// v2.3.3 — GPU encode + present cost (winit thread). See [`RenderPerf`].
     pub render_gpu: IntervalStats,
+    /// v2.3.3 F8 — blocking-present (vblank wait) cost. See [`RenderPerf`].
+    pub render_wait: IntervalStats,
     /// v2.3.3 — whole redraw handler cost (winit thread). See [`RenderPerf`].
     pub render_total: IntervalStats,
     /// See [`PerfStats::catchup_bursts`].

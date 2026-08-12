@@ -1115,6 +1115,13 @@ itself reports "not steady enough to trust" — but the re-resolve it triggers
 picks up the now-available declared 119.991 Hz, which is the outcome that
 matters.
 
+> **Superseded — see v2.3.3 F4.** The `RefreshProbe` described here was removed.
+> It held on `flowing_palette` and Super Mario Bros but failed on Bad Dudes,
+> for a structural reason: a redraw interval measures the *application*, not the
+> display, and the two diverge precisely when the measurement matters. The
+> compositor's own `wp_presentation` report replaced it. Changes 1 and 3 of this
+> entry, and everything downstream of them, are unaffected.
+
 **3. The display governs phase; the wall clock governs rate.** The obvious
 implementation — produce on every `N`th refresh — was implemented, measured,
 and rejected. It makes console speed a function of render-loop reliability:
@@ -1202,6 +1209,240 @@ is a **console-rate gate**: `|produced_mean - target_ms|` against a 0.5% band,
 which is the emulator's own responsibility, independent of display and
 `run_ahead`. Verified to fail the 3.3%-slow build from change 3 above (exit 1)
 and pass every healthy capture.
+
+### v2.3.3 F4 — sourcing the refresh from the compositor (decision: redraw-interval measurement REJECTED and removed; `wp_presentation` ADOPTED)
+
+F2 shipped, and on `flowing_palette` and Super Mario Bros it held. On **Bad
+Dudes** (MMC3) it did not: the session stayed on wall-clock pacing and the
+judder with it. F2's second change — the empirical `RefreshProbe` — is why, and
+the reason it fails is structural rather than a tuning problem.
+
+**A redraw interval measures the application, not the display.** The probe
+timed intervals between `RedrawRequested` under Fifo, on the assumption that
+Fifo makes those the display's own tick. It does — *while the application is
+keeping up*. Bad Dudes at `run_ahead = 2` takes ~14 ms/frame, and during the
+startup window the GPU has not yet left its idle clock, so redraws arrive at
+the rate the app can produce them. The probe reported **20.032 Hz on a
+119.991 Hz panel**, which `best_divisor` then correctly refused, leaving the
+session on wall-clock. The measurement is trustworthy exactly on the ROMs that
+never needed it, and wrong on the ones that do.
+
+Three attempts to rescue it were built and discarded: a retry schedule, a
+deferred re-resolve on the declared refresh, and a re-resolve on winit's
+surface-available event. None address the defect — no amount of re-sampling
+fixes a signal that is measuring the wrong quantity — and the last two also
+depend on `current_monitor()` eventually answering, which on this host it never
+does. **The sampling half of `refresh_probe` is removed rather than left
+disabled**, so nothing can feed a wrong number into pacing again.
+
+**What replaced it.** `wp_presentation` is a *stable* Wayland protocol and was
+being advertised by this compositor throughout the investigation, unused. Its
+`presented` event carries a `refresh` argument: the compositor's own prediction,
+in nanoseconds, of the next output refresh. That is the period stated by the
+authority that owns it — not inferred from the client's frame cadence, and not
+dependent on the `wl_output` global whose absence started all of this.
+`crates/rustynes-frontend/src/wayland_presentation.rs` binds it against winit's
+existing connection (`Backend::from_foreign_display` + `ObjectId::from_ptr`, the
+documented libwayland-interop path and the only `unsafe` involved) and collects
+24 reports on its own event queue, dispatched non-blocking so it can never stall
+winit's loop.
+
+The estimator was **not** the flawed half and is unchanged: the same median,
+stability quorum and plausibility window now run over compositor-reported
+periods instead of self-timed ones (`refresh_probe::estimate_hz_from_intervals`,
+shared, with its tests). `best_divisor`, `effective_period`, the
+phase/rate split and the console-rate fallback are all untouched by this
+change — F4 replaces one input, nothing else.
+
+The perf-log header gains **`refresh_source`** (`declared` | `presentation` |
+`none`). Two captures with the same refresh but different sources are not the
+same experiment, which the header previously could not express.
+
+Cost is nil: one request per present, and both the request and the poll become
+early-returns once an estimate settles. `poll` answers **once per session** by
+construction — the regime cannot oscillate, which is what made the retry-based
+attempt worse than doing nothing.
+
+**Measured outcome** (16 captures, 45 s each, four ROMs, `run_ahead = 2`,
+rewind on — every header asserted against the config):
+
+| ROM | regime held | drops / 45 s | underruns | console rate |
+| --- | --- | --- | --- | --- |
+| Bad Dudes (MMC3) | display-sync /2, 40/40 rows, 4/4 runs | 1, 3, 1, 6 | 0 | −0.02 … −0.16% |
+| Super Mario Bros | display-sync /2, 39/39, 4/4 | 7, 1, 1, 4 | 0 | ±0.05% |
+| Bandit Kings (MMC5) | display-sync /2, 39-40/40, 4/4 | 1, 7, 7, 1 | 0 | ±0.04% |
+| `flowing_palette` | display-sync /2, 40/40, 4/4 | 4, 3, 1, 3 | 0 | ±0.06% |
+
+Against wall-clock baselines taken on the same host earlier the same day, Bad
+Dudes at identical settings dropped **114, 141, 154, 117, 186** frames per 45 s
+and never left wall-clock. It is now **1-6**. This is the ROM F2 could not fix,
+and Bandit Kings is an MMC5 case that had never been captured at all.
+
+**One criterion is NOT met, and the cause is not established.** The
+`produced` interval p95 is **27-33 ms** — roughly twice the frame period — on
+every ROM, and *higher* than the wall-clock baseline's 17.1-23.0 ms. A
+`run_ahead = 0` control was run to test whether this is work cost hitting the
+16.639 ms budget (`cost_p95` sits at 14-16 ms at `run_ahead = 2`), and **the
+control is confounded and settles nothing**: its four captures ran last, after
+~20 minutes of sustained back-to-back capture, and their own `cost_p95` spans
+8.93-25.99 ms — a 3x spread `run_ahead` cannot produce. It reports `run_ahead
+= 0` as *more* expensive than `run_ahead = 2`, which is impossible on the
+merits, so run order is aliased with the variable. Resolving this needs the
+A/B/A order-bias design from v2.3.1 G-series, not another one-directional
+sweep.
+
+Two things are worth separating from that open question:
+
+- Under `/2`, `presented_mean` is 8.55-11.05 ms with 1435-2342 duplicate
+  presents per capture. That is **correct**: a 60 Hz console on a 120 Hz panel
+  must show each frame twice. It also means `presented_*` percentiles and
+  `presented_dups` no longer measure the same quantity they did under a 1:1
+  regime, so thresholds inherited from that regime do not transfer.
+- At `run_ahead = 0` the console-rate error grew to −0.26…−0.59%, breaching the
+  0.5% gate in one of four captures. At the shipped `run_ahead = 2` the worst
+  of sixteen captures was −0.16%. Also confounded by the ordering above, and
+  also worth re-measuring properly.
+
+### v2.3.3 F6 — refresh-counted produce phase + run-ahead hysteresis (decision: PARTIAL; the reported symptom is NOT fixed)
+
+Two defects found while chasing F4's open `produced` p95 question. Both are
+real and both changes are kept; neither resolves the maintainer-reported
+"left-to-right shudder" in Super Mario Bros, and that is stated plainly here
+rather than inferred away.
+
+**1. The produce phase was a marginal wall-clock decision.**
+`display_produce_due` re-tested `now + slack >= next` on every refresh with
+`slack` at half a *refresh* (4.167 ms) against an 8.334 ms grid, so ordinary
+`RedrawRequested` jitter flipped the decision between adjacent refreshes.
+The phase source is now a refresh **count** (`refreshes_since_produce >=
+divisor`), with the wall clock retained as two guards — `too_early` (else a
+fast refresh grid runs the console fast) and `overdue` (else a render loop
+that drops refreshes runs it slow, which is the 1.4-3.4% error that got plain
+"every Nth refresh" rejected in F2).
+
+**2. The run-ahead throttle could not release without re-engaging.** It
+engaged on cost *with* run-ahead (>85% of budget) but released on cost
+*without* it (<40%) — two different quantities, with the band sitting between
+them rather than spanning them. At depth 2 any ROM whose base cost lands
+between ~28% and 40% of budget oscillates at the median window (~2 s), and
+each toggle shifts the displayed frame by the run-ahead depth. Measured at
+three toggles per 45 s on Bad Dudes. Release now predicts the re-enabled cost
+(`p50 * (depth + 1) < 70%`).
+
+**Measured, same A/B/A instrument before and after** (SMB, six captures per
+build, `run_ahead` 0/2 alternating so drift differences out):
+
+| | `produced` p95 median | range |
+| --- | --- | --- |
+| before, `run_ahead = 2` | 30.36 ms | 30.2-30.4 |
+| after, `run_ahead = 2` | **27.21 ms** | 24.9-28.5 |
+| before, `run_ahead = 0` | 27.27 ms | 24.0-36.5 |
+| after, `run_ahead = 0` | 31.40 ms | 24.9-35.9 |
+
+A ~10% improvement at the shipped depth, and **still ~1.6x the frame period**
+against a ≤17 ms target. Two things this did not fix at all:
+
+- The `run_ahead = 0` console-rate error is unchanged (+0.18/+0.48/+0.66%
+  after, versus +0.22/+0.34/+0.60% before, one capture breaching the 0.5% gate
+  in each build). The `too_early` guard is therefore **not** doing what it was
+  added to do, and the fast-running cause is still unidentified.
+- The throttle fix is unverified against the symptom: SMB logs **zero** toggles
+  in all twelve captures across both builds, because it sits at ~81% of budget
+  and never trips. It only fires on heavier ROMs.
+
+**Conclusion: the shudder's cause remains unknown.** The p95 tail is real,
+partially reduced, and not yet traced to a mechanism; the leading remaining
+suspect is that `presented_mean` measures 8.55-11.05 ms rather than a clean
+8.334 ms, i.e. redraws are not arriving on the refresh grid in the first place,
+which no amount of produce-side scheduling can correct.
+
+### v2.3.3 F7 — the display-sync occlusion watchdog was unreachable (decision: FIXED)
+
+`about_to_wait` early-returns with `ControlFlow::Wait` whenever
+`emu_thread_drives()` is true — the default `emu-thread` feature with netplay
+off, i.e. essentially every shipped build — and that return sat **above** the
+`ActivePacing::Display` branch. So under display-sync the watchdog never ran.
+
+This matters because display-sync is self-driving: the only thing re-arming the
+redraw is `display_sync_after_present`, on the success path of a present. If a
+compositor stops delivering frame callbacks (window minimised or fully
+occluded) there is no present, so nothing re-arms, and with a bare `Wait` there
+was nothing scheduled to wake the loop either. Emulation and audio stop with
+it. The watchdog exists precisely to keep them running and to re-kick the
+redraw, and it could not fire.
+
+Display-sync now falls through to its own branch, which sets a bounded
+`WaitUntil` and re-arms. The stall path additionally had to be guarded: it was
+written for the synchronous path and calls `produce_due_frames` on the winit
+thread, which under `emu_thread_drives()` would advance the console *in
+addition to* the emulation thread. It now produces only when the winit thread
+actually owns production; otherwise it just restarts the redraw loop and lets
+the emulation thread's own pacer do the work.
+
+Found while investigating F6's residual, not by any test — no suite covers
+"compositor stops sending frame callbacks".
+
+### v2.3.3 F8 — splitting render WORK from vblank WAIT (decision: ADOPTED, instrument only)
+
+`RenderPerf::total` spans the whole `RedrawRequested` handler **including the
+blocking present**, so a 16 ms p95 reads identically whether the loop stalled
+or simply waited for vblank — which under Fifo is correct behaviour. That
+ambiguity produced a wrong conclusion in this campaign: the ~16 ms `rtot` p95
+was reported as a stall and a fix was built for it before the distribution was
+understood.
+
+A `wait` series now brackets the GPU submission and present, logged as
+`rwait_*`. Render **work** is `rtot - rwait`. Measured on SMB:
+
+| `run_ahead` | work p50 | wait p50 | work p95 | wait p95 |
+| --- | --- | --- | --- | --- |
+| 0 | 0.36-0.87 ms | 1.21-1.75 ms | **0.05-0.08 ms** | 16.19-16.24 ms |
+| 2 | 0.06-0.27 ms | 1.00-1.11 ms | **0.01-0.07 ms** | 15.94-16.11 ms |
+
+**The render loop is healthy** — 0.01-0.08 ms of work at p95. And the wait
+distribution is not a stall pattern but ordinary **triple-buffered Fifo**: p50
+of ~1 ms (two presents returning immediately from spare swapchain images) and
+p95 of ~16 ms (the third blocking a full refresh pair), averaging to the
+refresh interval. A p95 at twice the refresh period is the *expected* shape
+here, not a defect.
+
+The instrument earned its place immediately: it eliminated an entire subsystem
+in one measurement, where five successive theory-first attempts in this
+campaign each cost a build-and-measure cycle and were each falsified.
+
+### v2.3.3 F9 — re-arm the redraw before the present (decision: REJECTED, reverted)
+
+Hypothesis: render work is ~0.1 ms yet 5% of presents block ~16 ms, and a loop
+doing 0.1 ms of work cannot miss a vblank on cost — only on ordering. Since
+`display_sync_after_present` re-arms only once `present()` returns, the
+sequence is present-blocks → returns just after vblank N → request redraw →
+winit dispatch → render → present; if that dispatch lands past vblank N+1's
+commit deadline the next present waits until N+2. Requesting the redraw before
+the present should leave it already queued when the present returns.
+
+Measured with the same A/B/A instrument, six captures per build:
+
+| | `presented_mean` | `rwait` p95 | `produced` p95 |
+| --- | --- | --- | --- |
+| before, `run_ahead = 2` | 8.79 ms | 16.00 ms | 24.88 ms |
+| after, `run_ahead = 2` | 8.71 ms | 16.08 ms | 24.85 ms |
+| before, `run_ahead = 0` | 8.66 ms | 16.23 ms | 26.30 ms |
+| after, `run_ahead = 0` | 8.65 ms | 16.30 ms | 25.38 ms |
+
+The prediction was `rwait` p95 falling toward 8 ms. **Nothing moved** — every
+figure is inside run-to-run variance. Reverted per the standing >3%
+same-runner bar. The premise was wrong twice over: the 16 ms p95 is normal
+triple buffering (F8), so there was no missed vblank to explain.
+
+**Standing open question.** After F2, F4, F6, F7 and this rejection, the
+maintainer-reported "left-to-right shudder" in Super Mario Bros is **not
+explained**. `produced` p95 sits at ~25 ms against a perfect 16.64 ms mean,
+with render work at 0.05 ms and no emulator-mutex contention. Five mechanisms
+were proposed and falsified: run-ahead throttle oscillation (zero toggles on
+SMB), an undriven redraw loop (it is driven, from the present success path),
+16 ms render stalls (vblank wait), marginal produce-phase decisions (~10%, not
+the cause), and redraw ordering (zero effect). The one approach that produced a
+result was instrumenting first and theorising second.
 
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
