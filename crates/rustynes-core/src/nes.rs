@@ -498,6 +498,13 @@ impl Nes {
         // Cold-boot path: see comment in `from_rom`.
         self.cpu = Cpu::power_on();
         self.cpu.reset(&mut self.bus);
+        // v2.3.2 "Lucid" — a cold boot ends the history both provenance stores
+        // describe. Keep them armed (the user asked for them) but empty.
+        #[cfg(feature = "debug-hooks")]
+        {
+            self.bus.ppu.clear_write_attribution();
+            self.bus.ppu.clear_pixel_provenance();
+        }
     }
 
     /// Run until the PPU finishes a frame. Returns the framebuffer slice.
@@ -580,6 +587,21 @@ impl Nes {
                 if self.exec_logging {
                     self.exec_log.push(self.cpu.pc);
                 }
+                // v2.3.2 "Lucid" — push this instruction's `(pc, cycle)` down to
+                // the PPU so any CIRAM / OAM / palette byte it goes on to write
+                // is stamped with the instruction that caused it. Done here, in
+                // the existing per-instruction debug block, rather than through a
+                // new `CpuBus` hook: `run_frame` already holds both halves, so
+                // this costs two stores and leaves `rustynes-cpu` untouched.
+                //
+                // Unconditional rather than gated on the store being armed: the
+                // "is it armed?" question lives behind a `Box` on the other side
+                // of a crate boundary, so testing it would cost about as much as
+                // the two stores it would skip, in a block that already runs a
+                // breakpoint scan per instruction.
+                self.bus
+                    .ppu
+                    .set_attrib_context(self.cpu.pc, self.cpu.cycles);
                 // T-110-C2 — cycle trace: record the about-to-execute
                 // instruction's CPU state (ring-capped, oldest dropped).
                 if self.trace_enabled {
@@ -627,6 +649,14 @@ impl Nes {
     pub fn step_instruction(&mut self) -> u8 {
         #[cfg(feature = "cpu-boot-trace")]
         self.cpu_boot_trace_record();
+        // v2.3.2 "Lucid" — mirror `run_frame`'s write-attribution context push,
+        // so single-stepping through a `$2007` store in the debugger attributes
+        // the byte to the stepped instruction and not to whatever `run_frame`
+        // last left latched.
+        #[cfg(feature = "debug-hooks")]
+        self.bus
+            .ppu
+            .set_attrib_context(self.cpu.pc, self.cpu.cycles);
         self.cpu.step(&mut self.bus)
     }
 
@@ -778,6 +808,112 @@ impl Nes {
     #[allow(clippy::missing_const_for_fn)] // slice deref is not const.
     pub fn events(&self) -> &[crate::bus::EventRec] {
         self.bus.events()
+    }
+
+    /// v2.3.2 "Lucid" — arm or disarm per-byte **write attribution** for the
+    /// PPU's own memories (CIRAM, OAM, palette RAM).
+    ///
+    /// While armed, every write to those memories is stamped with the program
+    /// counter and CPU cycle of the instruction that performed it, which is the
+    /// edge the pixel-provenance panel walks to answer "which instruction put
+    /// this byte here?". The Event Viewer records the CPU-side `$2000-$3FFF`
+    /// write and the memory-access counter records a cycle stamp, but neither
+    /// carries the PC *and* the resolved destination — see
+    /// [`rustynes_ppu::provenance`] for why the two halves are recorded on
+    /// opposite sides of the bus.
+    ///
+    /// Default off. Arming allocates
+    /// [`rustynes_ppu::WriteAttribution::HEAP_BYTES`]; disarming frees it.
+    /// Output-only, so emulation is bit-identical either way.
+    #[cfg(feature = "debug-hooks")]
+    pub fn set_write_attribution(&mut self, enabled: bool) {
+        self.bus.ppu.set_write_attribution(enabled);
+    }
+
+    /// The write-attribution store, or `None` when not armed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn write_attribution(&self) -> Option<&rustynes_ppu::WriteAttribution> {
+        self.bus.ppu.write_attribution()
+    }
+
+    /// Forget the current frame's per-pixel provenance, keeping it armed.
+    ///
+    /// Called automatically on power-cycle and on both restore paths; exposed so
+    /// a host that rewinds by other means can do the same.
+    #[cfg(feature = "debug-hooks")]
+    pub fn clear_pixel_provenance(&mut self) {
+        self.bus.ppu.clear_pixel_provenance();
+    }
+
+    /// Forget every recorded write attribution, keeping the store armed.
+    ///
+    /// Call this after a save-state restore or a power-cycle: the restored bytes
+    /// were not written by any instruction this session executed, and reporting
+    /// the PCs that wrote those offsets before the restore would be a
+    /// confidently wrong answer rather than an absent one.
+    #[cfg(feature = "debug-hooks")]
+    pub fn clear_write_attribution(&mut self) {
+        self.bus.ppu.clear_write_attribution();
+    }
+
+    /// v2.3.2 "Lucid" phase 2 — arm or disarm **per-pixel provenance**.
+    ///
+    /// While armed, every emitted pixel records the layer that won the priority
+    /// decision, the exact `$3Fxx` palette address behind its color, and the
+    /// nametable / attribute / pattern addresses of the tile **actually on
+    /// screen** — which `v` cannot answer, because by display time it has
+    /// advanced two tiles past the pixel.
+    ///
+    /// Composes with [`Self::set_write_attribution`]: provenance says which
+    /// bytes produced a pixel, attribution says which instruction wrote them.
+    /// Each is useful alone; together they are the full causal chain.
+    ///
+    /// Default off. Arming allocates
+    /// [`rustynes_ppu::PixelProvenanceFrame::HEAP_BYTES`]. Output-only, so
+    /// emulation is bit-identical either way.
+    #[cfg(feature = "debug-hooks")]
+    pub fn set_pixel_provenance(&mut self, enabled: bool) {
+        self.bus.ppu.set_pixel_provenance(enabled);
+    }
+
+    /// The current frame's per-pixel provenance, or `None` when not armed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn pixel_provenance(&self) -> Option<&rustynes_ppu::PixelProvenanceFrame> {
+        self.bus.ppu.pixel_provenance()
+    }
+
+    /// Resolve a PPU-space nametable address (`$2000-$3EFF`) to the physical
+    /// internal-CIRAM offset it reads, applying the mapper's mirroring and any
+    /// per-game mirroring override.
+    ///
+    /// This is what turns a [`rustynes_ppu::PixelProvenance::nt_addr`] into the
+    /// key [`rustynes_ppu::WriteAttribution::ciram`] is indexed by, so the
+    /// provenance panel can go from "this pixel's tile came from `$2002`" to
+    /// "and instruction X wrote that byte" without reimplementing mirroring.
+    ///
+    /// Returns `None` for an address outside the nametable window.
+    ///
+    /// # Boards with mapper-supplied nametable memory
+    ///
+    /// On `MMC5` (`ExRAM` nametables) and 4-screen boards, some nametable writes are
+    /// absorbed by the mapper via `PpuBus::write_nametable` and never reach
+    /// internal CIRAM. This function still returns the CIRAM offset the standard
+    /// mirroring would select, because the only way to know whether the mapper
+    /// absorbed a particular write is to *perform* one — `write_nametable` takes
+    /// `&mut self` and has side effects, and a read-only query has no business
+    /// inventing one. Callers should treat a missing attribution on such a board
+    /// as "the mapper owns this byte", which is what it means.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn ciram_offset_for_nametable_addr(&self, addr: u16) -> Option<usize> {
+        let a = addr & 0x3FFF;
+        if !(0x2000..0x3F00).contains(&a) {
+            return None;
+        }
+        let nt_addr = if a >= 0x3000 { a - 0x1000 } else { a };
+        Some((self.bus.resolve_nametable_address(nt_addr) as usize) & 0x07FF)
     }
 
     /// v1.1.0 beta.3 (T-110-E2) — start/stop the Lua bus-access log. While on,
@@ -1827,6 +1963,26 @@ impl Nes {
         // to what was buffered before).
         if clear_rewind && let Some(r) = &mut self.rewind {
             r.clear();
+        }
+        // v2.3.2 "Lucid" — and it invalidates write attribution for the same
+        // reason, on BOTH restore paths. The restored bytes were not written by
+        // any instruction this session executed, so the PCs recorded against
+        // those offsets describe a timeline that no longer exists. Reporting
+        // them would be a confidently wrong answer; reporting nothing until the
+        // program writes again is the honest one. (Under run-ahead this fires
+        // once per displayed frame, leaving exactly the visible frame's writes —
+        // which is the timeline the user is looking at.)
+        //
+        // The per-pixel provenance frame is cleared for the same reason, and it
+        // needs saying separately because the obvious analogy is wrong: the
+        // framebuffer IS serialized and comes back consistent with the restored
+        // state, while this frame is not. A restore landing mid-frame would
+        // otherwise leave pre-restore tile and palette addresses for every pixel
+        // above the current scanline, unmarked. (Review catch on PR #356.)
+        #[cfg(feature = "debug-hooks")]
+        {
+            self.bus.ppu.clear_write_attribution();
+            self.bus.ppu.clear_pixel_provenance();
         }
         Ok(())
     }
@@ -3188,6 +3344,391 @@ mod tests {
         assert!(nes.events().len() <= 20_000, "bounded by EVENT_CAP");
         nes.set_event_logging(false);
         assert!(!nes.event_logging());
+    }
+
+    /// v2.3.2 "Lucid" Phase 1 — the write-attribution oracle.
+    ///
+    /// The claim under test is the whole point of the feature: for a byte in the
+    /// PPU's own memory, the store reports the PC of the instruction that put it
+    /// there. The ROM is written so the answer is known independently — a single
+    /// `STA $2007` at a fixed address — and the expectation is pinned to that
+    /// address rather than to whatever the implementation happens to record.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn write_attribution_names_the_instruction_that_wrote_a_nametable_byte() {
+        // NROM at $C000:
+        //   C000: A9 21     LDA #$21        ; VRAM addr hi
+        //   C002: 8D 06 20  STA $2006
+        //   C005: A9 08     LDA #$08        ; VRAM addr lo -> $2108
+        //   C007: 8D 06 20  STA $2006
+        //   C00A: A9 5A     LDA #$5A        ; the byte
+        //   C00C: 8D 07 20  STA $2007       <-- the write under test
+        //   C00F: 4C 00 C0  JMP $C000       ; loop the whole sequence
+        //
+        // The sequence LOOPS rather than spinning after one pass, and the test
+        // runs several frames, because the PPU ignores `$2000/$2001/$2005/$2006`
+        // writes for ~29,658 CPU cycles after reset (the documented post-reset
+        // mask window, `PpuRegion::post_reset_mask_cycles`). A single pass at
+        // power-on would have its two `$2006` stores dropped, leaving `v == 0`,
+        // and the `$2007` write would land in CHR space instead of a nametable.
+        const STA_2007_PC: u16 = 0xC00C;
+        const VRAM_ADDR: u16 = 0x2108;
+        const VALUE: u8 = 0x5A;
+
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1; // 1x16KB PRG
+        bytes[5] = 0; // no CHR bank appended
+        let prg = &mut bytes[16..16 + 16 * 1024];
+        prg[0..18].copy_from_slice(&[
+            0xA9, 0x21, // LDA #$21
+            0x8D, 0x06, 0x20, // STA $2006
+            0xA9, 0x08, // LDA #$08
+            0x8D, 0x06, 0x20, // STA $2006
+            0xA9, VALUE, // LDA #$5A
+            0x8D, 0x07, 0x20, // STA $2007
+            0x4C, 0x00, 0xC0, // JMP $C000
+        ]);
+        let len = 16 * 1024;
+        prg[len - 4] = 0x00; // reset vector lo
+        prg[len - 3] = 0xC0; // reset vector hi -> $C000
+
+        let mut nes = Nes::from_rom(&bytes).expect("parse");
+        assert!(
+            nes.write_attribution().is_none(),
+            "attribution is off by default"
+        );
+        nes.set_write_attribution(true);
+        // Three frames: one to clear the post-reset write-mask window, the rest
+        // so the loop's `$2006`/`$2007` sequence lands for real.
+        for _ in 0..3 {
+            let _ = nes.run_frame();
+        }
+
+        // Resolve the address the way the emulator does, through the mapper's
+        // mirroring, rather than hardcoding `& 0x07FF`. The previous version of
+        // this line claimed to do that and then hardcoded it anyway (review
+        // catch on PR #356) — which would have masked a mirroring regression.
+        let off = nes
+            .ciram_offset_for_nametable_addr(VRAM_ADDR)
+            .expect("a nametable address resolves to a CIRAM offset");
+        let attrib = nes.write_attribution().expect("armed");
+        let rec = attrib
+            .ciram(off)
+            .expect("the STA $2007 wrote this CIRAM byte");
+        assert_eq!(
+            rec.pc, STA_2007_PC,
+            "the byte is attributed to the STA $2007, not to the $2006 stores \
+             that set the address or to the LDA that loaded the value"
+        );
+        assert_eq!(rec.value, VALUE);
+        // The byte really is there — attribution must describe a write that
+        // actually happened, not a write the tap merely observed being issued.
+        assert_eq!(nes.vram()[off], VALUE);
+        // And the cycle stamp is a real one from this run.
+        assert!(rec.cycle > 0, "cycle stamp taken from the executing CPU");
+
+        // An untouched byte reports nothing rather than a plausible-looking zero.
+        assert_eq!(attrib.ciram(off ^ 0x0400), None);
+
+        // Disarming frees the store; re-arming starts clean.
+        nes.set_write_attribution(false);
+        assert!(nes.write_attribution().is_none());
+    }
+
+    /// v2.3.2 "Lucid" phase 2 — the per-pixel provenance oracle.
+    ///
+    /// Builds a screen out of a known nametable byte and a known palette, then
+    /// checks that the record for a background pixel names the addresses that
+    /// actually produced it. The load-bearing assertion is `nt_addr`: it must be
+    /// the address of the tile ON SCREEN, which is two tiles behind whatever `v`
+    /// holds at emit time — the single mistake this whole cascade exists to
+    /// prevent.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn pixel_provenance_names_the_displayed_tile_not_the_fetch_pointer() {
+        use rustynes_ppu::PixelLayer;
+
+        // NROM with CHR-RAM. The program:
+        //   * fills nametable $2000 with tile $01,
+        //   * writes a non-zero pattern for tile $01 into CHR-RAM,
+        //   * sets palette entry $3F01 to a known color,
+        //   * enables background rendering,
+        //   * spins.
+        //
+        // Assembled by hand below; addresses are named so the assertions can
+        // reference the instruction rather than a magic number.
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1; // 1x16KB PRG
+        bytes[5] = 0; // 0 CHR banks => CHR-RAM, so the pattern is writable
+        let prg = &mut bytes[16..16 + 16 * 1024];
+
+        #[rustfmt::skip]
+        let code: &[u8] = &[
+            // --- Delay ~328k cycles (~11 frames) BEFORE touching any PPU
+            // register. The PPU ignores $2000/$2001/$2005/$2006 writes for
+            // ~29,658 CPU cycles after reset; setup that runs inside that window
+            // has its $2006 address writes silently dropped, so every subsequent
+            // $2007 lands somewhere unintended. Found by this test failing.
+            0xA2, 0x00,                         // C000 LDX #$00
+            0xA0, 0x00,                         // C002 LDY #$00
+            0x88,                               // C004 DEY
+            0xD0, 0xFD,                         // C005 BNE $C004
+            0xCA,                               // C007 DEX
+            0xD0, 0xF8,                         // C008 BNE $C002
+            // --- CHR-RAM: tile $01 rows 0..7 low plane = $FF (all pixels idx 1)
+            0xA9, 0x00, 0x8D, 0x06, 0x20,       // C00A LDA #$00 / STA $2006
+            0xA9, 0x10, 0x8D, 0x06, 0x20,       // C00F LDA #$10 / STA $2006  -> $0010
+            0xA2, 0x08,                         // C014 LDX #$08
+            0xA9, 0xFF,                         // C016 LDA #$FF
+            0x8D, 0x07, 0x20,                   // C018 STA $2007  (8x low plane)
+            0xCA, 0xD0, 0xFA,                   // C01B DEX / BNE $C018
+            // --- palette: $3F00 = $0F (black), $3F01 = $16 (red)
+            0xA9, 0x3F, 0x8D, 0x06, 0x20,       // C01E LDA #$3F / STA $2006
+            0xA9, 0x00, 0x8D, 0x06, 0x20,       // C023 LDA #$00 / STA $2006  -> $3F00
+            0xA9, 0x0F, 0x8D, 0x07, 0x20,       // C028 LDA #$0F / STA $2007
+            0xA9, 0x16, 0x8D, 0x07, 0x20,       // C02D LDA #$16 / STA $2007
+            // --- nametable + attributes $2000..$23FF = $01
+            0xA9, 0x20, 0x8D, 0x06, 0x20,       // C032 LDA #$20 / STA $2006
+            0xA9, 0x00, 0x8D, 0x06, 0x20,       // C037 LDA #$00 / STA $2006  -> $2000
+            0xA0, 0x04,                         // C03C LDY #$04     (4 x 256)
+            0xA2, 0x00,                         // C03E LDX #$00
+            0xA9, 0x01,                         // C040 LDA #$01
+            0x8D, 0x07, 0x20,                   // C042 STA $2007
+            0xCA, 0xD0, 0xFA,                   // C045 DEX / BNE $C042
+            0x88, 0xD0, 0xF3,                   // C048 DEY / BNE $C03E
+            // --- enable BG: $2000 = $00 (BG pattern table $0000, NT $2000),
+            //     $2001 = $08 (show BG, but NOT the leftmost 8 px)
+            0xA9, 0x00, 0x8D, 0x00, 0x20,       // C04B LDA #$00 / STA $2000
+            0xA9, 0x08, 0x8D, 0x01, 0x20,       // C050 LDA #$08 / STA $2001
+            0x4C, 0x55, 0xC0,                   // C055 JMP $C055  (spin)
+        ];
+        prg[..code.len()].copy_from_slice(code);
+        let len = 16 * 1024;
+        prg[len - 4] = 0x00; // reset vector -> $C000
+        prg[len - 3] = 0xC0;
+
+        let mut nes = Nes::from_rom(&bytes).expect("parse");
+        // Enough frames for the delay loop, then the setup loops, to complete
+        // and for rendering to be running steadily.
+        for _ in 0..16 {
+            let _ = nes.run_frame();
+        }
+        assert!(nes.pixel_provenance().is_none(), "off by default");
+        nes.set_pixel_provenance(true);
+        let _ = nes.run_frame();
+
+        let prov = nes.pixel_provenance().expect("armed");
+
+        // Pixel (16, 0) sits in tile column 2 of row 0, i.e. nametable $2002.
+        let rec = prov.get(16, 0).expect("on-screen");
+        assert_eq!(
+            rec.layer,
+            PixelLayer::Background,
+            "the all-$FF pattern makes every BG pixel opaque"
+        );
+        assert_eq!(
+            rec.nt_addr, 0x2002,
+            "the record must name the tile ON SCREEN at x=16; `v` at emit time \
+             has already advanced two tiles past it, so a value near $2004 here \
+             would mean the cascade is not tracking the shifters"
+        );
+        assert_eq!(rec.at_addr, 0x23C0, "tile (2,0) -> attribute byte 0");
+        assert_eq!(rec.bg_idx, 1, "low plane $FF, high plane $00 -> index 1");
+        assert_eq!(rec.palette_addr, 0x3F01, "palette group 0, index 1");
+        assert_eq!(rec.palette_index, 1);
+        assert_eq!(rec.color, 0x16, "the red we wrote to $3F01");
+        assert_eq!(rec.scanline, 0);
+        assert_eq!(rec.dot, 17, "screen X is dot - 1");
+        assert_eq!(
+            rec.sprite_slot,
+            rustynes_ppu::SPRITE_SLOT_NONE,
+            "no sprites in this ROM"
+        );
+        // Fine-Y is 2, not 0, and that is correct: the ROM sets the scroll only
+        // via `$2006 = $20, $00`, which loads `v = t = $2000` — and bits 12-14 of
+        // a VRAM address ARE the fine-Y field, so `$2000` means fine-Y = 2. A ROM
+        // that wanted row 0 would have written `$2005` afterwards. The record
+        // reports what the hardware is actually displaying.
+        assert_eq!(rec.fine_y, 2, "$2006 = $2000 puts fine-Y at 2");
+        // Tile $01 base $0010, plus fine-Y 2.
+        assert_eq!(rec.pattern_addr, 0x0012);
+
+        // The cascade advances ONE TILE PER GROUP across the scanline — it is
+        // not a single address held for the whole line, and not skewed by the
+        // two dummy nametable fetches at dots 337-340.
+        for (x, want_nt) in [(0usize, 0x2000u16), (8, 0x2001), (24, 0x2003), (40, 0x2005)] {
+            assert_eq!(
+                prov.get(x, 0).expect("on-screen").nt_addr,
+                want_nt,
+                "tile column at x={x}"
+            );
+        }
+
+        // Off-screen queries answer `None` rather than clamping to a pixel the
+        // caller did not ask about.
+        assert_eq!(prov.get(256, 0), None);
+        assert_eq!(prov.get(0, 240), None);
+
+        nes.set_pixel_provenance(false);
+        assert!(nes.pixel_provenance().is_none());
+    }
+
+    /// The two halves compose: provenance gives the palette index, attribution
+    /// gives the instruction that wrote it. This is the end-to-end claim the
+    /// feature exists to support.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn provenance_and_attribution_compose_into_a_causal_chain() {
+        // Minimal ROM: set $3F00 (backdrop) to a known color from a known PC,
+        // then spin. Rendering stays off, so every pixel is the backdrop and the
+        // chain is unambiguous.
+        //   C000: LDA #$3F / STA $2006
+        //   C005: LDA #$00 / STA $2006      -> v = $3F00
+        //   C00A: LDA #$21 / STA $2007      <-- the palette write
+        //   C00F: JMP $C000
+        const STA_2007_PC: u16 = 0xC00C;
+        const COLOR: u8 = 0x21;
+
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1;
+        bytes[5] = 0;
+        let prg = &mut bytes[16..16 + 16 * 1024];
+        prg[0..18].copy_from_slice(&[
+            0xA9, 0x3F, 0x8D, 0x06, 0x20, // LDA #$3F / STA $2006
+            0xA9, 0x00, 0x8D, 0x06, 0x20, // LDA #$00 / STA $2006
+            0xA9, COLOR, 0x8D, 0x07, 0x20, // LDA #$21 / STA $2007
+            0x4C, 0x00, 0xC0, // JMP $C000
+        ]);
+        let len = 16 * 1024;
+        prg[len - 4] = 0x00;
+        prg[len - 3] = 0xC0;
+
+        let mut nes = Nes::from_rom(&bytes).expect("parse");
+        let _ = nes.run_frame();
+        nes.set_pixel_provenance(true);
+        nes.set_write_attribution(true);
+        for _ in 0..3 {
+            let _ = nes.run_frame();
+        }
+
+        // Step 1: which palette entry produced this pixel?
+        let rec = nes
+            .pixel_provenance()
+            .and_then(|p| p.get(100, 100))
+            .expect("armed and on-screen");
+        assert_eq!(rec.layer, rustynes_ppu::PixelLayer::Backdrop);
+        assert_eq!(rec.palette_index, 0, "the universal backdrop");
+        assert_eq!(rec.color, COLOR);
+
+        // Step 2: who wrote that palette entry?
+        let who = nes
+            .write_attribution()
+            .and_then(|a| a.palette(rec.palette_index as usize))
+            .expect("the STA $2007 wrote it");
+        assert_eq!(
+            who.pc, STA_2007_PC,
+            "the chain closes: pixel -> palette entry -> writing instruction"
+        );
+        assert_eq!(who.value, COLOR);
+    }
+
+    /// An OAM DMA burst moves 256 bytes but has exactly one cause. The store
+    /// must say so — attributing all 256 to the `STA $4014` that triggered them
+    /// rather than inventing a per-byte PC that no instruction ever had.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn oam_dma_attributes_all_256_bytes_to_the_triggering_store() {
+        // NROM at $C000:
+        //   C000: A9 02     LDA #$02
+        //   C002: 8D 14 40  STA $4014   <-- one instruction, 256 OAM bytes
+        //   C005: 4C 00 C0  JMP $C000
+        //
+        // `$4014` is not subject to the PPU's post-reset write-mask window, so
+        // this lands on the first pass; the loop just keeps it landing.
+        const STA_4014_PC: u16 = 0xC002;
+
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1;
+        bytes[5] = 0;
+        let prg = &mut bytes[16..16 + 16 * 1024];
+        prg[0..8].copy_from_slice(&[
+            0xA9, 0x02, // LDA #$02
+            0x8D, 0x14, 0x40, // STA $4014
+            0x4C, 0x00, 0xC0, // JMP $C000
+        ]);
+        let len = 16 * 1024;
+        prg[len - 4] = 0x00;
+        prg[len - 3] = 0xC0;
+
+        let mut nes = Nes::from_rom(&bytes).expect("parse");
+        // The first `run_frame` after power-on returns on the already-latched
+        // frame-complete flag, executing almost no instructions — the same
+        // warm-up the event-viewer tests need. Arm AFTER it, so the assertion
+        // below is about a frame that actually ran code.
+        let _ = nes.run_frame();
+        nes.set_write_attribution(true);
+        let _ = nes.run_frame();
+
+        let attrib = nes.write_attribution().expect("armed");
+        for idx in 0..=u8::MAX {
+            let rec = attrib
+                .oam(idx)
+                .unwrap_or_else(|| panic!("OAM byte {idx} unattributed after a full DMA burst"));
+            assert_eq!(
+                rec.pc, STA_4014_PC,
+                "OAM byte {idx} must name the STA $4014, not a synthesized PC"
+            );
+        }
+    }
+
+    /// A save-state restore must invalidate attribution: the restored bytes were
+    /// not written by anything this session ran, so the honest answer is "no
+    /// record", not the PC that wrote that offset on the abandoned timeline.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn write_attribution_is_invalidated_by_restore() {
+        let mut bytes = alloc::vec![0u8; 16 + 16 * 1024];
+        bytes[0..4].copy_from_slice(b"NES\x1A");
+        bytes[4] = 1;
+        bytes[5] = 0;
+        let prg = &mut bytes[16..16 + 16 * 1024];
+        // Same looping `$2006`/`$2007` ROM as the test above; see its comment for
+        // why it loops and why three frames are needed.
+        prg[0..18].copy_from_slice(&[
+            0xA9, 0x21, 0x8D, 0x06, 0x20, 0xA9, 0x08, 0x8D, 0x06, 0x20, 0xA9, 0x5A, 0x8D, 0x07,
+            0x20, 0x4C, 0x00, 0xC0,
+        ]);
+        let len = 16 * 1024;
+        prg[len - 4] = 0x00;
+        prg[len - 3] = 0xC0;
+
+        let mut nes = Nes::from_rom(&bytes).expect("parse");
+        nes.set_write_attribution(true);
+        for _ in 0..3 {
+            let _ = nes.run_frame();
+        }
+        let off = 0x0108usize;
+        assert!(
+            nes.write_attribution().and_then(|a| a.ciram(off)).is_some(),
+            "precondition: the write was attributed"
+        );
+
+        let snap = nes.snapshot();
+        nes.restore(&snap).expect("round-trip");
+        assert!(
+            nes.write_attribution().is_some(),
+            "the store stays armed across a restore"
+        );
+        assert_eq!(
+            nes.write_attribution().and_then(|a| a.ciram(off)),
+            None,
+            "but its records are dropped — they describe a timeline that the \
+             restore replaced"
+        );
     }
 
     #[cfg(feature = "debug-hooks")]

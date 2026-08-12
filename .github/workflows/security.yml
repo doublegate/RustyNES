@@ -60,7 +60,7 @@ jobs:
       # cargo-audit release needs >= 1.88 to COMPILE. The prebuilt binary RUNS
       # fine under any toolchain — it only parses Cargo.lock, it never compiles
       # the project — so the toolchain pin is irrelevant to it.
-      - uses: taiki-e/install-action@v2.85.5
+      - uses: taiki-e/install-action@v2.85.10
         with:
           tool: cargo-audit
       - run: cargo audit
@@ -75,7 +75,7 @@ jobs:
       # Prebuilt binary for the same reason as the audit job: the latest
       # cargo-deny needs rustc >= 1.88 to build from source, while the repo is
       # pinned to 1.96. Policy lives in `deny.toml`.
-      - uses: taiki-e/install-action@v2.85.5
+      - uses: taiki-e/install-action@v2.85.10
         with:
           tool: cargo-deny
       - run: cargo deny check

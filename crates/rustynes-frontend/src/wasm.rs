@@ -413,7 +413,9 @@ fn movie_record_toggle() {
                 log("movie record: no ROM loaded");
                 return;
             };
-            emu.movie.start_recording_power_on(nes);
+            // v2.3.2 "Lucid": wasm has no run-ahead on this path, so the
+            // attestation always describes the persistent timeline.
+            emu.movie.start_recording_power_on(nes, true);
             log("movie recording started (power-on)");
         }
     });
@@ -442,7 +444,7 @@ fn movie_branch() {
             log("movie branch: no ROM loaded");
             return;
         };
-        emu.movie.start_recording_branch(nes);
+        emu.movie.start_recording_branch(nes, true);
         log("movie branch — recording from current state");
     });
 }

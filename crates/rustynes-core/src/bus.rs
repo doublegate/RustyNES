@@ -4131,10 +4131,36 @@ impl PpuBus for PpuBusAdapter<'_> {
         self.mapper.notify_vblank();
     }
     fn nametable_address(&self, addr: u16) -> u16 {
-        self.nt_override.map_or_else(
-            || self.mapper.nametable_address(addr),
-            |m| override_nt_addr(m, addr),
-        )
+        resolve_nt_addr(self.nt_override, &*self.mapper, addr)
+    }
+}
+
+/// Resolve a nametable address to a physical CIRAM offset, honouring the
+/// per-game mirroring override when one is set.
+///
+/// Factored out of [`PpuBusAdapter::nametable_address`] (v2.3.2 "Lucid") so
+/// [`LockstepBus::resolve_nametable_address`] can answer the same question
+/// without constructing an adapter. One definition, so the fetch path and the
+/// provenance panel cannot drift apart on a board with an override.
+fn resolve_nt_addr(
+    nt_override: Option<rustynes_mappers::Mirroring>,
+    mapper: &dyn Mapper,
+    addr: u16,
+) -> u16 {
+    nt_override.map_or_else(
+        || mapper.nametable_address(addr),
+        |m| override_nt_addr(m, addr),
+    )
+}
+
+impl LockstepBus {
+    /// Read-only nametable-address resolution for the pixel-provenance panel.
+    ///
+    /// Shares [`resolve_nt_addr`] with the PPU's own fetch path, so a board with
+    /// a per-game mirroring override reports the offset its fetches really use.
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) fn resolve_nametable_address(&self, addr: u16) -> u16 {
+        resolve_nt_addr(self.nt_mirroring_override, &*self.mapper, addr)
     }
 }
 
@@ -4309,7 +4335,16 @@ impl Bus for LockstepBus {
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize] = value,
             0x2000..=0x3FFF => self.ppu_register_write(addr, value),
-            REG_OAM_DMA => self.dma_pending = Some(value),
+            REG_OAM_DMA => {
+                // v2.3.2 "Lucid" — freeze THIS instruction (the `STA $4014`) as
+                // the cause of the burst before it is armed. The 513/514 DMA
+                // cycles are stolen from the instructions that follow, so by the
+                // time the first OAM byte lands the live attribution context has
+                // moved on to whichever instruction is being halted.
+                #[cfg(feature = "debug-hooks")]
+                self.ppu.latch_dma_attrib_context();
+                self.dma_pending = Some(value);
+            }
             0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.write_register(addr, value),
             0x4016 => {
                 // Session-24 / Phase 3 (Controller Strobing): the

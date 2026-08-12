@@ -14,6 +14,114 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-08-11 - "Lucid" (pixel provenance + replay attestation)
+
+### Added
+
+- **Pixel provenance, phase 1 — per-byte write attribution** (`debug-hooks`,
+  default off). Every byte of CIRAM, OAM, and palette RAM now remembers the
+  **program counter and CPU cycle of the instruction that last wrote it** — the
+  edge that lets the forthcoming provenance panel walk from a pixel on screen
+  back to the code that produced it. Nothing in RustyNES recorded this before:
+  the Trace Logger has the PC but no effect, the Event Viewer has the write and
+  its PPU position but not the PC or the resolved destination, and the memory
+  access counter has a cycle stamp but no PC.
+  - Recording is **split across the bus/PPU boundary**, because neither side
+    knows enough alone: the bus has the program counter and the PPU has the
+    effective destination (a `STA $2007` lands in a nametable or in palette RAM
+    depending on the PPU's internal `v`). `Nes::run_frame` pushes the executing
+    instruction's context down once per instruction, inside the block that
+    already performs the breakpoint check — so no new `CpuBus` hook was needed
+    and `rustynes-cpu` is untouched.
+  - **An OAM DMA burst is attributed to its trigger, not its victim.**
+    `STA $4014` only arms the transfer; its 513/514 cycles are stolen from the
+    instructions that follow, so the live context would name whichever
+    instruction was being halted — true about the timing, wrong about the cause.
+    The bus latches the triggering instruction, and all 256 bytes name it.
+  - Attribution is **invalidated on power-cycle and on both save-state restore
+    paths**: a restored state's bytes were not written by anything this session
+    ran, so the honest answer is "no record" rather than a PC from a timeline
+    that no longer exists.
+  - CHR writes are deliberately **not** attributed (mapper-owned, so a byte
+    offset is not a stable identity across a bank switch), nor is the
+    `$2004`-during-rendering write the hardware discards.
+  - Output-only and lazily allocated: unarmed it costs one `Option` test per PPU
+    memory write, armed it costs ~37 KiB. Framebuffer, audio, and cycle counts
+    are bit-identical either way, and the default build is unchanged —
+    **AccuracyCoin holds at exactly 141/141** with nestest 0-diff.
+  - Spec: `docs/pixel-provenance.md`.
+- **Pixel provenance, phase 2 — the per-pixel causal record** (`debug-hooks`,
+  default off). Every emitted pixel now records the layer that won the priority
+  decision, the exact `$3Fxx` palette address behind its color, and the
+  nametable / attribute / pattern addresses of the tile **actually on screen**.
+  Composes with phase 1: the palette index and nametable address are the keys
+  into the write-attribution store, so pixel → byte → writing instruction is one
+  chain.
+  - **`v` cannot answer the "which tile" question.** By the time a tile's pixels
+    reach the screen, `v` has advanced two tiles past it, so an address derived
+    from `v` at emit time is wrong for every pixel — and wrong in a way that
+    looks plausible. The addresses ride the same `latch` → `next` → `cur`
+    cascade that moves the pattern bytes through the shift registers.
+  - **A tile is defined when its PATTERN is fetched, not when its nametable byte
+    is read.** The PPU performs two dummy nametable fetches at dots 337-340,
+    which clobbered the pending tile and made pixels x=8..15 report the tile
+    belonging to x=16..23. Found by the test failing, not by review.
+  - The attribute address is carried rather than derived, because an MMC5
+    vertical split supplies one the standard `$23C0 | ...` arithmetic cannot
+    produce.
+  - The plan had been to widen the existing `hd-pack` `HdTileSource` gate; that
+    was the wrong shape (it carries Mesen HD-pack tile *keys*, not addresses, and
+    widening it would have pulled eight fetch-telemetry fields into every
+    `debug-hooks` build). A separate lazily-allocated record leaves `hd-pack`
+    byte-identical by construction rather than by review.
+  - Unarmed cost in `emit_pixel` is one predicted `bool` branch — same shape as
+    the bus's existing `event_logging` flag. **AccuracyCoin holds at exactly
+    141/141**, nestest 0-diff.
+- **Pixel provenance, phase 3 — the inspector panel.** New **Tools → Pixel
+  Provenance**: pin a screen pixel and read its whole causal chain — the dot and
+  scanline that emitted it, which layer won, the palette entry and the
+  instruction that wrote it, the background tile's nametable / attribute /
+  pattern addresses with their CIRAM offsets and writing instructions, and the
+  winning sprite's slot, priority, and OAM attribution.
+  - Detachable into its own OS window through the shared v2.3.0
+    `detachable_window` helper. Read-only over the emulator; its only side effect
+    is the two arming checkboxes, both default off and both determinism-neutral.
+  - PC → source-line resolution reuses the existing `.dbg` source map when one is
+    loaded. `Nes::ciram_offset_for_nametable_addr` resolves a nametable address
+    to the offset attribution is keyed on, sharing its mirroring resolution with
+    the PPU's own fetch path so a per-game mirroring override cannot make the two
+    disagree.
+  - Frontend-only, so the deterministic core is untouched: **AccuracyCoin holds
+    at exactly 141/141**, nestest 0-diff.
+- **Deterministic replay attestation** — a `.rnm` movie can now carry a rolling
+  hash of its run that anyone else can independently re-derive:
+  `rustynes verify <movie.rnm> --rom <game.nes>`. Because the core re-derives
+  every pixel from the same ROM and inputs, a third party can replay the movie
+  and confirm it reproduces bit-for-bit. The digest is **tamper-evident, not
+  forgery-resistant** (64-bit FNV-1a): it catches accidental divergence and
+  casual edits, not a motivated forger who recomputes it.
+  - **No format-version bump.** `.rnm` already had a precedent for additive
+    trailing fields (`rerecord_count`), so the attestation is appended the same
+    way behind a marker. `MOVIE_FORMAT_VERSION` stays at 2, every existing movie
+    round-trips unchanged, and a pre-v2.3.2 reader parses an attested movie as a
+    plain one.
+  - **The hash covers the input applied AND the framebuffer it produced**, so
+    the record states *these inputs, applied to this ROM, produce this video*.
+    Hashing video alone would not pin the input stream at all for a ROM that
+    ignores the controller.
+  - A checkpoint every 64 frames localizes a mismatch to a 64-frame window rather
+    than reporting only a verdict. Exit codes are distinct: 0 verified, 1
+    mismatch, 3 not attested — a movie that makes no claim has not failed.
+  - Hashing the core snapshot would detect more, and was rejected: the snapshot
+    schema is versioned and bumps between releases, which would silently
+    invalidate every previously-recorded attestation. Audio is not covered, and
+    the docs say so rather than implying it.
+  - Recording arms automatically **unless run-ahead is on** — run-ahead presents
+    a frame ahead of the persistent timeline, so an attestation recorded under it
+    could never verify. If it is toggled on mid-recording the frame counts
+    diverge and the tail is dropped at load: the failure mode is "no
+    attestation", never "a wrong one".
+
 ## [2.3.1] - 2026-08-06 - "Plumb Line" (measurement apparatus + ten measured rejections)
 
 ### Performance

@@ -1,6 +1,18 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.3.1** (2026-08-06) — **"Plumb Line"**, the measurement
+> **Current release: v2.3.2** (2026-08-11) — **"Lucid"**, the pixel-provenance
+> release. Click any pixel and get its full causal chain: the dot and scanline
+> that emitted it, the layer that won priority, the nametable / attribute /
+> pattern addresses of the tile **actually on screen** (which `v` cannot answer —
+> by display time it has advanced two tiles past the pixel), the palette entry,
+> and **the CPU instruction and cycle that last wrote each of those bytes**. The
+> missing edge was byte-level write attribution; RustyNES had the PC and the
+> effect separately and nothing joining them. Also new: **deterministic replay
+> attestation** — `rustynes verify <movie.rnm> --rom <game.nes>` replays a movie
+> and proves it reproduces its recorded run, hashing the input applied *and* the
+> video it produced. All of it is `debug-hooks`-gated, output-only and default
+> off, so **AccuracyCoin holds at exactly 141/141 and nestest is 0-diff**. Built
+> on **v2.3.1** (2026-08-06) — **"Plumb Line"**, the measurement
 > release. The performance apparatus was made trustworthy and then used: a
 > harness-free frame probe, per-source-file subsystem attribution (which recovers
 > the **APU at 18.7% of frame time**, invisible in the symbol profile because fat

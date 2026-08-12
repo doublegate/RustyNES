@@ -142,22 +142,35 @@ impl MovieUi {
     /// Start recording from `nes`'s fresh power-on. Power-cycles `nes` so
     /// the recording starts from the exact state a replay reconstructs.
     /// Stops any in-progress playback. No-op if already recording.
-    pub fn start_recording_power_on(&mut self, nes: &mut Nes) {
+    ///
+    /// v2.3.2 "Lucid": `attest` arms a replay attestation, so the saved `.rnm`
+    /// carries a rolling hash of its video output that anyone can re-derive with
+    /// `rustynes verify`. Callers should pass `false` while run-ahead is active
+    /// — see [`Self::after_frame`] for why.
+    pub fn start_recording_power_on(&mut self, nes: &mut Nes, attest: bool) {
         if self.recorder.is_some() {
             return;
         }
         self.playback = None;
         nes.power_cycle();
-        self.recorder = Some(MovieRecorder::power_on(nes));
+        let mut rec = MovieRecorder::power_on(nes);
+        if attest {
+            rec.enable_attestation();
+        }
+        self.recorder = Some(rec);
     }
 
     /// Start recording a *branch* from `nes`'s current state (embeds a
     /// save-state start point). Stops any in-progress playback. Used both
     /// by the dedicated branch gesture and when the user starts recording
     /// mid-game without wanting a power-on reset.
-    pub fn start_recording_branch(&mut self, nes: &Nes) {
+    pub fn start_recording_branch(&mut self, nes: &Nes, attest: bool) {
         self.playback = None;
-        self.recorder = Some(MovieRecorder::from_current_state(nes));
+        let mut rec = MovieRecorder::from_current_state(nes);
+        if attest {
+            rec.enable_attestation();
+        }
+        self.recorder = Some(rec);
     }
 
     /// Finish recording and return the completed [`Movie`] for the caller
@@ -179,6 +192,47 @@ impl MovieUi {
     pub fn start_playback(&mut self, movie: Movie) {
         self.recorder = None;
         self.playback = Some(Playback { movie, cursor: 0 });
+    }
+
+    /// v2.3.2 "Lucid" — drop the in-progress attestation, keeping the recording.
+    ///
+    /// Called when something rewinds the emulator underneath the recorder: a
+    /// successful `rewind_step_back` restores an EARLIER state while the input
+    /// log keeps its full prefix, so the frames already folded into the hash no
+    /// longer describe the run the input stream encodes. The frame counts stay
+    /// self-consistent, so nothing downstream would notice — `Movie::verify`
+    /// would simply report `Mismatch` on an honest recording.
+    ///
+    /// Dropping the attestation makes that outcome "not attested" instead of
+    /// "failed verification", which is the truthful one. The recording itself is
+    /// unaffected. (Review catch on PR #356.)
+    pub fn invalidate_attestation(&mut self) {
+        if let Some(rec) = self.recorder.as_mut() {
+            rec.disable_attestation();
+        }
+    }
+
+    /// v2.3.2 "Lucid" — per-frame hook called AFTER `run_frame`, feeding the
+    /// completed frame's video output into the attestation.
+    ///
+    /// A no-op unless recording with attestation armed.
+    ///
+    /// # Run-ahead
+    ///
+    /// The caller must pass the **persistent-timeline** framebuffer and must not
+    /// call this for a run-ahead frame. Run-ahead presents the frame N ahead of
+    /// the persistent timeline; a verification replay has no run-ahead and
+    /// produces persistent frames, so attesting the presented image would record
+    /// a hash that can never be reproduced.
+    ///
+    /// Skipping run-ahead frames leaves the attestation's frame count short of
+    /// the input stream's, which `Movie::deserialize` detects and drops the tail
+    /// for. That is deliberate: the failure mode is "no attestation", never "a
+    /// wrong one".
+    pub fn after_frame(&mut self, framebuffer: &[u8]) {
+        if let Some(rec) = self.recorder.as_mut() {
+            rec.attest_frame(framebuffer);
+        }
     }
 
     /// Stop playback (control returns to live input). No-op if not playing.
@@ -294,7 +348,7 @@ mod tests {
     fn record_then_finish_yields_movie() {
         let mut nes = Nes::from_rom(&synth_nrom()).unwrap();
         let mut ui = MovieUi::default();
-        ui.start_recording_power_on(&mut nes);
+        ui.start_recording_power_on(&mut nes, true);
         assert_eq!(ui.mode(), MovieMode::Recording);
         for _ in 0..5 {
             assert!(ui.before_frame(&mut nes));
@@ -312,7 +366,7 @@ mod tests {
         // Record a short movie first.
         let mut nes = Nes::from_rom(&rom).unwrap();
         let mut ui = MovieUi::default();
-        ui.start_recording_power_on(&mut nes);
+        ui.start_recording_power_on(&mut nes, true);
         for _ in 0..3 {
             ui.before_frame(&mut nes);
             nes.run_frame();
@@ -346,7 +400,7 @@ mod tests {
         let rom = synth_nrom();
         let mut nes = Nes::from_rom(&rom).unwrap();
         let mut ui = MovieUi::default();
-        ui.start_recording_power_on(&mut nes);
+        ui.start_recording_power_on(&mut nes, true);
         for _ in 0..10 {
             ui.before_frame(&mut nes);
             nes.run_frame();
@@ -382,7 +436,7 @@ mod tests {
         let mut ui = MovieUi::default();
         // Idle: seek is a no-op.
         assert!(!ui.seek_playback(&mut nes, 5));
-        ui.start_recording_power_on(&mut nes);
+        ui.start_recording_power_on(&mut nes, true);
         for _ in 0..3 {
             ui.before_frame(&mut nes);
             nes.run_frame();
@@ -403,7 +457,7 @@ mod tests {
         let mut ui = MovieUi::default();
 
         // Make a 2-frame movie to play.
-        ui.start_recording_power_on(&mut nes);
+        ui.start_recording_power_on(&mut nes, true);
         ui.before_frame(&mut nes);
         nes.run_frame();
         ui.before_frame(&mut nes);
@@ -415,7 +469,7 @@ mod tests {
         ui.start_playback(movie);
         assert!(ui.is_playing());
         // Starting a recording must drop playback.
-        ui.start_recording_branch(&replay);
+        ui.start_recording_branch(&replay, true);
         assert!(ui.is_recording());
         assert!(!ui.is_playing());
         // Starting playback again must drop the recorder.

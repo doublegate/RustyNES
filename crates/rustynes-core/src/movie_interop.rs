@@ -273,6 +273,9 @@ pub fn import_fm2(text: &str, rom_sha256: [u8; 32]) -> Result<(Movie, Fm2Meta), 
         frames,
         // Carry the `.fm2` rerecordCount through (saturating into the `.rnm` u32).
         rerecord_count: u32::try_from(meta.rerecord_count).unwrap_or(u32::MAX),
+        // Imported: no attestation (the source format has no such field, and
+        // synthesizing one would attest a run this build never performed).
+        attestation: None,
     };
     Ok((movie, meta))
 }
@@ -504,6 +507,7 @@ mod tests {
             start: StartPoint::PowerOn,
             frames: varied_frames(),
             rerecord_count: 0,
+            attestation: None,
         };
         let opts = Fm2ExportOpts {
             rerecord_count: 42,
@@ -539,6 +543,7 @@ mod tests {
                 FrameInput::new(Buttons::RIGHT, Buttons::empty()),
             ],
             rerecord_count: 0,
+            attestation: None,
         };
         let text = export_fm2(&movie, &Fm2ExportOpts::default()).expect("export");
         // Pull the two input-log lines.
@@ -590,6 +595,7 @@ mod tests {
             start: StartPoint::PowerOn,
             frames: vec![FrameInput::new(Buttons::empty(), Buttons::empty())],
             rerecord_count: 0,
+            attestation: None,
         };
         let out = export_fm2(&pal_movie, &Fm2ExportOpts::default()).expect("export");
         assert!(
@@ -739,6 +745,7 @@ mod tests {
             start: StartPoint::SaveState(vec![1, 2, 3]),
             frames: vec![],
             rerecord_count: 0,
+            attestation: None,
         };
         assert!(matches!(
             export_fm2(&movie, &Fm2ExportOpts::default()),

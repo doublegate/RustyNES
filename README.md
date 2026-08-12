@@ -668,7 +668,20 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.3.0 "Datum II"** — the capstone that closes the
+RustyNES's current release is **v2.3.2 "Lucid"** — the pixel-provenance release.
+Click any pixel and get the full causal chain that produced it: the PPU dot and
+scanline that emitted it, which layer won priority, the nametable / attribute /
+pattern addresses of the tile **actually on screen** (`v` cannot answer that — by
+display time it has advanced two tiles past the pixel), the palette entry, and
+**the CPU instruction and cycle that last wrote each of those bytes**. Surfaced at
+**Tools → Pixel Provenance**. It also adds **deterministic replay attestation**:
+`rustynes verify <movie.rnm> --rom <game.nes>` replays a movie and confirms it
+reproduces its recorded run, hashing the input applied *and* the video it
+produced (tamper-evident, not forgery-resistant). Everything is `debug-hooks`-gated,
+output-only and default-off, so **AccuracyCoin holds at exactly 141/141** and
+nestest is 0-diff. Built on **v2.3.1 "Plumb Line"** (the measurement release: ten
+hot-path candidates measured, all ten rejected) and **v2.3.0 "Datum II"** — the
+capstone that closes the
 v2.2.6 → v2.3.0 NESdev-remediation line. Tool panels now open as **real OS windows**
 (the v2.2.9 affordance only *embedded* them, so the Windows-10 "trapped window" report
 is now genuinely resolved), and every tool window is detachable. Profiling that work

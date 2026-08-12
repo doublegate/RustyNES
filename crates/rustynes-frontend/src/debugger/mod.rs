@@ -144,6 +144,7 @@ mod replay_panel;
 // v2.8.0 Phase 0 — frame-pacing / audio-health instrumentation panel.
 mod perf_panel;
 mod ppu_panel;
+mod provenance_panel;
 mod script_panel;
 mod settings_panel;
 // v1.7.0 "Forge" Workstream C (C3) — ca65/cc65 `.dbg` source-line mapping
@@ -206,6 +207,11 @@ pub enum ToolPanel {
     /// v2.1.6 "Expansion Audio" — the Audio Mixer (per-source balance sliders +
     /// per-channel scopes / VU meters, incl. the on-cart expansion channel).
     AudioMixer,
+    /// v2.3.2 "Lucid" — the pixel provenance inspector: the causal chain from a
+    /// screen pixel back to the tile, palette entry, and writing instruction.
+    /// The variant is unconditional so the menu IA + dispatch match stay
+    /// exhaustive; the panel and its open path are `debug-hooks`-gated.
+    PixelProvenance,
 }
 
 /// A chip-inspection panel surfaced from the Debug menu (v1.0.0).
@@ -541,6 +547,7 @@ pub fn detached_window_meta(id: &'static str) -> (&'static str, (u32, u32)) {
         "cheat" => ("Cheats", (460, 440)),
         "game_db" => ("Game Database", (560, 480)),
         "rom_info" => ("ROM Info", (520, 520)),
+        "provenance" => ("Pixel Provenance", (520, 620)),
         "perf" => ("Performance", (560, 440)),
         "documentation" => ("Documentation", (780, 560)),
         "header_editor" => ("Cartridge Info / Header", (440, 500)),
@@ -584,7 +591,7 @@ pub fn detached_refresh(id: &'static str) -> DetachedRefresh {
     match id {
         // Live per-frame state.
         "cpu" | "ppu" | "oam" | "apu" | "memory" | "memory_compare" | "event" | "trace"
-        | "watch" | "perf" | "audio_mixer" | "input_display" => Live,
+        | "watch" | "perf" | "audio_mixer" | "input_display" | "provenance" => Live,
         // Slowly-changing status / playback progress.
         "mapper" | "nsf" | "replay" | "netplay" | "cheevos" | "tas" => Throttled,
         // Static / edit-driven panels (cheat, rom_info, game_db, header_editor,
@@ -656,6 +663,8 @@ pub struct DebuggerOverlay {
     show_game_db: bool,
     /// Read-only ROM Info browser open flag (v2.2.0 "Capstone").
     show_rom_info: bool,
+    /// v2.3.2 "Lucid" — pixel provenance inspector.
+    show_provenance: bool,
     /// "Input Display" panel open flag (v1.7.0 "Forge" beta.5, #51; née the
     /// v1.5.0 A1 Input Miniatures overlay).
     show_input_display: bool,
@@ -741,6 +750,8 @@ pub struct DebuggerOverlay {
     game_db_ui: game_db_panel::GameDbPanelState,
     /// Read-only ROM Info panel state (v2.2.0 "Capstone").
     rom_info_ui: rom_info_panel::RomInfoPanelState,
+    /// Pixel provenance inspector state (v2.3.2 "Lucid").
+    provenance_ui: provenance_panel::ProvenancePanelState,
     /// CRC32 of the currently-loaded ROM (PRG+CHR, header-excluded), pushed by
     /// [`DebuggerOverlay::set_rom_crc`] at load. `None` for FDS / NSF / no ROM.
     /// The ROM-database editor keys its overlay edits on this.
@@ -914,6 +925,7 @@ impl DebuggerOverlay {
             show_perf: false,
             show_game_db: false,
             show_rom_info: false,
+            show_provenance: false,
             show_input_display: false,
             #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
             show_hd_pixel: false,
@@ -951,6 +963,7 @@ impl DebuggerOverlay {
             cheat_ui: cheat_panel::CheatPanelState::default(),
             game_db_ui: game_db_panel::GameDbPanelState::default(),
             rom_info_ui: rom_info_panel::RomInfoPanelState,
+            provenance_ui: provenance_panel::ProvenancePanelState::default(),
             rom_crc: None,
             rom_crc_full: None,
             settings_ui: settings_panel::SettingsPanelState::default(),
@@ -1444,6 +1457,7 @@ impl DebuggerOverlay {
             ToolPanel::Input => self.show_input = true,
             ToolPanel::GameDb => self.show_game_db = true,
             ToolPanel::RomInfo => self.show_rom_info = true,
+            ToolPanel::PixelProvenance => self.show_provenance = true,
             ToolPanel::InputDisplay => self.show_input_display = true,
             ToolPanel::Replay => self.show_replay = true,
             ToolPanel::BasicBot => self.show_basic_bot = true,
@@ -1685,11 +1699,12 @@ impl DebuggerOverlay {
     /// happened to be open, then vanish when that one closed). Today the
     /// `nes`-reading tool panels are **Cheats** (`show_cheat`), the
     /// **ROM Database** editor (`show_game_db`), and the read-only **ROM Info**
-    /// browser (`show_rom_info`). If you add another panel that takes `&Nes` /
-    /// `&mut Nes` in `tool_panels`, add its `show_*` flag here too.
+    /// browser (`show_rom_info`), and the **Pixel Provenance** inspector
+    /// (`show_provenance`). If you add another panel that
+    /// takes `&Nes` / `&mut Nes` in `tool_panels`, add its `show_*` flag here too.
     #[must_use]
     pub const fn any_nes_tool_open(&self) -> bool {
-        self.show_cheat || self.show_game_db || self.show_rom_info
+        self.show_cheat || self.show_game_db || self.show_rom_info || self.show_provenance
     }
 
     /// Build the egui UI for this frame (the deep-overlay path: chip panels +
@@ -2291,6 +2306,22 @@ impl DebuggerOverlay {
                 &mut self.game_db_ui,
                 nes,
                 self.rom_crc,
+            );
+        }
+        if self.show_provenance
+            && let Some(nes) = nes.as_deref_mut()
+        {
+            // v2.3.2 "Lucid" — the causal chain from a screen pixel back to the
+            // tile, the palette entry, and the instruction that wrote them.
+            // Takes `&mut Nes` only to arm / disarm the two output-only stores
+            // from its checkboxes; the report itself is read-only.
+            provenance_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_provenance,
+                &mut self.provenance_ui,
+                nes,
+                &self.source_map,
             );
         }
         if self.show_rom_info

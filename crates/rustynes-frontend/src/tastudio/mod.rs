@@ -374,6 +374,11 @@ impl TasEditor {
             start: StartPoint::PowerOn,
             frames: self.input_log.clone(),
             rerecord_count: self.rerecord_count,
+            // No attestation: a TAStudio export is an EDITED input stream, so
+            // there is no single continuous run whose output an attestation
+            // could honestly describe. Attesting an edited movie would be the
+            // one thing this feature must not do.
+            attestation: None,
         }
     }
 

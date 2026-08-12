@@ -320,6 +320,10 @@ impl HistoryViewer {
             frames,
             // An exported rewind window is a straight capture — no re-records.
             rerecord_count: 0,
+            // No attestation: the rewind ring stores state, not the per-frame
+            // video output an attestation hashes, so one cannot be reconstructed
+            // after the fact. Re-record the run with attestation on to get one.
+            attestation: None,
         })
     }
 
