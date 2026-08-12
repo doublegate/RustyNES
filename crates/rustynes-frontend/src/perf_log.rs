@@ -219,7 +219,7 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     };
     let mut cols: Vec<(&'static str, String)> = Vec::with_capacity(40);
     // Static column names per interval series, so they stay `&'static str`.
-    let stats_names: [(&'static str, [&'static str; 5]); 3] = [
+    let stats_names: [(&'static str, [&'static str; 5]); 4] = [
         (
             "produced",
             [
@@ -250,11 +250,25 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
                 "cost_max_ms",
             ],
         ),
+        // v2.3.3 — emulator-mutex blocking, split out of `cost` (which was
+        // timed from before the acquire until v2.3.3 and so billed the winit
+        // thread's lock hold to the emulator).
+        (
+            "wait",
+            [
+                "wait_mean_ms",
+                "wait_p50_ms",
+                "wait_p95_ms",
+                "wait_p99_ms",
+                "wait_max_ms",
+            ],
+        ),
     ];
     let stat_for = |series: &str| -> &crate::perf::IntervalStats {
         match series {
             "produced" => &v.produced,
             "presented" => &v.presented,
+            "wait" => &v.produce_wait,
             _ => &v.produce_cost,
         }
     };
@@ -526,7 +540,7 @@ mod tests {
         // The exhaustive set of `PerfView` metrics the panel renders
         // (`debugger/perf_panel.rs`). Interval stats expand to mean/p50/p95/
         // p99/max per series.
-        for series in ["produced", "presented", "cost"] {
+        for series in ["produced", "presented", "cost", "wait"] {
             for stat in ["mean_ms", "p50_ms", "p95_ms", "p99_ms", "max_ms"] {
                 let want = format!("{series}_{stat}");
                 assert!(names.contains(want.as_str()), "missing column {want}");

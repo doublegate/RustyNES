@@ -900,6 +900,105 @@ dots. The plan item read two identical-looking expressions and inferred
 redundancy; they are identical only in the common case and are *meant* to be able
 to differ.
 
+### v2.3.3 F1 — dropped frames traced to presentation, not emulation (decision: root cause found; snapshot slimming REJECTED on frame-time grounds)
+
+Investigation opened by a maintainer report of residual stutter and dropped
+frames on a 20-thread i9-10850K + RTX 3090 — a host that should never drop a
+frame emulating a 1.79 MHz console. The working hypothesis on entry was that
+the emulation core had an underlying cost problem and that **snapshot slimming**
+(dropping the 245,760-byte framebuffer from the per-frame snapshot) was the
+headline fix. Measurement rejected both halves of that premise.
+
+**The instrument was wrong first.** The three `emu_thread` produce paths started
+their timer *before* `emu.lock()`:
+
+```rust
+let t0 = Instant::now();
+let mut guard = emu.lock();   // blocking billed to the emulator
+```
+
+so every millisecond the winit thread held the mutex was recorded as emulation
+cost. That is why the `cost` tail pinned to almost exactly one display refresh
+(16.81 / 16.92 / 17.04 / 17.35 / 17.49 ms across configurations) — the signature
+of blocking, not of work. Fixed by starting the work clock after the acquire and
+recording the blocking separately as `produce_wait` (new `wait_*` CSV columns).
+With the split in place the measured wait is **0.00 ms at every percentile**:
+there is no emulator-mutex contention at all, and the v2.3.0 lock-split holds.
+
+**Emulation is comfortably inside budget.** With the metric corrected:
+
+| run_ahead | rewind | work mean | work p95 | work p99 |
+|---|---|---|---|---|
+| 0 | off | 4.09 | 4.73 | 16.51 |
+| 0 | on | 4.39 | 6.22 | 17.64 |
+| 1 | off | 5.93 | 6.14 | 6.32 |
+| 1 | on | 6.11 | 6.31 | 6.63 |
+
+4.09 ms against the 16.639 ms NTSC budget is 24.6% — the design point
+`docs/performance.md` already records as knowingly accepted. `produced_mean`
+measured **16.64 ms in every capture taken** (nine of them): the producer hits
+NTSC frame timing exactly and never misses.
+
+**The drops are presentation-side.** `presented_mean` sits at 17.13-17.94 ms
+against that perfect 16.64 ms produce, and the excess is the drop rate:
+17.5 / 16.64 = 5.2% excess vs 135 dropped of ~2400 frames = 5.6%. Steady state
+shows drops *and* duplicates simultaneously (~7/s and ~4/s), which is a phase
+beat between two unsynchronized clocks, not a rate deficit. Confirmed
+independent of the present path — `presented_mean` is 17.4 ms in all five of
+Mailbox/mfl=1, Mailbox/mfl=2, Mailbox/mfl=3, Fifo/mfl=2, Immediate/mfl=2 — and
+independent of the GPU, which sits at 0-1% utilization at P0 1905 MHz. A
+`perf record` profile puts 94.3% of cycles in the emulation thread and 5.5% in
+the render thread; the render thread is cheap, not starved, and a cycles profile
+cannot see the blocking that actually matters here.
+
+**Root cause.** Display-sync pacing never engages, so the producer free-runs on
+a wallclock timer that is not phase-locked to the compositor's frame callbacks.
+Two independent reasons, either of which alone is sufficient:
+
+1. `resolve_pacing` requires the monitor refresh to be within
+   `DISPLAY_SYNC_MAX_SKEW` (0.5%) of the console rate, because display-sync
+   implements **one emulated frame per refresh** with no integer-divisor path.
+   A 120 Hz or 144 Hz panel therefore *always* falls back to wallclock — i.e.
+   most modern displays are excluded by construction.
+2. Refresh detection goes solely through winit's `current_monitor()` →
+   `refresh_rate_millihertz()`. On the reporting host (KDE Wayland) the
+   compositor advertises **no `wl_output` global at all** (65 globals, none an
+   output), so that returns `None` and the log records
+   `monitor_refresh_hz = unknown`. The `wp_presentation` protocol — which
+   reports exact presentation timestamps and refresh period — *is* advertised
+   and is not used.
+
+**Snapshot slimming: measured, and rejected as a frame-time fix.** The premise
+was that the 245,760-byte framebuffer carried through the run-ahead
+snapshot/restore was a major cost. Criterion says otherwise:
+
+| op | cost |
+|---|---|
+| `snapshot_core_into` | 14.8 µs |
+| `restore_quiet` | 122 µs |
+| full `snapshot` (with thumbnail) | 36.4 µs |
+
+Run-ahead at `run_ahead = 2` costs ~6.2 ms per displayed frame, of which
+snapshot + restore is **~137 µs — 2.2%**. The remainder is the extra `run_frame`
+calls, which are inherent to run-ahead and not removable. Removing the
+framebuffer entirely would save roughly 110 µs/frame, or **0.66% of the frame
+budget** — far below this project's standing >3%-same-runner adoption bar, and
+it would not move the drop rate at all, because drops are not caused by
+emulation cost. Slimming retains a real but *different* justification —
+rewind-ring memory, where the framebuffer is ~94% of every per-frame snapshot —
+and should be argued on memory, not on frame time, if it is revisited.
+
+**Also found, not yet fixed:** `pacing_mode = "vrr"` on a display that is not
+actually variable-refresh degrades to `presented_mean` 49.74 ms (~20 fps) with
+1170 dropped frames in 40 s, and has no sustained-miss fallback of the kind
+display-sync carries.
+
+**Adopted from this investigation:** the `cost`/`wait` metric split only. The
+pacing rework (integer-divisor display-sync driven by an empirically measured
+refresh period, so it works where the windowing API reports nothing) is the
+actual fix for the reported stutter and is scoped as follow-up rather than
+landed here unmeasured.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as

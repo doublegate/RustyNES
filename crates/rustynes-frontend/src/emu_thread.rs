@@ -598,8 +598,14 @@ fn drive_one(
 ) -> bool {
     let inputs = shared_input.load();
     let mut sinks = sinks_for(audio);
-    let t0 = Instant::now();
+    let t_wait = Instant::now();
     let mut guard = emu.lock();
+    // v2.3.3 — the work clock starts HERE, after the mutex is in hand. Timing
+    // from before the acquire billed the winit thread's lock hold to the
+    // emulator, which is what made a contention stall read as an expensive
+    // frame. The blocking is still measured, just under its own name.
+    let t_wait = t_wait.elapsed();
+    let t0 = Instant::now();
     // Re-check UNDER the lock: the winit thread sets `netplay_paused` then
     // fences on this same lock, so once it holds the lock we observe the
     // flag and never advance the core out from under the rollback session.
@@ -614,6 +620,7 @@ fn drive_one(
     // RA is None in `sinks`, so `fx` is always default — discard it.
     let _ = core.produce_one_frame(&inputs, &mut sinks);
     core.perf.record_produce_cost(t0.elapsed());
+    core.perf.record_produce_wait(t_wait);
     core.perf.record_produced(Instant::now());
     // v1.0.0 — display regime advances by the speed-scaled period.
     core.next_frame_time = Some(Instant::now() + core.effective_frame_duration());
@@ -640,8 +647,14 @@ fn drive_frame_advance(
 ) -> bool {
     let inputs = shared_input.load();
     let mut sinks = sinks_for(audio);
-    let t0 = Instant::now();
+    let t_wait = Instant::now();
     let mut guard = emu.lock();
+    // v2.3.3 — the work clock starts HERE, after the mutex is in hand. Timing
+    // from before the acquire billed the winit thread's lock hold to the
+    // emulator, which is what made a contention stall read as an expensive
+    // frame. The blocking is still measured, just under its own name.
+    let t_wait = t_wait.elapsed();
+    let t0 = Instant::now();
     if control.netplay_paused.load(Ordering::Acquire) {
         return false;
     }
@@ -649,6 +662,7 @@ fn drive_frame_advance(
     core.latch(&inputs);
     let _ = core.produce_one_frame(&inputs, &mut sinks);
     core.perf.record_produce_cost(t0.elapsed());
+    core.perf.record_produce_wait(t_wait);
     core.perf.record_produced(Instant::now());
     core.next_frame_time = Some(Instant::now());
     present.publish(&core.present_fb);
@@ -669,8 +683,14 @@ fn drive_fast_forward(
 ) -> bool {
     let inputs = shared_input.load();
     let mut sinks = sinks_for(None);
-    let t0 = Instant::now();
+    let t_wait = Instant::now();
     let mut guard = emu.lock();
+    // v2.3.3 — the work clock starts HERE, after the mutex is in hand. Timing
+    // from before the acquire billed the winit thread's lock hold to the
+    // emulator, which is what made a contention stall read as an expensive
+    // frame. The blocking is still measured, just under its own name.
+    let t_wait = t_wait.elapsed();
+    let t0 = Instant::now();
     if control.netplay_paused.load(Ordering::Acquire) || control.user_paused.load(Ordering::Acquire)
     {
         return false;
@@ -679,6 +699,7 @@ fn drive_fast_forward(
     core.latch(&inputs);
     let _ = core.produce_one_frame(&inputs, &mut sinks);
     core.perf.record_produce_cost(t0.elapsed());
+    core.perf.record_produce_wait(t_wait);
     core.perf.record_produced(Instant::now());
     // Rebase so leaving FF doesn't burst-catch-up the elapsed (fast) frames.
     core.next_frame_time = Some(Instant::now());
@@ -701,7 +722,9 @@ fn drive_wallclock(
     let inputs = shared_input.load();
     let mut sinks = sinks_for(audio);
     let now = Instant::now();
+    let t_wait = Instant::now();
     let mut guard = emu.lock();
+    let t_wait = t_wait.elapsed();
     // v1.0.0 (BUG-9) — see `drive_one`: honor netplay + user pause under the
     // lock so a just-issued pause stops the next produce.
     if control.netplay_paused.load(Ordering::Acquire) || control.user_paused.load(Ordering::Acquire)
@@ -712,6 +735,7 @@ fn drive_wallclock(
     let next = core.next_frame_time.unwrap_or(now);
     core.latch(&inputs);
     let _ = core.produce_due_frames(now, next, &inputs, &mut sinks);
+    core.perf.record_produce_wait(t_wait);
     // v1.5.0 H1 — publish the latest produced frame (after any catch-up
     // burst, `present_fb` holds the most-recent frame) into the lock-free
     // handoff under the lock we already hold.

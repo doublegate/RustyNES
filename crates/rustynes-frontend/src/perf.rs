@@ -174,6 +174,18 @@ pub struct PerfStats {
     produced: IntervalRing,
     presented: IntervalRing,
     produce_cost: SampleRing,
+    /// v2.3.3 — wall time the producer spent BLOCKED on the emulator mutex
+    /// before it could start work, split out of [`Self::produce_cost`].
+    ///
+    /// The two were conflated until v2.3.3: the produce paths started their
+    /// timer *before* `emu.lock()`, so every millisecond the winit thread held
+    /// the mutex was billed to the emulator as if the core had been slow. That
+    /// made a contention stall indistinguishable from an expensive frame, and
+    /// it is the reason the cost tail pinned to almost exactly one display
+    /// refresh in every configuration measured — a signature of blocking, not
+    /// of work. Recording the wait separately makes the distinction visible:
+    /// `cost` is now emulation work alone, and `wait` is the queueing delay.
+    produce_wait: SampleRing,
     /// Paces that produced >= 2 frames (the wall-clock pacer catching up —
     /// each one is an uneven content cadence on screen).
     pub catchup_bursts: u64,
@@ -220,8 +232,18 @@ impl PerfStats {
     }
 
     /// Record the wall cost of one `produce_one_frame` call.
+    ///
+    /// From v2.3.3 this is the work alone — the caller times it from *after*
+    /// the mutex is acquired and reports the blocking separately through
+    /// [`Self::record_produce_wait`].
     pub fn record_produce_cost(&mut self, d: Duration) {
         self.produce_cost.push(d.as_secs_f32() * 1000.0);
+    }
+
+    /// Record how long the producer was blocked on the emulator mutex before
+    /// it could begin the frame. See [`PerfStats::produce_wait`].
+    pub fn record_produce_wait(&mut self, d: Duration) {
+        self.produce_wait.push(d.as_secs_f32() * 1000.0);
     }
 
     /// Break interval phase after a discontinuity (ROM load, un-pause) so
@@ -238,6 +260,7 @@ impl PerfStats {
         self.produced.clear();
         self.presented.clear();
         self.produce_cost.clear();
+        self.produce_wait.clear();
         self.catchup_bursts = 0;
         self.snap_forwards = 0;
         self.produced_since_present = 0;
@@ -260,6 +283,7 @@ impl PerfStats {
             produced: self.produced.ring.stats(),
             presented: self.presented.ring.stats(),
             produce_cost: self.produce_cost.stats(),
+            produce_wait: self.produce_wait.stats(),
             catchup_bursts: self.catchup_bursts,
             snap_forwards: self.snap_forwards,
             presented_dups: self.presented_dups,
@@ -282,8 +306,11 @@ pub struct PerfView {
     pub produced: IntervalStats,
     /// Presented-frame interval stats (display-visible cadence).
     pub presented: IntervalStats,
-    /// `produce_one_frame` wall-cost stats.
+    /// `produce_one_frame` wall-cost stats (work only, from v2.3.3).
     pub produce_cost: IntervalStats,
+    /// v2.3.3 — emulator-mutex blocking stats for the producer. See
+    /// [`PerfStats::produce_wait`].
+    pub produce_wait: IntervalStats,
     /// See [`PerfStats::catchup_bursts`].
     pub catchup_bursts: u64,
     /// See [`PerfStats::snap_forwards`].
