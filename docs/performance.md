@@ -677,9 +677,36 @@ refresh rate at all (`monitor unknown`), so the beat is a property of the
 monitor. An absolute-millisecond p99 threshold therefore reports the host's
 display configuration as a regression. p99 is now reported, not gated.
 
-**The real signal was `cost_*`** — emulation work per displayed frame, with the
-pacer's sleep excluded, and therefore independent of the display. Varying only
-`[input] run_ahead` on one host and one ROM:
+> **RETRACTED IN v2.3.3 — the numbers in this subsection were contaminated and
+> the conclusion drawn from them was wrong.** The claim below that `cost_*` is
+> "emulation work … therefore independent of the display" was false: until
+> v2.3.3 the produce paths started their timer *before* `emu.lock()`, so
+> `cost_*` included time blocked on the winit thread and was very much a
+> function of the display. The corrected figures and the actual root cause are
+> in **v2.3.3 F1**; the original text is kept below, struck through in intent,
+> because deleting a wrong measurement hides that it was ever acted on.
+>
+> Corrected `cost_*` (work only), same host and ROM:
+>
+> | `run_ahead` | rewind | cost_mean | cost_p95 |
+> | --- | --- | --- | --- |
+> | 0 | off | 4.09 ms | 4.73 ms |
+> | 0 | on | 4.39 ms | 6.22 ms |
+> | 1 | off | 5.93 ms | 6.14 ms |
+> | 1 | on | 6.11 ms | 6.31 ms |
+>
+> So run-ahead at the default costs ~6 ms of a 16.639 ms budget, not 24 ms, and
+> "60 fps is not sustainable" was never true. **No core optimisation verdict is
+> affected**: every adopt/reject decision in this document is adjudicated by
+> criterion's `--baseline` change analysis on `rustynes-core`'s headless
+> `full_frame` bench, which has no mutex and no winit thread and therefore
+> could not have been contaminated by this bug. What *was* affected is this
+> table and the frontend pacing gate thresholds derived from it.
+
+**The signal believed to be real at the time was `cost_*`** — emulation work per
+displayed frame, with the pacer's sleep excluded, and *believed* to be
+independent of the display. Varying only `[input] run_ahead` on one host and one
+ROM:
 
 | `run_ahead` | cost_mean | cost_p95 | cost_p99 | produced_dropped (45 s) |
 | --- | --- | --- | --- | --- |
@@ -687,9 +714,10 @@ pacer's sleep excluded, and therefore independent of the display. Varying only
 | **1 (the shipped default)** | 8.50 ms | **24.15 ms** | 26.76 ms | **303** |
 | 2 | 9.82 ms | **19.56 ms** | 26.34 ms | 201 |
 
-At the **default**, the p95 of the emulator's own work is 24.15 ms against a
-16.639 ms budget: 60 fps is not sustainable and ~300 frames drop in 45 seconds.
-With run-ahead off, the same ROM sits at 4.51 ms with 10 drops.
+At the **default**, the p95 *appeared* to be 24.15 ms against a 16.639 ms
+budget, reading as "60 fps is not sustainable and ~300 frames drop in 45
+seconds". Both readings were artefacts of the timing bug — see the retraction
+above.
 
 The mechanism is not new — run-ahead snapshots (~250 KB) and restores the core
 once per displayed frame on top of running N+1 frames. What is new is the
@@ -993,11 +1021,84 @@ actually variable-refresh degrades to `presented_mean` 49.74 ms (~20 fps) with
 1170 dropped frames in 40 s, and has no sustained-miss fallback of the kind
 display-sync carries.
 
-**Adopted from this investigation:** the `cost`/`wait` metric split only. The
-pacing rework (integer-divisor display-sync driven by an empirically measured
-refresh period, so it works where the windowing API reports nothing) is the
-actual fix for the reported stutter and is scoped as follow-up rather than
-landed here unmeasured.
+**Adopted from this investigation:** the `cost`/`wait` metric split, and the
+pacing rework it made legible — see **v2.3.3 F2** below.
+
+### v2.3.3 F2 — display-synchronised pacing, generalised (decision: ADOPTED)
+
+The fix for F1's root cause. Three changes, each addressing one of the reasons
+display-sync could never engage.
+
+**1. Integer divisors.** Display-sync produced exactly one emulated frame per
+refresh, so `resolve_pacing` demanded a panel within 0.5% of the console rate
+and every 120/144 Hz host fell back to wall-clock *by construction*.
+`refresh_probe::best_divisor` now finds the integer `N` with `refresh / N`
+closest to the console rate: 120 Hz locks at `N = 2`, 240 Hz at `N = 4`, and
+144 Hz / 75 Hz still correctly return `None` (no integer relationship exists, so
+wall-clock with its small evenly-spread beat remains the better answer).
+
+**2. Measured refresh.** Detection went solely through winit's
+`current_monitor()`. Two failures showed up on the reporting host: the KDE
+Wayland session advertised no `wl_output` global at all, *and* `resolve_pacing`
+ran once at startup before the monitor was known and never revisited the
+decision. `RefreshProbe` measures the cadence directly (median of 80 redraw
+intervals under Fifo, with a stability quorum that refuses an unsteady
+cadence), and completing a probe re-resolves the regime. On this host the probe
+itself reports "not steady enough to trust" — but the re-resolve it triggers
+picks up the now-available declared 119.991 Hz, which is the outcome that
+matters.
+
+**3. The display governs phase; the wall clock governs rate.** The obvious
+implementation — produce on every `N`th refresh — was implemented, measured,
+and rejected. It makes console speed a function of render-loop reliability:
+presents landed at 116-119 Hz rather than the panel's 119.991, and because
+production was tied 1:2 to presents the console inherited the shortfall exactly
+(`produced/presented` measured 1.996). Result: a console running **1.4-3.4%
+slow** with audio underruns, outside the 0.5% skew band the regime promises.
+The wall-clock schedule is therefore the rate authority (accumulated, never
+rebased, so there is no drift) and the display only decides *when* within that
+schedule a frame is produced. A missed present no longer slows the console.
+
+Two bugs were found while measuring this, both worth recording because both
+were self-inflicted and caught only by measurement:
+
+- Consulting the schedule through the emulator mutex on every refresh (120+/s)
+  introduced the first real lock contention in the frontend — `cost` p95 36 ms,
+  console at 35 Hz. The schedule is now winit-thread-local and the hot path is
+  lock-free (`wait` p99 measured 0.10-0.12 ms).
+- Scaling the sustained-miss health check by the divisor made its threshold
+  12.5 ms, which ordinary refresh jitter under `/2` exceeds every run; the
+  regime downgraded itself in 4 of 4 captures. The check keeps the console
+  frame period as its target, and gained a 600-present grace window so the
+  startup transient (window mapping, shader compilation, the measured ~7 s GPU
+  clock ramp from P8 to P0) cannot permanently downgrade a session.
+
+**Measured outcome** (`flowing_palette`, 45 s, `run_ahead = 2`, rewind on):
+
+| | before | after |
+|---|---|---|
+| regime | wallclock (always) | display-sync /2 (held 6/6) |
+| dropped frames | 135-254 | **1, 2, 1, 9, 4, 5** |
+| audio underruns | 0-19 | **0** |
+| console rate error | — | +0.03% to +0.12% |
+| mutex wait p99 | — | 0.10-0.12 ms |
+
+**Also fixed:** `pacing_mode = "vrr"` had no sustained-miss fallback, so on a
+display that is not actually variable-refresh it collapsed to 49.74 ms
+presented (~20 fps) with 1170 dropped frames in 40 s and stayed there. It now
+shares display-sync's health check and its sticky fallback.
+
+**Gate corrections.** Two thresholds in `scripts/perf/perf_log_check.py` were
+derived from the contaminated `cost_*` numbers and are now *reported* rather
+than enforced: `cost_p95` scales with `run_ahead` by design (the shipped
+`run_ahead = 2` measures 13.9-21.9 ms and is healthy), and `produced_dropped`
+is a property of the display (1-9 per 45 s under display-sync, 35-131 under the
+wall-clock fallback, same build and host). Gating either reports the user's
+hardware as a regression — the same error the p99 gate made. What replaces them
+is a **console-rate gate**: `|produced_mean - target_ms|` against a 0.5% band,
+which is the emulator's own responsibility, independent of display and
+`run_ahead`. Verified to fail the 3.3%-slow build from change 3 above (exit 1)
+and pass every healthy capture.
 
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 

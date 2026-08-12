@@ -54,6 +54,19 @@ import csv
 import sys
 
 
+def load_meta(path: str) -> dict[str, str]:
+    """Return the `# key = value` metadata block from the top of a capture."""
+    meta: dict[str, str] = {}
+    with open(path, encoding="utf-8") as fh:
+        for ln in fh:
+            if not ln.startswith("#"):
+                break
+            if "=" in ln:
+                k, v = ln[1:].split("=", 1)
+                meta[k.strip()] = v.strip()
+    return meta
+
+
 def load_rows(path: str) -> tuple[list[str], list[dict[str, str]]]:
     """Return (header, data_rows) skipping the `#`-commented header block."""
     with open(path, newline="", encoding="utf-8") as fh:
@@ -147,23 +160,40 @@ def main() -> int:
     # period, 60 fps is not sustainable and frames WILL drop, whatever the
     # monitor is doing.
     #
-    # Measured on one host, one ROM, varying only `[input] run_ahead`:
+    # v2.3.3 — the two gates that used to live here were derived from
+    # CONTAMINATED numbers. `cost_*` included time blocked on the emulator
+    # mutex until v2.3.3 (the produce paths timed from before `emu.lock()`),
+    # which made run-ahead look like it pushed emulation work to a 24 ms p95
+    # against a 16.639 ms budget. Corrected, the same configuration measures
+    # ~6 ms. See docs/performance.md v2.3.3 F1.
     #
-    #   run_ahead  cost_mean  cost_p95  cost_p99  produced_dropped
-    #           0       3.91      4.51      5.83                10
-    #           1       8.50     24.15     26.76               303   <- the DEFAULT
-    #           2       9.82     19.56     26.34               201
+    # Both gates are now REPORTED, not enforced, for the same reason the p99
+    # gate above is: they measure the host, not the emulator.
     #
-    # Run-ahead snapshots (~250 KB) and restores the core once per displayed
-    # frame on top of running N+1 frames, and at the shipped default that pushes
-    # p95 past the budget. All three runs passed every other gate in this file,
-    # which is why this one exists.
-    ap.add_argument("--max-cost-p95-ms", type=float, default=16.639,
-                    help="max median emulation-work p95 ms (default: the NTSC frame "
-                         "budget — work that does not fit in a frame cannot sustain 60 fps)")
-    ap.add_argument("--max-produced-dropped", type=int, default=60,
-                    help="max cumulative dropped produced frames (default 60; "
-                         "run_ahead=0 gives ~10 per 45 s, run_ahead=1 gives ~300)")
+    #   - `cost_p95` legitimately scales with `run_ahead`, which multiplies
+    #     work by design: the shipped `run_ahead = 2` measures 13.9-21.9 ms
+    #     and is perfectly healthy, with ~0 drops and an exact console rate.
+    #     An absolute work ceiling would fail the shipped default forever.
+    #   - `produced_dropped` is a function of the DISPLAY: the same build on
+    #     the same host drops 1-9 frames per 45 s under display-sync and
+    #     35-131 under the wall-clock fallback. Gating it reports the user's
+    #     compositor as a regression.
+    #
+    # What IS the emulator's own responsibility, and is independent of both
+    # the display and `run_ahead`, is whether it keeps console time. That is
+    # `produced_mean` against the header's `target_ms`, and it is gated below.
+    # It held at exactly 16.64 ms in every capture taken across this
+    # investigation, including the ones where everything else looked broken.
+    ap.add_argument("--max-cost-p95-ms", type=float, default=None,
+                    help="max median emulation-work p95 ms (default: reported, not "
+                         "gated — scales with run_ahead by design)")
+    ap.add_argument("--max-produced-dropped", type=int, default=None,
+                    help="max cumulative dropped produced frames (default: reported, "
+                         "not gated — a property of the display, not the emulator)")
+    ap.add_argument("--max-rate-skew-pct", type=float, default=0.5,
+                    help="max |produced_mean - target_ms| as %% of target (default "
+                         "0.5%%, the audio DRC band: the emulator must keep console "
+                         "time regardless of host display configuration)")
     ap.add_argument("--warmup-rows", type=int, default=3,
                     help="rows to skip at the start (startup gate / first-frame)")
     args = ap.parse_args()
@@ -221,12 +251,32 @@ def main() -> int:
         failures.append(f"catchup_bursts {catchup} > {args.max_catchup_bursts}")
     if snaps > args.max_snap_forwards:
         failures.append(f"snap_forwards {snaps} > {args.max_snap_forwards}")
-    if cost_p95 == cost_p95 and cost_p95 > args.max_cost_p95_ms:  # NaN-safe
+    if (
+        args.max_cost_p95_ms is not None
+        and cost_p95 == cost_p95  # NaN-safe
+        and cost_p95 > args.max_cost_p95_ms
+    ):
         failures.append(
             f"cost_p95 {cost_p95:.1f} ms > {args.max_cost_p95_ms} ms "
             f"(emulation work does not fit in a frame)")
-    if dropped > args.max_produced_dropped:
+    if args.max_produced_dropped is not None and dropped > args.max_produced_dropped:
         failures.append(f"produced_dropped {dropped} > {args.max_produced_dropped}")
+
+    # v2.3.3 — the rate gate: does the emulator keep console time?
+    meta = load_meta(args.csv)
+    try:
+        target_ms = float(meta.get("target_ms", ""))
+    except ValueError:
+        target_ms = 0.0
+    produced_mean = _median([col_float(r, "produced_mean_ms") for r in body])
+    if target_ms > 0.0 and produced_mean > 0.0:
+        skew_pct = abs(produced_mean - target_ms) / target_ms * 100.0
+        print(f"  produced_mean {produced_mean:.3f} ms vs target {target_ms:.3f} ms "
+              f"({skew_pct:+.3f}%)")
+        if skew_pct > args.max_rate_skew_pct:
+            failures.append(
+                f"console rate skew {skew_pct:.3f}% > {args.max_rate_skew_pct}% "
+                f"(produced_mean {produced_mean:.3f} ms vs target {target_ms:.3f} ms)")
 
     print(f"perf_log_check: {args.csv}")
     print(f"  rows={len(rows)} (analyzed {len(body)} after {args.warmup_rows} warmup)")

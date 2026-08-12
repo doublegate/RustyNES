@@ -16,6 +16,17 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **Frontend perf gates: `cost_p95` and `produced_dropped` are reported, not
+  enforced; a console-rate gate replaces them.** Both thresholds were derived
+  from the contaminated cost metric described under *Fixed* below. `cost_p95` legitimately scales with
+  `run_ahead`, which multiplies work by design, and `produced_dropped` is a
+  property of the display (the same build and host drops 1–9 frames per 45 s
+  under display-sync and 35–131 under the wall-clock fallback), so gating either
+  reports the user's hardware as a regression. The new gate checks
+  `produced_mean` against the capture's `target_ms` within 0.5% — the one thing
+  that is the emulator's own responsibility and is independent of both the
+  display and `run_ahead`.
+
 - **Frontend: the framebuffer is no longer re-uploaded when it has not changed.**
   In `Mailbox` present mode the frontend presents faster than the emulator
   produces — measured across the captures in `perf-logs/`, four of six runs show
@@ -32,6 +43,36 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **Frontend: dropped frames and stutter traced to display pacing, and fixed.**
+  On a 120 Hz host the emulator produced NTSC frames perfectly (`produced_mean`
+  measured 16.64 ms in every capture) while the display-synchronised pacer never
+  engaged, leaving a free-running wall-clock producer beating against the
+  compositor's frame callbacks — 135–254 dropped frames per 45 s. Three causes,
+  all fixed: display-sync only ever supported **one emulated frame per refresh**,
+  so every 120/144 Hz panel was rejected by construction; refresh detection went
+  solely through winit's `current_monitor()`, which reports nothing on a
+  compositor that advertises no `wl_output` (and was consulted once at startup
+  before the monitor was known, then never revisited); and the regime tied
+  console *rate* to present rate, so render-loop hiccups slowed the console.
+  Display-sync now selects an integer divisor (120 Hz → one frame per two
+  refreshes), can measure the refresh cadence itself when the windowing API is
+  silent, and takes its rate from the wall-clock schedule while taking only its
+  *phase* from the display. Measured: dropped frames **135–254 → 1–9** per 45 s,
+  audio underruns **0–19 → 0**, console-rate error within 0.12%. Frontend-only —
+  the deterministic core, save-state and movie formats, and every golden vector
+  are untouched.
+- **Frontend: `pacing_mode = "vrr"` no longer collapses on a non-VRR display.**
+  It had no sustained-miss fallback, so on a fixed-refresh panel it degraded to
+  ~20 fps (49.74 ms presented, 1170 dropped frames in 40 s) and stayed there. It
+  now shares display-sync's health check and sticky fallback to wall-clock.
+- **Frontend: the producer's mutex wait is no longer billed as emulation cost.**
+  The three produce paths started their timer before acquiring the emulator
+  mutex, so time blocked on the winit thread was recorded as work — making a
+  contention stall indistinguishable from an expensive frame, and pinning the
+  reported tail to almost exactly one display refresh. Work and wait are now
+  measured separately (new `wait_*` columns in the perf-log CSV). The corrected
+  figures show emulation at ~4.1 ms of the 16.639 ms budget with run-ahead off,
+  and no mutex contention at any percentile.
 - **`scripts/perf/perf_log_check.py` crashed on valid captures.** A run ended
   mid-write (how every timed capture ends) yields a short final row, which
   `csv.DictReader` fills with `None`; `float(None)` raises `TypeError`, which the
@@ -72,17 +113,21 @@ cycle-accurate core later replaced.
 
 ### Performance
 
-- **Run-ahead blows the frame budget at the shipped default, and nothing was
-  measuring it.** Varying only `[input] run_ahead` on one host and one ROM, the
-  p95 of the emulator's own per-frame work (`cost_p95_ms`, pacer sleep excluded)
-  goes **4.51 ms → 24.15 ms** from `run_ahead = 0` to the default `1`, against a
-  16.639 ms budget, and dropped frames go **10 → 303** per 45 s. Run-ahead
-  snapshots (~250 KB) and restores the core once per displayed frame on top of
-  running N+1 frames; that was assumed affordable and never checked at the
-  default. **Not fixed in this release** — the lever is snapshot slimming, a
-  core-format change with its own verification burden — but it is now measured,
-  gated against, and documented as the highest-value known performance item.
-  See `docs/performance.md` (v2.3.3 F5).
+- **Run-ahead measurement, corrected.** An earlier entry in this section
+  claimed run-ahead "blows the frame budget at the shipped default", citing
+  `cost_p95` rising 4.51 ms → 24.15 ms and dropped frames 10 → 303. **Both
+  figures were artefacts of the mutex-wait timing bug fixed above**, which billed
+  time blocked on the winit thread to the emulator. Corrected, run-ahead costs
+  ~6 ms of the 16.639 ms budget at `run_ahead = 1` and ~9.7 ms at the shipped
+  `run_ahead = 2`; the dropped frames were display pacing, not run-ahead, and are
+  themselves fixed above. Snapshot slimming was then measured directly and is
+  **not** the lever it was assumed to be: `snapshot_core_into` is 14.8 µs and
+  `restore_quiet` 122 µs, together ~2.2% of a run-ahead frame, so removing the
+  245,760-byte framebuffer would buy ~0.66% of the frame budget — below the
+  project's standing >3% adoption bar. It retains a real justification on
+  rewind-ring *memory*, where the framebuffer is ~94% of every per-frame
+  snapshot, and should be argued there rather than on frame time. See
+  `docs/performance.md` (v2.3.3 F1).
 
 - **The frontend optimization items were measured before being built, and all
   three are under 0.1% of a frame** — the framebuffer copy chain 13.2 µs

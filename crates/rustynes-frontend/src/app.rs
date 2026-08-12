@@ -465,6 +465,91 @@ enum ActivePacing {
     Vrr,
 }
 
+/// v2.3.3 — state of the one-off display-refresh calibration.
+///
+/// The measurement is only meaningful while the surface is in Fifo and
+/// redraws are being driven continuously, because otherwise a redraw interval
+/// measures the *producer* rather than the display (see
+/// [`crate::refresh_probe`]). This enum is what keeps that invariant: the
+/// probe only samples in [`ProbePhase::Sampling`], which is the only phase
+/// that forces those conditions.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProbePhase {
+    /// Not started — no ROM / no surface yet, or the declared refresh was
+    /// usable so no measurement is needed.
+    Pending,
+    /// Fifo forced, continuous redraws, collecting intervals.
+    Sampling,
+    /// Finished. Whether it produced a usable estimate is recorded in
+    /// `measured_refresh_hz`; either way it is not retried, so a session
+    /// cannot oscillate between regimes.
+    Done,
+}
+
+/// v2.3.3 — everything display-synchronised pacing needs to decide *when* to
+/// produce a frame.
+///
+/// Grouped rather than left as nine loose `App` fields because they are one
+/// concern with one lifetime: they are all (re)initialised together whenever
+/// `resolve_pacing` runs, and reading any one of them in isolation is
+/// meaningless.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+struct DisplaySync {
+    /// Empirical refresh measurement. See [`crate::refresh_probe`] for why
+    /// the windowing API is not enough on its own.
+    probe: crate::refresh_probe::RefreshProbe,
+    /// Where the one-off refresh calibration has got to.
+    phase: ProbePhase,
+    /// The measured refresh in Hz once calibration succeeded. Used only when
+    /// the windowing API reports nothing; a declared refresh always wins,
+    /// since it is exact and this is an estimate.
+    measured_hz: Option<f64>,
+    /// Display refreshes per emulated frame. `1` is the pre-v2.3.3 behaviour;
+    /// `2` is a 120 Hz panel showing 60 Hz content. Meaningless unless the
+    /// active regime is [`ActivePacing::Display`].
+    divisor: u32,
+    /// Refreshes seen since the last emulated frame was produced.
+    refreshes_since_produce: u32,
+    /// Presents since pacing was last resolved, gating the sustained-miss
+    /// health check past the startup transient.
+    presents_since_resolve: u32,
+    /// The frame schedule, owned by the WINIT thread.
+    ///
+    /// Deliberately not `EmuCore::next_frame_time`: this is consulted on every
+    /// refresh (120+/s on a high-refresh panel), and reading it through the
+    /// emulator mutex put the winit thread in contention with the producer for
+    /// the first time — measured at 36 ms `cost` p95 and a console running at
+    /// 35 Hz. Keeping it thread-local makes the hot path lock-free.
+    next_frame: Option<Instant>,
+    /// Cached console frame period, refreshed whenever pacing is resolved.
+    /// Safe to cache because a non-1.0 emulation speed forces the wall-clock
+    /// regime, so under display-sync this is always the region's base period.
+    period: Duration,
+    /// Half a display refresh — the "produce slightly early rather than a lot
+    /// late" window. Cached with the period above.
+    slack: Duration,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Default for DisplaySync {
+    fn default() -> Self {
+        Self {
+            probe: crate::refresh_probe::RefreshProbe::default(),
+            phase: ProbePhase::Pending,
+            measured_hz: None,
+            divisor: 1,
+            refreshes_since_produce: 0,
+            presents_since_resolve: 0,
+            next_frame: None,
+            // NTSC base period; replaced on the first `resolve_pacing`.
+            period: Duration::from_nanos(16_639_267),
+            slack: Duration::from_micros(1_040),
+        }
+    }
+}
+
 /// v2.8.0 Phase 2 — how far the display refresh may deviate from the ROM's
 /// nominal rate for display-sync to engage (0.5%: 60.0988 Hz content on a
 /// 59.95-60.10 Hz panel run -0.25%..+0.0% — invisible; the audio DRC band
@@ -478,6 +563,20 @@ const DISPLAY_SYNC_MAX_SKEW: f64 = 0.005;
 /// frames wall-clock so emulation + audio + netplay keep running.
 #[cfg(not(target_arch = "wasm32"))]
 const DISPLAY_SYNC_WATCHDOG: Duration = Duration::from_millis(25);
+
+/// v2.3.3 — how many frames of schedule debt display-sync will carry before
+/// declaring the schedule stale and snapping it to `now`. Past this the gap is
+/// an occlusion / pause / hibernate rather than lateness, and sprinting to
+/// close it would fast-forward the game.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_DISPLAY_CATCHUP: u32 = 4;
+
+/// v2.3.3 — presents that must elapse after a pacing change before the
+/// sustained-miss health check is allowed to judge the regime. At 120 Hz this
+/// is ~5 s, which clears window mapping, shader compilation and the GPU clock
+/// ramp. The check is sticky for the session, so judging early is expensive.
+#[cfg(not(target_arch = "wasm32"))]
+const HEALTH_CHECK_GRACE: u32 = 600;
 
 /// Application state. Constructed in `resumed()` (per winit 0.30 idiom),
 /// torn down on exit.
@@ -677,6 +776,10 @@ pub struct App {
     /// miss fallback test runs every 60 presents, not every frame).
     #[cfg(not(target_arch = "wasm32"))]
     presents_since_check: u32,
+    /// v2.3.3 — display-synchronised pacing state (refresh calibration,
+    /// divisor, and the winit-thread-owned frame schedule).
+    #[cfg(not(target_arch = "wasm32"))]
+    dsync: DisplaySync,
     /// v2.8.0 — opt-in interval CSV performance logger, driven by the Perf
     /// panel's "Logging" checkbox (default OFF). Writes under `perf-logs/`.
     #[cfg(not(target_arch = "wasm32"))]
@@ -924,6 +1027,8 @@ impl App {
             // before the ROM is loaded.
             active_pacing: ActivePacing::Wallclock,
             display_fallback: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            dsync: DisplaySync::default(),
             last_redraw: None,
             presents_since_check: 0,
             perf_logger: crate::perf_log::PerfLogger::default(),
@@ -7029,6 +7134,18 @@ impl App {
             ),
             ("target_ms", format!("{target_ms:.3}")),
             ("monitor_refresh_hz", monitor_hz),
+            // v2.3.3 — what the calibration actually found, and the divisor it
+            // led to. Without these a capture cannot distinguish "the
+            // compositor reported nothing and we measured 119.99 Hz" from
+            // "the compositor reported nothing and we gave up", which are very
+            // different runs that otherwise look identical in the log.
+            (
+                "measured_refresh_hz",
+                self.dsync
+                    .measured_hz
+                    .map_or_else(|| "none".to_string(), |hz| format!("{hz:.3}")),
+            ),
+            ("display_divisor", self.dsync.divisor.to_string()),
             ("pacing_mode", self.config.graphics.pacing_mode.clone()),
             ("pacing_active", self.pacing_label()),
             (
@@ -7084,14 +7201,30 @@ impl App {
     fn resolve_pacing(&mut self) {
         let mode = self.config.graphics.pacing_mode.to_ascii_lowercase();
         let nominal_hz = 1.0 / self.emu.lock().frame_duration.as_secs_f64();
-        let monitor_hz = self
+        // v2.3.3 — a DECLARED refresh always wins over a measured one: it is
+        // exact, while the probe is an estimate. The measured value exists for
+        // the (common) case where the compositor advertises no output at all,
+        // which is precisely when `current_monitor()` yields `None`.
+        let declared_hz = self
             .gfx
             .as_ref()
             .and_then(|g| g.window.current_monitor())
             .and_then(|m| m.refresh_rate_millihertz())
             .map(|mhz| f64::from(mhz) / 1000.0);
-        let within_skew = monitor_hz
-            .is_some_and(|hz| ((hz - nominal_hz) / nominal_hz).abs() <= DISPLAY_SYNC_MAX_SKEW);
+        let refresh_hz = declared_hz.or(self.dsync.measured_hz);
+
+        // v2.3.3 — display-sync is no longer restricted to one emulated frame
+        // per refresh. `best_divisor` finds the integer N with refresh/N
+        // closest to the console rate, so a 120 Hz panel locks at N = 2
+        // instead of being rejected outright (which is what sent every
+        // high-refresh host to the free-running wall-clock pacer, and is the
+        // root cause investigated in docs/performance.md v2.3.3 F1). A panel
+        // with no integer relationship — 144 Hz, 75 Hz — still yields `None`
+        // and still falls back, which remains the correct answer for it.
+        let divisor = refresh_hz.and_then(|hz| {
+            crate::refresh_probe::best_divisor(hz, nominal_hz, DISPLAY_SYNC_MAX_SKEW)
+        });
+        let within_skew = divisor.is_some();
 
         // v1.0.0 — at a non-100% emulation speed the target rate is no longer
         // an integer multiple of the display refresh, so display-sync (one
@@ -7111,11 +7244,11 @@ impl App {
                     } else {
                         if !within_skew {
                             eprintln!(
-                                "rustynes: pacing_mode=display requested but the monitor \
-                             refresh ({}) is not within 0.5% of the console rate \
-                             ({nominal_hz:.4} Hz) — using wallclock pacing.",
-                                monitor_hz.map_or_else(
-                                    || "unknown".to_string(),
+                                "rustynes: pacing_mode=display requested but no integer \
+                                 number of refreshes ({}) matches the console rate \
+                                 ({nominal_hz:.4} Hz) within 0.5% — using wallclock pacing.",
+                                refresh_hz.map_or_else(
+                                    || "refresh unknown".to_string(),
                                     |hz| format!("{hz:.3} Hz")
                                 )
                             );
@@ -7123,7 +7256,17 @@ impl App {
                         ActivePacing::Wallclock
                     }
                 }
-                "vrr" => ActivePacing::Vrr,
+                // v2.3.3 — honour the sticky fallback here as well: VRR can
+                // now set it (see `display_sync_after_present`), and a regime
+                // that just proved it cannot hold cadence must not be
+                // re-entered on the next resolve.
+                "vrr" => {
+                    if self.display_fallback {
+                        ActivePacing::Wallclock
+                    } else {
+                        ActivePacing::Vrr
+                    }
+                }
                 "wallclock" => ActivePacing::Wallclock,
                 // "auto" (and anything unrecognized): display-sync when the
                 // panel matches the console rate, else the wall-clock pacer.
@@ -7138,8 +7281,25 @@ impl App {
         };
 
         self.active_pacing = want;
+        // Only meaningful under Display; kept at 1 elsewhere so a stale
+        // divisor can never gate the wall-clock or VRR produce paths.
+        self.dsync.divisor = if want == ActivePacing::Display {
+            divisor.unwrap_or(1)
+        } else {
+            1
+        };
+        self.dsync.refreshes_since_produce = 0;
+        // Cache the schedule inputs for the lock-free due check, and restart
+        // the schedule so a regime change never inherits a stale deadline.
+        self.dsync.period = self.emu.lock().effective_frame_duration();
+        self.dsync.slack = refresh_hz.filter(|hz| *hz > 0.0).map_or_else(
+            || self.dsync.period / 16,
+            |hz| Duration::from_secs_f64(0.5 / hz),
+        );
+        self.dsync.next_frame = None;
         self.last_redraw = None;
         self.presents_since_check = 0;
+        self.dsync.presents_since_resolve = 0;
         // v2.8.0 Phase 5 increment 3 — publish the regime + per-region frame
         // duration to the emulation thread so its pacer matches.
         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
@@ -7160,11 +7320,98 @@ impl App {
             }
         }
         eprintln!(
-            "rustynes: pacing = {} (config \"{}\", console {nominal_hz:.4} Hz, monitor {})",
+            "rustynes: pacing = {} (config \"{}\", console {nominal_hz:.4} Hz, refresh {})",
             self.pacing_label(),
             self.config.graphics.pacing_mode,
-            monitor_hz.map_or_else(|| "unknown".to_string(), |hz| format!("{hz:.3} Hz")),
+            refresh_hz.map_or_else(
+                || "unknown".to_string(),
+                |hz| format!(
+                    "{hz:.3} Hz{}",
+                    if declared_hz.is_some() {
+                        " (declared)"
+                    } else {
+                        " (measured)"
+                    }
+                )
+            ),
         );
+    }
+
+    /// v2.3.3 — start the one-off refresh calibration if it is both needed
+    /// and possible.
+    ///
+    /// Needed only when the windowing API declares no refresh: a declared
+    /// value is exact and a measurement could only make it worse. Possible
+    /// only once there is a surface and a ROM, because the probe forces Fifo
+    /// and drives continuous redraws, and doing that to an idle window would
+    /// spin the GPU for nothing.
+    ///
+    /// Deliberately one-shot per session ([`ProbePhase::Done`] is terminal):
+    /// a probe that re-armed on every regime change could oscillate between
+    /// pacing modes, which is worse than either mode.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn maybe_begin_refresh_probe(&mut self) {
+        if self.dsync.phase != ProbePhase::Pending {
+            return;
+        }
+        let mode = self.config.graphics.pacing_mode.to_ascii_lowercase();
+        if !matches!(mode.as_str(), "auto" | "display") || self.display_fallback {
+            self.dsync.phase = ProbePhase::Done;
+            return;
+        }
+        let declared = self
+            .gfx
+            .as_ref()
+            .and_then(|g| g.window.current_monitor())
+            .and_then(|m| m.refresh_rate_millihertz());
+        if declared.is_some() {
+            // The API answered; nothing to measure.
+            self.dsync.phase = ProbePhase::Done;
+            return;
+        }
+        if self.gfx.is_none() || self.emu.lock().nes.is_none() {
+            return;
+        }
+        let Some(gfx) = self.gfx.as_mut() else { return };
+        // Fifo is what makes a redraw interval mean "one display refresh".
+        let _ = gfx.set_present_mode(wgpu::PresentMode::Fifo);
+        gfx.window.request_redraw();
+        self.dsync.probe.begin();
+        self.dsync.phase = ProbePhase::Sampling;
+        eprintln!(
+            "rustynes: display refresh not reported by the compositor — \
+             measuring it ({} samples)…",
+            crate::refresh_probe::TARGET_SAMPLES
+        );
+    }
+
+    /// v2.3.3 — feed one redraw into the calibration and, once enough
+    /// intervals have been seen, resolve the pacing regime from the result.
+    ///
+    /// Returns `true` while sampling, so the caller keeps re-arming redraws
+    /// (Fifo would otherwise stop clocking the moment nothing asks to draw).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn probe_tick(&mut self, now: Instant) -> bool {
+        if self.dsync.phase != ProbePhase::Sampling {
+            return false;
+        }
+        self.dsync.probe.record(now);
+        if !self.dsync.probe.is_complete() {
+            return true;
+        }
+        self.dsync.phase = ProbePhase::Done;
+        self.dsync.measured_hz = self.dsync.probe.estimate_hz();
+        match self.dsync.measured_hz {
+            Some(hz) => eprintln!("rustynes: measured display refresh {hz:.3} Hz."),
+            // Not an error: an unsteady cadence means the wall-clock pacer is
+            // the right answer, which is what the session is already doing.
+            None => eprintln!(
+                "rustynes: display refresh measurement was not steady enough to \
+                 trust — staying on wallclock pacing."
+            ),
+        }
+        self.resolve_pacing();
+        false
     }
 
     /// v2.8.0 Phase 2 — the display-sync produce step, run at the top of
@@ -7190,6 +7437,14 @@ impl App {
             return;
         }
         self.last_redraw = Some(Instant::now());
+        // v2.3.3 — with a divisor > 1 this redraw may be one of the N-1
+        // refreshes that only re-present the current frame. Counting here (and
+        // in `display_sync_after_present` for the threaded path) is what turns
+        // "one frame per refresh" into "one frame per N refreshes", so a
+        // 120 Hz panel runs 60 Hz content at the right speed instead of double.
+        if !self.display_produce_due() {
+            return;
+        }
         self.pump_gamepad();
         self.latch_input();
         let t0 = Instant::now();
@@ -7214,36 +7469,82 @@ impl App {
     /// wall-clock pacer, sticky for the session.
     #[cfg(not(target_arch = "wasm32"))]
     fn display_sync_after_present(&mut self) {
-        if self.active_pacing != ActivePacing::Display || self.netplay.is_active() {
+        // v2.3.3 — VRR rides this path too, purely for the sustained-miss
+        // health check below. Measured on a NON-variable-refresh display,
+        // `pacing_mode = "vrr"` collapsed to 49.74 ms presented (~20 fps) with
+        // 1170 dropped frames in 40 s and never recovered, because it had no
+        // fallback of the kind display-sync carries. It does now.
+        if !matches!(
+            self.active_pacing,
+            ActivePacing::Display | ActivePacing::Vrr
+        ) || self.netplay.is_active()
+        {
             return;
         }
+        let is_display = self.active_pacing == ActivePacing::Display;
         // v2.8.0 Phase 5 increment 3 — in threaded display mode the present
         // is the clock: ping the emulation thread to produce the next frame.
         // (When the thread is off, the winit thread produces it in
         // `display_sync_produce` on the redraw this re-arms.)
-        #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
-        if let Some(thread) = self.emu_thread.as_ref() {
-            thread.notify_present();
-        }
-        if let Some(gfx) = self.gfx.as_ref() {
-            gfx.window.request_redraw();
+        // v2.3.3 — tick the divisor first: on a 120 Hz panel only every
+        // second present asks the emulation thread for a frame. The redraw is
+        // re-armed unconditionally below, because Fifo needs a continuous
+        // request stream to keep clocking even on the refreshes that produce
+        // nothing.
+        if is_display {
+            #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+            if self.display_produce_due()
+                && let Some(thread) = self.emu_thread.as_ref()
+            {
+                thread.notify_present();
+            }
+            #[cfg(not(all(not(target_arch = "wasm32"), feature = "emu-thread")))]
+            let _ = self.display_produce_due();
+            if let Some(gfx) = self.gfx.as_ref() {
+                gfx.window.request_redraw();
+            }
         }
         self.presents_since_check += 1;
-        if self.presents_since_check >= 60 {
+        self.dsync.presents_since_resolve = self.dsync.presents_since_resolve.saturating_add(1);
+        // v2.3.3 — do not judge the regime during the startup transient.
+        // Window mapping, shader compilation and the GPU's own clock ramp (a
+        // measured ~7 s at P8 before it reaches P0) all produce present
+        // hiccups that have nothing to do with whether the regime can hold
+        // cadence. The old check ran from 2 s in and was sticky for the
+        // session, so one startup stall permanently downgraded the run — seen
+        // once in three captures, costing 77 dropped frames against 0.
+        if self.presents_since_check >= 60
+            && self.dsync.presents_since_resolve >= HEALTH_CHECK_GRACE
+        {
             self.presents_since_check = 0;
             let (stats, target) = {
                 let emu = self.emu.lock();
                 (
                     emu.perf.view().presented,
+                    // v2.3.3 — deliberately the CONSOLE frame period, not the
+                    // (shorter) refresh period, even under a divisor. Scaling
+                    // this by the divisor was tried and reverted: under /2 an
+                    // occasional missed refresh turns an 8.3 ms present into a
+                    // 16.7 ms one, which is normal and harmless, but it put
+                    // p95 above a 12.5 ms threshold every single run and the
+                    // regime downgraded itself in all four captures.
+                    //
+                    // The check's original job — stop display-sync running the
+                    // console at the wrong speed — is now handled structurally
+                    // by the wall-clock rate authority in `display_produce_due`,
+                    // so what remains here is a catastrophe guard: presents so
+                    // bad that the display cannot show a console frame at all.
                     emu.frame_duration.as_secs_f32() * 1000.0,
                 )
             };
             if stats.count >= 240 && stats.p95_ms > target * 1.5 {
                 self.display_fallback = true;
                 eprintln!(
-                    "rustynes: display-sync is missing presents (p95 {:.2} ms vs \
+                    "rustynes: {} is missing presents (p95 {:.2} ms vs \
                      {:.2} ms target) — falling back to wallclock pacing for this session.",
-                    stats.p95_ms, target
+                    if is_display { "display-sync" } else { "vrr" },
+                    stats.p95_ms,
+                    target
                 );
                 self.resolve_pacing();
             }
@@ -7296,18 +7597,79 @@ impl App {
         }
     }
 
+    /// v2.3.3 — decide whether THIS refresh is the one that should produce an
+    /// emulated frame.
+    ///
+    /// # The display governs phase; the wall clock governs rate
+    ///
+    /// The obvious implementation — produce on every `N`th refresh — was
+    /// measured and rejected. It makes the console's speed a function of the
+    /// *render loop's* reliability: on the reporting host presents landed at
+    /// 116-119 Hz rather than the panel's 119.991, and since production was
+    /// tied 1:2 to presents the console inherited the shortfall exactly
+    /// (`produced/presented` measured 1.996). The result was a console running
+    /// 1.4-3.4% slow with audio underruns — well outside the 0.5% skew band
+    /// this regime promises, and *invisible* to the existing health check,
+    /// which validates presented jitter but never rate.
+    ///
+    /// So the wall-clock schedule stays the rate authority (exactly
+    /// `effective_frame_duration` per frame, accumulated rather than rebased,
+    /// so there is no drift), and the display only decides *when* within that
+    /// schedule a frame is produced. A refresh that arrives slightly before
+    /// the frame is due still produces it — being half a refresh early beats
+    /// being most of a refresh late, which is what re-introduces the beat this
+    /// whole regime exists to remove.
+    ///
+    /// A missed present therefore no longer slows the console: the next
+    /// refresh simply finds the frame overdue and produces it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn display_produce_due(&mut self) -> bool {
+        let now = Instant::now();
+        let period = self.dsync.period;
+        let Some(next) = self.dsync.next_frame else {
+            // First refresh after engaging / a ROM load: start the schedule
+            // here and produce immediately.
+            self.dsync.next_frame = Some(now + period);
+            self.dsync.refreshes_since_produce = 0;
+            return true;
+        };
+        if now + self.dsync.slack < next {
+            self.dsync.refreshes_since_produce += 1;
+            return false;
+        }
+        // Accumulate, never rebase — rebasing to `now` every frame would
+        // quantise the console rate to the refresh rate, which is the 1.4-3.4%
+        // speed error this function exists to avoid.
+        let mut target = next + period;
+        // Past MAX_DISPLAY_CATCHUP the schedule is stale (occlusion, pause,
+        // hibernate) rather than late, so snap rather than sprint.
+        if target + period * MAX_DISPLAY_CATCHUP < now {
+            target = now + period;
+        }
+        self.dsync.next_frame = Some(target);
+        self.dsync.refreshes_since_produce = 0;
+        true
+    }
+
     /// Human-readable active-pacing label for the Performance panel.
     #[cfg(not(target_arch = "wasm32"))]
     fn pacing_label(&self) -> String {
         let base = match self.active_pacing {
-            ActivePacing::Wallclock => "wallclock",
-            ActivePacing::Display => "display-sync",
-            ActivePacing::Vrr => "vrr",
+            ActivePacing::Wallclock => "wallclock".to_string(),
+            // v2.3.3 — surface the divisor: "display-sync /2" is the
+            // difference between a 120 Hz panel locked correctly and one
+            // running the console at double speed, and the panel should not
+            // make the reader guess which happened.
+            ActivePacing::Display if self.dsync.divisor > 1 => {
+                format!("display-sync /{}", self.dsync.divisor)
+            }
+            ActivePacing::Display => "display-sync".to_string(),
+            ActivePacing::Vrr => "vrr".to_string(),
         };
         if self.display_fallback && self.active_pacing == ActivePacing::Wallclock {
             format!("{base} (display-sync fell back)")
         } else {
-            base.to_string()
+            base
         }
     }
 
@@ -8455,6 +8817,20 @@ impl ApplicationHandler<AppEvent> for App {
                 // present — the Ok arm — so a skipped/early-returned redraw is
                 // not counted as a presented frame.)
                 let redraw_signal = Instant::now();
+                // v2.3.3 — refresh calibration. `maybe_begin_refresh_probe` is
+                // a cheap early-return once the phase is `Done`. While
+                // sampling we must keep re-arming the redraw ourselves: Fifo
+                // only clocks while something is asking to draw, and during
+                // the probe the display-sync self-drive is not yet running.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.maybe_begin_refresh_probe();
+                    if self.probe_tick(redraw_signal)
+                        && let Some(gfx) = self.gfx.as_ref()
+                    {
+                        gfx.window.request_redraw();
+                    }
+                }
                 // Native: rendering is decoupled from emulation — this
                 // branch only presents the most recent framebuffer.
                 // Emulator advance happens in `about_to_wait` on a

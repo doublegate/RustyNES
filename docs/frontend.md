@@ -750,17 +750,51 @@ pacing_mode`, default `auto`):
 
 | Regime | Clock master | Present mode | When |
 |---|---|---|---|
-| `display` | Fifo vsync (1 emulated frame per refresh; ≤0.5% speed bend, audio DRC absorbs) | `Fifo` | refresh within 0.5% of the console rate (`auto` engages it) |
+| `display` | one emulated frame per **N** refreshes; the display sets the *phase*, the wall clock sets the *rate* | `Fifo` | some integer N puts `refresh / N` within 0.5% of the console rate (`auto` engages it) |
 | `vrr` | wall clock at the exact console rate; the VRR display follows | `Fifo` | user-asserted G-Sync/FreeSync (best fullscreen) |
-| `wallclock` | wall clock (sleep-then-spin pacer) | configured (`Mailbox` default) | high-refresh fixed panels / fallback |
+| `wallclock` | wall clock (sleep-then-spin pacer) | configured (`Mailbox` default) | no integer N fits (e.g. 144 Hz, 75 Hz) / fallback |
+
+**v2.3.3 — the divisor, and why the wall clock still owns the rate.**
+Display-sync used to mean *one emulated frame per refresh*, which required the
+panel itself to be within 0.5% of the console rate; every 120/144 Hz display
+therefore fell back to wall-clock by construction, and the free-running
+producer beat against the compositor's frame callbacks (135-254 dropped frames
+per 45 s — see `docs/performance.md` v2.3.3 F1). `refresh_probe::best_divisor`
+now picks the integer N with `refresh / N` closest to the console rate, so
+120 Hz locks at N = 2. 144 Hz and 75 Hz still return `None` — no integer
+relationship exists — and correctly stay on wall-clock.
+
+Rate is deliberately **not** derived from the present cadence. Producing on
+every Nth refresh was implemented and rejected: it makes console speed a
+function of render-loop reliability (presents measured 116-119 Hz on a 119.991
+Hz panel, and the console inherited the shortfall exactly, running 1.4-3.4%
+slow with audio underruns). Instead the wall-clock schedule is accumulated —
+never rebased — and a refresh produces a frame only when that schedule says one
+is due, with a half-refresh "slightly early beats a lot late" window. A missed
+present therefore no longer slows the console. The schedule is owned by the
+winit thread, *not* read through the emulator mutex: doing that on every
+refresh was measured at 36 ms `cost` p95 with the console at 35 Hz.
+
+When the windowing API reports no refresh at all — a compositor advertising no
+`wl_output`, which is not rare — `RefreshProbe` measures the cadence directly
+(median of 80 redraw intervals under Fifo, with a stability quorum that refuses
+an unsteady cadence rather than guessing). It samples only under Fifo with
+continuous redraws, because a redraw interval measures the *display* only when
+redraws are display-clocked; sampling under the wall-clock regime would measure
+the producer and "discover" a 60 Hz panel on every host.
 
 Display-sync has an occlusion watchdog (emulation+audio keep running when
 the compositor throttles redraws) and a sustained-miss fallback to
-`wallclock` (sticky per session, reported in the Performance panel).
-`[graphics] max_frame_latency` (1|2) sets the swapchain depth. Input is
-latched immediately before `run_frame` in every regime (late latch).
+`wallclock` (sticky per session, reported in the Performance panel). As of
+v2.3.3 `vrr` shares that fallback — without it, `vrr` on a display that is not
+actually variable-refresh collapsed to ~20 fps and stayed there — and the check
+is gated behind a 600-present grace window so the startup transient (window
+mapping, shader compilation, the ~7 s GPU clock ramp from P8 to P0) cannot
+permanently downgrade a session. `[graphics] max_frame_latency` (1|2) sets the
+swapchain depth. Input is latched immediately before `run_frame` in every
+regime (late latch).
 
-## Run-ahead (`[input] run_ahead`, default 1, native)
+## Run-ahead (`[input] run_ahead`, native)
 
 Removes the game's OWN internal input lag (most NES titles buffer input
 ≥ 1 frame): each visible frame the emulator runs one persistent frame with
@@ -773,6 +807,23 @@ RA process the real timeline. Auto-disabled during netplay + movie
 record/playback; budget-throttled (hysteresis on produce-cost p95) on hosts
 that can't afford the extra frames. Cost: N extra `run_frame`s + ~140 µs of
 state churn per visible frame (`docs/benchmarks.md` §8).
+
+Measured per-level cost on a 10-core i9-10850K (v2.3.3, `flowing_palette`,
+rewind on, against the 16.639 ms NTSC budget):
+
+| `run_ahead` | work mean | work p99 | dropped / 45 s |
+|---|---|---|---|
+| 0 | 4.1-4.4 ms | — | — |
+| 1 | 5.9-6.1 ms | 6.6 ms | — |
+| 2 | 9.2 ms | 9.8-10.8 ms | 0-2 |
+| 3 | 11.9-12.6 ms | 12.5-**17.2** ms | 0 **or 229** |
+
+`3` is bimodal on that host: one capture was clean and the next dropped 229
+frames with 16 audio underruns, the difference being whether p99 crossed the
+frame budget. Note the throttle read `run_ahead_throttled = false` through
+*both* — it keys on the produce-cost median (12.6 ms, comfortably inside
+budget) and so cannot see a p99 excursion that is actively dropping frames.
+Treat a p99 approaching the budget, not the mean, as the limit.
 
 ## Desktop UX shell (always-on egui)
 

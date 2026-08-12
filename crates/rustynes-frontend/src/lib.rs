@@ -151,6 +151,14 @@ pub mod resampler;
 // v2.8.0 Phase 3 — run-ahead (removes the game's internal input lag via
 // muted-frame + snapshot/restore cycles). Native-only at the call site;
 // the module itself is target-agnostic and unit-tested headless.
+/// v2.3.3 — empirical display-refresh measurement + divisor selection.
+///
+/// Lets display-synchronised pacing work on high-refresh panels and on
+/// compositors that report no refresh rate at all. Native-only: the wasm
+/// frontend is clocked by `requestAnimationFrame`, which is already
+/// display-synchronised by construction.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod refresh_probe;
 pub mod runahead;
 // v2.3.0 — netplay UI state machine + run-loop driver. Native-only: it
 // drives a `std::net::UdpSocket` (absent on wasm32). The browser builds
