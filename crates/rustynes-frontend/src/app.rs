@@ -791,6 +791,9 @@ pub struct App {
     /// divisor, and the winit-thread-owned frame schedule).
     #[cfg(not(target_arch = "wasm32"))]
     dsync: DisplaySync,
+    /// v2.3.3 — render-loop cost (winit thread). See [`crate::perf::RenderPerf`].
+    #[cfg(not(target_arch = "wasm32"))]
+    render_perf: crate::perf::RenderPerf,
     /// v2.8.0 — opt-in interval CSV performance logger, driven by the Perf
     /// panel's "Logging" checkbox (default OFF). Writes under `perf-logs/`.
     #[cfg(not(target_arch = "wasm32"))]
@@ -1040,6 +1043,8 @@ impl App {
             display_fallback: false,
             #[cfg(not(target_arch = "wasm32"))]
             dsync: DisplaySync::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            render_perf: crate::perf::RenderPerf::default(),
             last_redraw: None,
             presents_since_check: 0,
             perf_logger: crate::perf_log::PerfLogger::default(),
@@ -7034,6 +7039,15 @@ impl App {
             perf_view.present_mode_fell_back = gfx.present_mode_fell_back();
             perf_view.gpu_ms = gfx.last_gpu_pass_ms();
         }
+        // v2.3.3 — the render loop lives on this thread, so its stats are
+        // App-local rather than behind the emulator mutex.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let (ui, gpu, total) = self.render_perf.stats();
+            perf_view.render_ui = ui;
+            perf_view.render_gpu = gpu;
+            perf_view.render_total = total;
+        }
         // v2.8.0 — opt-in perf logging (the Perf panel "Logging" checkbox):
         // reconcile the logger with the checkbox, append the interval row,
         // and reflect the destination/error back into the panel.
@@ -9065,6 +9079,12 @@ impl ApplicationHandler<AppEvent> for App {
                 };
 
                 let mut shell_out = crate::ui_shell::ShellOutput::default();
+                // v2.3.3 — render-loop cost. `ui_cost` is only set on the
+                // LOCKED branch (the one that builds the egui shell against
+                // `&mut Nes`); the common hidden-overlay branch leaves it
+                // `None` and only the GPU + total phases are recorded.
+                #[cfg(not(target_arch = "wasm32"))]
+                let mut ui_cost: Option<Duration> = None;
                 // v1.0.0 — Save-States manager inputs, captured BEFORE the
                 // render branches so the `extra` egui closure can render it
                 // without re-locking the emu (the locked branch holds the
@@ -9340,6 +9360,7 @@ impl ApplicationHandler<AppEvent> for App {
                                 script_overscan,
                             );
                         };
+                        let t_ui = Instant::now();
                         let mut guard = self.emu.lock();
                         let nes_for_render = guard.nes.as_mut();
                         let (out, prepared) = debugger.run_shell_ui(
@@ -9351,6 +9372,7 @@ impl ApplicationHandler<AppEvent> for App {
                             extra,
                         );
                         shell_out = out;
+                        ui_cost = Some(t_ui.elapsed());
                         prepared
                     };
                     // ---- PHASE 2 — paint it, with the emulator lock RELEASED ----
@@ -9767,6 +9789,24 @@ impl ApplicationHandler<AppEvent> for App {
                     }
                     render_result
                 };
+                // v2.3.3 — record the render-loop phases. `total` spans the
+                // whole handler from the redraw signal, so it includes the
+                // produce hook, the script/watchpoint pumps, the egui pass and
+                // the GPU work: the full budget one display refresh has to fit
+                // into. `gfx.last_gpu_pass_ms()` supplies the GPU phase.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if let Some(d) = ui_cost {
+                        self.render_perf.record_ui(d);
+                    }
+                    if let Some(gpu_ms) = self.gfx.as_ref().and_then(Gfx::last_gpu_pass_ms)
+                        && gpu_ms > 0.0
+                    {
+                        self.render_perf
+                            .record_gpu(Duration::from_secs_f32(gpu_ms / 1000.0));
+                    }
+                    self.render_perf.record_total(redraw_signal.elapsed());
+                }
                 match render_result {
                     Ok(()) => {
                         // v2.8.0 Phase 0 — the display-visible cadence. The

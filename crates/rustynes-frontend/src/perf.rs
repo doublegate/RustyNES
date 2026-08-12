@@ -166,6 +166,56 @@ impl AudioHealth {
     }
 }
 
+/// v2.3.3 — render-loop cost, owned by the WINIT thread.
+///
+/// Separate from [`PerfStats`] (which lives behind the emulator mutex and
+/// describes the producer) because this describes the *consumer*, and until
+/// v2.3.3 nothing measured it at all. That was the blind spot behind a
+/// user-visible judder report the produce-side metrics could not explain: the
+/// console rate was exact and drops were ~0, yet `presented` p95 sat at 3+
+/// display refreshes, meaning frames reached the screen unevenly. Uneven
+/// delivery is what the eye reads as stutter, and no instrument covered the
+/// path that delivers.
+#[derive(Debug, Default)]
+pub struct RenderPerf {
+    /// egui shell build (`run_shell_ui`), which holds the emulator lock.
+    ui: SampleRing,
+    /// GPU encode + submit + present (`render_with_overlay`).
+    gpu: SampleRing,
+    /// The whole `RedrawRequested` handler, end to end.
+    total: SampleRing,
+}
+
+impl RenderPerf {
+    /// Record the egui shell build.
+    pub fn record_ui(&mut self, d: Duration) {
+        self.ui.push(d.as_secs_f32() * 1000.0);
+    }
+
+    /// Record GPU encode + submit + present.
+    pub fn record_gpu(&mut self, d: Duration) {
+        self.gpu.push(d.as_secs_f32() * 1000.0);
+    }
+
+    /// Record the whole redraw handler.
+    pub fn record_total(&mut self, d: Duration) {
+        self.total.push(d.as_secs_f32() * 1000.0);
+    }
+
+    /// `(ui, gpu, total)` summaries.
+    #[must_use]
+    pub fn stats(&self) -> (IntervalStats, IntervalStats, IntervalStats) {
+        (self.ui.stats(), self.gpu.stats(), self.total.stats())
+    }
+
+    /// Drop all samples (new ROM / regime change).
+    pub fn clear(&mut self) {
+        self.ui.clear();
+        self.gpu.clear();
+        self.total.clear();
+    }
+}
+
 /// The live collector. Owned by the `App`; fed from the pacer / produce /
 /// present paths; snapshotted into a [`PerfView`] once per frame for the
 /// debugger.
@@ -311,6 +361,12 @@ pub struct PerfView {
     /// v2.3.3 — emulator-mutex blocking stats for the producer. See
     /// [`PerfStats::produce_wait`].
     pub produce_wait: IntervalStats,
+    /// v2.3.3 — egui shell build cost (winit thread). See [`RenderPerf`].
+    pub render_ui: IntervalStats,
+    /// v2.3.3 — GPU encode + present cost (winit thread). See [`RenderPerf`].
+    pub render_gpu: IntervalStats,
+    /// v2.3.3 — whole redraw handler cost (winit thread). See [`RenderPerf`].
+    pub render_total: IntervalStats,
     /// See [`PerfStats::catchup_bursts`].
     pub catchup_bursts: u64,
     /// See [`PerfStats::snap_forwards`].

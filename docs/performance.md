@@ -1024,6 +1024,73 @@ display-sync carries.
 **Adopted from this investigation:** the `cost`/`wait` metric split, and the
 pacing rework it made legible — see **v2.3.3 F2** below.
 
+### v2.3.3 F3 — the judder is a produce-interval tail, and rewind causes it (root cause found)
+
+F1 and F2 fixed the pacing, and the gates went green — exact console rate,
+~0 dropped frames — while the picture was still visibly uneven. This entry is
+why, and it starts with a correction: **"the emulator paces perfectly" was a
+conclusion drawn from the mean.**
+
+`produced_mean` is a textbook 16.64 ms in every capture ever taken here. The
+distribution is not:
+
+| MMC3 (Bad Dudes) | p50 | p95 | p99 | max |
+| --- | --- | --- | --- | --- |
+| PRODUCED interval | 17.12 | 28.19 | 47.05 | 52.38 |
+| WORK (`cost`) | 7.25 | 17.42 | 29.52 | 32.35 |
+
+Individual frames are produced 30-57 ms apart while the average is exactly
+right. Average-correct but delivery-uneven is precisely what is perceived as
+stutter, and it is invisible to every gate that watches a mean — including the
+console-rate gate F2 added, which would pass this run.
+
+**The render loop is not the cause.** v2.3.3 added `RenderPerf` (the first
+instrumentation this path has ever had: `rui_*` egui build, `rgpu_*` GPU
+encode+present, `rtot_*` whole redraw handler). Across NROM / MMC1 / MMC3 /
+MMC5 the GPU phase is **0.10-0.13 ms** and the egui build **0.00 ms** on the
+common hidden-overlay path. `rtot` p95 of ~16.4 ms is almost entirely the Fifo
+swapchain acquire blocking to vblank — the pacing mechanism working, not cost.
+
+**Rewind is the cause.** One ROM, one host, varying only two settings:
+
+| | WORK p99 | PRODUCED p95 | PRODUCED p99 |
+| --- | --- | --- | --- |
+| `run_ahead` 2, rewind **on** | 34.92 | **31.17** | 49.26 |
+| `run_ahead` 2, rewind **off** | 22.83 | **17.12** | 29.06 |
+| `run_ahead` 0, rewind **on** | 24.15 | **28.46** | 30.39 |
+| `run_ahead` 0, rewind **off** | 22.94 | **17.14** | 29.11 |
+
+Rewind — **on by default** — roughly doubles the produce-interval p95,
+independently of run-ahead. With it off the produce interval is near-perfect
+(17.1 ms against a 16.64 ms target).
+
+The mechanism is `RewindRing::push`, which runs inside the frame budget. Every
+frame it XORs the whole ~250 KB snapshot against a cached keyframe,
+LZ4-compresses the delta, and boxes the result; every 60 frames it additionally
+compresses and copies the full snapshot. **The framebuffer is 245,760 of those
+~250 KB — 94% of the work — and is the worst possible payload for the scheme**,
+because it changes every frame, so the XOR does not zero out and the delta does
+not compress.
+
+**This reframes snapshot slimming without overturning F1.** F1 measured it as a
+run-ahead frame-time optimisation and rejected it correctly: ~0.66% of the frame
+budget, under the project's >3% bar. That verdict stands. What F1 did not
+examine is the rewind ring, where the same change removes 94% of a *per-frame*
+XOR + compress that demonstrably drives the tail. The lever is the same; the
+justification is a different code path.
+
+**Not implemented here.** Excluding the framebuffer from the rewind snapshot
+changes what a restored frame can display — rewind steps backwards through
+frames and needs an image for each — so it needs a design (re-render one frame
+after restore, or a separate low-cost image ring), not a quick edit. The
+immediate mitigation is that `[rewind] enabled = false` measurably restores a
+near-perfect produce cadence.
+
+**Method note, for the third time in this campaign:** the gate that would have
+caught this does not exist. `produced_mean` passes, `produced_dropped` passes,
+`cost_p95` passes. What fails is `produced_p95` against the frame period, which
+nothing watches. A mean is not a cadence.
+
 ### v2.3.3 F2 — display-synchronised pacing, generalised (decision: ADOPTED)
 
 The fix for F1's root cause. Three changes, each addressing one of the reasons

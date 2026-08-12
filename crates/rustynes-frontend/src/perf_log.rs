@@ -211,15 +211,12 @@ fn open_log_file(dir: &Path, ctx: &PerfLogContext) -> std::io::Result<(BufWriter
 ///
 /// Edit this in lockstep with the panel (`debugger/perf_panel.rs`) +
 /// [`PerfView`]; the `csv_columns_cover_panel_metrics` test guards the set.
-fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
-    let fps = if v.produced.mean_ms > 0.0 {
-        1000.0 / v.produced.mean_ms
-    } else {
-        0.0
-    };
-    let mut cols: Vec<(&'static str, String)> = Vec::with_capacity(40);
-    // Static column names per interval series, so they stay `&'static str`.
-    let stats_names: [(&'static str, [&'static str; 5]); 4] = [
+/// The per-series percentile column names, in emit order.
+///
+/// Split out of `columns` so that function stays inside the line budget as
+/// series are added (v2.3.3 added `wait`, `rui`, `rgpu`, `rtot`).
+const fn stats_names() -> [(&'static str, [&'static str; 5]); 7] {
+    [
         (
             "produced",
             [
@@ -263,12 +260,59 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
                 "wait_max_ms",
             ],
         ),
-    ];
+        // v2.3.3 — the render loop (winit thread). Nothing measured this
+        // before, which is why a judder report could not be explained from the
+        // produce-side series alone.
+        (
+            "rui",
+            [
+                "rui_mean_ms",
+                "rui_p50_ms",
+                "rui_p95_ms",
+                "rui_p99_ms",
+                "rui_max_ms",
+            ],
+        ),
+        (
+            "rgpu",
+            [
+                "rgpu_mean_ms",
+                "rgpu_p50_ms",
+                "rgpu_p95_ms",
+                "rgpu_p99_ms",
+                "rgpu_max_ms",
+            ],
+        ),
+        (
+            "rtot",
+            [
+                "rtot_mean_ms",
+                "rtot_p50_ms",
+                "rtot_p95_ms",
+                "rtot_p99_ms",
+                "rtot_max_ms",
+            ],
+        ),
+    ]
+}
+
+fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
+    let fps = if v.produced.mean_ms > 0.0 {
+        1000.0 / v.produced.mean_ms
+    } else {
+        0.0
+    };
+    let mut cols: Vec<(&'static str, String)> = Vec::with_capacity(40);
+    // Static column names per interval series, so they stay `&'static str`.
+    let stats_names = stats_names();
     let stat_for = |series: &str| -> &crate::perf::IntervalStats {
         match series {
             "produced" => &v.produced,
             "presented" => &v.presented,
             "wait" => &v.produce_wait,
+            "rui" => &v.render_ui,
+            "rgpu" => &v.render_gpu,
+            "rtot" => &v.render_total,
             _ => &v.produce_cost,
         }
     };
@@ -540,7 +584,15 @@ mod tests {
         // The exhaustive set of `PerfView` metrics the panel renders
         // (`debugger/perf_panel.rs`). Interval stats expand to mean/p50/p95/
         // p99/max per series.
-        for series in ["produced", "presented", "cost", "wait"] {
+        for series in [
+            "produced",
+            "presented",
+            "cost",
+            "wait",
+            "rui",
+            "rgpu",
+            "rtot",
+        ] {
             for stat in ["mean_ms", "p50_ms", "p95_ms", "p99_ms", "max_ms"] {
                 let want = format!("{series}_{stat}");
                 assert!(names.contains(want.as_str()), "missing column {want}");
