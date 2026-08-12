@@ -62,7 +62,7 @@ pub use raw_signal::{
     ATTENUATION, BLACK, LEVELS, PHASES, RAW_ENTRIES, WHITE, composite_voltage,
     generate_raw_signal_lut, in_color_phase, normalize, signal_samples,
 };
-pub use snapshot::{PPU_SNAPSHOT_VERSION, PpuSnapshotError};
+pub use snapshot::{PPU_SNAPSHOT_SLIM_FLAG, PPU_SNAPSHOT_VERSION, PpuSnapshotError};
 
 #[cfg(feature = "ppu-state-trace")]
 pub use state_trace::{

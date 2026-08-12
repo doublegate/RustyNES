@@ -1848,6 +1848,32 @@ impl Nes {
         );
     }
 
+    /// v2.3.3 — [`Self::snapshot_core_into`] with the PPU encoded **slim**
+    /// (no framebuffer), for the rewind ring.
+    ///
+    /// The ring snapshots on every frame inside the frame budget and then XORs
+    /// and LZ4-compresses the result. The framebuffer is 245,760 of the ~250 KB
+    /// and is the worst possible payload for that scheme, since it changes
+    /// every frame: the XOR never zeroes and the delta never compresses.
+    /// Measured, that made rewind roughly double the produce-interval p95 and
+    /// it was the cause of a user-visible judder report — see
+    /// `docs/performance.md` v2.3.3 F3/F4.
+    ///
+    /// A blob written here restores every field except the framebuffer, so the
+    /// caller must regenerate the image; [`Self::rewind_step_back`] runs one
+    /// frame to do exactly that.
+    pub fn snapshot_core_into_slim(&self, out: &mut Vec<u8>) {
+        let tag = self.rom_hash_tag();
+        self.bus.snapshot_into_slim(out, tag);
+        let cpu_body = self.cpu.snapshot();
+        save_state::write_section(
+            out,
+            save_state::tag::CPU,
+            rustynes_cpu::CPU_SNAPSHOT_VERSION,
+            &cpu_body,
+        );
+    }
+
     /// Generate a 128x120 RGBA8 thumbnail of the current framebuffer.
     ///
     /// Nearest-neighbor downsample (sample every 2nd pixel of every 2nd row).
@@ -2113,7 +2139,8 @@ impl Nes {
         // a fresh ~320 KiB allocation per frame. The ring still LZ4s /
         // delta-encodes the bytes itself.
         let mut buf = core::mem::take(&mut self.rewind_snap_buf);
-        self.snapshot_core_into(&mut buf);
+        // v2.3.3 — SLIM: omit the framebuffer. See `snapshot_core_into_slim`.
+        self.snapshot_core_into_slim(&mut buf);
         if let Some(ring) = &mut self.rewind {
             ring.push(frame, &buf);
         }
@@ -2139,7 +2166,35 @@ impl Nes {
         let r = self.restore(&bytes);
         // Reattach the (possibly cleared, but cleared-by-us is fine) ring.
         self.rewind = saved_ring;
-        r.is_ok()
+        if r.is_err() {
+            return false;
+        }
+        // v2.3.3 — ring entries are SLIM, so the restore above left the
+        // framebuffer holding whatever was last displayed; without an image the
+        // picture would freeze while the state rewound. Regenerate it WITHOUT
+        // changing the state this call is contracted to land on:
+        //
+        //   1. state is at frame N (restored above), framebuffer stale
+        //   2. run one frame  -> renders exactly frame N's image, state N+1
+        //   3. restore the same bytes -> state back to N
+        //
+        // Step 3 is what makes this exact rather than approximate, and it works
+        // *because* the blob is slim: a slim restore does not touch the
+        // framebuffer, so the image rendered in step 2 survives. The observable
+        // contract is unchanged from before v2.3.3 — `cycle()` lands on the
+        // snapshotted frame — which the `rewind_step_back_returns_prior_frames`
+        // harness test pins.
+        //
+        // Capture is suppressed across step 2, or stepping back would push the
+        // frame it just rendered and the ring would never drain.
+        let saved_capture = self.rewind_capture_enabled;
+        self.rewind_capture_enabled = false;
+        self.run_frame();
+        let saved_ring = self.rewind.take();
+        let re = self.restore(&bytes);
+        self.rewind = saved_ring;
+        self.rewind_capture_enabled = saved_capture;
+        re.is_ok()
     }
 
     /// Drop every buffered rewind entry. Called when the user releases

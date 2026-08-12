@@ -2715,6 +2715,25 @@ impl LockstepBus {
         out: &mut Vec<u8>,
         rom_hash_tag: [u8; save_state::ROM_HASH_TAG_LEN],
     ) {
+        self.snapshot_into_with(out, rom_hash_tag, false);
+    }
+
+    /// v2.3.3 — [`Self::snapshot_into`] with the PPU encoded slim (no
+    /// framebuffer). See `rustynes_ppu::PPU_SNAPSHOT_SLIM_FLAG`.
+    pub fn snapshot_into_slim(
+        &self,
+        out: &mut Vec<u8>,
+        rom_hash_tag: [u8; save_state::ROM_HASH_TAG_LEN],
+    ) {
+        self.snapshot_into_with(out, rom_hash_tag, true);
+    }
+
+    fn snapshot_into_with(
+        &self,
+        out: &mut Vec<u8>,
+        rom_hash_tag: [u8; save_state::ROM_HASH_TAG_LEN],
+        slim: bool,
+    ) {
         out.clear();
         save_state::write_header(out, rom_hash_tag);
 
@@ -2736,7 +2755,11 @@ impl LockstepBus {
         // splice the CPU bytes in.
 
         // PPU section.
-        let ppu_body = self.ppu.snapshot();
+        let ppu_body = if slim {
+            self.ppu.snapshot_slim()
+        } else {
+            self.ppu.snapshot()
+        };
         save_state::write_section(
             out,
             save_state::tag::PPU,
