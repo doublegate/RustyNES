@@ -102,3 +102,36 @@ testing, and a built MkDocs static site — all spent/regenerable, none
 salvaged. Only `scripts/probes/probe_rev.rs` was promoted from untracked
 scratch to committed (see the row above) — everything else from the prior
 pass stays as previously recorded.
+
+## 2026-08-06 — pre-reboot salvage (manual, curated)
+
+Run before rebooting for an NVIDIA driver/kernel update. The `tmp-salvage` dry
+run offered **305 candidates / ~600 MB**; **3 files** were taken. The rest was
+deliberately left to be wiped:
+
+| left behind | why |
+| --- | --- |
+| `perf.data` (586 MB), `probe.perf`, `fp.data`, `di.data`, `bolt.log` | perf recordings and CI logs — regenerable with one command |
+| ~100 `.md`/`.json` PR-review files | already posted to GitHub PR #348 |
+| `fisk-*.png`, `v2p-*.png` (8 MB) | screenshots, possibly commercial-ROM framebuffers — not swept in unexamined |
+| `/tmp/accuracycoin-build/` | third-party MIT source + a Windows `nesasm.exe`; vendoring is a deliberate provenance decision, not a salvage side effect |
+| `agy-review.sh`, `agy-review-selftest.sh` | duplicates of files already in `scripts/` and `Local_Only-Projects/antigravity-pr-review/` |
+| `p3.sh`, `p4.sh`, `probe*.sh`, `mi.rs` | extraction artifacts (YAML pulled out for `shellcheck`) and a temp probe already reverted on purpose |
+
+Everything built during the session was **already committed** (`frame_probe.rs`,
+`ab_check.sh`, `frame_breakdown.sh`, the `perf_log_check.py` p99 gate), so the
+scratchpad held no unique source beyond the three below.
+
+| file | → | note |
+| --- | --- | --- |
+| `reflow.py` | `scripts/release-automation/` | markdown full-width reflow; fixed the release-notes formatting. Existed nowhere else on disk. |
+| `assemble.py` | `scripts/release-automation/` | HTML fragment → document (needs `bs4`). |
+| `guardrails_assemble.py` | `scripts/release-automation/` | same, for the provenance-guardrails doc. |
+
+Each file was SHA-256 verified identical to its `/tmp` source **at the moment of
+copy** — that is the recovery evidence, and it covers the recovery only. All
+three have been edited since: `reflow.py` was fixed (hard-break and fence
+handling) and both `bs4` scripts gained input validation, in response to the
+PR #349 review. The files in the tree are therefore **not** byte-identical to the
+recovered artifacts, and nothing here claims they are. See
+`scripts/release-automation/README-doc-tools.md` for usage.
