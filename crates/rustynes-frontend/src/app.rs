@@ -8544,7 +8544,7 @@ impl ApplicationHandler<AppEvent> for App {
                     let rec = emu.movie.is_recording();
                     let play = emu.movie.is_playing();
                     let lag = emu.lag_frames();
-                    // v2.3.2 F3 — read the name cached at ROM load rather than
+                    // v2.3.3 F3 — read the name cached at ROM load rather than
                     // rebuilding it from `mapper_info()` here. See `EmuCore::mapper_name`.
                     let mapper_name = emu.mapper_name.clone();
                     emu.nes.as_mut().map_or_else(

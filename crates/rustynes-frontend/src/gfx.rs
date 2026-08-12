@@ -306,7 +306,7 @@ pub struct Gfx {
     /// `width`/`height`/`format`.
     pub config: wgpu::SurfaceConfiguration,
     nes_texture: wgpu::Texture,
-    /// v2.3.2 F4 — identity of the pixels currently resident in [`Self::nes_texture`],
+    /// v2.3.3 F4 — identity of the pixels currently resident in [`Self::nes_texture`],
     /// so an unchanged framebuffer is not re-uploaded.
     ///
     /// In `Mailbox` present mode the frontend presents far faster than the
@@ -322,7 +322,7 @@ pub struct Gfx {
     /// with the content. `None` means "nothing uploaded yet", which always uploads.
     ///
     /// This is hygiene, not a measured frame-time win — see `docs/performance.md`
-    /// v2.3.2 F1/F4.
+    /// v2.3.3 F1/F4.
     nes_texture_key: Option<u64>,
     /// v1.1.0 beta.1 (T-110-A1) — `R16Uint` palette-index source for the true
     /// composite `NES_NTSC` filter; uploaded only while `ntsc_bisqwit` is active.
@@ -1208,7 +1208,7 @@ impl Gfx {
                 },
             );
         }
-        // v2.3.2 F4 — skip the upload when the texture already holds these exact
+        // v2.3.3 F4 — skip the upload when the texture already holds these exact
         // pixels. The hash is over 245,760 bytes and is far cheaper than the
         // staging copy plus GPU transfer it avoids; on a duplicate present it is
         // the only work done here.

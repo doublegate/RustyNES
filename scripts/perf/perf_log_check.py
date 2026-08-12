@@ -8,14 +8,14 @@ regression in the present/pace/audio layer surfaces as a tracked failure
 instead of a one-off observation.
 
 Tracked signals:
-  * produced_p99_ms  — p99 produced-frame interval. THE STUTTER SIGNAL (v2.3.2).
+  * produced_p99_ms  — p99 produced-frame interval. THE STUTTER SIGNAL (v2.3.3).
   * presented_p99_ms — p99 presented-frame interval. Ditto, on the present side.
   * underruns        — cumulative audio underruns (goal: 0 in a steady run).
   * produced_max_ms  — worst produced-frame interval; a coarse backstop only.
   * catchup_bursts   — wall-clock pacer catch-up bursts (>=2 frames in a pace).
   * snap_forwards    — catch-up windows abandoned (deep stalls).
 
-**Why p99 and not the max (v2.3.2 F2).** This gate originally tracked only
+**Why p99 and not the max (v2.3.3 F2).** This gate originally tracked only
 `produced_max_ms`, against a 150 ms threshold -- NINE TIMES the 16.639 ms NTSC
 budget. `produced_max` is also a single sample, so it is simultaneously too loose
 to catch real degradation and too noisy to tighten. Checked against the captures
@@ -101,7 +101,7 @@ def main() -> int:
     ap.add_argument("--max-produced-ms", type=float, default=150.0,
                     help="max produced-frame interval ms over the run (default 150; a "
                          "coarse backstop -- the p99 gates below are the real signal)")
-    # v2.3.2 F2 — p99 gates. `produced_max` is ONE sample and 150 ms is nine
+    # v2.3.3 F2 — p99 gates. `produced_max` is ONE sample and 150 ms is nine
     # times the 16.639 ms NTSC budget, so the old gate passed visibly-degraded
     # runs: `perf-Super_Mario_Bros_nes-20260616-231215.csv` peaks at 128.9 ms
     # with 62 catch-up bursts and only fails on underruns. Healthy captures in

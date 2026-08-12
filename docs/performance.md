@@ -661,9 +661,9 @@ for a byte-identical escape hatch is not justified.
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
 
-### v2.3.2 F1 — sizing the frontend items before building any of them
+### v2.3.3 F1 — sizing the frontend items before building any of them
 
-The v2.3.2 "Grain" frontend campaign was scoped from code reading: three full
+The v2.3.3 "Grain" frontend campaign was scoped from code reading: three full
 720 KiB framebuffer memcpys per displayed frame, a `perf.view()` doing five heap
 allocations and three 600-element sorts every frame, and a `format!` storm under
 the emulator lock the plan called "the single easiest win in the plan". After the

@@ -351,7 +351,7 @@ pub struct EmuCore {
     /// The running single-console emulator (None until a single-console ROM is
     /// loaded, or while a Vs. `DualSystem` cabinet is loaded — see [`Self::dual`]).
     pub nes: Option<Nes>,
-    /// v2.3.2 F3 — the loaded ROM's mapper display name, cached at load.
+    /// v2.3.3 F3 — the loaded ROM's mapper display name, cached at load.
     ///
     /// The status bar renders this every displayed frame. Reading it from
     /// `Nes::mapper_info()` instead costs **1,367 ns per frame measured**, because
@@ -362,7 +362,7 @@ pub struct EmuCore {
     ///
     /// This is **allocation hygiene, not an optimization**: 1.37 µs is 0.008% of
     /// a 16.639 ms frame and no frame-time change is claimed or expected (see
-    /// `docs/performance.md` v2.3.2 F1). It removes ~1,500 discarded allocations
+    /// `docs/performance.md` v2.3.3 F1). It removes ~1,500 discarded allocations
     /// per second because there is no reason to make them, not because they were
     /// costing anything measurable.
     ///
