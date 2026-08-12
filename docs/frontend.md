@@ -784,9 +784,14 @@ redraws are display-clocked; sampling under the wall-clock regime would measure
 the producer and "discover" a 60 Hz panel on every host.
 
 Display-sync has an occlusion watchdog (emulation+audio keep running when
-the compositor throttles redraws) and a sustained-miss fallback to
-`wallclock` (sticky per session, reported in the Performance panel). As of
-v2.3.3 `vrr` shares that fallback — without it, `vrr` on a display that is not
+the compositor throttles redraws) and a fallback to `wallclock` (sticky per
+session, reported in the Performance panel) that triggers on **console-rate
+error**, not present jitter: under display-sync every produced frame is
+presented, so irregular presents cost evenness but never speed, and a
+jitter threshold was measured downgrading the regime while it was winning
+(Super Mario Bros: 1-15 drops under display-sync against 35-147 after the
+fallback). As of v2.3.3 `vrr` shares the fallback but keeps the
+*present-based* test — without it, `vrr` on a display that is not
 actually variable-refresh collapsed to ~20 fps and stayed there — and the check
 is gated behind a 600-present grace window so the startup transient (window
 mapping, shader compilation, the ~7 s GPU clock ramp from P8 to P0) cannot
@@ -817,6 +822,11 @@ rewind on, against the 16.639 ms NTSC budget):
 | 1 | 5.9-6.1 ms | 6.6 ms | — |
 | 2 | 9.2 ms | 9.8-10.8 ms | 0-2 |
 | 3 | 11.9-12.6 ms | 12.5-**17.2** ms | 0 **or 229** |
+
+Those figures are `flowing_palette`, and per-ROM cost varies enough to matter:
+**Super Mario Bros measures 13.5-13.7 ms at `run_ahead = 2`** on the same host,
+against 9.2 ms for `flowing_palette` — 82% of the frame budget rather than 55%.
+Pick the level against the heaviest ROM in use, not a synthetic one.
 
 `3` is bimodal on that host: one capture was clean and the next dropped 229
 frames with 16 audio underruns, the difference being whether p99 crossed the

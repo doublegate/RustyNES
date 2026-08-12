@@ -61,6 +61,20 @@ cycle-accurate core later replaced.
   audio underruns **0–19 → 0**, console-rate error within 0.12%. Frontend-only —
   the deterministic core, save-state and movie formats, and every golden vector
   are untouched.
+- **Frontend: display-sync no longer downgrades itself while it is winning.**
+  Its sustained-miss fallback tripped on presented-interval p95, a proxy that
+  reports the host's compositor rather than whether the regime is working. On
+  Super Mario Bros — a materially heavier ROM than the synthetic one the regime
+  was tuned against, 13.5 ms of work at `run_ahead = 2` versus 9.2 ms — that
+  p95 sat at 25.3–27.2 ms against a 24.96 ms limit, so whether a session kept
+  the good regime came down to run-to-run variance, and the fallback is sticky.
+  Measured, the regime it fell back to was far worse: 1–15 dropped frames per
+  45 s under display-sync against 35–147 under wall-clock. Display-sync now
+  falls back on **console-rate error** instead (2% band, a structural safety
+  net — the wall-clock rate authority makes a breach a genuine defect), and
+  holds 4/4 runs on that ROM at both run-ahead levels with 1–8 drops. `vrr`
+  keeps the present-based test, because its failure is the opposite shape: the
+  emulator produces correctly at 16.64 ms while the display shows ~20 fps.
 - **Frontend: `pacing_mode = "vrr"` no longer collapses on a non-VRR display.**
   It had no sustained-miss fallback, so on a fixed-refresh panel it degraded to
   ~20 fps (49.74 ms presented, 1170 dropped frames in 40 s) and stayed there. It

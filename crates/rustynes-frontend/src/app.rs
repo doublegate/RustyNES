@@ -578,6 +578,17 @@ const MAX_DISPLAY_CATCHUP: u32 = 4;
 #[cfg(not(target_arch = "wasm32"))]
 const HEALTH_CHECK_GRACE: u32 = 600;
 
+/// v2.3.3 — relative console-rate error at which display-sync gives up and
+/// hands back to the wall-clock pacer.
+///
+/// Set well above the 0.5% audio-DRC band this regime targets, because it is a
+/// structural safety net rather than a tuning knob: `display_produce_due` takes
+/// its rate from the wall clock, so the only way to breach this is a genuine
+/// defect. A tight value here would re-create the sticky false-positive the
+/// present-jitter test caused.
+#[cfg(not(target_arch = "wasm32"))]
+const DISPLAY_SYNC_RATE_FALLBACK: f32 = 0.02;
+
 /// Application state. Constructed in `resumed()` (per winit 0.30 idiom),
 /// torn down on exit.
 // The app legitimately tracks several independent boolean modes (exit
@@ -7517,35 +7528,69 @@ impl App {
             && self.dsync.presents_since_resolve >= HEALTH_CHECK_GRACE
         {
             self.presents_since_check = 0;
-            let (stats, target) = {
+            let (presented, produced, target) = {
                 let emu = self.emu.lock();
+                let v = emu.perf.view();
                 (
-                    emu.perf.view().presented,
-                    // v2.3.3 — deliberately the CONSOLE frame period, not the
-                    // (shorter) refresh period, even under a divisor. Scaling
-                    // this by the divisor was tried and reverted: under /2 an
-                    // occasional missed refresh turns an 8.3 ms present into a
-                    // 16.7 ms one, which is normal and harmless, but it put
-                    // p95 above a 12.5 ms threshold every single run and the
-                    // regime downgraded itself in all four captures.
-                    //
-                    // The check's original job — stop display-sync running the
-                    // console at the wrong speed — is now handled structurally
-                    // by the wall-clock rate authority in `display_produce_due`,
-                    // so what remains here is a catastrophe guard: presents so
-                    // bad that the display cannot show a console frame at all.
+                    v.presented,
+                    v.produced,
                     emu.frame_duration.as_secs_f32() * 1000.0,
                 )
             };
-            if stats.count >= 240 && stats.p95_ms > target * 1.5 {
+            // v2.3.3 — WHAT this check measures, and why it changed twice.
+            //
+            // It used to trip on presented-interval p95 in every regime. That
+            // is a proxy, and on a real workload it fired while display-sync
+            // was *winning*: measured on Super Mario Bros at run_ahead = 1,
+            // display-sync dropped 6-15 frames per 45 s and the wall-clock
+            // pacer it fell back to dropped 61-147. The threshold sat right on
+            // the boundary (p95 25.3-25.4 ms against a 24.96 ms limit), so
+            // whether a session got the good regime came down to run-to-run
+            // variance — and the fallback is sticky, so one unlucky sample
+            // downgraded the whole session to the worse behaviour.
+            //
+            // Present jitter is the wrong instrument for display-sync, for the
+            // same reason the p99 and cost_p95 gates were wrong: it reports the
+            // host's compositor rather than whether the regime is working. Under
+            // display-sync every produced frame is presented, so irregular
+            // presents cost some evenness but never the console's speed —
+            // `display_produce_due` keeps the wall clock as the rate authority.
+            // What would actually be a failure is the console running at the
+            // wrong rate, so that is what is tested.
+            //
+            // VRR is the opposite case and keeps the present-based test: there
+            // the emulator produces correctly at the console rate while the
+            // display shows something else entirely (measured at 49.74 ms
+            // presented, ~20 fps, with the produced rate a healthy 16.64 ms),
+            // so only the present series can see that failure.
+            let unhealthy = if is_display {
+                let rate_skew = if produced.mean_ms > 0.0 {
+                    ((produced.mean_ms - target) / target).abs()
+                } else {
+                    0.0
+                };
+                produced.count >= 240 && rate_skew > DISPLAY_SYNC_RATE_FALLBACK
+            } else {
+                presented.count >= 240 && presented.p95_ms > target * 1.5
+            };
+            let stats = presented;
+            if unhealthy {
                 self.display_fallback = true;
-                eprintln!(
-                    "rustynes: {} is missing presents (p95 {:.2} ms vs \
-                     {:.2} ms target) — falling back to wallclock pacing for this session.",
-                    if is_display { "display-sync" } else { "vrr" },
-                    stats.p95_ms,
-                    target
-                );
+                if is_display {
+                    eprintln!(
+                        "rustynes: display-sync is not holding console rate \
+                         (produced {:.2} ms vs {:.2} ms target) — falling back to \
+                         wallclock pacing for this session.",
+                        produced.mean_ms, target
+                    );
+                } else {
+                    eprintln!(
+                        "rustynes: vrr is missing presents (p95 {:.2} ms vs \
+                         {:.2} ms target) — falling back to wallclock pacing for \
+                         this session.",
+                        stats.p95_ms, target
+                    );
+                }
                 self.resolve_pacing();
             }
         }

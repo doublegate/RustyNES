@@ -1068,10 +1068,33 @@ were self-inflicted and caught only by measurement:
   lock-free (`wait` p99 measured 0.10-0.12 ms).
 - Scaling the sustained-miss health check by the divisor made its threshold
   12.5 ms, which ordinary refresh jitter under `/2` exceeds every run; the
-  regime downgraded itself in 4 of 4 captures. The check keeps the console
-  frame period as its target, and gained a 600-present grace window so the
-  startup transient (window mapping, shader compilation, the measured ~7 s GPU
-  clock ramp from P8 to P0) cannot permanently downgrade a session.
+  regime downgraded itself in 4 of 4 captures. It gained a 600-present grace
+  window so the startup transient (window mapping, shader compilation, the
+  measured ~7 s GPU clock ramp from P8 to P0) cannot permanently downgrade a
+  session — and then the check itself had to change, see below.
+
+**The health check was measuring the wrong thing entirely.** Restoring the
+console frame period as the threshold was still not right: on a *real* workload
+it fired while display-sync was winning. On Super Mario Bros — a materially
+heavier ROM than `flowing_palette`, 13.1 ms of work at `run_ahead = 2` against
+9.2 ms — presented p95 sat at 25.3-27.2 ms against a 24.96 ms limit, so the
+regime downgraded on run-to-run variance, stickily, for the whole session. What
+it downgraded *to* was measurably worse:
+
+| SMB, 45 s | display-sync | wall-clock fallback |
+| --- | --- | --- |
+| `run_ahead = 1` | 4-15 drops | 61-147 drops |
+| `run_ahead = 2` | 1-5 drops | 35-71 drops |
+
+Present jitter is the wrong instrument for display-sync, for exactly the reason
+the p99 and `cost_p95` gates were wrong: it reports the host's compositor, not
+whether the regime is working. Under display-sync every produced frame is
+presented, so irregular presents cost evenness but never speed — the wall-clock
+rate authority guarantees that. The check now tests the **console rate**
+(`produced.mean_ms` against the frame period, 2% band as a structural safety
+net rather than a tuning knob). VRR keeps the present-based test, because there
+the failure is the opposite shape: the emulator produces correctly at 16.64 ms
+while the display shows ~20 fps, which only the present series can see.
 
 **Measured outcome** (`flowing_palette`, 45 s, `run_ahead = 2`, rewind on):
 
@@ -1082,6 +1105,19 @@ were self-inflicted and caught only by measurement:
 | audio underruns | 0-19 | **0** |
 | console rate error | — | +0.03% to +0.12% |
 | mutex wait p99 | — | 0.10-0.12 ms |
+
+And on Super Mario Bros, after the health-check correction (4/4 held):
+
+| SMB | `run_ahead = 1` | `run_ahead = 2` |
+| --- | --- | --- |
+| dropped / 45 s | 4, 8 | **1, 5** |
+| console rate error | -0.10%, +0.05% | +0.21%, -0.02% |
+| work mean | 9.5-10.3 ms | 13.5-13.7 ms |
+| presented p95 | 18.4-19.5 ms | 26.7-27.2 ms |
+
+The `run_ahead = 2` column is the point: a presented p95 of 27 ms would have
+tripped the old threshold every time, while the regime was in fact delivering
+the best drop count measured on that ROM.
 
 **Also fixed:** `pacing_mode = "vrr"` had no sustained-miss fallback, so on a
 display that is not actually variable-refresh it collapsed to 49.74 ms
