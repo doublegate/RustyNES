@@ -661,6 +661,50 @@ for a byte-identical escape hatch is not justified.
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
 
+### v2.3.3 F5 — run-ahead blows the frame budget at the shipped default (decision: FINDING, fix deferred)
+
+The p99 gate F2 added was supposed to catch frontend stutter. Measuring it on
+real hardware showed it catching the wrong thing — and, in the process, found a
+real one it had been blind to.
+
+**The gate was measuring the display.** Two clean 90 s captures reproduce
+`produced_p99` = 34.4 ms with **zero** catch-up bursts, underruns and
+snap-forwards — the same p99 as the worst archived run. `produced_mean_ms` is
+16.64 ms (the NTSC budget) in all eight captures on file, so the emulator always
+*paces* correctly. The p99 is the wall-clock pacer beating against vsync, which
+v2.3.0's notes predicted; on a 120 Hz Wayland host `winit` cannot read the
+refresh rate at all (`monitor unknown`), so the beat is a property of the
+monitor. An absolute-millisecond p99 threshold therefore reports the host's
+display configuration as a regression. p99 is now reported, not gated.
+
+**The real signal was `cost_*`** — emulation work per displayed frame, with the
+pacer's sleep excluded, and therefore independent of the display. Varying only
+`[input] run_ahead` on one host and one ROM:
+
+| `run_ahead` | cost_mean | cost_p95 | cost_p99 | produced_dropped (45 s) |
+| --- | --- | --- | --- | --- |
+| 0 | 3.91 ms | 4.51 ms | 5.83 ms | 10 |
+| **1 (the shipped default)** | 8.50 ms | **24.15 ms** | 26.76 ms | **303** |
+| 2 | 9.82 ms | **19.56 ms** | 26.34 ms | 201 |
+
+At the **default**, the p95 of the emulator's own work is 24.15 ms against a
+16.639 ms budget: 60 fps is not sustainable and ~300 frames drop in 45 seconds.
+With run-ahead off, the same ROM sits at 4.51 ms with 10 drops.
+
+The mechanism is not new — run-ahead snapshots (~250 KB) and restores the core
+once per displayed frame on top of running N+1 frames. What is new is the
+measurement: this was assumed to be affordable and never checked at the default.
+
+**Not fixed here.** The lever is snapshot slimming (a frame-boundary variant
+that omits the 245,760-byte framebuffer, which the next `run_frame` regenerates),
+and that is a core-format change with its own verification burden — not
+something to improvise while cutting a release. It is the single highest-value
+performance item currently known, and it now has a number attached.
+
+`scripts/perf/perf_log_check.py` gates `cost_p95` at the frame budget and
+`produced_dropped` at 60, both of which fail every run-ahead-enabled capture
+above and pass every clean one.
+
 ### v2.3.3 F1 — sizing the frontend items before building any of them
 
 The v2.3.3 "Grain" frontend campaign was scoped from code reading: three full

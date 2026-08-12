@@ -38,10 +38,24 @@ cycle-accurate core later replaced.
   bare `except ValueError` did not catch.
 - **The perf-log gate ignored the metric that matters.** It tracked only
   `produced_max_ms` against a 150 ms threshold — nine times the NTSC frame
-  budget, and a single sample. A capture peaking at 128.9 ms with 62 catch-up
-  bursts passed every threshold it tracked. `produced_p99_ms` and
-  `presented_p99_ms` (present in the CSV since v1.5.0, read by nothing) are now
-  gated at 22 ms.
+  budget, and a single sample — so a capture peaking at 128.9 ms with 62
+  catch-up bursts passed every threshold it tracked. The gate now trips on
+  `catchup_bursts` (200 → **16**) and `snap_forwards` (40 → **8**), both derived
+  from the eight captures on file rather than chosen: healthy runs sit at 0
+  bursts, the borderline one at 12, the degraded ones at 32 and 62.
+  - **The first fix for this was wrong, and measuring it disproved it.** It
+    gated `produced_p99_ms` / `presented_p99_ms` at 22 ms, justified by "healthy
+    captures sit at 17.2–17.6 ms, degraded ones reach 24–35". Two clean 90 s
+    captures on real hardware reproduce **p99 = 34.4 ms with zero bursts, zero
+    underruns and zero snap-forwards** — the same p99 as the worst archived run.
+    `produced_mean_ms` is 16.64 ms (the NTSC budget) in all eight captures, so
+    the emulator always produces on time; the p99 is the wall-clock pacer
+    beating against vsync, exactly as v2.3.0's notes predicted. On a 120 Hz
+    Wayland host `winit` cannot read the refresh rate at all, so the beat is a
+    property of the **display**, not of frontend health. An absolute-millisecond
+    p99 gate measures the host's monitor and reports it as a regression, so p99
+    is now **reported, not gated** (opt-in flags remain for single-machine
+    comparisons, where it is genuinely useful).
 - **The BOLT stage could not find its runtime, then measured the wrong binary.**
   The probe verified the `llvm-bolt` binary but not the `libbolt_rt_instr.a`
   runtime it links against, so instrumentation died after running a full
@@ -57,6 +71,18 @@ cycle-accurate core later replaced.
   shipping optimization. See `docs/performance.md`.
 
 ### Performance
+
+- **Run-ahead blows the frame budget at the shipped default, and nothing was
+  measuring it.** Varying only `[input] run_ahead` on one host and one ROM, the
+  p95 of the emulator's own per-frame work (`cost_p95_ms`, pacer sleep excluded)
+  goes **4.51 ms → 24.15 ms** from `run_ahead = 0` to the default `1`, against a
+  16.639 ms budget, and dropped frames go **10 → 303** per 45 s. Run-ahead
+  snapshots (~250 KB) and restores the core once per displayed frame on top of
+  running N+1 frames; that was assumed affordable and never checked at the
+  default. **Not fixed in this release** — the lever is snapshot slimming, a
+  core-format change with its own verification burden — but it is now measured,
+  gated against, and documented as the highest-value known performance item.
+  See `docs/performance.md` (v2.3.3 F5).
 
 - **The frontend optimization items were measured before being built, and all
   three are under 0.1% of a frame** — the framebuffer copy chain 13.2 µs

@@ -101,21 +101,69 @@ def main() -> int:
     ap.add_argument("--max-produced-ms", type=float, default=150.0,
                     help="max produced-frame interval ms over the run (default 150; a "
                          "coarse backstop -- the p99 gates below are the real signal)")
-    # v2.3.3 F2 — p99 gates. `produced_max` is ONE sample and 150 ms is nine
-    # times the 16.639 ms NTSC budget, so the old gate passed visibly-degraded
-    # runs: `perf-Super_Mario_Bros_nes-20260616-231215.csv` peaks at 128.9 ms
-    # with 62 catch-up bursts and only fails on underruns. Healthy captures in
-    # `perf-logs/` sit at produced/presented p99 ~17.2-17.6 ms (the budget plus
-    # pacing slack); degraded ones reach 24-35 ms produced and up to 56 ms
-    # presented. 22 ms sits cleanly between the two populations.
-    ap.add_argument("--max-produced-p99-ms", type=float, default=22.0,
-                    help="max median produced-frame p99 ms (default 22; healthy ~17.5)")
-    ap.add_argument("--max-presented-p99-ms", type=float, default=22.0,
-                    help="max median presented-frame p99 ms (default 22; healthy ~17.5)")
-    ap.add_argument("--max-catchup-bursts", type=int, default=200,
-                    help="max cumulative catch-up bursts at the LAST row (default 200)")
-    ap.add_argument("--max-snap-forwards", type=int, default=40,
-                    help="max cumulative snap-forwards at the LAST row (default 40)")
+    # v2.3.3 F2 — p99 is REPORTED, not gated by default. The first version of
+    # this gate defaulted both p99 knobs to 22 ms, justified by "healthy captures
+    # sit at 17.2-17.6 ms, degraded ones reach 24-35". Measuring on real hardware
+    # disproved it:
+    #
+    #   capture                       p99   bursts underruns snap_fwd
+    #   flowing_palette 20260812 x2  34.4        0         0        0   <- HEALTHY
+    #   SMB 20260616-231215          35.0       62        12       12   <- degraded
+    #
+    # Two clean 90 s captures reproduce p99 = 34.4 ms with ZERO bursts, ZERO
+    # underruns and ZERO snap-forwards — the same p99 as the worst archived run.
+    # `produced_mean_ms` is 16.64 ms (the NTSC budget) in all 8 captures on file,
+    # so the emulator always produces on time; the p99 is the wall-clock pacer
+    # beating against vsync, which v2.3.0's own notes predict. On a 120 Hz
+    # Wayland host winit cannot read the refresh rate at all (`monitor unknown`),
+    # so the beat is a property of the DISPLAY, not of frontend health.
+    #
+    # An absolute-millisecond p99 gate therefore measures the host's display
+    # configuration and reports it as a regression. Keep the number visible —
+    # it is genuinely useful when comparing two runs on ONE machine — and gate
+    # on the signals that actually separate the populations.
+    ap.add_argument("--max-produced-p99-ms", type=float, default=None,
+                    help="optional gate on median produced-frame p99 ms "
+                         "(default: reported only — see the note in this file)")
+    ap.add_argument("--max-presented-p99-ms", type=float, default=None,
+                    help="optional gate on median presented-frame p99 ms "
+                         "(default: reported only)")
+    # Derived from the 8 captures in `perf-logs/`, not chosen: healthy runs sit
+    # at 0 catch-up bursts (five captures), the borderline one at 12, and the
+    # degraded ones at 32 and 62. 16 separates {0, 12} from {32, 62}. The old
+    # default of 200 let a run with 62 bursts, 12 underruns and a 128.9 ms peak
+    # pass every threshold it tracked — the hole this gate exists to close.
+    ap.add_argument("--max-catchup-bursts", type=int, default=16,
+                    help="max cumulative catch-up bursts at the LAST row (default 16; "
+                         "healthy 0, degraded 32-62)")
+    # Same derivation: healthy 0, borderline 2, degraded 12.
+    ap.add_argument("--max-snap-forwards", type=int, default=8,
+                    help="max cumulative snap-forwards at the LAST row (default 8; "
+                         "healthy 0, degraded 12)")
+    # THE signal the p99 gate was reaching for and missed. `cost_*` is the
+    # emulator's own work per displayed frame, with the pacer's sleep excluded —
+    # so unlike `produced_*` it is independent of the display's refresh rate and
+    # of the wall-clock/vsync beat. If the p95 of that work exceeds one frame
+    # period, 60 fps is not sustainable and frames WILL drop, whatever the
+    # monitor is doing.
+    #
+    # Measured on one host, one ROM, varying only `[input] run_ahead`:
+    #
+    #   run_ahead  cost_mean  cost_p95  cost_p99  produced_dropped
+    #           0       3.91      4.51      5.83                10
+    #           1       8.50     24.15     26.76               303   <- the DEFAULT
+    #           2       9.82     19.56     26.34               201
+    #
+    # Run-ahead snapshots (~250 KB) and restores the core once per displayed
+    # frame on top of running N+1 frames, and at the shipped default that pushes
+    # p95 past the budget. All three runs passed every other gate in this file,
+    # which is why this one exists.
+    ap.add_argument("--max-cost-p95-ms", type=float, default=16.639,
+                    help="max median emulation-work p95 ms (default: the NTSC frame "
+                         "budget — work that does not fit in a frame cannot sustain 60 fps)")
+    ap.add_argument("--max-produced-dropped", type=int, default=60,
+                    help="max cumulative dropped produced frames (default 60; "
+                         "run_ahead=0 gives ~10 per 45 s, run_ahead=1 gives ~300)")
     ap.add_argument("--warmup-rows", type=int, default=3,
                     help="rows to skip at the start (startup gate / first-frame)")
     args = ap.parse_args()
@@ -144,27 +192,47 @@ def main() -> int:
     # is not itself hostage to one bad window (the failure mode `produced_max` has).
     produced_p99 = _median([col_float(r, "produced_p99_ms") for r in body])
     presented_p99 = _median([col_float(r, "presented_p99_ms") for r in body])
+    # Emulation work per displayed frame, pacer sleep excluded. `cost_*` and
+    # `produced_dropped` arrived after some archived captures were taken, so an
+    # absent column yields NaN / 0 and simply does not gate — an old CSV is not
+    # retroactively a failure.
+    cost_p95 = (
+        _median([col_float(r, "cost_p95_ms") for r in body])
+        if "cost_p95_ms" in header
+        else float("nan")
+    )
+    dropped = int(col_float(last, "produced_dropped")) if "produced_dropped" in header else 0
 
     failures: list[str] = []
     if underruns > args.max_underruns:
         failures.append(f"underruns {underruns} > {args.max_underruns}")
     if produced_max > args.max_produced_ms:
         failures.append(f"produced_max {produced_max:.1f} ms > {args.max_produced_ms} ms")
-    if produced_p99 > args.max_produced_p99_ms:
+    # `None` (the default) reports the p99 without gating it — see the note by
+    # the argument definitions for why an absolute p99 threshold measures the
+    # host's display rather than frontend health.
+    if args.max_produced_p99_ms is not None and produced_p99 > args.max_produced_p99_ms:
         failures.append(
             f"produced_p99 {produced_p99:.1f} ms > {args.max_produced_p99_ms} ms")
-    if presented_p99 > args.max_presented_p99_ms:
+    if args.max_presented_p99_ms is not None and presented_p99 > args.max_presented_p99_ms:
         failures.append(
             f"presented_p99 {presented_p99:.1f} ms > {args.max_presented_p99_ms} ms")
     if catchup > args.max_catchup_bursts:
         failures.append(f"catchup_bursts {catchup} > {args.max_catchup_bursts}")
     if snaps > args.max_snap_forwards:
         failures.append(f"snap_forwards {snaps} > {args.max_snap_forwards}")
+    if cost_p95 == cost_p95 and cost_p95 > args.max_cost_p95_ms:  # NaN-safe
+        failures.append(
+            f"cost_p95 {cost_p95:.1f} ms > {args.max_cost_p95_ms} ms "
+            f"(emulation work does not fit in a frame)")
+    if dropped > args.max_produced_dropped:
+        failures.append(f"produced_dropped {dropped} > {args.max_produced_dropped}")
 
     print(f"perf_log_check: {args.csv}")
     print(f"  rows={len(rows)} (analyzed {len(body)} after {args.warmup_rows} warmup)")
     print(f"  underruns={underruns}  produced_max={produced_max:.1f}ms  "
           f"catchup_bursts={catchup}  snap_forwards={snaps}")
+    print(f"  cost_p95={cost_p95:.2f}ms (emulation work)  produced_dropped={dropped}")
     print(f"  produced_p99={produced_p99:.2f}ms  presented_p99={presented_p99:.2f}ms  "
           f"(NTSC budget 16.639 ms)")
     if failures:
