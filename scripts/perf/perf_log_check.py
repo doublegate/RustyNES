@@ -334,10 +334,26 @@ def main() -> int:
     # does mean a pre-F16 capture cannot be *proven* valid; that is honest, and
     # the column exists so future ones can be.
     has_col = any(r.get("present_discarded") is not None for r in body)
-    discarded = int(max((col_float(r, "present_discarded") for r in body), default=0.0))
-    if discarded > 0:
+    # The counter is CUMULATIVE, so the post-warmup DELTA is the quantity that
+    # describes the analyzed window — not the total, which includes the handful
+    # of discards every session pays while the window is being mapped.
+    #
+    # The first version failed closed on the cumulative total being non-zero,
+    # and it was wrong: a good capture with display-sync engaged for 25 of 26
+    # rows still carried 5 discards, 3 of them in the first second. Rejecting
+    # that is a false negative on exactly the capture this gate exists to bless,
+    # and it would have sent the next person hunting a problem that was window
+    # mapping. An occluded window is not subtle — it discards EVERY frame, ~61
+    # per second — so a rate threshold separates the two cleanly where a
+    # non-zero test cannot.
+    disc_series = [col_float(r, "present_discarded") for r in body]
+    discarded = int(max(disc_series, default=0.0) - min(disc_series, default=0.0))
+    presents_in_window = max(len(body) - 1, 1) * 60.0  # rows are 1 Hz
+    disc_rate = 100.0 * discarded / presents_in_window
+    if disc_rate > 1.0:
         failures.append(
-            f"present_discarded {discarded} > 0 — the compositor discarded this "
+            f"present_discarded +{discarded} in the analyzed window "
+            f"({disc_rate:.1f}% of presents) — the compositor was discarding this "
             "window's frames, so it was not on screen for part of the run and no "
             "pacing conclusion may be drawn from this capture")
 
@@ -373,6 +389,9 @@ def main() -> int:
         validity = "capture predates the column — validity UNKNOWN, not verified"
     elif discarded == 0:
         validity = "capture VALID — window was on screen throughout"
+    elif disc_rate <= 1.0:
+        validity = (f"capture VALID — +{discarded} discards after warmup "
+                    f"({disc_rate:.2f}% of presents), consistent with compositor noise")
     else:
         validity = "capture INVALID — window occluded"
     print(f"  present_discarded={discarded} ({validity})")

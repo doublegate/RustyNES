@@ -36,8 +36,11 @@ pub mod cheats;
 // v1.4.0 Workstream H — native CLI (clap 4) + structured help-topic registry.
 // Native-only: a browser tab has no terminal, and the clap / clap_complete /
 // color-print deps are gated out of the wasm target in `Cargo.toml`.
-#[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
+#[cfg(not(target_arch = "wasm32"))]
+/// v2.3.3 — absolute `CLOCK_MONOTONIC` / `CLOCK_THREAD_CPUTIME_ID` readings,
+/// with the frontend's only `clock_gettime` call site.
+pub mod clock;
 pub mod config;
 pub mod debugger;
 // v2.3.0 "Datum II" — true multi-viewport tool-window detach: each detached tool

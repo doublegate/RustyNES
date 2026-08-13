@@ -61,6 +61,20 @@ cycle-accurate core later replaced.
   keeps the evidence. What it did establish: restore costs ~114 µs with **no
   framebuffer at all**, so its 8.3× asymmetry against `snapshot_core_into` is
   per-section deserialization, not the payload.
+||||||| parent of 0991b79a (feat(perf): tick_lat / tick_iv — the trigger is late, not the emulator (F15))
+  **`tick_lat` / `tick_iv` — the trigger is late, not the emulator (v2.3.3
+  F15).** Two new independently-ranked series decomposing the produce interval,
+  whose variance tracks missed presents at r = 0.937. The display tick's channel
+  payload became a `CLOCK_MONOTONIC` timestamp instead of `()`, which is what
+  makes the cross-thread hop measurable. First verified capture (SMB,
+  `run_ahead = 1`, display-sync /2, window confirmed on screen by the F16 gate):
+  the winit→emu hop is **0.033-0.050 ms** — negligible — while `produced` p95
+  (24.635 ms) matches `tick_iv` p95 (24.578 ms) to within 0.06 ms. With `rlock`
+  at 0.000 and `tick_timeout` at 0 of 1494, **the produce tail is inherited
+  wholesale from the trigger interval**: the emulator is not late, it is asked
+  late. First positive location the campaign has produced rather than an
+  elimination. Also `crates/rustynes-frontend/src/clock.rs`, holding the
+  frontend's only `clock_gettime` call site.
   **The unexplained between-session cadence spread is emulation budget margin
   (v2.3.3 F17).** F14 left one quantity open and called it the largest
   unexplained question in `docs/performance.md`: display cadence error varied

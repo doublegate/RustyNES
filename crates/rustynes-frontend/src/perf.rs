@@ -348,6 +348,24 @@ pub struct PerfStats {
     /// of work. Recording the wait separately makes the distinction visible:
     /// `cost` is now emulation work alone, and `wait` is the queueing delay.
     produce_wait: SampleRing,
+    /// v2.3.3 F15 — winit->emu display-tick hop: send to receipt, milliseconds.
+    ///
+    /// The last completely unmeasured step in the produce chain, and the only
+    /// one that crosses a thread boundary. Instrumented because produce-interval
+    /// standard deviation tracks missed presents at **r = 0.937** across
+    /// eighteen captures (3.3 ms sd at best, 7.2 ms at worst, against a 16.64 ms
+    /// period), so the interval's variance is where the display cadence errors
+    /// come from — and it has exactly three terms: how regularly the trigger was
+    /// SENT ([`Self::tick_iv`]), how long it took to ARRIVE (this), and how long
+    /// the frame took to MAKE ([`Self::produce_cost`]).
+    tick_lat: SampleRing,
+    /// v2.3.3 F15 — interval between successive display-tick SENDS, milliseconds.
+    ///
+    /// The winit-side half: how regularly a frame was asked for, independent of
+    /// how long the ask took to cross. Kept as its own ranked series rather than
+    /// derived from the other two, per the F8 rule that a difference of
+    /// percentiles is not a percentile.
+    tick_iv: SampleRing,
     /// Paces that produced >= 2 frames (the wall-clock pacer catching up —
     /// each one is an uneven content cadence on screen).
     pub catchup_bursts: u64,
@@ -552,6 +570,36 @@ impl PerfStats {
         self.produce_cost.push(d.as_secs_f32() * 1000.0);
     }
 
+    /// v2.3.3 F15 — the two halves of the display trigger, in milliseconds.
+    ///
+    /// `lat_ns` is the winit->emu hop (tick send to receipt) and `iv_ns` the
+    /// interval between successive sends. Recorded as two INDEPENDENT ranked
+    /// series alongside the existing `produce_cost`, so the produce interval —
+    /// whose standard deviation tracks missed presents at r = 0.937 — can be
+    /// attributed to the trigger, the hop, or the work without ever subtracting
+    /// one percentile from another (the F8 mistake).
+    ///
+    /// A zero means "not measured for this frame" (no tick drove it, or the
+    /// monotonic clock was unavailable) and is skipped rather than pushed:
+    /// entering it as a sample would drag every percentile toward zero and make
+    /// a watchdog-driven session look like a perfectly-triggered one.
+    pub fn record_tick_timing(&mut self, lat_ns: u64, iv_ns: u64) {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "nanosecond counts here are at most seconds; f32 is exact well past that"
+        )]
+        if lat_ns > 0 {
+            self.tick_lat.push(lat_ns as f32 / 1.0e6);
+        }
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "nanosecond counts here are at most seconds; f32 is exact well past that"
+        )]
+        if iv_ns > 0 {
+            self.tick_iv.push(iv_ns as f32 / 1.0e6);
+        }
+    }
+
     /// Record how long the producer was blocked on the emulator mutex before
     /// it could begin the frame, separately from the work itself — the split
     /// that showed the measured wait is 0.00 ms at every percentile. Surfaced
@@ -598,6 +646,8 @@ impl PerfStats {
             presented: self.presented.ring.stats(),
             produce_cost: self.produce_cost.stats(),
             produce_wait: self.produce_wait.stats(),
+            tick_lat: self.tick_lat.stats(),
+            tick_iv: self.tick_iv.stats(),
             catchup_bursts: self.catchup_bursts,
             snap_forwards: self.snap_forwards,
             presented_dups: self.presented_dups,
@@ -625,6 +675,13 @@ pub struct PerfView {
     /// v2.3.3 — emulator-mutex blocking stats for the producer, recorded by
     /// `PerfStats::record_produce_wait`.
     pub produce_wait: IntervalStats,
+    /// v2.3.3 F15 — winit->emu display-tick hop, milliseconds. See
+    /// `PerfStats::tick_lat` (plain code span: the field is private, and a link
+    /// from public docs to a private item fails the `-D warnings` rustdoc gate).
+    pub tick_lat: IntervalStats,
+    /// v2.3.3 F15 — interval between display-tick sends, milliseconds. See
+    /// `PerfStats::tick_iv`.
+    pub tick_iv: IntervalStats,
     /// v2.3.3 — egui shell build cost (winit thread). See [`RenderPerf`].
     pub render_ui: IntervalStats,
     /// v2.3.3 — GPU encode + present cost (winit thread). See [`RenderPerf`].

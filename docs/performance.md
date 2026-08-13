@@ -2403,6 +2403,58 @@ settled that 95% of run-ahead's cost is `run_frame` itself.
 
 The `nes_restore_quiet_slim_*` probe stays in the bench as the evidence.
 
+||||||| parent of 0991b79a (feat(perf): tick_lat / tick_iv — the trigger is late, not the emulator (F15))
+### v2.3.3 F15 — the trigger is late, not the emulator
+
+The produce interval's standard deviation tracks missed presents at **r = 0.937**
+(F17's data), so the interval's variance is where the display cadence error comes
+from. It has exactly three terms: how regularly the trigger is **sent**, how long
+it takes to **arrive**, and how long the frame takes to **make**. Only the third
+was measured.
+
+`tick_iv` and `tick_lat` measure the first two, as two independently-ranked
+series — never one derived by subtracting the other, per F8. The display tick's
+channel payload changed from `()` to a `CLOCK_MONOTONIC` timestamp, which is what
+makes a cross-thread hop measurable at all.
+
+**First verified capture** (SMB, `run_ahead = 1`, display-sync /2, window on
+screen and confirmed valid by F16's gate, 18 post-warmup rows):
+
+| series | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: |
+| `tick_lat` — winit→emu hop | **0.033 ms** | **0.043 ms** | **0.050 ms** |
+| `tick_iv` — between tick *sends* | 16.289 ms | **24.578 ms** | 28.637 ms |
+| `produced` — resulting interval | 16.269 ms | **24.635 ms** | — |
+
+#### The result
+
+**The cross-thread hop is 33-50 microseconds.** It is not a contributor, and the
+last completely unmeasured step in the produce chain is now measured and
+eliminated. One 13.155 ms outlier appears in `tick_lat_max` across 1494 ticks —
+a single scheduler hiccup, not a systematic cost.
+
+**`produced` p95 (24.635 ms) matches `tick_iv` p95 (24.578 ms) to within 0.06
+ms.** The produce tail is inherited wholesale from the trigger interval. Combined
+with `rlock` = 0.000, `tick_timeout` = 0 of 1494, and `cost_p95` = 9.198 ms (55%
+of budget, F17's healthy band):
+
+> **The emulator is not late. It is asked late.**
+
+That is the first *positive location* this campaign has produced rather than an
+elimination. The remaining defect is in **when the winit thread decides to send
+the tick** — `display_produce_due` and the present cadence feeding it — and every
+other candidate in the chain is now measured and ruled out.
+
+#### Why it took a working capture to say this
+
+The instrument was written, gated, and mutation-checked hours before it produced
+a single real sample: five verification attempts all read 0.000 because the
+window was occluded and display-sync never engaged, which is what F16 exists to
+detect. Its plumbing was pinned by tests (zero-payload guard, first-tick
+suppression, take-clears) that were themselves mutation-checked — but plumbing
+tests cannot verify an instrument, only that it lies in none of the ways
+anticipated. The numbers above are the verification.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as

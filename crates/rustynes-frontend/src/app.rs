@@ -7080,78 +7080,28 @@ impl App {
     ///
     /// The instrument that separates WORK from DESCHEDULING. `rwork` is wall
     /// time, so a redraw that sat 27 ms off-CPU and one that computed for 27 ms
-    /// are identical to it — the same ambiguity `rtot` carried before F8 split
-    /// `rwait` out of it, one level down. Differencing this across the same
-    /// span gives the CPU time actually consumed: wall ≫ CPU means the thread
-    /// was descheduled, wall ≈ CPU means real computation.
-    #[cfg(all(not(target_arch = "wasm32"), unix, feature = "emu-thread"))]
+    /// are identical to it. Differencing this across the same span gives the CPU
+    /// time actually consumed: wall much greater than CPU means the thread was
+    /// descheduled, wall approximately equal to CPU means real computation.
+    ///
+    /// Thread-local by definition — this is the WINIT thread's reading, which is
+    /// only meaningful because the span it brackets runs on that same thread.
+    /// Delegates to [`crate::clock`] (one `clock_gettime` site).
+    #[cfg(not(target_arch = "wasm32"))]
     fn thread_cpu_now_ns() -> Option<u64> {
-        let mut ts = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        };
-        // SAFETY: identical contract to `monotonic_now_ns` — `clock_gettime`
-        // writes only through the supplied pointer, which is a live,
-        // correctly-typed, stack-allocated `timespec` owned here for the call.
-        // `CLOCK_THREAD_CPUTIME_ID` is POSIX and available on Linux. The return
-        // value is checked.
-        #[allow(unsafe_code)]
-        let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &raw mut ts) };
-        if rc != 0 {
-            return None;
-        }
-        u64::try_from(ts.tv_sec)
-            .ok()?
-            .checked_mul(1_000_000_000)?
-            .checked_add(u64::try_from(ts.tv_nsec).ok()?)
-    }
-
-    /// No thread-CPU clock available; the work/deschedule split is not reported.
-    #[cfg(all(not(target_arch = "wasm32"), not(all(unix, feature = "emu-thread"))))]
-    const fn thread_cpu_now_ns() -> Option<u64> {
-        None
+        crate::clock::thread_cpu_now_ns()
     }
 
     /// v2.3.3 — `CLOCK_MONOTONIC` in nanoseconds, or `None` where unavailable.
     ///
     /// The anchor that lets the per-frame trace's produce/present rows be compared
-    /// to its compositor `scanout` rows. `wp_presentation` stamps presentations in
-    /// the clock named by its `clock_id` event (1 = `CLOCK_MONOTONIC`), and
-    /// `Instant` is that same clock on Linux — but opaque, so its absolute value
-    /// cannot be read. One reading taken at the trace origin converts the whole
-    /// series.
-    ///
-    /// Read through `libc` rather than a new dependency: it is already a direct
-    /// dep behind the default-on `emu-thread` feature (for the thread's `rtprio`
-    /// call). With that feature off this returns `None` and the trace simply says
-    /// the two halves are unaligned, rather than aligning them wrongly.
-    #[cfg(all(not(target_arch = "wasm32"), unix, feature = "emu-thread"))]
+    /// to its compositor `scanout` rows. Delegates to [`crate::clock`], which owns
+    /// the single `clock_gettime` call site — F15 needed the same reading on the
+    /// emulation thread, and duplicating it would have duplicated an `unsafe`
+    /// block and its safety argument.
+    #[cfg(not(target_arch = "wasm32"))]
     fn monotonic_now_ns() -> Option<u64> {
-        let mut ts = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        };
-        // SAFETY: `clock_gettime` writes only through the supplied pointer, which
-        // is a live, correctly-typed, stack-allocated `timespec` owned here for the
-        // duration of the call. `CLOCK_MONOTONIC` is unconditionally available on
-        // Linux. The return value is checked; on failure `ts` is left as
-        // initialised above and the result discarded.
-        #[allow(unsafe_code)]
-        let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut ts) };
-        if rc != 0 {
-            return None;
-        }
-        u64::try_from(ts.tv_sec)
-            .ok()?
-            .checked_mul(1_000_000_000)?
-            .checked_add(u64::try_from(ts.tv_nsec).ok()?)
-    }
-
-    /// No monotonic anchor available: the trace records that the produce/present
-    /// and `scanout` halves are in different, unjoinable clock domains.
-    #[cfg(all(not(target_arch = "wasm32"), not(all(unix, feature = "emu-thread"))))]
-    const fn monotonic_now_ns() -> Option<u64> {
-        None
+        crate::clock::monotonic_now_ns()
     }
 
     /// v2.3.3 — fill the [`crate::perf::PerfView`] fields that live on the
