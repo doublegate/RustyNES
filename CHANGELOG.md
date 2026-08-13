@@ -80,12 +80,16 @@ cycle-accurate core later replaced.
   moved off the redraw path into the lock `post_produce_housekeeping` already
   holds — which also fixes a second defect: at divisor 2 there are two redraws
   per produced frame, so the old placement replayed each frame's debug logs
-  **twice**. `rlock` p95/p99 go **8.707/9.008 ms → 0.000/0.000 ms**. The effect
-  on what the display shows is **not yet established**: scanouts-per-frame has a
-  10.8-point spread across four captures of the fixed build alone, so a single
-  before/after cannot resolve it in either direction, and the A/B/A that would
-  has not been run. The change lands on its own merits — one fewer hot-path
-  mutex acquisition and a corrected telemetry cadence — not as a shudder fix.
+  **twice**. `rlock` p95/p99 go **8.707/9.008 ms → 0.000/0.000 ms**. It also
+  measurably improves what the display shows, confirmed by a proper A/B: both
+  binaries rebuilt from the two adjacent commits that differ only by this
+  change, run **alternately** rather than in blocks, four captures each.
+  Frames shown for the intended two refreshes go **67.75% → 73.77%**, ranges
+  non-overlapping (A's best 69.36% below B's worst 71.33%), exact permutation
+  p = 1/70 — the smallest attainable at this sample size. An earlier
+  single-capture comparison suggested the opposite and was **confounded by run
+  order**, not by the change. 26% of frames are still shown for the wrong
+  duration, so the shudder has a remaining cause that is not this one.
 
 ### Changed
 

@@ -1853,38 +1853,85 @@ needed it. Two changes:
 The winit thread no longer blocks on the emulator mutex during a redraw. This is
 a floor, not a small delta, and is not in doubt.
 
-#### The OUTCOME metric is not resolved, and this is not a win yet
+#### The outcome metric, settled by a proper A/B (decision: CONFIRMED IMPROVEMENT)
 
-Scanouts-per-produced-frame — the thing that actually describes what the display
-showed — went 65.31% "exactly 2" before to 51.76% after, which *looks* like a
-regression. It is not evidence of one. Four consecutive captures on the **fixed
-build alone**:
+The first attempt at this comparison said the change made things **worse** —
+65.31% "exactly 2" before, 51.76% after. That was one capture per side, taken in
+different sessions, and it was wrong. Four consecutive captures of the fixed
+build alone spanned 51.76-62.59%, an 10.83-point spread, so a single before/after
+could not resolve the question in either direction.
 
-| capture | exactly 2 |
-| --- | --- |
-| 1 | 51.76% |
-| 2 | 62.59% |
-| 3 | 54.89% |
-| 4 | 53.95% |
+Redone properly: both binaries rebuilt from the two adjacent commits that differ
+only by this change (the fix and its parent), run **alternately** A/B/A/B rather
+than in blocks — so any thermal or host-contention drift over the run is shared
+equally instead of loading onto whichever configuration ran second — four
+captures each, identical config, 40 s.
 
-**A spread of 10.83 points within one build**, against a single-capture "before"
-of 65.31%. The comparison cannot distinguish the change from run-to-run
-variance, in either direction. Settling it needs the A/B/A this document's own
-verification rules require — ≥4 captures per configuration, order-controlled,
-with the pre-fix binary rebuilt — and that has not been run.
+| | capture 1 | 2 | 3 | 4 | mean |
+| --- | --- | --- | --- | --- | --- |
+| **A** — before the fix | 66.05% | 66.51% | 69.36% | 69.08% | **67.75%** |
+| **B** — after the fix | 74.52% | 71.33% | 76.12% | 73.10% | **73.77%** |
 
-Also unexplained: `rwork` p99 moved 0.109 ms → 27.254 ms in the same capture.
-With the pump gone from the redraw handler `rtot` should have fallen, so this
-is not accounted for and is recorded rather than rationalised.
+**+6.02 percentage points, and the ranges do not overlap** — A's best capture
+(69.36%) is below B's worst (71.33%). Every B beats every A. An exact
+permutation test over all 70 possible 4/4 splits gives a one-sided
+**p = 1/70 = 0.0143**, which is the smallest value attainable at this sample
+size: the observed split is the single most extreme arrangement of the data.
 
-#### Why it lands anyway
+Missed refreshes are ~0.2% in both arms of this session, against 4.60% measured
+in the earlier one — the host state differs enormously between sessions, which
+is precisely why the blocked, cross-session comparison failed and the alternating
+design was necessary. **That is the lesson worth keeping**: the ordering of the
+runs was doing more work than the change being measured.
 
-The change is justified without reference to the shudder: it removes a
-per-redraw mutex acquisition from the hot path, it eliminates a double replay of
-every frame's debug logs, and it drives the metric it targets to zero. What it
-does **not** yet have is a demonstrated effect on what the user sees. Claiming
-one on a single before/after capture is precisely the error this campaign has
-already made and retracted twice.
+So the change is confirmed to improve the display cadence, by about six points
+of frames-shown-for-the-right-duration. It does **not** close the gap — 26% of
+frames are still shown for the wrong length of time at the shipped default, so
+the shudder has a remaining cause that is not this one.
+
+#### The `rwork` p99 jump: leading candidate eliminated, not yet attributed
+
+Removing the pump from the redraw handler should have *lowered* `rtot`, yet
+across the fixed-build captures `rwork` p99 reads 9.1 / 9.8 / 20.5 / 27.3 /
+32.4 ms, where the pre-fix builds read 0.085 / 0.109 / 7.0 ms. `rtot` p99 rose
+with it (16.5 → 17-33 ms), so this is not lock time merely relabelled.
+
+**The obvious candidate is eliminated.** The egui shell build on the
+overlay-hidden path is genuinely untimed — `ui_cost` is set only on the locked
+branch, so `rui` p99 reads 0.000 in every capture — which makes it the first
+thing to suspect. But `render_shell` is invoked from **inside the `overlay`
+closure** that `gfx.render_with_overlay` calls, i.e. after the `t_present`
+restart, so it lands in `rwait` and cannot be this tail.
+
+What remains inside the `rwork` span (redraw signal → GPU dispatch, minus lock
+wait) is the framebuffer staging copy and HD-composite prep. A 240 KiB copy is
+microseconds; 28-33 ms of it is not credible.
+
+**Leading hypothesis, untested: it is not work at all — it is the winit thread
+being descheduled.** `rwork` is wall time, so an OS deschedule inside the span
+is indistinguishable from computation, and the variance (9-32 ms across five
+captures of one build) has the shape of scheduler noise rather than of a code
+path. Note this is the *same* ambiguity `rtot` carried before F8 split `rwait`
+out of it — one level further down.
+
+The instrument that would settle it is a third split: compare
+`CLOCK_THREAD_CPUTIME_ID` against wall time across the span. Wall ≫ CPU means
+descheduled; wall ≈ CPU means real work. Not guessed at further — this
+campaign's record on unmeasured mechanisms is five falsified out of six.
+
+#### Standing
+
+Confirmed on both counts: it drives the metric it targets to zero (`rlock`), and
+it measurably improves the one that describes what the user sees (+6.02 points,
+non-overlapping ranges). It also removes a per-redraw mutex acquisition from the
+hot path and eliminates a double replay of every frame's debug logs, either of
+which would justify it independently.
+
+The **first** version of this section claimed the opposite — that the change
+looked like a regression — on one capture per side. That claim was retracted
+here rather than quietly edited away, because the mistake is instructive: the
+comparison was confounded by run ORDER, not by the change, and the fix was to
+control the order rather than to gather more data in the same broken shape.
 
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 

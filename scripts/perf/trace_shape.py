@@ -33,6 +33,7 @@ than joining them wrongly.
 
 from __future__ import annotations
 
+import argparse
 import bisect
 import csv
 import math
@@ -44,7 +45,11 @@ from pathlib import Path
 # Startup transient to discard: window mapping, shader compilation and the GPU's
 # own P8->P0 clock ramp (measured ~7 s on the reporting host) all produce
 # present hiccups that say nothing about steady-state pacing.
-WARMUP_S = 8.0
+#
+# A HEURISTIC tuned to one machine, not a constant of nature: a host that clears
+# its transients sooner has valid steady-state telemetry discarded, and a slower
+# one keeps contaminated rows. Overridable with --warmup-s.
+DEFAULT_WARMUP_S = 8.0
 
 
 def lag1_autocorr(xs: list[float]) -> float:
@@ -128,7 +133,9 @@ def read_anchor(path: Path) -> float | None:
     return None
 
 
-def scanout_report(path: Path, rows: list[dict], offset: float | None) -> None:
+def scanout_report(
+    path: Path, rows: list[dict], offset: float | None, warmup_s: float
+) -> None:
     """Scanouts per produced frame — what the DISPLAY actually showed.
 
     At divisor N the intended answer is exactly N for every frame. Anything else
@@ -154,7 +161,7 @@ def scanout_report(path: Path, rows: list[dict], offset: float | None) -> None:
         print("    (no anchor_mono_ns header — cannot join to produced frames)")
         return
     pr = sorted(float(r["t_s"]) + offset for r in rows if r["event"] == "produce")
-    lo, hi = sc[0] + WARMUP_S, min(sc[-1], pr[-1] if pr else sc[-1])
+    lo, hi = sc[0] + warmup_s, min(sc[-1], pr[-1] if pr else sc[-1])
     pr = [t for t in pr if lo <= t <= hi]
     sc = [t for t in sc if lo <= t <= hi]
     if len(pr) < 10:
@@ -168,15 +175,15 @@ def scanout_report(path: Path, rows: list[dict], offset: float | None) -> None:
         print(f"      {k}: {hold[k]:6}  {100.0 * hold[k] / tot:6.2f}%")
 
 
-def report(path: Path) -> int:
+def report(path: Path, warmup_s: float) -> int:
     with path.open() as fh:
         rows = [r for r in csv.DictReader(ln for ln in fh if not ln.startswith("#"))]
     if not rows:
         print(f"{path}: empty trace")
         return 1
 
-    produce = [r for r in rows if r["event"] == "produce" and float(r["t_s"]) >= WARMUP_S]
-    present = [r for r in rows if r["event"] == "present" and float(r["t_s"]) >= WARMUP_S]
+    produce = [r for r in rows if r["event"] == "produce" and float(r["t_s"]) >= warmup_s]
+    present = [r for r in rows if r["event"] == "present" and float(r["t_s"]) >= warmup_s]
     if len(produce) < 10 or len(present) < 10:
         print(f"{path}: too few post-warmup events ({len(produce)} produce, "
               f"{len(present)} present) — capture longer than {WARMUP_S:.0f}s")
@@ -184,7 +191,7 @@ def report(path: Path) -> int:
 
     print(f"\n=== {path.name}")
     print(f"    {len(produce)} produce / {len(present)} present events "
-          f"after {WARMUP_S:.0f}s warmup")
+          f"after {warmup_s:.0f}s warmup")
 
     for label, evs in (("produce", produce), ("present", present)):
         iv = [float(r["interval_ms"]) for r in evs if float(r["interval_ms"]) > 0]
@@ -224,17 +231,27 @@ def report(path: Path) -> int:
         print(f"    since_present={k:<3} {hist[k]:6}  {100.0 * hist[k] / total:5.1f}%")
     rl = runs(sp)
     print(f"    run-length histogram : {dict(sorted(rl.items()))}")
-    scanout_report(path, rows, read_anchor(path))
+    scanout_report(path, rows, read_anchor(path), warmup_s)
     return 0
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 2:
-        print(__doc__)
-        return 2
+    ap = argparse.ArgumentParser(
+        description="Classify the temporal shape of a RustyNES per-frame trace"
+    )
+    ap.add_argument("traces", nargs="+", help="perf-logs/trace-<rom>-<utc>.csv")
+    ap.add_argument(
+        "--warmup-s",
+        type=float,
+        default=DEFAULT_WARMUP_S,
+        help=f"seconds of startup transient to discard (default {DEFAULT_WARMUP_S}; "
+        "window mapping, shader compilation and the GPU clock ramp — a host that "
+        "settles sooner should lower this rather than discard valid rows)",
+    )
+    args = ap.parse_args(argv[1:])
     rc = 0
-    for a in argv[1:]:
-        rc |= report(Path(a))
+    for a in args.traces:
+        rc |= report(Path(a), args.warmup_s)
     return rc
 
 
