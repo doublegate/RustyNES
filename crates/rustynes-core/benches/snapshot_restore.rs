@@ -100,8 +100,13 @@ fn bench_rom(c: &mut Criterion, label: &str, rel: &str) {
     // 94% of it, and the win could be a fraction of what F19 assumed. Measure
     // the pair rather than reason about the ratio.
     c.bench_function(&format!("nes_restore_quiet_slim_{label}"), |b| {
-        let mut nes = Nes::from_rom(&bytes).expect("rom parses");
-        nes.run_frame();
+        // `warmed_nes`, matching `nes_restore_quiet_*` exactly. The first
+        // version booted a fresh `Nes` and ran ONE frame, so it compared a
+        // cold-start state against the other bench's 60-frame steady state
+        // (rendering enabled, OAM and palette populated) — different serialized
+        // content, and therefore a confounded full-vs-slim delta on which the
+        // F19 rejection rested. Raised in review on PR #365.
+        let mut nes = warmed_nes(&bytes);
         let mut blob = Vec::new();
         nes.snapshot_core_into_slim(&mut blob);
         b.iter(|| {

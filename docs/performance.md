@@ -2365,12 +2365,19 @@ ring — and nothing else uses them. Free win, apparently.
 
 | bench | full | slim | saving |
 | --- | ---: | ---: | ---: |
-| `nes_restore_quiet_flowing_palette` | 122.8 µs | 114.4 µs | **8.4 µs** |
-| `nes_restore_quiet_mmc3` | 122.5 µs | 115.0 µs | **7.5 µs** |
+| `nes_restore_quiet_flowing_palette` | 122.8 µs | 115.9 µs | **6.9 µs** |
+| `nes_restore_quiet_mmc3` | 123.7 µs | 116.2 µs | **7.4 µs** |
 
-Against the 2.802 ms `nes_runahead_budget` increment that is **0.30%** — an
+Against the 2.802 ms `nes_runahead_budget` increment that is **0.25%** — an
 order of magnitude under the project's >3% bar. **Rejected before
 implementation.**
+
+> The first version of this table read 8.4 µs, from a **confounded** probe: it
+> booted a fresh `Nes` and ran one frame, while every other bench here uses
+> `warmed_nes` (60 frames, rendering enabled, OAM and palette populated). That
+> is different serialized content on the two sides of the comparison. Raised in
+> review on PR #365, corrected here — the delta *shrank*, so the rejection holds
+> and is slightly stronger than first reported.
 
 #### Why the estimate was wrong, which is the part worth keeping
 

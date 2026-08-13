@@ -46,11 +46,11 @@ cycle-accurate core later replaced.
   one row per produce and per present, with `scripts/perf/trace_shape.py` to
   classify its temporal shape. `rwork` is now `rtot - rwait - rlock`.
 
-  **A slim restore for run-ahead was measured and REJECTED (v2.3.3 F19).**
+- **Core: a slim restore for run-ahead was measured and REJECTED (v2.3.3 F19).**
   Run-ahead, netplay rollback and TAS seek all re-simulate immediately after
   restoring, so the 245,760-byte framebuffer they restore is overwritten before
   it is seen — and `PPU_SNAPSHOT_SLIM_FLAG` already omits it. Projected ~110 µs
-  per restore; **measured 8.4 µs** (122.8 → 114.4 µs), which is **0.30%** of the
+  per restore; **measured 6.9 µs** (122.8 → 115.9 µs), which is **0.25%** of the
   2.802 ms run-ahead increment and an order of magnitude under the >3% bar. The
   estimate came from "the framebuffer is 94% of the snapshot **bytes**" carried
   silently into a claim about **time** — 245 KiB is ~12-25 µs of memcpy, so it
