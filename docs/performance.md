@@ -2246,6 +2246,113 @@ sixteen scanout-bearing captures almost certainly were — they *have* `presente
 reports, which an occluded window cannot produce — but that is an inference, not
 a check.
 
+||||||| parent of c1325040 (docs(perf): the between-session cadence spread is emulation budget margin (F17))
+
+### v2.3.3 F17 — the between-session spread is emulation budget margin
+
+F14 left one quantity unexplained and named it the largest open question in this
+document: display cadence error varied **0.69-3.08%** in one session and
+**8.6-18.9%** in others, *on the same binary pair*, dwarfing anything the A/B was
+trying to resolve. This is the answer, and it is not a pacing defect.
+
+#### The result
+
+Across **27 captures** with at least 10 s of steady state, plotting cadence error
+against **what fraction of the NTSC frame budget the emulator consumes at p95**
+(`cost_p95` / 16.639 ms) separates them completely:
+
+| budget utilisation at p95 | n | cadence error |
+| --- | ---: | --- |
+| **< 60%** | 17 | 0.00-8.59% |
+| **>= 60%** | 10 | 9.02-18.93% |
+
+**Perfect separation — no overlap.** Pearson **r = +0.836**. The good captures
+are not merely better, they are *tightly clustered*: `cost_p95` spans
+8.955-9.122 ms across sixteen of them, a 0.167 ms band.
+
+`cost` is emulation work measured **after** the mutex is in hand (the v2.3.3 F1
+split), so this is not lock contention relabelled. It is the emulator taking
+longer to do the same work, against a fixed deadline.
+
+#### Two independent routes to a thin margin
+
+| run-ahead | n | `cost_p50` | = % of budget | tail p95/p50 | cadence error |
+| ---: | ---: | ---: | ---: | --- | --- |
+| 0 | 3 | 5.652 ms | 34.0% | 2.39-2.97 | 9.02-15.28% |
+| 1 | 21 | 8.736 ms | 52.5% | 1.03-1.88 | 0.00-17.66% |
+| 2 | 3 | 12.943 ms | 77.8% | 1.04-1.05 | 14.77-18.93% |
+
+- **BASELINE.** Run-ahead multiplies emulation work per produced frame, by
+  design. On this host that is 34% of the frame budget at depth 0, 52% at 1, and
+  **78% at 2**.
+- **TAIL.** Host contention adds a p95 tail on top. The `ra = 0` row shows it
+  most clearly: a 34% baseline with a 2.4-3.0x tail still lands over 80%.
+
+Either route reaches the same place, and the cadence error follows the *total*,
+not the cause.
+
+#### Why this is causal and not merely correlated
+
+Cost and cadence could in principle share a common cause — a loaded host makes
+the emulator slow *and* independently disturbs presentation. **The `ra = 2`
+captures separate the two, and they are the decisive evidence in this section.**
+
+Their tail ratio is **1.04-1.05**. That is *evidence against* a large contention
+tail, not proof of its absence — a uniform slowdown raises p50 and p95 together
+and leaves the ratio flat, so the ratio bounds the *spread* of contention, not
+its level. What it does establish is that their elevated cost is **structural**:
+three emulated frames per produced frame, by design, not a spike inflicted by the
+host. And they still show **14.77-18.93%** cadence error:
+
+| capture | `cost_p50` | % of budget | tail | cadence error |
+| --- | ---: | ---: | ---: | ---: |
+| `023514` | 12.943 ms | 78% | 1.044 | 18.93% |
+| `023655` | 12.928 ms | 78% | 1.054 | 14.77% |
+| `023836` | 12.948 ms | 78% | 1.040 | 15.38% |
+
+A *deliberate*, structural cost increase reproduces the full error. That is the
+manipulation the observational captures could not provide, and it is why this
+section claims causation where F13 could not.
+
+**Scoped precisely:** it shows emulation cost is *sufficient* to produce cadence
+error of this size. It does **not** show cost is the only contributor, nor that
+pacing contributes nothing — these captures cannot separate a pacing component
+riding along with the cost, and no measurement here attempts to.
+
+#### What this means
+
+**The between-session spread was never a property of the pacing code.** It is how
+much frame budget was left over, and it moved for two reasons this campaign was
+not tracking: which run-ahead depth the capture used, and how loaded the host was
+at the time. That also explains why the F13 A/B could not resolve a configuration
+difference — it was measuring a ~0.4-point effect inside a source of variance
+worth ten points.
+
+**Run-ahead 2 is structurally marginal on this host**: ~12.94 ms of a 16.639 ms
+budget, leaving ~3.7 ms for everything else. That is not a bug — run-ahead buys
+input latency with CPU time, and this is the price — but it is a real cost that
+was not written down, and it is directly relevant to a shudder reported *at
+run-ahead 1 and 2*.
+
+#### Limits, stated plainly
+
+- **`ra = 2` is n = 3, from one session.** The mechanism is clear and the tail
+  ratios rule out contention, but three captures is three captures.
+- This does **not** identify the maintainer's shudder. It explains the spread
+  between *these* captures. Whether their host has the same margin is unmeasured.
+- The 60% figure is a **separator observed in this data**, not a derived
+  threshold. The mechanism (deadline pressure) is continuous; do not read 60% as
+  a limit with physical meaning.
+- Pre-F16 captures cannot be proven to have had an on-screen window (see F16), so
+  each carries that unverifiable assumption.
+
+#### What to do with it
+
+Report budget utilisation where run-ahead is chosen, and treat `cost_p95`
+approaching the frame period as the leading indicator it evidently is. The
+existing perf gate already tracks `cost_p95`; what it lacked was the comparison
+against 16.639 ms that turns it into a margin.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as

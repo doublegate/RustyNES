@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import sys
 
 
@@ -171,9 +172,25 @@ def main() -> int:
     # gate above is: they measure the host, not the emulator.
     #
     #   - `cost_p95` legitimately scales with `run_ahead`, which multiplies
-    #     work by design: the shipped `run_ahead = 2` measures 13.9-21.9 ms
-    #     and is perfectly healthy, with ~0 drops and an exact console rate.
-    #     An absolute work ceiling would fail the shipped default forever.
+    #     work by design: the shipped `run_ahead = 2` measures 13.9-21.9 ms.
+    #     An absolute work ceiling would fail the shipped default forever, so
+    #     it stays reported rather than enforced.
+    #
+    #     This comment used to add "and is perfectly healthy, with ~0 drops and
+    #     an exact console rate". **v2.3.3 F17 contradicts that**, and the way it
+    #     is wrong is worth keeping: drops and console rate are exactly the two
+    #     metrics that cannot see a display-cadence failure. The wall clock is
+    #     the rate authority, so the console keeps perfect time regardless; and
+    #     `run_ahead = 2` measured 14.8-18.9% of frames shown for the wrong
+    #     duration in three captures whose cost tail ratio was 1.04, i.e. with no
+    #     host contention at all. "Healthy" was scoped to rate, and read as
+    #     scoped to everything.
+    #
+    #     So the utilisation is now REPORTED beside the raw number: 13.9 ms of a
+    #     16.639 ms NTSC frame is 84% of the budget, and F17 separates good from
+    #     bad captures at 60% with no overlap across 27 of them. Not a gate --
+    #     60% is a separator observed in that data, not a derived threshold --
+    #     but a reader comparing two captures should not have to do the division.
     #   - `produced_dropped` is a function of the DISPLAY: the same build on
     #     the same host drops 1-9 frames per 45 s under display-sync and
     #     35-131 under the wall-clock fallback. Gating it reports the user's
@@ -270,7 +287,7 @@ def main() -> int:
         failures.append(f"snap_forwards {snaps} > {args.max_snap_forwards}")
     if (
         args.max_cost_p95_ms is not None
-        and cost_p95 == cost_p95  # NaN-safe
+        and not math.isnan(cost_p95)
         and cost_p95 > args.max_cost_p95_ms
     ):
         failures.append(
@@ -328,10 +345,30 @@ def main() -> int:
     print(f"  rows={len(rows)} (analyzed {len(body)} after {args.warmup_rows} warmup)")
     print(f"  underruns={underruns}  produced_max={produced_max:.1f}ms  "
           f"catchup_bursts={catchup}  snap_forwards={snaps}")
-    print(f"  cost_p95={cost_p95:.2f}ms (emulation work)  produced_dropped={dropped}")
-    # Three states, not two: a pre-F16 log has no column, and reporting that as
-    # "VALID — window was on screen" would assert something never measured. The
-    # gate still passes it (see above), but it must not claim to have checked.
+    # v2.3.3 F17 — the frame period `cost_p95` is racing, taken from the log's
+    # own `target_ms` rather than hardcoded.
+    #
+    # The first version divided by 16.639 ms unconditionally and labelled the
+    # result "NTSC". A PAL or Dendy capture has `target_ms` = 19.997, so its
+    # utilisation was overstated by ~20% and mislabelled with a region it was not
+    # run in — a wrong number wearing a confident unit, which is the failure this
+    # whole document is about. Raised in review on PR #364.
+    #
+    # `target_ms` is written into the header by the frontend and is already read
+    # above for the rate gate. Absent or nonsensical, the utilisation is simply
+    # not reported: no budget, no percentage.
+    if target_ms > 0.0 and not math.isnan(cost_p95):
+        region = "NTSC" if abs(target_ms - 16.639) < 0.01 else "frame"
+        util = 100.0 * cost_p95 / target_ms
+        print(f"  cost_p95={cost_p95:.2f}ms (emulation work, {util:.0f}% of the "
+              f"{target_ms:.3f} ms {region} period)  produced_dropped={dropped}")
+    else:
+        print(f"  cost_p95={cost_p95:.2f}ms (emulation work; no target_ms in the "
+              f"header, so no budget share)  produced_dropped={dropped}")
+    # v2.3.3 F16 — three states, not two: a pre-F16 log has no column, and
+    # reporting that as "VALID — window was on screen" would assert something
+    # never measured. The gate still passes it (see above), but it must not claim
+    # to have checked.
     if not has_col:
         validity = "capture predates the column — validity UNKNOWN, not verified"
     elif discarded == 0:
