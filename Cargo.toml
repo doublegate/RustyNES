@@ -32,7 +32,20 @@ members = [
 default-members = ["crates/rustynes-libretro"]
 
 [workspace.package]
-version = "2.3.3"
+# Held at the SHIPPED release until the next version is actually cut.
+#
+# `release-auto.yml` treats "workspace version has no matching tag" as "this is
+# ready to release", which is correct when the bump lands in the release PR (the
+# convention module 70 describes: cut the version at the phase close). A bump
+# that arrives EARLY — as `0fcddf73`'s v2.3.3 renumber did, on a feature branch —
+# reaches `main` while the release does not exist, and the workflow then fails
+# closed on every push for want of release notes. It is right to fail closed;
+# the fix is not to leave `main` red for the whole development window.
+#
+# So: bump this as part of the release cut, together with the CHANGELOG's
+# `[Unreleased]` -> `[X.Y.Z]` rename and `rustynes_libretro.info`'s
+# `display_version`, and not before.
+version = "2.3.2"
 edition = "2024"
 rust-version = "1.96"
 license = "GPL-3.0-or-later"
