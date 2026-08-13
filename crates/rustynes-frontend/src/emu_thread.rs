@@ -40,7 +40,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -510,7 +510,12 @@ impl EmuThread {
         // producer consumes them, which is a different situation from the
         // occasional coalesced tick this depth was chosen for — and the two
         // were previously indistinguishable from outside.
-        if self.tick_tx.try_send(()).is_err() {
+        // Match `Full` specifically rather than testing `is_err()`:
+        // `TrySendError::Disconnected` is also an error, and would have counted
+        // thread teardown as a dropped tick. Harmless for the totals, but this
+        // counter exists to answer "are presents outrunning the producer", and
+        // an exiting thread is not evidence either way.
+        if matches!(self.tick_tx.try_send(()), Err(TrySendError::Full(()))) {
             self.control.note_tick_dropped();
         }
     }
