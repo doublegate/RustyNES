@@ -2361,7 +2361,7 @@ overwritten before anyone sees it. `PPU_SNAPSHOT_SLIM_FLAG` and
 `Nes::snapshot_core_into_slim` already omit it — built in F3/F4 for the rewind
 ring — and nothing else uses them. Free win, apparently.
 
-**Projected ~110 µs per restore. Measured 8.4 µs.**
+**Projected ~110 µs per restore. Measured 6.9 µs.**
 
 | bench | full | slim | saving |
 | --- | ---: | ---: | ---: |
