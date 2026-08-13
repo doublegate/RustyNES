@@ -186,7 +186,7 @@ def report(path: Path, warmup_s: float) -> int:
     present = [r for r in rows if r["event"] == "present" and float(r["t_s"]) >= warmup_s]
     if len(produce) < 10 or len(present) < 10:
         print(f"{path}: too few post-warmup events ({len(produce)} produce, "
-              f"{len(present)} present) — capture longer than {WARMUP_S:.0f}s")
+              f"{len(present)} present) — capture longer than {warmup_s:.0f}s")
         return 1
 
     print(f"\n=== {path.name}")
@@ -249,6 +249,8 @@ def main(argv: list[str]) -> int:
         "settles sooner should lower this rather than discard valid rows)",
     )
     args = ap.parse_args(argv[1:])
+    if args.warmup_s < 0 or not math.isfinite(args.warmup_s):
+        ap.error("--warmup-s must be a finite, non-negative number of seconds")
     rc = 0
     for a in args.traces:
         rc |= report(Path(a), args.warmup_s)

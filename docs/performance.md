@@ -1547,8 +1547,17 @@ each cost a build-and-measure cycle.
 | `rlock_*` | emulator-mutex blocking **on the winit thread** — the mirror of `wait_*`, which only ever covered the producer |
 | `trace-<rom>-<utc>.csv` | one row per produce and per present: interval, and `since_present` at each present. Env-gated (`RUSTYNES_FRAME_TRACE=1`), default off |
 | `scripts/perf/trace_shape.py` | lag-1 autocorrelation, consecutive-pair-sum cancellation, and refreshes-per-frame run lengths |
+| `rcpu` | the winit thread's own `CLOCK_THREAD_CPUTIME_ID` across the `rwork` span, so `rwork - rcpu` is time spent **off-CPU** rather than computing |
 
 `rwork` is now `rtot - rwait - rlock`, so it finally means work alone.
+
+`trace_shape.py` discards the first **8 s** of every trace by default — window
+mapping, shader compilation and the GPU's own P8→P0 clock ramp all produce
+present hiccups that say nothing about steady-state pacing. That figure is a
+heuristic tuned to the reporting host, not a constant: `--warmup-s N` overrides
+it, and a host that settles sooner should lower it rather than discard valid
+steady-state rows. Raising it past the capture length is reported as too-few-events,
+not silently as an empty result.
 
 #### Suspect A — the 25 ms tick watchdog: REFUTED
 
@@ -1858,7 +1867,7 @@ a floor, not a small delta, and is not in doubt.
 The first attempt at this comparison said the change made things **worse** —
 65.31% "exactly 2" before, 51.76% after. That was one capture per side, taken in
 different sessions, and it was wrong. Four consecutive captures of the fixed
-build alone spanned 51.76-62.59%, an 10.83-point spread, so a single before/after
+build alone spanned 51.76-62.59%, a 10.83-point spread, so a single before/after
 could not resolve the question in either direction.
 
 Redone properly: both binaries rebuilt from the two adjacent commits that differ
@@ -1873,10 +1882,30 @@ captures each, identical config, 40 s.
 | **B** — after the fix | 74.52% | 71.33% | 76.12% | 73.10% | **73.77%** |
 
 **+6.02 percentage points, and the ranges do not overlap** — A's best capture
-(69.36%) is below B's worst (71.33%). Every B beats every A. An exact
-permutation test over all 70 possible 4/4 splits gives a one-sided
-**p = 1/70 = 0.0143**, which is the smallest value attainable at this sample
-size: the observed split is the single most extreme arrangement of the data.
+(69.36%) is below B's worst (71.33%). Every B beats every A.
+
+**The statistics were first reported wrongly here, and the correction matters.**
+An unpaired permutation test over all 70 possible 4/4 splits gives
+p = 1/70 = 0.0143, and that is what this section originally quoted. It is the
+wrong test for this design. **Strict alternation is not randomisation**: every B
+ran immediately after an A, so run-order drift stays confounded with the change
+and the two groups are not exchangeable — which is precisely what the unpaired
+test assumes. The correct analysis is paired on adjacent A→B pairs:
+
+| pair | 1 | 2 | 3 | 4 |
+| --- | --- | --- | --- | --- |
+| B − A | +8.47 | +4.82 | +6.76 | +4.02 |
+
+All four differences are positive, mean +6.02; the exact sign-permutation test
+over all 2⁴ arrangements gives **p = 1/16 = 0.0625** — again the smallest value
+attainable, but at four pairs that is not conventional significance.
+
+The honest statement is therefore weaker than the first one: the effect is
+consistent in sign, consistent in magnitude, and **suggestive rather than
+established**. Settling it needs counterbalanced A→B and B→A blocks (or
+randomised order) with an order-bias control, which has not been run. Raised in
+review on PR #361. The `rlock` collapse and the double-replay fix are
+independent of this and stand on their own.
 
 Missed refreshes are ~0.2% in both arms of this session, against 4.60% measured
 in the earlier one — the host state differs enormously between sessions, which
@@ -1884,8 +1913,10 @@ is precisely why the blocked, cross-session comparison failed and the alternatin
 design was necessary. **That is the lesson worth keeping**: the ordering of the
 runs was doing more work than the change being measured.
 
-So the change is confirmed to improve the display cadence, by about six points
-of frames-shown-for-the-right-duration. It does **not** close the gap — 26% of
+So the change is *probably* an improvement of about six points of
+frames-shown-for-the-right-duration — consistent across four pairs but short of
+conventional significance, pending a counterbalanced design. It certainly does
+**not** close the gap — 26% of
 frames are still shown for the wrong length of time at the shipped default, so
 the shudder has a remaining cause that is not this one.
 
@@ -1916,14 +1947,47 @@ out of it — one level further down.
 
 The instrument that would settle it is a third split: compare
 `CLOCK_THREAD_CPUTIME_ID` against wall time across the span. Wall ≫ CPU means
-descheduled; wall ≈ CPU means real work. Not guessed at further — this
-campaign's record on unmeasured mechanisms is five falsified out of six.
+descheduled; wall ≈ CPU means real work.
+
+#### The deschedule probe — and the tail that was the measurement, not the program
+
+That instrument was built: `rcpu`, the winit thread's own CPU clock differenced
+across exactly the `rwork` span, so `rwork − rcpu` is time the thread was not
+running. Two 40 s captures of the same binary:
+
+| condition | `rwork` p99 | `rcpu` p99 | off-CPU |
+| --- | ---: | ---: | ---: |
+| idle host | 0.066 ms | 0.066 ms | ~0 |
+| 20 spinning threads | 0.069 ms | 0.061 ms | 0.008 ms |
+
+The idle row is also the instrument's own sanity check: on an unloaded host the
+two clocks should agree exactly, and they do to the reported precision. Under
+deliberate contention the gap opens — by 8 microseconds, three orders of
+magnitude short of the tail being chased.
+
+**Because the tail did not reproduce at all.** Neither condition showed anything
+near 9–32 ms. Going back to when the tail-bearing captures were taken, each of
+them ran while a `cargo build` was compiling on the same host. **The tail was an
+artefact of the measurement environment, not a property of the frontend** — the
+hypothesis under test (descheduling) turned out to be the right *class* of
+explanation while being wrong about the cause, since the deschedules were ones
+this campaign inflicted on itself.
+
+So the F8-corrected `rwork` p99 of 13.1–22.4 ms quoted earlier in this document,
+and the 9–32 ms figures above, should be read as contaminated. `rcpu` stays in
+the tree: it is cheap, and it is the check that distinguishes the two the next
+time a wall-clock tail appears. The operational rule it earns: **do not capture
+frontend pacing telemetry while a build is running**, and treat any wall-clock
+tail without a matching `rcpu` tail as environmental until proven otherwise.
+
+The genuine, uncontaminated finding of this section is unchanged and stands on
+its own instrument: `rlock` p95 8.707 ms → 0.000 ms.
 
 #### Standing
 
-Confirmed on both counts: it drives the metric it targets to zero (`rlock`), and
-it measurably improves the one that describes what the user sees (+6.02 points,
-non-overlapping ranges). It also removes a per-redraw mutex acquisition from the
+Confirmed on the metric it targets — `rlock` goes to zero — and *suggestive* on
+the one that describes what the user sees (+6.02 points, consistent in sign
+across four pairs, paired p = 0.0625, design not counterbalanced). It also removes a per-redraw mutex acquisition from the
 hot path and eliminates a double replay of every frame's debug logs, either of
 which would justify it independently.
 

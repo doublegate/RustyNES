@@ -46,6 +46,17 @@ cycle-accurate core later replaced.
   one row per produce and per present, with `scripts/perf/trace_shape.py` to
   classify its temporal shape. `rwork` is now `rtot - rwait - rlock`.
 
+  Later joined by **`rcpu`** — the winit thread's own `CLOCK_THREAD_CPUTIME_ID`
+  differenced across the `rwork` span, so `rwork - rcpu` is time the thread spent
+  off-CPU rather than computing. It was built to test whether the 9-32 ms `rwork`
+  tail was descheduling, and it showed wall and CPU **identical** on an idle host
+  and 8 us apart under 20 spinning threads — while **the tail did not reproduce
+  at all**. Every tail-bearing capture had been taken while a `cargo build` was
+  running: the tail was the measurement environment, not the frontend. `rcpu`
+  stays in the tree as the check that tells the two apart. Also
+  `scripts/perf/trace_shape.py --warmup-s N`, making the 8 s startup-transient
+  discard (a host-tuned heuristic) overridable instead of hard-coded.
+
   Measured on six 45 s SMB captures: the 25 ms tick watchdog **never fires** at
   the shipped `run_ahead = 2` (0 of ~1855 ticks) and drops no ticks, so its
   numeric coincidence with the 25-36 ms `produced` p95 was exactly that; and the
@@ -85,8 +96,10 @@ cycle-accurate core later replaced.
   binaries rebuilt from the two adjacent commits that differ only by this
   change, run **alternately** rather than in blocks, four captures each.
   Frames shown for the intended two refreshes go **67.75% → 73.77%**, ranges
-  non-overlapping (A's best 69.36% below B's worst 71.33%), exact permutation
-  p = 1/70 — the smallest attainable at this sample size. An earlier
+  non-overlapping (A's best 69.36% below B's worst 71.33%). The design was
+  strictly alternating, which is **not** randomisation — every B followed an A,
+  so the correct test is paired, giving **p = 0.0625**, suggestive rather than
+  established. (An unpaired p = 1/70 was quoted first and was the wrong test.) An earlier
   single-capture comparison suggested the opposite and was **confounded by run
   order**, not by the change. 26% of frames are still shown for the wrong
   duration, so the shudder has a remaining cause that is not this one.
