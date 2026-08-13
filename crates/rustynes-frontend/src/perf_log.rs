@@ -619,6 +619,10 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     // displaced by the run-ahead depth, which reads as the picture jumping
     // forward and back. No hold-duration column can show this.
     cols.push(("runahead_toggles", v.runahead_toggles.to_string()));
+    // F22 — the split. `toggles` says the throttle is churning; these say which
+    // arm, and the two have different causes and different fixes.
+    cols.push(("runahead_engages", v.runahead_engages.to_string()));
+    cols.push(("runahead_releases", v.runahead_releases.to_string()));
     // F16 — cumulative; difference successive rows for a rate. Nonzero means the
     // compositor is discarding this surface's frames, so the MEASURED refresh
     // never settles. That costs display-sync only when no DECLARED refresh is
@@ -911,6 +915,8 @@ mod tests {
             "tick_timeout",
             "tick_dropped",
             "runahead_toggles",
+            "runahead_engages",
+            "runahead_releases",
             "present_discarded",
             // audio health row
             "audio_queued_ms",
@@ -942,6 +948,8 @@ mod tests {
         let with_value = PerfView {
             present_discarded: 4321,
             runahead_toggles: 8765,
+            runahead_engages: 21,
+            runahead_releases: 34,
             ..PerfView::default()
         };
         let emitted = columns(&with_value)

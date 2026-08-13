@@ -719,6 +719,12 @@ pub struct PerfView {
     /// blind to it — the frames either side are each shown for exactly the right
     /// number of refreshes. Cumulative; difference successive rows for a rate.
     pub runahead_toggles: u64,
+    /// v2.3.3 F22 — of those toggles, how many REDUCED the depth.
+    pub runahead_engages: u64,
+    /// v2.3.3 F22 — of those toggles, how many RESTORED it. Engages and
+    /// releases have different causes, so the split is what makes the
+    /// oscillation diagnosable rather than merely visible.
+    pub runahead_releases: u64,
     /// v2.3.3 F16 — frames the compositor reported as **discarded**: composited
     /// but never scanned out (an occluded, minimized or otherwise unpresented
     /// surface).
