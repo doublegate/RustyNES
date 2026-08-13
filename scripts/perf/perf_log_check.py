@@ -346,7 +346,18 @@ def main() -> int:
     # mapping. An occluded window is not subtle — it discards EVERY frame, ~61
     # per second — so a rate threshold separates the two cleanly where a
     # non-zero test cannot.
-    disc_series = [col_float(r, "present_discarded") for r in body]
+    # Only rows that ACTUALLY carry the column. `col_float` maps a missing or
+    # unparseable cell to 0.0 by design -- which is right for a scalar read and
+    # wrong for a min/max range: a capture ends by killing the process, so the
+    # final row is routinely a partial write, and that synthetic 0.0 becomes the
+    # `min`. The delta then reads as the whole cumulative count instead of the
+    # post-warmup change, and an entirely healthy capture fails the gate as
+    # "occluded". Raised in review on PR #366.
+    disc_series = [
+        col_float(r, "present_discarded")
+        for r in body
+        if r.get("present_discarded") not in (None, "", "-")
+    ]
     discarded = int(max(disc_series, default=0.0) - min(disc_series, default=0.0))
     presents_in_window = max(len(body) - 1, 1) * 60.0  # rows are 1 Hz
     disc_rate = 100.0 * discarded / presents_in_window
