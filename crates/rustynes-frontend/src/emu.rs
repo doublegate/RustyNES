@@ -92,6 +92,18 @@ pub struct EmuHandle {
     inner: std::sync::Arc<std::sync::Mutex<EmuCore>>,
 }
 
+/// Hard cap on run-ahead depth, in frames.
+///
+/// One constant because two independent `3` literals are exactly what caused
+/// the defect they now both express: `update_runahead_throttle` predicted a
+/// depth the produce path would never run, because its cap and
+/// `effective_run_ahead`'s cap were separate literals that drifted. (PR #358
+/// review.)
+/// Native-only: both users (`effective_run_ahead`, `update_runahead_throttle`)
+/// are, and the wasm frontend has no run-ahead path.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_RUN_AHEAD_DEPTH: u32 = 3;
+
 impl EmuHandle {
     /// Wrap a fresh core in the shared handle.
     #[must_use]
@@ -737,7 +749,7 @@ impl EmuCore {
         if self.runahead_throttled || self.movie.status().mode != crate::movie_ui::MovieMode::Idle {
             return 0;
         }
-        configured.min(3)
+        configured.min(MAX_RUN_AHEAD_DEPTH)
     }
 
     /// v2.8.0 Phase 3 — run-ahead budget throttle with hysteresis, fed by
@@ -787,7 +799,7 @@ impl EmuCore {
             // against a 4x reality, leaving run-ahead throttled forever. The
             // comment this replaces asserted the value was "config-clamped",
             // which was simply not true. (PR #357 review, found post-merge.)
-            let bounded_depth = depth.min(3);
+            let bounded_depth = depth.min(MAX_RUN_AHEAD_DEPTH);
             let predicted_with_runahead =
                 produce_p50_ms * (f32::from(u8::try_from(bounded_depth).unwrap_or(3)) + 1.0);
             if predicted_with_runahead < target * 0.70 {

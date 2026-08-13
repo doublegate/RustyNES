@@ -96,6 +96,9 @@ const PRESENTATION_SAMPLES: usize = 24;
 /// bound if the estimator keeps refusing.
 const MAX_SAMPLES: usize = 240;
 
+/// Hard cap on retained scanout reports, mirroring `PerfStats`'s own trace cap.
+const MAX_SCANOUTS: usize = 1 << 20;
+
 /// Protocol version bound from the registry.
 ///
 /// Version 1 already carries `refresh` on the `presented` event, which is the
@@ -227,6 +230,8 @@ impl Dispatch<WpPresentationFeedback, ()> for State {
         // work that was composited and thrown away, invisible in every
         // present-side metric. Both are destructors handled by the protocol
         // layer.
+        // One `match` over both variants rather than an early-return plus an
+        // `if let`: the two arms are the same decision.
         if matches!(event, wp_presentation_feedback::Event::Discarded) {
             state.discarded = state.discarded.saturating_add(1);
             return;
@@ -242,7 +247,14 @@ impl Dispatch<WpPresentationFeedback, ()> for State {
             ..
         } = event
         {
-            if state.trace_scanout {
+            // Bounded exactly as `PerfStats::trace_event` bounds its own buffer,
+            // and for the same reason: the caller drains once per redraw, so
+            // steady-state occupancy is one or two records, but a caller that
+            // enables tracing and stops draining (a skipped poll, an early
+            // return in the redraw handler) must not grow this without limit.
+            // Dropping the newest keeps a gap at a known point rather than
+            // silently rebasing the window.
+            if state.trace_scanout && state.scanouts.len() < MAX_SCANOUTS {
                 // The protocol splits a 64-bit seconds count across two u32s
                 // (the interface predates 64-bit scalars). Join, then fold in
                 // the nanosecond remainder — in nanoseconds throughout, since

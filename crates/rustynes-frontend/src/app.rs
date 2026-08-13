@@ -5236,6 +5236,9 @@ impl App {
             self.ui
                 .set_status(StatusMessage::info("Step complete — paused".to_owned()));
         } else if step_still_pending && self.ui.paused {
+            // The step verb isn't satisfied yet: keep advancing frame-by-frame
+            // (the user is paused; this drives the step to completion without
+            // resuming free-running play).
             self.request_frame_advance();
         }
     }

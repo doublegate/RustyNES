@@ -110,7 +110,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="RustyNES perf-log regression gate")
     ap.add_argument("csv", help="path to a perf-logs/perf-*.csv capture")
     ap.add_argument("--max-underruns", type=int, default=0,
-                    help="max cumulative audio underruns at the LAST row (default 0)")
+                    help="max cumulative audio underruns over the analyzed rows (default 0)")
     ap.add_argument("--max-produced-ms", type=float, default=150.0,
                     help="max produced-frame interval ms over the run (default 150; a "
                          "coarse backstop -- the p99 gates below are the real signal)")
@@ -147,11 +147,11 @@ def main() -> int:
     # default of 200 let a run with 62 bursts, 12 underruns and a 128.9 ms peak
     # pass every threshold it tracked — the hole this gate exists to close.
     ap.add_argument("--max-catchup-bursts", type=int, default=16,
-                    help="max cumulative catch-up bursts at the LAST row (default 16; "
+                    help="max cumulative catch-up bursts over the analyzed rows (default 16; "
                          "healthy 0, degraded 32-62)")
     # Same derivation: healthy 0, borderline 2, degraded 12.
     ap.add_argument("--max-snap-forwards", type=int, default=8,
-                    help="max cumulative snap-forwards at the LAST row (default 8; "
+                    help="max cumulative snap-forwards over the analyzed rows (default 8; "
                          "healthy 0, degraded 12)")
     # THE signal the p99 gate was reaching for and missed. `cost_*` is the
     # emulator's own work per displayed frame, with the pacer's sleep excluded —
@@ -240,7 +240,15 @@ def main() -> int:
         if "cost_p95_ms" in header
         else float("nan")
     )
-    dropped = int(col_float(last, "produced_dropped")) if "produced_dropped" in header else 0
+    # Cumulative and monotonic like the three above, so read it the same way —
+    # from the maximum across the analysed rows, not from a final row that a
+    # mid-write kill routinely leaves short. Missing entirely in archived
+    # captures taken before the column existed, hence the header guard.
+    dropped = (
+        max(int(col_float(r, "produced_dropped")) for r in body)
+        if "produced_dropped" in header
+        else 0
+    )
 
     failures: list[str] = []
     if underruns > args.max_underruns:

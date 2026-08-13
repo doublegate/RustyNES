@@ -22,11 +22,18 @@ Usage
 -----
     scripts/perf/trace_shape.py perf-logs/trace-<rom>-<utc>.csv [...]
 
-Input columns: ``t_s,event,interval_ms,since_present``.
+Input columns: ``t_s,event,interval_ms,since_present[,flags]``.
+
+``scanout`` rows carry the COMPOSITOR's own presentation timestamps, in the
+clock its ``clock_id`` event names. They become comparable to the
+``produce``/``present`` rows only through the ``# anchor_mono_ns`` header line;
+without it the two halves are separate series and this script says so rather
+than joining them wrongly.
 """
 
 from __future__ import annotations
 
+import bisect
 import csv
 import math
 import statistics
@@ -107,9 +114,63 @@ def pct(xs: list[float], q: float) -> float:
     return s[i]
 
 
+def read_anchor(path: Path) -> float | None:
+    """Seconds to add to a ``t_s`` to reach the compositor's clock domain."""
+    with path.open() as fh:
+        for ln in fh:
+            if not ln.startswith("#"):
+                return None
+            if "anchor_mono_ns" in ln and "none" not in ln:
+                try:
+                    return int(ln.split("=", 1)[1].strip()) / 1e9
+                except ValueError:
+                    return None
+    return None
+
+
+def scanout_report(path: Path, rows: list[dict], offset: float | None) -> None:
+    """Scanouts per produced frame — what the DISPLAY actually showed.
+
+    At divisor N the intended answer is exactly N for every frame. Anything else
+    is a frame held for the wrong length of time, which is what the eye reads as
+    judder. Requires the anchor: without it the two series are in different
+    clock domains and cannot be joined (see v2.3.3 F10, where exactly that
+    mistake invalidated a published result).
+    """
+    sc = sorted(float(r["t_s"]) for r in rows if r["event"] == "scanout")
+    if not sc:
+        return
+    print(f"\n  [scanout] {len(sc)} compositor-reported presentations")
+    iv = [(b - a) * 1000.0 for a, b in zip(sc, sc[1:])]
+    if iv:
+        med = statistics.median(iv)
+        q = Counter(max(1, round(x / med)) for x in iv)
+        total_refreshes = sum(k * v for k, v in q.items())
+        missed = sum(v * (k - 1) for k, v in q.items())
+        print(f"    median interval {med:.4f} ms  ->  {1000.0 / med:.3f} scanouts/s")
+        print(f"    MISSED refreshes (display repeated the previous image): "
+              f"{missed} = {100.0 * missed / max(total_refreshes, 1):.2f}%")
+    if offset is None:
+        print("    (no anchor_mono_ns header — cannot join to produced frames)")
+        return
+    pr = sorted(float(r["t_s"]) + offset for r in rows if r["event"] == "produce")
+    lo, hi = sc[0] + WARMUP_S, min(sc[-1], pr[-1] if pr else sc[-1])
+    pr = [t for t in pr if lo <= t <= hi]
+    sc = [t for t in sc if lo <= t <= hi]
+    if len(pr) < 10:
+        return
+    hold: Counter = Counter()
+    for a, b in zip(pr, pr[1:]):
+        hold[bisect.bisect_left(sc, b) - bisect.bisect_left(sc, a)] += 1
+    tot = sum(hold.values()) or 1
+    print("    scanouts per produced frame (divisor N ideal = exactly N):")
+    for k in sorted(hold):
+        print(f"      {k}: {hold[k]:6}  {100.0 * hold[k] / tot:6.2f}%")
+
+
 def report(path: Path) -> int:
     with path.open() as fh:
-        rows = list(csv.DictReader(fh))
+        rows = [r for r in csv.DictReader(ln for ln in fh if not ln.startswith("#"))]
     if not rows:
         print(f"{path}: empty trace")
         return 1
@@ -163,6 +224,7 @@ def report(path: Path) -> int:
         print(f"    since_present={k:<3} {hist[k]:6}  {100.0 * hist[k] / total:5.1f}%")
     rl = runs(sp)
     print(f"    run-length histogram : {dict(sorted(rl.items()))}")
+    scanout_report(path, rows, read_anchor(path))
     return 0
 
 
