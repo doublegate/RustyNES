@@ -51,12 +51,17 @@ cycle-accurate core later replaced.
   numeric coincidence with the 25-36 ms `produced` p95 was exactly that; and the
   winit thread does **not** block on the emulator mutex there (`rlock` p99 =
   0.000 ms), so the 13 ms `rwork` p99 is neither lock, nor egui, nor GPU, and
-  stays unattributed. What the trace *does* show is a **ragged
-  refreshes-per-frame cadence** — 3.1-5.6% of runs break the clean divisor-2
-  alternation, with runs up to 15 — which the existing `presented_dups` counter
-  structurally cannot see. Recorded as an observation, **not** a diagnosis: no
-  fix is proposed and the shudder remains unexplained. See
-  `docs/performance.md` v2.3.3 F10.
+  stays unattributed. A **ragged refreshes-per-frame cadence** was then measured
+  and, on further investigation, **disqualified as mis-measured**: present
+  intervals are bimodal (31.8% under 1 ms, 38.9% at 12-16.7 ms, only 1.9% near
+  one refresh), which is the known triple-buffered-Fifo signature — so
+  `record_presented` timestamps *queue submission*, not scanout, and any cadence
+  derived from it counts queue slots rather than refreshes on screen. The
+  shudder remains **unexplained**; this round removed two candidates and
+  disqualified a third line of evidence. Next instrument identified:
+  `wp_presentation`'s `presented` event already delivers real scanout
+  timestamps, which the handler currently discards. See `docs/performance.md`
+  v2.3.3 F10.
 
 ### Changed
 

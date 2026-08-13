@@ -1610,20 +1610,73 @@ A run of 15 means fifteen consecutive presents where the alternation broke — a
 frame held across many refreshes, or the producer briefly tracking the present
 rate. Roughly four such events per second.
 
-#### What this does and does not establish
+#### The raggedness is measured in the WRONG UNIT — corrected
 
-It establishes that the **mapping of produced frames onto refreshes is
-measurably uneven**, in a way `presented_dups` cannot show (it folds the pattern
-into one total, so a clean `2,2,2,2` and a ragged `1,3,2,2,1,3` are identical to
-it). That unevenness has the shape the report describes — content stepping
-forward and back rather than a smooth glide.
+Pushed further, the above does **not** establish uneven delivery, and the
+correction matters more than the original observation.
 
-It does **not** establish that this is the shudder, and no fix is proposed here.
-Six mechanisms have now been advanced in this campaign and five falsified; a
-seventh is not being claimed on a correlation with a symptom description. The
-open questions are (a) what produces the ragged runs, and (b) what the
-unattributed 13 ms `rwork` p99 at `run_ahead = 2` consists of, given it is
-neither lock, nor UI, nor GPU.
+Per-frame **hold times** (how many presents each produced frame occupied) look
+alarming — aggregated over the six captures, `{1: 1634, 2: 11087, 3: 190,
+4: 3}`, i.e. **11.5% of frames occupy a single present instead of two**, with
+zero produced frames ever dropped. But the mean hold is 1.83-1.95, and a correct
+cadence on this panel requires exactly `16.6393 / 8.3340 = 1.9966`. The
+arithmetic does not close, which is what forced a look at the present intervals
+themselves:
+
+| present interval | share |
+| --- | --- |
+| < 1 ms | **31.8%** |
+| 1-2 ms | 9.2% |
+| 2-7.5 ms | 7.6% |
+| **7.5-9.5 ms (≈ one refresh)** | **1.9%** |
+| 9.5-12 ms | 4.8% |
+| **12-16.7 ms** | **38.9%** |
+| > 16.7 ms | 5.8% |
+
+Presents are **not quantised to the refresh grid at all**: barely 2% land near
+one refresh period, while a third arrive under a millisecond apart and another
+third after roughly two. Verified as the Fifo steady state, not a startup
+artefact — `Mailbox` appears only in row 0 of every capture and `Fifo` from 1 s
+onward, well before the 8 s warmup the analysis discards.
+
+**That bimodal shape is the expected signature of triple-buffered Fifo, and F8
+already documented it**: two presents return immediately from spare swapchain
+images, the third blocks a full refresh pair. Which means `record_presented`
+timestamps the moment an image is **queued**, not the moment it is **scanned
+out**. Under this present mode those are different clocks, and submission
+bursts while scanout stays regular.
+
+So the hold-time metric counts **queue slots, not refreshes on screen**. It
+cannot answer what the eye sees, and the "3.1-5.6% ragged runs" figure above is
+a statement about submission timing, not about display cadence. It is retained
+rather than deleted because it was published in this document and acted on.
+
+#### What is actually established
+
+- Suspect A (the 25 ms watchdog) is **refuted**: 0 fires in ~1855 ticks at the
+  shipped default.
+- Suspect B (winit-thread lock blocking) is **refuted at the shipped default**:
+  `rlock` p99 = 0.000 ms.
+- The `produce` interval tail is **isolated excursions, not alternation**
+  (lag-1 −0.07..−0.12) — this one is a genuine result about the producer and
+  does not depend on the present clock.
+- No produced frame is ever dropped (`drops = 0` in all six captures).
+- The 13 ms `rwork` p99 at `run_ahead = 2` is neither lock, nor UI, nor GPU, and
+  remains unattributed.
+
+The shudder is **still unexplained**, and this round did not get closer to it —
+it removed two candidates and disqualified a third line of evidence as
+mis-measured.
+
+#### The next instrument is already 90% built
+
+Answering "what did the display actually show" needs real scanout timestamps.
+`wp_presentation`'s `presented` event carries them — `tv_sec_hi`, `tv_sec_lo`,
+`tv_nsec` — and `wayland_presentation.rs` already binds the protocol, receives
+that event, and **destructures only `refresh`, discarding the timestamps**.
+Recording them would give the true per-frame scanout cadence directly from the
+compositor, in the one unit that answers the question. That is the obvious next
+step and it is a small one.
 
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
