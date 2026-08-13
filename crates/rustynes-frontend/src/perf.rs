@@ -725,6 +725,16 @@ pub struct PerfView {
     /// releases have different causes, so the split is what makes the
     /// oscillation diagnosable rather than merely visible.
     pub runahead_releases: u64,
+    /// v2.3.3 F23 — measured median cost at the last engage, ms.
+    pub thr_engage_cost_ms: f32,
+    /// v2.3.3 F23 — measured median cost at the last release, ms.
+    pub thr_release_cost_ms: f32,
+    /// v2.3.3 F23 — predicted one-depth-up cost the last release accepted, ms.
+    ///
+    /// Together these say whether the two throttle arms are judging the same
+    /// quantity. Near-identical engage/release measured costs with a predicted
+    /// value under the release band means one cost is producing two verdicts.
+    pub thr_release_pred_ms: f32,
     /// v2.3.3 F16 — frames the compositor reported as **discarded**: composited
     /// but never scanned out (an occluded, minimized or otherwise unpresented
     /// surface).

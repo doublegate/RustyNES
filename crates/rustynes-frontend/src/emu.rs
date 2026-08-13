@@ -568,6 +568,27 @@ pub struct EmuCore {
     /// v2.3.3 F22 — depth changes that RESTORED run-ahead (the release arm).
     /// See [`Self::runahead_engages`].
     pub runahead_releases: u64,
+    /// v2.3.3 F23 — the MEASURED median cost, ms, when the engage arm last fired.
+    ///
+    /// F22 established the oscillation alternates (3 engages / 2 releases,
+    /// identical across three captures — deterministic, not noise). Alternation
+    /// that survives a 20-point band and a four-window debounce says the two
+    /// arms are not testing the same quantity: engage compares the MEASURED
+    /// median at the current depth, release compares a PREDICTED cost one depth
+    /// up. A band between two different quantities is not hysteresis.
+    ///
+    /// These three fields record what each arm actually saw, so that stops being
+    /// an inference. If `engage_cost` and `release_cost` are near-identical while
+    /// `release_pred` sits under the release band, the prediction is turning one
+    /// cost into two verdicts and the arms need a common quantity — not a wider
+    /// gap between them.
+    pub thr_engage_cost_ms: f32,
+    /// v2.3.3 F23 — the MEASURED median cost, ms, when the release arm last
+    /// fired. See [`Self::thr_engage_cost_ms`].
+    pub thr_release_cost_ms: f32,
+    /// v2.3.3 F23 — the PREDICTED one-depth-up cost, ms, that the release arm
+    /// accepted. See [`Self::thr_engage_cost_ms`].
+    pub thr_release_pred_ms: f32,
     /// SHA-256 of the loaded FDS disk (keys the `.fds.sav` sidecar).
     #[cfg(not(target_arch = "wasm32"))]
     pub fds_disk_sha256: Option<[u8; 32]>,
@@ -674,6 +695,9 @@ impl EmuCore {
             throttle_frames_since_change: 0,
             runahead_engages: 0,
             runahead_releases: 0,
+            thr_engage_cost_ms: 0.0,
+            thr_release_cost_ms: 0.0,
+            thr_release_pred_ms: 0.0,
             #[cfg(not(target_arch = "wasm32"))]
             fds_disk_sha256: None,
             #[cfg(feature = "scripting")]
@@ -898,6 +922,7 @@ impl EmuCore {
             self.runahead_throttle_toggles += 1;
             self.throttle_frames_since_change = 0;
             self.runahead_engages += 1;
+            self.thr_engage_cost_ms = produce_p50_ms;
             let now_at = bounded.saturating_sub(self.runahead_throttle_steps);
             eprintln!(
                 "rustynes: median produce cost {produce_p50_ms:.2} ms is too close to the \
@@ -944,6 +969,8 @@ impl EmuCore {
                 self.runahead_throttle_toggles += 1;
                 self.throttle_frames_since_change = 0;
                 self.runahead_releases += 1;
+                self.thr_release_cost_ms = produce_p50_ms;
+                self.thr_release_pred_ms = predicted_one_more;
                 self.runahead_throttle_steps -= 1;
                 self.runahead_throttled = self.runahead_throttle_steps > 0;
                 let now_at = bounded.saturating_sub(self.runahead_throttle_steps);
