@@ -2078,10 +2078,11 @@ it looked like a result.
   as F13 already recorded).
 - **Overturned:** F13's display-side conclusion. At p = 0.25 with two of four
   pairs reversed, the fix cannot be said to have moved what the panel shows.
-- **Overturned:** the claim that display cadence is the shudder's main remaining
-  cause. At ~98% correct on the shipped default in that session, it is too small
-  to be the primary one — though at 8.6-18.9% in the earlier sessions it is not
-  negligible either, and the between-session spread is now the larger puzzle.
+- **Left open, in both directions:** whether display cadence is the shudder's
+  main remaining cause. F12 and F13 asserted it on numbers that were wrong; the
+  corrected numbers do not settle it either way, because the sessions disagree
+  by an order of magnitude (0.69-3.08% against 8.6-18.9%). Neither "it is the
+  cause" nor "it is not" is supported.
 - **Not overturned:** `rlock` p95 8.707 -> 0.000 ms, and the removal of a double
   debug-log replay. Both are direct measurements of what the change removes.
 - **Not overturned:** the F12 chain up to and including the lock contention. Only
@@ -2125,13 +2126,31 @@ survived. Recorded because a refuted mechanism is a result:
   something else. Verified in both directions: a 60 s corrupted anchor is
   refused, an intact one reports a 13 ms skew over 39 s.
 
-#### Where this leaves the campaign
+#### Where this leaves the campaign — UNRESOLVED
 
-Display cadence is not the remaining defect. On the shipped default the panel
-shows ~99% of frames for exactly the right duration, and the ~1% that it does
-not is roughly one hitch per second — visible, worth fixing, but a smaller and
-different problem than the one F12 and F13 described. The next instrument should
-target what happens to the ~1%, not the cadence as a whole.
+The honest position is that **nothing here is settled**, and it is worth being
+explicit about what the corrected numbers do and do not license.
+
+They do **not** establish that the fix improved the display: p = 0.25 with two of
+four pairs reversed is a null result, not a small positive one.
+
+They also do **not** establish that display cadence is fine and the cause lies
+elsewhere. A null A/B says the *configuration difference* was not resolved by
+these captures; it says nothing about the absolute level. And the absolute level
+is not uniformly small — it is 0.69-3.08% in the A/B session but **8.6-18.9% in
+the earlier ones, on the same binary pair**. At 18.9% roughly one frame in five
+is shown for the wrong duration, which is not a residual.
+
+That between-session spread is the largest unexplained quantity in this
+document, and it dwarfs everything the A/B was trying to resolve: a
+configuration difference that cannot beat p = 0.25 sits inside a session-to-
+session difference of an order of magnitude. Until it is explained, "display
+cadence is not the problem" and "display cadence is the problem" are both
+unsupported — the sessions disagree, and no measurement here says why.
+
+The next instrument should therefore ask **what differs between sessions**, not
+push further on the A/B, which is underpowered against a source of variance this
+large.
 
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 

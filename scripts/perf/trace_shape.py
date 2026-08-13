@@ -172,6 +172,21 @@ def join_is_sound(
     lo_s, hi_s = scanout_abs[0] - offset, scanout_abs[-1] - offset
     span = max(hi_p - lo_p, 1e-9)
     skew = max(abs(lo_s - lo_p), abs(hi_s - hi_p))
+    # Endpoint skew ALONE is not sufficient, and the `+ 1.0` slack is what makes
+    # it insufficient: two intervals can both sit inside that tolerance while
+    # sharing no time at all. Produce over 0.000-0.150 s and shifted scanouts
+    # over 0.900-1.050 s have a skew of 0.9 s, pass `0.05 * span + 1.0`, and are
+    # completely disjoint — every joined sample would then pair a produce with a
+    # scanout that happened at a different moment. Require actual INTERSECTION,
+    # which is the property the join needs and the one the skew test only
+    # approximates. Raised in review on PR #362.
+    overlap = min(hi_p, hi_s) - max(lo_p, lo_s)
+    if overlap < 0.5 * span:
+        return False, (
+            f"clock domains do not overlap enough: produce spans "
+            f"{lo_p:.3f}-{hi_p:.3f} s, shifted scanouts span {lo_s:.3f}-{hi_s:.3f} s "
+            f"(intersection {max(overlap, 0.0):.3f} s of a {span:.3f} s produce span)"
+        )
     if skew > 0.05 * span + 1.0:
         return False, (
             f"clock domains disagree: produce spans {lo_p:.3f}-{hi_p:.3f} s, "
@@ -218,10 +233,7 @@ def display_cadence(rows: list[dict], warmup_s: float) -> None:
     sp = [
         int(r["since_present"])
         for r in rows
-        if r["event"] == "present"
-        and r["since_present"] is not None
-        and r["t_s"] is not None
-        and float(r["t_s"]) >= warmup_s
+        if r["event"] == "present" and float(r["t_s"]) >= warmup_s
     ]
     # Index of every present that carried at least one new frame; the gaps
     # between them are the per-frame display durations, in refreshes.
@@ -317,10 +329,27 @@ def scanouts_per_produce(
 
 def report(path: Path, warmup_s: float) -> int:
     with path.open() as fh:
-        rows = [r for r in csv.DictReader(ln for ln in fh if not ln.startswith("#"))]
+        raw = list(csv.DictReader(ln for ln in fh if not ln.startswith("#")))
+    # Drop incomplete rows ONCE, here, rather than guarding each metric
+    # separately. A capture ends by killing the process, so the final line is
+    # routinely a partial write and `DictReader` fills its missing fields with
+    # `None`; a local guard in one function still leaves every other numeric
+    # conversion in this script to raise `TypeError` on it. Raised in review on
+    # PR #362 after exactly that happened.
+    rows = [
+        r
+        for r in raw
+        if r.get("t_s") is not None
+        and r.get("event") is not None
+        and r.get("interval_ms") is not None
+        and r.get("since_present") is not None
+    ]
     if not rows:
         print(f"{path}: empty trace")
         return 1
+    if len(rows) < len(raw):
+        print(f"  (dropped {len(raw) - len(rows)} incomplete row(s) — "
+              "expected when a capture is ended by killing the process)")
 
     produce = [r for r in rows if r["event"] == "produce" and float(r["t_s"]) >= warmup_s]
     present = [r for r in rows if r["event"] == "present" and float(r["t_s"]) >= warmup_s]

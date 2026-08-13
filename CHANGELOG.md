@@ -85,6 +85,9 @@ cycle-accurate core later replaced.
   `scripts/perf/trace_shape.py --warmup-s N`, making the 8 s startup-transient
   discard (a host-tuned heuristic) overridable instead of hard-coded.
 
+  **Superseded in part by F14 (below): the display-side claims in this entry and
+  the next were computed with a producer-side metric and are retracted.**
+
   Measured on six 45 s SMB captures: the 25 ms tick watchdog **never fires** at
   the shipped `run_ahead = 2` (0 of ~1855 ticks) and drops no ticks, so its
   numeric coincidence with the 25-36 ms `produced` p95 was exactly that; and the
@@ -120,17 +123,20 @@ cycle-accurate core later replaced.
   holds — which also fixes a second defect: at divisor 2 there are two redraws
   per produced frame, so the old placement replayed each frame's debug logs
   **twice**. `rlock` p95/p99 go **8.707/9.008 ms → 0.000/0.000 ms**. It also
-  measurably improves what the display shows, confirmed by a proper A/B: both
+  improves **producer-interval regularity**, confirmed by an A/B with both
   binaries rebuilt from the two adjacent commits that differ only by this
-  change, run **alternately** rather than in blocks, four captures each.
-  Frames shown for the intended two refreshes go **67.75% → 73.77%**, ranges
-  non-overlapping (A's best 69.36% below B's worst 71.33%). The design was
-  strictly alternating, which is **not** randomisation — every B followed an A,
-  so the correct test is paired, giving **p = 0.0625**, suggestive rather than
-  established. (An unpaired p = 1/70 was quoted first and was the wrong test.) An earlier
-  single-capture comparison suggested the opposite and was **confounded by run
-  order**, not by the change. 26% of frames are still shown for the wrong
-  duration, so the shudder has a remaining cause that is not this one.
+  change, run **alternately** rather than in blocks, four captures each:
+  produce intervals spanning exactly two refreshes go **67.75% → 73.77%**, ranges
+  non-overlapping. Alternation is **not** randomisation, so the correct test is
+  paired, giving **p = 0.0625** — suggestive, not established.
+
+  **What this does NOT show (see F14 below).** That 67.75 → 73.77% is a
+  **producer-side** statistic, not a display one: it counts refreshes between
+  consecutive *produce* timestamps. Re-run on the display-side metric the same
+  eight captures give **p = 0.25 with two of four pairs reversed**, so the
+  change's effect on what the panel shows is **not established in either
+  direction**. Every display-side figure originally published for this change is
+  retracted. The `rlock` collapse above is a direct measurement and stands.
 
 ### Changed
 
