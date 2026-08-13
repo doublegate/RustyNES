@@ -589,6 +589,10 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     cols.push(("tick_ok", v.tick_ok.to_string()));
     cols.push(("tick_timeout", v.tick_timeout.to_string()));
     cols.push(("tick_dropped", v.tick_dropped.to_string()));
+    // F16 — nonzero means the compositor is discarding this surface's frames,
+    // which is why the refresh estimate never settles and display-sync never
+    // engages. It belongs in the log because the failure is otherwise silent.
+    cols.push(("present_discarded", v.present_discarded.to_string()));
     cols.push(("audio_queued_ms", format!("{:.2}", v.audio.queued_ms())));
     cols.push(("audio_queued_samples", v.audio.queued_samples.to_string()));
     cols.push(("audio_sample_rate", v.audio.sample_rate.to_string()));
@@ -873,6 +877,7 @@ mod tests {
             "tick_ok",
             "tick_timeout",
             "tick_dropped",
+            "present_discarded",
             // audio health row
             "audio_queued_ms",
             "audio_queued_samples",

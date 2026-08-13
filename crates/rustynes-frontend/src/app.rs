@@ -7173,6 +7173,14 @@ impl App {
         perf_view.render_work = r.work;
         perf_view.render_lock = r.lock;
         perf_view.render_cpu = r.cpu;
+        // F16 — how many frames the compositor composited but never scanned
+        // out. Zero on a healthy session; a rising count is why display-sync
+        // did not engage, and it is the only signal that distinguishes "this
+        // compositor reports no refresh" from "this window is not being shown".
+        perf_view.present_discarded = self
+            .presentation_clock
+            .as_ref()
+            .map_or(0, crate::presentation_clock::PresentationClock::discarded);
         // Only the `emu-thread` half is conditional here — the function itself
         // already carries the target gate.
         #[cfg(feature = "emu-thread")]

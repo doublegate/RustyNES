@@ -2152,6 +2152,64 @@ The next instrument should therefore ask **what differs between sessions**, not
 push further on the A/B, which is underpowered against a source of variance this
 large.
 
+### v2.3.3 F16 — a silent wall-clock fallback, and a counter nobody read
+
+Found while trying to VERIFY F15's instrument, which is the only reason it was
+found at all: five of six launches produced all-zero readings, and the reason
+turned out to be more interesting than the instrument.
+
+**Display-sync never engaged in those sessions.** `pacing` stayed `wallclock`,
+`present_mode` stayed `Mailbox`, `refresh_source` stayed `none` — for the whole
+run, every run. The stakes are already on record earlier in this document: the
+wall-clock pacer dropped **61-147 frames per 45 s** where display-sync dropped
+**6-15**.
+
+#### The mechanism, measured
+
+`wp_presentation` bound correctly and its `clock_id = 1` event arrived, so the
+protocol was live. But **zero `presented` reports ever came back**. The refresh
+estimator needs `PRESENTATION_SAMPLES` = 24 of them before it can answer, and
+`resolve_pacing` has only two possible sources: a *declared* refresh from
+`current_monitor()` — which is `None` on this compositor, it advertises no
+`wl_output` — and the *measured* one. Neither, so `refresh_hz` is `None` and
+display-sync cannot engage.
+
+What arrives instead is `discarded`: composited, never scanned out. Measured on a
+backgrounded window, `present_discarded` climbs by ~61 per second — **every
+frame** — for the whole session.
+
+#### The counter existed and was read by nobody
+
+`PresentationClock::discarded()` has been there since scanout tracing landed, with
+a doc comment, cumulative and correct. Nothing called it. So the entire failure
+was invisible: a user whose display-sync silently never engages had no number
+anywhere that said why, and neither did this campaign until it tripped over it.
+
+It is now surfaced as `PerfView::present_discarded` and a `present_discarded`
+column in the perf log. **A diagnostic that is never surfaced is not a
+diagnostic** — that is the whole content of this entry, and it cost five wasted
+verification captures to notice.
+
+#### What this does NOT establish
+
+Two corrections to the hypothesis this started from, both against my own first
+reading:
+
+- **It is not "sticky".** The first framing was that display-sync degrades and
+  never recovers. `settled` is set **only on success**, so `request_feedback` and
+  `poll` keep issuing indefinitely and the regime should engage as soon as 24
+  `presented` reports accumulate. Recovery after an occlusion ends is therefore
+  expected by construction — **but it has not been tested**, and "expected by
+  construction" is exactly the kind of claim this campaign has had to retract
+  three times already.
+- **It is probably not the maintainer's shudder.** An occluded window is not a
+  use case. This matters if a session *starts* occluded, or if a real transient
+  occlusion during play leaves the regime wrong for longer than it should. Absent
+  evidence of either, it should not be promoted to a cause.
+
+The value delivered is narrower than a fix and worth having anyway: a failure
+that was completely silent now reports itself.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as

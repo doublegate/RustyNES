@@ -653,6 +653,22 @@ pub struct PerfView {
     pub tick_timeout: u64,
     /// Present ticks dropped on a full depth-1 channel. See [`Self::tick_ok`].
     pub tick_dropped: u64,
+    /// v2.3.3 F16 — frames the compositor reported as **discarded**: composited
+    /// but never scanned out (an occluded, minimized or otherwise unpresented
+    /// surface).
+    ///
+    /// Surfaced because its absence made a real failure completely silent. The
+    /// refresh estimator needs 24 `presented` reports before display-sync can
+    /// engage; if the compositor answers every feedback request with `discarded`
+    /// instead, that count is never reached, `refresh_source` stays `none`, and
+    /// pacing stays on the wall-clock fallback **for the whole session** with
+    /// nothing anywhere saying why. Measured in this campaign: 5 of 6 launches
+    /// never engaged display-sync, and the stakes are on record — wall-clock
+    /// dropped 61-147 frames per 45 s where display-sync dropped 6-15.
+    ///
+    /// The counter existed in `PresentationClock` from the start and was read by
+    /// nobody. A diagnostic that is never surfaced is not a diagnostic.
+    pub present_discarded: u64,
     /// v2.3.3 — whole redraw handler cost (winit thread). See [`RenderPerf`].
     pub render_total: IntervalStats,
     /// See [`PerfStats::catchup_bursts`].
