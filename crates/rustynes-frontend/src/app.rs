@@ -7075,6 +7075,43 @@ impl App {
         self.perf_logger.set_trace_anchor(anchor, clk);
     }
 
+    /// v2.3.3 — this thread's consumed CPU time in nanoseconds
+    /// (`CLOCK_THREAD_CPUTIME_ID`), or `None` where unavailable.
+    ///
+    /// The instrument that separates WORK from DESCHEDULING. `rwork` is wall
+    /// time, so a redraw that sat 27 ms off-CPU and one that computed for 27 ms
+    /// are identical to it — the same ambiguity `rtot` carried before F8 split
+    /// `rwait` out of it, one level down. Differencing this across the same
+    /// span gives the CPU time actually consumed: wall ≫ CPU means the thread
+    /// was descheduled, wall ≈ CPU means real computation.
+    #[cfg(all(not(target_arch = "wasm32"), unix, feature = "emu-thread"))]
+    fn thread_cpu_now_ns() -> Option<u64> {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: identical contract to `monotonic_now_ns` — `clock_gettime`
+        // writes only through the supplied pointer, which is a live,
+        // correctly-typed, stack-allocated `timespec` owned here for the call.
+        // `CLOCK_THREAD_CPUTIME_ID` is POSIX and available on Linux. The return
+        // value is checked.
+        #[allow(unsafe_code)]
+        let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &raw mut ts) };
+        if rc != 0 {
+            return None;
+        }
+        u64::try_from(ts.tv_sec)
+            .ok()?
+            .checked_mul(1_000_000_000)?
+            .checked_add(u64::try_from(ts.tv_nsec).ok()?)
+    }
+
+    /// No thread-CPU clock available; the work/deschedule split is not reported.
+    #[cfg(all(not(target_arch = "wasm32"), not(all(unix, feature = "emu-thread"))))]
+    const fn thread_cpu_now_ns() -> Option<u64> {
+        None
+    }
+
     /// v2.3.3 — `CLOCK_MONOTONIC` in nanoseconds, or `None` where unavailable.
     ///
     /// The anchor that lets the per-frame trace's produce/present rows be compared
@@ -7135,6 +7172,7 @@ impl App {
         perf_view.render_wait = r.wait;
         perf_view.render_work = r.work;
         perf_view.render_lock = r.lock;
+        perf_view.render_cpu = r.cpu;
         // Only the `emu-thread` half is conditional here — the function itself
         // already carries the target gate.
         #[cfg(feature = "emu-thread")]
@@ -9097,6 +9135,12 @@ impl ApplicationHandler<AppEvent> for App {
                 // present — the Ok arm — so a skipped/early-returned redraw is
                 // not counted as a presented frame.)
                 let redraw_signal = Instant::now();
+                // v2.3.3 — CPU time at the same instant, so the `rwork` span can
+                // be split into computation vs time spent off-CPU.
+                #[cfg(not(target_arch = "wasm32"))]
+                let cpu_at_signal = Self::thread_cpu_now_ns();
+                #[cfg(not(target_arch = "wasm32"))]
+                let cpu_at_dispatch: Option<u64>;
                 // v2.3.3 — refresh calibration. Both calls are cheap
                 // early-returns once an estimate has settled (or immediately
                 // and forever off Wayland, where `presentation_clock` is
@@ -9715,6 +9759,7 @@ impl ApplicationHandler<AppEvent> for App {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         t_present = Instant::now();
+                        cpu_at_dispatch = Self::thread_cpu_now_ns();
                     }
                     // v1.7.1 (#3) — present the upscaled HD buffer when a pack
                     // composited this redraw (the deep-overlay panels still draw on
@@ -10072,6 +10117,7 @@ impl ApplicationHandler<AppEvent> for App {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         t_present = Instant::now();
+                        cpu_at_dispatch = Self::thread_cpu_now_ns();
                     }
                     // v2.1.2 F2.1 — a Vs. `DualSystem` cabinet presents the composed
                     // two-screen image via the dedicated dynamic blit first.
@@ -10137,10 +10183,17 @@ impl ApplicationHandler<AppEvent> for App {
                     // Paired so the derived work sample comes from this redraw's
                     // own total, wait and lock-blocking, never from different
                     // redraws.
+                    // CPU consumed between the redraw signal and the GPU
+                    // dispatch — the same span `rwork` covers, so `rwork - rcpu`
+                    // is time spent off-CPU rather than computing.
+                    let cpu_span = cpu_at_signal
+                        .zip(cpu_at_dispatch)
+                        .map(|(a, b)| std::time::Duration::from_nanos(b.saturating_sub(a)));
                     self.render_perf.record_redraw(
                         redraw_signal.elapsed(),
                         t_present.elapsed(),
                         lock_wait,
+                        cpu_span,
                     );
                 }
                 match render_result {

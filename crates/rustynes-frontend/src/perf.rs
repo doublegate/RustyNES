@@ -214,6 +214,13 @@ pub struct RenderPerf {
     /// Subtracted out of `work` so that series finally means work alone:
     /// `work = total - wait - lock`.
     lock: SampleRing,
+    /// v2.3.3 — CPU time actually CONSUMED across the `work` span.
+    ///
+    /// `work` is wall time, so it cannot tell 27 ms of computation from 27 ms
+    /// spent off-CPU. This is `CLOCK_THREAD_CPUTIME_ID` differenced over the
+    /// same span, so `work - cpu` is the time the winit thread was descheduled.
+    /// Zero when the platform has no thread-CPU clock.
+    cpu: SampleRing,
 }
 
 /// One snapshot of every [`RenderPerf`] series.
@@ -238,6 +245,8 @@ pub struct RenderStats {
     pub work: IntervalStats,
     /// Emulator-mutex blocking on the winit thread.
     pub lock: IntervalStats,
+    /// CPU time consumed across the `work` span; `work - cpu` is deschedule.
+    pub cpu: IntervalStats,
 }
 
 impl RenderPerf {
@@ -269,7 +278,13 @@ impl RenderPerf {
     /// them here makes that structural rather than a convention a caller has to
     /// remember. Clamped at zero — the clocks stop at slightly different points,
     /// so a near-zero-work redraw can otherwise produce a small negative.
-    pub fn record_redraw(&mut self, total: Duration, wait: Duration, lock: Duration) {
+    pub fn record_redraw(
+        &mut self,
+        total: Duration,
+        wait: Duration,
+        lock: Duration,
+        cpu: Option<Duration>,
+    ) {
         let total_ms = total.as_secs_f32() * 1000.0;
         let wait_ms = wait.as_secs_f32() * 1000.0;
         let lock_ms = lock.as_secs_f32() * 1000.0;
@@ -277,6 +292,9 @@ impl RenderPerf {
         self.wait.push(wait_ms);
         self.lock.push(lock_ms);
         self.work.push((total_ms - wait_ms - lock_ms).max(0.0));
+        if let Some(c) = cpu {
+            self.cpu.push(c.as_secs_f32() * 1000.0);
+        }
     }
 
     /// `(ui, gpu, total, wait, work, lock)` summaries.
@@ -289,6 +307,7 @@ impl RenderPerf {
             wait: self.wait.stats(),
             work: self.work.stats(),
             lock: self.lock.stats(),
+            cpu: self.cpu.stats(),
         }
     }
 
@@ -305,6 +324,7 @@ impl RenderPerf {
         self.wait.clear();
         self.work.clear();
         self.lock.clear();
+        self.cpu.clear();
     }
 }
 
@@ -617,6 +637,9 @@ pub struct PerfView {
     /// v2.3.3 — emulator-mutex blocking on the WINIT thread during a redraw.
     /// The mirror of [`Self::produce_wait`]. See [`RenderPerf`].
     pub render_lock: IntervalStats,
+    /// v2.3.3 — CPU time consumed across the render-work span.
+    /// `render_work - render_cpu` is time the winit thread spent DESCHEDULED.
+    pub render_cpu: IntervalStats,
     /// v2.3.3 — display-tick accounting, read lock-free from
     /// `EmuControl::tick_counts`: `(present-driven, watchdog, dropped)`.
     ///
@@ -771,7 +794,7 @@ mod tests {
             } else {
                 (Duration::from_micros(16_600), Duration::from_millis(16))
             };
-            p.record_redraw(total, wait, Duration::ZERO);
+            p.record_redraw(total, wait, Duration::ZERO, None);
         }
         let s = p.stats();
         // The real work p95 must see the 19.9 ms redraws, not ~0.6 ms.
