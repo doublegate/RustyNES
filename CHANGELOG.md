@@ -46,6 +46,17 @@ cycle-accurate core later replaced.
   one row per produce and per present, with `scripts/perf/trace_shape.py` to
   classify its temporal shape. `rwork` is now `rtot - rwait - rlock`.
 
+  Later joined by **`rcpu`** — the winit thread's own `CLOCK_THREAD_CPUTIME_ID`
+  differenced across the `rwork` span, so `rwork - rcpu` is time the thread spent
+  off-CPU rather than computing. It was built to test whether the 9-32 ms `rwork`
+  tail was descheduling, and it showed wall and CPU **identical** on an idle host
+  and 8 us apart under 20 spinning threads — while **the tail did not reproduce
+  at all**. Every tail-bearing capture had been taken while a `cargo build` was
+  running: the tail was the measurement environment, not the frontend. `rcpu`
+  stays in the tree as the check that tells the two apart. Also
+  `scripts/perf/trace_shape.py --warmup-s N`, making the 8 s startup-transient
+  discard (a host-tuned heuristic) overridable instead of hard-coded.
+
   Measured on six 45 s SMB captures: the 25 ms tick watchdog **never fires** at
   the shipped `run_ahead = 2` (0 of ~1855 ticks) and drops no ticks, so its
   numeric coincidence with the 25-36 ms `produced` p95 was exactly that; and the
@@ -80,12 +91,18 @@ cycle-accurate core later replaced.
   moved off the redraw path into the lock `post_produce_housekeeping` already
   holds — which also fixes a second defect: at divisor 2 there are two redraws
   per produced frame, so the old placement replayed each frame's debug logs
-  **twice**. `rlock` p95/p99 go **8.707/9.008 ms → 0.000/0.000 ms**. The effect
-  on what the display shows is **not yet established**: scanouts-per-frame has a
-  10.8-point spread across four captures of the fixed build alone, so a single
-  before/after cannot resolve it in either direction, and the A/B/A that would
-  has not been run. The change lands on its own merits — one fewer hot-path
-  mutex acquisition and a corrected telemetry cadence — not as a shudder fix.
+  **twice**. `rlock` p95/p99 go **8.707/9.008 ms → 0.000/0.000 ms**. It also
+  measurably improves what the display shows, confirmed by a proper A/B: both
+  binaries rebuilt from the two adjacent commits that differ only by this
+  change, run **alternately** rather than in blocks, four captures each.
+  Frames shown for the intended two refreshes go **67.75% → 73.77%**, ranges
+  non-overlapping (A's best 69.36% below B's worst 71.33%). The design was
+  strictly alternating, which is **not** randomisation — every B followed an A,
+  so the correct test is paired, giving **p = 0.0625**, suggestive rather than
+  established. (An unpaired p = 1/70 was quoted first and was the wrong test.) An earlier
+  single-capture comparison suggested the opposite and was **confounded by run
+  order**, not by the change. 26% of frames are still shown for the wrong
+  duration, so the shudder has a remaining cause that is not this one.
 
 ### Changed
 

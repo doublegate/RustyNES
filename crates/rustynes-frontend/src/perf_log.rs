@@ -373,7 +373,7 @@ fn open_log_file(dir: &Path, ctx: &PerfLogContext) -> std::io::Result<(BufWriter
 /// A `const` data table rather than a `const fn`: it is pure data, and as a
 /// function it crossed the 100-line budget purely by growing a row, which is
 /// not the kind of complexity that lint exists to catch.
-static STATS_NAMES: [(&str, [&str; 5]); 10] = [
+static STATS_NAMES: [(&str, [&str; 5]); 11] = [
     (
         "produced",
         [
@@ -475,6 +475,19 @@ static STATS_NAMES: [(&str, [&str; 5]); 10] = [
         ],
     ),
     (
+        // v2.3.3 — CPU actually consumed across the work span. `rwork - rcpu`
+        // is the time the winit thread spent DESCHEDULED rather than computing:
+        // `rwork` is wall time and cannot tell those apart on its own.
+        "rcpu",
+        [
+            "rcpu_mean_ms",
+            "rcpu_p50_ms",
+            "rcpu_p95_ms",
+            "rcpu_p99_ms",
+            "rcpu_max_ms",
+        ],
+    ),
+    (
         // v2.3.3 — winit-thread emulator-mutex blocking, the mirror of the
         // producer's `wait_*`. Both sides are now visible, so a stall can
         // be attributed to whichever thread was actually waiting.
@@ -510,6 +523,7 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
             "rwait" => &v.render_wait,
             "rwork" => &v.render_work,
             "rlock" => &v.render_lock,
+            "rcpu" => &v.render_cpu,
             "rtot" => &v.render_total,
             _ => &v.produce_cost,
         }
@@ -798,6 +812,7 @@ mod tests {
             "rwait",
             "rwork",
             "rlock",
+            "rcpu",
         ] {
             for stat in ["mean_ms", "p50_ms", "p95_ms", "p99_ms", "max_ms"] {
                 let want = format!("{series}_{stat}");
