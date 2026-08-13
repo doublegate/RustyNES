@@ -114,6 +114,54 @@ struct State {
     presentation: Option<WpPresentation>,
     /// Reported refresh periods, in milliseconds.
     samples_ms: Vec<f64>,
+    /// v2.3.3 — captured SCANOUT reports, when scanout tracing is on.
+    ///
+    /// Empty and never appended to unless [`PresentationClock::trace_scanout`]
+    /// was set, so the shipped path allocates nothing here.
+    scanouts: Vec<Scanout>,
+    /// Whether to append to [`Self::scanouts`] at all.
+    trace_scanout: bool,
+    /// Presentation feedback that came back `discarded` — the frame was
+    /// composited but never reached the screen. Counted rather than recorded,
+    /// because there is no timestamp to record.
+    discarded: u64,
+    /// The POSIX clock id the compositor stamps presentations with.
+    clock_id: Option<u32>,
+}
+
+/// v2.3.3 — one compositor-reported scanout.
+///
+/// **Why this is the only honest display-cadence measurement.** Everything else
+/// in this frontend timestamps `present()` *returning*, which under
+/// triple-buffered Fifo is when an image was QUEUED, not when it was scanned
+/// out — the two differ by an unbounded amount and burst differently (measured:
+/// 31.8% of present returns under 1 ms apart, only 1.9% near one refresh
+/// period). A cadence computed from those timestamps counts queue slots, not
+/// refreshes on screen, which invalidated the v2.3.3 F10 raggedness result.
+///
+/// `wp_presentation` reports the actual scanout instant, from the compositor,
+/// in the compositor's own clock domain. That is the number that answers "what
+/// did the display show, and when".
+#[derive(Debug, Clone, Copy)]
+pub struct Scanout {
+    /// Presentation time in nanoseconds, in the clock domain named by the
+    /// protocol's `clock_id` event (see [`PresentationClock::clock_id`]).
+    /// Assembled from the protocol's split `tv_sec_hi` / `tv_sec_lo` /
+    /// `tv_nsec` triple.
+    pub t_ns: u64,
+    /// The compositor's own refresh estimate for this presentation, in
+    /// nanoseconds; `0` means "no constant refresh rate".
+    pub refresh_ns: u32,
+    /// Monotonically increasing per-output sequence counter (`seq_hi`/`seq_lo`
+    /// joined), when the compositor supplies one. A gap of more than 1 between
+    /// consecutive reports is a MISSED refresh, stated by the compositor rather
+    /// than inferred from timing — the single most direct evidence available
+    /// for the judder question.
+    pub seq: u64,
+    /// Raw protocol flags (`VSYNC` / `HW_CLOCK` / `HW_COMPLETION` /
+    /// `ZERO_COPY`), kept as bits so the log records what the compositor said
+    /// rather than this module's interpretation of it.
+    pub flags: u32,
 }
 
 impl Dispatch<WlRegistry, ()> for State {
@@ -145,16 +193,22 @@ impl Dispatch<WlRegistry, ()> for State {
 
 impl Dispatch<WpPresentation, ()> for State {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         _proxy: &WpPresentation,
-        _event: wp_presentation::Event,
+        event: wp_presentation::Event,
         (): &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // The only event is `clock_id`, which names the clock domain the
-        // presentation timestamps live in. Those timestamps are never read
-        // here — only the `refresh` period is — so the domain is irrelevant.
+        // The only event is `clock_id`, naming the POSIX clock the presentation
+        // timestamps live in. Irrelevant while only `refresh` was read; now
+        // that scanout timestamps are recorded it is essential — a timestamp
+        // without its clock domain cannot be compared to anything, and
+        // recording the id lets the analysis say so rather than assume
+        // `CLOCK_MONOTONIC` (1) and silently mis-align if it is not.
+        if let wp_presentation::Event::ClockId { clk_id } = event {
+            state.clock_id = Some(clk_id);
+        }
     }
 }
 
@@ -167,10 +221,44 @@ impl Dispatch<WpPresentationFeedback, ()> for State {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // `discarded` (the frame never reached the screen) and `sync_output`
-        // (which output it landed on) carry no period, so only `presented`
-        // is of interest. Both are destructors handled by the protocol layer.
-        if let wp_presentation_feedback::Event::Presented { refresh, .. } = event {
+        // `sync_output` (which output it landed on) carries no period.
+        // `discarded` means the frame never reached the screen: no timestamp
+        // exists to record, but the COUNT is meaningful — a discarded frame is
+        // work that was composited and thrown away, invisible in every
+        // present-side metric. Both are destructors handled by the protocol
+        // layer.
+        if matches!(event, wp_presentation_feedback::Event::Discarded) {
+            state.discarded = state.discarded.saturating_add(1);
+            return;
+        }
+        if let wp_presentation_feedback::Event::Presented {
+            tv_sec_hi,
+            tv_sec_lo,
+            tv_nsec,
+            refresh,
+            seq_hi,
+            seq_lo,
+            flags,
+            ..
+        } = event
+        {
+            if state.trace_scanout {
+                // The protocol splits a 64-bit seconds count across two u32s
+                // (the interface predates 64-bit scalars). Join, then fold in
+                // the nanosecond remainder — in nanoseconds throughout, since
+                // that is the resolution the compositor reports and any
+                // conversion to f64 here would quantise it.
+                let secs = (u64::from(tv_sec_hi) << 32) | u64::from(tv_sec_lo);
+                let t_ns = secs
+                    .saturating_mul(1_000_000_000)
+                    .saturating_add(u64::from(tv_nsec));
+                state.scanouts.push(Scanout {
+                    t_ns,
+                    refresh_ns: refresh,
+                    seq: (u64::from(seq_hi) << 32) | u64::from(seq_lo),
+                    flags: flags.into(),
+                });
+            }
             // The spec requires `refresh = 0` for an output with no constant
             // refresh rate. That is a legitimate answer meaning "there is no
             // period to lock to", so it is dropped rather than recorded — and
@@ -298,7 +386,12 @@ impl PresentationClock {
     /// Call once per present. A no-op before the global has been bound and
     /// after an estimate has settled, so the steady-state cost is nil.
     pub fn request_feedback(&mut self) {
-        if self.settled {
+        // v2.3.3 — settling stops the refresh estimator, but scanout tracing
+        // needs a report for EVERY present, so it keeps the requests flowing.
+        // Deliberately gated: one feedback object per present for a whole
+        // session is a real (if small) cost, and the shipped path has no use
+        // for it once the refresh is known.
+        if self.settled && !self.state.trace_scanout {
             return;
         }
         let Some(presentation) = self.state.presentation.as_ref() else {
@@ -308,6 +401,38 @@ impl PresentationClock {
         // delivers `presented` or `discarded`, so there is nothing to retain.
         let _feedback = presentation.feedback(&self.surface, &self.qh, ());
         let _ = self.conn.flush();
+    }
+
+    /// v2.3.3 — start recording compositor-reported scanout instants.
+    ///
+    /// Off by default. When on, [`Self::request_feedback`] keeps issuing after
+    /// the refresh estimate settles and every `presented` report is buffered
+    /// for [`Self::drain_scanouts`]. See [`Scanout`] for why present-return
+    /// timestamps cannot answer the same question.
+    pub const fn enable_scanout_trace(&mut self) {
+        self.state.trace_scanout = true;
+    }
+
+    /// Take the buffered scanout reports, leaving tracing on and the buffer
+    /// empty. `Vec` take — O(1); the caller writes them outside any lock.
+    pub fn drain_scanouts(&mut self) -> Vec<Scanout> {
+        std::mem::take(&mut self.state.scanouts)
+    }
+
+    /// Frames the compositor reported as `discarded` — composited but never
+    /// scanned out. Cumulative.
+    #[must_use]
+    pub const fn discarded(&self) -> u64 {
+        self.state.discarded
+    }
+
+    /// The POSIX clock id the compositor stamps presentations with, once it has
+    /// said. `1` is `CLOCK_MONOTONIC`; anything else means the timestamps are
+    /// NOT comparable to `Instant` and the analysis must say so rather than
+    /// quietly mix domains.
+    #[must_use]
+    pub const fn clock_id(&self) -> Option<u32> {
+        self.state.clock_id
     }
 
     /// Drain any feedback that has arrived and, once the reports agree, return
@@ -323,12 +448,22 @@ impl PresentationClock {
     /// than only where the method is unreachable.
     #[must_use]
     pub fn poll(&mut self) -> Option<f64> {
-        if self.settled {
+        // v2.3.3 — dispatch FIRST, and unconditionally when scanout tracing is
+        // on. This used to early-return on `settled`, which was correct while
+        // the refresh estimate was the only output: no dispatch, no work. With
+        // tracing on that return would strand every `presented` event in the
+        // queue forever, so the feature would silently record nothing while
+        // appearing to be enabled. Settling must terminate the ESTIMATE, not
+        // the event pump.
+        if self.settled && !self.state.trace_scanout {
             return None;
         }
         // Non-blocking: processes only what winit's socket reads have already
         // routed into this queue.
         let _ = self.queue.dispatch_pending(&mut self.state);
+        if self.settled {
+            return None;
+        }
         let hz = crate::refresh_probe::estimate_hz_from_intervals(
             &self.state.samples_ms,
             PRESENTATION_SAMPLES,

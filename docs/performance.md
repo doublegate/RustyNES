@@ -1678,6 +1678,57 @@ Recording them would give the true per-frame scanout cadence directly from the
 compositor, in the one unit that answers the question. That is the obvious next
 step and it is a small one.
 
+### v2.3.3 F11 — the display misses 4.6% of refreshes (decision: MEASURED, in the right unit at last)
+
+F10's raggedness was measured in queue-submission time and disqualified. This
+records the same question asked of the compositor.
+
+`wp_presentation`'s `presented` event now yields its full payload — the
+`tv_sec_hi` / `tv_sec_lo` / `tv_nsec` scanout instant, the compositor's own
+refresh estimate, the presentation sequence counter, and the flags — buffered
+in `wayland_presentation.rs` and written to the trace as `scanout` rows. Two
+structural changes were needed and are worth noting, because either omission
+would have produced a feature that silently recorded nothing:
+
+- `request_feedback` stopped issuing once the refresh estimate settled, and
+  `poll` early-returned on the same flag, so **the event queue was never
+  dispatched again**. Settling now terminates the *estimate*, not the event
+  pump.
+- Feedback is requested for every present only while tracing; the shipped path
+  keeps the original stop-after-settling behaviour.
+
+**Measured, SMB, one 25 s capture (16.1 s post-warmup, 1847 scanouts):**
+
+| scanout interval | share |
+| --- | --- |
+| **1 refresh (8.334 ms)** | **96.80%** |
+| 2 refreshes | 1.90% |
+| 3 refreshes | 1.03% |
+| 4-5 refreshes | 0.27% |
+
+`flags = 7` on every report — `VSYNC | HW_CLOCK | HW_COMPLETION` — so these are
+hardware-timed completions, not compositor estimates. (`seq` reads 0: this
+compositor supplies no presentation counter, so missed refreshes are inferred
+from the timestamps rather than stated.)
+
+**The result: 89 missed refreshes out of ~1935, or 4.60%** — the display
+repeated the previous image because no new one arrived in time. That is **59
+cadence breaks in 16.1 s, 3.66 per second.**
+
+Two things follow. First, the render loop delivers on 96.8% of refreshes, so
+this is not a broken pacer — it is a tail. Second, at divisor 2 a missed refresh
+does not merely repeat a frame, it *shifts the phase*: the frame on screen is
+held for a third refresh and the following one is shown for one. A ~3.7 Hz train
+of those is a plausible read of "content stepping forward and back".
+
+**This does not close the investigation.** The scanout series records *when* the
+display updated, not *what changed on it* — correlating scanouts against
+produced frames is the next step and has not been done. What is now established,
+in the compositor's own clock, is that the display misses 4.6% of its refreshes
+under display-sync, at a rate that independently agrees with the ~4/second
+figure F10 arrived at through the wrong unit. F10's number was right by
+accident; this one is right by measurement.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as

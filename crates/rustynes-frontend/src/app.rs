@@ -8093,6 +8093,12 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         if crate::perf_log::frame_trace_requested() {
             self.emu.lock().perf.enable_trace(Instant::now());
+            // Compositor-reported SCANOUT instants, the only measurement that
+            // answers what the display actually showed — present-return
+            // timestamps describe queue submission under triple-buffered Fifo.
+            if let Some(clock) = self.presentation_clock.as_mut() {
+                clock.enable_scanout_trace();
+            }
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -8946,19 +8952,40 @@ impl ApplicationHandler<AppEvent> for App {
                 // the request must be in flight before the compositor commits
                 // this frame, and `poll` only drains what winit's socket reads
                 // have already delivered, so neither blocks.
+                // Split into three statements so the `&mut self.presentation_clock`
+                // borrow ends before `resolve_pacing` needs `&mut self`.
                 #[cfg(not(target_arch = "wasm32"))]
-                if let Some(clock) = self.presentation_clock.as_mut() {
+                let hz = self.presentation_clock.as_mut().and_then(|clock| {
                     clock.request_feedback();
-                    if let Some(hz) = clock.poll() {
-                        eprintln!("rustynes: compositor reports a {hz:.3} Hz display refresh.");
-                        self.dsync.measured_hz = Some(hz);
-                        // Re-resolve ONCE, on success. `poll` answers exactly
-                        // once per session, so the regime cannot oscillate —
-                        // the failure mode that made the previous, retry-based
-                        // attempt worse than leaving pacing alone.
-                        self.resolve_pacing();
-                    }
+                    clock.poll()
+                });
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(hz) = hz {
+                    eprintln!("rustynes: compositor reports a {hz:.3} Hz display refresh.");
+                    self.dsync.measured_hz = Some(hz);
+                    // Re-resolve ONCE, on success. `poll` answers exactly once
+                    // per session, so the regime cannot oscillate — the failure
+                    // mode that made the previous, retry-based attempt worse
+                    // than leaving pacing alone.
+                    self.resolve_pacing();
                 }
+                // Drained AFTER `poll`, because `poll` is what dispatches the
+                // Wayland queue — draining earlier would read a buffer this
+                // frame had not filled yet. Empty unless the trace is on.
+                #[cfg(not(target_arch = "wasm32"))]
+                let scanouts = self
+                    .presentation_clock
+                    .as_mut()
+                    // Via the platform-neutral shim, not the Wayland module
+                    // directly — that indirection is the whole point of
+                    // `presentation_clock` and this call site must stay
+                    // target-agnostic.
+                    .map_or_else(
+                        Vec::new,
+                        crate::presentation_clock::PresentationClock::drain_scanouts,
+                    );
+                #[cfg(not(target_arch = "wasm32"))]
+                self.perf_logger.record_scanouts(&scanouts);
                 // Native: rendering is decoupled from emulation — this
                 // branch only presents the most recent framebuffer.
                 // Emulator advance happens in `about_to_wait` on a

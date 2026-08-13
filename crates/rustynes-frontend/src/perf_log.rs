@@ -191,6 +191,38 @@ impl PerfLogger {
         }
     }
 
+    /// v2.3.3 — append compositor-reported scanout instants to the trace.
+    ///
+    /// These are the ONLY rows in the trace that describe the display rather
+    /// than this process: `t_s` here is the compositor's own presentation
+    /// clock, not `Instant`, so scanout rows are directly comparable to each
+    /// other but NOT to the produce/present rows above them. The analysis
+    /// treats them as a separate series for exactly that reason.
+    pub fn record_scanouts(&mut self, scanouts: &[crate::presentation_clock::Scanout]) {
+        let (Some(w), false) = (self.trace.as_mut(), scanouts.is_empty()) else {
+            return;
+        };
+        for s in scanouts {
+            // `seq` in the `since_present` column and `flags` appended: the
+            // trace's four columns are reused rather than widened, because a
+            // fifth column would have to be blank on every produce/present row.
+            if let Err(err) = writeln!(
+                w,
+                "{}.{:06},scanout,{}.{:03},{},{}",
+                s.t_ns / 1_000_000_000,
+                (s.t_ns % 1_000_000_000) / 1000,
+                s.refresh_ns / 1_000_000,
+                (s.refresh_ns % 1_000_000) / 1000,
+                s.seq,
+                s.flags
+            ) {
+                self.error = Some(err.to_string());
+                self.trace = None;
+                return;
+            }
+        }
+    }
+
     /// Close the current file (flushes via `BufWriter::drop`).
     pub fn stop(&mut self) {
         if let Some(mut a) = self.active.take() {
@@ -262,7 +294,9 @@ fn open_trace_file(summary: &Path) -> std::io::Result<(BufWriter<File>, PathBuf)
     // the SAME kind, and `since_present` is the produced-frame count at a
     // present (the refreshes-per-frame datum). No `#` header here: this file is
     // read only by the analysis script, and its companion carries the context.
-    writeln!(w, "t_s,event,interval_ms,since_present")?;
+    // `scanout` rows carry a fifth `flags` field and reuse `since_present` for
+    // the compositor's presentation sequence number; see `record_scanouts`.
+    writeln!(w, "t_s,event,interval_ms,since_present,flags")?;
     Ok((w, path))
 }
 
