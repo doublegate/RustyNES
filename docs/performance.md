@@ -1531,6 +1531,100 @@ SMB), an undriven redraw loop (it is driven, from the present success path),
 the cause), and redraw ordering (zero effect). The one approach that produced a
 result was instrumenting first and theorising second.
 
+### v2.3.3 F10 — two named suspects, both refuted; a ragged present cadence found instead (decision: MEASUREMENT; no fix proposed)
+
+F8's correction left a 13-22 ms p99 render-work tail unexplained and the shudder
+unattributed. Two suspects were named up front, instrumented, and tested. **Both
+are refuted.** Naming them before measuring is what made the refutation cheap —
+and is the discipline this campaign adopted after five theory-first attempts
+each cost a build-and-measure cycle.
+
+#### New instrumentation
+
+| series / counter | what it answers |
+| --- | --- |
+| `tick_ok` / `tick_timeout` / `tick_dropped` | which arm of the display-regime `recv_timeout` drove each frame, and how many present ticks were dropped on the depth-1 channel |
+| `rlock_*` | emulator-mutex blocking **on the winit thread** — the mirror of `wait_*`, which only ever covered the producer |
+| `trace-<rom>-<utc>.csv` | one row per produce and per present: interval, and `since_present` at each present. Env-gated (`RUSTYNES_FRAME_TRACE=1`), default off |
+| `scripts/perf/trace_shape.py` | lag-1 autocorrelation, consecutive-pair-sum cancellation, and refreshes-per-frame run lengths |
+
+`rwork` is now `rtot - rwait - rlock`, so it finally means work alone.
+
+#### Suspect A — the 25 ms tick watchdog: REFUTED
+
+`DISPLAY_TICK_TIMEOUT` is 25 ms and the `produced` p95 was 25-36 ms, so the
+watchdog was a candidate frame driver. Measured on SMB, six 45 s captures:
+
+| `run_ahead` | `tick_ok` | `tick_timeout` | `tick_dropped` |
+| --- | --- | --- | --- |
+| 2 | 1851-1855 | **0, 0, 0** | 0 |
+| 0 | 1856-1857 | 2-7 (0.1-0.4%) | 0-1 |
+
+At the shipped default the watchdog **never fires**, and ticks are essentially
+never dropped. The numeric coincidence between the timeout and the p95 was
+exactly that — a coincidence. Recorded because it was compelling enough to act
+on, and testing it cost one capture round.
+
+#### Suspect B — winit-thread lock blocking: REFUTED at the shipped default
+
+| `run_ahead` | `rlock` p95 | `rlock` p99 | `rlock` max |
+| --- | --- | --- | --- |
+| 2 | 0.000 ms | **0.000 ms** | 12.7-13.3 ms |
+| 0 | 0.000 ms | 6.9-8.6 ms | 9.3-25.7 ms |
+
+At `run_ahead = 2` the winit thread does not block: p99 is zero, with a handful
+of isolated outliers. So the 13 ms `rwork` p99 at that setting is **not** lock
+blocking — and it is not the egui build (`rui` p99 = 0.00) and not the GPU
+(`rgpu` p99 = 0.15 ms) either. It remains unattributed.
+
+At `run_ahead = 0` the winit thread *does* block, p99 6.9-8.6 ms. That is a real
+finding and the reverse of the intuition (the cheaper produce blocks the
+consumer more), but it is not the shipped default and not the reported symptom.
+
+#### What the trace actually shows
+
+Six 45 s SMB traces, post-warmup:
+
+- **`produce` intervals are NOT alternating.** Lag-1 autocorrelation is −0.07 to
+  −0.12 (independent) and consecutive pairs do not cancel (pair/single stdev
+  ≈ 1.34). The produce tail is **isolated excursions**, not the alternating
+  cadence a shudder implies. This rules out a whole family of explanations.
+- **`present` intervals are strongly alternating** (lag-1 −0.60 to −0.68) — but
+  that is *expected* at divisor 2, where presents alternate between carrying a
+  new frame and repeating one. On its own it means nothing.
+- **The refreshes-per-frame cadence is ragged.** At divisor 2 the healthy
+  `since_present` sequence is a clean `0,1,0,1,…`, i.e. every run has length 1.
+  Measured:
+
+| capture | ragged runs (len ≥ 2) | total runs | % | longest run |
+| --- | --- | --- | --- | --- |
+| 1 | 193 | 3510 | 5.5% | 13 |
+| 2 | 124 | 4011 | 3.1% | 5 |
+| 3 | 135 | 3653 | 3.7% | 15 |
+| 4 | 214 | 3849 | 5.6% | 5 |
+| 5 | 169 | 3617 | 4.7% | 15 |
+| 6 | 151 | 3932 | 3.8% | 6 |
+
+**3.1-5.6% of runs are ragged, in every capture, with individual runs up to 15.**
+A run of 15 means fifteen consecutive presents where the alternation broke — a
+frame held across many refreshes, or the producer briefly tracking the present
+rate. Roughly four such events per second.
+
+#### What this does and does not establish
+
+It establishes that the **mapping of produced frames onto refreshes is
+measurably uneven**, in a way `presented_dups` cannot show (it folds the pattern
+into one total, so a clean `2,2,2,2` and a ragged `1,3,2,2,1,3` are identical to
+it). That unevenness has the shape the report describes — content stepping
+forward and back rather than a smooth glide.
+
+It does **not** establish that this is the shudder, and no fix is proposed here.
+Six mechanisms have now been advanced in this campaign and five falsified; a
+seventh is not being claimed on a correlation with a symptom description. The
+open questions are (a) what produces the ragged runs, and (b) what the
+unattributed 13 ms `rwork` p99 at `run_ahead = 2` consists of, given it is
+neither lock, nor UI, nor GPU.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as

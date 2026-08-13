@@ -101,6 +101,27 @@ impl EmuHandle {
         }
     }
 
+    /// [`Self::lock`], adding the time spent BLOCKED to `acc`.
+    ///
+    /// v2.3.3 — the winit thread acquires this mutex six times in one redraw
+    /// handler and none of those acquisitions was timed, while the producer's
+    /// single acquisition was (`PerfStats::produce_wait`). A redraw blocked
+    /// behind a produce was therefore billed entirely as render *work* — the
+    /// third instance in this campaign of blocking recorded as work, after
+    /// `cost_*` and the F8 `wait` series itself.
+    ///
+    /// Accumulates rather than returning, because what matters is the total
+    /// blocked time across a whole redraw, not any single acquisition; the
+    /// caller keeps one `Duration` for the handler and passes it here at each
+    /// site. Costs two `Instant::now()` calls per acquisition, which is the
+    /// same overhead the producer side has carried since v2.3.3 F1.
+    pub fn lock_timed(&self, acc: &mut Duration) -> std::sync::MutexGuard<'_, EmuCore> {
+        let t = Instant::now();
+        let guard = self.lock();
+        *acc += t.elapsed();
+        guard
+    }
+
     /// Lock the core. Poisoning is ignored deliberately: a panic on one
     /// thread must not wedge the other (the core's state is a plain value;
     /// the next frame either works or panics identically).

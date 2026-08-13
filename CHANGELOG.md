@@ -37,6 +37,27 @@ cycle-accurate core later replaced.
   `produced` interval p95 sits at 27-33 ms, and the control run intended to
   attribute it was confounded by capture order, so no cause is claimed.
 
+- **Frontend: instrumentation for the unresolved display-sync shudder** — two
+  named suspects were tested and **both refuted**, which is the result. New:
+  display-tick arm counters (`tick_ok` / `tick_timeout` / `tick_dropped`), a
+  winit-thread emulator-mutex blocking series (`rlock_*`, the mirror of the
+  producer's `wait_*` — only the producer side had ever been measured), and an
+  **env-gated, default-off per-frame trace** (`RUSTYNES_FRAME_TRACE=1`) writing
+  one row per produce and per present, with `scripts/perf/trace_shape.py` to
+  classify its temporal shape. `rwork` is now `rtot - rwait - rlock`.
+
+  Measured on six 45 s SMB captures: the 25 ms tick watchdog **never fires** at
+  the shipped `run_ahead = 2` (0 of ~1855 ticks) and drops no ticks, so its
+  numeric coincidence with the 25-36 ms `produced` p95 was exactly that; and the
+  winit thread does **not** block on the emulator mutex there (`rlock` p99 =
+  0.000 ms), so the 13 ms `rwork` p99 is neither lock, nor egui, nor GPU, and
+  stays unattributed. What the trace *does* show is a **ragged
+  refreshes-per-frame cadence** — 3.1-5.6% of runs break the clean divisor-2
+  alternation, with runs up to 15 — which the existing `presented_dups` counter
+  structurally cannot see. Recorded as an observation, **not** a diagnosis: no
+  fix is proposed and the shudder remains unexplained. See
+  `docs/performance.md` v2.3.3 F10.
+
 ### Changed
 
 - **Frontend: refresh measurement from redraw intervals is removed.** Shipped

@@ -6994,6 +6994,36 @@ impl App {
         }
     }
 
+    /// v2.3.3 — fill the [`crate::perf::PerfView`] fields that live on the
+    /// WINIT thread rather than behind the emulator mutex.
+    ///
+    /// Both sources here are deliberately lock-free. The render series are
+    /// `App`-local because the render loop runs on this thread; the display-tick
+    /// counters are read straight off the control block's atomics. Routing
+    /// either through `emu.lock()` would add an acquisition per produced frame
+    /// to a purely diagnostic path — measurement perturbing the thing measured,
+    /// which is the failure this whole investigation is chasing.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn fill_winit_thread_perf(&self, perf_view: &mut crate::perf::PerfView) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let r = self.render_perf.stats();
+            perf_view.render_ui = r.ui;
+            perf_view.render_gpu = r.gpu;
+            perf_view.render_total = r.total;
+            perf_view.render_wait = r.wait;
+            perf_view.render_work = r.work;
+            perf_view.render_lock = r.lock;
+        }
+        #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+        if let Some(thread) = self.emu_thread.as_ref() {
+            let (ok, timeout, dropped) = thread.control().tick_counts();
+            perf_view.tick_ok = ok;
+            perf_view.tick_timeout = timeout;
+            perf_view.tick_dropped = dropped;
+        }
+    }
+
     /// v2.8.0 Phase 2 — per-produced-frame housekeeping shared by the
     /// wall-clock pacer (`pace_frames`) and the display-sync redraw path:
     /// FDS save flush + audio-health refresh + perf/fps/movie pushes into
@@ -7022,7 +7052,7 @@ impl App {
         // user can read them from the top toolbar. One scoped lock builds
         // the whole perf snapshot (the gfx fields are App-resident and are
         // filled in after the guard drops).
-        let (fps, movie_status, region, mut perf_view) = {
+        let (fps, movie_status, region, mut perf_view, trace_events) = {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
             // v2.8.0 Phase 0 — refresh the audio-queue health + snapshot
@@ -7037,6 +7067,12 @@ impl App {
             }
             let mut view = emu.perf.view();
             view.target_ms = emu.frame_duration.as_secs_f32() * 1000.0;
+            // v2.3.3 — drain the per-frame trace under the SAME lock that is
+            // already held (an O(1) `Vec` take), and write it to disk after the
+            // guard drops. Doing the file I/O here would stall the producer and
+            // corrupt the very intervals being traced. Returns an empty `Vec`
+            // when the trace is off, so this costs nothing on the normal path.
+            let trace_events = emu.perf.drain_trace();
             // v2.8.0 Phase 3 — feed the run-ahead budget throttle. Keyed off
             // the median (steady-state) produce cost, not the p95 tail (which
             // on the emu thread is OS-deschedule noise, not run-ahead cost).
@@ -7056,8 +7092,17 @@ impl App {
                 .nes
                 .as_ref()
                 .map_or(rustynes_core::Region::Ntsc, rustynes_core::Nes::region);
-            (emu.current_fps(), emu.movie.status(), region, view)
+            (
+                emu.current_fps(),
+                emu.movie.status(),
+                region,
+                view,
+                trace_events,
+            )
         };
+        // Written outside the lock — see the drain comment above. Empty (and
+        // therefore a no-op) unless the trace is enabled.
+        self.perf_logger.record_trace(&trace_events);
         let replay_info = self.build_replay_info(region);
         perf_view.pacing = self.pacing_label();
         // v1.5.0 H8 — the live audio DRC servo ratio + latency setpoint.
@@ -7070,17 +7115,7 @@ impl App {
             perf_view.present_mode_fell_back = gfx.present_mode_fell_back();
             perf_view.gpu_ms = gfx.last_gpu_pass_ms();
         }
-        // v2.3.3 — the render loop lives on this thread, so its stats are
-        // App-local rather than behind the emulator mutex.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let (ui, gpu, total, wait, work) = self.render_perf.stats();
-            perf_view.render_ui = ui;
-            perf_view.render_gpu = gpu;
-            perf_view.render_total = total;
-            perf_view.render_wait = wait;
-            perf_view.render_work = work;
-        }
+        self.fill_winit_thread_perf(&mut perf_view);
         // v2.8.0 — opt-in perf logging (the Perf panel "Logging" checkbox):
         // reconcile the logger with the checkbox, append the interval row,
         // and reflect the destination/error back into the panel.
@@ -8050,6 +8085,14 @@ impl App {
             && let Some(debugger) = self.debugger.as_mut()
         {
             debugger.force_perf_logging();
+        }
+
+        // v2.3.3 — arm the per-frame trace at the same point, so the trace and
+        // the summary CSV cover the same window. Default off; see
+        // `perf_log::FRAME_TRACE_ENV`.
+        #[cfg(not(target_arch = "wasm32"))]
+        if crate::perf_log::frame_trace_requested() {
+            self.emu.lock().perf.enable_trace(Instant::now());
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -9111,13 +9154,33 @@ impl ApplicationHandler<AppEvent> for App {
                 // `None` and only the GPU + total phases are recorded.
                 #[cfg(not(target_arch = "wasm32"))]
                 let mut ui_cost: Option<Duration> = None;
+                // v2.3.3 — total time this redraw spends BLOCKED on the emulator
+                // mutex, summed across every acquisition below. Subtracted out
+                // of render work so that series finally means work alone; see
+                // `EmuHandle::lock_timed`.
+                //
+                // Deliberately NOT cfg-gated even though only the native build
+                // reads it: the acquisition sites it is passed to are shared
+                // between native and wasm, so gating the binding leaves those
+                // sites referencing a name that does not exist on wasm. (It did
+                // exactly that, breaking both wasm builds — the same
+                // cfg-consistency trap that took `ui_cost` down earlier in this
+                // release.) A `Duration` the wasm build never reads costs
+                // nothing.
+                // Fully qualified: the `Duration` import is itself native-only,
+                // and this binding must exist on every target.
+                let mut lock_wait = std::time::Duration::ZERO;
                 // v1.0.0 — Save-States manager inputs, captured BEFORE the
                 // render branches so the `extra` egui closure can render it
                 // without re-locking the emu (the locked branch holds the
                 // guard across the pass). Native-only.
                 #[cfg(not(target_arch = "wasm32"))]
-                let ss_sha: Option<[u8; 32]> =
-                    self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256());
+                let ss_sha: Option<[u8; 32]> = self
+                    .emu
+                    .lock_timed(&mut lock_wait)
+                    .nes
+                    .as_ref()
+                    .map(|n| *n.rom_sha256());
                 #[cfg(not(target_arch = "wasm32"))]
                 let ss_dir: Option<PathBuf> = self.data_dir.clone();
                 #[cfg(not(target_arch = "wasm32"))]
@@ -9198,7 +9261,7 @@ impl ApplicationHandler<AppEvent> for App {
                     // this branch later re-takes the lock is that the debugger pass
                     // needs a live `&mut Nes`, which the common branch does not.
                     {
-                        let mut guard = self.emu.lock();
+                        let mut guard = self.emu.lock_timed(&mut lock_wait);
                         let emu = &mut *guard;
                         // Backfill the presented framebuffer into staging under the
                         // held lock (a ROM may or may not be loaded). The debugger
@@ -9407,9 +9470,14 @@ impl ApplicationHandler<AppEvent> for App {
                         // heartbeat and `RenderPerf` is not compiled, so
                         // timing it here would be a use of an undeclared
                         // binding (which is exactly what it was).
+                        // v2.3.3 — the acquire is timed into `lock_wait` and
+                        // `t_ui` starts AFTER it, so `rui` is the egui build
+                        // alone. Starting the UI clock before the acquire would
+                        // fold producer blocking into the UI phase, which is the
+                        // same defect the F8 wait clock had.
+                        let mut guard = self.emu.lock_timed(&mut lock_wait);
                         #[cfg(not(target_arch = "wasm32"))]
                         let t_ui = Instant::now();
-                        let mut guard = self.emu.lock();
                         let nes_for_render = guard.nes.as_mut();
                         let (out, prepared) = debugger.run_shell_ui(
                             &window,
@@ -9534,7 +9602,7 @@ impl ApplicationHandler<AppEvent> for App {
                             self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
                         }
                     } else {
-                        let mut guard = self.emu.lock();
+                        let mut guard = self.emu.lock_timed(&mut lock_wait);
                         let emu = &mut *guard;
                         // v2.1.2 F2.1 — Vs. `DualSystem`: compose the two harvested
                         // console framebuffers (main = `present_fb`, sub =
@@ -9874,9 +9942,13 @@ impl ApplicationHandler<AppEvent> for App {
                             .record_gpu(Duration::from_secs_f32(gpu_ms / 1000.0));
                     }
                     // Paired so the derived work sample comes from this redraw's
-                    // own total and wait, never from two different redraws.
-                    self.render_perf
-                        .record_redraw(redraw_signal.elapsed(), t_present.elapsed());
+                    // own total, wait and lock-blocking, never from different
+                    // redraws.
+                    self.render_perf.record_redraw(
+                        redraw_signal.elapsed(),
+                        t_present.elapsed(),
+                        lock_wait,
+                    );
                 }
                 match render_result {
                     Ok(()) => {

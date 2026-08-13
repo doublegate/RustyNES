@@ -64,6 +64,23 @@ pub struct PerfLogger {
     /// Destination directory (default `perf-logs/` under the cwd;
     /// overridable for tests so they never touch the real tree).
     dir: Option<PathBuf>,
+    /// v2.3.3 — the companion per-frame trace file, when the trace is enabled.
+    trace: Option<BufWriter<File>>,
+}
+
+/// v2.3.3 — environment switch for the per-frame trace.
+///
+/// Default OFF and deliberately not a config key: this writes one CSV row per
+/// produced frame and per present (~180 rows/second at 120 Hz with divisor 2),
+/// which is a diagnostic tool for a specific investigation, not something a
+/// user should be able to leave on by accident. Set `RUSTYNES_FRAME_TRACE=1`
+/// alongside `RUSTYNES_PERF_LOG=1`.
+pub const FRAME_TRACE_ENV: &str = "RUSTYNES_FRAME_TRACE";
+
+/// Whether the per-frame trace was requested for this process.
+#[must_use]
+pub fn frame_trace_requested() -> bool {
+    std::env::var_os(FRAME_TRACE_ENV).is_some_and(|v| v != "0" && !v.is_empty())
 }
 
 impl PerfLogger {
@@ -141,10 +158,46 @@ impl PerfLogger {
         }
     }
 
+    /// v2.3.3 — append drained [`crate::perf::FrameEvent`]s to the trace file.
+    ///
+    /// Called from housekeeping AFTER the emulator mutex is released: the
+    /// events were buffered in memory under the lock (an O(1) `Vec` push) and
+    /// the file I/O happens here, so tracing cannot stall the producer. A
+    /// trace that changed the timing it records would be worthless.
+    pub fn record_trace(&mut self, events: &[crate::perf::FrameEvent]) {
+        let (Some(w), false) = (self.trace.as_mut(), events.is_empty()) else {
+            return;
+        };
+        for e in events {
+            let kind = if e.is_present { "present" } else { "produce" };
+            // Integer seconds + remainder rather than a `u64 as f64` divide:
+            // exact at any run length, and it keeps the lossy-cast lint honest
+            // instead of silenced. (A 64-bit microsecond count exceeds f64's
+            // 53-bit mantissa after ~285 years, so the cast would be harmless
+            // here — but "harmless in practice" is how precision bugs are
+            // argued into existence.)
+            if let Err(err) = writeln!(
+                w,
+                "{}.{:06},{kind},{:.3},{}",
+                e.t_us / 1_000_000,
+                e.t_us % 1_000_000,
+                f64::from(e.interval_us) / 1000.0,
+                e.since_present
+            ) {
+                self.error = Some(err.to_string());
+                self.trace = None;
+                return;
+            }
+        }
+    }
+
     /// Close the current file (flushes via `BufWriter::drop`).
     pub fn stop(&mut self) {
         if let Some(mut a) = self.active.take() {
             let _ = a.w.flush();
+        }
+        if let Some(mut t) = self.trace.take() {
+            let _ = t.flush();
         }
     }
 
@@ -156,6 +209,18 @@ impl PerfLogger {
         match open_log_file(&dir, ctx) {
             Ok((w, path)) => {
                 eprintln!("rustynes: perf logging to {}", path.display());
+                // v2.3.3 — open the companion trace beside the summary CSV, so
+                // the two always describe the same run and cannot be paired up
+                // wrongly after the fact.
+                if frame_trace_requested() {
+                    match open_trace_file(&path) {
+                        Ok((tw, tpath)) => {
+                            eprintln!("rustynes: frame trace to {}", tpath.display());
+                            self.trace = Some(tw);
+                        }
+                        Err(e) => eprintln!("rustynes: failed to start frame trace: {e}"),
+                    }
+                }
                 self.active = Some(ActiveLog {
                     w,
                     path,
@@ -171,6 +236,34 @@ impl PerfLogger {
             }
         }
     }
+}
+
+/// v2.3.3 — create the per-frame trace beside the summary CSV.
+///
+/// Derived from the summary path by swapping the `perf-` prefix for `trace-`,
+/// keeping the rest of the name identical: `perf-<rom>-<utc>.csv` pairs with
+/// `trace-<rom>-<utc>.csv`, so the two always describe the same run. Naming
+/// them independently would let files from different runs be analysed
+/// together, which is the class of mistake `perf_capture.sh`'s config
+/// assertion exists to prevent.
+///
+/// The PREFIX is swapped rather than the extension (the first attempt produced
+/// `perf-<rom>-<utc>.trace.csv`) because `perf_capture.sh` and the gate select
+/// the newest `perf-*.csv`, which that form matches — so the trace was picked
+/// up as if it were the summary and the gate failed on a missing column.
+fn open_trace_file(summary: &Path) -> std::io::Result<(BufWriter<File>, PathBuf)> {
+    let name = summary.file_name().and_then(|n| n.to_str()).map_or_else(
+        || "trace.csv".to_string(),
+        |n| format!("trace-{}", n.trim_start_matches("perf-")),
+    );
+    let path = summary.with_file_name(name);
+    let mut w = BufWriter::new(File::create(&path)?);
+    // One row per event; `interval_ms` is the gap since the previous event of
+    // the SAME kind, and `since_present` is the produced-frame count at a
+    // present (the refreshes-per-frame datum). No `#` header here: this file is
+    // read only by the analysis script, and its companion carries the context.
+    writeln!(w, "t_s,event,interval_ms,since_present")?;
+    Ok((w, path))
 }
 
 /// Create `<dir>/perf-<rom>-<utc>.csv` and write the header + CSV
@@ -215,110 +308,126 @@ fn open_log_file(dir: &Path, ctx: &PerfLogContext) -> std::io::Result<(BufWriter
 ///
 /// Split out of `columns` so that function stays inside the line budget as
 /// series are added (v2.3.3 added `wait`, `rui`, `rgpu`, `rtot`).
-const fn stats_names() -> [(&'static str, [&'static str; 5]); 9] {
-    [
-        (
-            "produced",
-            [
-                "produced_mean_ms",
-                "produced_p50_ms",
-                "produced_p95_ms",
-                "produced_p99_ms",
-                "produced_max_ms",
-            ],
-        ),
-        (
-            "presented",
-            [
-                "presented_mean_ms",
-                "presented_p50_ms",
-                "presented_p95_ms",
-                "presented_p99_ms",
-                "presented_max_ms",
-            ],
-        ),
-        (
-            "cost",
-            [
-                "cost_mean_ms",
-                "cost_p50_ms",
-                "cost_p95_ms",
-                "cost_p99_ms",
-                "cost_max_ms",
-            ],
-        ),
-        // v2.3.3 — emulator-mutex blocking, split out of `cost` (which was
-        // timed from before the acquire until v2.3.3 and so billed the winit
-        // thread's lock hold to the emulator).
-        (
-            "wait",
-            [
-                "wait_mean_ms",
-                "wait_p50_ms",
-                "wait_p95_ms",
-                "wait_p99_ms",
-                "wait_max_ms",
-            ],
-        ),
-        // v2.3.3 — the render loop (winit thread). Nothing measured this
-        // before, which is why a judder report could not be explained from the
-        // produce-side series alone.
-        (
-            "rui",
-            [
-                "rui_mean_ms",
-                "rui_p50_ms",
-                "rui_p95_ms",
-                "rui_p99_ms",
-                "rui_max_ms",
-            ],
-        ),
-        (
-            "rgpu",
-            [
-                "rgpu_mean_ms",
-                "rgpu_p50_ms",
-                "rgpu_p95_ms",
-                "rgpu_p99_ms",
-                "rgpu_max_ms",
-            ],
-        ),
-        (
-            "rtot",
-            [
-                "rtot_mean_ms",
-                "rtot_p50_ms",
-                "rtot_p95_ms",
-                "rtot_p99_ms",
-                "rtot_max_ms",
-            ],
-        ),
-        (
-            "rwait",
-            [
-                "rwait_mean_ms",
-                "rwait_p50_ms",
-                "rwait_p95_ms",
-                "rwait_p99_ms",
-                "rwait_max_ms",
-            ],
-        ),
-        (
-            // v2.3.3 F8 — logged as its OWN series precisely so nobody has to
-            // reconstruct it as `rtot_p95 - rwait_p95`. That subtraction is not
-            // a percentile of the work distribution and produced an impossible
-            // table (p95 below p50) the first time round.
-            "rwork",
-            [
-                "rwork_mean_ms",
-                "rwork_p50_ms",
-                "rwork_p95_ms",
-                "rwork_p99_ms",
-                "rwork_max_ms",
-            ],
-        ),
-    ]
-}
+/// Per-series CSV column names.
+///
+/// A `const` data table rather than a `const fn`: it is pure data, and as a
+/// function it crossed the 100-line budget purely by growing a row, which is
+/// not the kind of complexity that lint exists to catch.
+static STATS_NAMES: [(&str, [&str; 5]); 10] = [
+    (
+        "produced",
+        [
+            "produced_mean_ms",
+            "produced_p50_ms",
+            "produced_p95_ms",
+            "produced_p99_ms",
+            "produced_max_ms",
+        ],
+    ),
+    (
+        "presented",
+        [
+            "presented_mean_ms",
+            "presented_p50_ms",
+            "presented_p95_ms",
+            "presented_p99_ms",
+            "presented_max_ms",
+        ],
+    ),
+    (
+        "cost",
+        [
+            "cost_mean_ms",
+            "cost_p50_ms",
+            "cost_p95_ms",
+            "cost_p99_ms",
+            "cost_max_ms",
+        ],
+    ),
+    // v2.3.3 — emulator-mutex blocking, split out of `cost` (which was
+    // timed from before the acquire until v2.3.3 and so billed the winit
+    // thread's lock hold to the emulator).
+    (
+        "wait",
+        [
+            "wait_mean_ms",
+            "wait_p50_ms",
+            "wait_p95_ms",
+            "wait_p99_ms",
+            "wait_max_ms",
+        ],
+    ),
+    // v2.3.3 — the render loop (winit thread). Nothing measured this
+    // before, which is why a judder report could not be explained from the
+    // produce-side series alone.
+    (
+        "rui",
+        [
+            "rui_mean_ms",
+            "rui_p50_ms",
+            "rui_p95_ms",
+            "rui_p99_ms",
+            "rui_max_ms",
+        ],
+    ),
+    (
+        "rgpu",
+        [
+            "rgpu_mean_ms",
+            "rgpu_p50_ms",
+            "rgpu_p95_ms",
+            "rgpu_p99_ms",
+            "rgpu_max_ms",
+        ],
+    ),
+    (
+        "rtot",
+        [
+            "rtot_mean_ms",
+            "rtot_p50_ms",
+            "rtot_p95_ms",
+            "rtot_p99_ms",
+            "rtot_max_ms",
+        ],
+    ),
+    (
+        "rwait",
+        [
+            "rwait_mean_ms",
+            "rwait_p50_ms",
+            "rwait_p95_ms",
+            "rwait_p99_ms",
+            "rwait_max_ms",
+        ],
+    ),
+    (
+        // v2.3.3 F8 — logged as its OWN series precisely so nobody has to
+        // reconstruct it as `rtot_p95 - rwait_p95`. That subtraction is not
+        // a percentile of the work distribution and produced an impossible
+        // table (p95 below p50) the first time round.
+        "rwork",
+        [
+            "rwork_mean_ms",
+            "rwork_p50_ms",
+            "rwork_p95_ms",
+            "rwork_p99_ms",
+            "rwork_max_ms",
+        ],
+    ),
+    (
+        // v2.3.3 — winit-thread emulator-mutex blocking, the mirror of the
+        // producer's `wait_*`. Both sides are now visible, so a stall can
+        // be attributed to whichever thread was actually waiting.
+        "rlock",
+        [
+            "rlock_mean_ms",
+            "rlock_p50_ms",
+            "rlock_p95_ms",
+            "rlock_p99_ms",
+            "rlock_max_ms",
+        ],
+    ),
+];
 
 fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     let fps = if v.produced.mean_ms > 0.0 {
@@ -328,7 +437,7 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     };
     let mut cols: Vec<(&'static str, String)> = Vec::with_capacity(40);
     // Static column names per interval series, so they stay `&'static str`.
-    let stats_names = stats_names();
+    let stats_names = STATS_NAMES;
     let stat_for = |series: &str| -> &crate::perf::IntervalStats {
         match series {
             "produced" => &v.produced,
@@ -338,6 +447,7 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
             "rgpu" => &v.render_gpu,
             "rwait" => &v.render_wait,
             "rwork" => &v.render_work,
+            "rlock" => &v.render_lock,
             "rtot" => &v.render_total,
             _ => &v.produce_cost,
         }
@@ -355,6 +465,11 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     cols.push(("snap_forwards", v.snap_forwards.to_string()));
     cols.push(("presented_dups", v.presented_dups.to_string()));
     cols.push(("produced_dropped", v.produced_dropped.to_string()));
+    // v2.3.3 — display-tick arms. Cumulative, so a per-row delta is what
+    // matters; the analysis script differences them.
+    cols.push(("tick_ok", v.tick_ok.to_string()));
+    cols.push(("tick_timeout", v.tick_timeout.to_string()));
+    cols.push(("tick_dropped", v.tick_dropped.to_string()));
     cols.push(("audio_queued_ms", format!("{:.2}", v.audio.queued_ms())));
     cols.push(("audio_queued_samples", v.audio.queued_samples.to_string()));
     cols.push(("audio_sample_rate", v.audio.sample_rate.to_string()));
@@ -620,6 +735,7 @@ mod tests {
             "rtot",
             "rwait",
             "rwork",
+            "rlock",
         ] {
             for stat in ["mean_ms", "p50_ms", "p95_ms", "p99_ms", "max_ms"] {
                 let want = format!("{series}_{stat}");
@@ -633,6 +749,10 @@ mod tests {
             "snap_forwards",
             "presented_dups",
             "produced_dropped",
+            // v2.3.3 display-tick arms
+            "tick_ok",
+            "tick_timeout",
+            "tick_dropped",
             // audio health row
             "audio_queued_ms",
             "audio_queued_samples",

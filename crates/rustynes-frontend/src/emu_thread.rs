@@ -277,6 +277,29 @@ pub struct EmuControl {
     /// frame-advance key while paused). The thread consumes one per loop and
     /// produces exactly one unthrottled frame for each.
     frame_advance: AtomicU32,
+    /// v2.3.3 — display-regime tick accounting. Diagnostic only; nothing reads
+    /// these to make a decision.
+    ///
+    /// Under display-sync the producer waits on `tick_rx.recv_timeout`, and the
+    /// arm it takes is invisible in every other metric: an `Ok` (a present
+    /// drove the frame) and a `Timeout` (no present arrived for
+    /// [`DISPLAY_TICK_TIMEOUT`], so the watchdog produced anyway) both end in a
+    /// frame and both look identical in `produced`. That matters because
+    /// `DISPLAY_TICK_TIMEOUT` is **25 ms** and the shudder under investigation
+    /// shows a `produced` p95 of 25-36 ms — so "the watchdog is driving some
+    /// frames" is a candidate explanation that could not previously be
+    /// confirmed OR ruled out. These counters exist to settle that, and to be
+    /// deleted or kept on the evidence.
+    tick_ok: AtomicU64,
+    /// Watchdog fires: `recv_timeout` returned `Timeout`. See [`Self::tick_ok`].
+    tick_timeout: AtomicU64,
+    /// Ticks discarded by [`EmuThread::notify_present`] because the depth-1
+    /// channel was already full.
+    ///
+    /// Dropping a duplicate is by design — a pending tick is the same signal —
+    /// but the rate was never observable, and a *systematically* dropped tick
+    /// is indistinguishable from a delivered one at the point it is dropped.
+    tick_dropped: AtomicU64,
 }
 
 impl EmuControl {
@@ -292,7 +315,40 @@ impl EmuControl {
             frame_nanos: AtomicU64::new(dur_nanos(rustynes_core::FRAME_DURATION_NTSC)),
             fast_forward: AtomicBool::new(false),
             frame_advance: AtomicU32::new(0),
+            tick_ok: AtomicU64::new(0),
+            tick_timeout: AtomicU64::new(0),
+            tick_dropped: AtomicU64::new(0),
         }
+    }
+
+    /// Record which arm the display-regime `recv_timeout` took.
+    ///
+    /// `Relaxed` throughout: these are counters read for diagnosis, never to
+    /// order anything or gate a decision, so no synchronisation is implied and
+    /// none is needed. Using `Release`/`Acquire` here would imply a
+    /// happens-before edge that no reader relies on.
+    fn note_tick(&self, delivered: bool) {
+        let c = if delivered {
+            &self.tick_ok
+        } else {
+            &self.tick_timeout
+        };
+        c.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a tick discarded because the depth-1 channel was full.
+    fn note_tick_dropped(&self) {
+        self.tick_dropped.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// `(present-driven, watchdog, dropped)` display-tick totals since launch.
+    #[must_use]
+    pub fn tick_counts(&self) -> (u64, u64, u64) {
+        (
+            self.tick_ok.load(Ordering::Relaxed),
+            self.tick_timeout.load(Ordering::Relaxed),
+            self.tick_dropped.load(Ordering::Relaxed),
+        )
     }
 
     /// Mark a ROM loaded (or cleared) so the thread starts (or idles).
@@ -448,7 +504,15 @@ impl EmuThread {
     /// non-blocking: a full channel means a tick is already pending, which
     /// is the same signal — drop the duplicate.
     pub fn notify_present(&self) {
-        let _ = self.tick_tx.try_send(());
+        // v2.3.3 — count the drop rather than discard it silently. Dropping a
+        // duplicate is still correct (a pending tick carries the same signal),
+        // but a HIGH drop rate means presents are arriving faster than the
+        // producer consumes them, which is a different situation from the
+        // occasional coalesced tick this depth was chosen for — and the two
+        // were previously indistinguishable from outside.
+        if self.tick_tx.try_send(()).is_err() {
+            self.control.note_tick_dropped();
+        }
     }
 
     /// v1.0.0 (BUG-1) — wake the emulation thread out of its idle park. Called
@@ -540,8 +604,16 @@ fn run_loop(
             // Fifo vsync is the clock: one frame per present tick, with a
             // watchdog that keeps producing if presents stop arriving.
             match tick_rx.recv_timeout(DISPLAY_TICK_TIMEOUT) {
-                Ok(()) => drive_one(emu, audio.as_mut(), shared_input, control, present),
+                Ok(()) => {
+                    control.note_tick(true);
+                    drive_one(emu, audio.as_mut(), shared_input, control, present)
+                }
                 Err(RecvTimeoutError::Timeout) => {
+                    // The watchdog, not the display, is driving this frame.
+                    // Counted because `DISPLAY_TICK_TIMEOUT` is 25 ms and it is
+                    // therefore a candidate source of the 25-36 ms `produced`
+                    // p95 under investigation — see `EmuControl::tick_ok`.
+                    control.note_tick(false);
                     drive_wallclock(emu, audio.as_mut(), shared_input, control, present)
                 }
                 Err(RecvTimeoutError::Disconnected) => return,
