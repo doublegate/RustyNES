@@ -63,6 +63,19 @@ cycle-accurate core later replaced.
   timestamps, which the handler currently discards. See `docs/performance.md`
   v2.3.3 F10.
 
+  **Root cause then found (F11/F12).** Recording those scanout timestamps showed
+  the display misses **4.6% of refreshes**; joining them to the produce series
+  through a `CLOCK_MONOTONIC` anchor showed only **65.3% of produced frames get
+  the intended 2 scanouts** — 18.3% get one, 10.6% get three, and **3.2% are
+  never displayed at all**. Completing the `rlock` series (it had missed four
+  acquisition sites, which is why F10 read it as zero) moved the whole
+  unattributed 13 ms `rwork` tail into it: `rlock` p95 is **8.707 ms** against
+  an 8.334 ms refresh period, and `rwork` p99 drops to 0.109 ms. The winit
+  thread blocks on the emulator mutex for more than a refresh, so redraws land
+  late and frames miss their slot. `pump_watchpoints` takes that lock on every
+  redraw unconditionally; the fix is a pre-lock predicate and is deferred to its
+  own change with its own A/B.
+
 ### Changed
 
 - **Frontend: refresh measurement from redraw intervals is removed.** Shipped

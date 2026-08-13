@@ -1737,6 +1737,90 @@ under display-sync, at a rate that independently agrees with the ~4/second
 figure F10 arrived at through the wrong unit. F10's number was right by
 accident; this one is right by measurement.
 
+### v2.3.3 F12 — the mechanism, found: winit-thread lock contention (decision: ROOT CAUSE IDENTIFIED; fix deferred to its own change)
+
+F11 established that the display misses 4.6% of refreshes but could not say what
+changed on screen. Two measurements close that, and the first of them overturns
+an earlier conclusion in this document.
+
+#### `rlock` was incomplete, and completing it moved the whole 13 ms tail
+
+F10 reported `rlock` p99 = 0.000 ms and concluded the winit thread does not
+block. That series covered only part of the redraw window: `display_sync_produce`,
+`pump_scripts` and `pump_watchpoints` all run inside it and each acquire the
+emulator mutex, untimed. With all four sites instrumented, same host, same ROM:
+
+| series | F10 (incomplete) | complete |
+| --- | --- | --- |
+| `rlock` p95 | 0.000 ms | **8.707 ms** |
+| `rlock` p99 | 0.000 ms | **9.008 ms** |
+| `rlock` max | — | 33.194 ms |
+| `rwork` p99 | **13.0 ms** | **0.109 ms** |
+
+The unattributed 13 ms render-work tail **was lock waiting all along**, and it
+moved in full once the measurement covered the window. `rwork` p99 is now 0.109
+ms: the render loop genuinely does almost no work. **Suspect B is revived and
+confirmed** — it was refuted on a measurement that could not see it.
+
+Note the magnitude: `rlock` p95 of 8.707 ms against a refresh period of 8.334 ms.
+The winit thread spends more than a full refresh blocked, at the 95th percentile.
+
+#### What the display actually showed
+
+With the trace's produce/present rows and its compositor `scanout` rows joined
+through the new `anchor_mono_ns` header (both `CLOCK_MONOTONIC`), the question
+F10 asked in the wrong unit can finally be asked in the right one — **how many
+scanouts did each produced frame get?** At divisor 2 the answer should be
+exactly 2, every time. Measured over 1817 produced frames and 3480 scanouts:
+
+| scanouts per produced frame | share |
+| --- | --- |
+| 0 — never displayed at all | 3.19% |
+| 1 — half the intended duration | 18.28% |
+| **2 — correct** | **65.31%** |
+| 3 | 10.57% |
+| 4-5 | 2.65% |
+
+**34.69% of produced frames are displayed for the wrong length of time, and
+3.19% are never displayed at all.** A third of frames at the wrong duration is
+not a subtle artefact; it is a direct, quantitative account of content stepping
+forward and back.
+
+#### The chain
+
+1. The winit thread blocks on the emulator mutex — p95 8.7 ms, more than one
+   refresh period.
+2. The redraw and its present therefore land late.
+3. The frame misses its refresh slot: some frames get one scanout, some three,
+   some none.
+4. The display shows 34.7% of frames for the wrong duration and repeats 4.6% of
+   refreshes.
+
+The producer holds the mutex for the whole produce — ~9.7 ms per frame at the
+shipped `run_ahead = 2` — while the winit thread needs it inside every redraw at
+120 Hz. Contention is structural, not incidental.
+
+#### Where the contention is, and why the fix is deferred
+
+`display_sync_produce` returns *before* its acquisition on the threaded path, so
+it is not the source on the default build. `pump_watchpoints` is: it takes the
+lock on **every redraw**, unconditionally, before establishing whether anything
+needs it — and it does real per-frame work on `nes` (heatmap refresh, call-stack
+and access-counter replay, watch pump), so the lock is genuine whenever those
+features are live. In the common case — overlay hidden, no watchpoints, no
+logging — it is pure contention.
+
+The fix is a cheap pre-lock predicate ("does anything here need the emulator
+this frame?"), and **v2.3.0 already applied exactly this pattern one layer
+over**: `EmuControl::has_rom()` exists as a lock-free atomic precisely because
+`pace_frames` was blocking up to a full produce per iteration for a fact it
+could read without the mutex. The same shape, unfixed one call deeper.
+
+It is deferred to its own change rather than added here because it touches
+debugger internals this campaign has not read, it belongs with its own A/B
+measurement, and the instrument that would judge it is the one being landed.
+`rlock` and the scanouts-per-frame histogram are now the two numbers to move.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as

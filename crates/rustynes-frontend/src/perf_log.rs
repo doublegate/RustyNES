@@ -66,6 +66,9 @@ pub struct PerfLogger {
     dir: Option<PathBuf>,
     /// v2.3.3 — the companion per-frame trace file, when the trace is enabled.
     trace: Option<BufWriter<File>>,
+    /// v2.3.3 — `(CLOCK_MONOTONIC ns at the trace origin, compositor clock id)`,
+    /// written into the trace header so its two halves can be joined.
+    trace_anchor: (Option<u64>, Option<u32>),
 }
 
 /// v2.3.3 — environment switch for the per-frame trace.
@@ -191,13 +194,18 @@ impl PerfLogger {
         }
     }
 
+    /// Supply the clock anchor before the trace file is opened.
+    pub const fn set_trace_anchor(&mut self, origin_mono_ns: Option<u64>, clock_id: Option<u32>) {
+        self.trace_anchor = (origin_mono_ns, clock_id);
+    }
+
     /// v2.3.3 — append compositor-reported scanout instants to the trace.
     ///
-    /// These are the ONLY rows in the trace that describe the display rather
+    /// These are the only rows in the trace that describe the DISPLAY rather
     /// than this process: `t_s` here is the compositor's own presentation
-    /// clock, not `Instant`, so scanout rows are directly comparable to each
-    /// other but NOT to the produce/present rows above them. The analysis
-    /// treats them as a separate series for exactly that reason.
+    /// clock, not `Instant`. They become comparable to the produce/present
+    /// rows only through the `anchor_mono_ns` header line; without it the
+    /// analysis must treat the two halves as separate series.
     pub fn record_scanouts(&mut self, scanouts: &[crate::presentation_clock::Scanout]) {
         let (Some(w), false) = (self.trace.as_mut(), scanouts.is_empty()) else {
             return;
@@ -234,6 +242,7 @@ impl PerfLogger {
     }
 
     fn start(&mut self, ctx: &PerfLogContext) {
+        let (origin_mono_ns, clock_id) = self.trace_anchor;
         let dir = self
             .dir
             .clone()
@@ -245,7 +254,7 @@ impl PerfLogger {
                 // the two always describe the same run and cannot be paired up
                 // wrongly after the fact.
                 if frame_trace_requested() {
-                    match open_trace_file(&path) {
+                    match open_trace_file(&path, origin_mono_ns, clock_id) {
                         Ok((tw, tpath)) => {
                             eprintln!("rustynes: frame trace to {}", tpath.display());
                             self.trace = Some(tw);
@@ -283,7 +292,11 @@ impl PerfLogger {
 /// `perf-<rom>-<utc>.trace.csv`) because `perf_capture.sh` and the gate select
 /// the newest `perf-*.csv`, which that form matches — so the trace was picked
 /// up as if it were the summary and the gate failed on a missing column.
-fn open_trace_file(summary: &Path) -> std::io::Result<(BufWriter<File>, PathBuf)> {
+fn open_trace_file(
+    summary: &Path,
+    origin_mono_ns: Option<u64>,
+    clock_id: Option<u32>,
+) -> std::io::Result<(BufWriter<File>, PathBuf)> {
     let name = summary.file_name().and_then(|n| n.to_str()).map_or_else(
         || "trace.csv".to_string(),
         |n| format!("trace-{}", n.trim_start_matches("perf-")),
@@ -296,6 +309,19 @@ fn open_trace_file(summary: &Path) -> std::io::Result<(BufWriter<File>, PathBuf)
     // read only by the analysis script, and its companion carries the context.
     // `scanout` rows carry a fifth `flags` field and reuse `since_present` for
     // the compositor's presentation sequence number; see `record_scanouts`.
+    // v2.3.3 — the clock anchor, written before the header so the analysis can
+    // JOIN the two halves of this file. produce/present rows are `Instant`-based
+    // and origin-relative; `scanout` rows are absolute compositor timestamps.
+    // `origin_mono_ns` is `CLOCK_MONOTONIC` at the origin, and `clock_id` is the
+    // domain the compositor said it stamps in (1 = CLOCK_MONOTONIC). With both,
+    // scanout_t_s - origin_mono_ns/1e9 lands in the same timebase as t_s. Absent
+    // either, the analysis must treat the halves as unjoinable and SAY so —
+    // silently mixing clock domains is how F10 reached a wrong conclusion.
+    match (origin_mono_ns, clock_id) {
+        (Some(ns), Some(id)) => writeln!(w, "# anchor_mono_ns = {ns}\n# clock_id = {id}")?,
+        (Some(ns), None) => writeln!(w, "# anchor_mono_ns = {ns}\n# clock_id = unknown")?,
+        _ => writeln!(w, "# anchor_mono_ns = none (scanout rows are NOT joinable)")?,
+    }
     writeln!(w, "t_s,event,interval_ms,since_present,flags")?;
     Ok((w, path))
 }

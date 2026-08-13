@@ -395,6 +395,17 @@ const TRACE_CAPACITY: usize = 4096;
 /// Trace state: the origin instant plus the pending records.
 #[derive(Debug)]
 struct TraceBuf {
+    /// v2.3.3 — `CLOCK_MONOTONIC` nanoseconds at [`Self::origin`], when the
+    /// platform can supply it.
+    ///
+    /// This is what makes the produce/present rows joinable to the `scanout`
+    /// rows. Those carry the compositor's own presentation timestamps, which
+    /// live in the clock named by `wp_presentation`'s `clock_id` (1 =
+    /// `CLOCK_MONOTONIC`); `Instant` is the same clock on Linux but opaque, so
+    /// one anchor pair taken at the origin converts the whole series. Without
+    /// it the two halves of the trace describe the same run in incomparable
+    /// units — which is exactly the mistake that invalidated F10.
+    origin_mono_ns: Option<u64>,
     origin: Instant,
     last_produced: Option<Instant>,
     last_presented: Option<Instant>,
@@ -411,8 +422,9 @@ impl PerfStats {
     /// `App::post_produce_housekeeping`, so a handful of events is the real
     /// steady-state occupancy; the reservation is headroom for a stall, not a
     /// working size.
-    pub fn enable_trace(&mut self, now: Instant) {
+    pub fn enable_trace(&mut self, now: Instant, origin_mono_ns: Option<u64>) {
         self.trace = Some(TraceBuf {
+            origin_mono_ns,
             origin: now,
             last_produced: None,
             last_presented: None,
@@ -424,6 +436,17 @@ impl PerfStats {
     #[must_use]
     pub const fn trace_enabled(&self) -> bool {
         self.trace.is_some()
+    }
+
+    /// `CLOCK_MONOTONIC` nanoseconds at the trace origin, if the platform
+    /// supplied it. The anchor that makes produce/present rows comparable to
+    /// compositor `scanout` rows. `wp_presentation` stamps presentations in the
+    /// clock named by its `clock_id` event (1 = `CLOCK_MONOTONIC`), which is the
+    /// same clock `Instant` uses on Linux but opaque — so one anchor pair taken
+    /// at the origin converts the whole series.
+    #[must_use]
+    pub fn trace_origin_mono_ns(&self) -> Option<u64> {
+        self.trace.as_ref().and_then(|t| t.origin_mono_ns)
     }
 
     /// Swap the buffered events into `spare`, leaving the trace enabled and its

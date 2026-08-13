@@ -7027,6 +7027,78 @@ impl App {
         }
     }
 
+    /// v2.3.3 — arm the per-frame trace, if requested. Default off; see
+    /// `perf_log::FRAME_TRACE_ENV`.
+    ///
+    /// Extracted from `on_gfx_ready` only to keep that function inside the line
+    /// budget; it is called at the same point and does nothing else.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn arm_frame_trace(&mut self) {
+        if !crate::perf_log::frame_trace_requested() {
+            return;
+        }
+        self.emu
+            .lock()
+            .perf
+            .enable_trace(Instant::now(), Self::monotonic_now_ns());
+        // Compositor-reported SCANOUT instants, the only measurement that
+        // answers what the display actually showed — present-return timestamps
+        // describe queue submission under triple-buffered Fifo.
+        if let Some(clock) = self.presentation_clock.as_mut() {
+            clock.enable_scanout_trace();
+        }
+        // Hand the logger the clock anchor BEFORE the trace file opens, so the
+        // header can state whether the two halves are joinable.
+        let anchor = self.emu.lock().perf.trace_origin_mono_ns();
+        let clk = self
+            .presentation_clock
+            .as_ref()
+            .and_then(crate::presentation_clock::PresentationClock::clock_id);
+        self.perf_logger.set_trace_anchor(anchor, clk);
+    }
+
+    /// v2.3.3 — `CLOCK_MONOTONIC` in nanoseconds, or `None` where unavailable.
+    ///
+    /// The anchor that lets the per-frame trace's produce/present rows be compared
+    /// to its compositor `scanout` rows. `wp_presentation` stamps presentations in
+    /// the clock named by its `clock_id` event (1 = `CLOCK_MONOTONIC`), and
+    /// `Instant` is that same clock on Linux — but opaque, so its absolute value
+    /// cannot be read. One reading taken at the trace origin converts the whole
+    /// series.
+    ///
+    /// Read through `libc` rather than a new dependency: it is already a direct
+    /// dep behind the default-on `emu-thread` feature (for the thread's `rtprio`
+    /// call). With that feature off this returns `None` and the trace simply says
+    /// the two halves are unaligned, rather than aligning them wrongly.
+    #[cfg(all(not(target_arch = "wasm32"), unix, feature = "emu-thread"))]
+    fn monotonic_now_ns() -> Option<u64> {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: `clock_gettime` writes only through the supplied pointer, which
+        // is a live, correctly-typed, stack-allocated `timespec` owned here for the
+        // duration of the call. `CLOCK_MONOTONIC` is unconditionally available on
+        // Linux. The return value is checked; on failure `ts` is left as
+        // initialised above and the result discarded.
+        #[allow(unsafe_code)]
+        let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut ts) };
+        if rc != 0 {
+            return None;
+        }
+        u64::try_from(ts.tv_sec)
+            .ok()?
+            .checked_mul(1_000_000_000)?
+            .checked_add(u64::try_from(ts.tv_nsec).ok()?)
+    }
+
+    /// No monotonic anchor available: the trace records that the produce/present
+    /// and `scanout` halves are in different, unjoinable clock domains.
+    #[cfg(all(not(target_arch = "wasm32"), not(all(unix, feature = "emu-thread"))))]
+    const fn monotonic_now_ns() -> Option<u64> {
+        None
+    }
+
     /// v2.3.3 — fill the [`crate::perf::PerfView`] fields that live on the
     /// WINIT thread rather than behind the emulator mutex.
     ///
@@ -8131,15 +8203,7 @@ impl App {
         // the summary CSV cover the same window. Default off; see
         // `perf_log::FRAME_TRACE_ENV`.
         #[cfg(not(target_arch = "wasm32"))]
-        if crate::perf_log::frame_trace_requested() {
-            self.emu.lock().perf.enable_trace(Instant::now());
-            // Compositor-reported SCANOUT instants, the only measurement that
-            // answers what the display actually showed — present-return
-            // timestamps describe queue submission under triple-buffered Fifo.
-            if let Some(clock) = self.presentation_clock.as_mut() {
-                clock.enable_scanout_trace();
-            }
-        }
+        self.arm_frame_trace();
 
         #[cfg(not(target_arch = "wasm32"))]
         {
