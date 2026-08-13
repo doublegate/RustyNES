@@ -811,14 +811,23 @@ impl EmuCore {
 
     /// v2.8.0 Phase 3 — run-ahead budget throttle with hysteresis, fed by
     /// the produce-cost **median** (which INCLUDES the run-ahead frames).
-    /// Engages at `RUNAHEAD_THROTTLE_ENGAGE` of the frame budget and releases
-    /// a step below `RUNAHEAD_THROTTLE_RELEASE`, sustained for
-    /// `RUNAHEAD_RELEASE_WINDOWS` windows (plain code spans: those consts are
-    /// private, and a link from public docs to a private item fails the
-    /// `-D warnings` rustdoc gate) — the gap and the debounce together
-    /// are what prevent oscillation. (This said "releases below 40%", which
-    /// stopped being true when the release test moved to predicting the
-    /// re-enabled cost.)
+    /// Engages one step at a time above `RUNAHEAD_THROTTLE_ENGAGE` of the frame
+    /// budget (a plain code span, not an intra-doc link: the const is private
+    /// and linking to it from public docs fails the `-D warnings` rustdoc gate),
+    /// and releases a step when the PREDICTED cost one depth up falls below 70%.
+    ///
+    /// This comment previously said "releases below 40%", which stopped being
+    /// true when the release test moved to predicting the re-enabled cost.
+    ///
+    /// **The hysteresis is known to be insufficient.** Measured at
+    /// `run_ahead = 2`, the throttle changes depth ~3 times per 45 s — and each
+    /// change displaces the displayed frame by the run-ahead depth, which the
+    /// user sees as the picture jumping forward and back. Widening the band to
+    /// 55% and debouncing the release over four windows was tried and measured
+    /// WORSE on both counts (toggles unchanged, cadence 0.84% → 2.21-3.56% of
+    /// frames held for the wrong duration), so it was reverted: the cause lies
+    /// elsewhere. `runahead_throttle_toggles` is the metric to watch, and this
+    /// is an open defect, not a solved one.
     ///
     /// v2.8.0 Phase 5 — keyed off the MEDIAN, not the p95. On the dedicated
     /// emulation thread the p95/p99 tail is dominated by occasional OS
