@@ -14,6 +14,254 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Frontend: the display refresh can now come from the Wayland compositor.**
+  A new `wayland_presentation` module reads the refresh period straight off
+  `wp_presentation`'s `presented` event — the compositor's own figure, which
+  does not depend on the `wl_output` global whose absence leaves winit's
+  `current_monitor()` answering `None` for an entire session. It binds against
+  winit's existing connection and surface, polls without blocking, and settles
+  on one value per session, so the pacing regime cannot oscillate. A declared
+  refresh still always wins; this only fills the gap where there is none.
+  Wayland-only and best-effort — every failure path returns `None` and leaves
+  X11, Windows and macOS on exactly the code they ran before. The perf-log
+  header gains `refresh_source` (`declared` | `presentation` | `none`), because
+  two captures with the same refresh from different sources are not the same
+  experiment. Measured over 16 asserted 45 s captures on four ROMs: display-sync
+  now engages and **holds every row of every run**, where Bad Dudes (MMC3) and
+  Bandit Kings (MMC5) previously never left the wall-clock pacer. Dropped frames
+  on Bad Dudes go from **114-186 per 45 s to 1-6**, audio underruns are 0
+  throughout, and console-rate error stays within 0.16%. One measure did not
+  improve and is recorded as open in `docs/performance.md` v2.3.3 F4: the
+  `produced` interval p95 sits at 27-33 ms, and the control run intended to
+  attribute it was confounded by capture order, so no cause is claimed.
+
+### Changed
+
+- **Frontend: refresh measurement from redraw intervals is removed.** Shipped
+  earlier in this cycle as the fallback for a silent windowing API, it worked
+  on light ROMs and failed on the ones that needed it: a redraw interval
+  measures the *application*, not the display, so on a ~14 ms/frame commercial
+  ROM it reported **20.032 Hz on a 119.991 Hz panel** and display-sync
+  correctly refused to engage. No retry schedule fixes a signal measuring the
+  wrong quantity — three were tried — so the sampling half is deleted rather
+  than left disabled, and `wp_presentation` above replaces it. The median +
+  stability-quorum estimator was never the flawed half and is unchanged, now
+  shared by both callers along with its tests; `best_divisor`, the
+  phase/rate split and the console-rate fallback are untouched.
+
+- **Frontend perf gates: `cost_p95` and `produced_dropped` are reported, not
+  enforced; a console-rate gate replaces them.** Both thresholds were derived
+  from the contaminated cost metric described under *Fixed* below. `cost_p95` legitimately scales with
+  `run_ahead`, which multiplies work by design, and `produced_dropped` is a
+  property of the display (the same build and host drops 1–9 frames per 45 s
+  under display-sync and 35–131 under the wall-clock fallback), so gating either
+  reports the user's hardware as a regression. The new gate checks
+  `produced_mean` against the capture's `target_ms` within 0.5% — the one thing
+  that is the emulator's own responsibility and is independent of both the
+  display and `run_ahead`.
+
+- **Frontend: the framebuffer is no longer re-uploaded when it has not changed.**
+  In `Mailbox` present mode the frontend presents faster than the emulator
+  produces — measured across the captures in `perf-logs/`, four of six runs show
+  137–156 duplicate presents per second against ~60 produced frames, so roughly
+  70% of presents were re-sending pixels the GPU texture already held (~35 MB/s
+  of redundant staging and copy traffic). The upload is now gated on an FNV-1a
+  hash of the frame. No visual change; no frame-time change is claimed.
+- **Frontend: the status bar's mapper label is cached at ROM load.** It was
+  rebuilt every displayed frame from `Nes::mapper_info()` — which constructs a
+  whole debug structure (MMC3's runs ~25 `format!` calls and four `Vec`
+  allocations) — inside the emulator lock, keeping only the name. Measured at
+  1,367 ns/frame, i.e. 0.008% of a frame: this is allocation hygiene, not an
+  optimization.
+
+### Fixed
+
+- **Frontend: display-sync consumed a frame slot per redraw without producing a
+  frame, whenever the emulation thread was not driving.** `display_produce_due`
+  is a stateful mutator — it advances the wall-clock schedule and resets the
+  refresh counter — and both the post-present path and `display_sync_produce`
+  called it for the same redraw. At divisor 2 the discarded second call could
+  advance the schedule by a full period with no frame behind it, so the wall
+  clock (the rate authority) outran frame production and the console ran
+  **slow**, on exactly the high-refresh panel the divisor exists to serve.
+  Ownership now follows `emu_thread_drives()`, the same predicate
+  `display_sync_produce` stands down on.
+- **Frontend: the F8 work/wait instrument measured the wrong interval, and its
+  headline figure was arithmetically invalid.** The wait clock started before
+  the render branch, so it spanned the framebuffer copy, the HD composite and
+  the egui build in addition to the blocking present; and "render work" was
+  derived as `rtot p95 − rwait p95`, a difference of percentiles rather than a
+  percentile of the difference. The published table had `work p95` *below*
+  `work p50`, which is impossible. The clock now restarts immediately before
+  each GPU call, and work is recorded per sample as its own series (`rwork_*`).
+  Re-measured, this **reverses the conclusion drawn from it**: render work is
+  0.013 ms at p50 but reaches **13–22 ms at p99**, a real tail the broken
+  instrument hid and on the strength of which the render loop had been
+  eliminated as a suspect. Recorded as an open lead, not a diagnosis — see
+  `docs/performance.md` v2.3.3 F8.
+- **Frontend: `RenderPerf::clear()` left the wait samples behind**, mixing the
+  previous ROM's or regime's blocking-present figures into the next
+  experiment's while every other render series started fresh.
+- **Frontend: a `DisplaySync::slack` field documented as "half a display
+  refresh" was cached but never read**, while the guard it purported to
+  describe uses half a *console frame period*. The field is deleted and the
+  docs corrected rather than left to contradict the code.
+- **Frontend: `close_rom` left a stale cached mapper name** behind the ROM it
+  described; it now goes through `EmuCore::clear_rom`.
+- **Frontend: `refresh_probe::effective_period` could panic the render loop.**
+  `Duration::from_secs_f64` rejects non-finite and negative values, and the
+  refresh reaching it is compositor- or API-supplied rather than checked. It
+  now returns `Option<Duration>`, matching its sibling `best_divisor`.
+- **Frontend: the `wp_presentation` sample set could wedge permanently.** At the
+  cap the newest report was dropped rather than the oldest, so a set that
+  straddled an output change could never re-form a quorum while still creating
+  one feedback object per present for the rest of the session. It is now a
+  sliding window.
+- **Frontend: `PresentationClock` dropped winit's window before the Wayland
+  objects backed by its pointers.** Rust drops fields in declaration order and
+  `_window` was declared first; it is now declared last, so the foreign-backed
+  `conn`/`queue`/`surface` are gone before the `Arc<Window>` is released.
+- **Build: `wayland-client`'s `system` feature is now declared explicitly.**
+  `Backend::from_foreign_display` and `ObjectId::from_ptr` require it, and it
+  resolved only by unification through winit/sctk/rfd — a change in any of them
+  would have turned into a confusing missing-API error.
+- **`scripts/perf/perf_capture.sh`: the documented exit-3 "unverifiable
+  capture" path was unreachable.** `grep` exiting 1 on an absent header
+  propagated out of the command substitution under `set -euo pipefail` and
+  killed the script first, with status 1 and no message — in precisely the case
+  the message exists for. The metadata reader also imported `tomllib` outside
+  its `try`, aborting the whole capture on Python < 3.11 instead of degrading.
+- **CI: the PGO workflow's BOLT probe could report a runtime it had not
+  linked.** Failed `sudo mkdir`/`ln` left `bolt_dir` populated (the step carries
+  no `set -e`), publishing `have_bolt=true` without `libbolt_rt_instr.a`. It now
+  verifies the resulting file and prefers the selected toolchain's own prefix
+  over a system-wide search.
+- **Security: `webbrowser` bumped 1.2.1 → 1.2.4** for RUSTSEC-2026-0257 (Unix
+  `BROWSER` argument injection), reached transitively via `egui-winit`'s `links`
+  feature.
+- **Frontend: display-sync's occlusion watchdog never ran.** `about_to_wait`
+  early-returned with `ControlFlow::Wait` whenever the emulation thread drives
+  (the default build), and that return sat above the display-sync branch — so
+  the watchdog was unreachable in every shipped build. Display-sync is
+  self-driving from the present success path, so a compositor that stops
+  delivering frame callbacks (minimised or fully occluded window) left nothing
+  to re-arm the redraw and nothing scheduled to wake the loop, stopping
+  emulation and audio. The stall path is additionally guarded so it does not
+  produce frames on the winit thread while the emulation thread is also
+  producing.
+- **Frontend: the run-ahead throttle could not release without re-engaging.**
+  It engaged on produce cost measured *with* run-ahead (>85% of the frame
+  budget) but released on cost measured *without* it (<40%) — two different
+  quantities, with the hysteresis band sitting between the two states rather
+  than spanning them. At depth 2 any ROM whose base cost lands between ~28%
+  and 40% of budget oscillated on a ~2 s period, and each toggle shifts the
+  displayed frame by the run-ahead depth. Measured at three toggles per 45 s
+  on Bad Dudes. Release now predicts the re-enabled cost.
+- **Frontend: the display-sync produce phase was a marginal wall-clock test.**
+  It re-decided `now + slack >= next` on every refresh with `slack` at half a
+  *refresh*, putting the decision boundary 4.167 ms from an 8.334 ms grid, so
+  ordinary redraw jitter flipped it between adjacent refreshes. The phase now
+  comes from a refresh count, with the wall clock retained as rate guards in
+  both directions. Worth ~10% of the produced-interval p95; see
+  `docs/performance.md` v2.3.3 F6 for why that is reported as partial.
+- **Frontend: dropped frames and stutter traced to display pacing, and fixed.**
+  On a 120 Hz host the emulator produced NTSC frames perfectly (`produced_mean`
+  measured 16.64 ms in every capture) while the display-synchronised pacer never
+  engaged, leaving a free-running wall-clock producer beating against the
+  compositor's frame callbacks — 135–254 dropped frames per 45 s. Three causes,
+  all fixed: display-sync only ever supported **one emulated frame per refresh**,
+  so every 120/144 Hz panel was rejected by construction; refresh detection went
+  solely through winit's `current_monitor()`, which reports nothing on a
+  compositor that advertises no `wl_output` (and was consulted once at startup
+  before the monitor was known, then never revisited); and the regime tied
+  console *rate* to present rate, so render-loop hiccups slowed the console.
+  Display-sync now selects an integer divisor (120 Hz → one frame per two
+  refreshes), can measure the refresh cadence itself when the windowing API is
+  silent, and takes its rate from the wall-clock schedule while taking only its
+  *phase* from the display. Measured: dropped frames **135–254 → 1–9** per 45 s,
+  audio underruns **0–19 → 0**, console-rate error within 0.12%. Frontend-only —
+  the deterministic core, save-state and movie formats, and every golden vector
+  are untouched.
+- **Frontend: display-sync no longer downgrades itself while it is winning.**
+  Its sustained-miss fallback tripped on presented-interval p95, a proxy that
+  reports the host's compositor rather than whether the regime is working. On
+  Super Mario Bros — a materially heavier ROM than the synthetic one the regime
+  was tuned against, 13.5 ms of work at `run_ahead = 2` versus 9.2 ms — that
+  p95 sat at 25.3–27.2 ms against a 24.96 ms limit, so whether a session kept
+  the good regime came down to run-to-run variance, and the fallback is sticky.
+  Measured, the regime it fell back to was far worse: 1–15 dropped frames per
+  45 s under display-sync against 35–147 under wall-clock. Display-sync now
+  falls back on **console-rate error** instead (2% band, a structural safety
+  net — the wall-clock rate authority makes a breach a genuine defect), and
+  holds 4/4 runs on that ROM at both run-ahead levels with 1–8 drops. `vrr`
+  keeps the present-based test, because its failure is the opposite shape: the
+  emulator produces correctly at 16.64 ms while the display shows ~20 fps.
+- **Frontend: `pacing_mode = "vrr"` no longer collapses on a non-VRR display.**
+  It had no sustained-miss fallback, so on a fixed-refresh panel it degraded to
+  ~20 fps (49.74 ms presented, 1170 dropped frames in 40 s) and stayed there. It
+  now shares display-sync's health check and sticky fallback to wall-clock.
+- **Frontend: the producer's mutex wait is no longer billed as emulation cost.**
+  The three produce paths started their timer before acquiring the emulator
+  mutex, so time blocked on the winit thread was recorded as work — making a
+  contention stall indistinguishable from an expensive frame, and pinning the
+  reported tail to almost exactly one display refresh. Work and wait are now
+  measured separately (new `wait_*` columns in the perf-log CSV). The corrected
+  figures show emulation at ~4.1 ms of the 16.639 ms budget with run-ahead off,
+  and no mutex contention at any percentile.
+- **`scripts/perf/perf_log_check.py` crashed on valid captures.** A run ended
+  mid-write (how every timed capture ends) yields a short final row, which
+  `csv.DictReader` fills with `None`; `float(None)` raises `TypeError`, which the
+  bare `except ValueError` did not catch.
+- **The perf-log gate ignored the metric that matters.** It tracked only
+  `produced_max_ms` against a 150 ms threshold — nine times the NTSC frame
+  budget, and a single sample — so a capture peaking at 128.9 ms with 62
+  catch-up bursts passed every threshold it tracked. The gate now trips on
+  `catchup_bursts` (200 → **16**) and `snap_forwards` (40 → **8**), both derived
+  from the eight captures on file rather than chosen: healthy runs sit at 0
+  bursts, the borderline one at 12, the degraded ones at 32 and 62.
+  - An absolute-millisecond p99 gate was tried first and **rejected on
+    measurement**: p99 tracks the host display's beat against the console rate,
+    not frontend health, so it is now reported rather than gated (opt-in flags
+    remain for single-machine comparisons). Full figures and reasoning:
+    `docs/performance.md`.
+- **The BOLT stage reported a speedup it had not measured.** Its bench fallback
+  timed a plain, non-BOLT build and labelled the result "BOLT speedup vs plain
+  release", and the stage benched the core while BOLT optimizes the frontend
+  binary — so it could not have measured its subject in any case. Both gate
+  steps are now disabled with the reasoning inline, the runtime probe fails
+  closed, and the artifact is named for what it contains
+  (`rustynes-bolt-optimized`). **BOLT is deferred and explicitly unmeasured**;
+  PGO (measured 6.43% faster and byte-identical) remains the shipping
+  optimization. Investigation trail: `docs/performance.md`.
+
+### Performance
+
+- **Run-ahead measurement, corrected.** An earlier entry in this section
+  claimed run-ahead "blows the frame budget at the shipped default", citing
+  `cost_p95` rising 4.51 ms → 24.15 ms and dropped frames 10 → 303. **Both
+  figures were artefacts of the mutex-wait timing bug fixed above**, which billed
+  time blocked on the winit thread to the emulator. Corrected, run-ahead costs
+  ~6 ms of the 16.639 ms budget at `run_ahead = 1` and ~9.7 ms at the shipped
+  `run_ahead = 2`; the dropped frames were display pacing, not run-ahead, and are
+  themselves fixed above. Snapshot slimming was then measured directly and is
+  **not** the lever it was assumed to be: `snapshot_core_into` is 14.8 µs and
+  `restore_quiet` 122 µs, together ~2.2% of a run-ahead frame, so removing the
+  245,760-byte framebuffer would buy ~0.66% of the frame budget — below the
+  project's standing >3% adoption bar. It retains a real justification on
+  rewind-ring *memory*, where the framebuffer is ~94% of every per-frame
+  snapshot, and should be argued there rather than on frame time. See
+  `docs/performance.md` (v2.3.3 F1).
+
+- **The frontend optimization items were measured before being built, and all
+  three are under 0.1% of a frame** — the framebuffer copy chain 13.2 µs
+  (0.079%), `perf.view()` for a closed panel 16.2 µs (0.098%), and the
+  `mapper_info()` storm 1.4 µs (0.008%). Every claim in the plan was factually
+  true and verified in source; they are simply small. The core needs ~3.78 ms of
+  the 16.639 ms budget, so the frontend runs with ~12.8 ms of slack and mean
+  frame time was never the constraint. See `docs/performance.md` (v2.3.3 F1).
+
 ## [2.3.2] - 2026-08-11 - "Lucid" (pixel provenance + replay attestation)
 
 ### Added

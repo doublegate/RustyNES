@@ -346,14 +346,70 @@ jobs:
             done
           fi
 
+          # Finding the BINARY is necessary but NOT sufficient. `llvm-bolt
+          # --instrument` links a runtime archive, libbolt_rt_instr.a, which it
+          # resolves relative to its OWN location (<prefix>/lib/). Run
+          # 31062655291 located the binary, ran the whole analysis, and then died
+          # with `BOLT-ERROR: library not found: /usr/lib/libbolt_rt_instr.a` —
+          # the packaging ships the tool without the runtime where BOLT looks for
+          # it. This is the same mistake as the original `apt-get install bolt`
+          # check one level down: verifying one necessary condition and treating
+          # it as sufficient. Verify the runtime too, link it into place when it
+          # exists elsewhere, and otherwise skip — so `have_bolt=true` means
+          # "BOLT can actually instrument", not "a file called llvm-bolt exists".
+          # PR #357 review — the block below used to make the SAME mistake it
+          # warns about one paragraph up. It ran `sudo mkdir` and `sudo ln`
+          # without checking either, and the step carries no `set -e`, so a
+          # failed link left `bolt_dir` non-empty and published
+          # `have_bolt=true` with no usable runtime — the BOLT stage then died
+          # later, further from the cause. Attempting the link is a necessary
+          # condition; the file existing afterwards is the sufficient one, so
+          # that is what is now verified.
+          if [ -n "${bolt_dir}" ]; then
+            bolt_bin="$(command -v llvm-bolt || echo "${bolt_dir}/llvm-bolt")"
+            # Resolve symlinks: the runtime sits under the REAL install prefix,
+            # which /usr/bin/llvm-bolt (an alternatives symlink on Debian) is
+            # not. `readlink -f` failing leaves the original path, which is the
+            # correct fallback.
+            bolt_real="$(readlink -f "${bolt_bin}" 2>/dev/null || echo "${bolt_bin}")"
+            bolt_prefix="$(dirname "$(dirname "${bolt_real}")")"
+            rt_expected="${bolt_prefix}/lib/libbolt_rt_instr.a"
+            if [ ! -f "${rt_expected}" ]; then
+              # Search the SELECTED toolchain's own prefix first. A system-wide
+              # find can match an archive belonging to a different LLVM version,
+              # which links but does not necessarily work.
+              rt_found="$(find "${bolt_prefix}" -name libbolt_rt_instr.a 2>/dev/null | head -1)"
+              if [ -z "${rt_found}" ]; then
+                rt_found="$(find /usr/lib /usr/local/lib /usr/lib64 \
+                              -name libbolt_rt_instr.a 2>/dev/null | head -1)"
+                [ -n "${rt_found}" ] && echo \
+                  "note: BOLT runtime ${rt_found} found OUTSIDE the selected" \
+                  "prefix ${bolt_prefix}; version match not guaranteed." \
+                  >> "$GITHUB_STEP_SUMMARY"
+              fi
+              if [ -n "${rt_found}" ] \
+                 && sudo mkdir -p "$(dirname "${rt_expected}")" \
+                 && sudo ln -sf "${rt_found}" "${rt_expected}" \
+                 && [ -f "${rt_expected}" ]; then
+                echo "linked BOLT runtime ${rt_found} -> ${rt_expected}" \
+                  >> "$GITHUB_STEP_SUMMARY"
+              else
+                bolt_dir=""
+                echo "llvm-bolt present but libbolt_rt_instr.a could not be made" \
+                  "available at ${rt_expected} — skipping BOLT stage." \
+                  >> "$GITHUB_STEP_SUMMARY"
+              fi
+            fi
+          fi
+
           if [ -n "${bolt_dir}" ]; then
             echo "${bolt_dir}" >> "$GITHUB_PATH"
             echo "have_bolt=true" >> "$GITHUB_OUTPUT"
-            echo "llvm-bolt found: $(command -v llvm-bolt || echo "${bolt_dir}/llvm-bolt")" \
+            echo "llvm-bolt ready: $(command -v llvm-bolt || echo "${bolt_dir}/llvm-bolt")" \
               >> "$GITHUB_STEP_SUMMARY"
           else
             echo "have_bolt=false" >> "$GITHUB_OUTPUT"
-            echo "llvm-bolt unavailable on this runner — skipping BOLT stage." >> "$GITHUB_STEP_SUMMARY"
+            echo "BOLT unavailable on this runner — skipping BOLT stage." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       # Re-run PGO so BOLT chains onto a fresh PGO binary (artifacts from the

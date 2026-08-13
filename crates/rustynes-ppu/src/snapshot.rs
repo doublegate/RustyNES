@@ -145,6 +145,27 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///   same choice Mesen2 makes in its `if(!s.IsSaving())` post-load fixup block.
 pub const PPU_SNAPSHOT_VERSION: u8 = 8;
 
+/// v2.3.3 — high bit of the version byte, marking a **slim** snapshot: every
+/// field except the 245,760-byte framebuffer.
+///
+/// Exists for the rewind ring, which snapshots on *every* frame inside the
+/// frame budget and then XORs and LZ4-compresses the result. The framebuffer
+/// is 94% of those bytes and the worst possible payload for that scheme — it
+/// changes every frame, so the XOR never zeroes and the delta never
+/// compresses. Measured, rewind roughly doubled the produce-interval p95
+/// (31.17 ms against 17.12 ms with it off) and was the cause of a
+/// user-visible judder report; see `docs/performance.md` v2.3.3 F3/F4.
+///
+/// Encoded as a flag on the version byte rather than a new version number so
+/// the on-disk format is untouched: every `.rns` ever written has the high bit
+/// clear and still parses on exactly the path it always did. Slim snapshots
+/// are in-memory only and are never written to a file.
+///
+/// A slim blob restores every other field and **leaves the framebuffer
+/// untouched**, so the caller is responsible for producing an image — see
+/// `Nes::rewind_step_back`, which runs one frame to regenerate it.
+pub const PPU_SNAPSHOT_SLIM_FLAG: u8 = 0x80;
+
 const CIRAM_LEN: usize = 0x800;
 const OAM_LEN: usize = 0x100;
 const SEC_OAM_LEN: usize = 32;
@@ -268,11 +289,33 @@ impl Ppu {
     #[allow(clippy::too_many_lines)]
     #[must_use]
     pub fn snapshot(&self) -> Vec<u8> {
-        // Capacity hint: ~256 KiB framebuffer dominates.
+        self.snapshot_with(false)
+    }
+
+    /// v2.3.3 — [`Ppu::snapshot`] without the framebuffer. See
+    /// [`PPU_SNAPSHOT_SLIM_FLAG`].
+    #[must_use]
+    pub fn snapshot_slim(&self) -> Vec<u8> {
+        self.snapshot_with(true)
+    }
+
+    /// Shared body writer for the full and slim encodings.
+    // One long straight-line writer: every field in schema order. Splitting it
+    // would make the field-order correspondence with the reader (and with the
+    // ADR 0034 schema audit, which parses this body) harder to verify, which is
+    // the opposite of what this code needs.
+    #[allow(clippy::too_many_lines)]
+    fn snapshot_with(&self, slim: bool) -> Vec<u8> {
+        // Capacity hint: ~256 KiB framebuffer dominates the full encoding;
+        // the slim one is ~4 KiB, so don't reserve for a buffer it omits.
         let mut w = W {
-            buf: Vec::with_capacity(FRAMEBUFFER_LEN + 4096),
+            buf: Vec::with_capacity(if slim { 4096 } else { FRAMEBUFFER_LEN + 4096 }),
         };
-        w.u8(PPU_SNAPSHOT_VERSION);
+        w.u8(if slim {
+            PPU_SNAPSHOT_VERSION | PPU_SNAPSHOT_SLIM_FLAG
+        } else {
+            PPU_SNAPSHOT_VERSION
+        });
         w.u8(region_to_u8(self.region));
 
         w.u8(self.ctrl.bits());
@@ -351,7 +394,9 @@ impl Ppu {
         w.u8(self.spr_count);
         w.u8(u8::from(self.spr_zero_in_line));
 
-        w.bytes(&self.framebuffer);
+        if !slim {
+            w.bytes(&self.framebuffer);
+        }
 
         // v3 (W3-Stage-4): the `mc-ppu-2007-render-buffer` PPUDATA
         // state-machine tail. Written unconditionally (zeros when the
@@ -481,17 +526,33 @@ impl Ppu {
         // `UnsupportedVersion` on whatever byte sits at offset 0). `Truncated(0)`
         // matches the offset semantics `R::need` uses elsewhere (the position at
         // which a read ran out) — here, nothing valid was read.
-        const MIN_SNAPSHOT_SIZE: usize =
-            1 + CIRAM_LEN + OAM_LEN + SEC_OAM_LEN + PAL_LEN + FRAMEBUFFER_LEN;
-        if data.len() < MIN_SNAPSHOT_SIZE {
+        // v2.3.3 — a slim blob (high bit of the version byte) carries no
+        // framebuffer, so the bound must drop that term for it. Read the flag
+        // from byte 0 directly rather than through `R`, because this check
+        // deliberately runs BEFORE the reader is constructed.
+        const MIN_SLIM_SIZE: usize = 1 + CIRAM_LEN + OAM_LEN + SEC_OAM_LEN + PAL_LEN;
+        const MIN_SNAPSHOT_SIZE: usize = MIN_SLIM_SIZE + FRAMEBUFFER_LEN;
+        let is_slim = data
+            .first()
+            .is_some_and(|v| v & PPU_SNAPSHOT_SLIM_FLAG != 0);
+        let min_size = if is_slim {
+            MIN_SLIM_SIZE
+        } else {
+            MIN_SNAPSHOT_SIZE
+        };
+        if data.len() < min_size {
             return Err(PpuSnapshotError::Truncated(0));
         }
         let mut r = R { src: data, pos: 0 };
-        let version = r.u8()?;
+        let raw_version = r.u8()?;
+        // v2.3.3 — the high bit marks a slim (framebuffer-less) blob; strip it
+        // before the range check so the version rules are unchanged.
+        let slim = raw_version & PPU_SNAPSHOT_SLIM_FLAG != 0;
+        let version = raw_version & !PPU_SNAPSHOT_SLIM_FLAG;
         // Bound tied to the constant, not a literal: the acceptance range and
         // the emitted version must move together on every schema bump.
         if !matches!(version, 1..=PPU_SNAPSHOT_VERSION) {
-            return Err(PpuSnapshotError::UnsupportedVersion(version));
+            return Err(PpuSnapshotError::UnsupportedVersion(raw_version));
         }
         self.region = region_from_u8(r.u8()?)?;
 
@@ -582,7 +643,11 @@ impl Ppu {
         self.spr_count = r.u8()?;
         self.spr_zero_in_line = r.u8()? != 0;
 
-        r.bytes_into(&mut self.framebuffer)?;
+        // Slim blobs carry no framebuffer; the existing one is left in place
+        // and the caller regenerates the image.
+        if !slim {
+            r.bytes_into(&mut self.framebuffer)?;
+        }
 
         // v3 (W3-Stage-4): the gated master-clock PPU tail. v1/v2 blobs
         // lack it; upconvert at the inactive defaults (countdown 0 = no
@@ -1061,6 +1126,64 @@ mod tests {
         assert!(q.ale_armed);
         assert!(q.pattern_latch_stale);
         assert_eq!(q.copy_v_delay, 3);
+    }
+
+    /// v2.3.3 — a slim blob must be dramatically smaller, and the size
+    /// difference must be exactly the framebuffer.
+    #[test]
+    fn slim_snapshot_omits_exactly_the_framebuffer() {
+        let p = Ppu::new(PpuRegion::Ntsc);
+        let full = p.snapshot();
+        let slim = p.snapshot_slim();
+        assert_eq!(
+            full.len() - slim.len(),
+            FRAMEBUFFER_LEN,
+            "slim must differ from full by exactly the framebuffer"
+        );
+    }
+
+    /// A slim blob restores every field EXCEPT the framebuffer, which it must
+    /// leave untouched (the caller regenerates the image).
+    #[test]
+    fn slim_restore_preserves_the_existing_framebuffer() {
+        let mut src = Ppu::new(PpuRegion::Ntsc);
+        src.framebuffer[100] = 0xAB;
+        src.spr_count = 5;
+        let slim = src.snapshot_slim();
+
+        let mut dst = Ppu::new(PpuRegion::Ntsc);
+        dst.framebuffer[100] = 0xEF; // must survive the restore
+        dst.spr_count = 0;
+        dst.restore(&slim).expect("slim blob restores");
+        assert_eq!(dst.spr_count, 5, "non-framebuffer state must restore");
+        assert_eq!(
+            dst.framebuffer[100], 0xEF,
+            "slim restore must not touch the framebuffer"
+        );
+    }
+
+    /// The flag must not disturb the existing format: a full blob still round
+    /// trips its framebuffer, and its version byte has the flag clear.
+    #[test]
+    fn full_snapshot_is_unchanged_by_the_slim_flag() {
+        let mut src = Ppu::new(PpuRegion::Ntsc);
+        src.framebuffer[100] = 0xAB;
+        let full = src.snapshot();
+        assert_eq!(full[0] & PPU_SNAPSHOT_SLIM_FLAG, 0, "flag clear on full");
+        assert_eq!(full[0], PPU_SNAPSHOT_VERSION);
+        let mut dst = Ppu::new(PpuRegion::Ntsc);
+        dst.restore(&full).expect("full blob restores");
+        assert_eq!(dst.framebuffer[100], 0xAB);
+    }
+
+    /// A truncated slim blob must still be rejected — the relaxed minimum
+    /// must not become a hole that accepts garbage.
+    #[test]
+    fn truncated_slim_blob_is_still_rejected() {
+        let p = Ppu::new(PpuRegion::Ntsc);
+        let slim = p.snapshot_slim();
+        let mut dst = Ppu::new(PpuRegion::Ntsc);
+        assert!(dst.restore(&slim[..slim.len() / 2]).is_err());
     }
 
     #[test]

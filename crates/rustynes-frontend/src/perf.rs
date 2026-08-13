@@ -166,6 +166,116 @@ impl AudioHealth {
     }
 }
 
+/// v2.3.3 — render-loop cost, owned by the WINIT thread.
+///
+/// Separate from [`PerfStats`] (which lives behind the emulator mutex and
+/// describes the producer) because this describes the *consumer*, and until
+/// v2.3.3 nothing measured it at all. That was the blind spot behind a
+/// user-visible judder report the produce-side metrics could not explain: the
+/// console rate was exact and drops were ~0, yet `presented` p95 sat at 3+
+/// display refreshes, meaning frames reached the screen unevenly. Uneven
+/// delivery is what the eye reads as stutter, and no instrument covered the
+/// path that delivers.
+#[derive(Debug, Default)]
+pub struct RenderPerf {
+    /// egui shell build (`run_shell_ui`), which holds the emulator lock.
+    ui: SampleRing,
+    /// GPU encode + submit + present (`render_with_overlay`).
+    gpu: SampleRing,
+    /// The whole `RedrawRequested` handler, end to end.
+    total: SampleRing,
+    /// v2.3.3 F8 — the BLOCKING present alone (swapchain acquire + present).
+    ///
+    /// Split out because `total` conflates work with waiting: under Fifo a
+    /// present that blocks until vblank is correct behaviour, not a stall, so
+    /// a 16 ms `total` p95 could mean either and the metric could not say
+    /// which.
+    wait: SampleRing,
+    /// v2.3.3 F8 — render WORK, recorded PER SAMPLE as `total - wait`.
+    ///
+    /// Its own series rather than a derived one, because the derivation people
+    /// reach for is invalid: `work p95 = total p95 - wait p95` subtracts two
+    /// percentiles and is not the percentile of the difference. The first F8
+    /// write-up did exactly that and published a table whose `work p95` was
+    /// BELOW its `work p50` — percentiles cannot decrease, which is how the
+    /// error announced itself. Differencing the two timings of the same redraw
+    /// and ranking the result is the only way to get a real work percentile.
+    work: SampleRing,
+}
+
+impl RenderPerf {
+    /// Record the egui shell build.
+    pub fn record_ui(&mut self, d: Duration) {
+        self.ui.push(d.as_secs_f32() * 1000.0);
+    }
+
+    /// Record GPU encode + submit + present.
+    pub fn record_gpu(&mut self, d: Duration) {
+        self.gpu.push(d.as_secs_f32() * 1000.0);
+    }
+
+    /// Record the whole redraw handler.
+    pub fn record_total(&mut self, d: Duration) {
+        self.total.push(d.as_secs_f32() * 1000.0);
+    }
+
+    /// Record the blocking present (vblank wait included).
+    pub fn record_wait(&mut self, d: Duration) {
+        self.wait.push(d.as_secs_f32() * 1000.0);
+    }
+
+    /// Record one redraw's total and blocking present together, deriving the
+    /// work sample from the same pair.
+    ///
+    /// Prefer this to calling [`Self::record_total`] and [`Self::record_wait`]
+    /// separately: the work series is only meaningful when both halves come
+    /// from the SAME redraw, and pairing them here makes that structural
+    /// rather than a convention a caller has to remember. Clamped at zero —
+    /// the two clocks stop at slightly different points, so a near-zero-work
+    /// redraw can otherwise produce a small negative.
+    pub fn record_redraw(&mut self, total: Duration, wait: Duration) {
+        let total_ms = total.as_secs_f32() * 1000.0;
+        let wait_ms = wait.as_secs_f32() * 1000.0;
+        self.total.push(total_ms);
+        self.wait.push(wait_ms);
+        self.work.push((total_ms - wait_ms).max(0.0));
+    }
+
+    /// `(ui, gpu, total, wait, work)` summaries.
+    #[must_use]
+    pub fn stats(
+        &self,
+    ) -> (
+        IntervalStats,
+        IntervalStats,
+        IntervalStats,
+        IntervalStats,
+        IntervalStats,
+    ) {
+        (
+            self.ui.stats(),
+            self.gpu.stats(),
+            self.total.stats(),
+            self.wait.stats(),
+            self.work.stats(),
+        )
+    }
+
+    /// Drop all samples (new ROM / regime change).
+    pub fn clear(&mut self) {
+        self.ui.clear();
+        self.gpu.clear();
+        self.total.clear();
+        // Must be cleared with the rest: leaving it behind carried blocking-
+        // present samples from the previous ROM or pacing regime into the next
+        // experiment's `rwait_*`, while every other render series started
+        // fresh — silently mixing two populations in the one column used to
+        // tell render work from vblank waiting.
+        self.wait.clear();
+        self.work.clear();
+    }
+}
+
 /// The live collector. Owned by the `App`; fed from the pacer / produce /
 /// present paths; snapshotted into a [`PerfView`] once per frame for the
 /// debugger.
@@ -174,6 +284,18 @@ pub struct PerfStats {
     produced: IntervalRing,
     presented: IntervalRing,
     produce_cost: SampleRing,
+    /// v2.3.3 — wall time the producer spent BLOCKED on the emulator mutex
+    /// before it could start work, split out of [`Self::produce_cost`].
+    ///
+    /// The two were conflated until v2.3.3: the produce paths started their
+    /// timer *before* `emu.lock()`, so every millisecond the winit thread held
+    /// the mutex was billed to the emulator as if the core had been slow. That
+    /// made a contention stall indistinguishable from an expensive frame, and
+    /// it is the reason the cost tail pinned to almost exactly one display
+    /// refresh in every configuration measured — a signature of blocking, not
+    /// of work. Recording the wait separately makes the distinction visible:
+    /// `cost` is now emulation work alone, and `wait` is the queueing delay.
+    produce_wait: SampleRing,
     /// Paces that produced >= 2 frames (the wall-clock pacer catching up —
     /// each one is an uneven content cadence on screen).
     pub catchup_bursts: u64,
@@ -220,8 +342,20 @@ impl PerfStats {
     }
 
     /// Record the wall cost of one `produce_one_frame` call.
+    ///
+    /// From v2.3.3 this is the work alone — the caller times it from *after*
+    /// the mutex is acquired and reports the blocking separately through
+    /// [`Self::record_produce_wait`].
     pub fn record_produce_cost(&mut self, d: Duration) {
         self.produce_cost.push(d.as_secs_f32() * 1000.0);
+    }
+
+    /// Record how long the producer was blocked on the emulator mutex before
+    /// it could begin the frame, separately from the work itself — the split
+    /// that showed the measured wait is 0.00 ms at every percentile. Surfaced
+    /// as `PerfView::produce_wait`.
+    pub fn record_produce_wait(&mut self, d: Duration) {
+        self.produce_wait.push(d.as_secs_f32() * 1000.0);
     }
 
     /// Break interval phase after a discontinuity (ROM load, un-pause) so
@@ -238,6 +372,7 @@ impl PerfStats {
         self.produced.clear();
         self.presented.clear();
         self.produce_cost.clear();
+        self.produce_wait.clear();
         self.catchup_bursts = 0;
         self.snap_forwards = 0;
         self.produced_since_present = 0;
@@ -260,6 +395,7 @@ impl PerfStats {
             produced: self.produced.ring.stats(),
             presented: self.presented.ring.stats(),
             produce_cost: self.produce_cost.stats(),
+            produce_wait: self.produce_wait.stats(),
             catchup_bursts: self.catchup_bursts,
             snap_forwards: self.snap_forwards,
             presented_dups: self.presented_dups,
@@ -282,8 +418,22 @@ pub struct PerfView {
     pub produced: IntervalStats,
     /// Presented-frame interval stats (display-visible cadence).
     pub presented: IntervalStats,
-    /// `produce_one_frame` wall-cost stats.
+    /// `produce_one_frame` wall-cost stats (work only, from v2.3.3).
     pub produce_cost: IntervalStats,
+    /// v2.3.3 — emulator-mutex blocking stats for the producer, recorded by
+    /// `PerfStats::record_produce_wait`.
+    pub produce_wait: IntervalStats,
+    /// v2.3.3 — egui shell build cost (winit thread). See [`RenderPerf`].
+    pub render_ui: IntervalStats,
+    /// v2.3.3 — GPU encode + present cost (winit thread). See [`RenderPerf`].
+    pub render_gpu: IntervalStats,
+    /// v2.3.3 F8 — blocking-present (vblank wait) cost. See [`RenderPerf`].
+    pub render_wait: IntervalStats,
+    /// v2.3.3 F8 — render work, `total - wait` per redraw. A real series, not
+    /// a percentile-wise subtraction of the two above. See [`RenderPerf`].
+    pub render_work: IntervalStats,
+    /// v2.3.3 — whole redraw handler cost (winit thread). See [`RenderPerf`].
+    pub render_total: IntervalStats,
     /// See [`PerfStats::catchup_bursts`].
     pub catchup_bursts: u64,
     /// See [`PerfStats::snap_forwards`].

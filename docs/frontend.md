@@ -205,9 +205,23 @@ so a skipped / early-returned redraw is not counted.) A true scan-out timestamp
 The panel also surfaces two **present/produce "beat" counters** (`presented_dups`
 / `produced_dropped`, also logged to the perf CSV): a present with no new produced
 frame is a duplicate (the display repeated a frame); >1 produce between presents
-means the extra frames were dropped (unshown). Under display-sync both stay ~0;
-under wall-clock pacing they tick roughly once every ~10 s for the 60.0988-vs-60.000
-Hz beat. They are read-only diagnostics — the deeper pacer mitigation that would
+means the extra frames were dropped (unshown). Under wall-clock pacing both tick
+roughly once every ~10 s for the 60.0988-vs-60.000 Hz beat.
+
+Under display-sync the two counters part company, and only one of them is still
+a fault signal:
+
+| counter | divisor N = 1 | divisor N > 1 |
+| --- | --- | --- |
+| `presented_dups` | ~0 | **large and CORRECT** — ~(N−1) per produced frame |
+| `produced_dropped` | ~0 | ~0 — still the drop diagnostic |
+
+At N = 2 the regime *intends* each produced frame to be shown across two
+refreshes, so every second present is a duplicate by design: a 45 s capture
+records 1,435-2,342 of them (`docs/performance.md` v2.3.3 F2) and nothing is
+wrong. Reading that number as stutter is a mistake the table above exists to
+prevent. `produced_dropped` keeps its meaning at every divisor — it is the one
+to watch. They are read-only diagnostics — the deeper pacer mitigation that would
 *reduce* the beat (a present-aligned-to-production cadence under Mailbox) stays
 deferred: it needs on-device validation across real refresh rates and carries
 pacing-regression risk, so it was explicitly **dropped under the v1.5.0 "Lens"
@@ -750,17 +764,75 @@ pacing_mode`, default `auto`):
 
 | Regime | Clock master | Present mode | When |
 |---|---|---|---|
-| `display` | Fifo vsync (1 emulated frame per refresh; ≤0.5% speed bend, audio DRC absorbs) | `Fifo` | refresh within 0.5% of the console rate (`auto` engages it) |
+| `display` | one emulated frame per **N** refreshes; the display sets the *phase*, the wall clock sets the *rate* | `Fifo` | some integer N puts `refresh / N` within 0.5% of the console rate (`auto` engages it) |
 | `vrr` | wall clock at the exact console rate; the VRR display follows | `Fifo` | user-asserted G-Sync/FreeSync (best fullscreen) |
-| `wallclock` | wall clock (sleep-then-spin pacer) | configured (`Mailbox` default) | high-refresh fixed panels / fallback |
+| `wallclock` | wall clock (sleep-then-spin pacer) | configured (`Mailbox` default) | no integer N fits (e.g. 144 Hz, 75 Hz) / fallback |
+
+**v2.3.3 — the divisor, and why the wall clock still owns the rate.**
+Display-sync used to mean *one emulated frame per refresh*, which required the
+panel itself to be within 0.5% of the console rate; every 120/144 Hz display
+therefore fell back to wall-clock by construction, and the free-running
+producer beat against the compositor's frame callbacks (135-254 dropped frames
+per 45 s — see `docs/performance.md` v2.3.3 F1). `refresh_probe::best_divisor`
+now picks the integer N with `refresh / N` closest to the console rate, so
+120 Hz locks at N = 2. 144 Hz and 75 Hz still return `None` — no integer
+relationship exists — and correctly stay on wall-clock.
+
+Rate is deliberately **not** derived from the present cadence. Producing on
+every Nth refresh was implemented and rejected: it makes console speed a
+function of render-loop reliability (presents measured 116-119 Hz on a 119.991
+Hz panel, and the console inherited the shortfall exactly, running 1.4-3.4%
+slow with audio underruns). Instead the wall-clock schedule is accumulated —
+never rebased — and a refresh produces a frame only when that schedule says one
+is due, with a half-**frame-period** "slightly early beats a lot late" window
+(`period / 2`, the console frame period — an earlier `slack` field documented as
+half a *display refresh* was cached but never read, and was deleted in the
+PR #357 review rather than left contradicting the code). A missed
+present therefore no longer slows the console. The schedule is owned by the
+winit thread, *not* read through the emulator mutex: doing that on every
+refresh was measured at 36 ms `cost` p95 with the console at 35 Hz.
+
+The refresh figure itself comes from an ordered pair of sources, recorded per
+capture in the perf-log header as `refresh_source`:
+
+| `refresh_source` | where it comes from | when |
+| --- | --- | --- |
+| `declared` | winit `current_monitor()` → `refresh_rate_millihertz()` | whenever the windowing API answers — exact, always preferred |
+| `presentation` | the Wayland compositor's `wp_presentation` `presented` event (`crates/rustynes-frontend/src/wayland_presentation.rs`) | when it does not |
+| `none` | — | neither available; pacing stays wall-clock |
+
+A compositor advertising no `wl_output` — which is not rare, and is the case on
+the KDE Wayland session this was developed against — makes `current_monitor()`
+return `None` for the whole session, not merely at startup. `wp_presentation`
+is a stable protocol whose `presented` event carries the refresh period
+outright, so it answers where the windowing API cannot, and it does not depend
+on an output global existing. It binds against winit's own connection and
+surface, polls non-blocking, and settles on one value per session.
+
+v2.3.3 briefly measured the refresh instead, from redraw intervals under Fifo.
+That was **removed**: a redraw interval measures the *application*, not the
+display, and the two diverge precisely when it matters — it reported 20.032 Hz
+on a 119.991 Hz panel while a heavy ROM ran at ~14 ms/frame. See
+`docs/performance.md` v2.3.3 F4. The median + stability-quorum estimator was
+never the flawed half and still runs, over the compositor's reports.
 
 Display-sync has an occlusion watchdog (emulation+audio keep running when
-the compositor throttles redraws) and a sustained-miss fallback to
-`wallclock` (sticky per session, reported in the Performance panel).
-`[graphics] max_frame_latency` (1|2) sets the swapchain depth. Input is
-latched immediately before `run_frame` in every regime (late latch).
+the compositor throttles redraws) and a fallback to `wallclock` (sticky per
+session, reported in the Performance panel) that triggers on **console-rate
+error**, not present jitter: under display-sync every produced frame is
+presented, so irregular presents cost evenness but never speed, and a
+jitter threshold was measured downgrading the regime while it was winning
+(Super Mario Bros: 1-15 drops under display-sync against 35-147 after the
+fallback). As of v2.3.3 `vrr` shares the fallback but keeps the
+*present-based* test — without it, `vrr` on a display that is not
+actually variable-refresh collapsed to ~20 fps and stayed there — and the check
+is gated behind a 600-present grace window so the startup transient (window
+mapping, shader compilation, the ~7 s GPU clock ramp from P8 to P0) cannot
+permanently downgrade a session. `[graphics] max_frame_latency` (1|2) sets the
+swapchain depth. Input is latched immediately before `run_frame` in every
+regime (late latch).
 
-## Run-ahead (`[input] run_ahead`, default 1, native)
+## Run-ahead (`[input] run_ahead`, native)
 
 Removes the game's OWN internal input lag (most NES titles buffer input
 ≥ 1 frame): each visible frame the emulator runs one persistent frame with
@@ -773,6 +845,28 @@ RA process the real timeline. Auto-disabled during netplay + movie
 record/playback; budget-throttled (hysteresis on produce-cost p95) on hosts
 that can't afford the extra frames. Cost: N extra `run_frame`s + ~140 µs of
 state churn per visible frame (`docs/benchmarks.md` §8).
+
+Measured per-level cost on a 10-core i9-10850K (v2.3.3, `flowing_palette`,
+rewind on, against the 16.639 ms NTSC budget):
+
+| `run_ahead` | work mean | work p99 | dropped / 45 s |
+|---|---|---|---|
+| 0 | 4.1-4.4 ms | — | — |
+| 1 | 5.9-6.1 ms | 6.6 ms | — |
+| 2 | 9.2 ms | 9.8-10.8 ms | 0-2 |
+| 3 | 11.9-12.6 ms | 12.5-**17.2** ms | 0 **or 229** |
+
+Those figures are `flowing_palette`, and per-ROM cost varies enough to matter:
+**Super Mario Bros measures 13.5-13.7 ms at `run_ahead = 2`** on the same host,
+against 9.2 ms for `flowing_palette` — 82% of the frame budget rather than 55%.
+Pick the level against the heaviest ROM in use, not a synthetic one.
+
+`3` is bimodal on that host: one capture was clean and the next dropped 229
+frames with 16 audio underruns, the difference being whether p99 crossed the
+frame budget. Note the throttle read `run_ahead_throttled = false` through
+*both* — it keys on the produce-cost median (12.6 ms, comfortably inside
+budget) and so cannot see a p99 excursion that is actively dropping frames.
+Treat a p99 approaching the budget, not the mean, as the limit.
 
 ## Desktop UX shell (always-on egui)
 

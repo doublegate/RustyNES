@@ -151,7 +151,42 @@ pub mod resampler;
 // v2.8.0 Phase 3 — run-ahead (removes the game's internal input lag via
 // muted-frame + snapshot/restore cycles). Native-only at the call site;
 // the module itself is target-agnostic and unit-tested headless.
+/// v2.3.3 — the platform-neutral face of the compositor refresh source.
+///
+/// Always present on native; a stub off Wayland. This is what `app.rs` uses,
+/// so the Wayland target predicate is stated in exactly one place.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod presentation_clock;
+/// v2.3.3 — empirical display-refresh measurement + divisor selection.
+///
+/// Lets display-synchronised pacing work on high-refresh panels and on
+/// compositors that report no refresh rate at all. Native-only: the wasm
+/// frontend is clocked by `requestAnimationFrame`, which is already
+/// display-synchronised by construction.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod refresh_probe;
 pub mod runahead;
+/// v2.3.3 — the display refresh as reported by a Wayland compositor.
+///
+/// The refresh source of last resort, for the (common) case where the
+/// windowing API declares no refresh rate because the compositor advertises no
+/// output global. Gated to exactly the platforms where winit itself compiles
+/// its Wayland backend; everywhere else [`presentation_clock`] supplies a stub
+/// and the caller keeps the declared-refresh path unchanged.
+///
+/// This `cfg` is copy 3 of 4; [`presentation_clock`] is the authoritative
+/// statement and lists all four. Change them together.
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "redox",
+        target_family = "wasm",
+        target_os = "android",
+        target_os = "ios",
+        target_os = "macos"
+    ))
+))]
+pub mod wayland_presentation;
 // v2.3.0 — netplay UI state machine + run-loop driver. Native-only: it
 // drives a `std::net::UdpSocket` (absent on wasm32). The browser builds
 // compile with this module absent and the netplay panel shows a

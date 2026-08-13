@@ -391,11 +391,23 @@ fn struct_fields(src: &str, name: &str) -> Vec<String> {
 ///
 /// Scoping to the writer is the point of the whole audit — see the module docs.
 fn writer_body(src: &str) -> &str {
+    // v2.3.3 — the PPU's writer moved into `snapshot_with(&self, slim: bool)`
+    // when the slim (framebuffer-less) rewind encoding landed; `snapshot()` is
+    // now a one-line forwarder. Prefer the real writer and fall back to the
+    // plain signature for the serializers that still use it. Without this the
+    // audit reads an empty body and reports every field as unserialized —
+    // which it did, loudly, and correctly by its own rules.
+    const SIG_WITH: &str = "    fn snapshot_with(&self, slim: bool) -> Vec<u8> {";
     const SIG: &str = "    pub fn snapshot(&self) -> Vec<u8> {";
+    let sig = if src.contains(SIG_WITH) {
+        SIG_WITH
+    } else {
+        SIG
+    };
     let start = src
-        .find(SIG)
-        .unwrap_or_else(|| panic!("writer signature `{SIG}` not found — did it get renamed?"))
-        + SIG.len();
+        .find(sig)
+        .unwrap_or_else(|| panic!("writer signature `{sig}` not found — did it get renamed?"))
+        + sig.len();
     let body = &src[start..];
     let end = body
         .find("\n    }")

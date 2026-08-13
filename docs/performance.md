@@ -661,6 +661,119 @@ for a byte-identical escape hatch is not justified.
 had zero callers outside the core and its tests, so no shipped configuration of
 any frontend could enable it.
 
+### v2.3.3 F5 — run-ahead blows the frame budget at the shipped default (decision: FINDING, fix deferred)
+
+The p99 gate F2 added was supposed to catch frontend stutter. Measuring it on
+real hardware showed it catching the wrong thing — and, in the process, found a
+real one it had been blind to.
+
+**The gate was measuring the display.** Two clean 90 s captures reproduce
+`produced_p99` = 34.4 ms with **zero** catch-up bursts, underruns and
+snap-forwards — the same p99 as the worst archived run. `produced_mean_ms` is
+16.64 ms (the NTSC budget) in all eight captures on file, so the emulator always
+*paces* correctly. The p99 is the wall-clock pacer beating against vsync, which
+v2.3.0's notes predicted; on a 120 Hz Wayland host `winit` cannot read the
+refresh rate at all (`monitor unknown`), so the beat is a property of the
+monitor. An absolute-millisecond p99 threshold therefore reports the host's
+display configuration as a regression. p99 is now reported, not gated.
+
+> **RETRACTED IN v2.3.3 — the numbers in this subsection were contaminated and
+> the conclusion drawn from them was wrong.** The claim below that `cost_*` is
+> "emulation work … therefore independent of the display" was false: until
+> v2.3.3 the produce paths started their timer *before* `emu.lock()`, so
+> `cost_*` included time blocked on the winit thread and was very much a
+> function of the display. The corrected figures and the actual root cause are
+> in **v2.3.3 F1**; the original text is kept below, struck through in intent,
+> because deleting a wrong measurement hides that it was ever acted on.
+>
+> Corrected `cost_*` (work only), same host and ROM:
+>
+> | `run_ahead` | rewind | cost_mean | cost_p95 |
+> | --- | --- | --- | --- |
+> | 0 | off | 4.09 ms | 4.73 ms |
+> | 0 | on | 4.39 ms | 6.22 ms |
+> | 1 | off | 5.93 ms | 6.14 ms |
+> | 1 | on | 6.11 ms | 6.31 ms |
+>
+> So run-ahead at the default costs ~6 ms of a 16.639 ms budget, not 24 ms, and
+> "60 fps is not sustainable" was never true. **No core optimisation verdict is
+> affected**: every adopt/reject decision in this document is adjudicated by
+> criterion's `--baseline` change analysis on `rustynes-core`'s headless
+> `full_frame` bench, which has no mutex and no winit thread and therefore
+> could not have been contaminated by this bug. What *was* affected is this
+> table and the frontend pacing gate thresholds derived from it.
+
+**The signal believed to be real at the time was `cost_*`** — emulation work per
+displayed frame, with the pacer's sleep excluded, and *believed* to be
+independent of the display. Varying only `[input] run_ahead` on one host and one
+ROM:
+
+| `run_ahead` | cost_mean | cost_p95 | cost_p99 | produced_dropped (45 s) |
+| --- | --- | --- | --- | --- |
+| 0 | 3.91 ms | 4.51 ms | 5.83 ms | 10 |
+| **1 (the shipped default)** | 8.50 ms | **24.15 ms** | 26.76 ms | **303** |
+| 2 | 9.82 ms | **19.56 ms** | 26.34 ms | 201 |
+
+At the **default**, the p95 *appeared* to be 24.15 ms against a 16.639 ms
+budget, reading as "60 fps is not sustainable and ~300 frames drop in 45
+seconds". Both readings were artefacts of the timing bug — see the retraction
+above.
+
+The mechanism is not new — run-ahead snapshots (~250 KB) and restores the core
+once per displayed frame on top of running N+1 frames. What is new is the
+measurement: this was assumed to be affordable and never checked at the default.
+
+**Not fixed here.** The lever is snapshot slimming (a frame-boundary variant
+that omits the 245,760-byte framebuffer, which the next `run_frame` regenerates),
+and that is a core-format change with its own verification burden — not
+something to improvise while cutting a release. It is the single highest-value
+performance item currently known, and it now has a number attached.
+
+`scripts/perf/perf_log_check.py` gates `cost_p95` at the frame budget and
+`produced_dropped` at 60, both of which fail every run-ahead-enabled capture
+above and pass every clean one.
+
+### v2.3.3 F0 — sizing the frontend items before building any of them
+
+The v2.3.3 "Grain" frontend campaign was scoped from code reading: three full
+720 KiB framebuffer memcpys per displayed frame, a `perf.view()` doing five heap
+allocations and three 600-element sorts every frame, and a `format!` storm under
+the emulator lock the plan called "the single easiest win in the plan". After the
+core campaign rejected ten of ten items, each was **measured first**.
+
+| item | the claim | measured cost | % of the 16.639 ms frame |
+| --- | --- | ---: | ---: |
+| 1 — framebuffer copy chain | "the largest *absolute* waste" | 13.2 µs (3 × 4.39 µs) | **0.079%** |
+| 4 — `perf.view()` for a closed panel | 5 heap `Vec`s + 3 sorts of ≤600 | 16.2 µs | **0.098%** |
+| 3 — `mapper_info()` per redraw | "the single easiest win" | 1.37 µs | **0.008%** |
+| | | **~31 µs** | **0.19%** |
+
+Every claim is factually true. `mapper_info()` really does run ~25 `format!`
+calls and four `Vec` allocations per displayed frame under `self.emu.lock()`,
+discarding everything but `.name`. The copy chain really is three full
+245,760-byte memcpys. They are simply *small*: **eliminating all three entirely
+would recover under a fifth of one percent of a frame.**
+
+**The denominator was the mistake, and it is worth stating plainly.** These items
+were ranked by how wasteful they *look* in source — "three 720 KiB memcpys" reads
+as enormous — without anyone dividing by the frame budget. A 245,760-byte memcpy
+costs 4.4 µs; there are 16,639 µs in a frame. Modern memory bandwidth makes
+whole-framebuffer copies cheap in a way that per-frame *counts* do not convey.
+
+**What this means for the frontend.** The core needs ~3.78 ms of the 16.639 ms
+budget, so the frontend runs with ~12.8 ms of slack. Mean frame time was never
+the constraint. The frontend's real failure mode is **p99 / stutter**, which is a
+question of *lock-hold windows and scheduling*, not throughput — and v2.3.0
+already fixed the dominant instance of it by splitting the emulator lock out of
+the blocking swapchain acquire and present. Shaving 31 µs of throughput off a
+path with 12.8 ms of slack cannot move a stutter metric.
+
+Items 1, 3 and 4 are therefore **not worth implementing for performance**. Item 3
+remains defensible as allocation hygiene (~1,500 allocations/second discarded),
+and item 2 (skipping the GPU upload when no new frame arrived) remains defensible
+as not doing obviously-pointless work — but neither is a performance claim, and
+neither should be described as one.
+
 ### v2.3.1 G7/G8/G9/G10 — inline hints, typed indices, capability gate, adapter hoist (decision: all REJECTED)
 
 The last four campaign items. With G1–G6 the score is **ten measured, ten
@@ -814,6 +927,609 @@ MMC3 IRQ timing whenever a `$2000`/`$2005`/`$2006` write lands between the two
 dots. The plan item read two identical-looking expressions and inferred
 redundancy; they are identical only in the common case and are *meant* to be able
 to differ.
+
+### v2.3.3 F1 — dropped frames traced to presentation, not emulation (decision: root cause found; snapshot slimming REJECTED on frame-time grounds)
+
+Investigation opened by a maintainer report of residual stutter and dropped
+frames on a 20-thread i9-10850K + RTX 3090 — a host that should never drop a
+frame emulating a 1.79 MHz console. The working hypothesis on entry was that
+the emulation core had an underlying cost problem and that **snapshot slimming**
+(dropping the 245,760-byte framebuffer from the per-frame snapshot) was the
+headline fix. Measurement rejected both halves of that premise.
+
+**The instrument was wrong first.** The three `emu_thread` produce paths started
+their timer *before* `emu.lock()`:
+
+```rust
+let t0 = Instant::now();
+let mut guard = emu.lock();   // blocking billed to the emulator
+```
+
+so every millisecond the winit thread held the mutex was recorded as emulation
+cost. That is why the `cost` tail pinned to almost exactly one display refresh
+(16.81 / 16.92 / 17.04 / 17.35 / 17.49 ms across configurations) — the signature
+of blocking, not of work. Fixed by starting the work clock after the acquire and
+recording the blocking separately as `produce_wait` (new `wait_*` CSV columns).
+With the split in place the measured wait is **0.00 ms at every percentile**:
+there is no emulator-mutex contention at all, and the v2.3.0 lock-split holds.
+
+**Emulation is comfortably inside budget.** With the metric corrected:
+
+| run_ahead | rewind | work mean | work p95 | work p99 |
+|---|---|---|---|---|
+| 0 | off | 4.09 | 4.73 | 16.51 |
+| 0 | on | 4.39 | 6.22 | 17.64 |
+| 1 | off | 5.93 | 6.14 | 6.32 |
+| 1 | on | 6.11 | 6.31 | 6.63 |
+
+4.09 ms against the 16.639 ms NTSC budget is 24.6% — the design point
+`docs/performance.md` already records as knowingly accepted. `produced_mean`
+measured **16.64 ms in every capture taken** (nine of them): the producer hits
+NTSC frame timing exactly and never misses.
+
+**The drops are presentation-side.** `presented_mean` sits at 17.13-17.94 ms
+against that perfect 16.64 ms produce, and the excess is the drop rate:
+17.5 / 16.64 = 5.2% excess vs 135 dropped of ~2400 frames = 5.6%. Steady state
+shows drops *and* duplicates simultaneously (~7/s and ~4/s), which is a phase
+beat between two unsynchronized clocks, not a rate deficit. Confirmed
+independent of the present path — `presented_mean` is 17.4 ms in all five of
+Mailbox/mfl=1, Mailbox/mfl=2, Mailbox/mfl=3, Fifo/mfl=2, Immediate/mfl=2 — and
+independent of the GPU, which sits at 0-1% utilization at P0 1905 MHz. A
+`perf record` profile puts 94.3% of cycles in the emulation thread and 5.5% in
+the render thread; the render thread is cheap, not starved, and a cycles profile
+cannot see the blocking that actually matters here.
+
+**Root cause.** Display-sync pacing never engages, so the producer free-runs on
+a wallclock timer that is not phase-locked to the compositor's frame callbacks.
+Two independent reasons, either of which alone is sufficient:
+
+1. `resolve_pacing` requires the monitor refresh to be within
+   `DISPLAY_SYNC_MAX_SKEW` (0.5%) of the console rate, because display-sync
+   implements **one emulated frame per refresh** with no integer-divisor path.
+   A 120 Hz or 144 Hz panel therefore *always* falls back to wallclock — i.e.
+   most modern displays are excluded by construction.
+2. Refresh detection goes solely through winit's `current_monitor()` →
+   `refresh_rate_millihertz()`. On the reporting host (KDE Wayland) the
+   compositor advertises **no `wl_output` global at all** (65 globals, none an
+   output), so that returns `None` and the log records
+   `monitor_refresh_hz = unknown`. The `wp_presentation` protocol — which
+   reports exact presentation timestamps and refresh period — *is* advertised
+   and is not used.
+
+**Snapshot slimming: measured, and rejected as a frame-time fix.** The premise
+was that the 245,760-byte framebuffer carried through the run-ahead
+snapshot/restore was a major cost. Criterion says otherwise:
+
+| op | cost |
+|---|---|
+| `snapshot_core_into` | 14.8 µs |
+| `restore_quiet` | 122 µs |
+| full `snapshot` (with thumbnail) | 36.4 µs |
+
+Run-ahead at `run_ahead = 2` costs ~6.2 ms per displayed frame, of which
+snapshot + restore is **~137 µs — 2.2%**. The remainder is the extra `run_frame`
+calls, which are inherent to run-ahead and not removable. Removing the
+framebuffer entirely would save roughly 110 µs/frame, or **0.66% of the frame
+budget** — far below this project's standing >3%-same-runner adoption bar, and
+it would not move the drop rate at all, because drops are not caused by
+emulation cost. Slimming retains a real but *different* justification —
+rewind-ring memory, where the framebuffer is ~94% of every per-frame snapshot —
+and had to be argued on memory rather than on frame time.
+
+**It was, and it shipped on that basis** (see F3 below): the rewind ring now
+uses `snapshot_core_into_slim`, regenerating the image with a one-frame
+re-render on restore. The frame-time rejection recorded here is unaffected and
+stands — run-ahead still carries the full snapshot, because for *that* path the
+0.66% never cleared the bar.
+
+**Also found, not yet fixed:** `pacing_mode = "vrr"` on a display that is not
+actually variable-refresh degrades to `presented_mean` 49.74 ms (~20 fps) with
+1170 dropped frames in 40 s, and has no sustained-miss fallback of the kind
+display-sync carries.
+
+**Adopted from this investigation:** the `cost`/`wait` metric split, and the
+pacing rework it made legible — see **v2.3.3 F2** below.
+
+### v2.3.3 F3 — the judder is a produce-interval tail, and rewind causes it (root cause found)
+
+F1 and F2 fixed the pacing, and the gates went green — exact console rate,
+~0 dropped frames — while the picture was still visibly uneven. This entry is
+why, and it starts with a correction: **"the emulator paces perfectly" was a
+conclusion drawn from the mean.**
+
+`produced_mean` is a textbook 16.64 ms in every capture ever taken here. The
+distribution is not:
+
+| MMC3 (Bad Dudes) | p50 | p95 | p99 | max |
+| --- | --- | --- | --- | --- |
+| PRODUCED interval | 17.12 | 28.19 | 47.05 | 52.38 |
+| WORK (`cost`) | 7.25 | 17.42 | 29.52 | 32.35 |
+
+Individual frames are produced 30-57 ms apart while the average is exactly
+right. Average-correct but delivery-uneven is precisely what is perceived as
+stutter, and it is invisible to every gate that watches a mean — including the
+console-rate gate F2 added, which would pass this run.
+
+**The render loop is not the cause.** v2.3.3 added `RenderPerf` (the first
+instrumentation this path has ever had: `rui_*` egui build, `rgpu_*` GPU
+encode+present, `rtot_*` whole redraw handler). Across NROM / MMC1 / MMC3 /
+MMC5 the GPU phase is **0.10-0.13 ms** and the egui build **0.00 ms** on the
+common hidden-overlay path. `rtot` p95 of ~16.4 ms is almost entirely the Fifo
+swapchain acquire blocking to vblank — the pacing mechanism working, not cost.
+
+**Rewind is the cause.** One ROM, one host, varying only two settings:
+
+| | WORK p99 | PRODUCED p95 | PRODUCED p99 |
+| --- | --- | --- | --- |
+| `run_ahead` 2, rewind **on** | 34.92 | **31.17** | 49.26 |
+| `run_ahead` 2, rewind **off** | 22.83 | **17.12** | 29.06 |
+| `run_ahead` 0, rewind **on** | 24.15 | **28.46** | 30.39 |
+| `run_ahead` 0, rewind **off** | 22.94 | **17.14** | 29.11 |
+
+Rewind — **on by default** — roughly doubles the produce-interval p95,
+independently of run-ahead. With it off the produce interval is near-perfect
+(17.1 ms against a 16.64 ms target).
+
+The mechanism is `RewindRing::push`, which runs inside the frame budget. Every
+frame it XORs the whole ~250 KB snapshot against a cached keyframe,
+LZ4-compresses the delta, and boxes the result; every 60 frames it additionally
+compresses and copies the full snapshot. **The framebuffer is 245,760 of those
+~250 KB — 94% of the work — and is the worst possible payload for the scheme**,
+because it changes every frame, so the XOR does not zero out and the delta does
+not compress.
+
+**This reframes snapshot slimming without overturning F1.** F1 measured it as a
+run-ahead frame-time optimisation and rejected it correctly: ~0.66% of the frame
+budget, under the project's >3% bar. That verdict stands. What F1 did not
+examine is the rewind ring, where the same change removes 94% of a *per-frame*
+XOR + compress that demonstrably drives the tail. The lever is the same; the
+justification is a different code path.
+
+**Implemented, and shipped in this release.** Excluding the framebuffer changes
+what a restored frame can display — rewind steps backwards and needs an image
+for each — so it needed a design rather than a quick edit. The design chosen is
+the first of the two sketched above: **regenerate the image by running one
+frame after restore**.
+
+Shipped shape:
+
+| aspect | behaviour |
+|---|---|
+| writer | `Nes::snapshot_core_into_slim`, used by `rewind_capture` only |
+| what is omitted | the 245,760-byte PPU framebuffer; every other field is written |
+| restore | `rewind_step_back` runs one frame, which regenerates the image |
+| user-facing save states | UNCHANGED — `.rns` still carries the full framebuffer |
+| size | ~4 KiB of PPU section instead of ~250 KB |
+
+**Compatibility contract.** A slim blob is self-describing: the marker is the
+**high bit of the PPU snapshot version byte**, so the reader distinguishes slim
+from full without out-of-band knowledge and no container version bump was
+needed. A full blob restores the framebuffer as before; a slim one restores
+every other field and leaves the framebuffer untouched, which is why the
+one-frame re-render is part of the restore path and not optional. The rewind
+ring is in-memory and per-session, so no on-disk format changed and no
+cross-version compatibility question arises — the reason this could ship
+without the `.rns` epoch handling a save-state change would have required.
+
+**Method note, for the third time in this campaign:** the gate that would have
+caught this does not exist. `produced_mean` passes, `produced_dropped` passes,
+`cost_p95` passes. What fails is `produced_p95` against the frame period, which
+nothing watches. A mean is not a cadence.
+
+### v2.3.3 F2 — display-synchronised pacing, generalised (decision: ADOPTED)
+
+The fix for F1's root cause. Three changes, each addressing one of the reasons
+display-sync could never engage.
+
+**1. Integer divisors.** Display-sync produced exactly one emulated frame per
+refresh, so `resolve_pacing` demanded a panel within 0.5% of the console rate
+and every 120/144 Hz host fell back to wall-clock *by construction*.
+`refresh_probe::best_divisor` now finds the integer `N` with `refresh / N`
+closest to the console rate: 120 Hz locks at `N = 2`, 240 Hz at `N = 4`, and
+144 Hz / 75 Hz still correctly return `None` (no integer relationship exists, so
+wall-clock with its small evenly-spread beat remains the better answer).
+
+**2. Measured refresh.** Detection went solely through winit's
+`current_monitor()`. Two failures showed up on the reporting host: the KDE
+Wayland session advertised no `wl_output` global at all, *and* `resolve_pacing`
+ran once at startup before the monitor was known and never revisited the
+decision. `RefreshProbe` measures the cadence directly (median of 80 redraw
+intervals under Fifo, with a stability quorum that refuses an unsteady
+cadence), and completing a probe re-resolves the regime. On this host the probe
+itself reports "not steady enough to trust" — but the re-resolve it triggers
+picks up the now-available declared 119.991 Hz, which is the outcome that
+matters.
+
+> **Superseded — see v2.3.3 F4.** The `RefreshProbe` described here was removed.
+> It held on `flowing_palette` and Super Mario Bros but failed on Bad Dudes,
+> for a structural reason: a redraw interval measures the *application*, not the
+> display, and the two diverge precisely when the measurement matters. The
+> compositor's own `wp_presentation` report replaced it. Changes 1 and 3 of this
+> entry, and everything downstream of them, are unaffected.
+
+**3. The display governs phase; the wall clock governs rate.** The obvious
+implementation — produce on every `N`th refresh — was implemented, measured,
+and rejected. It makes console speed a function of render-loop reliability:
+presents landed at 116-119 Hz rather than the panel's 119.991, and because
+production was tied 1:2 to presents the console inherited the shortfall exactly
+(`produced/presented` measured 1.996). Result: a console running **1.4-3.4%
+slow** with audio underruns, outside the 0.5% skew band the regime promises.
+The wall-clock schedule is therefore the rate authority (accumulated, never
+rebased, so there is no drift) and the display only decides *when* within that
+schedule a frame is produced. A missed present no longer slows the console.
+
+Two bugs were found while measuring this, both worth recording because both
+were self-inflicted and caught only by measurement:
+
+- Consulting the schedule through the emulator mutex on every refresh (120+/s)
+  introduced the first real lock contention in the frontend — `cost` p95 36 ms,
+  console at 35 Hz. The schedule is now winit-thread-local and the hot path is
+  lock-free (`wait` p99 measured 0.10-0.12 ms).
+- Scaling the sustained-miss health check by the divisor made its threshold
+  12.5 ms, which ordinary refresh jitter under `/2` exceeds every run; the
+  regime downgraded itself in 4 of 4 captures. It gained a 600-present grace
+  window so the startup transient (window mapping, shader compilation, the
+  measured ~7 s GPU clock ramp from P8 to P0) cannot permanently downgrade a
+  session — and then the check itself had to change, see below.
+
+**The health check was measuring the wrong thing entirely.** Restoring the
+console frame period as the threshold was still not right: on a *real* workload
+it fired while display-sync was winning. On Super Mario Bros — a materially
+heavier ROM than `flowing_palette`, 13.1 ms of work at `run_ahead = 2` against
+9.2 ms — presented p95 sat at 25.3-27.2 ms against a 24.96 ms limit, so the
+regime downgraded on run-to-run variance, stickily, for the whole session. What
+it downgraded *to* was measurably worse:
+
+| SMB, 45 s | display-sync | wall-clock fallback |
+| --- | --- | --- |
+| `run_ahead = 1` | 4-15 drops | 61-147 drops |
+| `run_ahead = 2` | 1-5 drops | 35-71 drops |
+
+Present jitter is the wrong instrument for display-sync, for exactly the reason
+the p99 and `cost_p95` gates were wrong: it reports the host's compositor, not
+whether the regime is working. Under display-sync every produced frame is
+presented, so irregular presents cost evenness but never speed — the wall-clock
+rate authority guarantees that. The check now tests the **console rate**
+(`produced.mean_ms` against the frame period, 2% band as a structural safety
+net rather than a tuning knob). VRR keeps the present-based test, because there
+the failure is the opposite shape: the emulator produces correctly at 16.64 ms
+while the display shows ~20 fps, which only the present series can see.
+
+**Measured outcome** (`flowing_palette`, 45 s, `run_ahead = 2`, rewind on):
+
+| | before | after |
+|---|---|---|
+| regime | wallclock (always) | display-sync /2 (held 6/6) |
+| dropped frames | 135-254 | **1, 2, 1, 9, 4, 5** |
+| audio underruns | 0-19 | **0** |
+| console rate error | — | +0.03% to +0.12% |
+| mutex wait p99 | — | 0.10-0.12 ms |
+
+And on Super Mario Bros, after the health-check correction (4/4 held):
+
+| SMB | `run_ahead = 1` | `run_ahead = 2` |
+| --- | --- | --- |
+| dropped / 45 s | 4, 8 | **1, 5** |
+| console rate error | -0.10%, +0.05% | +0.21%, -0.02% |
+| work mean | 9.5-10.3 ms | 13.5-13.7 ms |
+| presented p95 | 18.4-19.5 ms | 26.7-27.2 ms |
+
+The `run_ahead = 2` column is the point: a presented p95 of 27 ms would have
+tripped the old threshold every time, while the regime was in fact delivering
+the best drop count measured on that ROM.
+
+**Also fixed:** `pacing_mode = "vrr"` had no sustained-miss fallback, so on a
+display that is not actually variable-refresh it collapsed to 49.74 ms
+presented (~20 fps) with 1170 dropped frames in 40 s and stayed there. It now
+shares display-sync's health check and its sticky fallback.
+
+**Gate corrections.** Two thresholds in `scripts/perf/perf_log_check.py` were
+derived from the contaminated `cost_*` numbers and are now *reported* rather
+than enforced: `cost_p95` scales with `run_ahead` by design (the shipped
+`run_ahead = 2` measures 13.9-21.9 ms and is healthy), and `produced_dropped`
+is a property of the display (1-9 per 45 s under display-sync, 35-131 under the
+wall-clock fallback, same build and host). Gating either reports the user's
+hardware as a regression — the same error the p99 gate made. What replaces them
+is a **console-rate gate**: `|produced_mean - target_ms|` against a 0.5% band,
+which is the emulator's own responsibility, independent of display and
+`run_ahead`. Verified to fail the 3.3%-slow build from change 3 above (exit 1)
+and pass every healthy capture.
+
+### v2.3.3 F4 — sourcing the refresh from the compositor (decision: redraw-interval measurement REJECTED and removed; `wp_presentation` ADOPTED)
+
+F2 shipped, and on `flowing_palette` and Super Mario Bros it held. On **Bad
+Dudes** (MMC3) it did not: the session stayed on wall-clock pacing and the
+judder with it. F2's second change — the empirical `RefreshProbe` — is why, and
+the reason it fails is structural rather than a tuning problem.
+
+**A redraw interval measures the application, not the display.** The probe
+timed intervals between `RedrawRequested` under Fifo, on the assumption that
+Fifo makes those the display's own tick. It does — *while the application is
+keeping up*. Bad Dudes at `run_ahead = 2` takes ~14 ms/frame, and during the
+startup window the GPU has not yet left its idle clock, so redraws arrive at
+the rate the app can produce them. The probe reported **20.032 Hz on a
+119.991 Hz panel**, which `best_divisor` then correctly refused, leaving the
+session on wall-clock. The measurement is trustworthy exactly on the ROMs that
+never needed it, and wrong on the ones that do.
+
+Three attempts to rescue it were built and discarded: a retry schedule, a
+deferred re-resolve on the declared refresh, and a re-resolve on winit's
+surface-available event. None address the defect — no amount of re-sampling
+fixes a signal that is measuring the wrong quantity — and the last two also
+depend on `current_monitor()` eventually answering, which on this host it never
+does. **The sampling half of `refresh_probe` is removed rather than left
+disabled**, so nothing can feed a wrong number into pacing again.
+
+**What replaced it.** `wp_presentation` is a *stable* Wayland protocol and was
+being advertised by this compositor throughout the investigation, unused. Its
+`presented` event carries a `refresh` argument: the compositor's own prediction,
+in nanoseconds, of the next output refresh. That is the period stated by the
+authority that owns it — not inferred from the client's frame cadence, and not
+dependent on the `wl_output` global whose absence started all of this.
+`crates/rustynes-frontend/src/wayland_presentation.rs` binds it against winit's
+existing connection (`Backend::from_foreign_display` + `ObjectId::from_ptr`, the
+documented libwayland-interop path and the only `unsafe` involved) and collects
+24 reports on its own event queue, dispatched non-blocking so it can never stall
+winit's loop.
+
+The estimator was **not** the flawed half and is unchanged: the same median,
+stability quorum and plausibility window now run over compositor-reported
+periods instead of self-timed ones (`refresh_probe::estimate_hz_from_intervals`,
+shared, with its tests). `best_divisor`, `effective_period`, the
+phase/rate split and the console-rate fallback are all untouched by this
+change — F4 replaces one input, nothing else.
+
+The perf-log header gains **`refresh_source`** (`declared` | `presentation` |
+`none`). Two captures with the same refresh but different sources are not the
+same experiment, which the header previously could not express.
+
+Cost is nil: one request per present, and both the request and the poll become
+early-returns once an estimate settles. `poll` answers **once per session** by
+construction — the regime cannot oscillate, which is what made the retry-based
+attempt worse than doing nothing.
+
+**Measured outcome** (16 captures, 45 s each, four ROMs, `run_ahead = 2`,
+rewind on — every header asserted against the config):
+
+| ROM | regime held | drops / 45 s | underruns | console rate |
+| --- | --- | --- | --- | --- |
+| Bad Dudes (MMC3) | display-sync /2, 40/40 rows, 4/4 runs | 1, 3, 1, 6 | 0 | −0.02 … −0.16% |
+| Super Mario Bros | display-sync /2, 39/39, 4/4 | 7, 1, 1, 4 | 0 | ±0.05% |
+| Bandit Kings (MMC5) | display-sync /2, 39-40/40, 4/4 | 1, 7, 7, 1 | 0 | ±0.04% |
+| `flowing_palette` | display-sync /2, 40/40, 4/4 | 4, 3, 1, 3 | 0 | ±0.06% |
+
+Against wall-clock baselines taken on the same host earlier the same day, Bad
+Dudes at identical settings dropped **114, 141, 154, 117, 186** frames per 45 s
+and never left wall-clock. It is now **1-6**. This is the ROM F2 could not fix,
+and Bandit Kings is an MMC5 case that had never been captured at all.
+
+**One criterion is NOT met, and the cause is not established.** The
+`produced` interval p95 is **27-33 ms** — roughly twice the frame period — on
+every ROM, and *higher* than the wall-clock baseline's 17.1-23.0 ms. A
+`run_ahead = 0` control was run to test whether this is work cost hitting the
+16.639 ms budget (`cost_p95` sits at 14-16 ms at `run_ahead = 2`), and **the
+control is confounded and settles nothing**: its four captures ran last, after
+~20 minutes of sustained back-to-back capture, and their own `cost_p95` spans
+8.93-25.99 ms — a 3x spread `run_ahead` cannot produce. It reports `run_ahead
+= 0` as *more* expensive than `run_ahead = 2`, which is impossible on the
+merits, so run order is aliased with the variable. Resolving this needs the
+A/B/A order-bias design from v2.3.1 G-series, not another one-directional
+sweep.
+
+Two things are worth separating from that open question:
+
+- Under `/2`, `presented_mean` is 8.55-11.05 ms with 1435-2342 duplicate
+  presents per capture. That is **correct**: a 60 Hz console on a 120 Hz panel
+  must show each frame twice. It also means `presented_*` percentiles and
+  `presented_dups` no longer measure the same quantity they did under a 1:1
+  regime, so thresholds inherited from that regime do not transfer.
+- At `run_ahead = 0` the console-rate error grew to −0.26…−0.59%, breaching the
+  0.5% gate in one of four captures. At the shipped `run_ahead = 2` the worst
+  of sixteen captures was −0.16%. Also confounded by the ordering above, and
+  also worth re-measuring properly.
+
+### v2.3.3 F6 — refresh-counted produce phase + run-ahead hysteresis (decision: PARTIAL; the reported symptom is NOT fixed)
+
+Two defects found while chasing F4's open `produced` p95 question. Both are
+real and both changes are kept; neither resolves the maintainer-reported
+"left-to-right shudder" in Super Mario Bros, and that is stated plainly here
+rather than inferred away.
+
+**1. The produce phase was a marginal wall-clock decision.**
+`display_produce_due` re-tested `now + slack >= next` on every refresh with
+`slack` at half a *refresh* (4.167 ms) against an 8.334 ms grid, so ordinary
+`RedrawRequested` jitter flipped the decision between adjacent refreshes.
+The phase source is now a refresh **count** (`refreshes_since_produce >=
+divisor`), with the wall clock retained as two guards — `too_early` (else a
+fast refresh grid runs the console fast) and `overdue` (else a render loop
+that drops refreshes runs it slow, which is the 1.4-3.4% error that got plain
+"every Nth refresh" rejected in F2).
+
+**2. The run-ahead throttle could not release without re-engaging.** It
+engaged on cost *with* run-ahead (>85% of budget) but released on cost
+*without* it (<40%) — two different quantities, with the band sitting between
+them rather than spanning them. At depth 2 any ROM whose base cost lands
+between ~28% and 40% of budget oscillates at the median window (~2 s), and
+each toggle shifts the displayed frame by the run-ahead depth. Measured at
+three toggles per 45 s on Bad Dudes. Release now predicts the re-enabled cost
+(`p50 * (depth + 1) < 70%`).
+
+**Measured, same A/B/A instrument before and after** (SMB, six captures per
+build, `run_ahead` 0/2 alternating so drift differences out):
+
+| | `produced` p95 median | range |
+| --- | --- | --- |
+| before, `run_ahead = 2` | 30.36 ms | 30.2-30.4 |
+| after, `run_ahead = 2` | **27.21 ms** | 24.9-28.5 |
+| before, `run_ahead = 0` | 27.27 ms | 24.0-36.5 |
+| after, `run_ahead = 0` | 31.40 ms | 24.9-35.9 |
+
+A ~10% improvement at the shipped depth, and **still ~1.6x the frame period**
+against a ≤17 ms target. Two things this did not fix at all:
+
+- The `run_ahead = 0` console-rate error is unchanged (+0.18/+0.48/+0.66%
+  after, versus +0.22/+0.34/+0.60% before, one capture breaching the 0.5% gate
+  in each build). The `too_early` guard is therefore **not** doing what it was
+  added to do, and the fast-running cause is still unidentified.
+- The throttle fix is unverified against the symptom: SMB logs **zero** toggles
+  in all twelve captures across both builds, because it sits at ~81% of budget
+  and never trips. It only fires on heavier ROMs.
+
+**Conclusion: the shudder's cause remains unknown.** The p95 tail is real,
+partially reduced, and not yet traced to a mechanism; the leading remaining
+suspect is that `presented_mean` measures 8.55-11.05 ms rather than a clean
+8.334 ms, i.e. redraws are not arriving on the refresh grid in the first place,
+which no amount of produce-side scheduling can correct.
+
+### v2.3.3 F7 — the display-sync occlusion watchdog was unreachable (decision: FIXED)
+
+`about_to_wait` early-returns with `ControlFlow::Wait` whenever
+`emu_thread_drives()` is true — the default `emu-thread` feature with netplay
+off, i.e. essentially every shipped build — and that return sat **above** the
+`ActivePacing::Display` branch. So under display-sync the watchdog never ran.
+
+This matters because display-sync is self-driving: the only thing re-arming the
+redraw is `display_sync_after_present`, on the success path of a present. If a
+compositor stops delivering frame callbacks (window minimised or fully
+occluded) there is no present, so nothing re-arms, and with a bare `Wait` there
+was nothing scheduled to wake the loop either. Emulation and audio stop with
+it. The watchdog exists precisely to keep them running and to re-kick the
+redraw, and it could not fire.
+
+Display-sync now falls through to its own branch, which sets a bounded
+`WaitUntil` and re-arms. The stall path additionally had to be guarded: it was
+written for the synchronous path and calls `produce_due_frames` on the winit
+thread, which under `emu_thread_drives()` would advance the console *in
+addition to* the emulation thread. It now produces only when the winit thread
+actually owns production; otherwise it just restarts the redraw loop and lets
+the emulation thread's own pacer do the work.
+
+Found while investigating F6's residual, not by any test — no suite covers
+"compositor stops sending frame callbacks".
+
+### v2.3.3 F8 — splitting render WORK from vblank WAIT (decision: ADOPTED, instrument only)
+
+`RenderPerf::total` spans the whole `RedrawRequested` handler **including the
+blocking present**, so a 16 ms p95 reads identically whether the loop stalled
+or simply waited for vblank — which under Fifo is correct behaviour. That
+ambiguity produced a wrong conclusion in this campaign: the ~16 ms `rtot` p95
+was reported as a stall and a fix was built for it before the distribution was
+understood.
+
+A `wait` series now brackets the GPU submission and present, logged as
+`rwait_*`; render **work** is `rtot - rwait`, logged as `rwork_*`.
+
+> **The first version of this instrument was wrong in two independent ways, and
+> the conclusion drawn from it below has been corrected.** Both defects were
+> found in the PR #357 review, not by any measurement of mine.
+>
+> 1. **The clock started in the wrong place.** `t_present` was taken before the
+>    branch selection, so `rwait` spanned the framebuffer copy, the HD composite
+>    and the whole phase-1 egui build (which holds the emulator lock) in
+>    addition to the present. `rtot - rwait` therefore reduced to the produce
+>    hook and the pumps — near zero by construction — and `rwait` read as a
+>    stall whenever the egui pass was slow. The instrument reported almost the
+>    opposite of what it was built to separate.
+> 2. **The arithmetic was invalid.** `work p95` was computed as
+>    `rtot p95 - rwait p95`. A difference of two percentiles is not the
+>    percentile of the difference. This announced itself in the published
+>    table: `work p95` sat *below* `work p50`, and percentiles cannot decrease.
+>    That impossibility was in the document and went unremarked.
+>
+> The retracted table is kept here because deleting a wrong measurement hides
+> that it was published and acted on:
+>
+> | `run_ahead` | work p50 | work p95 | ← RETRACTED, do not cite |
+> | --- | --- | --- |
+> | 0 | 0.36-0.87 ms | 0.05-0.08 ms |
+> | 2 | 0.06-0.27 ms | 0.01-0.07 ms |
+
+Both defects are fixed: the wait clock is restarted immediately before the GPU
+call in each render branch (left uninitialised so the compiler proves every
+path sets it), and work is now recorded **per sample** as its own ring, so its
+percentiles are real.
+
+Re-measured on SMB, six 30 s captures, A/B/A over `run_ahead` to control for
+order and thermal drift — medians across each capture's per-second rows:
+
+| `run_ahead` | work p50 | work p95 | **work p99** | wait p50 | wait p95 |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 0.013-0.015 ms | 2.2-4.5 ms | **16.0-22.4 ms** | 1.29-2.03 ms | 16.32-16.33 ms |
+| 2 | 0.011-0.012 ms | 0.04-0.06 ms | **13.1-13.5 ms** | 0.91-0.94 ms | 16.13-16.32 ms |
+
+Percentiles now increase, as they must.
+
+**The wait half of the original conclusion survives.** The distribution is
+ordinary **triple-buffered Fifo**: p50 ~1 ms (presents returning immediately
+from spare swapchain images) and p95 ~16 ms (one blocking a full refresh pair).
+A p95 at twice the refresh period is the expected shape, not a defect.
+
+**The work half does not survive, and it reverses a claim made in this
+campaign.** "The render loop is healthy — 0.01-0.08 ms at p95" was an artefact
+of both defects above. The loop is healthy *typically* — a 0.013 ms median is
+genuinely negligible — but it has a **real tail**: at `run_ahead = 0` the p95
+alone reaches 4.5 ms, and at p99 render work reaches **13-22 ms**, more than a
+full frame period, in every one of the six captures. At 120 Hz a p99 is roughly
+one redraw per second.
+
+That tail was invisible to the broken instrument, which is precisely how the
+render loop came to be eliminated as a suspect. **It is now an open lead, not a
+diagnosis** — this campaign has already advanced and falsified five mechanisms
+for the reported shudder, and a sixth is not being claimed on one measurement.
+What can be said is narrow and factual: something in the redraw handler outside
+the present occasionally takes longer than a frame, the previous instrument
+could not have shown it, and it has not been characterised.
+
+**Method note, and the sharper version of the earlier one.** The instrument did
+earn its place — it produced a result in one measurement where five
+theory-first attempts each cost a build-and-measure cycle. But the first
+version of it was *wrong*, and it was wrong in a way that flattered the
+conclusion being reached. Instrumenting before theorising is necessary and not
+sufficient: the instrument itself needs a check, and the cheapest one available
+here — do the percentiles increase? — was sitting in the published table the
+whole time.
+
+### v2.3.3 F9 — re-arm the redraw before the present (decision: REJECTED, reverted)
+
+Hypothesis: render work is ~0.1 ms yet 5% of presents block ~16 ms, and a loop
+doing 0.1 ms of work cannot miss a vblank on cost — only on ordering.
+
+> **The "~0.1 ms" premise came from the broken F8 instrument** (see the
+> retraction above); corrected, work is 0.013 ms at p50 but 13-22 ms at p99, so
+> a loop that *sometimes* misses a vblank on cost is no longer excluded. **The
+> REJECTION below still stands on its own evidence** — the change was measured
+> at zero effect across the full A/B/A, which is a result about the change
+> itself and does not depend on the premise that motivated it. The premise is
+> flagged rather than the verdict revisited. Since
+`display_sync_after_present` re-arms only once `present()` returns, the
+sequence is present-blocks → returns just after vblank N → request redraw →
+winit dispatch → render → present; if that dispatch lands past vblank N+1's
+commit deadline the next present waits until N+2. Requesting the redraw before
+the present should leave it already queued when the present returns.
+
+Measured with the same A/B/A instrument, six captures per build:
+
+| | `presented_mean` | `rwait` p95 | `produced` p95 |
+| --- | --- | --- | --- |
+| before, `run_ahead = 2` | 8.79 ms | 16.00 ms | 24.88 ms |
+| after, `run_ahead = 2` | 8.71 ms | 16.08 ms | 24.85 ms |
+| before, `run_ahead = 0` | 8.66 ms | 16.23 ms | 26.30 ms |
+| after, `run_ahead = 0` | 8.65 ms | 16.30 ms | 25.38 ms |
+
+The prediction was `rwait` p95 falling toward 8 ms. **Nothing moved** — every
+figure is inside run-to-run variance. Reverted per the standing >3%
+same-runner bar. The premise was wrong twice over: the 16 ms p95 is normal
+triple buffering (F8), so there was no missed vblank to explain.
+
+**Standing open question.** After F2, F4, F6, F7 and this rejection, the
+maintainer-reported "left-to-right shudder" in Super Mario Bros is **not
+explained**. `produced` p95 sits at ~25 ms against a perfect 16.64 ms mean,
+with render work at 0.05 ms and no emulator-mutex contention. Five mechanisms
+were proposed and falsified: run-ahead throttle oscillation (zero toggles on
+SMB), an undriven redraw loop (it is driven, from the present success path),
+16 ms render stalls (vblank wait), marginal produce-phase decisions (~10%, not
+the cause), and redraw ordering (zero effect). The one approach that produced a
+result was instrumenting first and theorising second.
 
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
@@ -1474,27 +2190,95 @@ name (so download links do not change shape). The alternative — withholding th
 whole release until PGO finishes — was rejected: a complete, downloadable
 release an hour sooner is worth more than avoiding an in-place swap.
 
-#### BOLT (Linux post-link, optional)
+#### BOLT (Linux post-link) — evaluated, gate DISABLED, deferred (v2.3.1)
 
-A second Linux-only `bolt` job runs behind the **same > 3% + byte-identical
-gate**, only after the PGO stage has already promoted (`needs.pgo.outputs.promotable
-== 'true'`), and **only** on an explicit `workflow_dispatch` with `run_bolt:
-true`. (Before v2.2.3 its condition admitted any non-dispatch event, which —
-once `release.yml` began calling this workflow — would have fired BOLT on every
-release, adding ~90 minutes for an artifact nothing consumes, since the release
-ships the PGO binary and not the BOLT one.)
-It is **best-effort**: it probes for `llvm-bolt` (PATH, then `apt-get install
-bolt`) and skips cleanly if unavailable, so the workflow never hard-fails on a
-runner image without BOLT. When present it chains `cargo pgo bolt build` →
-re-train → `cargo pgo bolt optimize`, re-benches, re-runs the oracle, and uploads
-the BOLT binary only if it too clears > 3% and stays byte-identical (a possible
-extra ~2% on top of PGO).
+**Status: BOLT builds and optimizes correctly; its promotion gate is disabled;
+BOLT itself is UNMEASURED and deferred.** This section records why, because the
+gate that used to sit here reported a number that was not real.
+
+A second Linux-only `bolt` job runs after the PGO stage has promoted
+(`needs.pgo.outputs.promotable == 'true'`), and **only** on an explicit
+`workflow_dispatch` with `run_bolt: true`. (Before v2.2.3 its condition admitted
+any non-dispatch event, which — once `release.yml` began calling this workflow —
+would have fired BOLT on every release for an artifact nothing consumes.) It
+still chains `cargo pgo bolt build` → re-train → `cargo pgo bolt optimize` and
+uploads the resulting binary for manual evaluation. What it no longer does is
+claim a speedup.
+
+##### Three defects, each hiding the next
+
+Getting BOLT to run at all took three dispatches, and each fix revealed the next
+problem — the earlier failure had been masking it.
+
+1. **The probe trusted a package manager.** It ran
+   `apt-get install -y bolt` and set `have_bolt=true` on exit 0. On Ubuntu the
+   package named `bolt` is the **Thunderbolt 3 device manager** — an unrelated
+   project that owns the name. apt installed it, exited 0, and the stage then
+   died on `Cannot find llvm-bolt`. A job whose entire contract is *skip cleanly
+   when the tool is missing* failed the run instead. Fixed by locating the
+   binary rather than inferring it.
+2. **The probe checked the binary but not the runtime.** With the tool found,
+   the stage ran the whole analysis — 12,816 functions, 356,056 instrumentation
+   counters — and then died on
+   `BOLT-ERROR: library not found: /usr/lib/libbolt_rt_instr.a`.
+   `llvm-bolt --instrument` links a runtime archive it resolves relative to its
+   own prefix, which Ubuntu's packaging does not put there. This is the same
+   mistake one level down: verifying one necessary condition and treating it as
+   sufficient. Fixed by verifying the runtime too and linking it into place.
+3. **The gate measured a binary BOLT had never touched — and reported success.**
+   With 1 and 2 fixed, BOLT genuinely instrumented and optimized for the first
+   time, which finally exposed this. `cargo pgo bolt optimize` accepts **no
+   cargo subcommand** (its usage is `[OPTIONS] [-- <CARGO_ARGS>...]`), unlike
+   `cargo pgo optimize` on the PGO side which accepts `bench`/`test`. Both BOLT
+   steps had been written by analogy with the PGO stage, so both were rejected:
+   `unexpected argument 'bench' found` and `unexpected argument 'test' found`.
+
+   The determinism step failed loudly. **The bench step did not:** it swallowed
+   the error with `|| cargo bench …`, fell back to a plain non-BOLT build,
+   computed a ratio against the plain baseline, and wrote it to the job summary
+   as *"BOLT speedup vs plain release"*. It compared plain against plain and
+   reported **success**. Had that ratio happened to land above 3%, the gate
+   would have promoted a BOLT binary on a measurement containing no BOLT.
+
+##### Why fixing the CLI would not have been enough
+
+BOLT optimizes the **`rustynes` frontend binary**. The gate benches
+`rustynes-core`'s `full_frame` criterion bench — a *separate* binary BOLT never
+touches. Even spelled correctly, the step would measure something unrelated to
+its subject. Measuring BOLT honestly requires a harness that runs **inside** the
+optimized artifact (`frame_probe` built as part of it, emitting framebuffer
+hashes for the determinism half), which is a design change rather than a fix.
+
+Both steps are therefore **disabled** (`if: false`) with this reasoning inline in
+the workflow, rather than patched. A gate that cannot measure its subject is
+worse than no gate, and defect 3 shows this one could actively mislead.
+
+##### Why it is deferred rather than rebuilt
+
+- **PGO already captures the win: measured 6.43% faster and byte-identical on
+  run 31067782333, promoted, and shipping as the Linux release asset.** That is
+  the profile-driven layout benefit, taken at compile time.
+- **BOLT's mechanism targets a bottleneck this workload does not have.** Its
+  gains come from instruction-cache and iTLB pressure in large-code-footprint
+  programs — compilers, databases, browsers. RustyNES's hot path is `Ppu::tick`,
+  `cpu_clock`, `emit_pixel` and a few fetch helpers: comfortably L1i-resident.
+  The v2.3.1 campaign established the loop is **issue-limited on work the
+  accuracy model requires**, not front-end-limited.
+- **The cost is several ~90-minute CI iterations plus new harness code**, for a
+  speculative marginal gain on top of PGO, in BOLT's weakest case.
+
+If it is ever revisited, start with the cheap half: BOLT-optimize `frame_probe`
+rather than the frontend binary, run it, and compare against a plain build. That
+answers the question without rebuilding the gate.
 
 #### How to trigger
 
 ```bash
 # Manual (from a checkout with the gh CLI):
 gh workflow run PGO.yml                     # default 3600 frames/ROM, no BOLT
+# `run_bolt=true` still builds + optimizes a BOLT binary and uploads it for
+# manual evaluation, but its promotion gate is DISABLED — it produces no
+# speedup claim (see "BOLT ... deferred" above).
 gh workflow run PGO.yml -f frames=7200 -f run_bolt=true
 # Or push a release tag — `release.yml` calls PGO and ships the promoted
 # binary as the linux-x86_64 asset when the gate passes:
