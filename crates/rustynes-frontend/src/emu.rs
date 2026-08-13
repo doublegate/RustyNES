@@ -126,6 +126,7 @@ const MAX_RUN_AHEAD_DEPTH: u32 = 3;
 /// interpolation presented as measurement. The engage test uses the produce
 /// MEDIAN (not p95) for the reason the surrounding comment gives — on the
 /// emulation thread the tail is OS descheduling, not run-ahead's compute.
+#[cfg(not(target_arch = "wasm32"))]
 const RUNAHEAD_THROTTLE_ENGAGE: f32 = 0.75;
 
 impl EmuHandle {
@@ -507,7 +508,8 @@ pub struct EmuCore {
     /// Run-ahead scratch (persistent-frame snapshot + discard sink).
     #[cfg(not(target_arch = "wasm32"))]
     pub runahead: crate::runahead::RunAhead,
-    /// Run-ahead budget throttle (hysteresis on produce-cost p95).
+    /// Run-ahead budget throttle (hysteresis on the produce-cost MEDIAN — see
+    /// `update_runahead_throttle`, which explains why p95 was the wrong signal).
     #[cfg(not(target_arch = "wasm32"))]
     pub runahead_throttled: bool,
     /// v2.3.3 F21 — how many depths the budget throttle has taken OFF the
@@ -526,6 +528,14 @@ pub struct EmuCore {
     /// the perf log keep their existing meaning ("the throttle is doing
     /// something") without needing to understand the depth arithmetic.
     pub runahead_throttle_steps: u32,
+    /// v2.3.3 F21 — cumulative run-ahead depth CHANGES, either direction.
+    ///
+    /// The only metric that sees the artefact matching the reported shudder: a
+    /// depth change displaces the displayed frame by the run-ahead depth, so the
+    /// picture jumps forward N frames and back. Every hold-duration statistic is
+    /// blind to it, because the frames either side are each shown for exactly
+    /// the right number of refreshes.
+    pub runahead_throttle_toggles: u64,
     /// SHA-256 of the loaded FDS disk (keys the `.fds.sav` sidecar).
     #[cfg(not(target_arch = "wasm32"))]
     pub fds_disk_sha256: Option<[u8; 32]>,
@@ -628,6 +638,7 @@ impl EmuCore {
             #[cfg(not(target_arch = "wasm32"))]
             runahead_throttled: false,
             runahead_throttle_steps: 0,
+            runahead_throttle_toggles: 0,
             #[cfg(not(target_arch = "wasm32"))]
             fds_disk_sha256: None,
             #[cfg(feature = "scripting")]
@@ -800,9 +811,14 @@ impl EmuCore {
 
     /// v2.8.0 Phase 3 — run-ahead budget throttle with hysteresis, fed by
     /// the produce-cost **median** (which INCLUDES the run-ahead frames).
-    /// Engages at [`RUNAHEAD_THROTTLE_ENGAGE`] of the frame budget, releases
-    /// below 40% — the gap prevents oscillation (cost drops when the extra
-    /// frames stop).
+    /// Engages at `RUNAHEAD_THROTTLE_ENGAGE` of the frame budget and releases
+    /// a step below `RUNAHEAD_THROTTLE_RELEASE`, sustained for
+    /// `RUNAHEAD_RELEASE_WINDOWS` windows (plain code spans: those consts are
+    /// private, and a link from public docs to a private item fails the
+    /// `-D warnings` rustdoc gate) — the gap and the debounce together
+    /// are what prevent oscillation. (This said "releases below 40%", which
+    /// stopped being true when the release test moved to predicting the
+    /// re-enabled cost.)
     ///
     /// v2.8.0 Phase 5 — keyed off the MEDIAN, not the p95. On the dedicated
     /// emulation thread the p95/p99 tail is dominated by occasional OS
@@ -827,6 +843,7 @@ impl EmuCore {
             // again, so an unaffordable host converges to 0 without the cliff.
             self.runahead_throttle_steps += 1;
             self.runahead_throttled = true;
+            self.runahead_throttle_toggles += 1;
             let now_at = bounded.saturating_sub(self.runahead_throttle_steps);
             eprintln!(
                 "rustynes: median produce cost {produce_p50_ms:.2} ms is too close to the \
@@ -860,7 +877,17 @@ impl EmuCore {
             let per_frame = produce_p50_ms / (f32::from(u8::try_from(running).unwrap_or(0)) + 1.0);
             let predicted_one_more =
                 per_frame * (f32::from(u8::try_from(running).unwrap_or(0)) + 2.0);
+            // v2.3.3 F21 — band left at 0.70 and NOT debounced. Widening it to
+            // 0.55 with a 4-window debounce was tried to stop the oscillation
+            // and MEASURED WORSE on both counts: toggles stayed at 3 per 45 s
+            // capture (target was 1) and cadence regressed from 0.84% to
+            // 2.21-3.56% of frames held for the wrong duration. Reverted rather
+            // than kept on the strength of its reasoning. The oscillation is a
+            // real, open defect — see `runahead_throttle_toggles` — but this was
+            // not its cause, so a wider band only removed a release path the
+            // build needed.
             if predicted_one_more < target * 0.70 {
+                self.runahead_throttle_toggles += 1;
                 self.runahead_throttle_steps -= 1;
                 self.runahead_throttled = self.runahead_throttle_steps > 0;
                 let now_at = bounded.saturating_sub(self.runahead_throttle_steps);
@@ -1408,6 +1435,80 @@ pub(crate) fn drive_ra(
 #[allow(clippy::suboptimal_flops)] // readability over FMA in assertions.
 mod tests {
     use super::*;
+
+    // ---- v2.3.3 F21: the run-ahead budget throttle state machine ----------
+    //
+    // It had no tests at all, through an all-or-nothing implementation and a
+    // step-down rewrite. Raised in review on PR #368, and the gap is why an
+    // oscillation regression reached a capture run rather than a test: the
+    // aggregate hold-duration metrics cannot see a toggle, so nothing but a
+    // direct assertion on this state machine would have caught it.
+    //
+    // `EmuCore` is expensive to build, so these drive the throttle fields
+    // directly through the same predicates production uses.
+
+    /// A budget-sized fixture: 16.639 ms NTSC frame, one median window's worth
+    /// of samples so the `samples < 120` guard does not swallow the call.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn throttle_fixture() -> EmuCore {
+        let mut c = EmuCore::new();
+        c.frame_duration = std::time::Duration::from_secs_f32(16.639 / 1000.0);
+        c
+    }
+
+    /// Engage takes ONE depth, not all of them — the whole point of the
+    /// step-down change. At depth 2 costing 77% of budget, the next frame runs
+    /// at depth 1, not 0.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn throttle_engages_one_step_at_a_time() {
+        let mut c = throttle_fixture();
+        c.update_runahead_throttle(12.884, 200, 2);
+        assert_eq!(c.runahead_throttle_steps, 1);
+        assert_eq!(c.effective_run_ahead(2), 1, "2 -> 1, not 2 -> 0");
+        assert!(c.runahead_throttled);
+    }
+
+    /// A host that genuinely cannot afford any depth still converges to 0 — it
+    /// just takes one median window per step instead of arriving in one jump.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn throttle_converges_to_zero_when_nothing_is_affordable() {
+        let mut c = throttle_fixture();
+        for _ in 0..4 {
+            c.update_runahead_throttle(15.0, 200, 2);
+        }
+        assert_eq!(c.effective_run_ahead(2), 0);
+    }
+
+    /// The oscillation guard. NOTE: this asserts the CURRENT 0.70 band holds a
+    /// steady depth-1 cost without releasing — it does not prove the build is
+    /// oscillation-free, and measurement says it is not (3 toggles per 45 s).
+    /// A wider band plus a debounce was tried and measured WORSE on both toggles
+    /// and cadence, so the defect is elsewhere and this test pins only what the
+    /// shipped code actually guarantees. A cost that sits between the
+    /// release band and the engage band must NOT produce a release: that is the
+    /// oscillation that displaces the displayed frame by the run-ahead depth,
+    /// which the user sees as the picture jumping forward and back. Measured at
+    /// 3 toggles per 45 s before the band was widened.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn throttle_does_not_oscillate_in_the_hysteresis_gap() {
+        let mut c = throttle_fixture();
+        c.update_runahead_throttle(12.884, 200, 2); // engage: 2 -> 1
+        let toggles_after_engage = c.runahead_throttle_toggles;
+        // Now running at depth 1, ~8.56 ms. Giving back a step predicts ~12.8 ms
+        // — under the OLD 0.70 band (11.65 ms)? No; but a dip cleared it. Feed
+        // the steady depth-1 cost for many windows and require no release.
+        for _ in 0..20 {
+            c.update_runahead_throttle(8.556, 200, 2);
+        }
+        assert_eq!(c.runahead_throttle_steps, 1, "must stay at one step");
+        assert_eq!(
+            c.runahead_throttle_toggles, toggles_after_engage,
+            "no toggle may occur while cost sits in the hysteresis gap"
+        );
+    }
 
     /// v1.7.0 "Forge" Workstream A1 — a minimal NES 2.0 NROM (16 KiB PRG / 8 KiB
     /// CHR) whose reset vector loops on itself, so `run_frame` advances without

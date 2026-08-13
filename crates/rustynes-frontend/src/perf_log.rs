@@ -615,6 +615,10 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     cols.push(("tick_ok", v.tick_ok.to_string()));
     cols.push(("tick_timeout", v.tick_timeout.to_string()));
     cols.push(("tick_dropped", v.tick_dropped.to_string()));
+    // F21 — cumulative; a rising count means the displayed frame is being
+    // displaced by the run-ahead depth, which reads as the picture jumping
+    // forward and back. No hold-duration column can show this.
+    cols.push(("runahead_toggles", v.runahead_toggles.to_string()));
     // F16 — cumulative; difference successive rows for a rate. Nonzero means the
     // compositor is discarding this surface's frames, so the MEASURED refresh
     // never settles. That costs display-sync only when no DECLARED refresh is
@@ -906,6 +910,7 @@ mod tests {
             "tick_ok",
             "tick_timeout",
             "tick_dropped",
+            "runahead_toggles",
             "present_discarded",
             // audio health row
             "audio_queued_ms",

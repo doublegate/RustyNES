@@ -710,6 +710,15 @@ pub struct PerfView {
     pub tick_timeout: u64,
     /// Present ticks dropped on a full depth-1 channel. See [`Self::tick_ok`].
     pub tick_dropped: u64,
+    /// v2.3.3 F21 — cumulative run-ahead depth changes made by the budget
+    /// throttle, either direction.
+    ///
+    /// The only metric that sees the artefact matching the reported shudder: a
+    /// depth change displaces the displayed frame by the run-ahead depth, so the
+    /// picture jumps forward N frames and back. Hold-duration statistics are
+    /// blind to it — the frames either side are each shown for exactly the right
+    /// number of refreshes. Cumulative; difference successive rows for a rate.
+    pub runahead_toggles: u64,
     /// v2.3.3 F16 — frames the compositor reported as **discarded**: composited
     /// but never scanned out (an occluded, minimized or otherwise unpresented
     /// surface).
