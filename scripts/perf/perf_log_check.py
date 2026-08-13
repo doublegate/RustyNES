@@ -295,11 +295,50 @@ def main() -> int:
                 f"console rate skew {skew_pct:.3f}% > {args.max_rate_skew_pct}% "
                 f"(produced_mean {produced_mean:.3f} ms vs target {target_ms:.3f} ms)")
 
+    # v2.3.3 F16 — CAPTURE VALIDITY, checked before any pacing verdict is read.
+    #
+    # `present_discarded` counts frames the compositor composited and then never
+    # scanned out. A non-zero count means this window was not actually on screen
+    # for part of the run, and everything downstream is then describing a display
+    # that was not displaying: the refresh estimate never settles, display-sync
+    # never engages, and the session silently rides the wall-clock fallback —
+    # which this project measures at 61-147 dropped frames per 45 s against
+    # display-sync's 6-15.
+    #
+    # This is a HARD failure rather than a warning because the campaign that
+    # added it wasted five verification captures on exactly this state, and
+    # because an occluded capture does not look broken: it produces plausible,
+    # well-formed, entirely misleading numbers. Fail closed, in the same spirit
+    # as the existing config-mismatch assertion.
+    # `col_float` (not a bespoke int reader): it already handles the `None` a
+    # mid-write-killed final row leaves behind, and a capture written before this
+    # column existed simply has no key, which it reads as 0.0 — so an OLD log is
+    # reported as valid rather than failed, which is the correct degradation. It
+    # does mean a pre-F16 capture cannot be *proven* valid; that is honest, and
+    # the column exists so future ones can be.
+    has_col = any(r.get("present_discarded") is not None for r in body)
+    discarded = int(max((col_float(r, "present_discarded") for r in body), default=0.0))
+    if discarded > 0:
+        failures.append(
+            f"present_discarded {discarded} > 0 — the compositor discarded this "
+            "window's frames, so it was not on screen for part of the run and no "
+            "pacing conclusion may be drawn from this capture")
+
     print(f"perf_log_check: {args.csv}")
     print(f"  rows={len(rows)} (analyzed {len(body)} after {args.warmup_rows} warmup)")
     print(f"  underruns={underruns}  produced_max={produced_max:.1f}ms  "
           f"catchup_bursts={catchup}  snap_forwards={snaps}")
     print(f"  cost_p95={cost_p95:.2f}ms (emulation work)  produced_dropped={dropped}")
+    # Three states, not two: a pre-F16 log has no column, and reporting that as
+    # "VALID — window was on screen" would assert something never measured. The
+    # gate still passes it (see above), but it must not claim to have checked.
+    if not has_col:
+        validity = "capture predates the column — validity UNKNOWN, not verified"
+    elif discarded == 0:
+        validity = "capture VALID — window was on screen throughout"
+    else:
+        validity = "capture INVALID — window occluded"
+    print(f"  present_discarded={discarded} ({validity})")
     print(f"  produced_p99={produced_p99:.2f}ms  presented_p99={presented_p99:.2f}ms  "
           f"(NTSC budget 16.639 ms)")
     if failures:

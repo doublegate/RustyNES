@@ -2210,6 +2210,26 @@ reading:
 The value delivered is narrower than a fix and worth having anyway: a failure
 that was completely silent now reports itself.
 
+#### The capture-validity gate
+
+`perf_log_check.py` now **fails closed** on `present_discarded > 0`, alongside its
+existing config-mismatch assertion. An occluded capture does not look broken —
+that is the whole problem with it. It produces plausible, well-formed, entirely
+misleading numbers, and this campaign spent five verification captures in that
+state without noticing.
+
+Three states, deliberately, because two would have been dishonest: `> 0` fails;
+`0` with the column present passes as verified; and a capture written **before**
+the column existed passes but is reported as *"validity UNKNOWN, not verified"* —
+it cannot be proven valid, and saying "window was on screen" of a log that never
+measured it would be a small version of exactly the error F14 is about.
+
+Every pacing conclusion in this document that predates the column therefore
+carries an unverifiable assumption: that the window was actually on screen. The
+sixteen scanout-bearing captures almost certainly were — they *have* `presented`
+reports, which an occluded window cannot produce — but that is an inference, not
+a check.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as
