@@ -78,6 +78,69 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **Frontend: display-sync consumed a frame slot per redraw without producing a
+  frame, whenever the emulation thread was not driving.** `display_produce_due`
+  is a stateful mutator — it advances the wall-clock schedule and resets the
+  refresh counter — and both the post-present path and `display_sync_produce`
+  called it for the same redraw. At divisor 2 the discarded second call could
+  advance the schedule by a full period with no frame behind it, so the wall
+  clock (the rate authority) outran frame production and the console ran
+  **slow**, on exactly the high-refresh panel the divisor exists to serve.
+  Ownership now follows `emu_thread_drives()`, the same predicate
+  `display_sync_produce` stands down on.
+- **Frontend: the F8 work/wait instrument measured the wrong interval, and its
+  headline figure was arithmetically invalid.** The wait clock started before
+  the render branch, so it spanned the framebuffer copy, the HD composite and
+  the egui build in addition to the blocking present; and "render work" was
+  derived as `rtot p95 − rwait p95`, a difference of percentiles rather than a
+  percentile of the difference. The published table had `work p95` *below*
+  `work p50`, which is impossible. The clock now restarts immediately before
+  each GPU call, and work is recorded per sample as its own series (`rwork_*`).
+  Re-measured, this **reverses the conclusion drawn from it**: render work is
+  0.013 ms at p50 but reaches **13–22 ms at p99**, a real tail the broken
+  instrument hid and on the strength of which the render loop had been
+  eliminated as a suspect. Recorded as an open lead, not a diagnosis — see
+  `docs/performance.md` v2.3.3 F8.
+- **Frontend: `RenderPerf::clear()` left the wait samples behind**, mixing the
+  previous ROM's or regime's blocking-present figures into the next
+  experiment's while every other render series started fresh.
+- **Frontend: a `DisplaySync::slack` field documented as "half a display
+  refresh" was cached but never read**, while the guard it purported to
+  describe uses half a *console frame period*. The field is deleted and the
+  docs corrected rather than left to contradict the code.
+- **Frontend: `close_rom` left a stale cached mapper name** behind the ROM it
+  described; it now goes through `EmuCore::clear_rom`.
+- **Frontend: `refresh_probe::effective_period` could panic the render loop.**
+  `Duration::from_secs_f64` rejects non-finite and negative values, and the
+  refresh reaching it is compositor- or API-supplied rather than checked. It
+  now returns `Option<Duration>`, matching its sibling `best_divisor`.
+- **Frontend: the `wp_presentation` sample set could wedge permanently.** At the
+  cap the newest report was dropped rather than the oldest, so a set that
+  straddled an output change could never re-form a quorum while still creating
+  one feedback object per present for the rest of the session. It is now a
+  sliding window.
+- **Frontend: `PresentationClock` dropped winit's window before the Wayland
+  objects backed by its pointers.** Rust drops fields in declaration order and
+  `_window` was declared first; it is now declared last, so the foreign-backed
+  `conn`/`queue`/`surface` are gone before the `Arc<Window>` is released.
+- **Build: `wayland-client`'s `system` feature is now declared explicitly.**
+  `Backend::from_foreign_display` and `ObjectId::from_ptr` require it, and it
+  resolved only by unification through winit/sctk/rfd — a change in any of them
+  would have turned into a confusing missing-API error.
+- **`scripts/perf/perf_capture.sh`: the documented exit-3 "unverifiable
+  capture" path was unreachable.** `grep` exiting 1 on an absent header
+  propagated out of the command substitution under `set -euo pipefail` and
+  killed the script first, with status 1 and no message — in precisely the case
+  the message exists for. The metadata reader also imported `tomllib` outside
+  its `try`, aborting the whole capture on Python < 3.11 instead of degrading.
+- **CI: the PGO workflow's BOLT probe could report a runtime it had not
+  linked.** Failed `sudo mkdir`/`ln` left `bolt_dir` populated (the step carries
+  no `set -e`), publishing `have_bolt=true` without `libbolt_rt_instr.a`. It now
+  verifies the resulting file and prefers the selected toolchain's own prefix
+  over a system-wide search.
+- **Security: `webbrowser` bumped 1.2.1 → 1.2.4** for RUSTSEC-2026-0257 (Unix
+  `BROWSER` argument injection), reached transitively via `egui-winit`'s `links`
+  feature.
 - **Frontend: display-sync's occlusion watchdog never ran.** `about_to_wait`
   early-returned with `ControlFlow::Wait` whenever the emulation thread drives
   (the default build), and that return sat above the display-sync branch — so
@@ -158,32 +221,20 @@ cycle-accurate core later replaced.
   `catchup_bursts` (200 → **16**) and `snap_forwards` (40 → **8**), both derived
   from the eight captures on file rather than chosen: healthy runs sit at 0
   bursts, the borderline one at 12, the degraded ones at 32 and 62.
-  - **The first fix for this was wrong, and measuring it disproved it.** It
-    gated `produced_p99_ms` / `presented_p99_ms` at 22 ms, justified by "healthy
-    captures sit at 17.2–17.6 ms, degraded ones reach 24–35". Two clean 90 s
-    captures on real hardware reproduce **p99 = 34.4 ms with zero bursts, zero
-    underruns and zero snap-forwards** — the same p99 as the worst archived run.
-    `produced_mean_ms` is 16.64 ms (the NTSC budget) in all eight captures, so
-    the emulator always produces on time; the p99 is the wall-clock pacer
-    beating against vsync, exactly as v2.3.0's notes predicted. On a 120 Hz
-    Wayland host `winit` cannot read the refresh rate at all, so the beat is a
-    property of the **display**, not of frontend health. An absolute-millisecond
-    p99 gate measures the host's monitor and reports it as a regression, so p99
-    is now **reported, not gated** (opt-in flags remain for single-machine
-    comparisons, where it is genuinely useful).
-- **The BOLT stage could not find its runtime, then measured the wrong binary.**
-  The probe verified the `llvm-bolt` binary but not the `libbolt_rt_instr.a`
-  runtime it links against, so instrumentation died after running a full
-  analysis. With that fixed, the gate itself proved unsound: `cargo pgo bolt
-  optimize` takes no cargo subcommand, and the bench step's `|| cargo bench …`
-  fallback then measured a **plain, non-BOLT** build and reported it as "BOLT
-  speedup vs plain release". Both gate steps are disabled with the reasoning
-  inline — BOLT optimizes the frontend binary while the gate benched the core's
-  criterion bench, so it could not measure its subject even spelled correctly.
-  The artifact upload likewise published the PGO binary under a BOLT name and now
-  uploads `rustynes-bolt-optimized`. **BOLT is deferred and explicitly
-  unmeasured**; PGO (measured 6.43% faster and byte-identical) remains the
-  shipping optimization. See `docs/performance.md`.
+  - An absolute-millisecond p99 gate was tried first and **rejected on
+    measurement**: p99 tracks the host display's beat against the console rate,
+    not frontend health, so it is now reported rather than gated (opt-in flags
+    remain for single-machine comparisons). Full figures and reasoning:
+    `docs/performance.md`.
+- **The BOLT stage reported a speedup it had not measured.** Its bench fallback
+  timed a plain, non-BOLT build and labelled the result "BOLT speedup vs plain
+  release", and the stage benched the core while BOLT optimizes the frontend
+  binary — so it could not have measured its subject in any case. Both gate
+  steps are now disabled with the reasoning inline, the runtime probe fails
+  closed, and the artifact is named for what it contains
+  (`rustynes-bolt-optimized`). **BOLT is deferred and explicitly unmeasured**;
+  PGO (measured 6.43% faster and byte-identical) remains the shipping
+  optimization. Investigation trail: `docs/performance.md`.
 
 ### Performance
 

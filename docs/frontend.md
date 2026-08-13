@@ -205,9 +205,23 @@ so a skipped / early-returned redraw is not counted.) A true scan-out timestamp
 The panel also surfaces two **present/produce "beat" counters** (`presented_dups`
 / `produced_dropped`, also logged to the perf CSV): a present with no new produced
 frame is a duplicate (the display repeated a frame); >1 produce between presents
-means the extra frames were dropped (unshown). Under display-sync both stay ~0;
-under wall-clock pacing they tick roughly once every ~10 s for the 60.0988-vs-60.000
-Hz beat. They are read-only diagnostics — the deeper pacer mitigation that would
+means the extra frames were dropped (unshown). Under wall-clock pacing both tick
+roughly once every ~10 s for the 60.0988-vs-60.000 Hz beat.
+
+Under display-sync the two counters part company, and only one of them is still
+a fault signal:
+
+| counter | divisor N = 1 | divisor N > 1 |
+| --- | --- | --- |
+| `presented_dups` | ~0 | **large and CORRECT** — ~(N−1) per produced frame |
+| `produced_dropped` | ~0 | ~0 — still the drop diagnostic |
+
+At N = 2 the regime *intends* each produced frame to be shown across two
+refreshes, so every second present is a duplicate by design: a 45 s capture
+records 1,435-2,342 of them (`docs/performance.md` v2.3.3 F2) and nothing is
+wrong. Reading that number as stutter is a mistake the table above exists to
+prevent. `produced_dropped` keeps its meaning at every divisor — it is the one
+to watch. They are read-only diagnostics — the deeper pacer mitigation that would
 *reduce* the beat (a present-aligned-to-production cadence under Mailbox) stays
 deferred: it needs on-device validation across real refresh rates and carries
 pacing-regression risk, so it was explicitly **dropped under the v1.5.0 "Lens"
@@ -770,7 +784,10 @@ function of render-loop reliability (presents measured 116-119 Hz on a 119.991
 Hz panel, and the console inherited the shortfall exactly, running 1.4-3.4%
 slow with audio underruns). Instead the wall-clock schedule is accumulated —
 never rebased — and a refresh produces a frame only when that schedule says one
-is due, with a half-refresh "slightly early beats a lot late" window. A missed
+is due, with a half-**frame-period** "slightly early beats a lot late" window
+(`period / 2`, the console frame period — an earlier `slack` field documented as
+half a *display refresh* was cached but never read, and was deleted in the
+PR #357 review rather than left contradicting the code). A missed
 present therefore no longer slows the console. The schedule is owned by the
 winit thread, *not* read through the emulator mutex: doing that on every
 refresh was measured at 36 ms `cost` p95 with the console at 35 Hz.

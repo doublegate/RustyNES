@@ -173,6 +173,9 @@ pub mod runahead;
 /// output global. Gated to exactly the platforms where winit itself compiles
 /// its Wayland backend; everywhere else [`presentation_clock`] supplies a stub
 /// and the caller keeps the declared-refresh path unchanged.
+///
+/// This `cfg` is copy 3 of 4; [`presentation_clock`] is the authoritative
+/// statement and lists all four. Change them together.
 #[cfg(all(
     unix,
     not(any(

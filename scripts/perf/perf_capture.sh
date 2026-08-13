@@ -58,18 +58,26 @@ CFG="${XDG_CONFIG_HOME:-$HOME/.config}/rustynes/config.toml"
 WANT_RUN_AHEAD=""
 WANT_REWIND=""
 if [[ -f "$CFG" ]]; then
-    WANT_RUN_AHEAD="$(python3 - "$CFG" <<'PYCFG'
-import sys, tomllib, pathlib
+    # `tomllib` is stdlib only from Python 3.11. Import it INSIDE the `try`:
+    # at module level the ImportError escapes before the handler exists, python
+    # exits non-zero, and `set -euo pipefail` then aborts the whole capture on a
+    # host that is merely older — rather than degrading to "cannot read the
+    # config", which the empty-value checks below already handle correctly. The
+    # `|| true` covers python3 being absent entirely for the same reason.
+    WANT_RUN_AHEAD="$(python3 - "$CFG" <<'PYCFG' || true
+import sys, pathlib
 try:
+    import tomllib
     d = tomllib.loads(pathlib.Path(sys.argv[1]).read_text())
     print(d.get("input", {}).get("run_ahead", ""))
 except Exception:
     print("")
 PYCFG
 )"
-    WANT_REWIND="$(python3 - "$CFG" <<'PYCFG'
-import sys, tomllib, pathlib
+    WANT_REWIND="$(python3 - "$CFG" <<'PYCFG' || true
+import sys, pathlib
 try:
+    import tomllib
     d = tomllib.loads(pathlib.Path(sys.argv[1]).read_text())
     v = d.get("rewind", {}).get("enabled", None)
     print("" if v is None else str(bool(v)).lower())
@@ -77,6 +85,11 @@ except Exception:
     print("")
 PYCFG
 )"
+    if [[ -z "$WANT_RUN_AHEAD" && -z "$WANT_REWIND" ]]; then
+        echo "perf_capture: warning: could not read $CFG (Python 3.11+ required for" >&2
+        echo "perf_capture: tomllib). The capture will run, but its configuration" >&2
+        echo "perf_capture: cannot be asserted." >&2
+    fi
 fi
 
 echo "perf_capture: running ${DURATION}s capture on $ROM (perf logging on)…"
@@ -115,8 +128,15 @@ echo "perf_capture: captured $NEWEST"
 # this fails the run rather than warning. To capture a config deliberately
 # different from the file on disk, set SKIP_CONFIG_ASSERT=1.
 if [[ -z "${SKIP_CONFIG_ASSERT:-}" ]]; then
-    GOT_RUN_AHEAD="$(grep -E '^# run_ahead = ' "$NEWEST" | head -1 | sed 's/.*= //')"
-    GOT_REWIND="$(grep -E '^# rewind_enabled = ' "$NEWEST" | head -1 | sed 's/.*= //')"
+    # The trailing `|| true` is LOAD-BEARING, not defensive noise. `grep` exits
+    # 1 when the header is absent; with `set -euo pipefail` that status
+    # propagates out of the command substitution and kills the script right
+    # here, with status 1 and no message — so the carefully-worded failure
+    # below, and the documented exit status 3, were both unreachable in exactly
+    # the case they exist for. Let the extraction yield an empty string and let
+    # the empty-header check own the failure.
+    GOT_RUN_AHEAD="$(grep -E '^# run_ahead = ' "$NEWEST" | head -1 | sed 's/.*= //' || true)"
+    GOT_REWIND="$(grep -E '^# rewind_enabled = ' "$NEWEST" | head -1 | sed 's/.*= //' || true)"
     MISMATCH=""
     # FAIL CLOSED on a header we cannot read. An absent header means the
     # capture cannot be checked at all, which is exactly the state that let
@@ -125,10 +145,11 @@ if [[ -z "${SKIP_CONFIG_ASSERT:-}" ]]; then
     # (Same failure shape as the release-tag check that could not distinguish
     # "tag absent" from "lookup failed".)
     if [[ -z "$GOT_RUN_AHEAD" || -z "$GOT_REWIND" ]]; then
-        echo "perf_capture: capture has no readable metadata header — cannot verify" >&2
-        echo "perf_capture: it matches the configuration. Refusing to report it as a" >&2
-        echo "perf_capture: valid measurement. (A too-short run can produce this:" >&2
-        echo "perf_capture: the header is written once logging starts.)" >&2
+        echo "perf_capture: capture has no readable metadata header, so it CANNOT be" >&2
+        echo "perf_capture: checked against the configuration it was meant to run." >&2
+        echo "perf_capture: Refusing to report it as a valid measurement." >&2
+        echo "perf_capture: (A too-short run can produce this: the header is written" >&2
+        echo "perf_capture: once logging starts.)" >&2
         exit 3
     fi
     if [[ -n "$WANT_RUN_AHEAD" && -n "$GOT_RUN_AHEAD" && "$WANT_RUN_AHEAD" != "$GOT_RUN_AHEAD" ]]; then

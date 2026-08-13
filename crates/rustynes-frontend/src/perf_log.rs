@@ -215,7 +215,7 @@ fn open_log_file(dir: &Path, ctx: &PerfLogContext) -> std::io::Result<(BufWriter
 ///
 /// Split out of `columns` so that function stays inside the line budget as
 /// series are added (v2.3.3 added `wait`, `rui`, `rgpu`, `rtot`).
-const fn stats_names() -> [(&'static str, [&'static str; 5]); 8] {
+const fn stats_names() -> [(&'static str, [&'static str; 5]); 9] {
     [
         (
             "produced",
@@ -303,6 +303,20 @@ const fn stats_names() -> [(&'static str, [&'static str; 5]); 8] {
                 "rwait_max_ms",
             ],
         ),
+        (
+            // v2.3.3 F8 — logged as its OWN series precisely so nobody has to
+            // reconstruct it as `rtot_p95 - rwait_p95`. That subtraction is not
+            // a percentile of the work distribution and produced an impossible
+            // table (p95 below p50) the first time round.
+            "rwork",
+            [
+                "rwork_mean_ms",
+                "rwork_p50_ms",
+                "rwork_p95_ms",
+                "rwork_p99_ms",
+                "rwork_max_ms",
+            ],
+        ),
     ]
 }
 
@@ -323,6 +337,7 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
             "rui" => &v.render_ui,
             "rgpu" => &v.render_gpu,
             "rwait" => &v.render_wait,
+            "rwork" => &v.render_work,
             "rtot" => &v.render_total,
             _ => &v.produce_cost,
         }
@@ -604,6 +619,7 @@ mod tests {
             "rgpu",
             "rtot",
             "rwait",
+            "rwork",
         ] {
             for stat in ["mean_ms", "p50_ms", "p95_ms", "p99_ms", "max_ms"] {
                 let want = format!("{series}_{stat}");

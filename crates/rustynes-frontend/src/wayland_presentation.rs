@@ -176,7 +176,19 @@ impl Dispatch<WpPresentationFeedback, ()> for State {
             // period to lock to", so it is dropped rather than recorded — and
             // if every report is zero the estimator simply never fires and the
             // session stays wall-clock paced, which is correct for that panel.
-            if refresh > 0 && state.samples_ms.len() < MAX_SAMPLES {
+            if refresh > 0 {
+                // Evict the OLDEST rather than drop the newest. Dropping the
+                // newest bounded memory but made the sample set unrecoverable:
+                // if the first `MAX_SAMPLES` reports straddled an output change
+                // — a window dragged between panels, a mode switch during
+                // startup — the quorum could never clear, `settled` stayed
+                // false, and `request_feedback` then created one feedback
+                // object per present for the rest of the session with no
+                // possibility of ever producing an estimate. A sliding window
+                // is self-healing at the same bounded cost.
+                if state.samples_ms.len() >= MAX_SAMPLES {
+                    state.samples_ms.remove(0);
+                }
                 state.samples_ms.push(f64::from(refresh) / 1_000_000.0);
             }
         }
@@ -191,12 +203,6 @@ impl Dispatch<WpPresentationFeedback, ()> for State {
 /// refresh in Hz exactly once, when enough consistent reports have arrived.
 #[derive(Debug)]
 pub struct PresentationClock {
-    /// Keeps winit's window — and therefore the `wl_display` and `wl_surface`
-    /// the raw pointers below were taken from — alive for at least as long as
-    /// this struct. This is the invariant the `unsafe` in
-    /// [`new`](Self::new) relies on, so the field is load-bearing despite
-    /// never being read.
-    _window: Arc<Window>,
     /// Our view of winit's connection. Owns nothing: dropping it does not
     /// disconnect the display.
     conn: Connection,
@@ -213,6 +219,19 @@ pub struct PresentationClock {
     /// clock that kept re-reporting could oscillate the pacing regime — the
     /// failure mode that made the previous attempt worse than doing nothing.
     settled: bool,
+    /// Keeps winit's window — and therefore the `wl_display` and `wl_surface`
+    /// the raw pointers above were taken from — alive for at least as long as
+    /// this struct. This is the invariant the `unsafe` in
+    /// [`new`](Self::new) relies on, so the field is load-bearing despite
+    /// never being read.
+    ///
+    /// DECLARED LAST ON PURPOSE. Rust drops struct fields in declaration
+    /// order, so this releases the `Arc<Window>` only after `conn`, `queue`
+    /// and `surface` — every field backed by a pointer into winit's Wayland
+    /// state — are already gone. Declared first (as it was), teardown could
+    /// drop the last window reference and then run foreign-backed destructors
+    /// against a freed `wl_display`. Moving this field up reopens that hole.
+    _window: Arc<Window>,
 }
 
 impl PresentationClock {
@@ -237,9 +256,10 @@ impl PresentationClock {
         // SAFETY: `display.display` is the `wl_display` winit is connected to,
         // and `surface.surface` the `wl_surface` backing this window, both
         // supplied by `raw-window-handle` from winit's live Wayland backend.
-        // The `Arc<Window>` that owns them is cloned into `_window` below and
-        // dropped only with this struct, so neither pointer can be freed while
-        // it is in use. `from_foreign_display` explicitly does not take
+        // The `Arc<Window>` that owns them is cloned into `_window` below —
+        // declared LAST in the struct so it outlives every foreign-backed
+        // field during drop — so neither pointer can be freed while it is in
+        // use. `from_foreign_display` explicitly does not take
         // ownership of the display — it will not disconnect it on drop — and
         // `ObjectId::from_ptr` validates the proxy's interface against
         // `WlSurface`, returning `Err` rather than mis-typing a foreign object.
@@ -262,13 +282,14 @@ impl PresentationClock {
         conn.flush().ok()?;
 
         Some(Self {
-            _window: Arc::clone(window),
             conn,
             queue,
             qh,
             surface,
             state: State::default(),
             settled: false,
+            // Last, matching the declaration order the drop safety relies on.
+            _window: Arc::clone(window),
         })
     }
 
@@ -294,6 +315,13 @@ impl PresentationClock {
     ///
     /// Returns `Some` **exactly once per session**; every later call returns
     /// `None`. The caller should treat that one value as terminal.
+    ///
+    /// `#[must_use]` because that single `Some` is the entire output of the
+    /// module: dropping it silently forfeits the refresh figure for the rest of
+    /// the session. The off-Wayland stub carries the attribute too, so the
+    /// warning fires on the platform where the value actually exists rather
+    /// than only where the method is unreachable.
+    #[must_use]
     pub fn poll(&mut self) -> Option<f64> {
         if self.settled {
             return None;

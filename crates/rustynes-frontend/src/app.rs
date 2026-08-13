@@ -501,9 +501,6 @@ struct DisplaySync {
     /// Safe to cache because a non-1.0 emulation speed forces the wall-clock
     /// regime, so under display-sync this is always the region's base period.
     period: Duration,
-    /// Half a display refresh — the "produce slightly early rather than a lot
-    /// late" window. Cached with the period above.
-    slack: Duration,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -517,7 +514,6 @@ impl Default for DisplaySync {
             next_frame: None,
             // NTSC base period; replaced on the first `resolve_pacing`.
             period: Duration::from_nanos(16_639_267),
-            slack: Duration::from_micros(1_040),
         }
     }
 }
@@ -1304,8 +1300,12 @@ impl App {
         {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
-            emu.nes = None;
-            emu.dual = None;
+            // `clear_rom` rather than clearing `nes`/`dual` by hand: it also
+            // drops the cached `mapper_name`, which otherwise outlives the ROM
+            // it described. Harmless today only because the status path is
+            // guarded on a ROM being present — exactly the kind of coupling
+            // that stops being harmless quietly.
+            emu.clear_rom();
             emu.perf.clear();
             emu.present_fb.clear();
             emu.present_fb_sub.clear();
@@ -7074,11 +7074,12 @@ impl App {
         // App-local rather than behind the emulator mutex.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let (ui, gpu, total, wait) = self.render_perf.stats();
+            let (ui, gpu, total, wait, work) = self.render_perf.stats();
             perf_view.render_ui = ui;
             perf_view.render_gpu = gpu;
             perf_view.render_total = total;
             perf_view.render_wait = wait;
+            perf_view.render_work = work;
         }
         // v2.8.0 — opt-in perf logging (the Perf panel "Logging" checkbox):
         // reconcile the logger with the checkbox, append the interval row,
@@ -7309,13 +7310,19 @@ impl App {
                     } else {
                         if !within_skew {
                             eprintln!(
+                                // The tolerance is formatted from the constant the
+                                // gate actually uses, so tuning `DISPLAY_SYNC_MAX_SKEW`
+                                // cannot leave this diagnostic quoting a stale figure —
+                                // it is the only signal a user gets about why
+                                // display-sync refused to engage.
                                 "rustynes: pacing_mode=display requested but no integer \
                                  number of refreshes ({}) matches the console rate \
-                                 ({nominal_hz:.4} Hz) within 0.5% — using wallclock pacing.",
+                                 ({nominal_hz:.4} Hz) within {:.1}% — using wallclock pacing.",
                                 refresh_hz.map_or_else(
                                     || "refresh unknown".to_string(),
                                     |hz| format!("{hz:.3} Hz")
-                                )
+                                ),
+                                DISPLAY_SYNC_MAX_SKEW * 100.0
                             );
                         }
                         ActivePacing::Wallclock
@@ -7357,10 +7364,6 @@ impl App {
         // Cache the schedule inputs for the lock-free due check, and restart
         // the schedule so a regime change never inherits a stale deadline.
         self.dsync.period = self.emu.lock().effective_frame_duration();
-        self.dsync.slack = refresh_hz.filter(|hz| *hz > 0.0).map_or_else(
-            || self.dsync.period / 16,
-            |hz| Duration::from_secs_f64(0.5 / hz),
-        );
         self.dsync.next_frame = None;
         self.last_redraw = None;
         self.presents_since_check = 0;
@@ -7480,14 +7483,34 @@ impl App {
         // request stream to keep clocking even on the refreshes that produce
         // nothing.
         if is_display {
-            #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
-            if self.display_produce_due()
-                && let Some(thread) = self.emu_thread.as_ref()
-            {
-                thread.notify_present();
+            // v2.3.3 (PR #357 review) — `display_produce_due` is a STATEFUL
+            // mutator: it advances `dsync.next_frame` and resets
+            // `refreshes_since_produce`. Exactly ONE path per redraw may call
+            // it, and which one owns it is precisely `emu_thread_drives()` —
+            // the same predicate `display_sync_produce` stands down on.
+            //
+            // When the thread does not drive, `display_sync_produce` already
+            // ticked the divisor for this redraw and produced the frame. A
+            // second call here consumed a frame slot while producing nothing:
+            // at divisor 2 the discarded call sees the count the produce path
+            // just reset, increments it, and on the following refresh finds
+            // `too_early` cleared and returns `true` — advancing the schedule
+            // by a full period with no frame behind it. The wall clock is the
+            // RATE authority, so it then runs ahead of frame production and
+            // the console runs SLOW, on exactly the high-refresh panel this
+            // regime exists to serve. Divisor 1 escaped only because the
+            // `overdue` guard papered over the oscillating count.
+            if self.emu_thread_drives() {
+                #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+                if self.display_produce_due()
+                    && let Some(thread) = self.emu_thread.as_ref()
+                {
+                    thread.notify_present();
+                }
             }
-            #[cfg(not(all(not(target_arch = "wasm32"), feature = "emu-thread")))]
-            let _ = self.display_produce_due();
+            // Re-armed unconditionally: Fifo needs a continuous request stream
+            // to keep clocking, including on the refreshes that produce
+            // nothing.
             if let Some(gfx) = self.gfx.as_ref() {
                 gfx.window.request_redraw();
             }
@@ -7638,9 +7661,12 @@ impl App {
     /// `effective_frame_duration` per frame, accumulated rather than rebased,
     /// so there is no drift), and the display only decides *when* within that
     /// schedule a frame is produced. A refresh that arrives slightly before
-    /// the frame is due still produces it — being half a refresh early beats
-    /// being most of a refresh late, which is what re-introduces the beat this
-    /// whole regime exists to remove.
+    /// the frame is due still produces it — being half a FRAME PERIOD early
+    /// beats being most of a frame late, which is what re-introduces the beat
+    /// this whole regime exists to remove. (The window is half the console
+    /// frame period, `period / 2`, not half a display refresh: a `slack` field
+    /// documented as the latter was cached but never read, and was deleted in
+    /// the PR #357 review rather than left to contradict the code.)
     ///
     /// A missed present therefore no longer slows the console: the next
     /// refresh simply finds the frame overdue and produces it.
@@ -7656,7 +7682,7 @@ impl App {
             return true;
         };
         // v2.3.3 F6 — the PHASE source is a refresh COUNT, not a wall-clock
-        // comparison. Deciding `now + slack >= next` afresh on every refresh
+        // comparison. Deciding `now + tolerance >= next` afresh on every refresh
         // put the decision boundary half a refresh from the refresh grid, so
         // ordinary jitter in when `RedrawRequested` fires flipped it between
         // "this refresh" and "the next one" — producing alternating ~8 ms and
@@ -9143,8 +9169,17 @@ impl ApplicationHandler<AppEvent> for App {
                 // present that blocks until vblank is correct behaviour, and a
                 // 16 ms `total` p95 reads identically whether the loop stalled
                 // or simply waited. Render work is `rtot - rwait`.
+                // Declared here, ASSIGNED in each render branch immediately
+                // before the GPU call — everything between this point and there
+                // (framebuffer copy, HD composite, the phase-1 egui build that
+                // holds the emulator lock) is work, not waiting, and an
+                // initialiser here would silently fold all of it into `rwait`.
+                // That is exactly the defect the PR #357 review caught. Leaving
+                // it uninitialised makes the compiler prove every path to
+                // `record_redraw` sets it: add a third render branch without a
+                // restart and this stops compiling rather than mis-measuring.
                 #[cfg(not(target_arch = "wasm32"))]
-                let t_present = Instant::now();
+                let t_present: Instant;
                 #[allow(clippy::unnecessary_unwrap)]
                 let render_result = if self.debugger.is_none() || self.gfx.is_none() {
                     // No overlay yet (pre-`resumed`): nothing to render.
@@ -9409,6 +9444,17 @@ impl ApplicationHandler<AppEvent> for App {
                                         size: (u32, u32)| {
                         debugger.paint_shell(device, queue, encoder, view, size, prepared);
                     };
+                    // v2.3.3 F8 (PR #357 review) — restart the WAIT clock here.
+                    // Started before the branch, it spanned the framebuffer
+                    // copy, the HD composite and the whole phase-1 egui build
+                    // (which holds the emulator lock), so `rwait` reported UI +
+                    // composite + GPU + present and `rtot - rwait` collapsed to
+                    // the produce hook and the pumps. That inverted the split
+                    // the F8 instrument exists to make.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        t_present = Instant::now();
+                    }
                     // v1.7.1 (#3) — present the upscaled HD buffer when a pack
                     // composited this redraw (the deep-overlay panels still draw on
                     // top via `overlay`); else the stock NES-resolution present path
@@ -9760,6 +9806,12 @@ impl ApplicationHandler<AppEvent> for App {
                     // redraw, present the upscaled buffer through the dedicated
                     // HD blit; otherwise the stock NES-resolution present path
                     // (byte-identical to before).
+                    // v2.3.3 F8 (PR #357 review) — restart the WAIT clock here;
+                    // see the matching restart in the `needs_nes` branch above.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        t_present = Instant::now();
+                    }
                     // v2.1.2 F2.1 — a Vs. `DualSystem` cabinet presents the composed
                     // two-screen image via the dedicated dynamic blit first.
                     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
@@ -9821,8 +9873,10 @@ impl ApplicationHandler<AppEvent> for App {
                         self.render_perf
                             .record_gpu(Duration::from_secs_f32(gpu_ms / 1000.0));
                     }
-                    self.render_perf.record_total(redraw_signal.elapsed());
-                    self.render_perf.record_wait(t_present.elapsed());
+                    // Paired so the derived work sample comes from this redraw's
+                    // own total and wait, never from two different redraws.
+                    self.render_perf
+                        .record_redraw(redraw_signal.elapsed(), t_present.elapsed());
                 }
                 match render_result {
                     Ok(()) => {

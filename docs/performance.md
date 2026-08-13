@@ -733,7 +733,7 @@ performance item currently known, and it now has a number attached.
 `produced_dropped` at 60, both of which fail every run-ahead-enabled capture
 above and pass every clean one.
 
-### v2.3.3 F1 — sizing the frontend items before building any of them
+### v2.3.3 F0 — sizing the frontend items before building any of them
 
 The v2.3.3 "Grain" frontend campaign was scoped from code reading: three full
 720 KiB framebuffer memcpys per displayed frame, a `perf.view()` doing five heap
@@ -1014,7 +1014,13 @@ budget** — far below this project's standing >3%-same-runner adoption bar, and
 it would not move the drop rate at all, because drops are not caused by
 emulation cost. Slimming retains a real but *different* justification —
 rewind-ring memory, where the framebuffer is ~94% of every per-frame snapshot —
-and should be argued on memory, not on frame time, if it is revisited.
+and had to be argued on memory rather than on frame time.
+
+**It was, and it shipped on that basis** (see F3 below): the rewind ring now
+uses `snapshot_core_into_slim`, regenerating the image with a one-frame
+re-render on restore. The frame-time rejection recorded here is unaffected and
+stands — run-ahead still carries the full snapshot, because for *that* path the
+0.66% never cleared the bar.
 
 **Also found, not yet fixed:** `pacing_mode = "vrr"` on a display that is not
 actually variable-refresh degrades to `presented_mean` 49.74 ms (~20 fps) with
@@ -1079,12 +1085,31 @@ examine is the rewind ring, where the same change removes 94% of a *per-frame*
 XOR + compress that demonstrably drives the tail. The lever is the same; the
 justification is a different code path.
 
-**Not implemented here.** Excluding the framebuffer from the rewind snapshot
-changes what a restored frame can display — rewind steps backwards through
-frames and needs an image for each — so it needs a design (re-render one frame
-after restore, or a separate low-cost image ring), not a quick edit. The
-immediate mitigation is that `[rewind] enabled = false` measurably restores a
-near-perfect produce cadence.
+**Implemented, and shipped in this release.** Excluding the framebuffer changes
+what a restored frame can display — rewind steps backwards and needs an image
+for each — so it needed a design rather than a quick edit. The design chosen is
+the first of the two sketched above: **regenerate the image by running one
+frame after restore**.
+
+Shipped shape:
+
+| aspect | behaviour |
+|---|---|
+| writer | `Nes::snapshot_core_into_slim`, used by `rewind_capture` only |
+| what is omitted | the 245,760-byte PPU framebuffer; every other field is written |
+| restore | `rewind_step_back` runs one frame, which regenerates the image |
+| user-facing save states | UNCHANGED — `.rns` still carries the full framebuffer |
+| size | ~4 KiB of PPU section instead of ~250 KB |
+
+**Compatibility contract.** A slim blob is self-describing: the marker is the
+**high bit of the PPU snapshot version byte**, so the reader distinguishes slim
+from full without out-of-band knowledge and no container version bump was
+needed. A full blob restores the framebuffer as before; a slim one restores
+every other field and leaves the framebuffer untouched, which is why the
+one-frame re-render is part of the restore path and not optional. The rewind
+ring is in-memory and per-session, so no on-disk format changed and no
+cross-version compatibility question arises — the reason this could ship
+without the `.rns` epoch handling a save-state change would have required.
 
 **Method note, for the third time in this campaign:** the gate that would have
 caught this does not exist. `produced_mean` passes, `produced_dropped` passes,
@@ -1392,28 +1417,90 @@ was reported as a stall and a fix was built for it before the distribution was
 understood.
 
 A `wait` series now brackets the GPU submission and present, logged as
-`rwait_*`. Render **work** is `rtot - rwait`. Measured on SMB:
+`rwait_*`; render **work** is `rtot - rwait`, logged as `rwork_*`.
 
-| `run_ahead` | work p50 | wait p50 | work p95 | wait p95 |
-| --- | --- | --- | --- | --- |
-| 0 | 0.36-0.87 ms | 1.21-1.75 ms | **0.05-0.08 ms** | 16.19-16.24 ms |
-| 2 | 0.06-0.27 ms | 1.00-1.11 ms | **0.01-0.07 ms** | 15.94-16.11 ms |
+> **The first version of this instrument was wrong in two independent ways, and
+> the conclusion drawn from it below has been corrected.** Both defects were
+> found in the PR #357 review, not by any measurement of mine.
+>
+> 1. **The clock started in the wrong place.** `t_present` was taken before the
+>    branch selection, so `rwait` spanned the framebuffer copy, the HD composite
+>    and the whole phase-1 egui build (which holds the emulator lock) in
+>    addition to the present. `rtot - rwait` therefore reduced to the produce
+>    hook and the pumps — near zero by construction — and `rwait` read as a
+>    stall whenever the egui pass was slow. The instrument reported almost the
+>    opposite of what it was built to separate.
+> 2. **The arithmetic was invalid.** `work p95` was computed as
+>    `rtot p95 - rwait p95`. A difference of two percentiles is not the
+>    percentile of the difference. This announced itself in the published
+>    table: `work p95` sat *below* `work p50`, and percentiles cannot decrease.
+>    That impossibility was in the document and went unremarked.
+>
+> The retracted table is kept here because deleting a wrong measurement hides
+> that it was published and acted on:
+>
+> | `run_ahead` | work p50 | work p95 | ← RETRACTED, do not cite |
+> | --- | --- | --- |
+> | 0 | 0.36-0.87 ms | 0.05-0.08 ms |
+> | 2 | 0.06-0.27 ms | 0.01-0.07 ms |
 
-**The render loop is healthy** — 0.01-0.08 ms of work at p95. And the wait
-distribution is not a stall pattern but ordinary **triple-buffered Fifo**: p50
-of ~1 ms (two presents returning immediately from spare swapchain images) and
-p95 of ~16 ms (the third blocking a full refresh pair), averaging to the
-refresh interval. A p95 at twice the refresh period is the *expected* shape
-here, not a defect.
+Both defects are fixed: the wait clock is restarted immediately before the GPU
+call in each render branch (left uninitialised so the compiler proves every
+path sets it), and work is now recorded **per sample** as its own ring, so its
+percentiles are real.
 
-The instrument earned its place immediately: it eliminated an entire subsystem
-in one measurement, where five successive theory-first attempts in this
-campaign each cost a build-and-measure cycle and were each falsified.
+Re-measured on SMB, six 30 s captures, A/B/A over `run_ahead` to control for
+order and thermal drift — medians across each capture's per-second rows:
+
+| `run_ahead` | work p50 | work p95 | **work p99** | wait p50 | wait p95 |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 0.013-0.015 ms | 2.2-4.5 ms | **16.0-22.4 ms** | 1.29-2.03 ms | 16.32-16.33 ms |
+| 2 | 0.011-0.012 ms | 0.04-0.06 ms | **13.1-13.5 ms** | 0.91-0.94 ms | 16.13-16.32 ms |
+
+Percentiles now increase, as they must.
+
+**The wait half of the original conclusion survives.** The distribution is
+ordinary **triple-buffered Fifo**: p50 ~1 ms (presents returning immediately
+from spare swapchain images) and p95 ~16 ms (one blocking a full refresh pair).
+A p95 at twice the refresh period is the expected shape, not a defect.
+
+**The work half does not survive, and it reverses a claim made in this
+campaign.** "The render loop is healthy — 0.01-0.08 ms at p95" was an artefact
+of both defects above. The loop is healthy *typically* — a 0.013 ms median is
+genuinely negligible — but it has a **real tail**: at `run_ahead = 0` the p95
+alone reaches 4.5 ms, and at p99 render work reaches **13-22 ms**, more than a
+full frame period, in every one of the six captures. At 120 Hz a p99 is roughly
+one redraw per second.
+
+That tail was invisible to the broken instrument, which is precisely how the
+render loop came to be eliminated as a suspect. **It is now an open lead, not a
+diagnosis** — this campaign has already advanced and falsified five mechanisms
+for the reported shudder, and a sixth is not being claimed on one measurement.
+What can be said is narrow and factual: something in the redraw handler outside
+the present occasionally takes longer than a frame, the previous instrument
+could not have shown it, and it has not been characterised.
+
+**Method note, and the sharper version of the earlier one.** The instrument did
+earn its place — it produced a result in one measurement where five
+theory-first attempts each cost a build-and-measure cycle. But the first
+version of it was *wrong*, and it was wrong in a way that flattered the
+conclusion being reached. Instrumenting before theorising is necessary and not
+sufficient: the instrument itself needs a check, and the cheapest one available
+here — do the percentiles increase? — was sitting in the published table the
+whole time.
 
 ### v2.3.3 F9 — re-arm the redraw before the present (decision: REJECTED, reverted)
 
 Hypothesis: render work is ~0.1 ms yet 5% of presents block ~16 ms, and a loop
-doing 0.1 ms of work cannot miss a vblank on cost — only on ordering. Since
+doing 0.1 ms of work cannot miss a vblank on cost — only on ordering.
+
+> **The "~0.1 ms" premise came from the broken F8 instrument** (see the
+> retraction above); corrected, work is 0.013 ms at p50 but 13-22 ms at p99, so
+> a loop that *sometimes* misses a vblank on cost is no longer excluded. **The
+> REJECTION below still stands on its own evidence** — the change was measured
+> at zero effect across the full A/B/A, which is a result about the change
+> itself and does not depend on the premise that motivated it. The premise is
+> flagged rather than the verdict revisited. Since
 `display_sync_after_present` re-arms only once `present()` returns, the
 sequence is present-blocks → returns just after vblank N → request redraw →
 winit dispatch → render → present; if that dispatch lands past vblank N+1's

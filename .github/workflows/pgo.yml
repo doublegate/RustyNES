@@ -357,21 +357,47 @@ jobs:
           # it as sufficient. Verify the runtime too, link it into place when it
           # exists elsewhere, and otherwise skip — so `have_bolt=true` means
           # "BOLT can actually instrument", not "a file called llvm-bolt exists".
+          # PR #357 review — the block below used to make the SAME mistake it
+          # warns about one paragraph up. It ran `sudo mkdir` and `sudo ln`
+          # without checking either, and the step carries no `set -e`, so a
+          # failed link left `bolt_dir` non-empty and published
+          # `have_bolt=true` with no usable runtime — the BOLT stage then died
+          # later, further from the cause. Attempting the link is a necessary
+          # condition; the file existing afterwards is the sufficient one, so
+          # that is what is now verified.
           if [ -n "${bolt_dir}" ]; then
             bolt_bin="$(command -v llvm-bolt || echo "${bolt_dir}/llvm-bolt")"
-            rt_expected="$(dirname "$(dirname "${bolt_bin}")")/lib/libbolt_rt_instr.a"
+            # Resolve symlinks: the runtime sits under the REAL install prefix,
+            # which /usr/bin/llvm-bolt (an alternatives symlink on Debian) is
+            # not. `readlink -f` failing leaves the original path, which is the
+            # correct fallback.
+            bolt_real="$(readlink -f "${bolt_bin}" 2>/dev/null || echo "${bolt_bin}")"
+            bolt_prefix="$(dirname "$(dirname "${bolt_real}")")"
+            rt_expected="${bolt_prefix}/lib/libbolt_rt_instr.a"
             if [ ! -f "${rt_expected}" ]; then
-              rt_found="$(find /usr/lib /usr/local/lib /usr/lib64 \
-                            -name libbolt_rt_instr.a 2>/dev/null | head -1)"
-              if [ -n "${rt_found}" ]; then
-                sudo mkdir -p "$(dirname "${rt_expected}")"
-                sudo ln -sf "${rt_found}" "${rt_expected}"
+              # Search the SELECTED toolchain's own prefix first. A system-wide
+              # find can match an archive belonging to a different LLVM version,
+              # which links but does not necessarily work.
+              rt_found="$(find "${bolt_prefix}" -name libbolt_rt_instr.a 2>/dev/null | head -1)"
+              if [ -z "${rt_found}" ]; then
+                rt_found="$(find /usr/lib /usr/local/lib /usr/lib64 \
+                              -name libbolt_rt_instr.a 2>/dev/null | head -1)"
+                [ -n "${rt_found}" ] && echo \
+                  "note: BOLT runtime ${rt_found} found OUTSIDE the selected" \
+                  "prefix ${bolt_prefix}; version match not guaranteed." \
+                  >> "$GITHUB_STEP_SUMMARY"
+              fi
+              if [ -n "${rt_found}" ] \
+                 && sudo mkdir -p "$(dirname "${rt_expected}")" \
+                 && sudo ln -sf "${rt_found}" "${rt_expected}" \
+                 && [ -f "${rt_expected}" ]; then
                 echo "linked BOLT runtime ${rt_found} -> ${rt_expected}" \
                   >> "$GITHUB_STEP_SUMMARY"
               else
                 bolt_dir=""
-                echo "llvm-bolt present but libbolt_rt_instr.a is not installed —" \
-                  "skipping BOLT stage." >> "$GITHUB_STEP_SUMMARY"
+                echo "llvm-bolt present but libbolt_rt_instr.a could not be made" \
+                  "available at ${rt_expected} — skipping BOLT stage." \
+                  >> "$GITHUB_STEP_SUMMARY"
               fi
             fi
           fi

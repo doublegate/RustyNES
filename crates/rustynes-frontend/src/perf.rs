@@ -189,8 +189,18 @@ pub struct RenderPerf {
     /// Split out because `total` conflates work with waiting: under Fifo a
     /// present that blocks until vblank is correct behaviour, not a stall, so
     /// a 16 ms `total` p95 could mean either and the metric could not say
-    /// which. Render WORK is `total - wait`.
+    /// which.
     wait: SampleRing,
+    /// v2.3.3 F8 — render WORK, recorded PER SAMPLE as `total - wait`.
+    ///
+    /// Its own series rather than a derived one, because the derivation people
+    /// reach for is invalid: `work p95 = total p95 - wait p95` subtracts two
+    /// percentiles and is not the percentile of the difference. The first F8
+    /// write-up did exactly that and published a table whose `work p95` was
+    /// BELOW its `work p50` — percentiles cannot decrease, which is how the
+    /// error announced itself. Differencing the two timings of the same redraw
+    /// and ranking the result is the only way to get a real work percentile.
+    work: SampleRing,
 }
 
 impl RenderPerf {
@@ -214,14 +224,40 @@ impl RenderPerf {
         self.wait.push(d.as_secs_f32() * 1000.0);
     }
 
-    /// `(ui, gpu, total, wait)` summaries.
+    /// Record one redraw's total and blocking present together, deriving the
+    /// work sample from the same pair.
+    ///
+    /// Prefer this to calling [`Self::record_total`] and [`Self::record_wait`]
+    /// separately: the work series is only meaningful when both halves come
+    /// from the SAME redraw, and pairing them here makes that structural
+    /// rather than a convention a caller has to remember. Clamped at zero —
+    /// the two clocks stop at slightly different points, so a near-zero-work
+    /// redraw can otherwise produce a small negative.
+    pub fn record_redraw(&mut self, total: Duration, wait: Duration) {
+        let total_ms = total.as_secs_f32() * 1000.0;
+        let wait_ms = wait.as_secs_f32() * 1000.0;
+        self.total.push(total_ms);
+        self.wait.push(wait_ms);
+        self.work.push((total_ms - wait_ms).max(0.0));
+    }
+
+    /// `(ui, gpu, total, wait, work)` summaries.
     #[must_use]
-    pub fn stats(&self) -> (IntervalStats, IntervalStats, IntervalStats, IntervalStats) {
+    pub fn stats(
+        &self,
+    ) -> (
+        IntervalStats,
+        IntervalStats,
+        IntervalStats,
+        IntervalStats,
+        IntervalStats,
+    ) {
         (
             self.ui.stats(),
             self.gpu.stats(),
             self.total.stats(),
             self.wait.stats(),
+            self.work.stats(),
         )
     }
 
@@ -230,6 +266,13 @@ impl RenderPerf {
         self.ui.clear();
         self.gpu.clear();
         self.total.clear();
+        // Must be cleared with the rest: leaving it behind carried blocking-
+        // present samples from the previous ROM or pacing regime into the next
+        // experiment's `rwait_*`, while every other render series started
+        // fresh — silently mixing two populations in the one column used to
+        // tell render work from vblank waiting.
+        self.wait.clear();
+        self.work.clear();
     }
 }
 
@@ -386,6 +429,9 @@ pub struct PerfView {
     pub render_gpu: IntervalStats,
     /// v2.3.3 F8 — blocking-present (vblank wait) cost. See [`RenderPerf`].
     pub render_wait: IntervalStats,
+    /// v2.3.3 F8 — render work, `total - wait` per redraw. A real series, not
+    /// a percentile-wise subtraction of the two above. See [`RenderPerf`].
+    pub render_work: IntervalStats,
     /// v2.3.3 — whole redraw handler cost (winit thread). See [`RenderPerf`].
     pub render_total: IntervalStats,
     /// See [`PerfStats::catchup_bursts`].

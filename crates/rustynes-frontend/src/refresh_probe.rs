@@ -143,9 +143,20 @@ pub fn best_divisor(refresh_hz: f64, console_hz: f64, max_skew: f64) -> Option<u
 
 /// Convenience: the effective emulated frame period when `divisor` refreshes
 /// of a `refresh_hz` display drive one frame.
+///
+/// Returns `None` for a refresh this cannot describe. `Duration::from_secs_f64`
+/// PANICS on a non-finite or negative value, and `refresh_hz` here is not a
+/// checked quantity: it arrives from `wp_presentation` (a compositor-supplied
+/// figure) or from a declared monitor mode, so `0.0`, a negative, or a `NaN`
+/// reaching this function would abort the render loop. [`best_divisor`]
+/// validates its own input and this is the sibling entry point, so it validates
+/// the same way rather than trusting the caller to have gone through it first.
 #[must_use]
-pub fn effective_period(refresh_hz: f64, divisor: u32) -> Duration {
-    Duration::from_secs_f64(f64::from(divisor) / refresh_hz)
+pub fn effective_period(refresh_hz: f64, divisor: u32) -> Option<Duration> {
+    if !refresh_hz.is_finite() || refresh_hz <= 0.0 || divisor == 0 {
+        return None;
+    }
+    Some(Duration::from_secs_f64(f64::from(divisor) / refresh_hz))
 }
 
 #[cfg(test)]
@@ -274,7 +285,30 @@ mod tests {
 
     #[test]
     fn effective_period_matches_the_divisor() {
-        let p = effective_period(120.0, 2);
+        let p = effective_period(120.0, 2).expect("120 Hz / 2 is representable");
         assert!((p.as_secs_f64() - 1.0 / 60.0).abs() < 1e-9);
+    }
+
+    /// `Duration::from_secs_f64` panics on these; the render loop must get a
+    /// `None` instead of an abort.
+    #[test]
+    fn effective_period_rejects_degenerate_refresh() {
+        assert_eq!(effective_period(0.0, 2), None);
+        assert_eq!(effective_period(-60.0, 2), None);
+        assert_eq!(effective_period(f64::NAN, 2), None);
+        assert_eq!(effective_period(f64::INFINITY, 2), None);
+        assert_eq!(effective_period(120.0, 0), None);
+    }
+
+    /// A majority-`NaN` sample set must be rejected. `sort_by(f64::total_cmp)`
+    /// orders `NaN` last, so the median of such a set is itself `NaN`: it
+    /// survives the `median <= 0.0` check (every `NaN` comparison is false) and
+    /// is caught only by the plausibility range. That chain is correct but
+    /// incidental, so it is pinned here — a future reordering that drops the
+    /// range check would otherwise let a `NaN` refresh reach the pacer.
+    #[test]
+    fn estimator_rejects_nan_samples() {
+        let samples = [f64::NAN, f64::NAN, f64::NAN, 8.333, 8.334];
+        assert_eq!(estimate_hz_from_intervals(&samples, 4), None);
     }
 }

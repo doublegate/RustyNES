@@ -4,8 +4,25 @@
 //! [`crate::wayland_presentation`] can only exist where winit compiles its
 //! Wayland backend. Rather than repeat that (long) target predicate at every
 //! use site in `app.rs` — four of them, and each one a place a future platform
-//! could be forgotten — the whole of it is stated **once**, here, and the rest
-//! of the frontend sees a type that is always present on native.
+//! could be forgotten — this module absorbs it, and the rest of the frontend
+//! sees a type that is always present on native.
+//!
+//! # Where the predicate is written
+//!
+//! Not, strictly, in one place — Rust has no stable `cfg` alias, so it appears
+//! four times and they must be changed together:
+//!
+//! 1. here, positively, gating the re-export;
+//! 2. here, negated, gating the stub;
+//! 3. `lib.rs`, gating `pub mod wayland_presentation`;
+//! 4. `Cargo.toml`, as the `[target.'cfg(...)'.dependencies]` expression.
+//!
+//! This module is nonetheless the authoritative statement, and the others
+//! point back at it. The saving is real but narrower than "stated once": the
+//! four sites are fixed, whereas use sites in `app.rs` would grow with every
+//! caller. Drift also fails LOUDLY rather than silently — the Rust copies
+//! disagreeing yields either a duplicate `PresentationClock` definition or
+//! none, and the Cargo copy disagreeing yields a missing-crate error.
 //!
 //! On a Wayland-capable target this re-exports the real implementation. On
 //! Windows, macOS, iOS, Android and Redox it is a stub whose constructor
