@@ -211,11 +211,20 @@ def main() -> int:
         return 2
 
     last = body[-1]
-    # Cumulative counters are taken at the final row; produced_max is a
-    # windowed peak, so take the max across the run.
-    underruns = int(col_float(last, "underruns"))
-    catchup = int(col_float(last, "catchup_bursts"))
-    snaps = int(col_float(last, "snap_forwards"))
+    # Cumulative counters: take the MAXIMUM readable value, not the final row.
+    #
+    # Every timed capture ends by killing the frontend mid-write, so the last
+    # row is routinely short and `col_float` fills its missing fields with 0.0.
+    # Reading these from `last` therefore reset them to zero exactly when a run
+    # was cut off — and a capture could PASS while an earlier row had already
+    # exceeded the gate. Since they are monotonic within one capture, the max is
+    # both correct and immune to truncation. (Same defect class as the
+    # `float(None)` crash fixed earlier in this file: the short final row is a
+    # normal event here, not an anomaly.) `produced_max` is a windowed peak, so
+    # it takes the max for a different reason.
+    underruns = max(int(col_float(r, "underruns")) for r in body)
+    catchup = max(int(col_float(r, "catchup_bursts")) for r in body)
+    snaps = max(int(col_float(r, "snap_forwards")) for r in body)
     produced_max = max(col_float(r, "produced_max_ms") for r in body)
     # p99 is taken as the MEDIAN across sample rows, not the max: each row already
     # reports a windowed p99, so the median of those is the run's typical tail and

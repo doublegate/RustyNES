@@ -4861,7 +4861,7 @@ impl App {
     /// emulated frame. Script writes are gated off in a locked / deterministic
     /// session (netplay / TAS replay / RA-hardcore), like the cheat path.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
-    fn pump_scripts(&mut self) {
+    fn pump_scripts(&mut self, lock_wait: &mut Duration) {
         // Console action (load / reload / stop) — taken without holding the
         // debugger borrow across the `&mut self` handler.
         let action = self
@@ -4933,7 +4933,7 @@ impl App {
         // deterministic run.
         let mut sprite0_hit_frame: Option<usize> = None;
         {
-            let mut guard = self.emu.lock();
+            let mut guard = self.emu.lock_timed(lock_wait);
             // Read the movie flags before the `nes` borrow — a `MutexGuard`
             // deref borrows the whole guard, so the two can't overlap.
             let movie_locked = guard.movie.is_playing() || guard.movie.is_recording();
@@ -5191,14 +5191,16 @@ impl App {
     /// *reads* the just-finished frame's exec/access logs, so determinism is
     /// unaffected. Runs on every build (the frontend always pulls `debug-hooks`),
     /// so it is not behind the `scripting` gate.
-    fn pump_watchpoints(&mut self) {
+    // `std::time::Duration` spelled out: this function is compiled on wasm too,
+    // where the `Duration` import is cfg'd away.
+    fn pump_watchpoints(&mut self, lock_wait: &mut std::time::Duration) {
         let mut step_satisfied = false;
         let mut step_still_pending = false;
         {
             let Some(dbg) = self.debugger.as_mut() else {
                 return;
             };
-            let mut guard = self.emu.lock();
+            let mut guard = self.emu.lock_timed(lock_wait);
             if let Some(nes) = guard.nes.as_mut() {
                 dbg.pump_watchpoints(nes);
                 // v1.7.0 "Forge" Workstream C (C1) — a queued step verb
@@ -6907,10 +6909,26 @@ impl App {
             // exact-rate one-frame-per-pace path below. Stay on `Poll` so the
             // burst repeats immediately next `about_to_wait`.
             if self.input.fast_forward_held() && !self.netplay.is_active() {
-                self.pump_gamepad();
-                self.latch_input();
-                self.produce_fast_forward_frames();
-                self.post_produce_housekeeping();
+                // v2.3.3 (PR #357 review) — the emulation thread fast-forwards
+                // ITSELF: `publish_shared_input` pushes `set_fast_forward` into
+                // the control block, and the thread's own loop drains ticks and
+                // produces unthrottled. So the winit thread must not also
+                // produce here.
+                //
+                // This became reachable when the v2.3.3 F7 watchdog fix relaxed
+                // the `emu_thread_drives()` early return above to let
+                // `ActivePacing::Display` fall through — which was necessary for
+                // the watchdog, but dropped this branch's protection as a side
+                // effect. Two producers advancing one `Nes` gives double-speed
+                // advancement, doubled audio pushes, and a rewind ring fed from
+                // two threads. The watchdog branch below took the same guard for
+                // the same reason; this one was missed.
+                if !self.emu_thread_drives() {
+                    self.pump_gamepad();
+                    self.latch_input();
+                    self.produce_fast_forward_frames();
+                    self.post_produce_housekeeping();
+                }
                 if let Some(gfx) = self.gfx.as_ref() {
                     gfx.window.request_redraw();
                 }
@@ -7469,7 +7487,7 @@ impl App {
     /// here — the latest possible point before `run_frame`. No-op outside
     /// the display regime (and during netplay, which paces wall-clock).
     #[cfg(not(target_arch = "wasm32"))]
-    fn display_sync_produce(&mut self) {
+    fn display_sync_produce(&mut self, lock_wait: &mut Duration) {
         // v2.8.0 Phase 5 increment 3 — when the emulation thread drives, it
         // produces the display-regime frame on the present tick
         // (`display_sync_after_present` notifies it); the winit thread only
@@ -7480,7 +7498,7 @@ impl App {
         if self.active_pacing != ActivePacing::Display
             || self.netplay.is_active()
             || self.ui.paused
-            || self.emu.lock().nes.is_none()
+            || self.emu.lock_timed(lock_wait).nes.is_none()
         {
             return;
         }
@@ -7498,7 +7516,7 @@ impl App {
         let t0 = Instant::now();
         self.produce_one_frame();
         {
-            let mut guard = self.emu.lock();
+            let mut guard = self.emu.lock_timed(lock_wait);
             let emu = &mut *guard;
             emu.perf.record_produce_cost(t0.elapsed());
             emu.perf.record_produced(Instant::now());
@@ -9025,22 +9043,44 @@ impl ApplicationHandler<AppEvent> for App {
                 #[cfg(target_arch = "wasm32")]
                 self.pace_and_produce_wasm();
 
+                // v2.3.3 — total time this redraw spends BLOCKED on the
+                // emulator mutex, summed over EVERY acquisition in the measured
+                // window. Subtracted out of render work so that series means
+                // work alone; see `EmuHandle::lock_timed`.
+                //
+                // Declared HERE, at the top of the window, not just before the
+                // render branches: `display_sync_produce`, `pump_scripts` and
+                // `pump_watchpoints` below each acquire the mutex too, and the
+                // first version of this accumulator started after them. It
+                // therefore under-reported, which matters because the
+                // conclusion drawn from `rlock` was that the winit thread does
+                // not block — a conclusion an incomplete measurement cannot
+                // support. Caught in review on PR #358.
+                //
+                // Deliberately NOT cfg-gated even though only the native build
+                // reads it: the acquisition sites are shared between native and
+                // wasm, so gating the binding leaves those sites referencing a
+                // name that does not exist on wasm (which broke both wasm
+                // builds once already this release). Fully qualified because the
+                // `Duration` import is itself native-only.
+                let mut lock_wait = std::time::Duration::ZERO;
+
                 // v2.8.0 Phase 2 — display-sync regime (native): produce
                 // exactly one emulated frame per redraw, BEFORE presenting.
                 #[cfg(not(target_arch = "wasm32"))]
-                self.display_sync_produce();
+                self.display_sync_produce(&mut lock_wait);
 
                 // v1.1.0 beta.3 (Workstream E) — pump the Lua engine for this
                 // redraw (after the frame is produced, before present), so its
                 // overlay draws are ready for the egui pass below.
                 #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
-                self.pump_scripts();
+                self.pump_scripts(&mut lock_wait);
 
                 // v1.6.0 "Studio" Workstream C — drive the debugger Watch panel's
                 // observational replay (conditional breakpoints / watchpoints /
                 // watch window / conditional trace). Runs after the frame is
                 // produced; observational-only, so determinism holds.
-                self.pump_watchpoints();
+                self.pump_watchpoints(&mut lock_wait);
 
                 // v2.8.0 Phase 3 — the renderer presents `present_fb` (the
                 // harvested per-frame framebuffer; with run-ahead it is the
@@ -9203,22 +9243,6 @@ impl ApplicationHandler<AppEvent> for App {
                 // `None` and only the GPU + total phases are recorded.
                 #[cfg(not(target_arch = "wasm32"))]
                 let mut ui_cost: Option<Duration> = None;
-                // v2.3.3 — total time this redraw spends BLOCKED on the emulator
-                // mutex, summed across every acquisition below. Subtracted out
-                // of render work so that series finally means work alone; see
-                // `EmuHandle::lock_timed`.
-                //
-                // Deliberately NOT cfg-gated even though only the native build
-                // reads it: the acquisition sites it is passed to are shared
-                // between native and wasm, so gating the binding leaves those
-                // sites referencing a name that does not exist on wasm. (It did
-                // exactly that, breaking both wasm builds — the same
-                // cfg-consistency trap that took `ui_cost` down earlier in this
-                // release.) A `Duration` the wasm build never reads costs
-                // nothing.
-                // Fully qualified: the `Duration` import is itself native-only,
-                // and this binding must exist on every target.
-                let mut lock_wait = std::time::Duration::ZERO;
                 // v1.0.0 — Save-States manager inputs, captured BEFORE the
                 // render branches so the `extra` egui closure can render it
                 // without re-locking the emu (the locked branch holds the

@@ -1655,8 +1655,16 @@ rather than deleted because it was published in this document and acted on.
 
 - Suspect A (the 25 ms watchdog) is **refuted**: 0 fires in ~1855 ticks at the
   shipped default.
-- Suspect B (winit-thread lock blocking) is **refuted at the shipped default**:
-  `rlock` p99 = 0.000 ms.
+- Suspect B (winit-thread lock blocking) read as **refuted at the shipped
+  default** on `rlock` p99 = 0.000 ms — but **that series was incomplete when
+  the figure was taken**, and the refutation should be treated as provisional
+  until re-measured. The accumulator started just before the render branches,
+  while `display_sync_produce`, `pump_scripts` and `pump_watchpoints` all run
+  earlier in the same measured window and each acquire the mutex: four untimed
+  sites. Fixed (the accumulator now starts at the top of the window and is
+  threaded through all three), found in the PR #357 review body rather than by
+  any measurement here. A p99 of zero over part of a window does not establish
+  a p99 of zero over the whole of it.
 - The `produce` interval tail is **isolated excursions, not alternation**
   (lag-1 −0.07..−0.12) — this one is a genuine result about the producer and
   does not depend on the present clock.

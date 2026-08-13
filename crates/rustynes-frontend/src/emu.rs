@@ -780,9 +780,16 @@ impl EmuCore {
             // frames and back again — measured on Bad Dudes at three toggles
             // per 45 s. Predicting the re-enabled cost makes the comparison
             // honest and the hysteresis real.
-            // Depth is 0-3 (config-clamped), so the widening is exact.
+            // Clamped to the depth that will actually RUN. `effective_run_ahead`
+            // caps at 3, but `run_ahead` is an unvalidated `u32` straight out of
+            // serde — nothing in `config.rs` clamps it — so a config saying
+            // `run_ahead = 10` reached here as 10 and predicted an 11x cost
+            // against a 4x reality, leaving run-ahead throttled forever. The
+            // comment this replaces asserted the value was "config-clamped",
+            // which was simply not true. (PR #357 review, found post-merge.)
+            let bounded_depth = depth.min(3);
             let predicted_with_runahead =
-                produce_p50_ms * (f32::from(u8::try_from(depth).unwrap_or(3)) + 1.0);
+                produce_p50_ms * (f32::from(u8::try_from(bounded_depth).unwrap_or(3)) + 1.0);
             if predicted_with_runahead < target * 0.70 {
                 self.runahead_throttled = false;
                 eprintln!(
