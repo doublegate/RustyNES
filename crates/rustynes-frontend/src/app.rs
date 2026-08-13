@@ -5193,23 +5193,41 @@ impl App {
     /// so it is not behind the `scripting` gate.
     // `std::time::Duration` spelled out: this function is compiled on wasm too,
     // where the `Duration` import is cfg'd away.
-    fn pump_watchpoints(&mut self, lock_wait: &mut std::time::Duration) {
-        let mut step_satisfied = false;
-        let mut step_still_pending = false;
-        {
-            let Some(dbg) = self.debugger.as_mut() else {
-                return;
-            };
-            let mut guard = self.emu.lock_timed(lock_wait);
-            if let Some(nes) = guard.nes.as_mut() {
-                dbg.pump_watchpoints(nes);
-                // v1.7.0 "Forge" Workstream C (C1) — a queued step verb
-                // (step-over / step-out / run-to-NMI / run-to-IRQ) was satisfied
-                // this frame; take the edge so we pause below.
-                step_satisfied = dbg.take_step_satisfied();
-                step_still_pending = dbg.step_pending();
-            }
-        } // emu lock + debugger borrow dropped here
+    /// v2.3.3 F12 — the emulator-touching half of the Watch-panel replay, run
+    /// from inside a lock the caller ALREADY holds.
+    ///
+    /// Split from the reaction below so this can live in
+    /// `post_produce_housekeeping`'s existing lock scope rather than taking its
+    /// own acquisition on the redraw path. Returns
+    /// `(step_satisfied, step_still_pending)`.
+    ///
+    /// `wants_emu_pump` gates the work: with the overlay hidden and no
+    /// watchpoints, breakpoints, heatmap, trace or pending step — the common
+    /// case — every consumer here is a no-op, and the predicate says so without
+    /// touching the emulator.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn pump_watchpoints_locked(
+        debugger: Option<&mut DebuggerOverlay>,
+        emu: &mut crate::emu::EmuCore,
+    ) -> (bool, bool) {
+        let Some(dbg) = debugger else {
+            return (false, false);
+        };
+        if !dbg.wants_emu_pump() {
+            return (false, false);
+        }
+        let Some(nes) = emu.nes.as_mut() else {
+            return (false, false);
+        };
+        dbg.pump_watchpoints(nes);
+        (dbg.take_step_satisfied(), dbg.step_pending())
+    }
+
+    /// v2.3.3 F12 — the reaction to a step verb, run AFTER the emulator lock is
+    /// released (it pauses, opens a panel and sets a status line, none of which
+    /// needs the core).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn apply_watchpoint_step(&mut self, step_satisfied: bool, step_still_pending: bool) {
         if step_satisfied {
             self.set_paused(true);
             if let Some(d) = self.debugger.as_mut() {
@@ -5218,9 +5236,6 @@ impl App {
             self.ui
                 .set_status(StatusMessage::info("Step complete — paused".to_owned()));
         } else if step_still_pending && self.ui.paused {
-            // The step verb isn't satisfied yet: keep advancing frame-by-frame
-            // (the user is paused; this drives the step to completion without
-            // resuming free-running play).
             self.request_frame_advance();
         }
     }
@@ -7132,6 +7147,27 @@ impl App {
     /// wall-clock pacer (`pace_frames`) and the display-sync redraw path:
     /// FDS save flush + audio-health refresh + perf/fps/movie pushes into
     /// the debugger + the raw-cheat pull.
+    /// v2.8.0 — reconcile the perf logger with the panel checkbox, append this
+    /// interval's row, and return the destination/error note for the panel.
+    ///
+    /// Extracted from `post_produce_housekeeping` only to keep that function
+    /// inside the line budget; the sequence is unchanged.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn drive_perf_logger(&mut self, perf_view: &crate::perf::PerfView) -> Option<String> {
+        let log_enabled = self
+            .debugger
+            .as_ref()
+            .is_some_and(DebuggerOverlay::perf_logging_enabled);
+        let log_ctx = self
+            .perf_logger
+            .wants_start(log_enabled, &self.rom_label)
+            .then(|| self.perf_log_context());
+        self.perf_logger
+            .sync(log_enabled, &self.rom_label, || log_ctx.unwrap_or_default());
+        self.perf_logger.record(perf_view);
+        self.perf_logger.note()
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn post_produce_housekeeping(&mut self) {
         // v2.3.0 "Datum II" — refresh detached tool windows once per produced
@@ -7156,7 +7192,15 @@ impl App {
         // user can read them from the top toolbar. One scoped lock builds
         // the whole perf snapshot (the gfx fields are App-resident and are
         // filled in after the guard drops).
-        let (fps, movie_status, region, mut perf_view, trace_events) = {
+        let (
+            fps,
+            movie_status,
+            region,
+            mut perf_view,
+            trace_events,
+            step_satisfied,
+            step_still_pending,
+        ) = {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
             // v2.8.0 Phase 0 — refresh the audio-queue health + snapshot
@@ -7182,6 +7226,14 @@ impl App {
             // No-op when the trace is off.
             let mut trace_events = std::mem::take(&mut self.trace_scratch);
             emu.perf.swap_trace(&mut trace_events);
+
+            // v2.3.3 F12 — the Watch-panel replay runs HERE, inside the lock
+            // this path already holds, instead of taking its own on every
+            // redraw. Once per produced frame is also the correct cadence: at
+            // divisor 2 the old redraw-path call replayed each frame's logs
+            // twice.
+            let (step_satisfied, step_still_pending) =
+                Self::pump_watchpoints_locked(self.debugger.as_mut(), emu);
             // v2.8.0 Phase 3 — feed the run-ahead budget throttle. Keyed off
             // the median (steady-state) produce cost, not the p95 tail (which
             // on the emu thread is OS-deschedule noise, not run-ahead cost).
@@ -7207,8 +7259,12 @@ impl App {
                 region,
                 view,
                 trace_events,
+                step_satisfied,
+                step_still_pending,
             )
         };
+        // Outside the lock: pausing / panel / status need no core access.
+        self.apply_watchpoint_step(step_satisfied, step_still_pending);
         // Written outside the lock — see the drain comment above. Empty (and
         // therefore a no-op) unless the trace is enabled.
         self.perf_logger.record_trace(&trace_events);
@@ -7231,18 +7287,7 @@ impl App {
         // v2.8.0 — opt-in perf logging (the Perf panel "Logging" checkbox):
         // reconcile the logger with the checkbox, append the interval row,
         // and reflect the destination/error back into the panel.
-        let log_enabled = self
-            .debugger
-            .as_ref()
-            .is_some_and(DebuggerOverlay::perf_logging_enabled);
-        let log_ctx = self
-            .perf_logger
-            .wants_start(log_enabled, &self.rom_label)
-            .then(|| self.perf_log_context());
-        self.perf_logger
-            .sync(log_enabled, &self.rom_label, || log_ctx.unwrap_or_default());
-        self.perf_logger.record(&perf_view);
-        let log_note = self.perf_logger.note();
+        let log_note = self.drive_perf_logger(&perf_view);
         // v1.1.0 beta.1 (Workstream B) — push the held-button snapshot for the
         // input-display HUD (P1..P4; 4 players shown only with Four Score).
         let input_players = if self.config.input.four_score { 4 } else { 2 };
@@ -9140,11 +9185,19 @@ impl ApplicationHandler<AppEvent> for App {
                 #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
                 self.pump_scripts(&mut lock_wait);
 
-                // v1.6.0 "Studio" Workstream C — drive the debugger Watch panel's
-                // observational replay (conditional breakpoints / watchpoints /
-                // watch window / conditional trace). Runs after the frame is
-                // produced; observational-only, so determinism holds.
-                self.pump_watchpoints(&mut lock_wait);
+                // v2.3.3 F12 — the debugger Watch-panel replay used to run HERE,
+                // once per redraw, taking the emulator mutex unconditionally.
+                // Two things were wrong with that. It was the dominant source of
+                // winit-thread lock contention (`rlock` p95 8.7 ms against an
+                // 8.334 ms refresh period — enough to miss the refresh, which is
+                // how 34.7% of frames ended up displayed for the wrong
+                // duration). And at divisor 2 there are two redraws per produced
+                // frame, so it REPLAYED EACH FRAME'S LOGS TWICE.
+                //
+                // It now runs from `post_produce_housekeeping`, inside the lock
+                // that path already holds — once per produced frame, which is
+                // both the correct cadence for per-frame telemetry and zero
+                // additional acquisitions on the redraw path.
 
                 // v2.8.0 Phase 3 — the renderer presents `present_fb` (the
                 // harvested per-frame framebuffer; with run-ahead it is the

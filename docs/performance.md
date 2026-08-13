@@ -1821,6 +1821,71 @@ debugger internals this campaign has not read, it belongs with its own A/B
 measurement, and the instrument that would judge it is the one being landed.
 `rlock` and the scanouts-per-frame histogram are now the two numbers to move.
 
+### v2.3.3 F13 — the redraw-path lock acquisition, removed (decision: ADOPTED on its own merits; the shudder outcome is UNRESOLVED)
+
+F12 named `pump_watchpoints` as the contention source: it took the emulator
+mutex on **every redraw**, unconditionally, before establishing whether anything
+needed it. Two changes:
+
+- **A pre-lock predicate.** `DebuggerOverlay::wants_emu_pump` answers "does the
+  per-frame pump actually need `&mut Nes`?" from debugger-side flags alone —
+  watchpoints, breakpoints, trace, heatmap, access/exec/interrupt log
+  consumers, pending step. Deliberately conservative: a false positive costs one
+  lock, a false negative would silently disable a debugger feature. A
+  `logs_armed` latch makes it safe to skip the pump's *disarming* pass, which
+  is the non-obvious half — "nothing wants a log" is not sufficient, because
+  the core could be left logging forever.
+- **The call moved off the redraw path** into `post_produce_housekeeping`, inside
+  the lock that path already holds. That removes the acquisition entirely rather
+  than merely making it conditional — and it fixes a second defect: at divisor 2
+  there are two redraws per produced frame, so the old placement **replayed each
+  frame's logs twice**. Once per produced frame is the correct cadence for
+  per-frame telemetry.
+
+#### The targeted metric collapses
+
+| | before | after |
+| --- | --- | --- |
+| `rlock` p95 | 8.707 ms | **0.000 ms** |
+| `rlock` p99 | 9.008 ms | **0.000 ms** |
+| `rlock` max | 33.194 ms | 8.943 ms |
+
+The winit thread no longer blocks on the emulator mutex during a redraw. This is
+a floor, not a small delta, and is not in doubt.
+
+#### The OUTCOME metric is not resolved, and this is not a win yet
+
+Scanouts-per-produced-frame — the thing that actually describes what the display
+showed — went 65.31% "exactly 2" before to 51.76% after, which *looks* like a
+regression. It is not evidence of one. Four consecutive captures on the **fixed
+build alone**:
+
+| capture | exactly 2 |
+| --- | --- |
+| 1 | 51.76% |
+| 2 | 62.59% |
+| 3 | 54.89% |
+| 4 | 53.95% |
+
+**A spread of 10.83 points within one build**, against a single-capture "before"
+of 65.31%. The comparison cannot distinguish the change from run-to-run
+variance, in either direction. Settling it needs the A/B/A this document's own
+verification rules require — ≥4 captures per configuration, order-controlled,
+with the pre-fix binary rebuilt — and that has not been run.
+
+Also unexplained: `rwork` p99 moved 0.109 ms → 27.254 ms in the same capture.
+With the pump gone from the redraw handler `rtot` should have fallen, so this
+is not accounted for and is recorded rather than rationalised.
+
+#### Why it lands anyway
+
+The change is justified without reference to the shudder: it removes a
+per-redraw mutex acquisition from the hot path, it eliminates a double replay of
+every frame's debug logs, and it drives the metric it targets to zero. What it
+does **not** yet have is a demonstrated effect on what the user sees. Claiming
+one on a single before/after capture is precisely the error this campaign has
+already made and retracted twice.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as

@@ -73,8 +73,19 @@ cycle-accurate core later replaced.
   an 8.334 ms refresh period, and `rwork` p99 drops to 0.109 ms. The winit
   thread blocks on the emulator mutex for more than a refresh, so redraws land
   late and frames miss their slot. `pump_watchpoints` takes that lock on every
-  redraw unconditionally; the fix is a pre-lock predicate and is deferred to its
-  own change with its own A/B.
+  redraw unconditionally.
+
+  **That acquisition is now removed (F13).** A conservative, emulator-free
+  predicate (`DebuggerOverlay::wants_emu_pump`) gates the work, and the call
+  moved off the redraw path into the lock `post_produce_housekeeping` already
+  holds — which also fixes a second defect: at divisor 2 there are two redraws
+  per produced frame, so the old placement replayed each frame's debug logs
+  **twice**. `rlock` p95/p99 go **8.707/9.008 ms → 0.000/0.000 ms**. The effect
+  on what the display shows is **not yet established**: scanouts-per-frame has a
+  10.8-point spread across four captures of the fixed build alone, so a single
+  before/after cannot resolve it in either direction, and the A/B/A that would
+  has not been run. The change lands on its own merits — one fewer hot-path
+  mutex acquisition and a corrected telemetry cadence — not as a shudder fix.
 
 ### Changed
 
