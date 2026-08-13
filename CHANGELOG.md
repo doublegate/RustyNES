@@ -46,6 +46,30 @@ cycle-accurate core later replaced.
   one row per produce and per present, with `scripts/perf/trace_shape.py` to
   classify its temporal shape. `rwork` is now `rtot - rwait - rlock`.
 
+  **The display-cadence metric was measuring the producer — F12 and F13
+  corrected (v2.3.3 F14).** Both quantified "frames shown for the wrong
+  duration" by counting refreshes between consecutive **produce** timestamps.
+  Both ends of that interval are producer-side, so a produce firing 3 ms early
+  followed by one 3 ms late scores as a mistimed pair **even when the panel
+  showed both frames for exactly two refreshes**. The display-side series was
+  already in the trace and unused: `since_present`, recorded on the present,
+  whose run lengths are all 1 under a healthy divisor cadence. Pooled over
+  sixteen captures the two read **32.7%** and **1.6%** wrong — a factor of
+  twenty. Every "N% of frames shown for the wrong duration" figure in F12 and
+  F13 is retracted; the display was ~98.4% correct while the document said
+  65-74%. Re-running the F13 A/B on the correct metric leaves the fix ahead but
+  weaker still: three of four pairs favour it, **one reverses**, paired
+  **p = 0.125**. The `rlock` 8.707 -> 0.000 ms collapse and the double-replay
+  removal are direct measurements and are unaffected. Three mechanisms were
+  measured and refuted along the way (presentation-path flipping — `flags` is a
+  constant 7; compositor sequence numbers — `seq` is 0, this compositor reports
+  none; produce margin — no phase dependence). `trace_shape.py` now leads with
+  the display-side metric, labels the old one as producer jitter, declines to
+  rate fewer than 100 runs, and **verifies the clock join by span overlap**
+  instead of assuming it — `clock_id` was `unknown` in every trace ever written
+  because it is read before the Wayland registry answers, and is now emitted as
+  a comment row once known.
+
   Later joined by **`rcpu`** — the winit thread's own `CLOCK_THREAD_CPUTIME_ID`
   differenced across the `rwork` span, so `rwork - rcpu` is time the thread spent
   off-CPU rather than computing. It was built to test whether the 9-32 ms `rwork`

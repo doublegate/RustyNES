@@ -69,6 +69,10 @@ pub struct PerfLogger {
     /// v2.3.3 — `(CLOCK_MONOTONIC ns at the trace origin, compositor clock id)`,
     /// written into the trace header so its two halves can be joined.
     trace_anchor: (Option<u64>, Option<u32>),
+    /// v2.3.3 — whether [`Self::note_clock_id`] has already emitted its comment
+    /// row for the current file. The id arrives too late for the header, so it
+    /// is appended once; without this flag it would be appended every frame.
+    clock_id_noted: bool,
 }
 
 /// v2.3.3 — environment switch for the per-frame trace.
@@ -199,6 +203,37 @@ impl PerfLogger {
         self.trace_anchor = (origin_mono_ns, clock_id);
     }
 
+    /// v2.3.3 — record the compositor's `clock_id` once it is actually known.
+    ///
+    /// The header could not carry it. [`Self::set_trace_anchor`] runs when
+    /// tracing is armed, and `PresentationClock::new` deliberately performs no
+    /// Wayland roundtrip (a blocking socket read inside winit's own dispatch is
+    /// the one reliable way to deadlock the event loop), so the registry — and
+    /// therefore the `wp_presentation.clock_id` event that follows the bind —
+    /// has not arrived yet. Every trace written before this fix says
+    /// `clock_id = unknown` for that reason alone, and the analysis then joined
+    /// the two clock domains anyway, contrary to the contract stated in
+    /// `open_trace_file`'s own comment. (Plain code span, not an intra-doc
+    /// link: that function is private, and a link from public docs to a
+    /// private item fails the `-D warnings` rustdoc gate.)
+    ///
+    /// A header cannot be rewritten in a stream, so the id is emitted as a
+    /// comment row at the point it first becomes available. The analysis skips
+    /// `#` lines wherever they appear, so this is invisible to the CSV parse
+    /// and recoverable by a scan of the whole file rather than of the header
+    /// alone. Emitted at most once per file.
+    pub fn note_clock_id(&mut self, clock_id: Option<u32>) {
+        let (Some(id), Some(w), false) = (clock_id, self.trace.as_mut(), self.clock_id_noted)
+        else {
+            return;
+        };
+        self.clock_id_noted = true;
+        if let Err(err) = writeln!(w, "# clock_id = {id}") {
+            self.error = Some(err.to_string());
+            self.trace = None;
+        }
+    }
+
     /// v2.3.3 — append compositor-reported scanout instants to the trace.
     ///
     /// These are the only rows in the trace that describe the DISPLAY rather
@@ -243,6 +278,10 @@ impl PerfLogger {
 
     fn start(&mut self, ctx: &PerfLogContext) {
         let (origin_mono_ns, clock_id) = self.trace_anchor;
+        // A new file needs its own `clock_id` comment row: the flag is per
+        // file, not per process, or a ROM change mid-session would leave the
+        // second trace with no clock domain recorded anywhere.
+        self.clock_id_noted = false;
         let dir = self
             .dir
             .clone()
