@@ -471,7 +471,9 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     };
     let mut cols: Vec<(&'static str, String)> = Vec::with_capacity(40);
     // Static column names per interval series, so they stay `&'static str`.
-    let stats_names = STATS_NAMES;
+    // By reference: the table is a `static`, and binding it by value copied
+    // ~960 bytes onto the stack on every row for no reason.
+    let stats_names = &STATS_NAMES;
     let stat_for = |series: &str| -> &crate::perf::IntervalStats {
         match series {
             "produced" => &v.produced,
@@ -491,7 +493,7 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     for (series, names) in stats_names {
         let st = stat_for(series);
         let vals = [st.mean_ms, st.p50_ms, st.p95_ms, st.p99_ms, st.max_ms];
-        for (n, val) in names.into_iter().zip(vals) {
+        for (n, val) in names.iter().zip(vals) {
             cols.push((n, format!("{val:.3}")));
         }
     }
