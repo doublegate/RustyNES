@@ -36,10 +36,14 @@ pub mod cheats;
 // v1.4.0 Workstream H — native CLI (clap 4) + structured help-topic registry.
 // Native-only: a browser tab has no terminal, and the clap / clap_complete /
 // color-print deps are gated out of the wasm target in `Cargo.toml`.
-pub mod cli;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod cli;
 /// v2.3.3 — absolute `CLOCK_MONOTONIC` / `CLOCK_THREAD_CPUTIME_ID` readings,
 /// with the frontend's only `clock_gettime` call site.
+///
+/// Declared unconditionally: the module cfg-gates its own bodies and returns
+/// `None` everywhere the clocks are unreachable (wasm, non-unix, `emu-thread`
+/// off), so callers need no `cfg` of their own.
 pub mod clock;
 pub mod config;
 pub mod debugger;
