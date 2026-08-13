@@ -110,7 +110,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="RustyNES perf-log regression gate")
     ap.add_argument("csv", help="path to a perf-logs/perf-*.csv capture")
     ap.add_argument("--max-underruns", type=int, default=0,
-                    help="max cumulative audio underruns at the LAST row (default 0)")
+                    help="max cumulative audio underruns over the analyzed rows (default 0)")
     ap.add_argument("--max-produced-ms", type=float, default=150.0,
                     help="max produced-frame interval ms over the run (default 150; a "
                          "coarse backstop -- the p99 gates below are the real signal)")
@@ -147,11 +147,11 @@ def main() -> int:
     # default of 200 let a run with 62 bursts, 12 underruns and a 128.9 ms peak
     # pass every threshold it tracked — the hole this gate exists to close.
     ap.add_argument("--max-catchup-bursts", type=int, default=16,
-                    help="max cumulative catch-up bursts at the LAST row (default 16; "
+                    help="max cumulative catch-up bursts over the analyzed rows (default 16; "
                          "healthy 0, degraded 32-62)")
     # Same derivation: healthy 0, borderline 2, degraded 12.
     ap.add_argument("--max-snap-forwards", type=int, default=8,
-                    help="max cumulative snap-forwards at the LAST row (default 8; "
+                    help="max cumulative snap-forwards over the analyzed rows (default 8; "
                          "healthy 0, degraded 12)")
     # THE signal the p99 gate was reaching for and missed. `cost_*` is the
     # emulator's own work per displayed frame, with the pacer's sleep excluded —
@@ -211,11 +211,20 @@ def main() -> int:
         return 2
 
     last = body[-1]
-    # Cumulative counters are taken at the final row; produced_max is a
-    # windowed peak, so take the max across the run.
-    underruns = int(col_float(last, "underruns"))
-    catchup = int(col_float(last, "catchup_bursts"))
-    snaps = int(col_float(last, "snap_forwards"))
+    # Cumulative counters: take the MAXIMUM readable value, not the final row.
+    #
+    # Every timed capture ends by killing the frontend mid-write, so the last
+    # row is routinely short and `col_float` fills its missing fields with 0.0.
+    # Reading these from `last` therefore reset them to zero exactly when a run
+    # was cut off — and a capture could PASS while an earlier row had already
+    # exceeded the gate. Since they are monotonic within one capture, the max is
+    # both correct and immune to truncation. (Same defect class as the
+    # `float(None)` crash fixed earlier in this file: the short final row is a
+    # normal event here, not an anomaly.) `produced_max` is a windowed peak, so
+    # it takes the max for a different reason.
+    underruns = max(int(col_float(r, "underruns")) for r in body)
+    catchup = max(int(col_float(r, "catchup_bursts")) for r in body)
+    snaps = max(int(col_float(r, "snap_forwards")) for r in body)
     produced_max = max(col_float(r, "produced_max_ms") for r in body)
     # p99 is taken as the MEDIAN across sample rows, not the max: each row already
     # reports a windowed p99, so the median of those is the run's typical tail and
@@ -231,7 +240,15 @@ def main() -> int:
         if "cost_p95_ms" in header
         else float("nan")
     )
-    dropped = int(col_float(last, "produced_dropped")) if "produced_dropped" in header else 0
+    # Cumulative and monotonic like the three above, so read it the same way —
+    # from the maximum across the analysed rows, not from a final row that a
+    # mid-write kill routinely leaves short. Missing entirely in archived
+    # captures taken before the column existed, hence the header guard.
+    dropped = (
+        max(int(col_float(r, "produced_dropped")) for r in body)
+        if "produced_dropped" in header
+        else 0
+    )
 
     failures: list[str] = []
     if underruns > args.max_underruns:

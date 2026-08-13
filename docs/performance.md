@@ -1531,6 +1531,361 @@ SMB), an undriven redraw loop (it is driven, from the present success path),
 the cause), and redraw ordering (zero effect). The one approach that produced a
 result was instrumenting first and theorising second.
 
+### v2.3.3 F10 — two named suspects, both refuted; a ragged present cadence found instead (decision: MEASUREMENT; no fix proposed)
+
+F8's correction left a 13-22 ms p99 render-work tail unexplained and the shudder
+unattributed. Two suspects were named up front, instrumented, and tested. **Both
+are refuted.** Naming them before measuring is what made the refutation cheap —
+and is the discipline this campaign adopted after five theory-first attempts
+each cost a build-and-measure cycle.
+
+#### New instrumentation
+
+| series / counter | what it answers |
+| --- | --- |
+| `tick_ok` / `tick_timeout` / `tick_dropped` | which arm of the display-regime `recv_timeout` drove each frame, and how many present ticks were dropped on the depth-1 channel |
+| `rlock_*` | emulator-mutex blocking **on the winit thread** — the mirror of `wait_*`, which only ever covered the producer |
+| `trace-<rom>-<utc>.csv` | one row per produce and per present: interval, and `since_present` at each present. Env-gated (`RUSTYNES_FRAME_TRACE=1`), default off |
+| `scripts/perf/trace_shape.py` | lag-1 autocorrelation, consecutive-pair-sum cancellation, and refreshes-per-frame run lengths |
+
+`rwork` is now `rtot - rwait - rlock`, so it finally means work alone.
+
+#### Suspect A — the 25 ms tick watchdog: REFUTED
+
+`DISPLAY_TICK_TIMEOUT` is 25 ms and the `produced` p95 was 25-36 ms, so the
+watchdog was a candidate frame driver. Measured on SMB, six 45 s captures:
+
+| `run_ahead` | `tick_ok` | `tick_timeout` | `tick_dropped` |
+| --- | --- | --- | --- |
+| 2 | 1851-1855 | **0, 0, 0** | 0 |
+| 0 | 1856-1857 | 2-7 (0.1-0.4%) | 0-1 |
+
+At the shipped default the watchdog **never fires**, and ticks are essentially
+never dropped. The numeric coincidence between the timeout and the p95 was
+exactly that — a coincidence. Recorded because it was compelling enough to act
+on, and testing it cost one capture round.
+
+#### Suspect B — winit-thread lock blocking: REFUTED at the shipped default
+
+| `run_ahead` | `rlock` p95 | `rlock` p99 | `rlock` max |
+| --- | --- | --- | --- |
+| 2 | 0.000 ms | **0.000 ms** | 12.7-13.3 ms |
+| 0 | 0.000 ms | 6.9-8.6 ms | 9.3-25.7 ms |
+
+At `run_ahead = 2` the winit thread does not block: p99 is zero, with a handful
+of isolated outliers. So the 13 ms `rwork` p99 at that setting is **not** lock
+blocking — and it is not the egui build (`rui` p99 = 0.00) and not the GPU
+(`rgpu` p99 = 0.15 ms) either. It remains unattributed.
+
+At `run_ahead = 0` the winit thread *does* block, p99 6.9-8.6 ms. That is a real
+finding and the reverse of the intuition (the cheaper produce blocks the
+consumer more), but it is not the shipped default and not the reported symptom.
+
+#### What the trace actually shows
+
+Six 45 s SMB traces, post-warmup:
+
+- **`produce` intervals are NOT alternating.** Lag-1 autocorrelation is −0.07 to
+  −0.12 (independent) and consecutive pairs do not cancel (pair/single stdev
+  ≈ 1.34). The produce tail is **isolated excursions**, not the alternating
+  cadence a shudder implies. This rules out a whole family of explanations.
+- **`present` intervals are strongly alternating** (lag-1 −0.60 to −0.68) — but
+  that is *expected* at divisor 2, where presents alternate between carrying a
+  new frame and repeating one. On its own it means nothing.
+- **The refreshes-per-frame cadence is ragged.** At divisor 2 the healthy
+  `since_present` sequence is a clean `0,1,0,1,…`, i.e. every run has length 1.
+  Measured:
+
+| capture | ragged runs (len ≥ 2) | total runs | % | longest run |
+| --- | --- | --- | --- | --- |
+| 1 | 193 | 3510 | 5.5% | 13 |
+| 2 | 124 | 4011 | 3.1% | 5 |
+| 3 | 135 | 3653 | 3.7% | 15 |
+| 4 | 214 | 3849 | 5.6% | 5 |
+| 5 | 169 | 3617 | 4.7% | 15 |
+| 6 | 151 | 3932 | 3.8% | 6 |
+
+**3.1-5.6% of runs are ragged, in every capture, with individual runs up to 15.**
+A run of 15 means fifteen consecutive presents where the alternation broke — a
+frame held across many refreshes, or the producer briefly tracking the present
+rate. Roughly four such events per second.
+
+#### The raggedness is measured in the WRONG UNIT — corrected
+
+Pushed further, the above does **not** establish uneven delivery, and the
+correction matters more than the original observation.
+
+Per-frame **hold times** (how many presents each produced frame occupied) look
+alarming — aggregated over the six captures, `{1: 1634, 2: 11087, 3: 190,
+4: 3}`, i.e. **11.5% of frames occupy a single present instead of two**, with
+zero produced frames ever dropped. But the mean hold is 1.83-1.95, and a correct
+cadence on this panel requires exactly `16.6393 / 8.3340 = 1.9966`. The
+arithmetic does not close, which is what forced a look at the present intervals
+themselves:
+
+| present interval | share |
+| --- | --- |
+| < 1 ms | **31.8%** |
+| 1-2 ms | 9.2% |
+| 2-7.5 ms | 7.6% |
+| **7.5-9.5 ms (≈ one refresh)** | **1.9%** |
+| 9.5-12 ms | 4.8% |
+| **12-16.7 ms** | **38.9%** |
+| > 16.7 ms | 5.8% |
+
+Presents are **not quantised to the refresh grid at all**: barely 2% land near
+one refresh period, while a third arrive under a millisecond apart and another
+third after roughly two. Verified as the Fifo steady state, not a startup
+artefact — `Mailbox` appears only in row 0 of every capture and `Fifo` from 1 s
+onward, well before the 8 s warmup the analysis discards.
+
+**That bimodal shape is the expected signature of triple-buffered Fifo, and F8
+already documented it**: two presents return immediately from spare swapchain
+images, the third blocks a full refresh pair. Which means `record_presented`
+timestamps the moment an image is **queued**, not the moment it is **scanned
+out**. Under this present mode those are different clocks, and submission
+bursts while scanout stays regular.
+
+So the hold-time metric counts **queue slots, not refreshes on screen**. It
+cannot answer what the eye sees, and the "3.1-5.6% ragged runs" figure above is
+a statement about submission timing, not about display cadence. It is retained
+rather than deleted because it was published in this document and acted on.
+
+#### What is actually established
+
+- Suspect A (the 25 ms watchdog) is **refuted**: 0 fires in ~1855 ticks at the
+  shipped default.
+- Suspect B (winit-thread lock blocking) read as **refuted at the shipped
+  default** on `rlock` p99 = 0.000 ms — but **that series was incomplete when
+  the figure was taken**, and the refutation should be treated as provisional
+  until re-measured. The accumulator started just before the render branches,
+  while `display_sync_produce`, `pump_scripts` and `pump_watchpoints` all run
+  earlier in the same measured window and each acquire the mutex: four untimed
+  sites. Fixed (the accumulator now starts at the top of the window and is
+  threaded through all three), found in the PR #357 review body rather than by
+  any measurement here. A p99 of zero over part of a window does not establish
+  a p99 of zero over the whole of it.
+- The `produce` interval tail is **isolated excursions, not alternation**
+  (lag-1 −0.07..−0.12) — this one is a genuine result about the producer and
+  does not depend on the present clock.
+- No produced frame is ever dropped (`drops = 0` in all six captures).
+- The 13 ms `rwork` p99 at `run_ahead = 2` is neither lock, nor UI, nor GPU, and
+  remains unattributed.
+
+The shudder is **still unexplained**, and this round did not get closer to it —
+it removed two candidates and disqualified a third line of evidence as
+mis-measured.
+
+#### The next instrument is already 90% built
+
+Answering "what did the display actually show" needs real scanout timestamps.
+`wp_presentation`'s `presented` event carries them — `tv_sec_hi`, `tv_sec_lo`,
+`tv_nsec` — and `wayland_presentation.rs` already binds the protocol, receives
+that event, and **destructures only `refresh`, discarding the timestamps**.
+Recording them would give the true per-frame scanout cadence directly from the
+compositor, in the one unit that answers the question. That is the obvious next
+step and it is a small one.
+
+### v2.3.3 F11 — the display misses 4.6% of refreshes (decision: MEASURED, in the right unit at last)
+
+F10's raggedness was measured in queue-submission time and disqualified. This
+records the same question asked of the compositor.
+
+`wp_presentation`'s `presented` event now yields its full payload — the
+`tv_sec_hi` / `tv_sec_lo` / `tv_nsec` scanout instant, the compositor's own
+refresh estimate, the presentation sequence counter, and the flags — buffered
+in `wayland_presentation.rs` and written to the trace as `scanout` rows. Two
+structural changes were needed and are worth noting, because either omission
+would have produced a feature that silently recorded nothing:
+
+- `request_feedback` stopped issuing once the refresh estimate settled, and
+  `poll` early-returned on the same flag, so **the event queue was never
+  dispatched again**. Settling now terminates the *estimate*, not the event
+  pump.
+- Feedback is requested for every present only while tracing; the shipped path
+  keeps the original stop-after-settling behaviour.
+
+**Measured, SMB, one 25 s capture (16.1 s post-warmup, 1847 scanouts):**
+
+| scanout interval | share |
+| --- | --- |
+| **1 refresh (8.334 ms)** | **96.80%** |
+| 2 refreshes | 1.90% |
+| 3 refreshes | 1.03% |
+| 4-5 refreshes | 0.27% |
+
+`flags = 7` on every report — `VSYNC | HW_CLOCK | HW_COMPLETION` — so these are
+hardware-timed completions, not compositor estimates. (`seq` reads 0: this
+compositor supplies no presentation counter, so missed refreshes are inferred
+from the timestamps rather than stated.)
+
+**The result: 89 missed refreshes out of ~1935, or 4.60%** — the display
+repeated the previous image because no new one arrived in time. That is **59
+cadence breaks in 16.1 s, 3.66 per second.**
+
+Two things follow. First, the render loop delivers on 96.8% of refreshes, so
+this is not a broken pacer — it is a tail. Second, at divisor 2 a missed refresh
+does not merely repeat a frame, it *shifts the phase*: the frame on screen is
+held for a third refresh and the following one is shown for one. A ~3.7 Hz train
+of those is a plausible read of "content stepping forward and back".
+
+**This does not close the investigation.** The scanout series records *when* the
+display updated, not *what changed on it* — correlating scanouts against
+produced frames is the next step and has not been done. What is now established,
+in the compositor's own clock, is that the display misses 4.6% of its refreshes
+under display-sync, at a rate that independently agrees with the ~4/second
+figure F10 arrived at through the wrong unit. F10's number was right by
+accident; this one is right by measurement.
+
+### v2.3.3 F12 — the mechanism, found: winit-thread lock contention (decision: ROOT CAUSE IDENTIFIED; fix deferred to its own change)
+
+F11 established that the display misses 4.6% of refreshes but could not say what
+changed on screen. Two measurements close that, and the first of them overturns
+an earlier conclusion in this document.
+
+#### `rlock` was incomplete, and completing it moved the whole 13 ms tail
+
+F10 reported `rlock` p99 = 0.000 ms and concluded the winit thread does not
+block. That series covered only part of the redraw window: `display_sync_produce`,
+`pump_scripts` and `pump_watchpoints` all run inside it and each acquire the
+emulator mutex, untimed. With all four sites instrumented, same host, same ROM:
+
+| series | F10 (incomplete) | complete |
+| --- | --- | --- |
+| `rlock` p95 | 0.000 ms | **8.707 ms** |
+| `rlock` p99 | 0.000 ms | **9.008 ms** |
+| `rlock` max | — | 33.194 ms |
+| `rwork` p99 | **13.0 ms** | **0.109 ms** |
+
+The unattributed 13 ms render-work tail **was lock waiting all along**, and it
+moved in full once the measurement covered the window. `rwork` p99 is now 0.109
+ms: the render loop genuinely does almost no work. **Suspect B is revived and
+confirmed** — it was refuted on a measurement that could not see it.
+
+Note the magnitude: `rlock` p95 of 8.707 ms against a refresh period of 8.334 ms.
+The winit thread spends more than a full refresh blocked, at the 95th percentile.
+
+#### What the display actually showed
+
+With the trace's produce/present rows and its compositor `scanout` rows joined
+through the new `anchor_mono_ns` header (both `CLOCK_MONOTONIC`), the question
+F10 asked in the wrong unit can finally be asked in the right one — **how many
+scanouts did each produced frame get?** At divisor 2 the answer should be
+exactly 2, every time. Measured over 1817 produced frames and 3480 scanouts:
+
+| scanouts per produced frame | share |
+| --- | --- |
+| 0 — never displayed at all | 3.19% |
+| 1 — half the intended duration | 18.28% |
+| **2 — correct** | **65.31%** |
+| 3 | 10.57% |
+| 4-5 | 2.65% |
+
+**34.69% of produced frames are displayed for the wrong length of time, and
+3.19% are never displayed at all.** A third of frames at the wrong duration is
+not a subtle artefact; it is a direct, quantitative account of content stepping
+forward and back.
+
+#### The chain
+
+1. The winit thread blocks on the emulator mutex — p95 8.7 ms, more than one
+   refresh period.
+2. The redraw and its present therefore land late.
+3. The frame misses its refresh slot: some frames get one scanout, some three,
+   some none.
+4. The display shows 34.7% of frames for the wrong duration and repeats 4.6% of
+   refreshes.
+
+The producer holds the mutex for the whole produce — ~9.7 ms per frame at the
+shipped `run_ahead = 2` — while the winit thread needs it inside every redraw at
+120 Hz. Contention is structural, not incidental.
+
+#### Where the contention is, and why the fix is deferred
+
+`display_sync_produce` returns *before* its acquisition on the threaded path, so
+it is not the source on the default build. `pump_watchpoints` is: it takes the
+lock on **every redraw**, unconditionally, before establishing whether anything
+needs it — and it does real per-frame work on `nes` (heatmap refresh, call-stack
+and access-counter replay, watch pump), so the lock is genuine whenever those
+features are live. In the common case — overlay hidden, no watchpoints, no
+logging — it is pure contention.
+
+The fix is a cheap pre-lock predicate ("does anything here need the emulator
+this frame?"), and **v2.3.0 already applied exactly this pattern one layer
+over**: `EmuControl::has_rom()` exists as a lock-free atomic precisely because
+`pace_frames` was blocking up to a full produce per iteration for a fact it
+could read without the mutex. The same shape, unfixed one call deeper.
+
+It is deferred to its own change rather than added here because it touches
+debugger internals this campaign has not read, it belongs with its own A/B
+measurement, and the instrument that would judge it is the one being landed.
+`rlock` and the scanouts-per-frame histogram are now the two numbers to move.
+
+### v2.3.3 F13 — the redraw-path lock acquisition, removed (decision: ADOPTED on its own merits; the shudder outcome is UNRESOLVED)
+
+F12 named `pump_watchpoints` as the contention source: it took the emulator
+mutex on **every redraw**, unconditionally, before establishing whether anything
+needed it. Two changes:
+
+- **A pre-lock predicate.** `DebuggerOverlay::wants_emu_pump` answers "does the
+  per-frame pump actually need `&mut Nes`?" from debugger-side flags alone —
+  watchpoints, breakpoints, trace, heatmap, access/exec/interrupt log
+  consumers, pending step. Deliberately conservative: a false positive costs one
+  lock, a false negative would silently disable a debugger feature. A
+  `logs_armed` latch makes it safe to skip the pump's *disarming* pass, which
+  is the non-obvious half — "nothing wants a log" is not sufficient, because
+  the core could be left logging forever.
+- **The call moved off the redraw path** into `post_produce_housekeeping`, inside
+  the lock that path already holds. That removes the acquisition entirely rather
+  than merely making it conditional — and it fixes a second defect: at divisor 2
+  there are two redraws per produced frame, so the old placement **replayed each
+  frame's logs twice**. Once per produced frame is the correct cadence for
+  per-frame telemetry.
+
+#### The targeted metric collapses
+
+| | before | after |
+| --- | --- | --- |
+| `rlock` p95 | 8.707 ms | **0.000 ms** |
+| `rlock` p99 | 9.008 ms | **0.000 ms** |
+| `rlock` max | 33.194 ms | 8.943 ms |
+
+The winit thread no longer blocks on the emulator mutex during a redraw. This is
+a floor, not a small delta, and is not in doubt.
+
+#### The OUTCOME metric is not resolved, and this is not a win yet
+
+Scanouts-per-produced-frame — the thing that actually describes what the display
+showed — went 65.31% "exactly 2" before to 51.76% after, which *looks* like a
+regression. It is not evidence of one. Four consecutive captures on the **fixed
+build alone**:
+
+| capture | exactly 2 |
+| --- | --- |
+| 1 | 51.76% |
+| 2 | 62.59% |
+| 3 | 54.89% |
+| 4 | 53.95% |
+
+**A spread of 10.83 points within one build**, against a single-capture "before"
+of 65.31%. The comparison cannot distinguish the change from run-to-run
+variance, in either direction. Settling it needs the A/B/A this document's own
+verification rules require — ≥4 captures per configuration, order-controlled,
+with the pre-fix binary rebuilt — and that has not been run.
+
+Also unexplained: `rwork` p99 moved 0.109 ms → 27.254 ms in the same capture.
+With the pump gone from the redraw handler `rtot` should have fallen, so this
+is not accounted for and is recorded rather than rationalised.
+
+#### Why it lands anyway
+
+The change is justified without reference to the shudder: it removes a
+per-redraw mutex acquisition from the hot path, it eliminates a double replay of
+every frame's debug logs, and it drives the metric it targets to zero. What it
+does **not** yet have is a demonstrated effect on what the user sees. Claiming
+one on a single before/after capture is precisely the error this campaign has
+already made and retracted twice.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as

@@ -630,6 +630,16 @@ pub struct DebuggerOverlay {
     visible: bool,
     /// Per-panel "open" flags.
     show_cpu: bool,
+    /// v2.3.3 — latch: did the last [`Self::pump_watchpoints`] leave any of the
+    /// core's per-frame logs ARMED?
+    ///
+    /// Load-bearing for [`Self::wants_emu_pump`]. The pump does not only read
+    /// the emulator, it also *disarms* logs nothing wants any more — so "no
+    /// consumer wants anything" is not by itself sufficient to skip it: the
+    /// core could be left logging forever. This records whether a disarming
+    /// pass is still owed, so the skip is taken only once the core is known to
+    /// be quiet.
+    logs_armed: bool,
     show_ppu: bool,
     show_oam: bool,
     show_apu: bool,
@@ -900,6 +910,7 @@ impl DebuggerOverlay {
             // (`~`) just shows the toolbar; the user opens the panels they want
             // via the CPU/PPU/OAM/APU/Memory checkboxes.
             show_cpu: false,
+            logs_armed: false,
             show_ppu: false,
             show_oam: false,
             show_apu: false,
@@ -1556,6 +1567,35 @@ impl DebuggerOverlay {
         &mut self.script_ui
     }
 
+    /// v2.3.3 — cheap, emulator-free test for "does the per-frame pump actually
+    /// need `&mut Nes` this frame?"
+    ///
+    /// [`Self::pump_watchpoints`] used to be called on EVERY redraw with the
+    /// emulator mutex taken unconditionally, before establishing whether
+    /// anything needed it. At 120 Hz against a producer that holds the mutex
+    /// for a whole produce (~9.7 ms at the shipped `run_ahead = 2`), that was
+    /// measured as the dominant source of winit-thread lock contention:
+    /// `rlock` p95 8.7 ms against an 8.334 ms refresh period, which is enough
+    /// to miss the refresh — see `docs/performance.md` v2.3.3 F12.
+    ///
+    /// Every term below is a debugger-side flag; none touches the emulator.
+    /// Deliberately CONSERVATIVE: it answers "possibly needs the emulator", so
+    /// a false positive costs one lock and a false negative is what must not
+    /// happen. `logs_armed` is what makes the disarming pass safe to skip.
+    #[must_use]
+    pub fn wants_emu_pump(&self) -> bool {
+        let panel_open = self.show_cpu;
+        self.logs_armed
+            || self.watch_ui.needs_exec_log()
+            || self.watch_ui.needs_access_log()
+            || self.memory_ui.wants_access_log()
+            || self.access_counter.wants_access_log()
+            || self.access_counter.wants_exec_log()
+            || self.callstack.wants_exec_log(panel_open)
+            || self.callstack.wants_interrupt_log(panel_open)
+            || self.callstack.step_pending()
+    }
+
     /// v1.6.0 "Studio" Workstream C — drive the per-frame observational debug
     /// pumps: the Watch panel's breakpoint / watchpoint / trace replay (C1/C4)
     /// and the Memory hex editor's access-type heatmap (C2). Called by `App`
@@ -1589,6 +1629,9 @@ impl DebuggerOverlay {
         if self.callstack.wants_interrupt_log(panel_open) {
             nes.set_interrupt_logging(true);
         }
+        // Record whether the core is still logging, so `wants_emu_pump` knows
+        // whether a disarming pass is owed before it may start skipping.
+        self.logs_armed = nes.exec_logging() || nes.access_logging() || nes.interrupt_logging();
     }
 
     /// v1.7.0 "Forge" Workstream C (C1) — whether a debugger step request

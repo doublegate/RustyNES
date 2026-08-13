@@ -92,6 +92,18 @@ pub struct EmuHandle {
     inner: std::sync::Arc<std::sync::Mutex<EmuCore>>,
 }
 
+/// Hard cap on run-ahead depth, in frames.
+///
+/// One constant because two independent `3` literals are exactly what caused
+/// the defect they now both express: `update_runahead_throttle` predicted a
+/// depth the produce path would never run, because its cap and
+/// `effective_run_ahead`'s cap were separate literals that drifted. (PR #358
+/// review.)
+/// Native-only: both users (`effective_run_ahead`, `update_runahead_throttle`)
+/// are, and the wasm frontend has no run-ahead path.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_RUN_AHEAD_DEPTH: u32 = 3;
+
 impl EmuHandle {
     /// Wrap a fresh core in the shared handle.
     #[must_use]
@@ -99,6 +111,27 @@ impl EmuHandle {
         Self {
             inner: std::sync::Arc::new(std::sync::Mutex::new(core)),
         }
+    }
+
+    /// [`Self::lock`], adding the time spent BLOCKED to `acc`.
+    ///
+    /// v2.3.3 — the winit thread acquires this mutex six times in one redraw
+    /// handler and none of those acquisitions was timed, while the producer's
+    /// single acquisition was (`PerfStats::produce_wait`). A redraw blocked
+    /// behind a produce was therefore billed entirely as render *work* — the
+    /// third instance in this campaign of blocking recorded as work, after
+    /// `cost_*` and the F8 `wait` series itself.
+    ///
+    /// Accumulates rather than returning, because what matters is the total
+    /// blocked time across a whole redraw, not any single acquisition; the
+    /// caller keeps one `Duration` for the handler and passes it here at each
+    /// site. Costs two `Instant::now()` calls per acquisition, which is the
+    /// same overhead the producer side has carried since v2.3.3 F1.
+    pub fn lock_timed(&self, acc: &mut Duration) -> std::sync::MutexGuard<'_, EmuCore> {
+        let t = Instant::now();
+        let guard = self.lock();
+        *acc += t.elapsed();
+        guard
     }
 
     /// Lock the core. Poisoning is ignored deliberately: a panic on one
@@ -716,7 +749,7 @@ impl EmuCore {
         if self.runahead_throttled || self.movie.status().mode != crate::movie_ui::MovieMode::Idle {
             return 0;
         }
-        configured.min(3)
+        configured.min(MAX_RUN_AHEAD_DEPTH)
     }
 
     /// v2.8.0 Phase 3 — run-ahead budget throttle with hysteresis, fed by
@@ -759,9 +792,16 @@ impl EmuCore {
             // frames and back again — measured on Bad Dudes at three toggles
             // per 45 s. Predicting the re-enabled cost makes the comparison
             // honest and the hysteresis real.
-            // Depth is 0-3 (config-clamped), so the widening is exact.
+            // Clamped to the depth that will actually RUN. `effective_run_ahead`
+            // caps at 3, but `run_ahead` is an unvalidated `u32` straight out of
+            // serde — nothing in `config.rs` clamps it — so a config saying
+            // `run_ahead = 10` reached here as 10 and predicted an 11x cost
+            // against a 4x reality, leaving run-ahead throttled forever. The
+            // comment this replaces asserted the value was "config-clamped",
+            // which was simply not true. (PR #357 review, found post-merge.)
+            let bounded_depth = depth.min(MAX_RUN_AHEAD_DEPTH);
             let predicted_with_runahead =
-                produce_p50_ms * (f32::from(u8::try_from(depth).unwrap_or(3)) + 1.0);
+                produce_p50_ms * (f32::from(u8::try_from(bounded_depth).unwrap_or(3)) + 1.0);
             if predicted_with_runahead < target * 0.70 {
                 self.runahead_throttled = false;
                 eprintln!(

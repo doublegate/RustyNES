@@ -44,7 +44,7 @@
         target_os = "macos"
     ))
 ))]
-pub use crate::wayland_presentation::PresentationClock;
+pub use crate::wayland_presentation::{PresentationClock, Scanout};
 
 /// Stub for platforms with no Wayland surface. Constructing one always fails,
 /// so the pacing code takes the declared-refresh path unchanged.
@@ -91,4 +91,49 @@ impl PresentationClock {
     pub const fn poll(&mut self) -> Option<f64> {
         None
     }
+
+    /// Unreachable — no value of this type can exist.
+    pub const fn enable_scanout_trace(&mut self) {}
+
+    /// Unreachable — no value of this type can exist.
+    #[must_use]
+    pub fn drain_scanouts(&mut self) -> Vec<Scanout> {
+        Vec::new()
+    }
+
+    /// Unreachable — no value of this type can exist.
+    #[must_use]
+    pub const fn discarded(&self) -> u64 {
+        0
+    }
+
+    /// Unreachable — no value of this type can exist.
+    #[must_use]
+    pub const fn clock_id(&self) -> Option<u32> {
+        None
+    }
+}
+
+/// Off-Wayland stand-in for [`crate::wayland_presentation::Scanout`], so the
+/// caller's signatures are identical on every target.
+#[cfg(not(all(
+    unix,
+    not(any(
+        target_os = "redox",
+        target_family = "wasm",
+        target_os = "android",
+        target_os = "ios",
+        target_os = "macos"
+    ))
+)))]
+#[derive(Debug, Clone, Copy)]
+pub struct Scanout {
+    /// Presentation time, nanoseconds.
+    pub t_ns: u64,
+    /// Compositor refresh estimate, nanoseconds.
+    pub refresh_ns: u32,
+    /// Per-output presentation sequence counter.
+    pub seq: u64,
+    /// Raw protocol flags.
+    pub flags: u32,
 }

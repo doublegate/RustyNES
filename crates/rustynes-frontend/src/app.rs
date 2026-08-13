@@ -792,6 +792,19 @@ pub struct App {
     /// v2.3.3 — render-loop cost (winit thread). See [`crate::perf::RenderPerf`].
     #[cfg(not(target_arch = "wasm32"))]
     render_perf: crate::perf::RenderPerf,
+    /// v2.3.3 — the spare half of the per-frame trace's double buffer.
+    ///
+    /// Swapped with `PerfStats`'s recording buffer each produced frame so both
+    /// allocations are recycled and the steady state allocates nothing —
+    /// recording happens under the emulator mutex, where a `Vec` growth would
+    /// perturb the very intervals being traced. Stays empty when the trace is
+    /// off. See `PerfStats::swap_trace`.
+    ///
+    /// Native-gated to match `render_perf` above — the trace is native-only
+    /// (it writes files), and the wasm `App` initializer does not construct
+    /// either field.
+    #[cfg(not(target_arch = "wasm32"))]
+    trace_scratch: Vec<crate::perf::FrameEvent>,
     /// v2.8.0 — opt-in interval CSV performance logger, driven by the Perf
     /// panel's "Logging" checkbox (default OFF). Writes under `perf-logs/`.
     #[cfg(not(target_arch = "wasm32"))]
@@ -1047,6 +1060,8 @@ impl App {
             refresh_source: "none",
             #[cfg(not(target_arch = "wasm32"))]
             render_perf: crate::perf::RenderPerf::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            trace_scratch: Vec::new(),
             last_redraw: None,
             presents_since_check: 0,
             perf_logger: crate::perf_log::PerfLogger::default(),
@@ -4846,7 +4861,7 @@ impl App {
     /// emulated frame. Script writes are gated off in a locked / deterministic
     /// session (netplay / TAS replay / RA-hardcore), like the cheat path.
     #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
-    fn pump_scripts(&mut self) {
+    fn pump_scripts(&mut self, lock_wait: &mut Duration) {
         // Console action (load / reload / stop) — taken without holding the
         // debugger borrow across the `&mut self` handler.
         let action = self
@@ -4918,7 +4933,7 @@ impl App {
         // deterministic run.
         let mut sprite0_hit_frame: Option<usize> = None;
         {
-            let mut guard = self.emu.lock();
+            let mut guard = self.emu.lock_timed(lock_wait);
             // Read the movie flags before the `nes` borrow — a `MutexGuard`
             // deref borrows the whole guard, so the two can't overlap.
             let movie_locked = guard.movie.is_playing() || guard.movie.is_recording();
@@ -5176,23 +5191,43 @@ impl App {
     /// *reads* the just-finished frame's exec/access logs, so determinism is
     /// unaffected. Runs on every build (the frontend always pulls `debug-hooks`),
     /// so it is not behind the `scripting` gate.
-    fn pump_watchpoints(&mut self) {
-        let mut step_satisfied = false;
-        let mut step_still_pending = false;
-        {
-            let Some(dbg) = self.debugger.as_mut() else {
-                return;
-            };
-            let mut guard = self.emu.lock();
-            if let Some(nes) = guard.nes.as_mut() {
-                dbg.pump_watchpoints(nes);
-                // v1.7.0 "Forge" Workstream C (C1) — a queued step verb
-                // (step-over / step-out / run-to-NMI / run-to-IRQ) was satisfied
-                // this frame; take the edge so we pause below.
-                step_satisfied = dbg.take_step_satisfied();
-                step_still_pending = dbg.step_pending();
-            }
-        } // emu lock + debugger borrow dropped here
+    // `std::time::Duration` spelled out: this function is compiled on wasm too,
+    // where the `Duration` import is cfg'd away.
+    /// v2.3.3 F12 — the emulator-touching half of the Watch-panel replay, run
+    /// from inside a lock the caller ALREADY holds.
+    ///
+    /// Split from the reaction below so this can live in
+    /// `post_produce_housekeeping`'s existing lock scope rather than taking its
+    /// own acquisition on the redraw path. Returns
+    /// `(step_satisfied, step_still_pending)`.
+    ///
+    /// `wants_emu_pump` gates the work: with the overlay hidden and no
+    /// watchpoints, breakpoints, heatmap, trace or pending step — the common
+    /// case — every consumer here is a no-op, and the predicate says so without
+    /// touching the emulator.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn pump_watchpoints_locked(
+        debugger: Option<&mut DebuggerOverlay>,
+        emu: &mut crate::emu::EmuCore,
+    ) -> (bool, bool) {
+        let Some(dbg) = debugger else {
+            return (false, false);
+        };
+        if !dbg.wants_emu_pump() {
+            return (false, false);
+        }
+        let Some(nes) = emu.nes.as_mut() else {
+            return (false, false);
+        };
+        dbg.pump_watchpoints(nes);
+        (dbg.take_step_satisfied(), dbg.step_pending())
+    }
+
+    /// v2.3.3 F12 — the reaction to a step verb, run AFTER the emulator lock is
+    /// released (it pauses, opens a panel and sets a status line, none of which
+    /// needs the core).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn apply_watchpoint_step(&mut self, step_satisfied: bool, step_still_pending: bool) {
         if step_satisfied {
             self.set_paused(true);
             if let Some(d) = self.debugger.as_mut() {
@@ -6892,10 +6927,26 @@ impl App {
             // exact-rate one-frame-per-pace path below. Stay on `Poll` so the
             // burst repeats immediately next `about_to_wait`.
             if self.input.fast_forward_held() && !self.netplay.is_active() {
-                self.pump_gamepad();
-                self.latch_input();
-                self.produce_fast_forward_frames();
-                self.post_produce_housekeeping();
+                // v2.3.3 (PR #357 review) — the emulation thread fast-forwards
+                // ITSELF: `publish_shared_input` pushes `set_fast_forward` into
+                // the control block, and the thread's own loop drains ticks and
+                // produces unthrottled. So the winit thread must not also
+                // produce here.
+                //
+                // This became reachable when the v2.3.3 F7 watchdog fix relaxed
+                // the `emu_thread_drives()` early return above to let
+                // `ActivePacing::Display` fall through — which was necessary for
+                // the watchdog, but dropped this branch's protection as a side
+                // effect. Two producers advancing one `Nes` gives double-speed
+                // advancement, doubled audio pushes, and a rewind ring fed from
+                // two threads. The watchdog branch below took the same guard for
+                // the same reason; this one was missed.
+                if !self.emu_thread_drives() {
+                    self.pump_gamepad();
+                    self.latch_input();
+                    self.produce_fast_forward_frames();
+                    self.post_produce_housekeeping();
+                }
                 if let Some(gfx) = self.gfx.as_ref() {
                     gfx.window.request_redraw();
                 }
@@ -6994,10 +7045,132 @@ impl App {
         }
     }
 
+    /// v2.3.3 — arm the per-frame trace, if requested. Default off; see
+    /// `perf_log::FRAME_TRACE_ENV`.
+    ///
+    /// Extracted from `on_gfx_ready` only to keep that function inside the line
+    /// budget; it is called at the same point and does nothing else.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn arm_frame_trace(&mut self) {
+        if !crate::perf_log::frame_trace_requested() {
+            return;
+        }
+        self.emu
+            .lock()
+            .perf
+            .enable_trace(Instant::now(), Self::monotonic_now_ns());
+        // Compositor-reported SCANOUT instants, the only measurement that
+        // answers what the display actually showed — present-return timestamps
+        // describe queue submission under triple-buffered Fifo.
+        if let Some(clock) = self.presentation_clock.as_mut() {
+            clock.enable_scanout_trace();
+        }
+        // Hand the logger the clock anchor BEFORE the trace file opens, so the
+        // header can state whether the two halves are joinable.
+        let anchor = self.emu.lock().perf.trace_origin_mono_ns();
+        let clk = self
+            .presentation_clock
+            .as_ref()
+            .and_then(crate::presentation_clock::PresentationClock::clock_id);
+        self.perf_logger.set_trace_anchor(anchor, clk);
+    }
+
+    /// v2.3.3 — `CLOCK_MONOTONIC` in nanoseconds, or `None` where unavailable.
+    ///
+    /// The anchor that lets the per-frame trace's produce/present rows be compared
+    /// to its compositor `scanout` rows. `wp_presentation` stamps presentations in
+    /// the clock named by its `clock_id` event (1 = `CLOCK_MONOTONIC`), and
+    /// `Instant` is that same clock on Linux — but opaque, so its absolute value
+    /// cannot be read. One reading taken at the trace origin converts the whole
+    /// series.
+    ///
+    /// Read through `libc` rather than a new dependency: it is already a direct
+    /// dep behind the default-on `emu-thread` feature (for the thread's `rtprio`
+    /// call). With that feature off this returns `None` and the trace simply says
+    /// the two halves are unaligned, rather than aligning them wrongly.
+    #[cfg(all(not(target_arch = "wasm32"), unix, feature = "emu-thread"))]
+    fn monotonic_now_ns() -> Option<u64> {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: `clock_gettime` writes only through the supplied pointer, which
+        // is a live, correctly-typed, stack-allocated `timespec` owned here for the
+        // duration of the call. `CLOCK_MONOTONIC` is unconditionally available on
+        // Linux. The return value is checked; on failure `ts` is left as
+        // initialised above and the result discarded.
+        #[allow(unsafe_code)]
+        let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut ts) };
+        if rc != 0 {
+            return None;
+        }
+        u64::try_from(ts.tv_sec)
+            .ok()?
+            .checked_mul(1_000_000_000)?
+            .checked_add(u64::try_from(ts.tv_nsec).ok()?)
+    }
+
+    /// No monotonic anchor available: the trace records that the produce/present
+    /// and `scanout` halves are in different, unjoinable clock domains.
+    #[cfg(all(not(target_arch = "wasm32"), not(all(unix, feature = "emu-thread"))))]
+    const fn monotonic_now_ns() -> Option<u64> {
+        None
+    }
+
+    /// v2.3.3 — fill the [`crate::perf::PerfView`] fields that live on the
+    /// WINIT thread rather than behind the emulator mutex.
+    ///
+    /// Both sources here are deliberately lock-free. The render series are
+    /// `App`-local because the render loop runs on this thread; the display-tick
+    /// counters are read straight off the control block's atomics. Routing
+    /// either through `emu.lock()` would add an acquisition per produced frame
+    /// to a purely diagnostic path — measurement perturbing the thing measured,
+    /// which is the failure this whole investigation is chasing.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn fill_winit_thread_perf(&self, perf_view: &mut crate::perf::PerfView) {
+        let r = self.render_perf.stats();
+        perf_view.render_ui = r.ui;
+        perf_view.render_gpu = r.gpu;
+        perf_view.render_total = r.total;
+        perf_view.render_wait = r.wait;
+        perf_view.render_work = r.work;
+        perf_view.render_lock = r.lock;
+        // Only the `emu-thread` half is conditional here — the function itself
+        // already carries the target gate.
+        #[cfg(feature = "emu-thread")]
+        if let Some(thread) = self.emu_thread.as_ref() {
+            let (ok, timeout, dropped) = thread.control().tick_counts();
+            perf_view.tick_ok = ok;
+            perf_view.tick_timeout = timeout;
+            perf_view.tick_dropped = dropped;
+        }
+    }
+
     /// v2.8.0 Phase 2 — per-produced-frame housekeeping shared by the
     /// wall-clock pacer (`pace_frames`) and the display-sync redraw path:
     /// FDS save flush + audio-health refresh + perf/fps/movie pushes into
     /// the debugger + the raw-cheat pull.
+    /// v2.8.0 — reconcile the perf logger with the panel checkbox, append this
+    /// interval's row, and return the destination/error note for the panel.
+    ///
+    /// Extracted from `post_produce_housekeeping` only to keep that function
+    /// inside the line budget; the sequence is unchanged.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn drive_perf_logger(&mut self, perf_view: &crate::perf::PerfView) -> Option<String> {
+        let log_enabled = self
+            .debugger
+            .as_ref()
+            .is_some_and(DebuggerOverlay::perf_logging_enabled);
+        let log_ctx = self
+            .perf_logger
+            .wants_start(log_enabled, &self.rom_label)
+            .then(|| self.perf_log_context());
+        self.perf_logger
+            .sync(log_enabled, &self.rom_label, || log_ctx.unwrap_or_default());
+        self.perf_logger.record(perf_view);
+        self.perf_logger.note()
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn post_produce_housekeeping(&mut self) {
         // v2.3.0 "Datum II" — refresh detached tool windows once per produced
@@ -7022,7 +7195,15 @@ impl App {
         // user can read them from the top toolbar. One scoped lock builds
         // the whole perf snapshot (the gfx fields are App-resident and are
         // filled in after the guard drops).
-        let (fps, movie_status, region, mut perf_view) = {
+        let (
+            fps,
+            movie_status,
+            region,
+            mut perf_view,
+            trace_events,
+            step_satisfied,
+            step_still_pending,
+        ) = {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
             // v2.8.0 Phase 0 — refresh the audio-queue health + snapshot
@@ -7037,6 +7218,25 @@ impl App {
             }
             let mut view = emu.perf.view();
             view.target_ms = emu.frame_duration.as_secs_f32() * 1000.0;
+            // v2.3.3 — drain the per-frame trace under the SAME lock that is
+            // already held (an O(1) `Vec` swap), and write it to disk after the
+            // guard drops. Doing the file I/O here would stall the producer and
+            // corrupt the very intervals being traced.
+            //
+            // A SWAP with a buffer owned by `App`, not a take: the two `Vec`s
+            // are recycled forever, so neither the recording side (which runs
+            // under this lock) nor this drain ever allocates in steady state.
+            // No-op when the trace is off.
+            let mut trace_events = std::mem::take(&mut self.trace_scratch);
+            emu.perf.swap_trace(&mut trace_events);
+
+            // v2.3.3 F12 — the Watch-panel replay runs HERE, inside the lock
+            // this path already holds, instead of taking its own on every
+            // redraw. Once per produced frame is also the correct cadence: at
+            // divisor 2 the old redraw-path call replayed each frame's logs
+            // twice.
+            let (step_satisfied, step_still_pending) =
+                Self::pump_watchpoints_locked(self.debugger.as_mut(), emu);
             // v2.8.0 Phase 3 — feed the run-ahead budget throttle. Keyed off
             // the median (steady-state) produce cost, not the p95 tail (which
             // on the emu thread is OS-deschedule noise, not run-ahead cost).
@@ -7056,8 +7256,24 @@ impl App {
                 .nes
                 .as_ref()
                 .map_or(rustynes_core::Region::Ntsc, rustynes_core::Nes::region);
-            (emu.current_fps(), emu.movie.status(), region, view)
+            (
+                emu.current_fps(),
+                emu.movie.status(),
+                region,
+                view,
+                trace_events,
+                step_satisfied,
+                step_still_pending,
+            )
         };
+        // Outside the lock: pausing / panel / status need no core access.
+        self.apply_watchpoint_step(step_satisfied, step_still_pending);
+        // Written outside the lock — see the drain comment above. Empty (and
+        // therefore a no-op) unless the trace is enabled.
+        self.perf_logger.record_trace(&trace_events);
+        // Hand the buffer back for reuse; `swap_trace` clears it on the way in,
+        // so the allocation survives and nothing is retained between frames.
+        self.trace_scratch = trace_events;
         let replay_info = self.build_replay_info(region);
         perf_view.pacing = self.pacing_label();
         // v1.5.0 H8 — the live audio DRC servo ratio + latency setpoint.
@@ -7070,32 +7286,11 @@ impl App {
             perf_view.present_mode_fell_back = gfx.present_mode_fell_back();
             perf_view.gpu_ms = gfx.last_gpu_pass_ms();
         }
-        // v2.3.3 — the render loop lives on this thread, so its stats are
-        // App-local rather than behind the emulator mutex.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let (ui, gpu, total, wait, work) = self.render_perf.stats();
-            perf_view.render_ui = ui;
-            perf_view.render_gpu = gpu;
-            perf_view.render_total = total;
-            perf_view.render_wait = wait;
-            perf_view.render_work = work;
-        }
+        self.fill_winit_thread_perf(&mut perf_view);
         // v2.8.0 — opt-in perf logging (the Perf panel "Logging" checkbox):
         // reconcile the logger with the checkbox, append the interval row,
         // and reflect the destination/error back into the panel.
-        let log_enabled = self
-            .debugger
-            .as_ref()
-            .is_some_and(DebuggerOverlay::perf_logging_enabled);
-        let log_ctx = self
-            .perf_logger
-            .wants_start(log_enabled, &self.rom_label)
-            .then(|| self.perf_log_context());
-        self.perf_logger
-            .sync(log_enabled, &self.rom_label, || log_ctx.unwrap_or_default());
-        self.perf_logger.record(&perf_view);
-        let log_note = self.perf_logger.note();
+        let log_note = self.drive_perf_logger(&perf_view);
         // v1.1.0 beta.1 (Workstream B) — push the held-button snapshot for the
         // input-display HUD (P1..P4; 4 players shown only with Four Score).
         let input_players = if self.config.input.four_score { 4 } else { 2 };
@@ -7412,7 +7607,7 @@ impl App {
     /// here — the latest possible point before `run_frame`. No-op outside
     /// the display regime (and during netplay, which paces wall-clock).
     #[cfg(not(target_arch = "wasm32"))]
-    fn display_sync_produce(&mut self) {
+    fn display_sync_produce(&mut self, lock_wait: &mut Duration) {
         // v2.8.0 Phase 5 increment 3 — when the emulation thread drives, it
         // produces the display-regime frame on the present tick
         // (`display_sync_after_present` notifies it); the winit thread only
@@ -7423,7 +7618,7 @@ impl App {
         if self.active_pacing != ActivePacing::Display
             || self.netplay.is_active()
             || self.ui.paused
-            || self.emu.lock().nes.is_none()
+            || self.emu.lock_timed(lock_wait).nes.is_none()
         {
             return;
         }
@@ -7441,7 +7636,7 @@ impl App {
         let t0 = Instant::now();
         self.produce_one_frame();
         {
-            let mut guard = self.emu.lock();
+            let mut guard = self.emu.lock_timed(lock_wait);
             let emu = &mut *guard;
             emu.perf.record_produce_cost(t0.elapsed());
             emu.perf.record_produced(Instant::now());
@@ -8051,6 +8246,12 @@ impl App {
         {
             debugger.force_perf_logging();
         }
+
+        // v2.3.3 — arm the per-frame trace at the same point, so the trace and
+        // the summary CSV cover the same window. Default off; see
+        // `perf_log::FRAME_TRACE_ENV`.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.arm_frame_trace();
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -8903,19 +9104,40 @@ impl ApplicationHandler<AppEvent> for App {
                 // the request must be in flight before the compositor commits
                 // this frame, and `poll` only drains what winit's socket reads
                 // have already delivered, so neither blocks.
+                // Split into three statements so the `&mut self.presentation_clock`
+                // borrow ends before `resolve_pacing` needs `&mut self`.
                 #[cfg(not(target_arch = "wasm32"))]
-                if let Some(clock) = self.presentation_clock.as_mut() {
+                let hz = self.presentation_clock.as_mut().and_then(|clock| {
                     clock.request_feedback();
-                    if let Some(hz) = clock.poll() {
-                        eprintln!("rustynes: compositor reports a {hz:.3} Hz display refresh.");
-                        self.dsync.measured_hz = Some(hz);
-                        // Re-resolve ONCE, on success. `poll` answers exactly
-                        // once per session, so the regime cannot oscillate —
-                        // the failure mode that made the previous, retry-based
-                        // attempt worse than leaving pacing alone.
-                        self.resolve_pacing();
-                    }
+                    clock.poll()
+                });
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(hz) = hz {
+                    eprintln!("rustynes: compositor reports a {hz:.3} Hz display refresh.");
+                    self.dsync.measured_hz = Some(hz);
+                    // Re-resolve ONCE, on success. `poll` answers exactly once
+                    // per session, so the regime cannot oscillate — the failure
+                    // mode that made the previous, retry-based attempt worse
+                    // than leaving pacing alone.
+                    self.resolve_pacing();
                 }
+                // Drained AFTER `poll`, because `poll` is what dispatches the
+                // Wayland queue — draining earlier would read a buffer this
+                // frame had not filled yet. Empty unless the trace is on.
+                #[cfg(not(target_arch = "wasm32"))]
+                let scanouts = self
+                    .presentation_clock
+                    .as_mut()
+                    // Via the platform-neutral shim, not the Wayland module
+                    // directly — that indirection is the whole point of
+                    // `presentation_clock` and this call site must stay
+                    // target-agnostic.
+                    .map_or_else(
+                        Vec::new,
+                        crate::presentation_clock::PresentationClock::drain_scanouts,
+                    );
+                #[cfg(not(target_arch = "wasm32"))]
+                self.perf_logger.record_scanouts(&scanouts);
                 // Native: rendering is decoupled from emulation — this
                 // branch only presents the most recent framebuffer.
                 // Emulator advance happens in `about_to_wait` on a
@@ -8933,22 +9155,52 @@ impl ApplicationHandler<AppEvent> for App {
                 #[cfg(target_arch = "wasm32")]
                 self.pace_and_produce_wasm();
 
+                // v2.3.3 — total time this redraw spends BLOCKED on the
+                // emulator mutex, summed over EVERY acquisition in the measured
+                // window. Subtracted out of render work so that series means
+                // work alone; see `EmuHandle::lock_timed`.
+                //
+                // Declared HERE, at the top of the window, not just before the
+                // render branches: `display_sync_produce`, `pump_scripts` and
+                // `pump_watchpoints` below each acquire the mutex too, and the
+                // first version of this accumulator started after them. It
+                // therefore under-reported, which matters because the
+                // conclusion drawn from `rlock` was that the winit thread does
+                // not block — a conclusion an incomplete measurement cannot
+                // support. Caught in review on PR #358.
+                //
+                // Deliberately NOT cfg-gated even though only the native build
+                // reads it: the acquisition sites are shared between native and
+                // wasm, so gating the binding leaves those sites referencing a
+                // name that does not exist on wasm (which broke both wasm
+                // builds once already this release). Fully qualified because the
+                // `Duration` import is itself native-only.
+                let mut lock_wait = std::time::Duration::ZERO;
+
                 // v2.8.0 Phase 2 — display-sync regime (native): produce
                 // exactly one emulated frame per redraw, BEFORE presenting.
                 #[cfg(not(target_arch = "wasm32"))]
-                self.display_sync_produce();
+                self.display_sync_produce(&mut lock_wait);
 
                 // v1.1.0 beta.3 (Workstream E) — pump the Lua engine for this
                 // redraw (after the frame is produced, before present), so its
                 // overlay draws are ready for the egui pass below.
                 #[cfg(all(feature = "scripting", not(target_arch = "wasm32")))]
-                self.pump_scripts();
+                self.pump_scripts(&mut lock_wait);
 
-                // v1.6.0 "Studio" Workstream C — drive the debugger Watch panel's
-                // observational replay (conditional breakpoints / watchpoints /
-                // watch window / conditional trace). Runs after the frame is
-                // produced; observational-only, so determinism holds.
-                self.pump_watchpoints();
+                // v2.3.3 F12 — the debugger Watch-panel replay used to run HERE,
+                // once per redraw, taking the emulator mutex unconditionally.
+                // Two things were wrong with that. It was the dominant source of
+                // winit-thread lock contention (`rlock` p95 8.7 ms against an
+                // 8.334 ms refresh period — enough to miss the refresh, which is
+                // how 34.7% of frames ended up displayed for the wrong
+                // duration). And at divisor 2 there are two redraws per produced
+                // frame, so it REPLAYED EACH FRAME'S LOGS TWICE.
+                //
+                // It now runs from `post_produce_housekeeping`, inside the lock
+                // that path already holds — once per produced frame, which is
+                // both the correct cadence for per-frame telemetry and zero
+                // additional acquisitions on the redraw path.
 
                 // v2.8.0 Phase 3 — the renderer presents `present_fb` (the
                 // harvested per-frame framebuffer; with run-ahead it is the
@@ -9116,8 +9368,12 @@ impl ApplicationHandler<AppEvent> for App {
                 // without re-locking the emu (the locked branch holds the
                 // guard across the pass). Native-only.
                 #[cfg(not(target_arch = "wasm32"))]
-                let ss_sha: Option<[u8; 32]> =
-                    self.emu.lock().nes.as_ref().map(|n| *n.rom_sha256());
+                let ss_sha: Option<[u8; 32]> = self
+                    .emu
+                    .lock_timed(&mut lock_wait)
+                    .nes
+                    .as_ref()
+                    .map(|n| *n.rom_sha256());
                 #[cfg(not(target_arch = "wasm32"))]
                 let ss_dir: Option<PathBuf> = self.data_dir.clone();
                 #[cfg(not(target_arch = "wasm32"))]
@@ -9198,7 +9454,7 @@ impl ApplicationHandler<AppEvent> for App {
                     // this branch later re-takes the lock is that the debugger pass
                     // needs a live `&mut Nes`, which the common branch does not.
                     {
-                        let mut guard = self.emu.lock();
+                        let mut guard = self.emu.lock_timed(&mut lock_wait);
                         let emu = &mut *guard;
                         // Backfill the presented framebuffer into staging under the
                         // held lock (a ROM may or may not be loaded). The debugger
@@ -9407,9 +9663,14 @@ impl ApplicationHandler<AppEvent> for App {
                         // heartbeat and `RenderPerf` is not compiled, so
                         // timing it here would be a use of an undeclared
                         // binding (which is exactly what it was).
+                        // v2.3.3 — the acquire is timed into `lock_wait` and
+                        // `t_ui` starts AFTER it, so `rui` is the egui build
+                        // alone. Starting the UI clock before the acquire would
+                        // fold producer blocking into the UI phase, which is the
+                        // same defect the F8 wait clock had.
+                        let mut guard = self.emu.lock_timed(&mut lock_wait);
                         #[cfg(not(target_arch = "wasm32"))]
                         let t_ui = Instant::now();
-                        let mut guard = self.emu.lock();
                         let nes_for_render = guard.nes.as_mut();
                         let (out, prepared) = debugger.run_shell_ui(
                             &window,
@@ -9534,7 +9795,7 @@ impl ApplicationHandler<AppEvent> for App {
                             self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
                         }
                     } else {
-                        let mut guard = self.emu.lock();
+                        let mut guard = self.emu.lock_timed(&mut lock_wait);
                         let emu = &mut *guard;
                         // v2.1.2 F2.1 — Vs. `DualSystem`: compose the two harvested
                         // console framebuffers (main = `present_fb`, sub =
@@ -9874,9 +10135,13 @@ impl ApplicationHandler<AppEvent> for App {
                             .record_gpu(Duration::from_secs_f32(gpu_ms / 1000.0));
                     }
                     // Paired so the derived work sample comes from this redraw's
-                    // own total and wait, never from two different redraws.
-                    self.render_perf
-                        .record_redraw(redraw_signal.elapsed(), t_present.elapsed());
+                    // own total, wait and lock-blocking, never from different
+                    // redraws.
+                    self.render_perf.record_redraw(
+                        redraw_signal.elapsed(),
+                        t_present.elapsed(),
+                        lock_wait,
+                    );
                 }
                 match render_result {
                     Ok(()) => {

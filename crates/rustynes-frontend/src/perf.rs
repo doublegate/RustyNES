@@ -201,6 +201,43 @@ pub struct RenderPerf {
     /// error announced itself. Differencing the two timings of the same redraw
     /// and ranking the result is the only way to get a real work percentile.
     work: SampleRing,
+    /// v2.3.3 — wall time the WINIT thread spent blocked acquiring the emulator
+    /// mutex during one redraw, summed over every acquisition in the handler.
+    ///
+    /// The mirror of [`PerfStats::produce_wait`], which measures exactly this
+    /// for the producer. Only the producer side was ever measured, so a redraw
+    /// blocked behind a produce was billed entirely as render WORK — the third
+    /// instance in this campaign of blocking recorded as work, after `cost_*`
+    /// and `wait` itself. Six acquisitions sit in the redraw handler and none
+    /// of them was timed.
+    ///
+    /// Subtracted out of `work` so that series finally means work alone:
+    /// `work = total - wait - lock`.
+    lock: SampleRing,
+}
+
+/// One snapshot of every [`RenderPerf`] series.
+///
+/// A named struct rather than the tuple this used to return: at four elements
+/// the positional form was already easy to mis-destructure, and `lock` made it
+/// six. A caller that swaps two `IntervalStats` in a tuple pattern gets no
+/// compile error and silently mislabels its output — which, in an investigation
+/// that has already retracted one conclusion to a mislabelled metric, is not a
+/// theoretical risk.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RenderStats {
+    /// egui shell build.
+    pub ui: IntervalStats,
+    /// GPU encode + submit + present.
+    pub gpu: IntervalStats,
+    /// Whole redraw handler, end to end.
+    pub total: IntervalStats,
+    /// Blocking present alone.
+    pub wait: IntervalStats,
+    /// `total - wait - lock`.
+    pub work: IntervalStats,
+    /// Emulator-mutex blocking on the winit thread.
+    pub lock: IntervalStats,
 }
 
 impl RenderPerf {
@@ -224,41 +261,35 @@ impl RenderPerf {
         self.wait.push(d.as_secs_f32() * 1000.0);
     }
 
-    /// Record one redraw's total and blocking present together, deriving the
-    /// work sample from the same pair.
+    /// Record one redraw's total, blocking present, and emulator-mutex wait
+    /// together, deriving the work sample from the same three.
     ///
-    /// Prefer this to calling [`Self::record_total`] and [`Self::record_wait`]
-    /// separately: the work series is only meaningful when both halves come
-    /// from the SAME redraw, and pairing them here makes that structural
-    /// rather than a convention a caller has to remember. Clamped at zero —
-    /// the two clocks stop at slightly different points, so a near-zero-work
-    /// redraw can otherwise produce a small negative.
-    pub fn record_redraw(&mut self, total: Duration, wait: Duration) {
+    /// Prefer this to recording the parts separately: the work series is only
+    /// meaningful when every component comes from the SAME redraw, and pairing
+    /// them here makes that structural rather than a convention a caller has to
+    /// remember. Clamped at zero — the clocks stop at slightly different points,
+    /// so a near-zero-work redraw can otherwise produce a small negative.
+    pub fn record_redraw(&mut self, total: Duration, wait: Duration, lock: Duration) {
         let total_ms = total.as_secs_f32() * 1000.0;
         let wait_ms = wait.as_secs_f32() * 1000.0;
+        let lock_ms = lock.as_secs_f32() * 1000.0;
         self.total.push(total_ms);
         self.wait.push(wait_ms);
-        self.work.push((total_ms - wait_ms).max(0.0));
+        self.lock.push(lock_ms);
+        self.work.push((total_ms - wait_ms - lock_ms).max(0.0));
     }
 
-    /// `(ui, gpu, total, wait, work)` summaries.
+    /// `(ui, gpu, total, wait, work, lock)` summaries.
     #[must_use]
-    pub fn stats(
-        &self,
-    ) -> (
-        IntervalStats,
-        IntervalStats,
-        IntervalStats,
-        IntervalStats,
-        IntervalStats,
-    ) {
-        (
-            self.ui.stats(),
-            self.gpu.stats(),
-            self.total.stats(),
-            self.wait.stats(),
-            self.work.stats(),
-        )
+    pub fn stats(&self) -> RenderStats {
+        RenderStats {
+            ui: self.ui.stats(),
+            gpu: self.gpu.stats(),
+            total: self.total.stats(),
+            wait: self.wait.stats(),
+            work: self.work.stats(),
+            lock: self.lock.stats(),
+        }
     }
 
     /// Drop all samples (new ROM / regime change).
@@ -273,6 +304,7 @@ impl RenderPerf {
         // tell render work from vblank waiting.
         self.wait.clear();
         self.work.clear();
+        self.lock.clear();
     }
 }
 
@@ -319,13 +351,160 @@ pub struct PerfStats {
     pub produced_dropped: u64,
     /// Latest audio-queue health (native; zeroed on wasm until Phase 6).
     pub audio: AudioHealth,
+    /// v2.3.3 — per-event trace buffer. `None` unless the trace is enabled.
+    ///
+    /// See [`FrameEvent`] for why a per-event record is needed at all when
+    /// percentile summaries already exist.
+    trace: Option<TraceBuf>,
+}
+
+/// v2.3.3 — one traced frame event, buffered in memory and drained by the
+/// logger.
+///
+/// **Why this exists.** Every other instrument in this frontend reports
+/// *percentile summaries over a ring*, which destroys temporal order. A
+/// `produced` p95 of 26 ms is equally consistent with an alternating 8/25 ms
+/// cadence (a shudder), isolated hitches (a stutter), and a slow beat — three
+/// symptoms that feel completely different to a player and have three different
+/// causes. No summary can separate them; only the sequence can. Likewise
+/// `presented_dups` folds the refreshes-per-frame *pattern* into one running
+/// total, so at divisor 2 a healthy `2,2,2,2` and a ragged `1,3,2,2,1,3` are
+/// indistinguishable — and the ragged one is what "frame forward/backward"
+/// looks like.
+#[derive(Debug, Clone, Copy)]
+pub struct FrameEvent {
+    /// Microseconds since the trace began.
+    pub t_us: u64,
+    /// Microseconds since the previous event of the SAME kind (0 for the
+    /// first). This is the interval whose sequence the analysis reads.
+    pub interval_us: u32,
+    /// On a present: produced frames seen since the previous present — the
+    /// refreshes-per-frame pattern. Always 0 on a produce event.
+    pub since_present: u32,
+    /// `true` for a present, `false` for a produce.
+    pub is_present: bool,
+}
+
+/// Reserved capacity for the per-event trace buffer.
+///
+/// Headroom for a stall, not a working size — the buffer is drained every
+/// produced frame, so steady-state occupancy is a handful of events. Sized at
+/// ~1 s of both event kinds at 120 Hz, times 8.
+const TRACE_CAPACITY: usize = 4096;
+
+/// Trace state: the origin instant plus the pending records.
+#[derive(Debug)]
+struct TraceBuf {
+    /// v2.3.3 — `CLOCK_MONOTONIC` nanoseconds at [`Self::origin`], when the
+    /// platform can supply it.
+    ///
+    /// This is what makes the produce/present rows joinable to the `scanout`
+    /// rows. Those carry the compositor's own presentation timestamps, which
+    /// live in the clock named by `wp_presentation`'s `clock_id` (1 =
+    /// `CLOCK_MONOTONIC`); `Instant` is the same clock on Linux but opaque, so
+    /// one anchor pair taken at the origin converts the whole series. Without
+    /// it the two halves of the trace describe the same run in incomparable
+    /// units — which is exactly the mistake that invalidated F10.
+    origin_mono_ns: Option<u64>,
+    origin: Instant,
+    last_produced: Option<Instant>,
+    last_presented: Option<Instant>,
+    recs: Vec<FrameEvent>,
 }
 
 impl PerfStats {
+    /// Enable the per-event frame trace.
+    ///
+    /// Capacity is reserved up front so the hot path never reallocates:
+    /// recording happens while the emulator mutex is held, and a `Vec` growth
+    /// there would be exactly the kind of measurement artefact this trace
+    /// exists to avoid. The buffer is drained **once per produced frame** by
+    /// `App::post_produce_housekeeping`, so a handful of events is the real
+    /// steady-state occupancy; the reservation is headroom for a stall, not a
+    /// working size.
+    pub fn enable_trace(&mut self, now: Instant, origin_mono_ns: Option<u64>) {
+        self.trace = Some(TraceBuf {
+            origin_mono_ns,
+            origin: now,
+            last_produced: None,
+            last_presented: None,
+            recs: Vec::with_capacity(TRACE_CAPACITY),
+        });
+    }
+
+    /// Whether the per-event trace is active.
+    #[must_use]
+    pub const fn trace_enabled(&self) -> bool {
+        self.trace.is_some()
+    }
+
+    /// `CLOCK_MONOTONIC` nanoseconds at the trace origin, if the platform
+    /// supplied it. The anchor that makes produce/present rows comparable to
+    /// compositor `scanout` rows. `wp_presentation` stamps presentations in the
+    /// clock named by its `clock_id` event (1 = `CLOCK_MONOTONIC`), which is the
+    /// same clock `Instant` uses on Linux but opaque — so one anchor pair taken
+    /// at the origin converts the whole series.
+    #[must_use]
+    pub fn trace_origin_mono_ns(&self) -> Option<u64> {
+        self.trace.as_ref().and_then(|t| t.origin_mono_ns)
+    }
+
+    /// Swap the buffered events into `spare`, leaving the trace enabled and its
+    /// buffer empty **with its capacity intact**.
+    ///
+    /// A swap rather than `std::mem::take`, which was the first implementation
+    /// and was wrong in a way that defeated the point of this whole struct:
+    /// `take` leaves a `Vec::new()` behind — capacity **zero** — so every
+    /// subsequent `trace_event` push started from nothing and reallocated,
+    /// *while the emulator mutex was held*. That is precisely the measurement
+    /// artefact `Vec::with_capacity` above exists to prevent, reintroduced one
+    /// function later. Caught in review on PR #358 by two reviewers
+    /// independently.
+    ///
+    /// Swapping recycles both buffers forever, so the steady state allocates
+    /// nothing at all: the caller's drained `Vec` becomes the next frame's
+    /// recording buffer.
+    pub fn swap_trace(&mut self, spare: &mut Vec<FrameEvent>) {
+        spare.clear();
+        if let Some(t) = self.trace.as_mut() {
+            std::mem::swap(&mut t.recs, spare);
+        }
+    }
+
+    /// Push one event into the trace, if enabled.
+    fn trace_event(&mut self, ts: Instant, is_present: bool, since_present: u32) {
+        let Some(t) = self.trace.as_mut() else {
+            return;
+        };
+        let last = if is_present {
+            &mut t.last_presented
+        } else {
+            &mut t.last_produced
+        };
+        let interval_us = last.map_or(0, |p| {
+            u32::try_from(ts.saturating_duration_since(p).as_micros()).unwrap_or(u32::MAX)
+        });
+        *last = Some(ts);
+        // Bound the buffer: a caller that enables the trace and never drains
+        // must not grow it without limit. Dropping the NEWEST here (rather than
+        // sliding) is deliberate — a trace with a gap at a known point is
+        // honest, whereas a silently re-based window would misreport intervals.
+        if t.recs.len() < 1 << 20 {
+            t.recs.push(FrameEvent {
+                t_us: u64::try_from(ts.saturating_duration_since(t.origin).as_micros())
+                    .unwrap_or(u64::MAX),
+                interval_us,
+                since_present,
+                is_present,
+            });
+        }
+    }
+
     /// Record a produced-frame completion timestamp.
     pub fn record_produced(&mut self, ts: Instant) {
         self.produced.record(ts);
         self.produced_since_present = self.produced_since_present.saturating_add(1);
+        self.trace_event(ts, false, 0);
     }
 
     /// Record a successful surface present. Also derives the present/produce
@@ -338,6 +517,9 @@ impl PerfStats {
             0 => self.presented_dups = self.presented_dups.saturating_add(1),
             n => self.produced_dropped = self.produced_dropped.saturating_add(u64::from(n - 1)),
         }
+        // Traced BEFORE the reset: the count at this instant is the
+        // refreshes-per-frame datum the whole trace exists to capture.
+        self.trace_event(ts, true, self.produced_since_present);
         self.produced_since_present = 0;
     }
 
@@ -429,9 +611,25 @@ pub struct PerfView {
     pub render_gpu: IntervalStats,
     /// v2.3.3 F8 — blocking-present (vblank wait) cost. See [`RenderPerf`].
     pub render_wait: IntervalStats,
-    /// v2.3.3 F8 — render work, `total - wait` per redraw. A real series, not
-    /// a percentile-wise subtraction of the two above. See [`RenderPerf`].
+    /// v2.3.3 F8 — render work, `total - wait - lock` per redraw. A real
+    /// series, not a percentile-wise subtraction. See [`RenderPerf`].
     pub render_work: IntervalStats,
+    /// v2.3.3 — emulator-mutex blocking on the WINIT thread during a redraw.
+    /// The mirror of [`Self::produce_wait`]. See [`RenderPerf`].
+    pub render_lock: IntervalStats,
+    /// v2.3.3 — display-tick accounting, read lock-free from
+    /// `EmuControl::tick_counts`: `(present-driven, watchdog, dropped)`.
+    ///
+    /// Diagnostic for the shudder investigation. Under a healthy display-sync
+    /// the watchdog count should stay ~0 — every frame driven by an actual
+    /// present. A non-trivial watchdog count means frames are being paced by
+    /// the 25 ms `DISPLAY_TICK_TIMEOUT` instead, which would show up as exactly
+    /// the 25 ms+ `produced` intervals under investigation.
+    pub tick_ok: u64,
+    /// Watchdog-driven frames. See [`Self::tick_ok`].
+    pub tick_timeout: u64,
+    /// Present ticks dropped on a full depth-1 channel. See [`Self::tick_ok`].
+    pub tick_dropped: u64,
     /// v2.3.3 — whole redraw handler cost (winit thread). See [`RenderPerf`].
     pub render_total: IntervalStats,
     /// See [`PerfStats::catchup_bursts`].
@@ -510,6 +708,79 @@ mod tests {
         assert!((s.p99_ms - 99.0).abs() < f32::EPSILON);
         assert!((s.max_ms - 100.0).abs() < f32::EPSILON);
         assert!((s.mean_ms - 50.5).abs() < 0.01);
+    }
+
+    /// Percentiles cannot decrease. Trivially true of a ranked series, and
+    /// asserted anyway because **this repo published a table where it was
+    /// false** — the v2.3.3 F8 write-up derived `work p95` as
+    /// `total p95 - wait p95`, which is a difference of percentiles and not a
+    /// percentile of the difference, and printed a `p95` BELOW its `p50`. The
+    /// impossibility sat in the document through authoring, review and a
+    /// commit message before a reviewer caught the underlying error.
+    ///
+    /// This pins the invariant at the only place it can be checked cheaply, so
+    /// any future series that reaches `IntervalStats` by a derivation rather
+    /// than by ranking fails here instead of in a published table.
+    #[test]
+    fn percentiles_never_decrease() {
+        // Several shapes: uniform, heavy-tailed, single-valued, tiny.
+        let shapes: [&[f32]; 4] = [
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
+            &[0.01, 0.01, 0.01, 0.02, 0.02, 0.03, 16.0, 22.0],
+            &[5.0; 12],
+            &[42.0],
+        ];
+        for shape in shapes {
+            let mut r = SampleRing::default();
+            for v in shape {
+                r.push(*v);
+            }
+            let s = r.stats();
+            assert!(
+                s.p50_ms <= s.p95_ms,
+                "p50 {} > p95 {} for {shape:?}",
+                s.p50_ms,
+                s.p95_ms
+            );
+            assert!(
+                s.p95_ms <= s.p99_ms,
+                "p95 {} > p99 {} for {shape:?}",
+                s.p95_ms,
+                s.p99_ms
+            );
+            assert!(
+                s.p99_ms <= s.max_ms,
+                "p99 {} > max {} for {shape:?}",
+                s.p99_ms,
+                s.max_ms
+            );
+        }
+    }
+
+    /// The work series must be a real ranked series, not a subtraction of
+    /// percentiles — the F8 defect above, pinned at the recording API.
+    #[test]
+    fn render_work_is_a_ranked_series_not_a_percentile_difference() {
+        let mut p = RenderPerf::default();
+        // A redraw population where the naive derivation goes wrong: work is
+        // large exactly when wait is small, so `p95(total) - p95(wait)`
+        // understates the work tail badly.
+        for i in 0..100 {
+            let (total, wait) = if i % 10 == 0 {
+                (Duration::from_millis(20), Duration::from_micros(100))
+            } else {
+                (Duration::from_micros(16_600), Duration::from_millis(16))
+            };
+            p.record_redraw(total, wait, Duration::ZERO);
+        }
+        let s = p.stats();
+        // The real work p95 must see the 19.9 ms redraws, not ~0.6 ms.
+        assert!(
+            s.work.p95_ms > 10.0,
+            "work p95 {} lost the tail — is it being derived rather than ranked?",
+            s.work.p95_ms
+        );
+        assert!(s.work.p50_ms <= s.work.p95_ms);
     }
 
     #[test]
