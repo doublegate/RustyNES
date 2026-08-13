@@ -119,36 +119,165 @@ def pct(xs: list[float], q: float) -> float:
     return s[i]
 
 
-def read_anchor(path: Path) -> float | None:
-    """Seconds to add to a ``t_s`` to reach the compositor's clock domain."""
+def read_anchor(path: Path) -> tuple[float | None, int | None]:
+    """``(offset_seconds, clock_id)`` recovered from the trace's comment rows.
+
+    Scans the WHOLE file, not just the header. ``clock_id`` cannot be in the
+    header: it is only known after the Wayland registry answers, which happens
+    several frames after the trace file is opened, so it is appended as a
+    comment row at the point it becomes available (see
+    ``PerfLogger::note_clock_id``). Traces written before that fix carry
+    ``clock_id = unknown`` and nothing else, which is why the join below is
+    verified empirically rather than trusted.
+    """
+    off: float | None = None
+    clk: int | None = None
     with path.open() as fh:
         for ln in fh:
             if not ln.startswith("#"):
-                return None
+                continue
             if "anchor_mono_ns" in ln and "none" not in ln:
                 try:
-                    return int(ln.split("=", 1)[1].strip()) / 1e9
+                    off = int(ln.split("=", 1)[1].strip()) / 1e9
                 except ValueError:
-                    return None
-    return None
+                    off = None
+            elif "clock_id" in ln and "unknown" not in ln:
+                try:
+                    clk = int(ln.split("=", 1)[1].strip())
+                except ValueError:
+                    clk = None
+    return off, clk
 
 
-def scanout_report(
-    path: Path, rows: list[dict], offset: float | None, warmup_s: float
-) -> None:
-    """Scanouts per produced frame — what the DISPLAY actually showed.
+def join_is_sound(
+    produce: list[float], scanout_abs: list[float], offset: float, clk: int | None
+) -> tuple[bool, str]:
+    """Verify the two halves really are in one clock domain before joining.
 
-    At divisor N the intended answer is exactly N for every frame. Anything else
-    is a frame held for the wrong length of time, which is what the eye reads as
-    judder. Requires the anchor: without it the two series are in different
-    clock domains and cannot be joined (see v2.3.3 F10, where exactly that
-    mistake invalidated a published result).
+    The docstring of this module has always said an unjoinable trace must be
+    reported as such rather than joined anyway. It was not enforced: the
+    ``clock_id`` was absent from every trace ever written, and the analysis
+    joined regardless. This is the enforcement, and it is deliberately
+    EMPIRICAL rather than a ``clk == 1`` assertion — the span test works on the
+    traces already on disk, which have no id at all, and it would also catch a
+    compositor that reports ``CLOCK_MONOTONIC`` and then stamps something else.
+
+    Shifted scanouts must cover substantially the same wall-clock interval as
+    the produce rows. A different clock domain (``CLOCK_REALTIME``, a
+    per-compositor epoch) misses by years, not milliseconds.
     """
-    sc = sorted(float(r["t_s"]) for r in rows if r["event"] == "scanout")
-    if not sc:
+    if not produce or not scanout_abs:
+        return False, "no rows to join"
+    lo_p, hi_p = produce[0], produce[-1]
+    lo_s, hi_s = scanout_abs[0] - offset, scanout_abs[-1] - offset
+    span = max(hi_p - lo_p, 1e-9)
+    skew = max(abs(lo_s - lo_p), abs(hi_s - hi_p))
+    # Endpoint skew ALONE is not sufficient, and the `+ 1.0` slack is what makes
+    # it insufficient: two intervals can both sit inside that tolerance while
+    # sharing no time at all. Produce over 0.000-0.150 s and shifted scanouts
+    # over 0.900-1.050 s have a skew of 0.9 s, pass `0.05 * span + 1.0`, and are
+    # completely disjoint — every joined sample would then pair a produce with a
+    # scanout that happened at a different moment. Require actual INTERSECTION,
+    # which is the property the join needs and the one the skew test only
+    # approximates. Raised in review on PR #362.
+    overlap = min(hi_p, hi_s) - max(lo_p, lo_s)
+    if overlap < 0.5 * span:
+        return False, (
+            f"clock domains do not overlap enough: produce spans "
+            f"{lo_p:.3f}-{hi_p:.3f} s, shifted scanouts span {lo_s:.3f}-{hi_s:.3f} s "
+            f"(intersection {max(overlap, 0.0):.3f} s of a {span:.3f} s produce span)"
+        )
+    if skew > 0.05 * span + 1.0:
+        return False, (
+            f"clock domains disagree: produce spans {lo_p:.3f}-{hi_p:.3f} s, "
+            f"shifted scanouts span {lo_s:.3f}-{hi_s:.3f} s (skew {skew:.3f} s)"
+        )
+    # `clk or ...` would be wrong here: POSIX `CLOCK_REALTIME` is 0, which is
+    # falsey, so a compositor stamping REALTIME — precisely the case this check
+    # exists to catch — would be reported as "unrecorded" rather than named.
+    if clk == 1:
+        named = "confirmed CLOCK_MONOTONIC"
+    elif clk is None:
+        named = "id unrecorded"
+    else:
+        named = f"id={clk}" + (" = CLOCK_REALTIME, NOT monotonic" if clk == 0 else "")
+    return True, f"join verified by span overlap (skew {skew * 1000:.0f} ms, {named})"
+
+
+def display_cadence(rows: list[dict], warmup_s: float) -> None:
+    """THE display-duration metric: did each present alternate as the divisor demands?
+
+    ``since_present`` is the count of frames produced since the previous
+    present, recorded on the present itself. At divisor D the healthy pattern is
+    D-1 presents carrying nothing, then one carrying a frame — so the **gap
+    between successive frame-carrying presents is exactly D, every time**. A gap
+    of D+1 is a frame that stayed on screen a refresh too long; D-1, one too
+    short. That is what the eye reads as judder.
+
+    The divisor is INFERRED as the modal gap rather than assumed, because the
+    trace does not record it. The first version of this function tested
+    run-lengths of equal values against 1, which is the correct test only at
+    divisor 2: at divisor 3 the healthy sequence is ``0,0,1,0,0,1``, whose runs
+    are ``2,1,2,1``, so a perfectly-paced 180 Hz panel would have scored ~50%
+    wrong. Raised in review on PR #362 — an assumption that happened to hold on
+    the reporting host, which is the kind this campaign keeps having to correct.
+
+    This is a purely DISPLAY-SIDE series: both the value and the instant come
+    from the present. Nothing about when the producer happened to run can leak
+    into it, which is exactly the property `scanouts_per_produce` lacks.
+    """
+    # `r["since_present"] is not None` guards the final row: a capture ends by
+    # killing the process, so the last line is routinely a partial write and
+    # `DictReader` fills the missing fields with `None`. Without this the whole
+    # analysis dies on a `TypeError` at the very last row of a good trace.
+    sp = [
+        int(r["since_present"])
+        for r in rows
+        if r["event"] == "present" and float(r["t_s"]) >= warmup_s
+    ]
+    # Index of every present that carried at least one new frame; the gaps
+    # between them are the per-frame display durations, in refreshes.
+    carried = [i for i, v in enumerate(sp) if v > 0]
+    gaps = [b - a for a, b in zip(carried, carried[1:])]
+    # A rate needs a denominator worth dividing by. Without this a four-event
+    # trace prints "1/4 = 25.00%" beside a real 3724-sample measurement, in the
+    # same column, with nothing to say which is which.
+    if len(gaps) < 100:
+        print(f"\n  [display cadence] only {len(gaps)} displayed frames after "
+              "warmup — too few to rate")
         return
-    print(f"\n  [scanout] {len(sc)} compositor-reported presentations")
-    iv = [(b - a) * 1000.0 for a, b in zip(sc, sc[1:])]
+    hist = Counter(gaps)
+    divisor = hist.most_common(1)[0][0]
+    bad = len(gaps) - hist[divisor]
+    print(f"\n  [display cadence] divisor {divisor} (inferred as the modal gap) — "
+          f"frames shown for the WRONG duration: "
+          f"{bad}/{len(gaps)} = {100.0 * bad / len(gaps):.2f}%")
+    print(f"    refreshes per displayed frame : {dict(sorted(hist.items()))}")
+
+
+def scanouts_per_produce(
+    rows: list[dict], offset: float | None, clk: int | None, warmup_s: float
+) -> None:
+    """Refreshes between consecutive PRODUCE instants — producer-side jitter.
+
+    **Read the name literally.** This counts scanouts falling between two
+    producer timestamps, so a produce that fires 3 ms early followed by one 3 ms
+    late scores ``(1, 3)`` **even when the display showed both frames for
+    exactly two refreshes each**. It is a measure of how regularly the emulator
+    thread ran, NOT of what the display did.
+
+    It was quoted as a display metric in the first version of v2.3.3 F13, and it
+    disagrees with the real one by a factor of ~20 on the same captures (32.7%
+    vs 1.6% pooled over sixteen). That is the same error as F10 — a display
+    claim computed from a producer-side series — committed while building the
+    instrument meant to prevent it. Kept, because producer-side regularity is
+    worth seeing; renamed and labelled so it cannot be mistaken again.
+    """
+    sc_abs = sorted(float(r["t_s"]) for r in rows if r["event"] == "scanout")
+    if not sc_abs:
+        return
+    print(f"\n  [scanout] {len(sc_abs)} compositor-reported presentations")
+    iv = [(b - a) * 1000.0 for a, b in zip(sc_abs, sc_abs[1:])]
     if iv:
         med = statistics.median(iv)
         q = Counter(max(1, round(x / med)) for x in iv)
@@ -157,30 +286,70 @@ def scanout_report(
         print(f"    median interval {med:.4f} ms  ->  {1000.0 / med:.3f} scanouts/s")
         print(f"    MISSED refreshes (display repeated the previous image): "
               f"{missed} = {100.0 * missed / max(total_refreshes, 1):.2f}%")
+    flags = {r["flags"] for r in rows if r["event"] == "scanout" and r.get("flags")}
+    if flags:
+        print(f"    presentation flags observed: {sorted(flags)}"
+              f"{'  (constant — no per-frame path change)' if len(flags) == 1 else ''}")
+    seqs = {r["since_present"] for r in rows if r["event"] == "scanout"}
+    if seqs == {"0"}:
+        print("    seq: all zero — this compositor does not report a presentation "
+              "counter, so missed refreshes above are INFERRED from intervals")
     if offset is None:
         print("    (no anchor_mono_ns header — cannot join to produced frames)")
         return
-    pr = sorted(float(r["t_s"]) + offset for r in rows if r["event"] == "produce")
-    lo, hi = sc[0] + warmup_s, min(sc[-1], pr[-1] if pr else sc[-1])
+    # `join_is_sound` compares in the ORIGIN-relative domain — it de-shifts the
+    # scanouts — so it must be handed the raw produce times, not ones already
+    # shifted into the compositor's domain. Passing the shifted series made the
+    # check report a 120130 s skew on a trace that joins perfectly.
+    pr_rel = sorted(float(r["t_s"]) for r in rows if r["event"] == "produce")
+    ok, why = join_is_sound(pr_rel, sc_abs, offset, clk)
+    pr = [t + offset for t in pr_rel]
+    print(f"    {why}")
+    if not ok:
+        return
+    # `offset + warmup_s`, NOT `sc_abs[0] + warmup_s`: `warmup_s` is measured
+    # from the trace ORIGIN, which is what every other filter in this script
+    # uses. Anchoring it to the first scanout instead discards an extra
+    # `first_scanout - origin` of valid rows and silently disagrees with the
+    # produce/present windows by that amount.
+    lo, hi = offset + warmup_s, min(sc_abs[-1], pr[-1] if pr else sc_abs[-1])
     pr = [t for t in pr if lo <= t <= hi]
-    sc = [t for t in sc if lo <= t <= hi]
+    sc = [t for t in sc_abs if lo <= t <= hi]
     if len(pr) < 10:
         return
     hold: Counter = Counter()
     for a, b in zip(pr, pr[1:]):
         hold[bisect.bisect_left(sc, b) - bisect.bisect_left(sc, a)] += 1
     tot = sum(hold.values()) or 1
-    print("    scanouts per produced frame (divisor N ideal = exactly N):")
+    print("    refreshes between consecutive PRODUCE instants "
+          "(producer jitter, NOT display duration):")
     for k in sorted(hold):
         print(f"      {k}: {hold[k]:6}  {100.0 * hold[k] / tot:6.2f}%")
 
 
 def report(path: Path, warmup_s: float) -> int:
     with path.open() as fh:
-        rows = [r for r in csv.DictReader(ln for ln in fh if not ln.startswith("#"))]
+        raw = list(csv.DictReader(ln for ln in fh if not ln.startswith("#")))
+    # Drop incomplete rows ONCE, here, rather than guarding each metric
+    # separately. A capture ends by killing the process, so the final line is
+    # routinely a partial write and `DictReader` fills its missing fields with
+    # `None`; a local guard in one function still leaves every other numeric
+    # conversion in this script to raise `TypeError` on it. Raised in review on
+    # PR #362 after exactly that happened.
+    rows = [
+        r
+        for r in raw
+        if r.get("t_s") is not None
+        and r.get("event") is not None
+        and r.get("interval_ms") is not None
+        and r.get("since_present") is not None
+    ]
     if not rows:
         print(f"{path}: empty trace")
         return 1
+    if len(rows) < len(raw):
+        print(f"  (dropped {len(raw) - len(rows)} incomplete row(s) — "
+              "expected when a capture is ended by killing the process)")
 
     produce = [r for r in rows if r["event"] == "produce" and float(r["t_s"]) >= warmup_s]
     present = [r for r in rows if r["event"] == "present" and float(r["t_s"]) >= warmup_s]
@@ -229,9 +398,9 @@ def report(path: Path, warmup_s: float) -> int:
           "N-1 zeros then a 1)")
     for k in sorted(hist):
         print(f"    since_present={k:<3} {hist[k]:6}  {100.0 * hist[k] / total:5.1f}%")
-    rl = runs(sp)
-    print(f"    run-length histogram : {dict(sorted(rl.items()))}")
-    scanout_report(path, rows, read_anchor(path), warmup_s)
+    display_cadence(rows, warmup_s)
+    offset, clk = read_anchor(path)
+    scanouts_per_produce(rows, offset, clk, warmup_s)
     return 0
 
 

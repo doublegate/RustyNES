@@ -9182,6 +9182,19 @@ impl ApplicationHandler<AppEvent> for App {
                     );
                 #[cfg(not(target_arch = "wasm32"))]
                 self.perf_logger.record_scanouts(&scanouts);
+                // v2.3.3 — the compositor's clock domain, recorded HERE rather
+                // than in the header, because at header-writing time the
+                // Wayland registry has not answered yet and the id is still
+                // `None` (see `PerfLogger::note_clock_id`). By the first drain
+                // the `wp_presentation` global is necessarily bound — the
+                // scanouts came through it — so the id is available. Costs one
+                // `bool` test per redraw after the single write.
+                #[cfg(not(target_arch = "wasm32"))]
+                self.perf_logger.note_clock_id(
+                    self.presentation_clock
+                        .as_ref()
+                        .and_then(crate::presentation_clock::PresentationClock::clock_id),
+                );
                 // Native: rendering is decoupled from emulation — this
                 // branch only presents the most recent framebuffer.
                 // Emulator advance happens in `about_to_wait` on a

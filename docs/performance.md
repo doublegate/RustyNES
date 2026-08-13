@@ -1774,26 +1774,33 @@ confirmed** — it was refuted on a measurement that could not see it.
 Note the magnitude: `rlock` p95 of 8.707 ms against a refresh period of 8.334 ms.
 The winit thread spends more than a full refresh blocked, at the 95th percentile.
 
-#### What the display actually showed
+#### What the display actually showed — RETRACTED, see F14
+
+> **This subsection was wrong and its numbers must not be quoted.** The metric
+> below counts refreshes between consecutive *produce* timestamps, so it is
+> dominated by producer-side jitter and is **not** a measure of display
+> duration. On the same captures the correct display-side metric reads **5.41%**
+> of frames shown for the wrong duration where this one reads **32.96%** — a
+> factor of six. The retraction, the correct numbers, and how the error was
+> made are in **F14** below. The table is kept for the record.
 
 With the trace's produce/present rows and its compositor `scanout` rows joined
-through the new `anchor_mono_ns` header (both `CLOCK_MONOTONIC`), the question
-F10 asked in the wrong unit can finally be asked in the right one — **how many
-scanouts did each produced frame get?** At divisor 2 the answer should be
-exactly 2, every time. Measured over 1817 produced frames and 3480 scanouts:
+through the new `anchor_mono_ns` header, this asked **how many scanouts did each
+produced frame get?** At divisor 2 the answer should be exactly 2, every time.
+Measured over 1817 produced frames and 3480 scanouts:
 
 | scanouts per produced frame | share |
 | --- | --- |
-| 0 — never displayed at all | 3.19% |
-| 1 — half the intended duration | 18.28% |
-| **2 — correct** | **65.31%** |
+| 0 | 3.19% |
+| 1 | 18.28% |
+| 2 | 65.31% |
 | 3 | 10.57% |
 | 4-5 | 2.65% |
 
-**34.69% of produced frames are displayed for the wrong length of time, and
-3.19% are never displayed at all.** A third of frames at the wrong duration is
-not a subtle artefact; it is a direct, quantitative account of content stepping
-forward and back.
+It was read at the time as "34.69% of produced frames are displayed for the
+wrong length of time". It is not that. It is: 34.69% of produce *intervals*
+spanned a number of refreshes other than two — a statement about when the
+emulator thread ran, not about what the panel showed.
 
 #### The chain
 
@@ -1884,6 +1891,14 @@ captures each, identical config, 40 s.
 **+6.02 percentage points, and the ranges do not overlap** — A's best capture
 (69.36%) is below B's worst (71.33%). Every B beats every A.
 
+> **The metric in this table is the wrong one — see F14.** "Exactly 2" counts
+> refreshes between consecutive *produce* instants, i.e. producer-side jitter,
+> not display duration. F14 re-runs this same A/B on the display-side metric:
+> the fix still leads, by a smaller margin, with one of the four pairs reversed
+> and a paired **p = 0.125**. The statistical discussion immediately below is
+> correct as far as it goes, and was itself a correction — but it corrected the
+> test while leaving the measurand wrong.
+
 **The statistics were first reported wrongly here, and the correction matters.**
 An unpaired permutation test over all 70 possible 4/4 splits gives
 p = 1/70 = 0.0143, and that is what this section originally quoted. It is the
@@ -1914,11 +1929,9 @@ design was necessary. **That is the lesson worth keeping**: the ordering of the
 runs was doing more work than the change being measured.
 
 So the change is *probably* an improvement of about six points of
-frames-shown-for-the-right-duration — consistent across four pairs but short of
-conventional significance, pending a counterbalanced design. It certainly does
-**not** close the gap — 26% of
-frames are still shown for the wrong length of time at the shipped default, so
-the shudder has a remaining cause that is not this one.
+**produce-interval regularity** — consistent across four pairs but short of
+conventional significance, pending a counterbalanced design. What it does to
+the *display* is F14's subject, and the answer there is smaller and weaker.
 
 #### The `rwork` p99 jump: leading candidate eliminated, not yet attributed
 
@@ -1996,6 +2009,148 @@ looked like a regression — on one capture per side. That claim was retracted
 here rather than quietly edited away, because the mistake is instructive: the
 comparison was confounded by run ORDER, not by the change, and the fix was to
 control the order rather than to gather more data in the same broken shape.
+
+### v2.3.3 F14 — the display metric was measuring the producer (F12 and F13 corrected)
+
+F12 and F13 both quantified "frames shown for the wrong duration" with the same
+statistic: **scanouts falling between consecutive produce timestamps**, which
+should be exactly 2 at divisor 2. It is not a display metric. Both ends of that
+interval are producer-side instants, so a produce that fires 3 ms early followed
+by one 3 ms late scores `(1, 3)` **even when the panel showed both frames for
+exactly two refreshes each**. It measures how regularly the emulator thread ran.
+
+The display-side metric was already in the trace and was not used for this.
+`since_present` is recorded *on the present*, and counts frames produced since
+the previous present; at divisor D the healthy pattern is D-1 presents carrying
+nothing then one carrying a frame, so the **gap between successive
+frame-carrying presents is exactly D, every time**. A gap of D+1 is a frame held
+a refresh too long; D-1, one too short. Value and instant both come from the
+present, so nothing about producer timing can leak in.
+
+Both, pooled over the seventeen captures on which both are computable:
+
+| metric | wrong |
+| --- | ---: |
+| refreshes between consecutive produce instants (F12/F13 quoted this) | 32.96% |
+| gaps between frame-carrying presents (the display-side one) | **5.41%** |
+
+**A factor of six.** The display was ~94.6% correct while this document said
+65-74%.
+
+> **This table was itself wrong once.** The first version of this section
+> reported 1.6% and "a factor of twenty", because it divided by the number of
+> *presents* rather than the number of *displayed frames* — at divisor 2 that is
+> a denominator twice too large. It also tested run-lengths against 1, which is
+> the right test only at divisor 2 (at divisor 3 the healthy sequence
+> `0,0,1,0,0,1` has runs `2,1,2,1`, so a perfectly-paced 180 Hz panel would have
+> scored ~50% wrong). Both were caught in review on PR #362, and the divisor is
+> now *inferred* as the modal gap rather than assumed.
+
+#### Re-running the F13 A/B on the correct metric
+
+Same eight captures, same pairing, display-side metric — percentage of frames
+shown for the wrong duration, so **lower is better**:
+
+| | pair 1 | 2 | 3 | 4 | mean |
+| --- | --- | --- | --- | --- | --- |
+| **A** — before the fix | 3.08% | 2.76% | 1.59% | 1.38% | **2.20%** |
+| **B** — after the fix | 0.69% | 3.07% | 0.85% | 1.65% | **1.57%** |
+| B − A | −2.39 | **+0.30** | −0.74 | **+0.26** | −0.64 |
+
+**Two of four pairs go the wrong way.** Exact paired sign-permutation:
+**p = 4/16 = 0.25** — the least significant result attainable short of a
+majority reversal. On the producer-side metric the same eight captures looked
+like 4/4 with p = 0.0625.
+
+So F13's display-side claim does not survive at all: **the fix's effect on what
+the panel shows is not distinguishable from noise in these captures.** The two metrics
+agree on *direction* — they rank the eight captures near-identically — and
+disagree on magnitude and on whether anything has been shown at all. **The
+metric that produced the cleaner-looking answer was the wrong metric**, which is
+the specific way this is worth remembering: it did not look like an error,
+it looked like a result.
+
+#### What this does and does not overturn
+
+- **Overturned:** every "N% of frames are shown for the wrong duration" figure in
+  F12 and F13. The real figure is 5.41% pooled, 0.69-3.08% in the A/B session and
+  8.6-18.9% in the earlier ones (host state differs enormously between sessions,
+  as F13 already recorded).
+- **Overturned:** F13's display-side conclusion. At p = 0.25 with two of four
+  pairs reversed, the fix cannot be said to have moved what the panel shows.
+- **Left open, in both directions:** whether display cadence is the shudder's
+  main remaining cause. F12 and F13 asserted it on numbers that were wrong; the
+  corrected numbers do not settle it either way, because the sessions disagree
+  by an order of magnitude (0.69-3.08% against 8.6-18.9%). Neither "it is the
+  cause" nor "it is not" is supported.
+- **Not overturned:** `rlock` p95 8.707 -> 0.000 ms, and the removal of a double
+  debug-log replay. Both are direct measurements of what the change removes.
+- **Not overturned:** the F12 chain up to and including the lock contention. Only
+  its final display-side quantification was wrong.
+
+#### Hypotheses tested and refuted on the way
+
+Three candidate mechanisms were measured against the sixteen captures and none
+survived. Recorded because a refuted mechanism is a result:
+
+- **Presentation-path flipping.** `flags` is a constant `7`
+  (`VSYNC | HW_CLOCK | HW_COMPLETION`) in every scanout of every capture — never
+  `ZERO_COPY`. Constant, so it cannot be a source of *variance*. (That the
+  compositor never zero-copies is a fixed extra stage, not a jitter source.)
+- **Compositor sequence numbers as ground truth.** `seq` is `0` in every scanout;
+  the parse was verified correct against the protocol, so this compositor simply
+  does not report a presentation counter. Missed refreshes therefore remain
+  *inferred* from intervals, and the analysis now says so in its output.
+- **Produce margin.** If frames were landing late against the refresh deadline,
+  the error rate should climb with produce phase. It does not: P(wrong) is
+  24-47% across all ten phase deciles with no cliff, and the produce-to-next-
+  scanout margin is 4.36 ms p50 against an 8.33 ms interval.
+
+#### Instrument changes
+
+- `trace_shape.py` reports `[display cadence]` as the primary result and renames
+  the old statistic `refreshes between consecutive PRODUCE instants (producer
+  jitter, NOT display duration)`. It also refuses to rate fewer than 100 runs,
+  rather than printing `1/4 = 25.00%` beside a 3724-sample measurement.
+- **The clock join is now verified, not assumed.** This module's docstring always
+  said an unjoinable trace must be reported as such; that was never enforced,
+  because `clock_id` was `unknown` in *every trace ever written*. The cause:
+  `set_trace_anchor` runs when tracing is armed, and `PresentationClock::new`
+  deliberately performs no Wayland roundtrip, so the registry — and the
+  `clock_id` event that follows the bind — has not arrived yet. Fixed by
+  emitting the id as a comment row once it is known (`note_clock_id`), and by
+  checking the join **empirically**: shifted scanouts must span substantially
+  the same interval as the produce rows. The empirical check is the load-bearing
+  one — it works on the traces already on disk, which carry no id at all, and it
+  would also catch a compositor that names `CLOCK_MONOTONIC` and stamps
+  something else. Verified in both directions: a 60 s corrupted anchor is
+  refused, an intact one reports a 13 ms skew over 39 s.
+
+#### Where this leaves the campaign — UNRESOLVED
+
+The honest position is that **nothing here is settled**, and it is worth being
+explicit about what the corrected numbers do and do not license.
+
+They do **not** establish that the fix improved the display: p = 0.25 with two of
+four pairs reversed is a null result, not a small positive one.
+
+They also do **not** establish that display cadence is fine and the cause lies
+elsewhere. A null A/B says the *configuration difference* was not resolved by
+these captures; it says nothing about the absolute level. And the absolute level
+is not uniformly small — it is 0.69-3.08% in the A/B session but **8.6-18.9% in
+the earlier ones, on the same binary pair**. At 18.9% roughly one frame in five
+is shown for the wrong duration, which is not a residual.
+
+That between-session spread is the largest unexplained quantity in this
+document, and it dwarfs everything the A/B was trying to resolve: a
+configuration difference that cannot beat p = 0.25 sits inside a session-to-
+session difference of an order of magnitude. Until it is explained, "display
+cadence is not the problem" and "display cadence is the problem" are both
+unsupported — the sessions disagree, and no measurement here says why.
+
+The next instrument should therefore ask **what differs between sessions**, not
+push further on the A/B, which is underpowered against a source of variance this
+large.
 
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 

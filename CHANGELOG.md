@@ -46,6 +46,34 @@ cycle-accurate core later replaced.
   one row per produce and per present, with `scripts/perf/trace_shape.py` to
   classify its temporal shape. `rwork` is now `rtot - rwait - rlock`.
 
+  **The display-cadence metric was measuring the producer — F12 and F13
+  corrected (v2.3.3 F14).** Both quantified "frames shown for the wrong
+  duration" by counting refreshes between consecutive **produce** timestamps.
+  Both ends of that interval are producer-side, so a produce firing 3 ms early
+  followed by one 3 ms late scores as a mistimed pair **even when the panel
+  showed both frames for exactly two refreshes**. The display-side series was
+  already in the trace and unused: `since_present`, recorded on the present,
+  whose gaps between frame-carrying presents are all exactly the divisor
+  under a healthy cadence. Pooled over seventeen captures the two read **32.96%**
+  and **5.41%** wrong — a factor of six. Every "N% of frames shown for the wrong
+  duration" figure in F12 and F13 is retracted; the display was ~94.6% correct
+  while the document said 65-74%. Re-running the F13 A/B on the correct metric
+  **removes its display-side conclusion entirely**: two of four pairs reverse and
+  the exact paired test gives **p = 0.25**, so the fix's effect on what the panel
+  shows is not distinguishable from noise. (The first version of this correction
+  was itself wrong — it divided by presents rather than displayed frames, and
+  tested run-lengths against 1, which holds only at divisor 2; both were caught
+  in review on PR #362 and the divisor is now inferred as the modal gap.) The `rlock` 8.707 -> 0.000 ms collapse and the double-replay
+  removal are direct measurements and are unaffected. Three mechanisms were
+  measured and refuted along the way (presentation-path flipping — `flags` is a
+  constant 7; compositor sequence numbers — `seq` is 0, this compositor reports
+  none; produce margin — no phase dependence). `trace_shape.py` now leads with
+  the display-side metric, labels the old one as producer jitter, declines to
+  rate fewer than 100 runs, and **verifies the clock join by span overlap**
+  instead of assuming it — `clock_id` was `unknown` in every trace ever written
+  because it is read before the Wayland registry answers, and is now emitted as
+  a comment row once known.
+
   Later joined by **`rcpu`** — the winit thread's own `CLOCK_THREAD_CPUTIME_ID`
   differenced across the `rwork` span, so `rwork - rcpu` is time the thread spent
   off-CPU rather than computing. It was built to test whether the 9-32 ms `rwork`
@@ -56,6 +84,9 @@ cycle-accurate core later replaced.
   stays in the tree as the check that tells the two apart. Also
   `scripts/perf/trace_shape.py --warmup-s N`, making the 8 s startup-transient
   discard (a host-tuned heuristic) overridable instead of hard-coded.
+
+  **Superseded in part by F14 (below): the display-side claims in this entry and
+  the next were computed with a producer-side metric and are retracted.**
 
   Measured on six 45 s SMB captures: the 25 ms tick watchdog **never fires** at
   the shipped `run_ahead = 2` (0 of ~1855 ticks) and drops no ticks, so its
@@ -92,17 +123,20 @@ cycle-accurate core later replaced.
   holds — which also fixes a second defect: at divisor 2 there are two redraws
   per produced frame, so the old placement replayed each frame's debug logs
   **twice**. `rlock` p95/p99 go **8.707/9.008 ms → 0.000/0.000 ms**. It also
-  measurably improves what the display shows, confirmed by a proper A/B: both
+  improves **producer-interval regularity**, confirmed by an A/B with both
   binaries rebuilt from the two adjacent commits that differ only by this
-  change, run **alternately** rather than in blocks, four captures each.
-  Frames shown for the intended two refreshes go **67.75% → 73.77%**, ranges
-  non-overlapping (A's best 69.36% below B's worst 71.33%). The design was
-  strictly alternating, which is **not** randomisation — every B followed an A,
-  so the correct test is paired, giving **p = 0.0625**, suggestive rather than
-  established. (An unpaired p = 1/70 was quoted first and was the wrong test.) An earlier
-  single-capture comparison suggested the opposite and was **confounded by run
-  order**, not by the change. 26% of frames are still shown for the wrong
-  duration, so the shudder has a remaining cause that is not this one.
+  change, run **alternately** rather than in blocks, four captures each:
+  produce intervals spanning exactly two refreshes go **67.75% → 73.77%**, ranges
+  non-overlapping. Alternation is **not** randomisation, so the correct test is
+  paired, giving **p = 0.0625** — suggestive, not established.
+
+  **What this does NOT show (see F14 below).** That 67.75 → 73.77% is a
+  **producer-side** statistic, not a display one: it counts refreshes between
+  consecutive *produce* timestamps. Re-run on the display-side metric the same
+  eight captures give **p = 0.25 with two of four pairs reversed**, so the
+  change's effect on what the panel shows is **not established in either
+  direction**. Every display-side figure originally published for this change is
+  retracted. The `rlock` collapse above is a direct measurement and stands.
 
 ### Changed
 
