@@ -74,6 +74,18 @@ cycle-accurate core later replaced.
   because it is read before the Wayland registry answers, and is now emitted as
   a comment row once known.
 
+  **`present_discarded` — an unpresented surface now reports itself (v2.3.3
+  F16).** New `PerfView` field and perf-log column carrying the compositor's
+  cumulative count of frames it composited but never scanned out. Sustained
+  discards stop the *measured* refresh from settling, which costs display-sync
+  only where no *declared* refresh is available either; where both are absent the
+  session silently holds the wall-clock fallback. `PresentationClock::discarded()`
+  had existed since scanout tracing landed and **was read by nobody**, so the
+  condition was invisible. `perf_log_check.py` now fails closed on a non-zero
+  count, since an occluded capture yields plausible but meaningless pacing
+  numbers. Measurements, mechanism and limits in `docs/performance.md` v2.3.3
+  F16.
+
   Later joined by **`rcpu`** — the winit thread's own `CLOCK_THREAD_CPUTIME_ID`
   differenced across the `rwork` span, so `rwork - rcpu` is time the thread spent
   off-CPU rather than computing. It was built to test whether the 9-32 ms `rwork`

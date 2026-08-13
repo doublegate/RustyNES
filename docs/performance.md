@@ -2152,6 +2152,100 @@ The next instrument should therefore ask **what differs between sessions**, not
 push further on the A/B, which is underpowered against a source of variance this
 large.
 
+### v2.3.3 F16 — a silent wall-clock fallback, and a counter nobody read
+
+Found while trying to VERIFY F15's instrument, which is the only reason it was
+found at all: five of six launches produced all-zero readings, and the reason
+turned out to be more interesting than the instrument.
+
+**Display-sync never engaged in those sessions.** `pacing` stayed `wallclock`,
+`present_mode` stayed `Mailbox`, `refresh_source` stayed `none` — for the whole
+run, every run. The stakes are already on record earlier in this document: the
+wall-clock pacer dropped **61-147 frames per 45 s** where display-sync dropped
+**6-15**.
+
+#### The mechanism, measured
+
+`wp_presentation` bound correctly and its `clock_id = 1` event arrived, so the
+protocol was live. But **zero `presented` reports ever came back**. The refresh
+estimator needs `PRESENTATION_SAMPLES` = 24 of them before it can answer.
+
+**State the chain precisely — the first version of this section did not.**
+Discards block the *measured* refresh, and nothing else. `resolve_pacing` has a
+second source it actually *prefers*: a **declared** refresh from
+`current_monitor()`. Where one exists, display-sync can engage perfectly well
+with discards ongoing. What happened here is the **conjunction**: this compositor
+advertises no `wl_output`, so `current_monitor()` is `None` too, and with both
+sources absent `refresh_hz` is `None` and display-sync cannot engage.
+
+That distinction matters for anyone reading the counter on another system: a
+rising `present_discarded` says **this surface is not being scanned out**. Whether
+it also costs display-sync depends on whether a declared refresh is available.
+Raised in review on PR #363, in four places at once, by both reviewers.
+
+What arrives instead is `discarded`: composited, never scanned out. Measured on a
+backgrounded window, `present_discarded` climbs by ~61 per second — **every
+frame** — for the whole session.
+
+#### The counter existed and was read by nobody
+
+`PresentationClock::discarded()` has been there since scanout tracing landed, with
+a doc comment, cumulative and correct. Nothing called it. So the entire failure
+was invisible: a user whose display-sync silently never engages had no number
+anywhere that said why, and neither did this campaign until it tripped over it.
+
+It is now surfaced as `PerfView::present_discarded` and a `present_discarded`
+column in the perf log. **A diagnostic that is never surfaced is not a
+diagnostic** — that is the whole content of this entry, and it cost five wasted
+verification captures to notice.
+
+Two properties to read it correctly. It is **cumulative** over the life of the
+presentation clock, so successive rows must be differenced for a rate. And
+**zero is not proof of health**: the field reads zero both when nothing was
+discarded and when there is no presentation clock at all (non-Wayland, or the
+global never bound), because the call site is a `map_or(0, ...)`. Pair it with
+`refresh_source` to tell those apart.
+
+#### What this does NOT establish
+
+Two corrections to the hypothesis this started from, both against my own first
+reading:
+
+- **It is not "sticky".** The first framing was that display-sync degrades and
+  never recovers. `settled` is set **only on success**, so `request_feedback` and
+  `poll` keep issuing indefinitely and the regime should engage as soon as 24
+  `presented` reports accumulate. Recovery after an occlusion ends is therefore
+  expected by construction — **but it has not been tested**, and "expected by
+  construction" is exactly the kind of claim this campaign has had to retract
+  three times already.
+- **It is probably not the maintainer's shudder.** An occluded window is not a
+  use case. This matters if a session *starts* occluded, or if a real transient
+  occlusion during play leaves the regime wrong for longer than it should. Absent
+  evidence of either, it should not be promoted to a cause.
+
+The value delivered is narrower than a fix and worth having anyway: a failure
+that was completely silent now reports itself.
+
+#### The capture-validity gate
+
+`perf_log_check.py` now **fails closed** on `present_discarded > 0`, alongside its
+existing config-mismatch assertion. An occluded capture does not look broken —
+that is the whole problem with it. It produces plausible, well-formed, entirely
+misleading numbers, and this campaign spent five verification captures in that
+state without noticing.
+
+Three states, deliberately, because two would have been dishonest: `> 0` fails;
+`0` with the column present passes as verified; and a capture written **before**
+the column existed passes but is reported as *"validity UNKNOWN, not verified"* —
+it cannot be proven valid, and saying "window was on screen" of a log that never
+measured it would be a small version of exactly the error F14 is about.
+
+Every pacing conclusion in this document that predates the column therefore
+carries an unverifiable assumption: that the window was actually on screen. The
+sixteen scanout-bearing captures almost certainly were — they *have* `presented`
+reports, which an occluded window cannot produce — but that is an inference, not
+a check.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as

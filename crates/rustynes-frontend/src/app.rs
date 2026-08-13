@@ -7173,6 +7173,21 @@ impl App {
         perf_view.render_work = r.work;
         perf_view.render_lock = r.lock;
         perf_view.render_cpu = r.cpu;
+        // F16 — how many frames the compositor composited but never scanned
+        // out, cumulative. A rising count means THIS SURFACE IS NOT BEING SHOWN;
+        // it is the signal that distinguishes that from "this compositor reports
+        // no refresh", which no other metric separates.
+        //
+        // Deliberately not phrased as "why display-sync did not engage": discards
+        // stop the MEASURED refresh from settling, but `resolve_pacing` prefers a
+        // DECLARED refresh from `current_monitor()` when one exists, so pacing
+        // only falls back when both are absent. `map_or(0, ...)` also yields 0
+        // when there is no presentation clock at all, so zero means "nothing
+        // discarded OR nothing to ask" — pair it with `refresh_source`.
+        perf_view.present_discarded = self
+            .presentation_clock
+            .as_ref()
+            .map_or(0, crate::presentation_clock::PresentationClock::discarded);
         // Only the `emu-thread` half is conditional here — the function itself
         // already carries the target gate.
         #[cfg(feature = "emu-thread")]
