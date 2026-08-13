@@ -510,6 +510,22 @@ pub struct EmuCore {
     /// Run-ahead budget throttle (hysteresis on produce-cost p95).
     #[cfg(not(target_arch = "wasm32"))]
     pub runahead_throttled: bool,
+    /// v2.3.3 F21 — how many depths the budget throttle has taken OFF the
+    /// configured run-ahead, rather than whether it fired at all.
+    ///
+    /// The throttle used to be all-or-nothing: over budget, drop to depth 0.
+    /// Measured at `run_ahead = 2` on a host that cannot afford it, that traded
+    /// **8.57% -> 0.73%** of frames held for the wrong duration — a real win —
+    /// but it bought it by disabling the feature outright, and the F18 sweep
+    /// shows it did not have to. Depth 1 costs 52.1% of the frame budget and
+    /// shows **1.7%** wrong: stepping 2 -> 1 keeps nearly all the cadence
+    /// benefit AND one frame of latency reduction, where 2 -> 0 discards the
+    /// latter for nothing.
+    ///
+    /// `runahead_throttled` is kept as `steps > 0` so the Performance panel and
+    /// the perf log keep their existing meaning ("the throttle is doing
+    /// something") without needing to understand the depth arithmetic.
+    pub runahead_throttle_steps: u32,
     /// SHA-256 of the loaded FDS disk (keys the `.fds.sav` sidecar).
     #[cfg(not(target_arch = "wasm32"))]
     pub fds_disk_sha256: Option<[u8; 32]>,
@@ -611,6 +627,7 @@ impl EmuCore {
             runahead: crate::runahead::RunAhead::default(),
             #[cfg(not(target_arch = "wasm32"))]
             runahead_throttled: false,
+            runahead_throttle_steps: 0,
             #[cfg(not(target_arch = "wasm32"))]
             fds_disk_sha256: None,
             #[cfg(feature = "scripting")]
@@ -770,10 +787,15 @@ impl EmuCore {
     /// from `App` and never calls the core produce).
     #[cfg(not(target_arch = "wasm32"))]
     fn effective_run_ahead(&self, configured: u32) -> u32 {
-        if self.runahead_throttled || self.movie.status().mode != crate::movie_ui::MovieMode::Idle {
+        if self.movie.status().mode != crate::movie_ui::MovieMode::Idle {
             return 0;
         }
-        configured.min(MAX_RUN_AHEAD_DEPTH)
+        // F21 — step DOWN, do not zero. `saturating_sub` bottoms out at 0, so a
+        // host that cannot afford any depth still ends up there; it just takes
+        // one median window per step instead of arriving in one jump.
+        configured
+            .min(MAX_RUN_AHEAD_DEPTH)
+            .saturating_sub(self.runahead_throttle_steps)
     }
 
     /// v2.8.0 Phase 3 — run-ahead budget throttle with hysteresis, fed by
@@ -797,13 +819,20 @@ impl EmuCore {
             return;
         }
         let target = self.frame_duration.as_secs_f32() * 1000.0;
-        if !self.runahead_throttled && produce_p50_ms > target * RUNAHEAD_THROTTLE_ENGAGE {
+        let bounded = depth.min(MAX_RUN_AHEAD_DEPTH);
+        let running = bounded.saturating_sub(self.runahead_throttle_steps);
+        if running > 0 && produce_p50_ms > target * RUNAHEAD_THROTTLE_ENGAGE {
+            // F21 — one step, not all of them. Re-measured on the next median
+            // window; if the reduced depth is still over budget this fires
+            // again, so an unaffordable host converges to 0 without the cliff.
+            self.runahead_throttle_steps += 1;
             self.runahead_throttled = true;
+            let now_at = bounded.saturating_sub(self.runahead_throttle_steps);
             eprintln!(
                 "rustynes: median produce cost {produce_p50_ms:.2} ms is too close to the \
-                 {target:.2} ms frame budget — run-ahead disabled until it recovers."
+                 {target:.2} ms frame budget — run-ahead reduced to depth {now_at}."
             );
-        } else if self.runahead_throttled {
+        } else if self.runahead_throttle_steps > 0 {
             // v2.3.3 F6 — the release test must be in the SAME units as the
             // engage test, i.e. cost *with run-ahead re-enabled*. Comparing the
             // throttled (run-ahead-off) cost against a fixed 40% band compares
@@ -824,14 +853,20 @@ impl EmuCore {
             // against a 4x reality, leaving run-ahead throttled forever. The
             // comment this replaces asserted the value was "config-clamped",
             // which was simply not true. (PR #357 review, found post-merge.)
-            let bounded_depth = depth.min(MAX_RUN_AHEAD_DEPTH);
-            let predicted_with_runahead =
-                produce_p50_ms * (f32::from(u8::try_from(bounded_depth).unwrap_or(3)) + 1.0);
-            if predicted_with_runahead < target * 0.70 {
-                self.runahead_throttled = false;
+            // F21 — predict the cost of giving back ONE step, not of restoring
+            // the full configured depth. The cost model is per-frame-linear
+            // (F18: +4.49 and +4.21 ms per depth, equal within 6%), so one more
+            // frame is `cost / (running + 1) * (running + 2)`.
+            let per_frame = produce_p50_ms / (f32::from(u8::try_from(running).unwrap_or(0)) + 1.0);
+            let predicted_one_more =
+                per_frame * (f32::from(u8::try_from(running).unwrap_or(0)) + 2.0);
+            if predicted_one_more < target * 0.70 {
+                self.runahead_throttle_steps -= 1;
+                self.runahead_throttled = self.runahead_throttle_steps > 0;
+                let now_at = bounded.saturating_sub(self.runahead_throttle_steps);
                 eprintln!(
-                    "rustynes: produce cost recovered ({produce_p50_ms:.2} ms, ~{predicted_with_runahead:.2} ms \
-                     with run-ahead) — run-ahead re-enabled."
+                    "rustynes: produce cost recovered ({produce_p50_ms:.2} ms, ~{predicted_one_more:.2} ms \
+                     one depth up) — run-ahead restored to depth {now_at}."
                 );
             }
         }
