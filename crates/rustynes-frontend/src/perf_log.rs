@@ -280,8 +280,12 @@ impl PerfLogger {
         let (origin_mono_ns, clock_id) = self.trace_anchor;
         // A new file needs its own `clock_id` comment row: the flag is per
         // file, not per process, or a ROM change mid-session would leave the
-        // second trace with no clock domain recorded anywhere.
-        self.clock_id_noted = false;
+        // second trace with no clock domain recorded anywhere. Seeded from
+        // whether the HEADER already carries a concrete id, not blindly to
+        // `false` — a trace started after the Wayland registry has answered
+        // (any ROM change past the first) gets the id in its header, and
+        // re-emitting it as a comment row would be a redundant second copy.
+        self.clock_id_noted = clock_id.is_some();
         let dir = self
             .dir
             .clone()

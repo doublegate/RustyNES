@@ -177,7 +177,15 @@ def join_is_sound(
             f"clock domains disagree: produce spans {lo_p:.3f}-{hi_p:.3f} s, "
             f"shifted scanouts span {lo_s:.3f}-{hi_s:.3f} s (skew {skew:.3f} s)"
         )
-    named = "confirmed CLOCK_MONOTONIC" if clk == 1 else f"id={clk or 'unrecorded'}"
+    # `clk or ...` would be wrong here: POSIX `CLOCK_REALTIME` is 0, which is
+    # falsey, so a compositor stamping REALTIME — precisely the case this check
+    # exists to catch — would be reported as "unrecorded" rather than named.
+    if clk == 1:
+        named = "confirmed CLOCK_MONOTONIC"
+    elif clk is None:
+        named = "id unrecorded"
+    else:
+        named = f"id={clk}" + (" = CLOCK_REALTIME, NOT monotonic" if clk == 0 else "")
     return True, f"join verified by span overlap (skew {skew * 1000:.0f} ms, {named})"
 
 
@@ -185,33 +193,54 @@ def display_cadence(rows: list[dict], warmup_s: float) -> None:
     """THE display-duration metric: did each present alternate as the divisor demands?
 
     ``since_present`` is the count of frames produced since the previous
-    present, recorded on the present itself. At divisor N the healthy pattern is
-    a clean alternation — N-1 presents carrying nothing, then one carrying a
-    frame — so **every run of equal values has length 1**. A run longer than 1
-    is a frame that stayed on screen for the wrong number of refreshes, which is
-    what the eye reads as judder.
+    present, recorded on the present itself. At divisor D the healthy pattern is
+    D-1 presents carrying nothing, then one carrying a frame — so the **gap
+    between successive frame-carrying presents is exactly D, every time**. A gap
+    of D+1 is a frame that stayed on screen a refresh too long; D-1, one too
+    short. That is what the eye reads as judder.
+
+    The divisor is INFERRED as the modal gap rather than assumed, because the
+    trace does not record it. The first version of this function tested
+    run-lengths of equal values against 1, which is the correct test only at
+    divisor 2: at divisor 3 the healthy sequence is ``0,0,1,0,0,1``, whose runs
+    are ``2,1,2,1``, so a perfectly-paced 180 Hz panel would have scored ~50%
+    wrong. Raised in review on PR #362 — an assumption that happened to hold on
+    the reporting host, which is the kind this campaign keeps having to correct.
 
     This is a purely DISPLAY-SIDE series: both the value and the instant come
     from the present. Nothing about when the producer happened to run can leak
     into it, which is exactly the property `scanouts_per_produce` lacks.
     """
+    # `r["since_present"] is not None` guards the final row: a capture ends by
+    # killing the process, so the last line is routinely a partial write and
+    # `DictReader` fills the missing fields with `None`. Without this the whole
+    # analysis dies on a `TypeError` at the very last row of a good trace.
     sp = [
         int(r["since_present"])
         for r in rows
-        if r["event"] == "present" and float(r["t_s"]) >= warmup_s
+        if r["event"] == "present"
+        and r["since_present"] is not None
+        and r["t_s"] is not None
+        and float(r["t_s"]) >= warmup_s
     ]
-    rl = runs(sp)
-    total = sum(rl.values())
+    # Index of every present that carried at least one new frame; the gaps
+    # between them are the per-frame display durations, in refreshes.
+    carried = [i for i, v in enumerate(sp) if v > 0]
+    gaps = [b - a for a, b in zip(carried, carried[1:])]
     # A rate needs a denominator worth dividing by. Without this a four-event
     # trace prints "1/4 = 25.00%" beside a real 3724-sample measurement, in the
     # same column, with nothing to say which is which.
-    if total < 100:
-        print(f"\n  [display cadence] only {total} runs after warmup — too few to rate")
+    if len(gaps) < 100:
+        print(f"\n  [display cadence] only {len(gaps)} displayed frames after "
+              "warmup — too few to rate")
         return
-    bad = total - rl.get(1, 0)
-    print("\n  [display cadence] frames shown for the WRONG duration: "
-          f"{bad}/{total} = {100.0 * bad / max(total, 1):.2f}%")
-    print(f"    run-length histogram : {dict(sorted(rl.items()))}")
+    hist = Counter(gaps)
+    divisor = hist.most_common(1)[0][0]
+    bad = len(gaps) - hist[divisor]
+    print(f"\n  [display cadence] divisor {divisor} (inferred as the modal gap) — "
+          f"frames shown for the WRONG duration: "
+          f"{bad}/{len(gaps)} = {100.0 * bad / len(gaps):.2f}%")
+    print(f"    refreshes per displayed frame : {dict(sorted(hist.items()))}")
 
 
 def scanouts_per_produce(
@@ -266,7 +295,12 @@ def scanouts_per_produce(
     print(f"    {why}")
     if not ok:
         return
-    lo, hi = sc_abs[0] + warmup_s, min(sc_abs[-1], pr[-1] if pr else sc_abs[-1])
+    # `offset + warmup_s`, NOT `sc_abs[0] + warmup_s`: `warmup_s` is measured
+    # from the trace ORIGIN, which is what every other filter in this script
+    # uses. Anchoring it to the first scanout instead discards an extra
+    # `first_scanout - origin` of valid rows and silently disagrees with the
+    # produce/present windows by that amount.
+    lo, hi = offset + warmup_s, min(sc_abs[-1], pr[-1] if pr else sc_abs[-1])
     pr = [t for t in pr if lo <= t <= hi]
     sc = [t for t in sc_abs if lo <= t <= hi]
     if len(pr) < 10:

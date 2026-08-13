@@ -1779,9 +1779,9 @@ The winit thread spends more than a full refresh blocked, at the 95th percentile
 > **This subsection was wrong and its numbers must not be quoted.** The metric
 > below counts refreshes between consecutive *produce* timestamps, so it is
 > dominated by producer-side jitter and is **not** a measure of display
-> duration. On the same captures the correct display-side metric reads **1.6%**
-> of frames shown for the wrong duration where this one reads **32.7%** — a
-> factor of twenty. The retraction, the correct numbers, and how the error was
+> duration. On the same captures the correct display-side metric reads **5.41%**
+> of frames shown for the wrong duration where this one reads **32.96%** — a
+> factor of six. The retraction, the correct numbers, and how the error was
 > made are in **F14** below. The table is kept for the record.
 
 With the trace's produce/present rows and its compositor `scanout` rows joined
@@ -2021,20 +2021,30 @@ exactly two refreshes each**. It measures how regularly the emulator thread ran.
 
 The display-side metric was already in the trace and was not used for this.
 `since_present` is recorded *on the present*, and counts frames produced since
-the previous present; at divisor 2 the healthy pattern is a clean alternation,
-so **every run of equal values has length 1**. A longer run is a frame that
-actually stayed on screen for the wrong number of refreshes. Value and instant
-both come from the present, so nothing about producer timing can leak in.
+the previous present; at divisor D the healthy pattern is D-1 presents carrying
+nothing then one carrying a frame, so the **gap between successive
+frame-carrying presents is exactly D, every time**. A gap of D+1 is a frame held
+a refresh too long; D-1, one too short. Value and instant both come from the
+present, so nothing about producer timing can leak in.
 
-Both, pooled over the sixteen scanout-bearing captures:
+Both, pooled over the seventeen captures on which both are computable:
 
 | metric | wrong |
 | --- | ---: |
-| refreshes between consecutive produce instants (F12/F13 quoted this) | 32.7% |
-| `since_present` run lengths (the display-side one) | **1.6%** |
+| refreshes between consecutive produce instants (F12/F13 quoted this) | 32.96% |
+| gaps between frame-carrying presents (the display-side one) | **5.41%** |
 
-**A factor of twenty.** The display was ~98.4% correct while this document said
+**A factor of six.** The display was ~94.6% correct while this document said
 65-74%.
+
+> **This table was itself wrong once.** The first version of this section
+> reported 1.6% and "a factor of twenty", because it divided by the number of
+> *presents* rather than the number of *displayed frames* — at divisor 2 that is
+> a denominator twice too large. It also tested run-lengths against 1, which is
+> the right test only at divisor 2 (at divisor 3 the healthy sequence
+> `0,0,1,0,0,1` has runs `2,1,2,1`, so a perfectly-paced 180 Hz panel would have
+> scored ~50% wrong). Both were caught in review on PR #362, and the divisor is
+> now *inferred* as the modal gap rather than assumed.
 
 #### Re-running the F13 A/B on the correct metric
 
@@ -2043,15 +2053,17 @@ shown for the wrong duration, so **lower is better**:
 
 | | pair 1 | 2 | 3 | 4 | mean |
 | --- | --- | --- | --- | --- | --- |
-| **A** — before the fix | 1.38% | 1.38% | 0.67% | 0.70% | **1.03%** |
-| **B** — after the fix | 0.35% | 1.03% | 0.43% | 0.83% | **0.66%** |
-| B − A | −1.03 | −0.35 | −0.24 | **+0.13** | −0.37 |
+| **A** — before the fix | 3.08% | 2.76% | 1.59% | 1.38% | **2.20%** |
+| **B** — after the fix | 0.69% | 3.07% | 0.85% | 1.65% | **1.57%** |
+| B − A | −2.39 | **+0.30** | −0.74 | **+0.26** | −0.64 |
 
-Three of four pairs favour the fix; **one goes the wrong way.** Exact paired
-sign-permutation: **p = 2/16 = 0.125.** On the wrong metric the same eight
-captures looked like 4/4 with p = 0.0625.
+**Two of four pairs go the wrong way.** Exact paired sign-permutation:
+**p = 4/16 = 0.25** — the least significant result attainable short of a
+majority reversal. On the producer-side metric the same eight captures looked
+like 4/4 with p = 0.0625.
 
-So F13's conclusion weakens again rather than strengthening. The two metrics
+So F13's display-side claim does not survive at all: **the fix's effect on what
+the panel shows is not distinguishable from noise in these captures.** The two metrics
 agree on *direction* — they rank the eight captures near-identically — and
 disagree on magnitude and on whether anything has been shown at all. **The
 metric that produced the cleaner-looking answer was the wrong metric**, which is
@@ -2061,11 +2073,15 @@ it looked like a result.
 #### What this does and does not overturn
 
 - **Overturned:** every "N% of frames are shown for the wrong duration" figure in
-  F12 and F13. The real figure is 1.6% pooled, 0.35-1.38% in the A/B session and
-  2.2-5.6% in the earlier one (host state differs enormously between sessions,
+  F12 and F13. The real figure is 5.41% pooled, 0.69-3.08% in the A/B session and
+  8.6-18.9% in the earlier ones (host state differs enormously between sessions,
   as F13 already recorded).
+- **Overturned:** F13's display-side conclusion. At p = 0.25 with two of four
+  pairs reversed, the fix cannot be said to have moved what the panel shows.
 - **Overturned:** the claim that display cadence is the shudder's main remaining
-  cause. At ~99% correct on the shipped default in that session, it cannot be.
+  cause. At ~98% correct on the shipped default in that session, it is too small
+  to be the primary one — though at 8.6-18.9% in the earlier sessions it is not
+  negligible either, and the between-session spread is now the larger puzzle.
 - **Not overturned:** `rlock` p95 8.707 -> 0.000 ms, and the removal of a double
   debug-log replay. Both are direct measurements of what the change removes.
 - **Not overturned:** the F12 chain up to and including the lock contention. Only

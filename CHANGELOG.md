@@ -53,13 +53,17 @@ cycle-accurate core later replaced.
   followed by one 3 ms late scores as a mistimed pair **even when the panel
   showed both frames for exactly two refreshes**. The display-side series was
   already in the trace and unused: `since_present`, recorded on the present,
-  whose run lengths are all 1 under a healthy divisor cadence. Pooled over
-  sixteen captures the two read **32.7%** and **1.6%** wrong — a factor of
-  twenty. Every "N% of frames shown for the wrong duration" figure in F12 and
-  F13 is retracted; the display was ~98.4% correct while the document said
-  65-74%. Re-running the F13 A/B on the correct metric leaves the fix ahead but
-  weaker still: three of four pairs favour it, **one reverses**, paired
-  **p = 0.125**. The `rlock` 8.707 -> 0.000 ms collapse and the double-replay
+  whose gaps between frame-carrying presents are all exactly the divisor
+  under a healthy cadence. Pooled over seventeen captures the two read **32.96%**
+  and **5.41%** wrong — a factor of six. Every "N% of frames shown for the wrong
+  duration" figure in F12 and F13 is retracted; the display was ~94.6% correct
+  while the document said 65-74%. Re-running the F13 A/B on the correct metric
+  **removes its display-side conclusion entirely**: two of four pairs reverse and
+  the exact paired test gives **p = 0.25**, so the fix's effect on what the panel
+  shows is not distinguishable from noise. (The first version of this correction
+  was itself wrong — it divided by presents rather than displayed frames, and
+  tested run-lengths against 1, which holds only at divisor 2; both were caught
+  in review on PR #362 and the divisor is now inferred as the modal gap.) The `rlock` 8.707 -> 0.000 ms collapse and the double-replay
   removal are direct measurements and are unaffected. Three mechanisms were
   measured and refuted along the way (presentation-path flipping — `flags` is a
   constant 7; compositor sequence numbers — `seq` is 0, this compositor reports
