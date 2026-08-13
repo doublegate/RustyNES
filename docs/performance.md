@@ -2455,6 +2455,70 @@ suppression, take-clears) that were themselves mutation-checked — but plumbing
 tests cannot verify an instrument, only that it lies in none of the ways
 anticipated. The numbers above are the verification.
 
+### v2.3.3 F18 — run-ahead's cost is the frames, and depth 3 throttles itself
+
+F17 measured run-ahead 2 at ~78% of the frame budget and asked whether that cost
+is reducible. It is not: it is emulation work, linear in depth, and the state
+handling around it is noise.
+
+**Design.** Sixteen captures, four at each depth, in a **Latin square** — each
+depth appears in each round-position exactly once, so run-order drift cannot load
+onto any one depth. That is the correction F13 earned: strict alternation
+balances the *direction* of a monotone drift but does not buy exchangeability,
+and a Latin square does. Every capture was validity-gated first (F16); **16/16
+passed**, window on screen, `display-sync /2`, discard rate ≤ 1%.
+
+| requested `ra` | n | `cost_p50` | % budget | `cost_p95` | % budget | throttled |
+| ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 0 | 4 | 4.180 ms | 25.1% | 4.404 ms | 26.5% | no |
+| 1 | 4 | 8.671 ms | 52.1% | 9.060 ms | 54.5% | no |
+| 2 | 4 | 12.884 ms | **77.4%** | 13.385 ms | **80.4%** | no |
+| 3 | 4 | 4.276 ms | 25.7% | 4.516 ms | 27.1% | **yes** |
+
+#### The cost is linear in depth, at the core's own frame cost
+
+Per-depth increments: **+4.491 ms** and **+4.213 ms** — equal within 6%, i.e. one
+extra `run_frame` each, at the ~4.3 ms the core costs per frame. Together with
+F19's measurement that snapshot + restore is ~136 µs, **run-ahead's cost is the
+emulated frames and essentially nothing else.** It is the price of the feature,
+not overhead around it, and the only way to reduce it is to make the core faster.
+
+This also settles a loose end F18 was explicitly told not to build on. The
+earlier increments — read off captures taken in *different sessions* — were
++3.09 ms and +4.20 ms, a 1.1 ms asymmetry that would have been an interesting
+finding about run-ahead's cost structure. Controlled, they are +4.49 and +4.21.
+**The asymmetry was session artefact**, exactly as suspected, and quoting it
+would have sent someone hunting a structure that does not exist.
+
+#### Depth 3 throttles itself — correct behaviour, and it looks like a bug
+
+`ra = 3` measures identically to `ra = 0`. It is not being ignored:
+`run_ahead_throttled` reads `true` in every one of its captures while
+`run_ahead` still reports the requested 3. `EmuCore::update_runahead_throttle`
+engages at **85% of the frame budget** and releases below 40% (hysteresis, so it
+cannot oscillate when the cost drops as the extra frames stop). Depth 3 would
+cost ~17.2 ms against a 16.639 ms period, so the throttle correctly refuses it
+and the frames are not run.
+
+Worth recording because the raw table reads as a defect — a requested depth with
+no effect — and it is the opposite: the budget guard doing exactly its job. The
+`run_ahead_throttled` column is what distinguishes the two, and any future reader
+of a depth sweep needs it.
+
+#### F15 replicates across all four depths
+
+| `ra` | `tick_iv` p95 | `produced` p95 | `tick_lat` p95 |
+| ---: | ---: | ---: | ---: |
+| 0 | 17.562 ms | 17.572 ms | 0.048 ms |
+| 1 | 23.814 ms | 23.782 ms | 0.044 ms |
+| 2 | 25.970 ms | 26.063 ms | 0.045 ms |
+| 3 | 17.586 ms | 17.581 ms | 0.046 ms |
+
+The produce interval **is** the trigger interval at every depth, and the
+cross-thread hop stays at 44-48 µs throughout. F15's conclusion — the emulator is
+not late, it is asked late — is a four-condition replication, not a single
+capture.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as
