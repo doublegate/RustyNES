@@ -104,6 +104,30 @@ pub struct EmuHandle {
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_RUN_AHEAD_DEPTH: u32 = 3;
 
+/// v2.3.3 F21 — fraction of the frame budget at which the run-ahead throttle
+/// engages, measured rather than chosen.
+///
+/// It was **0.85**, and the F18 depth sweep shows that is too high to protect
+/// what it exists to protect. Sixteen validity-gated captures, four per depth,
+/// with the display-side hold distribution measured from `since_present`:
+///
+/// | depth | median produce cost | % of budget | frames held for the wrong duration |
+/// |---|---|---|---|
+/// | 1 | 8.671 ms | 52.1% | **1.7%** |
+/// | 2 | 12.884 ms | 77.4% | **10.7%** |
+///
+/// At 77.4% the display is already visibly degraded — one frame in nine shown
+/// for the wrong number of refreshes — while the old 0.85 gate had not fired.
+/// That band, harmful but unthrottled, is the defect this constant fixes.
+///
+/// **0.75 is chosen to sit between the two MEASURED points**, above the healthy
+/// 52.1% and below the harmful 77.4%. It is deliberately not tuned finer: the
+/// sweep has no conditions between those two, so any more precise value would be
+/// interpolation presented as measurement. The engage test uses the produce
+/// MEDIAN (not p95) for the reason the surrounding comment gives — on the
+/// emulation thread the tail is OS descheduling, not run-ahead's compute.
+const RUNAHEAD_THROTTLE_ENGAGE: f32 = 0.75;
+
 impl EmuHandle {
     /// Wrap a fresh core in the shared handle.
     #[must_use]
@@ -754,8 +778,9 @@ impl EmuCore {
 
     /// v2.8.0 Phase 3 — run-ahead budget throttle with hysteresis, fed by
     /// the produce-cost **median** (which INCLUDES the run-ahead frames).
-    /// Engages at 85% of the frame budget, releases below 40% — the gap
-    /// prevents oscillation (cost drops when the extra frames stop).
+    /// Engages at [`RUNAHEAD_THROTTLE_ENGAGE`] of the frame budget, releases
+    /// below 40% — the gap prevents oscillation (cost drops when the extra
+    /// frames stop).
     ///
     /// v2.8.0 Phase 5 — keyed off the MEDIAN, not the p95. On the dedicated
     /// emulation thread the p95/p99 tail is dominated by occasional OS
@@ -772,7 +797,7 @@ impl EmuCore {
             return;
         }
         let target = self.frame_duration.as_secs_f32() * 1000.0;
-        if !self.runahead_throttled && produce_p50_ms > target * 0.85 {
+        if !self.runahead_throttled && produce_p50_ms > target * RUNAHEAD_THROTTLE_ENGAGE {
             self.runahead_throttled = true;
             eprintln!(
                 "rustynes: median produce cost {produce_p50_ms:.2} ms is too close to the \
