@@ -38,6 +38,13 @@ pub mod cheats;
 // color-print deps are gated out of the wasm target in `Cargo.toml`.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
+/// v2.3.3 — absolute `CLOCK_MONOTONIC` / `CLOCK_THREAD_CPUTIME_ID` readings,
+/// with the frontend's only `clock_gettime` call site.
+///
+/// Declared unconditionally: the module cfg-gates its own bodies and returns
+/// `None` everywhere the clocks are unreachable (wasm, non-unix, `emu-thread`
+/// off), so callers need no `cfg` of their own.
+pub mod clock;
 pub mod config;
 pub mod debugger;
 // v2.3.0 "Datum II" — true multi-viewport tool-window detach: each detached tool

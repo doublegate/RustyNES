@@ -61,6 +61,36 @@ cycle-accurate core later replaced.
   keeps the evidence. What it did establish: restore costs ~114 µs with **no
   framebuffer at all**, so its 8.3× asymmetry against `snapshot_core_into` is
   per-section deserialization, not the payload.
+||||||| parent of 0991b79a (feat(perf): tick_lat / tick_iv — the trigger is late, not the emulator (F15))
+||||||| parent of 60507e12 (docs(perf): the run-ahead depth sweep — cost is the frames (F18))
+  **Run-ahead's cost is the frames, and depth 3 throttles itself (v2.3.3 F18).**
+  Sixteen captures, four per depth, in a **Latin square** (each depth in each
+  round-position exactly once — F13's correction: alternation balances drift
+  direction but does not buy exchangeability), every one validity-gated by F16
+  and **16/16 passing**. Emulation cost is **linear in depth** at the core's own
+  ~4.3 ms per frame — increments +4.491 and +4.213 ms, equal within 6% — so with
+  snapshot + restore at ~136 µs (F19), run-ahead's cost is the emulated frames
+  and essentially nothing else: **the price of the feature, not overhead around
+  it**. Budget shares: 25.1% / 52.1% / **77.4%** at depths 0/1/2. Depth 3
+  measures like depth 0 because it **throttles itself** — `run_ahead_throttled`
+  is `true` in every one of its captures, the guard engaging at 85% of the frame
+  budget against depth 3's ~17.2 ms; correct behaviour that reads as a defect
+  without that column. It also retires an earlier cross-session artefact: the
+  +3.09/+4.20 ms increments that suggested a non-linear cost structure were
+  session noise, not structure.
+  **`tick_lat` / `tick_iv` — the trigger is late, not the emulator (v2.3.3
+  F15).** Two new independently-ranked series decomposing the produce interval,
+  whose variance tracks missed presents at r = 0.937. The display tick's channel
+  payload became a `CLOCK_MONOTONIC` timestamp instead of `()`, which is what
+  makes the cross-thread hop measurable. First verified capture (SMB,
+  `run_ahead = 1`, display-sync /2, window confirmed on screen by the F16 gate):
+  the winit→emu hop is **0.033-0.050 ms** — negligible — while `produced` p95
+  (24.635 ms) matches `tick_iv` p95 (24.578 ms) to within 0.06 ms. With `rlock`
+  at 0.000 and `tick_timeout` at 0 of 1494, **the produce tail is inherited
+  wholesale from the trigger interval**: the emulator is not late, it is asked
+  late. First positive location the campaign has produced rather than an
+  elimination. Also `crates/rustynes-frontend/src/clock.rs`, holding the
+  frontend's only `clock_gettime` call site.
   **The unexplained between-session cadence spread is emulation budget margin
   (v2.3.3 F17).** F14 left one quantity open and called it the largest
   unexplained question in `docs/performance.md`: display cadence error varied

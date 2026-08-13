@@ -293,6 +293,32 @@ pub struct EmuControl {
     tick_ok: AtomicU64,
     /// Watchdog fires: `recv_timeout` returned `Timeout`. See [`Self::tick_ok`].
     tick_timeout: AtomicU64,
+    /// v2.3.3 F15 — staging for the two halves of the display trigger,
+    /// nanoseconds, written by [`Self::note_tick_timing`] on the emulation
+    /// thread and drained into the perf rings by the produce path once it holds
+    /// the emulator lock (a ring is not `Sync`, and the timestamps are known
+    /// before the lock is taken).
+    ///
+    /// Two SEPARATE series, each ranked on its own samples — never one derived
+    /// from the other by subtraction, which is the F8 mistake:
+    ///
+    /// * `tick_lat_ns` — send to receipt, i.e. the winit->emu hop: scheduler
+    ///   wake-up latency, the last completely unmeasured step in the chain.
+    /// * `tick_iv_ns` — the interval between successive SENDS, i.e. how
+    ///   regularly the winit thread asked for a frame, independent of how long
+    ///   the ask took to arrive.
+    ///
+    /// Aimed by measurement, not by guess: produce-interval standard deviation
+    /// tracks missed presents at r = 0.937 across eighteen captures, and these
+    /// two plus the existing `produce_cost` are the three terms that make up
+    /// that interval.
+    tick_lat_ns: AtomicU64,
+    /// Interval between successive tick sends. See [`Self::tick_lat_ns`].
+    tick_iv_ns: AtomicU64,
+    /// Previous send stamp, for differencing into [`Self::tick_iv_ns`]. Zero
+    /// means "no previous tick", which suppresses the first interval rather
+    /// than reporting the whole time since the epoch as one.
+    tick_prev_send_ns: AtomicU64,
     /// Ticks discarded by [`EmuThread::notify_present`] because the depth-1
     /// channel was already full.
     ///
@@ -318,6 +344,9 @@ impl EmuControl {
             tick_ok: AtomicU64::new(0),
             tick_timeout: AtomicU64::new(0),
             tick_dropped: AtomicU64::new(0),
+            tick_lat_ns: AtomicU64::new(0),
+            tick_iv_ns: AtomicU64::new(0),
+            tick_prev_send_ns: AtomicU64::new(0),
         }
     }
 
@@ -334,6 +363,51 @@ impl EmuControl {
             &self.tick_timeout
         };
         c.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// v2.3.3 F15 — stage the trigger timings for the produce path to drain.
+    ///
+    /// `sent_ns` is the payload the winit thread stamped at `try_send`;
+    /// `recv_ns` is this thread's reading on receipt. Both are `CLOCK_MONOTONIC`
+    /// through [`crate::clock`], so the difference is meaningful across the
+    /// thread boundary in a way no `Instant` pair would be.
+    ///
+    /// `saturating_sub` rather than an assert: the two readings come from one
+    /// clock, so `recv >= sent` holds in practice, but a zero is a far better
+    /// failure mode for a diagnostic than a panic in the produce path.
+    fn note_tick_timing(&self, sent_ns: Option<u64>, recv_ns: Option<u64>) {
+        let (Some(sent), Some(recv)) = (sent_ns, recv_ns) else {
+            return;
+        };
+        // A zero payload is the sender saying its clock was unavailable, NOT a
+        // send at the epoch. Without this the latency would read as the machine's
+        // entire uptime and would dominate every percentile in the series.
+        if sent == 0 {
+            return;
+        }
+        self.tick_lat_ns
+            .store(recv.saturating_sub(sent), Ordering::Relaxed);
+        let prev = self.tick_prev_send_ns.swap(sent, Ordering::Relaxed);
+        // Zero prev = first tick of the session: there is no interval yet, and
+        // reporting `sent - 0` would enter the boot time as one sample.
+        self.tick_iv_ns.store(
+            if prev == 0 {
+                0
+            } else {
+                sent.saturating_sub(prev)
+            },
+            Ordering::Relaxed,
+        );
+    }
+
+    /// Take the staged trigger timings, clearing them so a frame produced
+    /// without a tick (the watchdog arm, or the wall-clock regime) does not
+    /// re-record the previous frame's numbers as its own.
+    fn take_tick_timing(&self) -> (u64, u64) {
+        (
+            self.tick_lat_ns.swap(0, Ordering::Relaxed),
+            self.tick_iv_ns.swap(0, Ordering::Relaxed),
+        )
     }
 
     /// Record a tick discarded because the depth-1 channel was full.
@@ -448,7 +522,15 @@ pub struct EmuThread {
     shared_input: Arc<SharedInput>,
     /// Display-regime present tick (bounded depth 1; `try_send` from
     /// `App::display_sync_after_present`).
-    tick_tx: SyncSender<()>,
+    ///
+    /// v2.3.3 F15 — the payload is `CLOCK_MONOTONIC` nanoseconds at the moment
+    /// of the send, not `()`. It is what makes the winit->emu hop measurable at
+    /// all: the receiver differences it against its own clock reading, and the
+    /// SUCCESSIVE payloads give the trigger interval as a series in its own
+    /// right. Without a payload both quantities are invisible, and the produce
+    /// interval — whose standard deviation tracks missed presents at r = 0.937
+    /// — cannot be attributed to the trigger, the hop, or the work.
+    tick_tx: SyncSender<u64>,
 }
 
 impl EmuThread {
@@ -466,7 +548,7 @@ impl EmuThread {
         shared_input: Arc<SharedInput>,
         present: Arc<crate::present_buffer::PresentBuffer>,
     ) -> Self {
-        let (tick_tx, tick_rx) = sync_channel::<()>(1);
+        let (tick_tx, tick_rx) = sync_channel::<u64>(1);
         let control_t = Arc::clone(&control);
         let shared_t = Arc::clone(&shared_input);
         let handle = std::thread::Builder::new()
@@ -515,7 +597,14 @@ impl EmuThread {
         // thread teardown as a dropped tick. Harmless for the totals, but this
         // counter exists to answer "are presents outrunning the producer", and
         // an exiting thread is not evidence either way.
-        if matches!(self.tick_tx.try_send(()), Err(TrySendError::Full(()))) {
+        if matches!(
+            // Zero when the clock is unavailable; the receiver's
+            // `note_tick_timing` treats it as no measurement rather than as an
+            // enormous latency, because its own reading is `None` too.
+            self.tick_tx
+                .try_send(crate::clock::monotonic_now_ns().unwrap_or(0)),
+            Err(TrySendError::Full(_))
+        ) {
             self.control.note_tick_dropped();
         }
     }
@@ -553,7 +642,7 @@ fn run_loop(
     proxy: &EventLoopProxy<AppEvent>,
     control: &EmuControl,
     shared_input: &SharedInput,
-    tick_rx: &Receiver<()>,
+    tick_rx: &Receiver<u64>,
     present: &crate::present_buffer::PresentBuffer,
 ) {
     elevate_thread_priority();
@@ -609,8 +698,12 @@ fn run_loop(
             // Fifo vsync is the clock: one frame per present tick, with a
             // watchdog that keeps producing if presents stop arriving.
             match tick_rx.recv_timeout(DISPLAY_TICK_TIMEOUT) {
-                Ok(()) => {
+                Ok(sent_ns) => {
                     control.note_tick(true);
+                    // F15 — the two halves of the trigger, each recorded as its
+                    // own per-sample series so neither is ever derived by
+                    // subtracting the other (the F8 lesson).
+                    control.note_tick_timing(Some(sent_ns), crate::clock::monotonic_now_ns());
                     drive_one(emu, audio.as_mut(), shared_input, control, present)
                 }
                 Err(RecvTimeoutError::Timeout) => {
@@ -682,6 +775,11 @@ fn drive_one(
     // emulator, which is what made a contention stall read as an expensive
     // frame. The blocking is still measured, just under its own name.
     let t_wait = t_wait.elapsed();
+    // F15 — drain the staged trigger timings now that the lock is held. Taken
+    // (not peeked) so a frame produced without a tick — the watchdog arm, or a
+    // regime change — records nothing rather than re-recording the previous
+    // frame's numbers as its own.
+    let (tick_lat_ns, tick_iv_ns) = control.take_tick_timing();
     let t0 = Instant::now();
     // Re-check UNDER the lock: the winit thread sets `netplay_paused` then
     // fences on this same lock, so once it holds the lock we observe the
@@ -698,6 +796,7 @@ fn drive_one(
     let _ = core.produce_one_frame(&inputs, &mut sinks);
     core.perf.record_produce_cost(t0.elapsed());
     core.perf.record_produce_wait(t_wait);
+    core.perf.record_tick_timing(tick_lat_ns, tick_iv_ns);
     core.perf.record_produced(Instant::now());
     // v1.0.0 — display regime advances by the speed-scaled period.
     core.next_frame_time = Some(Instant::now() + core.effective_frame_duration());
@@ -913,6 +1012,76 @@ fn elevate_thread_priority() {}
 mod tests {
     use super::*;
     use rustynes_core::Buttons;
+
+    // ---- v2.3.3 F15: display-tick timing plumbing -----------------------
+    //
+    // These test the LOGIC, not the measurement. The instrument's end-to-end
+    // behaviour needs a capture with display-sync actually engaged, which needs
+    // a window the compositor is presenting (see F16); until then every field
+    // reads 0.000 and the series has never carried a real sample. What CAN be
+    // pinned now is every way the staging can lie, and each of these
+    // corresponds to a specific wrong number it would otherwise report.
+
+    /// A zero payload means "the sender's clock was unavailable", not "the send
+    /// happened at the epoch". Without the guard the latency would read as the
+    /// machine's entire uptime and would dominate every percentile in the ring.
+    #[test]
+    fn zero_send_stamp_is_not_a_measurement() {
+        let c = EmuControl::new();
+        c.note_tick_timing(Some(0), Some(5_000_000));
+        assert_eq!(c.take_tick_timing(), (0, 0));
+    }
+
+    /// An unavailable clock on EITHER side records nothing rather than half a
+    /// measurement.
+    #[test]
+    fn absent_clock_records_nothing() {
+        let c = EmuControl::new();
+        c.note_tick_timing(None, Some(5_000_000));
+        assert_eq!(c.take_tick_timing(), (0, 0));
+        c.note_tick_timing(Some(5_000_000), None);
+        assert_eq!(c.take_tick_timing(), (0, 0));
+    }
+
+    /// The first tick of a session has no predecessor, so it has no interval.
+    /// Reporting `sent - 0` would enter the machine's whole uptime as one
+    /// sample; the second tick then measures a real interval.
+    #[test]
+    fn first_tick_has_no_interval_but_the_second_does() {
+        let c = EmuControl::new();
+        c.note_tick_timing(Some(1_000_000_000), Some(1_000_500_000));
+        let (lat, iv) = c.take_tick_timing();
+        assert_eq!(lat, 500_000, "latency is recv - sent");
+        assert_eq!(iv, 0, "no previous send, so no interval");
+        c.note_tick_timing(Some(1_016_640_000), Some(1_016_700_000));
+        let (lat, iv) = c.take_tick_timing();
+        assert_eq!(lat, 60_000);
+        assert_eq!(iv, 16_640_000, "interval is send-to-send, not recv-to-recv");
+    }
+
+    /// Taking CLEARS. A frame produced without a tick — the watchdog arm, or a
+    /// regime change — must record nothing, not re-record the previous frame's
+    /// numbers as its own and double-count them in the ring.
+    #[test]
+    fn take_clears_so_an_untriggered_frame_records_nothing() {
+        let c = EmuControl::new();
+        c.note_tick_timing(Some(1_000_000_000), Some(1_000_500_000));
+        assert_eq!(c.take_tick_timing(), (500_000, 0));
+        assert_eq!(
+            c.take_tick_timing(),
+            (0, 0),
+            "second take must not repeat the first's sample"
+        );
+    }
+
+    /// One clock, so `recv >= sent` holds in practice — but a diagnostic must
+    /// not panic in the produce path if it ever does not.
+    #[test]
+    fn reversed_stamps_saturate_rather_than_panic() {
+        let c = EmuControl::new();
+        c.note_tick_timing(Some(2_000_000_000), Some(1_000_000_000));
+        assert_eq!(c.take_tick_timing().0, 0);
+    }
 
     #[test]
     fn shared_input_round_trips() {

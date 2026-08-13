@@ -416,7 +416,7 @@ fn open_log_file(dir: &Path, ctx: &PerfLogContext) -> std::io::Result<(BufWriter
 /// A `const` data table rather than a `const fn`: it is pure data, and as a
 /// function it crossed the 100-line budget purely by growing a row, which is
 /// not the kind of complexity that lint exists to catch.
-static STATS_NAMES: [(&str, [&str; 5]); 11] = [
+static STATS_NAMES: [(&str, [&str; 5]); 13] = [
     (
         "produced",
         [
@@ -504,6 +504,30 @@ static STATS_NAMES: [(&str, [&str; 5]); 11] = [
         ],
     ),
     (
+        // v2.3.3 F15 — the winit->emu tick hop, and the interval between tick
+        // SENDS. Two independent series for the same reason `rwork` is one:
+        // the produce interval decomposes into trigger regularity, hop latency
+        // and work, and each must be ranked on its own samples.
+        "tick_lat",
+        [
+            "tick_lat_mean_ms",
+            "tick_lat_p50_ms",
+            "tick_lat_p95_ms",
+            "tick_lat_p99_ms",
+            "tick_lat_max_ms",
+        ],
+    ),
+    (
+        "tick_iv",
+        [
+            "tick_iv_mean_ms",
+            "tick_iv_p50_ms",
+            "tick_iv_p95_ms",
+            "tick_iv_p99_ms",
+            "tick_iv_max_ms",
+        ],
+    ),
+    (
         // v2.3.3 F8 — logged as its OWN series precisely so nobody has to
         // reconstruct it as `rtot_p95 - rwait_p95`. That subtraction is not
         // a percentile of the work distribution and produced an impossible
@@ -559,6 +583,8 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     let stat_for = |series: &str| -> &crate::perf::IntervalStats {
         match series {
             "produced" => &v.produced,
+            "tick_lat" => &v.tick_lat,
+            "tick_iv" => &v.tick_iv,
             "presented" => &v.presented,
             "wait" => &v.produce_wait,
             "rui" => &v.render_ui,

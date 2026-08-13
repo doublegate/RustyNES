@@ -2410,6 +2410,122 @@ settled that 95% of run-ahead's cost is `run_frame` itself.
 
 The `nes_restore_quiet_slim_*` probe stays in the bench as the evidence.
 
+||||||| parent of 0991b79a (feat(perf): tick_lat / tick_iv — the trigger is late, not the emulator (F15))
+### v2.3.3 F15 — the trigger is late, not the emulator
+
+The produce interval's standard deviation tracks missed presents at **r = 0.937**
+(F17's data), so the interval's variance is where the display cadence error comes
+from. It has exactly three terms: how regularly the trigger is **sent**, how long
+it takes to **arrive**, and how long the frame takes to **make**. Only the third
+was measured.
+
+`tick_iv` and `tick_lat` measure the first two, as two independently-ranked
+series — never one derived by subtracting the other, per F8. The display tick's
+channel payload changed from `()` to a `CLOCK_MONOTONIC` timestamp, which is what
+makes a cross-thread hop measurable at all.
+
+**First verified capture** (SMB, `run_ahead = 1`, display-sync /2, window on
+screen and confirmed valid by F16's gate, 18 post-warmup rows):
+
+| series | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: |
+| `tick_lat` — winit→emu hop | **0.033 ms** | **0.043 ms** | **0.050 ms** |
+| `tick_iv` — between tick *sends* | 16.289 ms | **24.578 ms** | 28.637 ms |
+| `produced` — resulting interval | 16.269 ms | **24.635 ms** | — |
+
+#### The result
+
+**The cross-thread hop is 33-50 microseconds.** It is not a contributor, and the
+last completely unmeasured step in the produce chain is now measured and
+eliminated. One 13.155 ms outlier appears in `tick_lat_max` across 1494 ticks —
+a single scheduler hiccup, not a systematic cost.
+
+**`produced` p95 (24.635 ms) matches `tick_iv` p95 (24.578 ms) to within 0.06
+ms.** The produce tail is inherited wholesale from the trigger interval. Combined
+with `rlock` = 0.000, `tick_timeout` = 0 of 1494, and `cost_p95` = 9.198 ms (55%
+of budget, F17's healthy band):
+
+> **The emulator is not late. It is asked late.**
+
+That is the first *positive location* this campaign has produced rather than an
+elimination. The remaining defect is in **when the winit thread decides to send
+the tick** — `display_produce_due` and the present cadence feeding it — and every
+other candidate in the chain is now measured and ruled out.
+
+#### Why it took a working capture to say this
+
+The instrument was written, gated, and mutation-checked hours before it produced
+a single real sample: five verification attempts all read 0.000 because the
+window was occluded and display-sync never engaged, which is what F16 exists to
+detect. Its plumbing was pinned by tests (zero-payload guard, first-tick
+suppression, take-clears) that were themselves mutation-checked — but plumbing
+tests cannot verify an instrument, only that it lies in none of the ways
+anticipated. The numbers above are the verification.
+
+### v2.3.3 F18 — run-ahead's cost is the frames, and depth 3 throttles itself
+
+F17 measured run-ahead 2 at ~78% of the frame budget and asked whether that cost
+is reducible. It is not: it is emulation work, linear in depth, and the state
+handling around it is noise.
+
+**Design.** Sixteen captures, four at each depth, in a **Latin square** — each
+depth appears in each round-position exactly once, so run-order drift cannot load
+onto any one depth. That is the correction F13 earned: strict alternation
+balances the *direction* of a monotone drift but does not buy exchangeability,
+and a Latin square does. Every capture was validity-gated first (F16); **16/16
+passed**, window on screen, `display-sync /2`, discard rate ≤ 1%.
+
+| requested `ra` | n | `cost_p50` | % budget | `cost_p95` | % budget | throttled |
+| ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 0 | 4 | 4.180 ms | 25.1% | 4.404 ms | 26.5% | no |
+| 1 | 4 | 8.671 ms | 52.1% | 9.060 ms | 54.5% | no |
+| 2 | 4 | 12.884 ms | **77.4%** | 13.385 ms | **80.4%** | no |
+| 3 | 4 | 4.276 ms | 25.7% | 4.516 ms | 27.1% | **yes** |
+
+#### The cost is linear in depth, at the core's own frame cost
+
+Per-depth increments: **+4.491 ms** and **+4.213 ms** — equal within 6%, i.e. one
+extra `run_frame` each, at the ~4.3 ms the core costs per frame. Together with
+F19's measurement that snapshot + restore is ~136 µs, **run-ahead's cost is the
+emulated frames and essentially nothing else.** It is the price of the feature,
+not overhead around it, and the only way to reduce it is to make the core faster.
+
+This also settles a loose end F18 was explicitly told not to build on. The
+earlier increments — read off captures taken in *different sessions* — were
++3.09 ms and +4.20 ms, a 1.1 ms asymmetry that would have been an interesting
+finding about run-ahead's cost structure. Controlled, they are +4.49 and +4.21.
+**The asymmetry was session artefact**, exactly as suspected, and quoting it
+would have sent someone hunting a structure that does not exist.
+
+#### Depth 3 throttles itself — correct behaviour, and it looks like a bug
+
+`ra = 3` measures identically to `ra = 0`. It is not being ignored:
+`run_ahead_throttled` reads `true` in every one of its captures while
+`run_ahead` still reports the requested 3. `EmuCore::update_runahead_throttle`
+engages at **85% of the frame budget** and releases below 40% (hysteresis, so it
+cannot oscillate when the cost drops as the extra frames stop). Depth 3 would
+cost ~17.2 ms against a 16.639 ms period, so the throttle correctly refuses it
+and the frames are not run.
+
+Worth recording because the raw table reads as a defect — a requested depth with
+no effect — and it is the opposite: the budget guard doing exactly its job. The
+`run_ahead_throttled` column is what distinguishes the two, and any future reader
+of a depth sweep needs it.
+
+#### F15 replicates across all four depths
+
+| `ra` | `tick_iv` p95 | `produced` p95 | `tick_lat` p95 |
+| ---: | ---: | ---: | ---: |
+| 0 | 17.562 ms | 17.572 ms | 0.048 ms |
+| 1 | 23.814 ms | 23.782 ms | 0.044 ms |
+| 2 | 25.970 ms | 26.063 ms | 0.045 ms |
+| 3 | 17.586 ms | 17.581 ms | 0.046 ms |
+
+The produce interval **is** the trigger interval at every depth, and the
+cross-thread hop stays at 44-48 µs throughout. F15's conclusion — the emulator is
+not late, it is asked late — is a four-condition replication, not a single
+capture.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as
