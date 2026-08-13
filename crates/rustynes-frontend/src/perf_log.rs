@@ -941,6 +941,7 @@ mod tests {
         // mutation-checked: a test that cannot fail on the bug is decoration.
         let with_value = PerfView {
             present_discarded: 4321,
+            runahead_toggles: 8765,
             ..PerfView::default()
         };
         let emitted = columns(&with_value)
@@ -951,6 +952,20 @@ mod tests {
             emitted.as_deref(),
             Some("4321"),
             "present_discarded must emit its own field verbatim"
+        );
+        // v2.3.3 F21 — same treatment for the toggle counter. The name check
+        // alone cannot tell a correctly-wired column from one reading the wrong
+        // field, because `PerfView::default()` zeroes both. Raised in review on
+        // PR #368 — the pattern was written for `present_discarded` an hour
+        // earlier and not applied to the column added beside it.
+        let toggles = columns(&with_value)
+            .into_iter()
+            .find(|(n, _)| *n == "runahead_toggles")
+            .map(|(_, v)| v);
+        assert_eq!(
+            toggles.as_deref(),
+            Some("8765"),
+            "runahead_toggles must emit its own field verbatim"
         );
 
         // The header (built from `columns`) must have no duplicate column
