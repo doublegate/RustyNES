@@ -2526,6 +2526,71 @@ cross-thread hop stays at 44-48 µs throughout. F15's conclusion — the emulato
 not late, it is asked late — is a four-condition replication, not a single
 capture.
 
+||||||| parent of 987ef249 (docs(perf): the F21 throttle A/Bs — 6.43% -> 0.84% at depth 1)
+### v2.3.3 F21 — the run-ahead throttle: lower, and one step at a time (ADOPTED)
+
+F18 measured `run_ahead = 2` at 77.4% of the frame budget with **10.7%** of
+frames held for the wrong number of refreshes, while the throttle's 0.85 gate had
+not fired. That band — harmful but unthrottled — is the defect. Two changes, each
+A/B'd, and the first one's result is what produced the second.
+
+#### Threshold 0.85 -> 0.75
+
+Chosen to sit between the two MEASURED points (52.1% healthy / 77.4% harmful),
+deliberately not tuned finer since the sweep has no conditions between them.
+Four captures per arm at `run_ahead = 2`:
+
+| | captures (% frames wrong) | mean | `cost_p50` |
+| --- | --- | ---: | ---: |
+| A — 0.85 | 7.87, 8.61, 5.88, 11.94 | 8.57% | 12.7 ms |
+| B — 0.75 | 0.69, 0.61, 0.92, 0.69 | **0.73%** | 4.24 ms |
+
+All four pairs favour B, mean −7.85 points, paired **p = 1/16**. **But look at
+`cost_p50` = 4.24 ms: that is depth-0 cost.** B did not make depth 2 smoother, it
+disabled run-ahead. The user asked for depth 2 and got depth 0 — two frames of
+input latency traded for the cadence.
+
+#### Step down, do not zero
+
+The sweep says that trade was unnecessary: depth 1 costs 52.1% of budget and
+shows 1.7% wrong. So the throttle now carries `runahead_throttle_steps` — how
+many depths it has removed — instead of a bare "is it off" bool. Engage subtracts
+**one** step and re-measures on the next median window, so a host that genuinely
+cannot afford any depth still converges to 0, without the cliff. Release predicts
+the cost of giving back one step using F18's per-frame-linear model
+(+4.49 / +4.21 ms per depth, equal within 6%).
+
+Three arms, Latin square so no arm owns a round-position, three captures each:
+
+| arm | % frames wrong | mean | `cost_p50` | depth reached |
+| --- | --- | ---: | ---: | ---: |
+| A — 0.85 | 9.21, 6.53, 3.56 | 6.43% | 12.707 ms | 2 |
+| B — 0.75 all-or-nothing | 1.15, 0.84, 0.61 | 0.87% | 4.258 ms | **0** |
+| **C — 0.75 step-down** | 0.76, 0.91, 0.84 | **0.84%** | 8.556 ms | **1** |
+
+**C matches B's cadence and keeps a frame of latency.** The per-pair differences
+between C and B are +0.07, +0.23 and −0.39 points — no difference, which is the
+point: C's win over B is not cadence, it is that B discarded a depth it did not
+need to. `cost_p50` 8.556 ms also matches F18's independently-measured depth-1
+cost of 8.671 ms, so C is demonstrably *running* at depth 1 rather than landing
+near it by coincidence.
+
+Against the unthrottled default, **6.43% -> 0.84%** of frames held for the wrong
+duration.
+
+#### What this is and is not
+
+It is a **budget guard doing its job earlier and more gently**. It is not a fix
+for the shudder: `display_produce_due` was measured before any of this and
+delivers 98.3% correct holds at the shipped `run_ahead = 1` (F18's sweep), so
+there was no pacing-logic defect to fix. What there was is a host that cannot
+afford depth 2, and a guard that noticed too late and then over-corrected.
+
+The thresholds are measured on ONE host. 0.75 is a separator between two observed
+points, not a derived constant, and a machine with a faster core will sit
+differently against it — which is the argument for keeping the guard adaptive
+rather than encoding a depth limit.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as
