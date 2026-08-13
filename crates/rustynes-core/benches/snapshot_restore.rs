@@ -89,6 +89,27 @@ fn bench_rom(c: &mut Criterion, label: &str, rel: &str) {
     // The run-ahead N=1 budget probe: what one visible frame pays ON TOP of
     // its own run_frame — snapshot, one hidden run_frame, restore — on the
     // Phase 3 fast path (the shipping run-ahead configuration).
+    // v2.3.3 F19 PROBE — the SLIM restore, to test whether skipping the
+    // 245,760-byte framebuffer is actually worth anything on the run-ahead /
+    // netplay / TAS paths.
+    //
+    // Written because the estimate that motivated F19 was unsound: the
+    // framebuffer is 94% of the snapshot BYTES, and that was silently carried
+    // over into a claim about TIME. A 245 KiB memcpy is ~12-25 us at ordinary
+    // bandwidth, so if `restore_quiet` costs 121 us the framebuffer cannot be
+    // 94% of it, and the win could be a fraction of what F19 assumed. Measure
+    // the pair rather than reason about the ratio.
+    c.bench_function(&format!("nes_restore_quiet_slim_{label}"), |b| {
+        let mut nes = Nes::from_rom(&bytes).expect("rom parses");
+        nes.run_frame();
+        let mut blob = Vec::new();
+        nes.snapshot_core_into_slim(&mut blob);
+        b.iter(|| {
+            nes.restore_quiet(black_box(&blob))
+                .expect("slim snapshot round-trips");
+        });
+    });
+
     c.bench_function(&format!("nes_runahead_budget_{label}"), |b| {
         b.iter_batched(
             || (warmed_nes(&bytes), Vec::new()),
