@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import sys
 
 
@@ -286,7 +287,7 @@ def main() -> int:
         failures.append(f"snap_forwards {snaps} > {args.max_snap_forwards}")
     if (
         args.max_cost_p95_ms is not None
-        and cost_p95 == cost_p95  # NaN-safe
+        and not math.isnan(cost_p95)
         and cost_p95 > args.max_cost_p95_ms
     ):
         failures.append(
@@ -344,11 +345,26 @@ def main() -> int:
     print(f"  rows={len(rows)} (analyzed {len(body)} after {args.warmup_rows} warmup)")
     print(f"  underruns={underruns}  produced_max={produced_max:.1f}ms  "
           f"catchup_bursts={catchup}  snap_forwards={snaps}")
-    # v2.3.3 F17 — the NTSC frame period, the deadline `cost_p95` is racing.
-    ntsc_budget_ms = 16.639
-    util = 100.0 * cost_p95 / ntsc_budget_ms if cost_p95 == cost_p95 else float("nan")
-    print(f"  cost_p95={cost_p95:.2f}ms (emulation work, {util:.0f}% of the "
-          f"{ntsc_budget_ms} ms NTSC frame)  produced_dropped={dropped}")
+    # v2.3.3 F17 — the frame period `cost_p95` is racing, taken from the log's
+    # own `target_ms` rather than hardcoded.
+    #
+    # The first version divided by 16.639 ms unconditionally and labelled the
+    # result "NTSC". A PAL or Dendy capture has `target_ms` = 19.997, so its
+    # utilisation was overstated by ~20% and mislabelled with a region it was not
+    # run in — a wrong number wearing a confident unit, which is the failure this
+    # whole document is about. Raised in review on PR #364.
+    #
+    # `target_ms` is written into the header by the frontend and is already read
+    # above for the rate gate. Absent or nonsensical, the utilisation is simply
+    # not reported: no budget, no percentage.
+    if target_ms > 0.0 and not math.isnan(cost_p95):
+        region = "NTSC" if abs(target_ms - 16.639) < 0.01 else "frame"
+        util = 100.0 * cost_p95 / target_ms
+        print(f"  cost_p95={cost_p95:.2f}ms (emulation work, {util:.0f}% of the "
+              f"{target_ms:.3f} ms {region} period)  produced_dropped={dropped}")
+    else:
+        print(f"  cost_p95={cost_p95:.2f}ms (emulation work; no target_ms in the "
+              f"header, so no budget share)  produced_dropped={dropped}")
     # v2.3.3 F16 — three states, not two: a pre-F16 log has no column, and
     # reporting that as "VALID — window was on screen" would assert something
     # never measured. The gate still passes it (see above), but it must not claim

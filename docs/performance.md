@@ -2247,6 +2247,7 @@ reports, which an occluded window cannot produce — but that is an inference, n
 a check.
 
 ||||||| parent of c1325040 (docs(perf): the between-session cadence spread is emulation budget margin (F17))
+
 ### v2.3.3 F17 — the between-session spread is emulation budget margin
 
 F14 left one quantity unexplained and named it the largest open question in this
@@ -2296,9 +2297,12 @@ Cost and cadence could in principle share a common cause — a loaded host makes
 the emulator slow *and* independently disturbs presentation. **The `ra = 2`
 captures separate the two, and they are the decisive evidence in this section.**
 
-Their tail ratio is **1.04-1.05**: essentially no contention tail at all. Their
-elevated cost is *by design* — three emulated frames per produced frame — not
-inflicted by the host. And they still show **14.77-18.93%** cadence error:
+Their tail ratio is **1.04-1.05**. That is *evidence against* a large contention
+tail, not proof of its absence — a uniform slowdown raises p50 and p95 together
+and leaves the ratio flat, so the ratio bounds the *spread* of contention, not
+its level. What it does establish is that their elevated cost is **structural**:
+three emulated frames per produced frame, by design, not a spike inflicted by the
+host. And they still show **14.77-18.93%** cadence error:
 
 | capture | `cost_p50` | % of budget | tail | cadence error |
 | --- | ---: | ---: | ---: | ---: |
@@ -2306,8 +2310,14 @@ inflicted by the host. And they still show **14.77-18.93%** cadence error:
 | `023655` | 12.928 ms | 78% | 1.054 | 14.77% |
 | `023836` | 12.948 ms | 78% | 1.040 | 15.38% |
 
-A *deliberate* cost increase, on an otherwise-quiet host, reproduces the full
-error. That is the manipulation the observational captures could not provide.
+A *deliberate*, structural cost increase reproduces the full error. That is the
+manipulation the observational captures could not provide, and it is why this
+section claims causation where F13 could not.
+
+**Scoped precisely:** it shows emulation cost is *sufficient* to produce cadence
+error of this size. It does **not** show cost is the only contributor, nor that
+pacing contributes nothing — these captures cannot separate a pacing component
+riding along with the cost, and no measurement here attempts to.
 
 #### What this means
 

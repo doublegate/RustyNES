@@ -58,8 +58,10 @@ cycle-accurate core later replaced.
   1, **78% at 2**) and a host-contention **tail** — and the error follows the
   total, not the cause. The `run_ahead = 2` captures are the decisive evidence
   that this is causal rather than a shared symptom of host load: their tail ratio
-  is 1.04-1.05, i.e. **no contention at all**, their cost is elevated *by design*,
-  and they still show 14.77-18.93% error. **The spread was never a property of the
+  is 1.04-1.05 (evidence against a large contention *spread*, not proof of zero
+  contention), their cost is elevated **structurally by design**, and they still
+  show 14.77-18.93% error — showing emulation cost is *sufficient* to produce the
+  effect, not that it is the only contributor. **The spread was never a property of the
   pacing code**, which is also why the F13 A/B could not resolve a ~0.4-point
   configuration effect sitting inside ten points of variance. Limits stated in
   full in F17: `ra = 2` is n = 3 from one session, 60% is an observed separator
