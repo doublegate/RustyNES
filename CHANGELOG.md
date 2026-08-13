@@ -46,6 +46,21 @@ cycle-accurate core later replaced.
   one row per produce and per present, with `scripts/perf/trace_shape.py` to
   classify its temporal shape. `rwork` is now `rtot - rwait - rlock`.
 
+  **A slim restore for run-ahead was measured and REJECTED (v2.3.3 F19).**
+  Run-ahead, netplay rollback and TAS seek all re-simulate immediately after
+  restoring, so the 245,760-byte framebuffer they restore is overwritten before
+  it is seen — and `PPU_SNAPSHOT_SLIM_FLAG` already omits it. Projected ~110 µs
+  per restore; **measured 8.4 µs** (122.8 → 114.4 µs), which is **0.30%** of the
+  2.802 ms run-ahead increment and an order of magnitude under the >3% bar. The
+  estimate came from "the framebuffer is 94% of the snapshot **bytes**" carried
+  silently into a claim about **time** — 245 KiB is ~12-25 µs of memcpy, so it
+  was never 94% of a 122 µs restore. Rejected before implementation, which also
+  avoided a save-state correctness hazard and two contract renegotiations
+  (netplay hashes the framebuffer as a desync classifier; TAS seek has a test
+  asserting it equals linear replay). A `nes_restore_quiet_slim_*` probe bench
+  keeps the evidence. What it did establish: restore costs ~114 µs with **no
+  framebuffer at all**, so its 8.3× asymmetry against `snapshot_core_into` is
+  per-section deserialization, not the payload.
   **The unexplained between-session cadence spread is emulation budget margin
   (v2.3.3 F17).** F14 left one quantity open and called it the largest
   unexplained question in `docs/performance.md`: display cadence error varied

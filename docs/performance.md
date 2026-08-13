@@ -2353,6 +2353,56 @@ approaching the frame period as the leading indicator it evidently is. The
 existing perf gate already tracks `cost_p95`; what it lacked was the comparison
 against 16.639 ms that turns it into a margin.
 
+### v2.3.3 F19 — slim restore for run-ahead (decision: REJECTED, not implemented)
+
+The proposal: run-ahead, netplay rollback and TAS seek all re-simulate frames
+immediately after restoring, so the 245,760-byte framebuffer they restore is
+overwritten before anyone sees it. `PPU_SNAPSHOT_SLIM_FLAG` and
+`Nes::snapshot_core_into_slim` already omit it — built in F3/F4 for the rewind
+ring — and nothing else uses them. Free win, apparently.
+
+**Projected ~110 µs per restore. Measured 8.4 µs.**
+
+| bench | full | slim | saving |
+| --- | ---: | ---: | ---: |
+| `nes_restore_quiet_flowing_palette` | 122.8 µs | 114.4 µs | **8.4 µs** |
+| `nes_restore_quiet_mmc3` | 122.5 µs | 115.0 µs | **7.5 µs** |
+
+Against the 2.802 ms `nes_runahead_budget` increment that is **0.30%** — an
+order of magnitude under the project's >3% bar. **Rejected before
+implementation.**
+
+#### Why the estimate was wrong, which is the part worth keeping
+
+It came from the project's own (correct) statement that the framebuffer is **94%
+of the snapshot BYTES**, and that was carried silently into a claim about
+**TIME**. 245,760 bytes is ~12-25 µs of memcpy at ordinary bandwidth, so it could
+never have been 94% of a 122 µs restore. The measured share is ~7%. The estimate
+was off by 13x.
+
+> **Bytes are not time.** Convert one to the other with a bandwidth figure before
+> quoting a projected win.
+
+Cost of getting this wrong, had it not been measured first: a change with a
+save-state correctness hazard (after a slim `finish`, the framebuffer holds the
+*visible* frame while the state is the *persistent* one, and `Nes::snapshot`
+serializes the framebuffer) across three call sites, two of which needed contract
+renegotiation — netplay's `gameplay_digest_parts` hashes the framebuffer as a
+**desync classifier**, and TAS seek has a test asserting its framebuffer equals
+linear replay's. All of that for 0.30%.
+
+#### What it did establish
+
+**Restore costs ~114 µs with no framebuffer at all.** So the 8.3x asymmetry
+against `snapshot_core_into` (14.7 µs) is not the big payload — it is per-section
+deserialization of the small structures, and the v2.8.0 fast path that halved
+snapshot did nothing for it. That is a better-aimed question than the one this
+section asked, and it matters on the netplay-rollback and TAS-seek paths where
+restore runs many times per second. It does **not** matter for run-ahead: F18
+settled that 95% of run-ahead's cost is `run_frame` itself.
+
+The `nes_restore_quiet_slim_*` probe stays in the bench as the evidence.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as
