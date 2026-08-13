@@ -657,14 +657,32 @@ pub struct PerfView {
     /// but never scanned out (an occluded, minimized or otherwise unpresented
     /// surface).
     ///
-    /// Surfaced because its absence made a real failure completely silent. The
-    /// refresh estimator needs 24 `presented` reports before display-sync can
-    /// engage; if the compositor answers every feedback request with `discarded`
-    /// instead, that count is never reached, `refresh_source` stays `none`, and
-    /// pacing stays on the wall-clock fallback **for the whole session** with
-    /// nothing anywhere saying why. Measured in this campaign: 5 of 6 launches
-    /// never engaged display-sync, and the stakes are on record — wall-clock
-    /// dropped 61-147 frames per 45 s where display-sync dropped 6-15.
+    /// **Cumulative for the life of the presentation clock**, not per-sample:
+    /// successive rows must be DIFFERENCED to get a rate. A single row's value
+    /// answers "has this surface ever gone unpresented", not "is it now".
+    ///
+    /// Surfaced because its absence made a real failure completely silent — but
+    /// state the chain precisely, because the first version of this comment did
+    /// not. Sustained `discarded` prevents the **measured** refresh from ever
+    /// settling: the estimator needs 24 `presented` reports and gets none.
+    /// Whether that costs display-sync depends on the OTHER source
+    /// `resolve_pacing` consults — a **declared** refresh from
+    /// `current_monitor()`, which it prefers when available. Only when both are
+    /// absent does `refresh_source` stay `none` and pacing hold the wall-clock
+    /// fallback for the session. Those coincide on the compositor this was
+    /// measured on (it advertises no `wl_output`, so `current_monitor()` is
+    /// `None`); on a compositor that declares a refresh, display-sync can engage
+    /// with discards ongoing.
+    ///
+    /// So read it as: **this surface was not being scanned out**. That is the
+    /// fact it reports. The pacing consequence is conditional, and the stakes
+    /// when it does apply are on record — wall-clock dropped 61-147 frames per
+    /// 45 s where display-sync dropped 6-15.
+    ///
+    /// Zero is **not** proof of health: [`PerfView`] reports zero both when
+    /// nothing was discarded and when there is no presentation clock at all
+    /// (non-Wayland, or the global never bound). Distinguish with
+    /// `refresh_source`.
     ///
     /// The counter existed in `PresentationClock` from the start and was read by
     /// nobody. A diagnostic that is never surfaced is not a diagnostic.

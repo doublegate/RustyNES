@@ -589,9 +589,12 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     cols.push(("tick_ok", v.tick_ok.to_string()));
     cols.push(("tick_timeout", v.tick_timeout.to_string()));
     cols.push(("tick_dropped", v.tick_dropped.to_string()));
-    // F16 — nonzero means the compositor is discarding this surface's frames,
-    // which is why the refresh estimate never settles and display-sync never
-    // engages. It belongs in the log because the failure is otherwise silent.
+    // F16 — cumulative; difference successive rows for a rate. Nonzero means the
+    // compositor is discarding this surface's frames, so the MEASURED refresh
+    // never settles. That costs display-sync only when no DECLARED refresh is
+    // available either (`resolve_pacing` prefers `current_monitor()`), so read
+    // this column with `refresh_source`, not alone. It belongs in the log
+    // because the discarding itself is otherwise entirely silent.
     cols.push(("present_discarded", v.present_discarded.to_string()));
     cols.push(("audio_queued_ms", format!("{:.2}", v.audio.queued_ms())));
     cols.push(("audio_queued_samples", v.audio.queued_samples.to_string()));
@@ -899,6 +902,26 @@ mod tests {
         ] {
             assert!(names.contains(want), "missing CSV column for `{want}`");
         }
+        // v2.3.3 F16 — assert the VALUE, not just the name. `PerfView::default()`
+        // leaves every counter at zero, so a column-name check passes even if the
+        // field is wired to the wrong source or formatted wrongly; the name was
+        // the only thing this test could see. Raised in review on PR #363, and it
+        // is the same defect class as the F15 tests that had to be
+        // mutation-checked: a test that cannot fail on the bug is decoration.
+        let with_value = PerfView {
+            present_discarded: 4321,
+            ..PerfView::default()
+        };
+        let emitted = columns(&with_value)
+            .into_iter()
+            .find(|(n, _)| *n == "present_discarded")
+            .map(|(_, v)| v);
+        assert_eq!(
+            emitted.as_deref(),
+            Some("4321"),
+            "present_discarded must emit its own field verbatim"
+        );
+
         // The header (built from `columns`) must have no duplicate column
         // names (a copy/paste hazard in the ordered list).
         let header: Vec<&'static str> = columns(&PerfView::default())

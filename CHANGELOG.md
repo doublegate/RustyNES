@@ -74,21 +74,17 @@ cycle-accurate core later replaced.
   because it is read before the Wayland registry answers, and is now emitted as
   a comment row once known.
 
-  **`present_discarded` — the silent wall-clock fallback now reports itself
-  (v2.3.3 F16).** The refresh estimator needs 24 compositor `presented` reports
-  before display-sync can engage. A compositor that answers every feedback
-  request with `discarded` instead — an occluded, minimized or otherwise
-  unpresented surface — never supplies them, so `refresh_source` stays `none` and
-  pacing stays on the wall-clock fallback **for the entire session**, which this
-  changelog elsewhere measures at **61-147 dropped frames per 45 s against
-  display-sync's 6-15**. Measured: on a backgrounded window the discard count
-  climbs by ~61 per second, every frame, and pacing never leaves wallclock.
-  `PresentationClock::discarded()` had existed since scanout tracing landed and
-  **was read by nobody**, so the whole failure was invisible; it is now a
-  `PerfView` field and a perf-log column. NOT established: that the fallback is
-  *sticky* (`settled` is set only on success, so the regime should engage once 24
-  reports accumulate — expected by construction, untested), or that this relates
-  to the reported shudder at all.
+  **`present_discarded` — an unpresented surface now reports itself (v2.3.3
+  F16).** New `PerfView` field and perf-log column carrying the compositor's
+  cumulative count of frames it composited but never scanned out. Sustained
+  discards stop the *measured* refresh from settling, which costs display-sync
+  only where no *declared* refresh is available either; where both are absent the
+  session silently holds the wall-clock fallback. `PresentationClock::discarded()`
+  had existed since scanout tracing landed and **was read by nobody**, so the
+  condition was invisible. `perf_log_check.py` now fails closed on a non-zero
+  count, since an occluded capture yields plausible but meaningless pacing
+  numbers. Measurements, mechanism and limits in `docs/performance.md` v2.3.3
+  F16.
 
   Later joined by **`rcpu`** — the winit thread's own `CLOCK_THREAD_CPUTIME_ID`
   differenced across the `rwork` span, so `rwork - rcpu` is time the thread spent

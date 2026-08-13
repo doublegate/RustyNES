@@ -2168,11 +2168,20 @@ wall-clock pacer dropped **61-147 frames per 45 s** where display-sync dropped
 
 `wp_presentation` bound correctly and its `clock_id = 1` event arrived, so the
 protocol was live. But **zero `presented` reports ever came back**. The refresh
-estimator needs `PRESENTATION_SAMPLES` = 24 of them before it can answer, and
-`resolve_pacing` has only two possible sources: a *declared* refresh from
-`current_monitor()` — which is `None` on this compositor, it advertises no
-`wl_output` — and the *measured* one. Neither, so `refresh_hz` is `None` and
-display-sync cannot engage.
+estimator needs `PRESENTATION_SAMPLES` = 24 of them before it can answer.
+
+**State the chain precisely — the first version of this section did not.**
+Discards block the *measured* refresh, and nothing else. `resolve_pacing` has a
+second source it actually *prefers*: a **declared** refresh from
+`current_monitor()`. Where one exists, display-sync can engage perfectly well
+with discards ongoing. What happened here is the **conjunction**: this compositor
+advertises no `wl_output`, so `current_monitor()` is `None` too, and with both
+sources absent `refresh_hz` is `None` and display-sync cannot engage.
+
+That distinction matters for anyone reading the counter on another system: a
+rising `present_discarded` says **this surface is not being scanned out**. Whether
+it also costs display-sync depends on whether a declared refresh is available.
+Raised in review on PR #363, in four places at once, by both reviewers.
 
 What arrives instead is `discarded`: composited, never scanned out. Measured on a
 backgrounded window, `present_discarded` climbs by ~61 per second — **every
@@ -2189,6 +2198,13 @@ It is now surfaced as `PerfView::present_discarded` and a `present_discarded`
 column in the perf log. **A diagnostic that is never surfaced is not a
 diagnostic** — that is the whole content of this entry, and it cost five wasted
 verification captures to notice.
+
+Two properties to read it correctly. It is **cumulative** over the life of the
+presentation clock, so successive rows must be differenced for a rate. And
+**zero is not proof of health**: the field reads zero both when nothing was
+discarded and when there is no presentation clock at all (non-Wayland, or the
+global never bound), because the call site is a `map_or(0, ...)`. Pair it with
+`refresh_source` to tell those apart.
 
 #### What this does NOT establish
 
