@@ -385,6 +385,13 @@ pub struct FrameEvent {
     pub is_present: bool,
 }
 
+/// Reserved capacity for the per-event trace buffer.
+///
+/// Headroom for a stall, not a working size — the buffer is drained every
+/// produced frame, so steady-state occupancy is a handful of events. Sized at
+/// ~1 s of both event kinds at 120 Hz, times 8.
+const TRACE_CAPACITY: usize = 4096;
+
 /// Trace state: the origin instant plus the pending records.
 #[derive(Debug)]
 struct TraceBuf {
@@ -400,15 +407,16 @@ impl PerfStats {
     /// Capacity is reserved up front so the hot path never reallocates:
     /// recording happens while the emulator mutex is held, and a `Vec` growth
     /// there would be exactly the kind of measurement artefact this trace
-    /// exists to avoid. The buffer is drained once per second by the logger,
-    /// so this only has to cover one drain interval with generous headroom.
+    /// exists to avoid. The buffer is drained **once per produced frame** by
+    /// `App::post_produce_housekeeping`, so a handful of events is the real
+    /// steady-state occupancy; the reservation is headroom for a stall, not a
+    /// working size.
     pub fn enable_trace(&mut self, now: Instant) {
         self.trace = Some(TraceBuf {
             origin: now,
             last_produced: None,
             last_presented: None,
-            // ~1 s at 120 Hz of both kinds, times 8 for safety.
-            recs: Vec::with_capacity(4096),
+            recs: Vec::with_capacity(TRACE_CAPACITY),
         });
     }
 
@@ -418,14 +426,26 @@ impl PerfStats {
         self.trace.is_some()
     }
 
-    /// Take the buffered events, leaving the trace enabled and empty.
+    /// Swap the buffered events into `spare`, leaving the trace enabled and its
+    /// buffer empty **with its capacity intact**.
     ///
-    /// `std::mem::take` on the `Vec` — O(1) — because the caller drains this
-    /// while holding the emulator mutex and writes the rows after releasing it.
-    pub fn drain_trace(&mut self) -> Vec<FrameEvent> {
-        self.trace
-            .as_mut()
-            .map_or_else(Vec::new, |t| std::mem::take(&mut t.recs))
+    /// A swap rather than `std::mem::take`, which was the first implementation
+    /// and was wrong in a way that defeated the point of this whole struct:
+    /// `take` leaves a `Vec::new()` behind — capacity **zero** — so every
+    /// subsequent `trace_event` push started from nothing and reallocated,
+    /// *while the emulator mutex was held*. That is precisely the measurement
+    /// artefact `Vec::with_capacity` above exists to prevent, reintroduced one
+    /// function later. Caught in review on PR #358 by two reviewers
+    /// independently.
+    ///
+    /// Swapping recycles both buffers forever, so the steady state allocates
+    /// nothing at all: the caller's drained `Vec` becomes the next frame's
+    /// recording buffer.
+    pub fn swap_trace(&mut self, spare: &mut Vec<FrameEvent>) {
+        spare.clear();
+        if let Some(t) = self.trace.as_mut() {
+            std::mem::swap(&mut t.recs, spare);
+        }
     }
 
     /// Push one event into the trace, if enabled.

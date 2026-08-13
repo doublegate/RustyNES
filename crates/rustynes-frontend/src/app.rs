@@ -792,6 +792,19 @@ pub struct App {
     /// v2.3.3 — render-loop cost (winit thread). See [`crate::perf::RenderPerf`].
     #[cfg(not(target_arch = "wasm32"))]
     render_perf: crate::perf::RenderPerf,
+    /// v2.3.3 — the spare half of the per-frame trace's double buffer.
+    ///
+    /// Swapped with `PerfStats`'s recording buffer each produced frame so both
+    /// allocations are recycled and the steady state allocates nothing —
+    /// recording happens under the emulator mutex, where a `Vec` growth would
+    /// perturb the very intervals being traced. Stays empty when the trace is
+    /// off. See `PerfStats::swap_trace`.
+    ///
+    /// Native-gated to match `render_perf` above — the trace is native-only
+    /// (it writes files), and the wasm `App` initializer does not construct
+    /// either field.
+    #[cfg(not(target_arch = "wasm32"))]
+    trace_scratch: Vec<crate::perf::FrameEvent>,
     /// v2.8.0 — opt-in interval CSV performance logger, driven by the Perf
     /// panel's "Logging" checkbox (default OFF). Writes under `perf-logs/`.
     #[cfg(not(target_arch = "wasm32"))]
@@ -1047,6 +1060,8 @@ impl App {
             refresh_source: "none",
             #[cfg(not(target_arch = "wasm32"))]
             render_perf: crate::perf::RenderPerf::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            trace_scratch: Vec::new(),
             last_redraw: None,
             presents_since_check: 0,
             perf_logger: crate::perf_log::PerfLogger::default(),
@@ -7005,17 +7020,16 @@ impl App {
     /// which is the failure this whole investigation is chasing.
     #[cfg(not(target_arch = "wasm32"))]
     fn fill_winit_thread_perf(&self, perf_view: &mut crate::perf::PerfView) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let r = self.render_perf.stats();
-            perf_view.render_ui = r.ui;
-            perf_view.render_gpu = r.gpu;
-            perf_view.render_total = r.total;
-            perf_view.render_wait = r.wait;
-            perf_view.render_work = r.work;
-            perf_view.render_lock = r.lock;
-        }
-        #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+        let r = self.render_perf.stats();
+        perf_view.render_ui = r.ui;
+        perf_view.render_gpu = r.gpu;
+        perf_view.render_total = r.total;
+        perf_view.render_wait = r.wait;
+        perf_view.render_work = r.work;
+        perf_view.render_lock = r.lock;
+        // Only the `emu-thread` half is conditional here — the function itself
+        // already carries the target gate.
+        #[cfg(feature = "emu-thread")]
         if let Some(thread) = self.emu_thread.as_ref() {
             let (ok, timeout, dropped) = thread.control().tick_counts();
             perf_view.tick_ok = ok;
@@ -7068,11 +7082,16 @@ impl App {
             let mut view = emu.perf.view();
             view.target_ms = emu.frame_duration.as_secs_f32() * 1000.0;
             // v2.3.3 — drain the per-frame trace under the SAME lock that is
-            // already held (an O(1) `Vec` take), and write it to disk after the
+            // already held (an O(1) `Vec` swap), and write it to disk after the
             // guard drops. Doing the file I/O here would stall the producer and
-            // corrupt the very intervals being traced. Returns an empty `Vec`
-            // when the trace is off, so this costs nothing on the normal path.
-            let trace_events = emu.perf.drain_trace();
+            // corrupt the very intervals being traced.
+            //
+            // A SWAP with a buffer owned by `App`, not a take: the two `Vec`s
+            // are recycled forever, so neither the recording side (which runs
+            // under this lock) nor this drain ever allocates in steady state.
+            // No-op when the trace is off.
+            let mut trace_events = std::mem::take(&mut self.trace_scratch);
+            emu.perf.swap_trace(&mut trace_events);
             // v2.8.0 Phase 3 — feed the run-ahead budget throttle. Keyed off
             // the median (steady-state) produce cost, not the p95 tail (which
             // on the emu thread is OS-deschedule noise, not run-ahead cost).
@@ -7103,6 +7122,9 @@ impl App {
         // Written outside the lock — see the drain comment above. Empty (and
         // therefore a no-op) unless the trace is enabled.
         self.perf_logger.record_trace(&trace_events);
+        // Hand the buffer back for reuse; `swap_trace` clears it on the way in,
+        // so the allocation survives and nothing is retained between frames.
+        self.trace_scratch = trace_events;
         let replay_info = self.build_replay_info(region);
         perf_view.pacing = self.pacing_label();
         // v1.5.0 H8 — the live audio DRC servo ratio + latency setpoint.

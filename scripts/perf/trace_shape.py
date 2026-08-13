@@ -28,6 +28,7 @@ Input columns: ``t_s,event,interval_ms,since_present``.
 from __future__ import annotations
 
 import csv
+import math
 import statistics
 import sys
 from collections import Counter
@@ -87,11 +88,22 @@ def runs(seq: list[int]) -> Counter:
 
 
 def pct(xs: list[float], q: float) -> float:
-    """Nearest-rank percentile, matching the Rust side's definition."""
+    """Nearest-rank percentile, matching the Rust side's definition EXACTLY.
+
+    `SampleRing::pick` in `perf.rs` computes ``ceil(q * n) - 1``, clamped into
+    range. The first version here used ``round(q * n + 0.5) - 1``, which is not
+    the same function: Python's ``round`` is round-half-to-even, so for an exact
+    integer ``k = q * n`` it yields ``k`` when ``k`` is even and ``k + 1`` when
+    ``k`` is odd, where ``ceil(k)`` is always ``k``. At ``q=0.95, n=100`` that is
+    a genuine off-by-one — Rust picks index 94, the old code picked 95.
+
+    A percentile helper that silently disagrees with the in-app statistic by one
+    rank is worse than no helper, because the two get quoted side by side.
+    """
     if not xs:
         return float("nan")
     s = sorted(xs)
-    i = min(len(s) - 1, max(0, int(round(q * len(s) + 0.5)) - 1))
+    i = min(len(s) - 1, max(0, math.ceil(q * len(s)) - 1))
     return s[i]
 
 
