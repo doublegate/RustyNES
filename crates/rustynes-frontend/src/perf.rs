@@ -29,7 +29,13 @@ use web_time::Instant;
 /// Ring capacity: ~10 s of NTSC frames. Long enough to catch the ~10 s
 /// Mailbox beat period, short enough that percentiles track regressions
 /// quickly.
-const WINDOW: usize = 600;
+///
+/// Public because it is the **turnover period of every statistic this module
+/// reports**, and a consumer that acts on a change in one of them has to know
+/// how long the ring takes to forget the previous regime. `update_runahead_throttle`
+/// is exactly such a consumer, and it is the reason this is no longer private:
+/// it had hardcoded its own idea of the window, which was wrong by 5x (F27).
+pub const WINDOW: usize = 600;
 
 /// Sparkline window (feature K): the number of most-recent frame-time samples
 /// the Performance panel plots as a rolling line graph (~4 s of NTSC frames).
