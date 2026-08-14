@@ -1015,6 +1015,39 @@ impl EmuCore {
             self.throttle_frames_since_change = 0;
             self.runahead_engages += 1;
             self.thr_engage_cost_ms = produce_p50_ms;
+            // F28 `Predict` — keep stepping while the PREDICTED cost at the
+            // reduced depth is still over the band, using F18's per-frame-linear
+            // model (increments +4.491 and +4.213 ms, equal within 6%) that the
+            // release arm already relies on. This is the whole asymmetry: the
+            // engage direction stops waiting for the ring and computes what the
+            // next depth costs instead, while the release direction still
+            // demands a real measurement.
+            //
+            // It converges to the SAME depth a sequence of windowed engages
+            // would reach — the cascade stops when the prediction fits, not at
+            // zero — but reaches it inside one evaluation instead of one window
+            // per step. A mispredicted overshoot is corrected by the release arm
+            // within a window, and only ever in the safe direction.
+            {
+                let per_frame =
+                    produce_p50_ms / (f32::from(u8::try_from(running).unwrap_or(0)) + 1.0);
+                while self.runahead_throttle_steps < bounded {
+                    let next = bounded.saturating_sub(self.runahead_throttle_steps);
+                    let predicted = per_frame * (f32::from(u8::try_from(next).unwrap_or(0)) + 1.0);
+                    if predicted <= engage_band {
+                        break;
+                    }
+                    self.runahead_throttle_steps += 1;
+                    self.runahead_throttle_toggles += 1;
+                    self.runahead_engages += 1;
+                    if trace_throttle {
+                        eprintln!(
+                            "THR cascade -> steps={} predicted={predicted:.3} band={engage_band:.3}",
+                            self.runahead_throttle_steps
+                        );
+                    }
+                }
+            }
             let now_at = bounded.saturating_sub(self.runahead_throttle_steps);
             eprintln!(
                 "rustynes: median produce cost {produce_p50_ms:.2} ms is too close to the \
@@ -1670,6 +1703,38 @@ mod tests {
             "two windows of an unchanged median may release at most once per window"
         );
         assert_eq!(c.runahead_throttle_steps, 0);
+    }
+
+    /// v2.3.3 F28 — the cascade converges to the depth that FITS, not to zero.
+    ///
+    /// This is the test that makes the arm worth having. At depth 3 a cost of
+    /// 17.2 ms exceeds the 12.48 ms engage band at every depth, so a gate that
+    /// merely engaged on less evidence would walk 3 -> 2 -> 1 -> 0 and throw the
+    /// whole feature away. The cascade stops where the PREDICTED cost fits:
+    /// per-frame is 17.2/4 = 4.3 ms, so depth 2 predicts 12.9 (over), depth 1
+    /// predicts 8.6 (under) -- it stops at 1, in one evaluation.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn predict_cascade_stops_at_the_depth_that_fits() {
+        let mut c = throttle_fixture();
+        c.update_runahead_throttle(17.2, 200, 3);
+        assert_eq!(
+            c.effective_run_ahead(3),
+            1,
+            "must land on the depth the prediction fits, not 0"
+        );
+        assert_eq!(c.runahead_throttle_steps, 2, "3 -> 1 is two steps");
+    }
+
+    /// A cascade must never overshoot past zero or wrap the step counter.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn predict_cascade_bottoms_out_at_zero() {
+        let mut c = throttle_fixture();
+        // Absurdly over budget at every depth: per-frame alone exceeds the band.
+        c.update_runahead_throttle(400.0, 200, 3);
+        assert_eq!(c.effective_run_ahead(3), 0);
+        assert_eq!(c.runahead_throttle_steps, 3, "never more steps than depth");
     }
 
     /// v2.3.3 F27 — the gate must be the turnover period of the statistic it

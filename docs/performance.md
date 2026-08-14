@@ -2664,6 +2664,71 @@ per step to converge. The counter is pre-seeded to one full window so the *first
 decision is gated only by the ring having enough samples — there is nothing stale
 to wait out at power-on.
 
+### v2.3.3 F28 — the engage arm computes instead of waiting (ADOPTED; one arm REJECTED)
+
+**Decision: ADOPTED** for the predictive cascade; **REJECTED** for ring-reset.
+
+F27's window is correct and it introduced a cost: `run_ahead = 3` reaches a
+sustainable depth but spends ~12 s over budget getting there, because every step
+waits a full 10 s for the median to turn over.
+
+#### Why the obvious asymmetry is wrong
+
+"Engage faster than you release" is the right instinct and the wrong mechanism.
+At depth 3 the measured cost is ~17.2 ms, which exceeds the 12.48 ms engage band
+at **every** depth — so a gate that merely engaged on less evidence would walk
+3 → 2 → 1 → 0 and discard the whole feature. Engaging is only safe on *less
+waiting* if it is done on *more information*.
+
+The fix is to stop waiting for the ring and compute the next depth's cost
+instead, using the per-frame-linear model F18 measured (+4.491 and +4.213 ms per
+depth, equal within 6%) — the same model the release arm has always used. Within
+one evaluation, the cascade steps while the PREDICTED cost at the reduced depth
+is still over the band: 17.2/4 = 4.3 ms per frame, so depth 2 predicts 12.9
+(over) and depth 1 predicts 8.6 (under). It stops at 1. Releasing still demands
+a full window and a real measurement, because releasing on a stale median is the
+direction that produced the F27 oscillation.
+
+#### The A/B
+
+Three arms, one binary (an env switch, since an earlier A/B in this campaign
+compared two binaries that turned out byte-identical), `run_ahead = 3`, Latin
+square. Five paired rounds for the two live arms:
+
+| arm | converge | frames wrong | underruns |
+|---|---:|---:|---:|
+| window — shipped | 12.12 s | 4.82% | 0.60 |
+| **predict — adopted** | **2.80 s** | **2.24%** | **0.20** |
+| reset — rejected | 4.00 s | 2.02% | **1.00 (3 of 3)** |
+
+**5/5 paired rounds favour `predict` on both convergence and cadence, exact
+one-sided sign p = 0.0312** — at the floor for n = 5, which is why five rounds
+were run rather than three (three floors at 0.125 and could not have reached
+significance whatever it showed).
+
+**`reset`** — clearing the produce-cost ring on every depth change, so the median
+is never stale and the gate collapses to the 2 s minimum — converged faster than
+the shipped arm and matched `predict` on cadence, but produced **an audio
+underrun in every one of its three captures**, against 0.20 and 0.60 for the
+other two. Rejected on that alone; the mechanism was not chased further.
+
+#### Verification of the promoted default
+
+The A/B measured `predict` through an env switch; the shipped default must
+reproduce it. Two fresh captures at `run_ahead = 3`: converge **3.0 s**, final
+depth **1**, two transitions, 1.33% and 0.81% of frames wrong.
+
+At `run_ahead = 1` the change is inert by construction — the diff is **purely
+additive (65 insertions, 0 deletions) inside `if engage {`**, and the shipped
+default fires **zero** transitions, so the added code never executes. An
+interleaved same-session A/B against `main`'s binary was run anyway and could not
+resolve anything: `main` itself measured **2.93%** where it had measured 1.35%
+earlier the same day, and unchanged code spanned 2.4-6.9% across captures. That
+drift is consistent with F17 — cadence error tracks how much frame budget is
+left, and the host had been building and capturing continuously for hours. The
+no-regression claim therefore rests on the code path not executing, which is
+checkable, and not on that measurement, which is not.
+
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 
 The campaign's highest-ranked *code* item, and the same transformation shape as

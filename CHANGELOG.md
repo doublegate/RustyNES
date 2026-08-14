@@ -271,6 +271,27 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **Frontend: a `run_ahead = 3` host reaches a sustainable depth in ~3 s instead
+  of ~12 s (v2.3.3 F28).** F27's median window is correct and it cost
+  convergence speed: every throttle step waited a full 10 s for the ring to turn
+  over, so a configuration starting well over budget stayed there while it
+  stepped down. The engage arm now computes rather than waits — within a single
+  evaluation it steps while the *predicted* cost at the reduced depth is still
+  over the band, using the per-frame-linear model (F18) that the release arm
+  already relied on. Releasing is unchanged and still demands a full window and a
+  real measurement, because releasing on a stale median is what produced the
+  oscillation F27 fixed. The naive reading of "engage faster" is a bug, not a
+  fix: at depth 3 the cost exceeds the band at every depth, so engaging on less
+  evidence would cascade to depth 0 and discard the feature — the cascade stops
+  where the prediction fits, which a test pins directly. Measured at
+  `run_ahead = 3` over five paired, Latin-square rounds: convergence **12.12 s →
+  2.80 s**, frames held for the wrong duration **4.82% → 2.24%**, 5/5 pairs on
+  both, exact one-sided sign p = 0.0312. An alternative arm that cleared the
+  produce-cost ring on each depth change converged in 4.0 s and matched on
+  cadence but produced an audio underrun in **every** capture, and was rejected.
+  Additive-only (65 insertions, 0 deletions) inside the engage branch, which the
+  shipped `run_ahead = 1` default never enters.
+
 - **Frontend: the run-ahead throttle no longer oscillates — it was pacing itself
   against a fifth of a median window (v2.3.3 F27).** The throttle is gated to one
   depth change per median window, but the gate used **120** frames — the number
