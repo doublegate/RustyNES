@@ -551,6 +551,44 @@ pub struct EmuCore {
     /// read as evidence the signal was genuine, is equally consistent with
     /// re-evaluating a single measurement. Raised in review on PR #368.
     pub throttle_frames_since_change: u32,
+    /// v2.3.3 F22 — depth changes that REDUCED run-ahead (the engage arm).
+    ///
+    /// `runahead_throttle_toggles` proved the oscillation exists (~3 depth
+    /// changes per 45 s at `run_ahead = 2`) but one counter cannot say which arm
+    /// fires, and the two have different causes. An engage means the MEASURED
+    /// cost crossed the band; a release means the PREDICTED cost one depth up
+    /// fell under it. Three toggles could be 2 engages + 1 release (the throttle
+    /// chasing a rising cost), 1 + 2 (a release predictor that is too
+    /// optimistic), or an alternating pair (genuine hysteresis failure) — three
+    /// different defects, and the aggregate is consistent with all of them.
+    ///
+    /// Split rather than theorised about: two theory-first attempts at this
+    /// oscillation have already been falsified by measurement today.
+    pub runahead_engages: u64,
+    /// v2.3.3 F22 — depth changes that RESTORED run-ahead (the release arm).
+    /// See [`Self::runahead_engages`].
+    pub runahead_releases: u64,
+    /// v2.3.3 F23 — the MEASURED median cost, ms, when the engage arm last fired.
+    ///
+    /// F22 established the oscillation alternates (3 engages / 2 releases,
+    /// identical across three captures — deterministic, not noise). Alternation
+    /// that survives a 20-point band and a four-window debounce says the two
+    /// arms are not testing the same quantity: engage compares the MEASURED
+    /// median at the current depth, release compares a PREDICTED cost one depth
+    /// up. A band between two different quantities is not hysteresis.
+    ///
+    /// These three fields record what each arm actually saw, so that stops being
+    /// an inference. If `engage_cost` and `release_cost` are near-identical while
+    /// `release_pred` sits under the release band, the prediction is turning one
+    /// cost into two verdicts and the arms need a common quantity — not a wider
+    /// gap between them.
+    pub thr_engage_cost_ms: f32,
+    /// v2.3.3 F23 — the MEASURED median cost, ms, when the release arm last
+    /// fired. See [`Self::thr_engage_cost_ms`].
+    pub thr_release_cost_ms: f32,
+    /// v2.3.3 F23 — the PREDICTED one-depth-up cost, ms, that the release arm
+    /// accepted. See [`Self::thr_engage_cost_ms`].
+    pub thr_release_pred_ms: f32,
     /// SHA-256 of the loaded FDS disk (keys the `.fds.sav` sidecar).
     #[cfg(not(target_arch = "wasm32"))]
     pub fds_disk_sha256: Option<[u8; 32]>,
@@ -655,6 +693,11 @@ impl EmuCore {
             runahead_throttle_steps: 0,
             runahead_throttle_toggles: 0,
             throttle_frames_since_change: 0,
+            runahead_engages: 0,
+            runahead_releases: 0,
+            thr_engage_cost_ms: 0.0,
+            thr_release_cost_ms: 0.0,
+            thr_release_pred_ms: 0.0,
             #[cfg(not(target_arch = "wasm32"))]
             fds_disk_sha256: None,
             #[cfg(feature = "scripting")]
@@ -868,8 +911,32 @@ impl EmuCore {
             return;
         }
         let target = self.frame_duration.as_secs_f32() * 1000.0;
+        // v2.3.3 F26 — per-EVALUATION logging of the release predicate.
+        //
+        // F22 and F23 record the last transition; three successive theories have
+        // now died on inference from that single sample (an over-optimistic
+        // predictor, stale medians, an unrepresentative dip -- each tested and
+        // each falsified). What none of them could see is the SEQUENCE: how the
+        // measured cost, the prediction and the band move across the windows
+        // BETWEEN transitions, including every evaluation that decided to do
+        // nothing.
+        //
+        // Emitted on stderr rather than through the perf log because it is one
+        // line per median window (~0.5/s), gated on the same env var as the
+        // frame trace, and needs no new plumbing on a path that already has
+        // enough. Redirect stderr to capture it.
+        let trace_throttle = crate::perf_log::frame_trace_requested();
         let bounded = depth.min(MAX_RUN_AHEAD_DEPTH);
         let running = bounded.saturating_sub(self.runahead_throttle_steps);
+        if trace_throttle {
+            eprintln!(
+                "THR check depth={running} steps={} cost={produce_p50_ms:.3} \
+                 engage_band={:.3} engage={}",
+                self.runahead_throttle_steps,
+                target * RUNAHEAD_THROTTLE_ENGAGE,
+                running > 0 && produce_p50_ms > target * RUNAHEAD_THROTTLE_ENGAGE
+            );
+        }
         if running > 0 && produce_p50_ms > target * RUNAHEAD_THROTTLE_ENGAGE {
             // F21 — one step, not all of them. Re-measured on the next median
             // window; if the reduced depth is still over budget this fires
@@ -878,6 +945,8 @@ impl EmuCore {
             self.runahead_throttled = true;
             self.runahead_throttle_toggles += 1;
             self.throttle_frames_since_change = 0;
+            self.runahead_engages += 1;
+            self.thr_engage_cost_ms = produce_p50_ms;
             let now_at = bounded.saturating_sub(self.runahead_throttle_steps);
             eprintln!(
                 "rustynes: median produce cost {produce_p50_ms:.2} ms is too close to the \
@@ -911,6 +980,16 @@ impl EmuCore {
             let per_frame = produce_p50_ms / (f32::from(u8::try_from(running).unwrap_or(0)) + 1.0);
             let predicted_one_more =
                 per_frame * (f32::from(u8::try_from(running).unwrap_or(0)) + 2.0);
+            if trace_throttle {
+                eprintln!(
+                    "THR eval depth={running} steps={} cost={produce_p50_ms:.3} \
+                     per_frame={per_frame:.3} pred={predicted_one_more:.3} \
+                     band={:.3} release={}",
+                    self.runahead_throttle_steps,
+                    target * 0.70,
+                    predicted_one_more < target * 0.70
+                );
+            }
             // v2.3.3 F21 — band left at 0.70 and NOT debounced. Widening it to
             // 0.55 with a 4-window debounce was tried to stop the oscillation
             // and MEASURED WORSE on both counts: toggles stayed at 3 per 45 s
@@ -923,6 +1002,9 @@ impl EmuCore {
             if predicted_one_more < target * 0.70 {
                 self.runahead_throttle_toggles += 1;
                 self.throttle_frames_since_change = 0;
+                self.runahead_releases += 1;
+                self.thr_release_cost_ms = produce_p50_ms;
+                self.thr_release_pred_ms = predicted_one_more;
                 self.runahead_throttle_steps -= 1;
                 self.runahead_throttled = self.runahead_throttle_steps > 0;
                 let now_at = bounded.saturating_sub(self.runahead_throttle_steps);

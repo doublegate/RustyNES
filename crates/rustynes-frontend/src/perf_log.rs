@@ -619,6 +619,27 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     // displaced by the run-ahead depth, which reads as the picture jumping
     // forward and back. No hold-duration column can show this.
     cols.push(("runahead_toggles", v.runahead_toggles.to_string()));
+    // F22 — the split. `toggles` says the throttle is churning; these say which
+    // arm, and the two have different causes and different fixes.
+    cols.push(("runahead_engages", v.runahead_engages.to_string()));
+    cols.push(("runahead_releases", v.runahead_releases.to_string()));
+    // F23 — what each arm actually saw at the moment it fired. The alternation
+    // survives a 20-point band, so the question is whether the arms are judging
+    // the same quantity at all.
+    // The `_ms` suffix is load-bearing, not decoration: every other time-valued
+    // column in this file carries it (`target_ms`, `gpu_ms`, `audio_queued_ms`,
+    // the `*_mean_ms` family), and an analysis script that infers units from the
+    // column name — as `perf_log_check.py` does — would silently treat a bare
+    // name as unitless. Raised in review on PR #369, before any consumer existed.
+    cols.push(("thr_engage_cost_ms", format!("{:.3}", v.thr_engage_cost_ms)));
+    cols.push((
+        "thr_release_cost_ms",
+        format!("{:.3}", v.thr_release_cost_ms),
+    ));
+    cols.push((
+        "thr_release_pred_ms",
+        format!("{:.3}", v.thr_release_pred_ms),
+    ));
     // F16 — cumulative; difference successive rows for a rate. Nonzero means the
     // compositor is discarding this surface's frames, so the MEASURED refresh
     // never settles. That costs display-sync only when no DECLARED refresh is
@@ -872,6 +893,78 @@ mod tests {
     /// column, so the exporter and the live panel can't silently drift again
     /// (the v1.4.0-era drift this workstream fixed). When you add a panel
     /// readout, add its column to `columns()` and its name here.
+    /// v2.3.3 F16/F23 — the VALUE half of the column check, split out of
+    /// `csv_columns_cover_panel_metrics` when that test crossed the 100-line
+    /// budget.
+    ///
+    /// Kept as a called helper rather than a second `#[test]` so the two halves
+    /// cannot drift apart: a column added to the name list without a value
+    /// assertion is exactly the gap this guards, and separating them into
+    /// independent tests would make that gap easy to reintroduce.
+    fn emitted_values_match_their_fields() {
+        // Assert the VALUE, not just the name. `PerfView::default()`
+        // leaves every counter at zero, so a column-name check passes even if the
+        // field is wired to the wrong source or formatted wrongly; the name was
+        // the only thing this test could see. Raised in review on PR #363, and it
+        // is the same defect class as the F15 tests that had to be
+        // mutation-checked: a test that cannot fail on the bug is decoration.
+        let with_value = PerfView {
+            present_discarded: 4321,
+            runahead_toggles: 8765,
+            runahead_engages: 21,
+            runahead_releases: 34,
+            thr_engage_cost_ms: 12.875,
+            thr_release_cost_ms: 8.5,
+            thr_release_pred_ms: 11.25,
+            ..PerfView::default()
+        };
+        let emitted = columns(&with_value)
+            .into_iter()
+            .find(|(n, _)| *n == "present_discarded")
+            .map(|(_, v)| v);
+        assert_eq!(
+            emitted.as_deref(),
+            Some("4321"),
+            "present_discarded must emit its own field verbatim"
+        );
+        // v2.3.3 F21 — same treatment for the toggle counter. The name check
+        // alone cannot tell a correctly-wired column from one reading the wrong
+        // field, because `PerfView::default()` zeroes both. Raised in review on
+        // PR #368 — the pattern was written for `present_discarded` an hour
+        // earlier and not applied to the column added beside it.
+        let toggles = columns(&with_value)
+            .into_iter()
+            .find(|(n, _)| *n == "runahead_toggles")
+            .map(|(_, v)| v);
+        assert_eq!(
+            toggles.as_deref(),
+            Some("8765"),
+            "runahead_toggles must emit its own field verbatim"
+        );
+        // v2.3.3 F23 — and every column added since. This loop exists because
+        // the value check was added for `present_discarded`, not generalised to
+        // `runahead_toggles` (caught in review on PR #368), and then not
+        // generalised again to these three — the same omission three times. A
+        // table is harder to forget than a hand-written assertion per column.
+        for (name, want) in [
+            ("runahead_engages", "21"),
+            ("runahead_releases", "34"),
+            ("thr_engage_cost_ms", "12.875"),
+            ("thr_release_cost_ms", "8.500"),
+            ("thr_release_pred_ms", "11.250"),
+        ] {
+            let got = columns(&with_value)
+                .into_iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| v);
+            assert_eq!(
+                got.as_deref(),
+                Some(want),
+                "{name} must emit its own field verbatim"
+            );
+        }
+    }
+
     #[test]
     fn csv_columns_cover_panel_metrics() {
         let names: std::collections::HashSet<&'static str> = columns(&PerfView::default())
@@ -911,6 +1004,11 @@ mod tests {
             "tick_timeout",
             "tick_dropped",
             "runahead_toggles",
+            "runahead_engages",
+            "runahead_releases",
+            "thr_engage_cost_ms",
+            "thr_release_cost_ms",
+            "thr_release_pred_ms",
             "present_discarded",
             // audio health row
             "audio_queued_ms",
@@ -933,40 +1031,7 @@ mod tests {
         ] {
             assert!(names.contains(want), "missing CSV column for `{want}`");
         }
-        // v2.3.3 F16 — assert the VALUE, not just the name. `PerfView::default()`
-        // leaves every counter at zero, so a column-name check passes even if the
-        // field is wired to the wrong source or formatted wrongly; the name was
-        // the only thing this test could see. Raised in review on PR #363, and it
-        // is the same defect class as the F15 tests that had to be
-        // mutation-checked: a test that cannot fail on the bug is decoration.
-        let with_value = PerfView {
-            present_discarded: 4321,
-            runahead_toggles: 8765,
-            ..PerfView::default()
-        };
-        let emitted = columns(&with_value)
-            .into_iter()
-            .find(|(n, _)| *n == "present_discarded")
-            .map(|(_, v)| v);
-        assert_eq!(
-            emitted.as_deref(),
-            Some("4321"),
-            "present_discarded must emit its own field verbatim"
-        );
-        // v2.3.3 F21 — same treatment for the toggle counter. The name check
-        // alone cannot tell a correctly-wired column from one reading the wrong
-        // field, because `PerfView::default()` zeroes both. Raised in review on
-        // PR #368 — the pattern was written for `present_discarded` an hour
-        // earlier and not applied to the column added beside it.
-        let toggles = columns(&with_value)
-            .into_iter()
-            .find(|(n, _)| *n == "runahead_toggles")
-            .map(|(_, v)| v);
-        assert_eq!(
-            toggles.as_deref(),
-            Some("8765"),
-            "runahead_toggles must emit its own field verbatim"
-        );
+        emitted_values_match_their_fields();
 
         // The header (built from `columns`) must have no duplicate column
         // names (a copy/paste hazard in the ordered list).

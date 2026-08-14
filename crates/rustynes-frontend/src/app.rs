@@ -7104,6 +7104,26 @@ impl App {
         crate::clock::monotonic_now_ns()
     }
 
+    /// v2.3.3 F22/F23 — copy the run-ahead throttle's diagnostic state into the
+    /// view.
+    ///
+    /// Extracted because the wiring outgrew `post_produce_housekeeping`'s line
+    /// budget (103/100). Raising the limit would have been the easy fix and the
+    /// wrong one: these seven fields are one coherent group — the throttle's
+    /// state, its two transition counters, and what each arm saw when it last
+    /// fired — and they belong together under a name rather than inline in a
+    /// function that is about something else.
+    #[cfg(not(target_arch = "wasm32"))]
+    const fn fill_throttle_perf(view: &mut crate::perf::PerfView, emu: &crate::emu::EmuCore) {
+        view.run_ahead_throttled = emu.runahead_throttled;
+        view.runahead_toggles = emu.runahead_throttle_toggles;
+        view.runahead_engages = emu.runahead_engages;
+        view.runahead_releases = emu.runahead_releases;
+        view.thr_engage_cost_ms = emu.thr_engage_cost_ms;
+        view.thr_release_cost_ms = emu.thr_release_cost_ms;
+        view.thr_release_pred_ms = emu.thr_release_pred_ms;
+    }
+
     /// v2.3.3 — fill the [`crate::perf::PerfView`] fields that live on the
     /// WINIT thread rather than behind the emulator mutex.
     ///
@@ -7252,8 +7272,7 @@ impl App {
             // state the Performance panel/log previously omitted, captured
             // under the same lock as the perf view.
             view.run_ahead = self.config.input.run_ahead;
-            view.run_ahead_throttled = emu.runahead_throttled;
-            view.runahead_toggles = emu.runahead_throttle_toggles;
+            Self::fill_throttle_perf(&mut view, emu);
             view.rewind_enabled = self.config.rewind.enabled;
             view.rewind_frames = emu.nes.as_ref().map_or(0, rustynes_core::Nes::rewind_len);
             let region = emu
