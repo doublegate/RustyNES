@@ -1879,6 +1879,18 @@ mod tests {
             c.update_runahead_throttle(15.0, 200, 2);
         }
         assert_eq!(c.effective_run_ahead(2), 0);
+        // ...and keeps taking that cost without the step counter growing past
+        // the depth. `engage` requires `running > 0`, so once the depth is
+        // exhausted the arm cannot fire at all -- but an unbounded counter would
+        // need many releases to climb back out of, so the bound is asserted
+        // rather than left to inspection. Raised in review on PR #371.
+        for _ in 0..(crate::perf::WINDOW * 3) {
+            c.update_runahead_throttle(15.0, 200, 2);
+        }
+        assert_eq!(
+            c.runahead_throttle_steps, 2,
+            "steps must never exceed the configured depth, however long it stays over budget"
+        );
     }
 
     /// The oscillation guard. NOTE: this asserts the CURRENT 0.70 band holds a
