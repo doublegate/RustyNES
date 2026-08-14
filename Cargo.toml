@@ -45,7 +45,7 @@ default-members = ["crates/rustynes-libretro"]
 # So: bump this as part of the release cut, together with the CHANGELOG's
 # `[Unreleased]` -> `[X.Y.Z]` rename and `rustynes_libretro.info`'s
 # `display_version`, and not before.
-version = "2.3.2"
+version = "2.3.3"
 edition = "2024"
 rust-version = "1.96"
 license = "GPL-3.0-or-later"

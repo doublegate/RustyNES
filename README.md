@@ -668,30 +668,50 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.3.2 "Lucid"** — the pixel-provenance release.
-Click any pixel and get the full causal chain that produced it: the PPU dot and
-scanline that emitted it, which layer won priority, the nametable / attribute /
-pattern addresses of the tile **actually on screen** (`v` cannot answer that — by
-display time it has advanced two tiles past the pixel), the palette entry, and
-**the CPU instruction and cycle that last wrote each of those bytes**. Surfaced at
-**Tools → Pixel Provenance**. It also adds **deterministic replay attestation**:
-`rustynes verify <movie.rnm> --rom <game.nes>` replays a movie and confirms it
-reproduces its recorded run, hashing the input applied *and* the video it
-produced (tamper-evident, not forgery-resistant). Everything is `debug-hooks`-gated,
-output-only and default-off, so **AccuracyCoin holds at exactly 141/141** and
-nestest is 0-diff. Built on **v2.3.1 "Plumb Line"** (the measurement release: ten
-hot-path candidates measured, all ten rejected) and **v2.3.0 "Datum II"** — the
-capstone that closes the
-v2.2.6 → v2.3.0 NESdev-remediation line. Tool panels now open as **real OS windows**
-(the v2.2.9 affordance only *embedded* them, so the Windows-10 "trapped window" report
-is now genuinely resolved), and every tool window is detachable. Profiling that work
-uncovered a **frame-pacing defect** that had been degrading any session with a debugger
-panel open: the render path held the emulator lock across the blocking swapchain wait
-and present, stalling frame production — now split so the lock covers only the UI build.
-The PPU's per-dot helpers also got **−5.13% / −3.51%** frame cost, byte-identically.
-Both remaining forum-reported accuracy items (SMB left edge, the Rad Racer
-hybrid-address render) were investigated and found **already correct**. **AccuracyCoin
-141/141 (100%)**, nestest 0-diff — now enforced as an *exact* count, not a 60% floor.
+RustyNES's current release is **v2.3.3 "Cadence"** — the display-pacing release.
+It closes the one measured artefact whose signature matches the reported picture
+"shudder", though it does not claim the report itself is resolved: that is a
+subjective observation on a machine whose frame-budget margin has never been
+measured, and this campaign already declared victory once on counter evidence and
+was wrong.
+
+Frames were being shown for the wrong number of refreshes, and six proposed causes
+were falsified by measurement before the real one surfaced: the **run-ahead throttle
+was oscillating**, changing depth 6-7 times per 24 s, and every change displaces the
+displayed frame by the run-ahead depth — the picture jumping forward and back. The
+cause was a stale statistic, not a bad threshold. The throttle is gated to one depth
+change per median window, but the gate counted **120** frames where the ring that
+feeds it holds **600**; a p50 sits at index 300, so a fifth of a window cannot move
+it off the previous depth. Transitions arrived in pairs sharing a median to three
+decimals. Fixed by expressing the gate in terms of the ring it reads: **6-7
+transitions per 24 s → 1**, spurious releases **2 → 0**.
+
+The engage arm then stopped waiting for the ring and started computing: it steps
+while the *predicted* cost at the reduced depth is still over budget, so a
+`run_ahead = 3` host converges in **2.8 s instead of 12.1 s** (5/5 paired rounds,
+exact sign p = 0.0312). Releasing is deliberately unchanged and still demands a real
+measurement, because releasing on a stale median is what caused the oscillation.
+
+Underneath that sits the measurement apparatus the diagnosis needed: compositor
+refresh sourced from `wp_presentation` (winit reports no `wl_output` on this
+compositor), divisor-based display-sync, a per-frame trace, and a validity gate that
+**fails closed** when the compositor discards frames — because an occluded window
+silently rides the wall-clock fallback, and a diagnostic nobody surfaces is not a
+diagnostic. Dropped frames fell from **135-254 to 1-9** per capture and audio
+underruns to zero.
+
+Two results are recorded as **rejections with their numbers**: a slim run-ahead
+restore (0.25% of the increment — "bytes are not time"; the framebuffer is 94% of
+the snapshot's *size* and ~6% of its *cost*), and a ring-reset throttle gate that
+converged fine but produced an audio underrun in every capture.
+
+**No emulation-core changes.** Every change is frontend or output-only, so
+**AccuracyCoin holds at exactly 141/141** and nestest is 0-diff — verified, not
+asserted. Built on **v2.3.2 "Lucid"** (pixel provenance + replay attestation),
+**v2.3.1 "Plumb Line"** (ten hot-path candidates measured, all ten rejected), and
+**v2.3.0 "Datum II"** — the capstone that closes the v2.2.6 → v2.3.0
+NESdev-remediation line, with real OS-window tool detach, a frame-pacing fix, a
+byte-identical −5.13% PPU optimization, and AccuracyCoin pinned to an *exact* count.
 
 The **v2.2.6 → v2.3.0** line was a de-monetization + NESdev-remediation run on the v2.0.0
 "Timebase" one-clock scheduler: v2.2.6 "Almanac" made RustyNES permanently open-source and
