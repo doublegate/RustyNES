@@ -407,7 +407,14 @@ fn external_coverage_boot_smoke() {
                 // We do NOT panic on a blank frame (so the snapshot still
                 // gets a chance to bless / compare); instead we record it
                 // and surface it in the aggregated failure list.
-                let health = capture.final_frame_health;
+                // v2.3.4 — judge the BEST frame the capture saw, not the one it
+                // happened to stop on. The check exists to catch a boot that
+                // never rendered; a boot that crashed or hung shows nothing at
+                // every checkpoint, while a healthy ROM whose script ends on a
+                // dark transition (Solstice: full title at f1100, uniform black
+                // at the final frame) is not a failure and was being reported as
+                // one.
+                let health = capture.best_frame_health;
                 let blank = if health.looks_blank() {
                     Some(format!(
                         "blank/few-colour boot: {} distinct colour(s), \
