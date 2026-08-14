@@ -76,9 +76,7 @@ cycle-accurate core later replaced.
   keeps the evidence. What it did establish: restore costs ~114 µs with **no
   framebuffer at all**, so its 8.3× asymmetry against `snapshot_core_into` is
   per-section deserialization, not the payload.
-||||||| parent of 0991b79a (feat(perf): tick_lat / tick_iv — the trigger is late, not the emulator (F15))
-||||||| parent of 60507e12 (docs(perf): the run-ahead depth sweep — cost is the frames (F18))
-  **Run-ahead's cost is the frames, and depth 3 throttles itself (v2.3.3 F18).**
+- **Run-ahead's cost is the frames, and depth 3 throttles itself (v2.3.3 F18).**
   Sixteen captures, four per depth, in a **Latin square** (each depth in each
   round-position exactly once — F13's correction: alternation balances drift
   direction but does not buy exchangeability), every one validity-gated by F16
@@ -272,6 +270,27 @@ cycle-accurate core later replaced.
   optimization.
 
 ### Fixed
+
+- **Frontend: the run-ahead throttle no longer oscillates — it was pacing itself
+  against a fifth of a median window (v2.3.3 F27).** The throttle is gated to one
+  depth change per median window, but the gate used **120** frames — the number
+  of samples the produce-cost ring needs before it will report at all — where the
+  ring's actual capacity is **600**. A p50 sits at index 300 of 600, so 120
+  frames of turnover cannot move it, and a second transition was permitted while
+  80% of the median still described the depth the first had just left. Depth then
+  walked `2 → 1 → 0` on one measurement, and each change displaces the displayed
+  frame by the run-ahead depth — the picture jumping forward and back. Per-window
+  logging caught transitions arriving in pairs sharing a median to three decimals
+  (`12.958` engaging twice, `4.994` releasing twice); in the release pair the
+  unchanged cost is divided by a depth that already changed, so the predicted
+  cost halves without any frame getting cheaper. The gate is now expressed in
+  terms of the ring it reads, so the two cannot drift apart again. Measured at
+  `run_ahead = 2` over three captures: **6-7 transitions per 24 s → 1**, with
+  zero spurious releases, and **1.31%** of frames held for the wrong duration
+  against a measured 10.7% at depth 2. The release predicate was never wrong —
+  its input was: at depth 1 it now reads an honest 8.670 ms (matching the
+  independently measured 8.671 ms) instead of a stale 4.994 ms. Frontend-only and
+  output-identical; AccuracyCoin and nestest are untouched by construction.
 
 - **Frontend: display-sync consumed a frame slot per redraw without producing a
   frame, whenever the emulation thread was not driving.** `display_produce_due`
