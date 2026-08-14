@@ -626,9 +626,20 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     // F23 — what each arm actually saw at the moment it fired. The alternation
     // survives a 20-point band, so the question is whether the arms are judging
     // the same quantity at all.
-    cols.push(("thr_engage_cost", format!("{:.3}", v.thr_engage_cost_ms)));
-    cols.push(("thr_release_cost", format!("{:.3}", v.thr_release_cost_ms)));
-    cols.push(("thr_release_pred", format!("{:.3}", v.thr_release_pred_ms)));
+    // The `_ms` suffix is load-bearing, not decoration: every other time-valued
+    // column in this file carries it (`target_ms`, `gpu_ms`, `audio_queued_ms`,
+    // the `*_mean_ms` family), and an analysis script that infers units from the
+    // column name — as `perf_log_check.py` does — would silently treat a bare
+    // name as unitless. Raised in review on PR #369, before any consumer existed.
+    cols.push(("thr_engage_cost_ms", format!("{:.3}", v.thr_engage_cost_ms)));
+    cols.push((
+        "thr_release_cost_ms",
+        format!("{:.3}", v.thr_release_cost_ms),
+    ));
+    cols.push((
+        "thr_release_pred_ms",
+        format!("{:.3}", v.thr_release_pred_ms),
+    ));
     // F16 — cumulative; difference successive rows for a rate. Nonzero means the
     // compositor is discarding this surface's frames, so the MEASURED refresh
     // never settles. That costs display-sync only when no DECLARED refresh is
@@ -938,9 +949,9 @@ mod tests {
         for (name, want) in [
             ("runahead_engages", "21"),
             ("runahead_releases", "34"),
-            ("thr_engage_cost", "12.875"),
-            ("thr_release_cost", "8.500"),
-            ("thr_release_pred", "11.250"),
+            ("thr_engage_cost_ms", "12.875"),
+            ("thr_release_cost_ms", "8.500"),
+            ("thr_release_pred_ms", "11.250"),
         ] {
             let got = columns(&with_value)
                 .into_iter()
@@ -995,9 +1006,9 @@ mod tests {
             "runahead_toggles",
             "runahead_engages",
             "runahead_releases",
-            "thr_engage_cost",
-            "thr_release_cost",
-            "thr_release_pred",
+            "thr_engage_cost_ms",
+            "thr_release_cost_ms",
+            "thr_release_pred_ms",
             "present_discarded",
             // audio health row
             "audio_queued_ms",
