@@ -2246,8 +2246,6 @@ sixteen scanout-bearing captures almost certainly were — they *have* `presente
 reports, which an occluded window cannot produce — but that is an inference, not
 a check.
 
-||||||| parent of c1325040 (docs(perf): the between-session cadence spread is emulation budget margin (F17))
-
 ### v2.3.3 F17 — the between-session spread is emulation budget margin
 
 F14 left one quantity unexplained and named it the largest open question in this
@@ -2410,7 +2408,6 @@ settled that 95% of run-ahead's cost is `run_frame` itself.
 
 The `nes_restore_quiet_slim_*` probe stays in the bench as the evidence.
 
-||||||| parent of 0991b79a (feat(perf): tick_lat / tick_iv — the trigger is late, not the emulator (F15))
 ### v2.3.3 F15 — the trigger is late, not the emulator
 
 The produce interval's standard deviation tracks missed presents at **r = 0.937**
@@ -2526,7 +2523,6 @@ cross-thread hop stays at 44-48 µs throughout. F15's conclusion — the emulato
 not late, it is asked late — is a four-condition replication, not a single
 capture.
 
-||||||| parent of 987ef249 (docs(perf): the F21 throttle A/Bs — 6.43% -> 0.84% at depth 1)
 ### v2.3.3 F21 — the run-ahead throttle: lower, and one step at a time (ADOPTED)
 
 F18 measured `run_ahead = 2` at 77.4% of the frame budget with **10.7%** of
@@ -2590,6 +2586,83 @@ The thresholds are measured on ONE host. 0.75 is a separator between two observe
 points, not a derived constant, and a machine with a faster core will sit
 differently against it — which is the argument for keeping the guard adaptive
 rather than encoding a depth limit.
+
+### v2.3.3 F27 — the throttle was pacing itself against a fifth of a window (ADOPTED)
+
+**Decision: ADOPTED.** The run-ahead throttle's oscillation — the one artefact in
+this campaign that matches the reported "picture jumps forward and back" — is
+fixed, and the mechanism is a stale statistic rather than a bad threshold.
+
+#### The defect
+
+F24 gated the throttle to one depth change per median window. The reasoning was
+right; the constant was wrong. It used **120** frames because 120 is the number
+of samples the produce-cost ring must hold before it reports a median at all,
+and mistook that *minimum-to-report* for the ring's *capacity*. The ring holds
+`perf::WINDOW` = **600**.
+
+A p50 sits at index 300 of 600 samples, so 120 frames of turnover cannot move it
+— not approximately, not partially. **The gate waited a fifth of a window and
+called it one.** That is why F24 measured as no improvement, and why it read as a
+refutation of the stale-median theory when it was an under-strength test of it.
+Two later theories (a sustained-release requirement, a wider band) died against
+the same under-strength gate.
+
+#### The evidence
+
+The per-evaluation log (F26) settled it. Transitions arrive in immediate pairs
+sharing a median to three decimal places:
+
+```text
+THR check depth=2 steps=0 cost=12.958 engage_band=12.479 engage=true
+THR check depth=1 steps=1 cost=12.958 engage_band=12.479 engage=true
+
+THR eval depth=0 steps=2 cost=4.994 per_frame=4.994 pred=9.988 release=true
+THR eval depth=1 steps=1 cost=4.994 per_frame=2.497 pred=7.491 release=true
+```
+
+The second line of each pair is decided on a measurement of the depth the first
+line just left. In the release pair the arithmetic goes visibly wrong in the same
+breath: an unchanged 4.994 ms is divided by a depth that has already changed, so
+the per-frame cost *halves* without any frame having become cheaper, and each
+release makes the next one look safer. That is a mechanism, not a correlation.
+
+#### The fix, and what it measures
+
+The gate is now expressed in terms of the ring it reads, so the two cannot drift
+apart again. Three captures, SMB, `run_ahead = 2`, window verified on screen:
+
+| | transitions | engages | releases | % frames wrong |
+| --- | ---: | ---: | ---: | ---: |
+| before (F22, 3 captures) | 6-7 / 24 s | 3-4 | 2 | — |
+| **after (F27, 3 captures)** | **1** | **1** | **0** | **1.31%** |
+
+The single remaining transition is the correct one: the engage at 12.65 ms, over
+the 12.48 ms band, after which the state is stable for the rest of the run.
+
+The predicate was never wrong — its input was. At depth 1 the honest median now
+reads **8.670 ms**, matching F18's independently measured depth-1 cost of 8.671
+ms, predicts 13.005 ms one depth up, and correctly declines to release. Before
+F27 the same evaluation read 4.994 ms, a depth-0 measurement, and released.
+
+Display-side, a `run_ahead = 2` configuration now delivers **1.31%** of frames
+held for the wrong duration, against F18's measured **10.7%** at depth 2 and
+**1.7%** at depth 1 — the throttle is delivering depth-1 display quality from a
+depth-2 request, which is what a budget guard is for. `cost_p95` 9.04 ms (54% of
+budget) puts it squarely in F17's healthy band.
+
+#### What this does not claim
+
+It fixes the throttle oscillation on this host. It is **not** confirmation that
+the maintainer's shudder is gone — that is a subjective report on a different
+machine, and the standing rule from F6 applies: the drop counters said "fixed"
+once already and were wrong. What can be said is that the one measured artefact
+whose signature matches the report no longer occurs.
+
+The 600-frame window is 10 s at NTSC, so an unaffordable host takes one window
+per step to converge. The counter is pre-seeded to one full window so the *first*
+decision is gated only by the ring having enough samples — there is nothing stale
+to wait out at power-on.
 
 ### v2.3.1 G3 — sink dead per-dot derivations to their use site (decision: REJECTED, reverted)
 

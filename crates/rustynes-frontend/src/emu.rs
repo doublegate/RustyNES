@@ -129,6 +129,34 @@ const MAX_RUN_AHEAD_DEPTH: u32 = 3;
 #[cfg(not(target_arch = "wasm32"))]
 const RUNAHEAD_THROTTLE_ENGAGE: f32 = 0.75;
 
+/// Samples the produce-cost ring must hold before its median is read at all.
+///
+/// This is a MINIMUM (is the statistic meaningful yet?), and is emphatically not
+/// the ring's capacity or its turnover period — [`crate::perf::WINDOW`] is both
+/// of those. Conflating the two is what F27 fixes; the name says which one this
+/// is so the next reader cannot repeat the substitution.
+#[cfg(not(target_arch = "wasm32"))]
+const THROTTLE_MIN_SAMPLES: usize = 120;
+
+/// Fraction of the frame budget the PREDICTED cost one depth up must fall under
+/// before a throttled step is given back.
+///
+/// The gap against `RUNAHEAD_THROTTLE_ENGAGE` is the hysteresis. It was a bare
+/// `0.70` at both its use sites while the engage side had a named constant and a
+/// documented derivation, which is the asymmetry that let the release arm be
+/// re-tuned twice (F21's 0.55 experiment, F23) without either change landing
+/// next to the reasoning for the value it replaced.
+#[cfg(not(target_arch = "wasm32"))]
+const RUNAHEAD_THROTTLE_RELEASE: f32 = 0.70;
+
+/// The two must not be swapped back. A minimum-to-report at or above the ring's
+/// capacity would mean the throttle either never reports or reports only on a
+/// full ring, and the F27 defect was precisely a confusion between these two
+/// quantities -- so the relationship is enforced by the compiler rather than
+/// left to the next reader to notice.
+#[cfg(not(target_arch = "wasm32"))]
+const _: () = assert!(THROTTLE_MIN_SAMPLES < crate::perf::WINDOW);
+
 impl EmuHandle {
     /// Wrap a fresh core in the shared handle.
     #[must_use]
@@ -550,7 +578,20 @@ pub struct EmuCore {
     /// exactly what that artefact would produce — its reproducibility, which
     /// read as evidence the signal was genuine, is equally consistent with
     /// re-evaluating a single measurement. Raised in review on PR #368.
-    pub throttle_frames_since_change: u32,
+    ///
+    /// **F27 — the counter was right, its threshold was wrong.** F24 gated on
+    /// 120 frames, which is the ring's minimum-to-report, not its capacity of
+    /// [`crate::perf::WINDOW`] = 600. So the guard permitted a second transition
+    /// while 80% of the median still described the pre-transition depth, and the
+    /// oscillation survived it unchanged — which is why F24 measured as no
+    /// improvement and looked like a refutation of the stale-median theory when
+    /// it was really an under-strength test of it.
+    ///
+    /// The per-evaluation log (F26) is what settled it. Transitions arrive in
+    /// immediate pairs sharing a median to three decimals — `12.958` engaging
+    /// twice, `4.994` releasing twice — so the second of each pair was decided
+    /// on a measurement of the depth the first had just left.
+    pub throttle_frames_since_change: usize,
     /// v2.3.3 F22 — depth changes that REDUCED run-ahead (the engage arm).
     ///
     /// `runahead_throttle_toggles` proved the oscillation exists (~3 depth
@@ -692,7 +733,14 @@ impl EmuCore {
             runahead_throttled: false,
             runahead_throttle_steps: 0,
             runahead_throttle_toggles: 0,
-            throttle_frames_since_change: 0,
+            // F27 — start "one window elapsed" so the FIRST decision is gated
+            // only by the ring having enough samples to report. There is nothing
+            // stale to wait out at power-on: the ring fills from empty at the
+            // configured depth, so every sample in it already describes the
+            // regime being judged. Starting at 0 would instead make a host that
+            // genuinely cannot afford its configured depth run over budget for a
+            // full 10 s window before the throttle was allowed to help it.
+            throttle_frames_since_change: crate::perf::WINDOW,
             runahead_engages: 0,
             runahead_releases: 0,
             thr_engage_cost_ms: 0.0,
@@ -899,15 +947,29 @@ impl EmuCore {
     /// correctly, while a deschedule spike no longer does.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn update_runahead_throttle(&mut self, produce_p50_ms: f32, samples: usize, depth: u32) {
-        if samples < 120 {
+        if samples < THROTTLE_MIN_SAMPLES {
             return;
         }
-        // F24 — one transition per median WINDOW, not per frame. The ring needs
-        // 120 samples before it reports at all, so 120 produced frames is one
-        // full turnover: after a transition the next decision is made against a
-        // median containing no pre-transition sample.
+        // F24, corrected by F27 — one transition per median WINDOW, not per
+        // frame. F24's reasoning was right and its constant was wrong: it gated
+        // on 120 frames because 120 is the number of samples the ring needs
+        // before it reports at all, and mistook that MINIMUM for the ring's
+        // CAPACITY. The ring holds `perf::WINDOW` = 600. After 120 produced
+        // frames, 480 of the 600 samples still predate the transition, and the
+        // p50 sits at index 300 -- so the median remains DOMINATED by the old
+        // regime, and where the two regimes separate cleanly (which is the case
+        // that matters here: depth N and depth N-1 differ by a whole emulated
+        // frame, ~4.3 ms) the reported p50 is still literally a pre-transition
+        // sample. It is not that 20% turnover cannot move the median in general
+        // -- overlapping distributions would shift it -- it is that it cannot
+        // move it off the wrong regime in the case this gate exists to handle.
+        // The gate waited a fifth of a window and called it one.
+        //
+        // Expressed in terms of the ring it reads, so the two cannot drift
+        // again. That drift is the entire defect: a magic number here had no
+        // stated relationship to the statistic it was supposed to be pacing.
         self.throttle_frames_since_change = self.throttle_frames_since_change.saturating_add(1);
-        if self.throttle_frames_since_change < 120 {
+        if self.throttle_frames_since_change < crate::perf::WINDOW {
             return;
         }
         let target = self.frame_duration.as_secs_f32() * 1000.0;
@@ -928,16 +990,22 @@ impl EmuCore {
         let trace_throttle = crate::perf_log::frame_trace_requested();
         let bounded = depth.min(MAX_RUN_AHEAD_DEPTH);
         let running = bounded.saturating_sub(self.runahead_throttle_steps);
+        // Evaluated ONCE and used by both the log and the branch. Raised by the
+        // Antigravity reviewer on PR #369, and it is the right call for a reason
+        // specific to this function: an instrument that recomputes the predicate
+        // it reports can drift from the predicate that acts, and every wrong
+        // turn in this campaign has come from a measurement that did not
+        // describe the thing it was believed to describe.
+        let engage_band = target * RUNAHEAD_THROTTLE_ENGAGE;
+        let engage = running > 0 && produce_p50_ms > engage_band;
         if trace_throttle {
             eprintln!(
                 "THR check depth={running} steps={} cost={produce_p50_ms:.3} \
-                 engage_band={:.3} engage={}",
+                 engage_band={engage_band:.3} engage={engage}",
                 self.runahead_throttle_steps,
-                target * RUNAHEAD_THROTTLE_ENGAGE,
-                running > 0 && produce_p50_ms > target * RUNAHEAD_THROTTLE_ENGAGE
             );
         }
-        if running > 0 && produce_p50_ms > target * RUNAHEAD_THROTTLE_ENGAGE {
+        if engage {
             // F21 — one step, not all of them. Re-measured on the next median
             // window; if the reduced depth is still over budget this fires
             // again, so an unaffordable host converges to 0 without the cliff.
@@ -980,14 +1048,14 @@ impl EmuCore {
             let per_frame = produce_p50_ms / (f32::from(u8::try_from(running).unwrap_or(0)) + 1.0);
             let predicted_one_more =
                 per_frame * (f32::from(u8::try_from(running).unwrap_or(0)) + 2.0);
+            let release_band = target * RUNAHEAD_THROTTLE_RELEASE;
+            let release = predicted_one_more < release_band;
             if trace_throttle {
                 eprintln!(
                     "THR eval depth={running} steps={} cost={produce_p50_ms:.3} \
                      per_frame={per_frame:.3} pred={predicted_one_more:.3} \
-                     band={:.3} release={}",
+                     band={release_band:.3} release={release}",
                     self.runahead_throttle_steps,
-                    target * 0.70,
-                    predicted_one_more < target * 0.70
                 );
             }
             // v2.3.3 F21 — band left at 0.70 and NOT debounced. Widening it to
@@ -999,7 +1067,7 @@ impl EmuCore {
             // real, open defect — see `runahead_throttle_toggles` — but this was
             // not its cause, so a wider band only removed a release path the
             // build needed.
-            if predicted_one_more < target * 0.70 {
+            if release {
                 self.runahead_throttle_toggles += 1;
                 self.throttle_frames_since_change = 0;
                 self.runahead_releases += 1;
@@ -1564,13 +1632,68 @@ mod tests {
     // `EmuCore` is expensive to build, so these drive the throttle fields
     // directly through the same predicates production uses.
 
-    /// A budget-sized fixture: 16.639 ms NTSC frame, one median window's worth
-    /// of samples so the `samples < 120` guard does not swallow the call.
+    /// A budget-sized fixture: 16.639 ms NTSC frame. Callers pass a sample count
+    /// above `THROTTLE_MIN_SAMPLES` so the minimum-to-report guard does not
+    /// swallow the call.
     #[cfg(not(target_arch = "wasm32"))]
     fn throttle_fixture() -> EmuCore {
         let mut c = EmuCore::new();
         c.frame_duration = std::time::Duration::from_secs_f32(16.639 / 1000.0);
         c
+    }
+
+    /// v2.3.3 F27 — the regression test for the defect itself, stated in the
+    /// terms the bug was actually in: a transition may not be decided on a
+    /// median that predates the previous transition.
+    ///
+    /// This reproduces the sequence the F26 per-evaluation log captured live.
+    /// At two throttle steps (depth 0) a cost of 4.994 ms predicts 9.988 ms one
+    /// depth up, under the 11.647 ms band, so it releases to depth 1. The ring
+    /// cannot have noticed yet — the very next produced frame still reports the
+    /// same 4.994 ms median — and the old gate let that stale value drive a
+    /// second release straight to depth 2, which is half of the observed
+    /// oscillation. Exactly one transition may come out of one median.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn throttle_will_not_act_twice_on_one_median() {
+        let mut c = throttle_fixture();
+        c.runahead_throttle_steps = 2;
+        c.runahead_throttled = true;
+        // The depth-0 cost, fed for a whole window and then some. The first
+        // evaluation releases; every later one sees an unchanged median and must
+        // decline, however long it is offered.
+        for _ in 0..(crate::perf::WINDOW * 2) {
+            c.update_runahead_throttle(4.994, 200, 2);
+        }
+        assert_eq!(
+            c.runahead_releases, 2,
+            "two windows of an unchanged median may release at most once per window"
+        );
+        assert_eq!(c.runahead_throttle_steps, 0);
+    }
+
+    /// v2.3.3 F27 — the gate must be the turnover period of the statistic it
+    /// paces. Asserting the relationship rather than a literal is the point: the
+    /// defect was a `120` here with no stated connection to the `600` there, and
+    /// a test pinning `120` would have passed throughout.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn throttle_window_is_the_ring_that_feeds_it() {
+        let mut c = throttle_fixture();
+        // The counter is pre-seeded to one window (see the initializer), so the
+        // very first evaluation transitions and resets it to zero. Count from
+        // there, exactly, rather than in loop-sized lumps.
+        c.update_runahead_throttle(15.0, 200, 2);
+        assert_eq!(c.runahead_throttle_toggles, 1, "the first call acts");
+        for _ in 0..(crate::perf::WINDOW - 1) {
+            c.update_runahead_throttle(15.0, 200, 2);
+        }
+        assert_eq!(
+            c.runahead_throttle_toggles, 1,
+            "a window minus one frame is not a window"
+        );
+        c.update_runahead_throttle(15.0, 200, 2);
+        assert_eq!(c.runahead_throttle_toggles, 2, "the window completes here");
     }
 
     /// Engage takes ONE depth, not all of them — the whole point of the
@@ -1584,19 +1707,20 @@ mod tests {
     #[test]
     fn throttle_allows_one_transition_per_median_window() {
         let mut c = throttle_fixture();
-        // Exactly one window's worth of frames: exactly one change. The first
-        // version of this test used 600 frames and expected 1 -- that is FIVE
-        // windows, so five legitimate opportunities, and it failed against
-        // correct behaviour (left: 2). The gate is one transition per window,
-        // not one transition ever.
-        for _ in 0..120 {
+        // Exactly one window's worth of frames: exactly one change. An earlier
+        // version of this test used a literal 600 against a gate of 120 and
+        // expected 1 -- that was five windows, so five legitimate opportunities,
+        // and it failed against then-correct behaviour (left: 2). The literals
+        // are gone: both the gate and the loop are now `perf::WINDOW`, which is
+        // what made that mismatch possible to write in the first place (F27).
+        for _ in 0..crate::perf::WINDOW {
             c.update_runahead_throttle(12.884, 200, 2);
         }
         assert_eq!(c.runahead_throttle_toggles, 1, "one window, one change");
         assert_eq!(c.runahead_throttle_steps, 1);
         // A second full window with the cost still over budget takes the next
         // step -- that is the convergence path, not oscillation.
-        for _ in 0..120 {
+        for _ in 0..crate::perf::WINDOW {
             c.update_runahead_throttle(12.884, 200, 2);
         }
         assert_eq!(c.runahead_throttle_toggles, 2, "second window, second step");
@@ -1606,7 +1730,7 @@ mod tests {
     #[test]
     fn throttle_engages_one_step_at_a_time() {
         let mut c = throttle_fixture();
-        for _ in 0..120 {
+        for _ in 0..crate::perf::WINDOW {
             c.update_runahead_throttle(12.884, 200, 2);
         }
         assert_eq!(c.runahead_throttle_steps, 1);
@@ -1621,7 +1745,7 @@ mod tests {
     fn throttle_converges_to_zero_when_nothing_is_affordable() {
         let mut c = throttle_fixture();
         // Two full median windows: two steps, 2 -> 1 -> 0.
-        for _ in 0..240 {
+        for _ in 0..(crate::perf::WINDOW * 2) {
             c.update_runahead_throttle(15.0, 200, 2);
         }
         assert_eq!(c.effective_run_ahead(2), 0);
@@ -1641,14 +1765,14 @@ mod tests {
     #[test]
     fn throttle_does_not_oscillate_in_the_hysteresis_gap() {
         let mut c = throttle_fixture();
-        for _ in 0..120 {
+        for _ in 0..crate::perf::WINDOW {
             c.update_runahead_throttle(12.884, 200, 2); // engage: 2 -> 1
         }
         let toggles_after_engage = c.runahead_throttle_toggles;
         // Now running at depth 1, ~8.56 ms. Giving back a step predicts ~12.8 ms
         // — under the OLD 0.70 band (11.65 ms)? No; but a dip cleared it. Feed
         // the steady depth-1 cost for many windows and require no release.
-        for _ in 0..600 {
+        for _ in 0..(crate::perf::WINDOW * 5) {
             c.update_runahead_throttle(8.556, 200, 2);
         }
         assert_eq!(c.runahead_throttle_steps, 1, "must stay at one step");
