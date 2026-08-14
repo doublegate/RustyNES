@@ -138,6 +138,17 @@ const RUNAHEAD_THROTTLE_ENGAGE: f32 = 0.75;
 #[cfg(not(target_arch = "wasm32"))]
 const THROTTLE_MIN_SAMPLES: usize = 120;
 
+/// Fraction of the frame budget the PREDICTED cost one depth up must fall under
+/// before a throttled step is given back.
+///
+/// The gap against `RUNAHEAD_THROTTLE_ENGAGE` is the hysteresis. It was a bare
+/// `0.70` at both its use sites while the engage side had a named constant and a
+/// documented derivation, which is the asymmetry that let the release arm be
+/// re-tuned twice (F21's 0.55 experiment, F23) without either change landing
+/// next to the reasoning for the value it replaced.
+#[cfg(not(target_arch = "wasm32"))]
+const RUNAHEAD_THROTTLE_RELEASE: f32 = 0.70;
+
 /// The two must not be swapped back. A minimum-to-report at or above the ring's
 /// capacity would mean the throttle either never reports or reports only on a
 /// full ring, and the F27 defect was precisely a confusion between these two
@@ -974,16 +985,22 @@ impl EmuCore {
         let trace_throttle = crate::perf_log::frame_trace_requested();
         let bounded = depth.min(MAX_RUN_AHEAD_DEPTH);
         let running = bounded.saturating_sub(self.runahead_throttle_steps);
+        // Evaluated ONCE and used by both the log and the branch. Raised by the
+        // Antigravity reviewer on PR #369, and it is the right call for a reason
+        // specific to this function: an instrument that recomputes the predicate
+        // it reports can drift from the predicate that acts, and every wrong
+        // turn in this campaign has come from a measurement that did not
+        // describe the thing it was believed to describe.
+        let engage_band = target * RUNAHEAD_THROTTLE_ENGAGE;
+        let engage = running > 0 && produce_p50_ms > engage_band;
         if trace_throttle {
             eprintln!(
                 "THR check depth={running} steps={} cost={produce_p50_ms:.3} \
-                 engage_band={:.3} engage={}",
+                 engage_band={engage_band:.3} engage={engage}",
                 self.runahead_throttle_steps,
-                target * RUNAHEAD_THROTTLE_ENGAGE,
-                running > 0 && produce_p50_ms > target * RUNAHEAD_THROTTLE_ENGAGE
             );
         }
-        if running > 0 && produce_p50_ms > target * RUNAHEAD_THROTTLE_ENGAGE {
+        if engage {
             // F21 — one step, not all of them. Re-measured on the next median
             // window; if the reduced depth is still over budget this fires
             // again, so an unaffordable host converges to 0 without the cliff.
@@ -1026,14 +1043,14 @@ impl EmuCore {
             let per_frame = produce_p50_ms / (f32::from(u8::try_from(running).unwrap_or(0)) + 1.0);
             let predicted_one_more =
                 per_frame * (f32::from(u8::try_from(running).unwrap_or(0)) + 2.0);
+            let release_band = target * RUNAHEAD_THROTTLE_RELEASE;
+            let release = predicted_one_more < release_band;
             if trace_throttle {
                 eprintln!(
                     "THR eval depth={running} steps={} cost={produce_p50_ms:.3} \
                      per_frame={per_frame:.3} pred={predicted_one_more:.3} \
-                     band={:.3} release={}",
+                     band={release_band:.3} release={release}",
                     self.runahead_throttle_steps,
-                    target * 0.70,
-                    predicted_one_more < target * 0.70
                 );
             }
             // v2.3.3 F21 — band left at 0.70 and NOT debounced. Widening it to
@@ -1045,7 +1062,7 @@ impl EmuCore {
             // real, open defect — see `runahead_throttle_toggles` — but this was
             // not its cause, so a wider band only removed a release path the
             // build needed.
-            if predicted_one_more < target * 0.70 {
+            if release {
                 self.runahead_throttle_toggles += 1;
                 self.throttle_frames_since_change = 0;
                 self.runahead_releases += 1;
