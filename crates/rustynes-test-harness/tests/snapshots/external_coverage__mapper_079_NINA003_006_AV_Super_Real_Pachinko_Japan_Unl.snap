@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-079-NINA003-006/AV Super Real Pachinko (Japan) (Unl).zip
+rom_sha256=6dfcb5b4239167bf91f02a02934cd842cfd11e6ca74ed6fbe1dda29813bed7f1
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=d9f1b8a5905a8642
+checkpoint f900 fb_fnv1a64=ea0cb23818cd0f5a
+checkpoint f1100 fb_fnv1a64=ea0cb23818cd0f5a

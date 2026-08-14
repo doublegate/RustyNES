@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-024-VRC6/Akumajou Densetsu (J) (VC).zip
+rom_sha256=f98081a732a8fa19b7f34d8ebda4a943749d8dbc0f773c1915c653b55406ec97
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=498a52a93c2655a0
+checkpoint f900 fb_fnv1a64=bc18ee5a984400fa
+checkpoint f1100 fb_fnv1a64=0eea81a5c68e1164

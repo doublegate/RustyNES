@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-148-SachenSA0037/Mahjong World, The - Ma Que Shi Jie (Asia) (Ja) (NTSC) (Unl).zip
+rom_sha256=2c0b0c4240d50adf69773e844e5a040b11b9344eb44b04e8c72bf712a3e6ccb6
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=1e5dc2ecae703b88
+checkpoint f900 fb_fnv1a64=40cb33fe297d4dfa
+checkpoint f1100 fb_fnv1a64=6ad0943892c9d941

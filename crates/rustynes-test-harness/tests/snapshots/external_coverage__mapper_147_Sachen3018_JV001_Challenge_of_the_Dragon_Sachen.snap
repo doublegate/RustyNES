@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-147-Sachen3018-JV001/Challenge of the Dragon (Sachen) [!].nes
-rom_sha256=98b94d70e4cad6c991d7e42c1e721d4bb4a2d37f386a98467da69db8e3642f3e
+rom=mapper-147-Sachen3018-JV001/Challenge of the Dragon (Sachen) [!].zip
+rom_sha256=e9cecd4303be5cd2a5a938a5425d186dc9030c1e77349d8f5c45895ec67b4441
 frames=1141
 fb_bytes=245760
 cycles=33949781

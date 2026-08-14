@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-146-Sachen-NINA/Master Chu & The Drunkard Hu (Sachen) [!].zip
+rom_sha256=f268bca534a683bfa8612d7c87240d1d0e3bfab54e9f56b7ee73dabbaf5584b7
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=c5cae7c18889db6d
+checkpoint f900 fb_fnv1a64=200357540ac047c0
+checkpoint f1100 fb_fnv1a64=e09a073d4a7407d8

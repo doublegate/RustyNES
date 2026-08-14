@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-147-Sachen3018-JV001/Shao Lin Wuz He - Chinese Kung Fu (Sachen-JAP) [!].nes
-rom_sha256=cfc60c4f6cee632ee71d216307c5b9671426a638374a5a6bdd68613a9e06e6a9
+rom=mapper-147-Sachen3018-JV001/Shao Lin Wuz He - Chinese Kung Fu (Sachen-JAP) [!].zip
+rom_sha256=a707d260904a408e8425665c85d9740efc7f61fede5f73a282b564b1ff7267d3
 frames=1141
 fb_bytes=245760
 cycles=33949783

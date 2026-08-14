@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-011-ColorDreams/Captain Comic - The Adventure (USA) (Unl).zip
+rom_sha256=625afedd1593e6b3b5dc417270886203420db4b9c714b68abef55fa3cf7f2e88
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=98828d1934b18679
+checkpoint f900 fb_fnv1a64=7dd3b764b6352afe
+checkpoint f1100 fb_fnv1a64=7dd3b764b6352afe

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-005-MMC5/Laser Invasion.zip
+rom_sha256=5ac0c52da5d321fb8bed530985ff45cc71bffd60373e8bf714ab5c52f3e3ade6
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=a44ca22596956477
+checkpoint f900 fb_fnv1a64=b649b7dcf71cfb76
+checkpoint f1100 fb_fnv1a64=b9c094bf9326e737

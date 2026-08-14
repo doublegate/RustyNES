@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-019-Namco163/Digital Devil Story - Megami Tensei II (Japan) (Rev A).zip
+rom_sha256=2a4b06487494f86669cb10f47a467a85d07e2b5f90b1992e3334a88ffbc43e61
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=ac8bb9582f87ad49
+checkpoint f900 fb_fnv1a64=15aeb5cc57077f59
+checkpoint f1100 fb_fnv1a64=3c7436e0d181475d

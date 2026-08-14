@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-113-NINA006-113/Fun Blaster Pak (HES) [!].zip
+rom_sha256=f15a440a238fe09a209018dde27e38e32e2bd84daf2760f0f1fb53330a7133c3
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=edd4459c13156daf
+checkpoint f900 fb_fnv1a64=a07ca20426264951
+checkpoint f1100 fb_fnv1a64=a07ca20426264951

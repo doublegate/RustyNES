@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-069-FME7-Sunsoft5B/Honoo no Toukyuuji - Dodge Danpei (Japan).zip
+rom_sha256=e7164d8fe44e973d8e5d10d014fe726d1f0fb304c37b2ddd5da17468abc9f8a0
+frames=1141
+fb_bytes=245760
+cycles=33949790
+audio_samples=836505
+audio_fnv1a64=66ca8e5b9c9e1d07
+checkpoint f900 fb_fnv1a64=1eac55253f10712c
+checkpoint f1100 fb_fnv1a64=1eac55253f10712c

@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-077-Irem77/Napoleon Senki (J) [!].nes
-rom_sha256=0a45b46c226cdf4f7b6ad5c50327d09a1370e7ef3390ed9da9ac8b5ee7e72753
+rom=mapper-077-Irem77/Napoleon Senki (Japan).zip
+rom_sha256=d6e97dcd82779f8ae37b2e7c0d985401497344a14b41304d62589c922578da75
 frames=1141
 fb_bytes=245760
 cycles=33949783

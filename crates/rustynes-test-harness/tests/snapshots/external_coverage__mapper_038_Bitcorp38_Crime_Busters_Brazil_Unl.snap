@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-038-Bitcorp38/Crime Busters (Brazil) (Unl).zip
+rom_sha256=27f4490260498ca98b41dd8e71753680431844533f08c60a7f84b9b68b13d0b2
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=de2d107996d402b9
+checkpoint f900 fb_fnv1a64=34dda533397d2d09
+checkpoint f1100 fb_fnv1a64=34dda533397d2d09

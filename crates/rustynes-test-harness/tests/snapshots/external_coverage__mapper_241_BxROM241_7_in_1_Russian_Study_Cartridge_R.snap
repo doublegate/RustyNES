@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-241-BxROM241/7-in-1 Russian Study Cartridge (R).zip
+rom_sha256=9c804c359609eedef82822d96931ea0e92bb949d8805599c7a7f3414fb867007
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=427ec3a46c21d1df
+checkpoint f900 fb_fnv1a64=5bc9e884b19768bb
+checkpoint f1100 fb_fnv1a64=2b19d97ef7e8f97c

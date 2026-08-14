@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-210-Namco175-340/Chibi Maruko-chan - Uki Uki Shopping (Japan).zip
+rom_sha256=1e89059504ba75d0e11be109fce0af8de92b69f6b68d210ccd9514168edbff9e
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=7074c0162832060f
+checkpoint f900 fb_fnv1a64=541700f4420b6e9b
+checkpoint f1100 fb_fnv1a64=541700f4420b6e9b

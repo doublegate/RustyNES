@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-052-MarioParty7in1/2-in-1 - 1996 Super HIK Gold Card (NT-803) [p1][!].zip
+rom_sha256=ec26a60865f6419fd9c069b98a94791999603ed619d7410b4f2380ec2f21c80c
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=7be6dea4a0320dba
+checkpoint f900 fb_fnv1a64=5b305cccc4e6a55f
+checkpoint f1100 fb_fnv1a64=5b305cccc4e6a55f

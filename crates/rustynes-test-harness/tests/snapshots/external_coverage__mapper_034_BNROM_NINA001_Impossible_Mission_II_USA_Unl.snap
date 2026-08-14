@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-034-BNROM-NINA001/Impossible Mission II (USA) (Unl).zip
+rom_sha256=b5766475dfe021046c58941dbec9b2f9ceb0614c931f5a100b7dbb50a9e5082a
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=7bde2bbd80bc49f8
+checkpoint f900 fb_fnv1a64=85830cc390da1a0d
+checkpoint f1100 fb_fnv1a64=85830cc390da1a0d

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-206-Namcot118/Karnov.zip
+rom_sha256=6f19d3190b829fe8cab8006472c96c30a4bb0b5dd2338caaa6779a5a60b2c8a5
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=2eb92edaf2ffe00f
+checkpoint f900 fb_fnv1a64=82346e26c481d2c9
+checkpoint f1100 fb_fnv1a64=82346e26c481d2c9

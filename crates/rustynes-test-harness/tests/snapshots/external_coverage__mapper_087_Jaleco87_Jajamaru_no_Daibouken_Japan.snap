@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-087-Jaleco87/Jajamaru no Daibouken (Japan).zip
+rom_sha256=64aba141489887cc53d56951f7090e20e66e1a6737c07590adae44c047e51a41
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=a6c2d3008779c3b4
+checkpoint f900 fb_fnv1a64=316202744431284f
+checkpoint f1100 fb_fnv1a64=7a3b23ae0fa38160

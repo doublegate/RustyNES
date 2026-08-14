@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-185-CNROM-Lock/Sansuu 1 Nen - Keisan Game (Japan).zip
+rom_sha256=34db2c0d400d1fc187cc543c90703442d17cfa9d6d26b9c8162d3efe8d782b9a
+frames=1141
+fb_bytes=245760
+cycles=33949960
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

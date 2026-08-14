@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-140-Jaleco140/Gyruss (U) [T+Chi20100408_NOKOH].zip
+rom_sha256=86a462d33d5cf1c6dc5e7a5e2580f00e1d5b6fc2c2905dc186ea95043e64ab31
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=1142827b92e152d5
+checkpoint f900 fb_fnv1a64=dd95cd832ab56ed4
+checkpoint f1100 fb_fnv1a64=1f22ca4f9df017a3

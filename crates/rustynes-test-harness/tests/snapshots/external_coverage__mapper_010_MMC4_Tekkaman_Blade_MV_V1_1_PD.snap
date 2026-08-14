@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-010-MMC4/Tekkaman Blade MV V1.1 (PD).zip
+rom_sha256=dfddd9a75a318c890dc1b23a3e35d5d24c4316360f07157e16a8827bdb38a065
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=0add4414d698751e
+checkpoint f900 fb_fnv1a64=69159fcb115f5bed
+checkpoint f1100 fb_fnv1a64=82450eef0e8ffe95

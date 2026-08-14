@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-241-BxROM241/ABM Study Card v5.0 (Ch).zip
+rom_sha256=d697161e582aaaa70850e6ac513d21b724ccbe40671356607942dd02f0470887
+frames=1141
+fb_bytes=245760
+cycles=33949960
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=ef3e5f8ef1f72325
+checkpoint f1100 fb_fnv1a64=ef3e5f8ef1f72325

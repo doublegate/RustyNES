@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-068-Sunsoft4/After Burner II (J) [!].zip
+rom_sha256=492d0b27d6dd91b04cc3860fb941bb207ed98c3da5bfdb54dd963981513df564
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=30d74e1fdb640661
+checkpoint f900 fb_fnv1a64=f87e9ee434889a28
+checkpoint f1100 fb_fnv1a64=283a58a7bd3083f7

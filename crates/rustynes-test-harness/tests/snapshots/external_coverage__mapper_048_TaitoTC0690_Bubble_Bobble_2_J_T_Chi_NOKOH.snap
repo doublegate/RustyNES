@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-048-TaitoTC0690/Bubble Bobble 2 (J) [T+Chi_NOKOH].nes
-rom_sha256=f0c43fabcb011a527a6bf19e7f3d6a6e278f2aa98b99dbb5e52ee6a9bcd9c69b
+rom=mapper-048-TaitoTC0690/Bubble Bobble 2 (J) [T+Chi_NOKOH].zip
+rom_sha256=43ef95db2f6f09b0ab78fbaa7214dae6e7270d45ae808a23f2e96e31e764eddd
 frames=1141
 fb_bytes=245760
 cycles=33949774

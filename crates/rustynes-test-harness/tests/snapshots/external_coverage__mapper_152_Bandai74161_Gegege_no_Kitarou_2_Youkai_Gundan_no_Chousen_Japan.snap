@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-152-Bandai74161/Gegege no Kitarou 2 - Youkai Gundan no Chousen (Japan).zip
+rom_sha256=4e9c000529096fa8ed635820747096be5e2b335cb27699cae854d425c7e2bcff
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=c576cff649957f81
+checkpoint f900 fb_fnv1a64=011f9ff1bd7d39d8
+checkpoint f1100 fb_fnv1a64=a82b022fc42adfa0

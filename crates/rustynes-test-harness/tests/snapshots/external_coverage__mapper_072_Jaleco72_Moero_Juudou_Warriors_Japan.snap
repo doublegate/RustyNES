@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-072-Jaleco72/Moero!! Juudou Warriors (J) [!].nes
-rom_sha256=670a9a05b01236312e08f03e6e6617c6794b8d12fe7d60dac6a12933121f223d
+rom=mapper-072-Jaleco72/Moero!! Juudou Warriors (Japan).zip
+rom_sha256=ddbad017f0be574740842731bc5d0f1720b071d9f0bdffe5e6e1eb514f65ea7f
 frames=1141
 fb_bytes=245760
 cycles=33949774

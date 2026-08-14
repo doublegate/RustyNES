@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/GVS Wrecking Crew (Dual).nes
+rom_sha256=4cde983b9d03402b324e2815189268041b313a9377d7f0856cf8d3a9790708fe
+frames=1141
+fb_bytes=245760
+cycles=33949962
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=1719dca5cef7a325
+checkpoint f1100 fb_fnv1a64=1719dca5cef7a325

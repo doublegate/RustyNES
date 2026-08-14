@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-225-ColorDreams72in1/52 Games [p1].nes
+rom_sha256=2b882e86aaf94cd749557fdb5892ac0b1610c76c2362019111fee436401e8804
+frames=1141
+fb_bytes=245760
+cycles=33949781
+audio_samples=836505
+audio_fnv1a64=3bb83f2a856f0c17
+checkpoint f900 fb_fnv1a64=e14f1c20e64b4dc1
+checkpoint f1100 fb_fnv1a64=6d058f6e6b1719a9

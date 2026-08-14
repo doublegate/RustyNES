@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-018-JalecoSS88006/Ninja Jajamaru - Ginga Daisakusen (Japan).zip
+rom_sha256=a439b397a3d098ab0c431c7c75e1454d433a14736762addb9b0b4d5035002ada
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=06b807c54b594442
+checkpoint f900 fb_fnv1a64=9fa053c87464bd25
+checkpoint f1100 fb_fnv1a64=9fa053c87464bd25

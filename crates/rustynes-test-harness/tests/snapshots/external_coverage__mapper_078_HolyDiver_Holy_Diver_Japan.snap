@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-078-HolyDiver/Holy Diver (J) [!].nes
-rom_sha256=4bfefecbaffa32903473c00217f0c57044a8194f1165c49c5f519258b3c9e89e
+rom=mapper-078-HolyDiver/Holy Diver (Japan).zip
+rom_sha256=7bfe98372219f7092c2614b8e83ceb823c30cc8cd513db4ab3956edc228102af
 frames=1141
 fb_bytes=245760
 cycles=33949778

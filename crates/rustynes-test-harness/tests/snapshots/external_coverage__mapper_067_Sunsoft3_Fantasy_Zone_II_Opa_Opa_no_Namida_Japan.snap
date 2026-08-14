@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-067-Sunsoft3/Fantasy Zone II - Opa-Opa no Namida (Japan).zip
+rom_sha256=486f51b30ada51decb31d6e8d098214e7ac2a0a9d2b58971d4e20c34889de3ab
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=b52732e4fb443a53
+checkpoint f900 fb_fnv1a64=e5536575d5bc44e2
+checkpoint f1100 fb_fnv1a64=13b48fb4a1177055

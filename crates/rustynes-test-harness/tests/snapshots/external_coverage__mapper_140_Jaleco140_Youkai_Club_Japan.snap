@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-140-Jaleco140/Youkai Club (Japan).zip
+rom_sha256=913c70ba724014b5801097257e7085c3ef45094cdb67f0badd6730123acfe0b2
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=646a7d8b06e95e7b
+checkpoint f900 fb_fnv1a64=74117c5cb5a6c681
+checkpoint f1100 fb_fnv1a64=74117c5cb5a6c681

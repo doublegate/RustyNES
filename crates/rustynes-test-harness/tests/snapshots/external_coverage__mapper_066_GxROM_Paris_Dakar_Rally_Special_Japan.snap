@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-066-GxROM/Paris-Dakar Rally Special (Japan).zip
+rom_sha256=0d8040a16887bd3148cff92b8f100325c09abda5ba877fac9317eb32e1ed494d
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=662e71745668fa07
+checkpoint f900 fb_fnv1a64=448df99c8fa6c766
+checkpoint f1100 fb_fnv1a64=448df99c8fa6c766

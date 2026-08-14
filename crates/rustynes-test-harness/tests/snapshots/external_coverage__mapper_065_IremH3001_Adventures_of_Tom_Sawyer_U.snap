@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-065-IremH3001/Adventures of Tom Sawyer (U) [!].zip
+rom_sha256=7aeb74ea167c8cd1420a8c52ef4200383d07ebaf5064fe161ee337932f246a2e
+frames=1141
+fb_bytes=245760
+cycles=88801
+audio_samples=2171
+audio_fnv1a64=9b76a01f026096c3
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

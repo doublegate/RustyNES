@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-162-WaixingFS304/Shen Gui Chuan Qi (The Mummy) (ES-1109) (Ch).nes
+rom_sha256=fd7afc402dd848dddef7b22f0bc269d24d7102f31e3d6d067cacc8ddf2581a15
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=c490dc4aaff67e12
+checkpoint f900 fb_fnv1a64=c345f06d612d8131
+checkpoint f1100 fb_fnv1a64=c345f06d612d8131

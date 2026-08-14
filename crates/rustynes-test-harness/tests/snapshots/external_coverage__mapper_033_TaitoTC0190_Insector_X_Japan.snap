@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-033-TaitoTC0190/Insector X (Japan).zip
+rom_sha256=b669466f9ff350a5953c9fd143e98756388bb5f9bc705247a8f5a274e9035906
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=ab04510cf7eced4e
+checkpoint f900 fb_fnv1a64=bb602e194c90940c
+checkpoint f1100 fb_fnv1a64=b32843a8027e25b2

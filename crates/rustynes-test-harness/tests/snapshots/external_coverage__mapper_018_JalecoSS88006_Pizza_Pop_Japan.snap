@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-018-JalecoSS88006/Pizza Pop! (Japan).zip
+rom_sha256=d46c69d2699a11d8a4d6c01d94b8ba4e84393f392809bbba38fca505202a0b60
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=14479f9cf3f76e00
+checkpoint f900 fb_fnv1a64=2441370a40807cea
+checkpoint f1100 fb_fnv1a64=8d895d55b2428b92

@@ -2,12 +2,12 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-073-VRC3/Salamander AC v0.1 (Hack).nes
-rom_sha256=fb56bae394c156d6ee712316ae1cbde21221dec9be0da080f16c2a383bb02cb8
+rom=mapper-073-VRC3/Salamander AC v0.1 (Hack).zip
+rom_sha256=ffda987416c7985769622ac6d2c3d79ca2eb532cee03b388a2fdd3fe1747b3e2
 frames=1141
 fb_bytes=245760
 cycles=33949783
 audio_samples=836505
 audio_fnv1a64=9ffe77ec799aa178
-checkpoint f900 fb_fnv1a64=f56a29563f9197d0
-checkpoint f1100 fb_fnv1a64=7a990cc3eed51a7a
+checkpoint f900 fb_fnv1a64=5e50e8ff0b0d0ae4
+checkpoint f1100 fb_fnv1a64=9c7bae275837a1fe

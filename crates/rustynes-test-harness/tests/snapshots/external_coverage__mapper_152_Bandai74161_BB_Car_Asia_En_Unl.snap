@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-152-Bandai74161/BB Car (Asia) (En) (Unl).zip
+rom_sha256=f94a3130535e2eb018074b076e588ff4ebc9f97ba44e3f8280d7a5b0ddd4075b
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=6b3972008b401b6a
+checkpoint f1100 fb_fnv1a64=6b3972008b401b6a

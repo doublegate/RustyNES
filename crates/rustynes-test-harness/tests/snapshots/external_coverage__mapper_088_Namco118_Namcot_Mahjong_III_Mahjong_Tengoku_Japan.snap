@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-088-Namco118/Namcot Mahjong III - Mahjong Tengoku (Japan).zip
+rom_sha256=1e77c5127b9476cf3521f307c1b8a7d1ba7512334aaf31242dee25067445ea35
+frames=1141
+fb_bytes=245760
+cycles=33949789
+audio_samples=836505
+audio_fnv1a64=7679478e000486e6
+checkpoint f900 fb_fnv1a64=652ee11a1d5290d3
+checkpoint f1100 fb_fnv1a64=8fde57f9e4557bc1

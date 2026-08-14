@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-034-BNROM-NINA001/Mashou (J) [!].zip
+rom_sha256=25acb23b007954679df8c984a72819a24ca43df3babc56b0e18f7a332d76cf3c
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=b35ee67798afb7e4
+checkpoint f900 fb_fnv1a64=b28e41cba43df5c5
+checkpoint f1100 fb_fnv1a64=b28e41cba43df5c5

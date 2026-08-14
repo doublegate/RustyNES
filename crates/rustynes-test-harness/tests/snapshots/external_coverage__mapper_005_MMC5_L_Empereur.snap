@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-005-MMC5/L'Empereur.zip
+rom_sha256=3981cd09dbe48a7c4019fa7e1184b9cf4162724cff63507e5052dd7a7c96c3f1
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=e396f07612a535a7
+checkpoint f900 fb_fnv1a64=53d5de1ac3472207
+checkpoint f1100 fb_fnv1a64=53d5de1ac3472207

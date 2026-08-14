@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-025-VRC2-VRC4/Gradius II (Japan).zip
+rom_sha256=8fd556a7be216178d481a983243a3f3e96bd9a9ff205377c1a1ea98144cfa2f2
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=4899bac8eaa1090a
+checkpoint f900 fb_fnv1a64=4cafe0ccf3f43684
+checkpoint f1100 fb_fnv1a64=b5bc7cd133eee6c1

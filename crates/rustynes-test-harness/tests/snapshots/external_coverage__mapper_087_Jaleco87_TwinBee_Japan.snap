@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-087-Jaleco87/TwinBee (Japan).zip
+rom_sha256=36adcbc709d3c2e879eab6bac35edf30e9428bd77972d84dc96b7dae7b4eb436
+frames=1141
+fb_bytes=245760
+cycles=33949782
+audio_samples=836505
+audio_fnv1a64=6b57dbba960de551
+checkpoint f900 fb_fnv1a64=559192e37403eb75
+checkpoint f1100 fb_fnv1a64=2a5311377a6a21f2

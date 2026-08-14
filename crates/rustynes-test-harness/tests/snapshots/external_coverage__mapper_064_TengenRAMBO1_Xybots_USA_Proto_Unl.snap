@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-064-TengenRAMBO1/Xybots (USA) (Proto) (Unl).zip
+rom_sha256=5409930031859619c27522380f87465e8310835a344bd1572a224496bb941cb8
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=93ad316a55058ab3
+checkpoint f900 fb_fnv1a64=e43c17b61b53417f
+checkpoint f1100 fb_fnv1a64=44fb98a1bd652d05

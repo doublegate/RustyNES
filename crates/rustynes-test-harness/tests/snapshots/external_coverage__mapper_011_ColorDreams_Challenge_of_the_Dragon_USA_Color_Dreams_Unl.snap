@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-011-ColorDreams/Challenge of the Dragon (USA) (Color Dreams) (Unl).zip
+rom_sha256=a82cc9cb497f7a804da1769f36f921ad0e617e2209757258a07784422451a94e
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=0fb1c81b35111026
+checkpoint f900 fb_fnv1a64=a4e1d321105df61b
+checkpoint f1100 fb_fnv1a64=3cddc0dab1964900

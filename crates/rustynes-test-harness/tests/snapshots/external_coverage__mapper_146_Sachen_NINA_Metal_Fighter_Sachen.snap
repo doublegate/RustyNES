@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-146-Sachen-NINA/Metal Fighter (Sachen) [!].nes
-rom_sha256=447e95c4c5c5172bdc4657ec3ed662cb2f79df7010c8a2b87394ebc8a9459104
+rom=mapper-146-Sachen-NINA/Metal Fighter (Sachen) [!].zip
+rom_sha256=90b610b4d5d78d5da76e0524aa7afa80af82be20db00422d2bd636cf41c8f4a8
 frames=1141
 fb_bytes=245760
 cycles=33949772

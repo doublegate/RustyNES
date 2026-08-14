@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-032-IremG101/Image Fight (J) [!].zip
+rom_sha256=f7b530551a535fe9e138fd8d59b5f2778af464f5f0f5c3cc92e2bfdadf9eb550
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=9f9c8265b5612ec1
+checkpoint f900 fb_fnv1a64=a1b3deb1e70c9973
+checkpoint f1100 fb_fnv1a64=fcdb9b541094fa3a

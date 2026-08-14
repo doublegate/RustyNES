@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-118-TxSROM/Ys III - Wanderers from Ys (Japan).zip
+rom_sha256=30e705c888c64a19e2a7880aea14be69bef986f4f0eab393ea60137b9b064609
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=639ff7d5a2eedf45
+checkpoint f900 fb_fnv1a64=70b09f6751967568
+checkpoint f1100 fb_fnv1a64=52bb398c26725858

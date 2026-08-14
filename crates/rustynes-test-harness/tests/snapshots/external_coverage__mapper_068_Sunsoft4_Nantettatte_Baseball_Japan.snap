@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-068-Sunsoft4/Nantettatte!! Baseball (Japan).zip
+rom_sha256=5378bfa9dad6de4cb227e69622e693a4b1e366efced2f169507b2cdf8da763ff
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=cdf1326d9d746ef4
+checkpoint f1100 fb_fnv1a64=cdf1326d9d746ef4

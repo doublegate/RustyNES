@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-010-MMC4/Fire Emblem - New Challenge by shinwa (Hack).zip
+rom_sha256=85b68e10c398cd91a41d44fa2f6744bba866ebcd8ffecd5832339534744b267a
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=98dfb567e4df947d
+checkpoint f900 fb_fnv1a64=092cc6a0e5ddffaf
+checkpoint f1100 fb_fnv1a64=28331e0f69dc3576

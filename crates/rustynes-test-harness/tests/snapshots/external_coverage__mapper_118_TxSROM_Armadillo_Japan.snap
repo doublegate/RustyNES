@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-118-TxSROM/Armadillo (Japan).zip
+rom_sha256=f2cc15ea066eda24c76e9594d8469fe8fce83294febcb4923b27afdc218c79db
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=99fc94a8a8fda636
+checkpoint f900 fb_fnv1a64=1e2894d780cc35dd
+checkpoint f1100 fb_fnv1a64=1e2894d780cc35dd

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-016-BandaiFCG/Akuma-kun - Makai no Wana (Japan).zip
+rom_sha256=79939082649f38d3999fb4c89d80fd6f1e4be12f5e2f26b5414b4b7e786ff923
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=39843836457de4eb
+checkpoint f900 fb_fnv1a64=ac7e381488d64094
+checkpoint f1100 fb_fnv1a64=ac7e381488d64094

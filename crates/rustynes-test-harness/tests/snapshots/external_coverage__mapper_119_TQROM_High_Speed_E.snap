@@ -1,0 +1,12 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-119-TQROM/High Speed (E) [!].nes
+rom_sha256=ffa90e2afecc4eaf457d26d3fd24fe5826b450dbb52dd57980803b32c6d8051e
+frames=700
+fb_bytes=245760
+cycles=20816575
+audio_samples=512903
+audio_fnv1a64=d7cb164e906ed82a
+checkpoint f700 fb_fnv1a64=210cdb6ea5b16e18

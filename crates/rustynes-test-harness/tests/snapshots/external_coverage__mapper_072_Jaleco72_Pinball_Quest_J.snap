@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-072-Jaleco72/Pinball Quest (J) [!].zip
+rom_sha256=77a083088868b437d1739e0c29b5e03e4581f42b8ddd2308f2912e67a99c4fcf
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=3879c8cbabb7b3e8
+checkpoint f900 fb_fnv1a64=8ac5e19daf0bbd42
+checkpoint f1100 fb_fnv1a64=8ac5e19daf0bbd42

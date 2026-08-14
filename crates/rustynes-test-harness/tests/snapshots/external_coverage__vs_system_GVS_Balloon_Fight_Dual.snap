@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=vs-system/GVS Balloon Fight (Dual).nes
+rom_sha256=8b3280e651f3f8d99de046cdd2710e2ff5f94b5dd4224982cca4a9a7264441cb
+frames=1141
+fb_bytes=245760
+cycles=33949961
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=b10170454c70a325
+checkpoint f1100 fb_fnv1a64=b10170454c70a325

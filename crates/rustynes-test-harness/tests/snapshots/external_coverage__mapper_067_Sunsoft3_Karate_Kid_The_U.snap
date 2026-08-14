@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-067-Sunsoft3/Karate Kid, The (U) [!].zip
+rom_sha256=9535d2210cd642005c71f7c7c87aa5fbfe12b700982fa22ef85bca3937b8edd6
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=0aa26c5dbafc49d4
+checkpoint f900 fb_fnv1a64=62f493d7f9665b8c
+checkpoint f1100 fb_fnv1a64=62f493d7f9665b8c

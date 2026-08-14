@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-066-GxROM/Gumshoe.zip
+rom_sha256=276aced244eb67f0bf050b473c1c470c32f6b08c86938baa4e7d9a0944f14dc9
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=3d0d0f620911dd4e
+checkpoint f1100 fb_fnv1a64=0957034ff4bb54ea

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-152-Bandai74161/Saint Seiya - Ougon Densetsu (Japan).zip
+rom_sha256=e2a0c2e08b6d7ebb2956dadec188cabcff10ea62c06e63626a3047b6b388c524
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=33ac4a57b52ab400
+checkpoint f900 fb_fnv1a64=83b8386f0247c9cb
+checkpoint f1100 fb_fnv1a64=83b8386f0247c9cb

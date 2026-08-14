@@ -2,11 +2,12 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-159-BandaiLZ93D50-24C01/Dragon Ball Z - Kyoushuu! Saiya Jin (Japan).nes
-rom_sha256=02ef93c157c226101bf0790639845bdfa8173df894e095e687f396bbddf583ce
-frames=600
+rom=mapper-159-BandaiLZ93D50-24C01/Dragon Ball Z - Kyoushuu! Saiya Jin (Japan).zip
+rom_sha256=cf033306bf7c7d84cefc14e491835c37e859e35e06ba646f84313c254f36a2f4
+frames=1141
 fb_bytes=245760
-cycles=17838525
-audio_samples=439524
-audio_fnv1a64=e6578f92d14d98ef
-checkpoint f600 fb_fnv1a64=a6ec537737a843e0
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=7faf0e23c16c4d68
+checkpoint f900 fb_fnv1a64=511a08b52f021e44
+checkpoint f1100 fb_fnv1a64=d540957892dd1ecc

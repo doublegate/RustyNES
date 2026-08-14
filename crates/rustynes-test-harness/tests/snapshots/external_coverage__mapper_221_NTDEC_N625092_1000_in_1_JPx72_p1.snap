@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-221-NTDEC-N625092/1000-in-1 (JPx72) [p1][!].zip
+rom_sha256=b81f6af94f919c8ccae49d0d976ce389bd160ebed5d4556e1c3970585f27972c
+frames=1141
+fb_bytes=245760
+cycles=33949790
+audio_samples=836505
+audio_fnv1a64=0474a9ad949ca1c3
+checkpoint f900 fb_fnv1a64=bff0e7375eba641f
+checkpoint f1100 fb_fnv1a64=7bc3618d24e086ff

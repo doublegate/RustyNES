@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-146-Sachen-NINA/Incantation (Dip Bin) (Joy Van).zip
+rom_sha256=d6b8f8a362649377a4b15cfb88581a652bccaa9d8564925b0c056ec29bee4264
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=0ea1eaadafeead48
+checkpoint f900 fb_fnv1a64=1d7601d642210592
+checkpoint f1100 fb_fnv1a64=8d73832e0f1b753c

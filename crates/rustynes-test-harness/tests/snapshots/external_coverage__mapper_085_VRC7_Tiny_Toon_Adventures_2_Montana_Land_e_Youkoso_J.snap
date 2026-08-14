@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-085-VRC7/Tiny Toon Adventures 2 - Montana Land e Youkoso (J) [!].zip
+rom_sha256=b3dc7bc53251fe135eb4f1de96834a5b07738f5b22ecc1bb268f5780cfe57e76
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=41fd5924ef2a442e
+checkpoint f900 fb_fnv1a64=1c7b8ad7197b4f5c
+checkpoint f1100 fb_fnv1a64=1c7b8ad7197b4f5c

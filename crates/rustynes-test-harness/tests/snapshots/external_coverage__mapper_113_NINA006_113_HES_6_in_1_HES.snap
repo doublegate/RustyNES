@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-113-NINA006-113/HES 6-in-1 (HES).zip
+rom_sha256=a697a25dbafe70a320869d9646b4fafae833d2e793de25592329ac7a0f124079
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=812822cc50925f90
+checkpoint f900 fb_fnv1a64=2d2c7a9d24d05143
+checkpoint f1100 fb_fnv1a64=6e0642abb4d133d8

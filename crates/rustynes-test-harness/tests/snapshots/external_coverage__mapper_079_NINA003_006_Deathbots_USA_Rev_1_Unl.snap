@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-079-NINA003-006/Deathbots (USA) (Rev 1) (Unl).zip
+rom_sha256=fd94511f719e5bdb68084ee87d26dc06d5f2bfb3a071a7bf4de473b77a9190f2
+frames=1141
+fb_bytes=245760
+cycles=33949788
+audio_samples=836505
+audio_fnv1a64=ca4795abe549bdc6
+checkpoint f900 fb_fnv1a64=aa56416843503b72
+checkpoint f1100 fb_fnv1a64=0aeba9edf7b466fb

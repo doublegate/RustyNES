@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-148-SachenSA0037/Peek-A-Boo Poker (USA) (Unl).nes
-rom_sha256=2a792283388fc2468e30fb67bce6254d5a9fd0f14d6d65378da2dc37fb55e279
+rom=mapper-148-SachenSA0037/Peek-A-Boo Poker (USA) (Unl).zip
+rom_sha256=243145dd2226e31c2cde52847d4b7a63c62ce87bbf4f54b69c74cafaff2c7bae
 frames=1141
 fb_bytes=245760
 cycles=33949773

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-148-SachenSA0037/Shisen Mahjong - Seifuku Hen (Japan) (Unl).zip
+rom_sha256=f8b9b6a0d75129dd08c27d77824d222138c2bab72c9cf8ae84af9ce48de338e1
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=b2820aa96617be36
+checkpoint f900 fb_fnv1a64=73522f8eeb801ec4
+checkpoint f1100 fb_fnv1a64=449f04b3d60b1ed1

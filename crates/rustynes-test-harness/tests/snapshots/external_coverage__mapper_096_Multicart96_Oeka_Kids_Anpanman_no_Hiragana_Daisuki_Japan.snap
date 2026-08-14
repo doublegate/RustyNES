@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-096-Multicart96/Oeka Kids - Anpanman no Hiragana Daisuki (J).nes
-rom_sha256=d2e4fd6ca16c065d933bd4c25566de8f78b7760a8079f9917030ff2ce8ced7b4
+rom=mapper-096-Multicart96/Oeka Kids - Anpanman no Hiragana Daisuki (Japan).zip
+rom_sha256=dda88f7e15e684216b47bc456a55515842594664e2487f92f6e7a9f77de6c8e7
 frames=1141
 fb_bytes=245760
 cycles=33949780

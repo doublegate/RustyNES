@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-015-Multicart15/100-in-1 Contra Function 16 [p1][!].nes
+rom_sha256=771bb80ed6753a2d7659b72c5e6b3c15f55abf80853650bfe52e7620abb38275
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=cba77a63994a35fc
+checkpoint f900 fb_fnv1a64=802ce8fb6a914cc9
+checkpoint f1100 fb_fnv1a64=e3ea8018110e5328

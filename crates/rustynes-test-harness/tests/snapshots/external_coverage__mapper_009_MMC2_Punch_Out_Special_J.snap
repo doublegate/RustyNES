@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-009-MMC2/Punch-Out!! Special (J).zip
+rom_sha256=12a8685669c48304c5c53d7b0603fb4e58256e3f1e7ccbc1ea0948b589fcb2ca
+frames=1141
+fb_bytes=245760
+cycles=33949806
+audio_samples=836506
+audio_fnv1a64=8f4a82d99a923f10
+checkpoint f900 fb_fnv1a64=28f1cc0a39674465
+checkpoint f1100 fb_fnv1a64=4f048afa91252855

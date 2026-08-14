@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-021-VRC2-VRC4/Wai Wai World 2 - SOS!! Paseri Jou (Japan).zip
+rom_sha256=43cba4b0749894735289e95c267b2e232f296962de5fc2b8c1f2e7d06ec474a0
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=403627c95e5119a7
+checkpoint f900 fb_fnv1a64=47de9c9ce1554cce
+checkpoint f1100 fb_fnv1a64=b6427844fd7fa7b3

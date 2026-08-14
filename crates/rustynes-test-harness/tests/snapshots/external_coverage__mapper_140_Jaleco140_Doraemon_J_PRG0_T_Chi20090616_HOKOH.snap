@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-140-Jaleco140/Doraemon (J) (PRG0) [T+Chi20090616_HOKOH].zip
+rom_sha256=8c30e44fe3ff297867b76c4fdb9da8be90a861c0c02243276fc3fad4f343a185
+frames=1141
+fb_bytes=245760
+cycles=33949783
+audio_samples=836505
+audio_fnv1a64=fdbec2f1ab3a105b
+checkpoint f900 fb_fnv1a64=03f1c57abfcf7249
+checkpoint f1100 fb_fnv1a64=ef2c3015997fec78

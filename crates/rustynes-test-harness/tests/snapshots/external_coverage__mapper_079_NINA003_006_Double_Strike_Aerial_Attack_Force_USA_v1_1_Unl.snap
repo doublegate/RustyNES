@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-079-NINA003-006/Double Strike - Aerial Attack Force (USA) (v1.1) (Unl).zip
+rom_sha256=428d41cc7d815bbda478609ad76f95342d51668b337b8314693ffcb58dd81869
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=b200e6b330072605
+checkpoint f900 fb_fnv1a64=e5d1011192b70d87
+checkpoint f1100 fb_fnv1a64=862446c12b4ab880

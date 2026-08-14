@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-184-Sunsoft1/Wing of Madoola, The (J) [!].zip
+rom_sha256=672b72f12da0d48a24e9d7a0605e6ffefb0aec178504aaf035f4e177e4d8c54b
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=a661c19bc25958ff
+checkpoint f900 fb_fnv1a64=68ac355df7ef815e
+checkpoint f1100 fb_fnv1a64=68ac355df7ef815e

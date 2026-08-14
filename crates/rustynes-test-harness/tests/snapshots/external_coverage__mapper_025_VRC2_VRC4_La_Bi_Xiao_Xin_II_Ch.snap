@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-025-VRC2-VRC4/La Bi Xiao Xin II (Ch).zip
+rom_sha256=34e7f2a06505410057dd49060e9c4d774820135ba9262deecdb2de53966961b7
+frames=1141
+fb_bytes=245760
+cycles=33949779
+audio_samples=836505
+audio_fnv1a64=cb95cd2e4c20e879
+checkpoint f900 fb_fnv1a64=9a4a23e62522cea2
+checkpoint f1100 fb_fnv1a64=9a4a23e62522cea2

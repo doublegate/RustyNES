@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-206-Namcot118/Dragon Buster II - Yami no Fuuin (USA, Europe) (Namco Museum Archives Vol 2).zip
+rom_sha256=009bad77518ac3eca83f66f693a71928e8def1d1eb9ad90edc6ea6919a48dbc7
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=e99aa954b8cdfb6b
+checkpoint f900 fb_fnv1a64=b0cb39b0cf5940ff
+checkpoint f1100 fb_fnv1a64=b0cb39b0cf5940ff

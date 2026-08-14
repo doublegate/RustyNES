@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-032-IremG101/Ai Sensei no Oshiete - Watashi no Hoshi (Japan).zip
+rom_sha256=da78c78fa35e50138448082251a0057f3efc38b6a1a4c01935775cdc2586196c
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=2c5dea2c0e27720c
+checkpoint f900 fb_fnv1a64=b130bd55266a97f8
+checkpoint f1100 fb_fnv1a64=ef2cea2993f40dd0

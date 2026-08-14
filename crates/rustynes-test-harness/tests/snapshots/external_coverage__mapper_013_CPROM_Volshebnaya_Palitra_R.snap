@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-013-CPROM/Volshebnaya Palitra (R) [!].zip
+rom_sha256=03d703a149bfde26d7551698fcc4d79c15f9c91a7431dd7d40a61595c672343c
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=8e5f296b85e9e53c
+checkpoint f900 fb_fnv1a64=e088c77d88ce8b3f
+checkpoint f1100 fb_fnv1a64=e088c77d88ce8b3f

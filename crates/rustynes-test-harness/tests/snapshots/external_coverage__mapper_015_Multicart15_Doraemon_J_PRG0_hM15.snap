@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-015-Multicart15/Doraemon (J) (PRG0) [hM15].zip
+rom_sha256=3057d5536a6cf49c3e8da4eba406287eab9d912c4377540d31fe4fbdf82ae3b1
+frames=1141
+fb_bytes=245760
+cycles=33949963
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

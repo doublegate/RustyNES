@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-132-TXC132/Qi Wang - Chinese Chess (Asia) (Ja) (Unl).zip
+rom_sha256=267eb71f1bf697454b3eeda82a9178b646e2ef9c02e75cb5920e1d41ff334b18
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=72887a5dea51cd21
+checkpoint f900 fb_fnv1a64=c4f2a22eebb7f349
+checkpoint f1100 fb_fnv1a64=2790c3628954d9ef

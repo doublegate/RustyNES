@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-088-Namco118/Quinty (J) [!].zip
+rom_sha256=c9bdb86c4640285ebddbc9ab3e965bc0fd2532eff7ecd15685a58ee6efad6e9b
+frames=1141
+fb_bytes=245760
+cycles=33949866
+audio_samples=836507
+audio_fnv1a64=d89757e250ad2c2b
+checkpoint f900 fb_fnv1a64=454ef0443f824e04
+checkpoint f1100 fb_fnv1a64=74cee056332bfa6e

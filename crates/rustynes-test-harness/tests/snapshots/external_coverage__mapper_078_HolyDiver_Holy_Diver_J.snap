@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-078-HolyDiver/Holy Diver (J) [!].nes
+rom_sha256=4bfefecbaffa32903473c00217f0c57044a8194f1165c49c5f519258b3c9e89e
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=469bbe5062b92bfa
+checkpoint f900 fb_fnv1a64=22577db6daa1aee0
+checkpoint f1100 fb_fnv1a64=22577db6daa1aee0

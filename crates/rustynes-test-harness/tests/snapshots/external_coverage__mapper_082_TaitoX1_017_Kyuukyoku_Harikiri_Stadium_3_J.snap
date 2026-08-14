@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-082-TaitoX1-017/Kyuukyoku Harikiri Stadium 3 (J) [!].zip
+rom_sha256=08ec7e3a8fc8bd60551f0afe26c631426656116362d4975f167c86e7a64d16ba
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=8dfec857ac714a23
+checkpoint f900 fb_fnv1a64=7e81e7ce9d41e10c
+checkpoint f1100 fb_fnv1a64=7e81e7ce9d41e10c

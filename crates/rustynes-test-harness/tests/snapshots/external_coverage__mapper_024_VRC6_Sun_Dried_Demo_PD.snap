@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-024-VRC6/Sun Dried Demo (PD).zip
+rom_sha256=22d19f323577fee59ce3b5c341cd98c8e88757b267381aba01e0965f766f5c9c
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=6502c3769e7ee764
+checkpoint f900 fb_fnv1a64=7c835883cc263473
+checkpoint f1100 fb_fnv1a64=6647ac501db7b81a

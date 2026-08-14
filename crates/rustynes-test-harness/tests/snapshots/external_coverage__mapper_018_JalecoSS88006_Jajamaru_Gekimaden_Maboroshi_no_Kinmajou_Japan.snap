@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-018-JalecoSS88006/Jajamaru Gekimaden - Maboroshi no Kinmajou (Japan).zip
+rom_sha256=9510f09c656452db4c1139dc7a5638e9bceb55a0b2bd5a880bbccf973d82c2ee
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=5a8a714163ee47f2
+checkpoint f900 fb_fnv1a64=d2d3d32210229b98
+checkpoint f1100 fb_fnv1a64=d2d3d32210229b98

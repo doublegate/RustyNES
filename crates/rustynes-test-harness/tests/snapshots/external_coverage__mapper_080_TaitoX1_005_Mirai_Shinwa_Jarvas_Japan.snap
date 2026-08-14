@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-080-TaitoX1-005/Mirai Shinwa Jarvas (Japan).zip
+rom_sha256=f2fb57232e0f8412049566025dd69011bd3565b1fb03b9c49e89ec0e85eb21df
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=e8f44d0fb44d3865
+checkpoint f900 fb_fnv1a64=30fb39e8148d21b6
+checkpoint f1100 fb_fnv1a64=30fb39e8148d21b6

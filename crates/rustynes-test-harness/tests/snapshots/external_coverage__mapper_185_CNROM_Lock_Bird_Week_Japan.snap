@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-185-CNROM-Lock/Bird Week (Japan).zip
+rom_sha256=eeb4efdf7e9153897faf1368c90bf50a84598c0a95d1a491143668e5739a4f38
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=17680a86ba954d1c
+checkpoint f900 fb_fnv1a64=89f5a0d1aec2053f
+checkpoint f1100 fb_fnv1a64=f29c0ac2a269190b

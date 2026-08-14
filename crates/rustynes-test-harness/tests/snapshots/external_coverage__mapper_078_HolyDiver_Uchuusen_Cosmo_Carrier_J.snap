@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-078-HolyDiver/Uchuusen - Cosmo Carrier (J) [!].zip
+rom_sha256=7a9f9516501d551c9a737b1bdfe7df98335187e5f481dc1bc76073801714d6c7
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=f5a7cf97abc99125
+checkpoint f1100 fb_fnv1a64=f5a7cf97abc99125

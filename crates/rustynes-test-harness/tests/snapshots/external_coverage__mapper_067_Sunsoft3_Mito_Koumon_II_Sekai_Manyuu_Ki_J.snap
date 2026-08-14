@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-067-Sunsoft3/Mito Koumon II - Sekai Manyuu Ki (J) [!].zip
+rom_sha256=53a2cada573b130bb26b1d4ca9390b800d216ba88b71076ef3d211df36ac2e9c
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=d1905213539bddcb
+checkpoint f900 fb_fnv1a64=4ee596bee14c5e01
+checkpoint f1100 fb_fnv1a64=01270b2d1eec76e5

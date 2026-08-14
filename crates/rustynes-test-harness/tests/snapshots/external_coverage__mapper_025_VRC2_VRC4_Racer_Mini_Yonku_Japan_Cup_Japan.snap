@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-025-VRC2-VRC4/Racer Mini Yonku - Japan Cup (Japan).zip
+rom_sha256=661ea626c01b902a1acd3af415c7b9ffd2f63cb91fcc249fafa6c3d06aad4a22
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=8802016a72052876
+checkpoint f900 fb_fnv1a64=32bc27470aa54df4
+checkpoint f1100 fb_fnv1a64=eb64ad99dd45ebb4

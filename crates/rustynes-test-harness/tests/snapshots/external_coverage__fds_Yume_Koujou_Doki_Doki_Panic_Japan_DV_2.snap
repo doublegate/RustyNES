@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=fds/Yume Koujou Doki Doki Panic (Japan) (DV 2).fds
+rom_sha256=f65cc381bbf79e2034d1a67dd2cd4484df4a6622c292f69067f0c85ae1017bae
+frames=1141
+fb_bytes=245760
+cycles=33949819
+audio_samples=836506
+audio_fnv1a64=2c71bdbd50976649
+checkpoint f900 fb_fnv1a64=7ddc253eae65b03f
+checkpoint f1100 fb_fnv1a64=85547498c64b345b

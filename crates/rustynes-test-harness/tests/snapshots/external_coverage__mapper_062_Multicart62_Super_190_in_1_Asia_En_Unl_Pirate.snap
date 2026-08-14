@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-062-Multicart62/Super 190-in-1 (Asia) (En) (Unl) (Pirate).nes
-rom_sha256=fcbe6c67249130e03d9a109f22b7aefb4289fd651b2057ec317c0c6a326e5412
+rom=mapper-062-Multicart62/Super 190-in-1 (Asia) (En) (Unl) (Pirate).zip
+rom_sha256=9c62bd223be1a6ca7dc23a3368abe60970bd2719ed71af9537a7a16bc385a66c
 frames=1141
 fb_bytes=245760
 cycles=33949774

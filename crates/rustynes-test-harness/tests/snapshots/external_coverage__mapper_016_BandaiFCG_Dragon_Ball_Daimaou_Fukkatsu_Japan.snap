@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-016-BandaiFCG/Dragon Ball - Daimaou Fukkatsu (Japan).zip
+rom_sha256=188ed4862df584a673d8e2ca633bd4e75d7faea8c790f8ddd88c19ab7706bdc2
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=7f819e245390f4a2
+checkpoint f900 fb_fnv1a64=4c8ee5b1393ef986
+checkpoint f1100 fb_fnv1a64=4c8ee5b1393ef986

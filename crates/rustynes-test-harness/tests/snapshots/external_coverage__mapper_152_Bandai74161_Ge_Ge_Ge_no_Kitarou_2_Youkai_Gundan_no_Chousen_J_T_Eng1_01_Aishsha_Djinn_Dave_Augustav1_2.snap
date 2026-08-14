@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-152-Bandai74161/Ge Ge Ge no Kitarou 2 - Youkai Gundan no Chousen (J) [T+Eng1.01_Aishsha,Djinn,Dave Augustav1.2].zip
+rom_sha256=c00570cab2ab029ed5e6a4930f6614bd0b2523a83f492b8f371be647d453ccb2
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=55b84a7340958ae6
+checkpoint f900 fb_fnv1a64=b847302d94bdbef5
+checkpoint f1100 fb_fnv1a64=1826f358ea380971

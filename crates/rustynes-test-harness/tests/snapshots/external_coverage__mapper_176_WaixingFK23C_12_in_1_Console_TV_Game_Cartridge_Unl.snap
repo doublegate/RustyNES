@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-176-WaixingFK23C/12-in-1 Console TV Game Cartridge (Unl) [!].zip
+rom_sha256=bc2b23e13eda9d9415d9a807c46d5492cd2a2fbafad0e04bb5abc41aaf17f260
+frames=1141
+fb_bytes=245760
+cycles=33949779
+audio_samples=836505
+audio_fnv1a64=e7bd749a629ed8a4
+checkpoint f900 fb_fnv1a64=edd6b5527f6c8188
+checkpoint f1100 fb_fnv1a64=edd6b5527f6c8188

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-070-Bandai74/Family Trainer 6 - Manhattan Police (J).zip
+rom_sha256=ed83f45c594ff5022d268c41942ecbe69ac358f4f8e8f44343116634f092a2e8
+frames=1141
+fb_bytes=245760
+cycles=33949785
+audio_samples=836505
+audio_fnv1a64=3059fe600b18b672
+checkpoint f900 fb_fnv1a64=d49d334c4dee208f
+checkpoint f1100 fb_fnv1a64=ec38c597a1467f15

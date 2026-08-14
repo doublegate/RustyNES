@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=fds/Metroid (Japan) (Rev 3).fds
+rom_sha256=6a4fa984a12e26b394998b17a924aee2033e0313d8c70dcfc6dc48cbbf809299
+frames=1141
+fb_bytes=245760
+cycles=33949822
+audio_samples=836506
+audio_fnv1a64=8676fb8991437ca7
+checkpoint f900 fb_fnv1a64=2bfabed61940776d
+checkpoint f1100 fb_fnv1a64=2bfabed61940776d

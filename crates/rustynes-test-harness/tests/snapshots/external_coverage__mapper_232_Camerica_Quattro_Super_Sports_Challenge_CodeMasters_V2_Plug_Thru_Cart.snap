@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-232-Camerica-Quattro/Super Sports Challenge (CodeMasters) (V2 Plug-Thru Cart).zip
+rom_sha256=ae565aedbc52ad498eb479b6da8acacb1457f0807704730306fa1031ec26982c
+frames=1141
+fb_bytes=245760
+cycles=33949791
+audio_samples=836505
+audio_fnv1a64=44008c74a610db9d
+checkpoint f900 fb_fnv1a64=e18ee694931ba387
+checkpoint f1100 fb_fnv1a64=fb2cd2b5efdad8a0

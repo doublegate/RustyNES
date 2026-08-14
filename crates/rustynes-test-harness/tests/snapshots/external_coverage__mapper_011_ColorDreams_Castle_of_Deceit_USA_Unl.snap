@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-011-ColorDreams/Castle of Deceit (USA) (Unl).zip
+rom_sha256=460cda3c2fbfbdf802768713fc5c3b9a789a462d1bdc7fde7fa2accb861b2eeb
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=551af334a43b6e24
+checkpoint f900 fb_fnv1a64=913573961b2b4fad
+checkpoint f1100 fb_fnv1a64=913573961b2b4fad

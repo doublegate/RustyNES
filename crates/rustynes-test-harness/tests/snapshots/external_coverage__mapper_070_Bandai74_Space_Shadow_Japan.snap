@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-070-Bandai74/Space Shadow (Japan).zip
+rom_sha256=0ad4d1b89fdf8f6a54b73a8f48092985777593b034719a54dd5fda9b9964e2a9
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=8697fca5ee83142c
+checkpoint f900 fb_fnv1a64=9e7863ebba0f4d3e
+checkpoint f1100 fb_fnv1a64=9e7863ebba0f4d3e

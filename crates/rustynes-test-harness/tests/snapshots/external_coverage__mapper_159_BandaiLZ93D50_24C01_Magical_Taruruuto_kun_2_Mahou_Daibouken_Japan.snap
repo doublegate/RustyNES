@@ -2,11 +2,12 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun 2 - Mahou Daibouken (Japan).nes
-rom_sha256=b0e346093196791d9e30a30318836828a4964870973b09512b31e907723a5777
-frames=600
+rom=mapper-159-BandaiLZ93D50-24C01/Magical Taruruuto-kun 2 - Mahou Daibouken (Japan).zip
+rom_sha256=021c2230ef469a5313a016cf3397ec11978aee57c33a05ccd00f47a5f7084014
+frames=1141
 fb_bytes=245760
-cycles=17838522
-audio_samples=439524
-audio_fnv1a64=c6e1f17fd220f6ac
-checkpoint f600 fb_fnv1a64=3b02424bc7c34b0d
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=cc5eaa47e9470375
+checkpoint f900 fb_fnv1a64=fce1606f3db991ca
+checkpoint f1100 fb_fnv1a64=fce1606f3db991ca

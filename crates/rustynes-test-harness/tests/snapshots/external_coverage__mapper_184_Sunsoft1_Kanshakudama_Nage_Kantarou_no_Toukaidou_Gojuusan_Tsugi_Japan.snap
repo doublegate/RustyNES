@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-184-Sunsoft1/Kanshakudama Nage Kantarou no Toukaidou Gojuusan Tsugi (Japan).zip
+rom_sha256=0a9e4ce021787a3e51146c0e81a9ec699a2aa532c9522dc49799bf04f5c069ec
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=e14627b8fa580ff1
+checkpoint f900 fb_fnv1a64=5618a5dacaffe0f6
+checkpoint f1100 fb_fnv1a64=92e202af22a63b60

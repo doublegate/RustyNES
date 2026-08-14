@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-082-TaitoX1-017/Kyuukyoku Harikiri Stadium - Heisei Gannen Ban (Japan).zip
+rom_sha256=eb586b587731b08034bdebdf0b42f80db6bfa3f96dd13af09b67904d80aeff0f
+frames=1141
+fb_bytes=245760
+cycles=33949783
+audio_samples=836505
+audio_fnv1a64=8a80e5457d3e8fb2
+checkpoint f900 fb_fnv1a64=3aef0d407d23e225
+checkpoint f1100 fb_fnv1a64=3aef0d407d23e225

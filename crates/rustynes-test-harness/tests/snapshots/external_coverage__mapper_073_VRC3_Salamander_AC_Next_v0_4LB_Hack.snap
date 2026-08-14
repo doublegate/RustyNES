@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-073-VRC3/Salamander AC Next v0.4LB (Hack).zip
+rom_sha256=bbffb8046d66c518a954d306dc3b0609d029a86fe2d6e1beca0527dac8ad026a
+frames=1141
+fb_bytes=245760
+cycles=33949783
+audio_samples=836505
+audio_fnv1a64=6ac2f5525bfdbaaa
+checkpoint f900 fb_fnv1a64=97e3f6abc0a4f9c9
+checkpoint f1100 fb_fnv1a64=97e3f6abc0a4f9c9

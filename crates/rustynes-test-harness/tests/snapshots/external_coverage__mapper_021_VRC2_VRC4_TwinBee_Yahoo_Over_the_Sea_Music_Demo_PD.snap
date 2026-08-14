@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-021-VRC2-VRC4/TwinBee Yahoo!! - Over the Sea Music Demo (PD).zip
+rom_sha256=28d742ead518687591b59445c2c165327a314b4fd04193bc21f42a4a03a1a956
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=5d4e47bfe1979079
+checkpoint f900 fb_fnv1a64=1719dca5cef7a325
+checkpoint f1100 fb_fnv1a64=1719dca5cef7a325

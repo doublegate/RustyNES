@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-184-Sunsoft1/Mario's Treasure Hunt v1.0 English by Googie (Atlantis no Nazo Hack).zip
+rom_sha256=72822143f9d380c6a16c10ec94311fc70d52391c14696029da5a38435985b5c4
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=a114b1b1f6518ae7
+checkpoint f900 fb_fnv1a64=6219f7765d9608ef
+checkpoint f1100 fb_fnv1a64=a0a48bc0eaee0047

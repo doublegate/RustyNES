@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-146-Sachen-NINA/Jaau Kong 2-in-1 (Sachen) [!].zip
+rom_sha256=07646b281adbfe87420db5efb2c1367a38a3e95c419ba3451edb127258bbf101
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=81432753518232ce
+checkpoint f900 fb_fnv1a64=3e85432a7fc91545
+checkpoint f1100 fb_fnv1a64=72f3c5ebdf27aaf1

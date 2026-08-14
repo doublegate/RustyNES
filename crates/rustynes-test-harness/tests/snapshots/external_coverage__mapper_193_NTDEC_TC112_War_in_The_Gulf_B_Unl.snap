@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-193-NTDEC-TC112/War in The Gulf (B) (Unl) [!].zip
+rom_sha256=a3041e1693a8022c3434fb601404c5d5ac5e7d1d34860acfc2bf38e29e050255
+frames=1141
+fb_bytes=245760
+cycles=33949779
+audio_samples=836505
+audio_fnv1a64=0800d9dd72ab2c11
+checkpoint f900 fb_fnv1a64=b97996dd924cf6df
+checkpoint f1100 fb_fnv1a64=1dc0deaf5afa528f

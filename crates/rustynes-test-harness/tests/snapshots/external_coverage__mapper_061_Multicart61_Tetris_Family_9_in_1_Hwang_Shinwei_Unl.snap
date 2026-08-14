@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-061-Multicart61/Tetris Family 9-in-1 (Hwang Shinwei) (Unl) [!].nes
-rom_sha256=66a7c3979f94fa0df2466c508265caaba62c5f3ac4b9412ac1e1140b91faa0a6
+rom=mapper-061-Multicart61/Tetris Family 9-in-1 (Hwang Shinwei) (Unl) [!].zip
+rom_sha256=e490d32b824569e944a082aa3b1fb6401d135ad6b2b572cadbcab746912d4248
 frames=1141
 fb_bytes=245760
 cycles=33949775

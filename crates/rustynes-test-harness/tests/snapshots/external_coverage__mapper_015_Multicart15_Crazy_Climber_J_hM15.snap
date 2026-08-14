@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-015-Multicart15/Crazy Climber (J) [hM15].zip
+rom_sha256=dfe28f9cc0caa80078ccd58f163c886979ac93a1b4d95f2eb45415c5333f6ae7
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=70fefba9039936e3
+checkpoint f900 fb_fnv1a64=1719dca5cef7a325
+checkpoint f1100 fb_fnv1a64=1719dca5cef7a325

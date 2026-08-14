@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-152-Bandai74161/Pocket Zaurus - Juu Ouken no Nazo (Japan).zip
+rom_sha256=53119fcf57fbd1609ebc53f99c1fd30b848f3c0bd907276f7762ed84567031bb
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=895af3eb8083fd93
+checkpoint f900 fb_fnv1a64=9a69fab0ecfdbe50
+checkpoint f1100 fb_fnv1a64=f122b311d91d0f88

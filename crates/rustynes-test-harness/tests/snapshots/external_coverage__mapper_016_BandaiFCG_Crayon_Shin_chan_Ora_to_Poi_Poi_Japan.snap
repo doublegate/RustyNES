@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-016-BandaiFCG/Crayon Shin-chan - Ora to Poi Poi (Japan).zip
+rom_sha256=01282572fe4663e77357b78a70091ae207b8fa758161f74a317e2d020d73b15f
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=b8c3352528d7301f
+checkpoint f900 fb_fnv1a64=38a46ca6e62c7f68
+checkpoint f1100 fb_fnv1a64=2a1e5f342d91ab47

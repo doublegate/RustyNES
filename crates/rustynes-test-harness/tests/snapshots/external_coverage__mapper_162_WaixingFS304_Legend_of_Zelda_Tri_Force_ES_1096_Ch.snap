@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-162-WaixingFS304/Legend of Zelda - Tri Force (ES-1096) (Ch).nes
+rom_sha256=475b52d4322210ba73bda32b1a6aea71eb8159e3b322aeade3d2d3428e21a381
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=42643b5abd821a25
+checkpoint f900 fb_fnv1a64=768457aaa51ab6cf
+checkpoint f1100 fb_fnv1a64=768457aaa51ab6cf

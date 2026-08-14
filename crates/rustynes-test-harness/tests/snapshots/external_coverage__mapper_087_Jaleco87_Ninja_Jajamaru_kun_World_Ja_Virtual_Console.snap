@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-087-Jaleco87/Ninja Jajamaru-kun (World) (Ja) (Virtual Console).zip
+rom_sha256=091c0ca7783e26e87751d1822f0beb64065bfb77815ff1bd72126b3177944e6b
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=640dc617142111fc
+checkpoint f900 fb_fnv1a64=c7fa09d1c3622e93
+checkpoint f1100 fb_fnv1a64=d7fea5369fd01833

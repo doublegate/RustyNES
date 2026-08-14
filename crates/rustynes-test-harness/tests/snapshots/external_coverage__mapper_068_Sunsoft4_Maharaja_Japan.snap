@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-068-Sunsoft4/Maharaja (Japan).zip
+rom_sha256=9f23c9c6bd4ee135779ac6d84acce2f0213cc179a8e406c386b53b61255b2dc5
+frames=1141
+fb_bytes=245760
+cycles=33949783
+audio_samples=836505
+audio_fnv1a64=070fe6083b41394b
+checkpoint f900 fb_fnv1a64=12e86ee24b247c52
+checkpoint f1100 fb_fnv1a64=ad9a281976ebf749

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-185-CNROM-Lock/B-Wings (Japan).zip
+rom_sha256=ff1c45e27d35f67593a1c2be38c95b478afd6288bc84b991ae69c270ef4029a7
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=9a2d560da8438848
+checkpoint f900 fb_fnv1a64=a54cde4a5960b27a
+checkpoint f1100 fb_fnv1a64=a54cde4a5960b27a
