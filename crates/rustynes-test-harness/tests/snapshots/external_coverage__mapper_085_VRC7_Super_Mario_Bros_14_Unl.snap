@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-085-VRC7/Super Mario Bros 14 (Unl) [!].zip
-rom_sha256=a94dfd414c6b6e22c1d339f0dea06fcc19970a73a6da1aa20b61490e09006c60
+rom=mapper-085-VRC7/Super Mario Bros 14 (Unl) [!].nes
+rom_sha256=54ed68cb77022353aa3f6714b8a3c2d201fd1ea63b418757e0301e16688722bf
 frames=1141
 fb_bytes=245760
 cycles=33949775

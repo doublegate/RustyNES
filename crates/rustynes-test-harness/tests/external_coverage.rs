@@ -275,10 +275,35 @@ fn snapshot_id(rom_rel: &str) -> String {
     let path = Path::new(rom_rel);
     let dir = path.parent().and_then(|p| p.to_str()).unwrap_or_default();
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(rom_rel);
-    let joined = if dir.is_empty() {
+    // v2.3.4 — the EXTENSION has to take part, or a game staged in two forms
+    // collides on one id.
+    //
+    // The corpus deliberately stages some titles both loose and archived, so
+    // the archive load path gets boot coverage too (T-PS-059). Because the id
+    // was built from `file_stem()`, `Foo.nes` and `Foo.zip` produced the SAME
+    // id, wrote the same snapshot with a different `rom=` line, and exactly one
+    // of every pair mismatched on every run -- permanently, and un-fixable by
+    // blessing, because blessing one broke the other. Measured on the corpus:
+    // 54 colliding ids over 108 ROMs, which is exactly the number of otherwise
+    // unexplained persistent mismatches.
+    //
+    // `.nes` keeps the bare id so the existing baselines stay valid; every
+    // other form is suffixed. Appending unconditionally would have been
+    // tidier and would have orphaned all 626 committed baselines at once.
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| !e.eq_ignore_ascii_case("nes"))
+        .unwrap_or_default();
+    let stem_ext = if ext.is_empty() {
         stem.to_string()
     } else {
-        format!("{dir}__{stem}")
+        format!("{stem}_{ext}")
+    };
+    let joined = if dir.is_empty() {
+        stem_ext
+    } else {
+        format!("{dir}__{stem_ext}")
     };
     // Collapse every non-alphanumeric run to a single '_', trim edges.
     let mut id = String::with_capacity(joined.len());

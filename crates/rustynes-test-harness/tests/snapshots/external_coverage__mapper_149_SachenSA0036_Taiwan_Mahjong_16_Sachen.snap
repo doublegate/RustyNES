@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-149-SachenSA0036/Taiwan Mahjong 16 (Sachen) [!].zip
-rom_sha256=fa8779aea655aacc492edd876e53f5f1b61e453f991ad0039292a35fbcbdc62c
+rom=mapper-149-SachenSA0036/Taiwan Mahjong 16 (Sachen) [!].nes
+rom_sha256=b2617487d9e8b485aa97d868242262785efb81bd05d5bc316da4c5c3dd16bdb7
 frames=1141
 fb_bytes=245760
 cycles=33949771

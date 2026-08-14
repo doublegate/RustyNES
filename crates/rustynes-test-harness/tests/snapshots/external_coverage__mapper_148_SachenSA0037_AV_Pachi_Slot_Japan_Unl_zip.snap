@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-148-SachenSA0037/AV Pachi-Slot (Japan) (Unl).zip
+rom_sha256=e466a13d2e0f2945a76821016ce99f03ba191e4186d542f57943301055e1d8e0
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=a880a5766fd0ef30
+checkpoint f900 fb_fnv1a64=c816d858ec9ea0b1
+checkpoint f1100 fb_fnv1a64=c816d858ec9ea0b1

@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-073-VRC3/Salamander (J) [!].zip
-rom_sha256=80540dca4c3c5ddd104b6c186b6a50be527660dd734e1e5bf2949b7251f54586
+rom=mapper-073-VRC3/Salamander (J) [!].nes
+rom_sha256=fce0e800062bb97fa6f583f6af2799771d5d5decf31aa336812ffb75d527169e
 frames=1141
 fb_bytes=245760
 cycles=33949783

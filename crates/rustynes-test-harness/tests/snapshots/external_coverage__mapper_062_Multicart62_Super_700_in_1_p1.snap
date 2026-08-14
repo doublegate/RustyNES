@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-062-Multicart62/Super 700-in-1 [p1][!].zip
-rom_sha256=4ab63f776e728b69afd071ac11976a6ce22ea0f586632b2b609b2b7053e29145
+rom=mapper-062-Multicart62/Super 700-in-1 [p1][!].nes
+rom_sha256=cae7294af6e7b9eb2b0e399538cfbf118f6ef7a602e0f36a4672bfc12ef474c9
 frames=1141
 fb_bytes=245760
 cycles=33949771

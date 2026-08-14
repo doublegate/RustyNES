@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-148-SachenSA0037/AV Hanafuda Club (Japan) (Unl).zip
-rom_sha256=4814ca43a3414561991bf9ed3fd86118f334fa05a1c7ecbf497f5d9e02662e8c
+rom=mapper-148-SachenSA0037/AV Hanafuda Club (Japan) (Unl).nes
+rom_sha256=64c617fbfe8185aba0ee847aeb42905d5dbd5dba87ef1c5ae55fac08264182bf
 frames=1141
 fb_bytes=245760
 cycles=33949773

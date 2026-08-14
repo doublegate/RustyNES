@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-072-Jaleco72/Moero!! Pro Tennis (J) [!].zip
-rom_sha256=233f62a6700c16654a6d4c8bb0cf1db15b8546607ee965bae467c02f9b5419c2
+rom=mapper-072-Jaleco72/Moero!! Pro Tennis (J) [!].nes
+rom_sha256=7cd7c1b440b8e0b0f7a310f3debaaed2b4fda0acb1696a68f861bbb9cdcd8897
 frames=1141
 fb_bytes=245760
 cycles=33949783

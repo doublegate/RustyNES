@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-148-SachenSA0037/AV Hanafuda Club (Japan) (Unl).zip
+rom_sha256=4814ca43a3414561991bf9ed3fd86118f334fa05a1c7ecbf497f5d9e02662e8c
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=8873ab39a4a2a454
+checkpoint f900 fb_fnv1a64=1ab3e35991103eb6
+checkpoint f1100 fb_fnv1a64=1ab3e35991103eb6

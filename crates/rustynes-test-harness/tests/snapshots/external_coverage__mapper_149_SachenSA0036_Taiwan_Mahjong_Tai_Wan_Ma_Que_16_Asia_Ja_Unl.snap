@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-149-SachenSA0036/Taiwan Mahjong - Tai Wan Ma Que 16 (Asia) (Ja) (Unl).zip
-rom_sha256=33e7b7cae01176cfe88044421af25c70010f0e2066001d94058d5fb980e5e513
+rom=mapper-149-SachenSA0036/Taiwan Mahjong - Tai Wan Ma Que 16 (Asia) (Ja) (Unl).nes
+rom_sha256=a20f4b7a558912c89cdfb7d2f88c5c4f260a43dc92cf3dbd69733e276a19184e
 frames=1141
 fb_bytes=245760
 cycles=33949771

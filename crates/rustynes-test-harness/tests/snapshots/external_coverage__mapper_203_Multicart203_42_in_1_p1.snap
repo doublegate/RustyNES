@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-203-Multicart203/42-in-1 [p1][!].zip
-rom_sha256=a520997be80618081fffcef2b114a2c14b5529cb4d24f8e9ee0ead40f5c3bad8
+rom=mapper-203-Multicart203/42-in-1 [p1][!].nes
+rom_sha256=c4532756dac28462695a96e63f2a34fdfff1ffb45b851004d5d4f3b6fbe23f28
 frames=1141
 fb_bytes=245760
 cycles=33949775

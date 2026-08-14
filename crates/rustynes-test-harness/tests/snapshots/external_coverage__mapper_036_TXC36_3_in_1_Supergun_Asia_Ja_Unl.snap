@@ -2,8 +2,8 @@
 source: crates/rustynes-test-harness/tests/external_coverage.rs
 expression: text
 ---
-rom=mapper-036-TXC36/3 in 1 Supergun (Asia) (Ja) (Unl).zip
-rom_sha256=95095501cb289d961864ce9fe223d28bfc2d7f290e9890bdfddfe03c32e411de
+rom=mapper-036-TXC36/3 in 1 Supergun (Asia) (Ja) (Unl).nes
+rom_sha256=db521c28884645a00ef4a4efabe9940734447ab6534b9652810589f867e2f52a
 frames=1141
 fb_bytes=245760
 cycles=33949772
