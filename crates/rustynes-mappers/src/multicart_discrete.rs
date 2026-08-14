@@ -123,6 +123,15 @@ const fn mirroring_to_byte(m: Mirroring) -> u8 {
 pub struct Multicart15 {
     prg_rom: Box<[u8]>,
     chr_ram: Box<[u8]>,
+    /// 8 KiB of PRG-RAM at CPU `$6000-$7FFF`.
+    ///
+    /// A real K-1029 PCB has none. It is here because the NESdev wiki's mapper
+    /// 15 page requires it: only two cartridges genuinely use this mapper, and
+    /// "all other known ROM files claiming to use mapper 15 have been identified
+    /// as being mapper hacks... to run these mapper-hacked games, emulators must
+    /// [...] provide 8 KiB of PRG-RAM at CPU $6000-$7FFF even though an actual
+    /// K-1029 PCB would not."
+    prg_ram: Box<[u8]>,
     vram: Box<[u8]>,
     mode: u8,
     prg_bank: u8,
@@ -153,6 +162,7 @@ impl Multicart15 {
         Ok(Self {
             prg_rom,
             chr_ram: vec![0u8; CHR_BANK_8K].into_boxed_slice(),
+            prg_ram: vec![0u8; PRG_BANK_8K].into_boxed_slice(),
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             mode: 0,
             prg_bank: 0,
@@ -183,6 +193,9 @@ impl Mapper for Multicart15 {
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            return self.prg_ram[(addr as usize) - 0x6000];
+        }
         if !(0x8000..=0xFFFF).contains(&addr) {
             return 0;
         }
@@ -217,6 +230,10 @@ impl Mapper for Multicart15 {
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            self.prg_ram[(addr as usize) - 0x6000] = value;
+            return;
+        }
         if (0x8000..=0xFFFF).contains(&addr) {
             self.mode = (addr & 0x03) as u8;
             self.horizontal_mirroring = (value & 0x40) != 0;
@@ -238,10 +255,27 @@ impl Mapper for Multicart15 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
-                // CHR-RAM write-protected in modes 0 and 3.
-                if self.mode != 0 && self.mode != 3 {
-                    self.chr_ram[addr as usize] = value;
-                }
+                // NOT write-protected, deliberately, against the hardware.
+                //
+                // A real K-1029 write-protects CHR-RAM in PRG banking modes 0
+                // and 3 (NESdev `INES_Mapper_015`), and RustyNES enforced that
+                // faithfully. The NESdev page also says an emulator must not:
+                // only two cartridges genuinely use mapper 15, and "all other
+                // known ROM files claiming to use mapper 15 have been identified
+                // as being mapper hacks, usually from mappers 164 and 227. To
+                // run these mapper-hacked games, emulators must not enforce
+                // CHR-RAM write-protection even though an actual K-1029 PCB
+                // would".
+                //
+                // Measured, which is what settled it: of the 11 mapper-15 ROMs
+                // in the coverage corpus, the ONE that rendered was
+                // `100-in-1 Contra Function 16` -- a genuine K-1029 cart. The
+                // other ten are hacks (several literally tagged `[hM15]` in
+                // their filenames) and every one of them booted to a blank
+                // screen, because power-on mode is 0 and their tile uploads
+                // were being discarded. Emulating the board correctly is what
+                // broke them.
+                self.chr_ram[addr as usize] = value;
             }
             0x2000..=0x3EFF => {
                 let off = nametable_offset(addr, self.current_mirroring());
@@ -260,7 +294,13 @@ impl Mapper for Multicart15 {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(5 + self.vram.len() + self.chr_ram.len());
+        // `prg_ram` is part of the state, not an afterthought: the mapper-15
+        // ROMs that need this RAM are the hacks, several of which set the
+        // battery flag, so a snapshot omitting it would silently drop save data
+        // across a state load. Adding mapper state without adding it to the
+        // snapshot is the exact schema gap v2.2.3 had to go back and fix.
+        let mut out =
+            Vec::with_capacity(5 + self.vram.len() + self.chr_ram.len() + self.prg_ram.len());
         out.push(SAVE_STATE_VERSION);
         out.push(self.mode);
         out.push(self.prg_bank);
@@ -268,11 +308,12 @@ impl Mapper for Multicart15 {
         out.push(u8::from(self.horizontal_mirroring));
         out.extend_from_slice(&self.vram);
         out.extend_from_slice(&self.chr_ram);
+        out.extend_from_slice(&self.prg_ram);
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 5 + self.vram.len() + self.chr_ram.len();
+        let expected = 5 + self.vram.len() + self.chr_ram.len() + self.prg_ram.len();
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -292,6 +333,9 @@ impl Mapper for Multicart15 {
         cursor += self.vram.len();
         self.chr_ram
             .copy_from_slice(&data[cursor..cursor + self.chr_ram.len()]);
+        cursor += self.chr_ram.len();
+        self.prg_ram
+            .copy_from_slice(&data[cursor..cursor + self.prg_ram.len()]);
         Ok(())
     }
 }
@@ -4043,17 +4087,73 @@ mod tests {
         assert_eq!(m.cpu_read(0xC000), 5); // 16 KiB mirrored across the window
     }
 
+    /// CHR-RAM stays writable in EVERY mode, deliberately against the hardware.
+    ///
+    /// This test previously asserted the opposite -- that modes 0 and 3
+    /// discard CHR-RAM writes, which is what a real K-1029 does. The NESdev
+    /// `INES_Mapper_015` page requires an emulator not to enforce it: only two
+    /// cartridges genuinely use mapper 15, and every other mapper-15 ROM is a
+    /// hack that expects writes to land. Power-on mode is 0, so enforcing the
+    /// board cost ten of the eleven mapper-15 ROMs in the coverage corpus a
+    /// blank screen -- Pokemon Gold and Crazy Climber among them, both of which
+    /// now render.
     #[test]
-    fn m15_chr_ram_write_protect() {
+    fn m15_chr_ram_is_writable_in_every_mode() {
         let mut m = Multicart15::new(synth_prg_16k(8), &[]).unwrap();
-        // mode 0 -> protected.
-        m.cpu_write(0x8000, 0);
-        m.ppu_write(0x0000, 0xAB);
-        assert_eq!(m.ppu_read(0x0000), 0);
-        // mode 2 -> writable.
-        m.cpu_write(0x8002, 0);
-        m.ppu_write(0x0000, 0xCD);
-        assert_eq!(m.ppu_read(0x0000), 0xCD);
+        for (mode_addr, value) in [
+            (0x8000u16, 0xABu8),
+            (0x8001, 0xCD),
+            (0x8002, 0xEF),
+            (0x8003, 0x42),
+        ] {
+            m.cpu_write(mode_addr, 0);
+            m.ppu_write(0x0000, value);
+            assert_eq!(
+                m.ppu_read(0x0000),
+                value,
+                "mapper-15 hacks require CHR-RAM writes to land in mode {}",
+                mode_addr & 0x03
+            );
+        }
+    }
+
+    /// PRG-RAM survives a save-state round trip.
+    ///
+    /// Written because the field was added without one, and a snapshot that
+    /// silently drops battery-backed RAM is the failure mode v2.2.3's
+    /// field-vs-schema audit exists to catch.
+    #[test]
+    fn m15_prg_ram_round_trips_through_a_save_state() {
+        let mut m = Multicart15::new(synth_prg_16k(8), &[]).unwrap();
+        m.cpu_write(0x6000, 0x11);
+        m.cpu_write(0x7FFF, 0x22);
+        m.ppu_write(0x0000, 0x33);
+        let blob = m.save_state();
+
+        let mut restored = Multicart15::new(synth_prg_16k(8), &[]).unwrap();
+        restored.load_state(&blob).expect("same-shape state loads");
+        assert_eq!(restored.cpu_read(0x6000), 0x11);
+        assert_eq!(restored.cpu_read(0x7FFF), 0x22);
+        assert_eq!(restored.ppu_read(0x0000), 0x33);
+    }
+
+    /// The 8 KiB of PRG-RAM at `$6000-$7FFF` that a real K-1029 does not have,
+    /// and that the NESdev page requires an emulator to provide for the hacks.
+    #[test]
+    fn m15_provides_prg_ram_the_board_lacks() {
+        let mut m = Multicart15::new(synth_prg_16k(8), &[]).unwrap();
+        m.cpu_write(0x6000, 0x5A);
+        m.cpu_write(0x7FFF, 0xA5);
+        assert_eq!(m.cpu_read(0x6000), 0x5A);
+        assert_eq!(m.cpu_read(0x7FFF), 0xA5);
+        // A write into the RAM window must NOT be decoded as the bank latch.
+        let before = m.cpu_read(0x8000);
+        m.cpu_write(0x6001, 0xFF);
+        assert_eq!(
+            m.cpu_read(0x8000),
+            before,
+            "the $6000-$7FFF window is RAM, not the mapper's address/data latch"
+        );
     }
 
     #[test]
