@@ -382,12 +382,46 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
 - `[B]` **`m176` Waixing FS005 detection follow-up** — three `.WXN` Chinese dumps
   are misdetected as m30 (UNROM-512). Not an m30 bug. Source: the blank-boot-fixes
   memory note. Files: `crates/rustynes-mappers`, frontend `game_db`.
-  **BLOCKED ON ROM AVAILABILITY, not on mapper support (verified 2026-08-14, v2.3.4
-  Workstream D).** m176 *is* supported — `mapper_tier` lists it, `lib.rs:1297`
-  dispatches it, and `m176_bmc_fk23c.rs` implements it. What is missing is the
-  evidence: `find tests/roms/external -iname '*.wxn'` returns **zero** files, so
-  the misdetection cannot be reproduced, fixed, or regression-pinned here. This is
-  a re-staging task before it is a code task; do not open it without the dumps.
+  **ACTIONABLE — the ROMs are staged, and the blocker is a missing board
+  (re-verified 2026-08-14, v2.3.4 Workstream B).**
+
+  An earlier pass in this same workstream recorded this as "blocked on ROM
+  availability" after `find -iname '*.wxn'` returned zero files. **That was
+  wrong.** The `.WXN` above is the `(Wxn)` tag in the FILENAME, not a file
+  extension: the three dumps are `Chu Liu Xiang (Ch) (Wxn).nes`, `Mo Shen Fa Shi
+  (Ch) (Wxn).nes` and `Shui Hu Zhuan (Ch) (Wxn).nes`, staged under
+  `tests/roms/external/mapper-030-UNROM512/` precisely *because* they are
+  misdetected. All three currently boot blank.
+
+  The misdetection is objectively provable from the headers: each declares
+  **mapper 30 with 256 KiB of CHR-ROM**, and UNROM-512 has no CHR-ROM at all, so
+  the header cannot be describing the board it claims.
+
+  What actually blocks the fix is that the destination board is not implemented.
+  NESdev `INES_Mapper_176` describes mapper 176 as the 8025 enhanced-MMC3
+  chipset with incompatible variants split by NES 2.0 submapper: **submapper 1 is
+  BMC-FK23C, which is what `m176_bmc_fk23c.rs` implements; these Waixing dumps
+  need submapper 2, `WAIXING-FS005`** — a different board (swapped outer-bank
+  registers, extra WRAM, its own address mask). So this is an FS005
+  implementation task plus a detection rule, not a re-staging task.
+- `[~]` **Harness cannot see game-database fixes (v2.3.4 Workstream B).** The
+  coverage harness loads ROMs with `Nes::from_rom(&bytes)` and never applies the
+  per-game database, while the frontend rewrites the header first via
+  `game_db::apply_header_overrides`. So any fix delivered through the DB is
+  invisible to the regression net, and the ROM boots correctly for users while
+  the harness reports it blank.
+
+  Confirmed on **Seicross**: PR #127 fixed it by adding a DB entry setting
+  mapper 185 **submapper 4** (`game_database.txt`: `F05FF0A, NTSC, 185, 4, ...`),
+  and the staged dump is plain iNES with no submapper field of its own — so
+  under the harness it loads as submapper 0 and hangs in its copy-protection
+  loop. The fix is real; the net simply cannot observe it. Options: teach the
+  harness the frontend load path (needs `game_db` reachable from the harness —
+  it currently lives in `rustynes-frontend`), or record these as
+  harness-limited. Until then, treat a blank boot on a DB-covered ROM as
+  unproven rather than as a defect. Files:
+  `crates/rustynes-test-harness/tests/common/mod.rs` (`load_nes`),
+  `crates/rustynes-frontend/src/game_db.rs`.
 - `[ ]` **Broken-boot residuals (blank/incomplete render)** — the v1.6.0 E-mapper
   coverage pass documented broken-boot cases (e.g. around m50/51/205/245/290 +
   m244/250 + some Vs.System multicart/menu titles). The m30/m80/m185 blank-boot
