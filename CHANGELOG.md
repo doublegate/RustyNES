@@ -14,6 +14,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.3.3] - 2026-08-14 - "Cadence" (display pacing + the run-ahead throttle)
+
 ### Added
 
 - **Frontend: the run-ahead budget throttle engages lower and degrades gracefully

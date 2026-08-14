@@ -1,17 +1,32 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.3.2** (2026-08-11) — **"Lucid"**, the pixel-provenance
-> release. Click any pixel and get its full causal chain: the dot and scanline
-> that emitted it, the layer that won priority, the nametable / attribute /
-> pattern addresses of the tile **actually on screen** (which `v` cannot answer —
-> by display time it has advanced two tiles past the pixel), the palette entry,
-> and **the CPU instruction and cycle that last wrote each of those bytes**. The
-> missing edge was byte-level write attribution; RustyNES had the PC and the
-> effect separately and nothing joining them. Also new: **deterministic replay
-> attestation** — `rustynes verify <movie.rnm> --rom <game.nes>` replays a movie
-> and proves it reproduces its recorded run, hashing the input applied *and* the
-> video it produced. All of it is `debug-hooks`-gated, output-only and default
-> off, so **AccuracyCoin holds at exactly 141/141 and nestest is 0-diff**. Built
+> **Current release: v2.3.3** (2026-08-14) — **"Cadence"**, the display-pacing
+> release. Frames were being shown for the wrong number of refreshes, and six
+> proposed causes were falsified by measurement before the real one surfaced: the
+> **run-ahead throttle was oscillating**, changing depth 6-7 times per 24 s, and
+> every depth change displaces the displayed frame by the run-ahead depth — the
+> picture jumping forward and back. The cause was a **stale statistic, not a bad
+> threshold**: the throttle is gated to one change per median window, but the gate
+> counted **120** frames where the ring feeding it holds **600**, and a p50 at
+> index 300 cannot be moved by a fifth of a window. Transitions arrived in pairs
+> sharing a median to three decimals. Expressing the gate in terms of the ring it
+> reads took **6-7 transitions per 24 s → 1** with spurious releases **2 → 0**;
+> the engage arm then stopped waiting and started predicting, so a
+> `run_ahead = 3` host converges in **2.8 s instead of 12.1 s** (5/5 paired
+> rounds, exact sign p = 0.0312) while releasing still demands a real
+> measurement. Underneath sits the apparatus the diagnosis required: compositor
+> refresh from `wp_presentation`, divisor display-sync, a per-frame trace, and a
+> validity gate that **fails closed** when the compositor discards frames.
+> Dropped frames **135-254 → 1-9** per capture, underruns to zero. Two results
+> are recorded as **rejections with their numbers** (a slim run-ahead restore at
+> 0.25% of the increment, and a ring-reset gate that underran in every capture).
+> **No emulation-core changes, so AccuracyCoin holds at exactly 141/141 and
+> nestest is 0-diff.** It does **not** claim the maintainer's reported shudder is
+> resolved — that is a subjective report on an unmeasured host; it closes the one
+> measured artefact matching its signature. Built on **v2.3.2** (2026-08-11) —
+> **"Lucid"**, the pixel-provenance release: click any pixel and get its full
+> causal chain, down to **the CPU instruction and cycle that last wrote each
+> byte**, plus deterministic replay attestation via `rustynes verify`. Built
 > on **v2.3.1** (2026-08-06) — **"Plumb Line"**, the measurement
 > release. The performance apparatus was made trustworthy and then used: a
 > harness-free frame probe, per-source-file subsystem attribution (which recovers
