@@ -955,10 +955,15 @@ impl EmuCore {
         // on 120 frames because 120 is the number of samples the ring needs
         // before it reports at all, and mistook that MINIMUM for the ring's
         // CAPACITY. The ring holds `perf::WINDOW` = 600. After 120 produced
-        // frames the median is still drawn from the 480 samples that predate the
-        // transition -- the p50 sits at index 300 of 600, so a mere 20% turnover
-        // cannot move it at all. The gate waited a fifth of a window and called
-        // it one.
+        // frames, 480 of the 600 samples still predate the transition, and the
+        // p50 sits at index 300 -- so the median remains DOMINATED by the old
+        // regime, and where the two regimes separate cleanly (which is the case
+        // that matters here: depth N and depth N-1 differ by a whole emulated
+        // frame, ~4.3 ms) the reported p50 is still literally a pre-transition
+        // sample. It is not that 20% turnover cannot move the median in general
+        // -- overlapping distributions would shift it -- it is that it cannot
+        // move it off the wrong regime in the case this gate exists to handle.
+        // The gate waited a fifth of a window and called it one.
         //
         // Expressed in terms of the ring it reads, so the two cannot drift
         // again. That drift is the entire defect: a magic number here had no
