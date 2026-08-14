@@ -356,8 +356,16 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
 
 ## 7. Mapper / coverage gaps
 
-Mapper coverage is **168 families** on `main` (BestEffort, honesty-gated). Gaps
+Mapper coverage is **172 families** on `main` (BestEffort, honesty-gated). Gaps
 are ROM-availability/coverage and a detection follow-up — none affect the oracle.
+
+> Corrected 2026-08-14 (v2.3.4 Workstream D): this said **168**, the pre-v2.2.3
+> figure. Counted from the tree rather than from another document —
+> `mapper_tier()` in `crates/rustynes-mappers/src/tier.rs` is the authoritative
+> supported list (it returns `None` for anything `parse` does not support), and
+> its match arms name **172** distinct families including mapper 0. That agrees
+> with `docs/STATUS.md`, which remains the single source of truth for the
+> published number.
 
 - `[~]` **Next reusable-ASIC BMC/pirate cores (G1 continuation → ~170–185)** —
   *(150 → 168 shipped in v1.7.0 beta.1; the → ~170–185 continuation is a
@@ -371,10 +379,15 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   screenshots (register-decode unit-tested only). Source: the standing
   mapper-ROM-coverage policy. Target: **backfill via homebrew if available / TBD**.
   Files: `tests/roms/external/`, `screenshots/`.
-- `[ ]` **`m176` Waixing FS005 detection follow-up** — three `.WXN` Chinese dumps
-  are currently misdetected as m30 (UNROM-512); they need proper m176 board
-  support + re-staging. Not an m30 bug. Source: the blank-boot-fixes memory note.
-  Target: **follow-up**. Files: `crates/rustynes-mappers`, frontend `game_db`.
+- `[B]` **`m176` Waixing FS005 detection follow-up** — three `.WXN` Chinese dumps
+  are misdetected as m30 (UNROM-512). Not an m30 bug. Source: the blank-boot-fixes
+  memory note. Files: `crates/rustynes-mappers`, frontend `game_db`.
+  **BLOCKED ON ROM AVAILABILITY, not on mapper support (verified 2026-08-14, v2.3.4
+  Workstream D).** m176 *is* supported — `mapper_tier` lists it, `lib.rs:1297`
+  dispatches it, and `m176_bmc_fk23c.rs` implements it. What is missing is the
+  evidence: `find tests/roms/external -iname '*.wxn'` returns **zero** files, so
+  the misdetection cannot be reproduced, fixed, or regression-pinned here. This is
+  a re-staging task before it is a code task; do not open it without the dumps.
 - `[ ]` **Broken-boot residuals (blank/incomplete render)** — the v1.6.0 E-mapper
   coverage pass documented broken-boot cases (e.g. around m50/51/205/245/290 +
   m244/250 + some Vs.System multicart/menu titles). The m30/m80/m185 blank-boot
@@ -383,10 +396,13 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   `docs/testing/v1.6.0-e-mapper-coverage-2026-06-18.md`; the blank-boot-fixes memory
   note; the coverage-harness reuse note. Target: **v1.7.x / follow-up**. Files:
   `crates/rustynes-test-harness/tests/external_coverage.rs`, `screenshots/`.
-- `[ ]` **`m301` / `m348` UNIF board-map entries** — UNIF board names that still
-  need wiring into the loader's board map (the UNIF loader shipped in v1.6.0;
-  m301 A7-outer-bank was patched, the board-map breadth continues). Source:
-  v1.6.0 fix train; [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) E (UNIF).
+- `[x]` **`m301` / `m348` UNIF board-map entries** — *(done; verified against the
+  tree 2026-08-14, v2.3.4 Workstream D: `unif.rs:246` maps board `"8157"` -> 301
+  and `unif.rs:270` maps `"830118C"` -> 348, both covered by the board-map tests
+  at `unif.rs:513` / `:540`. This entry was stale, not open — it had been
+  completed and never checked off, which is why §7 was re-read against the code
+  rather than trusted as prose.)* Source: v1.6.0 fix train;
+  [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) E (UNIF).
   Target: **v1.7.x → v2.0+**. Files: `crates/rustynes-mappers` UNIF board map.
 - `[x]` **Snapshot re-bless after blank-boot fixes** — *(done; v1.8.9 reconcile: commit
   `c286e63` re-blessed the `external_coverage` snapshots after the m30/m80/m185 fixes. Any
