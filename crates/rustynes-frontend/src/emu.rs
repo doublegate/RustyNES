@@ -536,6 +536,21 @@ pub struct EmuCore {
     /// blind to it, because the frames either side are each shown for exactly
     /// the right number of refreshes.
     pub runahead_throttle_toggles: u64,
+    /// v2.3.3 F24 — produced frames since the last throttle transition.
+    ///
+    /// `update_runahead_throttle` is called after EVERY produced frame but was
+    /// only guarded on `samples < 120`, with no notion of whether the median
+    /// window had advanced. One unchanged median could therefore drive a
+    /// transition on every consecutive frame: depth 2 -> 1 -> 0 without ever
+    /// MEASURING depth 1, and the release path had the identical defect.
+    ///
+    /// It also made the toggle counter untrustworthy. Several transitions
+    /// against one stale median are indistinguishable from real oscillation, and
+    /// F22's "3 engages / 2 releases, identical across three captures" is
+    /// exactly what that artefact would produce — its reproducibility, which
+    /// read as evidence the signal was genuine, is equally consistent with
+    /// re-evaluating a single measurement. Raised in review on PR #368.
+    pub throttle_frames_since_change: u32,
     /// SHA-256 of the loaded FDS disk (keys the `.fds.sav` sidecar).
     #[cfg(not(target_arch = "wasm32"))]
     pub fds_disk_sha256: Option<[u8; 32]>,
@@ -639,6 +654,7 @@ impl EmuCore {
             runahead_throttled: false,
             runahead_throttle_steps: 0,
             runahead_throttle_toggles: 0,
+            throttle_frames_since_change: 0,
             #[cfg(not(target_arch = "wasm32"))]
             fds_disk_sha256: None,
             #[cfg(feature = "scripting")]
@@ -843,6 +859,14 @@ impl EmuCore {
         if samples < 120 {
             return;
         }
+        // F24 — one transition per median WINDOW, not per frame. The ring needs
+        // 120 samples before it reports at all, so 120 produced frames is one
+        // full turnover: after a transition the next decision is made against a
+        // median containing no pre-transition sample.
+        self.throttle_frames_since_change = self.throttle_frames_since_change.saturating_add(1);
+        if self.throttle_frames_since_change < 120 {
+            return;
+        }
         let target = self.frame_duration.as_secs_f32() * 1000.0;
         let bounded = depth.min(MAX_RUN_AHEAD_DEPTH);
         let running = bounded.saturating_sub(self.runahead_throttle_steps);
@@ -853,6 +877,7 @@ impl EmuCore {
             self.runahead_throttle_steps += 1;
             self.runahead_throttled = true;
             self.runahead_throttle_toggles += 1;
+            self.throttle_frames_since_change = 0;
             let now_at = bounded.saturating_sub(self.runahead_throttle_steps);
             eprintln!(
                 "rustynes: median produce cost {produce_p50_ms:.2} ms is too close to the \
@@ -897,6 +922,7 @@ impl EmuCore {
             // build needed.
             if predicted_one_more < target * 0.70 {
                 self.runahead_throttle_toggles += 1;
+                self.throttle_frames_since_change = 0;
                 self.runahead_throttle_steps -= 1;
                 self.runahead_throttled = self.runahead_throttle_steps > 0;
                 let now_at = bounded.saturating_sub(self.runahead_throttle_steps);
@@ -1468,11 +1494,39 @@ mod tests {
     /// Engage takes ONE depth, not all of them — the whole point of the
     /// step-down change. At depth 2 costing 77% of budget, the next frame runs
     /// at depth 1, not 0.
+    /// v2.3.3 F24 — one transition per median WINDOW. Repeated calls against an
+    /// unchanged median must produce exactly one depth change, or the throttle
+    /// walks 2 -> 1 -> 0 without ever measuring depth 1 and the toggle counter
+    /// reports stale-median re-evaluation as oscillation.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn throttle_allows_one_transition_per_median_window() {
+        let mut c = throttle_fixture();
+        // Exactly one window's worth of frames: exactly one change. The first
+        // version of this test used 600 frames and expected 1 -- that is FIVE
+        // windows, so five legitimate opportunities, and it failed against
+        // correct behaviour (left: 2). The gate is one transition per window,
+        // not one transition ever.
+        for _ in 0..120 {
+            c.update_runahead_throttle(12.884, 200, 2);
+        }
+        assert_eq!(c.runahead_throttle_toggles, 1, "one window, one change");
+        assert_eq!(c.runahead_throttle_steps, 1);
+        // A second full window with the cost still over budget takes the next
+        // step -- that is the convergence path, not oscillation.
+        for _ in 0..120 {
+            c.update_runahead_throttle(12.884, 200, 2);
+        }
+        assert_eq!(c.runahead_throttle_toggles, 2, "second window, second step");
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn throttle_engages_one_step_at_a_time() {
         let mut c = throttle_fixture();
-        c.update_runahead_throttle(12.884, 200, 2);
+        for _ in 0..120 {
+            c.update_runahead_throttle(12.884, 200, 2);
+        }
         assert_eq!(c.runahead_throttle_steps, 1);
         assert_eq!(c.effective_run_ahead(2), 1, "2 -> 1, not 2 -> 0");
         assert!(c.runahead_throttled);
@@ -1484,7 +1538,8 @@ mod tests {
     #[test]
     fn throttle_converges_to_zero_when_nothing_is_affordable() {
         let mut c = throttle_fixture();
-        for _ in 0..4 {
+        // Two full median windows: two steps, 2 -> 1 -> 0.
+        for _ in 0..240 {
             c.update_runahead_throttle(15.0, 200, 2);
         }
         assert_eq!(c.effective_run_ahead(2), 0);
@@ -1504,12 +1559,14 @@ mod tests {
     #[test]
     fn throttle_does_not_oscillate_in_the_hysteresis_gap() {
         let mut c = throttle_fixture();
-        c.update_runahead_throttle(12.884, 200, 2); // engage: 2 -> 1
+        for _ in 0..120 {
+            c.update_runahead_throttle(12.884, 200, 2); // engage: 2 -> 1
+        }
         let toggles_after_engage = c.runahead_throttle_toggles;
         // Now running at depth 1, ~8.56 ms. Giving back a step predicts ~12.8 ms
         // — under the OLD 0.70 band (11.65 ms)? No; but a dip cleared it. Feed
         // the steady depth-1 cost for many windows and require no release.
-        for _ in 0..20 {
+        for _ in 0..600 {
             c.update_runahead_throttle(8.556, 200, 2);
         }
         assert_eq!(c.runahead_throttle_steps, 1, "must stay at one step");
