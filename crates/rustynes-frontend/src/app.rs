@@ -7253,6 +7253,7 @@ impl App {
             // under the same lock as the perf view.
             view.run_ahead = self.config.input.run_ahead;
             view.run_ahead_throttled = emu.runahead_throttled;
+            view.runahead_toggles = emu.runahead_throttle_toggles;
             view.rewind_enabled = self.config.rewind.enabled;
             view.rewind_frames = emu.nes.as_ref().map_or(0, rustynes_core::Nes::rewind_len);
             let region = emu

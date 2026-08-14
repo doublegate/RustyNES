@@ -16,6 +16,21 @@ cycle-accurate core later replaced.
 
 ### Added
 
+- **Frontend: the run-ahead budget throttle engages lower and degrades gracefully
+  (v2.3.3 F21).** The gate was 85% of the frame budget; F18 measured
+  `run_ahead = 2` at 77.4% with **10.7%** of frames held for the wrong number of
+  refreshes and the gate unfired. It is now **75%** — between the two measured
+  points, 52.1% healthy and 77.4% harmful — and the throttle removes **one depth
+  at a time** (`runahead_throttle_steps`) instead of dropping to zero,
+  re-measuring each median window so an unaffordable host still converges to 0
+  without the cliff. Release predicts the cost of giving back one step using
+  F18's per-frame-linear model. Measured at `run_ahead = 2`, three arms in a
+  Latin square: unthrottled **6.43%** of frames wrong → all-or-nothing **0.87%**
+  but at depth **0** → step-down **0.84%** at depth **1** — the same cadence as
+  disabling run-ahead while keeping a frame of latency reduction. A budget guard
+  firing earlier and more gently, **not** a shudder fix: `display_produce_due`
+  was measured first and delivers 98.3% correct holds at the shipped
+  `run_ahead = 1`.
 - **Frontend: the display refresh can now come from the Wayland compositor.**
   A new `wayland_presentation` module reads the refresh period straight off
   `wp_presentation`'s `presented` event — the compositor's own figure, which

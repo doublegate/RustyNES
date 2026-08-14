@@ -615,6 +615,10 @@ fn columns(v: &PerfView) -> Vec<(&'static str, String)> {
     cols.push(("tick_ok", v.tick_ok.to_string()));
     cols.push(("tick_timeout", v.tick_timeout.to_string()));
     cols.push(("tick_dropped", v.tick_dropped.to_string()));
+    // F21 — cumulative; a rising count means the displayed frame is being
+    // displaced by the run-ahead depth, which reads as the picture jumping
+    // forward and back. No hold-duration column can show this.
+    cols.push(("runahead_toggles", v.runahead_toggles.to_string()));
     // F16 — cumulative; difference successive rows for a rate. Nonzero means the
     // compositor is discarding this surface's frames, so the MEASURED refresh
     // never settles. That costs display-sync only when no DECLARED refresh is
@@ -906,6 +910,7 @@ mod tests {
             "tick_ok",
             "tick_timeout",
             "tick_dropped",
+            "runahead_toggles",
             "present_discarded",
             // audio health row
             "audio_queued_ms",
@@ -936,6 +941,7 @@ mod tests {
         // mutation-checked: a test that cannot fail on the bug is decoration.
         let with_value = PerfView {
             present_discarded: 4321,
+            runahead_toggles: 8765,
             ..PerfView::default()
         };
         let emitted = columns(&with_value)
@@ -946,6 +952,20 @@ mod tests {
             emitted.as_deref(),
             Some("4321"),
             "present_discarded must emit its own field verbatim"
+        );
+        // v2.3.3 F21 — same treatment for the toggle counter. The name check
+        // alone cannot tell a correctly-wired column from one reading the wrong
+        // field, because `PerfView::default()` zeroes both. Raised in review on
+        // PR #368 — the pattern was written for `present_discarded` an hour
+        // earlier and not applied to the column added beside it.
+        let toggles = columns(&with_value)
+            .into_iter()
+            .find(|(n, _)| *n == "runahead_toggles")
+            .map(|(_, v)| v);
+        assert_eq!(
+            toggles.as_deref(),
+            Some("8765"),
+            "runahead_toggles must emit its own field verbatim"
         );
 
         // The header (built from `columns`) must have no duplicate column
