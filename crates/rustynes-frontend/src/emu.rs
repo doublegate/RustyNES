@@ -563,6 +563,17 @@ pub struct EmuCore {
     /// picture jumps forward N frames and back. Every hold-duration statistic is
     /// blind to it, because the frames either side are each shown for exactly
     /// the right number of refreshes.
+    ///
+    /// **Counts depth STEPS, not visible displacements (v2.3.3 F28).** Since the
+    /// engage arm may cascade, one evaluation can drop several depths in a single
+    /// frame — which the viewer sees as ONE displacement, of several depths,
+    /// while this counter advances once per depth. The two were the same number
+    /// until F28 and are not any more. Read it as "how far the throttle moved",
+    /// and pair it with [`Self::runahead_engages`] against
+    /// [`Self::runahead_releases`] to tell a cascade from an oscillation: a
+    /// cascade is engages arriving together with no release between them.
+    /// Flagged in review on PR #371, where the doc still promised the older
+    /// meaning.
     pub runahead_throttle_toggles: u64,
     /// v2.3.3 F24 — produced frames since the last throttle transition.
     ///
@@ -605,6 +616,12 @@ pub struct EmuCore {
     ///
     /// Split rather than theorised about: two theory-first attempts at this
     /// oscillation have already been falsified by measurement today.
+    ///
+    /// Like [`Self::runahead_throttle_toggles`], this counts depth STEPS: an F28
+    /// cascade that drops two depths in one evaluation advances it twice. That
+    /// is the intended reading — the question this counter answers is how far
+    /// the engage arm moved, and the convergence measurements in
+    /// `docs/performance.md` are stated in those units.
     pub runahead_engages: u64,
     /// v2.3.3 F22 — depth changes that RESTORED run-ahead (the release arm).
     /// See [`Self::runahead_engages`].
@@ -918,13 +935,25 @@ impl EmuCore {
 
     /// v2.8.0 Phase 3 — run-ahead budget throttle with hysteresis, fed by
     /// the produce-cost **median** (which INCLUDES the run-ahead frames).
-    /// Engages one step at a time above `RUNAHEAD_THROTTLE_ENGAGE` of the frame
-    /// budget (a plain code span, not an intra-doc link: the const is private
-    /// and linking to it from public docs fails the `-D warnings` rustdoc gate),
-    /// and releases a step when the PREDICTED cost one depth up falls below 70%.
+    /// Engages above `RUNAHEAD_THROTTLE_ENGAGE` of the frame budget (a plain
+    /// code span, not an intra-doc link: the const is private and linking to it
+    /// from public docs fails the `-D warnings` rustdoc gate), and releases a
+    /// step when the PREDICTED cost one depth up falls below 70%.
     ///
-    /// This comment previously said "releases below 40%", which stopped being
-    /// true when the release test moved to predicting the re-enabled cost.
+    /// **The two arms are deliberately asymmetric (v2.3.3 F28).** Engaging may
+    /// drop SEVERAL depths within one evaluation: it steps while the predicted
+    /// cost at the reduced depth is still over the band, so it lands on the
+    /// depth that fits rather than taking one window per step. Releasing gives
+    /// back exactly one step and only after a full median window, because
+    /// releasing on a stale median is what produced the F27 oscillation.
+    /// Prediction is trusted only in the direction where being wrong is
+    /// corrected by the other arm, within a window.
+    ///
+    /// This doc has twice described a contract the code no longer had — it said
+    /// "releases below 40%" after the release test moved to predicting the
+    /// re-enabled cost, and "engages one step at a time" after F28 made the
+    /// engage arm cascade. Both were caught in review rather than by a gate;
+    /// the contract and the code change together or the doc is a liability.
     ///
     /// **The hysteresis is known to be insufficient.** Measured at
     /// `run_ahead = 2`, the throttle changes depth ~3 times per 45 s — and each
@@ -1015,6 +1044,55 @@ impl EmuCore {
             self.throttle_frames_since_change = 0;
             self.runahead_engages += 1;
             self.thr_engage_cost_ms = produce_p50_ms;
+            // F28 `Predict` — keep stepping while the PREDICTED cost at the
+            // reduced depth is still over the band, using F18's per-frame-linear
+            // model (increments +4.491 and +4.213 ms, equal within 6%) that the
+            // release arm already relies on. This is the whole asymmetry: the
+            // engage direction stops waiting for the ring and computes what the
+            // next depth costs instead, while the release direction still
+            // demands a real measurement.
+            //
+            // It converges to the SAME depth a sequence of windowed engages
+            // would reach — the cascade stops when the prediction fits, not at
+            // zero — but reaches it inside one evaluation instead of one window
+            // per step. A mispredicted overshoot is corrected by the release arm
+            // within a window, and only ever in the safe direction.
+            //
+            // The arithmetic runs in `f64` so every conversion is BOTH infallible
+            // and lossless: `f64: From<u32>` and `f64: From<f32>` are total, so
+            // there is no fallible cast to swallow and no precision to lose on
+            // values that are millisecond costs and depths of 0..=3. The obvious
+            // `f32::from(u8::try_from(d).unwrap_or(0))` is worse than it looks --
+            // the fallback is unreachable today, and if `MAX_RUN_AHEAD_DEPTH`
+            // ever exceeded 255 it would substitute a depth of ZERO, which
+            // predicts a cost of one frame and silently stops the cascade at the
+            // most expensive depth. A fallback whose failure mode is "keep the
+            // configuration that is over budget" is worse than no fallback.
+            // Raised by both reviewers on PR #371.
+            let band = f64::from(engage_band);
+            let per_frame = f64::from(produce_p50_ms) / (f64::from(running) + 1.0);
+            while self.runahead_throttle_steps < bounded {
+                let from = bounded.saturating_sub(self.runahead_throttle_steps);
+                let predicted = per_frame * (f64::from(from) + 1.0);
+                if predicted <= band {
+                    break;
+                }
+                self.runahead_throttle_steps += 1;
+                self.runahead_throttle_toggles += 1;
+                self.runahead_engages += 1;
+                if trace_throttle {
+                    // `predicted` describes the depth being LEFT, so the log names
+                    // both ends rather than printing a post-increment step count
+                    // beside a pre-increment prediction. An instrument that
+                    // mislabels which depth a number belongs to is the exact
+                    // failure this campaign has corrected twice.
+                    let to = bounded.saturating_sub(self.runahead_throttle_steps);
+                    eprintln!(
+                        "THR cascade {from} -> {to}: predicted={predicted:.3} at depth {from} \
+                         exceeds band={band:.3}"
+                    );
+                }
+            }
             let now_at = bounded.saturating_sub(self.runahead_throttle_steps);
             eprintln!(
                 "rustynes: median produce cost {produce_p50_ms:.2} ms is too close to the \
@@ -1045,10 +1123,16 @@ impl EmuCore {
             // the full configured depth. The cost model is per-frame-linear
             // (F18: +4.49 and +4.21 ms per depth, equal within 6%), so one more
             // frame is `cost / (running + 1) * (running + 2)`.
-            let per_frame = produce_p50_ms / (f32::from(u8::try_from(running).unwrap_or(0)) + 1.0);
-            let predicted_one_more =
-                per_frame * (f32::from(u8::try_from(running).unwrap_or(0)) + 2.0);
-            let release_band = target * RUNAHEAD_THROTTLE_RELEASE;
+            // `f64` for the same reason as the engage cascade: total, lossless
+            // conversions with no fallible cast to swallow. This arm carried the
+            // `u8::try_from(..).unwrap_or(0)` pattern first and the engage arm
+            // inherited it; the fallback substitutes a depth of zero, which here
+            // would predict the cost of a SINGLE frame and release into a
+            // configuration that cannot afford it. Fixed in both places at once
+            // rather than only in the code review happened to be looking at.
+            let per_frame = f64::from(produce_p50_ms) / (f64::from(running) + 1.0);
+            let predicted_one_more = per_frame * (f64::from(running) + 2.0);
+            let release_band = f64::from(target) * f64::from(RUNAHEAD_THROTTLE_RELEASE);
             let release = predicted_one_more < release_band;
             if trace_throttle {
                 eprintln!(
@@ -1072,7 +1156,21 @@ impl EmuCore {
                 self.throttle_frames_since_change = 0;
                 self.runahead_releases += 1;
                 self.thr_release_cost_ms = produce_p50_ms;
-                self.thr_release_pred_ms = predicted_one_more;
+                // Narrowed only for the diagnostic snapshot: the DECISION above
+                // is made in f64, and this field exists to be formatted to three
+                // decimals in a CSV column. The value is a millisecond cost in
+                // the low tens, so f32 holds it to far more precision than the
+                // column prints.
+                // On a `let`, not on the assignment: attributes on expressions
+                // are still unstable (E0658), so `#[allow]` cannot sit directly
+                // on `self.x = ...`. A binding takes it on stable and needs no
+                // wrapper block.
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "diagnostic snapshot of a ~10 ms value printed to 3dp"
+                )]
+                let pred_ms = predicted_one_more as f32;
+                self.thr_release_pred_ms = pred_ms;
                 self.runahead_throttle_steps -= 1;
                 self.runahead_throttled = self.runahead_throttle_steps > 0;
                 let now_at = bounded.saturating_sub(self.runahead_throttle_steps);
@@ -1672,6 +1770,38 @@ mod tests {
         assert_eq!(c.runahead_throttle_steps, 0);
     }
 
+    /// v2.3.3 F28 — the cascade converges to the depth that FITS, not to zero.
+    ///
+    /// This is the test that makes the arm worth having. At depth 3 a cost of
+    /// 17.2 ms exceeds the 12.48 ms engage band at every depth, so a gate that
+    /// merely engaged on less evidence would walk 3 -> 2 -> 1 -> 0 and throw the
+    /// whole feature away. The cascade stops where the PREDICTED cost fits:
+    /// per-frame is 17.2/4 = 4.3 ms, so depth 2 predicts 12.9 (over), depth 1
+    /// predicts 8.6 (under) -- it stops at 1, in one evaluation.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn predict_cascade_stops_at_the_depth_that_fits() {
+        let mut c = throttle_fixture();
+        c.update_runahead_throttle(17.2, 200, 3);
+        assert_eq!(
+            c.effective_run_ahead(3),
+            1,
+            "must land on the depth the prediction fits, not 0"
+        );
+        assert_eq!(c.runahead_throttle_steps, 2, "3 -> 1 is two steps");
+    }
+
+    /// A cascade must never overshoot past zero or wrap the step counter.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn predict_cascade_bottoms_out_at_zero() {
+        let mut c = throttle_fixture();
+        // Absurdly over budget at every depth: per-frame alone exceeds the band.
+        c.update_runahead_throttle(400.0, 200, 3);
+        assert_eq!(c.effective_run_ahead(3), 0);
+        assert_eq!(c.runahead_throttle_steps, 3, "never more steps than depth");
+    }
+
     /// v2.3.3 F27 — the gate must be the turnover period of the statistic it
     /// paces. Asserting the relationship rather than a literal is the point: the
     /// defect was a `120` here with no stated connection to the `600` there, and
@@ -1749,6 +1879,18 @@ mod tests {
             c.update_runahead_throttle(15.0, 200, 2);
         }
         assert_eq!(c.effective_run_ahead(2), 0);
+        // ...and keeps taking that cost without the step counter growing past
+        // the depth. `engage` requires `running > 0`, so once the depth is
+        // exhausted the arm cannot fire at all -- but an unbounded counter would
+        // need many releases to climb back out of, so the bound is asserted
+        // rather than left to inspection. Raised in review on PR #371.
+        for _ in 0..(crate::perf::WINDOW * 3) {
+            c.update_runahead_throttle(15.0, 200, 2);
+        }
+        assert_eq!(
+            c.runahead_throttle_steps, 2,
+            "steps must never exceed the configured depth, however long it stays over budget"
+        );
     }
 
     /// The oscillation guard. NOTE: this asserts the CURRENT 0.70 band holds a
