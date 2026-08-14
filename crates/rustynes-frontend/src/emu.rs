@@ -563,6 +563,17 @@ pub struct EmuCore {
     /// picture jumps forward N frames and back. Every hold-duration statistic is
     /// blind to it, because the frames either side are each shown for exactly
     /// the right number of refreshes.
+    ///
+    /// **Counts depth STEPS, not visible displacements (v2.3.3 F28).** Since the
+    /// engage arm may cascade, one evaluation can drop several depths in a single
+    /// frame — which the viewer sees as ONE displacement, of several depths,
+    /// while this counter advances once per depth. The two were the same number
+    /// until F28 and are not any more. Read it as "how far the throttle moved",
+    /// and pair it with [`Self::runahead_engages`] against
+    /// [`Self::runahead_releases`] to tell a cascade from an oscillation: a
+    /// cascade is engages arriving together with no release between them.
+    /// Flagged in review on PR #371, where the doc still promised the older
+    /// meaning.
     pub runahead_throttle_toggles: u64,
     /// v2.3.3 F24 — produced frames since the last throttle transition.
     ///
@@ -605,6 +616,12 @@ pub struct EmuCore {
     ///
     /// Split rather than theorised about: two theory-first attempts at this
     /// oscillation have already been falsified by measurement today.
+    ///
+    /// Like [`Self::runahead_throttle_toggles`], this counts depth STEPS: an F28
+    /// cascade that drops two depths in one evaluation advances it twice. That
+    /// is the intended reading — the question this counter answers is how far
+    /// the engage arm moved, and the convergence measurements in
+    /// `docs/performance.md` are stated in those units.
     pub runahead_engages: u64,
     /// v2.3.3 F22 — depth changes that RESTORED run-ahead (the release arm).
     /// See [`Self::runahead_engages`].
@@ -1144,13 +1161,16 @@ impl EmuCore {
                 // decimals in a CSV column. The value is a millisecond cost in
                 // the low tens, so f32 holds it to far more precision than the
                 // column prints.
+                // On a `let`, not on the assignment: attributes on expressions
+                // are still unstable (E0658), so `#[allow]` cannot sit directly
+                // on `self.x = ...`. A binding takes it on stable and needs no
+                // wrapper block.
                 #[allow(
                     clippy::cast_possible_truncation,
                     reason = "diagnostic snapshot of a ~10 ms value printed to 3dp"
                 )]
-                {
-                    self.thr_release_pred_ms = predicted_one_more as f32;
-                }
+                let pred_ms = predicted_one_more as f32;
+                self.thr_release_pred_ms = pred_ms;
                 self.runahead_throttle_steps -= 1;
                 self.runahead_throttled = self.runahead_throttle_steps > 0;
                 let now_at = bounded.saturating_sub(self.runahead_throttle_steps);
