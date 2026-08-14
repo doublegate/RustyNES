@@ -66,7 +66,10 @@ pub mod crt;
 pub mod eq;
 // v1.1.0 — embedded app icon (winit window icon + About dialog). Native-only
 // (`png` is in the cfg(not(wasm)) dep table; a browser tab has no window icon).
-pub mod game_db;
+/// v2.3.4 — the per-game database now lives in its own crate so the coverage
+/// harness can apply the same corrections the frontend does. Re-exported under
+/// the original path so every `crate::game_db::...` call site is unchanged.
+pub use rustynes_gamedb as game_db;
 pub mod genie_db;
 // v1.7.0 "Forge" Workstream H9 — Game Genie encoder + `.tbl` text tables
 // (frontend-only, pure; round-trips through the core decoder).

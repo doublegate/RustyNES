@@ -988,6 +988,12 @@ impl App {
         let config = Config::load_or_default();
         let input = InputState::from_config(&config.input);
         let data_dir = Config::default_data_dir();
+        // v2.3.4 — hand the game-DB crate the overlay directory. It no longer
+        // reaches for the user's config dir itself, so that a test harness can
+        // link it without inheriting whatever the developer has saved locally.
+        if let Some(dir) = data_dir.clone() {
+            crate::game_db::set_overlay_dir(dir);
+        }
         let ui = crate::ui_shell::UiShell::new(&config);
         let prev_par_correction = config.ui.pixel_aspect_correction;
         Ok(Self {

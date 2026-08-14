@@ -628,6 +628,26 @@ pub mod external {
             return Load::Ok(Box::new(nes));
         }
 
+        // v2.3.4 — apply the per-game database exactly as the frontend does.
+        //
+        // This harness used to call `Nes::from_rom` on the raw bytes, so any fix
+        // delivered through the game DB was invisible to it: the ROM booted
+        // correctly for users while the coverage net reported it blank. Seicross
+        // is the case that exposed it -- PR #127 fixed it with a DB entry setting
+        // mapper 185 submapper 4, and the staged dump is plain iNES with no
+        // submapper of its own, so under the old path it loaded as submapper 0
+        // and hung in its copy-protection loop.
+        //
+        // A regression net that tests a load path no user runs is testing the
+        // wrong program. `apply_header_overrides` patches the header in place,
+        // keyed on the header-excluded CRC32, which is exactly what
+        // `App::load_rom_from_path` does before handing bytes to the core.
+        let mut bytes = bytes;
+        if let Some(entry) =
+            rustynes_gamedb::rom_crc32(&bytes).and_then(rustynes_gamedb::entry_for_crc)
+        {
+            rustynes_gamedb::apply_header_overrides(&mut bytes, &entry);
+        }
         let nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rom_rel}: {e}"));
         Load::Ok(Box::new(nes))
     }

@@ -167,9 +167,31 @@ pub fn mirroring_for_crc(crc: u32) -> Option<Mirroring> {
 // touch this (frontend-only), so the determinism firewall holds.
 // ---------------------------------------------------------------------------
 
+/// Data directory the user overlay is read from, if an application set one.
+///
+/// v2.3.4 — injected rather than derived. This crate was extracted from
+/// `rustynes-frontend`, where the path came straight from
+/// `config::Config::default_data_dir()`. A library that reaches for the running
+/// user's config directory cannot be linked into a test harness without making
+/// its results depend on whatever that developer happens to have saved
+/// locally, so the application now supplies the directory and anything that
+/// does not (the coverage harness) simply gets no overlay.
+static OVERLAY_DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+/// Point the user overlay at `dir`. Call once, at application start.
+///
+/// Returns `false` if a directory was already set (the first call wins), so a
+/// late second caller cannot silently change which corrections are in force.
+pub fn set_overlay_dir(dir: std::path::PathBuf) -> bool {
+    OVERLAY_DIR.set(dir).is_ok()
+}
+
 /// Path to the user-overlay file (`game_db_user.txt` in the data dir).
+///
+/// `None` when no application set a directory — which is the correct answer for
+/// a test harness: the vendored table only, reproducibly.
 fn overlay_path() -> Option<std::path::PathBuf> {
-    crate::config::Config::default_data_dir().map(|d| d.join("game_db_user.txt"))
+    OVERLAY_DIR.get().map(|d| d.join("game_db_user.txt"))
 }
 
 /// The lazily-loaded, live-editable user overlay (sorted by CRC).
