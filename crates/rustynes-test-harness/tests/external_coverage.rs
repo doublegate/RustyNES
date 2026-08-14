@@ -302,6 +302,62 @@ fn snapshot_id(rom_rel: &str) -> String {
 /// blank / few-colour health verdict, and (2) the derived `insta`
 /// snapshot comparison. Per-ROM assertion panics are caught and
 /// aggregated so one missing/mismatched baseline (or one blank boot)
+/// v2.3.4 — narrow the sweep to the ROMs whose paths contain any of the
+/// comma-separated needles in `RUSTYNES_COVERAGE_FILTER` (case-insensitive).
+///
+/// The full sweep is **699 ROMs x ~1,290 boot frames == ~900k emulated frames,
+/// about 70 minutes single-threaded**. That is the right cost for a release
+/// gate and the wrong cost for the loop you actually work in — diagnosing one
+/// drifted baseline should not require re-booting the entire corpus, and
+/// before this the only way to re-check one ROM was to run all of them.
+///
+/// Matching is a plain substring over the ROM's path relative to
+/// `tests/roms/external/`, so the useful granularities all fall out of one
+/// mechanism: a family (`mapper-250`), a directory (`pc10`), a specific title
+/// (`Power Blade`), or several at once (`pc10,mapper-250`).
+///
+/// ```text
+/// RUSTYNES_COVERAGE_FILTER=pc10 cargo test -p rustynes-test-harness \
+///     --features test-roms,commercial-roms --test external_coverage
+/// ```
+///
+/// Unset (the default) runs everything, so the gate is unchanged. An
+/// unmatched filter is a hard failure rather than a silent pass: a typo that
+/// quietly ran zero ROMs and reported green is exactly the "the suite is fine"
+/// answer that hides a red net.
+fn apply_filter(all: Vec<String>) -> Vec<String> {
+    let Ok(raw) = std::env::var("RUSTYNES_COVERAGE_FILTER") else {
+        return all;
+    };
+    let needles: Vec<String> = raw
+        .split(',')
+        .map(|n| n.trim().to_ascii_lowercase())
+        .filter(|n| !n.is_empty())
+        .collect();
+    if needles.is_empty() {
+        return all;
+    }
+    let total = all.len();
+    let kept: Vec<String> = all
+        .into_iter()
+        .filter(|rom| {
+            let hay = rom.to_ascii_lowercase();
+            needles.iter().any(|n| hay.contains(n.as_str()))
+        })
+        .collect();
+    assert!(
+        !kept.is_empty(),
+        "RUSTYNES_COVERAGE_FILTER={raw:?} matched none of the {total} staged ROMs. \
+         Refusing to report a green run over an empty set — check the spelling, or \
+         unset the variable to sweep everything."
+    );
+    eprintln!(
+        "[external_coverage] filter {raw:?} -> {} of {total} staged ROM(s)",
+        kept.len()
+    );
+    kept
+}
+
 /// does not hide the rest — the final panic message lists EVERY failing
 /// ROM with its reason.
 ///
@@ -309,7 +365,8 @@ fn snapshot_id(rom_rel: &str) -> String {
 /// so a fresh checkout without the gitignored dumps stays green.
 #[test]
 fn external_coverage_boot_smoke() {
-    let roms = discover_external_roms();
+    let all = discover_external_roms();
+    let roms = apply_filter(all);
     if roms.is_empty() {
         eprintln!(
             "[external_coverage] SKIP: no ROMs staged under {} — \
