@@ -1,6 +1,41 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.3.3** (2026-08-14) — **"Cadence"**, the display-pacing
+> **Current release: v2.3.4** (2026-08-15) — **"Ledger"**, the coverage release.
+> Three boards land — **mapper 176 submapper 2** (WAIXING-FS005), **154**
+> (NAMCOT-3453) and **243** (Sachen SA-020A) — taking mapper breadth to **174
+> families** (51 Core + 95 Curated + 28 BestEffort). All three are implemented
+> from the NESdev wiki with **no reference-emulator source consulted**, unlike the
+> FK23C banking transforms they sit beside, which remain a disclosed Mesen2
+> derivation.
+>
+> The release's subject is not the boards, though. The coverage harness loaded
+> ROMs with a bare `Nes::from_rom` while the frontend rewrites the iNES header
+> first from the per-game database — so **the regression net was testing a load
+> path no user runs**, and every fix delivered through that database was invisible
+> to it. Putting the harness on the real path immediately exposed a defect that
+> had been reaching users since **v1.2.0**: the vendored table uses `0` in its
+> Mapper column as its unfilled-row default, `apply_header_overrides` read that as
+> "force NROM", and **12 staged ROMs — every Sachen board in the corpus (133, 143,
+> 145, 146, 147, 148, 149, 150)** — had correct headers overwritten and then
+> failed NROM's size check, refusing to load at all. Second time this table has
+> force-applied a field it should not have; the first froze *Wizards & Warriors*
+> (ADR 0031), and it is fixed the same way.
+>
+> Also: a Bandai FCG EEPROM counter that panicked in debug builds, CLI launches
+> that skipped every header override the File menu applied, mapper 15 PRG-RAM and
+> CHR-RAM, save-state back-compat for mappers 15/88/176, and issue #360 (the
+> `movie_ui` recording tests never called `after_frame`, so v2.3.2's replay
+> attestation was exercised by no test).
+>
+> **Unlike the previous three releases, this one touches the emulation core** —
+> five mappers and the tier classifier — so **AccuracyCoin 141/141 and nestest
+> 0-diff are VERIFIED, not true by construction**.
+>
+> Carried to v2.3.5 unstarted: the **APU at 18.7% of frame time**, scoped as this
+> release's Workstream C and not delivered — the `apu_throughput` bench it depends
+> on was never built, so there is no measurement to adopt or reject.
+>
+> Built on **v2.3.3** (2026-08-14) — **"Cadence"**, the display-pacing
 > release. Frames were being shown for the wrong number of refreshes, and six
 > proposed causes were falsified by measurement before the real one surfaced: the
 > **run-ahead throttle was oscillating**, changing depth 6-7 times per 24 s, and
