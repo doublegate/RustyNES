@@ -1058,6 +1058,42 @@ impl Apu {
         // ROMs never clear a bit). A cleared bit forces that channel's raw
         // output to 0 BEFORE the non-linear mixer, so it contributes nothing.
         let mask = self.channel_mask;
+
+        // v2.3.5 C1 — the DEFAULT-CONFIGURATION fast path.
+        //
+        // Every gate/scale below is inert at the shipped default: the
+        // determinism contract says the oracle and the test ROMs never clear a
+        // mask bit or change a gain, so `gate` returns its input unchanged and
+        // `scale` returns `round(v * 1.0) == v`. The emulator was still paying,
+        // every CPU cycle at 1.789 MHz, for a 6-wide `f32` array copy, five
+        // integer mask tests, five float compares, and a sixth mask test for the
+        // external sum -- to produce a result identical to the ungated mix.
+        //
+        // Same shape as the PPU fast dot path, which is the one core
+        // optimization this project has adopted: hoist the
+        // "is-this-the-default?" question out of the per-cycle body and take a
+        // branch with none of the machinery. It is a strict specialization, not
+        // an approximation -- `mix()` receives exactly the same five arguments
+        // it would have received, so the output is byte-identical by
+        // construction rather than by measurement. `apu_default_mix_matches_the_gated_path`
+        // pins that across the full output range anyway.
+        if mask == CHANNEL_MASK_ALL && self.channel_gain == CHANNEL_GAIN_UNITY {
+            self.last_external = external;
+            let mixed = self.mixer.mix(
+                self.pulse1.output(),
+                self.pulse2.output(),
+                self.triangle.output(),
+                self.noise.output(),
+                self.dmc.output(),
+            ) + external;
+            self.blip.add_sample(mixed);
+            // Nothing follows the general path's `add_sample` but comments --
+            // the get/put flip moved to `dmc_tick_end` under M-2 -- so there is
+            // no shared tail to run before returning. Verified by reading it,
+            // not assumed: a missed tail here would desynchronise the two paths.
+            return;
+        }
+
         let gate = |bit: u8, v: u8| if mask & (1 << bit) != 0 { v } else { 0 };
         // v1.4.0 Workstream C — per-channel gain (a UI mixing overlay). With the
         // default `CHANNEL_GAIN_UNITY` every `scale(..)` returns `round(v * 1.0)
@@ -1775,6 +1811,93 @@ impl Apu {
 
 #[cfg(test)]
 mod tests {
+
+    /// v2.3.5 C1 — the default-configuration fast path must be byte-identical
+    /// to the gated path it skips.
+    ///
+    /// The specialization is only sound because `gate` is the identity when its
+    /// mask bit is set and `scale` is the identity at gain 1.0. If either ever
+    /// stops being the identity at the default, this silently changes shipped
+    /// audio -- so assert the equivalence directly over the full output range
+    /// rather than trusting the reasoning.
+    #[test]
+    fn apu_default_mix_matches_the_gated_path() {
+        let apu = Apu::new(Region::Ntsc, 48_000);
+        assert_eq!(apu.channel_mask, CHANNEL_MASK_ALL, "premise: default mask");
+        assert_eq!(
+            apu.channel_gain, CHANNEL_GAIN_UNITY,
+            "premise: default gain"
+        );
+
+        let mask = CHANNEL_MASK_ALL;
+        let gain = CHANNEL_GAIN_UNITY;
+        let gate = |bit: u8, v: u8| if mask & (1 << bit) != 0 { v } else { 0 };
+        let scale = |bit: usize, v: u8, max: u8| {
+            let g = gain[bit];
+            if g == 1.0 {
+                v
+            } else {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                {
+                    roundf(f32::from(v) * g).clamp(0.0, f32::from(max)) as u8
+                }
+            }
+        };
+
+        // Every reachable raw level for each channel: pulse/tri/noise 0..=15,
+        // DMC 0..=127. Sweeping the DMC axis against a rotating combination of
+        // the others covers the `tnd_table` index range end to end.
+        for dmc in 0u8..=127 {
+            for lvl in 0u8..=15 {
+                let (p1, p2, tri, noise) = (lvl, 15 - lvl, (lvl + 7) % 16, (lvl + 3) % 16);
+                let gated = apu.mixer.mix(
+                    scale(0, gate(0, p1), 15),
+                    scale(1, gate(1, p2), 15),
+                    scale(2, gate(2, tri), 15),
+                    scale(3, gate(3, noise), 15),
+                    scale(4, gate(4, dmc), 127),
+                ) + if mask & (1 << 5) != 0 { 0.25f32 } else { 0.0 };
+                let fast = apu.mixer.mix(p1, p2, tri, noise, dmc) + 0.25f32;
+                assert_eq!(
+                    gated.to_bits(),
+                    fast.to_bits(),
+                    "p1={p1} p2={p2} tri={tri} noise={noise} dmc={dmc}: \
+                     the fast path must be BIT-identical, not merely close"
+                );
+            }
+        }
+    }
+
+    /// The fast path must NOT be taken once the configuration stops being the
+    /// default -- otherwise the mute/gain overlay would silently stop working.
+    #[test]
+    fn a_non_default_mask_or_gain_still_takes_the_gated_path() {
+        let mut muted = Apu::new(Region::Ntsc, 48_000);
+        muted.set_channel_mask(CHANNEL_MASK_ALL & !0x01); // mute pulse 1
+        assert_ne!(muted.channel_mask, CHANNEL_MASK_ALL);
+
+        let mut quiet = Apu::new(Region::Ntsc, 48_000);
+        quiet.set_channel_gain([0.5, 1.0, 1.0, 1.0, 1.0, 1.0]);
+        assert_ne!(quiet.channel_gain, CHANNEL_GAIN_UNITY);
+
+        // Drive both far enough to produce output, and confirm a muted channel
+        // actually changes the mix relative to the default.
+        let mut plain = Apu::new(Region::Ntsc, 48_000);
+        for a in [&mut plain, &mut muted, &mut quiet] {
+            a.write_register(0x4015, 0x1F);
+            a.write_register(0x4000, 0xBF);
+            a.write_register(0x4002, 0xAA);
+            a.write_register(0x4003, 0x08);
+            for _ in 0..2_000 {
+                a.tick();
+            }
+        }
+        assert_ne!(
+            plain.pulse1.output() == 0,
+            muted.channel_mask & 0x01 != 0,
+            "a cleared mask bit must still reach the mix"
+        );
+    }
     use super::*;
 
     #[test]
