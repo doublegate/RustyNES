@@ -16,6 +16,23 @@ cycle-accurate core later replaced.
 
 ### Added
 
+- **Mapper 154 (NAMCOT-3453) and mapper 243 (Sachen SA-020A).** Both surfaced from
+  the coverage sweep once the per-game database began reaching the harness, which
+  is what routes *Devil Man* from its mapper-88 header to 154 and 美女拳 *Honey
+  Peach* from its mapper-150 header to 243. Each is the only game on its board,
+  and both now boot: *Devil Man* to its intro cutscene, *Honey Peach* to gameplay.
+  Mapper breadth **172 → 174 families**, both `BestEffort` (their dumps are staged
+  but not redistributable, so neither can be honestly oracle-gated).
+
+  Neither needed a new type, because neither is a new chip. **154 is mapper 88**
+  plus a one-screen nametable bit — decoded across the whole `$8000-$FFFF` range,
+  not just the bank-select window — so it is a third `Namco118Board` variant.
+  **243 is the same ASIC as mapper 150** wired to a different PCB, which NESdev
+  records under its Errata; only the bank-bit significance differs (R2 is the CHR
+  LSB on the SA-020A and the MSB on the SA-150), so it is a `Sa020aBoard` variant.
+  Ten unit tests. `Namco118`'s save-state moves to v2: 154 makes mirroring mutable
+  on a family where it had been constant, and a v1 blob would restore the wrong
+  CIRAM page.
 - **Mapper 176 submapper 2 (WAIXING-FS005/FS006).** The 8025 ASIC's incompatible
   variants split by NES 2.0 submapper, and only the FK23C half was implemented.
   FS005 adds the `$A001` RAM Configuration Register — 32 KiB of banked WRAM, the
@@ -29,25 +46,20 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
-- **The per-game database was destroying correct mapper numbers, for users, since
-  v1.2.0.** The vendored table uses `0` in its Mapper column as the default for
-  rows nobody filled in, with no separate empty marker —
-  `80D63472, PAL, 0, 0, …` is `Sidewinder`, a Sachen SA-72007, which is **mapper
-  145**. `apply_header_overrides` read that `0` as "force NROM" and overwrote the
-  header's correct value, after which the ROM failed NROM's size check and would
-  not load at all. Measured over the staged corpus: **12 ROMs — every Sachen board
-  in it (133, 143, 145, 146, 147, 148, 149, 150)**. A Mapper column of `0` is now
-  treated as "unspecified": on a ROM whose header already says 0 the override was
-  a no-op anyway, and on any other ROM it could only ever be destructive. The 11
-  legitimate non-zero overrides are unaffected.
+- **The per-game database destroyed correct mapper numbers on every Sachen
+  cartridge.** The vendored table uses `0` in its Mapper column as the
+  unfilled-row default, with no separate empty marker, so
+  `80D63472, PAL, 0, 0, …` — `Sidewinder`, a Sachen SA-72007 and genuinely
+  **mapper 145** — was read as "force NROM". The header was overwritten and the
+  ROM then failed NROM's size check and would not load at all. **12 staged ROMs:
+  every Sachen board in the corpus** (133, 143, 145, 146, 147, 148, 149, 150).
+  A `0` in that column is now treated as "unspecified"; the 11 legitimate
+  non-zero overrides are unaffected. Present since v1.2.0 and reaching users, not
+  only CI, because the frontend applies these on every ROM load.
 
-  This is the second time this vendored table has force-applied a field it should
-  not have — the first was the mirroring column freezing *Wizards & Warriors*
-  (ADR 0031) — and it is fixed the same way: refuse to apply an override that
-  cannot be distinguished from "no data". It reached users rather than only the
-  test suite, because the frontend has called `apply_header_overrides` on every
-  ROM load since v1.2.0. It surfaced only once the coverage harness was put on
-  that same load path, which is the argument for having done that.
+  Same failure mode as the mirroring column freezing *Wizards & Warriors*
+  (ADR 0031), and fixed the same way: refuse to apply an override that cannot be
+  distinguished from "no data".
 - **Three Waixing dumps were being emulated as a board that cannot exist.**
   `Chu Liu Xiang`, `Mo Shen Fa Shi` and `Shui Hu Zhuan` carry iNES headers
   declaring **mapper 30 with 256 KiB of CHR-ROM**, and UNROM-512 is a CHR-RAM-only

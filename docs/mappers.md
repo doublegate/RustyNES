@@ -414,6 +414,76 @@ because the header refutes itself: UNROM-512 is a CHR-RAM-only board, so a
 mapper-30 image declaring CHR-ROM cannot be describing the board it claims. Two of
 the three boot; `Chu Liu Xiang` renders no tiles and remains open.
 
+#### Mapper 15 — K-1029 / K-1030P multicart
+
+Two deliberate departures from the bare board, both v2.3.4, because the staged
+corpus is dominated by single-game hacks rather than the multicarts the board
+shipped as:
+
+| | behaviour | why |
+| --- | --- | --- |
+| CPU `$6000-$7FFF` | 8 KiB PRG-RAM | The K-1029 has none. The mapper-15 hacks of `Doraemon`, `Dragon Ball`, `Z Gundam` and others are conversions of games that expect work RAM there, and several set the battery flag. Without it they read open bus and hang. Decoded *before* the bank latch, so it cannot shadow a register. |
+| PPU `$0000-$1FFF` | CHR-RAM writable in every mode | The board is CHR-RAM-only; write-protecting it in some banking modes was modelling a restriction the hardware does not have, and it blanked four ROMs. |
+
+The PRG-RAM is serialized, so it round-trips a save-state. Its arrival lengthened
+the state blob without a version bump, so `load_state` accepts **both** lengths
+and clears the RAM on the shorter one — a pre-v2.3.4 slot still loads rather than
+failing `Truncated` for a field it could not have contained.
+
+#### Mapper 154 — NAMCOT-3453
+
+Mapper 88 plus a single one-screen nametable bit, and nothing else. Implemented as
+a third `Namco118Board` variant rather than a new type, because that is what the
+hardware is: the CHR A16/A12 split, the bank registers, and the fixed PRG banks
+are all mapper 88's.
+
+| | |
+| --- | --- |
+| `$8000-$FFFF` bit 6 | nametable select — 0 = one-screen page A, 1 = page B |
+| everything else | identical to mapper 88, including the CHR A16 ↔ PPU A12 split |
+
+The bit is decoded across the **whole** `$8000-$FFFF` range, which is the one
+thing easy to get wrong: it shares a byte with the bank-select register, but that
+register is only decoded at `$8000-$9FFF` on the associated Namco 108. So the
+nametable bit is read on every write in the range — odd addresses carrying bank
+*data* included — and a test pins each of `$8001`, `$9FFF`, `$A000`, `$C001`,
+`$FFFF`.
+
+This makes mirroring **mutable state** on a board family where it had been
+constant, so `SAVE_STATE_VERSION` moves to 2 to carry it. A v1 blob never held a
+mirroring byte and would have restored the wrong CIRAM page.
+
+Used by exactly one game, *Devil Man*, whose dump is headered mapper 88 and
+corrected to 154 by the per-game database.
+
+#### Mapper 243 — Sachen SA-020A
+
+The **same eight-register ASIC** as mapper 150, on the PCB it was designed for.
+NESdev records this under mapper 243's Errata: the SA-150 board "connects the
+same ASIC differently, changing the meaning of the CHR-bank-related register
+bits". So this is a `Sa020aBoard` variant of the existing type, not a new one —
+the `$4100`/`$4101` index/data protocol, the three-bit register file, the
+readback, and the four mirroring modes are all shared, and only the bank decode
+branches.
+
+| register | SA-020A (243) | SA-150 (150) |
+| --- | --- | --- |
+| PRG 32 KiB bank | `R5[1:0]` (A16..A15) | `R5 \| R2[0]` |
+| CHR 8 KiB bank | `R2[0]` (A13) ∥ `R4[0]` (A14) ∥ `R6[1:0]` (A16..A15) | `R2[0]<<3 \| R4[0]<<2 \| R6[1:0]` |
+
+Note that both boards use the same three registers — R2 is the CHR **LSB** on the
+SA-020A and the **MSB** on the SA-150. That inversion is the whole reason the two
+need separate mapper numbers, and a test asserts one register setting lands on
+different banks for the two boards.
+
+Mirroring comes from `R7[2:1]`, including selector 0's S0-S0-S0-S1 layout (three
+nametables sharing CIRAM page 0, only the fourth distinct) which the existing
+`resolve_nametable` already implemented for mapper 150.
+
+Used by exactly one game, 美女拳 *Honey Peach* (SA-006), headered mapper 150 and
+corrected to 243 by the per-game database. Both maxima are reachable: 128 KiB PRG
+(4 × 32 KiB from two bits) and 128 KiB CHR (16 × 8 KiB from four bits).
+
 #### Mapper 176 submapper 2 — WAIXING-FS005/FS006
 
 Mapper 176 is the 8025 enhanced-MMC3 ASIC, whose variants are **incompatible** and
@@ -453,8 +523,8 @@ boards with no redistributable fixture, register-decode unit-tested only) is
 oracle ROM — is enforced at the classifier level (`BestEffort` is structurally
 never accuracy-gated; the three tier id-sets are disjoint) and by the curated
 construction of the byte-oracle corpus. See `docs/adr/0011-mapper-tiering.md`.
-Current split: **172 families** — 51 Core + 95 Curated (**146 accuracy-gated**) +
-26 BestEffort. The **v2.1.0 "Fathom" F3** batch promoted **86** previously-
+Current split: **174 families** — 51 Core + 95 Curated (**146 accuracy-gated**) +
+28 BestEffort (v2.3.4 added 154 and 243). The **v2.1.0 "Fathom" F3** batch promoted **86** previously-
 BestEffort families to Curated: each has a **cleanly-booting** staged
 commercial-ROM dump (57 already in `tests/roms/external/` + 29 sourced from
 GoodNES v3.23b) wired into a byte-identity boot-snapshot oracle in

@@ -1036,6 +1036,42 @@ impl Mapper for Sachen149 {
 // ===========================================================================
 
 /// Mapper 150 (Sachen `SA-015`/`SA-630`, `UNL-Sachen-74LS374N`).
+/// Which PCB the SA-020A ASIC is wired into.
+///
+/// The chip is the same eight-register part in both cases -- the NESdev wiki
+/// records this explicitly under mapper 243's Errata: "The SA-150 PCB, denoted
+/// by INES Mapper 150, connects the same ASIC differently, changing the meaning
+/// of the CHR-bank-related register bits." Only the bank decode differs; the
+/// register file, the $4100/$4101 index/data protocol, the readback, and the
+/// four mirroring modes are shared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sa020aBoard {
+    /// SA-150 PCB (iNES mapper 150).
+    Sa150,
+    /// SA-020A PCB (iNES mapper 243) -- Honey Peach / Mei Nu Quan (SA-006).
+    Sa020a,
+}
+
+impl Sa020aBoard {
+    /// The iNES mapper number this PCB is denoted by (used in error text).
+    const fn ines_id(self) -> u16 {
+        match self {
+            Self::Sa150 => 150,
+            Self::Sa020a => 243,
+        }
+    }
+}
+
+/// Sachen SA-020A eight-register ASIC (iNES mappers **150 and 243**).
+///
+/// A fake-"74LS374N"-marked part with eight three-bit registers reached through
+/// an index/data pair at `$4100`/`$4101` (mask `$C101`), driving one switchable
+/// 32 KiB PRG bank, one switchable 8 KiB CHR bank, and four mirroring modes --
+/// one of which is the non-standard S0-S0-S0-S1 layout.
+///
+/// The type is named for mapper 150 for historical reasons but backs both PCBs
+/// the ASIC shipped on; see [`Sa020aBoard`]. Construct via [`Sachen150::new`]
+/// for the SA-150 or [`Sachen150::new_on_board`] to pick explicitly.
 pub struct Sachen150 {
     prg_rom: Box<[u8]>,
     chr_rom: Box<[u8]>,
@@ -1043,6 +1079,7 @@ pub struct Sachen150 {
     chr_is_ram: bool,
     current_register: u8,
     reg: [u8; 8],
+    board: Sa020aBoard,
 }
 
 impl Sachen150 {
@@ -1053,9 +1090,24 @@ impl Sachen150 {
     /// Returns [`MapperError::Invalid`] when PRG is not a non-zero multiple of
     /// 32 KiB, or CHR-ROM (when present) is not a multiple of 8 KiB.
     pub fn new(prg_rom: Box<[u8]>, chr_rom: Box<[u8]>) -> Result<Self, MapperError> {
+        Self::new_on_board(prg_rom, chr_rom, Sa020aBoard::Sa150)
+    }
+
+    /// Construct the SA-020A ASIC on an explicit PCB.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MapperError::Invalid`] when PRG is not a non-zero multiple of
+    /// 32 KiB, or CHR-ROM (when present) is not a multiple of 8 KiB.
+    pub fn new_on_board(
+        prg_rom: Box<[u8]>,
+        chr_rom: Box<[u8]>,
+        board: Sa020aBoard,
+    ) -> Result<Self, MapperError> {
         if prg_rom.is_empty() || !prg_rom.len().is_multiple_of(PRG_BANK_32K) {
             return Err(MapperError::Invalid(format!(
-                "mapper 150 PRG-ROM size {} is not a non-zero multiple of 32 KiB",
+                "mapper {} PRG-ROM size {} is not a non-zero multiple of 32 KiB",
+                board.ines_id(),
                 prg_rom.len()
             )));
         }
@@ -1066,7 +1118,8 @@ impl Sachen150 {
             chr_rom
         } else {
             return Err(MapperError::Invalid(format!(
-                "mapper 150 CHR-ROM size {} is not a multiple of 8 KiB",
+                "mapper {} CHR-ROM size {} is not a multiple of 8 KiB",
+                board.ines_id(),
                 chr_rom.len()
             )));
         };
@@ -1077,6 +1130,7 @@ impl Sachen150 {
             chr_is_ram,
             current_register: 0,
             reg: [0u8; 8],
+            board,
         })
     }
 
@@ -1086,11 +1140,31 @@ impl Sachen150 {
     // The old decode masked PRG to reg[5] & 0x03 (dropping reg[2].0) and omitted
     // the reg[2]<<3 CHR term, so both banks resolved wrong -> blank/garbled.
     const fn prg_bank(&self) -> u8 {
-        self.reg[5] | (self.reg[2] & 0x01)
+        match self.board {
+            Sa020aBoard::Sa150 => self.reg[5] | (self.reg[2] & 0x01),
+            // Mapper 243: R5 supplies PRG A16..A15 and nothing else does, so the
+            // 32 KiB bank is just those two bits -- 4 banks, the documented
+            // 128 KiB maximum. R2 does NOT contribute here; that is one half of
+            // what "connects the same ASIC differently" means.
+            Sa020aBoard::Sa020a => self.reg[5] & 0x03,
+        }
     }
 
     const fn chr_bank(&self) -> u8 {
-        ((self.reg[2] & 0x01) << 3) | ((self.reg[4] & 0x01) << 2) | (self.reg[6] & 0x03)
+        match self.board {
+            Sa020aBoard::Sa150 => {
+                ((self.reg[2] & 0x01) << 3) | ((self.reg[4] & 0x01) << 2) | (self.reg[6] & 0x03)
+            }
+            // Mapper 243 assembles the 8 KiB CHR bank from, low to high:
+            // A13 = R2.0, A14 = R4.0, A15 = R6.0, A16 = R6.1. Four bits, 16
+            // banks, the documented 128 KiB maximum. Note this is the SAME three
+            // registers as the SA-150 above but at inverted significance -- R2
+            // is the LSB here and the MSB there, which is exactly why a ROM for
+            // one board renders garbage on the other.
+            Sa020aBoard::Sa020a => {
+                (self.reg[2] & 0x01) | ((self.reg[4] & 0x01) << 1) | ((self.reg[6] & 0x03) << 2)
+            }
+        }
     }
 
     /// Mirroring selector value `(reg[7] >> 1) & 0x03`.
@@ -1609,5 +1683,121 @@ mod tests {
             SachenTca01M143::new(synth_prg_16k(1), synth_chr_8k(1), Mirroring::Vertical).unwrap();
         m2.load_state(&blob).unwrap();
         assert_eq!(m2.ppu_read(0x2000), 0x33);
+    }
+
+    // ---- mapper 243 (Sachen SA-020A) ---------------------------------------
+
+    /// 128 KiB PRG (4 x 32 KiB) + 128 KiB CHR (16 x 8 KiB) -- the documented
+    /// maxima, so every bank bit is reachable.
+    fn m243() -> Sachen150 {
+        Sachen150::new_on_board(synth_prg_32k(4), synth_chr_8k(16), Sa020aBoard::Sa020a).unwrap()
+    }
+
+    /// Write `value` to register `index` through the $4100/$4101 index/data pair.
+    fn set_reg(m: &mut Sachen150, index: u8, value: u8) {
+        m.cpu_write(0x4100, index);
+        m.cpu_write(0x4101, value);
+    }
+
+    #[test]
+    fn m243_prg_bank_is_r5_alone() {
+        // R5 supplies PRG A16..A15 and nothing else contributes -- unlike the
+        // SA-150 wiring, where R2 bit 0 also feeds PRG.
+        let mut m = m243();
+        for bank in 0..4u8 {
+            set_reg(&mut m, 5, bank);
+            assert_eq!(
+                m.cpu_read(0x8000),
+                bank,
+                "R5={bank} selects 32 KiB bank {bank}"
+            );
+        }
+        // R2 must NOT disturb PRG on this board.
+        set_reg(&mut m, 5, 2);
+        set_reg(&mut m, 2, 1);
+        assert_eq!(m.cpu_read(0x8000), 2, "R2 does not feed PRG on the SA-020A");
+    }
+
+    #[test]
+    fn m243_chr_bank_assembles_a13_a14_a15_a16() {
+        // A13 = R2.0 (LSB), A14 = R4.0, A15 = R6.0, A16 = R6.1.
+        let cases = [
+            (0u8, 0u8, 0u8, 0u8),
+            (1, 0, 0, 1),
+            (0, 1, 0, 2),
+            (1, 1, 0, 3),
+            (0, 0, 1, 4),
+            (1, 0, 1, 5),
+            (0, 0, 2, 8),
+            (1, 1, 3, 15),
+        ];
+        for (r2, r4, r6, expect) in cases {
+            let mut m = m243();
+            set_reg(&mut m, 2, r2);
+            set_reg(&mut m, 4, r4);
+            set_reg(&mut m, 6, r6);
+            assert_eq!(
+                m.ppu_read(0x0000),
+                expect,
+                "R2={r2} R4={r4} R6={r6} should select CHR bank {expect}"
+            );
+        }
+    }
+
+    #[test]
+    fn m243_and_m150_decode_the_same_registers_differently() {
+        // The whole reason 243 exists as a separate mapper: same ASIC, inverted
+        // bank-bit significance. R2 is the CHR LSB on the SA-020A and the MSB on
+        // the SA-150, so one setting must land on different banks.
+        let mut a = m243();
+        let mut b = Sachen150::new(synth_prg_32k(4), synth_chr_8k(16)).unwrap();
+        for m in [&mut a, &mut b] {
+            set_reg(m, 2, 1);
+        }
+        assert_eq!(a.ppu_read(0x0000), 1, "SA-020A: R2 is CHR A13");
+        assert_eq!(b.ppu_read(0x0000), 8, "SA-150: R2 is the CHR MSB");
+        assert_ne!(a.ppu_read(0x0000), b.ppu_read(0x0000));
+    }
+
+    #[test]
+    fn m243_mirroring_modes_including_the_vertically_flipped_l() {
+        let mut m = m243();
+        // Selector lives in R7 bits 2:1.
+        set_reg(&mut m, 7, 1 << 1);
+        assert_eq!(m.current_mirroring(), Mirroring::Horizontal);
+        set_reg(&mut m, 7, 2 << 1);
+        assert_eq!(m.current_mirroring(), Mirroring::Vertical);
+        set_reg(&mut m, 7, 3 << 1);
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
+
+        // Selector 0 is the S0-S0-S0-S1 layout: the first three nametables share
+        // CIRAM page 0 and only the fourth is distinct.
+        set_reg(&mut m, 7, 0);
+        assert_eq!(m.current_mirroring(), Mirroring::MapperControlled);
+        m.ppu_write(0x2000, 0xA1);
+        m.ppu_write(0x2C00, 0xB2);
+        assert_eq!(m.ppu_read(0x2000), 0xA1);
+        assert_eq!(m.ppu_read(0x2400), 0xA1, "table 1 shares page 0");
+        assert_eq!(m.ppu_read(0x2800), 0xA1, "table 2 shares page 0");
+        assert_eq!(m.ppu_read(0x2C00), 0xB2, "table 3 is the unique page");
+    }
+
+    #[test]
+    fn m243_registers_read_back_and_round_trip_through_a_save_state() {
+        let mut m = m243();
+        set_reg(&mut m, 6, 3);
+        assert_eq!(
+            m.cpu_read(0x4101),
+            3,
+            "the data port reads the selected register"
+        );
+        set_reg(&mut m, 2, 1);
+        set_reg(&mut m, 7, 2 << 1);
+        let blob = m.save_state();
+
+        let mut m2 = m243();
+        m2.load_state(&blob).unwrap();
+        assert_eq!(m2.ppu_read(0x0000), m.ppu_read(0x0000));
+        assert_eq!(m2.current_mirroring(), Mirroring::Vertical);
     }
 }

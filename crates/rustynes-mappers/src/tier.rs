@@ -116,8 +116,14 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
         // halts ~18 frames in, 111 GTROM "Ninja Ryukenden" jams immediately) — a
         // jammed boot is not honest Curated oracle evidence. NOT accuracy-gated
         // (ADR 0011).
-        29 | 39 | 50 | 81 | 104 | 111 | 174 | 179 | 238 | 261 | 268 | 286 | 289 | 290 | 299
-        | 301 | 303 | 305 | 306 | 312 | 320 | 336 | 348 | 349 | 366 | 513 => {
+        //
+        // v2.3.4 adds 154 (NAMCOT-3453) and 243 (Sachen SA-020A). Both became
+        // visible only once the coverage harness started applying the per-game
+        // database, which is what routes `Devil Man` from its m88 header to 154
+        // and the Sachen 74LS374N set from m150 to 243. Their dumps are staged
+        // but not redistributable, so neither can be honestly oracle-gated.
+        29 | 39 | 50 | 81 | 104 | 111 | 154 | 174 | 179 | 238 | 243 | 261 | 268 | 286 | 289
+        | 290 | 299 | 301 | 303 | 305 | 306 | 312 | 320 | 336 | 348 | 349 | 366 | 513 => {
             Some(MapperTier::BestEffort)
         }
 
@@ -128,6 +134,37 @@ pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The first `mapper_tier` branch that depends on the submapper. Nothing
+    /// else fails if the early return is dropped during a later edit of the
+    /// match arms, so pin both halves: the variant is downgraded, the family is
+    /// not.
+    #[test]
+    fn m176_submapper_2_is_best_effort_but_the_family_stays_curated() {
+        assert_eq!(mapper_tier(176, 2), Some(MapperTier::BestEffort));
+        assert!(!mapper_tier(176, 2).unwrap().is_accuracy_gated());
+        for sub in [0u8, 1, 3, 255] {
+            assert_eq!(
+                mapper_tier(176, sub),
+                Some(MapperTier::Curated),
+                "submapper {sub} must keep the family tier"
+            );
+        }
+    }
+
+    /// 154 and 243 landed in v2.3.4 and must be classified, or `parse` supports
+    /// a mapper the tier table does not know -- the invariant this module exists
+    /// to hold.
+    #[test]
+    fn v234_additions_are_classified_best_effort() {
+        for id in [154u16, 243] {
+            assert_eq!(
+                mapper_tier(id, 0),
+                Some(MapperTier::BestEffort),
+                "mapper {id}"
+            );
+        }
+    }
 
     /// The 51 Core (Tier-0) families that shipped before v1.2.0. This list is
     /// the contract: every id here must classify as `Core`, and the count must

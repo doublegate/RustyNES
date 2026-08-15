@@ -489,7 +489,7 @@
 > 60/60 byte-identical); **(F1.2/F1.3)** OAM + open-bus audits regression-locked;
 > **(F3)** the **mapper completion** — **86** families promoted BestEffort → Curated
 > with a commercial-ROM boot-snapshot oracle (57 already-staged + 29 from GoodNES
-> v3.23b), so the tier split is **51 Core + 95 Curated + 26 BestEffort** and
+> v3.23b), so the tier split is **51 Core + 95 Curated + 28 BestEffort** and
 > oracle-gated coverage rises **60 → 146** of 172 (the 26 left have no
 > cleanly-booting dump); **(F5)** the **MMC3 R1/R2 scanline-IRQ residual CLOSED** by-design-permanent
 > (ADR 0002 F5.0 — differential 1-dot deficit, structurally unreachable, zero game

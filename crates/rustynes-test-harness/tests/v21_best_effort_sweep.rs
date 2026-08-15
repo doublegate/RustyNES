@@ -180,12 +180,16 @@ fn best_effort_set_is_nonempty_and_matches_classifier() {
     // Documents the current count so an accidental tier reshuffle (e.g. a
     // silent promotion that empties the tier) is caught. Update deliberately
     // when the BestEffort set legitimately changes. As of Fathom F3.1 the set
-    // is the 26 reference-ported long-tail boards that lack a cleanly-booting
+    // is the reference-ported long-tail boards that lack a cleanly-booting
     // redistributable dump (see `tier.rs`): the high-id NES 2.0 BMC/pirate
     // boards plus a handful of no-dump / jam-at-boot discrete boards.
+    //
+    // 26 -> 28 in v2.3.4: mapper 154 (NAMCOT-3453) and 243 (Sachen SA-020A).
+    // Both have a staged dump that boots, but neither dump is redistributable,
+    // so neither can be oracle-gated and both stay BestEffort.
     assert_eq!(
         ids.len(),
-        26,
+        28,
         "BestEffort family count changed to {} — if intentional, update this \
          assertion and docs/mappers.md; if not, a tier arm regressed",
         ids.len()
