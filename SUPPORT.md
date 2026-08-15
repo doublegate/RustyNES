@@ -116,7 +116,7 @@ A: Native Windows, Linux, and macOS, plus a WebAssembly / GitHub Pages browser b
 
 **Q: What ROMs are supported?**
 
-A: iNES and NES 2.0 ROM formats across **172 mapper families** (including expansion audio) plus the UNIF (`.unf`) container, the Famicom Disk System (real-BIOS boot), and Vs. System / PlayChoice-10 arcade hardware. Additional mapper families are added demand-driven; see [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md).
+A: iNES and NES 2.0 ROM formats across **174 mapper families** (including expansion audio) plus the UNIF (`.unf`) container, the Famicom Disk System (real-BIOS boot), and Vs. System / PlayChoice-10 arcade hardware. Additional mapper families are added demand-driven; see [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md).
 
 **Q: Does RustyNES support [feature]?**
 

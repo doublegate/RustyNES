@@ -668,12 +668,21 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.3.3 "Cadence"** — the display-pacing release.
-It closes the one measured artefact whose signature matches the reported picture
-"shudder", though it does not claim the report itself is resolved: that is a
-subjective observation on a machine whose frame-budget margin has never been
-measured, and this campaign already declared victory once on counter evidence and
-was wrong.
+RustyNES's current release is **v2.3.4 "Ledger"** — the coverage release. It adds
+three boards (mapper 176 submapper 2 WAIXING-FS005, 154 NAMCOT-3453, 243 Sachen
+SA-020A, taking breadth to **174 families**) and puts the coverage harness on the
+frontend's real load path, which immediately exposed a defect that had been
+reaching users since v1.2.0: the per-game database read a `0` in its Mapper column
+as "force NROM" and overwrote correct headers, leaving **every Sachen cartridge in
+the corpus** unable to load at all. Unlike the previous three releases this one
+does touch the emulation core, so the accuracy contract was **verified rather than
+asserted**: AccuracyCoin holds at exactly 141/141, nestest 0-diff.
+
+Built on **v2.3.3 "Cadence"** — the display-pacing release, which closed the one
+measured artefact whose signature matches the reported picture "shudder" without
+claiming the report itself is resolved: that is a subjective observation on a
+machine whose frame-budget margin has never been measured, and that campaign
+already declared victory once on counter evidence and was wrong.
 
 Frames were being shown for the wrong number of refreshes, and six proposed causes
 were falsified by measurement before the real one surfaced: the **run-ahead throttle
