@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-066-GxROM/Family Trainer 9 - Fuuun Takeshi-jou 2 (Japan).zip
+rom_sha256=22749d72a2d06bcf08de60a7ee8c413cf06fdb508876027b4058dcb38d2ab232
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=b47fc7a2e33b8e3a
+checkpoint f900 fb_fnv1a64=7a69fecc810ca666
+checkpoint f1100 fb_fnv1a64=7a69fecc810ca666

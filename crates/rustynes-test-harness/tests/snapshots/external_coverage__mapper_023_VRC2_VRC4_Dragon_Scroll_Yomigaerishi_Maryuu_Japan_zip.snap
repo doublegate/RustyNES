@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-023-VRC2-VRC4/Dragon Scroll - Yomigaerishi Maryuu (Japan).zip
+rom_sha256=9212e857b6fa917c7f278c36b6ebd8147f7282294533bb6fcb9902b1ece80e85
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=d78efbd22767b690
+checkpoint f900 fb_fnv1a64=38d935b2a2514bdf
+checkpoint f1100 fb_fnv1a64=009b583cba917753

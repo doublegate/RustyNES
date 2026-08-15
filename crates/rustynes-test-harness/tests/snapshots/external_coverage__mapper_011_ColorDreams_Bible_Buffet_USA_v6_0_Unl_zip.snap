@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-011-ColorDreams/Bible Buffet (USA) (v6.0) (Unl).zip
+rom_sha256=24cb868db00f8eba0536d5eabeec67693cb4a31b9215511fc4c1a910960e1486
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=2c38b22599f2294f
+checkpoint f900 fb_fnv1a64=444cde9e1b9e5cec
+checkpoint f1100 fb_fnv1a64=444cde9e1b9e5cec

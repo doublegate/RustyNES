@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-133-SachenSA72008/Qi Wang - Chinese Chess (MGC-001) (Ch) [!].nes
+rom_sha256=34f9be97166f35757028c5ba4389a24c7a62a7e3992a4ed118724607907a2aa3
+frames=1141
+fb_bytes=245760
+cycles=33949783
+audio_samples=836505
+audio_fnv1a64=2168afcf50ca6443
+checkpoint f900 fb_fnv1a64=5b567385887931a4
+checkpoint f1100 fb_fnv1a64=82816575632dba70

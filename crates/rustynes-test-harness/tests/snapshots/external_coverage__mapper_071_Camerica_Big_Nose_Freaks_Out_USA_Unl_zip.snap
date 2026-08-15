@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-071-Camerica/Big Nose Freaks Out (USA) (Unl).zip
+rom_sha256=3c63b2d969d263b803042048fa67c931e2f94af8559f2692af33c49663d8d019
+frames=1141
+fb_bytes=245760
+cycles=33949793
+audio_samples=836505
+audio_fnv1a64=26e4398075944506
+checkpoint f900 fb_fnv1a64=b15f96659431b06d
+checkpoint f1100 fb_fnv1a64=b15f96659431b06d

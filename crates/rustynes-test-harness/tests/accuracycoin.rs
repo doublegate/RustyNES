@@ -58,7 +58,7 @@ use rustynes_test_harness::accuracy_coin_catalog;
 ///   measured `75.93%` via framebuffer measures `64.03%` via RAM.
 const MIN_PASS_RATE: f64 = 0.60;
 
-/// v2.3.0 "Datum II" — the exact number of AccuracyCoin tests the shipped
+/// v2.3.0 "Datum II" — the exact number of `AccuracyCoin` tests the shipped
 /// headless build passes, held since v2.0.3 promoted the 2-cycle-ALE /
 /// delayed-`CopyV` PPU model (ADR 0030).
 ///

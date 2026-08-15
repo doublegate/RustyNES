@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-088-Namco118/Dragon Spirit - Aratanaru Densetsu (J) [!].zip
+rom_sha256=2a94f9c46b0f9e7d48dc198057725837f12515f91a9bdcca570d7adaa273cc85
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=d90497eba65a6e9e
+checkpoint f900 fb_fnv1a64=58ca1414ca44a613
+checkpoint f1100 fb_fnv1a64=cdf31df63dbcc32e

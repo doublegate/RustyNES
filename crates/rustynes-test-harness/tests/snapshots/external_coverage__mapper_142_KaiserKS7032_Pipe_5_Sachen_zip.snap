@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-142-KaiserKS7032/Pipe 5 (Sachen) [!].zip
+rom_sha256=ecc14988cc5f3cba6983115c805c9ae8b139a71c09c6b3b32b0c0cf64b96b6d0
+frames=1141
+fb_bytes=245760
+cycles=33949962
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

@@ -14,6 +14,76 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Mapper 154 (NAMCOT-3453) and mapper 243 (Sachen SA-020A).** Both surfaced from
+  the coverage sweep once the per-game database began reaching the harness, which
+  is what routes *Devil Man* from its mapper-88 header to 154 and 美女拳 *Honey
+  Peach* from its mapper-150 header to 243. Each is the only game on its board,
+  and both now boot: *Devil Man* to its intro cutscene, *Honey Peach* to gameplay.
+  Mapper breadth **172 → 174 families**, both `BestEffort` (their dumps are staged
+  but not redistributable, so neither can be honestly oracle-gated).
+
+  Neither needed a new type, because neither is a new chip. **154 is mapper 88**
+  plus a one-screen nametable bit — decoded across the whole `$8000-$FFFF` range,
+  not just the bank-select window — so it is a third `Namco118Board` variant.
+  **243 is the same ASIC as mapper 150** wired to a different PCB, which NESdev
+  records under its Errata; only the bank-bit significance differs (R2 is the CHR
+  LSB on the SA-020A and the MSB on the SA-150), so it is a `Sa020aBoard` variant.
+  Ten unit tests. `Namco118`'s save-state moves to v2: 154 makes mirroring mutable
+  on a family where it had been constant, and a v1 blob would restore the wrong
+  CIRAM page.
+- **Mapper 176 submapper 2 (WAIXING-FS005/FS006).** The 8025 ASIC's incompatible
+  variants split by NES 2.0 submapper, and only the FK23C half was implemented.
+  FS005 adds the `$A001` RAM Configuration Register — 32 KiB of banked WRAM, the
+  `$5000-$5FFF` register-window disable that the Waixing copy-protection sequence
+  is built on, and a mapper-195-like mixed CHR-ROM/CHR-RAM mode — plus two-bit
+  `$A000` mirroring with single-screen pages gated on that register, PRG A21-A25
+  from `$5xx0.3/7` and `$5xx2.5/6/7`, and the `$46`/`$47` bank-select swap (which
+  applies only with the PRG-invert bit set; `$06`/`$07` are unswapped).
+  Implemented from the NESdev wiki page; unlike the FK23C banking transforms in
+  the same file, no reference-emulator source was consulted for any of it.
+
+### Fixed
+
+- **The per-game database destroyed correct mapper numbers on every Sachen
+  cartridge.** The vendored table uses `0` in its Mapper column as the
+  unfilled-row default, with no separate empty marker, so
+  `80D63472, PAL, 0, 0, …` — `Sidewinder`, a Sachen SA-72007 and genuinely
+  **mapper 145** — was read as "force NROM". The header was overwritten and the
+  ROM then failed NROM's size check and would not load at all. **12 staged ROMs:
+  every Sachen board in the corpus** (133, 143, 145, 146, 147, 148, 149, 150).
+  A `0` in that column is now treated as "unspecified"; the 11 legitimate
+  non-zero overrides are unaffected. Present since v1.2.0 and reaching users, not
+  only CI, because the frontend applies these on every ROM load.
+
+  Same failure mode as the mirroring column freezing *Wizards & Warriors*
+  (ADR 0031), and fixed the same way: refuse to apply an override that cannot be
+  distinguished from "no data".
+- **Three Waixing dumps were being emulated as a board that cannot exist.**
+  `Chu Liu Xiang`, `Mo Shen Fa Shi` and `Shui Hu Zhuan` carry iNES headers
+  declaring **mapper 30 with 256 KiB of CHR-ROM**, and UNROM-512 is a CHR-RAM-only
+  board — so the header refutes itself. They are FS005 cartridges, and the loader
+  now routes any mapper-30 image that declares CHR-ROM to mapper 176 submapper 2.
+  Genuine mapper-30 images declare zero CHR-ROM and are untouched. Two of the
+  three now boot to their title screens and menus; `Chu Liu Xiang` still renders
+  no tiles and is recorded as an open residual rather than claimed as fixed.
+- **Bandai FCG (mapper 16): a debug-build panic on real ROMs.** The I2C EEPROM
+  byte-address counter is a `u8` advanced as `(addr + 1) & addr_mask()`, and the
+  mask is `0xFF` on every chip but the X24C01 — so the mask was written to express
+  a counter that rolls over, but the add traps on the wrap first. Now
+  `wrapping_add(1)`, which is what the hardware ring does.
+- **The coverage harness could not observe game-database fixes.** It loaded ROMs
+  with `Nes::from_rom` while the frontend rewrites the header first, so a ROM
+  fixed through the per-game database still reported blank in the regression net —
+  the fix was real and the net simply could not see it. The database is now its
+  own `rustynes-gamedb` crate that both consume (`rustynes-frontend` re-exports it,
+  so no call site moved), and its user-overlay directory became injectable rather
+  than hard-wired, so the harness cannot pick up a developer's local overrides.
+  **Seicross** now renders under the harness, closing the loop on PR #127, as does
+  `AV Pachi-Slot`. The risk was measured rather than assumed: all 25 staged ROMs
+  whose mapper or submapper the database changes were run, and none went blank.
+
 ## [2.3.3] - 2026-08-14 - "Cadence" (display pacing + the run-ahead throttle)
 
 ### Added

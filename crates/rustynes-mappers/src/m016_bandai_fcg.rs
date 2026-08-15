@@ -353,7 +353,13 @@ impl Eeprom {
             I2cMode::Read => {
                 if self.counter == 8 {
                     self.mode = I2cMode::WaitAck;
-                    self.addr = (self.addr + 1) & self.addr_mask();
+                    // The EEPROM byte-address counter is a hardware ring: it advances
+                    // within the device and rolls over at the top rather than
+                    // faulting. `addr` is a `u8` and `addr_mask()` is 0xFF on every
+                    // chip but the X24C01, so the mask cannot express that rollover
+                    // on its own -- the add traps in a debug build first. Wrap
+                    // explicitly; the mask still confines the X24C01 to 7 bits.
+                    self.addr = self.addr.wrapping_add(1) & self.addr_mask();
                 }
             }
             I2cMode::Write => {
@@ -365,7 +371,13 @@ impl Eeprom {
                         I2cMode::Write
                     };
                     self.mem[(self.addr & self.addr_mask()) as usize] = self.data;
-                    self.addr = (self.addr + 1) & self.addr_mask();
+                    // The EEPROM byte-address counter is a hardware ring: it advances
+                    // within the device and rolls over at the top rather than
+                    // faulting. `addr` is a `u8` and `addr_mask()` is 0xFF on every
+                    // chip but the X24C01, so the mask cannot express that rollover
+                    // on its own -- the add traps in a debug build first. Wrap
+                    // explicitly; the mask still confines the X24C01 to 7 bits.
+                    self.addr = self.addr.wrapping_add(1) & self.addr_mask();
                     self.counter = 0;
                 }
             }
@@ -1029,5 +1041,39 @@ mod tests {
         assert_eq!(m.ppu_read(0x0000), m2.ppu_read(0x0000));
         assert_eq!(m.irq_counter, m2.irq_counter);
         assert_eq!(m2.eeprom.as_ref().unwrap().mem[0], 0x42);
+    }
+
+    // ---- EEPROM address-counter rollover ------------------------------------
+    //
+    // The counter is a `u8` masked to 0xFF (0x7F on the X24C01), so the mask
+    // cannot express the wrap on its own and the add has to do it. These pin
+    // both chips at the boundary, for the read path and the write path, because
+    // the bug was a debug-build panic rather than a wrong value -- a test that
+    // only checked the returned byte would have passed before the fix.
+
+    #[test]
+    fn eeprom_address_wraps_at_the_top_of_each_chip() {
+        for (bytes, is_x24c01, top) in [(256usize, false, 0xFFu8), (128, true, 0x7F)] {
+            let mut e = Eeprom::new(bytes, is_x24c01);
+            e.addr = top;
+            e.data = 0xA5;
+            e.counter = 8;
+            e.mode = I2cMode::Write;
+            // Completing the byte must advance past the top without trapping.
+            e.clock_fall(0);
+            assert_eq!(e.addr, 0, "x24c01={is_x24c01}: ${top:02X} + 1 wraps to $00");
+        }
+    }
+
+    #[test]
+    fn eeprom_sequential_read_wraps_at_the_top_of_each_chip() {
+        for (bytes, is_x24c01, top) in [(256usize, false, 0xFFu8), (128, true, 0x7F)] {
+            let mut e = Eeprom::new(bytes, is_x24c01);
+            e.addr = top;
+            e.counter = 8;
+            e.mode = I2cMode::Read;
+            e.clock_fall(0);
+            assert_eq!(e.addr, 0, "x24c01={is_x24c01}: read rollover reaches $00");
+        }
     }
 }

@@ -35,7 +35,7 @@ two newest upstream PPU tests, "ALE + Read" and "Hybrid Addresses", via the prom
 > being "better."
 
 Beyond reference accuracy, RustyNES is a complete, modern emulation platform:
-**172 mapper families** covering the vast majority of the commercial library (plus a
+**174 mapper families** covering the vast majority of the commercial library (plus a
 UNIF `.unf` cartridge loader), the full **Famicom Disk System** (real-BIOS boot with a
 timed disk-head model), **Vs. System / PlayChoice-10** arcade games in true RGB,
 **GGPO-style rollback netplay** (native UDP and browser WebRTC, 2-4 players),
@@ -123,7 +123,7 @@ FME-7, and the full VRC line, plus Vs.-arcade RGB.
 The full per-mapper visual corpus lives in
 [`screenshots/external/`](screenshots/external/) (Core / Curated) and
 [`screenshots/besteffort/`](screenshots/besteffort/) (BestEffort) — boot / title /
-gameplay frames spanning the bulk of the 172 mapper families.
+gameplay frames spanning the bulk of the 174 mapper families.
 
 ---
 
@@ -150,7 +150,7 @@ gameplay frames spanning the bulk of the 172 mapper families.
 
 ### Cartridges and platforms
 
-- **172 mapper families** covering the bulk of the licensed library — NROM, all
+- **174 mapper families** covering the bulk of the licensed library — NROM, all
   MMC1-5, the full VRC1/2/4/6/7 line (incl. VRC6 and VRC7 expansion audio), Sunsoft
   FME-7/1/2/3/4 (+ 5B audio), Namco 163 (+ wavetable), the Taito
   TC0190/TC0690/X1-005/X1-017, J.Y. Company ASIC boards, and the
@@ -483,7 +483,7 @@ in [`docs/architecture.md`](docs/architecture.md) and [`docs/scheduler.md`](docs
 | `rustynes-cpu`           | Cycle-accurate 6502 / 2A03 CPU core                         |
 | `rustynes-ppu`           | Dot-level 2C02 PPU                                          |
 | `rustynes-apu`           | Hardware-accurate 2A03 APU with band-limited synthesis      |
-| `rustynes-mappers`       | 172 mapper families + expansion audio + UNIF loader         |
+| `rustynes-mappers`       | 174 mapper families + expansion audio + UNIF loader         |
 | `rustynes-core`          | Integration layer: Bus, scheduler, console, save states     |
 | `rustynes-script`        | Sandboxed Lua 5.4 scripting engine (native `mlua`, wasm `piccolo`) |
 | `rustynes-frontend`      | `winit` + `wgpu` + `cpal` + `egui` app (binary: `rustynes`) |
@@ -888,7 +888,7 @@ If you use RustyNES in academic research, please cite:
   version = {2.3.0},
   url     = {https://github.com/doublegate/RustyNES},
   note    = {Cycle-accurate NES emulator on a master-clock-precise scheduler;
-             AccuracyCoin 100\% (141/141), nestest 0-diff; 172 mapper families,
+             AccuracyCoin 100\% (141/141), nestest 0-diff; 174 mapper families,
              Famicom Disk System, Vs./PlayChoice-10 RGB, rollback netplay,
              RetroAchievements, a TAStudio piano-roll TAS editor with .fm2/.bk2
              movie interop, and a Mesen2-class debugger; pure-Rust

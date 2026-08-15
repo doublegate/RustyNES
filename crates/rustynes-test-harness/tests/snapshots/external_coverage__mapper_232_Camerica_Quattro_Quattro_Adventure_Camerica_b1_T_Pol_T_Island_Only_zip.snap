@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-232-Camerica-Quattro/Quattro Adventure (Camerica) [b1][T+Pol(T.Island Only)].zip
+rom_sha256=95172901a521104e62369bca193d71b326142ffd9d87f609a6292dce683214ea
+frames=1141
+fb_bytes=245760
+cycles=33949805
+audio_samples=836506
+audio_fnv1a64=99ed049be65503a1
+checkpoint f900 fb_fnv1a64=1719dca5cef7a325
+checkpoint f1100 fb_fnv1a64=d4e54d02d0b98e2e

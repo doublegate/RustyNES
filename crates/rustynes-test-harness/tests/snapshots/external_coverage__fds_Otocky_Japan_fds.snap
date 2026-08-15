@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=fds/Otocky (Japan).fds
+rom_sha256=eb0e8ce695ab96b6e8e73038494fd6203682378f5fb85a065865f46585a8bc9e
+frames=1141
+fb_bytes=245760
+cycles=33949814
+audio_samples=836506
+audio_fnv1a64=a69b582420456af2
+checkpoint f900 fb_fnv1a64=626194f1cf62a32d
+checkpoint f1100 fb_fnv1a64=b08ce0585211cff1

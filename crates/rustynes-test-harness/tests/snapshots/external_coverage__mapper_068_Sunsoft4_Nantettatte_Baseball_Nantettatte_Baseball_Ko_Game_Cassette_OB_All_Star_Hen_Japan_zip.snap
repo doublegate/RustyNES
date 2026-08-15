@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-068-Sunsoft4/Nantettatte!! Baseball + Nantettatte!! Baseball - Ko-Game Cassette - OB All Star Hen (Japan).zip
+rom_sha256=b0243d141b3cc86f4ead84bbdb4267f8beda7744175dccb48b4f797d7be4c6b7
+frames=1141
+fb_bytes=245760
+cycles=33949964
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

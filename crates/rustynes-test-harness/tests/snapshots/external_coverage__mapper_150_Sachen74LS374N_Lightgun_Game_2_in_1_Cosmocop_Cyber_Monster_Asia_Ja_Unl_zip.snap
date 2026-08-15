@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-150-Sachen74LS374N/Lightgun Game 2 in 1 - Cosmocop + Cyber Monster (Asia) (Ja) (Unl).zip
+rom_sha256=6102a22642c4bebe2195957623b4d1cba6fc0edb3f9b422f3f758e0eccf67a2e
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=cbd17d7bc88be5bc
+checkpoint f900 fb_fnv1a64=3b655e12889ae236
+checkpoint f1100 fb_fnv1a64=9c66a3fee797103e

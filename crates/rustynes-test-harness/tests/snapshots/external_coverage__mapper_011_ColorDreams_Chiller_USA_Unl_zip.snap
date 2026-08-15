@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-011-ColorDreams/Chiller (USA) (Unl).zip
+rom_sha256=3adc1d10c3d28525d1e117380d0f83de8f91e4da935eede58c0ad5724e4876b9
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=188bde786ef8f674
+checkpoint f900 fb_fnv1a64=8290fed06a8d80a5
+checkpoint f1100 fb_fnv1a64=8290fed06a8d80a5

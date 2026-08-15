@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-036-TXC36/Strike Wolf (Asia) (Unl).zip
+rom_sha256=27aa072dc3cbed8f55676e7ad1611c50d6306df349c3cc9caf42d00ab9c0687b
+frames=1141
+fb_bytes=245760
+cycles=33949908
+audio_samples=836508
+audio_fnv1a64=1da2742711746942
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

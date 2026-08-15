@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-150-Sachen74LS374N/Chinese Checkers (Asia) (Ja) (NTSC) (Unl).zip
+rom_sha256=a4b1dbf8126b27ed2c1f03d31b0657a0c59626d19dd79ec5eadfd01d7a7e9c83
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=b3fd5339f07af96d
+checkpoint f900 fb_fnv1a64=6e9eaf7e632ad77d
+checkpoint f1100 fb_fnv1a64=5fb205aeff9f67b5

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-075-VRC1/Ganbare Goemon! - Karakuri Douchuu (Japan).zip
+rom_sha256=048dd59d7c476be6e7980eb911b7c100f833f75fd6d42061ac690a882a92cc93
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=04ac6c66d1ce1a07
+checkpoint f900 fb_fnv1a64=76aab148035d5c99
+checkpoint f1100 fb_fnv1a64=d17bc67ab1b20e76

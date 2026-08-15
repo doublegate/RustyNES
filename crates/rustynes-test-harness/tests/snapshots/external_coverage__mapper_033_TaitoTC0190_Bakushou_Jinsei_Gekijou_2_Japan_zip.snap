@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-033-TaitoTC0190/Bakushou!! Jinsei Gekijou 2 (Japan).zip
+rom_sha256=b2f1f862ea86299b0d2f4c719f44acadd95b12bb91f22d9066b0fef01840d112
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=d9214ae7f3916dcf
+checkpoint f900 fb_fnv1a64=0dd7cc76321c85b1
+checkpoint f1100 fb_fnv1a64=0dd7cc76321c85b1

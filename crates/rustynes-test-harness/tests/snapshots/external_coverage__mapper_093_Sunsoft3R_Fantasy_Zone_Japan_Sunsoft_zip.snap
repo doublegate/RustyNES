@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-093-Sunsoft3R/Fantasy Zone (Japan) (Sunsoft).zip
+rom_sha256=f86f9d6f7716258820721db94c4dfb7cdc98a6995db2e9b22db9bd0c4f208703
+frames=1141
+fb_bytes=245760
+cycles=33949786
+audio_samples=836505
+audio_fnv1a64=148a3f006ea333ae
+checkpoint f900 fb_fnv1a64=0c5246bde981c3dc
+checkpoint f1100 fb_fnv1a64=b9dd481b304fb5fa

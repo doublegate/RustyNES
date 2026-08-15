@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-046-RumbleStation/RumbleStation 15-in-1 (Unl).zip
+rom_sha256=be6164f84bca40dea1ba155695b8eff1b141b47f886131b70758f4343777fed4
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=9b347ca7ed24b247
+checkpoint f900 fb_fnv1a64=2936a040165a4f38
+checkpoint f1100 fb_fnv1a64=2936a040165a4f38

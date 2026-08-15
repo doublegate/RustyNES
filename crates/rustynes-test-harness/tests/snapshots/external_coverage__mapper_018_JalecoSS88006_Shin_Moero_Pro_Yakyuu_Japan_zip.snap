@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-018-JalecoSS88006/Shin Moero!! Pro Yakyuu (Japan).zip
+rom_sha256=907e1dbaf421104d6be2d6b7f306b20a8a7bac72fb2bf53642e57ca8c635e260
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=9c6fd2994ffb2260
+checkpoint f900 fb_fnv1a64=d6b0fcf30ab5607b
+checkpoint f1100 fb_fnv1a64=75456f868f78eb0b

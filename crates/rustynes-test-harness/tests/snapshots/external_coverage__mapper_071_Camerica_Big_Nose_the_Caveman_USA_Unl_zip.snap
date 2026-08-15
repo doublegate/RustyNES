@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-071-Camerica/Big Nose the Caveman (USA) (Unl).zip
+rom_sha256=ec4e9cddacf5509a573da821414bc9e8162ddb1c409838d0d2f21c48650d0623
+frames=1141
+fb_bytes=245760
+cycles=33949787
+audio_samples=836505
+audio_fnv1a64=e73bb6ef3075eb6e
+checkpoint f900 fb_fnv1a64=ad8924f6fa42e018
+checkpoint f1100 fb_fnv1a64=576f37f927af1de0

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-080-TaitoX1-005/Minelvaton Saga - Ragon no Fukkatsu (Japan).zip
+rom_sha256=cd678db9c6968cf779a126ed98b767eec5bb083b4b1b5f2c183308f9bf0f6cac
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=4c6e00983b399593
+checkpoint f900 fb_fnv1a64=92b792d63ad3dce4
+checkpoint f1100 fb_fnv1a64=92b792d63ad3dce4

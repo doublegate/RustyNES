@@ -130,6 +130,15 @@ If applicable, add visual evidence of changes (especially for GUI/rendering chan
 - [ ] User-facing changes documented
 - [ ] CONTRIBUTING.md reviewed and followed
 
+### Review closeout
+
+- [ ] Every review **thread** replied to and resolved
+- [ ] Every review **body** read as well — CodeRabbit posts "Outside diff range"
+      and "Additional comments" findings in the review body, **not** as
+      resolvable threads, so a resolve-every-thread sweep cannot see them.
+      Three such findings have reached `main` unaddressed this way; one was a
+      critical defect, and one became issue #360.
+
 ### Compatibility
 
 - [ ] Changes are backward compatible

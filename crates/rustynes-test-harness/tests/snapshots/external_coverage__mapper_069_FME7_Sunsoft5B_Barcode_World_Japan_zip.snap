@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-069-FME7-Sunsoft5B/Barcode World (Japan).zip
+rom_sha256=6a764dcb1479d23d518f58f48a64d1b1e4fb0b7278aec5f36a6e7ab7d03e8c51
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=568699fc8b9758fd
+checkpoint f900 fb_fnv1a64=19deef7cf9299a41
+checkpoint f1100 fb_fnv1a64=19deef7cf9299a41

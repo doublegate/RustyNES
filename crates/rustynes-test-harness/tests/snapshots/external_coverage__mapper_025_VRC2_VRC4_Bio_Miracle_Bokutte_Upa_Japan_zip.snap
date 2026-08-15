@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-025-VRC2-VRC4/Bio Miracle Bokutte Upa (Japan).zip
+rom_sha256=70480da9be7b040ab80f5f58d2976b5ea9bbb4532a375a0a6bbdc44669191f1b
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=22d94ff9f4a3af22
+checkpoint f900 fb_fnv1a64=0fec2ac925a9871c
+checkpoint f1100 fb_fnv1a64=0fec2ac925a9871c

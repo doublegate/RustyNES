@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-118-TxSROM/Pro Sport Hockey.zip
+rom_sha256=7cea3d0efb4195096740a376338b160983f2907d96a9233ab0cf6e89a4e2d03f
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=4e33c83a2f9d8d07
+checkpoint f900 fb_fnv1a64=59a8c6efcc457282
+checkpoint f1100 fb_fnv1a64=59a8c6efcc457282

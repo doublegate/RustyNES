@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-067-Sunsoft3/Mito Koumon - Sekai Manyuu Ki (Japan).zip
+rom_sha256=1dc0aba270da199276538bd06cf851c0791fbcfada5832f5289dd4bb0d187082
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=d1905213539bddcb
+checkpoint f900 fb_fnv1a64=4ee596bee14c5e01
+checkpoint f1100 fb_fnv1a64=01270b2d1eec76e5

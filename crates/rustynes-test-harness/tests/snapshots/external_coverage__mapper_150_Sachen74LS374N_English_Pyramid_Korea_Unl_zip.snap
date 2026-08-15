@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-150-Sachen74LS374N/English, Pyramid (Korea) (Unl).zip
+rom_sha256=a66f42e00fea516a87f66a0cd918b4c0f26313c72ab6f2ada9e78460adf543c5
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=c395f959c4402805
+checkpoint f900 fb_fnv1a64=88f4ab48d4c375ee
+checkpoint f1100 fb_fnv1a64=88f4ab48d4c375ee

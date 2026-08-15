@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-024-VRC6/Pulsewave Invite (2009-08-xx) (PD).zip
+rom_sha256=d45c9f31f84673a4e9a2b1b5159e2fb57be4555538a3c0841515546ae0e767b0
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=b7bd509663aafb0b
+checkpoint f900 fb_fnv1a64=cb55cba318213cd5
+checkpoint f1100 fb_fnv1a64=89676b54a8f6d834

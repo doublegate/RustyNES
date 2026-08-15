@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-021-VRC2-VRC4/Ganbare Goemon Gaiden 2 - Tenka no Zaihou (Japan).zip
+rom_sha256=1f990331f5736ecde89a0df7f6f21af98c599a2e847532b070f7e21a908e93d7
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=dd77eb3d9768c666
+checkpoint f900 fb_fnv1a64=25e10b8e07698d95
+checkpoint f1100 fb_fnv1a64=25e10b8e07698d95

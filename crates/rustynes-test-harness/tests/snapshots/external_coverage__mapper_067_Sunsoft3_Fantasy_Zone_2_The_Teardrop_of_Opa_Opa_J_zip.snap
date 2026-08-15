@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-067-Sunsoft3/Fantasy Zone 2 - The Teardrop of Opa-Opa (J) [!].zip
+rom_sha256=b218fedcc977c6e783c03832a6c76a8f8767f00cb8ab49cff76477fea851817c
+frames=1141
+fb_bytes=245760
+cycles=33949780
+audio_samples=836505
+audio_fnv1a64=b52732e4fb443a53
+checkpoint f900 fb_fnv1a64=e5536575d5bc44e2
+checkpoint f1100 fb_fnv1a64=13b48fb4a1177055

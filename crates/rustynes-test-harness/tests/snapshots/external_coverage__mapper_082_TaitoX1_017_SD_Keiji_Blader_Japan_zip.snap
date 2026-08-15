@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-082-TaitoX1-017/SD Keiji - Blader (Japan).zip
+rom_sha256=56534feaefdd9dc88a88c7732348b0bbe6ca0df0a542beedb71666995c3a96ac
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=c0aece7264ff5dc0
+checkpoint f900 fb_fnv1a64=6d050918defb6c5b
+checkpoint f1100 fb_fnv1a64=cefded6db68263ac

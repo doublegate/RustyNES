@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-242-Waixing43in1/Wai Xing Zhan Shi (Ch).nes
+rom_sha256=efa36c857d4c46d522570437f18dbdb8c0f9675bd0d9dc9b6b1e63e566a87490
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=d2fb99e1cf13da57
+checkpoint f900 fb_fnv1a64=907707c090102e3c
+checkpoint f1100 fb_fnv1a64=601650fb31cdc3b0

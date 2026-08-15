@@ -67,6 +67,7 @@ mmc3-m2-phase-irq = ["rustynes-core/mmc3-m2-phase-irq"]
 mmc3-a12-phase-probe = ["rustynes-core/mmc3-a12-phase-probe"]
 
 [dependencies]
+rustynes-gamedb = { path = "../rustynes-gamedb" }
 rustynes-core.workspace = true
 thiserror.workspace = true
 # PNG encoding for the v1.3.x left-edge capture bin (`capture_left_edge`),

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-151-KonamiVS/Silent Assault (Sachen-Joy Van) [t1].zip
+rom_sha256=700dd39b50cb784f4f45b46e6f2af06e8b584dcf4141a289a2de84d9a72b9e48
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=f8a6ab39b21fca86
+checkpoint f900 fb_fnv1a64=d1b35e242586cc74
+checkpoint f1100 fb_fnv1a64=f24fec4ef3251037

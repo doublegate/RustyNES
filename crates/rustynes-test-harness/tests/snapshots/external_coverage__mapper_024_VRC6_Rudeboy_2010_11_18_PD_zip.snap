@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-024-VRC6/Rudeboy 2010-11-18 (PD).zip
+rom_sha256=e5afbabbbe4a7830e0fe9e2dd49c26de5385705df2a5c4577c37a0f3b9216e0a
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=0d091458bfb32840
+checkpoint f900 fb_fnv1a64=e43cfb88555983cc
+checkpoint f1100 fb_fnv1a64=9603a8ca2c3e33d0

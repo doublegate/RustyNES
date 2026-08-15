@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-064-TengenRAMBO1/Hard Drivin' (USA) (Proto) (Unl).zip
+rom_sha256=0f787289c454d46815e8d0c638c9fb92827e922dc03397f9e348e64b1c75d2ed
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=c03a8487c9f0c5fd
+checkpoint f900 fb_fnv1a64=f1b42c6369b1fe90
+checkpoint f1100 fb_fnv1a64=7447267eacbb9578

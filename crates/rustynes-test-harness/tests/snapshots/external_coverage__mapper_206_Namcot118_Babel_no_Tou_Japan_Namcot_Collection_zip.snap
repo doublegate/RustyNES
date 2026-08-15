@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-206-Namcot118/Babel no Tou (Japan) (Namcot Collection).zip
+rom_sha256=d5a421ae704932f81019226a178e4baf821a90e4e89f3b877c377acbbaa28a59
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=c9b05dbbe0c0c126
+checkpoint f900 fb_fnv1a64=884060a795d28054
+checkpoint f1100 fb_fnv1a64=884060a795d28054

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-033-TaitoTC0190/Akira (Japan).zip
+rom_sha256=da5b3a3b07be5085f528d097eecbac9b65ea5d81cb5ba1076bfcf91d8813f41e
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=7e05049b0b410da8
+checkpoint f900 fb_fnv1a64=002b76930b326803
+checkpoint f1100 fb_fnv1a64=35e7c8fcac7021de

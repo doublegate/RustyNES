@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-147-Sachen3018-JV001/Chinese KungFu (Asia) (Ja) (Unl).zip
+rom_sha256=58f0eb9f2ac79a705f05ba55d2d4fb1581b46334e7427f9e042c62bb3397d638
+frames=1141
+fb_bytes=245760
+cycles=33949783
+audio_samples=836505
+audio_fnv1a64=f181792247ff555a
+checkpoint f900 fb_fnv1a64=715a7fe33141301e
+checkpoint f1100 fb_fnv1a64=715a7fe33141301e

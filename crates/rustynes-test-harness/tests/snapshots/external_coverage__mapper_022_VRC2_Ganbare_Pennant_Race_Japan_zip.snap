@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-022-VRC2/Ganbare Pennant Race! (Japan).zip
+rom_sha256=f6cd5917b126ddc1e7a99dac08733d9d1abcb51ad78aa52f3844eb3e82a44d35
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=6648950531d5dcce
+checkpoint f900 fb_fnv1a64=d7d8192d0f13caf9
+checkpoint f1100 fb_fnv1a64=d7d8192d0f13caf9

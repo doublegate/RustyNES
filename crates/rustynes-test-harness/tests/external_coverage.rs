@@ -199,7 +199,7 @@ fn capture_override(rom_rel: &str) -> Option<InputScript> {
 /// NES/FDS/UNIF entry and routing an FDS disk through `Nes::from_disk` with a
 /// resolved BIOS. So a ROM left zipped, or an `.fds` disk, gets a boot
 /// screenshot just like a loose `.nes`.
-fn discover_external_roms() -> Vec<String> {
+fn discover_external_roms_raw() -> Vec<String> {
     let root = external_root();
     let mut out: Vec<String> = Vec::new();
     let Ok(entries) = fs::read_dir(&root) else {
@@ -253,6 +253,92 @@ fn discover_external_roms() -> Vec<String> {
     out
 }
 
+/// Every staged ROM, with snapshot-id collisions resolved. This is what the
+/// sweep runs; [`discover_external_roms_raw`] is what it found before
+/// [`dedupe_colliding_ids`] had a say, and the two are kept separate so a test
+/// can assert something about the raw corpus that deduplication would otherwise
+/// have made true by construction.
+fn discover_external_roms() -> Vec<String> {
+    dedupe_colliding_ids(discover_external_roms_raw())
+}
+
+/// Collapse ROMs that share a [`snapshot_id`], or fail loudly if they cannot be.
+///
+/// Two staged files can normalise to one id even after the extension is folded
+/// in, because the id sanitiser maps every non-alphanumeric run to a single `_`:
+/// `Magic Dragon (Unl).nes` and `Magic Dragon _Unl_.nes` are distinct files with
+/// the same id. Left alone that is *permanent* -- both write the same snapshot
+/// with a different `rom=` line, so exactly one of the pair mismatches on every
+/// run and blessing one breaks the other. That is the same failure the extension
+/// suffix was added to fix, arriving by a second route, and it is invisible in
+/// the output because a mismatch looks like ordinary baseline drift.
+///
+/// When the colliding files are **byte-identical** -- which is what a sanitised
+/// duplicate of an existing dump is -- one baseline is the correct answer for
+/// both, so the lexicographically-first path is kept and the rest are dropped
+/// with a note. When they **differ**, no single baseline can be right and the
+/// sweep aborts naming the paths, because that needs a human to rename or
+/// remove one, not a silent choice made here.
+fn dedupe_colliding_ids(roms: Vec<String>) -> Vec<String> {
+    dedupe_colliding_ids_in(&external_root(), roms)
+}
+
+/// [`dedupe_colliding_ids`] against an explicit corpus root, so the collision
+/// handling is testable without staging colliding ROMs in the real corpus. The
+/// staged corpus is currently 1:1 (691 files, 691 ids), which is exactly why
+/// this needs its own test: a safety net nothing exercises is decoration.
+fn dedupe_colliding_ids_in(root: &Path, roms: Vec<String>) -> Vec<String> {
+    use std::collections::BTreeMap;
+
+    let mut by_id: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for rom in roms {
+        by_id.entry(snapshot_id(&rom)).or_default().push(rom);
+    }
+
+    let mut kept = Vec::new();
+    let mut conflicts = Vec::new();
+    for (id, mut group) in by_id {
+        if group.len() > 1 {
+            group.sort();
+            let digests: Vec<Option<[u8; 32]>> =
+                group.iter().map(|r| file_digest(&root.join(r))).collect();
+            let all_same = digests.windows(2).all(|w| w[0].is_some() && w[0] == w[1]);
+            if all_same {
+                eprintln!(
+                    "[external_coverage] snapshot id `{id}` is shared by {} byte-identical \
+                     staged files; keeping `{}` and skipping the rest: {:?}",
+                    group.len(),
+                    group[0],
+                    &group[1..]
+                );
+            } else {
+                conflicts.push(format!("  id `{id}` <- {group:?}"));
+                continue;
+            }
+        }
+        kept.push(group.swap_remove(0));
+    }
+
+    assert!(
+        conflicts.is_empty(),
+        "external_coverage: {} snapshot id(s) are shared by staged ROMs whose CONTENTS differ, \
+         so no single baseline can be correct for them and each run would report a spurious \
+         mismatch. Rename or remove one of each set:\n{}",
+        conflicts.len(),
+        conflicts.join("\n")
+    );
+
+    kept.sort();
+    kept
+}
+
+/// SHA-256 of a file, or `None` if it cannot be read.
+fn file_digest(path: &Path) -> Option<[u8; 32]> {
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read(path).ok()?;
+    Some(Sha256::digest(bytes).into())
+}
+
 /// Resolve `<workspace>/tests/roms/external/`.
 fn external_root() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -275,10 +361,45 @@ fn snapshot_id(rom_rel: &str) -> String {
     let path = Path::new(rom_rel);
     let dir = path.parent().and_then(|p| p.to_str()).unwrap_or_default();
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(rom_rel);
-    let joined = if dir.is_empty() {
+    // v2.3.4 — the EXTENSION has to take part, or a game staged in two forms
+    // collides on one id.
+    //
+    // The corpus deliberately stages some titles both loose and archived, so
+    // the archive load path gets boot coverage too (T-PS-059). Because the id
+    // was built from `file_stem()`, `Foo.nes` and `Foo.zip` produced the SAME
+    // id, wrote the same snapshot with a different `rom=` line, and exactly one
+    // of every pair mismatched on every run -- permanently, and un-fixable by
+    // blessing, because blessing one broke the other. Measured on the corpus:
+    // 54 colliding ids over 108 ROMs, which is exactly the number of otherwise
+    // unexplained persistent mismatches.
+    //
+    // `.nes` keeps the bare id and every other form is suffixed, rather than
+    // appending unconditionally, because that would have orphaned every
+    // committed baseline at once.
+    //
+    // It does NOT make the change free, and an earlier version of this comment
+    // claimed it did. The bare id only survives for a title that has a `.nes`
+    // form; an archive-only ROM previously owned the bare id outright, so its
+    // baseline IS orphaned by the suffix. Measured on this corpus: 283 of the
+    // 691 staged ROMs, which were re-blessed under their new ids and whose dead
+    // baselines were removed in the same change. The remaining orphaned
+    // baselines belong to ROMs not staged on this machine and were deliberately
+    // left alone -- `tests/roms/external/` is gitignored, so a baseline with no
+    // local ROM means someone else's corpus is larger, not that it is stale.
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| !e.eq_ignore_ascii_case("nes"))
+        .unwrap_or_default();
+    let stem_ext = if ext.is_empty() {
         stem.to_string()
     } else {
-        format!("{dir}__{stem}")
+        format!("{stem}_{ext}")
+    };
+    let joined = if dir.is_empty() {
+        stem_ext
+    } else {
+        format!("{dir}__{stem_ext}")
     };
     // Collapse every non-alphanumeric run to a single '_', trim edges.
     let mut id = String::with_capacity(joined.len());
@@ -302,6 +423,62 @@ fn snapshot_id(rom_rel: &str) -> String {
 /// blank / few-colour health verdict, and (2) the derived `insta`
 /// snapshot comparison. Per-ROM assertion panics are caught and
 /// aggregated so one missing/mismatched baseline (or one blank boot)
+/// v2.3.4 — narrow the sweep to the ROMs whose paths contain any of the
+/// comma-separated needles in `RUSTYNES_COVERAGE_FILTER` (case-insensitive).
+///
+/// The full sweep is **699 ROMs x ~1,290 boot frames == ~900k emulated frames,
+/// about 70 minutes single-threaded**. That is the right cost for a release
+/// gate and the wrong cost for the loop you actually work in — diagnosing one
+/// drifted baseline should not require re-booting the entire corpus, and
+/// before this the only way to re-check one ROM was to run all of them.
+///
+/// Matching is a plain substring over the ROM's path relative to
+/// `tests/roms/external/`, so the useful granularities all fall out of one
+/// mechanism: a family (`mapper-250`), a directory (`pc10`), a specific title
+/// (`Power Blade`), or several at once (`pc10,mapper-250`).
+///
+/// ```text
+/// RUSTYNES_COVERAGE_FILTER=pc10 cargo test -p rustynes-test-harness \
+///     --features test-roms,commercial-roms --test external_coverage
+/// ```
+///
+/// Unset (the default) runs everything, so the gate is unchanged. An
+/// unmatched filter is a hard failure rather than a silent pass: a typo that
+/// quietly ran zero ROMs and reported green is exactly the "the suite is fine"
+/// answer that hides a red net.
+fn apply_filter(all: Vec<String>) -> Vec<String> {
+    let Ok(raw) = std::env::var("RUSTYNES_COVERAGE_FILTER") else {
+        return all;
+    };
+    let needles: Vec<String> = raw
+        .split(',')
+        .map(|n| n.trim().to_ascii_lowercase())
+        .filter(|n| !n.is_empty())
+        .collect();
+    if needles.is_empty() {
+        return all;
+    }
+    let total = all.len();
+    let kept: Vec<String> = all
+        .into_iter()
+        .filter(|rom| {
+            let hay = rom.to_ascii_lowercase();
+            needles.iter().any(|n| hay.contains(n.as_str()))
+        })
+        .collect();
+    assert!(
+        !kept.is_empty(),
+        "RUSTYNES_COVERAGE_FILTER={raw:?} matched none of the {total} staged ROMs. \
+         Refusing to report a green run over an empty set — check the spelling, or \
+         unset the variable to sweep everything."
+    );
+    eprintln!(
+        "[external_coverage] filter {raw:?} -> {} of {total} staged ROM(s)",
+        kept.len()
+    );
+    kept
+}
+
 /// does not hide the rest — the final panic message lists EVERY failing
 /// ROM with its reason.
 ///
@@ -309,7 +486,8 @@ fn snapshot_id(rom_rel: &str) -> String {
 /// so a fresh checkout without the gitignored dumps stays green.
 #[test]
 fn external_coverage_boot_smoke() {
-    let roms = discover_external_roms();
+    let all = discover_external_roms();
+    let roms = apply_filter(all);
     if roms.is_empty() {
         eprintln!(
             "[external_coverage] SKIP: no ROMs staged under {} — \
@@ -350,7 +528,14 @@ fn external_coverage_boot_smoke() {
                 // We do NOT panic on a blank frame (so the snapshot still
                 // gets a chance to bless / compare); instead we record it
                 // and surface it in the aggregated failure list.
-                let health = capture.final_frame_health;
+                // v2.3.4 — judge the BEST frame the capture saw, not the one it
+                // happened to stop on. The check exists to catch a boot that
+                // never rendered; a boot that crashed or hung shows nothing at
+                // every checkpoint, while a healthy ROM whose script ends on a
+                // dark transition (Solstice: full title at f1100, uniform black
+                // at the final frame) is not a failure and was being reported as
+                // one.
+                let health = capture.best_frame_health;
                 let blank = if health.looks_blank() {
                     Some(format!(
                         "blank/few-colour boot: {} distinct colour(s), \
@@ -400,5 +585,111 @@ fn external_coverage_boot_smoke() {
         failures.len(),
         roms.len(),
         failures.join("\n  "),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot-id collision handling.
+//
+// These run without any staged ROM, against a temp corpus, because the real
+// corpus is deliberately 1:1 (691 files, 691 ids) after the duplicate cleanup --
+// so nothing in the sweep exercises this path any more. It is a regression net
+// for a failure that has now arrived twice by two different routes (archive
+// forms sharing a stem, then sanitized filename copies), and both times it
+// presented as ordinary baseline drift rather than as an error.
+// ---------------------------------------------------------------------------
+
+/// Build a throwaway corpus root and return its path plus the relative names.
+fn stage_tmp_corpus(tag: &str, files: &[(&str, &[u8])]) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("rustynes-coverage-collide-{tag}"));
+    let _ = std::fs::remove_dir_all(&root);
+    for (rel, bytes) in files {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&path, bytes).expect("write");
+    }
+    root
+}
+
+#[test]
+fn byte_identical_files_sharing_a_snapshot_id_collapse_to_one() {
+    // `(Unl)` and `_Unl_` normalise to the same id, and both are `.nes`, so the
+    // extension suffix cannot separate them. Same bytes => one baseline is the
+    // right answer for both.
+    let root = stage_tmp_corpus(
+        "identical",
+        &[
+            ("m107/Magic Dragon (Unl).nes", b"ROMBYTES"),
+            ("m107/Magic Dragon _Unl_.nes", b"ROMBYTES"),
+            ("m107/Other Game.nes", b"DIFFERENT"),
+        ],
+    );
+    let roms = vec![
+        "m107/Magic Dragon (Unl).nes".to_string(),
+        "m107/Magic Dragon _Unl_.nes".to_string(),
+        "m107/Other Game.nes".to_string(),
+    ];
+    assert_eq!(snapshot_id(&roms[0]), snapshot_id(&roms[1]), "premise");
+
+    let kept = dedupe_colliding_ids_in(&root, roms);
+    assert_eq!(
+        kept.len(),
+        2,
+        "the colliding pair must collapse to one entry"
+    );
+    assert!(
+        kept.contains(&"m107/Magic Dragon (Unl).nes".to_string()),
+        "the lexicographically-first path is the one kept, so the `rom=` line in \
+         an already-blessed baseline stays correct: {kept:?}"
+    );
+    assert!(kept.contains(&"m107/Other Game.nes".to_string()));
+}
+
+#[test]
+#[should_panic(expected = "whose CONTENTS differ")]
+fn differing_files_sharing_a_snapshot_id_abort_the_sweep() {
+    // Different bytes cannot share a baseline, so this must be loud rather than
+    // silently picking one -- picking one is what produced a permanent,
+    // un-blessable mismatch on every run the last two times.
+    let root = stage_tmp_corpus(
+        "differing",
+        &[
+            ("m107/Magic Dragon (Unl).nes", b"ROM-A"),
+            ("m107/Magic Dragon _Unl_.nes", b"ROM-B"),
+        ],
+    );
+    let roms = vec![
+        "m107/Magic Dragon (Unl).nes".to_string(),
+        "m107/Magic Dragon _Unl_.nes".to_string(),
+    ];
+    let _ = dedupe_colliding_ids_in(&root, roms);
+}
+
+#[test]
+fn a_corpus_without_collisions_passes_through_unchanged() {
+    let root = stage_tmp_corpus("clean", &[("m000/A.nes", b"A"), ("m000/B.nes", b"B")]);
+    let roms = vec!["m000/A.nes".to_string(), "m000/B.nes".to_string()];
+    assert_eq!(dedupe_colliding_ids_in(&root, roms.clone()), roms);
+}
+
+#[test]
+fn the_staged_corpus_has_no_snapshot_id_collisions() {
+    // Standing assertion on the real corpus: after the v2.3.4 cleanup it is 1:1,
+    // and a future staging mistake should surface here rather than as drift.
+    // RAW, deliberately: `discover_external_roms()` runs the deduper, so
+    // asserting uniqueness on its output only proves the deduper returned unique
+    // ids -- true by construction, and a test that cannot fail.
+    let roms = discover_external_roms_raw();
+    let mut ids: Vec<String> = roms.iter().map(|r| snapshot_id(r)).collect();
+    ids.sort();
+    let before = ids.len();
+    ids.dedup();
+    assert_eq!(
+        before,
+        ids.len(),
+        "{} staged ROM(s) share a snapshot id BEFORE deduplication. The deduper \
+             will collapse byte-identical ones, but the corpus is meant to be 1:1 -- \
+             a new collision means a duplicate or a near-duplicate filename was staged.",
+        before - ids.len()
     );
 }

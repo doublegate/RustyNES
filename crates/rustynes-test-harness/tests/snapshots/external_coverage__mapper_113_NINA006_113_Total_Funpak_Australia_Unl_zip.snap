@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-113-NINA006-113/Total Funpak (Australia) (Unl).zip
+rom_sha256=5d97e0098ab2bbde578babeabe9baafcb6a383ac0ef5e21fd6bd4e25ccd2e5c0
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=b9d0cd8f2e67fa12
+checkpoint f900 fb_fnv1a64=ec1fdfc52982ac2e
+checkpoint f1100 fb_fnv1a64=44129fd97553f159

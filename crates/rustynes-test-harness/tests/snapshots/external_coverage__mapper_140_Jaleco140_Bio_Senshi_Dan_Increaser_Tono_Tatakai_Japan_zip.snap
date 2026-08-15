@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-140-Jaleco140/Bio Senshi Dan - Increaser Tono Tatakai (Japan).zip
+rom_sha256=5d9d607b809fb6e25b9ca5ccd08208a706bad096bd6024ffb5df2493076a0fda
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=ce26c48f5d2c62b4
+checkpoint f900 fb_fnv1a64=a5a32c3d22e5ca53
+checkpoint f1100 fb_fnv1a64=74c4f8174176961c

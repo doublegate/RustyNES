@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-015-Multicart15/Bao Xiao San Guo (Asia) (Unl) [b].zip
+rom_sha256=27015b24271867fb47d2a3de5288f0cadad7119a0fbab1efab8be5cbe3304395
+frames=1141
+fb_bytes=245760
+cycles=40428961
+audio_samples=996152
+audio_fnv1a64=e59ee5bfc32bbe80
+checkpoint f900 fb_fnv1a64=105e14f251fa37c7
+checkpoint f1100 fb_fnv1a64=105e14f251fa37c7

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-113-NINA006-113/Mindblower Pak (Australia) (Unl).zip
+rom_sha256=3f126b0e63ac72a8302f338cf7e8e1121881b840ee6bba4501ea4ecf46105825
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=c6c6d8adeba721cf
+checkpoint f900 fb_fnv1a64=8f05ce7b32a93c95
+checkpoint f1100 fb_fnv1a64=1ab198c4d58855ef

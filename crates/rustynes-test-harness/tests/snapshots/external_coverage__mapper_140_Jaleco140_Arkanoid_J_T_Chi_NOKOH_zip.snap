@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-140-Jaleco140/Arkanoid (J) [T+Chi_NOKOH].zip
+rom_sha256=b9c8474ce6de29731e3a02cf953df969dfcdf5ad213abd34e02debb7c21c845c
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=d35409942966d440
+checkpoint f900 fb_fnv1a64=bd5d09e870301bb2
+checkpoint f1100 fb_fnv1a64=c0084959cf38e49b

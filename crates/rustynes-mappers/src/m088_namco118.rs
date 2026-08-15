@@ -53,7 +53,11 @@ const CHR_BANK_1K: usize = 0x0400;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-const SAVE_STATE_VERSION: u8 = 1;
+// v2 appends the mirroring byte. Mapper 154 makes mirroring MUTABLE state (the
+// $8000-$FFFF bit-6 nametable select), so a v1 blob -- which never carried it --
+// would silently restore the wrong CIRAM page. 88/206 keep a constant mirroring
+// and are unaffected in behaviour, but share the layout.
+const SAVE_STATE_VERSION: u8 = 2;
 
 /// Board variant for the Namco 118 family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +67,12 @@ pub enum Namco118Board {
     /// Mapper 88: PPU A12 wired to CHR A16, splitting CHR into two disjoint
     /// 64 KiB halves between the left and right pattern tables.
     M88,
+    /// Mapper 154 / NAMCOT-3453: mapper 88 plus one-screen nametable control.
+    ///
+    /// Identical to [`Namco118Board::M88`] -- including the A12/A16 CHR split --
+    /// with a single added bit that selects between the two CIRAM pages. The
+    /// board exists for exactly one game, *Devil Man*.
+    M154,
 }
 
 /// Namco 118 / DxROM mapper (iNES 206 + 88).
@@ -178,7 +188,8 @@ impl Namco118 {
     /// second 64 KiB CHR half (`bank & $3F | $40`). For DxROM, identity.
     fn m88_high(&self, reg: usize) -> usize {
         match self.board {
-            Namco118Board::M88 => (reg & 0x3F) | 0x40,
+            // 154 is 88 in every respect but the nametable bit, including this.
+            Namco118Board::M88 | Namco118Board::M154 => (reg & 0x3F) | 0x40,
             Namco118Board::Dxrom => reg,
         }
     }
@@ -214,6 +225,20 @@ impl Mapper for Namco118 {
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
         if let 0x8000..=0xFFFF = addr {
+            // Mapper 154 (NAMCOT-3453) carries a one-screen nametable select in
+            // bit 6, and the wiki is explicit that it is decoded across the WHOLE
+            // $8000-$FFFF range -- unlike the bank-select register it shares a
+            // byte with, which the associated Namco 108 only decodes at
+            // $8000-$9FFF. So this is deliberately outside the even/odd split
+            // below and sees every write, including bank-data writes to odd
+            // addresses and writes above $9FFF.
+            if self.board == Namco118Board::M154 {
+                self.mirroring = if value & 0x40 == 0 {
+                    Mirroring::SingleScreenA
+                } else {
+                    Mirroring::SingleScreenB
+                };
+            }
             // Register mask $E001: even = bank-select, odd = bank-data.
             // There are no control registers in $A000-$FFFF (unlike MMC3).
             if addr & 1 == 0 {
@@ -266,12 +291,14 @@ impl Mapper for Namco118 {
     fn debug_info(&self) -> crate::mapper::MapperDebugInfo {
         let id = match self.board {
             Namco118Board::M88 => 88,
+            Namco118Board::M154 => 154,
             Namco118Board::Dxrom => 206,
         };
         let mut info = crate::mapper::MapperDebugInfo {
             mapper_id: id,
             name: match self.board {
                 Namco118Board::M88 => "Namco 118 (88)".into(),
+                Namco118Board::M154 => "NAMCOT-3453 (154)".into(),
                 Namco118Board::Dxrom => "DxROM / Namco 118 (206)".into(),
             },
             mirroring: crate::mapper::mirroring_name(self.mirroring),
@@ -290,11 +317,19 @@ impl Mapper for Namco118 {
 
     fn save_state(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(
-            10 + self.vram.len() + if self.chr_is_ram { self.chr.len() } else { 0 },
+            11 + self.vram.len() + if self.chr_is_ram { self.chr.len() } else { 0 },
         );
         out.push(SAVE_STATE_VERSION);
         out.extend_from_slice(&self.regs);
         out.push(self.bank_select);
+        out.push(match self.mirroring {
+            Mirroring::Horizontal => 0,
+            Mirroring::Vertical => 1,
+            Mirroring::SingleScreenA => 2,
+            Mirroring::SingleScreenB => 3,
+            Mirroring::FourScreen => 4,
+            Mirroring::MapperControlled => 5,
+        });
         out.extend_from_slice(&self.vram);
         if self.chr_is_ram {
             out.extend_from_slice(&self.chr);
@@ -304,19 +339,51 @@ impl Mapper for Namco118 {
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
-        let expected = 10 + self.vram.len() + need_chr;
-        if data.len() != expected {
-            return Err(MapperError::Truncated {
-                expected,
-                got: data.len(),
-            });
-        }
-        if data[0] != SAVE_STATE_VERSION {
+        // v1 had no mirroring byte, so it is exactly one shorter. Accept it and
+        // keep the mirroring the cartridge was constructed with -- which is the
+        // right answer, because a v1 state can only have come from mapper 88 or
+        // 206, where mirroring is hardwired and never changed at runtime. Only
+        // mapper 154 makes it mutable, and 154 has no v1 states to load.
+        // Rejecting them would break every existing slot for a field they could
+        // not have contained (ADR 0028 reserves format epochs for a MAJOR cut).
+        let with_mirroring = 11 + self.vram.len() + need_chr;
+        let legacy = with_mirroring - 1;
+        let has_mirroring = match data.len() {
+            n if n == with_mirroring => true,
+            n if n == legacy => false,
+            got => {
+                return Err(MapperError::Truncated {
+                    expected: with_mirroring,
+                    got,
+                });
+            }
+        };
+        // Length and version must AGREE -- a v2 blob one byte short has the
+        // legacy length while still declaring version 2, and accepting it would
+        // reinterpret a corrupt state as an older one rather than erroring.
+        let version_ok = if has_mirroring {
+            data[0] == SAVE_STATE_VERSION
+        } else {
+            data[0] == 1
+        };
+        if !version_ok {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.regs.copy_from_slice(&data[1..9]);
         self.bank_select = data[9];
         let mut cursor = 10;
+        if has_mirroring {
+            self.mirroring = match data[10] {
+                0 => Mirroring::Horizontal,
+                1 => Mirroring::Vertical,
+                2 => Mirroring::SingleScreenA,
+                3 => Mirroring::SingleScreenB,
+                4 => Mirroring::FourScreen,
+                5 => Mirroring::MapperControlled,
+                _ => self.mirroring,
+            };
+            cursor += 1;
+        }
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
         cursor += self.vram.len();
@@ -466,5 +533,156 @@ mod tests {
         m2.load_state(&blob).unwrap();
         assert_eq!(m.cpu_read(0x8000), m2.cpu_read(0x8000));
         assert_eq!(m.ppu_read(0x0000), m2.ppu_read(0x0000));
+    }
+
+    // ---- mapper 154 (NAMCOT-3453) ------------------------------------------
+
+    fn m154() -> Namco118 {
+        Namco118::new(
+            synth_prg(8),
+            synth_chr(128),
+            Mirroring::Vertical,
+            Namco118Board::M154,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn m154_bit6_selects_the_one_screen_page() {
+        let mut m = m154();
+        m.cpu_write(0x8000, 0x00);
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
+        m.cpu_write(0x8000, 0x40);
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenB);
+    }
+
+    #[test]
+    fn m154_decodes_the_nametable_bit_across_the_whole_8000_ffff_range() {
+        // The wiki is explicit that this bit is present over the entire 32 KiB
+        // range, unlike the bank-select register it shares a byte with. An
+        // implementation that folded it into the even-address arm would miss
+        // every one of these.
+        for addr in [0x8001u16, 0x9FFF, 0xA000, 0xC001, 0xFFFF] {
+            let mut m = m154();
+            m.cpu_write(0x8000, 0x00);
+            assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
+            m.cpu_write(addr, 0x40);
+            assert_eq!(
+                m.current_mirroring(),
+                Mirroring::SingleScreenB,
+                "bit 6 must be decoded at ${addr:04X}"
+            );
+        }
+    }
+
+    #[test]
+    fn m154_keeps_the_mapper_88_chr_split() {
+        // 154 is 88 in every respect but the nametable bit, so the right pattern
+        // table must still come from the second 64 KiB half.
+        let mut a = m154();
+        let mut b = Namco118::new(
+            synth_prg(8),
+            synth_chr(128),
+            Mirroring::Vertical,
+            Namco118Board::M88,
+        )
+        .unwrap();
+        for m in [&mut a, &mut b] {
+            m.cpu_write(0x8000, 0x02); // select R2
+            m.cpu_write(0x8001, 0x05);
+        }
+        assert_eq!(a.ppu_read(0x1000), b.ppu_read(0x1000));
+        assert_eq!(a.ppu_read(0x1000), (0x05u8 & 0x3F) | 0x40);
+    }
+
+    #[test]
+    fn m154_bank_writes_still_work_while_setting_mirroring() {
+        // The nametable bit rides along with bank-data writes, so a value with
+        // bit 6 set must still land in the selected register.
+        let mut m = m154();
+        m.cpu_write(0x8000, 0x06); // select R6 (PRG @ $8000)
+        m.cpu_write(0x8001, 0x43); // bank 3, and bit 6 set
+        assert_eq!(
+            m.cpu_read(0x8000),
+            3,
+            "the bank register still took the value"
+        );
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenB);
+    }
+
+    #[test]
+    fn m154_mirroring_survives_a_save_state() {
+        // Mirroring is mutable on this board, so it has to be serialized -- a v1
+        // blob never carried it and would restore the wrong CIRAM page.
+        let mut m = m154();
+        m.cpu_write(0x8000, 0x40);
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenB);
+        let blob = m.save_state();
+
+        let mut m2 = m154();
+        m2.cpu_write(0x8000, 0x00);
+        assert_eq!(m2.current_mirroring(), Mirroring::SingleScreenA);
+        m2.load_state(&blob).unwrap();
+        assert_eq!(m2.current_mirroring(), Mirroring::SingleScreenB);
+    }
+
+    #[test]
+    fn m88_ignores_bit6_so_it_is_unchanged() {
+        let mut m = Namco118::new(
+            synth_prg(8),
+            synth_chr(128),
+            Mirroring::Vertical,
+            Namco118Board::M88,
+        )
+        .unwrap();
+        m.cpu_write(0x8000, 0x40);
+        assert_eq!(m.current_mirroring(), Mirroring::Vertical);
+    }
+
+    #[test]
+    fn m88_loads_a_v1_state_that_predates_the_mirroring_byte() {
+        // v1 carried no mirroring byte. Rejecting those would break every
+        // existing mapper-88/206 slot for a field they could not have held, and
+        // ADR 0028 reserves format epochs for a MAJOR cut. Safe here because
+        // mirroring is hardwired on 88/206; only 154 makes it mutable, and 154
+        // is new, so it has no v1 states.
+        let mut m = Namco118::new(
+            synth_prg(8),
+            synth_chr(64),
+            Mirroring::Vertical,
+            Namco118Board::M88,
+        )
+        .unwrap();
+        m.cpu_write(0x8000, 0x06);
+        m.cpu_write(0x8001, 3);
+        let v2 = m.save_state();
+
+        // Legacy form: v1 byte, and the mirroring byte (index 10) removed.
+        let mut v1 = Vec::with_capacity(v2.len() - 1);
+        v1.extend_from_slice(&v2[..10]);
+        v1.extend_from_slice(&v2[11..]);
+        v1[0] = 1;
+
+        let mut m2 = Namco118::new(
+            synth_prg(8),
+            synth_chr(64),
+            Mirroring::Vertical,
+            Namco118Board::M88,
+        )
+        .unwrap();
+        m2.load_state(&v1).expect("a v1 state must still load");
+        assert_eq!(m2.cpu_read(0x8000), 3, "bank state round-trips");
+        assert_eq!(
+            m2.current_mirroring(),
+            Mirroring::Vertical,
+            "mirroring stays as constructed, which is correct for a hardwired board"
+        );
+
+        // A v2-length blob still declaring v1 (or vice versa) is NOT a legacy
+        // state, it is a corrupt one, and must be rejected rather than
+        // reinterpreted.
+        let mut mismatched = v2.clone();
+        mismatched[0] = 1;
+        assert!(m2.load_state(&mismatched).is_err());
     }
 }

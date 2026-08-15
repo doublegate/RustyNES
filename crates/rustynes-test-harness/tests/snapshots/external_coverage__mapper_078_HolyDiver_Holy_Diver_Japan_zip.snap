@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-078-HolyDiver/Holy Diver (Japan).zip
+rom_sha256=7bfe98372219f7092c2614b8e83ceb823c30cc8cd513db4ab3956edc228102af
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=469bbe5062b92bfa
+checkpoint f900 fb_fnv1a64=22577db6daa1aee0
+checkpoint f1100 fb_fnv1a64=22577db6daa1aee0

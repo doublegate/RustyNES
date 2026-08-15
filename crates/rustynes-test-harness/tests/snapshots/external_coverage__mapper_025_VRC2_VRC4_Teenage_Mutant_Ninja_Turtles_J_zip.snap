@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-025-VRC2-VRC4/Teenage Mutant Ninja Turtles (J) [!].zip
+rom_sha256=acffc471d496450136f8c39f02461fe063a25209bf984228015053db70c71037
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=cf7c383e2986eb13
+checkpoint f900 fb_fnv1a64=c8c564097f42153b
+checkpoint f1100 fb_fnv1a64=11239f0e48089c40

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-203-Multicart203/35-in-1 Happy [p1][!].zip
+rom_sha256=d733c1027f5a41f31f2facd63f3766f889f80a310dbbe30d4984e22aa3805ee3
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=cc9598f6bcba8286
+checkpoint f900 fb_fnv1a64=be09aebc6d9bcf3c
+checkpoint f1100 fb_fnv1a64=64776b355a40e6b9

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-064-TengenRAMBO1/Road Runner (USA) (Unl).zip
+rom_sha256=1ea2ef502316393e46e28239f9a6fcd9b78a37b4b67269d7a8184e6d57fd5c7e
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=31c413380319d25f
+checkpoint f900 fb_fnv1a64=6485f5aac07746c3
+checkpoint f1100 fb_fnv1a64=6485f5aac07746c3

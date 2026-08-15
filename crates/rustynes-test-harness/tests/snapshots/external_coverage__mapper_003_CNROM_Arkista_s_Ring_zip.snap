@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-003-CNROM/Arkista's Ring.zip
+rom_sha256=363e204adb5df99d4872c7c752badc3ac58e57f9293f16c1a849f915850d90a1
+frames=1141
+fb_bytes=245760
+cycles=33949782
+audio_samples=836505
+audio_fnv1a64=fbee8fd8826e4851
+checkpoint f900 fb_fnv1a64=1f8b7cb765257d3e
+checkpoint f1100 fb_fnv1a64=1f8b7cb765257d3e

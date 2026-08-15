@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-088-Namco118/Dragon Buster II - Yami no Fuuin (J) [T+Eng1.0_PentarouZero].zip
+rom_sha256=ccdbfd9bbc77926f0c28e9692dae20abc944643b9dee301f0678d089a6311191
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=e99aa954b8cdfb6b
+checkpoint f900 fb_fnv1a64=b0cb39b0cf5940ff
+checkpoint f1100 fb_fnv1a64=b0cb39b0cf5940ff

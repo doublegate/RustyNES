@@ -399,6 +399,17 @@ pub mod external {
         /// not [`looks_blank`](FrameHealth::looks_blank); the curated
         /// harnesses ignore it.
         pub final_frame_health: FrameHealth,
+        /// v2.3.4 — the most content-ful frame health seen across ALL captured
+        /// checkpoints AND the final frame.
+        ///
+        /// [`Self::final_frame_health`] judges only the frame the script
+        /// happened to stop on, which conflates "this boot never rendered" with
+        /// "this capture ended on a dark transition". Solstice renders its full
+        /// title screen at f1100 and is uniformly black by the final frame; on
+        /// the final-frame reading alone it is indistinguishable from a ROM that
+        /// never rendered at all. A boot that genuinely crashed or hung shows
+        /// nothing at EVERY checkpoint, so the best frame is the honest signal.
+        pub best_frame_health: FrameHealth,
     }
 
     /// Resolve `<workspace>/tests/roms/external/<rel>`. The
@@ -617,7 +628,41 @@ pub mod external {
             return Load::Ok(Box::new(nes));
         }
 
-        let nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rom_rel}: {e}"));
+        // v2.3.4 — apply the per-game database exactly as the frontend does.
+        //
+        // This harness used to call `Nes::from_rom` on the raw bytes, so any fix
+        // delivered through the game DB was invisible to it: the ROM booted
+        // correctly for users while the coverage net reported it blank. Seicross
+        // is the case that exposed it -- PR #127 fixed it with a DB entry setting
+        // mapper 185 submapper 4, and the staged dump is plain iNES with no
+        // submapper of its own, so under the old path it loaded as submapper 0
+        // and hung in its copy-protection loop.
+        //
+        // A regression net that tests a load path no user runs is testing the
+        // wrong program. `apply_header_overrides` patches the header in place,
+        // keyed on the header-excluded CRC32, which is exactly what
+        // `App::load_rom_from_path` does before handing bytes to the core.
+        let mut bytes = bytes;
+        if let Some(entry) =
+            rustynes_gamedb::rom_crc32(&bytes).and_then(rustynes_gamedb::entry_for_crc)
+        {
+            rustynes_gamedb::apply_header_overrides(&mut bytes, &entry);
+        }
+        let mut nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rom_rel}: {e}"));
+
+        // The header rewrite above is only HALF of what the frontend does.
+        // Mirroring is not a header override -- `apply_header_overrides` does
+        // not touch it -- it is applied post-construction, and only on a board
+        // with hardwired mirroring. Forcing it onto a mapper that controls its
+        // own is what froze Wizards & Warriors (ADR 0031), so the guard is the
+        // load-bearing part, not the lookup. Mirroring the frontend's
+        // `apply_game_db` exactly: same source, same guard, same order.
+        if let Some(crc) = rustynes_gamedb::rom_crc32(&bytes)
+            && let Some(m) = rustynes_gamedb::mirroring_for_crc(crc)
+            && nes.mapper_has_hardwired_mirroring()
+        {
+            nes.set_mirroring_override(Some(m));
+        }
         Load::Ok(Box::new(nes))
     }
 
@@ -736,6 +781,7 @@ pub mod external {
 
         let label_safe = sanitize(rom_rel);
         let mut checkpoints: Vec<Checkpoint> = Vec::new();
+        let mut best_health: Option<FrameHealth> = None;
         let mut samples: Vec<f32> = Vec::new();
 
         // Inner helper: tick `n` frames with the given button state and
@@ -772,6 +818,7 @@ pub mod external {
             InputScript::IdleOnly { frames } => {
                 tick_with!(Buttons::empty(), frames);
                 let fb_hash = fnv1a64(nes.framebuffer());
+                best_health = Some(best_of(best_health, frame_health(nes.framebuffer())));
                 checkpoints.push(Checkpoint {
                     frame: frames,
                     fb_hash,
@@ -789,6 +836,7 @@ pub mod external {
                 let mut maybe_emit = |frame: u32, nes: &Nes| {
                     if checkpoint_frames.contains(&frame) {
                         let fb_hash = fnv1a64(nes.framebuffer());
+                        best_health = Some(best_of(best_health, frame_health(nes.framebuffer())));
                         checkpoints.push(Checkpoint { frame, fb_hash });
                         dump_frame(&label_safe, &format!("f{frame}"), nes.framebuffer());
                     }
@@ -838,6 +886,7 @@ pub mod external {
                 let mut maybe_emit = |frame: u32, nes: &Nes| {
                     if checkpoint_frames.contains(&frame) {
                         let fb_hash = fnv1a64(nes.framebuffer());
+                        best_health = Some(best_of(best_health, frame_health(nes.framebuffer())));
                         checkpoints.push(Checkpoint { frame, fb_hash });
                         dump_frame(&label_safe, &format!("f{frame}"), nes.framebuffer());
                     }
@@ -874,6 +923,7 @@ pub mod external {
                 let mut maybe_emit = |frame: u32, nes: &Nes| {
                     if checkpoint_frames.contains(&frame) {
                         let fb_hash = fnv1a64(nes.framebuffer());
+                        best_health = Some(best_of(best_health, frame_health(nes.framebuffer())));
                         checkpoints.push(Checkpoint { frame, fb_hash });
                         dump_frame(&label_safe, &format!("f{frame}"), nes.framebuffer());
                     }
@@ -915,6 +965,20 @@ pub mod external {
         // coverage harness reject a blank / failed-to-render boot.
         let final_frame_health = frame_health(fb);
 
+        // v2.3.4 — dump the frame the verdict is ACTUALLY computed on.
+        //
+        // Until now `RUSTYNES_DUMP_FRAMES=1` emitted only the script's
+        // checkpoints (f900 / f1100 under the default capture), while
+        // `final_frame_health` judges the frame after the whole script has run
+        // (~f1290). So the one frame that decides pass/fail was the one frame
+        // nobody could look at, and a checkpoint image could show a perfectly
+        // good title screen for a ROM the gate had failed on a later, blank
+        // frame -- which is exactly the wrong conclusion this cost during the
+        // v2.3.4 blank-boot triage (Solstice renders its title at f1100 and is
+        // uniform by the final frame).
+        dump_frame(&label_safe, "final", fb);
+        let best_frame_health = best_of(best_health, final_frame_health);
+
         let cycles = nes.cycle();
         let mut audio_bytes: Vec<u8> = Vec::with_capacity(samples.len() * 4);
         for s in &samples {
@@ -929,6 +993,22 @@ pub mod external {
             audio_samples: samples.len(),
             audio_fnv1a64,
             final_frame_health,
+            best_frame_health,
+        })
+    }
+
+    /// v2.3.4 — pick the more content-ful of two frame-health readings.
+    ///
+    /// "More content-ful" is more distinct colours, tie-broken by a lower
+    /// dominant-colour fraction. Used to judge a boot on the BEST frame the
+    /// capture saw rather than on whichever frame the script happened to stop
+    /// on. See `CaptureResult::best_frame_health`.
+    fn best_of(a: Option<FrameHealth>, b: FrameHealth) -> FrameHealth {
+        a.map_or(b, |cur| {
+            let better = b.distinct_colors > cur.distinct_colors
+                || (b.distinct_colors == cur.distinct_colors
+                    && b.dominant_fraction < cur.dominant_fraction);
+            if better { b } else { cur }
         })
     }
 

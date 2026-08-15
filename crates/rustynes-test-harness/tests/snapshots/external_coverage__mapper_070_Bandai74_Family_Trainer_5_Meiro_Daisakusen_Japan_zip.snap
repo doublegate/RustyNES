@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-070-Bandai74/Family Trainer 5 - Meiro Daisakusen (Japan).zip
+rom_sha256=90b9c8a214a65a312819b47a034ca5828deb7d99f1056809cf1ce2127c5a5f5f
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=b0e96f469812c062
+checkpoint f900 fb_fnv1a64=36cad6eb3ab9a124
+checkpoint f1100 fb_fnv1a64=36cad6eb3ab9a124

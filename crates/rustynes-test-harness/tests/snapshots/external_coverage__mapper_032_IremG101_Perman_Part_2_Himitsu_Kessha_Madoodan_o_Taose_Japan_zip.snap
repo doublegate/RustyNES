@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-032-IremG101/Perman Part 2 - Himitsu Kessha Madoodan o Taose! (Japan).zip
+rom_sha256=49704d50dfabc043e732d1eb7fcd839fd7e755992a47cbe12903236ef1ed0bd2
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=a1cbb47e8cfb79d7
+checkpoint f900 fb_fnv1a64=556b5dcb3fbde79b
+checkpoint f1100 fb_fnv1a64=556b5dcb3fbde79b

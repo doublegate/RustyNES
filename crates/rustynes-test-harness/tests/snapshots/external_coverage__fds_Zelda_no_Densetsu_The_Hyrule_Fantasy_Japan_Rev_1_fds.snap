@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=fds/Zelda no Densetsu - The Hyrule Fantasy (Japan) (Rev 1).fds
+rom_sha256=c6afbc7cebff86ba1793524ae633f5f7812f589975bd052807e17d170c52e74b
+frames=1141
+fb_bytes=245760
+cycles=33949808
+audio_samples=836506
+audio_fnv1a64=172912a800c5f824
+checkpoint f900 fb_fnv1a64=442bb3f8238eaa6e
+checkpoint f1100 fb_fnv1a64=e3ac5636eb096384

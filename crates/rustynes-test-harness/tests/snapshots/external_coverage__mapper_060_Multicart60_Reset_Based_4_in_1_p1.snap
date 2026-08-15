@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-060-Multicart60/Reset Based 4-in-1 [p1].nes
+rom_sha256=745970566028531c9d3c25e2d8faf7db93bbb6813de84f18013d92404f5ef9f3
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=a3cf0ca2e8580182
+checkpoint f900 fb_fnv1a64=f10729054d6eae65
+checkpoint f1100 fb_fnv1a64=f10729054d6eae65

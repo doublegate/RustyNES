@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-065-IremH3001/Barbie (U) (REV0) [!].zip
+rom_sha256=d44ac63dd50ee75a851a895f292df6e04400b833f988f4f44f52a7687e7f2704
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=8d60eea3fc2c4409
+checkpoint f900 fb_fnv1a64=f79d1f083b835c5f
+checkpoint f1100 fb_fnv1a64=7607f7cb8a05b7bf

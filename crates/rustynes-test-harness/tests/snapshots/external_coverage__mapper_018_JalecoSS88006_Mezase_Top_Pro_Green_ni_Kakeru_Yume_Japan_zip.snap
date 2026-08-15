@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-018-JalecoSS88006/Mezase! Top Pro - Green ni Kakeru Yume (Japan).zip
+rom_sha256=c4f852f76c17c7540ac05f5db76381bf2a93afad2385d6a286f854d80b76c021
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=29364734b2f41b8a
+checkpoint f900 fb_fnv1a64=2b77242569662888
+checkpoint f1100 fb_fnv1a64=2b77242569662888

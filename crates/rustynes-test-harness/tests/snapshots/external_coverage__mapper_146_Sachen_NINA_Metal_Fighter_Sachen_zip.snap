@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-146-Sachen-NINA/Metal Fighter (Sachen) [!].zip
+rom_sha256=90b610b4d5d78d5da76e0524aa7afa80af82be20db00422d2bd636cf41c8f4a8
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=6225c6c40cfee705
+checkpoint f900 fb_fnv1a64=f0206063d6820f6e
+checkpoint f1100 fb_fnv1a64=f57bce7b323fb203

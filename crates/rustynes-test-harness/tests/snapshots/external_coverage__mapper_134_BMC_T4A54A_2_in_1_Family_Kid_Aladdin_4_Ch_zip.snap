@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-134-BMC-T4A54A/2-in-1 - Family Kid & Aladdin 4 (Ch) [!].zip
+rom_sha256=4e1573dc7263a8bd883da7c644b5ac4d4cc6fea828de0f1bcc24836ec0030df4
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=1e3cf22203606cc1
+checkpoint f900 fb_fnv1a64=7f05e19810bd5de0
+checkpoint f1100 fb_fnv1a64=8674365077d55f99

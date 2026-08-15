@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-184-Sunsoft1/Mario a la Caza del Tesoro V1.0 Spanish by Googie (Atlantis no Nazo Hack).zip
+rom_sha256=87723abea6a2edcbb5966f5ce71f8dc2d38c32fec5988b9621675e20027951ef
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=a114b1b1f6518ae7
+checkpoint f900 fb_fnv1a64=6219f7765d9608ef
+checkpoint f1100 fb_fnv1a64=a0a48bc0eaee0047

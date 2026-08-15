@@ -31,21 +31,40 @@ use rustynes_core::{Buttons, Nes};
 /// At most this many distinct colours means treat the frame as blank.
 ///
 /// A real NES screen draws well more than four distinct RGBA values; a
-/// backdrop-only or crashed boot shows <= 4 (the reset code's handful of
-/// palette writes). This is the heuristic the `coverage_smoke` bin
-/// flagged `SUSPICIOUS` at.
-pub const BLANK_MAX_DISTINCT_COLORS: usize = 4;
+/// backdrop-only or crashed boot shows a UNIFORM frame.
+///
+/// **Was 4, measured wrong, lowered to 1 in v2.3.4.** The premise behind 4 was
+/// that "a real title / menu / gameplay screen draws dozens of distinct
+/// colours". Checked against the 699-ROM corpus, that is simply false --
+/// plenty of correct screens are near-monochrome:
+///
+/// | ROM | reading | what it actually draws |
+/// | --- | --- | --- |
+/// | Adventures of Lolo | 4 colours, 73.1% | its mission-briefing text box |
+/// | Image Fight | 4 colours, 99.3% | its "1P START" menu |
+/// | Bandit Kings of Ancient China | 3 colours, 91.0% | its decorative border |
+/// | Racer Mini Yonku | 3 colours, 89.7% | its player-count dialogue |
+/// | Paperboy | 2 colours, 99.7% | its "MONDAY" day card |
+///
+/// Every one of those was reported as a failed boot. At 1, the test is the
+/// thing the check is actually for: a frame of a single colour is, by
+/// definition, a frame in which nothing was drawn.
+pub const BLANK_MAX_DISTINCT_COLORS: usize = 1;
 
 /// Dominant-colour threshold for the blank verdict.
 ///
-/// If a single colour fills at least this fraction of the frame, treat
-/// it as backdrop-only even when a few stray colours bump the distinct
-/// count above [`BLANK_MAX_DISTINCT_COLORS`]. Matches `render_smoke`'s
-/// dominant-fraction sentinel (it used `< 0.95` for "rendered"; we use
-/// the looser `>= 0.99` here so a deliberately small but real title
-/// palette (e.g. Mito Koumon) is not falsely flagged by the coverage
-/// gate, which must never panic on a genuine screen).
-pub const BLANK_MIN_DOMINANT_FRACTION: f64 = 0.99;
+/// If a single colour fills at least this fraction of the frame, treat it as
+/// backdrop-only even when a few stray colours bump the distinct count above
+/// [`BLANK_MAX_DISTINCT_COLORS`].
+///
+/// **Was 0.99, raised to 0.999 in v2.3.4** for the same reason the colour
+/// count moved: Paperboy's "MONDAY" card is 99.7% black and is correct output,
+/// so 0.99 failed it. The new value has a physical anchor rather than being a
+/// round number -- a 256x240 frame is 61,440 pixels, so 0.999 leaves room for
+/// 61 non-dominant pixels, just under the 64 in a single 8x8 tile. "Fewer
+/// non-backdrop pixels than one tile" is a defensible definition of nothing
+/// having been drawn; "fewer than 1%" (614 pixels, nearly ten tiles) is not.
+pub const BLANK_MIN_DOMINANT_FRACTION: f64 = 0.999;
 
 /// Objective per-frame render statistics over a 256x240 RGBA8 framebuffer.
 ///
@@ -186,10 +205,17 @@ mod tests {
         assert!(h.looks_blank());
     }
 
+    /// v2.3.4 — a few colours spread over the frame is CONTENT, not a blank.
+    ///
+    /// This test previously asserted the opposite, encoding the premise that
+    /// "a real screen draws dozens of colours". Measured against the 699-ROM
+    /// corpus that premise is false: Adventures of Lolo's briefing text (4
+    /// colours), Bandit Kings' border (3), and Paperboy's "MONDAY" card (2) are
+    /// all correct output that the old rule failed. A crashed boot does not
+    /// produce an even four-way dither across the screen; it produces a
+    /// UNIFORM frame, which `solid_frame_is_blank` covers.
     #[test]
-    fn few_colours_is_blank() {
-        // 4 distinct colours, evenly split: under the distinct-count
-        // threshold, so blank even though no colour dominates.
+    fn few_colours_evenly_spread_is_not_blank() {
         let mut fb = Vec::with_capacity(256 * 240 * 4);
         for i in 0u32..(256 * 240) {
             let v = u8::try_from(i % 4).unwrap() * 64;
@@ -197,7 +223,57 @@ mod tests {
         }
         let h = frame_health(&fb);
         assert_eq!(h.distinct_colors, 4);
-        assert!(h.looks_blank());
+        assert!(
+            !h.looks_blank(),
+            "four colours covering the whole frame is a pattern, not a blank screen"
+        );
+    }
+
+    /// The dominant-fraction arm, pinned at its physical anchor: fewer
+    /// non-backdrop pixels than a single 8x8 tile (64) means nothing was drawn.
+    #[test]
+    fn near_uniform_frame_is_blank() {
+        const TOTAL: u32 = 256 * 240;
+        let mut fb = Vec::with_capacity((TOTAL as usize) * 4);
+        // 32 stray pixels — half a tile's worth — on an otherwise solid frame.
+        for i in 0..TOTAL {
+            let v = u8::from(i < 32) * 255;
+            fb.extend_from_slice(&[v, v, v, 255]);
+        }
+        let h = frame_health(&fb);
+        assert_eq!(h.distinct_colors, 2);
+        assert!(
+            h.looks_blank(),
+            "32 stray pixels is less than one tile: nothing was drawn"
+        );
+    }
+
+    /// ...and the threshold sits exactly where the rationale says it does.
+    ///
+    /// 61,440 pixels at a 0.999 dominant fraction leaves room for 61
+    /// non-dominant pixels. Pin BOTH sides: 61 is still blank, 62 is not. A test
+    /// that only checked a comfortable value (the previous one used 128 while
+    /// calling it "one tile") cannot tell whether the constant is 0.999 or
+    /// 0.99, which is the thing worth pinning.
+    #[test]
+    fn the_blank_threshold_sits_at_sixty_one_non_dominant_pixels() {
+        const TOTAL: u32 = 256 * 240;
+        let lit = |n: u32| {
+            let mut fb = Vec::with_capacity((TOTAL as usize) * 4);
+            for i in 0..TOTAL {
+                let v = u8::from(i < n) * 255;
+                fb.extend_from_slice(&[v, v, v, 255]);
+            }
+            fb
+        };
+        assert!(
+            frame_health(&lit(61)).looks_blank(),
+            "61 non-dominant pixels is under one 8x8 tile: still nothing drawn"
+        );
+        assert!(
+            !frame_health(&lit(62)).looks_blank(),
+            "62 non-dominant pixels crosses the 0.999 dominant-fraction line"
+        );
     }
 
     #[test]

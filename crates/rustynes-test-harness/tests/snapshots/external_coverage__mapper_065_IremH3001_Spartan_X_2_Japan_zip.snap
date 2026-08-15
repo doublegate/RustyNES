@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-065-IremH3001/Spartan X 2 (Japan).zip
+rom_sha256=e59ffa8f83e6fa52317109ab2cc6ce8e5b386522ab2f0a4cbc1026a85f0e4908
+frames=1141
+fb_bytes=245760
+cycles=33949779
+audio_samples=836505
+audio_fnv1a64=5d3babb15538b4b3
+checkpoint f900 fb_fnv1a64=9336292df34b27c0
+checkpoint f1100 fb_fnv1a64=9336292df34b27c0

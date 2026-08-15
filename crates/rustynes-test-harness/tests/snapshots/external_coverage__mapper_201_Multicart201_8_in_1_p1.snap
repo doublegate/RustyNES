@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-201-Multicart201/8-in-1 [p1].nes
+rom_sha256=33e278940f542f58a55c3f1ceab30b951650fc8afab3f32dc607a5ae1213fa34
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=58a9a6b6c4c47860
+checkpoint f900 fb_fnv1a64=9801ca59adae0110
+checkpoint f1100 fb_fnv1a64=9801ca59adae0110

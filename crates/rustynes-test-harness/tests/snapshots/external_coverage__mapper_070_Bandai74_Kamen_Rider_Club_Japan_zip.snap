@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-070-Bandai74/Kamen Rider Club (Japan).zip
+rom_sha256=dfb78e6794da1dc7e5b8a7ec5c37a160c007ee2d920e90d343bbdf968cb6d1e4
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=47009102384e48a4
+checkpoint f900 fb_fnv1a64=dddc4ca6ad2c56d6
+checkpoint f1100 fb_fnv1a64=dddc4ca6ad2c56d6

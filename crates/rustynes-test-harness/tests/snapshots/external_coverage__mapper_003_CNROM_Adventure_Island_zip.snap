@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-003-CNROM/Adventure Island.zip
+rom_sha256=9262996a6f3bb5b03f04a77b29886c560b9231df8cf2251203903d2ec6b9553b
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=85f247f308778e5b
+checkpoint f900 fb_fnv1a64=eda70a71e90733e9
+checkpoint f1100 fb_fnv1a64=0e054152e4127d4d

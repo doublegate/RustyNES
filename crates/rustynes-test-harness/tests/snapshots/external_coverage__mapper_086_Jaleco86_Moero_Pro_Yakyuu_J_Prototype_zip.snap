@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-086-Jaleco86/Moero!! Pro Yakyuu (J) (Prototype).zip
+rom_sha256=369aa57767c78b2174cbab01e670a7ba3922a7f3a1ae4fa60d650adefad424e0
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=456b9f7dddafe3c5
+checkpoint f900 fb_fnv1a64=7d11c9da247bc915
+checkpoint f1100 fb_fnv1a64=4ef271397f4ac564

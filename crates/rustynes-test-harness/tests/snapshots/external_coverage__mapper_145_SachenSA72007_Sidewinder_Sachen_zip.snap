@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-145-SachenSA72007/Sidewinder (Sachen) [!].zip
+rom_sha256=663565fed306c26a13542154027f7a6c1ba90145a6a878e238a325f5f7b415b8
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=f32b315729491d8e
+checkpoint f900 fb_fnv1a64=bf7ead7381b0157a
+checkpoint f1100 fb_fnv1a64=bf7ead7381b0157a

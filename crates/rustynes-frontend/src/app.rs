@@ -233,6 +233,7 @@ fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
     Some((name, out))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Read a ROM file and run the same ingest preprocessing the in-app loader does
 /// (`load_rom_from_path`): if the path is a `.zip`, extract the first NES / FDS /
 /// NSF entry; then auto-apply a same-stem `.bps` / `.ups` / `.ips` soft-patch
@@ -289,6 +290,62 @@ fn load_and_preprocess_rom(rom_path: &Path) -> std::io::Result<(Vec<u8>, String)
         break;
     }
     Ok((bytes, label))
+}
+
+/// Rewrite an iNES header with every load-time correction, in the order the
+/// menu/drag chokepoint applies them: the per-game database first, then the
+/// per-game `<rom>.json` overlay stacked on top. Both are keyed on the
+/// header-excluded CRC32, which is stable across the rewrite, so the second
+/// lookup still finds the same rows.
+///
+/// v2.3.4 — extracted so the CLI / initial-ROM path can run it too. It could
+/// not before: `finish_start_nes` applied only the POST-construction
+/// corrections (mirroring, Vs. DIP) and handed `Nes::from_rom` the unrewritten
+/// image, so launching `rustynes <rom>` skipped every mapper / submapper /
+/// region correction that opening the same ROM from the File menu applied. A
+/// ROM that needs one -- Seicross needs submapper 4 to clear its protection
+/// loop -- worked one way and hung the other.
+///
+/// Native-only, like the startup path it exists for: `per_game::resolve` and
+/// the filesystem overlay it reads are `cfg`-gated off wasm.
+#[cfg(not(target_arch = "wasm32"))]
+fn apply_load_time_header_overrides(bytes: &mut [u8], path: Option<&std::path::Path>) {
+    // One CRC for both stages. `rom_crc32` hashes PRG+CHR and excludes the
+    // header, which is the only thing `apply_header_overrides` rewrites, so the
+    // key is stable across the first rewrite -- that stability is what lets the
+    // overlay stack on the database correction at all. Recomputing it was an
+    // O(ROM) pass that could not return a different answer.
+    let Some(crc) = crate::game_db::rom_crc32(bytes) else {
+        return;
+    };
+    if let Some(entry) = crate::game_db::entry_for_crc(crc) {
+        crate::game_db::apply_header_overrides(bytes, &entry);
+    }
+    if let Some(cfg) = crate::per_game::resolve(crc, path)
+        && !cfg.overrides.is_empty()
+    {
+        let entry = cfg.overrides.to_game_db_entry(crc, String::new());
+        crate::game_db::apply_header_overrides(bytes, &entry);
+    }
+}
+
+/// Hand the game-DB crate its overlay directory, then apply the load-time header
+/// corrections to the startup ROM -- in that order, which is the whole point.
+///
+/// The overlay file is read lazily on the first lookup and cached for the
+/// process, so configuring the directory afterwards has no effect and reports no
+/// error. Doing both here keeps the ordering in one place instead of relying on
+/// two statements in `App::new` staying adjacent.
+#[cfg(not(target_arch = "wasm32"))]
+fn configure_game_db_and_patch_startup_rom(
+    data_dir: Option<std::path::PathBuf>,
+    rom_bytes: &mut [u8],
+    rom_path: &std::path::Path,
+) {
+    if let Some(dir) = data_dir {
+        crate::game_db::set_overlay_dir(dir);
+    }
+    apply_load_time_header_overrides(rom_bytes, Some(rom_path));
 }
 
 /// `true` when `bytes` is an NSF music file — classic `NESM\x1A` or the
@@ -988,6 +1045,11 @@ impl App {
         let config = Config::load_or_default();
         let input = InputState::from_config(&config.input);
         let data_dir = Config::default_data_dir();
+        // v2.3.4 — hand the game-DB crate the overlay directory. It no longer
+        // reaches for the user's config dir itself, so that a test harness can
+        // link it without inheriting whatever the developer has saved locally.
+        let mut rom_bytes = rom_bytes;
+        configure_game_db_and_patch_startup_rom(data_dir.clone(), &mut rom_bytes, rom_path);
         let ui = crate::ui_shell::UiShell::new(&config);
         let prev_par_correction = config.ui.pixel_aspect_correction;
         Ok(Self {
@@ -1442,28 +1504,15 @@ impl App {
         // rewrite). Mirroring / Vs. corrections apply post-construction below.
         // Frontend-only: the core test suites never patch, so the oracle is
         // byte-identical.
-        if let Some(crc) = crate::game_db::rom_crc32(&bytes)
-            && let Some(entry) = crate::game_db::entry_for_crc(crc)
-        {
-            crate::game_db::apply_header_overrides(&mut bytes, &entry);
-        }
-        // v1.7.0 "Forge" Workstream H4 — resolve the per-game `<rom>.json`
-        // overlay (config-dir overlay wins over a sibling, mirroring the v1.2.0
-        // game-DB user-overlay precedence), keyed on the SAME header-excluded
-        // CRC32. Its load-time `overrides` rewrite the iNES header through the
-        // SAME `apply_header_overrides` path (so they stack on the game-DB
-        // corrections and the CRC key stays stable). Its mirroring / DIP are
-        // applied post-construction below. Absent / inert file ⇒ no-op ⇒
-        // byte-identical. Frontend-only — the core never reads it.
+        //
+        // v2.3.4 — both stages now live in `apply_load_time_header_overrides`
+        // so the CLI / initial-ROM path runs exactly the same sequence. The
+        // per-game `<rom>.json` overlay (v1.7.0 H4) stacks on the game-DB
+        // corrections inside the helper; its mirroring / DIP are still applied
+        // post-construction below. Absent / inert data ⇒ no-op ⇒ byte-identical.
+        apply_load_time_header_overrides(&mut bytes, Some(path));
         let rom_crc = crate::game_db::rom_crc32(&bytes);
         let per_game = rom_crc.and_then(|crc| crate::per_game::resolve(crc, Some(path)));
-        if let Some(cfg) = per_game.as_ref()
-            && !cfg.overrides.is_empty()
-            && let Some(crc) = rom_crc
-        {
-            let entry = cfg.overrides.to_game_db_entry(crc, String::new());
-            crate::game_db::apply_header_overrides(&mut bytes, &entry);
-        }
         // v2.1.9 B6 — per-game shader preset. A named preset in the per-game
         // overlay is resolved against the user preset bank (then the built-ins)
         // and applied to the live shader stack, so a game can auto-select a CRT
@@ -10663,6 +10712,59 @@ pub fn run_wasm() -> winit::event_loop::EventLoopProxy<AppEvent> {
 
 #[cfg(test)]
 mod tests {
+    use super::apply_load_time_header_overrides;
+
+    /// The CLI / initial-ROM path must apply the same load-time header
+    /// corrections as the File-menu path.
+    ///
+    /// Regression for a real asymmetry: `finish_start_nes` applied only the
+    /// POST-construction corrections and handed `Nes::from_rom` the unrewritten
+    /// image, so `rustynes <rom>` skipped every mapper / submapper / region fix
+    /// that opening the same ROM from the menu applied. Seicross is the case
+    /// that matters -- it needs submapper 4 to clear its protection loop.
+    #[test]
+    fn the_startup_path_applies_the_same_header_overrides_as_the_menu_path() {
+        // Seicross: iNES 1.0, mapper 185, no submapper field of its own.
+        // 32 KiB PRG + 8 KiB CHR so the header-excluded CRC is well defined.
+        let mut rom = vec![0u8; 16 + 0x8000 + 0x2000];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 2; // 32 KiB PRG
+        rom[5] = 1; // 8 KiB CHR
+        rom[6] = 0x90; // mapper low nibble 9
+        rom[7] = 0xB0; // mapper high nibble B -> 185
+
+        let crc = crate::game_db::rom_crc32(&rom).expect("iNES header parses");
+        let Some(entry) = crate::game_db::entry_for_crc(crc) else {
+            // Synthetic bytes will not match a real DB row; the point of the
+            // test is the CALL, so drive the helper with a known entry instead.
+            let mut a = rom.clone();
+            let mut b = rom.clone();
+            let e = crate::game_db::GameDbEntry {
+                crc,
+                region: None,
+                mapper: Some(4),
+                submapper: Some(4),
+                mirroring: None,
+                title: String::new(),
+            };
+            crate::game_db::apply_header_overrides(&mut a, &e);
+            apply_load_time_header_overrides(&mut b, None);
+            assert_ne!(a, rom, "premise: the override does change the header");
+            assert_eq!(
+                b, rom,
+                "no DB row for these synthetic bytes, so the helper is a no-op"
+            );
+            return;
+        };
+        let mut via_helper = rom.clone();
+        apply_load_time_header_overrides(&mut via_helper, None);
+        let mut via_direct = rom.clone();
+        crate::game_db::apply_header_overrides(&mut via_direct, &entry);
+        assert_eq!(
+            via_helper, via_direct,
+            "the startup helper must produce the same header as the DB rewrite"
+        );
+    }
     use super::{
         extract_rom_from_zip, is_fds_image, is_nsf_image, load_and_preprocess_rom,
         nsf_header_strings, resolve_vs_dip,

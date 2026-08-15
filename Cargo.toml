@@ -9,6 +9,7 @@ members = [
     "crates/rustynes-netplay",
     "crates/rustynes-cheevos",
     "crates/rustynes-script",
+    "crates/rustynes-gamedb",
     "crates/rustynes-frontend",
     "crates/rustynes-test-harness",
     "crates/rustynes-mobile",

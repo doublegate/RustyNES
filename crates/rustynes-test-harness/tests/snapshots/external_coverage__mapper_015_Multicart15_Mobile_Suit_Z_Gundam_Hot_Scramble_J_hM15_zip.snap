@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-015-Multicart15/Mobile Suit Z Gundam - Hot Scramble (J) [hM15].zip
+rom_sha256=163e48cd4cf1201b3cbd6f2602268dd4df0f8c38ffc44e9b036414444260caa9
+frames=1141
+fb_bytes=245760
+cycles=33949963
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

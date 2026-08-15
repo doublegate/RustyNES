@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-082-TaitoX1-017/Kyuukyoku Harikiri Stadium - Heisei Gannen Han (J) [!].zip
+rom_sha256=32ff634500ee21ef227b74fad1feec947f1c70e9f44c1588b1cb23857b2a2cf4
+frames=1141
+fb_bytes=245760
+cycles=33949783
+audio_samples=836505
+audio_fnv1a64=8a80e5457d3e8fb2
+checkpoint f900 fb_fnv1a64=3aef0d407d23e225
+checkpoint f1100 fb_fnv1a64=3aef0d407d23e225

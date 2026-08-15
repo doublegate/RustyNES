@@ -8,6 +8,6 @@ frames=1141
 fb_bytes=245760
 cycles=33949779
 audio_samples=836505
-audio_fnv1a64=993e90a99a223431
+audio_fnv1a64=996cd5821e9da29a
 checkpoint f900 fb_fnv1a64=245b4a48102de4ed
 checkpoint f1100 fb_fnv1a64=a8094835e8d1afb0

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-078-HolyDiver/Portopia Renzoku Satsujin Jiken (J) [T-Eng_DvD Translations].zip
+rom_sha256=1e98533a5992c3ef480789ae814a0b862bea49ca502b52dc38e87fdc2f536d85
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=1cee1bf4ca9135b0
+checkpoint f900 fb_fnv1a64=a2acde08461c5c24
+checkpoint f1100 fb_fnv1a64=ead1c237f0c46c71

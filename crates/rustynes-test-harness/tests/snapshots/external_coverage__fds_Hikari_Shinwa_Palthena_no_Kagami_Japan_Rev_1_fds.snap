@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=fds/Hikari Shinwa - Palthena no Kagami (Japan) (Rev 1).fds
+rom_sha256=f3e3a7b8e7bd4e9a84d768c6a588d0e66dca71b1d5a4b84360d9b50aea4fc9ff
+frames=1141
+fb_bytes=245760
+cycles=33949868
+audio_samples=836507
+audio_fnv1a64=efa2d121341b8d5b
+checkpoint f900 fb_fnv1a64=1719dca5cef7a325
+checkpoint f1100 fb_fnv1a64=cf8764e84395da99

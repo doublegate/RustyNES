@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-016-BandaiFCG/Dragon Ball Z II - Gekishin Freeza!! (Japan) (Rev 1).zip
+rom_sha256=8a568c1b387a6973b0d60a9cfdac8a5693b034f6718d55634fe263ab0a59e204
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=076a7295c5b23ea7
+checkpoint f900 fb_fnv1a64=0b869165fa681175
+checkpoint f1100 fb_fnv1a64=3364054147cbb560

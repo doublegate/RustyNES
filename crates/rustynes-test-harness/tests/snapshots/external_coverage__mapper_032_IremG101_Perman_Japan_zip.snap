@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-032-IremG101/Perman (Japan).zip
+rom_sha256=59c2dda43655a1e1f4eb84328c0b2760d80fa22f3d7cdd7b4bfcb1b9f23dec53
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=046dda2b0fac2849
+checkpoint f900 fb_fnv1a64=56bc84aeb89d0d3a
+checkpoint f1100 fb_fnv1a64=46f55261b2ddccd1

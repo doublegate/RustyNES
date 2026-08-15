@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-118-TxSROM/RPG Jinsei Game (Japan).zip
+rom_sha256=739cdfab51d002b565555268bb220aab617dd1f529e2c34d37f047bdf148106c
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=702e71af3a7b7499
+checkpoint f900 fb_fnv1a64=b3f7a218c8c4074d
+checkpoint f1100 fb_fnv1a64=b3f7a218c8c4074d

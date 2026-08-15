@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-009-MMC2/Mike Tyson's Bite Off (Hack).zip
+rom_sha256=b6f702baca68dbc8a2d5b728eb4f03c7ed2b2adb6ed7fdd1002862e7089e0bb6
+frames=1141
+fb_bytes=245760
+cycles=33949810
+audio_samples=836506
+audio_fnv1a64=8830707777e4b176
+checkpoint f900 fb_fnv1a64=a2a8e2bcc0e08942
+checkpoint f1100 fb_fnv1a64=d345e15da5f7e65f

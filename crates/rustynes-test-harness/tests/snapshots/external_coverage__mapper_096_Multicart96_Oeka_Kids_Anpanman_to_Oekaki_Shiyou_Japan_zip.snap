@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-096-Multicart96/Oeka Kids - Anpanman to Oekaki Shiyou!! (Japan).zip
+rom_sha256=db67f37077c84591f437b4f6b1a588d9485a7974d447b7e08a52d2d5e6a70e9e
+frames=1141
+fb_bytes=245760
+cycles=33949778
+audio_samples=836505
+audio_fnv1a64=4c55cd93c7fb6619
+checkpoint f900 fb_fnv1a64=b5f19c3483911a86
+checkpoint f1100 fb_fnv1a64=b5f19c3483911a86

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-078-HolyDiver/Uchuusen Cosmo Carrier (Japan).zip
+rom_sha256=ea00218d04a43d97d76b7b14f3fe926aa8a0241e7333708e477c58605d08997d
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=380d214e2c927ee7
+checkpoint f900 fb_fnv1a64=fb5cf7c9c7ce800a
+checkpoint f1100 fb_fnv1a64=b5bfab2876f6079b

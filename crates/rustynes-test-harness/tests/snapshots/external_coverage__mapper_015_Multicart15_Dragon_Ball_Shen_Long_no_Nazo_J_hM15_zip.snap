@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-015-Multicart15/Dragon Ball - Shen Long no Nazo (J) [hM15].zip
+rom_sha256=1b86be99cc4c1aebca37f80ec0e7f4fb271b09b2d0692ce5876b45e6ec236607
+frames=1141
+fb_bytes=245760
+cycles=33949964
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-019-Namco163/Battle Fleet (Japan).zip
+rom_sha256=84de93b9020c415ac2ffdf4331ac364f80db7fecf5332c4d81fd94873d4da205
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=8ffe3fcdc2771982
+checkpoint f900 fb_fnv1a64=cf84a24cb539cee3
+checkpoint f1100 fb_fnv1a64=cf84a24cb539cee3

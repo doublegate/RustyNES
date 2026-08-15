@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-151-KonamiVS/Gradius (VS).zip
+rom_sha256=22677bd7090897e4c95010a69a1aa8afd46fb50d2ade5ee75b32f50c22c6d439
+frames=1141
+fb_bytes=245760
+cycles=33949878
+audio_samples=836507
+audio_fnv1a64=626b4d113b8e10ea
+checkpoint f900 fb_fnv1a64=7fc7759682adeb5e
+checkpoint f1100 fb_fnv1a64=fea3d0041615bed7

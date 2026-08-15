@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-065-IremH3001/Daiku no Gen-san 2 - Akage no Dan no Gyakushuu (Japan).zip
+rom_sha256=de9fff6cf332a2ff4a26fc707f2c4584d75bfc1e43aae0f063d25f9ff2bd0c91
+frames=1141
+fb_bytes=245760
+cycles=33949784
+audio_samples=836505
+audio_fnv1a64=fcb948540d74efe5
+checkpoint f900 fb_fnv1a64=ace012f889fad95c
+checkpoint f1100 fb_fnv1a64=b8a8f73d768f4d8f

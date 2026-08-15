@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-064-TengenRAMBO1/Shinobi (USA) (Unl).zip
+rom_sha256=7063ea7d69a0408bdc2800270d79d906fe16660642fddf2e12e0b8e1da957f75
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=9ff7a92ad7c2c003
+checkpoint f900 fb_fnv1a64=1eff4443467e0c4a
+checkpoint f1100 fb_fnv1a64=38e236449750408a

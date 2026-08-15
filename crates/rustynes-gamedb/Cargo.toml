@@ -1,0 +1,22 @@
+# Extracted from `rustynes-frontend` in v2.3.4 so the coverage harness can apply
+# the same per-game corrections the frontend does. Before this, the harness
+# loaded ROMs with a bare `Nes::from_rom` and could not observe any fix
+# delivered through the database — Seicross being the case that exposed it.
+#
+# It carries no heavy dependencies on purpose: the whole point is that a test
+# harness can depend on it without pulling in winit/wgpu.
+[package]
+name = "rustynes-gamedb"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "CRC32-keyed per-game correction database (mirroring / mapper / region overrides)"
+
+[dependencies]
+rustynes-core = { path = "../rustynes-core" }
+
+[lints]
+workspace = true

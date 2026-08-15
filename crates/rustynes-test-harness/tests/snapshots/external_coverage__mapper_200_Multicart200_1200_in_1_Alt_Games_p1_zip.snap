@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-200-Multicart200/1200-in-1 (Alt Games) [p1].zip
+rom_sha256=15b57af29b0757e7574f2a3004c283e9ee11bd5a7802cadb17e1133727d0aeb4
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=87d4ca7fcb388a1e
+checkpoint f900 fb_fnv1a64=b9bf35081a96a0cd
+checkpoint f1100 fb_fnv1a64=108e1e614d82efef

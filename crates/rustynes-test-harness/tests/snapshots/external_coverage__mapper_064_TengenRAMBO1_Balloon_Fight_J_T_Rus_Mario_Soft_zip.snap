@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-064-TengenRAMBO1/Balloon Fight (J) [T+Rus_Mario Soft].zip
+rom_sha256=69987f2249f77006eddc67d4498977e05cd4fe63de92584e57154e609b4cc557
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=ab383d7f14f596d1
+checkpoint f900 fb_fnv1a64=948a6560fbcc2ff5
+checkpoint f1100 fb_fnv1a64=7138dd84ccde3a67

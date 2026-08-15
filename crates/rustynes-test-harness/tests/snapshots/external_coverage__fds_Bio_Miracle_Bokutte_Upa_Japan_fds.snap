@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=fds/Bio Miracle Bokutte Upa (Japan).fds
+rom_sha256=ff6b701acba09e6c044991a8bba771ee05f105a3930f36b196e52a03268f3e95
+frames=1141
+fb_bytes=245760
+cycles=33949826
+audio_samples=836506
+audio_fnv1a64=06493f9514f37731
+checkpoint f900 fb_fnv1a64=c1f1a505fd52043a
+checkpoint f1100 fb_fnv1a64=180e40f4ad5207c1

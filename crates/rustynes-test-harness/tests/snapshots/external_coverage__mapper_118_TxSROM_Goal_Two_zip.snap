@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-118-TxSROM/Goal! Two.zip
+rom_sha256=b2c78c02dd572fe19f66860bf210f9ab07b2c7aaf23202f5d817c427005b4da0
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=69b2d765b2b2b77a
+checkpoint f900 fb_fnv1a64=ddca5cd31742a51f
+checkpoint f1100 fb_fnv1a64=ddca5cd31742a51f

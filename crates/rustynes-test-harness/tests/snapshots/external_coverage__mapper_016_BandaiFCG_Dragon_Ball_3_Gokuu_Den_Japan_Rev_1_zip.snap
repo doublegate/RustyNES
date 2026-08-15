@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-016-BandaiFCG/Dragon Ball 3 - Gokuu Den (Japan) (Rev 1).zip
+rom_sha256=f549f44fde0c04e4f089486f341a4b2e51689a0168e4bcfea1e6e858b7265930
+frames=1141
+fb_bytes=245760
+cycles=33949776
+audio_samples=836505
+audio_fnv1a64=6ff76616329d5b96
+checkpoint f900 fb_fnv1a64=c228af0eddcb60fd
+checkpoint f1100 fb_fnv1a64=a599d5cd114f51b9

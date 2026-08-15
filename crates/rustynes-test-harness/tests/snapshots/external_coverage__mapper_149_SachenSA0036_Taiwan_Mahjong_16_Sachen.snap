@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-149-SachenSA0036/Taiwan Mahjong 16 (Sachen) [!].nes
+rom_sha256=b2617487d9e8b485aa97d868242262785efb81bd05d5bc316da4c5c3dd16bdb7
+frames=1141
+fb_bytes=245760
+cycles=33949771
+audio_samples=836505
+audio_fnv1a64=6820962e2cb8aa95
+checkpoint f900 fb_fnv1a64=6ebecc81a3f3be4d
+checkpoint f1100 fb_fnv1a64=0672a0bda2d9cc81

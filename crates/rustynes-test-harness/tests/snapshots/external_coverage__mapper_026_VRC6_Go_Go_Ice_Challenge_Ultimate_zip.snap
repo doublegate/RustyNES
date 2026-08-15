@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-026-VRC6/Go-Go! Ice Challenge Ultimate!.zip
+rom_sha256=c17feb6057f1387adbaf14eb2194af687a9fcfe1d50fb7c13c38fbe94edf4223
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=c57988653bcd7ef2
+checkpoint f900 fb_fnv1a64=5143e3e36bf4a9de
+checkpoint f1100 fb_fnv1a64=5d041eb4588efa18

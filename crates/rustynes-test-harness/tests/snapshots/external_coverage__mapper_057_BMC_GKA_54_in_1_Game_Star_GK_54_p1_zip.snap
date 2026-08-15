@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-057-BMC-GKA/54-in-1 (Game Star - GK-54) [p1][!].zip
+rom_sha256=6c959b9e4753b9d6ee87abb3aac4189eb86981cde6a971dcf514d33c814aa300
+frames=1141
+fb_bytes=245760
+cycles=33949777
+audio_samples=836505
+audio_fnv1a64=f6b4ff9f7ad1645b
+checkpoint f900 fb_fnv1a64=0dc27be2a6abaa79
+checkpoint f1100 fb_fnv1a64=c90299bf8aa0a9fd

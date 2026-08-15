@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-034-BNROM-NINA001/Journey to the West (Asia) (Ja) (Unl).zip
+rom_sha256=616485a267c7863e2934a77d89adc1beb223d9f65baad042a2921eee0d33566d
+frames=1141
+fb_bytes=245760
+cycles=40428961
+audio_samples=996152
+audio_fnv1a64=9fd166aff0bff5ba
+checkpoint f900 fb_fnv1a64=38d9c4caae6de64c
+checkpoint f1100 fb_fnv1a64=9ad7be9ce70ca13b

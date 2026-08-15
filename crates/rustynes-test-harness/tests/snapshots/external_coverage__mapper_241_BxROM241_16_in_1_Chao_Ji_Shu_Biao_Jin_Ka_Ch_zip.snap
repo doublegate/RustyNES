@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-241-BxROM241/16-in-1 Chao Ji Shu Biao Jin Ka (Ch).zip
+rom_sha256=9a15ce11afdcc811321a20175d279718dc30345a2b78b6da27b48fbf16935345
+frames=1141
+fb_bytes=245760
+cycles=33949774
+audio_samples=836505
+audio_fnv1a64=007f3246afa14d34
+checkpoint f900 fb_fnv1a64=3561c330fd502549
+checkpoint f1100 fb_fnv1a64=4f37c548c4070705

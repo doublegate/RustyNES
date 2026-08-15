@@ -308,6 +308,7 @@ impl MovieUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustynes_core::{Buttons, VerifyOutcome};
 
     // A minimal NROM (infinite loop) so we can exercise the record/play
     // state machine end-to-end without a real game. Mirrors the core's
@@ -352,12 +353,115 @@ mod tests {
         assert_eq!(ui.mode(), MovieMode::Recording);
         for _ in 0..5 {
             assert!(ui.before_frame(&mut nes));
-            nes.run_frame();
+            let fb = nes.run_frame().to_vec();
+            ui.after_frame(&fb);
         }
         assert_eq!(ui.status().cursor, 5);
         let movie = ui.finish_recording().expect("a movie");
         assert_eq!(movie.len(), 5);
         assert_eq!(ui.mode(), MovieMode::Idle);
+    }
+
+    /// v2.3.4 (issue #360) — a recorded movie must actually VERIFY.
+    ///
+    /// Every recording test above drives `before_frame` + `run_frame` and then
+    /// asserts on frame counts. None of them proved the thing v2.3.2 shipped:
+    /// that the movie carries an attestation which reproduces on replay. The
+    /// recorder's attestation builder stayed empty in tests because
+    /// `after_frame` — the only path that calls `attest_frame` — was never
+    /// invoked, so `Movie::verify` would have returned `NotAttested` for every
+    /// movie these tests built, and no assertion would have noticed.
+    ///
+    /// This asserts the end-to-end chain on a FRESH `Nes`: record with
+    /// attestation, then replay from scratch and require an exact `Match`. It
+    /// is the frontend-side analogue of `rustynes verify <movie> --rom <rom>`.
+    #[test]
+    fn a_recorded_movie_verifies_against_a_fresh_nes() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        let mut ui = MovieUi::default();
+        ui.start_recording_power_on(&mut nes, true);
+        for i in 0..12u8 {
+            // Vary the input per frame. The fixture ROM never reads the
+            // controller, so this cannot change the VIDEO -- which is exactly
+            // why it matters: v2.3.2's attestation folds in the input applied
+            // as well as the frames produced, so an input log EDITED WITHOUT
+            // RECOMPUTING the attestation cannot pass even on a ROM that ignores
+            // the pad. To be precise about what that buys: the rolling FNV-1a
+            // hash is tamper-EVIDENT, not forgery-resistant -- anyone willing to
+            // recompute it can produce a consistent pair. It catches accidental
+            // divergence and casual edits, which is what a replay attestation is
+            // for; it is not a signature. A constant-input
+            // recording cannot distinguish "the right input was attested" from
+            // "some input was attested", so this test presses buttons.
+            nes.set_buttons(0, Buttons::from_bits_truncate(1 << (i % 8)));
+            nes.set_buttons(1, Buttons::from_bits_truncate(1 << ((i + 3) % 8)));
+            assert!(ui.before_frame(&mut nes));
+            let fb = nes.run_frame().to_vec();
+            ui.after_frame(&fb);
+        }
+        let movie = ui.finish_recording().expect("a movie");
+
+        // A fresh console, not the one that recorded it: verification must
+        // re-derive the run rather than observe leftover state.
+        let mut fresh = Nes::from_rom(&rom).unwrap();
+        let outcome = movie
+            .verify(&mut fresh)
+            .expect("same ROM, valid start point");
+        match outcome {
+            VerifyOutcome::Match { frames, .. } => {
+                assert_eq!(frames, 12, "every recorded frame is attested");
+            }
+            VerifyOutcome::NotAttested => {
+                panic!("the movie carries no attestation — after_frame never reached the recorder")
+            }
+            VerifyOutcome::Mismatch { expected, got, .. } => {
+                panic!("a faithfully-recorded movie must verify: expected {expected}, got {got}")
+            }
+        }
+    }
+
+    /// The negative control for the test above, and the reason the #360 gap was
+    /// detectable at all.
+    ///
+    /// Recording enables attestation at `start_recording_power_on`, so the
+    /// finished movie carries an `Attestation` whether or not any frame reached
+    /// `attest_frame` — `MovieRecorder::finish` maps the *builder*, and the
+    /// builder exists from the moment attestation is enabled. A recording that
+    /// never calls `after_frame` therefore does not answer `NotAttested`; it
+    /// claims the empty-state hash (the FNV-1a offset basis) over zero frames.
+    ///
+    /// Verification must then **fail**, which is the safe direction: forgetting
+    /// to attest yields a movie that cannot be passed off as verified, rather
+    /// than one that silently verifies against nothing. This pins that, so a
+    /// future change that made an empty attestation compare equal — or made
+    /// `verify` fall back to `NotAttested` when the count is zero — would be
+    /// caught here rather than in the field.
+    #[test]
+    fn a_recording_that_never_attests_fails_verification() {
+        let rom = synth_nrom();
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        let mut ui = MovieUi::default();
+        ui.start_recording_power_on(&mut nes, true);
+        for _ in 0..4 {
+            assert!(ui.before_frame(&mut nes));
+            nes.run_frame(); // deliberately NOT attested
+        }
+        let movie = ui.finish_recording().expect("a movie");
+
+        let mut fresh = Nes::from_rom(&rom).unwrap();
+        match movie.verify(&mut fresh).expect("same ROM") {
+            VerifyOutcome::Mismatch { frames, .. } => {
+                assert_eq!(frames, 4, "the replay still runs every recorded input");
+            }
+            VerifyOutcome::Match { .. } => {
+                panic!("a movie that attested nothing must never verify as a match")
+            }
+            VerifyOutcome::NotAttested => panic!(
+                "recording enables attestation, so the movie carries an (empty) claim -- \
+                 NotAttested would mean the builder was never created at all"
+            ),
+        }
     }
 
     #[test]
@@ -369,7 +473,8 @@ mod tests {
         ui.start_recording_power_on(&mut nes, true);
         for _ in 0..3 {
             ui.before_frame(&mut nes);
-            nes.run_frame();
+            let fb = nes.run_frame().to_vec();
+            ui.after_frame(&fb);
         }
         let movie = ui.finish_recording().unwrap();
 
@@ -403,7 +508,8 @@ mod tests {
         ui.start_recording_power_on(&mut nes, true);
         for _ in 0..10 {
             ui.before_frame(&mut nes);
-            nes.run_frame();
+            let fb = nes.run_frame().to_vec();
+            ui.after_frame(&fb);
         }
         let movie = ui.finish_recording().unwrap();
 
@@ -439,7 +545,8 @@ mod tests {
         ui.start_recording_power_on(&mut nes, true);
         for _ in 0..3 {
             ui.before_frame(&mut nes);
-            nes.run_frame();
+            let fb = nes.run_frame().to_vec();
+            ui.after_frame(&fb);
         }
         let movie = ui.finish_recording().unwrap();
         let mut replay = Nes::from_rom(&rom).unwrap();
@@ -459,9 +566,11 @@ mod tests {
         // Make a 2-frame movie to play.
         ui.start_recording_power_on(&mut nes, true);
         ui.before_frame(&mut nes);
-        nes.run_frame();
+        let fb = nes.run_frame().to_vec();
+        ui.after_frame(&fb);
         ui.before_frame(&mut nes);
-        nes.run_frame();
+        let fb = nes.run_frame().to_vec();
+        ui.after_frame(&fb);
         let movie = ui.finish_recording().unwrap();
 
         let mut replay = Nes::from_rom(&rom).unwrap();

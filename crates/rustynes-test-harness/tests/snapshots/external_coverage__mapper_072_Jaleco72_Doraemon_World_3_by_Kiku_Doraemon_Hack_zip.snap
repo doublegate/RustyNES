@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-072-Jaleco72/Doraemon World 3 by Kiku (Doraemon Hack).zip
+rom_sha256=97ce03093c71fd82cb2ca21b10e11d28b101d0f3ddf49aa05dfd6e13afb44b19
+frames=1141
+fb_bytes=245760
+cycles=33949960
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

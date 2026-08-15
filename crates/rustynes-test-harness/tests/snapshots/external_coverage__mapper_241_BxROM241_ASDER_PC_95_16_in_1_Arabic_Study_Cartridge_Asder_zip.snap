@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-241-BxROM241/ASDER PC-95 (16-in-1) Arabic Study Cartridge (Asder).zip
+rom_sha256=9bf1ab91bcc596861326184b17866cdc6aa9546208ebba5eba57d436ce396d9b
+frames=1141
+fb_bytes=245760
+cycles=33949781
+audio_samples=836505
+audio_fnv1a64=faf2b91cfbd045d6
+checkpoint f900 fb_fnv1a64=45cf4079777fe720
+checkpoint f1100 fb_fnv1a64=2e56e8d85e770962

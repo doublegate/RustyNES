@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-005-MMC5/Gemfire.zip
+rom_sha256=14f4ddb1e7c166aab0e371a64f7bf1d9628eb3eb0662c29856fb79dc0ec9f3d4
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=a297a7c4866786c8
+checkpoint f900 fb_fnv1a64=96c783500c490274
+checkpoint f1100 fb_fnv1a64=96c783500c490274

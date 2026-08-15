@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-015-Multicart15/Da Hua Xi You (Ch).zip
+rom_sha256=b353d921ddd58d37a53c9720f4baa1a3c11786b9fe2adf1fd13caa0bad66ff4f
+frames=1141
+fb_bytes=245760
+cycles=33949781
+audio_samples=836505
+audio_fnv1a64=6b8e59335ca7d847
+checkpoint f900 fb_fnv1a64=e03f5b77f1b9b034
+checkpoint f1100 fb_fnv1a64=e03f5b77f1b9b034

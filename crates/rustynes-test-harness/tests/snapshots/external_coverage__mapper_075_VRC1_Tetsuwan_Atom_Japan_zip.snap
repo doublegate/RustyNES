@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-075-VRC1/Tetsuwan Atom (Japan).zip
+rom_sha256=7033067a5e592e982de3e6edc7b6f3dc00ccd9136cb18a919224ee220d7b4e0b
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=fb824404815e5e84
+checkpoint f900 fb_fnv1a64=3f8de8400f4fb088
+checkpoint f1100 fb_fnv1a64=2b9a4b042ad61ca3

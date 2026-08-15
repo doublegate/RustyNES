@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-070-Bandai74/Arkanoid II (J) [!].zip
+rom_sha256=f4ce79fa99f4ef7d1e82d9156a7726132c9905c88d5ee51c9452d83917aef5c5
+frames=1141
+fb_bytes=245760
+cycles=33949775
+audio_samples=836505
+audio_fnv1a64=0fbe2e16ed4e1832
+checkpoint f900 fb_fnv1a64=45eeba4d8e40af1a
+checkpoint f1100 fb_fnv1a64=0c1d7ae9556b08ca

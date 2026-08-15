@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-080-TaitoX1-005/Taito Grand Prix - Eikou e no License (Japan).zip
+rom_sha256=c8fd6fe99e92d5449ab9e6fac6356615b4839ec67b08c098a399ecd7eeae7d91
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=d0f00ed78c56d790
+checkpoint f900 fb_fnv1a64=5b7b5ee4c1f3ca84
+checkpoint f1100 fb_fnv1a64=5b7b5ee4c1f3ca84

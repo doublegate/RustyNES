@@ -243,7 +243,7 @@ pub use nsf::{Nsf, NsfMapper, is_nsf, parse_nsf};
 pub use ntdec::{Ntdec63, Ntdec81, Ntdec174, Ntdec2722M40, NtdecAsder112, new_m193, new_m221};
 pub use sachen_8259::{Sachen8259, Sachen8259M137, Sachen8259Variant};
 pub use sachen_discrete::{
-    Sachen133, Sachen145, Sachen146, Sachen148, Sachen149, Sachen150, Sachen3018M147,
+    Sa020aBoard, Sachen133, Sachen145, Sachen146, Sachen148, Sachen149, Sachen150, Sachen3018M147,
     SachenTca01M143,
 };
 pub use tier::{MapperTier, mapper_tier};
@@ -396,11 +396,24 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         (h.console_type, h.vs_ppu_type)
     };
 
+    // A mapper-30 image that declares CHR-ROM is not UNROM-512 and is built as
+    // WAIXING-FS005 below. The cartridge identity has to say so too, or every
+    // consumer keyed on `(mapper_id, submapper)` -- above all `mapper_tier`,
+    // which would answer Curated (accuracy-gated) for id 30 -- describes a board
+    // that is not the one running. That would bypass the BestEffort
+    // classification 176/2 carries precisely for these ROMs, which is the
+    // honesty gate reporting evidence it does not have.
+    let (identity_mapper, identity_submapper) = if h.mapper_id == 30 && !chr_rom.is_empty() {
+        (176, 2)
+    } else {
+        (h.mapper_id, h.submapper)
+    };
+
     let cart = Cartridge {
         prg_rom: prg_rom.clone(),
         chr_rom: chr_rom.clone(),
-        mapper_id: h.mapper_id,
-        submapper: h.submapper,
+        mapper_id: identity_mapper,
+        submapper: identity_submapper,
         mirroring: h.mirroring,
         region: h.region,
         console_type,
@@ -821,6 +834,14 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
             Box::new(m88)
         }
+        154 => {
+            // NAMCOT-3453: mapper 88 plus a one-screen nametable select. The
+            // board powers up with whatever the header claims; the game sets it
+            // on its first $8000-$FFFF write.
+            let m154 = Namco118::new(prg_rom, chr_rom, h.mirroring, Namco118Board::M154)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?;
+            Box::new(m154)
+        }
         206 => {
             // DxROM / Namco 118 base: MMC3 banking subset, no IRQ / A12.
             let m206 = Namco118::new(prg_rom, chr_rom, h.mirroring, Namco118Board::Dxrom)
@@ -956,6 +977,12 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         150 => Box::new(
             Sachen150::new(prg_rom, chr_rom).map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
+        // Same SA-020A ASIC as mapper 150, on the PCB it was designed for; only
+        // the CHR/PRG bank-bit significance differs (NESdev mapper 243 Errata).
+        243 => Box::new(
+            Sachen150::new_on_board(prg_rom, chr_rom, Sa020aBoard::Sa020a)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
         180 => Box::new(
             Nichibutsu180::new(prg_rom, chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
@@ -1059,6 +1086,19 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         // (`MapperTier::BestEffort`) + `docs/adr/0011-mapper-tiering.md`.
         28 => Box::new(
             Action53M28::new(prg_rom, &chr_rom, h.mirroring)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
+        // A mapper-30 header that also declares CHR-ROM is provably wrong:
+        // UNROM 512 is a CHR-RAM-only board, so there is no CHR-ROM for the
+        // header to be describing. The known dumps in this shape are Waixing
+        // 2005+ re-releases on the FS005 board, which is mapper 176 submapper 2
+        // -- an 8025 ASIC whose MMC3 core happens to run a mapper-30-sized image
+        // without complaint, which is exactly why the mis-header goes unnoticed.
+        // Route them to the board they actually are rather than emulating a
+        // board that cannot exist. Genuine mapper-30 images declare 0 CHR-ROM
+        // and are untouched.
+        30 if !chr_rom.is_empty() => Box::new(
+            new_m176(prg_rom, chr_rom, h.mirroring, 2)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         30 => {
@@ -1295,7 +1335,7 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         // Waixing / Kaiser clusters. Register-decode + save-state unit-tested
         // only, NOT accuracy-gated (`tier.rs`).
         176 => Box::new(
-            new_m176(prg_rom, chr_rom, h.mirroring)
+            new_m176(prg_rom, chr_rom, h.mirroring, h.submapper)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         268 => Box::new(

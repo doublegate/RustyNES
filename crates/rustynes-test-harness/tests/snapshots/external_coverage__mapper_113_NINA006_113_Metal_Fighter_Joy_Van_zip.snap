@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-113-NINA006-113/Metal Fighter (Joy Van) [!].zip
+rom_sha256=3eff26df840e876b683110cc2cd243d0f30d85e4530fe30fd93279aad488554e
+frames=1141
+fb_bytes=245760
+cycles=33949772
+audio_samples=836505
+audio_fnv1a64=31d801f62b0fa129
+checkpoint f900 fb_fnv1a64=f5046dbb263e2d7f
+checkpoint f1100 fb_fnv1a64=84e2f7fecd9423e9

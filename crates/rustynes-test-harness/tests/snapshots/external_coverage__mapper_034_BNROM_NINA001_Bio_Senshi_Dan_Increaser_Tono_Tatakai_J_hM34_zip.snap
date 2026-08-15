@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-034-BNROM-NINA001/Bio Senshi Dan - Increaser Tono Tatakai (J) [hM34].zip
+rom_sha256=8358bbefe96814697913a4dd334aee6d4e327ddfe3e9522d117372ec4889dc2d
+frames=1141
+fb_bytes=245760
+cycles=33949964
+audio_samples=836509
+audio_fnv1a64=15766b4c4a876f4f
+checkpoint f900 fb_fnv1a64=89ee4c476c97a325
+checkpoint f1100 fb_fnv1a64=89ee4c476c97a325

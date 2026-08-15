@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-018-JalecoSS88006/Plasma Ball (Japan).zip
+rom_sha256=da082d92b940ca7b28eab9d00ac5c083cb1f4907473103c63bac01345796623c
+frames=1141
+fb_bytes=245760
+cycles=33949790
+audio_samples=836505
+audio_fnv1a64=0c602a185e895213
+checkpoint f900 fb_fnv1a64=a0c24a798104b8e0
+checkpoint f1100 fb_fnv1a64=f493ca3c5c5884bc

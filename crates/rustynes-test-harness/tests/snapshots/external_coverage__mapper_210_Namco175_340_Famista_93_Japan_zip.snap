@@ -1,0 +1,13 @@
+---
+source: crates/rustynes-test-harness/tests/external_coverage.rs
+expression: text
+---
+rom=mapper-210-Namco175-340/Famista '93 (Japan).zip
+rom_sha256=fca402fe4e8b8e698c2f6f82983851ea09a11fad550b852efe8e423c5ebfe327
+frames=1141
+fb_bytes=245760
+cycles=33949773
+audio_samples=836505
+audio_fnv1a64=9bcda5c368f5249d
+checkpoint f900 fb_fnv1a64=c25a2e39261a2d8c
+checkpoint f1100 fb_fnv1a64=c25a2e39261a2d8c
