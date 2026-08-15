@@ -1903,13 +1903,12 @@ mod tests {
         // to test, and it never touched `quiet` at all. It could not fail on the
         // bug it existed to catch.
         //
-        // Compare the EMITTED AUDIO instead, which is the thing the overlay is
-        // supposed to change.
-        // NOT `pulse1.output() != 0`: that samples one instant, and a square wave
-        // spends half its period at zero, so it is phase-dependent. (The original
-        // assertion here passed precisely BECAUSE output happened to be 0.)
-        // Assert on the accumulated audio instead -- if anything was audible, some
-        // sample is non-zero.
+        // Compare the EMITTED AUDIO instead, which is what the overlay is
+        // supposed to change. Deliberately not `pulse1.output() != 0` even as a
+        // premise check: that samples one instant, and a square wave spends half
+        // its period at zero, so it is phase-dependent -- exactly the flaw that
+        // made the original assertion vacuous. Accumulated samples have no such
+        // dependence: if anything was audible, some sample is non-zero.
         assert_eq!(muted.channel_mask() & 0x01, 0, "premise: pulse 1 is muted");
 
         let plain_audio = plain.drain_audio();
