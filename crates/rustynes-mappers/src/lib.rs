@@ -1061,6 +1061,19 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
             Action53M28::new(prg_rom, &chr_rom, h.mirroring)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
+        // A mapper-30 header that also declares CHR-ROM is provably wrong:
+        // UNROM 512 is a CHR-RAM-only board, so there is no CHR-ROM for the
+        // header to be describing. The known dumps in this shape are Waixing
+        // 2005+ re-releases on the FS005 board, which is mapper 176 submapper 2
+        // -- an 8025 ASIC whose MMC3 core happens to run a mapper-30-sized image
+        // without complaint, which is exactly why the mis-header goes unnoticed.
+        // Route them to the board they actually are rather than emulating a
+        // board that cannot exist. Genuine mapper-30 images declare 0 CHR-ROM
+        // and are untouched.
+        30 if !chr_rom.is_empty() => Box::new(
+            new_m176(prg_rom, chr_rom, h.mirroring, 2)
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+        ),
         30 => {
             // UNROM-512 decodes its nametable wiring from the RAW iNES byte-6
             // N/M bits (bit 3 = four-screen, bit 0 = vertical), which use an
@@ -1295,7 +1308,7 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         // Waixing / Kaiser clusters. Register-decode + save-state unit-tested
         // only, NOT accuracy-gated (`tier.rs`).
         176 => Box::new(
-            new_m176(prg_rom, chr_rom, h.mirroring)
+            new_m176(prg_rom, chr_rom, h.mirroring, h.submapper)
                 .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
         ),
         268 => Box::new(

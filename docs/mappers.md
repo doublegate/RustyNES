@@ -402,11 +402,44 @@ correction (`game_database.txt`, applied by `apply_header_overrides`, which now
 promotes an iNES-1.0 header to NES 2.0 when a non-zero submapper override is
 set) — the mapper's existing submapper-4 rule already matches FCEUX `Sync181` /
 BizHawk's Seicross special-case, so the core is untouched. The `external_coverage`
-boot-smoke feeds raw bytes to `Nes::from_rom` and bypasses the frontend DB, so
-Seicross still captures blank there (a harness limitation, not a decode bug); the
-three converted Waixing `.WXN` dumps under `mapper-030-` are actually Waixing
-FS005 (iNES mapper 176 submapper 2) misdetected as mapper 30 by GoodNES, so they
-need mapper-176 support + re-staging rather than any mapper-30 change.
+boot-smoke used to feed raw bytes to `Nes::from_rom` and bypass the frontend DB,
+so Seicross captured blank there — a harness limitation, not a decode bug. **As of
+v2.3.4 the harness applies the database** (extracted into the `rustynes-gamedb`
+crate so both consumers share one copy), and Seicross renders.
+
+The three converted Waixing `(Wxn)` dumps staged under `mapper-030-` are Waixing
+FS005 (iNES mapper 176 submapper 2) misdetected as mapper 30 by GoodNES. **As of
+v2.3.4 they are routed by the loader**, on a rule that needs no database entry
+because the header refutes itself: UNROM-512 is a CHR-RAM-only board, so a
+mapper-30 image declaring CHR-ROM cannot be describing the board it claims. Two of
+the three boot; `Chu Liu Xiang` renders no tiles and remains open.
+
+#### Mapper 176 submapper 2 — WAIXING-FS005/FS006
+
+Mapper 176 is the 8025 enhanced-MMC3 ASIC, whose variants are **incompatible** and
+split by NES 2.0 submapper. `m176_bmc_fk23c.rs` covers submapper 0/1 (BMC-FK23C)
+and, since v2.3.4, submapper 2:
+
+| area | FS005 behaviour |
+| --- | --- |
+| `$A001` | RAM Configuration Register once bit 5 is set; behaves as MMC3 `$A001` until then |
+| `$A001.0-1` | 8 KiB WRAM bank at `$6000-$7FFF` (the board carries 32 KiB, not 8) |
+| `$A001.2` | first 8 KiB of CHR space becomes CHR-RAM (mapper-195-like mixed memory) |
+| `$A001.6` | clear ⇒ `$5000-$5FFF` is **not** a register window; it reads/writes the second 4 KiB of WRAM bank 2 |
+| `$A000` | two mirroring bits; single-screen A/B only while the RAM Configuration Register is enabled |
+| `$8000` | bank-select values `$46`/`$47` swap registers 6 and 7 — but `$06`/`$07` do not |
+| `$5xx0.3/7`, `$5xx2.5/6/7` | PRG A21, A22, A25, A23, A24 |
+| decode mask | `$E003`, not the stock MMC3 `$E001`, so `$9FFF` does not alias `$8001` |
+
+The register-window disable is the whole mechanism behind the documented Waixing
+copy-protection sequence: the game parks `$5000-$5FFF` over WRAM, stashes three
+bytes there, re-enables the registers, and reads the same bytes back through
+`$6000-$7FFF` with WRAM bank 2 selected.
+
+Implemented from the NESdev wiki `INES_Mapper_176` page. Unlike the FK23C banking
+transforms in the same file — a disclosed Mesen2 derivation, see `NOTICE` and
+`docs/originality-and-provenance.md` §1 — no reference-emulator source was
+consulted for any of the FS005 code.
 
 ### Mapper accuracy tiering (v1.2.0)
 

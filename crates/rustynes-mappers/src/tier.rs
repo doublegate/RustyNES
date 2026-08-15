@@ -54,16 +54,31 @@ impl MapperTier {
     }
 }
 
-/// Classify a mapper family by its iNES id (and NES 2.0 submapper, reserved for
-/// future per-submapper tiering) into a [`MapperTier`].
+/// Classify a mapper family by its iNES id and NES 2.0 submapper into a
+/// [`MapperTier`].
 ///
 /// Returns `None` for any id that [`crate::parse`] does not support — the two
 /// sets are kept in lockstep, so a supported mapper always has a tier and an
-/// unsupported one never does. The submapper argument is accepted now so a
-/// future `Core` family with a `BestEffort` submapper variant can be expressed
-/// without a signature change; today no family tiers on it.
+/// unsupported one never does.
+///
+/// The submapper argument was reserved from the start for the case where one
+/// variant of a family carries less evidence than the family as a whole.
+/// **Mapper 176 submapper 2 is the first family to use it** (v2.3.4): the 8025's
+/// submappers are documented as mutually incompatible boards, and WAIXING-FS005
+/// is a distinct board whose evidence is its own — see the match arm below.
 #[must_use]
-pub const fn mapper_tier(id: u16, _submapper: u8) -> Option<MapperTier> {
+pub const fn mapper_tier(id: u16, submapper: u8) -> Option<MapperTier> {
+    // --- Per-submapper overrides, applied before the family classification.
+    //
+    // Mapper 176 submapper 2 (WAIXING-FS005/FS006) is NOT the FK23C the rest of
+    // the family is oracle-gated on; it is a separate board added in v2.3.4. Of
+    // its three known dumps two boot correctly and one renders no tiles, so it
+    // has register-decode unit tests but no clean oracle across its own corpus.
+    // Claiming the family's `Curated` for it would assert evidence that does not
+    // exist, which is precisely what the tiering is here to prevent.
+    if id == 176 && submapper == 2 {
+        return Some(MapperTier::BestEffort);
+    }
     match id {
         // --- Tier 0 / Core: the original 51 families (AccuracyCoin/oracle-gated).
         0 | 1 | 2 | 3 | 4 | 5 | 7 | 9 | 10 | 11 | 13 | 16 | 18 | 19 | 21 | 22 | 23 | 24 | 25
