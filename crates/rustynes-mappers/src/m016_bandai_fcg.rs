@@ -353,7 +353,13 @@ impl Eeprom {
             I2cMode::Read => {
                 if self.counter == 8 {
                     self.mode = I2cMode::WaitAck;
-                    self.addr = (self.addr + 1) & self.addr_mask();
+                    // The EEPROM byte-address counter is a hardware ring: it advances
+                    // within the device and rolls over at the top rather than
+                    // faulting. `addr` is a `u8` and `addr_mask()` is 0xFF on every
+                    // chip but the X24C01, so the mask cannot express that rollover
+                    // on its own -- the add traps in a debug build first. Wrap
+                    // explicitly; the mask still confines the X24C01 to 7 bits.
+                    self.addr = self.addr.wrapping_add(1) & self.addr_mask();
                 }
             }
             I2cMode::Write => {
@@ -365,7 +371,13 @@ impl Eeprom {
                         I2cMode::Write
                     };
                     self.mem[(self.addr & self.addr_mask()) as usize] = self.data;
-                    self.addr = (self.addr + 1) & self.addr_mask();
+                    // The EEPROM byte-address counter is a hardware ring: it advances
+                    // within the device and rolls over at the top rather than
+                    // faulting. `addr` is a `u8` and `addr_mask()` is 0xFF on every
+                    // chip but the X24C01, so the mask cannot express that rollover
+                    // on its own -- the add traps in a debug build first. Wrap
+                    // explicitly; the mask still confines the X24C01 to 7 bits.
+                    self.addr = self.addr.wrapping_add(1) & self.addr_mask();
                     self.counter = 0;
                 }
             }
