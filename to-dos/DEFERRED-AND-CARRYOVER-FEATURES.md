@@ -379,11 +379,57 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   screenshots (register-decode unit-tested only). Source: the standing
   mapper-ROM-coverage policy. Target: **backfill via homebrew if available / TBD**.
   Files: `tests/roms/external/`, `screenshots/`.
-- `[B]` **`m176` Waixing FS005 detection follow-up** — three `.WXN` Chinese dumps
+- `[x]` **`m176` Waixing FS005 detection follow-up** — three `.WXN` Chinese dumps
   are misdetected as m30 (UNROM-512). Not an m30 bug. Source: the blank-boot-fixes
   memory note. Files: `crates/rustynes-mappers`, frontend `game_db`.
-  **ACTIONABLE — the ROMs are staged, and the blocker is a missing board
-  (re-verified 2026-08-14, v2.3.4 Workstream B).**
+  **DONE (2026-08-14, v2.3.4 Workstream B) for two of the three ROMs; the third is
+  recorded as an honest residual below.**
+
+  FS005 (submapper 2) is implemented in `m176_bmc_fk23c.rs` from the NESdev wiki
+  page alone -- no reference-emulator source was consulted for any of it, unlike
+  the FK23C banking transforms in the same file, which remain a disclosed Mesen2
+  derivation. What the submapper adds: the `$A001` RAM Configuration Register
+  (32 KiB banked WRAM, the register-window disable, and the mapper-195-like mixed
+  CHR-ROM/CHR-RAM mode), two-bit `$A000` mirroring with single-screen pages gated
+  on that register, the `$46`/`$47` bank-select swap (which does *not* apply to
+  `$06`/`$07`), and PRG A21-A25 from `$5xx0.3/7` + `$5xx2.5/6/7`. The
+  MMC3-compatible registers also moved from the stock `$E001` decode mask to the
+  board's documented `$E003`, so a write to `$9FFF` no longer aliases `$8001`.
+
+  Detection is a dispatch rule rather than a game-database entry, because the
+  header is self-refuting rather than merely unusual: **mapper 30 with any
+  CHR-ROM at all cannot be UNROM-512**, which is a CHR-RAM-only board. Genuine
+  mapper-30 images declare zero CHR-ROM and are untouched -- `Wampus` and
+  `PROTO DERE.NES` still take the m30 path and their baselines did not move.
+
+  Result: `Mo Shen Fa Shi` and `Shui Hu Zhuan` boot to their title screens and
+  menus (previously blank). `Chu Liu Xiang` went blank -> a flat grey frame: it
+  is no longer stuck before the PPU is enabled, but it renders no tiles, and it
+  is **not** fixed.
+
+  A static scan of all three PRG images narrows it. Every one of them stores to
+  the protection triple `$5000`/`$5010`/`$5013` and writes `$A001` 13-29 times, so
+  the copy-protection path is exercised by the two that work — it is not the
+  differentiator. The one structural difference is the mirroring register:
+
+  | ROM | `STA $A000` sites | boots |
+  | --- | ---: | --- |
+  | `Mo Shen Fa Shi` | 2 | yes |
+  | `Shui Hu Zhuan` | 4 | yes |
+  | `Chu Liu Xiang` | **0** | no |
+
+  `Chu Liu Xiang` never writes `$A000` at all, so it runs on whatever the register
+  powers up as. The wiki gives that as **`$00` = Vertical**, while `Fk23c::new`
+  seeds `mirroring` from the iNES header (Horizontal here) — and on a board that
+  *has* a mirroring register the header bit describes nothing. That is the
+  leading hypothesis and it is cheap to test.
+
+  It is deliberately **not** applied yet: wrong mirroring produces a scrambled or
+  duplicated screen, not an empty one, so it does not on its own explain a frame
+  with no tiles. Changing power-on state to chase a hypothesis that cannot be
+  observed on the only ROM that exercises it would be a speculative edit with no
+  measurement behind it. The next step is a CPU trace of where `Chu Liu Xiang`
+  ends up, not another guess.
 
   An earlier pass in this same workstream recorded this as "blocked on ROM
   availability" after `find -iname '*.wxn'` returned zero files. **That was
@@ -404,7 +450,7 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   need submapper 2, `WAIXING-FS005`** — a different board (swapped outer-bank
   registers, extra WRAM, its own address mask). So this is an FS005
   implementation task plus a detection rule, not a re-staging task.
-- `[~]` **Harness cannot see game-database fixes (v2.3.4 Workstream B).** The
+- `[x]` **Harness cannot see game-database fixes (v2.3.4 Workstream B).** The
   coverage harness loads ROMs with `Nes::from_rom(&bytes)` and never applies the
   per-game database, while the frontend rewrites the header first via
   `game_db::apply_header_overrides`. So any fix delivered through the DB is
@@ -422,6 +468,20 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   unproven rather than as a defect. Files:
   `crates/rustynes-test-harness/tests/common/mod.rs` (`load_nes`),
   `crates/rustynes-frontend/src/game_db.rs`.
+
+  **RESOLVED (2026-08-14): the harness now takes the frontend load path.** The
+  database was extracted from `rustynes-frontend` into its own `rustynes-gamedb`
+  crate, which the harness depends on; `load_nes` applies
+  `apply_header_overrides` before `Nes::from_rom`, exactly as the frontend does.
+  `rustynes-frontend` re-exports it as `crate::game_db`, so no call site moved,
+  and the user-overlay path became injectable (`set_overlay_dir`) rather than
+  hard-wired to the frontend's config directory, so the harness cannot
+  accidentally pick up a developer's local overrides.
+
+  **Seicross now renders under the harness**, closing the loop on PR #127. So
+  does `AV Pachi-Slot` (DB maps m148 -> m3), which had been blank. The risk this
+  introduces was measured rather than assumed: 25 staged ROMs have their
+  mapper or submapper changed by the DB, all 25 were run, and none went blank.
 - `[ ]` **Broken-boot residuals (blank/incomplete render)** — the v1.6.0 E-mapper
   coverage pass documented broken-boot cases (e.g. around m50/51/205/245/290 +
   m244/250 + some Vs.System multicart/menu titles). The m30/m80/m185 blank-boot
@@ -430,6 +490,50 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   `docs/testing/v1.6.0-e-mapper-coverage-2026-06-18.md`; the blank-boot-fixes memory
   note; the coverage-harness reuse note. Target: **v1.7.x / follow-up**. Files:
   `crates/rustynes-test-harness/tests/external_coverage.rs`, `screenshots/`.
+
+  **Boot-panic characterisation (2026-08-14, v2.3.4 Workstream B).** These were
+  being carried as "~60 boot panics". That number was wrong: it conflated insta
+  snapshot mismatches with actual panics. Classifying every `panicked at` line in
+  the full sweep by its panic *site* gives 42 insta snapshot assertions (baseline
+  drift, not failures to run), 6 load rejections, and **one real defect**:
+
+  | class | count | detail |
+  | --- | ---: | --- |
+  | insta snapshot assertion | 42 | baseline drift; resolved by re-blessing |
+  | load rejected | 6 | see the corrected corpus-wide figures below |
+  | **arithmetic overflow inside a mapper** | **1** | **`m016_bandai_fcg.rs`: `attempt to add with overflow`** |
+
+  **Correction: the load-rejection count above is from a FILTERED run and is
+  wrong as a corpus figure.** A full unfiltered sweep reports **37**, and 25 of
+  those turned out to be the game-database mapper-0 defect (see the entry above),
+  not board-size problems at all. After that fix the corpus-wide total is **12**,
+  in three classes, none of them a defect in existing code:
+
+  | class | count | detail |
+  | --- | ---: | --- |
+  | mapper not implemented | 5 | **243** (4 Sachen 74LS374N ROMs) and **154** (`Devil Man`) |
+  | header/size mismatch — needs a per-board decision | 6 | CPROM (m13) x3 "expects 32 KiB PRG, got 16384/131072"; m58 `Study and Game 32-in-1` "CHR-ROM size 0"; m146 `Lucky 777` x2 (`.nes` + `.zip`) "16384 is not a non-zero multiple of 32 KiB" |
+  | corrupt dump | 1 | `vs-system/VS Castlevania Hack.nes` — "rom magic bytes do not match" |
+
+  **Mappers 154 and 243 are newly surfaced gaps, not regressions.** They became
+  visible precisely because the database is now applying its *legitimate*
+  non-zero overrides through the harness: `Devil Man` is headered m88 and the DB
+  correctly corrects it to 154, and the Sachen 74LS374N set is headered m150 and
+  corrected to 243. The corpus could never see either before. Both are candidates
+  for the next coverage pass.
+
+  The six header/size mismatches remain an **unadjudicated** per-board question
+  (reject as today, mirror/pad the image, or treat the header as advisory), not a
+  bug to fix generically.
+
+  The last one was a genuine bug and is **fixed**: the Bandai FCG I2C EEPROM byte
+  address is a `u8` advanced as `(self.addr + 1) & self.addr_mask()`, and
+  `addr_mask()` is `0xFF` on every chip but the X24C01 — so the mask was written
+  to express a counter that rolls over, but the add traps on the wrap first in a
+  debug build. Now `wrapping_add(1)`, which is what the hardware ring does; the
+  mask still confines the X24C01 to seven bits.
+
+  Recording all of this so the count stops being folded into "panics".
 - `[x]` **`m301` / `m348` UNIF board-map entries** — *(done; verified against the
   tree 2026-08-14, v2.3.4 Workstream D: `unif.rs:246` maps board `"8157"` -> 301
   and `unif.rs:270` maps `"830118C"` -> 348, both covered by the board-map tests
