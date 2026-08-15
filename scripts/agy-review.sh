@@ -221,7 +221,13 @@ esac
 # ($diff_err was allocated alongside $diff_file / $meta_file above, so the cleanup
 # trap never references it before it exists.)
 if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2>"$diff_err"; then
-  if grep -qi 'diff exceeded the maximum number of lines' "$diff_err"; then
+  # GitHub refuses an oversized diff TWO ways, with different wording: over
+  # 20,000 lines, and over 300 FILES. Both are HTTP 406 and both mean the same
+  # thing here -- the PR is too big for the API, not that anything went wrong --
+  # so both must reach the local fallback. Matching only the `lines` variant made
+  # a wide-but-shallow PR (RustyNES #373: 487 files, mostly regenerated test
+  # baselines) fail the review outright instead of falling back.
+  if grep -qiE 'diff exceeded the maximum number of (lines|files)' "$diff_err"; then
     base_ref="$(jq -r '.baseRefName // empty' "$meta_file")"
     if [ -z "$base_ref" ] || [ "$base_ref" = "null" ]; then
       log "diff exceeds the API limit and the base branch is unknown; cannot fall back"
