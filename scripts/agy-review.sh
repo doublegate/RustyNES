@@ -273,7 +273,14 @@ if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2>"$diff_err"; then
     merge_base="$(git merge-base "$base_local" "$pr_ref" 2>/dev/null || true)"
     if [ -z "$merge_base" ]; then
       head_sha="$(jq -r '.headRefOid // empty' "$meta_file")"
-      api_base="$(gh api "repos/${REPO}/compare/${base_ref}...${head_sha}" \
+      # Percent-encode the branch name for the URL path. NOT for the `/` in a
+      # `<type>/<short-desc>` branch -- GitHub's compare endpoint accepts those
+      # raw, verified against a real slashed branch, returning the same SHA
+      # either way. It is for `%` and `#`, which git permits in a ref name and
+      # which a URL does not survive: `%` starts an escape and `#` truncates the
+      # path at the fragment. Both would fail silently into the `|| true`.
+      base_enc="$(jq -rn --arg v "$base_ref" '$v|@uri')"
+      api_base="$(gh api "repos/${REPO}/compare/${base_enc}...${head_sha}" \
                     --jq '.merge_base_commit.sha' 2>/dev/null || true)"
       if [ -n "$api_base" ] && [ "$api_base" != "null" ]; then
         if git fetch --no-tags --quiet origin "$api_base" 2>/dev/null \
