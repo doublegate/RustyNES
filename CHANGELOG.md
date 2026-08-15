@@ -14,6 +14,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.3.4] - 2026-08-15 - "Ledger" (mapper coverage + the load path the harness could not see)
+
 ### Added
 
 - **Mapper 154 (NAMCOT-3453) and mapper 243 (Sachen SA-020A).** Both surfaced from
