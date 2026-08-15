@@ -175,7 +175,7 @@ trap cleanup EXIT
 # but is NOT harmless now that isCrossRepository gates whether an untrusted diff
 # reaches agy: a lookup failure must never be indistinguishable from "same-repo".
 diff_file="$(mktemp)"; meta_file="$(mktemp)"; diff_err="$(mktemp)"
-gh pr view "$PR" --repo "$REPO" --json title,isCrossRepository,baseRefName > "$meta_file" \
+gh pr view "$PR" --repo "$REPO" --json title,isCrossRepository,baseRefName,headRefOid > "$meta_file" \
   || { log "gh pr view failed; refusing to review without knowing the PR's head repo"; exit 1; }
 
 # THE FORK GATE (see the trust model at the agy invocation below). The workflow `if:`
@@ -225,15 +225,24 @@ if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2>"$diff_err"; then
   # 20,000 lines, and over 300 FILES. Both are HTTP 406 and both mean the same
   # thing here -- the PR is too big for the API, not that anything went wrong --
   # so both must reach the local fallback. Matching only the `lines` variant made
-  # a wide-but-shallow PR (RustyNES #373: 487 files, mostly regenerated test
-  # baselines) fail the review outright instead of falling back.
+  # a wide-but-shallow PR -- hundreds of files, well under the line limit, as a
+  # bulk regeneration of test baselines produces -- fail the review outright
+  # instead of falling back.
   if grep -qiE 'diff exceeded the maximum number of (lines|files)' "$diff_err"; then
     base_ref="$(jq -r '.baseRefName // empty' "$meta_file")"
     if [ -z "$base_ref" ] || [ "$base_ref" = "null" ]; then
       log "diff exceeds the API limit and the base branch is unknown; cannot fall back"
       exit 1
     fi
-    log "diff exceeds GitHub's 20,000-line API limit; falling back to a local git diff"
+    # Name the limit that actually fired. Reporting "20,000-line" for a
+    # file-count refusal is the same class of misleading triage signal that
+    # made this bug look like a runner auth failure in the first place.
+    if grep -qi 'maximum number of files' "$diff_err"; then
+      hit="300-file"
+    else
+      hit="20,000-line"
+    fi
+    log "diff exceeds GitHub's ${hit} API limit; falling back to a local git diff"
     pr_ref="refs/agy/pr-${PR}"
     base_local="refs/agy/base-${PR}"
     agy_refs_created=1
@@ -251,8 +260,39 @@ if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2>"$diff_err"; then
       log "could not fetch PR #${PR} refs for the local diff fallback"
       exit 1
     fi
-    merge_base="$(git merge-base "$base_local" "$pr_ref")" || {
-      log "could not compute the merge base for PR #${PR}"; exit 1; }
+    # The workflow clones with `fetch-depth: 1`, so the two refs above arrive as
+    # DISCONNECTED shallow histories -- there is no common ancestor for
+    # `git merge-base` to find, and it fails even though both refs fetched fine.
+    # (A full local clone hides this completely, which is how it got missed.)
+    #
+    # Ask the API for the merge base and fetch that one commit, rather than
+    # unshallowing: a repo with a large history would pay a full clone on a path
+    # that only exists because the PR is already unusually big. Diffing two
+    # commits needs both trees, not the history between them, so a shallow fetch
+    # of the merge base is enough.
+    merge_base="$(git merge-base "$base_local" "$pr_ref" 2>/dev/null || true)"
+    if [ -z "$merge_base" ]; then
+      head_sha="$(jq -r '.headRefOid // empty' "$meta_file")"
+      # Percent-encode the branch name for the URL path. NOT for the `/` in a
+      # `<type>/<short-desc>` branch -- GitHub's compare endpoint accepts those
+      # raw, verified against a real slashed branch, returning the same SHA
+      # either way. It is for `%` and `#`, which git permits in a ref name and
+      # which a URL does not survive: `%` starts an escape and `#` truncates the
+      # path at the fragment. Both would fail silently into the `|| true`.
+      base_enc="$(jq -rn --arg v "$base_ref" '$v|@uri')"
+      api_base="$(gh api "repos/${REPO}/compare/${base_enc}...${head_sha}" \
+                    --jq '.merge_base_commit.sha' 2>/dev/null || true)"
+      if [ -n "$api_base" ] && [ "$api_base" != "null" ]; then
+        if git fetch --no-tags --quiet origin "$api_base" 2>/dev/null \
+           || git fetch --no-tags --quiet --deepen=250 origin "${fetch_refspecs[@]}" 2>/dev/null; then
+          merge_base="$(git merge-base "$base_local" "$pr_ref" 2>/dev/null || echo "$api_base")"
+          log "shallow clone: merge base ${merge_base} resolved via the compare API"
+        fi
+      fi
+    fi
+    if [ -z "$merge_base" ]; then
+      log "could not compute the merge base for PR #${PR}"; exit 1
+    fi
     git diff "$merge_base" "$pr_ref" > "$diff_file" || {
       log "local git diff failed for PR #${PR}"; exit 1; }
     log "local diff: $(wc -l < "$diff_file") lines, $(wc -c < "$diff_file") bytes"
