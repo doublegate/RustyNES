@@ -225,8 +225,9 @@ if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2>"$diff_err"; then
   # 20,000 lines, and over 300 FILES. Both are HTTP 406 and both mean the same
   # thing here -- the PR is too big for the API, not that anything went wrong --
   # so both must reach the local fallback. Matching only the `lines` variant made
-  # a wide-but-shallow PR (RustyNES #373: 487 files, mostly regenerated test
-  # baselines) fail the review outright instead of falling back.
+  # a wide-but-shallow PR -- hundreds of files, well under the line limit, as a
+  # bulk regeneration of test baselines produces -- fail the review outright
+  # instead of falling back.
   if grep -qiE 'diff exceeded the maximum number of (lines|files)' "$diff_err"; then
     base_ref="$(jq -r '.baseRefName // empty' "$meta_file")"
     if [ -z "$base_ref" ] || [ "$base_ref" = "null" ]; then
