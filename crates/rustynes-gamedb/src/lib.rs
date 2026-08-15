@@ -109,7 +109,27 @@ fn parse_row(line: &str) -> Option<GameDbEntry> {
     }
     let crc = u32::from_str_radix(fields[0], 16).ok()?;
     let region = parse_region(fields[1]);
-    let mapper = fields[2].parse::<u16>().ok();
+    // A Mapper column of `0` means "unspecified", NOT "force NROM".
+    //
+    // The vendored table carries `0` as its default for rows nobody filled in,
+    // and there is no separate empty marker, so a genuine "this ROM really is
+    // NROM" correction is indistinguishable from an unfilled field. Applying it
+    // is therefore never safe: on a ROM whose header already says 0 the override
+    // is a no-op, and on any other ROM it DESTROYS a correct header.
+    //
+    // That destruction was live. Measured over the staged corpus: 12 ROMs -- every
+    // Sachen board in it (133, 143, 145, 146, 147, 148, 149, 150) -- were being
+    // rewritten to mapper 0 and then rejected by NROM's size check, e.g.
+    // `Sidewinder` (SA-72007, mapper 145) whose row reads
+    // `80D63472, PAL, 0, 0, ...`. It reached users, not just the harness: the
+    // frontend has called `apply_header_overrides` since v1.2.0. It surfaced only
+    // when v2.3.4 put the same load path under the coverage sweep.
+    //
+    // This is the second time this vendored table has force-applied a field it
+    // should not have; the first was the mirroring column freezing Wizards &
+    // Warriors (ADR 0031), fixed the same way -- by refusing to apply an override
+    // that cannot be distinguished from "no data".
+    let mapper = fields[2].parse::<u16>().ok().filter(|&m| m != 0);
     let submapper = fields[3].parse::<u8>().ok();
     let mirroring = parse_mirroring(fields[8]);
     let title = fields
@@ -471,6 +491,47 @@ fn crc32(data: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    /// A Mapper column of `0` is "unspecified", not "force NROM" -- applying it
+    /// destroys a correct header. Regression for the 12 Sachen ROMs the vendored
+    /// table was rewriting to mapper 0 and thereby making unloadable.
+    #[test]
+    fn a_zero_mapper_column_is_not_an_override() {
+        let row = "80D63472, PAL, 0, 0, 2, 1, 0, false, Horizontal, \"Sidewinder (Asia) (PAL) (Unl).nes\"";
+        let entry = parse_row(row).expect("row parses");
+        assert_eq!(
+            entry.mapper, None,
+            "a 0 in the Mapper column must not become an override"
+        );
+
+        // ... and it must therefore leave a Sachen header alone. Mapper 145 lives
+        // as low nibble 1 in byte 6 and high nibble 9 in byte 7.
+        let mut rom = vec![0u8; 16];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 1;
+        rom[6] = 0x10;
+        rom[7] = 0x90;
+        apply_header_overrides(&mut rom, &entry);
+        assert_eq!(rom[6], 0x10, "byte 6 mapper nibble must survive");
+        assert_eq!(rom[7], 0x90, "byte 7 mapper nibble must survive");
+        assert_eq!((rom[6] >> 4) | (rom[7] & 0xF0), 145);
+    }
+
+    /// The guard must not disarm real overrides.
+    #[test]
+    fn a_non_zero_mapper_column_still_overrides() {
+        let row = "DEADBEEF, NTSC, 4, 0, 8, 8, 0, false, Vertical, \"Something.nes\"";
+        let entry = parse_row(row).expect("row parses");
+        assert_eq!(entry.mapper, Some(4));
+
+        let mut rom = vec![0u8; 16];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 1;
+        rom[6] = 0x10;
+        rom[7] = 0x90;
+        assert!(apply_header_overrides(&mut rom, &entry));
+        assert_eq!((rom[6] >> 4) | (rom[7] & 0xF0), 4, "mapper 145 -> 4");
+    }
+
     use super::*;
 
     #[test]
