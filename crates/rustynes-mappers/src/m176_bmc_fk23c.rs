@@ -429,9 +429,14 @@ impl Fk23c {
                 // Configuration Register is enabled, so a stray $A000 write on a
                 // submapper-0/1 multicart cannot reach a single-screen page.
                 self.mirroring = match (value & 0x03, self.ram_cfg_enabled()) {
-                    (0, _) => Mirroring::Vertical,
                     (2, true) => Mirroring::SingleScreenA,
                     (3, true) => Mirroring::SingleScreenB,
+                    // Everything else keeps the MMC3-compatible decode, which
+                    // looks at bit 0 ONLY. Folding bit 1 into this arm would
+                    // turn $02/$06 from Vertical into Horizontal on submapper
+                    // 0/1 -- a silent regression for the FK23C multicarts, which
+                    // are oracle-gated Curated.
+                    (v, _) if v & 0x01 == 0 => Mirroring::Vertical,
                     _ => Mirroring::Horizontal,
                 };
             }
@@ -525,13 +530,19 @@ impl Mapper for Fk23c {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
-                if self.chr_is_ram || self.select_chr_ram {
-                    return self.chr[addr as usize & (self.chr.len() - 1)];
-                }
+                // The FS005 mixed-memory overlay outranks the flat CHR window.
+                // `select_chr_ram` is `$5xx0.5`, which on submapper 2 selects
+                // NROM CHR mode rather than the SFC-12B CHR-RAM window, so a
+                // game can have both set -- and if the flat path won, `ppu_write`
+                // would keep writing the overlay while `ppu_read` could never
+                // see it. Resolve the bank first and let the overlay answer.
                 let slot = (addr as usize) / CHR_BANK_1K;
                 let b = self.resolve_chr(slot);
                 if self.chr_bank_is_ram(b) {
                     return self.chr_ram[b * CHR_BANK_1K + (addr as usize & 0x3FF)];
+                }
+                if self.chr_is_ram || self.select_chr_ram {
+                    return self.chr[addr as usize & (self.chr.len() - 1)];
                 }
                 self.chr[b * CHR_BANK_1K + (addr as usize & 0x3FF)]
             }
@@ -886,10 +897,15 @@ mod tests {
     fn fs005_a000_selects_single_screen_only_while_ram_config_is_enabled() {
         let mut m = fs005();
         m.cpu_write(0xA000, 0x02);
+        // Vertical, NOT Horizontal: with single-screen unarmed this falls to the
+        // MMC3-compatible decode, which reads bit 0 only, and bit 0 of $02 is
+        // clear. An earlier version of this test asserted Horizontal here and so
+        // encoded the very bug it was meant to guard -- it would have defended
+        // the regression rather than caught it.
         assert_eq!(
             m.current_mirroring(),
-            Mirroring::Horizontal,
-            "single-screen is unwired until $A001.5 is set"
+            Mirroring::Vertical,
+            "single-screen is unwired until $A001.5 is set, so bit 0 decides"
         );
 
         m.cpu_write(0xA001, 0x20);
@@ -1000,5 +1016,53 @@ mod tests {
             .len();
         let b = fs005().save_state().len();
         assert_eq!(b - a, Fk23c::FS005_CHR_RAM_BANKS * CHR_BANK_1K);
+    }
+
+    #[test]
+    fn a000_keeps_the_mmc3_bit0_decode_when_single_screen_is_not_armed() {
+        // Regression: folding bit 1 into the fallback turned $02/$06 from
+        // Vertical into Horizontal on the FK23C multicarts, which are
+        // oracle-gated Curated. The MMC3-compatible decode is bit 0 ONLY.
+        for sub in [0u8, 2] {
+            let mut m = new_m176(
+                synth_prg_8k(32),
+                synth_chr_1k(64),
+                Mirroring::Horizontal,
+                sub,
+            )
+            .unwrap();
+            for v in [0x00u8, 0x02, 0x04, 0x06] {
+                m.cpu_write(0xA000, v);
+                assert_eq!(
+                    m.current_mirroring(),
+                    Mirroring::Vertical,
+                    "submapper {sub}: ${v:02X} is Vertical (bit 0 clear)"
+                );
+            }
+            for v in [0x01u8, 0x03, 0x05, 0x07] {
+                m.cpu_write(0xA000, v);
+                assert_eq!(
+                    m.current_mirroring(),
+                    Mirroring::Horizontal,
+                    "submapper {sub}: ${v:02X} is Horizontal (bit 0 set)"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fs005_mixed_chr_overlay_outranks_the_flat_chr_window() {
+        // $5xx0.5 (`select_chr_ram`) and the $A001.2 overlay can both be set.
+        // If the flat window won the read, `ppu_write` would keep writing the
+        // overlay while `ppu_read` could never observe it -- writes into a void.
+        let mut m = fs005();
+        m.cpu_write(0xA001, 0x24); // cfg enabled + first 8 KiB is CHR-RAM
+        m.cpu_write(0x5000, 0x20); // and select_chr_ram set as well
+        m.ppu_write(0x0010, 0x77);
+        assert_eq!(
+            m.ppu_read(0x0010),
+            0x77,
+            "the overlay must answer the read, not the flat CHR window"
+        );
     }
 }

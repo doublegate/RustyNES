@@ -202,6 +202,16 @@ static OVERLAY_DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
 ///
 /// Returns `false` if a directory was already set (the first call wins), so a
 /// late second caller cannot silently change which corrections are in force.
+///
+/// # Call this BEFORE the first lookup
+///
+/// The overlay file is read once, lazily, on the first [`entry_for_crc`] /
+/// [`mirroring_for_crc`] call, and cached for the life of the process. Setting
+/// the directory after that point returns `true` -- the `OnceLock` really was
+/// empty -- while having no effect on anything resolved, because the overlay is
+/// already loaded. There is no error to observe. `App::new` therefore calls this
+/// before it applies any header override, and the contract is pinned by
+/// `tests/overlay_dir.rs`.
 pub fn set_overlay_dir(dir: std::path::PathBuf) -> bool {
     OVERLAY_DIR.set(dir).is_ok()
 }

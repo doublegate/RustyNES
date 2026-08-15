@@ -431,25 +431,37 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   measurement behind it. The next step is a CPU trace of where `Chu Liu Xiang`
   ends up, not another guess.
 
+  <details>
+  <summary><b>Historical — how this item was scoped, before FS005 existed.</b>
+  Superseded by the status above; kept because two of its conclusions were
+  wrong and the record of that is worth more than a tidy entry.</summary>
+
   An earlier pass in this same workstream recorded this as "blocked on ROM
   availability" after `find -iname '*.wxn'` returned zero files. **That was
   wrong.** The `.WXN` above is the `(Wxn)` tag in the FILENAME, not a file
   extension: the three dumps are `Chu Liu Xiang (Ch) (Wxn).nes`, `Mo Shen Fa Shi
   (Ch) (Wxn).nes` and `Shui Hu Zhuan (Ch) (Wxn).nes`, staged under
   `tests/roms/external/mapper-030-UNROM512/` precisely *because* they are
-  misdetected. All three currently boot blank.
+  misdetected. All three booted blank at the time this was written; two boot
+  correctly now.
 
   The misdetection is objectively provable from the headers: each declares
   **mapper 30 with 256 KiB of CHR-ROM**, and UNROM-512 has no CHR-ROM at all, so
-  the header cannot be describing the board it claims.
+  the header cannot be describing the board it claims. That reasoning still
+  holds and is what the shipped detection rule uses.
 
-  What actually blocks the fix is that the destination board is not implemented.
+  What blocked the fix was that the destination board was not implemented.
   NESdev `INES_Mapper_176` describes mapper 176 as the 8025 enhanced-MMC3
   chipset with incompatible variants split by NES 2.0 submapper: **submapper 1 is
-  BMC-FK23C, which is what `m176_bmc_fk23c.rs` implements; these Waixing dumps
-  need submapper 2, `WAIXING-FS005`** — a different board (swapped outer-bank
-  registers, extra WRAM, its own address mask). So this is an FS005
-  implementation task plus a detection rule, not a re-staging task.
+  BMC-FK23C, which is what `m176_bmc_fk23c.rs` implemented; these Waixing dumps
+  need submapper 2, `WAIXING-FS005`.** The parenthetical characterisation of
+  FS005 here as "swapped outer-bank registers, extra WRAM, its own address mask"
+  was a guess from the wiki's summary table and is **imprecise**: the swap is of
+  MMC3 bank-select values `$46`/`$47` only, and the address mask is a solder-pad
+  setting shared with the other submappers. See the board table in
+  `docs/mappers.md` for what it actually is.
+
+  </details>
 - `[x]` **Harness cannot see game-database fixes (v2.3.4 Workstream B).** The
   coverage harness loads ROMs with `Nes::from_rom(&bytes)` and never applies the
   per-game database, while the frontend rewrites the header first via
@@ -511,16 +523,24 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
 
   | class | count | detail |
   | --- | ---: | --- |
-  | mapper not implemented | 5 | **243** (4 Sachen 74LS374N ROMs) and **154** (`Devil Man`) |
+  | ~~mapper not implemented~~ | ~~5~~ **0** | **243** and **154** are now IMPLEMENTED (see below); all 5 ROMs boot |
   | header/size mismatch — needs a per-board decision | 6 | CPROM (m13) x3 "expects 32 KiB PRG, got 16384/131072"; m58 `Study and Game 32-in-1` "CHR-ROM size 0"; m146 `Lucky 777` x2 (`.nes` + `.zip`) "16384 is not a non-zero multiple of 32 KiB" |
   | corrupt dump | 1 | `vs-system/VS Castlevania Hack.nes` — "rom magic bytes do not match" |
 
-  **Mappers 154 and 243 are newly surfaced gaps, not regressions.** They became
-  visible precisely because the database is now applying its *legitimate*
+  **Mappers 154 and 243 were newly surfaced gaps, and are now CLOSED.** They
+  became visible precisely because the database is now applying its *legitimate*
   non-zero overrides through the harness: `Devil Man` is headered m88 and the DB
   correctly corrects it to 154, and the Sachen 74LS374N set is headered m150 and
-  corrected to 243. The corpus could never see either before. Both are candidates
-  for the next coverage pass.
+  corrected to 243. The corpus could never see either before.
+
+  Both are implemented (v2.3.4), taking mapper breadth to **174 families**.
+  Neither needed a new type. 154 is mapper 88 plus a one-screen nametable bit, so
+  it is a third `Namco118Board` variant; 243 is the same ASIC as mapper 150 on a
+  different PCB -- NESdev says so under its Errata -- so it is a `Sa020aBoard`
+  variant with a different bank decode. `Devil Man` boots to its intro cutscene
+  and `Honey Peach` to gameplay, verified by looking at the frames; all 17 ROMs
+  under `mapper-088-` and `mapper-150-` now pass the sweep with zero failures.
+  Both are `BestEffort`: their dumps are staged but not redistributable.
 
   The six header/size mismatches remain an **unadjudicated** per-board question
   (reject as today, mirror/pad the image, or treat the header as advisory), not a

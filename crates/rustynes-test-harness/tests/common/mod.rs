@@ -648,7 +648,21 @@ pub mod external {
         {
             rustynes_gamedb::apply_header_overrides(&mut bytes, &entry);
         }
-        let nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rom_rel}: {e}"));
+        let mut nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("parse {rom_rel}: {e}"));
+
+        // The header rewrite above is only HALF of what the frontend does.
+        // Mirroring is not a header override -- `apply_header_overrides` does
+        // not touch it -- it is applied post-construction, and only on a board
+        // with hardwired mirroring. Forcing it onto a mapper that controls its
+        // own is what froze Wizards & Warriors (ADR 0031), so the guard is the
+        // load-bearing part, not the lookup. Mirroring the frontend's
+        // `apply_game_db` exactly: same source, same guard, same order.
+        if let Some(crc) = rustynes_gamedb::rom_crc32(&bytes)
+            && let Some(m) = rustynes_gamedb::mirroring_for_crc(crc)
+            && nes.mapper_has_hardwired_mirroring()
+        {
+            nes.set_mirroring_override(Some(m));
+        }
         Load::Ok(Box::new(nes))
     }
 

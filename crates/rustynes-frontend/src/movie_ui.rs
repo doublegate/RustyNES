@@ -385,8 +385,13 @@ mod tests {
             // Vary the input per frame. The fixture ROM never reads the
             // controller, so this cannot change the VIDEO -- which is exactly
             // why it matters: v2.3.2's attestation folds in the input applied
-            // as well as the frames produced, precisely so a tampered input log
-            // cannot pass on a ROM that ignores the pad. A constant-input
+            // as well as the frames produced, so an input log EDITED WITHOUT
+            // RECOMPUTING the attestation cannot pass even on a ROM that ignores
+            // the pad. To be precise about what that buys: the rolling FNV-1a
+            // hash is tamper-EVIDENT, not forgery-resistant -- anyone willing to
+            // recompute it can produce a consistent pair. It catches accidental
+            // divergence and casual edits, which is what a replay attestation is
+            // for; it is not a signature. A constant-input
             // recording cannot distinguish "the right input was attested" from
             // "some input was attested", so this test presses buttons.
             nes.set_buttons(0, Buttons::from_bits_truncate(1 << (i % 8)));

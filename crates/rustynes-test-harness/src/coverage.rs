@@ -248,19 +248,31 @@ mod tests {
         );
     }
 
-    /// ...and one tile's worth of content clears it.
+    /// ...and the threshold sits exactly where the rationale says it does.
+    ///
+    /// 61,440 pixels at a 0.999 dominant fraction leaves room for 61
+    /// non-dominant pixels. Pin BOTH sides: 61 is still blank, 62 is not. A test
+    /// that only checked a comfortable value (the previous one used 128 while
+    /// calling it "one tile") cannot tell whether the constant is 0.999 or
+    /// 0.99, which is the thing worth pinning.
     #[test]
-    fn one_tile_of_content_is_not_blank() {
+    fn the_blank_threshold_sits_at_sixty_one_non_dominant_pixels() {
         const TOTAL: u32 = 256 * 240;
-        let mut fb = Vec::with_capacity((TOTAL as usize) * 4);
-        for i in 0..TOTAL {
-            let v = u8::from(i < 128) * 255;
-            fb.extend_from_slice(&[v, v, v, 255]);
-        }
-        let h = frame_health(&fb);
+        let lit = |n: u32| {
+            let mut fb = Vec::with_capacity((TOTAL as usize) * 4);
+            for i in 0..TOTAL {
+                let v = u8::from(i < n) * 255;
+                fb.extend_from_slice(&[v, v, v, 255]);
+            }
+            fb
+        };
         assert!(
-            !h.looks_blank(),
-            "two tiles' worth of drawn pixels is content, however dark the rest"
+            frame_health(&lit(61)).looks_blank(),
+            "61 non-dominant pixels is under one 8x8 tile: still nothing drawn"
+        );
+        assert!(
+            !frame_health(&lit(62)).looks_blank(),
+            "62 non-dominant pixels crosses the 0.999 dominant-fraction line"
         );
     }
 

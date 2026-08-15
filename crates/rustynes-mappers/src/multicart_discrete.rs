@@ -313,13 +313,24 @@ impl Mapper for Multicart15 {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 5 + self.vram.len() + self.chr_ram.len() + self.prg_ram.len();
-        if data.len() != expected {
-            return Err(MapperError::Truncated {
-                expected,
-                got: data.len(),
-            });
-        }
+        // The PRG-RAM tail is NEW in v2.3.4. A state written before it existed
+        // carries the same version byte and is exactly `prg_ram.len()` shorter,
+        // so accept that legacy length too and start the RAM cleared. Rejecting
+        // it would break every existing mapper-15 save slot for a field those
+        // slots could not have contained -- a self-inflicted format epoch, and
+        // this project reserves those for a MAJOR release (ADR 0028).
+        let with_ram = 5 + self.vram.len() + self.chr_ram.len() + self.prg_ram.len();
+        let legacy = with_ram - self.prg_ram.len();
+        let has_prg_ram = match data.len() {
+            n if n == with_ram => true,
+            n if n == legacy => false,
+            got => {
+                return Err(MapperError::Truncated {
+                    expected: with_ram,
+                    got,
+                });
+            }
+        };
         if data[0] != SAVE_STATE_VERSION {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
@@ -334,8 +345,12 @@ impl Mapper for Multicart15 {
         self.chr_ram
             .copy_from_slice(&data[cursor..cursor + self.chr_ram.len()]);
         cursor += self.chr_ram.len();
-        self.prg_ram
-            .copy_from_slice(&data[cursor..cursor + self.prg_ram.len()]);
+        if has_prg_ram {
+            self.prg_ram
+                .copy_from_slice(&data[cursor..cursor + self.prg_ram.len()]);
+        } else {
+            self.prg_ram.fill(0);
+        }
         Ok(())
     }
 }
@@ -4763,5 +4778,38 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn m15_loads_a_pre_prg_ram_save_state() {
+        // The PRG-RAM tail is new in v2.3.4 and carries the SAME version byte,
+        // so an existing slot is distinguishable only by length. Rejecting it
+        // would break every mapper-15 save that predates the field, for data
+        // those saves could not have held.
+        let mut m = Multicart15::new(synth_prg_16k(8), &[]).unwrap();
+        m.cpu_write(0x6000, 0x5A);
+        let current = m.save_state();
+
+        // Legacy form: identical bytes minus the PRG-RAM tail.
+        let legacy = current[..current.len() - 0x2000].to_vec();
+        let mut m2 = Multicart15::new(synth_prg_16k(8), &[]).unwrap();
+        m2.cpu_write(0x6000, 0xFF);
+        m2.load_state(&legacy)
+            .expect("a pre-v2.3.4 state must still load");
+        assert_eq!(
+            m2.cpu_read(0x6000),
+            0,
+            "PRG-RAM starts cleared on a legacy load"
+        );
+
+        // And the current form still round-trips its contents.
+        let mut m3 = Multicart15::new(synth_prg_16k(8), &[]).unwrap();
+        m3.load_state(&current).unwrap();
+        assert_eq!(m3.cpu_read(0x6000), 0x5A);
+
+        // A length that is neither is still rejected.
+        let mut bad = current.clone();
+        bad.pop();
+        assert!(m3.load_state(&bad).is_err());
     }
 }

@@ -199,7 +199,7 @@ fn capture_override(rom_rel: &str) -> Option<InputScript> {
 /// NES/FDS/UNIF entry and routing an FDS disk through `Nes::from_disk` with a
 /// resolved BIOS. So a ROM left zipped, or an `.fds` disk, gets a boot
 /// screenshot just like a loose `.nes`.
-fn discover_external_roms() -> Vec<String> {
+fn discover_external_roms_raw() -> Vec<String> {
     let root = external_root();
     let mut out: Vec<String> = Vec::new();
     let Ok(entries) = fs::read_dir(&root) else {
@@ -250,7 +250,16 @@ fn discover_external_roms() -> Vec<String> {
         roms.sort();
         out.extend(roms);
     }
-    dedupe_colliding_ids(out)
+    out
+}
+
+/// Every staged ROM, with snapshot-id collisions resolved. This is what the
+/// sweep runs; [`discover_external_roms_raw`] is what it found before
+/// [`dedupe_colliding_ids`] had a say, and the two are kept separate so a test
+/// can assert something about the raw corpus that deduplication would otherwise
+/// have made true by construction.
+fn discover_external_roms() -> Vec<String> {
+    dedupe_colliding_ids(discover_external_roms_raw())
 }
 
 /// Collapse ROMs that share a [`snapshot_id`], or fail loudly if they cannot be.
@@ -667,7 +676,10 @@ fn a_corpus_without_collisions_passes_through_unchanged() {
 fn the_staged_corpus_has_no_snapshot_id_collisions() {
     // Standing assertion on the real corpus: after the v2.3.4 cleanup it is 1:1,
     // and a future staging mistake should surface here rather than as drift.
-    let roms = discover_external_roms();
+    // RAW, deliberately: `discover_external_roms()` runs the deduper, so
+    // asserting uniqueness on its output only proves the deduper returned unique
+    // ids -- true by construction, and a test that cannot fail.
+    let roms = discover_external_roms_raw();
     let mut ids: Vec<String> = roms.iter().map(|r| snapshot_id(r)).collect();
     ids.sort();
     let before = ids.len();
@@ -675,6 +687,9 @@ fn the_staged_corpus_has_no_snapshot_id_collisions() {
     assert_eq!(
         before,
         ids.len(),
-        "discover_external_roms() returned ROMs sharing a snapshot id after deduplication"
+        "{} staged ROM(s) share a snapshot id BEFORE deduplication. The deduper \
+             will collapse byte-identical ones, but the corpus is meant to be 1:1 -- \
+             a new collision means a duplicate or a near-duplicate filename was staged.",
+        before - ids.len()
     );
 }
