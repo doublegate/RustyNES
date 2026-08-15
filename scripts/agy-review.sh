@@ -175,7 +175,7 @@ trap cleanup EXIT
 # but is NOT harmless now that isCrossRepository gates whether an untrusted diff
 # reaches agy: a lookup failure must never be indistinguishable from "same-repo".
 diff_file="$(mktemp)"; meta_file="$(mktemp)"; diff_err="$(mktemp)"
-gh pr view "$PR" --repo "$REPO" --json title,isCrossRepository,baseRefName > "$meta_file" \
+gh pr view "$PR" --repo "$REPO" --json title,isCrossRepository,baseRefName,headRefOid > "$meta_file" \
   || { log "gh pr view failed; refusing to review without knowing the PR's head repo"; exit 1; }
 
 # THE FORK GATE (see the trust model at the agy invocation below). The workflow `if:`
@@ -260,8 +260,32 @@ if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2>"$diff_err"; then
       log "could not fetch PR #${PR} refs for the local diff fallback"
       exit 1
     fi
-    merge_base="$(git merge-base "$base_local" "$pr_ref")" || {
-      log "could not compute the merge base for PR #${PR}"; exit 1; }
+    # The workflow clones with `fetch-depth: 1`, so the two refs above arrive as
+    # DISCONNECTED shallow histories -- there is no common ancestor for
+    # `git merge-base` to find, and it fails even though both refs fetched fine.
+    # (A full local clone hides this completely, which is how it got missed.)
+    #
+    # Ask the API for the merge base and fetch that one commit, rather than
+    # unshallowing: a repo with a large history would pay a full clone on a path
+    # that only exists because the PR is already unusually big. Diffing two
+    # commits needs both trees, not the history between them, so a shallow fetch
+    # of the merge base is enough.
+    merge_base="$(git merge-base "$base_local" "$pr_ref" 2>/dev/null || true)"
+    if [ -z "$merge_base" ]; then
+      head_sha="$(jq -r '.headRefOid // empty' "$meta_file")"
+      api_base="$(gh api "repos/${REPO}/compare/${base_ref}...${head_sha}" \
+                    --jq '.merge_base_commit.sha' 2>/dev/null || true)"
+      if [ -n "$api_base" ] && [ "$api_base" != "null" ]; then
+        if git fetch --no-tags --quiet origin "$api_base" 2>/dev/null \
+           || git fetch --no-tags --quiet --deepen=250 origin "${fetch_refspecs[@]}" 2>/dev/null; then
+          merge_base="$(git merge-base "$base_local" "$pr_ref" 2>/dev/null || echo "$api_base")"
+          log "shallow clone: merge base ${merge_base} resolved via the compare API"
+        fi
+      fi
+    fi
+    if [ -z "$merge_base" ]; then
+      log "could not compute the merge base for PR #${PR}"; exit 1
+    fi
     git diff "$merge_base" "$pr_ref" > "$diff_file" || {
       log "local git diff failed for PR #${PR}"; exit 1; }
     log "local diff: $(wc -l < "$diff_file") lines, $(wc -c < "$diff_file") bytes"
