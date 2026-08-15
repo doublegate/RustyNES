@@ -42,3 +42,8 @@ realfft = "3.4"
 name = "spectral"
 path = "benches/spectral.rs"
 harness = false
+
+[[bench]]
+name = "apu_throughput"
+path = "benches/apu_throughput.rs"
+harness = false

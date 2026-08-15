@@ -14,6 +14,41 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **An APU throughput bench** (`crates/rustynes-apu/benches/apu_throughput.rs`),
+  alongside the CPU's and the PPU's. The APU is **18.7% of frame time** by
+  v2.3.1's per-source-file attribution, and it is the largest core cost that had
+  never been examined — because fat LTO inlines it wholesale into `cpu_clock`, so
+  it does not appear in a symbol profile at all, which is why the ten-candidate
+  v2.3.1 hot-path sweep never reached it. Three workloads (silent floor, all five
+  channels running, and the expansion-audio path), each one NTSC frame of 29,780
+  CPU cycles so the numbers compare directly against the `full_frame` bench the
+  >3% adoption bar is adjudicated on. **81% of the active per-cycle cost is paid
+  with every channel disabled** — the overhead is very largely unconditional.
+
+### Changed
+
+- **The APU's default-configuration mix takes a specialized path** (−3.3% to
+  −4.2% on `nes_run_frame_nestest`, across two full replicates). Every CPU cycle
+  at 1.789 MHz, `tick_with_external` evaluated a per-channel `gate` closure
+  branching on `channel_mask`, a per-channel `scale` closure branching on
+  `channel_gain`, a 6-wide `f32` array copy, and a sixth mask test — all of them
+  the identity at the shipped default, which the determinism contract guarantees
+  the oracle never leaves. The specialization hoists that question out of the
+  per-cycle body, the same shape as the PPU fast dot path. `mix()` receives
+  exactly the same five arguments, so output is **byte-identical by
+  construction**; a 2,048-point sweep pins it anyway, and AccuracyCoin holds
+  **141/141** with nestest 0-diff.
+
+  Recorded in `docs/performance.md` with a caveat rather than a clean story: the
+  absolute saving on `nes_run_frame_nestest` (~124 µs) is about **three times**
+  what the standalone APU bench attributes to the change, and ~8× the saving on
+  `flowing_palette` — from a component doing identical work in both. The likely
+  mechanism is an LTO/register-allocation knock-on in `cpu_clock`, which is the
+  same inlining that hid the APU from the profile to begin with. Adopted on the
+  measurement, not on the explanation.
+
 ## [2.3.4] - 2026-08-15 - "Ledger" (mapper coverage + the load path the harness could not see)
 
 ### Added

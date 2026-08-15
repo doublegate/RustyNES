@@ -3483,6 +3483,120 @@ gh workflow run PGO.yml -f frames=7200 -f run_bolt=true
 git tag v2.2.3 && git push origin v2.2.3
 ```
 
+### v2.3.5 C0 — the APU had no throughput instrument (BUILT)
+
+v2.3.1's per-source-file attribution recovered the **APU at 18.7% of frame time**
+(`apu.rs` 8.4%, `frame_counter.rs` 2.1%, `blip.rs` 2.1%) — the largest core cost
+never examined, invisible in a symbol profile because fat LTO inlines the whole
+APU into `cpu_clock`. That invisibility is exactly why the ten-candidate v2.3.1
+hot-path sweep never touched it.
+
+Nothing about that cost could be adjudicated, because the instrument did not
+exist. `rustynes-cpu` and `rustynes-ppu` each had a `*_throughput` bench; the APU
+had only `spectral.rs`, which measures blip **quality**, not per-cycle cost.
+`benches/apu_throughput.rs` fills the gap: the APU is ticked one CPU cycle at a
+time, exactly as the bus drives it, 29,780 cycles to the NTSC frame so the number
+is directly comparable against `full_frame`.
+
+The baseline immediately produced the finding that motivated C1:
+
+| workload | time | |
+| --- | ---: | --- |
+| `apu_tick_silent_frame` | **443.02 µs** | every channel disabled |
+| `apu_tick_active_frame` | **547.40 µs** | all five channels running |
+| `apu_tick_active_frame_with_external` | 635.31 µs | the expansion-audio path |
+
+**81% of the active cost is paid with every channel disabled.** The per-cycle
+overhead is very largely unconditional, which is what C1 went after.
+
+*(These are the **corrected** figures. The first version of this bench called
+only `Apu::tick`, where `LockstepBus::cpu_clock` actually runs
+`set_canonical_cycle` then `tick_with_external` then `dmc_tick_end` then
+`promote_dmc_pending_next` on every cycle. Both PR review bots caught that
+independently, and it mattered: the missing end-of-cycle pair is ~23% of the
+per-cycle cost, and correcting it changed C1's measured saving -- see below. The
+instrument built to adjudicate C1 was itself wrong first, which is the same
+lesson F14 recorded when the display metric measured the producer.)*
+
+*(The third row is not a clean measurement: the bench varies the external sample
+inside the timed loop, so it includes that arithmetic. It is reported for shape,
+not for adoption arithmetic.)*
+
+### v2.3.5 C1 — the default-configuration APU mix (decision: ADOPTED, with an unexplained magnitude)
+
+**The change.** `tick_with_external` evaluated, every CPU cycle at 1.789 MHz, a
+`gate(bit, v)` closure per channel branching on `channel_mask`, a `scale(bit, v,
+max)` closure per channel branching on `channel_gain[bit] == 1.0`, a 6-wide `f32`
+array copy, and a sixth mask test for the external sum — to produce a result
+identical to the ungated mix. The determinism contract says the oracle and test
+ROMs never clear a mask bit or change a gain, so at the shipped default every one
+of those is the identity.
+
+C1 hoists the is-this-the-default question out of the per-cycle body and takes a
+branch with none of the machinery, the same shape as the PPU fast dot path. It is
+a strict specialization: `mix()` receives exactly the same five arguments, so the
+output is byte-identical **by construction**. `apu_default_mix_matches_the_gated_path`
+pins it anyway across 2,048 **selected** level combinations with `to_bits()`
+equality, and `a_non_default_mask_or_gain_still_takes_the_gated_path` pins that
+the overlay still works once the configuration stops being default.
+
+**Measured, two full replicates, both arms rebuilt each time** (`--save-baseline`
+/ `--baseline`, not criterion's implicit last-run comparison):
+
+| workload | replicate 1 | replicate 2 | clears >3%? |
+| --- | ---: | ---: | --- |
+| `nes_run_frame_nestest` | **−3.65%** | **−3.30%** | yes |
+| `nes_run_frame_nestest_fast` | **−4.15%** | **−3.30%** | yes |
+| `nes_run_frame_flowing_palette` | −0.53% | −0.66% | no |
+| `nes_run_frame_flowing_palette_fast` | −0.62% (no change) | −1.14% | no |
+
+APU-local, same change, re-measured on the corrected bench (both arms rebuilt
+back-to-back on a quiet host, load average 0.7):
+
+| workload | baseline | C1 | delta | absolute |
+| --- | ---: | ---: | ---: | ---: |
+| `apu_tick_silent_frame` | 443.02 µs | 401.43 µs | **−9.39%** | −41.6 µs |
+| `apu_tick_active_frame` | 547.40 µs | 507.74 µs | **−7.24%** | −39.7 µs |
+| `apu_tick_active_frame_with_external` | 635.31 µs | 597.33 µs | −5.98% | −38.0 µs |
+
+The relative win is smaller than the −15.0% / −14.3% first reported, and that
+is expected: the corrected bench's denominator now includes the end-of-cycle DMC
+pair, which C1 does not touch. The absolute saving also moved (~61 µs to
+~40 µs) -- same source change, so the difference is the loop's own inlining
+and register pressure shifting once two more calls per cycle are present.
+
+**What does not add up, stated rather than smoothed over.** The APU does
+identical work in both `full_frame` workloads — a frame is 29,780 CPU cycles
+whether or not rendering is enabled — so the *absolute* saving should match. It
+does not:
+
+| workload | absolute saving |
+| --- | ---: |
+| `nestest` | **~124 µs** |
+| `flowing_palette` | **~16 µs** |
+
+An 8× difference from a component doing identical work, and the nestest saving is
+**roughly three times the ~40 µs** the corrected standalone APU bench
+attributes to the change. Correcting the bench made this gap *wider*, not
+narrower: the first version of this section reported a 2× gap against a
+~61 µs standalone saving, and the honest correction moves the number the
+wrong way for the explanation. It is recorded that way rather than quietly
+re-fitted. An
+optimization cannot save more than the component it touches costs. So the win is
+**not purely the closure removal**; the likely mechanism is an LTO / register-
+allocation knock-on in `cpu_clock` for nestest's instruction mix — which is the
+same inlining behaviour that hid the APU from the symbol profile to begin with.
+
+Adopted because it clears the bar on the headline workload, reproduces across two
+replicates (the second with arm B under *higher* load, which biases against it),
+and is byte-identical. **Not** adopted on the claim that removing five closures
+buys 3.3%: that story is contradicted by the project's own numbers, and the
+honest position is that the mechanism is only partly understood.
+
+Prediction recorded and wrong, for the record: this campaign expected the
+shorter, rendering-heavy `flowing_palette` frame to show the *larger* relative
+win, since the APU should be a bigger fraction of it. It showed essentially none.
+
 ## Things explicitly *not* in scope for v1.0
 
 - **JIT recompilation** of CPU code. NES games are small enough that interpretation suffices; JIT complicates everything. (Higan/ares don't JIT either.)

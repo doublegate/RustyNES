@@ -138,7 +138,13 @@ bridge methods (`begin_login` / `load_game` / `do_frame`) over it. The side-modu
 build script now also exports `set_event_handler` and the `getValue` / `setValue`
 / `HEAPU8` runtime methods the marshalling reads/writes the rcheevos structs with.
 Off by default, so the shipped native + wasm builds are byte-identical and
-AccuracyCoin holds 139/141 (the two newest upstream PPU tests are known gaps).
+AccuracyCoin holds **141/141** — this sentence read "139/141 (the two newest
+upstream PPU tests are known gaps)" until v2.3.5, which was true when written
+and stopped being true at **v2.0.3**, where promoting the 2-cycle-ALE PPU fetch
+model to the unconditional default closed both gaps. The point the sentence is
+making is unchanged and is the one that matters here: this feature is off by
+default, so the shipped native and wasm builds are byte-identical and the
+accuracy figure is whatever the core scores independently of it.
 
 **v2.1.10 "Web Parity" update — the auth proxy is now a deployable service.**
 The deploy stack (`deploy/`) gained a first-class `ra-proxy` compose service
