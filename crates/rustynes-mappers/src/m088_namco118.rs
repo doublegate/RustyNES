@@ -339,28 +339,51 @@ impl Mapper for Namco118 {
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
-        let expected = 11 + self.vram.len() + need_chr;
-        if data.len() != expected {
-            return Err(MapperError::Truncated {
-                expected,
-                got: data.len(),
-            });
-        }
-        if data[0] != SAVE_STATE_VERSION {
+        // v1 had no mirroring byte, so it is exactly one shorter. Accept it and
+        // keep the mirroring the cartridge was constructed with -- which is the
+        // right answer, because a v1 state can only have come from mapper 88 or
+        // 206, where mirroring is hardwired and never changed at runtime. Only
+        // mapper 154 makes it mutable, and 154 has no v1 states to load.
+        // Rejecting them would break every existing slot for a field they could
+        // not have contained (ADR 0028 reserves format epochs for a MAJOR cut).
+        let with_mirroring = 11 + self.vram.len() + need_chr;
+        let legacy = with_mirroring - 1;
+        let has_mirroring = match data.len() {
+            n if n == with_mirroring => true,
+            n if n == legacy => false,
+            got => {
+                return Err(MapperError::Truncated {
+                    expected: with_mirroring,
+                    got,
+                });
+            }
+        };
+        // Length and version must AGREE -- a v2 blob one byte short has the
+        // legacy length while still declaring version 2, and accepting it would
+        // reinterpret a corrupt state as an older one rather than erroring.
+        let version_ok = if has_mirroring {
+            data[0] == SAVE_STATE_VERSION
+        } else {
+            data[0] == 1
+        };
+        if !version_ok {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.regs.copy_from_slice(&data[1..9]);
         self.bank_select = data[9];
-        self.mirroring = match data[10] {
-            0 => Mirroring::Horizontal,
-            1 => Mirroring::Vertical,
-            2 => Mirroring::SingleScreenA,
-            3 => Mirroring::SingleScreenB,
-            4 => Mirroring::FourScreen,
-            5 => Mirroring::MapperControlled,
-            _ => self.mirroring,
-        };
-        let mut cursor = 11;
+        let mut cursor = 10;
+        if has_mirroring {
+            self.mirroring = match data[10] {
+                0 => Mirroring::Horizontal,
+                1 => Mirroring::Vertical,
+                2 => Mirroring::SingleScreenA,
+                3 => Mirroring::SingleScreenB,
+                4 => Mirroring::FourScreen,
+                5 => Mirroring::MapperControlled,
+                _ => self.mirroring,
+            };
+            cursor += 1;
+        }
         self.vram
             .copy_from_slice(&data[cursor..cursor + self.vram.len()]);
         cursor += self.vram.len();
@@ -614,5 +637,52 @@ mod tests {
         .unwrap();
         m.cpu_write(0x8000, 0x40);
         assert_eq!(m.current_mirroring(), Mirroring::Vertical);
+    }
+
+    #[test]
+    fn m88_loads_a_v1_state_that_predates_the_mirroring_byte() {
+        // v1 carried no mirroring byte. Rejecting those would break every
+        // existing mapper-88/206 slot for a field they could not have held, and
+        // ADR 0028 reserves format epochs for a MAJOR cut. Safe here because
+        // mirroring is hardwired on 88/206; only 154 makes it mutable, and 154
+        // is new, so it has no v1 states.
+        let mut m = Namco118::new(
+            synth_prg(8),
+            synth_chr(64),
+            Mirroring::Vertical,
+            Namco118Board::M88,
+        )
+        .unwrap();
+        m.cpu_write(0x8000, 0x06);
+        m.cpu_write(0x8001, 3);
+        let v2 = m.save_state();
+
+        // Legacy form: v1 byte, and the mirroring byte (index 10) removed.
+        let mut v1 = Vec::with_capacity(v2.len() - 1);
+        v1.extend_from_slice(&v2[..10]);
+        v1.extend_from_slice(&v2[11..]);
+        v1[0] = 1;
+
+        let mut m2 = Namco118::new(
+            synth_prg(8),
+            synth_chr(64),
+            Mirroring::Vertical,
+            Namco118Board::M88,
+        )
+        .unwrap();
+        m2.load_state(&v1).expect("a v1 state must still load");
+        assert_eq!(m2.cpu_read(0x8000), 3, "bank state round-trips");
+        assert_eq!(
+            m2.current_mirroring(),
+            Mirroring::Vertical,
+            "mirroring stays as constructed, which is correct for a hardwired board"
+        );
+
+        // A v2-length blob still declaring v1 (or vice versa) is NOT a legacy
+        // state, it is a corrupt one, and must be rejected rather than
+        // reinterpreted.
+        let mut mismatched = v2.clone();
+        mismatched[0] = 1;
+        assert!(m2.load_state(&mismatched).is_err());
     }
 }

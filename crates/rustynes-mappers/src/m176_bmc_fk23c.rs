@@ -446,14 +446,17 @@ impl Fk23c {
                 // mirroring latched from a previous $A000 write; re-derive it
                 // rather than leaving a single-screen page selected on a board
                 // that no longer offers one.
-                if !self.ram_cfg_enabled()
-                    && matches!(
-                        self.mirroring,
-                        Mirroring::SingleScreenA | Mirroring::SingleScreenB
-                    )
-                {
-                    self.mirroring = Mirroring::Horizontal;
-                }
+                // Fall back to what the MMC3-compatible decode would have said
+                // for the SAME $A000 write, which is recoverable without keeping
+                // the raw byte: single-screen A can only have come from selector
+                // 2 (bit 0 clear -> Vertical) and B from selector 3 (bit 0 set ->
+                // Horizontal). Forcing Horizontal for both was wrong for A, and
+                // wrong the same way the $A000 arm above used to be.
+                self.mirroring = match self.mirroring {
+                    Mirroring::SingleScreenA if !self.ram_cfg_enabled() => Mirroring::Vertical,
+                    Mirroring::SingleScreenB if !self.ram_cfg_enabled() => Mirroring::Horizontal,
+                    other => other,
+                };
             }
             0xC000 => self.irq_latch = value,
             0xC001 => {
@@ -649,15 +652,33 @@ impl Mapper for Fk23c {
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let chr_ram = if self.chr_is_ram { self.chr.len() } else { 0 };
+        // v1 had no `ram_cfg` byte and no CHR-RAM overlay, so it is exactly
+        // those two shorter. Accept it: a v1 state can only have come from
+        // submapper 0/1, where `ram_cfg` is inert and the overlay is empty
+        // anyway, so zeroing both restores the same machine. Only submapper 2
+        // uses them, and it is new here -- it has no v1 states to load.
+        // Rejecting them would break every existing FK23C slot for fields they
+        // could not have contained (ADR 0028 reserves format epochs for a MAJOR).
         let expected =
             1 + Self::SAVE_LEN + self.vram.len() + self.wram.len() + chr_ram + self.chr_ram.len();
-        if data.len() != expected {
-            return Err(MapperError::Truncated {
-                expected,
-                got: data.len(),
-            });
-        }
-        if data[0] != SAVE_STATE_VERSION {
+        let legacy = expected - 1 - self.chr_ram.len();
+        let is_v2 = match data.len() {
+            n if n == expected => true,
+            n if n == legacy => false,
+            got => {
+                return Err(MapperError::Truncated { expected, got });
+            }
+        };
+        // Length and version must AGREE. A v2 blob with a byte lopped off has
+        // the legacy length while still declaring version 2, and accepting that
+        // would silently reinterpret a corrupt state as an older one -- which is
+        // how a truncation turns into wrong emulation instead of an error.
+        let version_ok = if is_v2 {
+            data[0] == SAVE_STATE_VERSION
+        } else {
+            data[0] == 1
+        };
+        if !version_ok {
             return Err(MapperError::UnsupportedVersion(data[0]));
         }
         let mut c = 1;
@@ -686,8 +707,12 @@ impl Mapper for Fk23c {
         self.cnrom_chr_reg = data[c + 1];
         self.mirroring = byte_to_mirroring(data[c + 2], self.mirroring);
         c += 3;
-        self.ram_cfg = data[c];
-        c += 1;
+        if is_v2 {
+            self.ram_cfg = data[c];
+            c += 1;
+        } else {
+            self.ram_cfg = 0;
+        }
         self.vram.copy_from_slice(&data[c..c + self.vram.len()]);
         c += self.vram.len();
         self.wram.copy_from_slice(&data[c..c + self.wram.len()]);
@@ -696,8 +721,12 @@ impl Mapper for Fk23c {
             self.chr.copy_from_slice(&data[c..c + self.chr.len()]);
             c += self.chr.len();
         }
-        let n = self.chr_ram.len();
-        self.chr_ram.copy_from_slice(&data[c..c + n]);
+        if is_v2 {
+            let n = self.chr_ram.len();
+            self.chr_ram.copy_from_slice(&data[c..c + n]);
+        } else {
+            self.chr_ram.fill(0);
+        }
         Ok(())
     }
 }
@@ -1063,6 +1092,65 @@ mod tests {
             m.ppu_read(0x0010),
             0x77,
             "the overlay must answer the read, not the flat CHR window"
+        );
+    }
+
+    #[test]
+    fn fk23c_loads_a_v1_state_that_predates_ram_cfg_and_the_overlay() {
+        // v1 had neither the RAM Configuration byte nor the CHR-RAM overlay. A
+        // v1 state can only be submapper 0/1, where both are inert, so zeroing
+        // them restores the same machine.
+        let mut m = new_m176(synth_prg_8k(32), synth_chr_1k(64), Mirroring::Vertical, 0).unwrap();
+        m.cpu_write(0x8000, 0x06);
+        m.cpu_write(0x8001, 5);
+        let v2 = m.save_state();
+
+        // Legacy form: drop the ram_cfg byte. Its offset is right after the
+        // mirroring byte that ends the scalar block.
+        let off = 1 + Fk23c::SAVE_LEN - 1;
+        let mut v1 = Vec::with_capacity(v2.len() - 1);
+        v1.extend_from_slice(&v2[..off]);
+        v1.extend_from_slice(&v2[off + 1..]);
+        v1[0] = 1;
+
+        let mut m2 = new_m176(synth_prg_8k(32), synth_chr_1k(64), Mirroring::Vertical, 0).unwrap();
+        m2.load_state(&v1)
+            .expect("a v1 FK23C state must still load");
+        assert_eq!(m2.cpu_read(0x8000), 5, "bank state round-trips");
+
+        let mut mismatched = v2.clone();
+        mismatched[0] = 1;
+        assert!(
+            m2.load_state(&mismatched).is_err(),
+            "a v2-length blob claiming v1 is corrupt, not legacy"
+        );
+    }
+
+    #[test]
+    fn fs005_disabling_ram_config_falls_back_per_the_mmc3_bit0_decode() {
+        // Single-screen A can only have come from selector 2 (bit 0 clear ->
+        // Vertical) and B from selector 3 (bit 0 set -> Horizontal). Forcing
+        // Horizontal for both was wrong for A.
+        let mut m = fs005();
+        m.cpu_write(0xA001, 0x20); // arm the RAM Configuration Register
+        m.cpu_write(0xA000, 0x02); // selector 2 -> single-screen A
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenA);
+        m.cpu_write(0xA001, 0x00); // disarm
+        assert_eq!(
+            m.current_mirroring(),
+            Mirroring::Vertical,
+            "A came from a bit-0-clear write, so it falls back to Vertical"
+        );
+
+        let mut m = fs005();
+        m.cpu_write(0xA001, 0x20);
+        m.cpu_write(0xA000, 0x03); // selector 3 -> single-screen B
+        assert_eq!(m.current_mirroring(), Mirroring::SingleScreenB);
+        m.cpu_write(0xA001, 0x00);
+        assert_eq!(
+            m.current_mirroring(),
+            Mirroring::Horizontal,
+            "B came from a bit-0-set write, so it falls back to Horizontal"
         );
     }
 }

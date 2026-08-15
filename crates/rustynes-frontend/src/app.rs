@@ -310,14 +310,18 @@ fn load_and_preprocess_rom(rom_path: &Path) -> std::io::Result<(Vec<u8>, String)
 /// the filesystem overlay it reads are `cfg`-gated off wasm.
 #[cfg(not(target_arch = "wasm32"))]
 fn apply_load_time_header_overrides(bytes: &mut [u8], path: Option<&std::path::Path>) {
-    if let Some(crc) = crate::game_db::rom_crc32(bytes)
-        && let Some(entry) = crate::game_db::entry_for_crc(crc)
-    {
+    // One CRC for both stages. `rom_crc32` hashes PRG+CHR and excludes the
+    // header, which is the only thing `apply_header_overrides` rewrites, so the
+    // key is stable across the first rewrite -- that stability is what lets the
+    // overlay stack on the database correction at all. Recomputing it was an
+    // O(ROM) pass that could not return a different answer.
+    let Some(crc) = crate::game_db::rom_crc32(bytes) else {
+        return;
+    };
+    if let Some(entry) = crate::game_db::entry_for_crc(crc) {
         crate::game_db::apply_header_overrides(bytes, &entry);
     }
-    let rom_crc = crate::game_db::rom_crc32(bytes);
-    if let Some(crc) = rom_crc
-        && let Some(cfg) = crate::per_game::resolve(crc, path)
+    if let Some(cfg) = crate::per_game::resolve(crc, path)
         && !cfg.overrides.is_empty()
     {
         let entry = cfg.overrides.to_game_db_entry(crc, String::new());
