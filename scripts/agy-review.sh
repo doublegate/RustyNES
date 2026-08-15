@@ -234,7 +234,15 @@ if ! gh pr diff "$PR" --repo "$REPO" > "$diff_file" 2>"$diff_err"; then
       log "diff exceeds the API limit and the base branch is unknown; cannot fall back"
       exit 1
     fi
-    log "diff exceeds GitHub's 20,000-line API limit; falling back to a local git diff"
+    # Name the limit that actually fired. Reporting "20,000-line" for a
+    # file-count refusal is the same class of misleading triage signal that
+    # made this bug look like a runner auth failure in the first place.
+    if grep -qi 'maximum number of files' "$diff_err"; then
+      hit="300-file"
+    else
+      hit="20,000-line"
+    fi
+    log "diff exceeds GitHub's ${hit} API limit; falling back to a local git diff"
     pr_ref="refs/agy/pr-${PR}"
     base_local="refs/agy/base-${PR}"
     agy_refs_created=1
