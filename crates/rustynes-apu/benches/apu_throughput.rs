@@ -11,12 +11,25 @@
 //! `ppu_throughput`); the APU had only `spectral.rs`, which measures blip
 //! *quality*, not per-cycle cost.
 //!
-//! **Methodology.** The APU is ticked one CPU cycle at a time, which is exactly
-//! how the bus drives it — no batching, no shortcuts — so the per-cycle overhead
-//! this bench measures is the same overhead the emulator pays. A frame is
-//! **29,780 CPU cycles** at NTSC (1,789,773 Hz / 60.0988 fps), so a one-frame
-//! bench is directly comparable against the `full_frame` core bench that the
-//! >3% adoption bar is adjudicated on.
+//! **Methodology.** Each iteration reproduces `LockstepBus::cpu_clock`'s full
+//! per-cycle APU sequence, not just the tick:
+//!
+//! ```text
+//! set_canonical_cycle(cycle)      // the one-clock collapse: the bus owns the counter
+//! tick_with_external(sample)      // the mix + timers
+//! dmc_tick_end()                  // M-1: DMC byte-timer + reload arm, end-of-cycle
+//! promote_dmc_pending_next()      // visibility delay for the next cycle's DMA
+//! ```
+//!
+//! An earlier version of this bench called only `tick()`. That under-measured the
+//! per-cycle cost and made the "exactly as the bus drives it" claim false — both
+//! review bots caught it independently. The end-of-cycle pair is where the get/put
+//! flip lives under M-2, so omitting it skips real work the emulator pays every
+//! cycle.
+//!
+//! A frame is **29,780 CPU cycles** at NTSC (1,789,773 Hz / 60.0988 fps), so a
+//! one-frame bench is directly comparable against the `full_frame` core bench
+//! that the >3% adoption bar is adjudicated on.
 //!
 //! Three workloads, because the per-cycle cost is not uniform and a single number
 //! would hide which part moved:
@@ -98,13 +111,23 @@ fn silent_apu() -> Apu {
     apu
 }
 
+/// One CPU cycle, in the order `LockstepBus::cpu_clock` runs it. `cycle` is the
+/// canonical bus counter the APU is handed rather than keeping its own mirror.
+#[inline]
+fn production_cycle(apu: &mut Apu, cycle: u64, external: f32) {
+    apu.set_canonical_cycle(cycle);
+    apu.tick_with_external(external);
+    apu.dmc_tick_end();
+    apu.promote_dmc_pending_next();
+}
+
 fn bench_silent(c: &mut Criterion) {
     c.bench_function("apu_tick_silent_frame", |b| {
         b.iter_batched(
             silent_apu,
             |mut apu| {
-                for _ in 0..CPU_CYCLES_PER_FRAME {
-                    apu.tick();
+                for cycle in 0..CPU_CYCLES_PER_FRAME as u64 {
+                    production_cycle(&mut apu, cycle, 0.0);
                 }
                 black_box(&apu);
             },
@@ -118,8 +141,8 @@ fn bench_active(c: &mut Criterion) {
         b.iter_batched(
             active_apu,
             |mut apu| {
-                for _ in 0..CPU_CYCLES_PER_FRAME {
-                    apu.tick();
+                for cycle in 0..CPU_CYCLES_PER_FRAME as u64 {
+                    production_cycle(&mut apu, cycle, 0.0);
                 }
                 black_box(&apu);
             },
@@ -137,9 +160,9 @@ fn bench_active_external(c: &mut Criterion) {
                 // a VRC6 / Sunsoft 5B / Namco 163 cart drives. Constant input
                 // would let the compiler hoist work the real path cannot.
                 let mut phase = 0.0f32;
-                for _ in 0..CPU_CYCLES_PER_FRAME {
+                for cycle in 0..CPU_CYCLES_PER_FRAME as u64 {
                     phase = if phase > 0.25 { -0.25 } else { phase + 0.001 };
-                    apu.tick_with_external(black_box(phase));
+                    production_cycle(&mut apu, cycle, black_box(phase));
                 }
                 black_box(&apu);
             },

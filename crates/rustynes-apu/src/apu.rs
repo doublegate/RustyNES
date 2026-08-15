@@ -1076,7 +1076,7 @@ impl Apu {
         // an approximation -- `mix()` receives exactly the same five arguments
         // it would have received, so the output is byte-identical by
         // construction rather than by measurement. `apu_default_mix_matches_the_gated_path`
-        // pins that across the full output range anyway.
+        // pins that across a 2,048-point sweep anyway.
         if mask == CHANNEL_MASK_ALL && self.channel_gain == CHANNEL_GAIN_UNITY {
             self.last_external = external;
             let mixed = self.mixer.mix(
@@ -1818,8 +1818,8 @@ mod tests {
     /// The specialization is only sound because `gate` is the identity when its
     /// mask bit is set and `scale` is the identity at gain 1.0. If either ever
     /// stops being the identity at the default, this silently changes shipped
-    /// audio -- so assert the equivalence directly over the full output range
-    /// rather than trusting the reasoning.
+    /// audio -- so assert the equivalence directly over a 2,048-point sweep of
+    /// the output range rather than trusting the reasoning.
     #[test]
     fn apu_default_mix_matches_the_gated_path() {
         let apu = Apu::new(Region::Ntsc, 48_000);
@@ -1844,9 +1844,12 @@ mod tests {
             }
         };
 
-        // Every reachable raw level for each channel: pulse/tri/noise 0..=15,
-        // DMC 0..=127. Sweeping the DMC axis against a rotating combination of
-        // the others covers the `tnd_table` index range end to end.
+        // 2,048 SELECTED combinations, not the full cross-product. The DMC axis
+        // is swept exhaustively (0..=127) against 16 rotating phases of the
+        // other four channels, which walks the `tnd_table` index range end to
+        // end and visits every raw level each channel can take. The exhaustive
+        // product would be 16^4 * 128 = 8.4M; this is a sweep, and the wording
+        // says "sweep" rather than claiming enumeration.
         for dmc in 0u8..=127 {
             for lvl in 0u8..=15 {
                 let (p1, p2, tri, noise) = (lvl, 15 - lvl, (lvl + 7) % 16, (lvl + 3) % 16);
@@ -1892,10 +1895,38 @@ mod tests {
                 a.tick();
             }
         }
+        // The original assertion here was broken, and both review bots caught it:
+        // it compared `plain.pulse1.output() == 0` against
+        // `muted.channel_mask & 0x01 != 0`, which is `false` for a muted mask --
+        // so it only passed when pulse 1 happened to be at output 0 on the
+        // sampled tick. Phase-dependent, disconnected from the overlay it claimed
+        // to test, and it never touched `quiet` at all. It could not fail on the
+        // bug it existed to catch.
+        //
+        // Compare the EMITTED AUDIO instead, which is the thing the overlay is
+        // supposed to change.
+        // NOT `pulse1.output() != 0`: that samples one instant, and a square wave
+        // spends half its period at zero, so it is phase-dependent. (The original
+        // assertion here passed precisely BECAUSE output happened to be 0.)
+        // Assert on the accumulated audio instead -- if anything was audible, some
+        // sample is non-zero.
+        assert_eq!(muted.channel_mask() & 0x01, 0, "premise: pulse 1 is muted");
+
+        let plain_audio = plain.drain_audio();
+        let muted_audio = muted.drain_audio();
+        let quiet_audio = quiet.drain_audio();
+        assert!(!plain_audio.is_empty(), "premise: samples were emitted");
+        assert!(
+            plain_audio.iter().any(|s| *s != 0.0),
+            "premise: the default configuration produced audible output"
+        );
         assert_ne!(
-            plain.pulse1.output() == 0,
-            muted.channel_mask & 0x01 != 0,
-            "a cleared mask bit must still reach the mix"
+            plain_audio, muted_audio,
+            "a cleared mask bit must change the emitted audio"
+        );
+        assert_ne!(
+            plain_audio, quiet_audio,
+            "a non-unity gain must change the emitted audio"
         );
     }
     use super::*;
