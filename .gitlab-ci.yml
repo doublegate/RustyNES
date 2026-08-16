@@ -152,14 +152,15 @@ libretro-build-linux-aarch64:
 # `arm-unknown-linux-gnueabihf`; the rest of the job is unchanged, since both use
 # the same `gcc-arm-linux-gnueabihf` cross toolchain.
 #
-# Verified locally before adding: `cargo check` is clean for this triple, and a
-# staticlib build produces a 9.2 MB archive of genuine `ELF 32-bit LSB
-# relocatable, ARM, EABI5` objects. Only the final cdylib link needs the cross
-# linker installed below -- without it cargo falls back to the host x86-64
-# linker and fails with "incompatible with elf64-x86-64", which is the exact
-# failure this `before_script` prevents.
+# The `gcc-arm-linux-gnueabihf` install is load-bearing, not belt-and-braces:
+# codegen for this triple needs nothing beyond the rustup target, but without a
+# cross linker cargo falls back to the HOST linker and the cdylib fails with
+# "incompatible with elf64-x86-64". Removing that line would still compile every
+# object and then fail at the last step.
 libretro-build-linux-armhf:
   extends:
+    # The x86-64 host container -- this is a CROSS build, same as the aarch64
+    # job above; the template supplies the builder image, not the target arch.
     - .libretro-rust-linux-x64
     - .core-defs
   variables:
