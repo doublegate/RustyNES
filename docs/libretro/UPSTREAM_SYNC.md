@@ -61,6 +61,33 @@ Given that RustyNES's license is itself the outcome of a corrected provenance fa
 | Public core docs page | `libretro/docs` | `docs/library/rustynes.md` (Author/License) |
 | Local source of truth | this repo | `crates/rustynes-libretro/rustynes_libretro.info` |
 
+#### iOS / iPadOS / tvOS availability is a THIRD repo, and a hardcoded list
+
+Being on the buildbot is **necessary but not sufficient** for Apple platforms. RustyNES has had a valid `ios-arm64` core on the buildbot for some time — a 1.3 MiB arm64 Mach-O exporting all 51 `retro_*` symbols, disk-control included — and it still does not appear in RetroArch on iOS or iPadOS.
+
+iOS cannot download cores; Apple prohibits fetching executable code. The App Store build therefore **bundles** a fixed set, chosen by `pkg/apple/update-cores.sh` in [`libretro/RetroArch`](https://github.com/libretro/RetroArch). That script holds two lists:
+
+| list | how it is populated | contains RustyNES? |
+| --- | --- | --- |
+| `allcores` | fetched dynamically from the buildbot directory listing | **yes**, automatically |
+| `appstore_cores` | hardcoded array in the script | **no** |
+
+The iOS and tvOS App Store build phases run `rm -f ${SRCROOT}/<platform>/modules/*.dylib` followed by `./update-cores.sh appstore` — so only the **hardcoded** list survives into the bundle. Being in the dynamic `allcores` buys nothing for App Store builds.
+
+**The fix is a one-line PR to `libretro/RetroArch`** adding `rustynes` to `appstore_cores`. The same array feeds iOS, tvOS, and the macOS App Store build, so one entry covers all three. Cores are added there by explicit PR — historically by the Apple maintainer, and also by core authors (`pd777` was added by its own author), so a submission from us is the established route rather than an imposition.
+
+**Alphabetical ordering is mandatory** (see the Strict Alphabetical Ordering note above — it applies to this array too). `rustynes` sorts between `reminiscence` and `sameboy`:
+
+```sh
+    reminiscence
+    rustynes        # <- insert here
+    sameboy
+```
+
+Check the surrounding lines at submission time rather than trusting this snippet; the array grows, and a misordered entry is the most common review comment on these PRs.
+
+**Licensing note for the maintainer, not a blocker.** Adding RustyNES to `appstore_cores` means a GPL-3.0-or-later work gets distributed through the App Store, which carries the long-standing GPL-vs-App-Store-terms tension. RetroArch has already made this call for itself — RetroArch is GPLv3 and ships there, as do the GPLv3 cores `mesen` and `bsnes_hd_beta` — so there is clear precedent. It is still the copyright holder's decision to make deliberately rather than by default.
+
 ### 4. Commit and Push
 
 Stage and commit your changes using clear, conventional commit messages.

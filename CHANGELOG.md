@@ -17,7 +17,15 @@ cycle-accurate core later replaced.
 ### Fixed
 
 - **RetroArch was advertising RustyNES under the pre-relicense MIT/Apache-2.0
-  terms.** Reported by a user, and true: the core-information screen and the core
+  terms — repo-side half fixed here; RetroArch will keep showing the stale
+  license until the upstream sync lands.** The metadata RetroArch reads lives in
+  a repository this project does not control, so nothing in this release can
+  change what an end user currently sees. What this release does is make the
+  local file authoritative and correct, and make the drift impossible to repeat;
+  the user-visible fix completes only when `libretro/libretro-super` and
+  `libretro/docs` merge the corresponding PRs, on their schedule.
+
+  Reported by a user, and true: the core-information screen and the core
   downloader both showed the old license alongside a version of v2.2.1. The cause
   is that RetroArch does not read this repo's
   `crates/rustynes-libretro/rustynes_libretro.info` — it downloads
@@ -45,6 +53,31 @@ cycle-accurate core later replaced.
   re-derivation. `docs/libretro/UPSTREAM_SYNC.md` now records that a license
   change is a mandatory sync trigger and lists the three surfaces that must move
   together.
+
+### Documented
+
+- **Why RustyNES does not appear in RetroArch on iOS / iPadOS** — investigated
+  alongside the license report, and it is **not** a build failure. The libretro
+  buildbot has a current, valid core for every Apple target: the `ios-arm64`
+  artifact is a 1.3 MiB arm64 Mach-O exporting all 51 `retro_*` symbols,
+  including the full disk-control interface the FDS multi-disk support needs.
+
+  iOS cannot download cores — Apple prohibits fetching executable code — so the
+  App Store build **bundles** a fixed set. `libretro/RetroArch`'s
+  `pkg/apple/update-cores.sh` holds two lists: `allcores`, which is fetched
+  dynamically from the buildbot directory (RustyNES is already in it), and
+  `appstore_cores`, a hardcoded array. The iOS and tvOS App Store build phases
+  run `rm -f ${SRCROOT}/iOS/modules/*.dylib` and then `./update-cores.sh
+  appstore`, so **only** the hardcoded list is bundled. RustyNES is absent from
+  it, while every NES competitor — `fceumm`, `mesen`, `nestopia`, `quicknes` — is
+  present. That single omission is the whole reason the core is invisible on
+  iOS/iPadOS, and by the same mechanism on tvOS.
+
+  The remedy is a one-line addition to that array upstream, alphabetically
+  between `reminiscence` and `sameboy`. Cores are added there by explicit PR, by
+  the Apple maintainer and by core authors alike. Recorded in
+  `docs/libretro/UPSTREAM_SYNC.md`; the PR is tracked separately, since like the
+  license sync it lands in a repository this project does not control.
 
 ### Added
 
