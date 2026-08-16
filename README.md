@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.3.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.3.5-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -668,15 +668,28 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.3.4 "Ledger"** — the coverage release. It adds
-three boards (mapper 176 submapper 2 WAIXING-FS005, 154 NAMCOT-3453, 243 Sachen
-SA-020A, taking breadth to **174 families**) and puts the coverage harness on the
-frontend's real load path, which immediately exposed a defect that had been
-reaching users since v1.2.0: the per-game database read a `0` in its Mapper column
-as "force NROM" and overwrote correct headers, leaving **every Sachen cartridge in
-the corpus** unable to load at all. Unlike the previous three releases this one
-does touch the emulation core, so the accuracy contract was **verified rather than
-asserted**: AccuracyCoin holds at exactly 141/141, nestest 0-diff.
+RustyNES's current release is **v2.3.5 "Manifest"** — about what the emulator
+tells the outside world about itself. A user reported RetroArch still showing the
+pre-relicense MIT/Apache-2.0 terms; it does, because RetroArch reads a **separate
+copy** of the core metadata in `libretro/libretro-super` that the v2.2.9 GPL
+relicense never reached. Chasing that opened an audit of the whole libretro
+wrapper, which was misreporting five further things — **each with correct
+emulation behind it**: PAL and Dendy ran **20.2% too fast**, RetroArch's Reset
+**did nothing at all**, unloading leaked Game Genie indices, the advertised aspect
+assumed square pixels, and the **Zapper was unreachable** despite being fully
+emulated. Review then caught a use-after-free in the controller tables. The APU —
+**18.7% of frame time and never examined** — finally got a throughput bench and
+the optimization it justified (**−3.3% to −4.2%** on `nes_run_frame_nestest`).
+The emulation core's shipped **output** is byte-identical, though the APU
+implementation did change (the mix specialization is a strict specialization, not a
+no-op), so the accuracy contract was **verified rather than asserted**: AccuracyCoin
+holds at exactly 141/141, nestest 0-diff.
+
+Two things this release deliberately does **not** claim: RetroArch will still show
+the wrong licence until upstream merges the sync, and RustyNES still will not
+appear on iOS / iPadOS / tvOS — the cause is now understood (a hardcoded core list
+in `libretro/RetroArch`, not a build failure) but the remedy lands in a repository
+this project does not control.
 
 Built on **v2.3.3 "Cadence"** — the display-pacing release, which closed the one
 measured artefact whose signature matches the reported picture "shudder" without
