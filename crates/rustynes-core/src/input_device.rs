@@ -369,7 +369,8 @@ impl ZapperState {
     /// * before the beam reaches the aim row (`scanline < y`) — dark, because
     ///   this frame has not painted it yet;
     /// * from the aim row until the hold expires — bright iff the aperture is
-    ///   bright, the same aperture test [`Self::sample_light`] uses;
+    ///   bright **over the rows the beam has already finished**, per
+    ///   [`Self::aperture_is_bright_painted`];
     /// * after the hold — dark again, the capacitor having drained.
     ///
     /// Holding **no extra state** is deliberate: light is derived on demand at
@@ -378,10 +379,26 @@ impl ZapperState {
     /// and keeps the determinism contract (same framebuffer + aim + scanline
     /// always yields the same answer).
     ///
-    /// One consequence is physically right rather than a compromise: the
-    /// aperture rows *below* the beam still hold the previous frame's pixels,
-    /// which is exactly what the sensor sees, since the beam has not repainted
-    /// them yet.
+    /// # A wrong claim this used to make (v2.3.6)
+    ///
+    /// This doc previously ended: *"One consequence is physically right rather
+    /// than a compromise: the aperture rows below the beam still hold the
+    /// previous frame's pixels, which is exactly what the sensor sees, since the
+    /// beam has not repainted them yet."*
+    ///
+    /// **That is backwards.** A photodiode responds to light the phosphor has
+    /// *emitted*; a row the beam has not reached this frame is emitting nothing,
+    /// and its stale framebuffer contents are an artefact of how the emulator
+    /// stores pixels, not something a sensor could see. Reading those rows made
+    /// the model report light on an all-black screen — measured at scanline 96,
+    /// where the beam was 5 dots into row 96 and the sampler returned the
+    /// previous frame's sky at luma 152 on a frame whose mean luma was 0.
+    ///
+    /// Because *Duck Hunt* requires the gun to see nothing for one frame before
+    /// it will accept a shot, that false positive discarded every shot: the gun
+    /// fired and no duck could ever be hit. The rows are now clipped, and the
+    /// paragraph is kept rather than deleted because the plausible-sounding
+    /// wrong reasoning is what made the defect look intentional.
     #[must_use]
     pub fn light_at_scanline(&self, framebuffer: &[u8], scanline: u16) -> bool {
         let y = self.y;

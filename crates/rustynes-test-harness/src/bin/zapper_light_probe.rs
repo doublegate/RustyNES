@@ -12,14 +12,23 @@
 //! light signal, and it makes a hit impossible in any game that draws its target
 //! and polls in the same frame — which is how *Duck Hunt* works.
 //!
-//! Run both models and compare:
+//! Run both models and compare — the first is the shipped default, the second
+//! the superseded pre-v2.3.6 model:
 //!
 //! ```text
 //! cargo run -p rustynes-test-harness --features commercial-roms,debug-hooks \
 //!   --bin zapper_light_probe -- "tests/roms/external/mapper-000-NROM/Duck Hunt.nes"
 //! cargo run -p rustynes-test-harness --features commercial-roms,debug-hooks \
-//!   --bin zapper_light_probe -- "…/Duck Hunt.nes" temporal
+//!   --bin zapper_light_probe -- "…/Duck Hunt.nes" frame-granular
 //! ```
+//!
+//! Useful environment knobs: `ZAPPER_PROBE_AIM=x,y` (aim point),
+//! `ZAPPER_PROBE_WARMUP` (frames to reach gameplay — note that pressing START an
+//! even number of times leaves *Duck Hunt* PAUSED, which looks exactly like "the
+//! Zapper is ignored"), `ZAPPER_PROBE_FRAMES`, `ZAPPER_PROBE_TRACE=1`
+//! (instruction-level replay of the first light-test frame) and
+//! `ZAPPER_PROBE_PNG_DIR` (dump frames, so a claim can be checked against what
+//! is actually on screen).
 //!
 //! The dump is gitignored (commercial), so this is a local-only diagnostic.
 
@@ -121,7 +130,12 @@ fn main() {
     let path = args
         .next()
         .unwrap_or_else(|| "tests/roms/external/mapper-000-NROM/Duck Hunt.nes".into());
-    let temporal = args.next().is_some_and(|s| s == "temporal");
+    // The beam-relative model is the SHIPPED DEFAULT from v2.3.6; pass
+    // `frame-granular` to probe the superseded pre-v2.3.6 model instead. The
+    // argument used to be `temporal` (opt-in then), which is still accepted so
+    // older invocations in notes and logs keep working.
+    let arg = args.next().unwrap_or_default();
+    let temporal = !matches!(arg.as_str(), "frame-granular" | "frame");
 
     let Ok(bytes) = std::fs::read(&path) else {
         eprintln!("skipping: {path} absent (commercial dump, gitignored)");
@@ -136,9 +150,9 @@ fn main() {
     println!(
         "light model: {}",
         if temporal {
-            "beam-relative (temporal, opt-in)"
+            "beam-relative (SHIPPED DEFAULT since v2.3.6)"
         } else {
-            "frame-granular (SHIPPED DEFAULT)"
+            "frame-granular (superseded; the model that made a Duck Hunt hit impossible)"
         }
     );
 
