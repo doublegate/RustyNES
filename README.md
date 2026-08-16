@@ -99,7 +99,7 @@ platform for NES emulation.
 | **A/V Recording** | Synchronized video + audio capture to `.mp4` / `.mkv` via an `ffmpeg` pipe (opt-in, output-only) |
 | **NSF / NSFe Player** | Chiptune playback through the real APU + expansion synths, honoring non-60 Hz play-speed dividers |
 | **Android & iOS Apps** | Complete native apps on the byte-identical core — touch + hardware controllers, save-states, netplay, RetroAchievements, and the shader stack (sideload / TestFlight; free store listing possible later) |
-| **Libretro Core** | A cycle-accurate `rustynes_libretro` core for RetroArch (RetroAchievements, dynamic audio sync, deterministic rollback / save-state) |
+| **Libretro Core** | A cycle-accurate `rustynes_libretro` core for RetroArch (RetroAchievements, dynamic audio sync, deterministic rollback / save-state, region-correct NTSC / PAL / Dendy pacing, FDS multi-disk swapping, Game Genie cheats, and the NES Zapper on ports 1-2) |
 | **Pure Rust** | `winit` + `wgpu` + `cpal` + `egui` frontend; safe `no_std + alloc` chip stack |
 
 <p align="center">

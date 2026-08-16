@@ -60,6 +60,19 @@ cycle-accurate core later replaced.
   from a previous game stayed live and a later removal could act on a code
   belonging to a cartridge no longer inserted.
 
+- **The libretro controller tables were dangling stack pointers.** Found in
+  review, and verified against RetroArch's handler rather than the header's
+  prose, because `libretro.h` does not specify the lifetime either way:
+  `SET_CONTROLLER_INFO` shallow-`memcpy`s the outer `retro_controller_info` array
+  and **retains** each entry's `types` pointer, dereferencing it later when the
+  Controls menu is built. Built as locals, those pointed into a stack frame that
+  died when the environment call returned — a use-after-free read at menu-open
+  time, on code that compiled cleanly. The tables are now `static`; the outer
+  array stays a local deliberately, because it *is* copied, and that asymmetry is
+  documented at the call site. The neighbouring `set_input_descriptors` call was
+  checked rather than assumed, and is safe: RetroArch walks that array during the
+  call and retains only `'static` string pointers.
+
 - **The advertised display aspect assumed square pixels.** The core sent
   `aspect_ratio = 0.0`, which tells the frontend to derive the ratio from the
   pixel dimensions — 256/240 ≈ 1.067. A NES does not produce square pixels, and
@@ -86,7 +99,9 @@ cycle-accurate core later replaced.
   but the wrapper polled joypads only and never implemented
   `retro_set_controller_port_device`, so light-gun games were unplayable through
   RetroArch despite being fully emulated. Ports 1 and 2 now offer "NES Zapper"
-  in the Controls menu via `RETRO_ENVIRONMENT_SET_CONTROLLER_INFO`. Off-screen
+  in the Controls menu via `RETRO_ENVIRONMENT_SET_CONTROLLER_INFO`; ports 3 and 4
+  — a Vs. cabinet's SUB console — are advertised pad-only, since a cabinet has no
+  light gun. Off-screen
   and "reload" reports are forwarded as a trigger pull at a guaranteed-dark
   position rather than dropped, which is how a real Zapper behaves when pointed
   away from the television — the mechanism the shoot-off-screen behaviour in
