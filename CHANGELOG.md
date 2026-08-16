@@ -14,6 +14,38 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **RetroArch was advertising RustyNES under the pre-relicense MIT/Apache-2.0
+  terms.** Reported by a user, and true: the core-information screen and the core
+  downloader both showed the old license alongside a version of v2.2.1. The cause
+  is that RetroArch does not read this repo's
+  `crates/rustynes-libretro/rustynes_libretro.info` — it downloads
+  `dist/info/rustynes_libretro.info` from `libretro/libretro-super`, a separate
+  copy that nothing syncs and nothing compares. Both upstream PRs merged in July,
+  three weeks **before** the v2.2.9 relicense to GPL-3.0-or-later (ADR 0036), so
+  no sync ever carried it. `libretro/docs`' Author/License section was stale the
+  same way. Since this project's license is itself the outcome of a corrected
+  provenance failure, a frontend misreporting it is a compliance problem rather
+  than a cosmetic one.
+
+  The local `.info` was also wrong, if less so. libretro metadata does not use
+  SPDX; it uses short tokens and marks "or later" with a trailing `+` (tallied
+  across all 316 upstream core files: `GPLv2` ×100, `GPLv3` ×64, `GPLv2+` ×19,
+  `GPLv3+` ×5). RustyNES is GPL-3.0-**or-later**, so the token is **`GPLv3+`** —
+  the bare `GPLv3` carried since v2.3.0 understated it as GPL-3.0-only. The
+  description's mapper count is corrected 172 → 174.
+
+  A standing audit (`libretro_info_audit.rs`, modelled on
+  `snapshot_schema_audit.rs`) now pins the `.info`'s license, `display_version`
+  and `supported_extensions` against the workspace manifest, with the SPDX →
+  libretro token mapping encoded so an unmapped license fails loudly instead of
+  passing through. It cannot reach the upstream repo — no test can — but it makes
+  the local file authoritative, so the upstream sync is a copy rather than a
+  re-derivation. `docs/libretro/UPSTREAM_SYNC.md` now records that a license
+  change is a mandatory sync trigger and lists the three surfaces that must move
+  together.
+
 ### Added
 
 - **An APU throughput bench** (`crates/rustynes-apu/benches/apu_throughput.rs`),
