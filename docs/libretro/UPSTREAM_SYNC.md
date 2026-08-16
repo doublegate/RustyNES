@@ -37,6 +37,30 @@ Make the necessary changes.
 - **Professionalism:** Maintain a professional, direct, and concise "core submission style" when drafting your PR descriptions.
 - **Info File Validation:** When updating the `rustynes_libretro.info` file (submitted to `libretro-super`, not the mirror), verify that `supported_extensions` matches the exact list supported by the `rustynes-libretro` crate.
 
+#### The `.info` file upstream is a SEPARATE COPY, and it went stale for eleven days
+
+**This is the failure this section exists to prevent, and it already happened once.**
+
+RetroArch does **not** read this repo's `crates/rustynes-libretro/rustynes_libretro.info`. It reads `dist/info/rustynes_libretro.info` from `libretro/libretro-super`, which the buildbot republishes and the frontend downloads. The two files are unrelated as far as any tooling is concerned — nothing syncs them, and nothing in either repo compares them.
+
+So when v2.2.9 relicensed RustyNES from MIT/Apache-2.0 to **GPL-3.0-or-later** (ADR 0036), the change reached `Cargo.toml`, `NOTICE`, `deny.toml`, the SPDX headers, `docs/originality-and-provenance.md`, the README, and the local `.info` — and **not** the upstream copy. RetroArch went on advertising a GPL-3.0-or-later emulator as "MIT OR Apache-2.0", alongside a `display_version` of v2.2.1, until a user noticed.
+
+Given that RustyNES's license is itself the outcome of a corrected provenance failure, a frontend misreporting it is a compliance problem, not a cosmetic one.
+
+**Therefore:**
+
+1. **A license change is a mandatory upstream-sync trigger**, on the same footing as a release. It is not a documentation-only change.
+2. `crates/rustynes-test-harness/tests/libretro_info_audit.rs` now pins the local `.info`'s `license`, `display_version`, and `supported_extensions` against the workspace manifest, so the local file cannot drift and the upstream sync is a **copy**, never a re-derivation. It cannot see the upstream repo — no test can — so the sync itself is still a human step.
+3. **libretro `.info` files do not use SPDX.** They use short tokens and mark "or later" with a trailing `+`. Verified across all 316 core info files in `libretro-super`: `GPLv2` (100), `GPLv3` (64), `GPLv2+` (19), `GPLv3+` (5). RustyNES is GPL-3.0-**or-later**, so the correct token is **`GPLv3+`** — a bare `GPLv3` understates it as GPL-3.0-only. The audit encodes this mapping and fails with instructions if the license moves to something it has not been taught.
+
+**Surfaces that must all be updated together on a license change:**
+
+| Surface | Repo | Path |
+| --- | --- | --- |
+| Core metadata RetroArch reads | `libretro/libretro-super` | `dist/info/rustynes_libretro.info` |
+| Public core docs page | `libretro/docs` | `docs/library/rustynes.md` (Author/License) |
+| Local source of truth | this repo | `crates/rustynes-libretro/rustynes_libretro.info` |
+
 ### 4. Commit and Push
 
 Stage and commit your changes using clear, conventional commit messages.
