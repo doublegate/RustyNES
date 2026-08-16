@@ -16,68 +16,37 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
-- **RetroArch was advertising RustyNES under the pre-relicense MIT/Apache-2.0
-  terms — repo-side half fixed here; RetroArch will keep showing the stale
-  license until the upstream sync lands.** The metadata RetroArch reads lives in
-  a repository this project does not control, so nothing in this release can
-  change what an end user currently sees. What this release does is make the
-  local file authoritative and correct, and make the drift impossible to repeat;
-  the user-visible fix completes only when `libretro/libretro-super` and
-  `libretro/docs` merge the corresponding PRs, on their schedule.
+- **The libretro core metadata advertised the pre-relicense MIT/Apache-2.0
+  license.** Corrected to `GPLv3+` — libretro metadata uses short tokens and
+  marks "or later" with a trailing `+`, so the bare `GPLv3` carried since v2.3.0
+  understated RustyNES as GPL-3.0-only. The description's mapper count is
+  corrected 172 → 174.
 
-  Reported by a user, and true: the core-information screen and the core
-  downloader both showed the old license alongside a version of v2.2.1. The cause
-  is that RetroArch does not read this repo's
-  `crates/rustynes-libretro/rustynes_libretro.info` — it downloads
-  `dist/info/rustynes_libretro.info` from `libretro/libretro-super`, a separate
-  copy that nothing syncs and nothing compares. Both upstream PRs merged in July,
-  three weeks **before** the v2.2.9 relicense to GPL-3.0-or-later (ADR 0036), so
-  no sync ever carried it. `libretro/docs`' Author/License section was stale the
-  same way. Since this project's license is itself the outcome of a corrected
-  provenance failure, a frontend misreporting it is a compliance problem rather
-  than a cosmetic one.
+  **This is the repo-side half only.** RetroArch reads a separate copy in
+  `libretro/libretro-super` that this project does not control, so nothing in
+  this release changes what an end user currently sees; the user-visible fix
+  completes when that sync and the `libretro/docs` page merge upstream. Since
+  RustyNES's license is itself the outcome of a corrected provenance failure,
+  a frontend misreporting it is a compliance matter rather than a cosmetic one.
 
-  The local `.info` was also wrong, if less so. libretro metadata does not use
-  SPDX; it uses short tokens and marks "or later" with a trailing `+` (tallied
-  across all 316 upstream core files: `GPLv2` ×100, `GPLv3` ×64, `GPLv2+` ×19,
-  `GPLv3+` ×5). RustyNES is GPL-3.0-**or-later**, so the token is **`GPLv3+`** —
-  the bare `GPLv3` carried since v2.3.0 understated it as GPL-3.0-only. The
-  description's mapper count is corrected 172 → 174.
-
-  A standing audit (`libretro_info_audit.rs`, modelled on
-  `snapshot_schema_audit.rs`) now pins the `.info`'s license, `display_version`
-  and `supported_extensions` against the workspace manifest, with the SPDX →
-  libretro token mapping encoded so an unmapped license fails loudly instead of
-  passing through. It cannot reach the upstream repo — no test can — but it makes
-  the local file authoritative, so the upstream sync is a copy rather than a
-  re-derivation. `docs/libretro/UPSTREAM_SYNC.md` now records that a license
-  change is a mandatory sync trigger and lists the three surfaces that must move
-  together.
+  A standing audit (`libretro_info_audit.rs`) now pins the `.info`'s `license`,
+  `display_version` and `supported_extensions` — the last derived from the core's
+  own `retro_get_system_info` declaration rather than a repeated literal — so the
+  local file cannot drift and the upstream sync is a copy rather than a
+  re-derivation. `docs/libretro/UPSTREAM_SYNC.md` records the full investigation,
+  the token mapping and its evidence, and the surfaces that must move together.
 
 ### Documented
 
-- **Why RustyNES does not appear in RetroArch on iOS / iPadOS** — investigated
-  alongside the license report, and it is **not** a build failure. The libretro
-  buildbot has a current, valid core for every Apple target: the `ios-arm64`
-  artifact is a 1.3 MiB arm64 Mach-O exporting all 51 `retro_*` symbols,
-  including the full disk-control interface the FDS multi-disk support needs.
-
-  iOS cannot download cores — Apple prohibits fetching executable code — so the
-  App Store build **bundles** a fixed set. `libretro/RetroArch`'s
-  `pkg/apple/update-cores.sh` holds two lists: `allcores`, which is fetched
-  dynamically from the buildbot directory (RustyNES is already in it), and
-  `appstore_cores`, a hardcoded array. The iOS and tvOS App Store build phases
-  run `rm -f ${SRCROOT}/iOS/modules/*.dylib` and then `./update-cores.sh
-  appstore`, so **only** the hardcoded list is bundled. RustyNES is absent from
-  it, while every NES competitor — `fceumm`, `mesen`, `nestopia`, `quicknes` — is
-  present. That single omission is the whole reason the core is invisible on
-  iOS/iPadOS, and by the same mechanism on tvOS.
-
-  The remedy is a one-line addition to that array upstream, alphabetically
-  between `reminiscence` and `sameboy`. Cores are added there by explicit PR, by
-  the Apple maintainer and by core authors alike. Recorded in
-  `docs/libretro/UPSTREAM_SYNC.md`; the PR is tracked separately, since like the
-  license sync it lands in a repository this project does not control.
+- **Why RustyNES does not appear in RetroArch on iOS / iPadOS / tvOS.** Not a
+  build failure: the buildbot carries a valid, current core for every Apple
+  target. iOS cannot download cores, so the App Store build bundles a hardcoded
+  list in `libretro/RetroArch`'s `pkg/apple/update-cores.sh`, and RustyNES is
+  absent from it while every NES competitor is present. The remedy is a one-line
+  upstream addition covering all three Apple platforms. Details and the
+  submission requirements are in `docs/libretro/UPSTREAM_SYNC.md`; the PR is
+  tracked separately, as it too lands in a repository this project does not
+  control.
 
 ### Added
 

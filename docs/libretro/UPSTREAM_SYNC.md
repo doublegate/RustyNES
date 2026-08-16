@@ -53,13 +53,34 @@ Given that RustyNES's license is itself the outcome of a corrected provenance fa
 2. `crates/rustynes-test-harness/tests/libretro_info_audit.rs` now pins the local `.info`'s `license`, `display_version`, and `supported_extensions` against the workspace manifest, so the local file cannot drift and the upstream sync is a **copy**, never a re-derivation. It cannot see the upstream repo — no test can — so the sync itself is still a human step.
 3. **libretro `.info` files do not use SPDX.** They use short tokens and mark "or later" with a trailing `+`. Verified across all 316 core info files in `libretro-super`: `GPLv2` (100), `GPLv3` (64), `GPLv2+` (19), `GPLv3+` (5). RustyNES is GPL-3.0-**or-later**, so the correct token is **`GPLv3+`** — a bare `GPLv3` understates it as GPL-3.0-only. The audit encodes this mapping and fails with instructions if the license moves to something it has not been taught.
 
-**Surfaces that must all be updated together on a license change:**
+**Surfaces that must all be updated together:**
 
 | Surface | Repo | Path |
 | --- | --- | --- |
 | Core metadata RetroArch reads | `libretro/libretro-super` | `dist/info/rustynes_libretro.info` |
-| Public core docs page | `libretro/docs` | `docs/library/rustynes.md` (Author/License) |
+| Public core docs page | `libretro/docs` | `docs/library/rustynes.md` |
 | Local source of truth | this repo | `crates/rustynes-libretro/rustynes_libretro.info` |
+
+**Every advertised field is in scope, not only the license.** The license is what
+drifted, but nothing about the failure was license-specific — the same gap
+applies to every field, and `display_version` had drifted too (stuck at v2.2.1).
+Treat a change to any of these as requiring an upstream sync:
+
+| Field | Syncs to `libretro-super` | Syncs to `libretro/docs` | Locally audited? |
+| --- | :---: | :---: | --- |
+| `license` | yes | yes (Author/License) | yes — vs `[workspace.package]` |
+| `display_version` | yes | no | yes — vs `[workspace.package]` |
+| `supported_extensions` | yes | yes (Extensions) | yes — vs the core's `retro_get_system_info` |
+| `disk_control`, `savestate`, `cheats`, `core_options`, and the other capability flags | yes | yes (Features table) | no — assert by hand against the crate |
+| mapper count / `description` | yes | no | no |
+| `firmware*`, `database` | yes | yes (Databases / BIOS) | no |
+
+The audited rows fail the test suite the moment they drift. The unaudited rows
+are the ones to check by hand at release time — capability flags especially, since
+advertising a capability the core lacks is worse than omitting one it has. That
+exact defect shipped once already: `disk_control` was `false` while the FDS Disk
+Control interface had been wired for months, hiding multi-disk swapping from
+RetroArch's Quick Menu until v2.2.4 corrected it.
 
 #### iOS / iPadOS / tvOS availability is a THIRD repo, and a hardcoded list
 
