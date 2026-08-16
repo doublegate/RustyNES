@@ -50,7 +50,11 @@ Given that RustyNES's license is itself the outcome of a corrected provenance fa
 **Therefore:**
 
 1. **A license change is a mandatory upstream-sync trigger**, on the same footing as a release. It is not a documentation-only change.
-2. `crates/rustynes-test-harness/tests/libretro_info_audit.rs` now pins the local `.info`'s `license`, `display_version`, and `supported_extensions` against the workspace manifest, so the local file cannot drift and the upstream sync is a **copy**, never a re-derivation. It cannot see the upstream repo — no test can — so the sync itself is still a human step.
+2. `crates/rustynes-test-harness/tests/libretro_info_audit.rs` now pins the local `.info` against **two different sources of truth**, one per field, so the local file cannot drift and the upstream sync is a **copy**, never a re-derivation:
+   - `license` and `display_version` — against `[workspace.package]` in the root `Cargo.toml`.
+   - `supported_extensions` — against the **core's own** `retro_get_system_info` declaration in `crates/rustynes-libretro/src/lib.rs`, not the manifest, because that is where the list the core will actually load is defined. A literal repeated in the test would be a second copy of the fact rather than an audit of it.
+
+   The audit cannot see the upstream repo — no test can — so the sync itself is still a human step.
 3. **libretro `.info` files do not use SPDX.** They use short tokens and mark "or later" with a trailing `+`. Verified across all 316 core info files in `libretro-super`: `GPLv2` (100), `GPLv3` (64), `GPLv2+` (19), `GPLv3+` (5). RustyNES is GPL-3.0-**or-later**, so the correct token is **`GPLv3+`** — a bare `GPLv3` understates it as GPL-3.0-only. The audit encodes this mapping and fails with instructions if the license moves to something it has not been taught.
 
 **Surfaces that must all be updated together:**
