@@ -20,6 +20,18 @@
 //! - **Input**: The Joypad API is polled each frame and bitmasked into `rustynes_core::Buttons`.
 //!   For a `DualSystem` cabinet libretro ports 0/1 drive the MAIN console's P1/P2 and
 //!   ports 2/3 drive the SUB console's P1/P2 (matching `VsDualSystem::set_buttons`).
+//!   Ports 1 and 2 additionally accept the **NES Zapper** — selected in the frontend's
+//!   Controls menu via `RETRO_ENVIRONMENT_SET_CONTROLLER_INFO`, polled through
+//!   `RETRO_DEVICE_LIGHTGUN`, and resolved against the CRT beam by
+//!   `Nes::set_zapper`. An off-screen or "reload" report is forwarded as a trigger
+//!   pull at a guaranteed-dark position, which is how a real Zapper behaves when
+//!   pointed away from the television.
+//! - **Region & timing**: `retro_get_system_av_info` reports the frame rate of the
+//!   cartridge actually loaded — 60.0988 Hz NTSC, 50.0070 Hz PAL/Dendy — derived from
+//!   `rustynes_core`'s `FRAME_DURATION_*` rather than transcribed, and
+//!   `retro_get_region` reports the matching `RETRO_REGION_*`. The advertised display
+//!   aspect is the NES's 8:7 pixel aspect (≈1.219, doubled for a Vs. cabinet's
+//!   512-wide present), matching what the desktop frontend applies.
 //! - **Save States & Memory Maps**: Direct pointers to WRAM, SRAM, and VRAM are provided
 //!   safely by isolating the memory accessors in the core, exposed both via the legacy
 //!   `retro_get_memory_data`/`_size` pointer API and the modern
@@ -64,7 +76,7 @@ use rust_libretro::{
     sys::*,
     types::*,
 };
-use rustynes_core::{Emu, Nes, VsDualSystem};
+use rustynes_core::{Emu, Nes, Region, VsDualSystem};
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
 
@@ -74,6 +86,127 @@ const NES_W: usize = 256;
 const NES_H: usize = 240;
 /// Composed width of a Vs. `DualSystem` side-by-side present (two consoles).
 const DUAL_W: usize = NES_W * 2;
+
+/// Frames per second implied by a core frame duration.
+///
+/// DERIVED from `rustynes_core`'s own constants rather than transcribed. The
+/// defect this replaces was a transcribed `60.0988` that no longer had any link
+/// to the value it was copied from, so it could not follow the core and did not
+/// distinguish regions. A derivation cannot drift.
+const fn fps_from(frame: core::time::Duration) -> f64 {
+    #[allow(clippy::cast_precision_loss)]
+    {
+        1_000_000_000.0 / frame.as_nanos() as f64
+    }
+}
+
+/// 60.0988 Hz — NTSC, and the pre-load default (libretro has no "unknown").
+const FPS_NTSC: f64 = fps_from(rustynes_core::FRAME_DURATION_NTSC);
+
+/// 50.0070 Hz — PAL. Dendy shares this frame duration in the core; the regions
+/// differ in clock division, not in frames per second.
+const FPS_PAL: f64 = fps_from(rustynes_core::FRAME_DURATION_PAL);
+
+/// The NES's pixel aspect ratio: pixels are 8:7, not square.
+///
+/// Matches what RustyNES's own desktop frontend applies (`crt.rs`: "8:7
+/// pixel-aspect / overscan crop"), so the libretro core and the native app agree
+/// on how a frame should look. This core previously advertised `aspect_ratio =
+/// 0.0`, which tells the frontend to derive one from the pixel dimensions —
+/// 256/240 = 1.067, i.e. square pixels, which is not the geometry a NES produces.
+const PIXEL_ASPECT: f64 = 8.0 / 7.0;
+
+/// Display aspect ratio for a `width` x `height` present at the NES's 8:7 pixel
+/// aspect.
+///
+/// Derived rather than written out so the two ratios below cannot drift from the
+/// framebuffer constants they describe.
+const fn dar_for(width: usize, height: usize) -> f64 {
+    // The inputs are the fixed framebuffer dimensions (256 / 512 / 240), far
+    // inside f64's exact-integer range; the lint is about arbitrary `usize`.
+    #[allow(clippy::cast_precision_loss)]
+    {
+        (width as f64 * PIXEL_ASPECT) / height as f64
+    }
+}
+
+/// Display aspect for a single console: 256 px at 8:7 over 240 lines ≈ 1.219.
+const DAR_SINGLE: f64 = dar_for(NES_W, NES_H);
+
+/// Display aspect for a Vs. `DualSystem` cabinet's 512x240 side-by-side present
+/// ≈ 2.438 — two single-console screens, so exactly twice as wide.
+const DAR_DUAL: f64 = dar_for(DUAL_W, NES_H);
+
+/// `'static` controller-type tables handed to
+/// `RETRO_ENVIRONMENT_SET_CONTROLLER_INFO`.
+///
+/// These MUST outlive the environment call — see the lifetime note at the call
+/// site. The wrapper exists only to satisfy `Sync` for a `static` containing raw
+/// pointers.
+struct ControllerTables {
+    /// Ports 1-2: a pad or the Zapper. Port 2 is where the hardware and
+    /// essentially every light-gun game put the Zapper, but nothing forbids
+    /// port 1, so both are offered.
+    pad_and_gun: [retro_controller_description; 2],
+    /// Ports 3-4: pad only. These exist for a Vs. `DualSystem` cabinet, whose
+    /// SUB console takes its P1/P2 from libretro ports 2/3. A cabinet has no
+    /// light gun, so offering one there would advertise hardware that cannot
+    /// exist.
+    pad_only: [retro_controller_description; 1],
+}
+
+// SAFETY: every field is either a plain integer or a pointer to a `'static` C
+// string literal baked into the binary. The struct is constructed once at
+// compile time and never mutated, so concurrent reads observe immutable data and
+// the pointers stay valid for the life of the process.
+unsafe impl Sync for ControllerTables {}
+
+impl ControllerTables {
+    /// The per-port array to hand the frontend, terminated by a zeroed entry.
+    ///
+    /// Returned by value because RetroArch copies this outer array; only the
+    /// `types` pointers it carries need to be `'static`, and they point into
+    /// `self`.
+    const fn ports(&'static self) -> [retro_controller_info; 5] {
+        let gun = retro_controller_info {
+            types: self.pad_and_gun.as_ptr(),
+            num_types: self.pad_and_gun.len() as std::os::raw::c_uint,
+        };
+        let pad = retro_controller_info {
+            types: self.pad_only.as_ptr(),
+            num_types: self.pad_only.len() as std::os::raw::c_uint,
+        };
+        [
+            gun,
+            gun,
+            pad,
+            pad,
+            // Terminator: the frontend reads until `types` is null.
+            retro_controller_info {
+                types: std::ptr::null(),
+                num_types: 0,
+            },
+        ]
+    }
+}
+
+/// The single `'static` instance of the controller tables.
+static CONTROLLER_INFO: ControllerTables = ControllerTables {
+    pad_and_gun: [
+        retro_controller_description {
+            desc: c"NES Controller".as_ptr(),
+            id: RETRO_DEVICE_JOYPAD,
+        },
+        retro_controller_description {
+            desc: c"NES Zapper".as_ptr(),
+            id: RETRO_DEVICE_LIGHTGUN,
+        },
+    ],
+    pad_only: [retro_controller_description {
+        desc: c"NES Controller".as_ptr(),
+        id: RETRO_DEVICE_JOYPAD,
+    }],
+};
 
 /// Named `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` address space for PPU nametable
 /// RAM (CIRAM), distinct from the blank/default CPU-bus address space WRAM
@@ -125,6 +258,15 @@ pub struct RustyNesLibretro {
     /// Pre-allocated buffer for snapshot serialization.
     serialize_buffer: Vec<u8>,
 
+    /// Which libretro device the frontend has assigned to each of the four
+    /// ports, as told to us by `retro_set_controller_port_device`.
+    ///
+    /// Only [`RETRO_DEVICE_LIGHTGUN`] is treated specially; everything else is a
+    /// joypad. Tracked per port rather than as a single flag because the Zapper
+    /// is a port-2 device in nearly every game that uses it, but nothing in the
+    /// hardware requires that, and the Vs. cabinet has four ports.
+    port_devices: [u32; 4],
+
     /// Active Game Genie codes, keyed by the frontend's per-slot cheat index
     /// (`on_cheat_set`'s `index`). Deliberately NOT part of save-state /
     /// serialized state, matching `Nes::add_genie_code`'s own contract, so
@@ -148,6 +290,9 @@ impl Default for RustyNesLibretro {
             video_buffer: Vec::with_capacity(DUAL_W * NES_H * 4),
             serialize_size: 0,
             serialize_buffer: Vec::new(),
+            // Every port starts as a joypad, which is what the frontend assumes
+            // until it says otherwise via `retro_set_controller_port_device`.
+            port_devices: [RETRO_DEVICE_JOYPAD; 4],
             genie_cheats: BTreeMap::new(),
         }
     }
@@ -168,6 +313,63 @@ struct RetroGameInfoExt {
     size: usize,
     file_in_archive: bool,
     persistent_data: bool,
+}
+
+/// Read a libretro lightgun port and drive the NES Zapper on `port`.
+///
+/// The Zapper reports two things on its port: a trigger, and whether its
+/// photodiode currently sees light. RustyNES models the photodiode properly
+/// against the CRT beam (`Nes::set_zapper` takes screen coordinates and resolves
+/// brightness at the position the beam is painting), which is why this hands over
+/// coordinates rather than a pre-computed hit.
+///
+/// libretro reports lightgun position in the normalized `[-0x8000, 0x7fff]`
+/// space of the *viewport*, plus an `IS_OFFSCREEN` flag. Off-screen shots are the
+/// interesting case and are handled deliberately: a real Zapper pointed away from
+/// the television sees no light, which is exactly how the "shoot off-screen to
+/// reload / miss" behaviour games rely on works. So an off-screen report is
+/// forwarded as a trigger pull at a position guaranteed to be dark, rather than
+/// being dropped.
+fn poll_zapper(ctx: &mut RunContext, nes: &mut Nes, port: u32) {
+    let read = |id: u32| ctx.get_input_state(port, RETRO_DEVICE_LIGHTGUN, 0, id);
+
+    let trigger = read(RETRO_DEVICE_ID_LIGHTGUN_TRIGGER) != 0;
+    let offscreen = read(RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN) != 0;
+
+    // `RELOAD` is libretro's explicit "point away and pull" control, which maps
+    // onto the same physical act as an off-screen shot.
+    let reload = read(RETRO_DEVICE_ID_LIGHTGUN_RELOAD) != 0;
+
+    if offscreen || reload {
+        // `set_zapper` only STORES the aim point — it does no clamping and
+        // computes no brightness. Light detection happens later, when the port is
+        // read during emulation and the photodiode is resolved against what the
+        // beam is painting. A coordinate outside the 256x240 active area is
+        // therefore never over a lit pixel, which is the honest encoding of "the
+        // lens is not pointed at the screen" (and is pinned by the core's
+        // `zapper_off_screen_never_sees_light` test).
+        nes.set_zapper(port as usize, u16::MAX, u16::MAX, trigger || reload);
+        return;
+    }
+
+    // Map the normalized viewport coordinate onto the 256x240 active area.
+    // libretro's range is [-0x8000, 0x7fff] across the full viewport.
+    // `span` is a u16 so both conversions below are lossless `f32::from`, with no
+    // precision-losing cast to justify.
+    let to_pixel = |v: i16, span: u16| -> u16 {
+        let normalized = (f32::from(v) + 32_768.0) / 65_536.0;
+        let scaled = (normalized * f32::from(span)).clamp(0.0, f32::from(span - 1));
+        #[allow(clippy::cast_sign_loss)]
+        {
+            // Clamped to [0, span-1] immediately above, so the truncation is
+            // exact and the value is non-negative.
+            scaled as u16
+        }
+    };
+
+    let x = to_pixel(read(RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X), NES_W as u16);
+    let y = to_pixel(read(RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y), NES_H as u16);
+    nes.set_zapper(port as usize, x, y, trigger);
 }
 
 /// Translate a libretro joypad snapshot for `port` into RustyNES `Buttons`.
@@ -240,6 +442,28 @@ impl RustyNesLibretro {
             (None, Some(dual)) => Some(dual.main()),
             (None, None) => None,
         }
+    }
+
+    /// Ports the frontend has assigned a lightgun to, in port order.
+    ///
+    /// Returned as a small fixed array rather than an iterator so the caller can
+    /// take it before borrowing `self.nes` mutably; the NES has at most four
+    /// ports, so there is nothing to allocate.
+    fn lightgun_ports(&self) -> [bool; 4] {
+        let mut out = [false; 4];
+        for (slot, device) in out.iter_mut().zip(self.port_devices.iter()) {
+            *slot = *device == RETRO_DEVICE_LIGHTGUN;
+        }
+        out
+    }
+
+    /// Region of the loaded cartridge, or `None` when nothing is loaded.
+    ///
+    /// For a Vs. `DualSystem` cabinet this reports the MAIN console's region.
+    /// Both consoles in a cabinet are the same hardware revision, so they cannot
+    /// disagree; taking `main()` is exact rather than a simplification.
+    fn active_region(&self) -> Option<Region> {
+        self.active_nes().map(Nes::region)
     }
 
     /// Register `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` descriptors for WRAM, PRG-RAM/SRAM
@@ -353,10 +577,26 @@ impl RustyNesLibretro {
         // Port 0 → Player 1, Port 1 → Player 2.
         let b0 = joypad_to_buttons(ctx, 0);
         let b1 = joypad_to_buttons(ctx, 1);
+        // Which ports the frontend has set to a lightgun, captured before the
+        // mutable borrow of `self.nes` below.
+        let zapper_ports = self.lightgun_ports();
         {
             let nes = self.nes.as_mut().expect("run_single: nes present");
             nes.set_buttons(0, b0);
             nes.set_buttons(1, b1);
+            // A Zapper occupies a port INSTEAD of a joypad, but the joypad write
+            // above is harmless and deliberate: the Zapper's own byte is assembled
+            // by `set_zapper`, and leaving the pad state written keeps a port that
+            // the user switches back to a joypad mid-session from reading stale.
+            //
+            // `.take(2)` is load-bearing, not tidiness: `Nes::set_zapper` asserts
+            // `port < 2` (the console has exactly two controller ports), so
+            // forwarding a lightgun assignment on port 3 or 4 would panic.
+            for (port, is_gun) in zapper_ports.iter().enumerate().take(2) {
+                if *is_gun {
+                    poll_zapper(ctx, nes, port as u32);
+                }
+            }
             // Advance the emulator clock by precisely one frame (the lockstep routine
             // that drives CPU/PPU/APU progression). The returned framebuffer borrow is
             // dropped immediately; we re-read it below via `framebuffer()` to keep the
@@ -458,8 +698,50 @@ impl Core for RustyNesLibretro {
     }
 
     fn on_get_av_info(&mut self, _ctx: &mut GetAvInfoContext) -> retro_system_av_info {
-        // Return standard NTSC geometries. The core runs internally at ~60.0988 FPS
-        // for NTSC standard. We match the internal audio mixing rate of 44.1kHz.
+        // Frame rate is REGION-DEPENDENT and must be read from the loaded
+        // cartridge, not assumed.
+        //
+        // This returned a hardcoded 60.0988 for every cartridge, which is the
+        // NTSC rate. RustyNES has always emulated PAL and Dendy correctly --
+        // `Nes::region()` reports them and `frame_duration()` gives 19.9972 ms
+        // against NTSC's 16.6393 ms -- but the libretro core told the frontend
+        // every game was NTSC. RetroArch paces the core from this figure, so a
+        // PAL cartridge ran ~20% fast with audio pitched up to match, and
+        // RetroArch's own A/V sync then fought a mismatch it had been misinformed
+        // about. Nothing in the deterministic core was wrong; only what the
+        // wrapper advertised.
+        //
+        // Reading the region here is sound because libretro guarantees
+        // `retro_get_system_av_info` is called AFTER `retro_load_game`, so a
+        // cartridge is loaded by the time this runs. Before load -- and for the
+        // frontend's initial probe -- there is no cartridge to ask, so NTSC is
+        // the honest default rather than a guess: it is the region the
+        // overwhelming majority of dumps declare, and any real value replaces it
+        // once a game is loaded.
+        let fps = self
+            .active_region()
+            .map_or(FPS_NTSC, |region| match region {
+                // 50.0070 Hz. PAL and Dendy share a frame duration in the core
+                // (`FRAME_DURATION_PAL` == `FRAME_DURATION_DENDY`); they differ in
+                // CPU/PPU clock division, not in frames per second.
+                Region::Pal | Region::Dendy => FPS_PAL,
+                Region::Ntsc => FPS_NTSC,
+            });
+
+        // The declared audio rate stays 44_100 -- `DEFAULT_SAMPLE_RATE`, which is
+        // what `Nes::from_rom` builds the APU with, so the figure below and the
+        // samples actually produced cannot disagree.
+        //
+        // Deliberately NOT raised to 48 kHz. The BLEP synthesizes band-limited
+        // output directly at whatever target rate it is given and the mixer
+        // designs its one-poles from `fs`, so the DSP is rate-agnostic -- and a
+        // matched-normalized-frequency SFDR measurement confirms it: 81.6 dB at
+        // 44.1 kHz versus 82.2 dB at 48 kHz, i.e. equivalent. There is therefore
+        // no accuracy being left on the table, while 44_100 is the ONLY rate at
+        // which this project's audio is actually verified (the SFDR gate, the
+        // expansion-audio decibel oracle, and the mixer filter tests are all
+        // written at it). Advertising an unverified operating point to gain
+        // nothing measurable is the kind of claim module 20 exists to prevent.
         retro_system_av_info {
             geometry: retro_game_geometry {
                 base_width: 256,
@@ -470,12 +752,38 @@ impl Core for RustyNesLibretro {
                 // a dual 512x240 frame both draw correctly against the same AV info.
                 max_width: DUAL_W as u32,
                 max_height: 240,
-                aspect_ratio: 0.0,
+                // Keyed on what is actually loaded, for the same reason `fps` is:
+                // a cabinet presents a 512-wide frame, so it needs twice the
+                // display aspect of a single console. A single fixed value cannot
+                // be right for both, and `0.0` (derive from pixel dimensions) is
+                // right for neither, because it assumes square pixels.
+                #[allow(clippy::cast_possible_truncation)]
+                aspect_ratio: if self.dual.is_some() {
+                    DAR_DUAL as f32
+                } else {
+                    DAR_SINGLE as f32
+                },
             },
             timing: retro_system_timing {
-                fps: 60.0988,
-                sample_rate: 44100.0,
+                fps,
+                sample_rate: f64::from(rustynes_core::DEFAULT_SAMPLE_RATE),
             },
+        }
+    }
+
+    /// Report the cartridge's region to the frontend.
+    ///
+    /// Previously left at `rust_libretro`'s default, which is an unconditional
+    /// `RETRO_REGION_NTSC` — so RetroArch was told every cartridge was NTSC even
+    /// when the header said otherwise. Paired with the hardcoded 60.0988 fps
+    /// above, a PAL game was misdescribed on both axes at once.
+    fn on_get_region(&mut self, _ctx: &mut GetRegionContext) -> std::os::raw::c_uint {
+        match self.active_region() {
+            Some(Region::Pal | Region::Dendy) => RETRO_REGION_PAL,
+            // No cartridge loaded, or a genuine NTSC one. libretro has no
+            // "unknown" region, so NTSC is the required answer rather than a
+            // chosen one.
+            _ => RETRO_REGION_NTSC,
         }
     }
 
@@ -506,6 +814,34 @@ impl Core for RustyNesLibretro {
                 { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right" }
             );
             rust_libretro::environment::set_input_descriptors(cb, &descriptors);
+
+            // Advertise the devices each port accepts, so RetroArch's
+            // Controls menu offers "NES Zapper" instead of only a gamepad.
+            //
+            // Without this the `on_set_controller_port_device` hook below can
+            // never fire for a light gun: the user has no way to select one. The
+            // Zapper is offered on both ports because, while port 2 is where the
+            // hardware and essentially every game put it, nothing prevents port 1
+            // and there is no reason to forbid what the console permits.
+            //
+            // LIFETIME, and it is not symmetric — read before changing.
+            //
+            // RetroArch's handler `memcpy`s the OUTER `retro_controller_info`
+            // array into its own storage, but that copy is SHALLOW: the `types`
+            // pointers inside each entry are retained as-is and dereferenced
+            // later, when the Controls menu is built. So:
+            //
+            //   * the outer array may live on the stack (it is copied), but
+            //   * everything `types` points at MUST outlive this call.
+            //
+            // Hence `PAD_AND_GUN` / `PAD_ONLY` are `'static`. Building them as
+            // locals compiled and appeared to work, and would have handed the
+            // frontend dangling stack pointers to read at menu-open time.
+            //
+            // (The `set_input_descriptors` call above is NOT affected: RetroArch
+            // walks that array during the call and retains only the `description`
+            // string pointers, which are `'static` literals.)
+            rust_libretro::environment::set_controller_info(cb, &CONTROLLER_INFO.ports());
 
             // Register the disk-control callback trampolines (on_set_eject_state,
             // on_get_image_index, etc. below) so RetroArch's Quick Menu → Disk
@@ -640,6 +976,78 @@ impl Core for RustyNesLibretro {
         } else if self.nes.is_some() {
             self.run_single(ctx);
         }
+    }
+
+    /// Record the device the frontend assigned to a port.
+    ///
+    /// Previously the default no-op, so the core could not tell a joypad from a
+    /// light gun. RustyNES has modelled the NES Zapper for a long time —
+    /// `Nes::set_zapper` resolves the photodiode against the CRT beam — but the
+    /// libretro wrapper polled joypads only, so light-gun games were unplayable
+    /// through RetroArch despite the emulation being present and correct.
+    fn on_set_controller_port_device(&mut self, port: u32, device: u32, _ctx: &mut GenericContext) {
+        if let Some(slot) = self.port_devices.get_mut(port as usize) {
+            *slot = device;
+        }
+        // Ports beyond the NES's four are silently ignored rather than treated as
+        // an error: libretro permits a frontend to probe more ports than a system
+        // has, and refusing would be a spec violation on our side.
+    }
+
+    /// Soft-reset the console — RetroArch's Restart, and the front-panel RESET
+    /// button it stands for.
+    ///
+    /// This was never implemented, so it fell through to `rust_libretro`'s
+    /// default, which is literally "do nothing". **RetroArch's Reset has been
+    /// inert in this core for its entire existence**: the menu entry and the
+    /// hotkey both appeared to work and did nothing at all.
+    ///
+    /// `Nes::reset` is the correct primitive rather than `power_cycle`:
+    /// `retro_reset` means the RESET line, which preserves RAM contents and the
+    /// CPU/PPU phase alignment the determinism contract depends on. A power cycle
+    /// would additionally re-randomize power-on RAM, which is a different button
+    /// the NES also has and libretro does not expose here.
+    ///
+    /// Game Genie codes deliberately survive. The Genie is a pass-through
+    /// cartridge sitting between the console and the game, so its patches persist
+    /// across a front-panel reset on real hardware; RetroArch likewise keeps
+    /// cheats applied across a restart.
+    fn on_reset(&mut self, _ctx: &mut ResetContext) {
+        if let Some(dual) = self.dual.as_mut() {
+            // One cabinet, one RESET line: a Vs. DualSystem's two consoles share
+            // the cabinet's reset, so resetting only `main` would desynchronize
+            // the pair — and they are cross-wired, so a desynchronized cabinet is
+            // not a state the hardware can be in.
+            dual.main_mut().reset();
+            dual.sub_mut().reset();
+        } else if let Some(nes) = self.nes.as_mut() {
+            nes.reset();
+        }
+    }
+
+    /// Drop the loaded cartridge and every piece of per-game state with it.
+    ///
+    /// Also previously the default no-op. The console handles themselves are
+    /// replaced on the next `on_load_game`, so the leak that actually mattered
+    /// was `genie_cheats`: the map is keyed by the frontend's cheat *index*, and
+    /// it survived unloading, so indices from the previous game stayed live and a
+    /// later `on_cheat_set` removal could act on a code belonging to a cartridge
+    /// that was no longer inserted.
+    ///
+    /// `serialize_size` is zeroed for the same reason — reporting the previous
+    /// game's snapshot size while no game is loaded invites the frontend to size
+    /// a buffer against a cartridge that is gone.
+    fn on_unload_game(&mut self, _ctx: &mut UnloadGameContext) {
+        self.nes = None;
+        self.dual = None;
+        self.genie_cheats.clear();
+        self.serialize_size = 0;
+        // The scratch buffers keep their capacity on purpose: they are pooled to
+        // honour the hot-path allocation ban, and a subsequent load would only
+        // have to grow them again.
+        self.audio_buffer.clear();
+        self.audio_float_buffer.clear();
+        self.video_buffer.clear();
     }
 
     fn get_memory_data(
@@ -862,5 +1270,184 @@ retro_core!(RustyNesLibretro {
     video_buffer: Vec::with_capacity(DUAL_W * NES_H * 4),
     serialize_size: 0,
     serialize_buffer: Vec::new(),
+    port_devices: [RETRO_DEVICE_JOYPAD; 4],
     genie_cheats: BTreeMap::new(),
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Historical value: the literal this core hardcoded into
+    /// `retro_get_system_av_info` for every cartridge, regardless of region.
+    const HISTORICAL_HARDCODED_FPS: f64 = 60.0988;
+
+    /// The NTSC derivation must reproduce the old hardcoded number exactly.
+    ///
+    /// This is the no-regression half. The overwhelming majority of dumps are
+    /// NTSC, so if the derivation moved that figure even slightly it would be a
+    /// pacing change for nearly every user — which would be a far bigger problem
+    /// than the PAL bug it was introduced to fix.
+    #[test]
+    fn ntsc_fps_is_unchanged_by_the_derivation() {
+        assert!(
+            (FPS_NTSC - HISTORICAL_HARDCODED_FPS).abs() < 5e-5,
+            "NTSC pacing moved: derived {FPS_NTSC} vs the historical {HISTORICAL_HARDCODED_FPS}"
+        );
+    }
+
+    /// PAL must be 50.0070 Hz, not the NTSC rate.
+    ///
+    /// The defect: `on_get_av_info` returned 60.0988 for every cartridge, so
+    /// RetroArch paced PAL games ~20% fast with audio pitched to match. The core
+    /// itself was always right — `FRAME_DURATION_PAL` is 19.9972 ms — only the
+    /// wrapper's advertisement was wrong.
+    #[test]
+    fn pal_fps_is_the_pal_rate_and_not_the_ntsc_one() {
+        assert!(
+            (FPS_PAL - 50.0070).abs() < 5e-5,
+            "PAL should be 50.0070 Hz, derived {FPS_PAL}"
+        );
+
+        let error = (FPS_NTSC / FPS_PAL - 1.0) * 100.0;
+        assert!(
+            error > 19.0 && error < 21.0,
+            "sanity: reporting NTSC for a PAL cart should be ~20% fast, computed {error:.1}%"
+        );
+    }
+
+    /// Dendy shares PAL's frame duration; the regions differ in clock division.
+    ///
+    /// Pinned because `on_get_av_info` folds `Dendy` into the PAL arm. If the
+    /// core ever gives Dendy its own duration, that fold becomes silently wrong,
+    /// and this fails at that moment rather than shipping a mispaced region.
+    #[test]
+    fn dendy_shares_pals_frame_duration() {
+        assert_eq!(
+            rustynes_core::FRAME_DURATION_DENDY,
+            rustynes_core::FRAME_DURATION_PAL,
+            "Dendy no longer shares PAL's frame duration -- `on_get_av_info` and \
+             `on_get_region` fold them together and must be split"
+        );
+    }
+
+    /// The advertised display aspect must be the NES's 8:7 pixel aspect, not
+    /// square pixels.
+    ///
+    /// The core previously sent `aspect_ratio = 0.0`, which tells the frontend to
+    /// derive the ratio from the pixel dimensions — 256/240 = 1.067, i.e. square
+    /// pixels. A NES does not produce square pixels, and RustyNES's own desktop
+    /// frontend applies 8:7, so RetroArch and the native app disagreed about the
+    /// shape of the same frame.
+    #[test]
+    fn display_aspect_is_the_nes_pixel_aspect_not_square() {
+        // 256/240 = 1.0667 — what `aspect_ratio = 0.0` made the frontend assume.
+        const SQUARE_PIXEL_DAR: f64 = 256.0 / 240.0;
+
+        assert!(
+            (DAR_SINGLE - 1.219_047_6).abs() < 1e-6,
+            "single-console DAR should be 256*(8/7)/240, got {DAR_SINGLE}"
+        );
+        assert!(
+            (DAR_SINGLE - SQUARE_PIXEL_DAR).abs() > 0.1,
+            "DAR must not have collapsed back to the square-pixel 256/240"
+        );
+    }
+
+    /// A Vs. cabinet presents two screens side by side, so it needs exactly twice
+    /// the display aspect. A single fixed ratio cannot serve both.
+    #[test]
+    fn dual_cabinet_aspect_is_exactly_twice_the_single_one() {
+        assert!(
+            DAR_SINGLE.mul_add(-2.0, DAR_DUAL).abs() < 1e-9,
+            "dual DAR {DAR_DUAL} should be exactly 2x single {DAR_SINGLE}"
+        );
+    }
+
+    /// The controller tables handed to the frontend must be `'static`, and must
+    /// cover every port the core can use.
+    ///
+    /// RetroArch shallow-`memcpy`s the outer `retro_controller_info` array but
+    /// RETAINS the `types` pointers inside it, dereferencing them later when the
+    /// Controls menu is built. Building the description arrays as locals compiled
+    /// cleanly and handed the frontend dangling stack pointers — a defect no
+    /// compiler check catches, hence this test.
+    ///
+    /// Rust has no runtime lifetime assertion, so this pins the two properties
+    /// that make the lifetime correct by construction: the tables come from a
+    /// `static`, and the pointers into them are stable across calls.
+    #[test]
+    fn controller_tables_are_static_and_cover_every_port() {
+        let first = CONTROLLER_INFO.ports();
+        let second = CONTROLLER_INFO.ports();
+
+        // Same backing storage on every call => it is not a temporary.
+        assert_eq!(
+            first[0].types, second[0].types,
+            "`types` must point into `static` storage, not a per-call temporary"
+        );
+        assert_eq!(
+            first[0].types,
+            CONTROLLER_INFO.pad_and_gun.as_ptr(),
+            "port 1 must point at the static pad+gun table"
+        );
+
+        // Four real ports (a Vs. cabinet uses all four) plus a null terminator.
+        assert_eq!(first.len(), 5, "4 ports + terminator");
+        assert!(
+            first[4].types.is_null() && first[4].num_types == 0,
+            "the array must end with a zeroed terminator"
+        );
+        for (i, entry) in first.iter().take(4).enumerate() {
+            assert!(
+                !entry.types.is_null() && entry.num_types > 0,
+                "port {i} must advertise at least one device"
+            );
+        }
+
+        // Ports 1-2 offer the Zapper; ports 3-4 (a cabinet's SUB console) do not,
+        // because a Vs. cabinet has no light gun.
+        assert_eq!(first[1].num_types, 2, "port 2 should offer pad + Zapper");
+        assert_eq!(first[2].num_types, 1, "port 3 should be pad-only");
+    }
+
+    /// Ports default to a joypad, and only an explicit lightgun assignment
+    /// changes that.
+    ///
+    /// Guards the Zapper wiring's premise: if `port_devices` did not start as
+    /// joypads, or `lightgun_ports` misread them, every port would silently poll
+    /// the wrong device.
+    #[test]
+    fn ports_are_joypads_until_the_frontend_says_lightgun() {
+        let mut core = RustyNesLibretro::default();
+        assert_eq!(
+            core.lightgun_ports(),
+            [false; 4],
+            "no port should be a light gun before the frontend assigns one"
+        );
+
+        // Port 2 is where the Zapper physically lives on the console.
+        core.port_devices[1] = RETRO_DEVICE_LIGHTGUN;
+        assert_eq!(
+            core.lightgun_ports(),
+            [false, true, false, false],
+            "only the assigned port should read as a light gun"
+        );
+    }
+
+    /// The declared audio rate must be the rate the APU is actually built with.
+    ///
+    /// Declaring a rate the core does not produce pitches every game. Reading the
+    /// constant instead of transcribing it makes the two incapable of disagreeing;
+    /// this test pins that they are in fact the same source.
+    #[test]
+    fn declared_sample_rate_is_the_rate_the_core_produces() {
+        assert_eq!(
+            rustynes_core::DEFAULT_SAMPLE_RATE,
+            44_100,
+            "the APU default moved; `on_get_av_info` follows it automatically, but \
+             every audio verification in this project (SFDR gate, decibel oracle, \
+             mixer filter tests) is written at 44_100 and must be re-run first"
+        );
+    }
+}

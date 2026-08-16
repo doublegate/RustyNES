@@ -37,6 +37,82 @@ Make the necessary changes.
 - **Professionalism:** Maintain a professional, direct, and concise "core submission style" when drafting your PR descriptions.
 - **Info File Validation:** When updating the `rustynes_libretro.info` file (submitted to `libretro-super`, not the mirror), verify that `supported_extensions` matches the exact list supported by the `rustynes-libretro` crate.
 
+#### The `.info` file upstream is a SEPARATE COPY, and it went stale for eleven days
+
+**This is the failure this section exists to prevent, and it already happened once.**
+
+RetroArch does **not** read this repo's `crates/rustynes-libretro/rustynes_libretro.info`. It reads `dist/info/rustynes_libretro.info` from `libretro/libretro-super`, which the buildbot republishes and the frontend downloads. The two files are unrelated as far as any tooling is concerned — nothing syncs them, and nothing in either repo compares them.
+
+So when v2.2.9 relicensed RustyNES from MIT/Apache-2.0 to **GPL-3.0-or-later** (ADR 0036), the change reached `Cargo.toml`, `NOTICE`, `deny.toml`, the SPDX headers, `docs/originality-and-provenance.md`, the README, and the local `.info` — and **not** the upstream copy. RetroArch went on advertising a GPL-3.0-or-later emulator as "MIT OR Apache-2.0", alongside a `display_version` of v2.2.1, until a user noticed.
+
+Given that RustyNES's license is itself the outcome of a corrected provenance failure, a frontend misreporting it is a compliance problem, not a cosmetic one.
+
+**Therefore:**
+
+1. **A license change is a mandatory upstream-sync trigger**, on the same footing as a release. It is not a documentation-only change.
+2. `crates/rustynes-test-harness/tests/libretro_info_audit.rs` now pins the local `.info` against **two different sources of truth**, one per field, so the local file cannot drift and the upstream sync is a **copy**, never a re-derivation:
+   - `license` and `display_version` — against `[workspace.package]` in the root `Cargo.toml`.
+   - `supported_extensions` — against the **core's own** `retro_get_system_info` declaration in `crates/rustynes-libretro/src/lib.rs`, not the manifest, because that is where the list the core will actually load is defined. A literal repeated in the test would be a second copy of the fact rather than an audit of it.
+
+   The audit cannot see the upstream repo — no test can — so the sync itself is still a human step.
+3. **libretro `.info` files do not use SPDX.** They use short tokens and mark "or later" with a trailing `+`. Verified across all 316 core info files in `libretro-super`: `GPLv2` (100), `GPLv3` (64), `GPLv2+` (19), `GPLv3+` (5). RustyNES is GPL-3.0-**or-later**, so the correct token is **`GPLv3+`** — a bare `GPLv3` understates it as GPL-3.0-only. The audit encodes this mapping and fails with instructions if the license moves to something it has not been taught.
+
+**Surfaces that must all be updated together:**
+
+| Surface | Repo | Path |
+| --- | --- | --- |
+| Core metadata RetroArch reads | `libretro/libretro-super` | `dist/info/rustynes_libretro.info` |
+| Public core docs page | `libretro/docs` | `docs/library/rustynes.md` |
+| Local source of truth | this repo | `crates/rustynes-libretro/rustynes_libretro.info` |
+
+**Every advertised field is in scope, not only the license.** The license is what
+drifted, but nothing about the failure was license-specific — the same gap
+applies to every field, and `display_version` had drifted too (stuck at v2.2.1).
+Treat a change to any of these as requiring an upstream sync:
+
+| Field | Syncs to `libretro-super` | Syncs to `libretro/docs` | Locally audited? |
+| --- | :---: | :---: | --- |
+| `license` | yes | yes (Author/License) | yes — vs `[workspace.package]` |
+| `display_version` | yes | no | yes — vs `[workspace.package]` |
+| `supported_extensions` | yes | yes (Extensions) | yes — vs the core's `retro_get_system_info` |
+| `disk_control`, `savestate`, `cheats`, `core_options`, and the other capability flags | yes | yes (Features table) | no — assert by hand against the crate |
+| mapper count / `description` | yes | no | no |
+| `firmware*`, `database` | yes | yes (Databases / BIOS) | no |
+
+The audited rows fail the test suite the moment they drift. The unaudited rows
+are the ones to check by hand at release time — capability flags especially, since
+advertising a capability the core lacks is worse than omitting one it has. That
+exact defect shipped once already: `disk_control` was `false` while the FDS Disk
+Control interface had been wired for months, hiding multi-disk swapping from
+RetroArch's Quick Menu until v2.2.4 corrected it.
+
+#### iOS / iPadOS / tvOS availability is a THIRD repo, and a hardcoded list
+
+Being on the buildbot is **necessary but not sufficient** for Apple platforms. RustyNES has had a valid `ios-arm64` core on the buildbot for some time — a 1.3 MiB arm64 Mach-O exporting all 51 `retro_*` symbols, disk-control included — and it still does not appear in RetroArch on iOS or iPadOS.
+
+iOS cannot download cores; Apple prohibits fetching executable code. The App Store build therefore **bundles** a fixed set, chosen by `pkg/apple/update-cores.sh` in [`libretro/RetroArch`](https://github.com/libretro/RetroArch). That script holds two lists:
+
+| list | how it is populated | contains RustyNES? |
+| --- | --- | --- |
+| `allcores` | fetched dynamically from the buildbot directory listing | **yes**, automatically |
+| `appstore_cores` | hardcoded array in the script | **no** |
+
+The iOS and tvOS App Store build phases run `rm -f ${SRCROOT}/<platform>/modules/*.dylib` followed by `./update-cores.sh appstore` — so only the **hardcoded** list survives into the bundle. Being in the dynamic `allcores` buys nothing for App Store builds.
+
+**The fix is a one-line PR to `libretro/RetroArch`** adding `rustynes` to `appstore_cores`. The same array feeds iOS, tvOS, and the macOS App Store build, so one entry covers all three. Cores are added there by explicit PR — historically by the Apple maintainer, and also by core authors (`pd777` was added by its own author), so a submission from us is the established route rather than an imposition.
+
+**Alphabetical ordering is mandatory** (see the Strict Alphabetical Ordering note above — it applies to this array too). `rustynes` sorts between `reminiscence` and `sameboy`:
+
+```sh
+    reminiscence
+    rustynes        # <- insert here
+    sameboy
+```
+
+Check the surrounding lines at submission time rather than trusting this snippet; the array grows, and a misordered entry is the most common review comment on these PRs.
+
+**Licensing note for the maintainer, not a blocker.** Adding RustyNES to `appstore_cores` means a GPL-3.0-or-later work gets distributed through the App Store, which carries the long-standing GPL-vs-App-Store-terms tension. RetroArch has already made this call for itself — RetroArch is GPLv3 and ships there, as do the GPLv3 cores `mesen` and `bsnes_hd_beta` — so there is clear precedent. It is still the copyright holder's decision to make deliberately rather than by default.
+
 ### 4. Commit and Push
 
 Stage and commit your changes using clear, conventional commit messages.

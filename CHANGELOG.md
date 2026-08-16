@@ -14,6 +14,73 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The libretro core metadata advertised the pre-relicense MIT/Apache-2.0
+  license.** Corrected to `GPLv3+` — libretro metadata uses short tokens and
+  marks "or later" with a trailing `+`, so the bare `GPLv3` carried since v2.3.0
+  understated RustyNES as GPL-3.0-only. The description's mapper count is
+  corrected 172 → 174.
+
+  **This is the repo-side half only.** RetroArch reads a separate copy in
+  `libretro/libretro-super` that this project does not control, so nothing in
+  this release changes what an end user currently sees; the user-visible fix
+  completes when that sync and the `libretro/docs` page merge upstream. Since
+  RustyNES's license is itself the outcome of a corrected provenance failure,
+  a frontend misreporting it is a compliance matter rather than a cosmetic one.
+
+  A standing audit (`libretro_info_audit.rs`) now pins the `.info`'s `license`,
+  `display_version` and `supported_extensions` — the last derived from the core's
+  own `retro_get_system_info` declaration rather than a repeated literal — so the
+  local file cannot drift and the upstream sync is a copy rather than a
+  re-derivation. `docs/libretro/UPSTREAM_SYNC.md` records the full investigation,
+  the token mapping and its evidence, and the surfaces that must move together.
+
+- **PAL and Dendy games ran ~20% too fast in RetroArch.** The libretro core
+  reported a hardcoded 60.0988 fps — the NTSC rate — for every cartridge, and
+  never implemented `retro_get_region` at all, so RetroArch was told every game
+  was NTSC on both axes at once. The emulation was never wrong: `Nes::region()`
+  and `FRAME_DURATION_PAL` (19.9972 ms, 50.0070 Hz) have always been correct.
+  Only what the wrapper advertised was. Both now follow the loaded cartridge, and
+  the NTSC figure is derived from the core's own constant rather than
+  transcribed — it reproduces the old value exactly, so nothing changes for the
+  NTSC majority.
+
+- **RetroArch's Reset did nothing.** `retro_reset` was never implemented, so it
+  fell through to the library's default, which is literally a no-op. The menu
+  entry and the hotkey both appeared to work and had no effect for the core's
+  entire existence. Now soft-resets the console — `Nes::reset`, the RESET line,
+  which preserves RAM and the CPU/PPU phase alignment; Game Genie codes survive,
+  as they do on hardware through a pass-through cartridge. A Vs. cabinet resets
+  both of its cross-wired consoles together.
+
+- **Per-game state leaked across unloads.** `retro_unload_game` was also a
+  default no-op. The cartridge handles were replaced on the next load, but the
+  Game Genie map — keyed by the frontend's cheat *index* — survived, so indices
+  from a previous game stayed live and a later removal could act on a code
+  belonging to a cartridge no longer inserted.
+
+- **The libretro controller tables were dangling stack pointers.** Found in
+  review, and verified against RetroArch's handler rather than the header's
+  prose, because `libretro.h` does not specify the lifetime either way:
+  `SET_CONTROLLER_INFO` shallow-`memcpy`s the outer `retro_controller_info` array
+  and **retains** each entry's `types` pointer, dereferencing it later when the
+  Controls menu is built. Built as locals, those pointed into a stack frame that
+  died when the environment call returned — a use-after-free read at menu-open
+  time, on code that compiled cleanly. The tables are now `static`; the outer
+  array stays a local deliberately, because it *is* copied, and that asymmetry is
+  documented at the call site. The neighbouring `set_input_descriptors` call was
+  checked rather than assumed, and is safe: RetroArch walks that array during the
+  call and retains only `'static` string pointers.
+
+- **The advertised display aspect assumed square pixels.** The core sent
+  `aspect_ratio = 0.0`, which tells the frontend to derive the ratio from the
+  pixel dimensions — 256/240 ≈ 1.067. A NES does not produce square pixels, and
+  RustyNES's own desktop frontend applies 8:7, so RetroArch and the native app
+  disagreed about the shape of the same frame. Now ≈1.219, and doubled for a Vs.
+  cabinet's 512-wide side-by-side present, which a single fixed ratio could not
+  have served.
+
 ### Added
 
 - **An APU throughput bench** (`crates/rustynes-apu/benches/apu_throughput.rs`),
@@ -26,6 +93,37 @@ cycle-accurate core later replaced.
   CPU cycles so the numbers compare directly against the `full_frame` bench the
   >3% adoption bar is adjudicated on. **81% of the active per-cycle cost is paid
   with every channel disabled** — the overhead is very largely unconditional.
+
+- **NES Zapper support in the libretro core.** The emulation has existed for a
+  long time — `Nes::set_zapper` resolves the photodiode against the CRT beam —
+  but the wrapper polled joypads only and never implemented
+  `retro_set_controller_port_device`, so light-gun games were unplayable through
+  RetroArch despite being fully emulated. Ports 1 and 2 now offer "NES Zapper"
+  in the Controls menu via `RETRO_ENVIRONMENT_SET_CONTROLLER_INFO`; ports 3 and 4
+  — a Vs. cabinet's SUB console — are advertised pad-only, since a cabinet has no
+  light gun. Off-screen
+  and "reload" reports are forwarded as a trigger pull at a guaranteed-dark
+  position rather than dropped, which is how a real Zapper behaves when pointed
+  away from the television — the mechanism the shoot-off-screen behaviour in
+  those games depends on.
+
+- **The libretro crate's first unit tests** (it had none). Seven, pinning the
+  region/timing derivation, that NTSC is unchanged by it, that Dendy still shares
+  PAL's frame duration — the assumption the region fold depends on — the declared
+  sample rate against the rate the APU is actually built with, the display
+  aspect, and the port-device defaults.
+
+### Documented
+
+- **Why RustyNES does not appear in RetroArch on iOS / iPadOS / tvOS.** Not a
+  build failure: the buildbot carries a valid, current core for every Apple
+  target. iOS cannot download cores, so the App Store build bundles a hardcoded
+  list in `libretro/RetroArch`'s `pkg/apple/update-cores.sh`, and RustyNES is
+  absent from it while every NES competitor is present. The remedy is a one-line
+  upstream addition covering all three Apple platforms. Details and the
+  submission requirements are in `docs/libretro/UPSTREAM_SYNC.md`; the PR is
+  tracked separately, as it too lands in a repository this project does not
+  control.
 
 ### Changed
 
