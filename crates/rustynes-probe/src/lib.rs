@@ -57,6 +57,8 @@
 //! # }
 //! ```
 
+pub mod latency;
+
 use rustynes_core::{Buttons, Nes, ROM_HASH_TAG_LEN};
 
 /// Bounds on what a single probe may spend.
