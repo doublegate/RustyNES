@@ -58,6 +58,14 @@ pub mod vs_dualsystem;
 // `docs/rewind.md` §Zwinder.
 pub mod zwinder;
 
+/// The APU sample rate `Nes::from_rom` and friends build with when no explicit
+/// rate is given (`44_100` Hz).
+///
+/// Re-exported so a downstream consumer that must *declare* the rate it produces
+/// — the libretro core does, in `retro_get_system_av_info` — can state the real
+/// value instead of transcribing a literal that could silently fall out of step
+/// with the samples actually emitted.
+pub use bus::DEFAULT_SAMPLE_RATE;
 pub use bus::LockstepBus;
 #[cfg(feature = "debug-hooks")]
 pub use bus::{AccessRec, EventBpKind, EventBreakHit, EventKind, EventRec, InterruptRec};
