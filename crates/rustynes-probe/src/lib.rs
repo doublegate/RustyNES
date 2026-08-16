@@ -40,15 +40,16 @@
 //! use rustynes_probe::{Budget, Observable, Probe};
 //!
 //! # fn demo(live: &Nes, scratch: &mut Nes) {
-//! let probe = Probe::anchor(live, Budget::default());
+//! let mut probe = Probe::anchor(live, Budget::default());
 //!
 //! // Trial A: hold Right from the first frame. Trial B: never press anything.
+//! // `run` is budgeted: `None` means the trial ceiling is spent.
 //! let held = probe.run(scratch, 16, Observable::Framebuffer, |_| {
 //!     (Buttons::RIGHT, Buttons::empty())
-//! });
+//! }).expect("within budget");
 //! let idle = probe.run(scratch, 16, Observable::Framebuffer, |_| {
 //!     (Buttons::empty(), Buttons::empty())
-//! });
+//! }).expect("within budget");
 //!
 //! match Probe::first_divergence(&held, &idle) {
 //!     Some(frame) => println!("reacted on frame {frame}"),
@@ -152,7 +153,7 @@ impl Probe {
         self.budget.max_trials.saturating_sub(self.trials_used)
     }
 
-    /// Trials spent through [`Self::run_counted`] so far.
+    /// Trials spent through [`Self::run`] so far.
     ///
     /// Reported so a caller can say how much work a measurement cost, and so a
     /// test can assert that a budget is actually *binding* rather than merely
@@ -187,7 +188,7 @@ impl Probe {
     /// from, or if the anchor fails to restore. Both are caller errors that
     /// would otherwise yield a plausible, wrong answer, and this engine exists
     /// to produce answers people will act on.
-    pub fn run<F>(
+    fn run_uncounted<F>(
         &self,
         nes: &mut Nes,
         frames: u32,
@@ -230,12 +231,18 @@ impl Probe {
         samples
     }
 
-    /// [`Self::run`], counting the trial against the budget.
+    /// Restore the anchor and run one **budgeted** trial.
     ///
     /// Returns `None` once [`Self::trials_remaining`] reaches zero, so a search
     /// loop terminates on the budget rather than on the caller remembering to
     /// check.
-    pub fn run_counted<F>(
+    ///
+    /// This is the only public way to run a trial, deliberately. An earlier
+    /// version also exposed an uncounted `run`, which made the unbudgeted choice
+    /// the convenient default — and `latency::measure` duly used it, so the
+    /// budget was computed, documented and never enforced. Raised in review on
+    /// #384; the uncounted path is now private.
+    pub fn run<F>(
         &mut self,
         nes: &mut Nes,
         frames: u32,
@@ -249,7 +256,7 @@ impl Probe {
             return None;
         }
         self.trials_used += 1;
-        Some(self.run(nes, frames, observable, input))
+        Some(self.run_uncounted(nes, frames, observable, input))
     }
 
     /// The first frame index at which two trials differ, or `None` if they agree
@@ -366,10 +373,14 @@ mod tests {
         for _ in 0..10 {
             n.run_frame();
         }
-        let probe = Probe::anchor(&n, Budget::default());
+        let mut probe = Probe::anchor(&n, Budget::default());
 
-        let a = probe.run(&mut n, 20, Observable::Framebuffer, idle);
-        let b = probe.run(&mut n, 20, Observable::Framebuffer, idle);
+        let a = probe
+            .run(&mut n, 20, Observable::Framebuffer, idle)
+            .expect("within budget");
+        let b = probe
+            .run(&mut n, 20, Observable::Framebuffer, idle)
+            .expect("within budget");
         assert_eq!(a, b, "the determinism contract failed under replay");
         assert_eq!(Probe::first_divergence(&a, &b), None);
         assert!(Probe::agree(&a, &b));
@@ -381,13 +392,17 @@ mod tests {
     #[test]
     fn each_trial_restarts_from_the_anchor() {
         let mut n = nes();
-        let probe = Probe::anchor(&n, Budget::default());
-        let first = probe.run(&mut n, 8, Observable::Wram, idle);
+        let mut probe = Probe::anchor(&n, Budget::default());
+        let first = probe
+            .run(&mut n, 8, Observable::Wram, idle)
+            .expect("within budget");
         // Advance well past the anchor between trials.
         for _ in 0..50 {
             n.run_frame();
         }
-        let second = probe.run(&mut n, 8, Observable::Wram, idle);
+        let second = probe
+            .run(&mut n, 8, Observable::Wram, idle)
+            .expect("within budget");
         assert_eq!(first, second, "the anchor did not restore between trials");
     }
 
@@ -395,15 +410,15 @@ mod tests {
     #[test]
     fn every_observable_is_deterministic() {
         let mut n = nes();
-        let probe = Probe::anchor(&n, Budget::default());
+        let mut probe = Probe::anchor(&n, Budget::default());
         for obs in [
             Observable::Framebuffer,
             Observable::IndexFramebuffer,
             Observable::Wram,
             Observable::AudioEnergy,
         ] {
-            let a = probe.run(&mut n, 6, obs, idle);
-            let b = probe.run(&mut n, 6, obs, idle);
+            let a = probe.run(&mut n, 6, obs, idle).expect("within budget");
+            let b = probe.run(&mut n, 6, obs, idle).expect("within budget");
             assert_eq!(a, b, "{obs:?} was not deterministic under replay");
             assert_eq!(a.len(), 6, "{obs:?} produced the wrong sample count");
         }
@@ -419,8 +434,10 @@ mod tests {
             max_frames_per_trial: 3,
             ..Budget::default()
         };
-        let probe = Probe::anchor(&n, budget);
-        let samples = probe.run(&mut n, 100, Observable::Framebuffer, idle);
+        let mut probe = Probe::anchor(&n, budget);
+        let samples = probe
+            .run(&mut n, 100, Observable::Framebuffer, idle)
+            .expect("within budget");
         assert_eq!(samples.len(), 3, "budget did not cap the trial");
     }
 
@@ -435,21 +452,11 @@ mod tests {
         };
         let mut probe = Probe::anchor(&n, budget);
         assert_eq!(probe.trials_remaining(), 2);
-        assert!(
-            probe
-                .run_counted(&mut n, 2, Observable::Wram, idle)
-                .is_some()
-        );
-        assert!(
-            probe
-                .run_counted(&mut n, 2, Observable::Wram, idle)
-                .is_some()
-        );
+        assert!(probe.run(&mut n, 2, Observable::Wram, idle).is_some());
+        assert!(probe.run(&mut n, 2, Observable::Wram, idle).is_some());
         assert_eq!(probe.trials_remaining(), 0);
         assert!(
-            probe
-                .run_counted(&mut n, 2, Observable::Wram, idle)
-                .is_none(),
+            probe.run(&mut n, 2, Observable::Wram, idle).is_none(),
             "the engine handed out a trial past its budget"
         );
     }
@@ -498,7 +505,7 @@ mod tests {
     #[test]
     fn the_input_closure_is_called_once_per_frame_in_order() {
         let mut n = nes();
-        let probe = Probe::anchor(&n, Budget::default());
+        let mut probe = Probe::anchor(&n, Budget::default());
         let mut seen = Vec::new();
         let _ = probe.run(&mut n, 5, Observable::Wram, |f| {
             seen.push(f);
@@ -527,14 +534,20 @@ mod tests {
         }
 
         n.poke_ram(0x0200, 0x00);
-        let probe_a = Probe::anchor(&n, Budget::default());
-        let a = probe_a.run(&mut n, 4, Observable::Wram, idle);
+        let mut probe_a = Probe::anchor(&n, Budget::default());
+        let a = probe_a
+            .run(&mut n, 4, Observable::Wram, idle)
+            .expect("within budget");
 
         // Restore to the same point, change ONE byte, and re-anchor.
-        probe_a.run(&mut n, 0, Observable::Wram, idle); // restore only
+        probe_a
+            .run(&mut n, 0, Observable::Wram, idle)
+            .expect("within budget"); // restore only
         n.poke_ram(0x0200, 0xA5);
-        let probe_b = Probe::anchor(&n, Budget::default());
-        let b = probe_b.run(&mut n, 4, Observable::Wram, idle);
+        let mut probe_b = Probe::anchor(&n, Budget::default());
+        let b = probe_b
+            .run(&mut n, 4, Observable::Wram, idle)
+            .expect("within budget");
 
         assert_eq!(
             Probe::first_divergence(&a, &b),
@@ -551,13 +564,15 @@ mod tests {
     #[should_panic(expected = "different ROM")]
     fn replaying_into_a_different_rom_panics() {
         let n = nes();
-        let probe = Probe::anchor(&n, Budget::default());
+        let mut probe = Probe::anchor(&n, Budget::default());
 
         // A ROM with different PRG contents => a different hash tag.
         let mut other_bytes = synth_nrom();
         let prg_start = 16;
         other_bytes[prg_start + 8] = 0xEA; // NOP somewhere harmless
         let mut other = Nes::from_rom(&other_bytes).expect("fixture parses");
-        let _ = probe.run(&mut other, 1, Observable::Wram, idle);
+        let _ = probe
+            .run(&mut other, 1, Observable::Wram, idle)
+            .expect("within budget");
     }
 }

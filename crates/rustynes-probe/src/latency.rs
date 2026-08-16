@@ -191,7 +191,7 @@ pub fn measure(nes: &mut Nes, anchor: &Nes, cfg: LatencyConfig) -> LatencyReport
         // been gathered rather than continuing unbudgeted: the honest answer to
         // "I ran out of trials" is inconclusive, never a verdict from partial
         // evidence.
-        let Some(idle) = probe.run_counted(nes, cfg.frames_per_trial, observable, |_| {
+        let Some(idle) = probe.run(nes, cfg.frames_per_trial, observable, |_| {
             (Buttons::empty(), Buttons::empty())
         }) else {
             return LatencyReport::inconclusive(last_evidence, probed, probe.trials_used());
@@ -199,7 +199,7 @@ pub fn measure(nes: &mut Nes, anchor: &Nes, cfg: LatencyConfig) -> LatencyReport
 
         let mut per_button = Vec::with_capacity(PROBE_BUTTONS.len());
         for button in PROBE_BUTTONS {
-            let Some(held) = probe.run_counted(nes, cfg.frames_per_trial, observable, move |_| {
+            let Some(held) = probe.run(nes, cfg.frames_per_trial, observable, move |_| {
                 (button, Buttons::empty())
             }) else {
                 return LatencyReport::inconclusive(last_evidence, probed, probe.trials_used());
