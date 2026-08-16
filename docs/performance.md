@@ -3597,6 +3597,58 @@ Prediction recorded and wrong, for the record: this campaign expected the
 shorter, rendering-heavy `flowing_palette` frame to show the *larger* relative
 win, since the APU should be a bigger fraction of it. It showed essentially none.
 
+### v2.3.6 D3 — caching the C1 fast-path gain predicate (decision: REJECTED, reverted)
+
+**The change.** v2.3.5's C1 fast path tests
+`mask == CHANNEL_MASK_ALL && channel_gain == CHANNEL_GAIN_UNITY` once per CPU
+cycle. The second half is a 6-wide `f32` array comparison evaluated **1.789
+million times a second** to answer a question that can only change when a user
+drags a mixer slider. D3 cached it in a `gain_is_unity: bool`, reducing the
+per-cycle test to a `u8` compare plus a `bool` load. Byte-identical by
+construction: same predicate over the same array, same branch taken.
+
+**Adjudicated with `scripts/perf/ab_check.sh --base <D3^> --bench nes_run_frame_nestest`,
+two independent runs, quiet host.**
+
+| workload | run 1 | run 2 |
+|---|---:|---:|
+| `nes_run_frame_nestest` | **+1.72%** (p = 0.00) | **−0.91%** (p = 0.01) |
+| `nes_run_frame_nestest_fast` (shipped default) | −0.45% (p = 0.31) | −0.70% (p = 0.05) |
+| order-bias control, `_fast` | **−2.53% (p = 0.00) — FAILED** | clean |
+
+**Rejected**, on three independent grounds, any one of which suffices:
+
+1. **The sign flips between independent runs** on `nes_run_frame_nestest`:
+   +1.72% then −0.91%, both nominally significant. Mixed signs are a rejection,
+   never something to average — and mixed signs *across runs* mean the effect is
+   not reproducible at all.
+2. **Run 1's order-bias control failed** (`_fast` drifted −2.53% from position in
+   the run alone), so run 1's candidate numbers carry at least that much
+   systematic error and its small result is not interpretable.
+3. **The shipped `_fast` variant never moved significantly** (p = 0.31, then
+   p = 0.05). `fast_dotloop` has been default-on since v2.2.3, so a change that
+   does not move `_fast` moves nothing a user runs.
+
+This is the shape v2.3.1 G2 recorded: a textbook single-run result that
+evaporates on re-run. A third run was not pursued — even the most favourable
+reading is under 1%, and the change is not free: the cache is derived state that
+must be kept in sync with `channel_gain`, which cost a dedicated desync test and
+an entry in `snapshot_schema_audit`. Two standing obligations for an effect
+indistinguishable from zero is a bad trade, so the code was reverted rather than
+kept as a simplification.
+
+**What this does not say.** "Not measurable here" is not "no difference". The
+instrument's resolution on this host is roughly ±1-2%, so a sub-1% effect is
+invisible to it. The honest claim is that D3 has no *demonstrated* benefit, and
+the project does not carry core state on undemonstrated benefit.
+
+**Still open from the v2.3.4 Workstream C list**, unmeasured: D1 (gating the DMC
+end-of-cycle pair, ~23% of per-cycle cost and never optimized — the largest
+remaining target, and the hardest byte-identity proof), D2 (`FrameCounter::tick`
+as a countdown rather than a 6-arm match per cycle), D4 (`Pulse::muted()`
+caching), D5 (hoisting `add_sample`'s finite-check), D6 (gating the four
+unconditional `length.reload()` calls).
+
 ## Things explicitly *not* in scope for v1.0
 
 - **JIT recompilation** of CPU code. NES games are small enough that interpretation suffices; JIT complicates everything. (Higan/ares don't JIT either.)

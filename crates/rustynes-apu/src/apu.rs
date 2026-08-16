@@ -292,25 +292,6 @@ pub struct Apu {
     /// the oracle / test ROMs (which never touch a gain) are unaffected. NEVER
     /// serialized into the save state (a UI preference, like the mask / volume).
     pub(crate) channel_gain: [f32; 6],
-    /// v2.3.6 D3 — cached `channel_gain == CHANNEL_GAIN_UNITY`.
-    ///
-    /// The C1 fast-path predicate compared a `[f32; 6]` array **1.789 million
-    /// times a second** to answer a question that can only change in
-    /// [`Apu::set_channel_gain`], which a user reaches through a mixer slider.
-    /// Caching it turns the per-cycle test into a `u8` compare plus a `bool`
-    /// load.
-    ///
-    /// Not serialized, and correctly so: `channel_gain` is a UI playback overlay
-    /// rather than NES hardware state, so it is not in the APU snapshot either.
-    ///
-    /// This field is derived from it and must be recomputed at every site that
-    /// writes it — which is exactly two: [`Apu::new`] and
-    /// [`Apu::set_channel_gain`]. **[`Apu::reset`] is deliberately not one of
-    /// them**: it leaves the gain overlay alone (a reset is a console reset, not
-    /// a mixer reset), so the pair stays consistent across it without any work.
-    /// `the_cached_gain_predicate_cannot_desync` pins that, along with the
-    /// clamping case a naive implementation gets wrong.
-    pub(crate) gain_is_unity: bool,
     /// v2.1.6 "Expansion Audio" — the most recent RAW external / on-cart
     /// expansion-audio sample fed into [`Self::tick_with_external`] (BEFORE the
     /// UI [`Self::channel_gain`] `[5]` re-weight), retained purely so the
@@ -401,7 +382,6 @@ impl Apu {
             last_frame_events: FrameEvents::default(),
             channel_mask: CHANNEL_MASK_ALL,
             channel_gain: CHANNEL_GAIN_UNITY,
-            gain_is_unity: true,
             last_external: 0.0,
         }
     }
@@ -483,10 +463,6 @@ impl Apu {
         for (slot, g) in self.channel_gain.iter_mut().zip(gain.iter()) {
             *slot = g.clamp(0.0, 2.0);
         }
-        // v2.3.6 D3 — refresh the cached predicate the per-cycle fast path
-        // reads. Recomputed from the CLAMPED values, so a caller passing 3.0
-        // (clamped to 2.0) cannot leave the cache claiming unity.
-        self.gain_is_unity = self.channel_gain == CHANNEL_GAIN_UNITY;
     }
 
     /// v2.1.3 — select the analog output-filter model (see
@@ -1101,10 +1077,7 @@ impl Apu {
         // it would have received, so the output is byte-identical by
         // construction rather than by measurement. `apu_default_mix_matches_the_gated_path`
         // pins that across a 2,048-point sweep anyway.
-        // v2.3.6 D3 — `gain_is_unity` is the cached form of
-        // `channel_gain == CHANNEL_GAIN_UNITY`; see the field. Same predicate,
-        // without a 6-wide `f32` array compare per CPU cycle.
-        if mask == CHANNEL_MASK_ALL && self.gain_is_unity {
+        if mask == CHANNEL_MASK_ALL && self.channel_gain == CHANNEL_GAIN_UNITY {
             self.last_external = external;
             let mixed = self.mixer.mix(
                 self.pulse1.output(),
@@ -1955,48 +1928,6 @@ mod tests {
             "a non-unity gain must change the emitted audio"
         );
     }
-
-    /// v2.3.6 D3 — the cached `gain_is_unity` must never disagree with the array
-    /// it summarises.
-    ///
-    /// The cache is what the per-cycle fast path reads, so a stale `true` would
-    /// silently apply unity gain while the user's mixer said otherwise — a
-    /// wrong-output bug with no assertion anywhere else to catch it. Every write
-    /// path to `channel_gain` is exercised, including the clamp: a caller asking
-    /// for 3.0 gets 2.0, which is NOT unity, and the cache must say so.
-    #[test]
-    fn the_cached_gain_predicate_cannot_desync() {
-        let mut apu = Apu::new(Region::Ntsc, 48_000);
-        assert!(apu.gain_is_unity, "a fresh APU is at unity gain");
-        assert_eq!(apu.channel_gain, CHANNEL_GAIN_UNITY);
-
-        apu.set_channel_gain([0.5, 1.0, 1.0, 1.0, 1.0, 1.0]);
-        assert!(!apu.gain_is_unity, "cache missed a non-unity gain");
-        assert_eq!(apu.gain_is_unity, apu.channel_gain == CHANNEL_GAIN_UNITY);
-
-        // Back to unity: the cache must recover, not latch.
-        apu.set_channel_gain(CHANNEL_GAIN_UNITY);
-        assert!(apu.gain_is_unity, "cache latched non-unity");
-
-        // Clamped input: 3.0 becomes 2.0, which is not unity.
-        apu.set_channel_gain([3.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
-        assert_eq!(apu.channel_gain[0], 2.0, "premise: the setter clamps");
-        assert!(
-            !apu.gain_is_unity,
-            "cache computed from the pre-clamp value, not the stored one"
-        );
-        assert_eq!(apu.gain_is_unity, apu.channel_gain == CHANNEL_GAIN_UNITY);
-
-        // `reset` does not touch the gain overlay, so the cache must survive it.
-        apu.set_channel_gain([0.25; 6]);
-        apu.reset();
-        assert_eq!(
-            apu.gain_is_unity,
-            apu.channel_gain == CHANNEL_GAIN_UNITY,
-            "reset desynced the cache from the array"
-        );
-    }
-
     use super::*;
 
     #[test]
