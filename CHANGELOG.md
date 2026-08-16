@@ -14,6 +14,18 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The libretro `.info` description is corrected.** It now advertises native
+  `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` support and native Game Genie cheats —
+  both long-standing capabilities that the description omitted — plus the two
+  v2.3.5 additions, region-correct NTSC/PAL/Dendy timing and NES Zapper support.
+  "Written entirely in safe Rust" becomes "written in pure Rust, with an
+  unsafe-free `#![no_std]` emulation core": the chip stack is `unsafe`-free, but
+  the libretro wrapper is an FFI boundary and is not, so the scoped claim is both
+  accurate and more informative. This is the file RetroArch's core-information
+  screen displays.
+
 ## [2.3.5] - 2026-08-16 - "Manifest" (what the core declares about itself — and the APU, measured at last)
 
 ### Fixed
