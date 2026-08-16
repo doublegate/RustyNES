@@ -109,7 +109,7 @@ cycle-accurate core later replaced.
   away from the television — the mechanism the shoot-off-screen behaviour in
   those games depends on.
 
-- **The libretro crate's first unit tests** (it had none). Seven, pinning the
+- **The libretro crate's first unit tests** (it had none). Eight, pinning the
   region/timing derivation, that NTSC is unchanged by it, that Dendy still shares
   PAL's frame duration — the assumption the region fold depends on — the declared
   sample rate against the rate the APU is actually built with, the display

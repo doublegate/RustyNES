@@ -18,9 +18,11 @@
 > bench and a default-configuration mix specialization, **−3.3% to −4.2%** on
 > `nes_run_frame_nestest`, byte-identical by construction.
 >
-> The emulation core is untouched apart from a `pub use`, but the accuracy
-> contract was **verified rather than asserted**: AccuracyCoin **141/141**
-> (RAM decoder authoritative), nestest 0-diff.
+> The emulation core's shipped **output** is byte-identical, but the APU
+> *implementation* did change — the mix specialization is a strict specialization
+> of `rustynes-apu`, not a no-op — so the accuracy contract was **verified rather
+> than asserted**: AccuracyCoin **141/141** (RAM decoder authoritative), nestest
+> 0-diff.
 >
 > **Not fixed by this release:** RetroArch still shows the wrong licence until
 > `libretro/libretro-super` and `libretro/docs` merge the sync, and RustyNES still

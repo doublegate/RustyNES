@@ -680,9 +680,10 @@ assumed square pixels, and the **Zapper was unreachable** despite being fully
 emulated. Review then caught a use-after-free in the controller tables. The APU —
 **18.7% of frame time and never examined** — finally got a throughput bench and
 the optimization it justified (**−3.3% to −4.2%** on `nes_run_frame_nestest`).
-The emulation core is untouched apart from a `pub use`, and the accuracy contract
-was **verified rather than asserted**: AccuracyCoin holds at exactly 141/141,
-nestest 0-diff.
+The emulation core's shipped **output** is byte-identical, though the APU
+implementation did change (the mix specialization is a strict specialization, not a
+no-op), so the accuracy contract was **verified rather than asserted**: AccuracyCoin
+holds at exactly 141/141, nestest 0-diff.
 
 Two things this release deliberately does **not** claim: RetroArch will still show
 the wrong licence until upstream merges the sync, and RustyNES still will not
