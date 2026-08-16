@@ -1,0 +1,26 @@
+# v2.3.6 — the deterministic-probe engine.
+#
+# Three planned tools reduce to the same primitive: take a snapshot anchor,
+# re-simulate N times under controlled variation, and find the first observable
+# divergence. RustyNES can do that soundly because its determinism contract is a
+# hard guarantee rather than an aspiration, so the answer is a property of the
+# ROM rather than of the run.
+#
+# Kept dependency-light on purpose, like `rustynes-gamedb`: it depends only on
+# `rustynes-core`, so it is headless-testable and CI can gate it without pulling
+# in winit/wgpu.
+[package]
+name = "rustynes-probe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Deterministic re-simulation probe: anchor, replay under variation, locate the first divergence"
+
+[dependencies]
+rustynes-core = { path = "../rustynes-core" }
+
+[lints]
+workspace = true

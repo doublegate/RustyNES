@@ -4504,6 +4504,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustynes-probe"
+version = "2.3.5"
+dependencies = [
+ "rustynes-core",
+]
+
+[[package]]
 name = "rustynes-ra"
 version = "2.3.5"
 dependencies = [
