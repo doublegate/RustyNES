@@ -14,6 +14,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.3.5] - 2026-08-16 - "Manifest" (what the core declares about itself — and the APU, measured at last)
+
 ### Fixed
 
 - **The libretro core metadata advertised the pre-relicense MIT/Apache-2.0

@@ -1,6 +1,33 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.3.4** (2026-08-15) — **"Ledger"**, the coverage release.
+> **Current release: v2.3.5** (2026-08-16) — **"Manifest"**, about what the core
+> *declares* about itself. The libretro metadata RetroArch reads is a **separate
+> copy** in `libretro/libretro-super` that the v2.2.9 GPL relicense never reached,
+> so the frontend still advertises MIT/Apache-2.0 at v2.2.1; the repo-side half is
+> corrected here (`GPLv3+`, libretro's token dialect) with a standing audit that
+> makes the upstream sync a copy rather than a re-derivation. Auditing the wrapper
+> found **five further defects, each with correct emulation behind it**: PAL and
+> Dendy paced at the NTSC rate (**20.2% fast**), `retro_reset` unimplemented so
+> **RetroArch's Reset did nothing**, `retro_unload_game` unimplemented so Game
+> Genie indices leaked across cartridges, `aspect_ratio = 0.0` (square pixels
+> against the desktop app's 8:7), and no controller info so the **Zapper was
+> unreachable**. Review caught a **use-after-free** in the controller tables —
+> RetroArch retains the `types` pointers it is handed. The crate went from **zero
+> tests to eight**. Separately, the APU (**18.7% of frame time**, invisible to a
+> symbol profile because fat LTO inlines it into `cpu_clock`) gained a throughput
+> bench and a default-configuration mix specialization, **−3.3% to −4.2%** on
+> `nes_run_frame_nestest`, byte-identical by construction.
+>
+> The emulation core is untouched apart from a `pub use`, but the accuracy
+> contract was **verified rather than asserted**: AccuracyCoin **141/141**
+> (RAM decoder authoritative), nestest 0-diff.
+>
+> **Not fixed by this release:** RetroArch still shows the wrong licence until
+> `libretro/libretro-super` and `libretro/docs` merge the sync, and RustyNES still
+> does not appear on iOS / iPadOS / tvOS — a hardcoded `appstore_cores` list in
+> `libretro/RetroArch`, not a build failure. Both land upstream.
+>
+> **Previous release: v2.3.4** (2026-08-15) — **"Ledger"**, the coverage release.
 > Three boards land — **mapper 176 submapper 2** (WAIXING-FS005), **154**
 > (NAMCOT-3453) and **243** (Sachen SA-020A) — taking mapper breadth to **174
 > families** (51 Core + 95 Curated + 28 BestEffort). All three are implemented
