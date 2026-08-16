@@ -208,13 +208,24 @@ impl Probe {
 
         let n = frames.min(self.budget.max_frames_per_trial);
         let mut samples = Vec::with_capacity(n as usize);
-        let mut audio = Vec::new();
+        // Generously sized so one frame always fits: an NTSC frame at 192 kHz is
+        // ~3,200 samples. Allocated once per trial, not per frame.
+        let mut audio = vec![0.0f32; 8192];
         for f in 0..n {
             let (p1, p2) = input(f);
             nes.set_buttons(0, p1);
             nes.set_buttons(1, p2);
             nes.run_frame();
-            samples.push(sample(nes, observable, &mut audio));
+            // Drain EVERY frame, whatever the observable. `Nes::restore` does
+            // drop the blip's pending queue (verified by
+            // `tests/restore_audio_pin.rs`), so trials cannot contaminate each
+            // other through it — but draining only for `AudioEnergy` made that
+            // safety depend on restore's audio semantics staying as they are,
+            // and let a 120-frame framebuffer trial pile up ~88k samples for
+            // nothing. Raised in review on #384.
+            audio.clear();
+
+            samples.push(sample(nes, observable, &audio));
         }
         samples
     }
@@ -267,7 +278,7 @@ impl Probe {
 }
 
 /// Reduce the emulator's current state to one comparable value.
-fn sample(nes: &mut Nes, observable: Observable, audio: &mut Vec<f32>) -> u64 {
+fn sample(nes: &Nes, observable: Observable, audio: &[f32]) -> u64 {
     match observable {
         Observable::Framebuffer => fnv1a64(nes.framebuffer()),
         Observable::IndexFramebuffer => {
@@ -281,8 +292,6 @@ fn sample(nes: &mut Nes, observable: Observable, audio: &mut Vec<f32>) -> u64 {
         }
         Observable::Wram => fnv1a64(nes.wram()),
         Observable::AudioEnergy => {
-            audio.clear();
-            audio.extend_from_slice(&nes.drain_audio());
             // Quantised sum of |amplitude|. Exact float equality across a
             // resampled stream would compare noise; this asks the coarser
             // question the fallback is for — "did this frame make a

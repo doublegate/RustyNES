@@ -211,7 +211,17 @@ pub fn measure(nes: &mut Nes, anchor: &Nes, cfg: LatencyConfig) -> LatencyReport
         if let Some(report) = conclude(&per_button, probed, observable, probe.trials_used()) {
             return report;
         }
-        last_evidence = per_button;
+        // Keep the RICHEST evidence, not the most recent. Raised in review on
+        // #384: blindly overwriting meant an inconclusive report could end up
+        // claiming `reacting_buttons: 0` because the last observable saw nothing,
+        // discarding a framebuffer round that had six reactions and merely failed
+        // to agree. The evidence is what a user is shown when the probe declines,
+        // so throwing away the informative half makes the decline useless.
+        let richer = per_button.iter().filter(|d| d.is_some()).count()
+            > last_evidence.iter().filter(|d| d.is_some()).count();
+        if richer {
+            last_evidence = per_button;
+        }
     }
 
     LatencyReport::inconclusive(last_evidence, probed, probe.trials_used())
