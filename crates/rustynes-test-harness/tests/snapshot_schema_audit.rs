@@ -309,6 +309,17 @@ const CHIPS: &[Chip] = &[
                 "config: frontend Audio Mixer per-channel gain",
             ),
             (
+                "gain_is_unity",
+                "derived config (v2.3.6 D3): the cached form of `channel_gain == \
+                 CHANNEL_GAIN_UNITY`, read once per CPU cycle by the default-mix fast \
+                 path so that predicate is not a 6-wide f32 array compare at 1.789 MHz. \
+                 Excluded for the same reason `channel_gain` is — it is a frontend mixer \
+                 overlay, not NES hardware state — and safe to omit because `Apu::restore` \
+                 is a hand-written field reader that touches neither, so the pair cannot \
+                 desync across a load. `the_cached_gain_predicate_cannot_desync` pins the \
+                 write paths that CAN change it",
+            ),
+            (
                 "last_external",
                 "output-only: write-only-from-synthesis copy of the expansion-audio DAC tap \
                  for the UI oscilloscope; documented as never read back into the mixer, the \
