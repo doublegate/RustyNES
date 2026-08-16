@@ -99,14 +99,19 @@ pub struct LatencyReport {
     pub observable: Option<Observable>,
     /// Per-button first-divergence frames, in `PROBE_BUTTONS` order (a plain
     /// code span: that item is private and `rustdoc::private_intra_doc_links` is
-    /// denied), for a UI
-    /// that wants to show the evidence rather than just the conclusion.
+    /// denied), for a UI that wants to show the evidence rather than just the
+    /// conclusion.
     pub per_button: Vec<Option<u32>>,
+    /// Trials the measurement actually spent.
+    ///
+    /// Useful to a UI ("measured in 7 trials"), and load-bearing for the test
+    /// that proves the trial budget is binding rather than merely declared.
+    pub trials_used: u32,
 }
 
 impl LatencyReport {
     /// An inconclusive report, with the evidence that produced it.
-    fn inconclusive(per_button: Vec<Option<u32>>, probed: u32) -> Self {
+    fn inconclusive(per_button: Vec<Option<u32>>, probed: u32, trials_used: u32) -> Self {
         let reacting =
             u32::try_from(per_button.iter().filter(|d| d.is_some()).count()).unwrap_or(u32::MAX);
         Self {
@@ -116,6 +121,7 @@ impl LatencyReport {
             probed_buttons: probed,
             observable: None,
             per_button,
+            trials_used,
         }
     }
 
@@ -163,39 +169,52 @@ impl Default for LatencyConfig {
 /// Returns as soon as an observable yields agreeing answers, so the common case
 /// costs one observable's worth of trials rather than all three.
 pub fn measure(nes: &mut Nes, anchor: &Nes, cfg: LatencyConfig) -> LatencyReport {
+    // EXACTLY the trials this loop can run: one idle baseline plus one held
+    // trial per button, per observable. Not "plus headroom" — a ceiling with
+    // slack in it is not a ceiling, and `run_counted` below makes it binding, so
+    // a future edit that adds a trial fails closed here rather than silently
+    // spending more of the caller's time than the budget advertises.
     let budget = Budget {
         max_frames_per_trial: cfg.frames_per_trial,
-        // Two trials per button per observable, plus headroom.
-        max_trials: u32::try_from((PROBE_BUTTONS.len() + 1) * 2 * OBSERVABLE_ORDER.len())
+        max_trials: u32::try_from((PROBE_BUTTONS.len() + 1) * OBSERVABLE_ORDER.len())
             .unwrap_or(u32::MAX),
     };
-    let probe = Probe::anchor(anchor, budget);
+    let mut probe = Probe::anchor(anchor, budget);
     let probed = u32::try_from(PROBE_BUTTONS.len()).unwrap_or(u32::MAX);
     let mut last_evidence = vec![None; PROBE_BUTTONS.len()];
 
     for observable in OBSERVABLE_ORDER {
         // The idle baseline is the same for every button under one observable,
         // so it is run once rather than per button.
-        let idle = probe.run(nes, cfg.frames_per_trial, observable, |_| {
+        //
+        // A `None` from `run_counted` means the budget is spent. Report what has
+        // been gathered rather than continuing unbudgeted: the honest answer to
+        // "I ran out of trials" is inconclusive, never a verdict from partial
+        // evidence.
+        let Some(idle) = probe.run_counted(nes, cfg.frames_per_trial, observable, |_| {
             (Buttons::empty(), Buttons::empty())
-        });
+        }) else {
+            return LatencyReport::inconclusive(last_evidence, probed, probe.trials_used());
+        };
 
         let mut per_button = Vec::with_capacity(PROBE_BUTTONS.len());
         for button in PROBE_BUTTONS {
-            let held = probe.run(nes, cfg.frames_per_trial, observable, move |_| {
+            let Some(held) = probe.run_counted(nes, cfg.frames_per_trial, observable, move |_| {
                 (button, Buttons::empty())
-            });
+            }) else {
+                return LatencyReport::inconclusive(last_evidence, probed, probe.trials_used());
+            };
             let d = Probe::first_divergence(&held, &idle).filter(|f| *f <= cfg.max_plausible_lag);
             per_button.push(d);
         }
 
-        if let Some(report) = conclude(&per_button, probed, observable) {
+        if let Some(report) = conclude(&per_button, probed, observable, probe.trials_used()) {
             return report;
         }
         last_evidence = per_button;
     }
 
-    LatencyReport::inconclusive(last_evidence, probed)
+    LatencyReport::inconclusive(last_evidence, probed, probe.trials_used())
 }
 
 /// Turn per-button divergences into a verdict, or `None` if this observable
@@ -204,6 +223,7 @@ fn conclude(
     per_button: &[Option<u32>],
     probed: u32,
     observable: Observable,
+    trials_used: u32,
 ) -> Option<LatencyReport> {
     let reacting: Vec<u32> = per_button.iter().filter_map(|d| *d).collect();
     if reacting.is_empty() {
@@ -240,6 +260,7 @@ fn conclude(
         probed_buttons: probed,
         observable: Some(observable),
         per_button: per_button.to_vec(),
+        trials_used,
     })
 }
 
@@ -388,6 +409,53 @@ mod tests {
         assert!(report.observable.is_some());
     }
 
+    /// The trial budget must be **binding**, not decorative.
+    ///
+    /// `measure` sizes `Budget::max_trials` to exactly the trials it can run —
+    /// one idle baseline plus one held trial per button, per observable — and
+    /// spends them through `run_counted`. Before review this used `Probe::run`,
+    /// which does not consume trials, so the budget was computed, documented,
+    /// and never enforced: a stated contract that nothing checked.
+    ///
+    /// This pins the arithmetic, because that is what a future edit breaks. A
+    /// loop that adds a trial without widening the budget now fails closed at
+    /// the last observable rather than quietly running over.
+    #[test]
+    fn the_trial_budget_is_exactly_what_the_loop_spends() {
+        let expected = (PROBE_BUTTONS.len() + 1) * OBSERVABLE_ORDER.len();
+
+        // Drive a full three-observable run: a ROM that never reacts exhausts
+        // every observable, which is the worst case and the one the budget must
+        // accommodate exactly.
+        let rom = spin_rom();
+        let anchor = warmed(&rom, 20);
+        let mut scratch = Nes::from_rom(&rom).expect("fixture parses");
+        let report = measure(&mut scratch, &anchor, LatencyConfig::default());
+
+        // Inconclusive because nothing reacted — NOT because the budget ran out
+        // mid-run. If the budget were even one trial short, the run would bail
+        // early through the `run_counted` -> `None` path and still report
+        // inconclusive, so the count is what distinguishes the two.
+        assert_eq!(report.confidence, Confidence::Inconclusive);
+
+        // THE assertion. `per_button.len()` cannot distinguish these two cases —
+        // a budget one trial short still bails on the LAST trial of the LAST
+        // observable and still returns the previous observable's full six-entry
+        // evidence, so the first version of this test passed under exactly the
+        // mutation it existed to catch. `trials_used` is the quantity that
+        // actually moves.
+        assert_eq!(
+            usize::try_from(report.trials_used).unwrap_or(usize::MAX),
+            expected,
+            "the run did not spend exactly its budget: either it bailed early \
+             (budget too small) or the loop and the budget have drifted apart"
+        );
+        assert_eq!(
+            expected, 21,
+            "the trial arithmetic changed; re-check Budget::max_trials in `measure`"
+        );
+    }
+
     /// A divergence past `max_plausible_lag` is discarded: at that distance it is
     /// far likelier to be the game's own animation than a reaction to the pad.
     #[test]
@@ -398,7 +466,7 @@ mod tests {
             .iter()
             .map(|d| d.filter(|f| *f <= LatencyConfig::default().max_plausible_lag))
             .collect();
-        assert!(conclude(&filtered, 6, Observable::Framebuffer).is_none());
+        assert!(conclude(&filtered, 6, Observable::Framebuffer, 0).is_none());
     }
 
     /// Unanimity, majority and a bare plurality must be told apart — a plurality
@@ -406,19 +474,19 @@ mod tests {
     #[test]
     fn agreement_is_graded_and_a_plurality_is_not_agreement() {
         let unanimous = [Some(2), Some(2), None, None, None, None];
-        let r = conclude(&unanimous, 6, Observable::Framebuffer).expect("a verdict");
+        let r = conclude(&unanimous, 6, Observable::Framebuffer, 0).expect("a verdict");
         assert_eq!(r.frames, Some(2));
         assert_eq!(r.confidence, Confidence::Unanimous);
 
         let majority = [Some(1), Some(1), Some(4), None, None, None];
-        let r = conclude(&majority, 6, Observable::Framebuffer).expect("a verdict");
+        let r = conclude(&majority, 6, Observable::Framebuffer, 0).expect("a verdict");
         assert_eq!(r.frames, Some(1));
         assert_eq!(r.confidence, Confidence::Majority);
 
         // Two against two: no majority, so no number.
         let split = [Some(1), Some(1), Some(4), Some(4), None, None];
         assert!(
-            conclude(&split, 6, Observable::Framebuffer).is_none(),
+            conclude(&split, 6, Observable::Framebuffer, 0).is_none(),
             "a plurality was reported as a measurement"
         );
     }
@@ -435,11 +503,11 @@ mod tests {
     fn an_even_split_is_inconclusive_at_any_size() {
         let one_v_one = [Some(3), Some(1), None, None, None, None];
         assert!(
-            conclude(&one_v_one, 6, Observable::Framebuffer).is_none(),
+            conclude(&one_v_one, 6, Observable::Framebuffer, 0).is_none(),
             "a 1-1 split was reported as a measurement"
         );
         let two_v_two = [Some(3), Some(3), Some(1), Some(1), None, None];
-        assert!(conclude(&two_v_two, 6, Observable::Framebuffer).is_none());
+        assert!(conclude(&two_v_two, 6, Observable::Framebuffer, 0).is_none());
     }
 
     /// The suggested depth is clamped, so a measurement cannot ask for more
@@ -453,6 +521,7 @@ mod tests {
             probed_buttons: 6,
             observable: Some(Observable::Framebuffer),
             per_button: vec![Some(7); 6],
+            trials_used: 0,
         };
         assert_eq!(r.suggested_run_ahead(3), Some(3));
         assert_eq!(r.suggested_run_ahead(0), Some(0));

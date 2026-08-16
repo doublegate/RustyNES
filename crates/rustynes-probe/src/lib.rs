@@ -152,6 +152,17 @@ impl Probe {
         self.budget.max_trials.saturating_sub(self.trials_used)
     }
 
+    /// Trials spent through [`Self::run_counted`] so far.
+    ///
+    /// Reported so a caller can say how much work a measurement cost, and so a
+    /// test can assert that a budget is actually *binding* rather than merely
+    /// declared — the two are easy to confuse, and a test that cannot tell them
+    /// apart is decoration.
+    #[must_use]
+    pub const fn trials_used(&self) -> u32 {
+        self.trials_used
+    }
+
     /// The budget this anchor was taken under.
     #[must_use]
     pub const fn budget(&self) -> Budget {

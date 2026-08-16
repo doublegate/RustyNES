@@ -302,8 +302,14 @@ pub struct Apu {
     ///
     /// Not serialized, and correctly so: `channel_gain` is a UI playback overlay
     /// rather than NES hardware state, so it is not in the APU snapshot either.
-    /// This field is derived from it and must be recomputed wherever it is
-    /// written — `new`, `reset`, and `set_channel_gain`.
+    ///
+    /// This field is derived from it and must be recomputed at every site that
+    /// writes it — which is exactly two: [`Apu::new`] and
+    /// [`Apu::set_channel_gain`]. **[`Apu::reset`] is deliberately not one of
+    /// them**: it leaves the gain overlay alone (a reset is a console reset, not
+    /// a mixer reset), so the pair stays consistent across it without any work.
+    /// `the_cached_gain_predicate_cannot_desync` pins that, along with the
+    /// clamping case a naive implementation gets wrong.
     pub(crate) gain_is_unity: bool,
     /// v2.1.6 "Expansion Audio" — the most recent RAW external / on-cart
     /// expansion-audio sample fed into [`Self::tick_with_external`] (BEFORE the
