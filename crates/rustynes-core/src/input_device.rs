@@ -370,7 +370,8 @@ impl ZapperState {
     ///   this frame has not painted it yet;
     /// * from the aim row until the hold expires — bright iff the aperture is
     ///   bright **over the rows the beam has already finished**, per
-    ///   [`Self::aperture_is_bright_painted`];
+    ///   `aperture_is_bright_painted` (a plain code span, not an intra-doc link:
+    ///   that item is private and `rustdoc::private_intra_doc_links` is denied);
     /// * after the hold — dark again, the capacitor having drained.
     ///
     /// Holding **no extra state** is deliberate: light is derived on demand at
