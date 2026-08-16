@@ -139,6 +139,38 @@ libretro-build-linux-aarch64:
     - apt-get update -qy && apt-get install -yq gcc-aarch64-linux-gnu
     - rustup target add ${RUST_TARGET}
 
+# Linux armhf (32-bit ARM, hard-float)
+# Same shape as the aarch64 job above and for the same reasons: cross-compiled
+# from the amd64 rust image, no upstream template exists, so the target and its
+# linker are installed here rather than via `.rust-target-install`.
+#
+# Target choice: `armv7-unknown-linux-gnueabihf` (ARMv7-A + VFPv3 hard-float),
+# NOT `arm-unknown-linux-gnueabihf` (ARMv6). The buildbot exposes two 32-bit ARM
+# slots -- `linux/armhf` and `linux/armv7-neon-hf` -- and this triple targets the
+# ARMv7 baseline both are built against in practice. If the `linux/armhf` slot
+# turns out to be an ARMv6 baseline (Pi 1 / Pi Zero), switch the triple to
+# `arm-unknown-linux-gnueabihf`; the rest of the job is unchanged, since both use
+# the same `gcc-arm-linux-gnueabihf` cross toolchain.
+#
+# Verified locally before adding: `cargo check` is clean for this triple, and a
+# staticlib build produces a 9.2 MB archive of genuine `ELF 32-bit LSB
+# relocatable, ARM, EABI5` objects. Only the final cdylib link needs the cross
+# linker installed below -- without it cargo falls back to the host x86-64
+# linker and fails with "incompatible with elf64-x86-64", which is the exact
+# failure this `before_script` prevents.
+libretro-build-linux-armhf:
+  extends:
+    - .libretro-rust-linux-x64
+    - .core-defs
+  variables:
+    RUST_TARGET: armv7-unknown-linux-gnueabihf
+    TARGET_ARCH: armv7-unknown-linux-gnueabihf
+    STRIP: arm-linux-gnueabihf-strip
+    CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
+  before_script:
+    - apt-get update -qy && apt-get install -yq gcc-arm-linux-gnueabihf
+    - rustup target add ${RUST_TARGET}
+
 # macOS 64-bit
 libretro-build-osx-x64:
   extends:

@@ -373,6 +373,14 @@ jobs:
         #     masks the need — its glibc headers are not arch-split, so a local
         #     `cargo check` passes without the sysroot; the Debian-multiarch runner
         #     does not, which is exactly the blind spot this gate exists to catch.)
+        #   * Linux-armhf (glibc, 32-bit ARM) — identical situation to aarch64,
+        #     wired up the same way via `gcc-arm-linux-gnueabihf` and its
+        #     `libc6-dev-armhf-cross` headers under `/usr/arm-linux-gnueabihf`.
+        #     This leg is the PR-time rehearsal of the `.gitlab-ci.yml`
+        #     `libretro-build-linux-armhf` job. It matters MORE than it looks:
+        #     the Arch-host blind spot noted above applies to it too, so a clean
+        #     local `cargo check` on the maintainer's machine proves nothing
+        #     about this triple — only this runner does.
         #   * Android — ubuntu-latest ships an NDK, whose sysroot is wired up
         #     below exactly as `cargo ndk` does it on the buildbot.
         #   * Apple (macOS/iOS) — DELIBERATELY EXCLUDED. There is no Apple SDK
@@ -387,6 +395,7 @@ jobs:
         target:
           - x86_64-pc-windows-gnu
           - aarch64-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
           - aarch64-linux-android
     steps:
       # `cargo check` runs build scripts and proc macros from the checkout — on
@@ -425,6 +434,17 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -yq gcc-aarch64-linux-gnu
           echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include" >> "$GITHUB_ENV"
+      # Provision the armhf glibc headers for bindgen, exactly as for aarch64
+      # above. `gcc-arm-linux-gnueabihf` pulls `libc6-dev-armhf-cross`, landing
+      # the 32-bit ARM glibc headers under `/usr/arm-linux-gnueabihf/include`.
+      # The cross linker in that package is unused here — this gate is
+      # `cargo check` only; the buildbot remains the authority on linking.
+      - name: Provision the armhf glibc headers for bindgen
+        if: matrix.target == 'armv7-unknown-linux-gnueabihf'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -yq gcc-arm-linux-gnueabihf
+          echo "BINDGEN_EXTRA_CLANG_ARGS_armv7_unknown_linux_gnueabihf=--sysroot=/usr/arm-linux-gnueabihf -isystem /usr/arm-linux-gnueabihf/include" >> "$GITHUB_ENV"
       # Deliberately NOT the composite action's `targets:` input. That routes
       # through `dtolnay/rust-toolchain`, which installs the target for the
       # channel IT pins (stable) — while `rust-toolchain.toml` then switches
