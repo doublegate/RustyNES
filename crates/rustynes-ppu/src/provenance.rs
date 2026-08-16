@@ -320,6 +320,22 @@ pub struct PixelProvenance {
     pub fine_y: u8,
 }
 
+impl PixelProvenance {
+    /// Whether this record was actually emitted, as opposed to being the cleared
+    /// [`Default`].
+    ///
+    /// `Ppu::emit_pixel` stamps [`Self::dot`] on every pixel it records, and the
+    /// visible dots are `1..=256` — so dot 0 is unreachable for a real record and
+    /// is exactly what `clear` leaves behind. Without this a caller cannot tell a
+    /// cleared record from a genuine backdrop pixel, and reads a confident
+    /// "scanline 0, dot 0, backdrop, palette $0000" as fact. That is precisely how
+    /// the v2.3.2 inspector reported a wiped frame (v2.3.6 workstream 0).
+    #[must_use]
+    pub const fn is_recorded(&self) -> bool {
+        self.dot != 0
+    }
+}
+
 /// Screen width in pixels, and the stride of a [`PixelProvenanceFrame`].
 pub const SCREEN_W: usize = 256;
 /// Screen height in pixels.
@@ -388,6 +404,54 @@ impl PixelProvenanceFrame {
 impl Default for PixelProvenanceFrame {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stashing both stores across a same-timeline restore
+// ---------------------------------------------------------------------------
+
+/// Both provenance stores, moved out of a [`Ppu`] so a caller can put them back.
+///
+/// # Why this exists
+///
+/// A save-state restore clears both stores, and that is right: the restored
+/// bytes were not written by anything this session ran, so the honest answer is
+/// "no record" rather than a PC from a timeline that no longer exists.
+///
+/// Run-ahead is the one caller for which that is wrong, and it is wrong for a
+/// reason that has nothing to do with the restore itself. Its cycle runs the
+/// persistent frame, snapshots, runs the hidden and then the **visible** frame,
+/// lets the frontend harvest that frame, and only then rolls back. The rollback
+/// is therefore the *last* thing to happen before the emulator lock reaches the
+/// UI — so a clear there does not discard a stale timeline, it discards the
+/// record for the exact frame the user is looking at, before anyone can read it.
+/// That is what made the shipped Pixel Provenance inspector render a complete,
+/// confident, entirely empty report (v2.3.6 workstream 0, defect 1).
+///
+/// Stashing is a **move, not a copy**: both stores are boxed, so this costs two
+/// pointer moves per visible frame rather than the ~37 KiB memcpy a snapshot of
+/// the contents would. The restore in between sees `None` on both, so its clear
+/// is a no-op and its own reasoning is left completely intact — this mechanism
+/// changes nothing for save-state loads or for netplay rollback, both of which
+/// still want the clear.
+///
+/// [`Ppu`]: crate::Ppu
+#[derive(Debug, Default)]
+pub struct ProvenanceStash {
+    pub(crate) write_attrib: Option<Box<WriteAttribution>>,
+    pub(crate) prov_frame: Option<Box<PixelProvenanceFrame>>,
+    pub(crate) prov_armed: bool,
+}
+
+impl ProvenanceStash {
+    /// Whether either store was armed when this stash was taken.
+    ///
+    /// Callers use it to skip the put-back entirely on the overwhelmingly
+    /// common path where nothing is armed at all.
+    #[must_use]
+    pub const fn is_armed(&self) -> bool {
+        self.prov_armed || self.write_attrib.is_some()
     }
 }
 

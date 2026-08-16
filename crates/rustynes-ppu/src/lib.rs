@@ -55,8 +55,8 @@ pub use ppu::{HD_CHR_RAM, HD_TILE_NONE, HdSprite, HdTileSource};
 #[cfg(feature = "debug-hooks")]
 pub use provenance::{
     CIRAM_LEN as ATTRIB_CIRAM_LEN, OAM_LEN as ATTRIB_OAM_LEN, PALETTE_LEN as ATTRIB_PALETTE_LEN,
-    PATTERN_ADDR_NONE, PixelLayer, PixelProvenance, PixelProvenanceFrame, SPRITE_SLOT_NONE,
-    WriteAttrib, WriteAttribution,
+    PATTERN_ADDR_NONE, PixelLayer, PixelProvenance, PixelProvenanceFrame, ProvenanceStash,
+    SPRITE_SLOT_NONE, WriteAttrib, WriteAttribution,
 };
 pub use raw_signal::{
     ATTENUATION, BLACK, LEVELS, PHASES, RAW_ENTRIES, WHITE, composite_voltage,

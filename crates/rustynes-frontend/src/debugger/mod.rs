@@ -1750,6 +1750,25 @@ impl DebuggerOverlay {
         self.show_cheat || self.show_game_db || self.show_rom_info || self.show_provenance
     }
 
+    /// Whether the **Pixel Provenance** inspector is open.
+    ///
+    /// The winit mouse handler asks so it can turn a click on the game view into
+    /// a pinned pixel — and only while the panel is open, so a click costs
+    /// nothing (and pins nothing) for every other user.
+    #[must_use]
+    pub const fn provenance_open(&self) -> bool {
+        self.show_provenance
+    }
+
+    /// Pin the NES pixel the user clicked on the game view (v2.3.6 workstream 0,
+    /// defect 2).
+    ///
+    /// Routed through the overlay rather than threaded into `tool_panels`'
+    /// signature because the click arrives from winit, outside any egui pass.
+    pub const fn set_provenance_pick(&mut self, x: u16, y: u16) {
+        self.provenance_ui.set_pick(x, y);
+    }
+
     /// Build the egui UI for this frame (the deep-overlay path: chip panels +
     /// tool panels, all with a live `nes`). Used by [`Self::render`] and by
     /// [`Self::render_shell`] when the overlay is visible.

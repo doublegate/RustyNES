@@ -884,6 +884,29 @@ impl Nes {
         self.bus.ppu.pixel_provenance()
     }
 
+    /// v2.3.6 — move both provenance stores out, leaving them unarmed.
+    ///
+    /// For a host that performs a **same-timeline** restore whose result the user
+    /// is about to inspect. [`Self::restore`] and [`Self::restore_quiet`] both
+    /// clear the stores, which is correct when the restore replaces the timeline
+    /// the records describe — and wrong for run-ahead, whose rollback is the last
+    /// thing before the UI reads, so the clear discards the record for the frame
+    /// actually on screen. Take before the restore, [`Self::put_provenance`]
+    /// after.
+    ///
+    /// A move, not a copy: the stores are boxed, so this is two pointer moves.
+    /// See [`rustynes_ppu::ProvenanceStash`].
+    #[cfg(feature = "debug-hooks")]
+    pub const fn take_provenance(&mut self) -> rustynes_ppu::ProvenanceStash {
+        self.bus.ppu.take_provenance()
+    }
+
+    /// Put back stores taken by [`Self::take_provenance`].
+    #[cfg(feature = "debug-hooks")]
+    pub fn put_provenance(&mut self, stash: rustynes_ppu::ProvenanceStash) {
+        self.bus.ppu.put_provenance(stash);
+    }
+
     /// Resolve a PPU-space nametable address (`$2000-$3EFF`) to the physical
     /// internal-CIRAM offset it reads, applying the mapper's mirroring and any
     /// per-game mirroring override.
@@ -1399,11 +1422,15 @@ impl Nes {
 
     /// A3 (v2.2.3): enable the **beam-relative** Zapper light model.
     ///
-    /// Default **off**. See [`crate::bus::LockstepBus::set_zapper_temporal_light`]
-    /// for the model; in short, the light bit becomes a function of where the
-    /// CRT beam is at the moment of the read (dark before the beam paints the
-    /// aim row, lit for the ~19-26-scanline photodiode hold, dark after)
-    /// instead of one answer for the whole frame.
+    /// **Default ON since v2.3.6** (was off in v2.2.3-v2.3.5). See
+    /// [`crate::bus::LockstepBus::set_zapper_temporal_light`] for the model and
+    /// for why it was promoted; in short, the light bit is a function of where
+    /// the CRT beam is at the moment of the read (dark before the beam paints
+    /// the aim row, lit for the ~19-26-scanline photodiode hold, dark after)
+    /// instead of one answer for the whole frame — and the frame model made a
+    /// *Duck Hunt* hit impossible.
+    ///
+    /// Pass `false` to restore the pre-v2.3.6 frame-granular behaviour.
     ///
     /// Deterministic either way: the temporal answer is a pure function of
     /// framebuffer + aim + current scanline and holds no extra state, so it
@@ -1995,9 +2022,20 @@ impl Nes {
         // any instruction this session executed, so the PCs recorded against
         // those offsets describe a timeline that no longer exists. Reporting
         // them would be a confidently wrong answer; reporting nothing until the
-        // program writes again is the honest one. (Under run-ahead this fires
-        // once per displayed frame, leaving exactly the visible frame's writes —
-        // which is the timeline the user is looking at.)
+        // program writes again is the honest one.
+        //
+        // v2.3.6 CORRECTION. This comment used to end by claiming that under
+        // run-ahead the clear "fires once per displayed frame, leaving exactly
+        // the visible frame's writes — which is the timeline the user is looking
+        // at". That was false about the two lines below it, which empty both
+        // stores completely; and because run-ahead's rollback is the LAST thing
+        // before the frontend releases the emulator lock, the wipe landed on the
+        // visible frame's records before any UI could read them. The shipped
+        // Pixel Provenance inspector therefore rendered an empty report for every
+        // user with the default `run_ahead = 1`. The clear here is right and
+        // stays; run-ahead now carries the stores AROUND it (`RunAhead::finish`
+        // → `Nes::take_provenance` / `put_provenance`), which is what this
+        // comment always claimed was happening.
         //
         // The per-pixel provenance frame is cleared for the same reason, and it
         // needs saying separately because the obvious analogy is wrong: the
@@ -4152,17 +4190,25 @@ mod tests {
         assert_eq!(nes.nsf_current_song(), 0);
     }
 
-    /// A3 (v2.2.3): the beam-relative Zapper model is OFF by default, so the
-    /// shipped `$4017` byte is exactly what the frame-granular model produced.
+    /// v2.3.6: the beam-relative Zapper model is ON by default.
+    ///
+    /// It shipped OFF in v2.2.3-v2.3.5 on the reasoning that no light-gun test
+    /// ROM could adjudicate it and the supported titles were satisfied either
+    /// way. The second half was false: under the frame-granular model *Duck
+    /// Hunt* receives its "dark frame then bright frame" probe inverted and can
+    /// never register a hit. See `LockstepBus::set_zapper_temporal_light`.
     #[test]
-    fn zapper_temporal_light_is_off_by_default() {
+    fn zapper_temporal_light_is_on_by_default() {
         let mut nes = Nes::from_rom(&synth_nrom(16, 8)).expect("nrom builds");
-        assert!(!nes.zapper_temporal_light(), "A3 must default OFF");
+        assert!(
+            nes.zapper_temporal_light(),
+            "the beam-relative model must default ON from v2.3.6"
+        );
         nes.set_zapper(1, 100, 120, false);
-        // Toggling it on and back off must restore the default exactly.
-        nes.set_zapper_temporal_light(true);
-        assert!(nes.zapper_temporal_light());
+        // Toggling it off and back on must restore the default exactly.
         nes.set_zapper_temporal_light(false);
         assert!(!nes.zapper_temporal_light());
+        nes.set_zapper_temporal_light(true);
+        assert!(nes.zapper_temporal_light());
     }
 }

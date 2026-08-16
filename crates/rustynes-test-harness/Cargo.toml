@@ -120,6 +120,17 @@ name = "dump_battery_ram"
 path = "src/bin/dump_battery_ram.rs"
 required-features = ["test-roms"]
 
+# v2.3.6 — Zapper light-timing probe. Answers, from the game's own `$4017`
+# traffic, whether a light-gun title ever sees light: per frame it pairs each
+# read's returned byte (bit 3 = light NOT detected) with whether the aim point
+# was actually bright in that frame's framebuffer. Built for the "Duck Hunt
+# fires but never hits" report; needs a gitignored commercial dump, so it skips
+# cleanly when absent.
+[[bin]]
+name = "zapper_light_probe"
+path = "src/bin/zapper_light_probe.rs"
+required-features = ["commercial-roms", "debug-hooks"]
+
 # v2.3.1 "Plumb Line" — harness-free steady-state frame-cost probe. Profile THIS
 # instead of the criterion bench: a `perf record` of the bench binary attributes
 # ~17% of samples to criterion itself (rayon plumbing, libm exp, its sorts),

@@ -282,12 +282,45 @@ impl ZapperState {
     /// temporal model differs from the frame model ONLY in *when* it samples,
     /// never in what counts as light.
     fn aperture_is_bright(framebuffer: &[u8], x: u16, y: u16) -> bool {
+        Self::aperture_is_bright_painted(framebuffer, x, y, None)
+    }
+
+    /// [`Self::aperture_is_bright`], restricted to rows the CRT beam has
+    /// **finished painting this frame**.
+    ///
+    /// `painted_before` is the scanline the beam is currently on: rows at or
+    /// after it are excluded, because the current row is only part-way drawn and
+    /// later rows still hold the PREVIOUS frame's pixels. `None` means the whole
+    /// framebuffer is current, which is true only for the end-of-frame sampler.
+    ///
+    /// # Why this is load-bearing
+    ///
+    /// A photodiode can only respond to light the phosphor has already emitted.
+    /// Without this clip the beam-relative model samples stale rows and reports
+    /// light on a screen that is entirely black — measured directly on *Duck
+    /// Hunt*'s light-test frame, where at scanline 96 the beam was 5 dots into
+    /// row 96 and the sampler read the previous frame's bright sky (`aim_luma
+    /// 152` on a frame whose mean luma is 0), then did it again at scanline 97
+    /// via the still-unpainted row 97 of the 3x3 aperture.
+    ///
+    /// That matters because *Duck Hunt* requires the gun to see **nothing** for
+    /// one frame before it will accept a shot, so a false positive here discards
+    /// every shot: the gun fires and nothing can ever be hit (v2.3.6).
+    fn aperture_is_bright_painted(
+        framebuffer: &[u8],
+        x: u16,
+        y: u16,
+        painted_before: Option<u16>,
+    ) -> bool {
         const W: i32 = 256;
         const H: i32 = 240;
         let (ax, ay) = (i32::from(x), i32::from(y));
         if ax >= W || ay >= H {
             return false; // aimed off-screen: never sees light
         }
+        // Rows `>= painted_before` are not yet emitted this frame. `None` (the
+        // end-of-frame sampler) admits the whole screen.
+        let row_limit = painted_before.map_or(H, i32::from);
         let mut bright = 0u32;
         let r = ZAPPER_APERTURE_RADIUS;
         for dy in -r..=r {
@@ -295,6 +328,9 @@ impl ZapperState {
                 let (px, py) = (ax + dx, ay + dy);
                 if !(0..W).contains(&px) || !(0..H).contains(&py) {
                     continue; // aperture clipped by the screen edge
+                }
+                if py >= row_limit {
+                    continue; // the beam has not finished this row this frame
                 }
                 // px/py are now bounded to the screen, so the linear index is
                 // non-negative and fits a usize.
@@ -355,7 +391,9 @@ impl ZapperState {
         if scanline - y >= ZAPPER_LIGHT_HOLD_SCANLINES {
             return false; // photodiode has drained
         }
-        Self::aperture_is_bright(framebuffer, self.x, y)
+        // Only rows the beam has FINISHED this frame can have emitted light —
+        // see `aperture_is_bright_painted` for what goes wrong without this.
+        Self::aperture_is_bright_painted(framebuffer, self.x, y, Some(scanline))
     }
 
     /// The device byte as [`Self::read`] would return it, but using the
@@ -1898,11 +1936,26 @@ mod tests {
         z.set(100, 0, true); // aim on visible row 0, trigger pulled
         let fb = fb_with_target(100, 0);
 
-        // Row 0 itself is inside the hold window: light IS detected there.
+        // v2.3.6: reading WHILE the beam is on the aim row reports no light —
+        // the row is only part-way painted, so the phosphor has not emitted it
+        // yet and the framebuffer still holds the previous frame there. (This
+        // assertion read "light IS detected at row 0" until v2.3.6; sampling
+        // rows the beam had not finished is what let the sensor report light on
+        // a fully black screen, which made a Duck Hunt hit impossible. See
+        // `aperture_is_bright_painted`.)
         assert_eq!(
             z.read_at_scanline(&fb, 0) & 0b0000_1000,
+            0b0000_1000,
+            "the aim row is still being painted at scanline == y: no light yet"
+        );
+
+        // The first scanline PAST the aim row: the row is complete, the
+        // photodiode is inside its hold window, so light IS detected. This is
+        // the contrast the fallback below is measured against.
+        assert_eq!(
+            z.read_at_scanline(&fb, 1) & 0b0000_1000,
             0,
-            "row 0 detects light (contrast for the fallback below)"
+            "scanline 1 detects the light emitted by the completed row 0"
         );
 
         // The real pre-render line (261 NTSC) is already no-light via the normal

@@ -2084,6 +2084,40 @@ impl Ppu {
         }
     }
 
+    /// Move both provenance stores out, leaving the PPU unarmed.
+    ///
+    /// Paired with [`Self::put_provenance`] to carry the stores across a
+    /// same-timeline restore that would otherwise clear them — see
+    /// [`crate::provenance::ProvenanceStash`] for why run-ahead needs that and
+    /// save-state loads and netplay rollback do not.
+    ///
+    /// `prov_armed` is dropped to `false` alongside the frame it mirrors, so the
+    /// invariant "`prov_armed` iff `prov_frame.is_some()`" holds while stashed
+    /// and `emit_pixel` records nothing into the vacated slot.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn take_provenance(&mut self) -> crate::provenance::ProvenanceStash {
+        let stash = crate::provenance::ProvenanceStash {
+            write_attrib: self.write_attrib.take(),
+            prov_frame: self.prov_frame.take(),
+            prov_armed: self.prov_armed,
+        };
+        self.prov_armed = false;
+        stash
+    }
+
+    /// Put back stores taken by [`Self::take_provenance`].
+    ///
+    /// Overwrites whatever is currently held, which is what the pairing wants:
+    /// the only thing that can have appeared in between is a restore's cleared
+    /// (or absent) store, and the stashed records are the ones the caller means
+    /// to keep.
+    #[cfg(feature = "debug-hooks")]
+    pub fn put_provenance(&mut self, stash: crate::provenance::ProvenanceStash) {
+        self.write_attrib = stash.write_attrib;
+        self.prov_frame = stash.prov_frame;
+        self.prov_armed = stash.prov_armed;
+    }
+
     /// Freeze the current instruction context as the cause of an OAM DMA burst.
     ///
     /// Called by the bus from the `$4014` write, i.e. while

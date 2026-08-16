@@ -16,6 +16,108 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **Pixel Provenance now works.** The v2.3.2 "Lucid" marquee returned an empty
+  report for effectively every user, from release until now, because of two
+  independent defects.
+
+  **Run-ahead erased the record before the UI could read it.** Run-ahead defaults
+  to 1, and its per-frame rollback (`RunAhead::finish` → `Nes::restore_quiet`)
+  unconditionally cleared both provenance stores. That clear is right for a
+  save-state load and for netplay rollback, and wrong here for a reason that has
+  nothing to do with the restore: run-ahead's rollback is the *last* thing before
+  the frontend releases the emulator lock, so the panel's first opportunity to
+  look was always after the wipe. It did not discard a stale timeline; it
+  discarded the record for the frame on screen. `finish` now carries both stores
+  **around** the restore (`Nes::take_provenance` / `put_provenance` — a move of
+  two boxed stores, skipped when neither is armed), keeping exactly the visible
+  frame's records. Every other caller still clears, unchanged.
+
+  **Clicking a pixel was never implemented.** The panel offered two coordinate
+  spinboxes and no click hit-test, while the docs and release notes said "point
+  at"/"pin" a pixel. Clicking the game view now pins that pixel. The NES image is
+  a raw wgpu blit rather than an egui widget, so the click is captured in the
+  winit handler and converted by a new `gfx::window_to_nes_pixel`, which inverts
+  the blit's own letterbox/crop transform — correct at any window size, pixel
+  aspect and overscan crop, and `None` on a letterbox bar.
+
+  Also fixed while here: the panel mirrored the core's armed flags in frontend
+  state, which desynced permanently the moment a ROM load installed a fresh
+  `Nes` (checkbox ticked, core unarmed, no way back but unticking and re-ticking)
+  — the core is now the single source of truth; and the panel rendered a cleared
+  record as fact, because every field of one reads as a confident "scanline 0,
+  dot 0, backdrop, palette `$0000`". It now distinguishes not-armed from
+  nothing-recorded-yet from off-screen.
+
+  **Why it went unnoticed:** the core data structures were well unit-tested and
+  the frontend wiring was tested by nothing — the same shape as issue #360 in the
+  same release train. `runahead.rs` even carried tests pinning the determinism of
+  the very code path that destroyed this telemetry. The new regression net drives
+  the run-ahead cycle with provenance armed and asserts a record survives, with a
+  plain-run control so a failure cannot be misread as a bad assertion, plus three
+  tests for the coordinate converter — one round-tripping it against the shader's
+  own uniform rather than a third re-derivation of the letterbox.
+
+  Two comments and four documentation claims asserted the opposite of the code
+  and are corrected in the same change, including one in `CHANGELOG-FULL.md`'s
+  spec (`docs/pixel-provenance.md`) that contradicted itself two sections apart.
+
+  Emulation is untouched: the new core methods are additive and output-only, so
+  **AccuracyCoin holds at exactly 141/141** (RAM decoder) with nestest 0-diff —
+  verified, not asserted.
+
+- **Duck Hunt is playable: a Zapper shot can finally score.** The gun fired and
+  nothing could ever be hit — at any aim point, in any part of a duck.
+
+  Duck Hunt's protocol is "the gun must see **nothing** for one frame, then a
+  bright spot in the next". `Bus::sample_zapper_light()` runs at the *end* of
+  `run_frame`, so the light bit a read returns during frame N was sampled from
+  frame N−1. The game therefore received its probe **exactly inverted**: on the
+  blanked frame it read the previous, bright frame; on the target frame it read
+  the blanked one. The shot was discarded before hit-testing, which is why aiming
+  made no difference.
+
+  The **beam-relative light model is now the default** (`zapper_temporal_light`,
+  opt-in since v2.2.3). It derives the light bit from where the CRT beam is at
+  the moment of the read — dark before the beam paints the aim row, lit for the
+  ~19-26-scanline photodiode hold, dark once drained — which is what the hardware
+  does and what the frame model structurally cannot express.
+
+  A second defect had to go with it: the beam-relative sampler read aperture rows
+  the beam had **not finished painting**, which still hold the previous frame, so
+  it asserted light on an all-black screen. Measured directly — at scanline 96
+  the beam was 5 dots into row 96 and the sampler saw the previous frame's sky at
+  luma 152 on a frame whose mean luma was 0. Rows at or after the current
+  scanline are now excluded (`aperture_is_bright_painted`).
+
+  **The reason it shipped that way was a wrong claim, not a missing oracle.**
+  v2.2.3 kept the model off because "no pass/fail light-gun test ROM exists… the
+  supported titles are satisfied by either model". The second half was false, and
+  the first was beside the point: the game is the oracle. Measured A/B on the same
+  ROM, aim and inputs — frame model: score 000000, duck still flying;
+  beam-relative: score 000500, duck marked hit. Pinned by
+  `duck_hunt_zapper_shot_can_score`, which asserts Duck Hunt's own scoreboard and
+  was mutation-checked (with the model forced off it fails on identical score
+  pixels). New `zapper_light_probe` diagnostic reproduces the whole sequence from
+  the game's `$4017` traffic.
+
+  This changes emulation behaviour when a Zapper is attached, so the gates were
+  re-run rather than assumed: **AccuracyCoin 141/141** (RAM decoder), nestest
+  0-diff, 2,038 workspace tests green. Pass `set_zapper_temporal_light(false)` to
+  restore the pre-v2.3.6 model.
+
+- **The Zapper's aim was off by the letterbox.** Its cursor mapping stretched the
+  256×240 image across the whole window, so the aim was wrong by the bar size
+  whenever the window did not match the NES aspect, and a click on a black bar
+  registered as a hit on a real pixel — while the comment directly above it
+  claimed "letterbox bars read as off-screen — the correct Zapper 'no light'
+  behavior", which a full-window stretch cannot produce. It now shares
+  `gfx::window_to_nes_pixel` with the provenance picker, so bars are genuinely
+  dark and the aim tracks the pixel actually under the cursor at any window size,
+  pixel-aspect setting or overscan crop. The Input Display's on-screen indicator
+  uses the same converter, so the HUD and the core agree. The Vaus paddle keeps
+  its full-window sweep deliberately: a knob has no off-screen state, and how far
+  the hand travels per turn is a feel decision no oracle adjudicates.
+
 - **The libretro `.info` description is corrected.** It now advertises native
   `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` support and native Game Genie cheats —
   both long-standing capabilities that the description omitted — plus the two

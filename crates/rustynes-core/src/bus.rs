@@ -858,7 +858,9 @@ impl LockstepBus {
             vs_4016_bit1: false,
             vs_4016_bit1_dirty: false,
             expansion_device: [None, None],
-            zapper_temporal_light: false,
+            // v2.3.6: ON by default. See `set_zapper_temporal_light` — the frame
+            // model made a Duck Hunt hit impossible.
+            zapper_temporal_light: true,
             famicom_mic: false,
             nt_mirroring_override: None,
             #[cfg(feature = "debug-hooks")]
@@ -1628,22 +1630,37 @@ impl LockstepBus {
         }
     }
 
-    /// A3 (v2.2.3): enable the **beam-relative** Zapper light model.
+    /// Enable the **beam-relative** Zapper light model.
     ///
-    /// Default **off**, which keeps the frame-granular model and therefore
-    /// byte-identical output on every shipped build.
+    /// **Default ON since v2.3.6.** The light bit is derived from where the CRT
+    /// beam is at the moment of the `$4016`/`$4017` read: dark before the beam
+    /// paints the aim row, lit while the photodiode holds (~19-26 scanlines,
+    /// per the `NESdev` wiki's capacitor model), dark once it drains. That is what
+    /// real hardware does, and the frame-granular model structurally cannot
+    /// express it — it returns one answer for the whole frame, sampled at
+    /// end-of-frame, so every read during frame N reports frame N-1.
     ///
-    /// With it on, the light bit is derived from where the CRT beam is at the
-    /// moment of the `$4016`/`$4017` read rather than from the completed frame:
-    /// dark before the beam paints the aim row, lit while the photodiode holds
-    /// (~19-26 scanlines), dark once it drains. That is what real hardware
-    /// does, and the frame model structurally cannot express it — it returns
-    /// one answer for the whole frame.
+    /// # Why it was promoted (v2.3.6)
     ///
-    /// Opt-in rather than promoted because there is **no pass/fail light-gun
-    /// test ROM** to adjudicate it: the supported titles re-poll every frame and
-    /// are satisfied by either model, so promoting it would change output with
-    /// no oracle able to confirm the change is an improvement.
+    /// A3 (v2.2.3) shipped this off, on the reasoning that "there is no pass/fail
+    /// light-gun test ROM… the supported titles re-poll every frame and are
+    /// satisfied by either model". **The second half of that was false**, and no
+    /// test ROM was needed to show it — the game itself is the oracle.
+    ///
+    /// *Duck Hunt* requires the gun to see **nothing for one frame** and then a
+    /// bright spot in the next. Under the frame model it received exactly the
+    /// inverse: on the blanked frame it read the previous (bright) frame's
+    /// answer, and on the target frame it read the blanked frame's. The shot was
+    /// discarded before hit-testing, so the gun fired and **nothing could ever be
+    /// hit** — reported by the maintainer, then reproduced headlessly from the
+    /// game's own `$4017` traffic (`zapper_light_probe`).
+    ///
+    /// Measured A/B on the same ROM, aim and inputs: frame model → score 000000,
+    /// duck still flying; beam-relative → score 000500, duck marked hit.
+    ///
+    /// Turning it off restores the pre-v2.3.6 frame-granular behaviour.
+    /// Deterministic either way: the answer is a pure function of framebuffer +
+    /// aim + scanline and holds no state, so it adds nothing to serialize.
     pub const fn set_zapper_temporal_light(&mut self, on: bool) {
         self.zapper_temporal_light = on;
     }
