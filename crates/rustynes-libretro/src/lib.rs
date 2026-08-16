@@ -137,6 +137,77 @@ const DAR_SINGLE: f64 = dar_for(NES_W, NES_H);
 /// ≈ 2.438 — two single-console screens, so exactly twice as wide.
 const DAR_DUAL: f64 = dar_for(DUAL_W, NES_H);
 
+/// `'static` controller-type tables handed to
+/// `RETRO_ENVIRONMENT_SET_CONTROLLER_INFO`.
+///
+/// These MUST outlive the environment call — see the lifetime note at the call
+/// site. The wrapper exists only to satisfy `Sync` for a `static` containing raw
+/// pointers.
+struct ControllerTables {
+    /// Ports 1-2: a pad or the Zapper. Port 2 is where the hardware and
+    /// essentially every light-gun game put the Zapper, but nothing forbids
+    /// port 1, so both are offered.
+    pad_and_gun: [retro_controller_description; 2],
+    /// Ports 3-4: pad only. These exist for a Vs. `DualSystem` cabinet, whose
+    /// SUB console takes its P1/P2 from libretro ports 2/3. A cabinet has no
+    /// light gun, so offering one there would advertise hardware that cannot
+    /// exist.
+    pad_only: [retro_controller_description; 1],
+}
+
+// SAFETY: every field is either a plain integer or a pointer to a `'static` C
+// string literal baked into the binary. The struct is constructed once at
+// compile time and never mutated, so concurrent reads observe immutable data and
+// the pointers stay valid for the life of the process.
+unsafe impl Sync for ControllerTables {}
+
+impl ControllerTables {
+    /// The per-port array to hand the frontend, terminated by a zeroed entry.
+    ///
+    /// Returned by value because RetroArch copies this outer array; only the
+    /// `types` pointers it carries need to be `'static`, and they point into
+    /// `self`.
+    const fn ports(&'static self) -> [retro_controller_info; 5] {
+        let gun = retro_controller_info {
+            types: self.pad_and_gun.as_ptr(),
+            num_types: self.pad_and_gun.len() as std::os::raw::c_uint,
+        };
+        let pad = retro_controller_info {
+            types: self.pad_only.as_ptr(),
+            num_types: self.pad_only.len() as std::os::raw::c_uint,
+        };
+        [
+            gun,
+            gun,
+            pad,
+            pad,
+            // Terminator: the frontend reads until `types` is null.
+            retro_controller_info {
+                types: std::ptr::null(),
+                num_types: 0,
+            },
+        ]
+    }
+}
+
+/// The single `'static` instance of the controller tables.
+static CONTROLLER_INFO: ControllerTables = ControllerTables {
+    pad_and_gun: [
+        retro_controller_description {
+            desc: c"NES Controller".as_ptr(),
+            id: RETRO_DEVICE_JOYPAD,
+        },
+        retro_controller_description {
+            desc: c"NES Zapper".as_ptr(),
+            id: RETRO_DEVICE_LIGHTGUN,
+        },
+    ],
+    pad_only: [retro_controller_description {
+        desc: c"NES Controller".as_ptr(),
+        id: RETRO_DEVICE_JOYPAD,
+    }],
+};
+
 /// Named `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` address space for PPU nametable
 /// RAM (CIRAM), distinct from the blank/default CPU-bus address space WRAM
 /// and SRAM are registered under. See `register_memory_maps`.
@@ -270,10 +341,13 @@ fn poll_zapper(ctx: &mut RunContext, nes: &mut Nes, port: u32) {
     let reload = read(RETRO_DEVICE_ID_LIGHTGUN_RELOAD) != 0;
 
     if offscreen || reload {
-        // Any coordinate outside the 256x240 active area reads as darkness;
-        // `set_zapper` clamps and resolves brightness from the framebuffer, so a
-        // deliberately out-of-range position is the honest encoding of "the lens
-        // is not pointed at the screen".
+        // `set_zapper` only STORES the aim point — it does no clamping and
+        // computes no brightness. Light detection happens later, when the port is
+        // read during emulation and the photodiode is resolved against what the
+        // beam is painting. A coordinate outside the 256x240 active area is
+        // therefore never over a lit pixel, which is the honest encoding of "the
+        // lens is not pointed at the screen" (and is pinned by the core's
+        // `zapper_off_screen_never_sees_light` test).
         nes.set_zapper(port as usize, u16::MAX, u16::MAX, trigger || reload);
         return;
     }
@@ -514,6 +588,10 @@ impl RustyNesLibretro {
             // above is harmless and deliberate: the Zapper's own byte is assembled
             // by `set_zapper`, and leaving the pad state written keeps a port that
             // the user switches back to a joypad mid-session from reading stale.
+            //
+            // `.take(2)` is load-bearing, not tidiness: `Nes::set_zapper` asserts
+            // `port < 2` (the console has exactly two controller ports), so
+            // forwarding a lightgun assignment on port 3 or 4 would panic.
             for (port, is_gun) in zapper_ports.iter().enumerate().take(2) {
                 if *is_gun {
                     poll_zapper(ctx, nes, port as u32);
@@ -746,34 +824,24 @@ impl Core for RustyNesLibretro {
             // hardware and essentially every game put it, nothing prevents port 1
             // and there is no reason to forbid what the console permits.
             //
-            // These CStrs are `'static`, and `retro_controller_info` is documented
-            // as being consumed during this call, so no ownership escapes.
-            let pad_desc = retro_controller_description {
-                desc: c"NES Controller".as_ptr(),
-                id: RETRO_DEVICE_JOYPAD,
-            };
-            let gun_desc = retro_controller_description {
-                desc: c"NES Zapper".as_ptr(),
-                id: RETRO_DEVICE_LIGHTGUN,
-            };
-            let port_descs = [pad_desc, gun_desc];
-            let controller_info = [
-                // Ports 1 and 2 (indices 0/1) accept a pad or a Zapper.
-                retro_controller_info {
-                    types: port_descs.as_ptr(),
-                    num_types: port_descs.len() as std::os::raw::c_uint,
-                },
-                retro_controller_info {
-                    types: port_descs.as_ptr(),
-                    num_types: port_descs.len() as std::os::raw::c_uint,
-                },
-                // Terminator: libretro reads until a zeroed entry.
-                retro_controller_info {
-                    types: std::ptr::null(),
-                    num_types: 0,
-                },
-            ];
-            rust_libretro::environment::set_controller_info(cb, &controller_info);
+            // LIFETIME, and it is not symmetric — read before changing.
+            //
+            // RetroArch's handler `memcpy`s the OUTER `retro_controller_info`
+            // array into its own storage, but that copy is SHALLOW: the `types`
+            // pointers inside each entry are retained as-is and dereferenced
+            // later, when the Controls menu is built. So:
+            //
+            //   * the outer array may live on the stack (it is copied), but
+            //   * everything `types` points at MUST outlive this call.
+            //
+            // Hence `PAD_AND_GUN` / `PAD_ONLY` are `'static`. Building them as
+            // locals compiled and appeared to work, and would have handed the
+            // frontend dangling stack pointers to read at menu-open time.
+            //
+            // (The `set_input_descriptors` call above is NOT affected: RetroArch
+            // walks that array during the call and retains only the `description`
+            // string pointers, which are `'static` literals.)
+            rust_libretro::environment::set_controller_info(cb, &CONTROLLER_INFO.ports());
 
             // Register the disk-control callback trampolines (on_set_eject_state,
             // on_get_image_index, etc. below) so RetroArch's Quick Menu → Disk
@@ -1294,6 +1362,53 @@ mod tests {
             DAR_SINGLE.mul_add(-2.0, DAR_DUAL).abs() < 1e-9,
             "dual DAR {DAR_DUAL} should be exactly 2x single {DAR_SINGLE}"
         );
+    }
+
+    /// The controller tables handed to the frontend must be `'static`, and must
+    /// cover every port the core can use.
+    ///
+    /// RetroArch shallow-`memcpy`s the outer `retro_controller_info` array but
+    /// RETAINS the `types` pointers inside it, dereferencing them later when the
+    /// Controls menu is built. Building the description arrays as locals compiled
+    /// cleanly and handed the frontend dangling stack pointers — a defect no
+    /// compiler check catches, hence this test.
+    ///
+    /// Rust has no runtime lifetime assertion, so this pins the two properties
+    /// that make the lifetime correct by construction: the tables come from a
+    /// `static`, and the pointers into them are stable across calls.
+    #[test]
+    fn controller_tables_are_static_and_cover_every_port() {
+        let first = CONTROLLER_INFO.ports();
+        let second = CONTROLLER_INFO.ports();
+
+        // Same backing storage on every call => it is not a temporary.
+        assert_eq!(
+            first[0].types, second[0].types,
+            "`types` must point into `static` storage, not a per-call temporary"
+        );
+        assert_eq!(
+            first[0].types,
+            CONTROLLER_INFO.pad_and_gun.as_ptr(),
+            "port 1 must point at the static pad+gun table"
+        );
+
+        // Four real ports (a Vs. cabinet uses all four) plus a null terminator.
+        assert_eq!(first.len(), 5, "4 ports + terminator");
+        assert!(
+            first[4].types.is_null() && first[4].num_types == 0,
+            "the array must end with a zeroed terminator"
+        );
+        for (i, entry) in first.iter().take(4).enumerate() {
+            assert!(
+                !entry.types.is_null() && entry.num_types > 0,
+                "port {i} must advertise at least one device"
+            );
+        }
+
+        // Ports 1-2 offer the Zapper; ports 3-4 (a cabinet's SUB console) do not,
+        // because a Vs. cabinet has no light gun.
+        assert_eq!(first[1].num_types, 2, "port 2 should offer pad + Zapper");
+        assert_eq!(first[2].num_types, 1, "port 3 should be pad-only");
     }
 
     /// Ports default to a joypad, and only an explicit lightgun assignment
