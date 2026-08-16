@@ -3844,11 +3844,27 @@ impl App {
             use crate::config::ExpansionDevice;
             // Map the cursor X into 0..=255 for the Vaus paddle / aim, and decide
             // whether the cursor is on the NES screen (Zapper light sensor).
+            // `on_screen` is the Zapper's light indicator, so it must agree with
+            // the aim the core actually receives — same converter, same answer
+            // (v2.3.6). It used to be a third independent full-window stretch,
+            // which reported "on screen" for a cursor sitting on a black bar.
+            // The knob keeps the full-window sweep, matching the Vaus branch of
+            // `mouse_nes` for the same reason given there.
             let (knob, on_screen) = self.cursor_pos.map_or((0x80u8, false), |(cx, cy)| {
                 let (ww, wh) = self.window_size;
                 let nx = (cx / f64::from(ww.max(1))) * 256.0;
-                let ny = (cy / f64::from(wh.max(1))) * 240.0;
-                let on = (0.0..256.0).contains(&nx) && (0.0..240.0).contains(&ny);
+                let on = crate::gfx::window_to_nes_pixel(
+                    ww,
+                    wh,
+                    self.config.ui.pixel_aspect_correction,
+                    crate::gfx::effective_overscan(
+                        self.config.graphics.hide_overscan,
+                        self.config.graphics.overscan,
+                    ),
+                    cx,
+                    cy,
+                )
+                .is_some();
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let knob = nx.clamp(0.0, 255.0) as u8;
                 (knob, on)
@@ -3974,36 +3990,52 @@ impl App {
             run_ahead: self.config.input.run_ahead,
             #[cfg(not(target_arch = "wasm32"))]
             expansion: self.config.input.expansion_device,
-            // Map the cursor (physical window px) to the 256x240 NES screen,
-            // assuming the framebuffer fills the window (letterbox bars read
-            // as off-screen — the correct Zapper "no light" behavior).
-            // v1.5.0 D4 — the Vaus paddle X applies the pointer-scale gain
-            // around the screen centre (pointer_scale 1.0 = the prior 1:1 map,
-            // byte-identical); the Zapper aim is unaffected (the gain is only
-            // meaningful for the paddle and the clamp keeps the aim sane).
+            // Map the cursor (physical window px) to the 256x240 NES screen.
+            //
+            // v2.3.6 workstream 0, defect 2 — the ZAPPER aim now inverts the
+            // blit's real letterbox/crop transform instead of stretching the
+            // image across the whole window. The old comment here claimed
+            // "letterbox bars read as off-screen — the correct Zapper 'no light'
+            // behavior", but a full-window stretch cannot produce that: every
+            // position in a bar mapped onto a real, wrong NES pixel, so the light
+            // sensor read a hit where the screen showed a black bar, and the aim
+            // was off by the bar size everywhere else. `(u16::MAX, u16::MAX)` is
+            // the established off-screen sentinel, so a bar is now genuinely dark.
+            //
+            // v1.5.0 D4 — the Vaus paddle keeps the full-window sweep with its
+            // pointer-scale gain, deliberately. A knob has no "off-screen" state,
+            // and making it jump to the sentinel (or stick) when the cursor
+            // crosses a bar would be worse, not more correct; how far the hand
+            // travels per knob turn is a feel decision no oracle adjudicates, so
+            // it is left exactly as it was rather than changed in passing.
             #[cfg(not(target_arch = "wasm32"))]
             mouse_nes: self.cursor_pos.map_or((u16::MAX, u16::MAX), |(cx, cy)| {
-                let (ww, wh) = self.window_size;
-                let scale = f64::from(self.config.input.pointer_scale.clamp(0.1, 8.0));
-                let raw_x = (cx / f64::from(ww.max(1))) * 256.0;
-                // Apply the paddle gain (deviation from centre 128, scaled) only
-                // for the Vaus device; the Zapper keeps the raw cursor map.
-                let mapped_x = if matches!(
+                if matches!(
                     self.config.input.expansion_device,
                     crate::config::ExpansionDevice::Vaus
                 ) {
-                    (raw_x - 128.0).mul_add(scale, 128.0)
-                } else {
-                    raw_x
-                };
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let x = mapped_x.clamp(0.0, 255.0) as i64;
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let y = ((cy / f64::from(wh.max(1))) * 240.0) as i64;
-                (
-                    u16::try_from(x).unwrap_or(u16::MAX),
-                    u16::try_from(y).unwrap_or(u16::MAX),
+                    let (ww, wh) = self.window_size;
+                    let scale = f64::from(self.config.input.pointer_scale.clamp(0.1, 8.0));
+                    let raw_x = (cx / f64::from(ww.max(1))) * 256.0;
+                    let mapped_x = (raw_x - 128.0).mul_add(scale, 128.0);
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let x = mapped_x.clamp(0.0, 255.0) as u16;
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let y = ((cy / f64::from(wh.max(1))) * 240.0).clamp(0.0, 239.0) as u16;
+                    return (x, y);
+                }
+                crate::gfx::window_to_nes_pixel(
+                    self.window_size.0,
+                    self.window_size.1,
+                    self.config.ui.pixel_aspect_correction,
+                    crate::gfx::effective_overscan(
+                        self.config.graphics.hide_overscan,
+                        self.config.graphics.overscan,
+                    ),
+                    cx,
+                    cy,
                 )
+                .unwrap_or((u16::MAX, u16::MAX))
             }),
             #[cfg(not(target_arch = "wasm32"))]
             mouse_pressed: self.mouse_pressed,
@@ -8998,6 +9030,35 @@ impl ApplicationHandler<AppEvent> for App {
                     .is_some_and(DebuggerOverlay::wants_egui_input);
                 if button == winit::event::MouseButton::Left && !egui_pointer {
                     self.mouse_pressed = state == winit::event::ElementState::Pressed;
+                    // v2.3.6 workstream 0, defect 2 — clicking the game view pins
+                    // that pixel in the Pixel Provenance inspector. The NES image
+                    // is a raw wgpu blit rather than an egui widget, so there is
+                    // no `Response` to hit-test; the conversion inverts the blit's
+                    // own letterbox/crop transform (`gfx::window_to_nes_pixel`) so
+                    // it is correct at any window size, aspect setting and
+                    // overscan crop. A click on a letterbox bar maps to `None` and
+                    // pins nothing, rather than silently pinning an edge pixel.
+                    if state == winit::event::ElementState::Pressed
+                        && let Some((cx, cy)) = self.cursor_pos
+                        && self
+                            .debugger
+                            .as_ref()
+                            .is_some_and(DebuggerOverlay::provenance_open)
+                        && let Some((nx, ny)) = crate::gfx::window_to_nes_pixel(
+                            self.window_size.0,
+                            self.window_size.1,
+                            self.config.ui.pixel_aspect_correction,
+                            crate::gfx::effective_overscan(
+                                self.config.graphics.hide_overscan,
+                                self.config.graphics.overscan,
+                            ),
+                            cx,
+                            cy,
+                        )
+                        && let Some(dbg) = self.debugger.as_mut()
+                    {
+                        dbg.set_provenance_pick(nx, ny);
+                    }
                 }
                 // v1.2.0 Workstream D — the SNES mouse's right button.
                 if button == winit::event::MouseButton::Right && !egui_pointer {

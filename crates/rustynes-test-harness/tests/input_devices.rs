@@ -249,3 +249,97 @@ fn input_device_state_types_constructible() {
     let _ = InputDevice::KonamiHyperShot(rustynes_core::KonamiHyperShotState::new());
     let _ = InputDevice::BandaiHyperShot(rustynes_core::BandaiHyperShotState::new());
 }
+
+/// v2.3.6 regression — a Zapper shot in *Duck Hunt* must be able to score.
+///
+/// This is the defect the beam-relative light model was promoted to fix. Duck
+/// Hunt's protocol is "the gun must see NOTHING for one frame, then a bright
+/// spot in the next". Under the frame-granular model the light bit was sampled
+/// at end-of-frame, so a read during frame N reported frame N-1: on the blanked
+/// probe frame the game saw the previous (bright) frame and on the target frame
+/// it saw the blanked one — the probe inverted, the shot discarded before
+/// hit-testing, and no duck could ever be hit however well the player aimed.
+///
+/// The assertion is the game's own scoreboard, not an internal flag: score is
+/// zero at the start of the round and non-zero after a shot aimed at the target
+/// box. That is the only oracle that cannot pass while the bug is present.
+///
+/// Uses a gitignored commercial dump; skips cleanly when absent, like the other
+/// commercial-ROM tests here.
+#[test]
+fn duck_hunt_zapper_shot_can_score() {
+    use rustynes_core::Buttons;
+
+    // The target box centre on the light-test frame for this deterministic
+    // replay, found with `zapper_light_probe`.
+    const AIM: (u16, u16) = (93, 156);
+
+    // Bottom-right of the play area, where Duck Hunt renders SCORE. Counting
+    // bright pixels over the digits detects "not all zeroes" without decoding
+    // the font.
+    fn score_ink(fb: &[u8]) -> u64 {
+        let mut ink = 0u64;
+        for y in 200..232usize {
+            for x in 184..248usize {
+                let idx = (y * 256 + x) * 4;
+                let luma = (77 * u64::from(fb[idx])
+                    + 150 * u64::from(fb[idx + 1])
+                    + 29 * u64::from(fb[idx + 2]))
+                    >> 8;
+                if luma >= 0x80 {
+                    ink += 1;
+                }
+            }
+        }
+        ink
+    }
+
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest.parent().and_then(|p| p.parent()).expect("root");
+    let path = root.join("tests/roms/external/mapper-000-NROM/Duck Hunt.nes");
+    let Ok(bytes) = fs::read(&path) else {
+        eprintln!("skipping: {} absent (commercial dump)", path.display());
+        return;
+    };
+
+    let mut nes = Nes::from_rom(&bytes).expect("rom parses");
+    assert!(
+        nes.zapper_temporal_light(),
+        "this test asserts the SHIPPED default; it is meaningless if the \
+         beam-relative model is off"
+    );
+    let mut discard = vec![0.0f32; 8192];
+
+    // Title -> gameplay. Exactly ONE Start press: holding it into gameplay
+    // pauses the game, which looks identical to "the Zapper is ignored".
+    for f in 0..1000u32 {
+        nes.set_buttons(
+            0,
+            if (60..66).contains(&f) {
+                Buttons::START
+            } else {
+                Buttons::empty()
+            },
+        );
+        nes.set_zapper(1, AIM.0, AIM.1, false);
+        nes.run_frame();
+        let _ = nes.drain_audio_into(&mut discard);
+    }
+    let ink_before = score_ink(nes.framebuffer());
+
+    // Pulse the trigger; the round's ducks cross the aim point.
+    for f in 0..260u32 {
+        nes.set_buttons(0, Buttons::empty());
+        nes.set_zapper(1, AIM.0, AIM.1, f % 40 < 6);
+        nes.run_frame();
+        let _ = nes.drain_audio_into(&mut discard);
+    }
+    let ink_after = score_ink(nes.framebuffer());
+
+    assert_ne!(
+        ink_after, ink_before,
+        "Duck Hunt's score never changed: the Zapper shot was discarded before \
+         hit-testing (the v2.2.3-v2.3.5 frame-granular light model), or the \
+         replay drifted off the round this fixture pins"
+    );
+}

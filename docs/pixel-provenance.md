@@ -3,10 +3,15 @@
 > **Status:** all four phases implemented (write attribution, per-pixel
 > provenance, the inspector panel, replay attestation). This document is the
 > spec, so it is updated in the same change as the code it describes.
+>
+> **v2.3.6 — the feature did not work as shipped in v2.3.2, and this document
+> was part of the reason.** Two defects, and a doc claim covering each. See
+> [Two defects, and what they cost](#two-defects-and-what-they-cost) below.
 
 ## What the feature answers
 
-Point at any pixel on screen and get the full causal chain that produced it:
+Click any pixel on screen — or type its coordinates — and get the full causal
+chain that produced it:
 
 1. the PPU **dot and scanline** that emitted it;
 2. the **background tile** behind it — nametable address, attribute address,
@@ -98,9 +103,29 @@ Both stores — write attribution and the per-pixel frame — are cleared on
 **power-cycle** and on **both save-state restore paths**
 (`Nes::restore` and `Nes::restore_quiet`). A restored state's bytes were not
 written by any instruction this session executed, so the PCs recorded against
-those offsets describe a timeline that no longer exists. Under run-ahead the
-per-frame `restore_quiet` therefore leaves exactly the visible frame's writes —
-which is the timeline the user is looking at.
+those offsets describe a timeline that no longer exists.
+
+**Run-ahead is carried around that clear, not through it** (v2.3.6).
+`RunAhead::finish` moves both stores out with `Nes::take_provenance`, lets
+`restore_quiet` run, and puts them back with `Nes::put_provenance`. The records
+kept are the **visible** frame's — one frame ahead of the restored persistent
+state, and exactly the frame on screen.
+
+This is the one caller that needs the exception, and not because its restore is
+different: because of *when* it happens. Run-ahead's rollback is the last thing
+before the frontend releases the emulator lock, so the UI's first chance to look
+is always after it. Clearing there discards the frame the user is looking at
+rather than a stale timeline. Every other caller — a user-driven save-state load,
+netplay rollback — still clears, and still should. The stash is a move of two
+boxed stores, skipped entirely when neither is armed.
+
+> **This paragraph used to say the opposite of the code.** Until v2.3.6 it read:
+> "Under run-ahead the per-frame `restore_quiet` therefore leaves exactly the
+> visible frame's writes — which is the timeline the user is looking at." The
+> clear emptied both stores completely, and an identical claim sat in a comment
+> beside the clear itself. Since run-ahead defaults to 1, the shipped inspector
+> showed an empty report to every user for four releases. The prose asserting the
+> intent is what stopped anyone checking the code against it.
 
 ### Cost and the determinism contract
 
@@ -236,12 +261,62 @@ The panel pins a screen coordinate and reports, in four sections:
    CIRAM offsets and the instructions that wrote those bytes, the palette group,
    the pattern bits, fine scroll, and the pattern address. Shown for sprite
    pixels too, since the background is what the sprite won priority *over*.
-4. **Sprite** — slot, priority, pattern bits and address, the sprite-0 flag, and
-   the instruction that wrote the slot's OAM bytes.
+4. **Sprite** — slot, priority, pattern bits and address, and the sprite-0 flag.
+   Deliberately **no OAM write-attribution row**: the primary OAM index does not
+   exist at emit time, so naming a writer would name a different sprite's. See
+   "What phase 2 cannot answer" above, which this line used to contradict.
+
+**Selecting a pixel.** Click anywhere on the game view to pin that pixel, or set
+the X/Y spinboxes directly. The click is captured in the winit mouse handler
+rather than as an egui `Response`, because the NES image is a raw wgpu blit and
+not an egui widget — there is nothing to hit-test. `gfx::window_to_nes_pixel`
+does the conversion by inverting the blit's own letterbox/crop transform, so it
+is correct at any window size, pixel-aspect setting and overscan crop, and a
+click on a letterbox bar pins nothing rather than silently pinning an edge pixel.
 
 Arming is in the panel: two checkboxes for the provenance frame and the
 attribution store, both default off. This is the panel's only side effect on the
-emulator, and both stores are determinism-neutral.
+emulator, and both stores are determinism-neutral. The checkbox state is read
+from the core every frame rather than mirrored in the panel, so loading a ROM
+(which installs a fresh `Nes`) cannot desync it.
+
+When the panel has no answer it says which kind of "no answer" it is — not armed,
+armed but nothing recorded for this pixel yet, or off-screen. A cleared record is
+a valid `PixelProvenance` whose every field reads as a confident "scanline 0,
+dot 0, backdrop, palette `$0000`", so without that check an empty frame renders
+as fact. `PixelProvenance::is_recorded()` is the discriminator: `emit_pixel`
+stamps `dot` on every pixel it records and the visible dots are `1..=256`, so
+dot 0 is unreachable for a real record and is exactly what `clear` leaves.
+
+## Two defects, and what they cost
+
+Recorded because the shape of the failure matters more than either bug.
+
+**Defect 1 — run-ahead wiped the record before the UI could read it.** Covered
+under [Lifetime and invalidation](#lifetime-and-invalidation) above.
+
+**Defect 2 — clicking a pixel was never implemented.** The panel offered two
+`DragValue` spinboxes and contained no click hit-test at all, while this document
+opened with "Point at any pixel on screen" and the release notes said "pin a
+screen pixel". Two later lines here — the panel "pins a screen coordinate" and
+"the coordinate-picker shape follows `hd_pixel_panel.rs`" — described the real
+behaviour accurately, so the document contradicted itself and the wrong half was
+the one users read first.
+
+**What both have in common:** the core data structures were well covered by unit
+tests, and the frontend wiring was covered by nothing. No test drove the produce
+path with run-ahead on; no test asked whether a click could reach the panel. The
+same shape produced issue #360 in the same release train, where `MovieUi::after_frame`
+worked in production but no test ever called it. `runahead.rs` even carried tests
+pinning the determinism of the exact code path that destroyed this telemetry.
+
+The regression net added in v2.3.6:
+`runahead::tests::runahead_preserves_pixel_provenance` (with
+`plain_run_leaves_pixel_provenance_populated` as its control, so a failure cannot
+be misread as a bad assertion), `runahead_preserves_the_provenance_arm`, and
+three `gfx::tests::window_to_nes_pixel_*` tests — one of which round-trips the
+picker against the shader's own uniform rather than against a third re-derivation
+of the letterbox.
 
 ### Reuse, and one thing deliberately not reused
 

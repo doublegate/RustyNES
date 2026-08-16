@@ -1948,41 +1948,132 @@ pub(crate) fn letterbox_uniform(
     par_8_7: bool,
     overscan: crate::config::Overscan,
 ) -> [f32; 8] {
-    let os = overscan.clamped();
-    let crop_v = u32::from(os.top) + u32::from(os.bottom);
-    let crop_h = u32::from(os.left) + u32::from(os.right);
-    let visible_h = NES_H.saturating_sub(crop_v).max(1);
-    let visible_w = NES_W.saturating_sub(crop_h).max(1);
-    let win_aspect = width as f32 / height.max(1) as f32;
-    // Aspect of the VISIBLE image (square-pixel or 8:7-corrected width over
-    // the visible height).
-    let img_w = if par_8_7 {
-        visible_w as f32 * 8.0 / 7.0
-    } else {
-        visible_w as f32
-    };
-    let nes_aspect = img_w / visible_h as f32;
-    let (sx, sy) = if win_aspect > nes_aspect {
-        (nes_aspect / win_aspect, 1.0)
-    } else {
-        (1.0, win_aspect / nes_aspect)
-    };
-    // V crop: scale the [0,1] sample range to the visible rows and offset to
-    // the top kept row. U crop is the same on the horizontal axis.
-    let crop_scale_v = visible_h as f32 / NES_H as f32;
-    let crop_offset_v = f32::from(os.top) / NES_H as f32;
-    let crop_scale_u = visible_w as f32 / NES_W as f32;
-    let crop_offset_u = f32::from(os.left) / NES_W as f32;
+    let t = BlitTransform::new(width, height, par_8_7, overscan);
     [
-        sx,
-        sy,
+        t.sx,
+        t.sy,
         0.0,
         0.0,
-        crop_scale_v,
-        crop_offset_v,
-        crop_scale_u,
-        crop_offset_u,
+        t.crop_scale_v,
+        t.crop_offset_v,
+        t.crop_scale_u,
+        t.crop_offset_u,
     ]
+}
+
+/// The blit's window→texture mapping, in one place.
+///
+/// [`letterbox_uniform`] serialises this for the shader and
+/// [`window_to_nes_pixel`] inverts it for hit-testing. They MUST agree: a picker
+/// that re-derives the letterbox independently is a second source of truth that
+/// drifts silently, reporting a neighbouring pixel's causal chain as fact. The
+/// shared struct makes agreement structural rather than a review obligation
+/// (v2.3.6 workstream 0, defect 2).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BlitTransform {
+    /// Image width as a fraction of the surface (`rect.x`).
+    sx: f32,
+    /// Image height as a fraction of the surface (`rect.y`).
+    sy: f32,
+    crop_scale_v: f32,
+    crop_offset_v: f32,
+    crop_scale_u: f32,
+    crop_offset_u: f32,
+}
+
+impl BlitTransform {
+    #[allow(clippy::cast_precision_loss)] // window / NES dims fit in f32.
+    fn new(width: u32, height: u32, par_8_7: bool, overscan: crate::config::Overscan) -> Self {
+        let os = overscan.clamped();
+        let crop_v = u32::from(os.top) + u32::from(os.bottom);
+        let crop_h = u32::from(os.left) + u32::from(os.right);
+        let visible_h = NES_H.saturating_sub(crop_v).max(1);
+        let visible_w = NES_W.saturating_sub(crop_h).max(1);
+        let win_aspect = width as f32 / height.max(1) as f32;
+        // Aspect of the VISIBLE image (square-pixel or 8:7-corrected width over
+        // the visible height).
+        let img_w = if par_8_7 {
+            visible_w as f32 * 8.0 / 7.0
+        } else {
+            visible_w as f32
+        };
+        let nes_aspect = img_w / visible_h as f32;
+        let (sx, sy) = if win_aspect > nes_aspect {
+            (nes_aspect / win_aspect, 1.0)
+        } else {
+            (1.0, win_aspect / nes_aspect)
+        };
+        // V crop: scale the [0,1] sample range to the visible rows and offset to
+        // the top kept row. U crop is the same on the horizontal axis.
+        Self {
+            sx,
+            sy,
+            crop_scale_v: visible_h as f32 / NES_H as f32,
+            crop_offset_v: f32::from(os.top) / NES_H as f32,
+            crop_scale_u: visible_w as f32 / NES_W as f32,
+            crop_offset_u: f32::from(os.left) / NES_W as f32,
+        }
+    }
+}
+
+/// Map a cursor position in **physical surface pixels** to the NES pixel under
+/// it, or `None` when the cursor is on a letterbox bar.
+///
+/// The exact inverse of what the blit's vertex + fragment shaders do:
+///
+/// ```text
+///   screen uv = (cx / width, cy / height)          // y down, matching the quad
+///   image uv  = (screen uv - 0.5) / (sx, sy) + 0.5 // undo the letterbox
+///   sample uv = image uv * crop_scale + crop_offset// undo the overscan crop
+///   nes px    = floor(sample uv * (NES_W, NES_H))
+/// ```
+///
+/// `None` for an out-of-image cursor is the honest answer and is load-bearing in
+/// both callers: the provenance picker must not report a pixel the user did not
+/// click, and the Zapper must read a bar as "no light" — which its own comment
+/// always claimed it did, while in fact stretching the image across the bars and
+/// mapping every bar position onto a real, wrong NES pixel.
+#[must_use]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+pub fn window_to_nes_pixel(
+    width: u32,
+    height: u32,
+    par_8_7: bool,
+    overscan: crate::config::Overscan,
+    cx: f64,
+    cy: f64,
+) -> Option<(u16, u16)> {
+    let xform = BlitTransform::new(width, height, par_8_7, overscan);
+    let (scale_x, scale_y) = (f64::from(xform.sx), f64::from(xform.sy));
+    if scale_x <= 0.0 || scale_y <= 0.0 {
+        return None;
+    }
+    // Surface-relative position, then undo the letterbox to get image-relative.
+    let screen_u = cx / f64::from(width.max(1));
+    let screen_v = cy / f64::from(height.max(1));
+    let image_u = (screen_u - 0.5) / scale_x + 0.5;
+    let image_v = (screen_v - 0.5) / scale_y + 0.5;
+    // Half-open on the far edge: 1.0 is the first texel past the image, exactly
+    // as the fragment shader's `> 1.0` clip plus a floor would treat it.
+    if !(0.0..1.0).contains(&image_u) || !(0.0..1.0).contains(&image_v) {
+        return None;
+    }
+    // Undo the overscan crop to land in full 256x240 texture space.
+    let tex_u = image_u.mul_add(
+        f64::from(xform.crop_scale_u),
+        f64::from(xform.crop_offset_u),
+    );
+    let tex_v = image_v.mul_add(
+        f64::from(xform.crop_scale_v),
+        f64::from(xform.crop_offset_v),
+    );
+    let nes_x = (tex_u * f64::from(NES_W))
+        .floor()
+        .clamp(0.0, f64::from(NES_W - 1)) as u16;
+    let nes_y = (tex_v * f64::from(NES_H))
+        .floor()
+        .clamp(0.0, f64::from(NES_H - 1)) as u16;
+    Some((nes_x, nes_y))
 }
 
 #[cfg(test)]
@@ -2114,6 +2205,116 @@ mod tests {
             assert!((u[6] - 1.0).abs() < 1e-6, "crop u-scale");
             assert_eq!(u[7], 0.0, "crop u-offset");
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // window_to_nes_pixel (v2.3.6 workstream 0, defect 2)
+    // ---------------------------------------------------------------------
+
+    /// The picker must be the exact inverse of the shader, so re-implement the
+    /// shader's forward map here FROM THE UNIFORM and require a round trip. A
+    /// test that re-derives the letterbox a third way would only prove the two
+    /// re-derivations agree with each other.
+    fn shader_forward(uni: &[f32; 8], nes_x: u16, nes_y: u16) -> (f64, f64) {
+        // Centre of the NES texel -> sample uv -> image uv -> screen uv.
+        let tex_u = (f64::from(nes_x) + 0.5) / f64::from(NES_W);
+        let tex_v = (f64::from(nes_y) + 0.5) / f64::from(NES_H);
+        let image_u = (tex_u - f64::from(uni[7])) / f64::from(uni[6]);
+        let image_v = (tex_v - f64::from(uni[5])) / f64::from(uni[4]);
+        (
+            (image_u - 0.5).mul_add(f64::from(uni[0]), 0.5),
+            (image_v - 0.5).mul_add(f64::from(uni[1]), 0.5),
+        )
+    }
+
+    #[test]
+    fn window_to_nes_pixel_round_trips_against_the_shader_uniform() {
+        for &(w, h, par, os) in &[
+            (NES_W, NES_H, false, crate::config::Overscan::default()),
+            (
+                NES_W * 4,
+                NES_H * 4,
+                false,
+                crate::config::Overscan::default(),
+            ),
+            // Wide window: horizontal bars. Tall window: vertical bars.
+            (1920, 1080, true, crate::config::Overscan::default()),
+            (800, 1200, true, crate::config::Overscan::default()),
+            // Odd size + 8:7 + an asymmetric crop: every term non-trivial.
+            (
+                1366,
+                768,
+                true,
+                crate::config::Overscan {
+                    top: 8,
+                    right: 4,
+                    bottom: 8,
+                    left: 12,
+                },
+            ),
+        ] {
+            let uni = letterbox_uniform(w, h, par, os);
+            let osc = os.clamped();
+            // Only VISIBLE pixels survive the crop; a cropped-away pixel has no
+            // window position at all.
+            let last_x = u16::try_from(NES_W - 1).unwrap() - u16::from(osc.right);
+            let last_y = u16::try_from(NES_H - 1).unwrap() - u16::from(osc.bottom);
+            for &(nx, ny) in &[
+                (u16::from(osc.left), u16::from(osc.top)),
+                (128u16, 120u16),
+                (last_x, last_y),
+            ] {
+                let (su, sv) = shader_forward(&uni, nx, ny);
+                let cx = su * f64::from(w);
+                let cy = sv * f64::from(h);
+                let got = window_to_nes_pixel(w, h, par, os, cx, cy);
+                assert_eq!(
+                    got,
+                    Some((nx, ny)),
+                    "round trip failed at nes=({nx},{ny}) for {w}x{h} par={par} os={osc:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn window_to_nes_pixel_rejects_the_letterbox_bars() {
+        // 8:7 on a square window letterboxes top and bottom; a cursor in a bar
+        // has no NES pixel under it. The Zapper depends on this reading as "no
+        // light" rather than as a real, wrong coordinate.
+        let os = crate::config::Overscan::default();
+        let (w, h) = (512u32, 1024u32);
+        assert_eq!(
+            window_to_nes_pixel(w, h, true, os, 256.0, 1.0),
+            None,
+            "top bar"
+        );
+        assert_eq!(
+            window_to_nes_pixel(w, h, true, os, 256.0, 1023.0),
+            None,
+            "bottom bar"
+        );
+        // Dead centre is always inside the image, whatever the aspect.
+        assert!(window_to_nes_pixel(w, h, true, os, 256.0, 512.0).is_some());
+    }
+
+    #[test]
+    fn window_to_nes_pixel_covers_the_whole_screen_without_gaps_or_overlap() {
+        // Sweep an exactly-4x window: every NES column and row must be hit, and
+        // the mapping must be monotone. Catches an off-by-one in the floor or a
+        // half-texel bias that a centre-only test would miss.
+        let os = crate::config::Overscan::default();
+        let (w, h) = (NES_W * 4, NES_H * 4);
+        let mut seen_x = vec![false; NES_W as usize];
+        let mut prev = 0u16;
+        for i in 0..w {
+            let (x, _) = window_to_nes_pixel(w, h, false, os, f64::from(i) + 0.5, 2.0)
+                .expect("square-pixel 4x fills the window exactly");
+            assert!(x >= prev, "x went backwards at column {i}");
+            prev = x;
+            seen_x[x as usize] = true;
+        }
+        assert!(seen_x.iter().all(|&s| s), "some NES column was unreachable");
     }
 
     #[test]

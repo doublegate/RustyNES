@@ -191,6 +191,51 @@ set of debugging and authoring tools, reachable from the **Tools** and
 These are aimed at homebrew developers and TAS authors; you never need
 them to play a game.
 
+## Pixel Provenance
+
+**Tools → Pixel Provenance** answers "why is this pixel this colour?" for any
+pixel on screen, all the way back to the code that caused it.
+
+How to use it:
+
+1. Open **Tools → Pixel Provenance**.
+2. Tick **both** checkboxes — *Per-pixel provenance* and *Write attribution*.
+   They are independent and both default off: the first records which bytes
+   produced each pixel, the second records which instruction wrote those bytes.
+   You want both for the full chain.
+3. Let the game run at least one frame.
+4. **Click any pixel on the game view**, or type coordinates into the X/Y boxes.
+
+You then get, for that pixel: the PPU dot and scanline that emitted it; whether
+the background, a sprite, or the backdrop won; the palette address and entry; the
+nametable, attribute and pattern addresses of the tile actually on screen; and —
+for each of those bytes — the program counter and CPU cycle of the instruction
+that last wrote it. If you have loaded a `.dbg` source map, you also get the
+source file and line.
+
+If the panel has nothing to show it tells you which kind of nothing: not armed,
+nothing recorded for that pixel yet, or off-screen. Clicking a black letterbox
+bar pins nothing, by design.
+
+Things worth knowing:
+
+- **Arming costs memory, not accuracy.** Both stores are output-only. The
+  framebuffer, the audio and every cycle count are bit-identical whether they are
+  armed or not.
+- **A power-cycle or loading a save state clears the records**, because the
+  restored bytes were not written by anything the current session ran. Run-ahead
+  does *not* clear them — you get the frame you are looking at.
+- **CHR (pattern) bytes have no attribution row.** They are mapper-owned, so a
+  byte offset is not a stable identity across a bank switch. The panel reports
+  which bank supplied them instead.
+- **Sprites have no OAM attribution row.** The PPU does not keep the primary OAM
+  index at emit time, so naming a writer would risk naming a different sprite's.
+
+> **Fixed in v2.3.6.** In v2.3.2 through v2.3.5 this panel returned an empty
+> report for almost everyone: run-ahead (on by default) erased the record before
+> the panel could read it, and clicking a pixel was never wired up. If you tried
+> it on an older build and nothing happened, that was the bug, not your setup.
+
 ## See also
 
 - [Controls](./controls.md) — full rebind flow

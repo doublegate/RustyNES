@@ -1138,6 +1138,35 @@ The panels split by what they need:
   `&mut Nes` and a per-frame core poll, so they render only while the overlay
   is visible. `OpenChipPanel` therefore forces the overlay visible.
 
+### Pixel Provenance
+
+**Tools → Pixel Provenance** pins one screen pixel and reports its whole causal
+chain — the dot and scanline that emitted it, the layer that won priority, the
+nametable / attribute / pattern addresses of the tile actually on screen, the
+palette entry, and the CPU instruction and cycle that last wrote each of those
+bytes. Spec: [`pixel-provenance.md`](pixel-provenance.md).
+
+Two frontend details belong here rather than in the spec:
+
+- **Selecting a pixel is a raw winit click, not an egui `Response`.** The NES
+  image is a wgpu letterbox blit drawn under the egui shell, not a widget, so
+  there is nothing to hit-test. `WindowEvent::MouseInput` converts the cursor
+  with `gfx::window_to_nes_pixel` and calls `DebuggerOverlay::set_provenance_pick`
+  — guarded by the same `wants_egui_input` check that keeps a menu click from
+  firing the Zapper, and only while the panel is open. The X/Y spinboxes remain
+  for exact coordinates.
+- **`gfx::window_to_nes_pixel` is the inverse of the blit, derived from the same
+  `BlitTransform` the shader uniform is built from.** A picker that re-derived
+  the letterbox independently would be a second source of truth that drifts
+  silently and reports a neighbouring pixel's causal chain as fact. It returns
+  `None` on a letterbox bar, which is load-bearing in both callers: the picker
+  must not pin a pixel the user did not click, and the **Zapper** must read a bar
+  as "no light". The Zapper's own mapping was a full-window stretch until v2.3.6
+  — its comment claimed bars read as off-screen while in fact every bar position
+  mapped onto a real, wrong NES pixel — and now shares this converter. The Vaus
+  paddle deliberately keeps its full-window sweep: a knob has no off-screen
+  state, and how far the hand travels per turn is a feel decision.
+
 ### Pause and fullscreen
 
 Pausing parks the emu thread (no `EmuFrame` pings), so the shell keeps

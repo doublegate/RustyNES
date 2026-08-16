@@ -33,15 +33,18 @@ use crate::debugger::source_map::SourceMap;
 use crate::gfx::{NES_H, NES_W};
 
 /// Persistent panel state.
+///
+/// Deliberately does NOT mirror the core's armed flags. It used to (v2.3.2), and
+/// that mirror silently desynced: loading a ROM installs a brand-new `Nes` whose
+/// PPU starts unarmed, while the mirror still read `true`, so the edge-detected
+/// push never fired and the core was never re-armed. The checkbox stayed ticked
+/// while the report said "enable this, then run a frame" forever, until the user
+/// unticked and re-ticked it. The core is now the single source of truth and the
+/// desync cannot recur (v2.3.6 workstream 0, defect 3).
 pub struct ProvenancePanelState {
     /// Pinned screen coordinate the report describes.
     px: u32,
     py: u32,
-    /// Mirrors the core's "provenance armed" state so the checkbox is stateful
-    /// across frames without querying the `Nes` before it exists.
-    prov_armed: bool,
-    /// Mirrors the core's "write attribution armed" state.
-    attrib_armed: bool,
 }
 
 impl Default for ProvenancePanelState {
@@ -52,9 +55,22 @@ impl Default for ProvenancePanelState {
             // a user sees a backdrop pixel with nothing to say.
             px: 128,
             py: 120,
-            prov_armed: false,
-            attrib_armed: false,
         }
+    }
+}
+
+impl ProvenancePanelState {
+    /// Pin the pixel the user clicked on the game view.
+    ///
+    /// The click is captured in the winit handler rather than here because the
+    /// NES image is a raw wgpu blit, not an egui widget — there is no `Response`
+    /// to hit-test against. `crate::gfx::window_to_nes_pixel` does the screen →
+    /// NES conversion, inverting the blit's own letterbox/crop transform so a
+    /// click lands on the pixel actually under the cursor at any window size,
+    /// aspect setting or overscan crop.
+    pub const fn set_pick(&mut self, x: u16, y: u16) {
+        self.px = x as u32;
+        self.py = y as u32;
     }
 }
 
@@ -114,12 +130,19 @@ pub fn show(
     nes: &mut Nes,
     source_map: &SourceMap,
 ) {
-    // Arming toggles are applied BEFORE the body renders, so a click takes
-    // effect on the frame after next (the core has to run a frame to fill the
-    // record). The checkbox therefore reflects intent immediately while the
-    // report below still honestly says "waiting for a frame".
-    let mut want_prov = state.prov_armed;
-    let mut want_attrib = state.attrib_armed;
+    // The CORE is the source of truth for both arm states, re-read every frame.
+    // A frontend-side mirror desyncs the moment a ROM load installs a new `Nes`
+    // (v2.3.6 workstream 0, defect 3), and the failure is invisible: the checkbox
+    // stays ticked over an unarmed core.
+    //
+    // Arming toggles are applied AFTER the body renders, so a click takes effect
+    // on the frame after next (the core has to run a frame to fill the record).
+    // The checkbox therefore reflects intent immediately while the report below
+    // still honestly says "waiting for a frame".
+    let armed_prov = nes.pixel_provenance().is_some();
+    let armed_attrib = nes.write_attribution().is_some();
+    let mut want_prov = armed_prov;
+    let mut want_attrib = armed_attrib;
 
     super::detachable_window(
         ctx,
@@ -148,26 +171,44 @@ pub fn show(
                 ui.label("Y");
                 ui.add(egui::DragValue::new(&mut state.py).range(0..=(NES_H - 1)));
             });
+            ui.weak("Or click any pixel on the game view to pin it.");
             ui.separator();
 
+            // Every way this panel can have no answer is named. A cleared record
+            // is a valid `PixelProvenance` whose fields all read as a confident
+            // "scanline 0, dot 0, backdrop, palette $0000" — so without the
+            // `is_recorded` check below, an empty frame renders as fact. That is
+            // exactly how the v2.3.2 inspector reported a wiped frame, and why
+            // the underlying bug went unnoticed from release until a user hit it.
             let Some(frame) = nes.pixel_provenance() else {
-                ui.weak("Enable \"Per-pixel provenance\" above, then run a frame.");
+                ui.weak("Not armed. Tick \"Per-pixel provenance\" above, then run a frame.");
                 return;
             };
             let Some(rec) = frame.get(state.px as usize, state.py as usize) else {
                 ui.weak("(pixel off-screen)");
                 return;
             };
+            if !rec.is_recorded() {
+                ui.weak(
+                    "Armed, but nothing has been recorded for this pixel yet — run a \
+                     frame. (A power-cycle or a save-state load also clears the frame, \
+                     because its records describe a timeline the restore replaced.)",
+                );
+                return;
+            }
             report(ui, &rec, nes, source_map);
         },
     );
 
-    if want_prov != state.prov_armed {
-        state.prov_armed = want_prov;
+    // Compared against what the CORE reported at the top of this frame, not
+    // against a stored mirror — so a `Nes` swapped in underneath us (ROM load)
+    // simply reads as "not armed" and the next comparison re-arms it. Pushing
+    // unconditionally would be wrong for the opposite reason: `set_pixel_provenance`
+    // reallocates the frame, which would discard the record every single frame.
+    if want_prov != armed_prov {
         nes.set_pixel_provenance(want_prov);
     }
-    if want_attrib != state.attrib_armed {
-        state.attrib_armed = want_attrib;
+    if want_attrib != armed_attrib {
         nes.set_write_attribution(want_attrib);
     }
 }
