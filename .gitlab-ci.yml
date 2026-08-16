@@ -139,39 +139,6 @@ libretro-build-linux-aarch64:
     - apt-get update -qy && apt-get install -yq gcc-aarch64-linux-gnu
     - rustup target add ${RUST_TARGET}
 
-# Linux armhf (32-bit ARM, hard-float)
-# Same shape as the aarch64 job above and for the same reasons: cross-compiled
-# from the amd64 rust image, no upstream template exists, so the target and its
-# linker are installed here rather than via `.rust-target-install`.
-#
-# Target choice: `armv7-unknown-linux-gnueabihf` (ARMv7-A + VFPv3 hard-float),
-# NOT `arm-unknown-linux-gnueabihf` (ARMv6). The buildbot exposes two 32-bit ARM
-# slots -- `linux/armhf` and `linux/armv7-neon-hf` -- and this triple targets the
-# ARMv7 baseline both are built against in practice. If the `linux/armhf` slot
-# turns out to be an ARMv6 baseline (Pi 1 / Pi Zero), switch the triple to
-# `arm-unknown-linux-gnueabihf`; the rest of the job is unchanged, since both use
-# the same `gcc-arm-linux-gnueabihf` cross toolchain.
-#
-# The `gcc-arm-linux-gnueabihf` install is load-bearing, not belt-and-braces:
-# codegen for this triple needs nothing beyond the rustup target, but without a
-# cross linker cargo falls back to the HOST linker and the cdylib fails with
-# "incompatible with elf64-x86-64". Removing that line would still compile every
-# object and then fail at the last step.
-libretro-build-linux-armhf:
-  extends:
-    # The x86-64 host container -- this is a CROSS build, same as the aarch64
-    # job above; the template supplies the builder image, not the target arch.
-    - .libretro-rust-linux-x64
-    - .core-defs
-  variables:
-    RUST_TARGET: armv7-unknown-linux-gnueabihf
-    TARGET_ARCH: armv7-unknown-linux-gnueabihf
-    STRIP: arm-linux-gnueabihf-strip
-    CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
-  before_script:
-    - apt-get update -qy && apt-get install -yq gcc-arm-linux-gnueabihf
-    - rustup target add ${RUST_TARGET}
-
 # macOS 64-bit
 libretro-build-osx-x64:
   extends:
