@@ -369,13 +369,13 @@ impl Probe {
 /// `panic = "abort"` argument does not rescue this case either: in a build that
 /// does unwind, this flag outlives the panic, whereas an advanced timeline in a
 /// dying process does not.
-struct CaptureGuard<'a> {
-    nes: &'a mut Nes,
+pub(crate) struct CaptureGuard<'a> {
+    pub(crate) nes: &'a mut Nes,
     restore_to: bool,
 }
 
 impl<'a> CaptureGuard<'a> {
-    const fn suppress(nes: &'a mut Nes) -> Self {
+    pub(crate) const fn suppress(nes: &'a mut Nes) -> Self {
         // The caller's setting, not an assumed `true`: someone who deliberately
         // disabled capture must not have it switched back on by a probe.
         let restore_to = nes.rewind_capture_enabled();

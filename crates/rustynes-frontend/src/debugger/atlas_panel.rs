@@ -552,7 +552,10 @@ fn do_verify(state: &mut AtlasPanel, nes: &mut Nes, targets: &[u16]) {
         if let Some(l) = state.labels.get_mut(addr as usize) {
             debug_assert_eq!(
                 l.addr, addr,
-                "atlas labels are no longer address-indexed; a verdict would                  have been recorded against the wrong address"
+                concat!(
+                    "atlas labels are no longer address-indexed; ",
+                    "a verdict would have been recorded against the wrong address"
+                )
             );
             l.liveness = liveness;
             l.divergence_frame = frame;

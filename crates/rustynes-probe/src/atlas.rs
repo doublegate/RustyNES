@@ -170,13 +170,26 @@ where
     // address-major layout — would stride 2,048 times per frame across a buffer
     // far larger than cache.
     let mut frame_major: Vec<u8> = Vec::with_capacity(WRAM_LEN * frames as usize);
+    // Rewind capture is suppressed for the whole window, by the same guard a
+    // trial uses. These frames advance the live emulator and the caller rolls
+    // them back, so they never happened on the user's timeline — letting them
+    // into the ring would allow rewinding *into an observation*, which is exactly
+    // the defect this crate had just fixed for `verify_liveness` and then
+    // reintroduced one function away. Caught in review on PR #392.
+    //
+    // The guard also makes this panic-safe: an observation is 180 frames, and a
+    // panic part-way through must not leave capture disabled on a `Nes` the
+    // caller keeps using.
+    let guard = crate::CaptureGuard::suppress(nes);
     for f in 0..frames {
         let (p1, p2) = input(f);
-        nes.set_buttons(0, p1);
-        nes.set_buttons(1, p2);
-        nes.run_frame();
-        frame_major.extend_from_slice(&nes.wram()[..WRAM_LEN]);
+        guard.nes.set_buttons(0, p1);
+        guard.nes.set_buttons(1, p2);
+        guard.nes.run_frame();
+        frame_major.extend_from_slice(&guard.nes.wram()[..WRAM_LEN]);
     }
+    // Restores the caller's capture setting.
+    drop(guard);
 
     let n = frames as usize;
     let mut data = vec![0u8; WRAM_LEN * n];
@@ -699,6 +712,40 @@ mod tests {
             "a ROM that only spins changed work RAM"
         );
         assert!(labels.iter().all(|l| l.liveness == Liveness::Untested));
+    }
+
+    /// Observing must not leak its frames into the caller's rewind ring.
+    ///
+    /// `observe` advances the live emulator and the caller rolls it back, so those
+    /// frames never happened on the user's timeline. Letting them into the ring
+    /// would allow rewinding *into an observation* — the same defect this crate
+    /// fixed for `verify_liveness` and then reintroduced one function away, caught
+    /// in review on PR #392.
+    ///
+    /// Mutation-checked: removing the `CaptureGuard` from `observe` fails this
+    /// with the ring grown by the window length.
+    #[test]
+    fn observing_does_not_pollute_the_callers_rewind_ring() {
+        let mut n = nes();
+        n.enable_rewind();
+        for _ in 0..3 {
+            n.run_frame();
+            n.rewind_capture();
+        }
+        let before = n.rewind_len();
+        assert!(before > 0, "fixture failed to buffer any rewind frames");
+
+        let _ = observe(&mut n, 12, idle_input);
+
+        assert_eq!(
+            n.rewind_len(),
+            before,
+            "an observation leaked its frames into the caller's rewind ring"
+        );
+        assert!(
+            n.rewind_capture_enabled(),
+            "observation left rewind capture disabled"
+        );
     }
 
     /// THE positive case for verification: a poke must reach the observable and
