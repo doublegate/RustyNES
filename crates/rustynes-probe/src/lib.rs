@@ -660,6 +660,44 @@ mod tests {
         );
     }
 
+    /// A caller's rewind configuration must not change what a trial MEASURES.
+    ///
+    /// This is the question that decides whether the rewind fix above
+    /// invalidated earlier results. Before it, every trial ran with capture
+    /// enabled and the ring being cleared; after it, capture is suppressed and
+    /// the ring is left alone. If either had perturbed emulation, samples taken
+    /// under the two regimes would differ — and every measurement predating the
+    /// fix would need re-running.
+    ///
+    /// One anchor, two trials, rewind armed between them: the probe restores the
+    /// same emulation state both times, so any difference in the sample vectors
+    /// is attributable to the rewind machinery alone.
+    #[test]
+    fn a_trials_samples_are_independent_of_the_callers_rewind_state() {
+        let mut n = nes();
+        let mut probe = Probe::anchor(&n, Budget::default());
+
+        let without = probe
+            .run(&mut n, 8, Observable::Framebuffer, idle)
+            .expect("within budget");
+
+        n.enable_rewind();
+        for _ in 0..3 {
+            n.run_frame();
+            n.rewind_capture();
+        }
+        let with_ring = probe
+            .run(&mut n, 8, Observable::Framebuffer, idle)
+            .expect("within budget");
+
+        assert_eq!(
+            without, with_ring,
+            "a trial's samples changed when the caller armed rewind; the rewind \
+             machinery is perturbing emulation, and every probe result taken \
+             under a different rewind configuration would be suspect"
+        );
+    }
+
     /// Replaying an anchor into an emulator running a different ROM must fail
     /// loudly. A snapshot restored across ROMs would produce a confident, wrong
     /// answer, which is worse than no answer for a tool people act on.
