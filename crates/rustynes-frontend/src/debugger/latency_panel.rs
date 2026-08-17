@@ -32,16 +32,28 @@ use rustynes_probe::latency::{self, Confidence, LatencyConfig, LatencyReport};
 
 /// Highest depth this panel will ever recommend.
 ///
-/// Matches the Emulation menu's run-ahead range. A game measuring higher than
-/// this is reported honestly and the recommendation is clamped, rather than the
-/// measurement being silently discarded.
-const MAX_DEPTH: u32 = 3;
+/// A game measuring higher than this is reported honestly and the recommendation
+/// clamped, rather than the measurement being silently discarded.
+///
+/// Re-exported from [`crate::emu`] rather than declared as its own `3`: that
+/// constant exists precisely because `effective_run_ahead`'s cap and the
+/// throttle's cap were once separate literals that drifted apart (PR #358), and
+/// a third copy here would reopen the same seam. (PR #385 review.)
+use crate::emu::MAX_RUN_AHEAD_DEPTH as MAX_DEPTH;
 
 /// Persistent panel state.
 #[derive(Default)]
 pub struct LatencyPanel {
     /// The most recent measurement, if one has been run for this session.
     report: Option<LatencyReport>,
+    /// Milliseconds per frame **of the console the report was measured on**,
+    /// captured at measurement time from `Nes::frame_duration`.
+    ///
+    /// Recorded here rather than read at render time because it is a property of
+    /// the measurement, not of the current session: unloading the ROM, or
+    /// loading a PAL one after measuring an NTSC one, must not silently restate
+    /// an old result in the new region's units.
+    frame_ms: f64,
     /// "Measure" was clicked this frame; [`show`] runs it after the render, so
     /// `nes` is never captured by the viewport callback.
     measure_requested: bool,
@@ -114,7 +126,13 @@ fn body(ui: &mut egui::Ui, state: &mut LatencyPanel, can_measure: bool, current:
 
     if let Some(report) = &state.report {
         ui.separator();
-        report_body(ui, report, current, &mut state.pending_apply);
+        report_body(
+            ui,
+            report,
+            current,
+            state.frame_ms,
+            &mut state.pending_apply,
+        );
     }
 
     if !state.status.is_empty() {
@@ -128,15 +146,20 @@ fn report_body(
     ui: &mut egui::Ui,
     report: &LatencyReport,
     current: u32,
+    frame_ms: f64,
     pending_apply: &mut Option<u32>,
 ) {
     if let Some(frames) = report.frames {
         let plural = if frames == 1 { "frame" } else { "frames" };
         ui.label(format!("Internal lag: {frames} {plural}"));
-        // The felt latency, which is what the user actually experiences: one
-        // NTSC frame is 16.639 ms.
-        #[allow(clippy::cast_precision_loss)] // small counts; display only.
-        let ms = f64::from(frames) * 16.639;
+        // The felt latency, which is what the user actually experiences.
+        //
+        // Derived from the console's own frame duration, NOT a hardcoded NTSC
+        // 16.639. A literal here would overstate PAL and Dendy lag by 20.2% —
+        // the identical defect v2.3.5 fixed in the libretro wrapper, where a
+        // hardcoded 60.0988 fps had lost all connection to the constant it was
+        // copied from and ran every PAL cartridge fast. (PR #385 review.)
+        let ms = f64::from(frames) * frame_ms;
         ui.weak(format!("about {ms:.0} ms of the game's own delay"));
 
         let confidence = match report.confidence {
@@ -206,6 +229,9 @@ fn run_measurement(state: &mut LatencyPanel, nes: Option<&mut Nes>) {
         "No ROM loaded.".clone_into(&mut state.status);
         return;
     };
+    // Captured BEFORE the measurement, from the console that is about to be
+    // measured — see `LatencyPanel::frame_ms`.
+    state.frame_ms = nes.frame_duration().as_secs_f64() * 1000.0;
     // `measure_in_place` snapshots, replays, and restores — the live timeline is
     // exactly where it was when this returns.
     let report = latency::measure_in_place(nes, LatencyConfig::default());
@@ -259,6 +285,22 @@ mod tests {
         let r = report(Some(7), Confidence::Unanimous);
         assert_eq!(r.frames, Some(7));
         assert_eq!(r.suggested_run_ahead(MAX_DEPTH), Some(MAX_DEPTH));
+    }
+
+    /// The felt-latency read-out must be a function of the console's frame
+    /// duration, not a constant. Hardcoding NTSC's 16.639 ms makes this fail:
+    /// PAL and Dendy would report the same milliseconds as NTSC for the same
+    /// frame count, understating them by 20.2%.
+    #[test]
+    fn felt_milliseconds_track_the_region_not_a_constant() {
+        let ms_of = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+        let ntsc = ms_of(rustynes_core::FRAME_DURATION_NTSC);
+        let pal = ms_of(rustynes_core::FRAME_DURATION_PAL);
+        assert!(
+            (f64::from(3_u32) * pal - f64::from(3_u32) * ntsc).abs() > 1.0,
+            "a three-frame lag must read differently on PAL than on NTSC; \
+             identical output means the conversion is hardcoded"
+        );
     }
 
     /// `take_pending_apply` drains, so one Apply click cannot be consumed twice

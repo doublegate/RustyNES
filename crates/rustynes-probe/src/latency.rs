@@ -192,7 +192,21 @@ pub fn measure_in_place(nes: &mut Nes, cfg: LatencyConfig) -> LatencyReport {
     let report = run_measurement(&mut probe, nes, cfg);
     // Put the user's timeline back exactly. A measurement that leaves the game
     // 400 frames further on would be a worse bug than the one it measures.
-    let _ = nes.restore(&restore_point);
+    //
+    // `restore_quiet`, NOT `restore`: the loud variant additionally clears the
+    // rewind ring, on the correct reasoning that a state loaded from elsewhere
+    // is unrelated to what was buffered. That reasoning does not hold here —
+    // this is the same timeline, snapshotted moments ago on this very instance —
+    // so the loud variant would silently destroy the user's rewind history as
+    // the price of asking how much input lag their game has.
+    //
+    // The result is expected rather than discarded. The bytes came from
+    // `nes.snapshot()` on this instance one call ago, so a failure would mean
+    // the snapshot format cannot round-trip itself; returning normally would
+    // hand the user a report while leaving their game several hundred frames
+    // ahead, which is precisely the outcome this line exists to prevent.
+    nes.restore_quiet(&restore_point)
+        .expect("a snapshot taken from this instance restores to it");
     report
 }
 
