@@ -50,6 +50,8 @@ Given that RustyNES's license is itself the outcome of a corrected provenance fa
 **Therefore:**
 
 1. **A license change is a mandatory upstream-sync trigger**, on the same footing as a release. It is not a documentation-only change.
+
+   **A version bump alone is not.** Maintainer decision at the v2.3.6 cut: upstream syncs are batched to MINOR releases, so the next one is **v2.4.0**. The upstream `dist/info/rustynes_libretro.info` therefore reads `display_version = "v2.3.5"` through the v2.3.6-v2.3.9 line, deliberately and not by oversight. The distinction that makes this safe is the one this whole document exists for: a stale `display_version` misreports a number, whereas a stale `license` misreports the terms under which the software is distributed — which is what actually went wrong in v2.2.9. Anything touching `license`, `supported_extensions`, or the core's declared capabilities still syncs immediately, regardless of where the version line sits.
 2. `crates/rustynes-test-harness/tests/libretro_info_audit.rs` now pins the local `.info` against **two different sources of truth**, one per field, so the local file cannot drift and the upstream sync is a **copy**, never a re-derivation:
    - `license` and `display_version` — against `[workspace.package]` in the root `Cargo.toml`.
    - `supported_extensions` — against the **core's own** `retro_get_system_info` declaration in `crates/rustynes-libretro/src/lib.rs`, not the manifest, because that is where the list the core will actually load is defined. A literal repeated in the test would be a second copy of the fact rather than an audit of it.

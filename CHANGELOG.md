@@ -249,6 +249,14 @@ optimization campaign is closed on the strength of three measured rejections.
 
 ### Changed
 
+- **Upstream libretro `.info` syncs are batched to MINOR releases.** RetroArch
+  reads its copy from `libretro/libretro-super`, which nothing syncs
+  automatically; the next sync is v2.4.0, so that copy reads `v2.3.5` through this
+  line by decision rather than oversight. A stale `display_version` misreports a
+  number — the v2.2.9 incident was a stale **licence**, misreporting the terms of
+  distribution — so licence, supported extensions, and declared-capability changes
+  still sync immediately. Recorded in `docs/libretro/UPSTREAM_SYNC.md`.
+
 - **The Tools and Debug menus are regrouped by task.** Tools had reached twenty flat
   entries spanning cheats, TAS authoring, media capture, multiplayer, ROM inspection
   and provenance analysis; Debug listed "CPU" and "Lua Script" as peers in a
