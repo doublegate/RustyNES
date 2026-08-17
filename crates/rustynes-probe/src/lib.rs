@@ -204,8 +204,30 @@ impl Probe {
             "probe anchor belongs to a different ROM than the emulator it was \
              replayed into; restoring across ROMs yields confident nonsense"
         );
-        nes.restore(&self.snapshot)
+        // `restore_quiet`, NOT `restore`. The loud variant additionally clears
+        // the rewind ring, on the correct reasoning that a state loaded from
+        // elsewhere is unrelated to what was buffered. That reasoning does not
+        // hold for a probe: the anchor was snapshotted from this same timeline,
+        // and a trial ends by putting it back.
+        //
+        // This was a real, user-visible bug. `latency::measure_in_place` runs up
+        // to 21 trials against the LIVE emulator, so asking "how much input lag
+        // does this game have?" silently destroyed the user's rewind history
+        // twenty-one times over. PR #385 review caught the symptom and the fix
+        // there changed only `measure_in_place`'s FINAL restore — which left
+        // every trial's restore, the actual source, untouched. Fixed here at the
+        // one site all trials share.
+        nes.restore_quiet(&self.snapshot)
             .expect("probe anchor round-trips: it came from Nes::snapshot");
+
+        // A trial's frames are re-simulated: they never happened on the user's
+        // timeline. Letting them into the rewind ring would let the user rewind
+        // *into a measurement* — the same reason run-ahead suppresses capture
+        // around its hidden frames. Suppressed for the trial and restored to
+        // whatever the caller had, not to an assumed `true`, so a caller who had
+        // deliberately disabled capture does not get it switched back on.
+        let capture_was = nes.rewind_capture_enabled();
+        nes.set_rewind_capture(false);
 
         let n = frames.min(self.budget.max_frames_per_trial);
         let mut samples = Vec::with_capacity(n as usize);
@@ -228,6 +250,7 @@ impl Probe {
 
             samples.push(sample(nes, observable, &audio));
         }
+        nes.set_rewind_capture(capture_was);
         samples
     }
 
@@ -555,6 +578,48 @@ mod tests {
             "a one-byte work-RAM difference did not reach the observable"
         );
         assert!(!Probe::agree(&a, &b));
+    }
+
+    /// A trial must not destroy the caller's rewind history.
+    ///
+    /// `latency::measure_in_place` runs up to 21 trials against the **live**
+    /// emulator, so a loud `restore` here means asking "how much input lag does
+    /// this game have?" wipes the user's rewind buffer twenty-one times over.
+    /// PR #385 review caught the symptom; the fix there changed only
+    /// `measure_in_place`'s final restore and left every trial's restore — the
+    /// actual source — untouched, so the bug survived a fix that claimed it.
+    ///
+    /// The ring must come back **exactly** as it was: neither cleared nor grown.
+    /// Growth is its own defect — a trial's frames are re-simulated and never
+    /// happened on the user's timeline, so rewinding into them would be rewinding
+    /// into a measurement.
+    ///
+    /// Mutation-checked in both directions: swapping `restore_quiet` back to
+    /// `restore` fails this at `rewind_len()` 0, and removing the
+    /// `set_rewind_capture(false)` guard fails it at 10 against 8.
+    #[test]
+    fn a_trial_preserves_the_callers_rewind_ring() {
+        let mut n = nes();
+        n.enable_rewind();
+        for _ in 0..4 {
+            n.run_frame();
+            n.rewind_capture();
+        }
+        let before = n.rewind_len();
+        assert!(before > 0, "fixture failed to buffer any rewind frames");
+
+        let mut probe = Probe::anchor(&n, Budget::default());
+        let _ = probe
+            .run(&mut n, 2, Observable::Wram, idle)
+            .expect("within budget");
+
+        assert_eq!(
+            n.rewind_len(),
+            before,
+            "running a probe trial cleared the caller's rewind ring; a trial \
+             restores its own anchor onto the same timeline and has no business \
+             invalidating history the user recorded"
+        );
     }
 
     /// Replaying an anchor into an emulator running a different ROM must fail

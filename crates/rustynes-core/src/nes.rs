@@ -645,6 +645,21 @@ impl Nes {
         self.rewind_capture_enabled = enabled;
     }
 
+    /// Whether the per-frame rewind capture is currently armed.
+    ///
+    /// Added in v2.3.6 so a caller that needs to suppress capture temporarily can
+    /// save and restore the *caller's* setting rather than assume the default.
+    /// `rustynes-probe` does exactly that around a trial: its replayed frames
+    /// never happened on the user's timeline, so they must not enter the ring —
+    /// but nor may re-enabling capture afterwards turn it on for someone who had
+    /// deliberately turned it off. Run-ahead predates this and still restores an
+    /// unconditional `true`, which is correct only because nothing else disables
+    /// capture today.
+    #[must_use]
+    pub const fn rewind_capture_enabled(&self) -> bool {
+        self.rewind_capture_enabled
+    }
+
     /// Step exactly one CPU instruction. For debuggers / step-through tools.
     pub fn step_instruction(&mut self) -> u8 {
         #[cfg(feature = "cpu-boot-trace")]
