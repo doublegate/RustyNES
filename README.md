@@ -687,11 +687,13 @@ implementation did change (the mix specialization is a strict specialization, no
 no-op), so the accuracy contract was **verified rather than asserted**: AccuracyCoin
 holds at exactly 141/141, nestest 0-diff.
 
-Two things this release deliberately does **not** claim: RetroArch will still show
-the wrong licence until upstream merges the sync, and RustyNES still will not
-appear on iOS / iPadOS / tvOS — the cause is now understood (a hardcoded core list
-in `libretro/RetroArch`, not a build failure) but the remedy lands in a repository
-this project does not control.
+Two things v2.3.5 deliberately did **not** claim have since landed upstream
+(2026-08-16): `libretro-super#2069` merged, so RetroArch now reads `GPLv3+`, and
+`RetroArch#19416` merged, so RustyNES is in the App Store core list. Being in that
+list is not the same as being installable — iOS / iPadOS / tvOS availability
+arrives with the next App Store RetroArch build, on libretro's cadence. One item
+is still open: `libretro/docs#1180`, the licence on the libretro documentation
+site.
 
 Built on **v2.3.3 "Cadence"** — the display-pacing release, which closed the one
 measured artefact whose signature matches the reported picture "shudder" without
