@@ -55,10 +55,14 @@
 > than asserted**: AccuracyCoin **141/141** (RAM decoder authoritative), nestest
 > 0-diff.
 >
-> **Not fixed by this release:** RetroArch still shows the wrong licence until
-> `libretro/libretro-super` and `libretro/docs` merge the sync, and RustyNES still
-> does not appear on iOS / iPadOS / tvOS — a hardcoded `appstore_cores` list in
-> `libretro/RetroArch`, not a build failure. Both land upstream.
+> **Not fixed by v2.3.5, and since RESOLVED upstream (2026-08-16):**
+> `libretro-super#2069` merged, so RetroArch now reads `GPLv3+`; and
+> `RetroArch#19416` merged, so `rustynes` is in the `appstore_cores` list —
+> verified against that repository's `master`, not the PR state. Being in the
+> build list is not the same as being installable: iOS / iPadOS / tvOS
+> availability arrives with the next App Store RetroArch build, on libretro's
+> cadence. **`libretro/docs#1180` remains open** — the licence on the libretro
+> documentation site.
 >
 > **Previous release: v2.3.4** (2026-08-15) — **"Ledger"**, the coverage release.
 > Three boards land — **mapper 176 submapper 2** (WAIXING-FS005), **154**
