@@ -3597,6 +3597,53 @@ Prediction recorded and wrong, for the record: this campaign expected the
 shorter, rendering-heavy `flowing_palette` frame to show the *larger* relative
 win, since the APU should be a bigger fraction of it. It showed essentially none.
 
+### Workstream D (the APU at 18.7% of frame time) — CLOSED, v2.3.6
+
+**Status: closed. Do not reopen as a per-cycle-gating campaign.** The 18.7%
+figure stands — it is a real, correctly-measured subsystem attribution from
+v2.3.1, recovered only because fat LTO inlines the APU into `cpu_clock` and hides
+it from a symbol profile. What is settled is that the figure is **not recoverable
+by gating per-cycle bookkeeping**, which is the only strategy this workstream
+ever tried.
+
+| lever | target | outcome |
+|---|---|---|
+| C1 | default-configuration mix specialization | **ADOPTED** v2.3.5, −3.3% to −4.2% |
+| D1 | DMC end-of-cycle tick, ~23% of per-cycle cost | REJECTED — no measurable effect |
+| D3 | cached C1 gain predicate | REJECTED — sign flipped between runs |
+| D6 | four unconditional `length.reload()` stores | REJECTED — no measurable effect |
+| D5 | `add_sample` finite-check hoist | DECLINED on inspection — swaps one per-cycle branch for another |
+| D2 | `FrameCounter::tick` countdown | not measured; ceiling ~2.1% of frame |
+| D4 | `Pulse::muted()` caching | not measured; would add derived state to `Pulse` |
+
+**The generalisation, which is the reason to close rather than continue.** Three
+levers were measured and three produced nothing, for one shared mechanical
+reason: under `lto = "fat"` with `codegen-units = 1`, the code these levers guard
+is already inlined into `cpu_clock`, its loads are already common-subexpressioned,
+and the branches being elided are always-not-taken and therefore perfectly
+predicted. Replacing predictable not-taken branches with an equivalent count of
+loads and a predicate is arithmetically a wash. **"This work is inert on almost
+every cycle" predicts a win only if the work is actually executed** — and under
+fat LTO with perfect prediction it largely is not.
+
+D2 and D4 are the same shape as D1, D3 and D6, so the prior for them is now a
+null, not an unknown. Measuring them would cost two more quiet-host A/B pairs to
+confirm what three data points already indicate, and D4 additionally carries a
+`snapshot_schema_audit` registration and a recompute-on-restore obligation. They
+are left unmeasured deliberately, not overlooked.
+
+**What would justify reopening**, none of which is a variation on the above:
+
+- A **structural** change to how the APU is clocked or how its output is
+  synthesized, rather than gating around the existing per-cycle body. C1 is the
+  only lever that ever paid, and it worked by specializing a whole code path, not
+  by skipping bookkeeping.
+- A profile taken on **different hardware or a different codegen configuration**,
+  where the fat-LTO / perfect-prediction premise does not hold.
+- A measurement instrument with better than the ±1-2% resolution this host
+  provides, which is the floor that made three of these calls "not demonstrated"
+  rather than "demonstrably zero".
+
 ### v2.3.6 D1 + D6 — DMC-idle fast path and length-reload early-out (decision: REJECTED, reverted)
 
 **The changes**, measured together as one adoption unit because each alone was
