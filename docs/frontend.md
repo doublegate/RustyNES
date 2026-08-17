@@ -1167,6 +1167,41 @@ Two frontend details belong here rather than in the spec:
   paddle deliberately keeps its full-window sweep: a knob has no off-screen
   state, and how far the hand travels per turn is a feel decision.
 
+### Latency Oracle and RAM Atlas (Tools → Analysis, v2.3.6)
+
+Two panels over `rustynes-probe`, the deterministic re-simulation engine. Specs:
+[`latency-oracle.md`](latency-oracle.md), [`ram-atlas.md`](ram-atlas.md). Four
+frontend details belong here rather than in those specs:
+
+- **Both drive the emulator, so both run their work AFTER the egui render.** The
+  action is requested by setting a flag in the panel state during `body`, and
+  executed by the caller once the viewport closure has returned. `nes` is
+  therefore never captured by a closure that may run inside a detached viewport —
+  the same deferred shape `BasicBot` uses.
+- **Both snapshot, act, and `restore_quiet`.** The loud `Nes::restore`
+  additionally clears the rewind ring, which is right for a state loaded from
+  elsewhere and wrong for a snapshot taken from this timeline moments earlier.
+  `Probe::run_uncounted` does the same per trial, and suppresses rewind capture
+  for the trial's duration via an RAII guard so a panic cannot leave capture
+  switched off on a `Nes` the caller keeps using.
+- **Results are ROM-bound and cleared through one hook.**
+  `DebuggerOverlay::clear_rom_bound_analysis` is called from all three ROM
+  transition sites in `app.rs` (`close_rom`, `load_rom_from_path`, and the wasm
+  `RomLoaded` path), beside `clear_tas_editor`. One hook rather than one call per
+  panel, deliberately: the Latency Oracle shipped without a clear and needed a
+  review to catch it, and the Pixel Provenance panel had the same defect in
+  another form, so the next ROM-bound panel should be one line from correct rather
+  than one omission from wrong. Clearing the Latency Oracle's queued Apply depth
+  matters more than clearing its report — a stale report is cosmetic, a stale
+  `pending_apply` is one click from applying a depth measured on another
+  cartridge.
+- **The RAM Atlas address list is virtualized** (`ScrollArea::show_rows`). With
+  untouched addresses shown it is 2,048 rows, and building that many selectable
+  labels per frame is a cost with no purpose. Virtualization needs a uniform row
+  height, so the evidence pane sits below the list rather than inline under its
+  row — which also stops the detail shifting the rows around it when opened, and
+  keeps it visible while scrolling.
+
 ### Pause and fullscreen
 
 Pausing parks the emu thread (no `EmuFrame` pings), so the shell keeps

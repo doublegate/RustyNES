@@ -1,8 +1,8 @@
 # Troubleshooting
 
-Pragmatic answers to common problems. The egui debugger overlay (toggle
-with `~`) is your friend here — the top toolbar's `fps:` readout alone
-diagnoses about half of the issues on this page.
+Pragmatic answers to common problems. The debugger and tool panels — opened
+directly from the Debug and Tools menus — are your friend here, and the status
+bar's `fps:` readout alone diagnoses about half of the issues on this page.
 
 ## "The ROM won't load — `UnsupportedMapper(N)`"
 
@@ -43,8 +43,8 @@ The window opens but stays black. Likely causes:
 3. **Your GPU driver can't open a wgpu surface.** Check stderr for a
    wgpu error message. Updating GPU drivers usually fixes it.
 
-If the debugger overlay opens (press `~`) but only shows panels — no
-game graphics under them — the renderer is alive but the emulator
+If a debugger panel opens (Debug -> Chip State -> CPU) but only the panel
+draws — no game graphics under it — the renderer is alive but the emulator
 isn't producing frames. Check the CPU panel: if PC isn't advancing, the
 CPU is jammed. The flag row will show `JAMMED` in red.
 
@@ -76,7 +76,7 @@ the buffer fed — this is audible as crackles or a brief gap.
 Common causes:
 
 - **The emulator is briefly slow** — usually because the host system is
-  under load. Check the debugger overlay's `fps:` readout: drops below
+  under load. Check the status bar's `fps:` readout (View -> Show FPS): drops below
   the target (60.1 NTSC / 50.0 PAL) cause crackles.
 - **Audio latency set too low for the system.** Raise `[audio] latency_ms`
   (default 60) to give the dynamic-rate-control loop more headroom on a

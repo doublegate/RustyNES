@@ -149,7 +149,7 @@ covers all emulator-observable state:
 
 What is **not** captured: the host audio ring (its dynamic-rate-control
 resync absorbs the brief discontinuity), the wgpu surface (next redraw
-recreates the texture from the framebuffer), or any debugger overlay
+recreates the texture from the framebuffer), or any debugger panel
 state.
 
 ### Memory footprint

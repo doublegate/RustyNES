@@ -537,7 +537,12 @@ pub struct SystemBindings {
     pub reset: String,
     /// Power cycle (cold boot).
     pub power_cycle: String,
-    /// Toggle the egui debug overlay (defaults to `~`, i.e. `Backquote`).
+    /// Toggle the status-bar `RetroAchievements` read-out between its compact and
+    /// long-form variants (defaults to `~`, i.e. `Backquote`).
+    ///
+    /// The field name is historical: this key toggled the debugger overlay until
+    /// v1.7.0 retired that overlay, and renaming it would break every existing
+    /// `config.toml`. Documented rather than renamed.
     #[serde(default = "default_debug_overlay")]
     pub debug_overlay: String,
     /// Open the rfd file-picker to load a different ROM (default `F12`).

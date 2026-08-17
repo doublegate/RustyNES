@@ -5,7 +5,8 @@ End-user documentation for running NES games with the `rustynes` binary.
 If you've used Mesen, Nestopia, or FCEUX before, the model here will be
 familiar: one ROM per window, cycle-accurate emulation, a menu bar and
 status bar framing the picture, F-key save states, hold-to-rewind, and a
-`~` debugger overlay. Settings live in a TOML file under your OS's standard
+debugger and tool panels that open
+directly as windows from the menu bar. Settings live in a TOML file under your OS's standard
 config directory (and most of them are also reachable from View → Settings…).
 
 If you're a developer or contributor looking for implementation specs (CPU,
@@ -21,6 +22,7 @@ instead. This subdirectory only covers running the emulator.
 | [Menu reference](./menus.md) | What every menu-bar / status-bar / Settings entry does |
 | [Configuration](./configuration.md) | The `config.toml` schema, every key documented with defaults |
 | [Save states and rewind](./save-states-and-rewind.md) | F1 / F4 / F5, the 10 slots per ROM, where files live |
+| [Analysis tools](./analysis-tools.md) | Latency Oracle, RAM Atlas, Pixel Provenance — what each answers, and what it will not claim |
 | [Debugger](./debugger.md) | The `~` overlay tour: CPU, PPU, OAM, APU, memory, mapper, input panels, fps counter |
 | [Display and audio](./display-and-audio.md) | NTSC filter, aspect ratio, audio sample rate, region detection |
 | [Compatibility](./compatibility.md) | Supported mappers, known accuracy gaps, ROM-format support |
@@ -45,7 +47,7 @@ instead. This subdirectory only covers running the emulator.
 | F11             | Fullscreen |
 | F12             | Open ROM |
 | M               | Toggle the menu bar |
-| `~` (Backquote) | Toggle the debugger overlay |
+| `~` (Backquote) | Toggle the status-bar `RetroAchievements` read-out between compact and long form |
 | Esc             | Quit (or exit fullscreen) |
 
 All keys are rebindable. See [Controls](./controls.md) and the
