@@ -121,6 +121,7 @@ mod expr;
 mod game_db_panel;
 // v2.2.0 "Capstone" — read-only ROM Info browser (per-game DB + No-Intro CRC +
 // decoded cartridge header for the loaded ROM).
+mod latency_panel;
 mod rom_info_panel;
 // v1.5.0 "Lens" Workstream A4 — HD-pack per-pixel inspector (native + hd-pack).
 // `pub(crate)` so `app.rs` can drive its `show` (the panel needs the compositor
@@ -190,6 +191,9 @@ pub enum ToolPanel {
     /// identity CRCs / SHA-256, its per-game DB entry, and its decoded
     /// cartridge header. A read-only companion to [`Self::GameDb`].
     RomInfo,
+    /// v2.3.6 — the Latency Oracle: measures the game's own input lag and
+    /// recommends (never applies) a run-ahead depth.
+    LatencyOracle,
     /// Live "Input Display" panel — the consolidated controller + expansion-
     /// device HUD (v1.7.0 "Forge" beta.5, #51; the v1.5.0 "Lens" Workstream A1
     /// Input Miniatures overlay absorbed the former standalone Input Display).
@@ -547,6 +551,7 @@ pub fn detached_window_meta(id: &'static str) -> (&'static str, (u32, u32)) {
         "cheat" => ("Cheats", (460, 440)),
         "game_db" => ("Game Database", (560, 480)),
         "rom_info" => ("ROM Info", (520, 520)),
+        "latency_oracle" => ("Latency Oracle", (380, 420)),
         "provenance" => ("Pixel Provenance", (520, 620)),
         "perf" => ("Performance", (560, 440)),
         "documentation" => ("Documentation", (780, 560)),
@@ -673,6 +678,8 @@ pub struct DebuggerOverlay {
     show_game_db: bool,
     /// Read-only ROM Info browser open flag (v2.2.0 "Capstone").
     show_rom_info: bool,
+    /// v2.3.6 — Latency Oracle panel visible.
+    show_latency: bool,
     /// v2.3.2 "Lucid" — pixel provenance inspector.
     show_provenance: bool,
     /// "Input Display" panel open flag (v1.7.0 "Forge" beta.5, #51; née the
@@ -760,6 +767,7 @@ pub struct DebuggerOverlay {
     game_db_ui: game_db_panel::GameDbPanelState,
     /// Read-only ROM Info panel state (v2.2.0 "Capstone").
     rom_info_ui: rom_info_panel::RomInfoPanelState,
+    latency_ui: latency_panel::LatencyPanel,
     /// Pixel provenance inspector state (v2.3.2 "Lucid").
     provenance_ui: provenance_panel::ProvenancePanelState,
     /// CRC32 of the currently-loaded ROM (PRG+CHR, header-excluded), pushed by
@@ -936,6 +944,7 @@ impl DebuggerOverlay {
             show_perf: false,
             show_game_db: false,
             show_rom_info: false,
+            show_latency: false,
             show_provenance: false,
             show_input_display: false,
             #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
@@ -974,6 +983,7 @@ impl DebuggerOverlay {
             cheat_ui: cheat_panel::CheatPanelState::default(),
             game_db_ui: game_db_panel::GameDbPanelState::default(),
             rom_info_ui: rom_info_panel::RomInfoPanelState,
+            latency_ui: latency_panel::LatencyPanel::default(),
             provenance_ui: provenance_panel::ProvenancePanelState::default(),
             rom_crc: None,
             rom_crc_full: None,
@@ -1468,6 +1478,7 @@ impl DebuggerOverlay {
             ToolPanel::Input => self.show_input = true,
             ToolPanel::GameDb => self.show_game_db = true,
             ToolPanel::RomInfo => self.show_rom_info = true,
+            ToolPanel::LatencyOracle => self.show_latency = true,
             ToolPanel::PixelProvenance => self.show_provenance = true,
             ToolPanel::InputDisplay => self.show_input_display = true,
             ToolPanel::Replay => self.show_replay = true,
@@ -1742,12 +1753,17 @@ impl DebuggerOverlay {
     /// happened to be open, then vanish when that one closed). Today the
     /// `nes`-reading tool panels are **Cheats** (`show_cheat`), the
     /// **ROM Database** editor (`show_game_db`), and the read-only **ROM Info**
-    /// browser (`show_rom_info`), and the **Pixel Provenance** inspector
-    /// (`show_provenance`). If you add another panel that
+    /// browser (`show_rom_info`), the **Pixel Provenance** inspector
+    /// (`show_provenance`), and the **Latency Oracle** (`show_latency`). If you
+    /// add another panel that
     /// takes `&Nes` / `&mut Nes` in `tool_panels`, add its `show_*` flag here too.
     #[must_use]
     pub const fn any_nes_tool_open(&self) -> bool {
-        self.show_cheat || self.show_game_db || self.show_rom_info || self.show_provenance
+        self.show_cheat
+            || self.show_game_db
+            || self.show_rom_info
+            || self.show_provenance
+            || self.show_latency
     }
 
     /// Whether the **Pixel Provenance** inspector is open.
@@ -2085,6 +2101,28 @@ impl DebuggerOverlay {
                 &mut self.basic_bot_ui,
                 nes.as_deref_mut(),
             );
+        }
+        // v2.3.6 — the Latency Oracle. Takes the optional `nes` because the
+        // measurement DRIVES the emulator (snapshotting and restoring it, so the
+        // live timeline is untouched), the same shape as BasicBot above.
+        //
+        // It only ever RECOMMENDS a run-ahead depth. `take_pending_apply` is
+        // non-empty solely when the user pressed Apply, which is why the config
+        // write lives here rather than inside the panel: "measured" and
+        // "applied" stay two separate, auditable steps.
+        if self.show_latency {
+            let current = config.input.run_ahead;
+            latency_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_latency,
+                &mut self.latency_ui,
+                nes.as_deref_mut(),
+                current,
+            );
+            if let Some(depth) = self.latency_ui.take_pending_apply() {
+                config.input.run_ahead = depth;
+            }
         }
         // v2.1.6 "Expansion Audio" B7 — the Audio Mixer. It reads `config` (the
         // persisted mix) and the optional `nes` (read-only DAC taps for the

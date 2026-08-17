@@ -169,17 +169,47 @@ impl Default for LatencyConfig {
 /// Returns as soon as an observable yields agreeing answers, so the common case
 /// costs one observable's worth of trials rather than all three.
 pub fn measure(nes: &mut Nes, anchor: &Nes, cfg: LatencyConfig) -> LatencyReport {
-    // EXACTLY the trials this loop can run: one idle baseline plus one held
-    // trial per button, per observable. Not "plus headroom" — a ceiling with
-    // slack in it is not a ceiling, and `run_counted` below makes it binding, so
-    // a future edit that adds a trial fails closed here rather than silently
-    // spending more of the caller's time than the budget advertises.
-    let budget = Budget {
+    let mut probe = Probe::anchor(anchor, budget_for(cfg));
+    run_measurement(&mut probe, nes, cfg)
+}
+
+/// [`measure`] against the emulator's **own** current state, restoring it before
+/// returning.
+///
+/// The convenience a frontend actually wants: it has one live `Nes` and no
+/// second instance to replay into. The state is snapshotted, used as both anchor
+/// and scratch, and restored on the way out — so the live timeline is untouched,
+/// the same contract `basic_bot::search` offers for the same reason.
+///
+/// Note this DRIVES the emulator for the duration (roughly
+/// `frames_per_trial * 21` frames), so a caller on a UI thread will block. That
+/// is the established shape here — `BasicBot` does the same on an explicit
+/// button press — but it is why the panel says "briefly pauses" on the button
+/// rather than pretending the work is free.
+pub fn measure_in_place(nes: &mut Nes, cfg: LatencyConfig) -> LatencyReport {
+    let restore_point = nes.snapshot();
+    let mut probe = Probe::anchor(&*nes, budget_for(cfg));
+    let report = run_measurement(&mut probe, nes, cfg);
+    // Put the user's timeline back exactly. A measurement that leaves the game
+    // 400 frames further on would be a worse bug than the one it measures.
+    let _ = nes.restore(&restore_point);
+    report
+}
+
+/// EXACTLY the trials the measurement loop can run: one idle baseline plus one
+/// held trial per button, per observable. Not "plus headroom" — a ceiling with
+/// slack in it is not a ceiling, and `Probe::run` makes it binding, so a future
+/// edit that adds a trial fails closed rather than silently spending more of the
+/// caller's time than the budget advertises.
+fn budget_for(cfg: LatencyConfig) -> Budget {
+    Budget {
         max_frames_per_trial: cfg.frames_per_trial,
         max_trials: u32::try_from((PROBE_BUTTONS.len() + 1) * OBSERVABLE_ORDER.len())
             .unwrap_or(u32::MAX),
-    };
-    let mut probe = Probe::anchor(anchor, budget);
+    }
+}
+
+fn run_measurement(probe: &mut Probe, nes: &mut Nes, cfg: LatencyConfig) -> LatencyReport {
     let probed = u32::try_from(PROBE_BUTTONS.len()).unwrap_or(u32::MAX);
     let mut last_evidence = vec![None; PROBE_BUTTONS.len()];
 
@@ -464,6 +494,50 @@ mod tests {
             expected, 21,
             "the trial arithmetic changed; re-check Budget::max_trials in `measure`"
         );
+    }
+
+    /// `measure_in_place` must leave the emulator exactly where it found it.
+    ///
+    /// It drives the emulator for hundreds of frames, so a measurement that
+    /// forgot to restore would advance the user's game — a worse bug than the one
+    /// being measured, and one that would look like the emulator randomly
+    /// skipping ahead. Compared on the full snapshot, not just the framebuffer,
+    /// because a difference in CPU or APU state that has not reached the screen
+    /// yet is still a difference.
+    #[test]
+    fn measure_in_place_restores_the_live_timeline() {
+        let rom = polling_rom();
+        let mut nes = warmed(&rom, 20);
+        let before = nes.snapshot();
+
+        let report = measure_in_place(&mut nes, LatencyConfig::default());
+        assert!(
+            report.trials_used > 0,
+            "premise: the measurement actually ran"
+        );
+
+        assert_eq!(
+            nes.snapshot(),
+            before,
+            "measure_in_place moved the live timeline"
+        );
+    }
+
+    /// `measure_in_place` must agree with the two-instance `measure`: it is a
+    /// convenience, not a different measurement.
+    #[test]
+    fn measure_in_place_agrees_with_the_two_instance_form() {
+        let rom = polling_rom();
+        let anchor = warmed(&rom, 20);
+        let mut scratch = Nes::from_rom(&rom).expect("fixture parses");
+        let two_instance = measure(&mut scratch, &anchor, LatencyConfig::default());
+
+        let mut live = warmed(&rom, 20);
+        let in_place = measure_in_place(&mut live, LatencyConfig::default());
+
+        assert_eq!(two_instance.frames, in_place.frames);
+        assert_eq!(two_instance.confidence, in_place.confidence);
+        assert_eq!(two_instance.per_button, in_place.per_button);
     }
 
     /// A divergence past `max_plausible_lag` is discarded: at that distance it is
