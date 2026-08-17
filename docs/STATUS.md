@@ -99,13 +99,13 @@
 > control**, and a relative gate that declines to conclude on a contended host.
 > **Ten core hot-path optimization candidates were measured and all ten
 > rejected** through six distinct mechanisms — none of the ten yielded a
-> shippable improvement. (Of the two leads the campaign surfaced, the **APU at
-> 18.7% of frame** was pursued as Workstream C/D and is now **CLOSED** in v2.3.6:
-> C1 shipped at −3.3% to −4.2%, then D1, D3 and D6 were each measured and
-> rejected and D5 declined on inspection, establishing that the figure is not
+> shippable improvement. The campaign surfaced two further leads. The **APU at
+> 18.7% of frame** was pursued as Workstream C/D and is now **CLOSED** in
+> v2.3.6: C1 shipped at −3.3% to −4.2%, then D1, D3 and D6 were each measured
+> and rejected and D5 declined on inspection. That establishes the figure is not
 > recoverable by gating per-cycle bookkeeping under fat LTO — see
-> `docs/performance.md`. `range.rs` inlined inside `Ppu::tick` at 1.52% remains
-> **unmeasured**.)
+> `docs/performance.md`. The second lead, `range.rs` inlined inside `Ppu::tick`
+> at 1.52%, remains **unmeasured**.
 > **No emulation-core changes: AccuracyCoin holds at
 > exactly 141/141 and nestest is 0-diff.** Built on **v2.3.0** (2026-08-05) —
 > **"Datum II"**, the capstone closing

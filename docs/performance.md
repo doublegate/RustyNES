@@ -3617,9 +3617,10 @@ ever tried.
 | D4 | `Pulse::muted()` caching | not measured; would add derived state to `Pulse` |
 
 **The generalisation, which is the reason to close rather than continue.** Three
-levers were measured and three produced nothing, for one shared mechanical
-reason: under `lto = "fat"` with `codegen-units = 1`, the code these levers guard
-is already inlined into `cpu_clock`, common-subexpression elimination has
+levers — D1, D3 and D6 — were measured and all three produced nothing, for one
+shared mechanical reason (C1 was also measured, and is the one that paid).
+Under `lto = "fat"` with `codegen-units = 1`, the code these levers guard is
+already inlined into `cpu_clock`, common-subexpression elimination has
 already merged its repeated loads, and the branches being elided are
 always-not-taken and therefore perfectly predicted. Replacing predictable
 not-taken branches with an equivalent count of
@@ -3647,8 +3648,9 @@ are left unmeasured deliberately, not overlooked.
 
 ### v2.3.6 D1 + D6 — DMC-idle fast path and length-reload early-out (decision: REJECTED, reverted)
 
-**The changes**, measured together as one adoption unit because each alone was
-expected to be sub-threshold and both target the same per-cycle bookkeeping.
+**The changes.** D1 and D6 were measured together as one adoption unit, because
+each alone was expected to be sub-threshold and both target the same per-cycle
+bookkeeping.
 
 **D1** — `Apu::dmc_tick_end` runs on every CPU cycle at 1.789 MHz and was the
 largest untouched component of the APU's 18.7% of frame time, at roughly 23% of
@@ -3730,7 +3732,7 @@ D3 made.
 
 **What this does not say.** "Not measurable here" is not "no difference". This
 host resolves roughly ±1-2%, so a sub-1% effect is invisible to it. The honest
-claim is that D1 and D6 have no *demonstrated* benefit. Byte-identity, separately,
+claim is that D1 and D6 have no *demonstrated* benefit. Byte-identity separately
 **was** established and is not in question: `dmc_dma` 1/1, `dma_timing_pin` 11/11,
 the APU unit suite 143/143, AccuracyCoin 141/141 on the authoritative RAM decoder,
 nestest 0-diff, and a full `--features test-roms` sweep across 127 test binaries.
