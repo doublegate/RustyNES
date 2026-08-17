@@ -1106,6 +1106,16 @@ impl DebuggerOverlay {
         self.show_tas = false;
     }
 
+    /// v2.3.6 — discard a Latency Oracle measurement bound to the previous ROM.
+    ///
+    /// Called at every ROM transition, beside [`Self::clear_tas_editor`], which
+    /// is invalidated by the same event for the same reason. Without it a report
+    /// measured on one game stays on screen for the next, with its **Apply**
+    /// button still live. (PR #385 review.)
+    pub fn clear_latency_report(&mut self) {
+        self.latency_ui.clear();
+    }
+
     /// Returns `true` when the overlay is currently visible. The render
     /// path uses this to pick its emu-lock policy (v2.8.0 Phase 5): the
     /// egui pass needs `&mut Nes`, so a visible overlay holds the lock

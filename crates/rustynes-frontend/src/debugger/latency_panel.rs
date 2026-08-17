@@ -66,6 +66,21 @@ pub struct LatencyPanel {
 }
 
 impl LatencyPanel {
+    /// Discard everything bound to the previous ROM.
+    ///
+    /// A latency report describes one game. Left standing across a ROM change it
+    /// becomes a confident statement about a cartridge it was never measured on
+    /// — and worse, its **Apply** button stays live, so a depth measured for game
+    /// A is one click from being applied while game B is running. Clearing
+    /// `pending_apply` matters as much as clearing `report`.
+    ///
+    /// Called from the same ROM-transition points that end a `TAStudio` session,
+    /// for the same reason: that state anchored on an emulator instance which no
+    /// longer exists. (PR #385 review.)
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
     /// Take a depth the user pressed **Apply** for, if any.
     ///
     /// Returned rather than written here because the panel has no business
@@ -312,6 +327,33 @@ mod tests {
             "a three-frame lag must read differently on PAL than on NTSC; \
              identical output means the conversion is hardcoded"
         );
+    }
+
+    /// A ROM transition must discard the whole measurement — and `pending_apply`
+    /// especially. A report left standing describes a cartridge that is no
+    /// longer loaded; a `pending_apply` left standing would apply the previous
+    /// game's depth to the new one.
+    #[test]
+    fn clearing_discards_the_report_and_any_queued_apply() {
+        let mut panel = LatencyPanel {
+            report: Some(report(Some(2), Confidence::Unanimous)),
+            pending_apply: Some(2),
+            frame_ms: 16.639,
+            status: "Measured in 7 trials.".to_owned(),
+            measure_requested: true,
+        };
+        panel.clear();
+        assert!(
+            panel.report.is_none(),
+            "a stale report survived a ROM change"
+        );
+        assert_eq!(
+            panel.take_pending_apply(),
+            None,
+            "the previous game's run-ahead depth was still queued to apply"
+        );
+        assert!(panel.status.is_empty());
+        assert!(!panel.measure_requested);
     }
 
     /// `take_pending_apply` drains, so one Apply click cannot be consumed twice

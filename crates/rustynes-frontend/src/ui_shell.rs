@@ -1182,6 +1182,13 @@ impl UiShell {
                             out.action = Some(MenuAction::MovieBranch);
                             ui.close();
                         }
+                        // Gated with the block it introduces: the interop items
+                        // below compile out on wasm, and an ungated separator
+                        // here would then sit directly against the one after
+                        // them — two rules with nothing between. Same treatment
+                        // as the session-services separator lower down.
+                        // (PR #385 review.)
+                        #[cfg(not(target_arch = "wasm32"))]
                         ui.separator();
                         // v1.6.0 B1 — external TAS movie interop (FCEUX
                         // `.fm2` / BizHawk `.bk2`). Import begins playback
