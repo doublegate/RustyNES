@@ -3619,8 +3619,8 @@ ever tried.
 **The generalisation, which is the reason to close rather than continue.** Three
 levers were measured and three produced nothing, for one shared mechanical
 reason: under `lto = "fat"` with `codegen-units = 1`, the code these levers guard
-is already inlined into `cpu_clock`, its loads are already common-subexpressioned,
-and the branches being elided are always-not-taken and therefore perfectly
+is already inlined into `cpu_clock`, common-subexpression elimination has already
+merged its repeated loads, and the branches being elided are always-not-taken and therefore perfectly
 predicted. Replacing predictable not-taken branches with an equivalent count of
 loads and a predicate is arithmetically a wash. **"This work is inert on almost
 every cycle" predicts a win only if the work is actually executed** — and under
@@ -3657,7 +3657,7 @@ flip. Everything else — the implicit-abort kill, the consume-edge transfer, th
 load-delay countdown, the re-enable period block, the edge-arm suppression, the
 reload arm, the `cannot_run` decrement, the delayed-`$4015` countdown — is DMA
 corner-case bookkeeping gated on some piece of DMC state being non-idle, and on a
-cartridge not running a DMC sample all of it is inert on every cycle. D1 added an
+cartridge not running a DMC sample, all of it is inert on every cycle. D1 added an
 idle guard between the byte-timer clock and the rest, plus a dedupe of two
 identical `bits_remaining()` reads.
 
@@ -3709,7 +3709,8 @@ which took the control's drift from ~4% to ~1%.
 
 **Why a null is the expected result here, in hindsight.** Release builds use
 `lto = "fat"` with `codegen-units = 1`, so `dmc_tick_end` is already inlined into
-`cpu_clock` and LLVM can common-subexpression the field loads across the blocks
+`cpu_clock` and LLVM can apply common-subexpression elimination to the field
+loads across the blocks
 the guard skips. The branches D1 elides were always-not-taken and therefore
 perfectly predicted, so trading ~9 predictable not-taken branches for 9 loads, an
 OR-reduction and one branch is arithmetically a wash. D6 is the same shape at
