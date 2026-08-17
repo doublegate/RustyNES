@@ -45,7 +45,8 @@ the hotkey and the menu item do exactly the same thing.
 ### Tools
 
 These open as floating windows directly — you do **not** need the debugger
-overlay for them. Every one can be popped out into its own OS window.
+overlay for them. On native, every one can be popped out into its own OS window;
+the web build always renders them docked.
 
 Grouped by task since **v2.3.6**; the menu had grown to twenty flat entries.
 
@@ -56,7 +57,7 @@ Grouped by task since **v2.3.6**; the menu had grown to twenty flat entries.
 | Audio ▸ | | NSF Player (NSF / NSFe playback), Audio Mixer (per-channel balance, scopes, VU) |
 | Input ▸ | | Input Display (pads + every expansion peripheral), Virtual Pad (on-screen controller, native only) |
 | Game Data ▸ | | ROM Info (read-only browser), ROM Database (per-game override editor) |
-| Analysis ▸ | | Latency Oracle, Pixel Provenance, BasicBot — see [Analysis tools](./analysis-tools.md) |
+| Analysis ▸ | | Latency Oracle, Pixel Provenance, RAM Atlas, BasicBot — see [Analysis tools](./analysis-tools.md) |
 | HD Pack ▸ | | Load / unload an HD pack, Pixel Inspector, Build HD Pack (native, opt-in feature) |
 | Netplay… | | Host or join a rollback session (native only) |
 | RetroAchievements… | | Login, achievements, leaderboards (native only, opt-in feature) |
@@ -64,10 +65,6 @@ Grouped by task since **v2.3.6**; the menu had grown to twenty flat entries.
 Netplay and RetroAchievements sit below a separator at the top level rather than
 in a submenu: they change what the *session* is, rather than being a tool you
 point at the game.
-
-> **RAM Atlas** also lives under **Analysis** from v2.3.6 — classify every byte of
-> work RAM, then verify a candidate by changing it. See
-> [Analysis tools](./analysis-tools.md).
 
 ### View
 

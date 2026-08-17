@@ -1,8 +1,10 @@
 # Analysis tools
 
-Three tools under **Tools → Analysis** answer questions about the running game
-rather than changing it. All three are output-only: they never alter emulation, and
-each restores the live timeline when it finishes.
+**Tools → Analysis** holds the tools that answer questions about the running game
+rather than changing it. This page covers three of them; the submenu also contains
+**BasicBot**, an input-search tool documented separately. All three below are
+output-only: they never alter emulation, and each restores the live timeline when
+it finishes.
 
 They share one design rule worth knowing before you use them: **each says what it
 does not know.** None of them will give you a confident number in place of "I could
