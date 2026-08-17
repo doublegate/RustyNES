@@ -5,7 +5,8 @@ End-user documentation for running NES games with the `rustynes` binary.
 If you've used Mesen, Nestopia, or FCEUX before, the model here will be
 familiar: one ROM per window, cycle-accurate emulation, a menu bar and
 status bar framing the picture, F-key save states, hold-to-rewind, and a
-`~` debugger overlay. Settings live in a TOML file under your OS's standard
+debugger and tool panels that open
+directly as windows from the menu bar. Settings live in a TOML file under your OS's standard
 config directory (and most of them are also reachable from View → Settings…).
 
 If you're a developer or contributor looking for implementation specs (CPU,
@@ -46,7 +47,7 @@ instead. This subdirectory only covers running the emulator.
 | F11             | Fullscreen |
 | F12             | Open ROM |
 | M               | Toggle the menu bar |
-| `~` (Backquote) | Toggle the debugger overlay |
+| `~` (Backquote) | Toggle the status-bar `RetroAchievements` read-out between compact and long form |
 | Esc             | Quit (or exit fullscreen) |
 
 All keys are rebindable. See [Controls](./controls.md) and the

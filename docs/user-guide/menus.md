@@ -1,9 +1,11 @@
 # Menu reference
 
 The desktop frontend frames the NES image with an always-on **menu bar**
-across the top and a **status bar** along the bottom. The egui debugger is a
-separate overlay toggled with `` ` `` — the menu bar and status bar are always
-present (unless you hide the menu bar with `M` or View → Show Menu Bar).
+across the top and a **status bar** along the bottom, both always present (unless
+you hide the menu bar with `M` or View → Show Menu Bar). Debugger and tool panels
+open directly as windows from the Tools and Debug menus — there is no overlay to
+switch on first. The `` ` `` key toggles the status-bar RetroAchievements
+read-out, not the debugger.
 
 Every menu entry shows its keyboard accelerator on the right where one exists;
 the hotkey and the menu item do exactly the same thing.

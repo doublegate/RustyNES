@@ -3,8 +3,10 @@
 **Tools → Analysis** holds the tools that answer questions about the running game
 rather than changing it. This page covers three of them; the submenu also contains
 **BasicBot**, an input-search tool documented separately. All three below are
-output-only: they never alter emulation, and each restores the live timeline when
-it finishes.
+**output-only in effect**: an analysis may advance the emulator or change memory
+while it runs, but each restores the live timeline — and your rewind history —
+before it returns. Nothing they do reaches a save state, a movie, or a netplay
+peer, which is also why they are unavailable during those sessions.
 
 They share one design rule worth knowing before you use them: **each says what it
 does not know.** None of them will give you a confident number in place of "I could

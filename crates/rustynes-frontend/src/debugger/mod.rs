@@ -18,7 +18,10 @@
 //!
 //! Sprint 5-3 (T-53-001 ... T-53-007 + T-52-007). The overlay is rendered
 //! into the same surface frame as the main NES blit, on top of everything.
-//! Toggle via `~` (configurable in `[input.system].debug_overlay`).
+//! Panels open directly from the Debug and Tools menus; there is no overlay to
+//! switch on first (the vestigial Debug -> Show Debugger toggle went in v1.7.1).
+//! The `~` key bound at `[input.system].debug_overlay` toggles the status-bar
+//! `RetroAchievements` read-out — the binding kept its historical name.
 //!
 //! The overlay is read-only: it never advances emulator-visible state.
 //! Panels poll the inspection API exposed by `rustynes_core::Nes` once per

@@ -139,9 +139,10 @@ restores it — the live timeline is exactly where it was. It exists because the
 frontend already holds `&mut Nes` under the lock and cloning a `Nes` per
 measurement is a cost with no purpose there.
 
-The trial budget is **exactly** the trials the loop can run: one idle baseline
-plus one held trial per button, per observable. Not "plus headroom" — a ceiling
-with slack in it is not a ceiling, and `Probe::run` makes it binding, so a future
+The trial budget is **exactly** the trials the loop can run: for each observable,
+one idle baseline plus one held trial per probe button — `(6 + 1) * 3 = 21`, since
+the baseline is re-run per observable rather than shared. Not "plus headroom" — a
+ceiling with slack in it is not a ceiling, and `Probe::run` makes it binding, so a future
 edit that adds a trial fails closed rather than silently spending more of the
 caller's time than advertised.
 
