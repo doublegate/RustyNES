@@ -1393,10 +1393,11 @@ impl App {
         // v1.6.0 "Studio" A2 — a TAStudio session anchors on the closed ROM; end it.
         if let Some(d) = self.debugger.as_mut() {
             d.clear_tas_editor();
-            // v2.3.6 — a Latency Oracle report is bound to the ROM it was
-            // measured on. Left standing it describes a cartridge that is no
-            // longer loaded, with its Apply button still live. (PR #385 review.)
-            d.clear_latency_report();
+            // v2.3.6 — analysis results are bound to the ROM they were derived
+            // from. Left standing they describe a cartridge that is no longer
+            // loaded: a Latency Oracle report with its Apply button still live
+            // (PR #385 review), or a 2,048-entry RAM Atlas that looks like a map.
+            d.clear_rom_bound_analysis();
         }
         // Stop the dedicated emulation thread from producing frames.
         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
@@ -1704,10 +1705,11 @@ impl App {
         // replay inputs/branches against a different `Nes`.
         if let Some(d) = self.debugger.as_mut() {
             d.clear_tas_editor();
-            // v2.3.6 — a Latency Oracle report is bound to the ROM it was
-            // measured on. Left standing it describes a cartridge that is no
-            // longer loaded, with its Apply button still live. (PR #385 review.)
-            d.clear_latency_report();
+            // v2.3.6 — analysis results are bound to the ROM they were derived
+            // from. Left standing they describe a cartridge that is no longer
+            // loaded: a Latency Oracle report with its Apply button still live
+            // (PR #385 review), or a 2,048-entry RAM Atlas that looks like a map.
+            d.clear_rom_bound_analysis();
         }
         // v2.8.0 Phase 5 increment 3 — a reload keeps the pacing regime but
         // may change the region (NTSC<->PAL frame duration); refresh the
@@ -7450,9 +7452,27 @@ impl App {
             let netplay_locked = self.netplay_is_active() || self.ra_hardcore_blocks();
             let mut guard = self.emu.lock();
             let movie_locked = guard.movie.is_playing() || guard.movie.is_recording();
-            guard.writes_locked = netplay_locked || movie_locked;
+            let locked = netplay_locked || movie_locked;
+            guard.writes_locked = locked;
             guard.raw_cheats = raw_cheats;
             guard.debug_pokes.extend(debug_pokes);
+            drop(guard);
+            self.publish_debugger_write_gate(locked);
+        }
+    }
+
+    /// v2.3.6 — mirror the combined write gate onto the debugger overlay.
+    ///
+    /// The RAM Atlas needs the same predicate `emu.write` uses: it advances the
+    /// live `Nes` and pokes work RAM, so under netplay or a TAS record/replay it
+    /// would diverge a timeline other peers are lockstepped to, and under
+    /// RA-hardcore it is precisely the write the mode exists to forbid. Passed the
+    /// already-computed value rather than re-deriving it, so the two consumers
+    /// cannot drift apart. (PR #392 review.)
+    #[cfg(not(target_arch = "wasm32"))]
+    const fn publish_debugger_write_gate(&mut self, locked: bool) {
+        if let Some(d) = self.debugger.as_mut() {
+            d.set_writes_locked(locked);
         }
     }
 
@@ -8279,9 +8299,18 @@ impl App {
                     // replay/record; wasm has no native netplay/RA-hardcore).
                     let debug_pokes = debugger.take_debug_pokes();
                     let mut guard = self.emu.lock();
-                    guard.writes_locked = guard.movie.is_playing() || guard.movie.is_recording();
+                    let locked = guard.movie.is_playing() || guard.movie.is_recording();
+                    guard.writes_locked = locked;
                     guard.raw_cheats = raw_cheats;
                     guard.debug_pokes.extend(debug_pokes);
+                    // v2.3.6 — the RAM Atlas needs the same gate: it advances the
+                    // live `Nes` and pokes work RAM, which would diverge a TAS
+                    // timeline being recorded or replayed. Mirrored here as well as
+                    // on the native path, because `post_produce_housekeeping` — the
+                    // native republish site — is `cfg(not(wasm32))`, so relying on
+                    // it alone would leave the wasm build ungated while every
+                    // native gate looked correct. (PR #392 review.)
+                    debugger.set_writes_locked(locked);
                 }
             }
         }
@@ -8587,10 +8616,11 @@ impl App {
         // session (it anchored on the previous `Nes`).
         if let Some(d) = self.debugger.as_mut() {
             d.clear_tas_editor();
-            // v2.3.6 — a Latency Oracle report is bound to the ROM it was
-            // measured on. Left standing it describes a cartridge that is no
-            // longer loaded, with its Apply button still live. (PR #385 review.)
-            d.clear_latency_report();
+            // v2.3.6 — analysis results are bound to the ROM they were derived
+            // from. Left standing they describe a cartridge that is no longer
+            // loaded: a Latency Oracle report with its Apply button still live
+            // (PR #385 review), or a 2,048-entry RAM Atlas that looks like a map.
+            d.clear_rom_bound_analysis();
         }
         // v2.8.0 Phase 5 increment 3 — let the (idle) emulation thread start
         // producing now that the core holds a ROM. Set AFTER `nes` is in

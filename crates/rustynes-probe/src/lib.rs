@@ -58,6 +58,7 @@
 //! # }
 //! ```
 
+pub mod atlas;
 pub mod latency;
 
 use rustynes_core::{Buttons, Nes, ROM_HASH_TAG_LEN};
@@ -188,15 +189,17 @@ impl Probe {
     /// from, or if the anchor fails to restore. Both are caller errors that
     /// would otherwise yield a plausible, wrong answer, and this engine exists
     /// to produce answers people will act on.
-    fn run_uncounted<F>(
+    fn run_uncounted<F, S>(
         &self,
         nes: &mut Nes,
         frames: u32,
         observable: Observable,
+        setup: S,
         mut input: F,
     ) -> Vec<u64>
     where
         F: FnMut(u32) -> (Buttons, Buttons),
+        S: FnOnce(&mut Nes),
     {
         assert_eq!(
             nes.rom_hash_tag(),
@@ -204,19 +207,52 @@ impl Probe {
             "probe anchor belongs to a different ROM than the emulator it was \
              replayed into; restoring across ROMs yields confident nonsense"
         );
-        nes.restore(&self.snapshot)
+        // `restore_quiet`, NOT `restore`. The loud variant additionally clears
+        // the rewind ring, on the correct reasoning that a state loaded from
+        // elsewhere is unrelated to what was buffered. That reasoning does not
+        // hold for a probe: the anchor was snapshotted from this same timeline,
+        // and a trial ends by putting it back.
+        //
+        // This was a real, user-visible bug. `latency::measure_in_place` runs up
+        // to 21 trials against the LIVE emulator, so asking "how much input lag
+        // does this game have?" silently destroyed the user's rewind history
+        // twenty-one times over. PR #385 review caught the symptom and the fix
+        // there changed only `measure_in_place`'s FINAL restore — which left
+        // every trial's restore, the actual source, untouched. Fixed here at the
+        // one site all trials share.
+        nes.restore_quiet(&self.snapshot)
             .expect("probe anchor round-trips: it came from Nes::snapshot");
+
+        // A trial's frames are re-simulated: they never happened on the user's
+        // timeline. Letting them into the rewind ring would let the user rewind
+        // *into a measurement* — the same reason run-ahead suppresses capture
+        // around its hidden frames. Suppressed for the trial and restored to
+        // whatever the caller had, not to an assumed `true`, so a caller who had
+        // deliberately disabled capture does not get it switched back on.
+        //
+        // Held by a guard rather than restored at the end of the function, so an
+        // unwinding panic anywhere in the trial cannot leave capture switched off
+        // on a `Nes` the caller keeps using. That failure would be silent and
+        // durable: rewind would simply stop recording, with nothing to indicate
+        // why. (PR #392 review.)
+        let guard = CaptureGuard::suppress(nes);
+
+        // The perturbation, if any: applied to the freshly-restored anchor before
+        // frame 0, so it is the ONLY difference between this trial and a
+        // baseline one. That is what lets a divergence be attributed to it.
+        setup(guard.nes);
 
         let n = frames.min(self.budget.max_frames_per_trial);
         let mut samples = Vec::with_capacity(n as usize);
         // Generously sized so one frame always fits: an NTSC frame at 192 kHz is
-        // ~3,200 samples. Allocated once per trial, not per frame.
+        // ~3,200 samples. Allocated once per trial, not per frame, and reused as
+        // the drain target via `drain_audio_into`.
         let mut audio = vec![0.0f32; 8192];
         for f in 0..n {
             let (p1, p2) = input(f);
-            nes.set_buttons(0, p1);
-            nes.set_buttons(1, p2);
-            nes.run_frame();
+            guard.nes.set_buttons(0, p1);
+            guard.nes.set_buttons(1, p2);
+            guard.nes.run_frame();
             // Drain EVERY frame, whatever the observable. `Nes::restore` does
             // drop the blip's pending queue (verified by
             // `tests/restore_audio_pin.rs`), so trials cannot contaminate each
@@ -224,10 +260,25 @@ impl Probe {
             // safety depend on restore's audio semantics staying as they are,
             // and let a 120-frame framebuffer trial pile up ~88k samples for
             // nothing. Raised in review on #384.
-            audio.clear();
+            //
+            // v2.3.6: this was `audio.clear()` and nothing else — the buffer was
+            // emptied and never filled, so `sample` summed an EMPTY slice and
+            // `Observable::AudioEnergy` reported zero energy on every frame of
+            // every trial. Two trials therefore always agreed under that
+            // observable, which made the audio lens incapable of detecting any
+            // divergence: `latency`'s audio fallback silently never fired, and the
+            // RAM Atlas's audio lens would have reported EVERY address `Inert` —
+            // a confident wrong verdict, from a comment that said "drain" beside
+            // code that did not. Caught in review on PR #392.
+            // Samples actually written by this frame's drain. `audio` keeps its
+            // full capacity, so `sample` gets only the populated prefix — passing
+            // the whole buffer would mix this frame's samples with stale trailing
+            // zeros and make the energy depend on buffer length rather than audio.
+            let audio_len = guard.nes.drain_audio_into(&mut audio);
 
-            samples.push(sample(nes, observable, &audio));
+            samples.push(sample(guard.nes, observable, &audio[..audio_len]));
         }
+        // `guard` restores the caller's capture setting as it drops here.
         samples
     }
 
@@ -256,7 +307,37 @@ impl Probe {
             return None;
         }
         self.trials_used += 1;
-        Some(self.run_uncounted(nes, frames, observable, input))
+        Some(self.run_uncounted(nes, frames, observable, |_| {}, input))
+    }
+
+    /// Restore the anchor, apply `setup`, then run one **budgeted** trial.
+    ///
+    /// `setup` sees the emulator with the anchor freshly restored and before any
+    /// frame has run, so whatever it changes is the only difference between this
+    /// trial and a baseline [`Self::run`]. That is precisely what licenses
+    /// attributing a divergence to it — the RAM Atlas pokes one work-RAM byte
+    /// here and asks whether the screen then differs.
+    ///
+    /// Counts against the same trial budget as [`Self::run`]: a perturbation
+    /// sweep is the easiest way to spend an unbounded number of trials, so it
+    /// must not have a cheaper path to the emulator than anything else.
+    pub fn run_perturbed<F, S>(
+        &mut self,
+        nes: &mut Nes,
+        frames: u32,
+        observable: Observable,
+        setup: S,
+        input: F,
+    ) -> Option<Vec<u64>>
+    where
+        F: FnMut(u32) -> (Buttons, Buttons),
+        S: FnOnce(&mut Nes),
+    {
+        if self.trials_remaining() == 0 {
+            return None;
+        }
+        self.trials_used += 1;
+        Some(self.run_uncounted(nes, frames, observable, setup, input))
     }
 
     /// The first frame index at which two trials differ, or `None` if they agree
@@ -284,6 +365,46 @@ impl Probe {
     }
 }
 
+/// Suppresses rewind capture for the lifetime of a trial and restores the
+/// caller's setting on drop — including on an unwinding panic.
+///
+/// A plain save-and-restore around the trial body is correct on the happy path
+/// and wrong on the unwind: a panic inside `Nes::run_frame` or the perturbation
+/// closure would skip the restore and leave capture switched off on a `Nes` the
+/// caller keeps using. Rewind would then stop recording silently, with nothing
+/// to indicate why.
+///
+/// Worth contrasting with the `Drop` guard declined for
+/// `latency::measure_in_place` on PR #385, because the reasoning genuinely
+/// differs rather than being applied inconsistently. There, the guard would have
+/// had to restore a snapshot — a fallible operation — and `Drop` cannot return a
+/// `Result`, so it would have reintroduced the silent failure that review had
+/// just asked to remove. Here the restored value is a `bool` and the operation is
+/// infallible, so the guard has no downside at all. And the release profile's
+/// `panic = "abort"` argument does not rescue this case either: in a build that
+/// does unwind, this flag outlives the panic, whereas an advanced timeline in a
+/// dying process does not.
+pub(crate) struct CaptureGuard<'a> {
+    pub(crate) nes: &'a mut Nes,
+    restore_to: bool,
+}
+
+impl<'a> CaptureGuard<'a> {
+    pub(crate) const fn suppress(nes: &'a mut Nes) -> Self {
+        // The caller's setting, not an assumed `true`: someone who deliberately
+        // disabled capture must not have it switched back on by a probe.
+        let restore_to = nes.rewind_capture_enabled();
+        nes.set_rewind_capture(false);
+        Self { nes, restore_to }
+    }
+}
+
+impl Drop for CaptureGuard<'_> {
+    fn drop(&mut self) {
+        self.nes.set_rewind_capture(self.restore_to);
+    }
+}
+
 /// Reduce the emulator's current state to one comparable value.
 fn sample(nes: &Nes, observable: Observable, audio: &[f32]) -> u64 {
     match observable {
@@ -298,17 +419,25 @@ fn sample(nes: &Nes, observable: Observable, audio: &[f32]) -> u64 {
             h
         }
         Observable::Wram => fnv1a64(nes.wram()),
-        Observable::AudioEnergy => {
-            // Quantised sum of |amplitude|. Exact float equality across a
-            // resampled stream would compare noise; this asks the coarser
-            // question the fallback is for — "did this frame make a
-            // meaningfully different sound?".
-            let energy: f32 = audio.iter().map(|s| s.abs()).sum();
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let q = (energy * 64.0) as u64;
-            q
-        }
+        Observable::AudioEnergy => audio_energy(audio),
     }
+}
+
+/// Quantised sum of |amplitude| for one frame of drained audio.
+///
+/// Exact float equality across a resampled stream would compare noise; this asks
+/// the coarser question the fallback is for — "did this frame make a meaningfully
+/// different sound?".
+///
+/// Extracted from [`sample`] so its dependence on its input can be tested without
+/// a ROM that makes noise. That matters because the trial loop once handed this an
+/// always-empty slice, and a lens returning a constant is invisible to every test
+/// that only compares trials to each other: constants always agree. (PR #392.)
+fn audio_energy(audio: &[f32]) -> u64 {
+    let energy: f32 = audio.iter().map(|s| s.abs()).sum();
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let q = (energy * 64.0) as u64;
+    q
 }
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -555,6 +684,173 @@ mod tests {
             "a one-byte work-RAM difference did not reach the observable"
         );
         assert!(!Probe::agree(&a, &b));
+    }
+
+    /// A trial must not destroy the caller's rewind history.
+    ///
+    /// `latency::measure_in_place` runs up to 21 trials against the **live**
+    /// emulator, so a loud `restore` here means asking "how much input lag does
+    /// this game have?" wipes the user's rewind buffer twenty-one times over.
+    /// PR #385 review caught the symptom; the fix there changed only
+    /// `measure_in_place`'s final restore and left every trial's restore — the
+    /// actual source — untouched, so the bug survived a fix that claimed it.
+    ///
+    /// The ring must come back **exactly** as it was: neither cleared nor grown.
+    /// Growth is its own defect — a trial's frames are re-simulated and never
+    /// happened on the user's timeline, so rewinding into them would be rewinding
+    /// into a measurement.
+    ///
+    /// Mutation-checked in both directions: swapping `restore_quiet` back to
+    /// `restore` fails this at `rewind_len()` 0, and removing the
+    /// `set_rewind_capture(false)` guard fails it at 10 against 8.
+    #[test]
+    fn a_trial_preserves_the_callers_rewind_ring() {
+        let mut n = nes();
+        n.enable_rewind();
+        for _ in 0..4 {
+            n.run_frame();
+            n.rewind_capture();
+        }
+        let before = n.rewind_len();
+        assert!(before > 0, "fixture failed to buffer any rewind frames");
+
+        let mut probe = Probe::anchor(&n, Budget::default());
+        let _ = probe
+            .run(&mut n, 2, Observable::Wram, idle)
+            .expect("within budget");
+
+        assert_eq!(
+            n.rewind_len(),
+            before,
+            "running a probe trial cleared the caller's rewind ring; a trial \
+             restores its own anchor onto the same timeline and has no business \
+             invalidating history the user recorded"
+        );
+    }
+
+    /// An unwinding panic inside a trial must still restore the caller's rewind
+    /// capture setting.
+    ///
+    /// Without the RAII guard this leaves capture switched OFF on a `Nes` the
+    /// caller keeps using, and rewind then stops recording silently with nothing
+    /// to indicate why. Raised in review on PR #392.
+    ///
+    /// The panic is injected through the perturbation closure, which is the one
+    /// caller-supplied hook that runs inside the guarded region. Mutation-checked:
+    /// replacing the guard with a save-and-restore around the trial body fails
+    /// this test.
+    #[test]
+    fn a_panic_inside_a_trial_still_restores_rewind_capture() {
+        let mut n = nes();
+        assert!(
+            n.rewind_capture_enabled(),
+            "fixture starts with capture armed"
+        );
+
+        let mut probe = Probe::anchor(&n, Budget::default());
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = probe.run_perturbed(
+                &mut n,
+                4,
+                Observable::Wram,
+                |_| panic!("injected mid-trial failure"),
+                idle,
+            );
+        }));
+        assert!(result.is_err(), "the injected panic did not propagate");
+
+        assert!(
+            n.rewind_capture_enabled(),
+            "a panic inside a trial left rewind capture disabled; the caller's \
+             rewind would silently stop recording"
+        );
+    }
+
+    /// The trial loop must actually DRAIN audio each frame.
+    ///
+    /// This is the wiring test, and it is the one that was missing. The sibling
+    /// test below proves `audio_energy` responds to its input, but it calls that
+    /// function directly — so it passes with the drain removed, which is exactly
+    /// how the bug survived: core logic tested, plumbing not.
+    ///
+    /// Asserted through the emulator's own queue rather than through the samples:
+    /// this fixture is silent, so drained audio is all zeros and hashes identically
+    /// to an empty slice. What *is* observable is the residue. If the loop drains
+    /// every frame, the queue is empty when the trial ends; if it never drains, the
+    /// queue holds the whole trial's audio.
+    ///
+    /// Mutation-checked: removing the `drain_audio_into` call fails this with
+    /// thousands of samples left pending.
+    #[test]
+    fn a_trial_drains_audio_every_frame() {
+        let mut n = nes();
+        let mut probe = Probe::anchor(&n, Budget::default());
+        let _ = probe
+            .run(&mut n, 8, Observable::Framebuffer, idle)
+            .expect("within budget");
+
+        let residue = n.drain_audio().len();
+        assert_eq!(
+            residue, 0,
+            "a trial left {residue} audio samples pending; the per-frame drain \
+             did not run, so `Observable::AudioEnergy` would see an empty slice \
+             and report the same value on every frame of every trial"
+        );
+    }
+
+    /// The audio observable's value must depend on the samples it is given.
+    ///
+    /// Direct on `sample`, because that is where the empty-slice bug lived and it
+    /// can be proven without a ROM that makes noise.
+    #[test]
+    fn the_audio_observable_reflects_drained_samples() {
+        let empty = super::audio_energy(&[]);
+        let quiet = super::audio_energy(&[0.0, 0.0, 0.0]);
+        let loud = super::audio_energy(&[0.4, -0.4, 0.4]);
+        assert_ne!(
+            loud, empty,
+            "audio energy of a non-silent buffer matched an EMPTY buffer; the \
+             observable cannot distinguish audio from a missing drain"
+        );
+        assert_ne!(loud, quiet, "audio energy did not respond to amplitude");
+    }
+
+    /// A caller's rewind configuration must not change what a trial MEASURES.
+    ///
+    /// This is the question that decides whether the rewind fix above
+    /// invalidated earlier results. Before it, every trial ran with capture
+    /// enabled and the ring being cleared; after it, capture is suppressed and
+    /// the ring is left alone. If either had perturbed emulation, samples taken
+    /// under the two regimes would differ — and every measurement predating the
+    /// fix would need re-running.
+    ///
+    /// One anchor, two trials, rewind armed between them: the probe restores the
+    /// same emulation state both times, so any difference in the sample vectors
+    /// is attributable to the rewind machinery alone.
+    #[test]
+    fn a_trials_samples_are_independent_of_the_callers_rewind_state() {
+        let mut n = nes();
+        let mut probe = Probe::anchor(&n, Budget::default());
+
+        let without = probe
+            .run(&mut n, 8, Observable::Framebuffer, idle)
+            .expect("within budget");
+
+        n.enable_rewind();
+        for _ in 0..3 {
+            n.run_frame();
+            n.rewind_capture();
+        }
+        let with_ring = probe
+            .run(&mut n, 8, Observable::Framebuffer, idle)
+            .expect("within budget");
+
+        assert_eq!(
+            without, with_ring,
+            "a trial's samples changed when the caller armed rewind; the rewind \
+             machinery is perturbing emulation, and every probe result taken \
+             under a different rewind configuration would be suspect"
+        );
     }
 
     /// Replaying an anchor into an emulator running a different ROM must fail
