@@ -315,7 +315,12 @@ pub fn stats_for(series: &[u8]) -> AddressStats {
             s.decreases += 1;
         }
     }
-    s.distinct = u32::try_from(seen.iter().filter(|&&b| b).count()).unwrap_or(u32::MAX);
+    // `seen` is exactly 256 entries, so the count cannot exceed 256. `expect`
+    // rather than `unwrap_or(u32::MAX)`: the saturating form implied the value
+    // could plausibly be huge, which misdescribes a one-byte domain.
+    // (PR #392 review.)
+    s.distinct = u32::try_from(seen.iter().filter(|&&b| b).count())
+        .expect("at most 256 distinct byte values");
     s
 }
 

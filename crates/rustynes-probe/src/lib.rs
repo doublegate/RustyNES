@@ -229,13 +229,18 @@ impl Probe {
         // around its hidden frames. Suppressed for the trial and restored to
         // whatever the caller had, not to an assumed `true`, so a caller who had
         // deliberately disabled capture does not get it switched back on.
-        let capture_was = nes.rewind_capture_enabled();
-        nes.set_rewind_capture(false);
+        //
+        // Held by a guard rather than restored at the end of the function, so an
+        // unwinding panic anywhere in the trial cannot leave capture switched off
+        // on a `Nes` the caller keeps using. That failure would be silent and
+        // durable: rewind would simply stop recording, with nothing to indicate
+        // why. (PR #392 review.)
+        let guard = CaptureGuard::suppress(nes);
 
         // The perturbation, if any: applied to the freshly-restored anchor before
         // frame 0, so it is the ONLY difference between this trial and a
         // baseline one. That is what lets a divergence be attributed to it.
-        setup(nes);
+        setup(guard.nes);
 
         let n = frames.min(self.budget.max_frames_per_trial);
         let mut samples = Vec::with_capacity(n as usize);
@@ -244,9 +249,9 @@ impl Probe {
         let mut audio = vec![0.0f32; 8192];
         for f in 0..n {
             let (p1, p2) = input(f);
-            nes.set_buttons(0, p1);
-            nes.set_buttons(1, p2);
-            nes.run_frame();
+            guard.nes.set_buttons(0, p1);
+            guard.nes.set_buttons(1, p2);
+            guard.nes.run_frame();
             // Drain EVERY frame, whatever the observable. `Nes::restore` does
             // drop the blip's pending queue (verified by
             // `tests/restore_audio_pin.rs`), so trials cannot contaminate each
@@ -256,9 +261,9 @@ impl Probe {
             // nothing. Raised in review on #384.
             audio.clear();
 
-            samples.push(sample(nes, observable, &audio));
+            samples.push(sample(guard.nes, observable, &audio));
         }
-        nes.set_rewind_capture(capture_was);
+        // `guard` restores the caller's capture setting as it drops here.
         samples
     }
 
@@ -342,6 +347,46 @@ impl Probe {
     pub fn agree(a: &[u64], b: &[u64]) -> bool {
         let common = a.len().min(b.len());
         common > 0 && Self::first_divergence(a, b).is_none()
+    }
+}
+
+/// Suppresses rewind capture for the lifetime of a trial and restores the
+/// caller's setting on drop — including on an unwinding panic.
+///
+/// A plain save-and-restore around the trial body is correct on the happy path
+/// and wrong on the unwind: a panic inside `Nes::run_frame` or the perturbation
+/// closure would skip the restore and leave capture switched off on a `Nes` the
+/// caller keeps using. Rewind would then stop recording silently, with nothing
+/// to indicate why.
+///
+/// Worth contrasting with the `Drop` guard declined for
+/// `latency::measure_in_place` on PR #385, because the reasoning genuinely
+/// differs rather than being applied inconsistently. There, the guard would have
+/// had to restore a snapshot — a fallible operation — and `Drop` cannot return a
+/// `Result`, so it would have reintroduced the silent failure that review had
+/// just asked to remove. Here the restored value is a `bool` and the operation is
+/// infallible, so the guard has no downside at all. And the release profile's
+/// `panic = "abort"` argument does not rescue this case either: in a build that
+/// does unwind, this flag outlives the panic, whereas an advanced timeline in a
+/// dying process does not.
+struct CaptureGuard<'a> {
+    nes: &'a mut Nes,
+    restore_to: bool,
+}
+
+impl<'a> CaptureGuard<'a> {
+    const fn suppress(nes: &'a mut Nes) -> Self {
+        // The caller's setting, not an assumed `true`: someone who deliberately
+        // disabled capture must not have it switched back on by a probe.
+        let restore_to = nes.rewind_capture_enabled();
+        nes.set_rewind_capture(false);
+        Self { nes, restore_to }
+    }
+}
+
+impl Drop for CaptureGuard<'_> {
+    fn drop(&mut self) {
+        self.nes.set_rewind_capture(self.restore_to);
     }
 }
 
@@ -657,6 +702,44 @@ mod tests {
             "running a probe trial cleared the caller's rewind ring; a trial \
              restores its own anchor onto the same timeline and has no business \
              invalidating history the user recorded"
+        );
+    }
+
+    /// An unwinding panic inside a trial must still restore the caller's rewind
+    /// capture setting.
+    ///
+    /// Without the RAII guard this leaves capture switched OFF on a `Nes` the
+    /// caller keeps using, and rewind then stops recording silently with nothing
+    /// to indicate why. Raised in review on PR #392.
+    ///
+    /// The panic is injected through the perturbation closure, which is the one
+    /// caller-supplied hook that runs inside the guarded region. Mutation-checked:
+    /// replacing the guard with a save-and-restore around the trial body fails
+    /// this test.
+    #[test]
+    fn a_panic_inside_a_trial_still_restores_rewind_capture() {
+        let mut n = nes();
+        assert!(
+            n.rewind_capture_enabled(),
+            "fixture starts with capture armed"
+        );
+
+        let mut probe = Probe::anchor(&n, Budget::default());
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = probe.run_perturbed(
+                &mut n,
+                4,
+                Observable::Wram,
+                |_| panic!("injected mid-trial failure"),
+                idle,
+            );
+        }));
+        assert!(result.is_err(), "the injected panic did not propagate");
+
+        assert!(
+            n.rewind_capture_enabled(),
+            "a panic inside a trial left rewind capture disabled; the caller's \
+             rewind would silently stop recording"
         );
     }
 

@@ -270,31 +270,42 @@ fn summary(ui: &mut egui::Ui, state: &AtlasPanel) {
     ));
 }
 
-/// The per-address rows.
+/// The per-address rows, virtualized, with the detail pane below them.
+///
+/// `show_rows` renders only the visible slice. With "hide untouched" off this
+/// list is all [`WRAM_LEN`] addresses, and building two thousand selectable
+/// labels every frame is a cost the panel has no reason to pay. (PR #392 review.)
+///
+/// Virtualization requires a uniform row height, which is why the expanded
+/// evidence sits in a fixed pane BELOW the scroll area rather than inline under
+/// its row. That is the better arrangement anyway: the detail no longer shifts
+/// the rows around it when opened, and it stays visible while scrolling.
 fn table(ui: &mut egui::Ui, state: &mut AtlasPanel, can_run: bool) {
+    // Collected first, and owned: `Label` is `Copy`, so the row loop can mutate
+    // `state` without holding a borrow of `state.labels`.
+    let rows: Vec<Label> = state
+        .labels
+        .iter()
+        .filter(|l| !(state.hide_untouched && l.behaviour == Behaviour::Untouched))
+        .copied()
+        .collect();
+    if rows.is_empty() {
+        ui.weak("No addresses changed during the window.");
+        return;
+    }
+
+    let row_h = ui.text_style_height(&egui::TextStyle::Monospace);
     egui::ScrollArea::vertical()
-        .max_height(280.0)
-        .show(ui, |ui| {
-            // Collected first so the row loop can mutate `state.selected` and
-            // `state.verify_requested` without holding a borrow of `state.labels`.
-            let rows: Vec<Label> = state
-                .labels
-                .iter()
-                .filter(|l| !(state.hide_untouched && l.behaviour == Behaviour::Untouched))
-                .copied()
-                .collect();
-            if rows.is_empty() {
-                ui.weak("No addresses changed during the window.");
-                return;
-            }
-            for l in rows {
+        .max_height(240.0)
+        .show_rows(ui, row_h, rows.len(), |ui, range| {
+            for l in &rows[range] {
                 let selected = state.selected == Some(l.addr);
                 let text = format!(
                     "${:04X}  {:<15} {:<9} {}",
                     l.addr,
                     behaviour_name(l.behaviour),
                     liveness_name(l.liveness),
-                    short_evidence(&l),
+                    short_evidence(l),
                 );
                 if ui
                     .selectable_label(selected, egui::RichText::new(text).monospace())
@@ -302,11 +313,18 @@ fn table(ui: &mut egui::Ui, state: &mut AtlasPanel, can_run: bool) {
                 {
                     state.selected = if selected { None } else { Some(l.addr) };
                 }
-                if selected {
-                    detail(ui, state, &l, can_run);
-                }
             }
         });
+
+    // The detail pane. Resolved from `rows` rather than `state.labels` so a
+    // selection hidden by the current filter stops being shown, instead of
+    // lingering as evidence for a row the user can no longer see.
+    if let Some(addr) = state.selected
+        && let Some(l) = rows.iter().find(|l| l.addr == addr).copied()
+    {
+        ui.separator();
+        detail(ui, state, &l, can_run);
+    }
 }
 
 /// The expanded evidence for one address, plus its Verify button.
@@ -526,7 +544,16 @@ fn do_verify(state: &mut AtlasPanel, nes: &mut Nes, targets: &[u16]) {
             Liveness::Inert => inert += 1,
             Liveness::Untested => untested += 1,
         }
-        if let Some(l) = state.labels.iter_mut().find(|l| l.addr == addr) {
+        // Direct index, not a linear scan: `classify` emits one label per
+        // address over `0..WRAM_LEN` in order, so the index IS the address. The
+        // assertion keeps that from being a silent assumption — if the layout
+        // ever changes, this fails loudly instead of writing a verdict onto the
+        // wrong address. (PR #392 review.)
+        if let Some(l) = state.labels.get_mut(addr as usize) {
+            debug_assert_eq!(
+                l.addr, addr,
+                "atlas labels are no longer address-indexed; a verdict would                  have been recorded against the wrong address"
+            );
             l.liveness = liveness;
             l.divergence_frame = frame;
         }
