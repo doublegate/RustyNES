@@ -120,6 +120,19 @@ opposite verdicts — which is what proves `Inert` is a real verdict rather than
 stuck default. Every verdict the panel shows names the lens that produced it; one
 that did not would be over-claiming.
 
+### An un-perturbable address is `Untested`, not `Inert`
+
+An address outside work RAM is refused **before any trial is spent**. The first
+implementation skipped the write and let the two identical trials agree, reporting
+`Inert` for a byte it never touched — the exact failure mode this document warns
+against, produced by the function's own bounds check, and reachable because
+`verify_liveness` is public and takes a full `u16` (a CPU-space mirror such as
+`$0810` is a plausible caller input).
+
+Mirrors are deliberately **not** folded to their physical byte. Silently
+reinterpreting the caller's address as a different address would be its own
+confident guess; `Untested` says the honest thing.
+
 ### `Untested` is a third state, not an absence
 
 `Liveness::Untested` is distinct from `Inert` on purpose. "We did not look" and
@@ -167,7 +180,25 @@ perturbing a byte the game never reads is the one case guaranteed to be
 uninformative; spending trials there would crowd out the addresses that moved.
 
 Both actions snapshot, act, and `restore_quiet` — the live timeline and the
-user's rewind ring end exactly where they started. `restore_quiet` rather than
+user's rewind ring end exactly where they started. Both are held by a
+`TimelineGuard` that restores on drop, so a panic part-way through several hundred
+frames cannot leave the user mid-analysis. `observe` additionally suppresses rewind
+capture for its whole window, via the same guard a trial uses: those frames are
+rolled back, so letting them into the ring would allow rewinding *into an
+observation*.
+
+### Unavailable during locked sessions
+
+Both actions advance the live `Nes`, and Verify pokes work RAM. The panel is
+therefore gated on the same `writes_locked || hardcore_blocked` predicate
+`emu.write` and the debugger writeback path use — disabled under netplay, a TAS
+record or replay, and RetroAchievements hardcore. Under netplay or a movie it
+would diverge a timeline other peers are lockstepped to, and under hardcore it is
+the memory write that mode exists to forbid; `restore_quiet` puts the state back
+afterwards, but a netplay peer has already consumed the frames.
+
+The disabled state names *which* reason applies, so a user in a netplay session is
+not left staring at a dead button. `restore_quiet` rather than
 `restore` matters: the loud variant clears the rewind ring, which is right for a
 state loaded from elsewhere and wrong for a snapshot taken from this timeline
 moments earlier.
@@ -194,7 +225,13 @@ measurement.
   verification will use.
 - The address list is **virtualized** (`ScrollArea::show_rows`) — with untouched
   addresses shown it is 2048 rows, and building that many selectable labels per
-  frame is a cost with no purpose.
+  frame is a cost with no purpose. The filter is walked twice per frame (once to
+  count, once inside the closure) rather than cached: a cached filtered list would
+  be marginally faster and would add derived state needing invalidation in step
+  with two other fields, and stale derived state is a defect class this project
+  has produced repeatedly.
+- The batch button reports the number it will **actually** attempt, not the cap,
+  and disables at zero.
 - The evidence pane sits **below** the list rather than inline under its row.
   Virtualization requires a uniform row height, and it reads better anyway: the
   detail does not shift the rows around it when opened, and stays visible while

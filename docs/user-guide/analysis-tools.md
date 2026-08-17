@@ -99,6 +99,11 @@ usually what you want), *audio*, or *work RAM* (which reports almost everything
 live, because your poke *is* a work-RAM change — true and useless). Every verdict
 names the lens it used, because liveness depends on it.
 
+**Not available during netplay, TAS recording or playback, or RetroAchievements
+hardcore.** Both actions advance the emulator and Verify changes memory, so they
+would diverge a session other people are synchronised to, or make a memory write
+hardcore mode exists to forbid. The panel says which reason applies.
+
 **Why there is no "verify everything".** Verification costs two re-simulations per
 address, so all 2048 would be over four thousand runs and tens of minutes. The
 batch is capped at 16 and skips untouched addresses.

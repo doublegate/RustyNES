@@ -55,6 +55,14 @@ wrong in a way indistinguishable from right. Two failure modes drive the design:
 The measurement returns as soon as one observable yields agreeing answers, so the
 common case costs one observable's worth of trials rather than all three.
 
+> **The audio stage did not work until v2.3.6.** The trial loop emptied its audio
+> buffer and never filled it, so `AudioEnergy` summed an empty slice and reported
+> zero energy on every frame of every trial. Nothing failed, because a lens that
+> returns a constant never disagrees with itself — the fallback simply degraded to
+> work RAM without saying so. Fixed, and pinned by a wiring test that asserts
+> through the emulator's audio queue rather than through sample values, because a
+> silent fixture's drained audio hashes identically to an empty slice.
+
 ## Being honest is the hard part
 
 A latency number is **acted on** — it sets run-ahead depth, which costs real frame
