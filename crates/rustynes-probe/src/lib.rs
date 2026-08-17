@@ -58,6 +58,7 @@
 //! # }
 //! ```
 
+pub mod atlas;
 pub mod latency;
 
 use rustynes_core::{Buttons, Nes, ROM_HASH_TAG_LEN};
@@ -188,15 +189,17 @@ impl Probe {
     /// from, or if the anchor fails to restore. Both are caller errors that
     /// would otherwise yield a plausible, wrong answer, and this engine exists
     /// to produce answers people will act on.
-    fn run_uncounted<F>(
+    fn run_uncounted<F, S>(
         &self,
         nes: &mut Nes,
         frames: u32,
         observable: Observable,
+        setup: S,
         mut input: F,
     ) -> Vec<u64>
     where
         F: FnMut(u32) -> (Buttons, Buttons),
+        S: FnOnce(&mut Nes),
     {
         assert_eq!(
             nes.rom_hash_tag(),
@@ -228,6 +231,11 @@ impl Probe {
         // deliberately disabled capture does not get it switched back on.
         let capture_was = nes.rewind_capture_enabled();
         nes.set_rewind_capture(false);
+
+        // The perturbation, if any: applied to the freshly-restored anchor before
+        // frame 0, so it is the ONLY difference between this trial and a
+        // baseline one. That is what lets a divergence be attributed to it.
+        setup(nes);
 
         let n = frames.min(self.budget.max_frames_per_trial);
         let mut samples = Vec::with_capacity(n as usize);
@@ -279,7 +287,37 @@ impl Probe {
             return None;
         }
         self.trials_used += 1;
-        Some(self.run_uncounted(nes, frames, observable, input))
+        Some(self.run_uncounted(nes, frames, observable, |_| {}, input))
+    }
+
+    /// Restore the anchor, apply `setup`, then run one **budgeted** trial.
+    ///
+    /// `setup` sees the emulator with the anchor freshly restored and before any
+    /// frame has run, so whatever it changes is the only difference between this
+    /// trial and a baseline [`Self::run`]. That is precisely what licenses
+    /// attributing a divergence to it — the RAM Atlas pokes one work-RAM byte
+    /// here and asks whether the screen then differs.
+    ///
+    /// Counts against the same trial budget as [`Self::run`]: a perturbation
+    /// sweep is the easiest way to spend an unbounded number of trials, so it
+    /// must not have a cheaper path to the emulator than anything else.
+    pub fn run_perturbed<F, S>(
+        &mut self,
+        nes: &mut Nes,
+        frames: u32,
+        observable: Observable,
+        setup: S,
+        input: F,
+    ) -> Option<Vec<u64>>
+    where
+        F: FnMut(u32) -> (Buttons, Buttons),
+        S: FnOnce(&mut Nes),
+    {
+        if self.trials_remaining() == 0 {
+            return None;
+        }
+        self.trials_used += 1;
+        Some(self.run_uncounted(nes, frames, observable, setup, input))
     }
 
     /// The first frame index at which two trials differ, or `None` if they agree
