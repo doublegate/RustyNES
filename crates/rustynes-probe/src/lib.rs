@@ -245,7 +245,8 @@ impl Probe {
         let n = frames.min(self.budget.max_frames_per_trial);
         let mut samples = Vec::with_capacity(n as usize);
         // Generously sized so one frame always fits: an NTSC frame at 192 kHz is
-        // ~3,200 samples. Allocated once per trial, not per frame.
+        // ~3,200 samples. Allocated once per trial, not per frame, and reused as
+        // the drain target via `drain_audio_into`.
         let mut audio = vec![0.0f32; 8192];
         for f in 0..n {
             let (p1, p2) = input(f);
@@ -259,9 +260,23 @@ impl Probe {
             // safety depend on restore's audio semantics staying as they are,
             // and let a 120-frame framebuffer trial pile up ~88k samples for
             // nothing. Raised in review on #384.
-            audio.clear();
+            //
+            // v2.3.6: this was `audio.clear()` and nothing else — the buffer was
+            // emptied and never filled, so `sample` summed an EMPTY slice and
+            // `Observable::AudioEnergy` reported zero energy on every frame of
+            // every trial. Two trials therefore always agreed under that
+            // observable, which made the audio lens incapable of detecting any
+            // divergence: `latency`'s audio fallback silently never fired, and the
+            // RAM Atlas's audio lens would have reported EVERY address `Inert` —
+            // a confident wrong verdict, from a comment that said "drain" beside
+            // code that did not. Caught in review on PR #392.
+            // Samples actually written by this frame's drain. `audio` keeps its
+            // full capacity, so `sample` gets only the populated prefix — passing
+            // the whole buffer would mix this frame's samples with stale trailing
+            // zeros and make the energy depend on buffer length rather than audio.
+            let audio_len = guard.nes.drain_audio_into(&mut audio);
 
-            samples.push(sample(guard.nes, observable, &audio));
+            samples.push(sample(guard.nes, observable, &audio[..audio_len]));
         }
         // `guard` restores the caller's capture setting as it drops here.
         samples
@@ -404,17 +419,25 @@ fn sample(nes: &Nes, observable: Observable, audio: &[f32]) -> u64 {
             h
         }
         Observable::Wram => fnv1a64(nes.wram()),
-        Observable::AudioEnergy => {
-            // Quantised sum of |amplitude|. Exact float equality across a
-            // resampled stream would compare noise; this asks the coarser
-            // question the fallback is for — "did this frame make a
-            // meaningfully different sound?".
-            let energy: f32 = audio.iter().map(|s| s.abs()).sum();
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let q = (energy * 64.0) as u64;
-            q
-        }
+        Observable::AudioEnergy => audio_energy(audio),
     }
+}
+
+/// Quantised sum of |amplitude| for one frame of drained audio.
+///
+/// Exact float equality across a resampled stream would compare noise; this asks
+/// the coarser question the fallback is for — "did this frame make a meaningfully
+/// different sound?".
+///
+/// Extracted from [`sample`] so its dependence on its input can be tested without
+/// a ROM that makes noise. That matters because the trial loop once handed this an
+/// always-empty slice, and a lens returning a constant is invisible to every test
+/// that only compares trials to each other: constants always agree. (PR #392.)
+fn audio_energy(audio: &[f32]) -> u64 {
+    let energy: f32 = audio.iter().map(|s| s.abs()).sum();
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let q = (energy * 64.0) as u64;
+    q
 }
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -741,6 +764,55 @@ mod tests {
             "a panic inside a trial left rewind capture disabled; the caller's \
              rewind would silently stop recording"
         );
+    }
+
+    /// The trial loop must actually DRAIN audio each frame.
+    ///
+    /// This is the wiring test, and it is the one that was missing. The sibling
+    /// test below proves `audio_energy` responds to its input, but it calls that
+    /// function directly — so it passes with the drain removed, which is exactly
+    /// how the bug survived: core logic tested, plumbing not.
+    ///
+    /// Asserted through the emulator's own queue rather than through the samples:
+    /// this fixture is silent, so drained audio is all zeros and hashes identically
+    /// to an empty slice. What *is* observable is the residue. If the loop drains
+    /// every frame, the queue is empty when the trial ends; if it never drains, the
+    /// queue holds the whole trial's audio.
+    ///
+    /// Mutation-checked: removing the `drain_audio_into` call fails this with
+    /// thousands of samples left pending.
+    #[test]
+    fn a_trial_drains_audio_every_frame() {
+        let mut n = nes();
+        let mut probe = Probe::anchor(&n, Budget::default());
+        let _ = probe
+            .run(&mut n, 8, Observable::Framebuffer, idle)
+            .expect("within budget");
+
+        let residue = n.drain_audio().len();
+        assert_eq!(
+            residue, 0,
+            "a trial left {residue} audio samples pending; the per-frame drain \
+             did not run, so `Observable::AudioEnergy` would see an empty slice \
+             and report the same value on every frame of every trial"
+        );
+    }
+
+    /// The audio observable's value must depend on the samples it is given.
+    ///
+    /// Direct on `sample`, because that is where the empty-slice bug lived and it
+    /// can be proven without a ROM that makes noise.
+    #[test]
+    fn the_audio_observable_reflects_drained_samples() {
+        let empty = super::audio_energy(&[]);
+        let quiet = super::audio_energy(&[0.0, 0.0, 0.0]);
+        let loud = super::audio_energy(&[0.4, -0.4, 0.4]);
+        assert_ne!(
+            loud, empty,
+            "audio energy of a non-silent buffer matched an EMPTY buffer; the \
+             observable cannot distinguish audio from a missing drain"
+        );
+        assert_ne!(loud, quiet, "audio energy did not respond to amplitude");
     }
 
     /// A caller's rewind configuration must not change what a trial MEASURES.

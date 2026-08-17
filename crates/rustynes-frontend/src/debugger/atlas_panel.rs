@@ -522,10 +522,18 @@ const fn lens_name(o: Observable) -> &'static str {
 
 /// Run whichever action the body requested, against the live emulator.
 fn run_actions(state: &mut AtlasPanel, nes: Option<&mut Nes>) {
+    // Observe is checked FIRST and the verification flags are left in place if it
+    // wins, rather than being taken unconditionally. Taking them up front
+    // discarded a Verify click that landed in the same frame as an Observe — and
+    // silently, since the request simply vanished. It now survives to the next
+    // frame. (PR #392 review.)
+    //
+    // A fresh observation replaces every label, so a verification queued against
+    // the OLD labels must not then be applied to the new ones; the observe branch
+    // clears them explicitly for that reason, which is a different thing from
+    // dropping them by accident.
     let observe = std::mem::take(&mut state.observe_requested);
-    let single = state.verify_requested.take();
-    let batch = std::mem::take(&mut state.verify_batch_requested);
-    if !observe && single.is_none() && !batch {
+    if !observe && state.verify_requested.is_none() && !state.verify_batch_requested {
         return;
     }
     let Some(nes) = nes else {
@@ -537,10 +545,16 @@ fn run_actions(state: &mut AtlasPanel, nes: Option<&mut Nes>) {
         do_observe(state, nes);
         // An observation invalidates any prior verification: the labels are new
         // objects, and carrying old verdicts across would attach a verdict to a
-        // hypothesis it was not tested against.
+        // hypothesis it was not tested against. Dropped deliberately here, having
+        // been preserved above.
+        state.verify_requested = None;
+        state.verify_batch_requested = false;
         return;
     }
 
+    let single = state.verify_requested.take();
+    // Cleared whether or not it is used: the branch below is chosen by `single`.
+    state.verify_batch_requested = false;
     let targets: Vec<u16> = if let Some(addr) = single {
         vec![addr]
     } else {
