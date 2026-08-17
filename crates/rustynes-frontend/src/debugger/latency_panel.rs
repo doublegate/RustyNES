@@ -30,6 +30,8 @@
 use rustynes_core::Nes;
 use rustynes_probe::latency::{self, Confidence, LatencyConfig, LatencyReport};
 
+use crate::icons::{glyph, label as ic};
+
 /// Highest depth this panel will ever recommend.
 ///
 /// A game measuring higher than this is reported honestly and the recommendation
@@ -113,8 +115,17 @@ fn body(ui: &mut egui::Ui, state: &mut LatencyPanel, can_measure: bool, current:
     );
     ui.separator();
 
+    // `icons::label` with a `glyph::` constant, NOT a literal codepoint. The
+    // button read `"\u{23F1} Measure now"` — U+23F1 STOPWATCH, an emoji, which
+    // the project style rule forbids in code outright. `glyph::GAUGE` is a
+    // private-use-area codepoint from the bundled icon font, and it is the same
+    // glyph the Tools menu entry uses, so the button now matches the item that
+    // opens it. (PR #385 review.)
     if ui
-        .add_enabled(can_measure, egui::Button::new("\u{23F1} Measure now"))
+        .add_enabled(
+            can_measure,
+            egui::Button::new(ic(glyph::GAUGE, "Measure now")),
+        )
         .clicked()
     {
         state.measure_requested = true;
