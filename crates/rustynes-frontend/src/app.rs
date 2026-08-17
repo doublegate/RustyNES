@@ -7452,9 +7452,27 @@ impl App {
             let netplay_locked = self.netplay_is_active() || self.ra_hardcore_blocks();
             let mut guard = self.emu.lock();
             let movie_locked = guard.movie.is_playing() || guard.movie.is_recording();
-            guard.writes_locked = netplay_locked || movie_locked;
+            let locked = netplay_locked || movie_locked;
+            guard.writes_locked = locked;
             guard.raw_cheats = raw_cheats;
             guard.debug_pokes.extend(debug_pokes);
+            drop(guard);
+            self.publish_debugger_write_gate(locked);
+        }
+    }
+
+    /// v2.3.6 — mirror the combined write gate onto the debugger overlay.
+    ///
+    /// The RAM Atlas needs the same predicate `emu.write` uses: it advances the
+    /// live `Nes` and pokes work RAM, so under netplay or a TAS record/replay it
+    /// would diverge a timeline other peers are lockstepped to, and under
+    /// RA-hardcore it is precisely the write the mode exists to forbid. Passed the
+    /// already-computed value rather than re-deriving it, so the two consumers
+    /// cannot drift apart. (PR #392 review.)
+    #[cfg(not(target_arch = "wasm32"))]
+    const fn publish_debugger_write_gate(&mut self, locked: bool) {
+        if let Some(d) = self.debugger.as_mut() {
+            d.set_writes_locked(locked);
         }
     }
 
@@ -8281,9 +8299,18 @@ impl App {
                     // replay/record; wasm has no native netplay/RA-hardcore).
                     let debug_pokes = debugger.take_debug_pokes();
                     let mut guard = self.emu.lock();
-                    guard.writes_locked = guard.movie.is_playing() || guard.movie.is_recording();
+                    let locked = guard.movie.is_playing() || guard.movie.is_recording();
+                    guard.writes_locked = locked;
                     guard.raw_cheats = raw_cheats;
                     guard.debug_pokes.extend(debug_pokes);
+                    // v2.3.6 — the RAM Atlas needs the same gate: it advances the
+                    // live `Nes` and pokes work RAM, which would diverge a TAS
+                    // timeline being recorded or replayed. Mirrored here as well as
+                    // on the native path, because `post_produce_housekeeping` — the
+                    // native republish site — is `cfg(not(wasm32))`, so relying on
+                    // it alone would leave the wasm build ungated while every
+                    // native gate looked correct. (PR #392 review.)
+                    debugger.set_writes_locked(locked);
                 }
             }
         }

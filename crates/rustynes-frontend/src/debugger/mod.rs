@@ -686,6 +686,8 @@ pub struct DebuggerOverlay {
     show_latency: bool,
     /// v2.3.6 — RAM Atlas window visible.
     show_atlas: bool,
+    /// v2.3.6 — locked-session write gate, republished by `App` each frame.
+    writes_locked: bool,
     /// v2.3.2 "Lucid" — pixel provenance inspector.
     show_provenance: bool,
     /// "Input Display" panel open flag (v1.7.0 "Forge" beta.5, #51; née the
@@ -954,6 +956,7 @@ impl DebuggerOverlay {
             show_rom_info: false,
             show_latency: false,
             show_atlas: false,
+            writes_locked: false,
             show_provenance: false,
             show_input_display: false,
             #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
@@ -1114,6 +1117,18 @@ impl DebuggerOverlay {
     pub fn clear_tas_editor(&mut self) {
         self.tas_editor = None;
         self.show_tas = false;
+    }
+
+    /// v2.3.6 — republish the locked-session write gate from `App`.
+    ///
+    /// `true` under netplay, a TAS record/replay, or `RetroAchievements` hardcore —
+    /// the same condition `emu.write` and the debugger writeback path use. The
+    /// RAM Atlas reads it to disable both of its actions, since each advances the
+    /// live `Nes` and Verify additionally pokes work RAM. Republished per frame
+    /// rather than queried, mirroring `EmuCore::writes_locked`, so there is one
+    /// source of truth for the condition.
+    pub const fn set_writes_locked(&mut self, locked: bool) {
+        self.writes_locked = locked;
     }
 
     /// v2.3.6 — discard a Latency Oracle measurement bound to the previous ROM.
@@ -2119,6 +2134,11 @@ impl DebuggerOverlay {
     /// overlay is visible, so the menu bar can surface them directly. Panels
     /// that read `nes` (Cheats) no-op when `nes` is `None`.
     fn tool_panels(&mut self, ctx: &egui::Context, mut nes: Option<&mut Nes>, config: &mut Config) {
+        // The locked-session gate, republished by `App` each frame from the exact
+        // same condition `emu.write` uses. Read once here so every panel that
+        // mutates or advances the live `Nes` shares one predicate rather than
+        // re-deriving it. (PR #392 review.)
+        let atlas_writes_locked = self.writes_locked;
         // v2.3.0 "Datum II" — a detached render pass paints only its one target
         // panel (via `detachable_window`, which self-filters); the non-detachable
         // tool panels + the RetroAchievements HUD below render only in the
@@ -2161,6 +2181,16 @@ impl DebuggerOverlay {
         // v2.3.6 workstream C — the RAM Atlas. Needs `&mut Nes`: it observes a
         // window of frames and perturbs candidate addresses, restoring the live
         // timeline after each action. Reads no config and writes none.
+        //
+        // Gated on the SAME locked-session predicate `emu.write` and the debugger
+        // writeback path use (`writes_locked || hardcore_blocked`). Both of its
+        // actions advance the live `Nes`, and Verify additionally pokes work RAM —
+        // under netplay or a TAS record/replay that diverges the timeline every
+        // peer is lockstepped to, and under RetroAchievements hardcore it is a
+        // memory write the mode exists to forbid. `restore_quiet` puts the state
+        // back, but a netplay peer has already consumed the frames. Checking only
+        // `nes.is_some()` bypassed a gate that exists precisely for this.
+        // (PR #392 review.)
         if self.show_atlas {
             atlas_panel::show(
                 ctx,
@@ -2168,6 +2198,7 @@ impl DebuggerOverlay {
                 &mut self.show_atlas,
                 &mut self.atlas_ui,
                 nes.as_deref_mut(),
+                atlas_writes_locked,
             );
         }
         // v2.1.6 "Expansion Audio" B7 — the Audio Mixer. It reads `config` (the

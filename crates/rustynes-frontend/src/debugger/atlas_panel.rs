@@ -59,6 +59,15 @@ const OBSERVE_FRAMES: u32 = 180;
 /// rather than "dead".
 const VERIFY_FRAMES: u32 = 8;
 
+/// Trials one address costs to verify: a baseline plus a perturbed run.
+///
+/// Named because it appears in three places that must agree — the hover text
+/// quoting the cost, the `Budget` sizing in `do_verify`, and
+/// `atlas::verify_liveness`'s own up-front affordability check. A bare `2` in the
+/// budget with a stale number in the tooltip is the drift this prevents.
+/// (PR #392 review.)
+const TRIALS_PER_ADDRESS: usize = 2;
+
 /// Addresses one batch verification will attempt.
 ///
 /// Sixteen, so a batch is 32 trials — a fraction of a second of emulation, and
@@ -130,8 +139,15 @@ pub fn show(
     open: &mut bool,
     state: &mut AtlasPanel,
     nes: Option<&mut Nes>,
+    writes_locked: bool,
 ) {
-    let can_run = nes.is_some();
+    // Both actions advance the live `Nes`, and Verify pokes work RAM. Under
+    // netplay or a TAS record/replay that diverges a timeline other peers are
+    // lockstepped to; under RetroAchievements hardcore it is the write the mode
+    // exists to forbid. `restore_quiet` puts the state back, but a netplay peer
+    // has already consumed the frames. Gated on the same predicate `emu.write`
+    // uses rather than on `nes.is_some()` alone. (PR #392 review.)
+    let can_run = nes.is_some() && !writes_locked;
     super::detachable_window(
         ctx,
         detached,
@@ -142,7 +158,7 @@ pub fn show(
             ..Default::default()
         },
         open,
-        |ui| body(ui, state, can_run),
+        |ui| body(ui, state, can_run, writes_locked),
     );
     // Actions run AFTER the render — `nes` is free here, not captured by any
     // closure. Same shape as the Latency Oracle and `BasicBot`.
@@ -150,7 +166,7 @@ pub fn show(
 }
 
 /// The panel body, shared by the docked window and the detached OS viewport.
-fn body(ui: &mut egui::Ui, state: &mut AtlasPanel, can_run: bool) {
+fn body(ui: &mut egui::Ui, state: &mut AtlasPanel, can_run: bool, writes_locked: bool) {
     ui.label("Classifies every byte of the 2 KiB work RAM by how it behaves, then");
     ui.label("verifies a candidate by changing it and re-simulating.");
     ui.separator();
@@ -186,7 +202,17 @@ fn body(ui: &mut egui::Ui, state: &mut AtlasPanel, can_run: bool) {
     });
 
     if !can_run {
-        ui.weak("Load a ROM to observe.");
+        // Distinguish the two reasons, or a user in a netplay session sees a dead
+        // button and concludes the tool is broken.
+        if writes_locked {
+            ui.weak(
+                "Unavailable during netplay, TAS recording or playback, and \
+                 RetroAchievements hardcore: this tool advances the emulator and \
+                 pokes memory.",
+            );
+        } else {
+            ui.weak("Load a ROM to observe.");
+        }
     }
 
     if state.labels.is_empty() {
@@ -209,10 +235,10 @@ fn body(ui: &mut egui::Ui, state: &mut AtlasPanel, can_run: bool) {
                 egui::Button::new(ic(glyph::GAUGE, &format!("Verify next {VERIFY_BATCH}"))),
             )
             .on_hover_text(format!(
-                "Perturbs up to {VERIFY_BATCH} not-yet-tested addresses, {} trials \
-                 each. A full sweep of all {WRAM_LEN} addresses is deliberately not \
-                 offered: it would be over 4,000 trials.",
-                2
+                "Perturbs up to {VERIFY_BATCH} not-yet-tested addresses, \
+                 {TRIALS_PER_ADDRESS} trials each. A full sweep of all {WRAM_LEN} \
+                 addresses is deliberately not offered: it would be {} trials.",
+                WRAM_LEN * TRIALS_PER_ADDRESS
             ))
             .clicked()
         {
@@ -500,18 +526,60 @@ fn run_actions(state: &mut AtlasPanel, nes: Option<&mut Nes>) {
     do_verify(state, nes, &targets);
 }
 
+/// Restores a snapshot into the live emulator on drop, including on an unwind.
+///
+/// Both actions here advance the live `Nes` by hundreds of frames and put it back
+/// afterwards. A plain restore at the end of the function is correct on the happy
+/// path and wrong on a panic: the user would be left mid-analysis, several hundred
+/// frames from where they were, with no indication why. `Drop` cannot return a
+/// `Result`, so the unwind path is best-effort — but best-effort recovery beats
+/// none, and the success path still checks. (PR #392 review.)
+struct TimelineGuard<'a> {
+    nes: &'a mut Nes,
+    snapshot: Vec<u8>,
+    restored: bool,
+}
+
+impl<'a> TimelineGuard<'a> {
+    fn capture(nes: &'a mut Nes) -> Self {
+        let snapshot = nes.snapshot();
+        Self {
+            nes,
+            snapshot,
+            restored: false,
+        }
+    }
+
+    /// Restore on the success path, where a failure can still be surfaced.
+    fn restore(&mut self) {
+        self.nes
+            .restore_quiet(&self.snapshot)
+            .expect("a snapshot taken from this instance restores to it");
+        self.restored = true;
+    }
+}
+
+impl Drop for TimelineGuard<'_> {
+    fn drop(&mut self) {
+        if !self.restored {
+            // Unwind path only. Cannot report, so it must not panic here either —
+            // a panic during unwinding aborts.
+            let _ = self.nes.restore_quiet(&self.snapshot);
+        }
+    }
+}
+
 /// Observe and classify, restoring the live timeline afterwards.
 fn do_observe(state: &mut AtlasPanel, nes: &mut Nes) {
-    let restore_point = nes.snapshot();
+    let mut guard = TimelineGuard::capture(nes);
     // Idle input: an atlas taken while a button is held describes a different
     // situation, which is a useful thing to offer later but a confusing default.
-    let obs: Observation = atlas::observe(nes, OBSERVE_FRAMES, |_| {
+    let obs: Observation = atlas::observe(guard.nes, OBSERVE_FRAMES, |_| {
         (Buttons::empty(), Buttons::empty())
     });
     // `restore_quiet`, not `restore`: this is the same timeline, snapshotted
     // moments ago on this instance, so the rewind ring must survive.
-    nes.restore_quiet(&restore_point)
-        .expect("a snapshot taken from this instance restores to it");
+    guard.restore();
 
     state.labels = atlas::classify(&obs);
     state.frames = obs.frames();
@@ -524,21 +592,21 @@ fn do_observe(state: &mut AtlasPanel, nes: &mut Nes) {
 
 /// Verify the given addresses, restoring the live timeline afterwards.
 fn do_verify(state: &mut AtlasPanel, nes: &mut Nes, targets: &[u16]) {
-    let restore_point = nes.snapshot();
+    let mut guard = TimelineGuard::capture(nes);
     // Two trials per address, plus nothing else: sized exactly, so a budget that
     // runs out is a bug in this arithmetic rather than a silent truncation.
     let budget = Budget {
         max_frames_per_trial: VERIFY_FRAMES,
-        max_trials: u32::try_from(targets.len() * 2).unwrap_or(u32::MAX),
+        max_trials: u32::try_from(targets.len() * TRIALS_PER_ADDRESS).unwrap_or(u32::MAX),
     };
-    let mut probe = Probe::anchor(&*nes, budget);
+    let mut probe = Probe::anchor(&*guard.nes, budget);
 
     let mut live = 0usize;
     let mut inert = 0usize;
     let mut untested = 0usize;
     for &addr in targets {
         let (liveness, frame) =
-            atlas::verify_liveness(&mut probe, nes, addr, VERIFY_FRAMES, state.lens);
+            atlas::verify_liveness(&mut probe, guard.nes, addr, VERIFY_FRAMES, state.lens);
         match liveness {
             Liveness::Live => live += 1,
             Liveness::Inert => inert += 1,
@@ -562,8 +630,7 @@ fn do_verify(state: &mut AtlasPanel, nes: &mut Nes, targets: &[u16]) {
         }
     }
 
-    nes.restore_quiet(&restore_point)
-        .expect("a snapshot taken from this instance restores to it");
+    guard.restore();
 
     // The untested count is reported rather than folded into "inert", so a
     // budget shortfall is visible instead of looking like a finding.

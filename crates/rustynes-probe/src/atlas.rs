@@ -429,6 +429,23 @@ pub fn verify_liveness(
 ) -> (Liveness, Option<u32>) {
     let idle = |_: u32| (Buttons::empty(), Buttons::empty());
 
+    // An address outside work RAM cannot be perturbed, and the old code silently
+    // skipped the write and then let the two identical trials agree — reporting
+    // `Inert` for an address it never touched. That is the exact failure mode the
+    // module docs above spend three paragraphs warning against, produced by this
+    // function's own bounds check. `Untested` is the honest answer, and refusing
+    // before the budget is spent also stops two trials going on a no-op.
+    //
+    // The case is reachable: this is public and takes a full `u16`, so a caller
+    // passing a CPU-space mirror such as `$0810` is entirely plausible. Folding
+    // mirrors to their physical byte is deliberately NOT done here — silently
+    // reinterpreting the caller's address would be its own confident guess.
+    // (PR #392 review.)
+    let a = addr as usize;
+    if a >= WRAM_LEN {
+        return (Liveness::Untested, None);
+    }
+
     // Both trials must be funded, or neither is meaningful. Checking up front
     // avoids spending a baseline trial that the perturbed run then cannot match.
     if probe.trials_remaining() < 2 {
@@ -443,11 +460,9 @@ pub fn verify_liveness(
         frames,
         observable,
         |n| {
-            let a = addr as usize;
-            if a < WRAM_LEN {
-                let current = n.wram()[a];
-                n.wram_mut()[a] = perturbed_value(current);
-            }
+            // `a` is in range: checked above, before any trial was spent.
+            let current = n.wram()[a];
+            n.wram_mut()[a] = perturbed_value(current);
         },
         idle,
     ) else {
@@ -785,6 +800,31 @@ mod tests {
         assert_eq!(
             frame, None,
             "an inert verdict must carry no divergence frame"
+        );
+    }
+
+    /// An address outside work RAM must be `Untested`, never `Inert`.
+    ///
+    /// The old code skipped the perturbation for such an address and then let the
+    /// two identical trials agree, reporting `Inert` — a confident verdict for a
+    /// byte it never touched, which is precisely what this module documents itself
+    /// as never doing. `$0810` is a CPU-space mirror of `$0010` and a plausible
+    /// caller input. Raised in review on PR #392.
+    #[test]
+    fn an_address_outside_work_ram_is_untested_not_inert() {
+        let mut n = nes();
+        let mut probe = Probe::anchor(&n, Budget::default());
+        let (liveness, frame) = verify_liveness(&mut probe, &mut n, 0x0810, 4, Observable::Wram);
+        assert_eq!(
+            liveness,
+            Liveness::Untested,
+            "an un-perturbable address was given a verdict"
+        );
+        assert_eq!(frame, None);
+        assert_eq!(
+            probe.trials_used(),
+            0,
+            "two trials were spent on an address that could not be perturbed"
         );
     }
 
