@@ -121,6 +121,7 @@ mod expr;
 mod game_db_panel;
 // v2.2.0 "Capstone" — read-only ROM Info browser (per-game DB + No-Intro CRC +
 // decoded cartridge header for the loaded ROM).
+mod atlas_panel;
 mod latency_panel;
 mod rom_info_panel;
 // v1.5.0 "Lens" Workstream A4 — HD-pack per-pixel inspector (native + hd-pack).
@@ -194,6 +195,8 @@ pub enum ToolPanel {
     /// v2.3.6 — the Latency Oracle: measures the game's own input lag and
     /// recommends (never applies) a run-ahead depth.
     LatencyOracle,
+    /// v2.3.6 — the RAM Atlas: what each byte of work RAM is for.
+    RamAtlas,
     /// Live "Input Display" panel — the consolidated controller + expansion-
     /// device HUD (v1.7.0 "Forge" beta.5, #51; the v1.5.0 "Lens" Workstream A1
     /// Input Miniatures overlay absorbed the former standalone Input Display).
@@ -552,6 +555,7 @@ pub fn detached_window_meta(id: &'static str) -> (&'static str, (u32, u32)) {
         "game_db" => ("Game Database", (560, 480)),
         "rom_info" => ("ROM Info", (520, 520)),
         "latency_oracle" => ("Latency Oracle", (380, 420)),
+        "ram_atlas" => ("RAM Atlas", (560, 620)),
         "provenance" => ("Pixel Provenance", (520, 620)),
         "perf" => ("Performance", (560, 440)),
         "documentation" => ("Documentation", (780, 560)),
@@ -680,6 +684,8 @@ pub struct DebuggerOverlay {
     show_rom_info: bool,
     /// v2.3.6 — Latency Oracle panel visible.
     show_latency: bool,
+    /// v2.3.6 — RAM Atlas window visible.
+    show_atlas: bool,
     /// v2.3.2 "Lucid" — pixel provenance inspector.
     show_provenance: bool,
     /// "Input Display" panel open flag (v1.7.0 "Forge" beta.5, #51; née the
@@ -768,6 +774,8 @@ pub struct DebuggerOverlay {
     /// Read-only ROM Info panel state (v2.2.0 "Capstone").
     rom_info_ui: rom_info_panel::RomInfoPanelState,
     latency_ui: latency_panel::LatencyPanel,
+    /// v2.3.6 — RAM Atlas panel state.
+    atlas_ui: atlas_panel::AtlasPanel,
     /// Pixel provenance inspector state (v2.3.2 "Lucid").
     provenance_ui: provenance_panel::ProvenancePanelState,
     /// CRC32 of the currently-loaded ROM (PRG+CHR, header-excluded), pushed by
@@ -945,6 +953,7 @@ impl DebuggerOverlay {
             show_game_db: false,
             show_rom_info: false,
             show_latency: false,
+            show_atlas: false,
             show_provenance: false,
             show_input_display: false,
             #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
@@ -984,6 +993,7 @@ impl DebuggerOverlay {
             game_db_ui: game_db_panel::GameDbPanelState::default(),
             rom_info_ui: rom_info_panel::RomInfoPanelState,
             latency_ui: latency_panel::LatencyPanel::default(),
+            atlas_ui: atlas_panel::AtlasPanel::default(),
             provenance_ui: provenance_panel::ProvenancePanelState::default(),
             rom_crc: None,
             rom_crc_full: None,
@@ -1114,6 +1124,18 @@ impl DebuggerOverlay {
     /// button still live. (PR #385 review.)
     pub fn clear_latency_report(&mut self) {
         self.latency_ui.clear();
+    }
+
+    /// v2.3.6 — discard every analysis result bound to the previous ROM.
+    ///
+    /// One hook rather than one call per panel, deliberately. The Latency Oracle
+    /// shipped without a clear and needed a review to catch it (PR #385), and the
+    /// Pixel Provenance panel had the same defect in a different form. A single
+    /// entry point means the next ROM-bound analysis panel is one line away from
+    /// being correct instead of one omission away from being wrong.
+    pub fn clear_rom_bound_analysis(&mut self) {
+        self.clear_latency_report();
+        self.atlas_ui.clear();
     }
 
     /// Returns `true` when the overlay is currently visible. The render
@@ -1489,6 +1511,7 @@ impl DebuggerOverlay {
             ToolPanel::GameDb => self.show_game_db = true,
             ToolPanel::RomInfo => self.show_rom_info = true,
             ToolPanel::LatencyOracle => self.show_latency = true,
+            ToolPanel::RamAtlas => self.show_atlas = true,
             ToolPanel::PixelProvenance => self.show_provenance = true,
             ToolPanel::InputDisplay => self.show_input_display = true,
             ToolPanel::Replay => self.show_replay = true,
@@ -1774,6 +1797,7 @@ impl DebuggerOverlay {
             || self.show_rom_info
             || self.show_provenance
             || self.show_latency
+            || self.show_atlas
     }
 
     /// Whether the **Pixel Provenance** inspector is open.
@@ -2133,6 +2157,18 @@ impl DebuggerOverlay {
             if let Some(depth) = self.latency_ui.take_pending_apply() {
                 config.input.run_ahead = depth;
             }
+        }
+        // v2.3.6 workstream C — the RAM Atlas. Needs `&mut Nes`: it observes a
+        // window of frames and perturbs candidate addresses, restoring the live
+        // timeline after each action. Reads no config and writes none.
+        if self.show_atlas {
+            atlas_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_atlas,
+                &mut self.atlas_ui,
+                nes.as_deref_mut(),
+            );
         }
         // v2.1.6 "Expansion Audio" B7 — the Audio Mixer. It reads `config` (the
         // persisted mix) and the optional `nes` (read-only DAC taps for the

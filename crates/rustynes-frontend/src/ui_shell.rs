@@ -1394,6 +1394,18 @@ impl UiShell {
                             out.action = Some(MenuAction::OpenPanel(ToolPanel::PixelProvenance));
                             ui.close();
                         }
+                        // v2.3.6 workstream C — the RAM Atlas: classify every
+                        // byte of work RAM by behaviour, then verify a candidate
+                        // by perturbing it. Sits with the other output-only
+                        // analysis tools; needs a loaded ROM to have any memory
+                        // to describe.
+                        if ui
+                            .add_enabled(rom, egui::Button::new(ic(glyph::MEMORY, "RAM Atlas")))
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::OpenPanel(ToolPanel::RamAtlas));
+                            ui.close();
+                        }
                         // v1.8.9 "Backlog" — BasicBot input-search control panel.
                         if ui
                             .button(ic(glyph::WAND_MAGIC_SPARKLES, "BasicBot"))
