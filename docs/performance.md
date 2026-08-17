@@ -3597,6 +3597,104 @@ Prediction recorded and wrong, for the record: this campaign expected the
 shorter, rendering-heavy `flowing_palette` frame to show the *larger* relative
 win, since the APU should be a bigger fraction of it. It showed essentially none.
 
+### v2.3.6 D1 + D6 — DMC-idle fast path and length-reload early-out (decision: REJECTED, reverted)
+
+**The changes**, measured together as one adoption unit because each alone was
+expected to be sub-threshold and both target the same per-cycle bookkeeping.
+
+**D1** — `Apu::dmc_tick_end` runs on every CPU cycle at 1.789 MHz and was the
+largest untouched component of the APU's 18.7% of frame time, at roughly 23% of
+per-cycle cost. Reading it against what each block requires, exactly two things
+in it are unconditional hardware: the byte-timer clock and the get/put parity
+flip. Everything else — the implicit-abort kill, the consume-edge transfer, the
+load-delay countdown, the re-enable period block, the edge-arm suppression, the
+reload arm, the `cannot_run` decrement, the delayed-`$4015` countdown — is DMA
+corner-case bookkeeping gated on some piece of DMC state being non-idle, and on a
+cartridge not running a DMC sample all of it is inert on every cycle. D1 added an
+idle guard between the byte-timer clock and the rest, plus a dedupe of two
+identical `bits_remaining()` reads.
+
+Deliberately **not** the maintained summary flag the v2.3.4 workstream note
+proposed. A cached flag would need updating at each of the ~30 mutation sites in
+`apu.rs` and `dmc.rs`, and one missed site is a silent accuracy regression in the
+least testable corner of the emulator. The guard instead reads the same fields
+the skipped blocks branch on, each term the negation of the condition that makes
+one block act, so byte-identity is a structural property rather than a claim.
+
+**D6** — `LengthCounter::reload` is called four times per CPU cycle. With nothing
+pending it reduced to one predictable not-taken branch plus an *unconditional
+store* of `new_halt` over an already-identical `halt`: four redundant stores per
+cycle, each writing a byte back onto itself in a different channel's cache line.
+D6 replaced that store with a compare.
+
+**Adjudicated with `scripts/perf/ab_check.sh --base origin/main`, two independent
+runs.** Host qualified first: the self-hosted PR-review runner idle, load 2.06
+across 20 cores, no cargo or rustc running.
+
+| workload | run 1 candidate | run 1 control | run 2 candidate | run 2 control |
+|---|---:|---:|---:|---:|
+| `nes_run_frame_nestest` | −0.24% (p = 0.50) | **−4.27%** | +0.99% | +1.37% |
+| `nes_run_frame_flowing_palette` | −2.39% | **−3.37%** | +1.12% | +0.53% |
+| `nes_run_frame_nestest_fast` (shipped default) | −2.91% | **−3.72%** | +1.26% | +1.13% |
+| `nes_run_frame_flowing_palette_fast` (shipped default) | −3.81% | **−3.73%** | +0.58% | +0.91% |
+
+All entries p = 0.00 unless noted. **Run 1's order-bias control failed on every
+workload** at −3.4% to −4.3%, so its candidate column is not interpretable — the
+apparent −3.81% on `flowing_palette_fast` is entirely accounted for by a −3.73%
+drift measured with the reference benched against *itself*.
+
+The mechanism is visible in the run-1 log and is worth recording, because it will
+recur: the reference is benchmarked **immediately after a 44.9 s fat-LTO compile
+across all cores**, so it measures on a hot, frequency-throttled machine while
+the candidate runs once thermals have settled. Run 2 removed the confound — the
+reference build was cached, and `AB_MEASUREMENT_TIME=25` widened the window —
+which took the control's drift from ~4% to ~1%.
+
+**Rejected**, on grounds that are independent of each other:
+
+1. **The sign flips between independent runs**, negative throughout run 1 and
+   positive throughout run 2. Mixed signs across runs mean the effect is not
+   reproducible at all.
+2. **Neither order-bias control was clean**, and run 1's failed outright.
+3. **In the well-conditioned run the candidate tracks the drift.** Run 2's
+   candidate and control agree to within a few tenths of a percent on every
+   workload; subtract the drift and the effect is indistinguishable from zero.
+
+**Why a null is the expected result here, in hindsight.** Release builds use
+`lto = "fat"` with `codegen-units = 1`, so `dmc_tick_end` is already inlined into
+`cpu_clock` and LLVM can common-subexpression the field loads across the blocks
+the guard skips. The branches D1 elides were always-not-taken and therefore
+perfectly predicted, so trading ~9 predictable not-taken branches for 9 loads, an
+OR-reduction and one branch is arithmetically a wash. D6 is the same shape at
+smaller scale: a not-taken branch plus a store-to-same-value, against a load and
+a compare. **"Inert on almost every cycle" predicts a large win only if the work
+is actually executed; under fat LTO with perfect prediction it largely is not.**
+That reasoning applies equally to D2, D4 and D5 and should temper their
+expectations rather than being rediscovered three more times.
+
+**Reverted rather than kept as a simplification.** D1 adds a 40-line guard
+predicate whose correctness argument is a nine-term case analysis, sited in the
+DMA timing that the `$500`/`$520`/`$540` implicit-abort battery exists to pin.
+Carrying that in the least testable part of the emulator for an effect
+indistinguishable from zero is a bad trade — the same call v2.2.3 P3 and v2.3.6
+D3 made.
+
+**What this does not say.** "Not measurable here" is not "no difference". This
+host resolves roughly ±1-2%, so a sub-1% effect is invisible to it. The honest
+claim is that D1 and D6 have no *demonstrated* benefit. Byte-identity, separately,
+**was** established and is not in question: `dmc_dma` 1/1, `dma_timing_pin` 11/11,
+the APU unit suite 143/143, AccuracyCoin 141/141 on the authoritative RAM decoder,
+nestest 0-diff, and a full `--features test-roms` sweep across 127 test binaries.
+
+**Remaining from the v2.3.4 Workstream C list.** **D5 was declined without
+measurement**, on inspection rather than on a benchmark: `add_sample` cannot know
+whether expansion audio is live, so keying the finite-check on the caller's
+`external` argument replaces one per-cycle branch with another — a check-for-check
+trade, not an elimination. **D2** (`FrameCounter::tick` as a countdown rather than
+a 6-arm match) and **D4** (`Pulse::muted()` caching) remain unmeasured; note D4
+would add derived state to `Pulse`, incurring the same `snapshot_schema_audit`
+registration and recompute-on-restore obligations that counted against D3.
+
 ### v2.3.6 D3 — caching the C1 fast-path gain predicate (decision: REJECTED, reverted)
 
 **The change.** v2.3.5's C1 fast path tests
@@ -3642,12 +3740,11 @@ instrument's resolution on this host is roughly ±1-2%, so a sub-1% effect is
 invisible to it. The honest claim is that D3 has no *demonstrated* benefit, and
 the project does not carry core state on undemonstrated benefit.
 
-**Still open from the v2.3.4 Workstream C list**, unmeasured: D1 (gating the DMC
-end-of-cycle pair, ~23% of per-cycle cost and never optimized — the largest
-remaining target, and the hardest byte-identity proof), D2 (`FrameCounter::tick`
-as a countdown rather than a 6-arm match per cycle), D4 (`Pulse::muted()`
-caching), D5 (hoisting `add_sample`'s finite-check), D6 (gating the four
-unconditional `length.reload()` calls).
+**Still open from the v2.3.4 Workstream C list** at the time D3 was written: D1,
+D2, D4, D5, D6. **Superseded** — D1 and D6 were subsequently measured and
+rejected, and D5 declined on inspection; see the §D1 + D6 section above for the
+numbers and for why a null was the expected result under fat LTO. D2 and D4
+remain unmeasured.
 
 ## Things explicitly *not* in scope for v1.0
 
