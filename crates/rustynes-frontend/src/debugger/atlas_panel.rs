@@ -229,10 +229,18 @@ fn body(ui: &mut egui::Ui, state: &mut AtlasPanel, can_run: bool, writes_locked:
 
     ui.horizontal(|ui| {
         ui.checkbox(&mut state.hide_untouched, "Hide untouched");
+        // The real count, not the cap: "Verify next 16" when three remain
+        // overstates what the button will do. (PR #392 review.)
+        let pending = state
+            .labels
+            .iter()
+            .filter(|l| l.liveness == Liveness::Untested && l.behaviour != Behaviour::Untouched)
+            .count()
+            .min(VERIFY_BATCH);
         if ui
             .add_enabled(
-                can_run,
-                egui::Button::new(ic(glyph::GAUGE, &format!("Verify next {VERIFY_BATCH}"))),
+                can_run && pending > 0,
+                egui::Button::new(ic(glyph::GAUGE, &format!("Verify next {pending}"))),
             )
             .on_hover_text(format!(
                 "Perturbs up to {VERIFY_BATCH} not-yet-tested addresses, \
@@ -307,25 +315,36 @@ fn summary(ui: &mut egui::Ui, state: &AtlasPanel) {
 /// its row. That is the better arrangement anyway: the detail no longer shifts
 /// the rows around it when opened, and it stays visible while scrolling.
 fn table(ui: &mut egui::Ui, state: &mut AtlasPanel, can_run: bool) {
-    // Collected first, and owned: `Label` is `Copy`, so the row loop can mutate
-    // `state` without holding a borrow of `state.labels`.
-    let rows: Vec<Label> = state
-        .labels
-        .iter()
-        .filter(|l| !(state.hide_untouched && l.behaviour == Behaviour::Untouched))
-        .copied()
-        .collect();
-    if rows.is_empty() {
+    // No per-frame allocation. Review suggested caching a filtered `Vec<Label>`
+    // and invalidating it when `labels` or the filter changes; this avoids the
+    // allocation *without* adding cache state to keep in sync — and stale derived
+    // state is the defect class this release has already produced three times.
+    //
+    // `show_rows` needs a count up front, so the filter is walked twice: once to
+    // count (2,048 predicate evaluations at worst, no allocation) and once inside
+    // the closure, where `skip`/`take` bound the work to the visible slice.
+    // (PR #392 review.)
+    let hide_untouched = state.hide_untouched;
+    let visible = |l: &&Label| !(hide_untouched && l.behaviour == Behaviour::Untouched);
+    let row_count = state.labels.iter().filter(visible).count();
+    if row_count == 0 {
         ui.weak("No addresses changed during the window.");
         return;
     }
 
     let row_h = ui.text_style_height(&egui::TextStyle::Monospace);
+    // Copied out so the row loop can mutate `state.selected` without holding a
+    // borrow of `state.labels`; `Label` is `Copy` and the slice is one screenful.
+    let mut clicked: Option<u16> = None;
+    let labels = &state.labels;
+    let selected_addr = state.selected;
     egui::ScrollArea::vertical()
         .max_height(240.0)
-        .show_rows(ui, row_h, rows.len(), |ui, range| {
-            for l in &rows[range] {
-                let selected = state.selected == Some(l.addr);
+        .show_rows(ui, row_h, row_count, |ui, range| {
+            let start = range.start;
+            let len = range.len();
+            for l in labels.iter().filter(visible).skip(start).take(len) {
+                let selected = selected_addr == Some(l.addr);
                 let text = format!(
                     "${:04X}  {:<15} {:<9} {}",
                     l.addr,
@@ -337,16 +356,30 @@ fn table(ui: &mut egui::Ui, state: &mut AtlasPanel, can_run: bool) {
                     .selectable_label(selected, egui::RichText::new(text).monospace())
                     .clicked()
                 {
-                    state.selected = if selected { None } else { Some(l.addr) };
+                    clicked = Some(l.addr);
                 }
             }
         });
+    if let Some(addr) = clicked {
+        state.selected = if selected_addr == Some(addr) {
+            None
+        } else {
+            Some(addr)
+        };
+    }
 
     // The detail pane. Resolved from `rows` rather than `state.labels` so a
     // selection hidden by the current filter stops being shown, instead of
     // lingering as evidence for a row the user can no longer see.
+    // Resolved against the FILTERED set, so a selection hidden by the current
+    // filter stops showing evidence for a row the user cannot see.
     if let Some(addr) = state.selected
-        && let Some(l) = rows.iter().find(|l| l.addr == addr).copied()
+        && let Some(l) = state
+            .labels
+            .iter()
+            .filter(visible)
+            .find(|l| l.addr == addr)
+            .copied()
     {
         ui.separator();
         detail(ui, state, &l, can_run);
