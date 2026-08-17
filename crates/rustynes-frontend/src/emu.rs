@@ -99,10 +99,12 @@ pub struct EmuHandle {
 /// depth the produce path would never run, because its cap and
 /// `effective_run_ahead`'s cap were separate literals that drifted. (PR #358
 /// review.)
-/// Native-only: both users (`effective_run_ahead`, `update_runahead_throttle`)
-/// are, and the wasm frontend has no run-ahead path.
-#[cfg(not(target_arch = "wasm32"))]
-const MAX_RUN_AHEAD_DEPTH: u32 = 3;
+/// v2.3.6: no longer native-only. It was `#[cfg(not(target_arch = "wasm32"))]`
+/// because its only two users (`effective_run_ahead`, `update_runahead_throttle`)
+/// are, but the Latency Oracle panel compiles on every target and needs the same
+/// cap to clamp its recommendation — and reintroducing a bare `3` there is
+/// exactly the drift this constant was created to stop.
+pub(crate) const MAX_RUN_AHEAD_DEPTH: u32 = 3;
 
 /// v2.3.3 F21 — fraction of the frame budget at which the run-ahead throttle
 /// engages, measured rather than chosen.

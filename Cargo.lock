@@ -4381,6 +4381,7 @@ dependencies = [
  "rustynes-gfx-shaders",
  "rustynes-hdpack",
  "rustynes-netplay",
+ "rustynes-probe",
  "rustynes-ra",
  "rustynes-script",
  "serde",

@@ -203,6 +203,10 @@ workspace = true
 
 [dependencies]
 rustynes-gamedb = { path = "../rustynes-gamedb" }
+# v2.3.6 — the deterministic re-simulation probe engine, consumed by the Latency
+# Oracle panel. Core-only dependency, so it adds nothing to the frontend's build
+# graph beyond what `rustynes-core` already pulls in.
+rustynes-probe = { path = "../rustynes-probe" }
 # v1.1.0 beta.2 (Workstream C) — `debug-hooks` enables the core's run-loop
 # breakpoint/trace/event hooks for the debugger. The hooks are determinism-
 # neutral no-ops until armed, so the headless test/bench builds (which depend on

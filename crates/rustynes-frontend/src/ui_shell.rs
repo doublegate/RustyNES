@@ -949,23 +949,30 @@ impl UiShell {
                     // would diverge the recorded timeline).
                     if frame.disk_sides > 0 {
                         ui.separator();
-                        if accel_enabled(
-                            ui,
-                            !replay_locked,
-                            &ic(glyph::FLOPPY_DISK, "Swap Disk Side"),
-                            &keys.disk_swap,
-                        )
-                        .clicked()
-                        {
-                            out.action = Some(MenuAction::CycleDiskSide);
-                            ui.close();
-                        }
-                        // v1.8.9 — Multi-Disk: insert a specific side directly (a
-                        // multi-disk FDS game prompts "insert side N"), or eject.
-                        // Disabled during a replay (mutating the disk diverges the
-                        // recorded timeline), like the cycle item above.
-                        ui.add_enabled_ui(!replay_locked, |ui| {
-                            ui.menu_button(ic(glyph::FLOPPY_DISK, "Disk Side"), |ui| {
+                        // v2.3.6 menu reorg — the swap accelerator and the
+                        // per-side selector were two sibling entries describing
+                        // one piece of hardware; they are now one submenu. The
+                        // accelerator (F9 by default) is global and unaffected by
+                        // the extra hop, so nothing gets slower to reach in
+                        // practice — only tidier to read.
+                        ui.menu_button(ic(glyph::FLOPPY_DISK, "Famicom Disk System"), |ui| {
+                            if accel_enabled(
+                                ui,
+                                !replay_locked,
+                                &ic(glyph::FLOPPY_DISK, "Swap Disk Side"),
+                                &keys.disk_swap,
+                            )
+                            .clicked()
+                            {
+                                out.action = Some(MenuAction::CycleDiskSide);
+                                ui.close();
+                            }
+                            ui.separator();
+                            // v1.8.9 — Multi-Disk: insert a specific side directly (a
+                            // multi-disk FDS game prompts "insert side N"), or eject.
+                            // Disabled during a replay (mutating the disk diverges the
+                            // recorded timeline), like the cycle item above.
+                            ui.add_enabled_ui(!replay_locked, |ui| {
                                 for i in 0..frame.disk_sides {
                                     if ui
                                         .radio(
@@ -1101,6 +1108,16 @@ impl UiShell {
 
                 // ----- Tools -----
                 ui.menu_button(ic(glyph::WRENCH, crate::t!(MenuTools)), |ui| {
+                    // v2.3.6 menu reorg — Tools had grown to twenty flat entries
+                    // spanning cheats, TAS authoring, media capture, multiplayer,
+                    // ROM inspection and provenance analysis, which is more than a
+                    // menu can be scanned at. The entries below are grouped by the
+                    // TASK the user is doing, one submenu per task, with the two
+                    // that are neither task-scoped nor frequently used (Netplay,
+                    // RetroAchievements — they configure a *session*, not a tool)
+                    // kept at the bottom behind a separator. Cheats stays at the
+                    // top level because it is by a wide margin the most-opened
+                    // panel and burying the common case is how menus get worse.
                     if ui
                         .button(ic(glyph::WAND_MAGIC_SPARKLES, "Cheats..."))
                         .clicked()
@@ -1108,258 +1125,293 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheats));
                         ui.close();
                     }
+                    ui.separator();
+                    // ---- Movies & Recording --------------------------------
+                    // Everything that captures or replays a session: the TAS
+                    // movie transport, the external-format interop, the two
+                    // authoring panels, and the A/V + clip exporters.
+                    //
                     // BUG-1: direct child (not inside add_enabled_ui — see File).
-                    // (H1) The Movies submenu is unavailable during a netplay
-                    // session (a rollback session cannot also be a TAS movie).
-                    if rom && !rom_change_restricted {
-                        ui.menu_button(ic(glyph::VIDEO, "Movies (TAS)"), |ui| {
-                            // Record toggles record on/off; it must be locked
-                            // while a movie is PLAYING (can't record over a
-                            // playback). The toggle-off case (already recording)
-                            // stays enabled so the user can stop.
-                            let rec_label = if frame.movie_recording {
-                                ic(glyph::STOP, "Stop Recording")
-                            } else {
-                                ic(glyph::VIDEO, "Record")
-                            };
-                            let rec_enabled = frame.movie_recording || !frame.movie_playing;
-                            if accel_enabled(ui, rec_enabled, &rec_label, &keys.movie_record)
-                                .clicked()
-                            {
-                                out.action = Some(MenuAction::MovieRecordToggle);
-                                ui.close();
-                            }
-                            // Play toggles playback; locked while RECORDING. The
-                            // toggle-off (already playing) stays enabled to stop.
-                            let play_label = if frame.movie_playing {
-                                ic(glyph::STOP, "Stop Playback")
-                            } else {
-                                ic(glyph::PLAY, "Play")
-                            };
-                            let play_enabled = frame.movie_playing || !frame.movie_recording;
-                            if accel_enabled(ui, play_enabled, &play_label, &keys.movie_play)
-                                .clicked()
-                            {
-                                out.action = Some(MenuAction::MoviePlayToggle);
-                                ui.close();
-                            }
-                            // Branch forks the CURRENT playback into a new
-                            // recording — only meaningful while playing back.
-                            if accel_enabled(
-                                ui,
-                                frame.movie_playing,
-                                &ic(glyph::VIDEO, "Branch"),
-                                &keys.movie_branch,
-                            )
-                            .clicked()
-                            {
-                                out.action = Some(MenuAction::MovieBranch);
-                                ui.close();
-                            }
-                            ui.separator();
-                            // v1.6.0 B1 — external TAS movie interop (FCEUX
-                            // `.fm2` / BizHawk `.bk2`). Import begins playback
-                            // (locked while recording, like Play); Export writes
-                            // the current recording / loaded movie (enabled when
-                            // a movie exists to export).
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                let import_enabled = !frame.movie_recording;
-                                if ui
-                                    .add_enabled(
-                                        import_enabled,
-                                        egui::Button::new(ic(
-                                            glyph::FOLDER_OPEN,
-                                            "Import (.fm2 / .bk2)",
-                                        )),
-                                    )
-                                    .clicked()
-                                {
-                                    out.action = Some(MenuAction::MovieImport);
-                                    ui.close();
-                                }
-                                let export_enabled = frame.movie_recording || frame.movie_playing;
-                                if ui
-                                    .add_enabled(
-                                        export_enabled,
-                                        egui::Button::new(ic(
-                                            glyph::FLOPPY_DISK,
-                                            "Export (.fm2 / .bk2)",
-                                        )),
-                                    )
-                                    .clicked()
-                                {
-                                    out.action = Some(MenuAction::MovieExport);
-                                    ui.close();
-                                }
-                                // v1.7.0 H9 — export TAStudio markers as a
-                                // SubRip (.srt) subtitle track.
-                                if ui
-                                    .add(egui::Button::new(ic(
-                                        glyph::FLOPPY_DISK,
-                                        "Export subtitles (.srt)",
-                                    )))
-                                    .clicked()
-                                {
-                                    out.action = Some(MenuAction::MovieExportSubtitles);
-                                    ui.close();
-                                }
-                            }
-                        });
-                    } else {
-                        ui.add_enabled(false, egui::Button::new(ic(glyph::VIDEO, "Movies (TAS)")));
-                    }
-                    // v1.6.0 "Studio" Workstream G — A/V recording (native +
-                    // `av-record`-gated). Start opens a save dialog + arms an
-                    // ffmpeg-piped recorder; a second click stops + finalizes.
-                    // Needs a loaded ROM to record anything; the stop case stays
-                    // enabled while armed so the user can finish.
-                    #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
-                    {
-                        let av_label = if frame.av_recording {
-                            ic(glyph::STOP, "Stop A/V Recording")
+                    ui.menu_button(ic(glyph::VIDEO, "Movies & Recording"), |ui| {
+                        // (H1) The movie transport is unavailable during a netplay
+                        // session (a rollback session cannot also be a TAS movie).
+                        // Pre-reorg this gated the whole submenu open/closed; it is
+                        // now applied per item, so the entries stay visible-but-
+                        // disabled and the user can see WHY nothing is available.
+                        let movie_ok = rom && !rom_change_restricted;
+                        // Record toggles record on/off; it must be locked
+                        // while a movie is PLAYING (can't record over a
+                        // playback). The toggle-off case (already recording)
+                        // stays enabled so the user can stop.
+                        let rec_label = if frame.movie_recording {
+                            ic(glyph::STOP, "Stop Recording")
                         } else {
-                            ic(glyph::VIDEO, "Record A/V...")
+                            ic(glyph::VIDEO, "Record")
                         };
-                        let av_enabled = frame.av_recording || rom;
-                        if ui
-                            .add_enabled(av_enabled, egui::Button::new(av_label))
-                            .clicked()
+                        let rec_enabled =
+                            movie_ok && (frame.movie_recording || !frame.movie_playing);
+                        if accel_enabled(ui, rec_enabled, &rec_label, &keys.movie_record).clicked()
                         {
-                            out.action = Some(MenuAction::AvRecordToggle);
+                            out.action = Some(MenuAction::MovieRecordToggle);
                             ui.close();
                         }
-                    }
-                    // (H1) Opening the Netplay panel is locked while a replay
-                    // (TAS movie) owns the session. Mirrors the `GeraNES`
-                    // reference emulator's Netplay gating (no replay-interaction
-                    // lockout active).
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if ui
-                        .add_enabled(
-                            !replay_locked,
-                            egui::Button::new(ic(glyph::WIFI, "Netplay...")),
+                        // Play toggles playback; locked while RECORDING. The
+                        // toggle-off (already playing) stays enabled to stop.
+                        let play_label = if frame.movie_playing {
+                            ic(glyph::STOP, "Stop Playback")
+                        } else {
+                            ic(glyph::PLAY, "Play")
+                        };
+                        let play_enabled =
+                            movie_ok && (frame.movie_playing || !frame.movie_recording);
+                        if accel_enabled(ui, play_enabled, &play_label, &keys.movie_play).clicked()
+                        {
+                            out.action = Some(MenuAction::MoviePlayToggle);
+                            ui.close();
+                        }
+                        // Branch forks the CURRENT playback into a new
+                        // recording — only meaningful while playing back.
+                        if accel_enabled(
+                            ui,
+                            movie_ok && frame.movie_playing,
+                            &ic(glyph::VIDEO, "Branch"),
+                            &keys.movie_branch,
                         )
                         .clicked()
-                    {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Netplay));
-                        ui.close();
-                    }
-                    #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
-                    if ui
-                        .button(ic(glyph::TROPHY, "RetroAchievements..."))
-                        .clicked()
-                    {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheevos));
-                        ui.close();
-                    }
-                    // v1.7.0 "Forge" beta.5 (#51) — one consolidated "Input
-                    // Display" panel: standard pads + every expansion peripheral
-                    // (Zapper / Vaus / SNES mouse / Power Pad / keyboard / Hyper
-                    // Shot / Four Score), real-time button/axis state.
-                    if ui.button(ic(glyph::GAMEPAD, "Input Display")).clicked() {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::InputDisplay));
-                        ui.close();
-                    }
-                    // v1.8.9 "Backlog" — the desktop on-screen virtual pad: a
-                    // clickable egui controller that feeds player 1. Native-only
-                    // (the browser build has the touch overlay).
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if ui.button(ic(glyph::GAMEPAD, "Virtual Pad")).clicked() {
-                        out.action = Some(MenuAction::ToggleVirtualPad);
-                        ui.close();
-                    }
-                    // v1.3.0 menu reorg — NSF/NSFe music player (moved here from
-                    // the Debug menu; it is a playback tool, not a chip inspector).
-                    if ui.button(ic(glyph::HEADPHONES, "NSF Player")).clicked() {
-                        out.action = Some(MenuAction::OpenChipPanel(ChipPanel::Nsf));
-                        ui.close();
-                    }
-                    // v2.1.6 "Expansion Audio" B7 — the Audio Mixer: per-source
-                    // balance sliders + per-channel scopes / VU (base 2A03 + the
-                    // on-cart expansion channel). A frontend mix overlay; the
-                    // deterministic core output is unchanged.
-                    if ui.button(ic(glyph::SLIDERS, "Audio Mixer")).clicked() {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::AudioMixer));
-                        ui.close();
-                    }
-                    // v1.5.0 "Lens" Workstream C2 — Replay / TAS window (device
-                    // topology + timebase + branch/seek UX over the .rnm machinery).
-                    if ui.button(ic(glyph::VIDEO, "Replay / TAS")).clicked() {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Replay));
-                        ui.close();
-                    }
-                    // v1.8.9 "Backlog" — BasicBot input-search control panel.
-                    if ui
-                        .button(ic(glyph::WAND_MAGIC_SPARKLES, "BasicBot"))
-                        .clicked()
-                    {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::BasicBot));
-                        ui.close();
-                    }
-                    // v1.6.0 "Studio" Workstream A2 — TAStudio piano-roll TAS
-                    // editor. Needs a loaded ROM (the editor anchors on the
-                    // current emulator state as the project's frame 0).
-                    if ui
-                        .add_enabled(rom, egui::Button::new(ic(glyph::VIDEO, "TAStudio")))
-                        .clicked()
-                    {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::TasStudio));
-                        ui.close();
-                    }
-                    // v1.7.0 "Forge" Workstream D1 — export the last 30 s of the
-                    // live session timeline (the HistoryViewer over the rewind
-                    // ring) as a replayable `.rnm` clip. Needs a loaded ROM.
-                    if ui
-                        .add_enabled(
-                            rom,
-                            egui::Button::new(ic(glyph::FLOPPY_DISK, "Export Last 30s (.rnm)")),
-                        )
-                        .clicked()
-                    {
-                        out.action = Some(MenuAction::HistoryExportClip { seconds: 30.0 });
-                        ui.close();
-                    }
-                    // (H1) The ROM Database editor needs a loaded ROM to edit.
-                    if ui
-                        .add_enabled(rom, egui::Button::new(ic(glyph::DATABASE, "ROM Database")))
-                        .clicked()
-                    {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::GameDb));
-                        ui.close();
-                    }
-                    // (H1) v2.2.0 "Capstone" — the read-only ROM Info browser
-                    // needs a loaded ROM to describe.
-                    if ui
-                        .add_enabled(rom, egui::Button::new(ic(glyph::CIRCLE_INFO, "ROM Info")))
-                        .clicked()
-                    {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::RomInfo));
-                        ui.close();
-                    }
-                    // (H1) v2.3.2 "Lucid" — the pixel provenance inspector: the
-                    // causal chain from a screen pixel back to the tile, the
-                    // palette entry, and the instruction that wrote them. Needs a
-                    // loaded ROM to have any pixels to explain. NOT gated on the
-                    // frontend's `debug-hooks` alias: the frontend always pulls
-                    // `rustynes-core` with `debug-hooks` on (see its Cargo.toml),
-                    // so gating on the alias — which is off by default — would
-                    // ship the panel permanently unreachable.
-                    if ui
-                        .add_enabled(
-                            rom,
-                            egui::Button::new(ic(glyph::MAGNIFYING_GLASS_PLUS, "Pixel Provenance")),
-                        )
-                        .clicked()
-                    {
-                        out.action = Some(MenuAction::OpenPanel(ToolPanel::PixelProvenance));
-                        ui.close();
-                    }
+                        {
+                            out.action = Some(MenuAction::MovieBranch);
+                            ui.close();
+                        }
+                        // Gated with the block it introduces: the interop items
+                        // below compile out on wasm, and an ungated separator
+                        // here would then sit directly against the one after
+                        // them — two rules with nothing between. Same treatment
+                        // as the session-services separator lower down.
+                        // (PR #385 review.)
+                        #[cfg(not(target_arch = "wasm32"))]
+                        ui.separator();
+                        // v1.6.0 B1 — external TAS movie interop (FCEUX
+                        // `.fm2` / BizHawk `.bk2`). Import begins playback
+                        // (locked while recording, like Play); Export writes
+                        // the current recording / loaded movie (enabled when
+                        // a movie exists to export).
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            let import_enabled = movie_ok && !frame.movie_recording;
+                            if ui
+                                .add_enabled(
+                                    import_enabled,
+                                    egui::Button::new(ic(
+                                        glyph::FOLDER_OPEN,
+                                        "Import (.fm2 / .bk2)",
+                                    )),
+                                )
+                                .clicked()
+                            {
+                                out.action = Some(MenuAction::MovieImport);
+                                ui.close();
+                            }
+                            let export_enabled =
+                                movie_ok && (frame.movie_recording || frame.movie_playing);
+                            if ui
+                                .add_enabled(
+                                    export_enabled,
+                                    egui::Button::new(ic(
+                                        glyph::FLOPPY_DISK,
+                                        "Export (.fm2 / .bk2)",
+                                    )),
+                                )
+                                .clicked()
+                            {
+                                out.action = Some(MenuAction::MovieExport);
+                                ui.close();
+                            }
+                            // v1.7.0 H9 — export TAStudio markers as a
+                            // SubRip (.srt) subtitle track.
+                            if ui
+                                .add_enabled(
+                                    movie_ok,
+                                    egui::Button::new(ic(
+                                        glyph::FLOPPY_DISK,
+                                        "Export subtitles (.srt)",
+                                    )),
+                                )
+                                .clicked()
+                            {
+                                out.action = Some(MenuAction::MovieExportSubtitles);
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        // v1.6.0 "Studio" Workstream A2 — TAStudio piano-roll TAS
+                        // editor. Needs a loaded ROM (the editor anchors on the
+                        // current emulator state as the project's frame 0).
+                        if ui
+                            .add_enabled(rom, egui::Button::new(ic(glyph::VIDEO, "TAStudio")))
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::OpenPanel(ToolPanel::TasStudio));
+                            ui.close();
+                        }
+                        // v1.5.0 "Lens" Workstream C2 — Replay / TAS window (device
+                        // topology + timebase + branch/seek UX over the .rnm machinery).
+                        if ui.button(ic(glyph::VIDEO, "Replay / TAS")).clicked() {
+                            out.action = Some(MenuAction::OpenPanel(ToolPanel::Replay));
+                            ui.close();
+                        }
+                        ui.separator();
+                        // v1.6.0 "Studio" Workstream G — A/V recording (native +
+                        // `av-record`-gated). Start opens a save dialog + arms an
+                        // ffmpeg-piped recorder; a second click stops + finalizes.
+                        // Needs a loaded ROM to record anything; the stop case stays
+                        // enabled while armed so the user can finish.
+                        #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
+                        {
+                            let av_label = if frame.av_recording {
+                                ic(glyph::STOP, "Stop A/V Recording")
+                            } else {
+                                ic(glyph::VIDEO, "Record A/V...")
+                            };
+                            let av_enabled = frame.av_recording || rom;
+                            if ui
+                                .add_enabled(av_enabled, egui::Button::new(av_label))
+                                .clicked()
+                            {
+                                out.action = Some(MenuAction::AvRecordToggle);
+                                ui.close();
+                            }
+                        }
+                        // v1.7.0 "Forge" Workstream D1 — export the last 30 s of the
+                        // live session timeline (the HistoryViewer over the rewind
+                        // ring) as a replayable `.rnm` clip. Needs a loaded ROM.
+                        if ui
+                            .add_enabled(
+                                rom,
+                                egui::Button::new(ic(glyph::FLOPPY_DISK, "Export Last 30s (.rnm)")),
+                            )
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::HistoryExportClip { seconds: 30.0 });
+                            ui.close();
+                        }
+                    });
+                    // ---- Audio ---------------------------------------------
+                    ui.menu_button(ic(glyph::HEADPHONES, "Audio"), |ui| {
+                        // v1.3.0 menu reorg — NSF/NSFe music player (moved here from
+                        // the Debug menu; it is a playback tool, not a chip inspector).
+                        if ui.button(ic(glyph::HEADPHONES, "NSF Player")).clicked() {
+                            out.action = Some(MenuAction::OpenChipPanel(ChipPanel::Nsf));
+                            ui.close();
+                        }
+                        // v2.1.6 "Expansion Audio" B7 — the Audio Mixer: per-source
+                        // balance sliders + per-channel scopes / VU (base 2A03 + the
+                        // on-cart expansion channel). A frontend mix overlay; the
+                        // deterministic core output is unchanged.
+                        if ui.button(ic(glyph::SLIDERS, "Audio Mixer")).clicked() {
+                            out.action = Some(MenuAction::OpenPanel(ToolPanel::AudioMixer));
+                            ui.close();
+                        }
+                    });
+                    // ---- Input ---------------------------------------------
+                    ui.menu_button(ic(glyph::GAMEPAD, "Input"), |ui| {
+                        // v1.7.0 "Forge" beta.5 (#51) — one consolidated "Input
+                        // Display" panel: standard pads + every expansion peripheral
+                        // (Zapper / Vaus / SNES mouse / Power Pad / keyboard / Hyper
+                        // Shot / Four Score), real-time button/axis state.
+                        if ui.button(ic(glyph::GAMEPAD, "Input Display")).clicked() {
+                            out.action = Some(MenuAction::OpenPanel(ToolPanel::InputDisplay));
+                            ui.close();
+                        }
+                        // v1.8.9 "Backlog" — the desktop on-screen virtual pad: a
+                        // clickable egui controller that feeds player 1. Native-only
+                        // (the browser build has the touch overlay).
+                        #[cfg(not(target_arch = "wasm32"))]
+                        if ui.button(ic(glyph::GAMEPAD, "Virtual Pad")).clicked() {
+                            out.action = Some(MenuAction::ToggleVirtualPad);
+                            ui.close();
+                        }
+                    });
+                    // ---- Game Data -----------------------------------------
+                    // What this cartridge IS, as opposed to what it is doing:
+                    // both entries describe the loaded ROM and both need one.
+                    ui.menu_button(ic(glyph::DATABASE, "Game Data"), |ui| {
+                        // (H1) v2.2.0 "Capstone" — the read-only ROM Info browser
+                        // needs a loaded ROM to describe.
+                        if ui
+                            .add_enabled(rom, egui::Button::new(ic(glyph::CIRCLE_INFO, "ROM Info")))
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::OpenPanel(ToolPanel::RomInfo));
+                            ui.close();
+                        }
+                        // (H1) The ROM Database editor needs a loaded ROM to edit.
+                        if ui
+                            .add_enabled(
+                                rom,
+                                egui::Button::new(ic(glyph::DATABASE, "ROM Database")),
+                            )
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::OpenPanel(ToolPanel::GameDb));
+                            ui.close();
+                        }
+                    });
+                    // ---- Analysis ------------------------------------------
+                    // The three tools that answer a question ABOUT the running
+                    // game rather than changing it: what its input lag is, why a
+                    // pixel looks the way it does, and what input sequence reaches
+                    // a goal. All three are output-only.
+                    ui.menu_button(ic(glyph::MAGNIFYING_GLASS_PLUS, "Analysis"), |ui| {
+                        // v2.3.6 — the Latency Oracle. Grouped with the other
+                        // measurement tools rather than under Settings because it is
+                        // a measurement you RUN, not a preference you set; it
+                        // recommends a run-ahead depth and never applies one itself.
+                        if ui
+                            .add_enabled(rom, egui::Button::new(ic(glyph::GAUGE, "Latency Oracle")))
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::OpenPanel(ToolPanel::LatencyOracle));
+                            ui.close();
+                        }
+                        // (H1) v2.3.2 "Lucid" — the pixel provenance inspector: the
+                        // causal chain from a screen pixel back to the tile, the
+                        // palette entry, and the instruction that wrote them. Needs a
+                        // loaded ROM to have any pixels to explain. NOT gated on the
+                        // frontend's `debug-hooks` alias: the frontend always pulls
+                        // `rustynes-core` with `debug-hooks` on (see its Cargo.toml),
+                        // so gating on the alias — which is off by default — would
+                        // ship the panel permanently unreachable.
+                        if ui
+                            .add_enabled(
+                                rom,
+                                egui::Button::new(ic(
+                                    glyph::MAGNIFYING_GLASS_PLUS,
+                                    "Pixel Provenance",
+                                )),
+                            )
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::OpenPanel(ToolPanel::PixelProvenance));
+                            ui.close();
+                        }
+                        // v1.8.9 "Backlog" — BasicBot input-search control panel.
+                        if ui
+                            .button(ic(glyph::WAND_MAGIC_SPARKLES, "BasicBot"))
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::OpenPanel(ToolPanel::BasicBot));
+                            ui.close();
+                        }
+                    });
                     // v1.3.0 menu reorg — HD-pack loader (v1.2.0 C3), folded in
                     // from the former standalone "Mod" menu as a Tools submenu;
                     // native + `hd-pack`-feature-gated. (H1) Load/unload needs a
                     // loaded ROM (the pack is keyed on the ROM hash) and is locked
                     // while a netplay/replay session owns presentation.
+                    //
+                    // Deliberately NOT wrapped in a further "Enhancements" level:
+                    // it is the only member that category would have, so the extra
+                    // hop would buy indirection and no grouping.
                     #[cfg(all(feature = "hd-pack", not(target_arch = "wasm32")))]
                     ui.menu_button(ic(glyph::PUZZLE_PIECE, "HD Pack"), |ui| {
                         let mod_enabled = rom && !rom_change_restricted && !replay_locked;
@@ -1415,6 +1467,41 @@ impl UiShell {
                             ui.close();
                         }
                     });
+                    // ---- Session services ----------------------------------
+                    // Netplay and RetroAchievements are not tools you point at
+                    // the game; they change what the SESSION is (a lockstep
+                    // rollback match, an authenticated hardcore run). They stay
+                    // at the top level, below a separator, so they read as
+                    // session-scoped rather than as two more inspectors.
+                    //
+                    // Gated with the items it introduces: both are native-only, so
+                    // on wasm this would otherwise render as a trailing separator
+                    // with nothing beneath it.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ui.separator();
+                    // (H1) Opening the Netplay panel is locked while a replay
+                    // (TAS movie) owns the session. Mirrors the `GeraNES`
+                    // reference emulator's Netplay gating (no replay-interaction
+                    // lockout active).
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if ui
+                        .add_enabled(
+                            !replay_locked,
+                            egui::Button::new(ic(glyph::WIFI, "Netplay...")),
+                        )
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Netplay));
+                        ui.close();
+                    }
+                    #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
+                    if ui
+                        .button(ic(glyph::TROPHY, "RetroAchievements..."))
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Cheevos));
+                        ui.close();
+                    }
                 });
 
                 // ----- Debug -----
@@ -1434,29 +1521,69 @@ impl UiShell {
                         ui.close();
                     }
                     ui.separator();
-                    // Chip / state inspectors. (NSF Player moved to the Tools menu
-                    // in v1.3.0 — it is a playback tool, not a chip inspector.)
-                    for (icon, label, panel) in [
-                        (glyph::MICROCHIP, "CPU", ChipPanel::Cpu),
-                        (glyph::MICROCHIP, "PPU", ChipPanel::Ppu),
-                        (glyph::VOLUME_HIGH, "APU", ChipPanel::Apu),
-                        (glyph::MEMORY, "Memory", ChipPanel::Memory),
-                        (glyph::MEMORY, "Memory Compare", ChipPanel::MemoryCompare),
-                        (glyph::MEMORY, "OAM", ChipPanel::Oam),
-                        (glyph::PUZZLE_PIECE, "Mapper", ChipPanel::Mapper),
-                        (glyph::CLIPBOARD, "Trace Logger", ChipPanel::Trace),
-                        (glyph::CLIPBOARD, "Watch / Breakpoints", ChipPanel::Watch),
-                        (glyph::CLIPBOARD, "Event Viewer", ChipPanel::Events),
-                        (glyph::CODE, "Lua Script", ChipPanel::Script),
-                    ] {
-                        if ui.button(ic(icon, label)).clicked() {
-                            out.action = Some(MenuAction::OpenChipPanel(panel));
-                            ui.close();
-                        }
-                    }
+                    // v2.3.6 menu reorg — the eleven inspectors below used to be
+                    // one flat run, which put "CPU" and "Lua Script" at the same
+                    // level and made the list scan as an undifferentiated column.
+                    // They split cleanly along what you are inspecting: the chips'
+                    // register state, the address space, or the flow of execution.
+                    // The loop shape is kept per group so adding an inspector
+                    // stays a one-line table edit.
+                    //
+                    // (NSF Player moved to the Tools menu in v1.3.0 — it is a
+                    // playback tool, not a chip inspector.)
+                    let mut chip_group =
+                        |ui: &mut egui::Ui,
+                         icon: char,
+                         label: &'static str,
+                         items: &[(char, &'static str, ChipPanel)]| {
+                            ui.menu_button(ic(icon, label), |ui| {
+                                for &(icon, label, panel) in items {
+                                    if ui.button(ic(icon, label)).clicked() {
+                                        out.action = Some(MenuAction::OpenChipPanel(panel));
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        };
+                    // Per-chip register / internal state.
+                    chip_group(
+                        ui,
+                        glyph::MICROCHIP,
+                        "Chip State",
+                        &[
+                            (glyph::MICROCHIP, "CPU", ChipPanel::Cpu),
+                            (glyph::MICROCHIP, "PPU", ChipPanel::Ppu),
+                            (glyph::VOLUME_HIGH, "APU", ChipPanel::Apu),
+                            (glyph::MEMORY, "OAM", ChipPanel::Oam),
+                            (glyph::PUZZLE_PIECE, "Mapper", ChipPanel::Mapper),
+                        ],
+                    );
+                    // The address space itself — one live view, one differ.
+                    chip_group(
+                        ui,
+                        glyph::MEMORY,
+                        "Memory",
+                        &[
+                            (glyph::MEMORY, "Memory", ChipPanel::Memory),
+                            (glyph::MEMORY, "Memory Compare", ChipPanel::MemoryCompare),
+                        ],
+                    );
+                    // Everything that observes or interrupts the flow of execution.
+                    chip_group(
+                        ui,
+                        glyph::CLIPBOARD,
+                        "Execution",
+                        &[
+                            (glyph::CLIPBOARD, "Trace Logger", ChipPanel::Trace),
+                            (glyph::CLIPBOARD, "Watch / Breakpoints", ChipPanel::Watch),
+                            (glyph::CLIPBOARD, "Event Viewer", ChipPanel::Events),
+                            (glyph::CODE, "Lua Script", ChipPanel::Script),
+                        ],
+                    );
                     // v1.7.0 "Forge" Workstream A2 — Cartridge Info / header
                     // editor. Native-only (it inspects + edits a ROM file on
-                    // disk).
+                    // disk). Left at the top level: it edits a file on disk rather
+                    // than inspecting running state, so it belongs to neither group.
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         ui.separator();
@@ -1467,24 +1594,23 @@ impl UiShell {
                             out.action = Some(MenuAction::OpenChipPanel(ChipPanel::HeaderEditor));
                             ui.close();
                         }
-                    }
-                    // v1.4.0 Workstream D (D1) — symbol/label files annotate the
-                    // disassembler + breakpoint + trace views. Native-only (it
-                    // reads a picked file).
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        ui.separator();
-                        if ui
-                            .button(ic(glyph::FILE, "Load Symbols (.sym/.mlb/.nl)..."))
-                            .clicked()
-                        {
-                            out.action = Some(MenuAction::LoadSymbols);
-                            ui.close();
-                        }
-                        if ui.button(ic(glyph::XMARK, "Clear Symbols")).clicked() {
-                            out.action = Some(MenuAction::ClearSymbols);
-                            ui.close();
-                        }
+                        // v1.4.0 Workstream D (D1) — symbol/label files annotate the
+                        // disassembler + breakpoint + trace views. Native-only (it
+                        // reads a picked file). Grouped because the pair is one
+                        // load/clear lifecycle, not two independent commands.
+                        ui.menu_button(ic(glyph::FILE, "Symbols"), |ui| {
+                            if ui
+                                .button(ic(glyph::FILE, "Load Symbols (.sym/.mlb/.nl)..."))
+                                .clicked()
+                            {
+                                out.action = Some(MenuAction::LoadSymbols);
+                                ui.close();
+                            }
+                            if ui.button(ic(glyph::XMARK, "Clear Symbols")).clicked() {
+                                out.action = Some(MenuAction::ClearSymbols);
+                                ui.close();
+                            }
+                        });
                     }
                 });
 

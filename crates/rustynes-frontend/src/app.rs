@@ -1393,6 +1393,10 @@ impl App {
         // v1.6.0 "Studio" A2 — a TAStudio session anchors on the closed ROM; end it.
         if let Some(d) = self.debugger.as_mut() {
             d.clear_tas_editor();
+            // v2.3.6 — a Latency Oracle report is bound to the ROM it was
+            // measured on. Left standing it describes a cartridge that is no
+            // longer loaded, with its Apply button still live. (PR #385 review.)
+            d.clear_latency_report();
         }
         // Stop the dedicated emulation thread from producing frames.
         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
@@ -1700,6 +1704,10 @@ impl App {
         // replay inputs/branches against a different `Nes`.
         if let Some(d) = self.debugger.as_mut() {
             d.clear_tas_editor();
+            // v2.3.6 — a Latency Oracle report is bound to the ROM it was
+            // measured on. Left standing it describes a cartridge that is no
+            // longer loaded, with its Apply button still live. (PR #385 review.)
+            d.clear_latency_report();
         }
         // v2.8.0 Phase 5 increment 3 — a reload keeps the pacing regime but
         // may change the region (NTSC<->PAL frame duration); refresh the
@@ -8579,6 +8587,10 @@ impl App {
         // session (it anchored on the previous `Nes`).
         if let Some(d) = self.debugger.as_mut() {
             d.clear_tas_editor();
+            // v2.3.6 — a Latency Oracle report is bound to the ROM it was
+            // measured on. Left standing it describes a cartridge that is no
+            // longer loaded, with its Apply button still live. (PR #385 review.)
+            d.clear_latency_report();
         }
         // v2.8.0 Phase 5 increment 3 — let the (idle) emulation thread start
         // producing now that the core holds a ROM. Set AFTER `nes` is in
