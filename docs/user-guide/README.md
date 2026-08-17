@@ -21,6 +21,7 @@ instead. This subdirectory only covers running the emulator.
 | [Menu reference](./menus.md) | What every menu-bar / status-bar / Settings entry does |
 | [Configuration](./configuration.md) | The `config.toml` schema, every key documented with defaults |
 | [Save states and rewind](./save-states-and-rewind.md) | F1 / F4 / F5, the 10 slots per ROM, where files live |
+| [Analysis tools](./analysis-tools.md) | Latency Oracle, RAM Atlas, Pixel Provenance — what each answers, and what it will not claim |
 | [Debugger](./debugger.md) | The `~` overlay tour: CPU, PPU, OAM, APU, memory, mapper, input panels, fps counter |
 | [Display and audio](./display-and-audio.md) | NTSC filter, aspect ratio, audio sample rate, region detection |
 | [Compatibility](./compatibility.md) | Supported mappers, known accuracy gaps, ROM-format support |

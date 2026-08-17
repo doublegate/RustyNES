@@ -133,6 +133,9 @@ nav:
       - Frontend Shell: frontend.md
       - Scripting (Lua): scripting.md
       - Creator Tools: creator-tools.md
+      - Pixel Provenance: pixel-provenance.md
+      - Latency Oracle: latency-oracle.md
+      - RAM Atlas: ram-atlas.md
       - CRT / Composite Video: crt-composite.md
       - Netplay (WebRTC): netplay-webrtc.md
       - RetroAchievements: cheevos-browser.md
@@ -154,6 +157,7 @@ nav:
       - Display & Audio: user-guide/display-and-audio.md
       - Save States & Rewind: user-guide/save-states-and-rewind.md
       - Configuration: user-guide/configuration.md
+      - Analysis Tools: user-guide/analysis-tools.md
       - Debugger: user-guide/debugger.md
       - File Locations: user-guide/file-locations.md
       - Compatibility: user-guide/compatibility.md

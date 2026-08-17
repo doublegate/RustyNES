@@ -37,22 +37,37 @@ the hotkey and the menu item do exactly the same thing.
 | Frame Advance | `\` | Step exactly one frame — meant for use while paused |
 | Fast Forward (hold Tab) | `Tab` | Hint only — hold `Tab` to run unthrottled (audio muted); there is no toggle |
 | Speed ▸ | `=` / `-` / `0` | Pick an emulation-speed preset — 25% / 50% / 75% / 100% / 150% / 200% / 300% (the current one is checkmarked). `=` steps up, `-` steps down, `0` resets to 100%. The speed is transient (always launches at 100%); the status bar shows it when it is not 100%. Audio pitch-shifts naturally at non-100% speeds — distinct from the muted hold-`Tab` fast-forward |
-| Run-Ahead ▸ | | Choose the run-ahead depth, 0–3 frames |
+| Run-Ahead ▸ | | Choose the run-ahead depth, 0–3 frames. **Tools → Analysis → Latency Oracle** can measure the depth this game actually needs |
 | Region | | Read-only NTSC / PAL / Dendy label |
 | Vs. Insert Coin | `F10` | Vs. System games only — insert a coin into acceptor #1 |
+| Famicom Disk System ▸ | `F9` | FDS games only — Swap Disk Side, plus direct side selection and Eject. `F9` works without opening the menu |
 
 ### Tools
 
 These open as floating windows directly — you do **not** need the debugger
-overlay for them.
+overlay for them. Every one can be popped out into its own OS window.
+
+Grouped by task since **v2.3.6**; the menu had grown to twenty flat entries.
 
 | Item | Key | Notes |
 |------|-----|-------|
-| Cheats… | | Game Genie and raw RAM cheats |
-| Movies (TAS) ▸ | `F6` / `F7` / `F8` | Record / Play / Branch a TAS movie |
+| Cheats… | | Game Genie and raw RAM cheats. Kept at the top level as the most-used panel |
+| Movies & Recording ▸ | `F6` / `F7` / `F8` | Record / Play / Branch a TAS movie; import & export `.fm2` / `.bk2` and `.srt` subtitles; TAStudio; Replay / TAS; Record A/V…; Export Last 30s (`.rnm`) |
+| Audio ▸ | | NSF Player (NSF / NSFe playback), Audio Mixer (per-channel balance, scopes, VU) |
+| Input ▸ | | Input Display (pads + every expansion peripheral), Virtual Pad (on-screen controller, native only) |
+| Game Data ▸ | | ROM Info (read-only browser), ROM Database (per-game override editor) |
+| Analysis ▸ | | Latency Oracle, Pixel Provenance, BasicBot — see [Analysis tools](./analysis-tools.md) |
+| HD Pack ▸ | | Load / unload an HD pack, Pixel Inspector, Build HD Pack (native, opt-in feature) |
 | Netplay… | | Host or join a rollback session (native only) |
 | RetroAchievements… | | Login, achievements, leaderboards (native only, opt-in feature) |
-| Performance Monitor | | Frame-timing, audio-queue, and pacing telemetry |
+
+Netplay and RetroAchievements sit below a separator at the top level rather than
+in a submenu: they change what the *session* is, rather than being a tool you
+point at the game.
+
+> **RAM Atlas** also lives under **Analysis** from v2.3.6 — classify every byte of
+> work RAM, then verify a candidate by changing it. See
+> [Analysis tools](./analysis-tools.md).
 
 ### View
 
@@ -70,10 +85,21 @@ overlay for them.
 
 ### Debug
 
-| Item | Key | Notes |
-|------|-----|-------|
-| Show Debugger | `` ` `` | Toggle the egui debugger overlay |
-| CPU / PPU / APU / Memory / OAM / Mapper | | Open a specific inspection panel (forces the overlay visible) |
+Grouped by what is being inspected since **v2.3.6**. Every entry opens its own
+window; there is no overlay to toggle first.
+
+| Item | Notes |
+|------|-------|
+| Performance Monitor | Frame-timing, audio-queue and pacing telemetry |
+| Chip State ▸ | CPU, PPU, APU, OAM, Mapper — per-chip register and internal state |
+| Memory ▸ | Memory (live hex view), Memory Compare (RAM Search + RAM Watch) |
+| Execution ▸ | Trace Logger, Watch / Breakpoints, Event Viewer, Lua Script |
+| Cartridge Info / Header Editor… | Inspect and edit a ROM header on disk (native only) |
+| Symbols ▸ | Load Symbols (`.sym` / `.mlb` / `.nl`), Clear Symbols (native only) |
+
+> The old **Show Debugger** entry was removed in v1.7.1 when the debugger toolbar
+> was retired — every panel now opens directly. The `` ` `` key toggles the
+> status-bar RetroAchievements read-out, not the debugger.
 
 ### Help
 
