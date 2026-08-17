@@ -3619,9 +3619,10 @@ ever tried.
 **The generalisation, which is the reason to close rather than continue.** Three
 levers were measured and three produced nothing, for one shared mechanical
 reason: under `lto = "fat"` with `codegen-units = 1`, the code these levers guard
-is already inlined into `cpu_clock`, common-subexpression elimination has already
-merged its repeated loads, and the branches being elided are always-not-taken and therefore perfectly
-predicted. Replacing predictable not-taken branches with an equivalent count of
+is already inlined into `cpu_clock`, common-subexpression elimination has
+already merged its repeated loads, and the branches being elided are
+always-not-taken and therefore perfectly predicted. Replacing predictable
+not-taken branches with an equivalent count of
 loads and a predicate is arithmetically a wash. **"This work is inert on almost
 every cycle" predicts a win only if the work is actually executed** — and under
 fat LTO with perfect prediction it largely is not.
@@ -3710,10 +3711,10 @@ which took the control's drift from ~4% to ~1%.
 **Why a null is the expected result here, in hindsight.** Release builds use
 `lto = "fat"` with `codegen-units = 1`, so `dmc_tick_end` is already inlined into
 `cpu_clock` and LLVM can apply common-subexpression elimination to the field
-loads across the blocks
-the guard skips. The branches D1 elides were always-not-taken and therefore
-perfectly predicted, so trading ~9 predictable not-taken branches for 9 loads, an
-OR-reduction and one branch is arithmetically a wash. D6 is the same shape at
+loads across the blocks the guard skips. The branches D1 elides were
+always-not-taken and therefore perfectly predicted, so trading ~9 predictable
+not-taken branches for 9 loads, an OR-reduction and one branch is arithmetically
+a wash. D6 is the same shape at
 smaller scale: a not-taken branch plus a store-to-same-value, against a load and
 a compare. **"Inert on almost every cycle" predicts a large win only if the work
 is actually executed; under fat LTO with perfect prediction it largely is not.**
