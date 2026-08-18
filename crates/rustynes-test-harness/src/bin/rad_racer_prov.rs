@@ -59,8 +59,7 @@ fn main() {
     // Locate the band exactly as the sibling probe does.
     let sky = idx[8 * 256 + 8];
     let hz = (100..180)
-        .filter(|&y| (0..256).any(|x| idx[y * 256 + x] == sky))
-        .next_back()
+        .rfind(|&y| (0..256).any(|x| idx[y * 256 + x] == sky))
         .expect("horizon");
     let mut hist = std::collections::HashMap::<u16, usize>::new();
     // Sample only the RIGHT-HAND sand. Sampling the full width lets the road
@@ -84,17 +83,27 @@ fn main() {
     };
 
     println!(
-        "{:>4} {:>4}  {:>8} {:>6} {:>4}  {:>6} {:>6} {:>6}  {:>5} {:>5}  {}",
-        "x", "y", "layer", "scanln", "dot", "nt", "at", "pattern", "pal", "idx", "note"
+        "{:>4} {:>4}  {:>8} {:>6} {:>4}  {:>6} {:>6} {:>6}  {:>5} {:>5}  note",
+        "x", "y", "layer", "scanln", "dot", "nt", "at", "pattern", "pal", "idx"
     );
     let mut shown = 0;
-    // `get` returns `Option`: v2.3.6 gave the frame a validity marker so a
-    // cleared pixel reports "no record" instead of a plausible-looking default.
-    // Printing that distinctly matters here — "no record" and "backdrop" would
-    // otherwise look identical, which is the exact confusion that hid the
-    // provenance defect for four releases.
+    // Two DIFFERENT ways a query has no answer, and conflating them is what hid
+    // the provenance defect for four releases:
+    //
+    //   * `get` returns `None` only for an OFF-SCREEN coordinate.
+    //   * an on-screen pixel that was never recorded (or was cleared) returns
+    //     `Some(PixelProvenance::default())`, every field of which reads as a
+    //     confident "scanline 0, dot 0, backdrop, palette $0000" — indis-
+    //     tinguishable from a real backdrop pixel unless `is_recorded()` is
+    //     consulted, which `get` deliberately does not do.
+    //
+    // So filter on `is_recorded` here. An earlier version of this comment
+    // claimed `get` itself carried the validity marker; it does not, and the
+    // tool printed cleared records as fact. Caught in review.
     let row = |x: usize, y: usize, note: &str| {
-        let cell = prov.get(x, y);
+        let cell = prov
+            .get(x, y)
+            .filter(rustynes_core::rustynes_ppu::PixelProvenance::is_recorded);
         match cell {
             Some(p) => println!(
                 "{x:>4} {y:>4}  {:>9} {:>6} {:>4}  {:#06X} {:#06X} {:#06X}  {:>5} {:>5}  {note}",

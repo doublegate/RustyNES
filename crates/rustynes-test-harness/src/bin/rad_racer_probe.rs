@@ -64,6 +64,121 @@ fn region_indices(idx: &[u16]) -> Vec<u16> {
     out
 }
 
+/// Left edge of the right-hand roadside strip the below-horizon detector works
+/// in. The reported artifact sits there; the road is narrow and central at that
+/// height, so excluding everything left of this keeps the road and the car out
+/// of both the anomaly count AND the modal-colour baseline it is measured
+/// against. Those two must use the same window or the baseline describes a
+/// different part of the screen than the measurement.
+const STRIP_X0: usize = 200;
+
+/// Parse a numeric option value, exiting with a usage message rather than
+/// panicking -- these come from a human typing a command line.
+fn parse_u64(raw: &str, flag: &str) -> u64 {
+    raw.parse().unwrap_or_else(|_| {
+        eprintln!("rad_racer_probe: {flag} expects a non-negative integer, got {raw:?}");
+        std::process::exit(2);
+    })
+}
+
+/// Parse the optional flags after the two positional arguments.
+///
+/// Every option takes a value, and each is read through `next()` rather than an
+/// `args[i + 1]` index: a flag left last on the line
+/// (`rad_racer_probe rom movie --out`) is a plausible typo, and an
+/// index-out-of-bounds panic is a confusing way to report it. Unknown flags and
+/// missing values both exit 2 with a message.
+fn parse_options(rest: &[String], out_dir: &mut PathBuf, from: &mut u64, count: &mut u64) {
+    let mut it = rest.iter();
+    while let Some(flag) = it.next() {
+        let mut value = || -> &String {
+            it.next().unwrap_or_else(|| {
+                eprintln!("rad_racer_probe: {flag} needs a value");
+                std::process::exit(2);
+            })
+        };
+        match flag.as_str() {
+            "--out" => *out_dir = PathBuf::from(value()),
+            "--dump-from" => *from = parse_u64(value(), "--dump-from"),
+            "--dump-count" => *count = parse_u64(value(), "--dump-count"),
+            other => {
+                eprintln!("rad_racer_probe: unknown argument: {other}");
+                std::process::exit(2);
+            }
+        }
+    }
+}
+
+/// One frame's below-horizon anomaly measurement.
+struct Anomaly {
+    /// Stray pixels found in the strip.
+    count: usize,
+    /// Bounding box of those pixels.
+    x0: usize,
+    x1: usize,
+    y0: usize,
+    y1: usize,
+    /// The scanline the sky/ground boundary was found on this frame.
+    horizon: usize,
+}
+
+/// Count stray pixels in the right-hand roadside strip just below the horizon.
+///
+/// The reported artifact is a short band of pixels immediately BELOW the
+/// sky/ground boundary, on the right. Find the horizon per frame (the last row
+/// still containing sky), take the modal ground colour beneath it, and count
+/// what is neither that nor sky.
+///
+/// Both the modal-colour baseline and the count are taken from the SAME
+/// [`STRIP_X0`]-bounded window, which is load-bearing. Across the full scanline
+/// the road can win the mode, and then every sand pixel reads as an anomaly --
+/// the 5.8M-stray-pixel result the first version of this detector produced.
+/// Restricting the count without restricting the baseline leaves half of that
+/// in place.
+fn detect_below_horizon_anomaly(idx: &[u16]) -> Option<Anomaly> {
+    let sky = idx[8 * 256 + 8]; // top-left is sky in this scene
+    let hz = (100..180)
+        .rev()
+        .find(|&y| (0..256).any(|x| idx[y * 256 + x] == sky))?;
+    let lo = hz + 3;
+    let hi = (hz + 40).min(200);
+
+    let mut hist = std::collections::HashMap::<u16, usize>::new();
+    for y in lo..hi {
+        for x in STRIP_X0..256usize {
+            *hist.entry(idx[y * 256 + x]).or_default() += 1;
+        }
+    }
+    let (&ground, _) = hist.iter().max_by_key(|&(_, n)| *n)?;
+
+    // A TIGHT window: the artifact is a short band in the first few rows under
+    // the horizon, well right of the road (which is narrow and central at that
+    // height). Bounding it to exactly that is what lets a real regression be
+    // the only thing that trips this.
+    let mut count = 0usize;
+    let (mut x0, mut x1, mut y0, mut y1) = (255usize, 0usize, 255usize, 0usize);
+    for y in (hz + 1)..(hz + 6).min(hi) {
+        for x in STRIP_X0..256usize {
+            let v = idx[y * 256 + x];
+            if v != ground && v != sky {
+                count += 1;
+                x0 = x0.min(x);
+                x1 = x1.max(x);
+                y0 = y0.min(y);
+                y1 = y1.max(y);
+            }
+        }
+    }
+    (count > 0).then_some(Anomaly {
+        count,
+        x0,
+        x1,
+        y0,
+        y1,
+        horizon: hz,
+    })
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
@@ -75,27 +190,12 @@ fn main() {
     }
     let rom_path = &args[1];
     let movie_path = &args[2];
-    let mut out_dir = PathBuf::from("/tmp/rad_racer_probe");
+    // `temp_dir()` rather than a literal `/tmp`, so the default works on
+    // Windows too (review nitpick, and free to honour).
+    let mut out_dir = std::env::temp_dir().join("rad_racer_probe");
     let mut dump_from = u64::MAX;
     let mut dump_count = 0u64;
-    let mut i = 3;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--out" => {
-                out_dir = PathBuf::from(&args[i + 1]);
-                i += 2;
-            }
-            "--dump-from" => {
-                dump_from = args[i + 1].parse().expect("frame index");
-                i += 2;
-            }
-            "--dump-count" => {
-                dump_count = args[i + 1].parse().expect("count");
-                i += 2;
-            }
-            other => panic!("unknown argument: {other}"),
-        }
-    }
+    parse_options(&args[3..], &mut out_dir, &mut dump_from, &mut dump_count);
     std::fs::create_dir_all(&out_dir).expect("create out dir");
 
     let rom = std::fs::read(rom_path).unwrap_or_else(|e| panic!("read rom: {e}"));
@@ -126,58 +226,14 @@ fn main() {
         let cur = region_indices(idx);
 
         // --- below-horizon anomaly detector -------------------------------
-        // The reported artifact is a short band of stray pixels immediately
-        // BELOW the sky/ground boundary, on the right. Find the horizon per
-        // frame (the last row still containing sky), take the modal ground
-        // colour beneath it, and count pixels that are neither.
-        {
-            let sky = idx[8 * 256 + 8]; // top-left is sky in this scene
-            let horizon = (100..180)
-                .filter(|&y| (0..256).any(|x| idx[y * 256 + x] == sky))
-                .next_back();
-            if let Some(hz) = horizon {
-                let lo = hz + 3;
-                let hi = (hz + 40).min(200);
-                let mut hist = std::collections::HashMap::<u16, usize>::new();
-                for y in lo..hi {
-                    for x in 0..256usize {
-                        *hist.entry(idx[y * 256 + x]).or_default() += 1;
-                    }
-                }
-                if let Some((&ground, _)) = hist.iter().max_by_key(|&(_, n)| *n) {
-                    // TIGHT window. The first detector counted the road, the
-                    // car and the roadside stripes as "not ground" and reported
-                    // 5.8M stray pixels across the movie, which is noise, not
-                    // signal. The reported artifact is a SHORT band in the first
-                    // few rows under the horizon, well right of the road (which
-                    // is narrow and central up there), so bound it to exactly
-                    // that and let a real regression be the only thing that
-                    // trips it.
-                    let mut n = 0usize;
-                    let mut minx = 255usize;
-                    let mut maxx = 0usize;
-                    let mut miny = 255usize;
-                    let mut maxy = 0usize;
-                    for y in (hz + 1)..(hz + 6).min(hi) {
-                        for x in 200..256usize {
-                            let v = idx[y * 256 + x];
-                            if v != ground && v != sky {
-                                n += 1;
-                                minx = minx.min(x);
-                                maxx = maxx.max(x);
-                                miny = miny.min(y);
-                                maxy = maxy.max(y);
-                            }
-                        }
-                    }
-                    if n > 0 {
-                        anomaly_frames += 1;
-                        anomaly_px += n;
-                        rows_seen.insert((miny, maxy));
-                        eprintln!("ANOM f{frame} n={n} x={minx}..{maxx} y={miny}..{maxy} hz={hz}");
-                    }
-                }
-            }
+        if let Some(a) = detect_below_horizon_anomaly(idx) {
+            anomaly_frames += 1;
+            anomaly_px += a.count;
+            rows_seen.insert((a.y0, a.y1));
+            eprintln!(
+                "ANOM f{frame} n={} x={}..{} y={}..{} hz={}",
+                a.count, a.x0, a.x1, a.y0, a.y1, a.horizon
+            );
         }
 
         if let Some(p) = &prev {

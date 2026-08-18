@@ -224,6 +224,23 @@ jobs:
       - name: clippy (mappers — mapper-audio compiled OUT)
         run: cargo clippy -p rustynes-mappers --no-default-features --all-targets -- -D warnings
 
+      # v2.3.7 — the `commercial-roms` harness binaries had NEVER been linted.
+      # `--all-targets` only builds targets whose `required-features` are
+      # enabled, and nothing in CI enables `commercial-roms` (the corpus is
+      # non-redistributable, so the TESTS behind it cannot run here). The
+      # binaries themselves compile perfectly well without any ROM, though, and
+      # the omission had let a 164-line `main`, two `next_back()` lints and a
+      # `print_literal` accumulate unseen — found only when a reviewer read the
+      # code a human never lints.
+      #
+      # Compile-only, so it needs no corpus and costs one incremental pass on a
+      # runner that has already built this crate's dependencies. `debug-hooks`
+      # rides along because two of those binaries additionally require it.
+      - name: clippy (harness — commercial-roms binaries, compile-only)
+        run: >-
+          cargo clippy -p rustynes-test-harness --all-targets
+          --features commercial-roms,debug-hooks -- -D warnings
+
   # Cross-platform behaviour: full `cargo test` on stable across the three
   # shipped OSes. The previous ubuntu / 1.96 MSRV *test* entry is dropped — the
   # `lint` job above already compiles the whole workspace (`clippy
