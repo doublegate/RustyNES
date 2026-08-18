@@ -1640,6 +1640,10 @@ const SLOT_BYTES: usize = 62;
 /// evaluates `1u32 << eg_shift`, which panics at 32 and above.
 const EG_SHIFT_MAX: u32 = 13;
 
+/// Highest instrument number a channel can select: the `$3x` high nibble is four
+/// bits, and index 0 is the user patch.
+const MAX_PATCH_NUMBER: i32 = 15;
+
 /// Clamp a restored operator output into the range synthesis can actually
 /// produce. See the call site for why the field is wider than its contents.
 const fn clamp_i16(v: i32) -> i32 {
@@ -1971,7 +1975,18 @@ impl Opll {
         let lfo_am = r.u8()?;
         let mut patch_number = [0i32; 9];
         for n in &mut patch_number {
-            *n = r.i32()?;
+            // CLAMPED to the instrument range even though it is not currently a
+            // subscript -- it is only ever compared to zero, and `set_patch`
+            // bounds-checks its own argument before touching `patch_set`.
+            //
+            // Clamped anyway, for consistency with every other field here: the
+            // legal domain is 0..=15 (a 4-bit `$3x` high nibble), so a wider
+            // value describes a chip state that cannot exist, and letting one
+            // through would leave the ONE field whose safety rests on "nothing
+            // indexes it today" rather than on its own width. Reviewers flagged
+            // it three times; that is a fair signal that the invariant was too
+            // subtle to be load-bearing.
+            *n = r.i32()?.clamp(0, MAX_PATCH_NUMBER);
         }
         let user_patch = [r.patch()?, r.patch()?];
         let mut slots = [Slot::default(); SNAPSHOT_SLOTS];
