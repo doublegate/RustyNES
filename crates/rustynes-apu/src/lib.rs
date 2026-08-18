@@ -58,7 +58,10 @@ pub use frame_counter::{FrameCounter, FrameEvents, Mode as FrameCounterMode};
 pub use length::{LENGTH_TABLE, LengthCounter};
 pub use mixer::{FilterChain, FilterModel, Mixer, OnePole};
 pub use noise::{NTSC_NOISE_PERIODS, Noise, PAL_NOISE_PERIODS};
-pub use opll::{ChipType as OpllChipType, Opll, Patch as OpllPatch};
+pub use opll::{
+    ChipType as OpllChipType, OPLL_SNAPSHOT_LEN, OPLL_SNAPSHOT_VERSION, Opll, OpllStateError,
+    Patch as OpllPatch,
+};
 pub use pulse::Pulse;
 pub use snapshot::{APU_SNAPSHOT_VERSION, ApuSnapshotError};
 pub use triangle::Triangle;

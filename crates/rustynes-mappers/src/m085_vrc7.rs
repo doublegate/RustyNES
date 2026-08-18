@@ -44,6 +44,36 @@ const CHR_BANK_8K: usize = 0x2000;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
+/// Version byte this board writes in its mapper save-state section.
+///
+/// **v1** (through v2.3.6) carried banking, IRQ, mirroring, PRG-RAM and the
+/// *shadow* OPLL register bytes. **v2** (v2.3.7) appends the live synthesizer,
+/// closing the save-state audio-continuity gap recorded in
+/// `docs/accuracy-ledger.md`. `load_state` accepts both.
+///
+/// A build without `mapper-audio` has no synthesizer to describe, so it writes
+/// **v1** and, on load, validates a v2 tail's length and ignores its contents.
+/// That keeps the cross-build property this crate's feature documentation
+/// promises — an audio build's save still loads in a no-audio build, and a
+/// no-audio build's save still loads everywhere.
+///
+/// **This constant is the WRITE version only. Never key the accept set on it.**
+/// `load_state` compares against the literals 1 and 2 for that reason: it once
+/// compared against this constant, which is 1 here, so the condition collapsed
+/// to "v1 only" and a no-audio build rejected v2 outright — the precise opposite
+/// of the sentence above, which is what the code claimed to do while doing the
+/// reverse. What a build can write and what it must accept are different sets,
+/// and only the first varies by feature. Pinned by
+/// `vrc7_load_state_accepts_a_v2_blob_on_every_build`.
+#[cfg(feature = "mapper-audio")]
+const VRC7_SECTION_VERSION: u8 = 2;
+#[cfg(not(feature = "mapper-audio"))]
+const VRC7_SECTION_VERSION: u8 = 1;
+
+/// Bytes the v2 tail adds after the VRAM: `opll_clock_counter` (2),
+/// `last_opll_sample` (2), and the self-versioned OPLL blob.
+const VRC7_V2_TAIL_LEN: usize = 2 + 2 + rustynes_apu::OPLL_SNAPSHOT_LEN;
+
 fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let table = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as u8;
     let local = (addr as usize) & (NAMETABLE_SIZE - 1);
@@ -545,10 +575,14 @@ impl Mapper for Vrc7 {
         //   audio.regs[0..64] (64)
         //   vram (2 KiB)
         //
-        // Per ADR-0003: the future v1.x commit that lands the OPLL state
-        // bumps version 1 → 2, appending the synthesizer's internal
-        // state (operator phases, envelope phases, key-on flags) at the
-        // tail.  v1 blobs default-load the synthesizer to silent.
+        // v2 (v2.3.7) is that commit: it appends, after the VRAM,
+        //   opll_clock_counter(2 le) + last_opll_sample(2 le)
+        //   + opll blob (OPLL_SNAPSHOT_LEN bytes, self-versioned)
+        // closing the `docs/accuracy-ledger.md` row that recorded the FM
+        // voice resuming from arbitrary envelope + phase state after a
+        // rewind / rollback / TAS restore. `load_state` still accepts a v1
+        // blob, which leaves the synthesizer wherever it was — the exact
+        // pre-v2.3.7 behaviour, so an old save is no worse than it was.
         // version(1) + prg(3) + chr(8) + mirroring(1) + prg_ram_enable(1)
         //   + irq_latch(1) + irq_counter(1) + irq_enabled(1)
         //   + irq_enable_after_ack(1) + irq_mode_scanline(1)
@@ -556,8 +590,14 @@ impl Mapper for Vrc7 {
         //   + audio addr_latch(1) + data_latch(1) + silenced(1) + regs(64)
         // = 1 + 3 + 8 + 1 + 1 + 5 + 5 + 67 = 91
         let scalar_len = 1 + 3 + 8 + 1 + 1 + 10 + 3 + 64;
+        // The v2 tail only exists on a `mapper-audio` build, so only reserve for
+        // it there — a no-audio build would otherwise over-allocate ~1.3 KiB on
+        // every save for a tail it never writes.
+        #[cfg(feature = "mapper-audio")]
+        let mut out = Vec::with_capacity(scalar_len + self.vram.len() + VRC7_V2_TAIL_LEN);
+        #[cfg(not(feature = "mapper-audio"))]
         let mut out = Vec::with_capacity(scalar_len + self.vram.len());
-        out.push(1u8); // version
+        out.push(VRC7_SECTION_VERSION); // version
         out.push(self.prg_0);
         out.push(self.prg_1);
         out.push(self.prg_2);
@@ -576,6 +616,13 @@ impl Mapper for Vrc7 {
         out.push(u8::from(self.audio.silenced));
         out.extend_from_slice(&self.audio.regs);
         out.extend_from_slice(&self.vram);
+        // --- v2 tail: the live synthesizer ---
+        #[cfg(feature = "mapper-audio")]
+        {
+            out.extend_from_slice(&self.opll_clock_counter.to_le_bytes());
+            out.extend_from_slice(&self.last_opll_sample.to_le_bytes());
+            out.extend_from_slice(&self.opll.snapshot());
+        }
         out
     }
 
@@ -595,9 +642,73 @@ impl Mapper for Vrc7 {
             });
         }
         let version = data[0];
-        if version != 1 {
+        // Both READABLE versions, spelled as literals — deliberately NOT
+        // `VRC7_SECTION_VERSION`, which is what this WRITES and is 1 on a
+        // no-audio build. Keying the accept set on the write version made the
+        // condition collapse to `version != 1` there, so a no-audio build
+        // REJECTED a v2 blob outright — the exact opposite of the
+        // validate-then-ignore portability ADR 0004 asks for, and of what the
+        // comment on `VRC7_SECTION_VERSION` claimed. What a build can write and
+        // what it must accept are different sets; only the first varies by
+        // feature. Caught in review by two independent bots.
+        if version != 1 && version != 2 {
             return Err(MapperError::UnsupportedVersion(version));
         }
+
+        // VALIDATE EVERYTHING BEFORE MUTATING ANYTHING.
+        //
+        // The v2 tail introduced a failure that can occur AFTER the core fields
+        // have been assigned, which the v1 layout could not: v1 validated its
+        // whole length and version up front, so once it started writing it could
+        // not fail. A truncated or corrupt v2 tail used to return `Err` with
+        // `prg_0`, `chr`, the IRQ state and 2 KiB of VRAM already overwritten --
+        // a mapper left in a state that is neither the old one nor the new one,
+        // while the caller reports the load as failed and keeps running.
+        //
+        // `Opll::restore` was already atomic internally, which is exactly what
+        // made this easy to miss: the guarantee existed one level down and was
+        // silently discarded one level up. Parse into a temporary here, so this
+        // function has the same all-or-nothing property its own comments claim.
+        // Caught in review; the truncation test missed it because it asserted on
+        // the return value and never on the target.
+        #[cfg(feature = "mapper-audio")]
+        let staged_opll = if version >= 2 {
+            let tail = &data[core_expected..];
+            if tail.len() < VRC7_V2_TAIL_LEN {
+                return Err(MapperError::Truncated {
+                    expected: core_expected + VRC7_V2_TAIL_LEN,
+                    got: data.len(),
+                });
+            }
+            let mut opll = self.opll.clone();
+            opll.restore(&tail[4..])
+                .map_err(|e| MapperError::Invalid(format!("VRC7 OPLL state: {e}")))?;
+            Some((
+                u16::from_le_bytes(tail[0..2].try_into().expect("length checked above")),
+                i16::from_le_bytes(tail[2..4].try_into().expect("length checked above")),
+                opll,
+            ))
+        } else {
+            None
+        };
+        // A no-audio build has no synthesizer to stage into, but must still
+        // reject a truncated tail identically -- the same blob has to be
+        // accepted or refused the same way on every build.
+        #[cfg(not(feature = "mapper-audio"))]
+        // Written as an addition rather than `data.len() - core_expected < ..`:
+        // the subtraction cannot underflow TODAY (the length guard at the top of
+        // this function already proved `data.len() >= core_expected`), but it is
+        // one moved guard away from being able to, and an underflow here would
+        // wrap to a huge value and silently ACCEPT a truncated blob rather than
+        // panicking. Not worth leaving a correctness proof spread across two
+        // distant statements to save an addition.
+        if version >= 2 && data.len() < core_expected + VRC7_V2_TAIL_LEN {
+            return Err(MapperError::Truncated {
+                expected: core_expected + VRC7_V2_TAIL_LEN,
+                got: data.len(),
+            });
+        }
+
         self.prg_0 = data[1];
         self.prg_1 = data[2];
         self.prg_2 = data[3];
@@ -628,6 +739,21 @@ impl Mapper for Vrc7 {
         self.audio.silenced = data[26] != 0;
         self.audio.regs.copy_from_slice(&data[27..91]);
         self.vram.copy_from_slice(&data[91..91 + self.vram.len()]);
+
+        // --- v2 tail: the live synthesizer ---
+        //
+        // A v1 blob stops here. That is deliberately NOT an error and NOT a
+        // reset: it is the pre-v2.3.7 behaviour, in which the synthesizer kept
+        // running from whatever state it held. An old save is therefore exactly
+        // as (in)accurate as it always was, rather than newly silent.
+        // Commit the already-validated synthesizer. Infallible by construction:
+        // every way this could fail was exercised above, before the first write.
+        #[cfg(feature = "mapper-audio")]
+        if let Some((counter, sample, opll)) = staged_opll {
+            self.opll_clock_counter = counter;
+            self.last_opll_sample = sample;
+            self.opll = opll;
+        }
         Ok(())
     }
 }
@@ -940,7 +1066,10 @@ mod tests {
         m.cpu_write(0x9010, 0x30);
         m.cpu_write(0x9030, 0x5F);
         let blob = m.save_state();
-        assert_eq!(blob[0], 1u8, "VRC7 save-state version tag");
+        // v1 through v2.3.6; v2 since v2.3.7, which appends the live OPLL.
+        // A build without `mapper-audio` has no synthesizer to describe and
+        // still writes v1 — see `VRC7_SECTION_VERSION`.
+        assert_eq!(blob[0], VRC7_SECTION_VERSION, "VRC7 save-state version tag");
 
         let mut target = vrc7_default();
         target.load_state(&blob).unwrap();
@@ -995,6 +1124,176 @@ mod tests {
             m.mix_audio(),
             0,
             "feature-off path must remain silent (matches feature-on for VRC7 v0.9.x)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Save-state audio continuity (v2.3.7 — closes the accuracy-ledger row)
+    // -----------------------------------------------------------------------
+
+    /// Key a note on channel 0 with a real melodic patch, so the OPLL has
+    /// non-trivial envelope + phase state to carry.
+    #[cfg(feature = "mapper-audio")]
+    fn key_on_channel_0(m: &mut Vrc7) {
+        // $3x: high nibble = instrument (1 = the first Konami melodic patch),
+        // low nibble = attenuation (0 = loudest).
+        m.cpu_write(0x9010, 0x30);
+        m.cpu_write(0x9030, 0x10);
+        // $1x: F-number low 8 bits.
+        m.cpu_write(0x9010, 0x10);
+        m.cpu_write(0x9030, 0xAD);
+        // $2x: bit5 sustain, bit4 key-on, bits3-1 block, bit0 F-number bit 8.
+        m.cpu_write(0x9010, 0x20);
+        m.cpu_write(0x9030, 0x15);
+    }
+
+    /// Run `n` CPU cycles and return every mixed sample, so two timelines can
+    /// be compared as a waveform rather than as a single instant.
+    #[cfg(feature = "mapper-audio")]
+    fn run_capture(m: &mut Vrc7, n: usize) -> Vec<i32> {
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            m.notify_cpu_cycle();
+            out.push(m.mix_audio());
+        }
+        out
+    }
+
+    /// **The test the ledger row existed for.** A restored VRC7 must resume the
+    /// note that was playing, sample for sample.
+    ///
+    /// Before v2.3.7 the section carried only the shadow register bytes, so the
+    /// restored synthesizer started from its power-on state and this comparison
+    /// failed on the very first sample after the envelope diverged. Deleting
+    /// the v2 tail from `save_state` reproduces that failure — the mutation
+    /// check for this test.
+    #[cfg(feature = "mapper-audio")]
+    #[test]
+    fn vrc7_save_state_carries_the_live_opll_so_audio_resumes_identically() {
+        let mut source = vrc7_default();
+        key_on_channel_0(&mut source);
+        // Advance far enough that the envelope is well past attack and the
+        // phase accumulators hold values no reset could coincidentally match.
+        let _ = run_capture(&mut source, 20_000);
+
+        let blob = source.save_state();
+        assert_eq!(blob[0], 2, "a mapper-audio build must write section v2");
+
+        let expected = run_capture(&mut source, 4_000);
+        assert!(
+            expected.iter().any(|&s| s != 0),
+            "fixture produced silence — the test would pass vacuously"
+        );
+
+        let mut restored = vrc7_default();
+        restored.load_state(&blob).expect("v2 blob must load");
+        let got = run_capture(&mut restored, 4_000);
+
+        assert_eq!(
+            got, expected,
+            "the restored VRC7 did not resume the note that was playing: the OPLL \
+             envelope + phase state is not surviving the save state"
+        );
+    }
+
+    /// The v2 tail is additive: a v1 blob (every save written before v2.3.7)
+    /// still loads. It leaves the synthesizer untouched, which is exactly the
+    /// pre-v2.3.7 behaviour — an old save is no worse than it always was.
+    #[test]
+    fn vrc7_load_state_still_accepts_a_v1_blob() {
+        let mut source = vrc7_default();
+        source.cpu_write(0x8000, 5);
+        source.cpu_write(0x9010, 0x15);
+        source.cpu_write(0x9030, 0x77);
+        let blob = source.save_state();
+
+        // Synthesize the v1 form: version byte 1, and no tail past the VRAM.
+        let core_len = 91 + source.vram.len();
+        let mut v1 = blob[..core_len].to_vec();
+        v1[0] = 1;
+
+        let mut target = vrc7_default();
+        target.load_state(&v1).expect("a v1 blob must still load");
+        assert_eq!(target.prg_0, 5, "v1 core fields must round-trip");
+        assert_eq!(target.audio.regs[0x15], 0x77);
+    }
+
+    /// **Every build must ACCEPT a v2 blob, including one that cannot write it.**
+    ///
+    /// Regression for a defect two review bots caught independently: the accept
+    /// check read `version != 1 && version != VRC7_SECTION_VERSION`, and
+    /// `VRC7_SECTION_VERSION` is 1 on a no-audio build — so the condition
+    /// collapsed to `version != 1` there and a v2 blob was rejected outright.
+    /// That is the exact opposite of the validate-then-ignore portability
+    /// ADR 0004 asks for, and the opposite of what the constant's own doc
+    /// comment claimed.
+    ///
+    /// The lesson, which is why this test exists rather than a one-line diff:
+    /// **what a build can WRITE and what it must ACCEPT are different sets, and
+    /// only the first varies by feature.** Deriving one from the other reads as
+    /// tidy and silently couples them.
+    #[test]
+    fn vrc7_load_state_accepts_a_v2_blob_on_every_build() {
+        let mut source = vrc7_default();
+        source.cpu_write(0x8000, 5);
+
+        // On a `mapper-audio` build `save_state` already emits v2. On a no-audio
+        // build it emits v1 with no tail, so synthesize the v2 shape: the load
+        // path validates that tail's LENGTH on every build and reads its
+        // CONTENTS only where there is a synthesizer, so zeros are correct here.
+        #[cfg(feature = "mapper-audio")]
+        let blob = source.save_state();
+        #[cfg(not(feature = "mapper-audio"))]
+        let blob = {
+            let mut b = source.save_state();
+            b[0] = 2;
+            b.resize(b.len() + VRC7_V2_TAIL_LEN, 0);
+            b
+        };
+        assert_eq!(blob[0], 2, "the fixture must be a v2 blob");
+
+        let mut target = vrc7_default();
+        target
+            .load_state(&blob)
+            .expect("a v2 blob must load on every build, whether or not it can write one");
+        assert_eq!(target.prg_0, 5, "the core fields must still round-trip");
+    }
+
+    /// A v2 blob truncated inside its tail must be rejected, not partially
+    /// applied. This is untrusted input: a save state is a file on disk.
+    #[cfg(feature = "mapper-audio")]
+    #[test]
+    fn vrc7_load_state_rejects_a_truncated_v2_tail() {
+        let mut source = vrc7_default();
+        key_on_channel_0(&mut source);
+        let _ = run_capture(&mut source, 500);
+        let blob = source.save_state();
+
+        // Give the target DIFFERENT state from the source, so a partial write
+        // is observable rather than coincidentally identical.
+        let mut target = vrc7_default();
+        target.cpu_write(0x8000, 3);
+        target.cpu_write(0x9000, 6);
+        let pristine = target.save_state();
+
+        let err = target
+            .load_state(&blob[..blob.len() - 1])
+            .expect_err("a truncated v2 tail must be rejected");
+        assert!(
+            matches!(err, MapperError::Truncated { .. }),
+            "expected Truncated, got {err:?}"
+        );
+
+        // The half this test used to be missing. Returning `Err` is not enough:
+        // `load_state` assigned the core fields BEFORE validating the v2 tail, so
+        // a rejected load left the mapper neither in its old state nor the new
+        // one, while the caller reported failure and kept running. Asserting only
+        // on the return value cannot see that -- which is why review found it and
+        // this test did not.
+        assert_eq!(
+            target.save_state(),
+            pristine,
+            "a rejected load mutated the mapper: load_state is not atomic"
         );
     }
 }

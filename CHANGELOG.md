@@ -16,6 +16,101 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **VRC7 save states now carry the FM synthesizer, so rewind no longer garbles
+  the music.** `Vrc7::save_state` wrote the *shadow* OPLL register bytes and
+  never the live synthesizer — not `opll`, not `opll_clock_counter`, not
+  `last_opll_sample` — and `load_state` never replayed them either. After a
+  rewind, a netplay rollback, or a TAS/save-state restore the FM voice therefore
+  resumed from whatever envelope and phase state it happened to be holding.
+  Banking, IRQ, mirroring and PRG-RAM had always round-tripped correctly; this
+  was audio-only, and only on mapper 85. Recorded as an open frontier in
+  `docs/accuracy-ledger.md` since v2.2.3, closed now.
+
+  `rustynes_apu::Opll` gains a `snapshot` / `restore` pair carrying the register
+  shadow, the EG and LFO counters, the per-channel patch selection, all 18
+  operator slots (phase accumulators, envelope state machines, feedback history)
+  and the per-channel outputs. The lookup tables and the chip's patch ROM are
+  deliberately not carried — they are constants of construction, and restoring
+  them would be restoring a copy of the binary into itself. The chip type rides
+  along only as a tag, so a YM2413 blob restored into a VRC7 is rejected rather
+  than silently reinterpreting every slot patch against the wrong instrument set.
+
+  The VRC7 mapper section is now **v2**, appending that blob after the VRAM.
+  It is additive: a v1 blob still loads and leaves the synthesizer exactly where
+  the old build left it, so an old save is no worse than it always was rather
+  than newly silent. A build without `mapper-audio` has no synthesizer to
+  describe, so it still writes v1 and validates-then-ignores a v2 tail — which
+  preserves the cross-feature save portability ADR 0004 promises, and is why the
+  version byte is build-dependent rather than unconditionally 2.
+
+  The repair a reader will think of first was rejected on the merits: replaying
+  the register shadow through `Opll::write_reg` on load needs no new format, but
+  restarts every keyed-on channel's envelope at attack, so every rewind frame
+  would produce an audible transient.
+
+  The regression net keys a note, advances 20,000 CPU cycles, saves, and then
+  compares 4,000 mixed samples from the source against 4,000 from a **fresh**
+  mapper restored from the blob — equal sample for sample. It is
+  mutation-checked: making the tail carry a *reset* synthesizer reproduces the
+  pre-fix failure exactly. `Opll` is also now registered in
+  `snapshot_schema_audit.rs`, the standing field-vs-schema audit, which had
+  never been able to see this surface — a save-state surface no audit can see is
+  precisely how a gap this size survives for four releases.
+
+  Emulation output is unchanged (nothing on the synthesis path moved), and the
+  accuracy contract was verified rather than assumed: AccuracyCoin **141/141**
+  via the authoritative RAM decoder, nestest 0-diff.
+
+  Review caught a defect in the fix itself, worth recording because of *why* no
+  test could have. The accept check read `version != 1 && version !=
+  VRC7_SECTION_VERSION`, and that constant is **1** on a `mapper-audio`-off
+  build — so the condition collapsed to "v1 only" there and a no-audio build
+  **rejected** every v2 blob, the exact opposite of the portability the constant's
+  own doc comment claimed. What a build can *write* and what it must *accept* are
+  different sets, and only the first varies by feature; deriving one from the
+  other reads as tidy and silently couples them. The check now compares against
+  literals.
+
+  The default build takes the other branch and was correct throughout, which is
+  why every gate stayed green: CI **linted** the `--no-default-features` shape
+  and never **ran** it. `cargo test -p rustynes-mappers --no-default-features` is
+  now a CI step, and the new regression test is mutation-checked in both
+  configurations — red on no-audio with the old condition, green on the default
+  build either way.
+
+  A second review pass found two more, both in the new code and both of a kind
+  the tests as written could not see. **A hand-edited save state could crash the
+  emulator**: `commit_slot_update` indexes the TLL table as
+  `[block_fnum][tl][kl]` with dimensions `[128][64][4]`, and `restore` was
+  handing it raw bytes — a `tl` of 255 computes an index of 524,539 into a
+  32,768-entry table. Every register field is now masked to its hardware width
+  at the parse boundary, which is what those fields physically are. The test that
+  proves it is careful about one thing: an all-`0xFF` blob is rejected by the
+  envelope-state tag check before any numeric field is read, so the naive hostile
+  input passes **by accident** and reports the emulator safe. The interesting
+  input is the one that satisfies every explicit check and is still nonsense. A
+  later review pass pushed back that the masking did not in fact cover every
+  field, and was right: replacing the single fixed payload with a deterministic
+  pseudo-random sweep found **three more panics** the fixed one could not,
+  including one it actively hid — with every byte `0xFF`, `update_requests` is
+  also all-ones, so the slot state was recomputed before the restored values
+  could be used. A blob that is maximally hostile in one dimension can be
+  harmless in another. The three: `eg_shift` used as a shift amount (`1u32 <<`
+  panics at 32), the operator feedback pair summed as two arbitrary `i32`s, and
+  `eg_rate_l` indexing a 4-entry table — the last being a field I had explicitly
+  traced as safe, using a broken grep whose empty output I read as proof.
+
+  And **`load_state` was not atomic**. The v2 tail introduced a failure that can
+  occur *after* the core fields are assigned, which the v1 layout could not, so a
+  truncated tail returned `Err` with the banking, IRQ state and 2 KiB of VRAM
+  already overwritten — a mapper left in neither its old state nor its new one
+  while the caller reported failure and kept running. `Opll::restore` was already
+  atomic internally, which is exactly what made it easy to miss: the guarantee
+  existed one level down and was silently discarded one level up. It now parses
+  into a staged value before the first write. The truncation test asserted only
+  on the return value, which is why review found this and the test did not; it
+  now asserts the target is byte-identical afterwards.
+
 - **Corrected a stale comment in `security.yml`.** It justified installing
   `cargo-audit` / `cargo-deny` as prebuilt binaries with "the repo pins rustc
   1.96 **but** cargo-audit needs >= 1.88 to compile" — which argues against
@@ -106,8 +201,9 @@ cycle-accurate core later replaced.
 - **CI jobs are bounded, so a hung job can no longer block a release.** No job
   in `ci.yml` carried a `timeout-minutes`, which means every one inherited
   GitHub's **six-hour** default. On the night of the v2.3.6 cut the `lint` job —
-  normally four minutes — hung on `main` (2026-08-17 21:11 UTC). Because `main` runs deliberately do not cancel each
-  other, the v2.3.6 release commit queued behind it and never started; GitHub
+  normally four minutes — hung on `main` (2026-08-17 21:11 UTC). Because `main`
+  runs deliberately do not cancel each other, the v2.3.6 release commit queued
+  behind it and never started; GitHub
   keeps only one pending run per concurrency group, so the commit between them
   was cancelled outright; `Auto Release` fired on *that* cancellation, saw a
   non-success conclusion, and correctly skipped.
