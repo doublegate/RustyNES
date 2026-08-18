@@ -242,8 +242,14 @@ fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
 /// image. Returns the processed bytes and a display label (the inner archive
 /// entry name when unzipped, else the file name). Used by `App::new` so a ROM
 /// passed on argv loads identically to one opened from the menu / drag-drop.
-/// Native-only (the in-app menu path handles the running-app case; the wasm
-/// `AppEvent::RomLoaded` path preprocesses separately).
+/// Native-only (the in-app menu path handles the running-app case). The wasm
+/// `AppEvent::RomLoaded` path does NOT run this: a browser file picker hands
+/// over one file with no sibling `.bps`/`.ips` to find and no path to derive a
+/// stem from, so zip extraction and soft-patching have nothing to act on there.
+/// It does apply the header corrections, via
+/// [`apply_game_db_header_overrides`] — which is the half that used to be
+/// missing, and which this sentence previously papered over by claiming the
+/// wasm path "preprocesses separately" when it preprocessed nothing at all.
 #[cfg(not(target_arch = "wasm32"))]
 fn load_and_preprocess_rom(rom_path: &Path) -> std::io::Result<(Vec<u8>, String)> {
     let mut bytes = std::fs::read(rom_path)?;
@@ -306,8 +312,9 @@ fn load_and_preprocess_rom(rom_path: &Path) -> std::io::Result<(Vec<u8>, String)
 /// ROM that needs one -- Seicross needs submapper 4 to clear its protection
 /// loop -- worked one way and hung the other.
 ///
-/// Native-only, like the startup path it exists for: `per_game::resolve` and
-/// the filesystem overlay it reads are `cfg`-gated off wasm.
+/// Only the SECOND stage is native-only. See
+/// [`apply_game_db_header_overrides`] for why that distinction cost the
+/// browser build every header correction for three releases.
 #[cfg(not(target_arch = "wasm32"))]
 fn apply_load_time_header_overrides(bytes: &mut [u8], path: Option<&std::path::Path>) {
     // One CRC for both stages. `rom_crc32` hashes PRG+CHR and excludes the
@@ -315,18 +322,44 @@ fn apply_load_time_header_overrides(bytes: &mut [u8], path: Option<&std::path::P
     // key is stable across the first rewrite -- that stability is what lets the
     // overlay stack on the database correction at all. Recomputing it was an
     // O(ROM) pass that could not return a different answer.
-    let Some(crc) = crate::game_db::rom_crc32(bytes) else {
+    let Some(crc) = apply_game_db_header_overrides(bytes) else {
         return;
     };
-    if let Some(entry) = crate::game_db::entry_for_crc(crc) {
-        crate::game_db::apply_header_overrides(bytes, &entry);
-    }
     if let Some(cfg) = crate::per_game::resolve(crc, path)
         && !cfg.overrides.is_empty()
     {
         let entry = cfg.overrides.to_game_db_entry(crc, String::new());
         crate::game_db::apply_header_overrides(bytes, &entry);
     }
+}
+
+/// Stage one on its own: the vendored per-game database's header corrections.
+///
+/// Returns the header-excluded CRC32 the lookup used, so a caller that stacks a
+/// second correction on top does not pay an O(ROM) pass to recompute a value
+/// that cannot have changed.
+///
+/// **Available on every target, and that is the point.** The database is a table
+/// compiled into `rustynes-gamedb`; nothing about it needs a filesystem. Only the
+/// *second* stage — the per-game `<rom>.json` overlay — is native-only, and
+/// until v2.3.7 that distinction was lost: the whole function was `cfg`-gated
+/// off wasm because one of its two halves was, so **the browser build applied no
+/// header corrections at all**. Every mapper / submapper / region fix the
+/// database ships was silently absent on the web demo — Seicross needs
+/// submapper 4 to clear its protection loop and hung there, exactly as it hung
+/// on the CLI before v2.3.4 fixed *that* half of the same asymmetry.
+///
+/// This is the third time this correction has been skipped by a load path that
+/// did not go through the File-menu chokepoint (CLI in v2.3.4, the coverage
+/// harness in v2.3.4, the browser here). The lesson recorded with the fix: a
+/// `cfg` gate inherited from the strictest of several stages is a gate on the
+/// whole feature, and nothing tells you which stages did not need it.
+pub(crate) fn apply_game_db_header_overrides(bytes: &mut [u8]) -> Option<u32> {
+    let crc = crate::game_db::rom_crc32(bytes)?;
+    if let Some(entry) = crate::game_db::entry_for_crc(crc) {
+        crate::game_db::apply_header_overrides(bytes, &entry);
+    }
+    Some(crc)
 }
 
 /// Hand the game-DB crate its overlay directory, then apply the load-time header
@@ -8940,6 +8973,22 @@ impl ApplicationHandler<AppEvent> for App {
             AppEvent::GfxReady(gfx) => self.on_gfx_ready(*gfx, event_loop),
             AppEvent::RomLoaded(bytes) => {
                 self.rom_bytes = bytes;
+                // v2.3.7 — apply the per-game database's header corrections
+                // BEFORE `start_nes` hands the bytes to `Nes::from_rom`, which
+                // is the only moment the header still matters.
+                //
+                // This arm is the browser's ONLY ROM entry point, and until now
+                // it did none of this: the helper it needed was `cfg`-gated off
+                // wasm because its second stage (the `<rom>.json` overlay) reads
+                // a filesystem, so the first stage — a compiled-in table that
+                // needs nothing — went with it. The native File-menu and CLI
+                // paths both correct the header; the web demo did not.
+                //
+                // Only the database stage runs here. The overlay stage has no
+                // meaning in a browser (there is no `<rom>.json` to find), so it
+                // is not a gap, and `apply_load_time_header_overrides` stays
+                // native-only for that reason alone.
+                let _ = apply_game_db_header_overrides(&mut self.rom_bytes);
                 // Match the AudioContext's actual sample rate (set up
                 // by `wasm_winit::start`'s file-picker gesture) so the
                 // APU output needs no resampling. Falls back to
@@ -10867,6 +10916,101 @@ mod tests {
             via_helper, via_direct,
             "the startup helper must produce the same header as the DB rewrite"
         );
+    }
+
+    /// The browser's load path must correct the header the same way the native
+    /// one does.
+    ///
+    /// Regression for the third instance of one defect: a load path that does
+    /// not go through the File-menu chokepoint skips the per-game database's
+    /// header corrections. The CLI skipped them until v2.3.4; the coverage
+    /// harness skipped them until v2.3.4; the **browser** skipped them until
+    /// v2.3.7, because `apply_load_time_header_overrides` was `cfg`-gated off
+    /// wasm on account of its SECOND stage reading a filesystem — taking the
+    /// first stage, a compiled-in table that needs nothing, down with it.
+    ///
+    /// A browser never has a per-game `<rom>.json` overlay, so the database
+    /// stage alone must equal the full native helper with no overlay present.
+    #[test]
+    fn the_browser_path_applies_the_same_header_corrections_as_the_native_one() {
+        let rom = synth_ines_185();
+
+        let mut via_browser = rom.clone();
+        let crc_browser = super::apply_game_db_header_overrides(&mut via_browser);
+
+        let mut via_native = rom.clone();
+        apply_load_time_header_overrides(&mut via_native, None);
+
+        assert_eq!(
+            via_browser, via_native,
+            "the browser stage diverged from the native helper on a ROM with no overlay"
+        );
+        assert_eq!(
+            crc_browser,
+            crate::game_db::rom_crc32(&rom),
+            "the returned CRC must be the header-excluded key the lookup used, so a \
+             caller stacking a second correction need not recompute it"
+        );
+    }
+
+    /// Premise for the test above: the correction is observable at all.
+    ///
+    /// Without this, `the_browser_path_...` would pass just as happily if both
+    /// sides were no-ops — which is precisely the state the browser was in.
+    #[test]
+    fn a_header_correction_is_observable_so_the_agreement_test_is_not_vacuous() {
+        let rom = synth_ines_185();
+        let crc = crate::game_db::rom_crc32(&rom).expect("iNES header parses");
+        let entry = crate::game_db::GameDbEntry {
+            crc,
+            region: None,
+            mapper: Some(4),
+            submapper: Some(4),
+            mirroring: None,
+            title: String::new(),
+        };
+        let mut rewritten = rom.clone();
+        assert!(
+            crate::game_db::apply_header_overrides(&mut rewritten, &entry),
+            "the DB rewrite reported no change"
+        );
+        assert_ne!(rewritten, rom, "the DB rewrite left the header untouched");
+    }
+
+    /// Every wasm ROM entry point must call the correction.
+    ///
+    /// A source-text assertion on purpose, in the style of
+    /// `snapshot_schema_audit.rs`: the two call sites live in `cfg`-gated wasm
+    /// code that a native test binary cannot execute or even link, so behaviour
+    /// cannot reach them. What CAN be checked is that the call is present — and
+    /// the bug being pinned was exactly an absent call, not a wrong one.
+    ///
+    /// If a third wasm ROM entry point is added, add it here.
+    #[test]
+    fn every_wasm_rom_entry_point_corrects_the_header() {
+        const APP_SRC: &str = include_str!("app.rs");
+        const CANVAS_SRC: &str = include_str!("wasm.rs");
+
+        assert!(
+            APP_SRC.contains("apply_game_db_header_overrides(&mut self.rom_bytes)"),
+            "the `wasm-winit` demo's AppEvent::RomLoaded arm no longer corrects the header"
+        );
+        assert!(
+            CANVAS_SRC.contains("apply_game_db_header_overrides(&mut bytes)"),
+            "the `wasm-canvas` embed's ROM loader no longer corrects the header"
+        );
+    }
+
+    /// Seicross (Japan): iNES 1.0, mapper 185, no submapper field of its own.
+    /// 32 KiB PRG + 8 KiB CHR so the header-excluded CRC is well defined.
+    fn synth_ines_185() -> Vec<u8> {
+        let mut rom = vec![0u8; 16 + 0x8000 + 0x2000];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 2; // 32 KiB PRG
+        rom[5] = 1; // 8 KiB CHR
+        rom[6] = 0x90; // mapper low nibble 9
+        rom[7] = 0xB0; // mapper high nibble B -> 185
+        rom
     }
     use super::{
         extract_rom_from_zip, is_fds_image, is_nsf_image, load_and_preprocess_rom,
