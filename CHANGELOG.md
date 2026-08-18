@@ -111,6 +111,54 @@ cycle-accurate core later replaced.
   on the return value, which is why review found this and the test did not; it
   now asserts the target is byte-identical afterwards.
 
+- **Corrected a stale comment in `security.yml`.** It justified installing
+  `cargo-audit` / `cargo-deny` as prebuilt binaries with "the repo pins rustc
+  1.96 **but** cargo-audit needs >= 1.88 to compile" — which argues against
+  itself, since 1.96 satisfies that. True when written at a 1.86 pin; it
+  survived the v1.3.0 bump. Comments only; no behaviour change.
+
+- **The browser demo applied no per-game header corrections.** Every mapper,
+  submapper and region fix the vendored game database ships was silently absent
+  on the web build — Seicross, which needs submapper 4 to clear its protection
+  loop, hung there exactly as it hung on the CLI before v2.3.4.
+
+  The mechanism is the interesting part, because this is the **third** time the
+  same correction has been skipped by a load path that does not go through the
+  File-menu chokepoint: the CLI (fixed v2.3.4), the mapper-coverage harness
+  (fixed v2.3.4), and now the browser. `apply_load_time_header_overrides` has two
+  stages — the compiled-in game database, then the per-game `<rom>.json` overlay.
+  Only the *second* needs a filesystem, but the whole function was `cfg`-gated
+  off wasm on its account, so the first went down with it. **A `cfg` gate
+  inherited from the strictest of several stages is a gate on the whole feature,
+  and nothing tells you which stages did not need it.**
+
+  The database stage is now its own function, ungated, called from both browser
+  ROM entry points (the `wasm-winit` demo's `AppEvent::RomLoaded` and the
+  `wasm-canvas` embed's file picker). The overlay stage stays native-only, which
+  is correct rather than a remaining gap: a browser has no `<rom>.json` to find.
+
+  Found by the audit v2.3.6 opened after Pixel Provenance — *look for shipped
+  features whose core logic is tested and whose frontend wiring is not.* And, as
+  with Pixel Provenance, a comment asserted the opposite of the code: the wasm
+  path was documented as one that "preprocesses separately" when it preprocessed
+  nothing at all. That sentence is corrected in place, quoted, rather than
+  quietly deleted.
+
+  Pinned three ways: the browser stage must produce byte-identical output to the
+  full native helper when no overlay exists; a premise test proves the correction
+  is observable at all, so the agreement test cannot pass vacuously (which is
+  precisely the state the browser was in); and a source-text assertion requires
+  every wasm ROM entry point to call it — mutation-checked — because those call
+  sites live in `cfg`-gated code a native test binary cannot link, so an absent
+  call is the one thing behaviour can never catch. That third test was itself
+  **vacuous on first writing**, and review caught it: it lives in `app.rs`, so
+  `include_str!("app.rs")` pulled in the test's own source — which contains the
+  literal it searches for, making the assertion permanently true. It survived a
+  mutation check only because the check deleted the *other* file's call. A file
+  that reads itself has to exclude the part doing the reading; it now truncates
+  at the test module, asserts that the truncation worked, and is
+  mutation-checked on both halves.
+
 - **Rad Racer's roadside artifact — the PPU spliced a hybrid address from a
   stale address bus.** A band of stray pixels flickered in the sand to the right
   of the road, tracking the horizon, on 1639 of the 1841 frames of the movie the

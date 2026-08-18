@@ -150,7 +150,21 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
                 return;
             };
             let array = js_sys::Uint8Array::new(&buffer);
-            let bytes = array.to_vec();
+            let mut bytes = array.to_vec();
+            // v2.3.7 — the per-game database's header corrections, applied
+            // before the core parses the header. Same fix as the `wasm-winit`
+            // demo's `AppEvent::RomLoaded` arm: the helper used to be `cfg`-gated
+            // off wasm because a LATER stage of it reads a filesystem, so this
+            // stage — a compiled-in table needing nothing — was lost with it, and
+            // every mapper / submapper / region fix was absent in the browser.
+            // CRC discarded: nothing stacks on it here, and `None` just means
+            // the bytes are not a parseable iNES image -- which `Nes::from_rom`
+            // reports properly a few lines below.
+            // `let _` is deliberate; an explicit `match` here is rejected by
+            // `clippy::single_match`. `None` means "not an iNES image" -- which
+            // includes formats this path legitimately handles -- so it must not
+            // abort the load; `Nes::from_rom` reports a genuinely malformed one.
+            let _ = crate::app::apply_game_db_header_overrides(&mut bytes);
             // The file-pick is a user gesture, so it's safe to create
             // the AudioContext here (the browser autoplay policy
             // requires a gesture). Create the Nes at the audio
