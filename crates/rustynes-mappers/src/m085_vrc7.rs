@@ -52,10 +52,19 @@ const NAMETABLE_SIZE_U16: u16 = 0x0400;
 /// `docs/accuracy-ledger.md`. `load_state` accepts both.
 ///
 /// A build without `mapper-audio` has no synthesizer to describe, so it writes
-/// **v1** and skips a v2 tail on load. That keeps the cross-build property this
-/// crate's feature documentation promises — an audio build's save still loads in
-/// a no-audio build, and a no-audio build's save still loads everywhere — which
-/// a build-dependent *version byte* alone would not have given.
+/// **v1** and, on load, validates a v2 tail's length and ignores its contents.
+/// That keeps the cross-build property this crate's feature documentation
+/// promises — an audio build's save still loads in a no-audio build, and a
+/// no-audio build's save still loads everywhere.
+///
+/// **This constant is the WRITE version only. Never key the accept set on it.**
+/// `load_state` compares against the literals 1 and 2 for that reason: it once
+/// compared against this constant, which is 1 here, so the condition collapsed
+/// to "v1 only" and a no-audio build rejected v2 outright — the precise opposite
+/// of the sentence above, which is what the code claimed to do while doing the
+/// reverse. What a build can write and what it must accept are different sets,
+/// and only the first varies by feature. Pinned by
+/// `vrc7_load_state_accepts_a_v2_blob_on_every_build`.
 #[cfg(feature = "mapper-audio")]
 const VRC7_SECTION_VERSION: u8 = 2;
 #[cfg(not(feature = "mapper-audio"))]
@@ -581,7 +590,13 @@ impl Mapper for Vrc7 {
         //   + audio addr_latch(1) + data_latch(1) + silenced(1) + regs(64)
         // = 1 + 3 + 8 + 1 + 1 + 5 + 5 + 67 = 91
         let scalar_len = 1 + 3 + 8 + 1 + 1 + 10 + 3 + 64;
+        // The v2 tail only exists on a `mapper-audio` build, so only reserve for
+        // it there — a no-audio build would otherwise over-allocate ~1.3 KiB on
+        // every save for a tail it never writes.
+        #[cfg(feature = "mapper-audio")]
         let mut out = Vec::with_capacity(scalar_len + self.vram.len() + VRC7_V2_TAIL_LEN);
+        #[cfg(not(feature = "mapper-audio"))]
+        let mut out = Vec::with_capacity(scalar_len + self.vram.len());
         out.push(VRC7_SECTION_VERSION); // version
         out.push(self.prg_0);
         out.push(self.prg_1);
@@ -627,7 +642,16 @@ impl Mapper for Vrc7 {
             });
         }
         let version = data[0];
-        if version != 1 && version != VRC7_SECTION_VERSION {
+        // Both READABLE versions, spelled as literals — deliberately NOT
+        // `VRC7_SECTION_VERSION`, which is what this WRITES and is 1 on a
+        // no-audio build. Keying the accept set on the write version made the
+        // condition collapse to `version != 1` there, so a no-audio build
+        // REJECTED a v2 blob outright — the exact opposite of the
+        // validate-then-ignore portability ADR 0004 asks for, and of what the
+        // comment on `VRC7_SECTION_VERSION` claimed. What a build can write and
+        // what it must accept are different sets; only the first varies by
+        // feature. Caught in review by two independent bots.
+        if version != 1 && version != 2 {
             return Err(MapperError::UnsupportedVersion(version));
         }
         self.prg_0 = data[1];
@@ -1148,6 +1172,47 @@ mod tests {
         target.load_state(&v1).expect("a v1 blob must still load");
         assert_eq!(target.prg_0, 5, "v1 core fields must round-trip");
         assert_eq!(target.audio.regs[0x15], 0x77);
+    }
+
+    /// **Every build must ACCEPT a v2 blob, including one that cannot write it.**
+    ///
+    /// Regression for a defect two review bots caught independently: the accept
+    /// check read `version != 1 && version != VRC7_SECTION_VERSION`, and
+    /// `VRC7_SECTION_VERSION` is 1 on a no-audio build — so the condition
+    /// collapsed to `version != 1` there and a v2 blob was rejected outright.
+    /// That is the exact opposite of the validate-then-ignore portability
+    /// ADR 0004 asks for, and the opposite of what the constant's own doc
+    /// comment claimed.
+    ///
+    /// The lesson, which is why this test exists rather than a one-line diff:
+    /// **what a build can WRITE and what it must ACCEPT are different sets, and
+    /// only the first varies by feature.** Deriving one from the other reads as
+    /// tidy and silently couples them.
+    #[test]
+    fn vrc7_load_state_accepts_a_v2_blob_on_every_build() {
+        let mut source = vrc7_default();
+        source.cpu_write(0x8000, 5);
+
+        // On a `mapper-audio` build `save_state` already emits v2. On a no-audio
+        // build it emits v1 with no tail, so synthesize the v2 shape: the load
+        // path validates that tail's LENGTH on every build and reads its
+        // CONTENTS only where there is a synthesizer, so zeros are correct here.
+        #[cfg(feature = "mapper-audio")]
+        let blob = source.save_state();
+        #[cfg(not(feature = "mapper-audio"))]
+        let blob = {
+            let mut b = source.save_state();
+            b[0] = 2;
+            b.resize(b.len() + VRC7_V2_TAIL_LEN, 0);
+            b
+        };
+        assert_eq!(blob[0], 2, "the fixture must be a v2 blob");
+
+        let mut target = vrc7_default();
+        target
+            .load_state(&blob)
+            .expect("a v2 blob must load on every build, whether or not it can write one");
+        assert_eq!(target.prg_0, 5, "the core fields must still round-trip");
     }
 
     /// A v2 blob truncated inside its tail must be rejected, not partially

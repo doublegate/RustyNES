@@ -61,6 +61,23 @@ cycle-accurate core later replaced.
   accuracy contract was verified rather than assumed: AccuracyCoin **141/141**
   via the authoritative RAM decoder, nestest 0-diff.
 
+  Review caught a defect in the fix itself, worth recording because of *why* no
+  test could have. The accept check read `version != 1 && version !=
+  VRC7_SECTION_VERSION`, and that constant is **1** on a `mapper-audio`-off
+  build — so the condition collapsed to "v1 only" there and a no-audio build
+  **rejected** every v2 blob, the exact opposite of the portability the constant's
+  own doc comment claimed. What a build can *write* and what it must *accept* are
+  different sets, and only the first varies by feature; deriving one from the
+  other reads as tidy and silently couples them. The check now compares against
+  literals.
+
+  The default build takes the other branch and was correct throughout, which is
+  why every gate stayed green: CI **linted** the `--no-default-features` shape
+  and never **ran** it. `cargo test -p rustynes-mappers --no-default-features` is
+  now a CI step, and the new regression test is mutation-checked in both
+  configurations — red on no-audio with the old condition, green on the default
+  build either way.
+
 - **Pixel Provenance now works.** The v2.3.2 "Lucid" marquee returned an empty
   report for effectively every user, from release until now, because of two
   independent defects.

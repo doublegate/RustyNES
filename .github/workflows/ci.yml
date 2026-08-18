@@ -258,6 +258,22 @@ jobs:
       # running a single test (`cargo metadata --all-features` exits 101). Plain
       # `cargo test` with explicit features stays the runner.
       - run: cargo test --workspace
+      # v2.3.7 — the default-feature run cannot see a `mapper-audio`-off defect.
+      # `rustynes-mappers` compiles two shapes: with the on-cart synthesizers
+      # (default) and without, and only the second is what the `no_std`
+      # cross-build and any downstream dependency-light consumer gets. CI linted
+      # that shape and never RAN it, so a VRC7 save-state version check that
+      # rejected every v2 blob on a no-audio build passed every gate — the
+      # default build takes the other branch and is correct. Two review bots
+      # caught it; no test could have, because no test ran in that
+      # configuration.
+      #
+      # Linux only, and only this crate: the shape is target-independent, and
+      # `rustynes-mappers` is the only crate whose behaviour is feature-gated
+      # this way. Cheap (one extra compile of a mid-sized crate), so it runs on
+      # every PR rather than only on a full run.
+      - if: runner.os == 'Linux'
+        run: cargo test -p rustynes-mappers --no-default-features
 
   test-roms:
     name: test (test-roms feature)
