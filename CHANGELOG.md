@@ -49,7 +49,14 @@ cycle-accurate core later replaced.
   precisely the state the browser was in); and a source-text assertion requires
   every wasm ROM entry point to call it — mutation-checked — because those call
   sites live in `cfg`-gated code a native test binary cannot link, so an absent
-  call is the one thing behaviour can never catch.
+  call is the one thing behaviour can never catch. That third test was itself
+  **vacuous on first writing**, and review caught it: it lives in `app.rs`, so
+  `include_str!("app.rs")` pulled in the test's own source — which contains the
+  literal it searches for, making the assertion permanently true. It survived a
+  mutation check only because the check deleted the *other* file's call. A file
+  that reads itself has to exclude the part doing the reading; it now truncates
+  at the test module, asserts that the truncation worked, and is
+  mutation-checked on both halves.
 
 - **CI jobs are bounded, so a hung job can no longer block a release.** No job
   in `ci.yml` carried a `timeout-minutes`, which means every one inherited

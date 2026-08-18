@@ -11027,8 +11027,25 @@ mod tests {
         // appears in doc comments on both files, so a name-only assertion would
         // stay green with every call site deleted.
         let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        // CUT THE TEST MODULE OFF FIRST. This test lives in `app.rs`, so
+        // `include_str!("app.rs")` includes the text of this function -- and
+        // this function contains the very string literal it searches for. The
+        // `APP_SRC` assertion was therefore VACUOUS: permanently true, whether
+        // or not the real call site existed. It survived a mutation check
+        // because the check deleted the `wasm.rs` call, exercising only the
+        // other half. Caught in review.
+        //
+        // A file that reads itself has to exclude the part doing the reading.
+        let app_production = APP_SRC
+            .split_once("\n#[cfg(test)]")
+            .map_or(APP_SRC, |(before, _)| before);
         assert!(
-            squash(APP_SRC).contains("apply_game_db_header_overrides(&mut self.rom_bytes)"),
+            !squash(app_production).contains("fn every_wasm_rom_entry_point_corrects_the_header"),
+            "the test-module split failed, so this assertion is searching its own source again"
+        );
+        assert!(
+            squash(app_production).contains("apply_game_db_header_overrides(&mut self.rom_bytes)"),
             "the `wasm-winit` demo's AppEvent::RomLoaded arm no longer corrects the header"
         );
         assert!(
