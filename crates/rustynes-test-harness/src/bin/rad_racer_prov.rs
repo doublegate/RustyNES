@@ -25,13 +25,55 @@ fn layer_name(l: impl core::fmt::Debug) -> String {
     format!("{l:?}")
 }
 
+/// Locate the sky colour, the horizon scanline, and the modal ground colour of
+/// the right-hand sand strip -- the same band the sibling `rad_racer_probe`
+/// measures, computed the same way so the two tools describe one region.
+///
+/// Exits 0 with a message when there is no sky/ground boundary at all. That is a
+/// legitimate answer for a menu, a fade, or a frame past the end of the movie --
+/// not a crash.
+fn locate_band(idx: &[u16], target: u64) -> (u16, usize, u16) {
+    let sky = idx[8 * 256 + 8];
+    let Some(hz) = (100..180).rfind(|&y| (0..256).any(|x| idx[y * 256 + x] == sky)) else {
+        eprintln!(
+            "rad_racer_prov: no sky/ground boundary on frame {target} \
+             (sky index {sky:#06X} absent from rows 100..180) -- nothing to inspect"
+        );
+        std::process::exit(0);
+    };
+    // Sample only the RIGHT-HAND sand. Sampling the full width lets the road
+    // (palette index 0, and wide just below the horizon) win the mode, which
+    // makes every sand pixel read as an "anomaly" -- a false positive that
+    // reported 280 stray pixels on a frame whose real count is around a dozen.
+    let mut hist = std::collections::HashMap::<u16, usize>::new();
+    for y in (hz + 3)..(hz + 30).min(200) {
+        for x in 200..256usize {
+            *hist.entry(idx[y * 256 + x]).or_default() += 1;
+        }
+    }
+    let ground = *hist
+        .iter()
+        .max_by_key(|&(_, n)| *n)
+        .expect("the strip is non-empty, so a modal colour always exists")
+        .0;
+    (sky, hz, ground)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 4 {
         eprintln!("usage: rad_racer_prov <rom> <movie.rnm> <target-frame>");
         std::process::exit(2);
     }
-    let target: u64 = args[3].parse().expect("target frame");
+    // A typo in the frame number is the one wrong thing a user of this tool is
+    // actually likely to type, so report it rather than panicking at them.
+    let target: u64 = args[3].parse().unwrap_or_else(|_| {
+        eprintln!(
+            "rad_racer_prov: <target-frame> expects a non-negative integer, got {:?}",
+            args[3]
+        );
+        std::process::exit(2);
+    });
 
     let rom = std::fs::read(&args[1]).unwrap_or_else(|e| panic!("read rom: {e}"));
     let mut nes = Nes::from_rom(&rom).unwrap_or_else(|e| panic!("load rom: {e}"));
@@ -56,26 +98,7 @@ fn main() {
     }
 
     let idx = nes.index_framebuffer().to_vec();
-    // Locate the band exactly as the sibling probe does.
-    let sky = idx[8 * 256 + 8];
-    let hz = (100..180)
-        .rfind(|&y| (0..256).any(|x| idx[y * 256 + x] == sky))
-        .expect("horizon");
-    let mut hist = std::collections::HashMap::<u16, usize>::new();
-    // Sample only the RIGHT-HAND sand. Sampling the full width lets the road
-    // (palette index 0, and wide just below the horizon) win the mode, which
-    // makes every sand pixel read as an "anomaly" — a false positive that
-    // reported 280 stray pixels on a frame whose real count is around a dozen.
-    for y in (hz + 3)..(hz + 30).min(200) {
-        for x in 200..256usize {
-            *hist.entry(idx[y * 256 + x]).or_default() += 1;
-        }
-    }
-    let ground = *hist
-        .iter()
-        .max_by_key(|&(_, n)| *n)
-        .expect("ground colour")
-        .0;
+    let (sky, hz, ground) = locate_band(&idx, target);
     eprintln!("frame {target}: horizon y={hz}, ground index {ground:#06X}, sky {sky:#06X}");
 
     let Some(prov) = nes.pixel_provenance() else {
