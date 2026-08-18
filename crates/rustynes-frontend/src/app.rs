@@ -9007,6 +9007,17 @@ impl ApplicationHandler<AppEvent> for App {
                 // would make the browser refuse every FDS image. A genuinely
                 // malformed cartridge is rejected by `Nes::from_rom` below, with
                 // a better message than this stage could produce.
+                // `let _` is deliberate, and it is what clippy permits: an
+                // explicit `match`/`if let` on this was tried and rejected by
+                // `clippy::single_match` (the enforced gate), which is right --
+                // there is genuinely nothing to do in either arm.
+                //
+                // `None` MUST NOT abort the load. `rom_crc32` requires the
+                // `NES\x1A` magic, so an FDS disk (`FDS\x1A`) returns `None` and
+                // is then handled by `start_nes`'s wasm FDS branch. Treating it
+                // as failure would make the browser refuse every FDS image. A
+                // genuinely malformed cartridge is rejected by `Nes::from_rom`
+                // below, with a better message than this stage could produce.
                 let _ = apply_game_db_header_overrides(&mut self.rom_bytes);
                 // Match the AudioContext's actual sample rate (set up
                 // by `wasm_winit::start`'s file-picker gesture) so the

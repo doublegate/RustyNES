@@ -160,6 +160,10 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
             // CRC discarded: nothing stacks on it here, and `None` just means
             // the bytes are not a parseable iNES image -- which `Nes::from_rom`
             // reports properly a few lines below.
+            // `let _` is deliberate; an explicit `match` here is rejected by
+            // `clippy::single_match`. `None` means "not an iNES image" -- which
+            // includes formats this path legitimately handles -- so it must not
+            // abort the load; `Nes::from_rom` reports a genuinely malformed one.
             let _ = crate::app::apply_game_db_header_overrides(&mut bytes);
             // The file-pick is a user gesture, so it's safe to create
             // the AudioContext here (the browser autoplay policy
