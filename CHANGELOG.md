@@ -16,6 +16,45 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **Rad Racer's roadside artifact — the PPU spliced a hybrid address from a
+  stale address bus.** A band of stray pixels flickered in the sand to the right
+  of the road, tracking the horizon, on 1639 of the 1841 frames of the movie the
+  maintainer recorded. It was reported as unfixed after v2.3.0 examined the same
+  area and concluded the model was correct.
+
+  Pixel Provenance answered it in one query: the stray pixels reported
+  `layer = Backdrop`, `pattern_addr = PATTERN_ADDR_NONE`, `palette = $3F00`.
+  They were not sprites or mis-fetched tiles — they were **holes**, pixels for
+  which no background tile had been fetched at all.
+
+  When `$2006` is written mid-render the PPU drives a hybrid address: the low
+  bits come from the octal latch (a real 74LS373 that holds the previous ALE
+  half), the high six from the address bus. `ale_splice` took those high six from
+  `self.address_bus` — the value latched at ALE time — rather than recomputing
+  them from the **live** `v` at the read dot. The NESdev wiki is explicit that
+  the bus is driven every PPU cycle and that the nametable fetch's upper bits
+  follow `v`; a game that times a split early therefore reads its tile from an
+  address the hardware never presents. Rad Racer times exactly that way, and the
+  wiki names the symptom: "a visible glitch at the end of the line".
+
+  The one-line fix splices from the recomputed intended address instead. Note
+  what it is **not**: `COPY_V_DELAY` is unchanged at 4. Removing the deferral
+  entirely was tried and **fails** AccuracyCoin's `Hybrid Addresses` test —
+  `$2006` is applied at the start of a CPU cycle, before its three PPU ticks, so
+  an immediate copy lets the next ALE re-drive coherently and hides the bug the
+  test looks for. A delay sweep across 1..6 confirms the artifact count is flat
+  (1078 / 1072 / 1077 / 1072 / 1080 / 1065), so the residual is the detector's
+  floor — real roadside objects — and not remaining signal.
+
+  This touches the core, so the contract is **verified, not asserted**:
+  AccuracyCoin **141/141** via the authoritative RAM decoder, nestest 0-diff.
+  The bundled AccuracyCoin ROM is also synced to upstream `7dc08e5`, whose own
+  source comment was rewritten from "since we are updating `v` this cycle, we
+  update the address bus" to "the address bus is updated **every ppu cycle** …
+  the upper 6 bits for the nametable fetch are based on the `v` register" —
+  independent confirmation of the same reading, from the author of both the test
+  ROM and the emulator whose timing this was once calibrated against.
+
 - **Pixel Provenance now works.** The v2.3.2 "Lucid" marquee returned an empty
   report for effectively every user, from release until now, because of two
   independent defects.
