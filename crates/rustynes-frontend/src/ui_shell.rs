@@ -1394,6 +1394,20 @@ impl UiShell {
                             out.action = Some(MenuAction::OpenPanel(ToolPanel::PixelProvenance));
                             ui.close();
                         }
+                        // v2.3.7 "Overtone" — the audio counterpart: why does
+                        // this moment sound like that. Sits beside Pixel
+                        // Provenance because they answer the same question about
+                        // the two halves of the output.
+                        if ui
+                            .add_enabled(
+                                rom,
+                                egui::Button::new(ic(glyph::VOLUME_HIGH, "Audio Provenance")),
+                            )
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::OpenPanel(ToolPanel::AudioProvenance));
+                            ui.close();
+                        }
                         // v2.3.6 workstream C — the RAM Atlas: classify every
                         // byte of work RAM by behaviour, then verify a candidate
                         // by perturbing it. Sits with the other output-only

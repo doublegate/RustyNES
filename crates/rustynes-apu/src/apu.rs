@@ -305,6 +305,15 @@ pub struct Apu {
     /// audio — the visualization samples a copy, exactly like the base-channel
     /// `*_out()` DAC accessors already do.
     pub(crate) last_external: f32,
+
+    /// v2.3.7 "Overtone" — audio provenance, behind ONE pointer.
+    ///
+    /// `None` until armed via [`Apu::set_audio_provenance`]. Consolidated into a
+    /// single `Option<Box<..>>` after `apu_throughput` measured +9% on the
+    /// DISARMED path with this state spread across four inline fields — see
+    /// `crate::provenance::AudioProvenance`.
+    #[cfg(feature = "debug-hooks")]
+    pub(crate) audio_prov: Option<alloc::boxed::Box<crate::provenance::AudioProvenance>>,
 }
 
 /// All [`Apu::channel_mask`] bits set — every channel audible (the default and
@@ -383,7 +392,159 @@ impl Apu {
             channel_mask: CHANNEL_MASK_ALL,
             channel_gain: CHANNEL_GAIN_UNITY,
             last_external: 0.0,
+            #[cfg(feature = "debug-hooks")]
+            audio_prov: None,
         }
+    }
+
+    // -----------------------------------------------------------------
+    // v2.3.7 "Overtone" — audio provenance (output-only, off by default)
+    // -----------------------------------------------------------------
+
+    /// Record one mixed CPU cycle — the OUTLINED half.
+    ///
+    /// Called from both mix paths so the fast default-configuration
+    /// specialization and the gated general path produce the same trace: a
+    /// provenance record that existed on only one of two byte-identical paths
+    /// would be a trap for whoever next changed the other.
+    ///
+    /// # Why `#[cold]` and `#[inline(never)]` are load-bearing
+    ///
+    /// This function is measurement-driven twice over, and the second lesson is
+    /// the less obvious one.
+    ///
+    /// The FIRST version built the `MixRecord` before testing whether
+    /// provenance was armed, so a DISARMED build recomputed all five channel
+    /// outputs every CPU cycle — and `Pulse::output` is not free (it calls
+    /// `muted()`, which calls `sweep_target()`). `apu_throughput` measured
+    /// **+14% to +23%** in the feature-on/arm-off configuration the shipped
+    /// frontend runs. Hoisting the arm check to the top fixed that.
+    ///
+    /// It was NOT enough. With the check first, a quiet-host A/B still measured
+    /// **+7.98% / +2.88% / +11.03%** on the three `apu_throughput` workloads
+    /// (order-bias control: +0.11% / +0.76% / +0.67%, so the deltas are real).
+    /// The absolute costs — +33 µs, +15 µs, +65 µs — are wildly non-uniform,
+    /// which a per-cycle branch cannot produce: a constant branch costs a
+    /// constant number of cycles. The cause was that this body was still being
+    /// INLINED into `tick_with_external`. The five `output()` calls sat in the
+    /// hot function even though the branch skipped over them, inflating it past
+    /// the point where the mixer and the channel ticks kept their registers and
+    /// their I-cache line.
+    ///
+    /// So the hot path now contains exactly one null test, and everything else
+    /// lives out of line behind it. `#[cold]` additionally tells LLVM to lay
+    /// this block out away from the fall-through path. It pessimizes the ARMED
+    /// case, which is the correct trade: armed is an interactive debugging mode
+    /// and disarmed is what every user runs.
+    #[cfg(feature = "debug-hooks")]
+    #[cold]
+    #[inline(never)]
+    fn record_mix_armed(&mut self, mixed: f32, external: f32) {
+        let rec = crate::provenance::MixRecord {
+            mixed,
+            external,
+            pulse1: self.pulse1.output(),
+            pulse2: self.pulse2.output(),
+            triangle: self.triangle.output(),
+            noise: self.noise.output(),
+            dmc: self.dmc.output(),
+        };
+        if let Some(p) = self.audio_prov.as_mut() {
+            p.mix_trace.push(rec);
+        }
+    }
+
+    /// Arm or disarm audio provenance.
+    ///
+    /// Arming allocates both stores; disarming frees them. Mirrors
+    /// `Ppu::set_pixel_provenance`, including that re-arming an already-armed
+    /// APU is a no-op rather than a silent wipe — the frontend re-asserts the
+    /// arm every frame (a lesson from the pixel panel, whose edge-triggered
+    /// mirror desynced permanently the moment a ROM load installed a fresh
+    /// core).
+    #[cfg(feature = "debug-hooks")]
+    pub fn set_audio_provenance(&mut self, enabled: bool) {
+        if enabled {
+            if self.audio_prov.is_none() {
+                self.audio_prov = Some(alloc::boxed::Box::new(
+                    crate::provenance::AudioProvenance::new(),
+                ));
+            }
+        } else {
+            self.audio_prov = None;
+        }
+    }
+
+    /// Whether audio provenance is armed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn audio_provenance_armed(&self) -> bool {
+        self.audio_prov.is_some()
+    }
+
+    /// The per-register write attribution, or `None` when disarmed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn register_attribution(&self) -> Option<&crate::provenance::RegisterAttribution> {
+        self.audio_prov.as_ref().map(|p| &p.reg_attrib)
+    }
+
+    /// The per-CPU-cycle mix trace, or `None` when disarmed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn mix_trace(&self) -> Option<&crate::provenance::MixTrace> {
+        self.audio_prov.as_ref().map(|p| &p.mix_trace)
+    }
+
+    /// Begin a new frame's mix trace, anchored at `first_cycle`.
+    ///
+    /// The register attribution is deliberately NOT cleared here: "which
+    /// instruction last wrote `$4003`" is a question whose answer legitimately
+    /// predates the current frame, and clearing it every frame would report a
+    /// register nobody has touched this frame as never written.
+    #[cfg(feature = "debug-hooks")]
+    pub fn begin_audio_provenance_frame(&mut self, first_cycle: u64) {
+        if let Some(p) = self.audio_prov.as_mut() {
+            p.mix_trace.clear(first_cycle);
+        }
+    }
+
+    /// Forget the register attribution history. Called on a cold boot, where
+    /// the history it describes genuinely ended.
+    #[cfg(feature = "debug-hooks")]
+    pub fn clear_audio_provenance_history(&mut self) {
+        if let Some(p) = self.audio_prov.as_mut() {
+            p.reg_attrib.clear();
+        }
+    }
+
+    /// Push the writing instruction's PC + cycle down, mirroring the PPU's
+    /// write-attribution context. Called once per instruction by the core.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn set_attrib_context(&mut self, pc: u16, cycle: u64) {
+        // No-op when disarmed: nothing reads these, so skipping the stores keeps
+        // the disarmed per-instruction cost at one null test.
+        if let Some(p) = self.audio_prov.as_mut() {
+            p.attrib_pc = pc;
+            p.attrib_cycle = cycle;
+        }
+    }
+
+    /// Lift both stores out for a same-timeline restore (run-ahead), leaving the
+    /// APU disarmed. See [`crate::provenance::AudioProvenanceStash`] for why
+    /// this exists at all.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn take_audio_provenance(&mut self) -> crate::provenance::AudioProvenanceStash {
+        crate::provenance::AudioProvenanceStash {
+            state: self.audio_prov.take(),
+        }
+    }
+
+    /// Put back stores taken by [`Self::take_audio_provenance`].
+    #[cfg(feature = "debug-hooks")]
+    pub fn put_audio_provenance(&mut self, stash: crate::provenance::AudioProvenanceStash) {
+        self.audio_prov = stash.state;
     }
 
     /// Reset (warm).  Per nesdev: most APU state is preserved across reset
@@ -1086,6 +1247,10 @@ impl Apu {
                 self.noise.output(),
                 self.dmc.output(),
             ) + external;
+            #[cfg(feature = "debug-hooks")]
+            if self.audio_prov.is_some() {
+                self.record_mix_armed(mixed, external);
+            }
             self.blip.add_sample(mixed);
             // Nothing follows the general path's `add_sample` but comments --
             // the get/put flip moved to `dmc_tick_end` under M-2 -- so there is
@@ -1140,6 +1305,10 @@ impl Apu {
             scale(3, gate(3, self.noise.output()), 15),
             scale(4, gate(4, self.dmc.output()), 127),
         ) + if mask & (1 << 5) != 0 { ext } else { 0.0 };
+        #[cfg(feature = "debug-hooks")]
+        if self.audio_prov.is_some() {
+            self.record_mix_armed(mixed, ext);
+        }
         self.blip.add_sample(mixed);
 
         // v2.0 interleaved-DMA Phase A: toggle the global get/put flip-flop once
@@ -1550,6 +1719,14 @@ impl Apu {
 
     /// CPU register write (`$4000-$4017` excluding `$4014`).
     pub fn write_register(&mut self, addr: u16, value: u8) {
+        // v2.3.7 "Overtone" — attribute the write BEFORE dispatching it, so the
+        // recorded value is what the CPU put on the bus rather than whatever a
+        // channel decided to keep. One `Option` test when disarmed.
+        #[cfg(feature = "debug-hooks")]
+        if let Some(p) = self.audio_prov.as_mut() {
+            p.reg_attrib
+                .record(addr, p.attrib_pc, p.attrib_cycle, value);
+        }
         match addr {
             0x4000 => self.pulse1.write_ctrl(value),
             0x4001 => self.pulse1.write_sweep(value),

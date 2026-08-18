@@ -134,6 +134,7 @@ nav:
       - Scripting (Lua): scripting.md
       - Creator Tools: creator-tools.md
       - Pixel Provenance: pixel-provenance.md
+      - Audio Provenance: audio-provenance.md
       - Latency Oracle: latency-oracle.md
       - RAM Atlas: ram-atlas.md
       - CRT / Composite Video: crt-composite.md

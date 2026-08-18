@@ -3797,6 +3797,68 @@ rejected, and D5 declined on inspection; see the §D1 + D6 section above for the
 numbers and for why a null was the expected result under fat LTO. D2 and D4
 remain unmeasured.
 
+### v2.3.7 C2 — the cost a default-OFF feature charged the default path (three findings, all REJECTED-then-fixed)
+
+Audio provenance (`docs/audio-provenance.md`) is output-only and runtime-default-off.
+It still made the shipped APU slower, twice, by two different mechanisms — and the
+second diagnosis was wrong before the third one was right. This section records
+all three because the sequence is the lesson.
+
+**The configuration under test throughout is feature-compiled-in, arm-off.** That
+is what every user runs: `crates/rustynes-frontend/Cargo.toml` declares
+`rustynes-core = { workspace = true, features = ["debug-hooks"] }` with no
+condition, so "default-off" describes the runtime arm, not the code. A feature
+that is off can only be free if the compiled-in-but-unarmed path is free, and
+that is a property to measure, not to assume.
+
+Method: `apu_throughput` built twice (with and without `debug-hooks`), both
+binaries copied aside **before** any measurement so no run is contaminated by its
+own compile (the `ab_check.sh` hazard `AGENTS.md` records), then executed on a
+host held below 1.00 load, A → B → A, with the trailing A as the order-bias
+control.
+
+| finding | mechanism | measured | disposition |
+|---|---|---|---|
+| C2a | `MixRecord` built *before* the arm test, so a disarmed build recomputed five channel outputs per CPU cycle | **+14% to +23%** | fixed — arm check hoisted |
+| C2b | four new inline `Apu` fields suspected of disturbing hot-member layout | **+9.2% / −2.0% / +9.7%**, then **+7.98% / +2.88% / +11.03%** after consolidating them | **diagnosis REJECTED** — consolidation kept as the better shape, but it fixed nothing |
+| C2c | `record_mix` still **inlined** into `tick_with_external`; the branch skipped the work, not the code | **+33 µs / +15 µs / +65 µs** absolute | fixed — outlined behind `#[cold] #[inline(never)]` |
+
+**What broke C2b open** was the absolute column, not the percentages. +33 µs,
++15 µs and +65 µs on three workloads is not a per-cycle cost: a branch executed
+once per CPU cycle costs a constant number of cycles, so it must appear as a
+constant number of microseconds, not one that varies four-fold. That single
+observation is what redirected the investigation from data layout to code layout
+— after the layout fix had already been written, built, and measured.
+
+Final state, disarmed, against an order-bias control that drifted −0.8% to −1.4%
+over the same interval:
+
+| workload | outlined vs baseline | control | net |
+|---|---|---|---|
+| `apu_tick_silent_frame` | −0.63% | −1.41% | +0.8% — within drift |
+| `apu_tick_active_frame` | −5.60% | −0.80% | −4.8% |
+| `apu_tick_active_frame_with_external` | +0.00% (p = 0.99) | −0.29% | +0.3% — within drift |
+
+**Decision: the disarmed regression is closed; the −4.8% is NOT adopted as a
+win.** It is code-layout luck in the favourable direction, the same phenomenon
+that produced +11% in the unfavourable one, and it will not survive an unrelated
+change to the same function. Claiming it would mean adopting noise, and the
+project's own bar — >3% same-runner **and** byte-identical **and** attributable to
+the change — is not met by an effect nobody can point at a mechanism for.
+
+Two rules this adds to the Workstream D findings above:
+
+- **A branch that skips the work does not skip the code.** An early return leaves
+  the whole body inlined in the caller, where it costs registers and I-cache even
+  though it never executes. `#[cold]` + `#[inline(never)]` is how a debug hook
+  stays free; an early return is not.
+- **Non-uniform absolute deltas rule out a per-cycle mechanism.** Read the
+  microseconds before the percentages when deciding *what kind* of cost you are
+  looking at.
+
+The armed path is deliberately pessimized by `#[cold]`. Armed is an interactive
+debugging mode; disarmed is every user.
+
 ## Things explicitly *not* in scope for v1.0
 
 - **JIT recompilation** of CPU code. NES games are small enough that interpretation suffices; JIT complicates everything. (Higan/ares don't JIT either.)

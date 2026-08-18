@@ -44,6 +44,8 @@ mod length;
 mod mixer;
 mod noise;
 mod opll;
+#[cfg(feature = "debug-hooks")]
+pub mod provenance;
 mod pulse;
 mod snapshot;
 mod triangle;

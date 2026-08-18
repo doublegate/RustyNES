@@ -504,6 +504,9 @@ impl Nes {
         {
             self.bus.ppu.clear_write_attribution();
             self.bus.ppu.clear_pixel_provenance();
+            // v2.3.7 — same for audio: a cold boot ends the history the
+            // register attribution describes.
+            self.bus.apu.clear_audio_provenance_history();
         }
     }
 
@@ -520,6 +523,12 @@ impl Nes {
         // VBL detection or DMA-stall heavy frames before declaring "stuck".
         const MAX_CYCLES_PER_FRAME: u64 = 150_000;
         let start = self.bus.cycle();
+        // v2.3.7 "Overtone" — anchor this frame's mix trace. The trace is
+        // per-frame (the index IS the cycle offset from here); the REGISTER
+        // attribution deliberately is not, because "which instruction last wrote
+        // $4003" has an answer that legitimately predates this frame.
+        #[cfg(feature = "debug-hooks")]
+        self.bus.apu.begin_audio_provenance_frame(start);
         // T-110-C3 — the event viewer shows one frame; reset the log per frame.
         #[cfg(feature = "debug-hooks")]
         if self.bus.event_logging() {
@@ -602,6 +611,15 @@ impl Nes {
                 self.bus
                     .ppu
                     .set_attrib_context(self.cpu.pc, self.cpu.cycles);
+                // v2.3.7 "Overtone" — the same push-down for audio, so
+                // `Apu::write_register` can attribute a `$4000-$4017` write
+                // without `rustynes-cpu` knowing the feature exists. Same
+                // reasoning as the PPU line above: two unconditional stores are
+                // cheaper than testing an arm behind a `Box` across a crate
+                // boundary, in a block that already scans breakpoints.
+                self.bus
+                    .apu
+                    .set_attrib_context(self.cpu.pc, self.cpu.cycles);
                 // T-110-C2 — cycle trace: record the about-to-execute
                 // instruction's CPU state (ring-capped, oldest dropped).
                 if self.trace_enabled {
@@ -671,6 +689,10 @@ impl Nes {
         #[cfg(feature = "debug-hooks")]
         self.bus
             .ppu
+            .set_attrib_context(self.cpu.pc, self.cpu.cycles);
+        #[cfg(feature = "debug-hooks")]
+        self.bus
+            .apu
             .set_attrib_context(self.cpu.pc, self.cpu.cycles);
         self.cpu.step(&mut self.bus)
     }
@@ -886,6 +908,62 @@ impl Nes {
     ///
     /// Default off. Arming allocates
     /// [`rustynes_ppu::PixelProvenanceFrame::HEAP_BYTES`]. Output-only, so
+    /// Arm or disarm **audio** provenance (v2.3.7 "Overtone").
+    ///
+    /// Off by default. Arming allocates the per-register write attribution and
+    /// the per-CPU-cycle mix trace; disarming frees both. Output-only — nothing
+    /// recorded is read back into synthesis or carried in the save state, so the
+    /// deterministic audio contract is unaffected either way.
+    #[cfg(feature = "debug-hooks")]
+    pub fn set_audio_provenance(&mut self, enabled: bool) {
+        self.bus.apu.set_audio_provenance(enabled);
+    }
+
+    /// Whether audio provenance is armed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn audio_provenance_armed(&self) -> bool {
+        self.bus.apu.audio_provenance_armed()
+    }
+
+    /// The per-register write attribution — which instruction last wrote each of
+    /// `$4000-$4017` — or `None` when disarmed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn register_attribution(&self) -> Option<&rustynes_apu::provenance::RegisterAttribution> {
+        self.bus.apu.register_attribution()
+    }
+
+    /// This frame's per-CPU-cycle mix trace, or `None` when disarmed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn mix_trace(&self) -> Option<&rustynes_apu::provenance::MixTrace> {
+        self.bus.apu.mix_trace()
+    }
+
+    /// Lift the audio provenance stores out for a same-timeline restore.
+    ///
+    /// The audio counterpart of [`Self::take_provenance`], and it exists for the
+    /// identical reason: run-ahead's rollback runs AFTER the visible frame is
+    /// produced and BEFORE the frontend releases the emulator lock, so a store
+    /// the restore clears can never be observed by the UI. That is exactly how
+    /// Pixel Provenance shipped non-functional from v2.3.2 to v2.3.6. Take
+    /// before the restore, [`Self::put_audio_provenance`] after.
+    ///
+    /// Save-state loads and netplay rollback still clear, unchanged — those are
+    /// genuine timeline changes. Run-ahead's rollback is not.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn take_audio_provenance(&mut self) -> rustynes_apu::provenance::AudioProvenanceStash {
+        self.bus.apu.take_audio_provenance()
+    }
+
+    /// Put back stores taken by [`Self::take_audio_provenance`].
+    #[cfg(feature = "debug-hooks")]
+    pub fn put_audio_provenance(&mut self, stash: rustynes_apu::provenance::AudioProvenanceStash) {
+        self.bus.apu.put_audio_provenance(stash);
+    }
+
     /// emulation is bit-identical either way.
     #[cfg(feature = "debug-hooks")]
     pub fn set_pixel_provenance(&mut self, enabled: bool) {

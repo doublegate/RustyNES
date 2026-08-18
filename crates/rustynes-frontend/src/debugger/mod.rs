@@ -147,6 +147,7 @@ mod nsf_panel;
 mod oam_panel;
 mod replay_panel;
 // v2.8.0 Phase 0 — frame-pacing / audio-health instrumentation panel.
+mod audio_provenance_panel;
 mod perf_panel;
 mod ppu_panel;
 mod provenance_panel;
@@ -222,6 +223,10 @@ pub enum ToolPanel {
     /// The variant is unconditional so the menu IA + dispatch match stay
     /// exhaustive; the panel and its open path are `debug-hooks`-gated.
     PixelProvenance,
+    /// v2.3.7 "Overtone" — the audio provenance inspector: the causal chain from
+    /// a moment in the mix back to the channels and the writing instruction.
+    /// Unconditional variant for the same reason as [`Self::PixelProvenance`].
+    AudioProvenance,
 }
 
 /// A chip-inspection panel surfaced from the Debug menu (v1.0.0).
@@ -693,6 +698,8 @@ pub struct DebuggerOverlay {
     writes_locked: bool,
     /// v2.3.2 "Lucid" — pixel provenance inspector.
     show_provenance: bool,
+    show_audio_provenance: bool,
+    audio_provenance_ui: audio_provenance_panel::AudioProvenancePanelState,
     /// "Input Display" panel open flag (v1.7.0 "Forge" beta.5, #51; née the
     /// v1.5.0 A1 Input Miniatures overlay).
     show_input_display: bool,
@@ -961,6 +968,8 @@ impl DebuggerOverlay {
             show_atlas: false,
             writes_locked: false,
             show_provenance: false,
+            show_audio_provenance: false,
+            audio_provenance_ui: audio_provenance_panel::AudioProvenancePanelState::default(),
             show_input_display: false,
             #[cfg(all(not(target_arch = "wasm32"), feature = "hd-pack"))]
             show_hd_pixel: false,
@@ -1531,6 +1540,7 @@ impl DebuggerOverlay {
             ToolPanel::LatencyOracle => self.show_latency = true,
             ToolPanel::RamAtlas => self.show_atlas = true,
             ToolPanel::PixelProvenance => self.show_provenance = true,
+            ToolPanel::AudioProvenance => self.show_audio_provenance = true,
             ToolPanel::InputDisplay => self.show_input_display = true,
             ToolPanel::Replay => self.show_replay = true,
             ToolPanel::BasicBot => self.show_basic_bot = true,
@@ -1814,6 +1824,7 @@ impl DebuggerOverlay {
             || self.show_game_db
             || self.show_rom_info
             || self.show_provenance
+            || self.show_audio_provenance
             || self.show_latency
             || self.show_atlas
     }
@@ -2500,6 +2511,21 @@ impl DebuggerOverlay {
                 &mut self.detached_panels,
                 &mut self.show_provenance,
                 &mut self.provenance_ui,
+                nes,
+                &self.source_map,
+            );
+        }
+        if self.show_audio_provenance
+            && let Some(nes) = nes.as_deref_mut()
+        {
+            // v2.3.7 "Overtone" — why does this moment sound like that. Takes
+            // `&mut Nes` only to arm / disarm the output-only stores; the report
+            // itself is read-only.
+            audio_provenance_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_audio_provenance,
+                &mut self.audio_provenance_ui,
                 nes,
                 &self.source_map,
             );
