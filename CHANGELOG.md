@@ -16,6 +16,12 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **Corrected a stale comment in `security.yml`.** It justified installing
+  `cargo-audit` / `cargo-deny` as prebuilt binaries with "the repo pins rustc
+  1.96 **but** cargo-audit needs >= 1.88 to compile" — which argues against
+  itself, since 1.96 satisfies that. True when written at a 1.86 pin; it
+  survived the v1.3.0 bump. Comments only; no behaviour change.
+
 - **The browser demo applied no per-game header corrections.** Every mapper,
   submapper and region fix the vendored game database ships was silently absent
   on the web build — Seicross, which needs submapper 4 to clear its protection

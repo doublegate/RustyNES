@@ -56,10 +56,14 @@ jobs:
         with:
           persist-credentials: false
       # Install the PREBUILT binary, never `cargo install` (build-from-source):
-      # the repo pins rustc 1.96 (rust-toolchain.toml), but the current
-      # cargo-audit release needs >= 1.88 to COMPILE. The prebuilt binary RUNS
-      # fine under any toolchain — it only parses Cargo.lock, it never compiles
-      # the project — so the toolchain pin is irrelevant to it.
+      #  1. compiling the tool on every run dwarfs downloading it, and
+      #  2. `rust-toolchain.toml` is a directory override, so a build-from-source
+      #     install is subject to this repo's rustc pin -- if a tool's own MSRV
+      #     ever rises above that pin, the SECURITY gate is what breaks. The
+      #     prebuilt binary only parses `Cargo.lock` and runs under any toolchain.
+      # Reason 2 was an ACTIVE constraint until the v1.3.0 pin bump (1.86 vs
+      # cargo-audit's 1.88); it is slack today and can bind again after an MSRV
+      # change in either direction, so it is kept rather than deleted as history.
       - uses: taiki-e/install-action@v2.86.1
         with:
           tool: cargo-audit
@@ -72,9 +76,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      # Prebuilt binary for the same reason as the audit job: the latest
-      # cargo-deny needs rustc >= 1.88 to build from source, while the repo is
-      # pinned to 1.96. Policy lives in `deny.toml`.
+      # Prebuilt binary for the same two reasons as the audit job above: it is
+      # much faster than compiling cargo-deny, and it keeps the security gate
+      # independent of this repo's rustc pin. Policy lives in `deny.toml`.
       - uses: taiki-e/install-action@v2.86.1
         with:
           tool: cargo-deny
