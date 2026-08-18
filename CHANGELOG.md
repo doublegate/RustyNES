@@ -88,7 +88,17 @@ cycle-accurate core later replaced.
   proves it is careful about one thing: an all-`0xFF` blob is rejected by the
   envelope-state tag check before any numeric field is read, so the naive hostile
   input passes **by accident** and reports the emulator safe. The interesting
-  input is the one that satisfies every explicit check and is still nonsense.
+  input is the one that satisfies every explicit check and is still nonsense. A
+  later review pass pushed back that the masking did not in fact cover every
+  field, and was right: replacing the single fixed payload with a deterministic
+  pseudo-random sweep found **three more panics** the fixed one could not,
+  including one it actively hid — with every byte `0xFF`, `update_requests` is
+  also all-ones, so the slot state was recomputed before the restored values
+  could be used. A blob that is maximally hostile in one dimension can be
+  harmless in another. The three: `eg_shift` used as a shift amount (`1u32 <<`
+  panics at 32), the operator feedback pair summed as two arbitrary `i32`s, and
+  `eg_rate_l` indexing a 4-entry table — the last being a field I had explicitly
+  traced as safe, using a broken grep whose empty output I read as proof.
 
   And **`load_state` was not atomic**. The v2 tail introduced a failure that can
   occur *after* the core fields are assigned, which the v1 layout could not, so a

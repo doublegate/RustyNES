@@ -1633,6 +1633,25 @@ const SNAPSHOT_SLOTS: usize = 18;
 /// `slot_serialized_size_matches_the_declared_constant` so the two cannot drift.
 const SLOT_BYTES: usize = 62;
 
+/// Largest `eg_shift` the envelope generator can legitimately produce.
+///
+/// `commit_slot_update` assigns `13 - eg_rate_h` with `eg_rate_h <= 13`, so the
+/// value is always in `0..=13`. It matters on restore because `calc_envelope`
+/// evaluates `1u32 << eg_shift`, which panics at 32 and above.
+const EG_SHIFT_MAX: u32 = 13;
+
+/// Clamp a restored operator output into the range synthesis can actually
+/// produce. See the call site for why the field is wider than its contents.
+const fn clamp_i16(v: i32) -> i32 {
+    if v < i16::MIN as i32 {
+        i16::MIN as i32
+    } else if v > i16::MAX as i32 {
+        i16::MAX as i32
+    } else {
+        v
+    }
+}
+
 /// Serialized size of one [`Patch`], in bytes (13 one-byte parameters).
 const PATCH_BYTES: usize = 13;
 
@@ -1782,6 +1801,20 @@ impl OpllR<'_> {
         // fixed bit width, so a wider value does not describe a chip state that
         // exists -- masking IS the parse, not a repair after it.
         //
+        // Scope, precisely, because an earlier version of this comment claimed
+        // "every register field is masked" and that was an OVERCLAIM (review
+        // caught it): what is masked is everything that reaches a SUBSCRIPT --
+        // the 13 patch parameters here, and `blk_fnum` / `fnum` / `blk` /
+        // `number` / `wave_table_idx` / `pg_keep` in the slot reader. The
+        // remaining restored fields are deliberately left alone because none of
+        // them can index anything: `eg_rate_h`/`eg_rate_l` are consumed by a
+        // `match` and recomputed as `(p_rate + rks_h2).min(15)`; `lfo_am` is
+        // overwritten every `update_ampm` from `AM_TABLE[idx % len]`; `rks`,
+        // `tll`, `type_flags`, `key_flag`, `sus_flag` and `test_flag` are only
+        // ever compared, shifted or added; and `lookup_exp_table` masks its own
+        // index to 8 bits. `opll_restore_survives_a_hostile_blob` sweeps
+        // pseudo-random payloads to keep that true rather than assumed.
+        //
         // Load-bearing, not defensive tidiness: `commit_slot_update` indexes the
         // TLL table as `[block_fnum][tl][kl]`, dimensions `[128][64][4]`. An
         // unmasked `tl` of 255 computes an index of ~524k into a 32,768-entry
@@ -1930,7 +1963,7 @@ impl Opll {
         let mut reg = [0u8; 0x40];
         reg.copy_from_slice(&r.src[r.pos..r.pos + 0x40]);
         r.pos += 0x40;
-        let test_flag = r.u8()?;
+        let test_flag = r.u8()? & 0x01;
         let slot_key_status = r.u32()?;
         let eg_counter = r.u32()?;
         let pm_phase = r.u32()?;
@@ -1948,9 +1981,14 @@ impl Opll {
             // unmasked u16 indexes far past both tables. A legal `blk_fnum` is
             // `(blk3 << 9) | fnum9`, i.e. at most 0x0FFF.
             s.number = r.u8()? % SNAPSHOT_SLOTS as u8;
-            s.type_flags = r.u8()?;
+            s.type_flags = r.u8()? & 0x03;
             s.patch = r.patch()?;
-            s.output = [r.i32()?, r.i32()?];
+            // CLAMPED to i16: `calc_slot_mod` / `calc_slot_car` only ever store
+            // `i32::from(out)` with `out: i16`, and the feedback path evaluates
+            // `output[0] + output[1]`, which overflows on two arbitrary i32s.
+            // The field is `i32` for headroom in that sum, not because the
+            // values are ever wider than i16.
+            s.output = [clamp_i16(r.i32()?), clamp_i16(r.i32()?)];
             s.wave_table_idx = r.u8()? & 0x01;
             s.pg_phase = r.u32()?;
             s.pg_out = r.u32()?;
@@ -1960,13 +1998,28 @@ impl Opll {
             s.blk = r.u8()? & 0x07;
             s.eg_state = EgState::from_tag(r.u8()?)?;
             s.volume = r.i32()?;
-            s.key_flag = r.u8()?;
-            s.sus_flag = r.u8()?;
+            s.key_flag = r.u8()? & 0x01;
+            s.sus_flag = r.u8()? & 0x01;
             s.tll = r.u16()?;
-            s.rks = r.u8()?;
-            s.eg_rate_h = r.u8()?;
-            s.eg_rate_l = r.u8()?;
-            s.eg_shift = r.u32()?;
+            s.rks = r.u8()? & 0x0F;
+            s.eg_rate_h = r.u8()? & 0x0F;
+            // `eg_rate_l` INDEXES `EG_STEP_TABLES`, whose outer dimension is
+            // 4. Legal values are `rks & 3`. This one is why the whole sweep
+            // exists: I had claimed, after tracing by hand, that none of the
+            // flag fields reach a subscript -- and this one does. The trace
+            // was run with a broken grep whose empty output I read as proof.
+            s.eg_rate_l = r.u8()? & 0x03;
+            // CLAMPED, and this one is a shift amount rather than a
+            // subscript -- `calc_envelope` computes `1u32 << eg_shift`, which
+            // PANICS for any value >= 32. `commit_slot_update` only ever
+            // produces `13 - eg_rate_h` with `eg_rate_h <= 13`, so 13 is the
+            // real ceiling. Found by the randomized half of
+            // `opll_restore_survives_a_hostile_blob`, NOT by its fixed
+            // all-`0xFF` payload: with every byte 0xFF, `update_requests` is
+            // also all-ones, so `commit_slot_update` recomputed `eg_shift`
+            // before `calc_envelope` could use the restored one. The fixed blob
+            // was too hostile in one dimension to expose a bug in another.
+            s.eg_shift = r.u32()?.min(EG_SHIFT_MAX);
             s.eg_out = r.u32()?;
             s.update_requests = r.u32()?;
         }
@@ -2763,6 +2816,38 @@ mod tests {
         // slot update the restored state provoked.
         for _ in 0..4_000 {
             let _ = opll.calc();
+        }
+
+        // One fixed payload proves one path. Sweep pseudo-random ones too, so
+        // the claim is "no hostile blob reaches a subscript" rather than "this
+        // particular blob did not" -- which is the difference review asked
+        // about. A tiny xorshift keeps it deterministic and dependency-free; a
+        // flaky fuzz test would be worse than none.
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for round in 0..64 {
+            let mut b = Opll::new(ChipType::Vrc7).snapshot();
+            for byte in b.iter_mut().skip(2) {
+                *byte = (next() & 0xFF) as u8;
+            }
+            b[0] = OPLL_SNAPSHOT_VERSION;
+            b[1] = ChipType::Vrc7.to_tag();
+            for i in 0..SNAPSHOT_SLOTS {
+                // Keep the tag valid: an invalid one short-circuits the parse,
+                // and the round would then prove nothing.
+                b[EG_STATE_OFFSET + i * SLOT_BYTES] = (next() % 6) as u8;
+            }
+            let mut o = Opll::new(ChipType::Vrc7);
+            o.restore(&b)
+                .unwrap_or_else(|e| panic!("round {round}: valid-shaped blob rejected: {e}"));
+            for _ in 0..1_000 {
+                let _ = o.calc();
+            }
         }
 
         // And a hostile blob must not be able to smuggle out-of-range register
