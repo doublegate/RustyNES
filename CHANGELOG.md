@@ -203,9 +203,13 @@ cycle-accurate core later replaced.
   mid-frame scanline-effect demo exercising mid-scanline scroll timing — the
   exact `$2006`-during-render path this changes. Its hash goes
   `39e8052eedc7f4d5` → `7c1cedf0cb725375`, deterministic across independent
-  runs, and it is the **only one of nine** vectors to move: `flowing_palette`,
-  `full_palette`, `nmi_sync` and the rest are byte-identical, which is what
-  distinguishes a targeted fix from a broad rendering shift.
+  runs, and it is the **only one of nine** vectors to move. The other eight are
+  byte-identical, named exactly as the tests are so the entry can be correlated
+  with the artifacts: `flowing_palette_frame_60` / `_180` / `_300`,
+  `full_palette_frame_60` / `_180`, `ppu_vbl_nmi_basics_frame_60`,
+  `instr_test_basics_frame_60` and `nmi_sync_demo_ntsc_frame_180`. That
+  distribution is what distinguishes a targeted fix from a broad rendering
+  shift.
 
   Updating a canonical vector is permitted only on an intentional, reviewed
   behaviour change, and this is one — pinned by AccuracyCoin's `Hybrid Addresses`
