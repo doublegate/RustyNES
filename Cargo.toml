@@ -135,8 +135,32 @@ winit = "0.30"
 # v1.3.0 Sprint 1.4 — `webgl` feature enables the WebGL2 fallback on
 # wasm32 (for browsers without WebGPU: Linux Firefox, pre-A12 iOS).
 # No effect on native builds. WebGPU-primary is on by default.
+#
+# PINNED AT 29 BY THE egui TIER BELOW, not by anything wgpu does. `egui-wgpu`
+# 0.35 requires it, so 29 -> 30 cannot land ahead of egui 0.36.
 wgpu = { version = "29", features = ["webgl"] }
 cpal = "0.18"
+# ---------------------------------------------------------------------------
+# egui / egui-wgpu / egui-winit are HELD AT 0.35. Do not let Dependabot or a
+# `cargo update --aggressive` take them to 0.36 — it does not compile for wasm,
+# and RustyNES ships a wasm demo:
+#
+#   error[E0407]: method `bytes` is not a member of trait `egui::DroppedFile`
+#     --> egui-winit-0.36.1/src/dropped_file.rs:19:5
+#
+# egui 0.36 made `DroppedFile` a trait split by target — `bytes_async` on wasm
+# (a browser can only read a dropped file asynchronously), `bytes` on native.
+# `egui-winit`'s `NativeFile` impl provides `path` + `bytes` with NO cfg gate,
+# on a type holding a `PathBuf` that calls `std::fs::read`. On wasm it therefore
+# implements a method the trait does not declare and omits the one it does.
+#
+# Nothing here can route around it: `mod dropped_file;` is unconditional in
+# egui-winit's `lib.rs`, so the module compiles on wasm whatever we do. The fix
+# is a one-line cfg upstream, and no release carries it (0.36.1 is the newest on
+# crates.io as of 2026-08). Re-check by bumping and running BOTH wasm clippy
+# invocations; the complete migration, native-green, is preserved on
+# `chore/egui-0.36-wgpu-30-blocked`.
+# ---------------------------------------------------------------------------
 egui = "0.35"
 egui-wgpu = "0.35"
 # `links` enables egui-winit's URL opener (webbrowser) so hyperlinks (e.g. the
