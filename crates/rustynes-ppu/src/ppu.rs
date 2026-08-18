@@ -4049,7 +4049,14 @@ impl Ppu {
     fn ale_splice(&mut self, intended: u16) -> u16 {
         if self.ale_armed {
             self.ale_armed = false;
-            let effective = (self.address_bus & 0x3F00) | u16::from(self.octal_latch);
+            // v2.3.6 — high 6 bits from `intended` (recomputed from the LIVE `v` at
+            // the read dot), not from the ALE-time `address_bus` snapshot. Upstream
+            // AccuracyCoin's commentary was rewritten to say the address bus is
+            // driven EVERY ppu cycle and its upper 6 bits track `v`, so the hybrid
+            // address is what a continuously-driven bus produces when `v` moves
+            // between a fetch's ALE half and its read half. Behaviour-neutral for a
+            // coherent fetch: `v` unchanged => `intended` == the driven address.
+            let effective = (intended & 0x3F00) | u16::from(self.octal_latch);
             // Diagnostic: record any read whose spliced effective address diverges
             // from the intended one (the two corruptions) for the TriCNES per-dot
             // cross-diff. `push` self-filters to scanlines 2-5, so this is cheap.
