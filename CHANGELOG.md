@@ -51,8 +51,6 @@ cycle-accurate core later replaced.
   sites live in `cfg`-gated code a native test binary cannot link, so an absent
   call is the one thing behaviour can never catch.
 
-||||||| 3f99a3dd
-
 - **CI jobs are bounded, so a hung job can no longer block a release.** No job
   in `ci.yml` carried a `timeout-minutes`, which means every one inherited
   GitHub's **six-hour** default. On the night of the v2.3.6 cut the `lint` job —

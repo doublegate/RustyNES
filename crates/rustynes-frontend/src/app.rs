@@ -8997,9 +8997,16 @@ impl ApplicationHandler<AppEvent> for App {
                 // is not a gap, and `apply_load_time_header_overrides` stays
                 // native-only for that reason alone.
                 // The returned CRC is discarded because nothing stacks on it
-                // here (the overlay stage is native-only), and `None` needs no
-                // handling: it means the bytes are not a parseable iNES image,
-                // which `Nes::from_rom` reports properly a few lines below.
+                // here (the overlay stage is native-only).
+                //
+                // `None` MUST NOT abort the load. It means "not a parseable iNES
+                // image", and that includes the formats this arm legitimately
+                // goes on to load: `rom_crc32` requires the `NES\x1A` magic, so
+                // an FDS disk (`FDS\x1A`) returns `None` and is then handled by
+                // `start_nes`'s wasm FDS branch. Treating `None` as a failure
+                // would make the browser refuse every FDS image. A genuinely
+                // malformed cartridge is rejected by `Nes::from_rom` below, with
+                // a better message than this stage could produce.
                 let _ = apply_game_db_header_overrides(&mut self.rom_bytes);
                 // Match the AudioContext's actual sample rate (set up
                 // by `wasm_winit::start`'s file-picker gesture) so the
