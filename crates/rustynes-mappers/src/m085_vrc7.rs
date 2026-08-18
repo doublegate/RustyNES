@@ -654,6 +654,54 @@ impl Mapper for Vrc7 {
         if version != 1 && version != 2 {
             return Err(MapperError::UnsupportedVersion(version));
         }
+
+        // VALIDATE EVERYTHING BEFORE MUTATING ANYTHING.
+        //
+        // The v2 tail introduced a failure that can occur AFTER the core fields
+        // have been assigned, which the v1 layout could not: v1 validated its
+        // whole length and version up front, so once it started writing it could
+        // not fail. A truncated or corrupt v2 tail used to return `Err` with
+        // `prg_0`, `chr`, the IRQ state and 2 KiB of VRAM already overwritten --
+        // a mapper left in a state that is neither the old one nor the new one,
+        // while the caller reports the load as failed and keeps running.
+        //
+        // `Opll::restore` was already atomic internally, which is exactly what
+        // made this easy to miss: the guarantee existed one level down and was
+        // silently discarded one level up. Parse into a temporary here, so this
+        // function has the same all-or-nothing property its own comments claim.
+        // Caught in review; the truncation test missed it because it asserted on
+        // the return value and never on the target.
+        #[cfg(feature = "mapper-audio")]
+        let staged_opll = if version >= 2 {
+            let tail = &data[core_expected..];
+            if tail.len() < VRC7_V2_TAIL_LEN {
+                return Err(MapperError::Truncated {
+                    expected: core_expected + VRC7_V2_TAIL_LEN,
+                    got: data.len(),
+                });
+            }
+            let mut opll = self.opll.clone();
+            opll.restore(&tail[4..])
+                .map_err(|e| MapperError::Invalid(format!("VRC7 OPLL state: {e}")))?;
+            Some((
+                u16::from_le_bytes(tail[0..2].try_into().expect("length checked above")),
+                i16::from_le_bytes(tail[2..4].try_into().expect("length checked above")),
+                opll,
+            ))
+        } else {
+            None
+        };
+        // A no-audio build has no synthesizer to stage into, but must still
+        // reject a truncated tail identically -- the same blob has to be
+        // accepted or refused the same way on every build.
+        #[cfg(not(feature = "mapper-audio"))]
+        if version >= 2 && data.len() - core_expected < VRC7_V2_TAIL_LEN {
+            return Err(MapperError::Truncated {
+                expected: core_expected + VRC7_V2_TAIL_LEN,
+                got: data.len(),
+            });
+        }
+
         self.prg_0 = data[1];
         self.prg_1 = data[2];
         self.prg_2 = data[3];
@@ -691,24 +739,13 @@ impl Mapper for Vrc7 {
         // reset: it is the pre-v2.3.7 behaviour, in which the synthesizer kept
         // running from whatever state it held. An old save is therefore exactly
         // as (in)accurate as it always was, rather than newly silent.
-        if version >= 2 {
-            let tail = &data[core_expected..];
-            if tail.len() < VRC7_V2_TAIL_LEN {
-                return Err(MapperError::Truncated {
-                    expected: core_expected + VRC7_V2_TAIL_LEN,
-                    got: data.len(),
-                });
-            }
-            // A no-audio build validates the tail's LENGTH (above) and then
-            // ignores its contents — there is no synthesizer to restore into.
-            #[cfg(feature = "mapper-audio")]
-            {
-                self.opll_clock_counter = u16::from_le_bytes([tail[0], tail[1]]);
-                self.last_opll_sample = i16::from_le_bytes([tail[2], tail[3]]);
-                self.opll
-                    .restore(&tail[4..])
-                    .map_err(|e| MapperError::Invalid(format!("VRC7 OPLL state: {e}")))?;
-            }
+        // Commit the already-validated synthesizer. Infallible by construction:
+        // every way this could fail was exercised above, before the first write.
+        #[cfg(feature = "mapper-audio")]
+        if let Some((counter, sample, opll)) = staged_opll {
+            self.opll_clock_counter = counter;
+            self.last_opll_sample = sample;
+            self.opll = opll;
         }
         Ok(())
     }
@@ -1225,13 +1262,31 @@ mod tests {
         let _ = run_capture(&mut source, 500);
         let blob = source.save_state();
 
+        // Give the target DIFFERENT state from the source, so a partial write
+        // is observable rather than coincidentally identical.
         let mut target = vrc7_default();
+        target.cpu_write(0x8000, 3);
+        target.cpu_write(0x9000, 6);
+        let pristine = target.save_state();
+
         let err = target
             .load_state(&blob[..blob.len() - 1])
             .expect_err("a truncated v2 tail must be rejected");
         assert!(
             matches!(err, MapperError::Truncated { .. }),
             "expected Truncated, got {err:?}"
+        );
+
+        // The half this test used to be missing. Returning `Err` is not enough:
+        // `load_state` assigned the core fields BEFORE validating the v2 tail, so
+        // a rejected load left the mapper neither in its old state nor the new
+        // one, while the caller reported failure and kept running. Asserting only
+        // on the return value cannot see that -- which is why review found it and
+        // this test did not.
+        assert_eq!(
+            target.save_state(),
+            pristine,
+            "a rejected load mutated the mapper: load_state is not atomic"
         );
     }
 }

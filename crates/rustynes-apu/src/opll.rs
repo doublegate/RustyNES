@@ -1778,20 +1778,30 @@ impl OpllR<'_> {
             .try_into()
             .expect("slice length checked by `need` above");
         self.pos += PATCH_BYTES;
+        // MASK to each parameter's hardware width. These are register fields of
+        // fixed bit width, so a wider value does not describe a chip state that
+        // exists -- masking IS the parse, not a repair after it.
+        //
+        // Load-bearing, not defensive tidiness: `commit_slot_update` indexes the
+        // TLL table as `[block_fnum][tl][kl]`, dimensions `[128][64][4]`. An
+        // unmasked `tl` of 255 computes an index of ~524k into a 32,768-entry
+        // table and PANICS. A save state is a file on disk -- untrusted input --
+        // so a hand-edited one must not be able to crash the emulator. Pinned by
+        // `opll_restore_survives_a_hostile_blob`, which panicked before this.
         Ok(Patch {
-            tl,
-            fb,
-            eg,
-            ml,
-            ar,
-            dr,
-            sl,
-            rr,
-            kr,
-            kl,
-            am,
-            pm,
-            ws,
+            tl: tl & 0x3F,
+            fb: fb & 0x07,
+            eg: eg & 0x01,
+            ml: ml & 0x0F,
+            ar: ar & 0x0F,
+            dr: dr & 0x0F,
+            sl: sl & 0x0F,
+            rr: rr & 0x0F,
+            kr: kr & 0x01,
+            kl: kl & 0x03,
+            am: am & 0x01,
+            pm: pm & 0x01,
+            ws: ws & 0x01,
         })
     }
 }
@@ -1933,17 +1943,21 @@ impl Opll {
         let user_patch = [r.patch()?, r.patch()?];
         let mut slots = [Slot::default(); SNAPSHOT_SLOTS];
         for s in &mut slots {
-            s.number = r.u8()?;
+            // Masked for the same reason as the patch fields: `blk_fnum` feeds
+            // the TLL/RKS row index (`>> 5` into 128 rows, `>> 8` into 16), so an
+            // unmasked u16 indexes far past both tables. A legal `blk_fnum` is
+            // `(blk3 << 9) | fnum9`, i.e. at most 0x0FFF.
+            s.number = r.u8()? % SNAPSHOT_SLOTS as u8;
             s.type_flags = r.u8()?;
             s.patch = r.patch()?;
             s.output = [r.i32()?, r.i32()?];
-            s.wave_table_idx = r.u8()?;
+            s.wave_table_idx = r.u8()? & 0x01;
             s.pg_phase = r.u32()?;
             s.pg_out = r.u32()?;
-            s.pg_keep = r.u8()?;
-            s.blk_fnum = r.u16()?;
-            s.fnum = r.u16()?;
-            s.blk = r.u8()?;
+            s.pg_keep = r.u8()? & 0x01;
+            s.blk_fnum = r.u16()? & 0x0FFF;
+            s.fnum = r.u16()? & 0x01FF;
+            s.blk = r.u8()? & 0x07;
             s.eg_state = EgState::from_tag(r.u8()?)?;
             s.volume = r.i32()?;
             s.key_flag = r.u8()?;
@@ -2716,6 +2730,49 @@ mod tests {
             before,
             "a rejected restore left the synthesizer half-overwritten"
         );
+    }
+
+    /// A save state is a file on disk. A hand-edited one must not be able to
+    /// crash the emulator.
+    ///
+    /// This FAILED before the parse-boundary masks: with every payload byte set
+    /// to `0xFF` and only the envelope-state tags made valid, `commit_slot_update`
+    /// computed a TLL index of 524,539 into a 32,768-entry table and panicked.
+    ///
+    /// Making the tags valid is the point of the test rather than an
+    /// inconvenience. An all-`0xFF` blob is rejected by `EgState::from_tag`
+    /// before any numeric field is touched, so the naive hostile input passes
+    /// *by accident* and reports the emulator safe. The interesting input is the
+    /// one that satisfies every explicit check and is still nonsense.
+    #[test]
+    fn opll_restore_survives_a_hostile_blob() {
+        let mut blob = Opll::new(ChipType::Vrc7).snapshot();
+        for b in blob.iter_mut().skip(2) {
+            *b = 0xFF;
+        }
+        blob[0] = OPLL_SNAPSHOT_VERSION;
+        blob[1] = ChipType::Vrc7.to_tag();
+        for i in 0..SNAPSHOT_SLOTS {
+            blob[EG_STATE_OFFSET + i * SLOT_BYTES] = EgState::Release.to_tag();
+        }
+
+        let mut opll = Opll::new(ChipType::Vrc7);
+        opll.restore(&blob)
+            .expect("a structurally valid blob must load");
+        // Run synthesis: the panic was not in `restore`, it was in the first
+        // slot update the restored state provoked.
+        for _ in 0..4_000 {
+            let _ = opll.calc();
+        }
+
+        // And a hostile blob must not be able to smuggle out-of-range register
+        // fields past the parse, which is what the masks are for.
+        for (i, s) in opll.slot.iter().enumerate() {
+            assert!(s.patch.tl <= 0x3F, "slot {i} tl out of range");
+            assert!(s.patch.kl <= 0x03, "slot {i} kl out of range");
+            assert!(s.blk_fnum <= 0x0FFF, "slot {i} blk_fnum out of range");
+            assert!(usize::from(s.number) < SNAPSHOT_SLOTS, "slot {i} number");
+        }
     }
 
     #[test]

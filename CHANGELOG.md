@@ -78,6 +78,29 @@ cycle-accurate core later replaced.
   configurations — red on no-audio with the old condition, green on the default
   build either way.
 
+  A second review pass found two more, both in the new code and both of a kind
+  the tests as written could not see. **A hand-edited save state could crash the
+  emulator**: `commit_slot_update` indexes the TLL table as
+  `[block_fnum][tl][kl]` with dimensions `[128][64][4]`, and `restore` was
+  handing it raw bytes — a `tl` of 255 computes an index of 524,539 into a
+  32,768-entry table. Every register field is now masked to its hardware width
+  at the parse boundary, which is what those fields physically are. The test that
+  proves it is careful about one thing: an all-`0xFF` blob is rejected by the
+  envelope-state tag check before any numeric field is read, so the naive hostile
+  input passes **by accident** and reports the emulator safe. The interesting
+  input is the one that satisfies every explicit check and is still nonsense.
+
+  And **`load_state` was not atomic**. The v2 tail introduced a failure that can
+  occur *after* the core fields are assigned, which the v1 layout could not, so a
+  truncated tail returned `Err` with the banking, IRQ state and 2 KiB of VRAM
+  already overwritten — a mapper left in neither its old state nor its new one
+  while the caller reported failure and kept running. `Opll::restore` was already
+  atomic internally, which is exactly what made it easy to miss: the guarantee
+  existed one level down and was silently discarded one level up. It now parses
+  into a staged value before the first write. The truncation test asserted only
+  on the return value, which is why review found this and the test did not; it
+  now asserts the target is byte-identical afterwards.
+
 ## [2.3.6] - 2026-08-17 - "Sounding" (measuring, and what a measurement may claim)
 
 A *sounding* is a depth measured with its uncertainty attached, and that is what
