@@ -198,6 +198,21 @@ cycle-accurate core later replaced.
   independent confirmation of the same reading, from the author of both the test
   ROM and the emulator whose timing this was once calibrated against.
 
+  **One committed visual-regression vector moves with it.**
+  `scanline_frame_180` hashes `scanline.nes`, described in its own test as a
+  mid-frame scanline-effect demo exercising mid-scanline scroll timing — the
+  exact `$2006`-during-render path this changes. Its hash goes
+  `39e8052eedc7f4d5` → `7c1cedf0cb725375`, deterministic across independent
+  runs, and it is the **only one of nine** vectors to move: `flowing_palette`,
+  `full_palette`, `nmi_sync` and the rest are byte-identical, which is what
+  distinguishes a targeted fix from a broad rendering shift.
+
+  Updating a canonical vector is permitted only on an intentional, reviewed
+  behaviour change, and this is one — pinned by AccuracyCoin's `Hybrid Addresses`
+  test, which covers this precise mechanism, at 141/141. `scanline.nes` has no
+  pass/fail protocol, so its hash is a *sentinel* rather than an oracle; it did
+  its job by flagging that output changed.
+
 - **CI jobs are bounded, so a hung job can no longer block a release.** No job
   in `ci.yml` carried a `timeout-minutes`, which means every one inherited
   GitHub's **six-hour** default. On the night of the v2.3.6 cut the `lint` job —
