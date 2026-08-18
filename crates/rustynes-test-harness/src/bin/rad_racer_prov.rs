@@ -1,0 +1,136 @@
+//! Rad Racer artifact — causal chain for the stray pixels below the horizon.
+//!
+//! NOT part of CI. Diagnostic tool only; needs a gitignored external dump.
+//!
+//! Replays the recorded `.rnm` to a chosen frame with **Pixel Provenance armed**,
+//! then prints, for every anomalous pixel in the band and for a matched control
+//! pixel on the same scanline, the full record the v2.3.2 feature captures: the
+//! layer that won, the dot and scanline that emitted it, the nametable /
+//! attribute / pattern addresses of the tile actually on screen, and the palette
+//! entry.
+//!
+//! The question this settles in one shot: are the stray pixels **background**
+//! (a tile fetch went wrong at the end of a scanline) or **sprite** (roadside
+//! object drawn wrong)? Every other hypothesis follows from that answer, and
+//! guessing between them from colours alone is how an investigation goes wide.
+
+use rustynes_core::{Movie, MoviePlayer, Nes};
+
+/// The layer, rendered from its `Debug` form.
+///
+/// `rustynes-core` does not re-export `PixelLayer`, and adding a direct
+/// `rustynes-ppu` edge to the harness for a diagnostic binary would violate the
+/// workspace's one-directional dependency rule for the sake of a label.
+fn layer_name(l: impl core::fmt::Debug) -> String {
+    format!("{l:?}")
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 4 {
+        eprintln!("usage: rad_racer_prov <rom> <movie.rnm> <target-frame>");
+        std::process::exit(2);
+    }
+    let target: u64 = args[3].parse().expect("target frame");
+
+    let rom = std::fs::read(&args[1]).unwrap_or_else(|e| panic!("read rom: {e}"));
+    let mut nes = Nes::from_rom(&rom).unwrap_or_else(|e| panic!("load rom: {e}"));
+    let blob = std::fs::read(&args[2]).unwrap_or_else(|e| panic!("read movie: {e}"));
+    let movie = Movie::deserialize(&blob).unwrap_or_else(|e| panic!("parse movie: {e}"));
+    movie
+        .seek_to_start(&mut nes)
+        .unwrap_or_else(|e| panic!("seek movie start: {e}"));
+
+    let mut player = MoviePlayer::new(&movie);
+    let mut frame = 0u64;
+    while player.apply_next(&mut nes) {
+        // Arm one frame early so the TARGET frame is the one recorded.
+        if frame == target {
+            nes.set_pixel_provenance(true);
+        }
+        nes.run_frame();
+        if frame == target {
+            break;
+        }
+        frame += 1;
+    }
+
+    let idx = nes.index_framebuffer().to_vec();
+    // Locate the band exactly as the sibling probe does.
+    let sky = idx[8 * 256 + 8];
+    let hz = (100..180)
+        .filter(|&y| (0..256).any(|x| idx[y * 256 + x] == sky))
+        .next_back()
+        .expect("horizon");
+    let mut hist = std::collections::HashMap::<u16, usize>::new();
+    // Sample only the RIGHT-HAND sand. Sampling the full width lets the road
+    // (palette index 0, and wide just below the horizon) win the mode, which
+    // makes every sand pixel read as an "anomaly" — a false positive that
+    // reported 280 stray pixels on a frame whose real count is around a dozen.
+    for y in (hz + 3)..(hz + 30).min(200) {
+        for x in 200..256usize {
+            *hist.entry(idx[y * 256 + x]).or_default() += 1;
+        }
+    }
+    let ground = *hist
+        .iter()
+        .max_by_key(|&(_, n)| *n)
+        .expect("ground colour")
+        .0;
+    eprintln!("frame {target}: horizon y={hz}, ground index {ground:#06X}, sky {sky:#06X}");
+
+    let Some(prov) = nes.pixel_provenance() else {
+        panic!("provenance not armed — the record is empty");
+    };
+
+    println!(
+        "{:>4} {:>4}  {:>8} {:>6} {:>4}  {:>6} {:>6} {:>6}  {:>5} {:>5}  {}",
+        "x", "y", "layer", "scanln", "dot", "nt", "at", "pattern", "pal", "idx", "note"
+    );
+    let mut shown = 0;
+    // `get` returns `Option`: v2.3.6 gave the frame a validity marker so a
+    // cleared pixel reports "no record" instead of a plausible-looking default.
+    // Printing that distinctly matters here — "no record" and "backdrop" would
+    // otherwise look identical, which is the exact confusion that hid the
+    // provenance defect for four releases.
+    let row = |x: usize, y: usize, note: &str| {
+        let cell = prov.get(x, y);
+        match cell {
+            Some(p) => println!(
+                "{x:>4} {y:>4}  {:>9} {:>6} {:>4}  {:#06X} {:#06X} {:#06X}  {:>5} {:>5}  {note}",
+                layer_name(p.layer),
+                p.scanline,
+                p.dot,
+                p.nt_addr,
+                p.at_addr,
+                p.pattern_addr,
+                p.palette_addr,
+                idx[y * 256 + x]
+            ),
+            None => println!(
+                "{x:>4} {y:>4}  {:>9} {:>6} {:>4}  {:>6} {:>6} {:>6}  {:>5} {:>5}  {note}",
+                "NO-RECORD",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                idx[y * 256 + x]
+            ),
+        }
+    };
+    for y in (hz + 1)..(hz + 6).min(200) {
+        row(210, y, "control");
+        for x in 200..256usize {
+            if idx[y * 256 + x] != ground && idx[y * 256 + x] != sky {
+                row(x, y, "ANOMALY");
+                shown += 1;
+                if shown > 40 {
+                    println!("... (truncated)");
+                    return;
+                }
+            }
+        }
+    }
+}
