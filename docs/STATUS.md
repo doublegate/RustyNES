@@ -1,6 +1,37 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.3.5** (2026-08-16) — **"Manifest"**, about what the core
+> **Current release: v2.3.6** (2026-08-17) — **"Sounding"**, about measuring and
+> about what a measurement is allowed to claim. **Two shipped features are found
+> never to have worked.** Pixel Provenance, the v2.3.2 marquee, returned an empty
+> report for every user on the default `run_ahead = 1` — its per-frame rollback is
+> the last thing before the frontend releases the emulator lock, so the panel's
+> first look was always *after* the wipe — and "click any pixel" was never
+> implemented at all. Two source comments and four doc claims asserted the
+> opposite of their own code, which is why four releases passed unchecked. And
+> **Duck Hunt could never score**: the Zapper light probe was sampled at
+> end-of-frame, exactly inverting the "see nothing, then a bright spot" protocol
+> the game depends on (000000 → 000500).
+>
+> Two new tools, both built to **decline rather than guess**. The **Latency
+> Oracle** measures the game's own input lag by replaying one moment with a button
+> held and without it; `None` and `Some(0)` are different answers and are never
+> collapsed, `START` is excluded from the probe buttons because pausing is a
+> reaction to a menu rather than to gameplay, and it **recommends a run-ahead depth
+> without ever applying one**. The **RAM Atlas** classifies all 2 KiB of work RAM
+> and then *verifies* a candidate by perturbing it — the step that separates
+> causation from coincidence. Observation returns all 2048 labels as `Untested`, so
+> it is structurally incapable of claiming an effect; liveness is relative to its
+> lens and every verdict names it; and `Inert` is documented as **not** meaning
+> unused.
+>
+> **APU Workstream D is closed.** The 18.7%-of-frame figure stands; what is settled
+> is that it is not recoverable by gating per-cycle bookkeeping — one adoption,
+> three measured rejections, one declined on inspection, two left unmeasured
+> deliberately, and the fat-LTO mechanism that explains all three nulls. The Tools
+> and Debug menus are regrouped by task (Tools had twenty flat entries). **The core
+> gains one `const fn` getter and nothing else, so AccuracyCoin exactly 141/141 and
+> nestest 0-diff are verified, not asserted.** Built on **v2.3.5** (2026-08-16) —
+> **"Manifest"**, about what the core
 > *declares* about itself. The libretro metadata RetroArch reads is a **separate
 > copy** in `libretro/libretro-super` that the v2.2.9 GPL relicense never reached,
 > so the frontend still advertises MIT/Apache-2.0 at v2.2.1; the repo-side half is
@@ -24,10 +55,14 @@
 > than asserted**: AccuracyCoin **141/141** (RAM decoder authoritative), nestest
 > 0-diff.
 >
-> **Not fixed by this release:** RetroArch still shows the wrong licence until
-> `libretro/libretro-super` and `libretro/docs` merge the sync, and RustyNES still
-> does not appear on iOS / iPadOS / tvOS — a hardcoded `appstore_cores` list in
-> `libretro/RetroArch`, not a build failure. Both land upstream.
+> **Not fixed by v2.3.5, and since RESOLVED upstream (2026-08-16):**
+> `libretro-super#2069` merged, so RetroArch now reads `GPLv3+`; and
+> `RetroArch#19416` merged, so `rustynes` is in the `appstore_cores` list —
+> verified against that repository's `master`, not the PR state. Being in the
+> build list is not the same as being installable: iOS / iPadOS / tvOS
+> availability arrives with the next App Store RetroArch build, on libretro's
+> cadence. **`libretro/docs#1180` remains open** — the licence on the libretro
+> documentation site.
 >
 > **Previous release: v2.3.4** (2026-08-15) — **"Ledger"**, the coverage release.
 > Three boards land — **mapper 176 submapper 2** (WAIXING-FS005), **154**

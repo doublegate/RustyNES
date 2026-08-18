@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.3.5-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.3.6-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -668,7 +668,9 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.3.5 "Manifest"** — about what the emulator
+RustyNES's current release is **v2.3.6 "Sounding"** — about measuring, and
+about what a measurement is allowed to claim. Built on **v2.3.5 "Manifest"**,
+which was about what the emulator
 tells the outside world about itself. A user reported RetroArch still showing the
 pre-relicense MIT/Apache-2.0 terms; it does, because RetroArch reads a **separate
 copy** of the core metadata in `libretro/libretro-super` that the v2.2.9 GPL
@@ -685,11 +687,13 @@ implementation did change (the mix specialization is a strict specialization, no
 no-op), so the accuracy contract was **verified rather than asserted**: AccuracyCoin
 holds at exactly 141/141, nestest 0-diff.
 
-Two things this release deliberately does **not** claim: RetroArch will still show
-the wrong licence until upstream merges the sync, and RustyNES still will not
-appear on iOS / iPadOS / tvOS — the cause is now understood (a hardcoded core list
-in `libretro/RetroArch`, not a build failure) but the remedy lands in a repository
-this project does not control.
+Two things v2.3.5 deliberately did **not** claim have since landed upstream
+(2026-08-16): `libretro-super#2069` merged, so RetroArch now reads `GPLv3+`, and
+`RetroArch#19416` merged, so RustyNES is in the App Store core list. Being in that
+list is not the same as being installable — iOS / iPadOS / tvOS availability
+arrives with the next App Store RetroArch build, on libretro's cadence. One item
+is still open: `libretro/docs#1180`, the licence on the libretro documentation
+site.
 
 Built on **v2.3.3 "Cadence"** — the display-pacing release, which closed the one
 measured artefact whose signature matches the reported picture "shudder" without
