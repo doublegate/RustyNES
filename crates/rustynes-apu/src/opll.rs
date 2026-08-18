@@ -1587,6 +1587,400 @@ impl Opll {
 }
 
 // ---------------------------------------------------------------------------
+// Save-state surface (v2.3.7 — closes the `docs/accuracy-ledger.md` OPLL row)
+// ---------------------------------------------------------------------------
+
+/// Errors returned by [`Opll::restore`].
+///
+/// Deliberately its own type rather than `ApuSnapshotError`: the OPLL blob does
+/// not ride in the APU section of a save state. It rides in the **mapper**
+/// section of whichever board carries the chip (VRC7 today), which is versioned
+/// independently of `APU_SNAPSHOT_VERSION`. Sharing an error type would imply a
+/// coupling between two schemas that must be free to move apart.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum OpllStateError {
+    /// Blob is shorter than the schema declares.
+    #[error("OPLL snapshot truncated at offset {0}")]
+    Truncated(usize),
+    /// The blob's version byte is not understood by this build.
+    #[error("OPLL snapshot unsupported version {0}")]
+    UnsupportedVersion(u8),
+    /// The blob was written by a differently-configured chip (YM2413 state
+    /// restored into a VRC7 instance, or the reverse). The patch ROM differs
+    /// between them, so the slot patches would be reinterpreted against the
+    /// wrong instrument set.
+    #[error("OPLL snapshot chip type {got} does not match this instance ({want})")]
+    ChipTypeMismatch {
+        /// The tag read from the blob.
+        got: u8,
+        /// The tag this instance was constructed with.
+        want: u8,
+    },
+    /// An envelope-generator state tag outside the six defined variants.
+    #[error("OPLL snapshot has invalid envelope-generator state tag {0}")]
+    InvalidEgState(u8),
+}
+
+/// Schema version of the blob [`Opll::snapshot`] emits.
+pub const OPLL_SNAPSHOT_VERSION: u8 = 1;
+
+/// Number of slots (operators) carried. 18 in the YM2413; the VRC7 uses the
+/// first 12, but all 18 are serialized so the same blob describes either chip.
+const SNAPSHOT_SLOTS: usize = 18;
+
+/// Serialized size of one [`Slot`], in bytes. Asserted against the writer by
+/// `slot_serialized_size_matches_the_declared_constant` so the two cannot drift.
+const SLOT_BYTES: usize = 62;
+
+/// Serialized size of one [`Patch`], in bytes (13 one-byte parameters).
+const PATCH_BYTES: usize = 13;
+
+/// Total serialized size of an OPLL snapshot, in bytes.
+///
+/// version(1) + chip_type(1) + adr(1) + reg(64) + test_flag(1)
+///   + slot_key_status(4) + eg_counter(4) + pm_phase(4) + am_phase(4)
+///   + lfo_am(1) + patch_number(9x4) + user patch pair(2x13)
+///   + slot(18x62) + ch_out(14x2) + mix_out(2)
+pub const OPLL_SNAPSHOT_LEN: usize = 1
+    + 1
+    + 1
+    + 0x40
+    + 1
+    + 4
+    + 4
+    + 4
+    + 4
+    + 1
+    + 9 * 4
+    + 2 * PATCH_BYTES
+    + SNAPSHOT_SLOTS * SLOT_BYTES
+    + 14 * 2
+    + 2;
+
+impl EgState {
+    /// Stable on-disk tag. Explicit rather than `as u8` so reordering the enum
+    /// cannot silently reinterpret existing save states.
+    const fn to_tag(self) -> u8 {
+        match self {
+            Self::Attack => 0,
+            Self::Decay => 1,
+            Self::Sustain => 2,
+            Self::Release => 3,
+            Self::Damp => 4,
+            Self::Unknown => 5,
+        }
+    }
+
+    const fn from_tag(tag: u8) -> Result<Self, OpllStateError> {
+        match tag {
+            0 => Ok(Self::Attack),
+            1 => Ok(Self::Decay),
+            2 => Ok(Self::Sustain),
+            3 => Ok(Self::Release),
+            4 => Ok(Self::Damp),
+            5 => Ok(Self::Unknown),
+            other => Err(OpllStateError::InvalidEgState(other)),
+        }
+    }
+}
+
+impl ChipType {
+    /// Stable on-disk tag, for the same reason as [`EgState::to_tag`].
+    const fn to_tag(self) -> u8 {
+        match self {
+            Self::Ym2413 => 0,
+            Self::Vrc7 => 1,
+            Self::Ymf281b => 2,
+        }
+    }
+}
+
+/// Append-only byte writer. Local to this module because the OPLL schema is
+/// versioned with the mapper section, not with the APU section (see
+/// [`OpllStateError`]).
+struct OpllW(Vec<u8>);
+
+impl OpllW {
+    fn u8(&mut self, v: u8) {
+        self.0.push(v);
+    }
+    fn u16(&mut self, v: u16) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn u32(&mut self, v: u32) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn i16(&mut self, v: i16) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn i32(&mut self, v: i32) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn patch(&mut self, p: &Patch) {
+        // Field order is load-bearing: `OpllR::patch` reads it back verbatim.
+        for b in [
+            p.tl, p.fb, p.eg, p.ml, p.ar, p.dr, p.sl, p.rr, p.kr, p.kl, p.am, p.pm, p.ws,
+        ] {
+            self.0.push(b);
+        }
+    }
+}
+
+/// Bounds-checked byte reader. Every read is length-checked before it happens,
+/// so a truncated or hand-edited blob returns [`OpllStateError::Truncated`]
+/// rather than panicking — this parses untrusted save-state bytes.
+struct OpllR<'a> {
+    src: &'a [u8],
+    pos: usize,
+}
+
+impl OpllR<'_> {
+    fn need(&self, n: usize) -> Result<(), OpllStateError> {
+        if self.src.len() - self.pos < n {
+            return Err(OpllStateError::Truncated(self.pos));
+        }
+        Ok(())
+    }
+    fn u8(&mut self) -> Result<u8, OpllStateError> {
+        self.need(1)?;
+        let v = self.src[self.pos];
+        self.pos += 1;
+        Ok(v)
+    }
+    fn u16(&mut self) -> Result<u16, OpllStateError> {
+        self.need(2)?;
+        let v = u16::from_le_bytes([self.src[self.pos], self.src[self.pos + 1]]);
+        self.pos += 2;
+        Ok(v)
+    }
+    fn u32(&mut self) -> Result<u32, OpllStateError> {
+        self.need(4)?;
+        let mut b = [0u8; 4];
+        b.copy_from_slice(&self.src[self.pos..self.pos + 4]);
+        self.pos += 4;
+        Ok(u32::from_le_bytes(b))
+    }
+    fn i16(&mut self) -> Result<i16, OpllStateError> {
+        Ok(self.u16()? as i16)
+    }
+    fn i32(&mut self) -> Result<i32, OpllStateError> {
+        Ok(self.u32()? as i32)
+    }
+    fn patch(&mut self) -> Result<Patch, OpllStateError> {
+        self.need(PATCH_BYTES)?;
+        // Destructured positionally rather than field-by-field so the order
+        // here is visibly the same list `OpllW::patch` writes; a reordering on
+        // one side is then a visible diff on the other, not a silent
+        // reinterpretation of thirteen interchangeable `u8`s.
+        let [tl, fb, eg, ml, ar, dr, sl, rr, kr, kl, am, pm, ws]: [u8; PATCH_BYTES] = self.src
+            [self.pos..self.pos + PATCH_BYTES]
+            .try_into()
+            .expect("slice length checked by `need` above");
+        self.pos += PATCH_BYTES;
+        Ok(Patch {
+            tl,
+            fb,
+            eg,
+            ml,
+            ar,
+            dr,
+            sl,
+            rr,
+            kr,
+            kl,
+            am,
+            pm,
+            ws,
+        })
+    }
+}
+
+impl Opll {
+    /// Serialize the complete live synthesizer state.
+    ///
+    /// # Why this exists
+    ///
+    /// Until v2.3.7 the VRC7 mapper's save state carried only the *shadow*
+    /// register bytes and replayed nothing into the synthesizer, so after a
+    /// rewind, a netplay rollback, or a TAS restore the FM voice resumed from
+    /// whatever envelope and phase state it happened to hold — audible, and a
+    /// determinism gap in a project whose central claim is determinism. The
+    /// obvious format-free repair (replaying `regs` through
+    /// [`Opll::write_reg`]) is worse than the disease: it restarts every
+    /// keyed-on channel's envelope at attack, so every rewind frame produces a
+    /// transient. Carrying the state verbatim is the only repair that restores
+    /// the sound that was actually playing.
+    ///
+    /// # What is and is not carried
+    ///
+    /// Everything mutated during synthesis: the register shadow, the EG/LFO
+    /// counters, the per-channel patch selection, all 18 operator slots
+    /// (phase accumulators, envelope state machines, feedback history), the
+    /// per-channel outputs and the mix. The user patch pair (`patch_set[0..2]`,
+    /// writeable through registers `$00-$07`) is carried explicitly rather than
+    /// re-derived, so a restore cannot depend on `refresh_user_patch_pointers`
+    /// running in the right order.
+    ///
+    /// Deliberately NOT carried, because they are constants of construction and
+    /// restoring them would be restoring a copy of the binary into itself:
+    /// `waves` and `tll_rks` (pure lookup tables built in [`Opll::new`]) and
+    /// `patch_set[2..]` (the chip's patch ROM, fixed by `chip_type`). The chip
+    /// type itself IS carried, as a tag, purely so a mismatched restore is
+    /// rejected instead of silently reinterpreting slot patches against the
+    /// wrong instrument set.
+    ///
+    /// The blob is exactly [`OPLL_SNAPSHOT_LEN`] bytes and self-describes its
+    /// version in byte 0.
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<u8> {
+        let mut w = OpllW(Vec::with_capacity(OPLL_SNAPSHOT_LEN));
+        w.u8(OPLL_SNAPSHOT_VERSION);
+        w.u8(self.chip_type.to_tag());
+        w.u8(self.adr);
+        w.0.extend_from_slice(&self.reg);
+        w.u8(self.test_flag);
+        w.u32(self.slot_key_status);
+        w.u32(self.eg_counter);
+        w.u32(self.pm_phase);
+        w.i32(self.am_phase);
+        w.u8(self.lfo_am);
+        for n in self.patch_number {
+            w.i32(n);
+        }
+        // The user patch (modulator + carrier), written through $00-$07.
+        for p in self.patch_set.iter().take(2) {
+            w.patch(p);
+        }
+        for s in &self.slot {
+            w.u8(s.number);
+            w.u8(s.type_flags);
+            w.patch(&s.patch);
+            w.i32(s.output[0]);
+            w.i32(s.output[1]);
+            w.u8(s.wave_table_idx);
+            w.u32(s.pg_phase);
+            w.u32(s.pg_out);
+            w.u8(s.pg_keep);
+            w.u16(s.blk_fnum);
+            w.u16(s.fnum);
+            w.u8(s.blk);
+            w.u8(s.eg_state.to_tag());
+            w.i32(s.volume);
+            w.u8(s.key_flag);
+            w.u8(s.sus_flag);
+            w.u16(s.tll);
+            w.u8(s.rks);
+            w.u8(s.eg_rate_h);
+            w.u8(s.eg_rate_l);
+            w.u32(s.eg_shift);
+            w.u32(s.eg_out);
+            w.u32(s.update_requests);
+        }
+        for v in self.ch_out {
+            w.i16(v);
+        }
+        w.i16(self.mix_out);
+        debug_assert_eq!(w.0.len(), OPLL_SNAPSHOT_LEN, "OPLL snapshot length drift");
+        w.0
+    }
+
+    /// Restore state previously produced by [`Opll::snapshot`].
+    ///
+    /// Trailing bytes past the schema are ignored, so a future version may
+    /// append without breaking this reader — the same additive discipline the
+    /// PPU and APU sections use.
+    ///
+    /// # Errors
+    ///
+    /// [`OpllStateError::Truncated`] if the blob is shorter than the schema,
+    /// [`OpllStateError::UnsupportedVersion`] if byte 0 is not
+    /// [`OPLL_SNAPSHOT_VERSION`], [`OpllStateError::ChipTypeMismatch`] if the
+    /// blob describes a different chip, and
+    /// [`OpllStateError::InvalidEgState`] on a corrupt envelope-state tag.
+    pub fn restore(&mut self, data: &[u8]) -> Result<(), OpllStateError> {
+        let mut r = OpllR { src: data, pos: 0 };
+        let version = r.u8()?;
+        if version != OPLL_SNAPSHOT_VERSION {
+            return Err(OpllStateError::UnsupportedVersion(version));
+        }
+        let chip_tag = r.u8()?;
+        if chip_tag != self.chip_type.to_tag() {
+            return Err(OpllStateError::ChipTypeMismatch {
+                got: chip_tag,
+                want: self.chip_type.to_tag(),
+            });
+        }
+        // Read the whole blob into locals BEFORE mutating `self`: a truncated
+        // or corrupt tail must leave the synthesizer on its previous state
+        // rather than half-overwritten, since the caller (a mapper's
+        // `load_state`) reports the error and keeps running.
+        let adr = r.u8()?;
+        r.need(0x40)?;
+        let mut reg = [0u8; 0x40];
+        reg.copy_from_slice(&r.src[r.pos..r.pos + 0x40]);
+        r.pos += 0x40;
+        let test_flag = r.u8()?;
+        let slot_key_status = r.u32()?;
+        let eg_counter = r.u32()?;
+        let pm_phase = r.u32()?;
+        let am_phase = r.i32()?;
+        let lfo_am = r.u8()?;
+        let mut patch_number = [0i32; 9];
+        for n in &mut patch_number {
+            *n = r.i32()?;
+        }
+        let user_patch = [r.patch()?, r.patch()?];
+        let mut slots = [Slot::default(); SNAPSHOT_SLOTS];
+        for s in &mut slots {
+            s.number = r.u8()?;
+            s.type_flags = r.u8()?;
+            s.patch = r.patch()?;
+            s.output = [r.i32()?, r.i32()?];
+            s.wave_table_idx = r.u8()?;
+            s.pg_phase = r.u32()?;
+            s.pg_out = r.u32()?;
+            s.pg_keep = r.u8()?;
+            s.blk_fnum = r.u16()?;
+            s.fnum = r.u16()?;
+            s.blk = r.u8()?;
+            s.eg_state = EgState::from_tag(r.u8()?)?;
+            s.volume = r.i32()?;
+            s.key_flag = r.u8()?;
+            s.sus_flag = r.u8()?;
+            s.tll = r.u16()?;
+            s.rks = r.u8()?;
+            s.eg_rate_h = r.u8()?;
+            s.eg_rate_l = r.u8()?;
+            s.eg_shift = r.u32()?;
+            s.eg_out = r.u32()?;
+            s.update_requests = r.u32()?;
+        }
+        let mut ch_out = [0i16; 14];
+        for v in &mut ch_out {
+            *v = r.i16()?;
+        }
+        let mix_out = r.i16()?;
+
+        self.adr = adr;
+        self.reg = reg;
+        self.test_flag = test_flag;
+        self.slot_key_status = slot_key_status;
+        self.eg_counter = eg_counter;
+        self.pm_phase = pm_phase;
+        self.am_phase = am_phase;
+        self.lfo_am = lfo_am;
+        self.patch_number = patch_number;
+        self.patch_set[0] = user_patch[0];
+        self.patch_set[1] = user_patch[1];
+        self.slot = slots;
+        self.ch_out = ch_out;
+        self.mix_out = mix_out;
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests — verify the static tables match the C source byte-for-byte.
 // These tests run unconditionally (no feature gate) since the OPLL
 // constants are pure data and the tests are cheap.
@@ -2221,5 +2615,138 @@ mod tests {
             assert_eq!(s.number, i as u8, "slot {i} number");
             assert_eq!(s.type_flags & 1, (i & 1) as u8, "slot {i} M/C bit");
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Save-state surface (v2.3.7)
+    // -----------------------------------------------------------------------
+
+    /// Key a note and run it well past the attack phase, so the snapshot under
+    /// test describes a genuinely mid-flight synthesizer rather than something
+    /// a `reset()` could coincidentally reproduce.
+    fn opll_mid_note() -> Opll {
+        let mut opll = Opll::new(ChipType::Vrc7);
+        opll.write_reg(0x30, 0x10); // channel 0: instrument 1, full volume
+        opll.write_reg(0x10, 0xAD); // F-number low
+        opll.write_reg(0x20, 0x15); // key on, block 2, F-number bit 8
+        for _ in 0..600 {
+            let _ = opll.calc();
+        }
+        opll
+    }
+
+    #[test]
+    fn opll_snapshot_length_matches_the_declared_constant() {
+        // Pins SLOT_BYTES / PATCH_BYTES against the writer. A field added to
+        // `Slot` without extending the arithmetic fails here rather than
+        // silently shifting every subsequent field on restore.
+        assert_eq!(
+            Opll::new(ChipType::Vrc7).snapshot().len(),
+            OPLL_SNAPSHOT_LEN
+        );
+    }
+
+    #[test]
+    fn opll_snapshot_restore_reproduces_the_sample_stream_exactly() {
+        let mut source = opll_mid_note();
+        let blob = source.snapshot();
+        let expected: Vec<i16> = (0..2000).map(|_| source.calc()).collect();
+        assert!(
+            expected.iter().any(|&s| s != 0),
+            "fixture is silent — the comparison would pass vacuously"
+        );
+
+        // Restore into a FRESH chip, not the one that produced the blob: this
+        // has to work from power-on state, which is the actual rewind case.
+        let mut restored = Opll::new(ChipType::Vrc7);
+        restored.restore(&blob).expect("round-trip must load");
+        let got: Vec<i16> = (0..2000).map(|_| restored.calc()).collect();
+
+        assert_eq!(
+            got, expected,
+            "restored OPLL diverged from the source stream"
+        );
+    }
+
+    #[test]
+    fn opll_snapshot_is_stable_across_a_restore_cycle() {
+        // Byte-level idempotence: snapshot -> restore -> snapshot must be the
+        // same bytes. Catches a field that is written but not read back (which
+        // the stream test above can miss if the field happens not to affect
+        // the next 2000 samples).
+        let source = opll_mid_note();
+        let first = source.snapshot();
+        let mut restored = Opll::new(ChipType::Vrc7);
+        restored.restore(&first).unwrap();
+        assert_eq!(restored.snapshot(), first);
+    }
+
+    #[test]
+    fn opll_restore_rejects_a_blob_from_a_different_chip() {
+        // The patch ROM differs per chip type, so slot patches restored across
+        // types would be reinterpreted against the wrong instrument set —
+        // silently, since every field is otherwise structurally valid.
+        let blob = Opll::new(ChipType::Ym2413).snapshot();
+        let mut vrc7 = Opll::new(ChipType::Vrc7);
+        let err = vrc7
+            .restore(&blob)
+            .expect_err("chip mismatch must be rejected");
+        assert!(
+            matches!(err, OpllStateError::ChipTypeMismatch { got: 0, want: 1 }),
+            "expected ChipTypeMismatch, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn opll_restore_rejects_a_truncated_blob_without_mutating_state() {
+        let source = opll_mid_note();
+        let blob = source.snapshot();
+        let mut target = Opll::new(ChipType::Vrc7);
+        let before = target.snapshot();
+
+        let err = target
+            .restore(&blob[..blob.len() - 1])
+            .expect_err("a truncated blob must be rejected");
+        assert!(
+            matches!(err, OpllStateError::Truncated(_)),
+            "expected Truncated, got {err:?}"
+        );
+        assert_eq!(
+            target.snapshot(),
+            before,
+            "a rejected restore left the synthesizer half-overwritten"
+        );
+    }
+
+    #[test]
+    fn opll_restore_rejects_an_unknown_version() {
+        let mut blob = Opll::new(ChipType::Vrc7).snapshot();
+        blob[0] = 99;
+        let mut target = Opll::new(ChipType::Vrc7);
+        assert!(matches!(
+            target.restore(&blob),
+            Err(OpllStateError::UnsupportedVersion(99))
+        ));
+    }
+
+    /// Byte offset of slot 0's `eg_state` tag within a snapshot blob.
+    ///
+    /// Header: `version(1) + chip_type(1) + adr(1) + reg(64) + test_flag(1) +
+    /// slot_key_status/eg_counter/pm_phase/am_phase(16) + lfo_am(1) +
+    /// patch_number(36) + user patch pair(26) = 147`. Then within slot 0:
+    /// `number(1) + type_flags(1) + patch(13) + output(8) + wave_table_idx(1) +
+    /// pg_phase(4) + pg_out(4) + pg_keep(1) + blk_fnum(2) + fnum(2) + blk(1) = 38`.
+    const EG_STATE_OFFSET: usize = 147 + 38;
+
+    #[test]
+    fn opll_restore_rejects_an_invalid_envelope_state_tag() {
+        let mut blob = opll_mid_note().snapshot();
+        assert!(blob[EG_STATE_OFFSET] <= 5, "offset does not point at a tag");
+        blob[EG_STATE_OFFSET] = 6;
+        let mut target = Opll::new(ChipType::Vrc7);
+        assert!(matches!(
+            target.restore(&blob),
+            Err(OpllStateError::InvalidEgState(6))
+        ));
     }
 }

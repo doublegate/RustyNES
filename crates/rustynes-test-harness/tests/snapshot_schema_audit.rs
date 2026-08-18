@@ -317,6 +317,42 @@ const CHIPS: &[Chip] = &[
         ],
         known_gaps: &[],
     },
+    // The OPLL is not a 2A03 chip, but it is a serialized synthesizer with the
+    // same failure mode, and it reached this audit the hard way: its state was
+    // NOT carried at all until v2.3.7, and nothing mechanical noticed for the
+    // whole life of the feature because the audit only knew about the three
+    // chips in the console. A save-state surface that no audit can see is
+    // exactly how the gap this closes was able to persist — so the new surface
+    // is registered here in the same change that creates it.
+    //
+    // Its blob rides in the *mapper* section of whichever board carries the
+    // chip (VRC7 today), which is why it has its own version byte and its own
+    // error type rather than APU_SNAPSHOT_VERSION's.
+    Chip {
+        label: "Opll",
+        struct_src: include_str!("../../rustynes-apu/src/opll.rs"),
+        struct_name: "Opll",
+        snapshot_src: include_str!("../../rustynes-apu/src/opll.rs"),
+        // `chip_type` and `patch_set` are absent from this list on purpose:
+        // both ARE written by the serializer, so the audit already accounts for
+        // them and an exclusion entry would be rejected as a false admission.
+        // Their subtlety is on the *read* side, and is documented at the writer
+        // — `chip_type` is emitted only as a tag that rejects a cross-chip
+        // restore and is never assigned from, and of `patch_set` only the two
+        // non-ROM entries (the user patch written through `$00-$07`) round-trip;
+        // the remaining 36 are the chip's patch ROM, fixed by `chip_type`.
+        derived_or_config: &[
+            (
+                "waves",
+                "derived: the 1024-entry sine / half-sine lookup tables, built in `Opll::new`",
+            ),
+            (
+                "tll_rks",
+                "derived: the TLL + RKS lookup tables (~128 KiB), built in `Opll::new`",
+            ),
+        ],
+        known_gaps: &[],
+    },
 ];
 
 /// Extract the field names of `struct <name>` from Rust source.
