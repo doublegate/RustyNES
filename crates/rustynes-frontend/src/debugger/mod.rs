@@ -1163,6 +1163,9 @@ impl DebuggerOverlay {
     pub fn clear_rom_bound_analysis(&mut self) {
         self.clear_latency_report();
         self.atlas_ui.clear();
+        // v2.3.7 — Audio Provenance. Registered here rather than given its own
+        // per-panel clear, which is the whole point of this hook existing.
+        self.audio_provenance_ui.clear();
     }
 
     /// Returns `true` when the overlay is currently visible. The render

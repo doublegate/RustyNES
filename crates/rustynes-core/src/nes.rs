@@ -908,6 +908,19 @@ impl Nes {
     ///
     /// Default off. Arming allocates
     /// [`rustynes_ppu::PixelProvenanceFrame::HEAP_BYTES`]. Output-only, so
+    /// emulation is bit-identical either way.
+    #[cfg(feature = "debug-hooks")]
+    pub fn set_pixel_provenance(&mut self, enabled: bool) {
+        self.bus.ppu.set_pixel_provenance(enabled);
+    }
+
+    /// The current frame's per-pixel provenance, or `None` when not armed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn pixel_provenance(&self) -> Option<&rustynes_ppu::PixelProvenanceFrame> {
+        self.bus.ppu.pixel_provenance()
+    }
+
     /// Arm or disarm **audio** provenance (v2.3.7 "Overtone").
     ///
     /// Off by default. Arming allocates the per-register write attribution and
@@ -962,19 +975,6 @@ impl Nes {
     #[cfg(feature = "debug-hooks")]
     pub fn put_audio_provenance(&mut self, stash: rustynes_apu::provenance::AudioProvenanceStash) {
         self.bus.apu.put_audio_provenance(stash);
-    }
-
-    /// emulation is bit-identical either way.
-    #[cfg(feature = "debug-hooks")]
-    pub fn set_pixel_provenance(&mut self, enabled: bool) {
-        self.bus.ppu.set_pixel_provenance(enabled);
-    }
-
-    /// The current frame's per-pixel provenance, or `None` when not armed.
-    #[cfg(feature = "debug-hooks")]
-    #[must_use]
-    pub fn pixel_provenance(&self) -> Option<&rustynes_ppu::PixelProvenanceFrame> {
-        self.bus.ppu.pixel_provenance()
     }
 
     /// v2.3.6 — move both provenance stores out, leaving them unarmed.
@@ -2140,6 +2140,21 @@ impl Nes {
         {
             self.bus.ppu.clear_write_attribution();
             self.bus.ppu.clear_pixel_provenance();
+            // v2.3.7 — the audio register attribution is the same kind of claim
+            // about the same replaced timeline: a restored state's APU registers
+            // were not written by any instruction this session executed, so
+            // keeping their PCs would report a timeline that no longer exists.
+            //
+            // This was MISSING when audio provenance first landed, while
+            // `docs/audio-provenance.md` already asserted that "save-state loads
+            // and netplay rollback still clear" — prose describing behaviour the
+            // code did not have, which is the exact failure that let Pixel
+            // Provenance ship broken for four releases. Caught in review.
+            //
+            // Harmless for run-ahead: `RunAhead::finish` TAKES the store before
+            // `restore_quiet` and puts it back after, so `audio_prov` is `None`
+            // here and this call is a no-op on that path.
+            self.bus.apu.clear_audio_provenance_history();
         }
         Ok(())
     }

@@ -573,6 +573,15 @@ impl Apu {
         self.reset_4017_value = last;
         self.reset_4017_delay = 2;
         self.write_register(0x4015, 0x00);
+        // v2.3.7 — that write went through the ordinary CPU path, which just
+        // attributed it to whatever instruction was last latched. No instruction
+        // caused it: this models the warm-reset silencing of the channels.
+        // Correct the origin so the panel reports hardware rather than naming an
+        // innocent PC. (Caught in review of the PR that added the feature.)
+        #[cfg(feature = "debug-hooks")]
+        if let Some(p) = self.audio_prov.as_mut() {
+            p.reg_attrib.record_reset(0x4015, p.attrib_cycle, 0x00);
+        }
         self.pending_dmc_dma = false;
         self.dmc_dma_is_load = false;
         self.dmc_dma_short = false;
@@ -1307,7 +1316,16 @@ impl Apu {
         ) + if mask & (1 << 5) != 0 { ext } else { 0.0 };
         #[cfg(feature = "debug-hooks")]
         if self.audio_prov.is_some() {
-            self.record_mix_armed(mixed, ext);
+            // RAW `external`, not the gained `ext`, and not zero when the mask
+            // bit clears it. The five channel fields are already the raw
+            // pre-gate outputs, so recording a gain-scaled or mask-zeroed
+            // expansion value would make ONE field follow the user's mixer
+            // sliders while five describe the chip -- and would make this path
+            // disagree with the fast path, which records the raw value. Review
+            // caught the disagreement; this resolves it toward the documented
+            // semantic rather than toward the local variable that happened to
+            // be in scope.
+            self.record_mix_armed(mixed, external);
         }
         self.blip.add_sample(mixed);
 

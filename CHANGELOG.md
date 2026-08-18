@@ -69,23 +69,15 @@ cycle-accurate core later replaced.
 
 ### Changed
 
-- **The disarmed cost of audio provenance was measured, and it was not free.**
-  Workstream C re-ran `apu_throughput` after the plumbing landed and found the
-  shipped APU slower in the configuration every user runs — feature compiled in,
-  arm off, because the frontend pulls the core's `debug-hooks` unconditionally.
-  Two distinct mechanisms, and the diagnosis in between was wrong:
-  building the `MixRecord` before testing the arm (**+14% to +23%**, fixed by
-  hoisting the check), then a suspected `Apu` field-layout effect whose fix
-  **changed nothing** (still +7.98% / +2.88% / +11.03% after consolidating four
-  fields behind one `Option<Box<..>>`), and finally the real cause — the body
-  was still being *inlined* into the hot mix path, so the branch skipped the
-  work but not the code. Outlining it behind `#[cold] #[inline(never)]` returns
-  the disarmed path to baseline. What broke the wrong diagnosis open was the
-  absolute column: +33 µs / +15 µs / +65 µs cannot be a per-cycle cost, because
-  a per-cycle branch costs a constant number of cycles. One workload measures
-  −4.8% and that is **not** claimed as an optimization — it is code-layout luck
-  in the favourable direction, and adopting it would be adopting noise. Numbers,
-  method and the order-bias control: `docs/performance.md` §v2.3.7 C2.
+- **Audio provenance costs the shipped default nothing when it is not armed.**
+  The feature is compiled into every build (the frontend enables the core's
+  `debug-hooks` unconditionally), so "default-off" describes the runtime arm
+  rather than the code. Two separate mechanisms were found charging the APU
+  hot path while disarmed — the mix record was being built before the arm was
+  tested, and the recording body was being inlined into the hot mix path — and
+  both are fixed; the disarmed path measures at baseline. The full measurement
+  chronology, including a diagnosis that was made, measured and rejected, is in
+  `docs/performance.md` §v2.3.7 C2 rather than here.
 
 ### Fixed
 

@@ -112,6 +112,30 @@ pub struct AudioProvenancePanelState {
     follow: bool,
 }
 
+impl AudioProvenancePanelState {
+    /// Discard the ROM-bound half of this panel's state.
+    ///
+    /// Registered with [`super::DebuggerOverlay::clear_rom_bound_analysis`],
+    /// whose doc comment says the next ROM-bound panel is "one line away from
+    /// being correct instead of one omission away from being wrong". This panel
+    /// was that omission until it was caught, which is the third instance of
+    /// the same seam after the Latency Oracle and Pixel Provenance.
+    ///
+    /// `pin` is cleared: a cycle offset chosen while watching one game names
+    /// nothing in particular in another. It cannot panic if left stale — the
+    /// render clamps it to the live record count every frame — so this is about
+    /// the panel not silently presenting a cycle the user never picked.
+    ///
+    /// `follow` is deliberately KEPT. It is a display preference, not a
+    /// measurement: "show me the newest cycle" means exactly the same thing on
+    /// the next ROM, and resetting it would make a ROM load quietly undo a
+    /// setting the user chose. Clearing state wholesale is the easy call and
+    /// the wrong one; the hook exists to discard results, not preferences.
+    pub(super) const fn clear(&mut self) {
+        self.pin = 0;
+    }
+}
+
 /// Render the inspector.
 pub fn show(
     ctx: &egui::Context,
@@ -173,7 +197,7 @@ pub fn show(
             if trace.truncated() {
                 ui.colored_label(
                     egui::Color32::from_rgb(0xE0, 0xA0, 0x30),
-                    "⚠ Trace truncated — this frame produced more cycles than the buffer holds.",
+                    "Trace truncated: this frame produced more cycles than the buffer holds.",
                 );
             }
 
@@ -271,10 +295,21 @@ pub fn show(
                                 ui.label(*name);
                                 ui.label(format!("{:#04X}", w.value));
                                 ui.label(format!("{}", w.cycle));
-                                ui.label(source_map.annotation(w.pc).map_or_else(
-                                    || format!("{:#06X}", w.pc),
-                                    |s| format!("{:#06X}  {s}", w.pc),
-                                ));
+                                match w.origin {
+                                    rustynes_core::rustynes_apu::provenance::WriteOrigin::Instruction => {
+                                        ui.label(source_map.annotation(w.pc).map_or_else(
+                                            || format!("{:#06X}", w.pc),
+                                            |s| format!("{:#06X}  {s}", w.pc),
+                                        ));
+                                    }
+                                    // No instruction caused this one, so no PC is
+                                    // printed. Naming a plausible address here would
+                                    // be the tool lying in exactly the register it is
+                                    // supposed to explain.
+                                    rustynes_core::rustynes_apu::provenance::WriteOrigin::Reset => {
+                                        ui.label("APU reset (not an instruction)");
+                                    }
+                                }
                                 ui.end_row();
 
                                 if let Some(extra) = side_effects(i) {
@@ -289,7 +324,9 @@ pub fn show(
                 });
             ui.label(
                 egui::RichText::new(
-                    "Registers with no row have not been written since the last cold boot.",
+                    "Registers with no row have not been written since audio provenance was \
+                     enabled. Arming allocates a fresh table, so writes made before you ticked \
+                     Enable are not shown.",
                 )
                 .small()
                 .weak(),

@@ -50,14 +50,22 @@ the panel says plainly that one output sample spans ~40.6 of these cycles. This
 is the same discipline as the mapper tier gate and the accuracy ledger: state
 what is measured, and decline the rest.
 
-**It is also cheaper than it sounds.** 29,781 records per NTSC frame against the
-pixel store's 61,440 — **0.48x the record count of the video side**.
+**It is also cheaper than it sounds.** Roughly 29,781 records per NTSC frame
+against the pixel store's 61,440 — **0.48x the record count of the video side**.
 
 | region | CPU cycles/frame |
 |---|---|
-| NTSC | 29,781 |
+| NTSC | 29,780 / 29,781 (alternating) |
 | PAL | 33,247 |
 | **Dendy** | **35,464** |
+
+The NTSC row is two numbers on purpose. A real NTSC frame is 29,780.5 CPU cycles:
+hardware alternates 29,780- and 29,781-cycle frames, because the pre-render
+scanline's last dot is skipped on odd frames when rendering is enabled — the same
+half-cycle `crates/rustynes-core/src/nes.rs` documents at its frame-duration
+constant. So 29,781 is the **upper bound** on a trace's NTSC record count, not a
+fixed figure, and a frame that records 29,780 is not short. (The `apu_throughput`
+bench drives a fixed 29,780-cycle workload and is a bench, not a frame.)
 
 `MIX_CAP` is sized from **Dendy**, not NTSC. Sizing it from the number that comes
 to mind first would silently truncate the last 16% of every Dendy frame; and when
@@ -85,7 +93,24 @@ call site.
 
 The attribution is **not** cleared per frame — "which instruction last wrote
 `$4003`" has an answer that legitimately predates this frame. It is cleared on a
-cold boot, where the history it describes genuinely ended.
+cold boot, where the history it describes genuinely ended, and it starts empty
+when you arm it: arming allocates a fresh table, so writes made before Enable was
+ticked are not shown. The panel footer says exactly that rather than the
+easier-to-write "since the last cold boot", which would be false for anyone who
+armed the feature mid-session — which is everyone.
+
+**Not every write to this range comes from an instruction.** `Apu::reset`
+performs an internal `write_register($4015, 0)` modelling the warm-reset
+silencing of the channels; it reaches the table through the ordinary CPU path
+and would therefore be stamped with whatever PC was last latched. A provenance
+tool that answers "who wrote `$4015`?" with a confident, specific, innocent
+address is worse than one that declines, so `RegWrite` carries a
+`WriteOrigin` — `Instruction` or `Reset` — and the panel prints "APU reset (not
+an instruction)" rather than a PC for the latter. The two alternatives were both
+worse: suppressing the record entirely would leave the slot advertising the
+register's *previous* value after reset genuinely changed it, and a sentinel PC
+would be indistinguishable from a real write to address zero. Caught in review of
+the PR that introduced the feature, before it shipped.
 
 ## Phase 2 — the mix trace
 
@@ -98,6 +123,15 @@ noise; 0-127 for the DMC) — what the non-linear mixer consumes. They are **not
 scaled by the frontend's mixer gains: those are a presentation control, and
 recording post-gain values would make the record describe the user's slider
 rather than the chip.
+
+**The expansion contribution follows the same rule**, and this took a review to
+get right. The gated general mix path had a post-gain `ext` in scope and
+recorded that, while the default fast path recorded the raw value — so the two
+byte-identical paths were recording different things, which is precisely the
+divergence this feature's "both paths record" rule exists to prevent. Both now
+record the raw value. On a muted expansion channel that means the panel reports
+what the cartridge produced rather than zero, exactly as it reports a muted
+pulse's output rather than zero.
 
 `dominant()` compares each channel's share of **its own full scale**, not raw
 magnitude, because the raw values are not commensurable — a DMC 127 and a pulse
@@ -261,5 +295,15 @@ Three lessons worth carrying:
 - `cargo test -p rustynes-frontend audio_provenance` — the control and the
   run-ahead regression.
 - `cargo test -p rustynes-test-harness --test snapshot_schema_audit`.
+- `cargo test -p rustynes-apu --no-default-features` and
+  `cargo clippy -p rustynes-apu --all-targets --no-default-features` — required
+  because this release adds a feature to a chip crate, and the v2.3.6 VRC7
+  defect was a `--no-default-features` build breaking under exactly that change.
+- `cargo test -p rustynes-test-harness --features test-roms --test audio_expansion`
+  — **25 passed** (six expansion-level assertions plus 19 `insta` snapshot
+  cases, whose snapshots live under `crates/rustynes-test-harness/tests/snapshots`,
+  not `tests/golden/`). This is the standing APU audio regression gate, and it
+  belongs in any change that touches the mix path. Added to this list after
+  review pointed out it was missing.
 - AccuracyCoin **141/141** and nestest 0-diff, verified rather than assumed: this
   release touches `rustynes-apu`.

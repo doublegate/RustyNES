@@ -84,12 +84,39 @@ pub const MIX_CAP: usize = 36_864;
 /// carries the same three fields for VRAM/OAM/palette bytes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct RegWrite {
-    /// CPU cycle count at the writing instruction.
+    /// CPU cycle count at the write.
     pub cycle: u64,
-    /// Program counter of the writing instruction.
+    /// Program counter of the writing instruction. Meaningful only when
+    /// [`Self::origin`] is [`WriteOrigin::Instruction`].
     pub pc: u16,
     /// The byte written, as the CPU put it on the bus.
     pub value: u8,
+    /// What performed the write.
+    pub origin: WriteOrigin,
+}
+
+/// What performed a register write.
+///
+/// **Not every write to `$4000-$4017` comes from an instruction, and a
+/// provenance tool that pretends otherwise is worse than no tool.** `Apu::reset`
+/// performs an internal `write_register($4015, 0)` modelling the warm-reset
+/// silencing of the channels. That is real hardware behaviour with no CPU
+/// instruction behind it, and attributing it to whatever PC happened to be
+/// latched would print a confident, specific, wrong answer — the exact failure
+/// this feature exists to prevent, reproduced by the feature itself.
+///
+/// Found in review of the PR that introduced audio provenance, before it
+/// shipped. The alternative fixes were both worse: suppressing the record
+/// entirely would leave the slot advertising the register's *previous* value
+/// after reset genuinely changed it, and a sentinel PC would be indistinguishable
+/// from a real write to address zero.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub enum WriteOrigin {
+    /// A CPU instruction wrote it; `pc` names that instruction.
+    #[default]
+    Instruction,
+    /// The APU's own reset sequence wrote it. `pc` is not meaningful.
+    Reset,
 }
 
 /// Storage-side mirror of [`RegWrite`] with a `Default`, so a slot array can be
@@ -99,6 +126,7 @@ struct RegWriteInner {
     cycle: u64,
     pc: u16,
     value: u8,
+    origin: WriteOrigin,
 }
 
 /// One attribution slot plus whether anything has been written yet.
@@ -120,6 +148,7 @@ impl Slot {
                 cycle: self.rec.cycle,
                 pc: self.rec.pc,
                 value: self.rec.value,
+                origin: self.rec.origin,
             })
         } else {
             None
@@ -149,6 +178,7 @@ impl RegisterAttribution {
                     cycle: 0,
                     pc: 0,
                     value: 0,
+                    origin: WriteOrigin::Instruction,
                 },
                 written: false,
             }; REG_COUNT],
@@ -167,7 +197,35 @@ impl RegisterAttribution {
             return;
         };
         self.slots[idx] = Slot {
-            rec: RegWriteInner { cycle, pc, value },
+            rec: RegWriteInner {
+                cycle,
+                pc,
+                value,
+                origin: WriteOrigin::Instruction,
+            },
+            written: true,
+        };
+    }
+
+    /// Record a write performed by the APU's own reset sequence.
+    ///
+    /// Overwrites whatever [`Self::record`] just stored for the same address,
+    /// which is deliberate: `Apu::reset` reaches the slot through the ordinary
+    /// `write_register` path, so the honest origin has to replace the
+    /// instruction attribution that path installs. The value and cycle are
+    /// genuine — the register really did change, at that time — and only the
+    /// claim about *who caused it* is corrected.
+    pub const fn record_reset(&mut self, addr: u16, cycle: u64, value: u8) {
+        let Some(idx) = Self::index(addr) else {
+            return;
+        };
+        self.slots[idx] = Slot {
+            rec: RegWriteInner {
+                cycle,
+                pc: 0,
+                value,
+                origin: WriteOrigin::Reset,
+            },
             written: true,
         };
     }
@@ -215,7 +273,15 @@ pub struct MixRecord {
     /// The mixed sample handed to the band-limited decimator, including any
     /// expansion audio.
     pub mixed: f32,
-    /// The expansion-audio contribution (`0.0` on a cartridge without one).
+    /// The expansion-audio contribution, RAW (`0.0` on a cartridge without one).
+    ///
+    /// Raw in the same sense as the five channel fields: before the frontend's
+    /// expansion gain and before the mixer mask. So on a muted or attenuated
+    /// expansion channel this reports what the cartridge produced, not what
+    /// reached `mixed` — consistent with `pulse1` reporting a muted pulse's
+    /// output rather than zero. Both mix paths record this same raw value; an
+    /// earlier revision recorded the gained value on one of them, which review
+    /// caught.
     pub external: f32,
     /// Pulse 1 output, 0-15.
     pub pulse1: u8,
@@ -234,11 +300,19 @@ impl MixRecord {
     /// conventional order (0 = pulse 1 … 4 = DMC), or `None` when every channel
     /// is silent.
     ///
-    /// Compares each channel's share of the **non-linear** mixer rather than its
+    /// Compares each channel's share of **its own full scale** rather than its
     /// raw value, because the raw values are not commensurable: a DMC 127 and a
-    /// pulse 15 are both "full scale" on different scales. The comparison is
-    /// therefore on normalised share, which is the only ordering that answers
-    /// the question a user is actually asking.
+    /// pulse 15 are both "full scale" on different scales.
+    ///
+    /// That normalisation is **linear** — `value / max` — and deliberately does
+    /// NOT model the non-linear mixer, which an earlier draft of this comment
+    /// claimed it did. The two give different answers, since the mixer weights
+    /// the triangle/noise/DMC group differently from the pulses and is not
+    /// proportional in either. This reports which channel is working hardest
+    /// relative to what it can do, which is the question a user pointing at a
+    /// cycle is asking; attributing loudness in the final mix would be a
+    /// different function, and calling this one that would be a false label on
+    /// a correct computation.
     #[must_use]
     pub fn dominant(&self) -> Option<usize> {
         let shares = [
@@ -263,8 +337,13 @@ impl MixRecord {
 /// One frame's worth of per-CPU-cycle mix records.
 ///
 /// The index **is** the cycle offset from [`Self::first_cycle`], so no per-record
-/// timestamp is stored — that is what keeps the record at 16 bytes and the frame
-/// at ~465 KiB.
+/// timestamp is stored — that is what keeps the record at 16 bytes.
+///
+/// Two different numbers follow from that, and the first draft of this comment
+/// conflated them. An **NTSC frame** of 29,781 records is ~465 KiB; the
+/// **allocation** is [`MIX_CAP`] records reserved up front, which is 576 KiB,
+/// because the cap is sized from Dendy (the longest frame) rather than from
+/// NTSC. The buffer is therefore always the worst case, never the typical one.
 #[derive(Clone, Debug)]
 pub struct MixTrace {
     recs: Vec<MixRecord>,
@@ -432,7 +511,8 @@ mod tests {
             Some(RegWrite {
                 cycle: 0,
                 pc: 0,
-                value: 0
+                value: 0,
+                origin: WriteOrigin::Instruction,
             })
         );
     }
@@ -447,6 +527,43 @@ mod tests {
             assert_eq!(a.get(addr), None, "{addr:#06X} was written by a stray addr");
         }
         assert_eq!(a.get(0x4018), None);
+    }
+
+    /// A reset-driven write must NOT claim an instruction caused it.
+    ///
+    /// `Apu::reset` silences the channels via an internal
+    /// `write_register($4015, 0)`, which reaches the attribution table through
+    /// the ordinary CPU path and is therefore stamped with whatever PC was last
+    /// latched. Without the correction that produces a specific, confident,
+    /// false answer in the one register a user would look at after pressing
+    /// Reset. Both halves are asserted because they fail independently: the
+    /// origin could be right while the value went stale, or vice versa.
+    #[test]
+    fn a_reset_write_is_not_attributed_to_an_instruction() {
+        let mut a = RegisterAttribution::new();
+
+        // The CPU path runs first, exactly as `Apu::reset` causes it to.
+        a.record(0x4015, 0xC5F3, 1_234, 0x1F);
+        let before = a.get(0x4015).expect("recorded");
+        assert_eq!(before.origin, WriteOrigin::Instruction);
+        assert_eq!(before.pc, 0xC5F3);
+
+        // ...then the reset correction replaces the CAUSE, not the effect.
+        a.record_reset(0x4015, 1_234, 0x00);
+        let after = a.get(0x4015).expect("still recorded");
+        assert_eq!(
+            after.origin,
+            WriteOrigin::Reset,
+            "a reset write still claims an instruction wrote it"
+        );
+        assert_eq!(
+            after.value, 0x00,
+            "the corrected record lost the value the reset actually wrote"
+        );
+        assert_eq!(after.cycle, 1_234, "the correction moved the write in time");
+
+        // A neighbouring slot is untouched -- the correction is not a wipe.
+        assert!(a.get(0x4014).is_none());
     }
 
     #[test]
