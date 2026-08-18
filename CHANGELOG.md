@@ -18,8 +18,8 @@ cycle-accurate core later replaced.
 
 - **CI jobs are bounded, so a hung job can no longer block a release.** No job
   in `ci.yml` carried a `timeout-minutes`, which means every one inherited
-  GitHub's **six-hour** default. On 2026-08-18 the `lint` job — normally four
-  minutes — hung on `main`. Because `main` runs deliberately do not cancel each
+  GitHub's **six-hour** default. On the night of the v2.3.6 cut the `lint` job —
+  normally four minutes — hung on `main` (2026-08-17 21:11 UTC). Because `main` runs deliberately do not cancel each
   other, the v2.3.6 release commit queued behind it and never started; GitHub
   keeps only one pending run per concurrency group, so the commit between them
   was cancelled outright; `Auto Release` fired on *that* cancellation, saw a
@@ -27,9 +27,12 @@ cycle-accurate core later replaced.
 
   Every PR was green. The release simply never happened, and nothing reported an
   error anywhere — the failure presented as a workflow that had quietly decided
-  not to run. Every job now declares a budget of 4-8x its observed duration,
-  recorded beside it, so a timeout fires on a hang and never on a slow runner.
-  It was the second hung job that day; the first cost two hours on a PR.
+  not to run. Every job now declares an explicit budget with its observed
+  duration recorded beside it: a 20-minute floor for jobs that finish in seconds
+  (a fixed ratio would put those under a minute, where startup and a cold cache
+  trip them for nothing) and roughly 2-3x for the jobs long enough for a ratio to
+  mean anything. It was the second hung job that night; the first cost two hours
+  on a PR.
 
 ## [2.3.6] - 2026-08-17 - "Sounding" (measuring, and what a measurement may claim)
 

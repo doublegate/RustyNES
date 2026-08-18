@@ -40,17 +40,26 @@ on:
 #
 # `cancel-in-progress: false` on `main` has a consequence that cost a release:
 # pushes QUEUE behind the in-progress run, and GitHub keeps only ONE pending run
-# per group -- so a third push cancels the second. On 2026-08-18 the `lint` job
-# (a 4-minute job) hung at 21:11. The v2.3.6 release commit pushed at 01:56 sat
-# pending behind it and never started; the commit between them was cancelled
+# per group -- so a third push cancels the second. On the night of the v2.3.6
+# cut the `lint` job (a ~4-minute job) hung at 2026-08-17 21:11 UTC. The release
+# commit, pushed 2026-08-18 01:56 UTC, sat pending behind it and never started;
+# the commit between them was cancelled
 # outright; `Auto Release` fired on THAT cancellation, saw a non-success
 # conclusion, and correctly skipped. Every PR was green, the release simply
 # never happened, and nothing reported an error anywhere.
 #
 # Every job therefore carries an explicit `timeout-minutes`. Without one a job
 # inherits GitHub's SIX HOUR default, which on a serialized `main` group is six
-# hours of blocked releases. The budgets are 4-8x the observed durations
-# (recorded beside each), so they fire on a hang and never on a slow runner.
+# hours of blocked releases.
+#
+# Sizing policy, since it is NOT a single ratio: a 20-minute FLOOR for jobs that
+# finish in seconds (a ratio would put them under a minute, where runner startup
+# and a cold cache trip them for no reason), and roughly 2-3x the observed
+# duration for the jobs long enough for a ratio to mean something -- 30 for a
+# ~4-minute lint, 45 for a ~16-minute Windows leg, 60 for a ~29-minute
+# `test-roms`. Each job records its own observed time beside its budget. The
+# point is not to measure the runner; it is that six hours becomes thirty
+# minutes and a red X.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
