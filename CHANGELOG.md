@@ -14,6 +14,75 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.3.6] - 2026-08-17 - "Sounding" (measuring, and what a measurement may claim)
+
+A *sounding* is a depth measured with its uncertainty attached, and that is what
+every workstream here has in common. Two shipped features are found not to work at
+all; two new tools are added that decline to answer rather than guess; and an
+optimization campaign is closed on the strength of three measured rejections.
+
+### The release in one line each
+
+- **Pixel Provenance never worked, in any release since v2.3.2** — and two comments
+  plus four doc claims asserted the opposite of their own code, which is why nobody
+  checked.
+- **Duck Hunt could never score.** The Zapper light probe was exactly inverted
+  against the protocol the game uses.
+- **The Latency Oracle** measures the game's own input lag instead of leaving it to
+  a manual frame-advance ritual — and recommends a run-ahead depth without ever
+  applying one.
+- **The RAM Atlas** classifies all 2 KiB of work RAM, then verifies a candidate by
+  perturbing it — the step that separates causation from coincidence.
+- **The Tools and Debug menus** are regrouped by task; Tools had reached twenty flat
+  entries.
+- **APU Workstream D is closed**, on three measured rejections and the mechanism
+  that explains them.
+
+### Added
+
+- **Latency Oracle** (`Tools → Analysis`, spec `docs/latency-oracle.md`). Replays
+  the current moment twice — once with a probe button held, once with nothing
+  pressed — and reports the first frame that differs. That index *is* the game's
+  internal lag, because on a deterministic core two replays of identical state can
+  differ for exactly one reason.
+
+  It is built to decline rather than guess. `frames` is an `Option`, and `None` and
+  `Some(0)` are different answers that are never collapsed: `Some(0)` means the game
+  reacted on the next frame, `None` means the probe could not tell. It probes six
+  buttons across three observables (framebuffer, then audio, then work RAM) and
+  requires agreement; `START` is deliberately excluded, because it pauses many games
+  — a reaction to a menu, not to gameplay, and counting it would over-report.
+
+  **It recommends; it never applies.** Run-ahead is linear in the core's frame cost,
+  so silently raising it can push a marginal host into dropped frames for a change
+  the user never asked for. The depth appears with an explicit Apply button, and a
+  test fails if storing a report ever queues a config write on its own.
+
+- **RAM Atlas** (`Tools → Analysis`, spec `docs/ram-atlas.md`). Answers what each
+  byte of work RAM is *for*, in two stages with deliberately different confidence.
+  Observation classifies every address (untouched / frame tick / rising / falling /
+  sparse / volatile) and is **correlation only** — `classify` returns all 2048 labels
+  as `Untested`, so observation is structurally incapable of claiming liveness.
+  Verification pokes the byte, re-simulates from the same anchor, and compares.
+
+  Liveness is relative to its lens, and every verdict names the one it used: the same
+  byte is routinely `Live` through work RAM and `Inert` through the framebuffer.
+  `Untested` is a third state, distinct from `Inert`, because "we did not look" and
+  "we looked and saw nothing" are different claims. `Inert` is documented as *not*
+  meaning unused — a byte the game rewrites from a master copy each frame reads inert
+  because the poke is overwritten.
+
+- **`rustynes-probe`**, the deterministic re-simulation engine both tools consume:
+  anchor, replay under controlled variation, locate the first divergence. Trials are
+  budgeted, and the budget is binding rather than advisory.
+
+- **`rustynes verify <movie.rnm> --rom <rom>`** attestation tests, closing the last
+  item of #360.
+
+- **Docs**: `docs/ram-atlas.md`, `docs/latency-oracle.md`, and
+  `docs/user-guide/analysis-tools.md`. `docs/pixel-provenance.md` was also added to
+  the docs-site nav, having been built but unreachable since v2.3.2.
+
 ### Fixed
 
 - **VRC7 save states now carry the FM synthesizer, so rewind no longer garbles
@@ -189,6 +258,116 @@ cycle-accurate core later replaced.
   the libretro wrapper is an FFI boundary and is not, so the scoped claim is both
   accurate and more informative. This is the file RetroArch's core-information
   screen displays.
+
+- **A probe trial no longer clears or pollutes the caller's rewind ring.** Two
+  defects at the one site every trial shares. The first is a bug an earlier fix in
+  this same release reported as closed and did not close: trials restored their
+  anchor with the loud `Nes::restore`, which clears the rewind ring, and
+  `latency::measure_in_place` runs up to 21 trials against the live emulator — so
+  asking how much input lag a game has destroyed the user's rewind history,
+  twenty-one times over. The earlier fix had changed only the final restore, not the
+  per-trial one. With the wipe fixed a second defect became visible: the ring then
+  *grows*, because trial frames are captured like any others, and those frames are
+  re-simulated and never happened on the user's timeline. Both fixed; the test
+  asserts the ring returns exactly as it was, since a weaker "not cleared"
+  assertion is what let the incomplete fix pass review.
+
+  Separately pinned: a trial's samples do not change when the caller has rewind
+  armed, so **no measurement taken before this fix needed re-running**. The engine's
+  premise is that a replay from one anchor is bit-identical, so anything that
+  silently perturbed state would have invalidated the primitive rather than one
+  measurement.
+
+- **The audio observable was structurally dead.** `Observable::AudioEnergy` never
+  saw any audio: the probe's trial loop emptied its buffer and never filled it, so
+  the energy reduction summed an empty slice and every frame of every trial
+  reported zero. Nothing failed, because a lens that returns a constant never
+  disagrees with itself — so the Latency Oracle's audio fallback stage, the one
+  that exists for a game whose reaction is audible before it is visible, silently
+  degraded to work RAM, and the RAM Atlas's audio lens would have reported **every
+  address inert**. The comment above the missing call said "Drain EVERY frame,
+  whatever the observable" and explained at length why. Found in review on #392.
+
+- **The RAM Atlas is unavailable during locked sessions.** Both of its actions
+  advance the live emulator and Verify pokes work RAM, so it is now gated on the
+  same `writes_locked || hardcore_blocked` predicate `emu.write` uses — netplay, a
+  TAS record or replay, and RetroAchievements hardcore. Under netplay or a movie it
+  would diverge a timeline other peers are lockstepped to; under hardcore it is the
+  memory write that mode exists to forbid. The disabled state names which reason
+  applies.
+
+- **An un-perturbable address is reported `Untested`, not `Inert`.** `verify_liveness`
+  skipped the poke for an address outside work RAM and then let the two identical
+  trials agree, producing a confident verdict for a byte it never touched — the
+  exact failure mode that module documents itself as never producing. It is public
+  and takes a full `u16`, so a CPU-space mirror such as `$0810` is a plausible
+  caller input.
+
+- **The Latency Oracle's felt-latency figure is derived, not transcribed.** It
+  multiplied by a hardcoded NTSC 16.639 ms, understating PAL and Dendy by 20.2% —
+  the identical figure and mechanism as the v2.3.5 libretro defect, where a
+  hardcoded 60.0988 fps had lost all connection to the constant it was copied from.
+  It now uses the console's own `frame_duration`, captured at measurement time.
+
+### Changed
+
+- **Upstream libretro `.info` syncs are batched to MINOR releases.** RetroArch
+  reads its copy from `libretro/libretro-super`, which nothing syncs
+  automatically; the next sync is v2.4.0, so that copy reads `v2.3.5` through this
+  line by decision rather than oversight. A stale `display_version` misreports a
+  number — the v2.2.9 incident was a stale **licence**, misreporting the terms of
+  distribution — so licence, supported extensions, and declared-capability changes
+  still sync immediately. Recorded in `docs/libretro/UPSTREAM_SYNC.md`.
+
+- **The Tools and Debug menus are regrouped by task.** Tools had reached twenty flat
+  entries spanning cheats, TAS authoring, media capture, multiplayer, ROM inspection
+  and provenance analysis; Debug listed "CPU" and "Lua Script" as peers in a
+  fifteen-item column. Tools becomes Cheats at the top level, then Movies &
+  Recording, Audio, Input, Game Data, Analysis and HD Pack, with Netplay and
+  RetroAchievements below a separator — they change what the *session* is rather
+  than being tools pointed at the game. Debug splits into Chip State, Memory and
+  Execution, plus Symbols. Emulation's two FDS entries become one Famicom Disk
+  System submenu.
+
+  No entry is removed, none changes what it dispatches, and nothing moves between
+  top-level menus — only the depth at which it sits. The movie transport's gating
+  changes shape but not effect: the ROM/netplay condition moves from deciding
+  whether the submenu can *open* to per-item enabling, so the reachable set is
+  identical but the user can see which entries are unavailable instead of facing one
+  opaque disabled label. `docs/user-guide/menus.md` is corrected, and was already
+  stale before this release touched it — it listed five Tools entries against an
+  actual twenty, and still documented a "Show Debugger" toggle removed in v1.7.1.
+
+- **`MAX_RUN_AHEAD_DEPTH` is shared rather than redeclared.** The Latency Oracle's
+  clamp was a third independent `3`; that constant exists precisely because two
+  earlier caps drifted apart (PR #358).
+
+### Documented
+
+- **APU Workstream D is closed.** The 18.7%-of-frame-time figure stands — it is a
+  correct v2.3.1 subsystem attribution, visible only because that pass attributed by
+  source file, since fat LTO inlines the APU into `cpu_clock`. What is settled is
+  narrower: the figure is **not recoverable by gating per-cycle bookkeeping**, the
+  only strategy the workstream ever tried. One adoption (C1, shipped in v2.3.5 at
+  −3.3% to −4.2%), three measured rejections (D1, D3, D6), one declined on
+  inspection (D5), and two left unmeasured deliberately (D2, D4).
+
+  The three rejections share one mechanical cause, and it generalises to the two
+  remaining levers: under `lto = "fat"` with `codegen-units = 1` the guarded code is
+  already inlined, its repeated loads already merged by common-subexpression
+  elimination, and the elided branches always-not-taken and so perfectly predicted.
+  Swapping predictable not-taken branches for an equivalent count of loads plus a
+  predicate is arithmetically a wash. Stated as the rule worth keeping: *"this work
+  is inert on almost every cycle" predicts a win only if the work is actually
+  executed* — and under fat LTO with perfect prediction it largely is not.
+
+  Also recorded: D1's run 1 looked like a textbook win at −3.81% (p = 0.00) on a
+  shipped default workload and was **entirely an artifact** — the order-bias control,
+  benching the reference against *itself*, drifted −3.73% on that same workload with
+  no code change at all, because `ab_check.sh` benchmarks the reference immediately
+  after a 44.9-second fat-LTO compile across all cores. Three conditions that would
+  justify reopening the workstream are written down, none a variation on per-cycle
+  gating. Full numbers in `docs/performance.md`.
 
 ## [2.3.5] - 2026-08-16 - "Manifest" (what the core declares about itself — and the APU, measured at last)
 
