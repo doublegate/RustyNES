@@ -20,6 +20,32 @@ updates:
       - "doublegate"
     assignees:
       - "doublegate"
+    # HOLD the egui tier. A comment in `Cargo.toml` explains WHY the pin exists,
+    # but a comment does not reach Dependabot -- it would keep re-opening the
+    # same three PRs every Monday, and the risk is not the noise, it is that the
+    # twentieth identical PR gets merged on the assumption it is routine.
+    #
+    # `egui-winit` 0.36.1 does not compile for `wasm32-unknown-unknown`, and
+    # RustyNES ships a wasm demo:
+    #
+    #   error[E0407]: method `bytes` is not a member of trait `egui::DroppedFile`
+    #
+    # egui 0.36 split `DroppedFile` by target (`bytes_async` on wasm, `bytes` on
+    # native) while egui-winit's `NativeFile` impl has no cfg gate, so on wasm it
+    # implements a method the trait does not declare and omits the one it does.
+    # `wgpu` is held with them only because `egui-wgpu` 0.35 pins it.
+    #
+    # REMOVE ALL FOUR ENTRIES once upstream ships the fix -- this is a hold, not
+    # a policy. Re-check by bumping and running both wasm clippy invocations.
+    ignore:
+      - dependency-name: "egui"
+        versions: [">=0.36"]
+      - dependency-name: "egui-wgpu"
+        versions: [">=0.36"]
+      - dependency-name: "egui-winit"
+        versions: [">=0.36"]
+      - dependency-name: "wgpu"
+        versions: [">=30"]
     # Group minor and patch updates together
     groups:
       development-dependencies:
