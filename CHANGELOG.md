@@ -16,24 +16,11 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
-- **The security workflow's stated reason for using prebuilt tooling was false.**
-  Both jobs justified installing `cargo-audit` / `cargo-deny` as prebuilt
-  binaries with "the repo pins rustc 1.96 … **but** cargo-audit needs >= 1.88 to
-  compile" — and 1.96 satisfies `>= 1.88`, so the sentence argues against itself.
-  It was true when written, with the pin at 1.86, and survived the v1.3.0 bump.
-
-  The decision was always right; only the reason had rotted. The comment now
-  gives both real reasons in order — speed first, since compiling the tool on
-  every run dwarfs downloading it, and toolchain independence second, because
-  `rust-toolchain.toml` is a directory override, so a build-from-source install
-  is hostage to this repo's pin and the **security** gate is what breaks if a
-  tool's MSRV ever rises above it. That second reason is slack today and can
-  bind again after any MSRV change in either direction, which is why it is
-  recorded as a standing property rather than deleted as historical.
-
-  Found while reviewing a Dependabot bump of the very action these comments sit
-  above — the fourth instance this release train of prose asserting something
-  its own facts contradict.
+- **Corrected a stale comment in `security.yml`.** It justified installing
+  `cargo-audit` / `cargo-deny` as prebuilt binaries with "the repo pins rustc
+  1.96 **but** cargo-audit needs >= 1.88 to compile" — which argues against
+  itself, since 1.96 satisfies that. True when written at a 1.86 pin; it
+  survived the v1.3.0 bump. Comments only; no behaviour change.
 
 - **CI jobs are bounded, so a hung job can no longer block a release.** No job
   in `ci.yml` carried a `timeout-minutes`, which means every one inherited
