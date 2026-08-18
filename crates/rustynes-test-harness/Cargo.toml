@@ -179,6 +179,22 @@ name = "render_smoke"
 path = "src/bin/render_smoke.rs"
 required-features = ["commercial-roms"]
 
+# v2.3.6 — Rad Racer right-of-road artifact probe. Replays a recorded `.rnm` and
+# reports per-frame change statistics for the roadside strip, optionally dumping
+# consecutive frames as PNG. Diagnostic only, never in CI; needs the optional
+# `png` dep and a gitignored commercial dump.
+[[bin]]
+name = "rad_racer_probe"
+path = "src/bin/rad_racer_probe.rs"
+required-features = ["commercial-roms"]
+
+# v2.3.6 — causal chain for the Rad Racer below-horizon artifact, via the v2.3.2
+# Pixel Provenance record. Diagnostic only; needs a gitignored commercial dump.
+[[bin]]
+name = "rad_racer_prov"
+path = "src/bin/rad_racer_prov.rs"
+required-features = ["commercial-roms", "debug-hooks"]
+
 # v1.8.9 "Backlog" — headless batch runner (manifest -> screenshots + fb-hash +
 # blank verdict, JSON out). Writes PNGs, so it needs the optional `png` dep.
 [[bin]]
