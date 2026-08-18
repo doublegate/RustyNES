@@ -2848,6 +2848,19 @@ mod tests {
             for _ in 0..1_000 {
                 let _ = o.calc();
             }
+
+            // Then drive the REGISTER PORT on the restored chip. `calc()` alone
+            // never exercises `write_reg`, so a restored field that is only
+            // consumed on a subsequent port write -- `adr` is the candidate
+            // review raised -- would sail past a synthesis-only sweep. Covering
+            // both is cheaper than arguing about which fields reach a subscript,
+            // and this session has shown my hand-tracing to be the less reliable
+            // instrument.
+            for _ in 0..64 {
+                o.write_reg((next() & 0xFF) as u8, (next() & 0xFF) as u8);
+                let _ = o.calc();
+                let _ = o.read_reg((next() & 0xFF) as u8);
+            }
         }
 
         // And a hostile blob must not be able to smuggle out-of-range register
