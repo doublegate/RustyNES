@@ -101,8 +101,6 @@ cycle-accurate core later replaced.
   on the return value, which is why review found this and the test did not; it
   now asserts the target is byte-identical afterwards.
 
-||||||| 3f99a3dd
-
 - **CI jobs are bounded, so a hung job can no longer block a release.** No job
   in `ci.yml` carried a `timeout-minutes`, which means every one inherited
   GitHub's **six-hour** default. On the night of the v2.3.6 cut the `lint` job —

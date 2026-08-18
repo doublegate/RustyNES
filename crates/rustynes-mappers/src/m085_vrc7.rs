@@ -695,7 +695,14 @@ impl Mapper for Vrc7 {
         // reject a truncated tail identically -- the same blob has to be
         // accepted or refused the same way on every build.
         #[cfg(not(feature = "mapper-audio"))]
-        if version >= 2 && data.len() - core_expected < VRC7_V2_TAIL_LEN {
+        // Written as an addition rather than `data.len() - core_expected < ..`:
+        // the subtraction cannot underflow TODAY (the length guard at the top of
+        // this function already proved `data.len() >= core_expected`), but it is
+        // one moved guard away from being able to, and an underflow here would
+        // wrap to a huge value and silently ACCEPT a truncated blob rather than
+        // panicking. Not worth leaving a correctness proof spread across two
+        // distant statements to save an addition.
+        if version >= 2 && data.len() < core_expected + VRC7_V2_TAIL_LEN {
             return Err(MapperError::Truncated {
                 expected: core_expected + VRC7_V2_TAIL_LEN,
                 got: data.len(),
