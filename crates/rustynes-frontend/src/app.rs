@@ -243,13 +243,21 @@ fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
 /// entry name when unzipped, else the file name). Used by `App::new` so a ROM
 /// passed on argv loads identically to one opened from the menu / drag-drop.
 /// Native-only (the in-app menu path handles the running-app case). The wasm
-/// `AppEvent::RomLoaded` path does NOT run this: a browser file picker hands
-/// over one file with no sibling `.bps`/`.ips` to find and no path to derive a
-/// stem from, so zip extraction and soft-patching have nothing to act on there.
-/// It does apply the header corrections, via
-/// [`apply_game_db_header_overrides`] — which is the half that used to be
-/// missing, and which this sentence previously papered over by claiming the
-/// wasm path "preprocesses separately" when it preprocessed nothing at all.
+/// `AppEvent::RomLoaded` path does NOT run this, and the two halves have
+/// different reasons:
+///
+/// * **Soft-patching** (`.bps` / `.ups` / `.ips`, that precedence) is keyed on a
+///   same-stem sibling file. A browser file picker hands over one file's bytes
+///   with no directory to look in and no path to derive a stem from, so there is
+///   nothing it could match.
+/// * **Zip extraction** is NOT sibling-dependent — a `.zip` selected in a
+///   browser is as extractable as one on disk. It is simply not wired up on that
+///   path yet.
+///
+/// The header corrections DO apply there, via
+/// [`apply_game_db_header_overrides`] — the half that used to be missing, and
+/// which this sentence previously papered over by claiming the wasm path
+/// "preprocesses separately" when it preprocessed nothing at all.
 #[cfg(not(target_arch = "wasm32"))]
 fn load_and_preprocess_rom(rom_path: &Path) -> std::io::Result<(Vec<u8>, String)> {
     let mut bytes = std::fs::read(rom_path)?;
@@ -8988,6 +8996,10 @@ impl ApplicationHandler<AppEvent> for App {
                 // meaning in a browser (there is no `<rom>.json` to find), so it
                 // is not a gap, and `apply_load_time_header_overrides` stays
                 // native-only for that reason alone.
+                // The returned CRC is discarded because nothing stacks on it
+                // here (the overlay stage is native-only), and `None` needs no
+                // handling: it means the bytes are not a parseable iNES image,
+                // which `Nes::from_rom` reports properly a few lines below.
                 let _ = apply_game_db_header_overrides(&mut self.rom_bytes);
                 // Match the AudioContext's actual sample rate (set up
                 // by `wasm_winit::start`'s file-picker gesture) so the
@@ -10991,12 +11003,18 @@ mod tests {
         const APP_SRC: &str = include_str!("app.rs");
         const CANVAS_SRC: &str = include_str!("wasm.rs");
 
+        // Whitespace-collapsed before matching, so a rustfmt line-wrap cannot
+        // turn a still-present call into a phantom regression. Matching the
+        // ARGUMENT too, not just the function name, is deliberate: the name
+        // appears in doc comments on both files, so a name-only assertion would
+        // stay green with every call site deleted.
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            APP_SRC.contains("apply_game_db_header_overrides(&mut self.rom_bytes)"),
+            squash(APP_SRC).contains("apply_game_db_header_overrides(&mut self.rom_bytes)"),
             "the `wasm-winit` demo's AppEvent::RomLoaded arm no longer corrects the header"
         );
         assert!(
-            CANVAS_SRC.contains("apply_game_db_header_overrides(&mut bytes)"),
+            squash(CANVAS_SRC).contains("apply_game_db_header_overrides(&mut bytes)"),
             "the `wasm-canvas` embed's ROM loader no longer corrects the header"
         );
     }

@@ -157,6 +157,9 @@ fn install_rom_loader(rom_input: &HtmlInputElement) {
             // off wasm because a LATER stage of it reads a filesystem, so this
             // stage — a compiled-in table needing nothing — was lost with it, and
             // every mapper / submapper / region fix was absent in the browser.
+            // CRC discarded: nothing stacks on it here, and `None` just means
+            // the bytes are not a parseable iNES image -- which `Nes::from_rom`
+            // reports properly a few lines below.
             let _ = crate::app::apply_game_db_header_overrides(&mut bytes);
             // The file-pick is a user gesture, so it's safe to create
             // the AudioContext here (the browser autoplay policy
