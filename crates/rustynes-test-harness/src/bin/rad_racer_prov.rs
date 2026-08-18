@@ -85,16 +85,31 @@ fn main() {
 
     let mut player = MoviePlayer::new(&movie);
     let mut frame = 0u64;
+    let mut reached = false;
     while player.apply_next(&mut nes) {
-        // Arm one frame early so the TARGET frame is the one recorded.
+        // Arm provenance ON the target frame, immediately before the `run_frame`
+        // that produces it -- the recording covers that frame's own rendering.
+        // (An earlier version of this comment claimed it armed "one frame early";
+        // it never did, and the code below is the correct behaviour.)
         if frame == target {
             nes.set_pixel_provenance(true);
         }
         nes.run_frame();
         if frame == target {
+            reached = true;
             break;
         }
         frame += 1;
+    }
+
+    // A target past the end of the movie is a plausible thing to type, and it
+    // used to arrive as an unconditional panic several steps later: the arm never
+    // fired, so `pixel_provenance()` returned `None` and the tool blamed itself
+    // for a "record [that] is empty". Report the actual mistake, here, where the
+    // number that caused it is still in hand.
+    if !reached {
+        eprintln!("rad_racer_prov: the movie ended at frame {frame}; target {target} is past it");
+        std::process::exit(2);
     }
 
     let idx = nes.index_framebuffer().to_vec();
@@ -102,7 +117,10 @@ fn main() {
     eprintln!("frame {target}: horizon y={hz}, ground index {ground:#06X}, sky {sky:#06X}");
 
     let Some(prov) = nes.pixel_provenance() else {
-        panic!("provenance not armed — the record is empty");
+        // Unreachable given the arm above, so this really is an invariant
+        // violation rather than a user error -- the reachable version of it is
+        // handled at the loop exit.
+        panic!("provenance armed on frame {target} but the core reports no record");
     };
 
     println!(

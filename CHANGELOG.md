@@ -55,8 +55,6 @@ cycle-accurate core later replaced.
   independent confirmation of the same reading, from the author of both the test
   ROM and the emulator whose timing this was once calibrated against.
 
-||||||| 3f99a3dd
-
 - **CI jobs are bounded, so a hung job can no longer block a release.** No job
   in `ci.yml` carried a `timeout-minutes`, which means every one inherited
   GitHub's **six-hour** default. On the night of the v2.3.6 cut the `lint` job —
