@@ -95,6 +95,11 @@ pub struct AtlasPanel {
     verify_batch_requested: bool,
     /// The address whose detail is expanded.
     selected: Option<u16>,
+    /// An address the user asked to send to RAM Watch, with the label the atlas
+    /// can honestly attach to it. Drained by the overlay after this panel's
+    /// render, for the same reason as the two emulator actions: the destination
+    /// panel's state is not reachable from here.
+    watch_requested: Option<(u16, String)>,
     /// Status / cost line.
     status: String,
 }
@@ -114,6 +119,7 @@ impl Default for AtlasPanel {
             verify_requested: None,
             verify_batch_requested: false,
             selected: None,
+            watch_requested: None,
             status: String::new(),
         }
     }
@@ -128,6 +134,27 @@ impl AtlasPanel {
     /// two thousand of them and they look like a map.
     pub fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    /// Take a pending RAM Watch export, if one was requested this frame.
+    ///
+    /// Taken rather than read so a single click seeds a single entry. The
+    /// alternative — leaving the request standing and de-duplicating downstream —
+    /// makes the panel's behaviour depend on the destination list's contents,
+    /// which is exactly the coupling this hand-off exists to avoid.
+    pub fn take_watch_request(&mut self) -> Option<(u16, String)> {
+        self.watch_requested.take()
+    }
+
+    /// Report the outcome of an export back onto the panel's status line.
+    ///
+    /// The destination window is drawn EARLIER in the overlay's pass than this
+    /// one, so a seed made here does not appear over there until the next frame.
+    /// Without this line the user's evidence that anything happened is a list
+    /// they may not be looking at — an export that silently succeeds and one that
+    /// silently does nothing look identical.
+    pub fn note_export(&mut self, text: impl Into<String>) {
+        self.status = text.into();
     }
 }
 
@@ -438,7 +465,54 @@ fn detail(ui: &mut egui::Ui, state: &mut AtlasPanel, l: &Label, can_run: bool) {
                 }
             }
         }
+
+        // Offered for EVERY address, including `Untested` and `Inert`.
+        //
+        // Restricting the export to verified-live addresses would be the
+        // paternalistic reading of this panel's honesty rule. The rule is that a
+        // claim must carry its evidence, not that unverified addresses are
+        // unusable — an `Untested` sparse byte is a perfectly good thing to watch
+        // while forming a hypothesis, and `Inert` is documented here as NOT
+        // meaning unused. What the rule requires is that the exported entry say
+        // which of the three it was, which `watch_label` does.
+        //
+        // Not gated on `can_run` either: this writes to another panel's list and
+        // never touches the emulator, so the netplay / TAS / hardcore predicate
+        // that gates Observe and Verify does not apply to it.
+        if ui
+            .button(ic(glyph::EYE, "Send to RAM Watch"))
+            .on_hover_text(
+                "Adds this address to Tools -> Analysis -> Memory Compare's RAM \
+                 Watch list, labelled with the atlas verdict that produced it.",
+            )
+            .clicked()
+        {
+            state.watch_requested = Some((l.addr, watch_label(l, state.lens)));
+        }
     });
+}
+
+/// The label an exported address carries into RAM Watch.
+///
+/// Three things, in the order a reader needs them: the address, the behavioural
+/// class, and the verification verdict **with its lens**. The lens is not
+/// decoration — liveness is relative to the observable, so "live" without it is
+/// the over-claim the atlas exists to avoid, and the watch list is precisely
+/// where that claim would outlive the panel that qualified it.
+///
+/// `Untested` is spelled out rather than omitted. An entry with no verdict and
+/// an entry that was never tested look the same once the atlas is gone.
+fn watch_label(l: &Label, lens: Observable) -> String {
+    let verdict = match l.liveness {
+        Liveness::Untested => "unverified".to_owned(),
+        Liveness::Live => format!("LIVE via {}", lens_name(lens)),
+        Liveness::Inert => format!("inert via {}", lens_name(lens)),
+    };
+    format!(
+        "${:04X} atlas: {}, {verdict}",
+        l.addr,
+        behaviour_name(l.behaviour)
+    )
 }
 
 /// The threshold that produced this label, in words.
@@ -739,6 +813,85 @@ mod tests {
             liveness,
             divergence_frame: None,
         }
+    }
+
+    /// The exported label must name the LENS a verdict came from. Liveness is
+    /// relative to the observable — a byte is `Live` through work RAM and may be
+    /// `Inert` through the screen — and the watch list is exactly where an
+    /// unqualified "LIVE" would outlive the panel that qualified it.
+    #[test]
+    fn an_exported_verdict_carries_its_lens() {
+        let l = label(0x0071, Behaviour::RisingCounter, Liveness::Live);
+        let text = watch_label(&l, Observable::Wram);
+        assert!(text.contains("0071"), "the address is missing: {text}");
+        assert!(text.contains("rising"), "the behaviour is missing: {text}");
+        assert!(text.contains("LIVE"), "the verdict is missing: {text}");
+        assert!(
+            text.contains(lens_name(Observable::Wram)),
+            "the lens is missing, so the verdict over-claims: {text}"
+        );
+        // The same label under a different lens must READ differently. Naming
+        // the lens is only worth anything if the name tracks the argument.
+        assert_ne!(
+            text,
+            watch_label(&l, Observable::Framebuffer),
+            "the lens name did not change with the lens"
+        );
+    }
+
+    /// `Untested` is spelled out rather than left blank. Once the atlas is gone,
+    /// an entry with no verdict and an entry that was never tested look the same,
+    /// which is the exact collapse this panel refuses to make elsewhere.
+    #[test]
+    fn an_unverified_export_says_so() {
+        let l = label(0x0300, Behaviour::Sparse, Liveness::Untested);
+        let text = watch_label(&l, Observable::Framebuffer);
+        assert!(
+            text.contains("unverified"),
+            "an untested address exported without saying so: {text}"
+        );
+        assert!(
+            !text.contains("LIVE"),
+            "an untested address claimed a verdict: {text}"
+        );
+        // And it must NOT name a lens: nothing was observed through one, so
+        // citing one would dress a hypothesis as a measurement.
+        assert!(
+            !text.contains(lens_name(Observable::Framebuffer)),
+            "an untested address cited a lens it never used: {text}"
+        );
+    }
+
+    /// The request is TAKEN, so one click seeds one entry. Left standing it would
+    /// re-fire every frame until the destination happened to de-duplicate it,
+    /// which makes this panel's behaviour depend on another panel's contents.
+    #[test]
+    fn a_watch_request_is_drained_by_the_first_taker() {
+        let mut p = AtlasPanel {
+            watch_requested: Some((0x0071, "atlas".to_owned())),
+            ..AtlasPanel::default()
+        };
+        assert_eq!(p.take_watch_request(), Some((0x0071, "atlas".to_owned())));
+        assert_eq!(
+            p.take_watch_request(),
+            None,
+            "the request survived being taken and would seed a second entry"
+        );
+    }
+
+    /// A ROM change must discard a pending export too. An address is a fact about
+    /// one cartridge's memory map; seeding it into a watch list after a different
+    /// game has loaded is the same class of stale claim as keeping the labels.
+    #[test]
+    fn clearing_discards_a_pending_export() {
+        let mut p = AtlasPanel {
+            watch_requested: Some((0x0071, "atlas".to_owned())),
+            status: "stale".to_owned(),
+            ..AtlasPanel::default()
+        };
+        p.clear();
+        assert_eq!(p.take_watch_request(), None);
+        assert!(p.status.is_empty());
     }
 
     /// A ROM change must discard the whole atlas. Two thousand labels describing

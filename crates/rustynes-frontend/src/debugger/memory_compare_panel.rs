@@ -112,6 +112,18 @@ impl CompareTo {
     }
 }
 
+/// What [`MemoryComparePanelState::seed_watch`] did.
+///
+/// Two outcomes rather than a `bool`, so a caller's status line cannot describe
+/// one as the other. Neither is an error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeedOutcome {
+    /// A new entry was appended.
+    Added,
+    /// An entry for that address was already present; the list is unchanged.
+    AlreadyWatched,
+}
+
 /// One RAM Watch entry.
 #[derive(Debug, Clone)]
 struct WatchEntry {
@@ -241,6 +253,38 @@ impl MemoryComparePanelState {
         });
         self.watch_addr_text.clear();
         self.watch_label_text.clear();
+    }
+
+    /// Add a watch entry on behalf of another panel.
+    ///
+    /// The RAM Atlas classifies every byte of work RAM but deliberately offers
+    /// no way to keep an address once the panel is closed — an atlas is a
+    /// snapshot of one observation window, and it is cleared at every ROM
+    /// transition. RAM Watch is where an address the user cares about already
+    /// lives, so the export target is this list rather than a second one.
+    ///
+    /// `Size::U8` is not a parameter: the atlas classifies **bytes**, and its
+    /// evidence (change count, direction, range) is per byte. Seeding a `u16`
+    /// from a byte-scoped verdict would attach that evidence to a second address
+    /// nothing was ever observed about. The user can widen the entry afterwards,
+    /// which is a decision they have made rather than one made for them.
+    ///
+    /// Returns which of the two things happened, because they are different and
+    /// the caller has to say which. A second click on an address already watched
+    /// must not report "added" (the list did not grow) and must not report a
+    /// failure (nothing went wrong) — the same refusal to collapse distinct
+    /// outcomes that keeps `Untested` and `Inert` apart in the atlas itself.
+    pub fn seed_watch(&mut self, addr: u16, label: String) -> SeedOutcome {
+        if self.watches.iter().any(|w| w.addr == addr) {
+            return SeedOutcome::AlreadyWatched;
+        }
+        self.watches.push(WatchEntry {
+            addr,
+            size: Size::U8,
+            label,
+            frozen: None,
+        });
+        SeedOutcome::Added
     }
 }
 
@@ -580,6 +624,44 @@ fn parse_wch(text: &str) -> Vec<WatchEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The export path from the RAM Atlas. A second click on the same address
+    /// must be reported as "already there", never as an addition — the list did
+    /// not grow, and a status line saying it did is a false report of work done.
+    #[test]
+    fn seeding_the_same_address_twice_adds_one_entry() {
+        let mut s = MemoryComparePanelState::default();
+        assert_eq!(s.seed_watch(0x0071, "first".to_owned()), SeedOutcome::Added);
+        assert_eq!(s.watches.len(), 1);
+        assert_eq!(
+            s.seed_watch(0x0071, "second".to_owned()),
+            SeedOutcome::AlreadyWatched
+        );
+        assert_eq!(s.watches.len(), 1, "a duplicate address grew the list");
+        assert_eq!(
+            s.watches[0].label, "first",
+            "the duplicate overwrote the original entry's label"
+        );
+    }
+
+    /// A seeded entry is byte-scoped, because the atlas's evidence is per byte.
+    /// Seeding a `u16` would attach a byte's verdict to a second address nothing
+    /// was ever observed about.
+    #[test]
+    fn a_seeded_entry_is_one_byte_and_unfrozen() {
+        // The panel's own size selector is deliberately set to something else:
+        // the seed must not inherit whatever the user last picked in the Add row.
+        let mut s = MemoryComparePanelState {
+            watch_size: Size::U32,
+            ..MemoryComparePanelState::default()
+        };
+        s.seed_watch(0x0300, "atlas".to_owned());
+        assert_eq!(s.watches[0].size, Size::U8);
+        assert!(
+            s.watches[0].frozen.is_none(),
+            "an exported watch arrived frozen, which would write to the game"
+        );
+    }
 
     #[test]
     fn op_predicates() {
