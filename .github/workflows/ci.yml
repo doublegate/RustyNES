@@ -105,8 +105,8 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      code: ${{ steps.filter.outputs.code }}
-      accuracy: ${{ steps.filter.outputs.accuracy }}
+      code: ${{ steps.filter-code.outputs.code }}
+      accuracy: ${{ steps.filter-accuracy.outputs.accuracy }}
     steps:
       # Full history: on `push`, dorny/paths-filter diffs against the before-SHA
       # using local git, so the default shallow clone (fetch-depth: 1) can miss
@@ -126,9 +126,26 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # TWO filter steps, not one, because `predicate-quantifier` is a STEP-level
+      # input and the two filters need opposite settings.
+      #
+      # `code` is one positive pattern plus exclusions, so it needs `every`:
+      # under the default `some` a file is included if it matches ANY pattern,
+      # `'**'` matches everything, and every `!` line below it is dead. The
+      # action's README says so outright — "under some, negation syntax is
+      # ineffective".
+      #
+      # That is not theoretical. Until v2.3.9 both filters shared one step on the
+      # default, so the docs-only skip NEVER worked: PR #416 changed exactly one
+      # file, `AGENTS.md`, and the filter log reads
+      # `Filter code = true / Matching files: AGENTS.md`. Every documentation PR
+      # in this repo's history has run the full code matrix, including the ARM
+      # cross-compiles, and two docs PRs were blocked by a flaky apt provision
+      # for jobs that should never have been scheduled.
       - uses: dorny/paths-filter@v4
-        id: filter
+        id: filter-code
         with:
+          predicate-quantifier: every
           filters: |
             code:
               - '**'
@@ -139,6 +156,14 @@ jobs:
               - '!NOTICE'
               - '!.gitignore'
               - '!.codegraph/**'
+      # `accuracy` keeps the DEFAULT quantifier, and must. Its patterns are
+      # alternatives — a file lives in one of these trees, never in all eight —
+      # so `every` would make it unsatisfiable and silently disable the accuracy
+      # battery at review time, which is the gate A5 exists to add.
+      - uses: dorny/paths-filter@v4
+        id: filter-accuracy
+        with:
+          filters: |
             # v2.3.9 A5 — paths that can move an accuracy or visual vector.
             #
             # `test-roms` used to be FULL-run only, so a regular feature PR never
