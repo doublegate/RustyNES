@@ -2319,9 +2319,21 @@ impl DebuggerOverlay {
                 && let Some(key) = nes.as_deref().map(Self::rom_key_of)
             {
                 config.input.latency_reports.insert(key, remembered);
-                // Best-effort, matching `hd_packs`: a failed write must not take
-                // down the UI, and the measurement is still on screen either way.
-                let _ = config.save();
+                // Reported, not swallowed. An ignored `save()` result was the
+                // first form here and review flagged it: the style guide names
+                // ignored return values as a blocking issue, and this one hides
+                // the exact failure the whole feature exists to prevent — the
+                // measurement silently not being persisted. A quieter version of
+                // the bug this block was written to fix. (Review on #410.)
+                //
+                // Two channels because they reach different people: stderr for a
+                // terminal launch, matching the FDS BIOS path's convention, and
+                // the panel's own status line for the user who is looking at the
+                // panel and nowhere else.
+                if let Err(e) = config.save() {
+                    eprintln!("rustynes: could not persist the latency measurement: {e}");
+                    self.latency_ui.note_persist_failure(&e);
+                }
             }
         }
         // v2.3.6 workstream C — the RAM Atlas. Needs `&mut Nes`: it observes a

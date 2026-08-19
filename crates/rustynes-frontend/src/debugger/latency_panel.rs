@@ -139,6 +139,23 @@ impl LatencyPanel {
         Some(current)
     }
 
+    /// Report that the config write for the last `take_unpersisted` failed.
+    ///
+    /// Surfaces the failure where the user is already looking — they opened this
+    /// panel to ask a question about this game, and "your measurement was not
+    /// saved" belongs beside the answer rather than only in a terminal they may
+    /// not have.
+    ///
+    /// **Does NOT un-mark the value as persisted**, deliberately. Un-marking
+    /// would retry on the very next frame, so a full disk or a read-only config
+    /// becomes a per-frame write attempt and a per-frame log line — turning one
+    /// failure into a flood. The user has been told, the measurement is still on
+    /// screen, and re-measuring is an explicit retry. That trade is worth stating
+    /// because the opposite choice looks more diligent and is worse.
+    pub fn note_persist_failure(&mut self, err: impl core::fmt::Display) {
+        self.status = format!("Measured, but could not be saved: {err}");
+    }
+
     /// Whether this session already holds a report — measured or remembered.
     ///
     /// The restore is driven off this rather than off a ROM-load hook, so it
@@ -630,6 +647,59 @@ mod tests {
             .take_unpersisted()
             .expect("a changed result is offered");
         assert_eq!(second.frames, 1);
+    }
+
+    /// A failed save must be visible in the panel, not only on stderr.
+    ///
+    /// The user opened this panel to ask about this game; "your measurement was
+    /// not saved" belongs beside the answer. Discarding the save result — the
+    /// form this PR replaced — put it nowhere at all.
+    ///
+    /// The literal discard expression is deliberately NOT spelled out here. It
+    /// was, and a grep for it during verification matched this comment instead of
+    /// any code, reporting a defect that had already been fixed.
+    #[test]
+    fn a_failed_save_is_reported_in_the_panel() {
+        let mut panel = LatencyPanel {
+            report: Some(report(Some(3), Confidence::Unanimous)),
+            frame_ms: 16.639,
+            ..LatencyPanel::default()
+        };
+        let taken = panel.take_unpersisted();
+        assert!(taken.is_some(), "premise: there was something to write");
+
+        panel.note_persist_failure("permission denied");
+
+        assert!(
+            panel.status.contains("could not be saved"),
+            "the failure must be stated, not implied: {}",
+            panel.status
+        );
+        assert!(
+            panel.status.contains("permission denied"),
+            "and it must carry the reason: {}",
+            panel.status
+        );
+    }
+
+    /// A failure does NOT schedule a retry on the next frame.
+    ///
+    /// Un-marking would look more diligent and be worse: a read-only config
+    /// would then produce a write attempt and a log line every frame. The user
+    /// has been told and re-measuring is an explicit retry.
+    #[test]
+    fn a_failed_save_does_not_retry_every_frame() {
+        let mut panel = LatencyPanel {
+            report: Some(report(Some(3), Confidence::Unanimous)),
+            frame_ms: 16.639,
+            ..LatencyPanel::default()
+        };
+        assert!(panel.take_unpersisted().is_some());
+        panel.note_persist_failure("disk full");
+        assert!(
+            panel.take_unpersisted().is_none(),
+            "a failed write must not become a per-frame write attempt"
+        );
     }
 
     /// A RESTORED measurement came from the config, so it must not be written
