@@ -2305,6 +2305,30 @@ impl DebuggerOverlay {
                 nes.as_deref_mut(),
                 atlas_writes_locked,
             );
+            // The atlas -> RAM Watch export (v2.3.9 item C). Dispatched here
+            // rather than inside the panel because the destination is another
+            // panel's private state, and the overlay is the only place that holds
+            // both.
+            //
+            // The destination window is opened as part of the export. Landing an
+            // entry in a list the user cannot see is the shape of defect this
+            // release keeps finding: it succeeds, reports nothing, and is
+            // indistinguishable from having done nothing at all. Memory Compare
+            // is drawn EARLIER in this pass, so the seeded row itself appears on
+            // the next frame — which is why the outcome is also reported on the
+            // atlas's own status line, where the user is already looking.
+            if let Some((addr, label)) = self.atlas_ui.take_watch_request() {
+                let outcome = self.memory_compare_ui.seed_watch(addr, label);
+                self.show_memory_compare = true;
+                self.atlas_ui.note_export(match outcome {
+                    memory_compare_panel::SeedOutcome::Added => {
+                        format!("${addr:04X} added to RAM Watch (Memory Compare).")
+                    }
+                    memory_compare_panel::SeedOutcome::AlreadyWatched => {
+                        format!("${addr:04X} was already in the RAM Watch list.")
+                    }
+                });
+            }
         }
         // v2.3.8 "Parallax" — the Divergence Lens. Gated on the SAME predicate as
         // the RAM Atlas above, and for identical reasons rather than by analogy:
