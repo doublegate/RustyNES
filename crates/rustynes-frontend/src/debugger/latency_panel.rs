@@ -205,6 +205,7 @@ pub fn show(
     nes: Option<&mut Nes>,
     current_run_ahead: u32,
     render_work: crate::perf::IntervalStats,
+    present_lat: crate::perf::IntervalStats,
 ) {
     let can_measure = nes.is_some();
     super::detachable_window(
@@ -217,7 +218,16 @@ pub fn show(
             ..Default::default()
         },
         open,
-        |ui| body(ui, state, can_measure, current_run_ahead, render_work),
+        |ui| {
+            body(
+                ui,
+                state,
+                can_measure,
+                current_run_ahead,
+                render_work,
+                present_lat,
+            );
+        },
     );
     // Measure AFTER the render — `nes` is free here, not captured by any closure.
     if std::mem::take(&mut state.measure_requested) {
@@ -232,6 +242,7 @@ fn body(
     can_measure: bool,
     current: u32,
     render_work: crate::perf::IntervalStats,
+    present_lat: crate::perf::IntervalStats,
 ) {
     ui.label("Measures how many frames this game waits before acting on input.");
     ui.weak(
@@ -268,6 +279,7 @@ fn body(
             current,
             state.frame_ms,
             render_work,
+            present_lat,
             &mut state.pending_apply,
         );
     }
@@ -285,6 +297,7 @@ fn report_body(
     current: u32,
     frame_ms: f64,
     render_work: crate::perf::IntervalStats,
+    present_lat: crate::perf::IntervalStats,
     pending_apply: &mut Option<u32>,
 ) {
     if let Some(frames) = report.frames {
@@ -299,7 +312,7 @@ fn report_body(
         // copied from and ran every PAL cartridge fast. (PR #385 review.)
         let ms = f64::from(frames) * frame_ms;
         ui.weak(format!("about {ms:.0} ms of the game's own delay"));
-        end_to_end(ui, frames, current, frame_ms, render_work);
+        end_to_end(ui, frames, current, frame_ms, render_work, present_lat);
 
         let confidence = match report.confidence {
             Confidence::Unanimous => "every reacting button agreed",
@@ -407,23 +420,49 @@ fn end_to_end(
     current_run_ahead: u32,
     frame_ms: f64,
     render_work: crate::perf::IntervalStats,
+    present_lat: crate::perf::IntervalStats,
 ) {
-    match end_to_end_figure(frames, current_run_ahead, frame_ms, render_work) {
+    match end_to_end_figure(
+        frames,
+        current_run_ahead,
+        frame_ms,
+        render_work,
+        present_lat,
+    ) {
         EndToEnd::Unavailable { samples, need } => {
             ui.weak(format!(
                 "end-to-end unavailable: {samples} render samples, need {need}"
             ));
         }
-        EndToEnd::Ms { total, effective } => {
-            ui.label(format!(
-                "Game delay + render work: about {total:.0} ms (p95)"
-            ));
+        EndToEnd::Ms {
+            work_ms,
+            full_ms,
+            effective,
+        } => {
+            if let Some(full) = full_ms {
+                // The complete figure leads where it exists: it is what the user
+                // actually waits. The narrower one becomes context for it.
+                ui.label(format!(
+                    "Game delay + full pipeline: about {full:.0} ms (p95)"
+                ));
+                ui.weak(format!(
+                    "of which render work is about {work_ms:.0} ms; the rest is the \
+                     frame waiting to be shown"
+                ));
+            } else {
+                ui.label(format!(
+                    "Game delay + render work: about {work_ms:.0} ms (p95)"
+                ));
+                ui.weak(
+                    "Excludes the vblank wait and the frame's wait to be shown — \
+                     that series has no samples on this path.",
+                );
+            }
             if current_run_ahead > 0 {
                 ui.weak(format!(
                     "{effective} of {frames} frames remain after run-ahead {current_run_ahead}"
                 ));
             }
-            ui.weak("Excludes the vblank wait and lock contention — see the panel docs.");
         }
     }
 }
@@ -442,7 +481,21 @@ enum EndToEnd {
     /// Too few render samples for a percentile to mean anything.
     Unavailable { samples: usize, need: usize },
     /// Milliseconds, with the frame count left after run-ahead.
-    Ms { total: f64, effective: u32 },
+    Ms {
+        /// Game delay + render WORK. Excludes the vblank wait and lock
+        /// contention, which are separate percentile series.
+        work_ms: f64,
+        /// Game delay + the whole produce-to-visible pipeline, when that series
+        /// has samples.
+        ///
+        /// `None` is neither "zero" nor "same as `work_ms`": the
+        /// produce-to-visible series only fills on the lock-free handoff path,
+        /// so a configuration that never takes it has nothing to report and
+        /// says so.
+        full_ms: Option<f64>,
+        /// Frames of the game's own lag left after run-ahead.
+        effective: u32,
+    },
 }
 
 fn end_to_end_figure(
@@ -450,6 +503,7 @@ fn end_to_end_figure(
     current_run_ahead: u32,
     frame_ms: f64,
     render_work: crate::perf::IntervalStats,
+    present_lat: crate::perf::IntervalStats,
 ) -> EndToEnd {
     if render_work.count < MIN_RENDER_SAMPLES {
         return EndToEnd::Unavailable {
@@ -462,8 +516,16 @@ fn end_to_end_figure(
     // worst exactly when they have taken this panel's advice. Saturating, not
     // wrapping: a depth above the measured lag leaves zero, not `u32::MAX`.
     let effective = frames.saturating_sub(current_run_ahead);
+    let lag_ms = f64::from(effective) * frame_ms;
     EndToEnd::Ms {
-        total: f64::from(effective) * frame_ms + f64::from(render_work.p95_ms),
+        work_ms: lag_ms + f64::from(render_work.p95_ms),
+        // Gated on its OWN sample count, not on `render_work`'s. The two series
+        // fill from different paths — every redraw feeds `work`, only a redraw
+        // that took a new frame from the handoff feeds this one — so borrowing
+        // the other's sufficiency would report a percentile over a handful of
+        // samples as though it were over hundreds.
+        full_ms: (present_lat.count >= MIN_RENDER_SAMPLES)
+            .then(|| lag_ms + f64::from(present_lat.p95_ms)),
         effective,
     }
 }
@@ -617,7 +679,13 @@ mod tests {
     #[test]
     fn too_few_render_samples_declines_rather_than_guessing() {
         assert_eq!(
-            end_to_end_figure(4, 0, 16.639, work(MIN_RENDER_SAMPLES - 1, 3.0)),
+            end_to_end_figure(
+                4,
+                0,
+                16.639,
+                work(MIN_RENDER_SAMPLES - 1, 3.0),
+                work(0, 0.0)
+            ),
             EndToEnd::Unavailable {
                 samples: MIN_RENDER_SAMPLES - 1,
                 need: MIN_RENDER_SAMPLES,
@@ -630,7 +698,11 @@ mod tests {
     /// constant — which is why a second series may never be added here.
     #[test]
     fn the_figure_is_lag_plus_one_series() {
-        let EndToEnd::Ms { total, effective } = end_to_end_figure(4, 0, 16.0, work(600, 3.5))
+        let EndToEnd::Ms {
+            work_ms: total,
+            effective,
+            ..
+        } = end_to_end_figure(4, 0, 16.0, work(600, 3.5), work(0, 0.0))
         else {
             panic!("expected a figure");
         };
@@ -641,20 +713,69 @@ mod tests {
         );
     }
 
+    /// The full figure is gated on ITS OWN sample count, not the work series'.
+    ///
+    /// The two fill from different paths — every redraw feeds `work`, only a
+    /// redraw that took a new frame from the handoff feeds `present_lat` — so
+    /// borrowing the other's sufficiency would publish a percentile over a
+    /// handful of samples as though it were over hundreds.
+    #[test]
+    fn the_full_figure_needs_its_own_samples() {
+        // Plenty of render-work samples, almost none of the pipeline series.
+        let EndToEnd::Ms {
+            work_ms, full_ms, ..
+        } = end_to_end_figure(
+            2,
+            0,
+            16.0,
+            work(600, 4.0),
+            work(MIN_RENDER_SAMPLES - 1, 9.0),
+        )
+        else {
+            panic!("expected a figure");
+        };
+        assert!((work_ms - 36.0).abs() < 1e-6, "2 frames + 4 ms work");
+        assert!(
+            full_ms.is_none(),
+            "the full figure must not borrow the work series' sample count"
+        );
+    }
+
+    /// With samples of its own, the full figure is the lag plus the WHOLE
+    /// pipeline — and it is a different number from the work figure, which is
+    /// the entire reason both are reported.
+    #[test]
+    fn the_full_figure_covers_more_than_render_work() {
+        let EndToEnd::Ms {
+            work_ms, full_ms, ..
+        } = end_to_end_figure(2, 0, 16.0, work(600, 4.0), work(600, 9.0))
+        else {
+            panic!("expected a figure");
+        };
+        let full = full_ms.expect("the pipeline series has samples");
+        assert!((work_ms - 36.0).abs() < 1e-6);
+        assert!((full - 41.0).abs() < 1e-6, "2 frames + 9 ms pipeline");
+        assert!(
+            full > work_ms,
+            "the whole pipeline cannot be cheaper than one span of it"
+        );
+    }
+
     /// Run-ahead removes frames of the game's own lag, so the figure must shrink
     /// by exactly one frame per depth — otherwise the panel overstates latency
     /// worst for the users who took its advice.
     #[test]
     fn run_ahead_is_subtracted_frame_for_frame() {
         let (base, with_two) = (
-            end_to_end_figure(4, 0, 16.0, work(600, 0.0)),
-            end_to_end_figure(4, 2, 16.0, work(600, 0.0)),
+            end_to_end_figure(4, 0, 16.0, work(600, 0.0), work(0, 0.0)),
+            end_to_end_figure(4, 2, 16.0, work(600, 0.0), work(0, 0.0)),
         );
         let (
-            EndToEnd::Ms { total: a, .. },
+            EndToEnd::Ms { work_ms: a, .. },
             EndToEnd::Ms {
-                total: b,
+                work_ms: b,
                 effective,
+                ..
             },
         ) = (base, with_two)
         else {
@@ -670,7 +791,11 @@ mod tests {
     /// A depth ABOVE the measured lag leaves zero, never a wrapped `u32::MAX`.
     #[test]
     fn run_ahead_deeper_than_the_lag_saturates_at_zero() {
-        let EndToEnd::Ms { total, effective } = end_to_end_figure(1, 3, 16.0, work(600, 2.0))
+        let EndToEnd::Ms {
+            work_ms: total,
+            effective,
+            ..
+        } = end_to_end_figure(1, 3, 16.0, work(600, 2.0), work(0, 0.0))
         else {
             panic!("expected a figure");
         };

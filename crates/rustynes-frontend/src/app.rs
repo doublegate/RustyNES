@@ -7275,6 +7275,7 @@ impl App {
         perf_view.render_work = r.work;
         perf_view.render_lock = r.lock;
         perf_view.render_cpu = r.cpu;
+        perf_view.present_lat = r.present_lat;
         #[cfg(feature = "debug-hooks")]
         {
             perf_view.lock_gap_hits = r.lock_gap_hits;
@@ -9454,6 +9455,24 @@ impl ApplicationHandler<AppEvent> for App {
                 // builds once already this release). Fully qualified because the
                 // `Duration` import is itself native-only.
                 let mut lock_wait = std::time::Duration::ZERO;
+                // v2.3.9 item C — publish stamp of the frame this redraw will show.
+                // Declared in the same scope as `lock_wait` and for the same reason:
+                // it is set inside one render branch and consumed after the present,
+                // so a narrower scope would not reach `record_redraw`. Set only on
+                // the lock-free handoff path — the only path where a frame crosses a
+                // thread boundary and can therefore wait.
+                //
+                // Deliberately UNANNOTATED. The type comes from `take_into`,
+                // which returns `web_time::Instant` — the crate's Instant
+                // everywhere in this file. Writing `Option<std::time::Instant>`
+                // here compiles only because `web_time` re-exports std's type on
+                // native, and this line is native-only; naming std's type would
+                // be a second, coincidentally-equal spelling of one thing.
+                // (Review on #412 proposed the inference form. Its stated reason
+                // was that the annotation fails to build — it does not — but the
+                // suggestion is right for this reason instead.)
+                #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+                let mut present_stamp = None;
 
                 // v2.8.0 Phase 2 — display-sync regime (native): produce
                 // exactly one emulated frame per redraw, BEFORE presenting.
@@ -10104,10 +10123,20 @@ impl ApplicationHandler<AppEvent> for App {
                         // frame arrived; otherwise keep the previously presented
                         // staging (the display simply re-presents it).
                         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
-                        if !self.present_buffer.take_into(&mut self.present_staging)
-                            && self.present_staging.is_empty()
                         {
-                            self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
+                            // v2.3.9 — the publish stamp of the frame this redraw
+                            // will show, carried to the end of the handler so the
+                            // recorded latency spans produce -> VISIBLE rather than
+                            // produce -> taken. `None` when nothing new arrived, in
+                            // which case this redraw re-presents the previous frame
+                            // and contributes no sample: its age would be measured
+                            // from a publish two redraws ago and describe the
+                            // display's cadence rather than the pipeline's latency.
+                            let taken = self.present_buffer.take_into(&mut self.present_staging);
+                            present_stamp = taken;
+                            if taken.is_none() && self.present_staging.is_empty() {
+                                self.present_staging.resize((NES_W * NES_H * 4) as usize, 0);
+                            }
                         }
                     } else {
                         let mut guard = self.emu.lock_timed(&mut lock_wait);
@@ -10465,6 +10494,22 @@ impl ApplicationHandler<AppEvent> for App {
                         lock_wait,
                         cpu_span,
                     );
+                    // v2.3.9 item C — produce -> VISIBLE latency, as ONE sample.
+                    //
+                    // Recorded here, after the present, so the sample spans the
+                    // whole pipeline: the frame's publish on the emulation thread,
+                    // its wait in the handoff, this redraw's work, and the blocking
+                    // present that puts it on screen.
+                    //
+                    // One series rather than a sum of `work`, `lock` and `wait`,
+                    // because summing percentiles is not the percentile of the sum
+                    // — the same defect `RenderPerf::work` exists to avoid, in the
+                    // addition direction. A distribution has to be built from
+                    // per-sample totals, which is what this is.
+                    #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+                    if let Some(published) = present_stamp {
+                        self.render_perf.record_present_latency(published.elapsed());
+                    }
                 }
                 match render_result {
                     Ok(()) => {

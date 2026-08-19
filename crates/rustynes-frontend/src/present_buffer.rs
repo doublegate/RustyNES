@@ -40,6 +40,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use web_time::Instant;
 
 /// NES framebuffer size in bytes (256 × 240 × RGBA8).
 const FB_LEN: usize = 256 * 240 * 4;
@@ -47,6 +48,24 @@ const FB_LEN: usize = 256 * 240 * 4;
 /// The three reusable byte buffers behind the handoff.
 struct Slots {
     bufs: [Vec<u8>; 3],
+    /// v2.3.9 — when each slot's frame was published, parallel to `bufs`.
+    ///
+    /// **Per slot, though a single "latest publish" field would currently give
+    /// the same answer** — and that is worth stating rather than dressing up as
+    /// necessity, because the first draft of this comment claimed the opposite.
+    /// `publish` always swaps `back` into `ready`, and `take_into` always takes
+    /// `ready`, so under the slots lock the frame taken IS the newest published.
+    /// A mutation returning `stamps.iter().max()` instead of `stamps[ready]`
+    /// fails no test, because the two cannot differ today.
+    ///
+    /// Kept per slot anyway, for the same reason `bufs` is: the timestamp is a
+    /// property OF the frame, so it travels with it and stays correct if the
+    /// handoff ever hands back something other than the newest slot. The cost is
+    /// three `Option<Instant>`.
+    ///
+    /// `None` until a slot has been published into, so the first take cannot
+    /// produce an age measured from an arbitrary zero.
+    stamps: [Option<Instant>; 3],
     /// `front | (ready << 2) | (back << 4)` slot ids; mutated only by the
     /// producer's `publish` and the consumer's `take_into` via a swap that
     /// keeps the three fields a permutation of `{0,1,2}`. Stored here (a plain
@@ -87,6 +106,7 @@ impl PresentBuffer {
             generation: AtomicUsize::new(0),
             slots: Mutex::new(Slots {
                 bufs: [Vec::new(), Vec::new(), Vec::new()],
+                stamps: [None; 3],
                 index: Self::INIT_INDEX,
             }),
         })
@@ -125,6 +145,9 @@ impl PresentBuffer {
         // the same slots lock, so the index move, the slot write, and the
         // fresh-flag stay consistent for the consumer (which also takes the
         // lock before reading any of them).
+        // Stamped under the same lock as the copy and the index move, so a
+        // consumer can never observe a slot whose bytes and timestamp disagree.
+        slots.stamps[back] = Some(Instant::now());
         let front = Self::front(idx);
         let ready = Self::ready(idx);
         slots.index = Self::pack(front, back, ready);
@@ -135,17 +158,26 @@ impl PresentBuffer {
 
     /// Consumer: if a new frame was published since the last call, swap it
     /// into the front slot and copy it into `out` (the present-staging buffer
-    /// the GPU uploads). Returns `true` when `out` was refreshed with a new
-    /// frame, `false` when there was nothing new (the caller keeps the
-    /// previously presented `out` — the display simply re-presents it).
-    pub fn take_into(&self, out: &mut Vec<u8>) -> bool {
+    /// the GPU uploads).
+    ///
+    /// Returns `Some(stamp)` when `out` was refreshed, where `stamp` is the
+    /// instant the emulation thread **published that frame** — carried per slot
+    /// so it travels with the frame it describes. Returns `None` when there was
+    /// nothing new, in which case the caller keeps the previously presented
+    /// `out` and the display simply re-presents it.
+    ///
+    /// The stamp is what makes a produce-to-visible measurement a real
+    /// distribution: the consumer records `stamp.elapsed()` after the present,
+    /// so one sample spans the whole pipeline rather than being assembled by
+    /// summing percentiles of its parts.
+    pub fn take_into(&self, out: &mut Vec<u8>) -> Option<Instant> {
         // Cheap pre-check off the lock; the authoritative check is under it.
         if !self.has_new.load(Ordering::Relaxed) {
-            return false;
+            return None;
         }
         let mut slots = self.slots.lock().expect("present buffer slots");
         if !self.has_new.swap(false, Ordering::Relaxed) {
-            return false;
+            return None;
         }
         let idx = slots.index;
         let front = Self::front(idx);
@@ -156,7 +188,7 @@ impl PresentBuffer {
         slots.index = Self::pack(ready, front, back);
         out.clear();
         out.extend_from_slice(&slots.bufs[ready]);
-        true
+        slots.stamps[ready]
     }
 
     /// True once at least one frame has been published (so the present path
@@ -176,6 +208,16 @@ impl PresentBuffer {
         for b in &mut slots.bufs {
             b.clear();
         }
+        // v2.3.9 — clear the publish stamps with the buffers.
+        //
+        // Defensive, and unreachable today: `has_new` is cleared above, and
+        // `take_into` returns before touching a stamp while it is false, so a
+        // stale stamp cannot currently be observed. Verified by mutation —
+        // deleting this line fails nothing. Kept because the invariant it
+        // maintains ("a stamp describes a frame in this session") is cheaper to
+        // hold than to re-derive, and because a future take path that does not
+        // gate on `has_new` would otherwise report a latency spanning a ROM load.
+        slots.stamps = [None; 3];
     }
 
     /// Expected framebuffer byte length (for the no-ROM black frame).
@@ -197,10 +239,10 @@ mod tests {
         pb.publish(&frame);
         assert!(pb.has_published());
         let mut out = Vec::new();
-        assert!(pb.take_into(&mut out));
+        assert!(pb.take_into(&mut out).is_some());
         assert_eq!(out, frame);
-        // No new frame -> take returns false and leaves `out` intact.
-        assert!(!pb.take_into(&mut out));
+        // No new frame -> take returns `None` and leaves `out` intact.
+        assert!(pb.take_into(&mut out).is_none());
         assert_eq!(out, frame);
     }
 
@@ -214,7 +256,7 @@ mod tests {
         // overwritten in the back slot before a take) — the intended
         // "drop stale frames" behavior under wall-clock pacing.
         let mut out = Vec::new();
-        assert!(pb.take_into(&mut out));
+        assert!(pb.take_into(&mut out).is_some());
         assert_eq!(out, vec![4u8; 8]);
     }
 
@@ -242,6 +284,56 @@ mod tests {
         }
     }
 
+    /// A stamp advances with the frame it describes.
+    ///
+    /// Note what this does NOT establish: that the stamp comes from the taken
+    /// slot rather than from the newest publish. Those cannot differ here —
+    /// `publish` swaps into `ready` and `take_into` takes `ready` — so no test
+    /// can separate them, and a mutation swapping one for the other passes.
+    /// See the `stamps` field comment.
+    #[test]
+    fn the_stamp_belongs_to_the_frame_that_was_taken() {
+        let pb = PresentBuffer::new();
+        let mut out = Vec::new();
+
+        pb.publish(&vec![1u8; FB_LEN]);
+        let first = pb
+            .take_into(&mut out)
+            .expect("a published frame has a stamp");
+
+        // Two more publishes with a measurable gap, none of them taken yet.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        pb.publish(&vec![2u8; FB_LEN]);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        pb.publish(&vec![3u8; FB_LEN]);
+
+        let latest = pb
+            .take_into(&mut out)
+            .expect("the freshest frame has a stamp");
+        assert_eq!(out[0], 3, "premise: the freshest frame is the one taken");
+        assert!(
+            latest > first,
+            "the stamp must advance with the frame it describes"
+        );
+    }
+
+    /// A take with nothing new returns `None` rather than a stale stamp. A
+    /// redraw that re-presents the previous frame must contribute no sample:
+    /// its age would be measured from a publish two redraws ago and would
+    /// describe the display's cadence rather than the pipeline's latency.
+    #[test]
+    fn an_empty_take_yields_no_stamp() {
+        let pb = PresentBuffer::new();
+        let mut out = Vec::new();
+        assert!(pb.take_into(&mut out).is_none(), "nothing published yet");
+        pb.publish(&vec![7u8; FB_LEN]);
+        assert!(pb.take_into(&mut out).is_some());
+        assert!(
+            pb.take_into(&mut out).is_none(),
+            "a second take with nothing new must not re-report the old stamp"
+        );
+    }
+
     #[test]
     fn reset_clears_published_state() {
         let pb = PresentBuffer::new();
@@ -250,7 +342,7 @@ mod tests {
         pb.reset();
         assert!(!pb.has_published());
         let mut out = Vec::new();
-        assert!(!pb.take_into(&mut out));
+        assert!(pb.take_into(&mut out).is_none());
     }
 
     #[test]
@@ -275,7 +367,7 @@ mod tests {
         let mut out = Vec::new();
         let mut taken = 0u32;
         loop {
-            if pb.take_into(&mut out) {
+            if pb.take_into(&mut out).is_some() {
                 taken += 1;
                 // Every taken frame is a full 64-byte uniform buffer (no torn
                 // read across slots).
@@ -297,7 +389,7 @@ mod tests {
                 // branch ended with `taken == 0` and failed the assert.) This
                 // guarantees `taken >= 1` whenever the producer published at
                 // least once, independent of how the two threads interleave.
-                if pb.take_into(&mut out) {
+                if pb.take_into(&mut out).is_some() {
                     taken += 1;
                     assert_eq!(out.len(), 64);
                     let v = out[0];

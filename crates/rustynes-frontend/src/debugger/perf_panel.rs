@@ -48,6 +48,19 @@ impl PerfPanelState {
     /// `render_lock` or `render_wait` would be summing two percentiles, which is
     /// not the percentile of the sum — the error `RenderPerf::work` already
     /// exists to avoid, in the addition direction.
+    /// v2.3.9 item C — the produce-to-visible latency series.
+    ///
+    /// The full-pipeline counterpart of [`Self::render_work`], and offered for
+    /// the same reason `render_wait` and `render_lock` are NOT: this is a single
+    /// per-sample series, so adding it to a constant yields a real percentile.
+    /// It is what `work` could not be — the whole journey rather than one span
+    /// of it — because it is measured per frame rather than assembled from
+    /// parts.
+    #[must_use]
+    pub const fn present_lat(&self) -> crate::perf::IntervalStats {
+        self.view.present_lat
+    }
+
     #[must_use]
     pub const fn render_work(&self) -> crate::perf::IntervalStats {
         self.view.render_work
