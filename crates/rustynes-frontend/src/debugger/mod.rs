@@ -1211,6 +1211,12 @@ impl DebuggerOverlay {
         // freezes and the derived search state. See each `clear_rom_bound`.
         self.memory_compare_ui.clear_rom_bound();
         self.memory_ui.clear_rom_bound();
+        // The Watch panel's accumulated hit + trace log, for the same reason as
+        // the access counters above: every row names a PC in the previous
+        // cartridge's code, and nothing marks where one game's rows end. Its
+        // breakpoints and watchpoints stay, and stay ARMED -- they are
+        // user-authored and, unlike a frozen byte, they do not write.
+        self.watch_ui.clear_rom_bound();
     }
 
     /// Returns `true` when the overlay is currently visible. The render

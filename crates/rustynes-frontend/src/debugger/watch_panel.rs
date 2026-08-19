@@ -247,6 +247,29 @@ impl EvalContext for ReplayCtx<'_> {
 }
 
 impl WatchPanelState {
+    /// Discard the accumulated hit and trace log on a ROM change.
+    ///
+    /// The rule this panel is being held to, stated once because three panels
+    /// now follow it: **derived output is discarded, user-authored input is
+    /// kept, and only input that actively WRITES is neutralised.**
+    ///
+    /// `hits` and `trace_rows` are derived — each row names a PC and an address
+    /// in the previous cartridge's code. Left standing they interleave with the
+    /// new game's rows with nothing marking the boundary, so the log reads as one
+    /// continuous record of a session that never happened.
+    ///
+    /// Breakpoints and watchpoints are kept, and kept **armed**. They are
+    /// user-authored, and unlike a frozen byte they do not write: a breakpoint on
+    /// an address that means something else in the new game halts the emulator,
+    /// which is visible, recoverable and immediately obvious. Disarming them
+    /// would silently stop a debugging session working across a reload of the
+    /// SAME ROM, which is the common case this hook also fires on.
+    pub fn clear_rom_bound(&mut self) {
+        self.hits.clear();
+        self.trace_rows.clear();
+    }
+}
+impl WatchPanelState {
     /// `true` when any breakpoint or watchpoint exists (used to decide whether
     /// the per-frame exec/access logs must be armed).
     #[must_use]
@@ -900,6 +923,59 @@ fn find_double_close(chars: &[char], from: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A ROM change discards the derived log and keeps the user's breakpoints.
+    ///
+    /// Both halves matter and are asserted together. Every hit row names a PC in
+    /// the previous cartridge's code, so keeping them produces one continuous
+    /// record of a session that never happened; the breakpoints were typed by the
+    /// user and, unlike a frozen byte, cannot write anything, so they stay and
+    /// stay armed.
+    #[test]
+    fn a_rom_change_clears_the_log_but_keeps_the_breakpoints() {
+        let mut s = WatchPanelState {
+            armed: true,
+            ..WatchPanelState::default()
+        };
+        s.breakpoints.push(CondBreakpoint {
+            enabled: true,
+            lo: 0x8004,
+            hi: 0x8004,
+            cond_src: String::new(),
+            cond: None,
+            cond_error: false,
+            hits: 7,
+        });
+        s.hits.push_back(HitRec {
+            tag: "BP",
+            frame: 12,
+            addr: 0x8004,
+            value: 0,
+            has_value: false,
+        });
+        s.trace_rows.push_back("A=01 X=02".to_owned());
+
+        s.clear_rom_bound();
+
+        assert!(
+            s.hits.is_empty(),
+            "hits from the previous cartridge survived"
+        );
+        assert!(
+            s.trace_rows.is_empty(),
+            "trace rows from the previous cartridge survived"
+        );
+        assert_eq!(
+            s.breakpoints.len(),
+            1,
+            "a ROM change destroyed the user's breakpoints"
+        );
+        assert!(
+            s.armed,
+            "a ROM change silently disarmed the panel, so the next session's \
+             breakpoints would never fire"
+        );
+    }
 
     /// A minimal evaluator context with a tiny memory window for the
     /// format-string tests (mirrors the expr-module fake, kept local).
