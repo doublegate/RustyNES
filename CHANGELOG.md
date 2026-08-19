@@ -14,11 +14,7 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-Post-v2.3.7 work, landed but not yet cut. Backfilled: PRs #407, #409 and #410
-merged without a CHANGELOG entry, so the file that is supposed to be the single
-source of truth for user-visible change did not mention a whole new tool panel.
-Recorded here rather than reconstructed at release time, when the reasons are
-harder to recover than the diffs.
+Post-v2.3.7 work, landed but not yet cut.
 
 ### Added
 
