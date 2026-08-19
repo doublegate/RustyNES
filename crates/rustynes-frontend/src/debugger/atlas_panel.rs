@@ -635,6 +635,9 @@ impl Drop for TimelineGuard<'_> {
         // timeline that has already stopped being rewritten.
         #[cfg(feature = "debug-hooks")]
         {
+            // `mem::take` because `Drop` has only `&mut self`. The guard is
+            // being destroyed, so leaving default stashes behind is invisible —
+            // the same pattern, for the same reason, as `TrialGuard::drop`.
             let (pixel, audio) = core::mem::take(&mut self.provenance);
             self.nes.put_provenance(pixel);
             self.nes.put_audio_provenance(audio);

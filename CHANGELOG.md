@@ -104,9 +104,14 @@ cycle-accurate core later replaced.
   across a trial for the same underlying reason: state that lives outside the
   save state is not carried by a snapshot round trip.
 
-  Pinned by four tests under four independent mutations — one per store and one
-  per site — so a fix that put back only one store, or guarded only one of the
-  two probe restores, fails. The existing
+  Pinned by the **full 2x2 matrix** — each of the two stores against each of the
+  two probe restores — under four independent mutations, so a fix that put back
+  only one store, or guarded only one of the two restores, fails. The fourth cell
+  (`measure_in_place` against the *pixel* store) was **missing until review
+  caught it**, and it was not a rounding error: the `measure_in_place` mutation
+  fails only the audio test, so a final restore that put back the audio stash and
+  dropped the pixel one would have passed everything. The claim of "four tests"
+  was written before the fourth existed. The existing
   `measure_in_place_restores_the_live_timeline` could not have caught it: it
   compares `nes.snapshot()` before and after, and provenance is deliberately not
   in the snapshot, so it asserted something strictly weaker than the contract it

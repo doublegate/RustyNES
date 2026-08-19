@@ -438,8 +438,12 @@ pub(crate) struct TrialGuard<'a> {
     restore_to: bool,
     /// The caller's pixel- and audio-provenance stores, moved out for the
     /// duration so neither the anchor restore nor the trial's frames can touch
-    /// them. `None` in a build without the feature, and cheap when unarmed:
-    /// each stash is one moved `Option<Box<..>>`.
+    /// them.
+    ///
+    /// The field does not exist at all without `debug-hooks` — it is `cfg`d out
+    /// rather than present-and-empty — so there is no per-trial cost of any kind
+    /// in a build that cannot record provenance. With the feature on it is cheap
+    /// when unarmed: each stash is one moved `Option<Box<..>>`.
     #[cfg(feature = "debug-hooks")]
     provenance: (
         rustynes_core::rustynes_ppu::ProvenanceStash,
@@ -669,6 +673,39 @@ mod tests {
         assert_eq!(
             before, after,
             "a probe trial rewrote the caller's audio provenance"
+        );
+    }
+
+    /// The fourth cell of the matrix: `measure_in_place` x the PIXEL store.
+    ///
+    /// Added after review pointed out that the CHANGELOG claimed "four tests"
+    /// while three existed, and that the missing one was not a rounding error —
+    /// it is a real gap. The `measure_in_place` mutation fails only the AUDIO
+    /// test, so a final restore that put back the audio stash and dropped the
+    /// pixel one would have passed every test here.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn measure_in_place_preserves_the_callers_pixel_provenance() {
+        let mut n = Nes::from_rom(&reg_writing_nrom()).expect("fixture parses");
+        n.set_pixel_provenance(true);
+        for _ in 0..3 {
+            n.run_frame();
+        }
+        assert!(
+            n.pixel_provenance().is_some(),
+            "premise: the pixel store is armed"
+        );
+
+        let report =
+            crate::latency::measure_in_place(&mut n, crate::latency::LatencyConfig::default());
+        assert!(
+            report.trials_used > 0,
+            "premise: the measurement actually ran"
+        );
+
+        assert!(
+            n.pixel_provenance().is_some(),
+            "a latency measurement disarmed the caller's pixel provenance"
         );
     }
 
