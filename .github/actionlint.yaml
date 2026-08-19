@@ -1,18 +1,26 @@
-# actionlint configuration (v2.3.9).
+# actionlint configuration.
 #
-# The self-hosted runner label the Antigravity PR reviewer runs on. actionlint
-# validates `runs-on` against the hosted-runner list and cannot know a custom
-# label unless it is declared here, so without this it reports `agy` as unknown.
+# actionlint validates `runs-on:` against GitHub's list of hosted-runner labels
+# and reports anything else as unknown, because a typo'd label is a job that
+# queues forever rather than failing. Self-hosted labels therefore have to be
+# declared here — that is the mechanism actionlint's own diagnostic points at.
 #
-# Worth noting how this was found: the label check only started firing once this
-# config file existed. Adding a linter config is not inert — it can activate
-# checks that were dormant — so the first run after introducing one is where the
-# real inventory appears, not the run before.
+# Run it over the whole tree with:
+#
+#   actionlint
+#
+# (no arguments — it discovers `.github/workflows/*.yml` and reads this file).
+
 self-hosted-runner:
   labels:
+    # The maintainer's self-hosted runner for the Antigravity PR reviewer
+    # (`.github/workflows/antigravity-review.yml`, `runs-on: [self-hosted, agy]`).
+    # It is a personal machine holding the `agy` CLI's Google AI Ultra OAuth
+    # session, which is why that workflow cannot run on a hosted runner. See
+    # `Local_Only-Projects/antigravity-pr-review/README.md` in the workspace.
     - agy
 
-# One suppression, scoped to one file and one message.
+# v2.3.9 — one suppression, scoped to one file and one message.
 #
 # `pgo.yml` carries two steps deliberately disabled with `if: false`, each with a
 # written rationale above it: the BOLT bench and determinism gates were switched
@@ -24,12 +32,13 @@ self-hosted-runner:
 # actionlint's `if-cond` rule flags a constant condition, which is correct in
 # general and wrong about intent here.
 #
-# THE COST, stated rather than buried: this silences the rule for the whole
-# file, so a genuinely accidental `if: false` added to `pgo.yml` later would not
-# be caught. actionlint has no line-scoped ignore, and the alternatives are worse
-# — deleting the steps loses the documented shape, and rewriting the condition to
+# THE COST, stated rather than buried: this silences the rule for the whole file,
+# so a genuinely accidental `if: false` added to `pgo.yml` later would not be
+# caught. actionlint has no line-scoped ignore, and the alternatives are worse —
+# deleting the steps loses the documented shape, and rewriting the condition to
 # something non-constant hides the intent from the reader to satisfy a linter.
-# Every other workflow keeps the rule.
+# Every other workflow keeps the rule; verified by adding an `if: false` to
+# `security.yml` and confirming it still fails.
 paths:
   .github/workflows/pgo.yml:
     ignore:
