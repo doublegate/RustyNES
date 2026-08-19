@@ -9731,10 +9731,20 @@ impl ApplicationHandler<AppEvent> for App {
                     // scope mirrors the common `else` branch exactly; the only reason
                     // this branch later re-takes the lock is that the debugger pass
                     // needs a live `&mut Nes`, which the common branch does not.
-                    // v2.3.9 item B — the emulator's cumulative cycle at the moment
-                    // the framebuffer the user will SEE is copied. Declared out here
-                    // so it outlives the scoped guard below and can be compared at
-                    // the egui pass; see `RenderPerf::record_lock_gap`.
+                    // v2.3.9 item B — the emulator's cumulative cycle for the frame
+                    // whose framebuffer this pass will copy.
+                    //
+                    // Read on ACQUIRING the lock, a few lines before the copy itself
+                    // rather than at it. Equivalent, and worth stating why rather
+                    // than leaving it to be re-derived: the emulator cannot advance
+                    // while this guard is held, so every reading taken anywhere
+                    // inside this scope names the same frame. The earlier wording
+                    // said "at the moment the framebuffer is copied", which was
+                    // close enough to be misleading — review on #409 asked, which
+                    // means the next reader would have too.
+                    //
+                    // Declared outside the scope so it outlives the guard and can be
+                    // compared at the egui pass; see `RenderPerf::record_lock_gap`.
                     #[cfg(feature = "debug-hooks")]
                     let cycle_at_fb: Option<u64>;
                     {

@@ -361,9 +361,12 @@ impl RenderPerf {
     /// change at all means at least one complete frame landed in the gap.
     #[cfg(feature = "debug-hooks")]
     pub const fn record_lock_gap(&mut self, advanced: bool) {
-        self.lock_gap_obs = self.lock_gap_obs.saturating_add(1);
+        // Plain `+= 1`: one increment per redraw, so a `u64` cannot overflow in
+        // any run that ends. `saturating_add` here suggested a bound worth
+        // reasoning about and there is none. (Review nitpick on #409.)
+        self.lock_gap_obs += 1;
         if advanced {
-            self.lock_gap_hits = self.lock_gap_hits.saturating_add(1);
+            self.lock_gap_hits += 1;
         }
     }
 
@@ -381,6 +384,18 @@ impl RenderPerf {
         self.work.clear();
         self.lock.clear();
         self.cpu.clear();
+        // v2.3.9 — and the lock-gap counters, for exactly the reason the `wait`
+        // comment above gives. A rate is a ratio over a population; carrying the
+        // numerator and denominator across a ROM change or a pacing-regime
+        // change mixes two populations into one percentage and reports it as a
+        // single measurement. Caught in review on #409 — the new counters had
+        // been added to `stats()` and not to `clear()`, which is precisely how
+        // `wait` went wrong before them.
+        #[cfg(feature = "debug-hooks")]
+        {
+            self.lock_gap_hits = 0;
+            self.lock_gap_obs = 0;
+        }
     }
 }
 
@@ -899,6 +914,28 @@ mod lock_gap_tests {
         let p = RenderPerf::default();
         let s = p.stats();
         assert_eq!((s.lock_gap_hits, s.lock_gap_obs), (0, 0));
+    }
+
+    /// `clear()` must reset the counters with everything else. A rate is a
+    /// ratio over a population, and carrying the numerator and denominator
+    /// across a ROM or pacing-regime change mixes two populations into one
+    /// percentage and reports it as a single measurement. Caught in review on
+    /// #409, which is the same defect the `wait` series had before it.
+    #[test]
+    fn clear_resets_the_lock_gap_counters_too() {
+        let mut p = RenderPerf::default();
+        p.record_lock_gap(true);
+        p.record_lock_gap(false);
+        assert_eq!(p.stats().lock_gap_obs, 2, "premise: something was counted");
+
+        p.clear();
+
+        let s = p.stats();
+        assert_eq!(
+            (s.lock_gap_hits, s.lock_gap_obs),
+            (0, 0),
+            "a rate carried across a regime change is two populations in one number"
+        );
     }
 
     #[test]
