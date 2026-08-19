@@ -32,14 +32,71 @@ if [ -z "${APT_PACKAGE:-}" ]; then
     exit 1
 fi
 
-# Bounds chosen from observed behaviour, not from taste: a healthy `update` on
-# these runners is a few seconds and a healthy `install` well under a minute, so
-# these are roughly an order of magnitude of headroom. Long enough that a merely
-# slow mirror still succeeds; short enough that three full attempts fit inside
-# the 25-minute job budget with room for the build that follows.
+# Bounds RE-CALIBRATED against a real failure, because the first set was
+# calibrated against a claim.
+#
+# The comment that stood here asserted that "a healthy `update` on these runners
+# is a few seconds", which made 180s look like an order of magnitude of headroom.
+# It was never measured. On 2026-08-19 this step failed on three consecutive PRs
+# (#412, #415, #416) and the log says exactly where:
+#
+#   attempt 1  update killed at 180s, precisely the timeout
+#   attempt 2  update killed at 180s again
+#   attempt 3  update succeeded; install killed at 300s MID-DOWNLOAD, the log
+#              ending inside `Get:20 gcc-13-aarch64-linux-gnu [21.1 MB]`
+#
+# No apt error anywhere in it. The provision was succeeding slowly and the
+# wrapper converted that into a hard failure, three times over. A bound derived
+# from an unmeasured premise is a gate that fires on healthy runs, which is worse
+# than a loose one: it blocked three PRs while looking like infrastructure decay.
+#
+# `apt-get update` now runs ONLY after a direct install has failed. The runner
+# image ships a populated package index, so an index refresh does not belong on
+# the happy path -- it is the recovery step for the one case that needs it, an
+# index stale enough that the requested version has moved and install 404s.
+#
+# THE SECOND CALIBRATION, from this change's own first CI run. Do not tune these
+# numbers again without a `Fetched` line to point at.
+#
+# The narrowed package (see the workflow step) made the provision succeed, and
+# the log gives the reason the old one could not:
+#
+#   Fetched 4201 kB in 4min 45s (14.7 kB/s)
+#
+# Fourteen point seven kilobytes per second. The mirror is degraded by roughly
+# three orders of magnitude, which is why every bound derived from "healthy"
+# behaviour was wrong -- and why the previous 40 MB package set was hopeless:
+# at that rate it needed about 45 minutes, past the job budget entirely.
+#
+# Even at 4.2 MB it only just passed, and NOT the way the first draft of this
+# comment assumed. The real sequence was:
+#
+#   attempt 1  install downloaded all 4201 kB (285s), then was killed at 300s
+#              during dpkg unpack -- the download finished, the install did not
+#   attempt 2  update, then install: NO re-download, because the archives were
+#              already in /var/cache/apt/archives. Succeeded.
+#
+# So the run was rescued by apt's archive cache persisting across attempts. That
+# is a real and useful property -- each attempt makes progress rather than
+# starting over -- but it was undesigned and undocumented, which makes it the
+# same defect class as the bound it rescued: behaviour nobody wrote down.
+# Written down now, and no longer relied upon: INSTALL_TIMEOUT is sized so ONE
+# attempt completes at the worst speed actually observed.
+#
+#   285s download at 14.7 kB/s + dpkg unpack, so 600s is ~2x the worst observed.
+#
+# ATTEMPTS drops to 2 to keep the worst case inside the job's 25-minute budget,
+# stated as arithmetic rather than as "roughly an order of magnitude" -- that
+# phrasing is what went unchecked the first time:
+#
+#   600 + 15 + (180 + 600) = 1395s, plus ~45s of surrounding steps
+#
+# The third attempt is not a loss worth arguing for: attempt 2 already retries
+# with a refreshed index AND a warm download cache, which covers both the stale
+# index and the slow mirror. A third would only repeat attempt 2.
 readonly UPDATE_TIMEOUT=180
-readonly INSTALL_TIMEOUT=300
-readonly ATTEMPTS=3
+readonly INSTALL_TIMEOUT=600
+readonly ATTEMPTS=2
 
 # Elevation on the OUTSIDE, `timeout` on the inside. Review on #408 caught the
 # ordering and it is not cosmetic: with `timeout` outermost the SIGTERM goes to
@@ -60,9 +117,35 @@ readonly ATTEMPTS=3
 # run at all, which would break the wrapper rather than degrade it. `env` is a
 # plain command and needs no such privilege. (Review on #409; both reviewers
 # raised it independently.)
+# `--` before the package name so a value beginning with a hyphen is treated as
+# an operand rather than as an option. `APT_PACKAGE` comes from a workflow `env:`
+# block and never from event data, so this is not closing a live injection path;
+# it is one token that makes the guarantee structural instead of dependent on
+# every future caller remembering where the value came from. (Both reviewers
+# raised it on #417.)
+apt_install() {
+    sudo env DEBIAN_FRONTEND=noninteractive timeout "$INSTALL_TIMEOUT" \
+        apt-get install -yq --no-install-recommends -- "$APT_PACKAGE"
+}
+
+apt_update() {
+    sudo env DEBIAN_FRONTEND=noninteractive timeout "$UPDATE_TIMEOUT" apt-get update -qq
+}
+
+# `--no-install-recommends` is not a size micro-optimisation, it is the same
+# argument as the bounds above: every byte downloaded is time spent inside a
+# timeout. The recommends pulled here are packages the caller has already written
+# down as unused -- the workflow step's own comment says the cross linker is
+# unused because this gate is `cargo check` only.
 for attempt in $(seq 1 "$ATTEMPTS"); do
-    if sudo env DEBIAN_FRONTEND=noninteractive timeout "$UPDATE_TIMEOUT" apt-get update -qq &&
-        sudo env DEBIAN_FRONTEND=noninteractive timeout "$INSTALL_TIMEOUT" apt-get install -yq "$APT_PACKAGE"; then
+    # Attempt 1 goes straight at the package. Later attempts refresh the index
+    # first, since a stale index is the one failure a refresh actually fixes.
+    if [ "$attempt" -eq 1 ]; then
+        if apt_install; then
+            echo "Installed ${APT_PACKAGE} on attempt ${attempt} (no index refresh needed)."
+            exit 0
+        fi
+    elif apt_update && apt_install; then
         echo "Installed ${APT_PACKAGE} on attempt ${attempt}."
         exit 0
     fi
