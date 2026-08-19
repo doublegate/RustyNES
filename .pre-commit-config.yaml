@@ -71,6 +71,24 @@ repos:
       - id: markdownlint
         args: [--config, .markdownlint.json]
 
+  # GitHub Actions workflow linting (v2.3.9).
+  #
+  # Pinned to the version installed here, matching how every other hook in this
+  # file is pinned: an unpinned linter that gains a rule turns a green tree red
+  # on someone else's machine, which is the trap `markdownlint` already documents
+  # (the local binary reports rules the pinned v0.39.0 does not).
+  #
+  # Added because a review disagreement on #406 could not be settled from
+  # GitHub's own documentation — whether `timeout-minutes` is valid on a job that
+  # calls a reusable workflow. `actionlint` encodes the job schema and answered it
+  # in one command. Seven workflow files were edited during the v2.3.7 cut with no
+  # schema check at all; `check-yaml` proves a file is YAML, not that it is a
+  # workflow.
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
   # Rust formatting and linting (when code exists)
   - repo: local
     hooks:

@@ -19,3 +19,27 @@ self-hosted-runner:
     # session, which is why that workflow cannot run on a hosted runner. See
     # `Local_Only-Projects/antigravity-pr-review/README.md` in the workspace.
     - agy
+
+# v2.3.9 — one suppression, scoped to one file and one message.
+#
+# `pgo.yml` carries two steps deliberately disabled with `if: false`, each with a
+# written rationale above it: the BOLT bench and determinism gates were switched
+# off because the harness benches the wrong binary, and "a gate that cannot
+# measure its subject is worse than no gate". The steps are kept rather than
+# deleted so the shape survives for whoever re-enables them behind a harness that
+# benches the BOLT-optimized binary itself.
+#
+# actionlint's `if-cond` rule flags a constant condition, which is correct in
+# general and wrong about intent here.
+#
+# THE COST, stated rather than buried: this silences the rule for the whole file,
+# so a genuinely accidental `if: false` added to `pgo.yml` later would not be
+# caught. actionlint has no line-scoped ignore, and the alternatives are worse —
+# deleting the steps loses the documented shape, and rewriting the condition to
+# something non-constant hides the intent from the reader to satisfy a linter.
+# Every other workflow keeps the rule; verified by adding an `if: false` to
+# `security.yml` and confirming it still fails.
+paths:
+  .github/workflows/pgo.yml:
+    ignore:
+      - 'constant expression "false" in condition'

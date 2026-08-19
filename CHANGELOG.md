@@ -387,7 +387,11 @@ timeout, so one hung job silently skipped a release for five hours.
 
   Two details worth keeping. `release-auto.yml`'s `build` job **cannot** carry a
   timeout, because `timeout-minutes` is not valid on a job that uses `uses:`; its
-  budget lives on the jobs inside `release.yml`, which already had them. And
+  budget lives on the jobs inside `release.yml`, which already had them. (Review
+  challenged this, claiming the restriction was lifted in 2022. It was not —
+  checked against the schema with `actionlint`, which reports the key as
+  unavailable and lists the seven that are allowed. Adding one is a syntax error,
+  not an ignored key.) And
   `antigravity-review.yml` is bounded *harder* than the hosted jobs rather than
   softer, because it runs on the maintainer's own hardware, where a hung run
   holds a real machine instead of a disposable VM.

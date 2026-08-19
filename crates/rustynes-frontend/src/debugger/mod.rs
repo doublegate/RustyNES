@@ -2205,6 +2205,12 @@ impl DebuggerOverlay {
         // "applied" stay two separate, auditable steps.
         if self.show_latency {
             let current = config.input.run_ahead;
+            // v2.3.9 item C — the render-WORK series, read from the perf panel's
+            // snapshot rather than plumbed separately, so there is one copy of
+            // this data in the overlay. Only `work` is offered; see
+            // `PerfPanelState::render_work` for why it is the only series that
+            // can legitimately be added to the measured lag.
+            let render_work = self.perf_ui.render_work();
             latency_panel::show(
                 ctx,
                 &mut self.detached_panels,
@@ -2212,6 +2218,7 @@ impl DebuggerOverlay {
                 &mut self.latency_ui,
                 nes.as_deref_mut(),
                 current,
+                render_work,
             );
             if let Some(depth) = self.latency_ui.take_pending_apply() {
                 config.input.run_ahead = depth;
