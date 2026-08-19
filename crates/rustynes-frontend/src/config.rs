@@ -150,15 +150,25 @@ pub struct InputConfig {
     /// run-ahead depth, which is the field directly above; a measurement and the
     /// setting it recommends belong together.
     ///
-    /// `#[serde(default)]` = empty, so a pre-v2.3.9 config round-trips
-    /// byte-identically and a user who never opens the panel carries nothing.
+    /// `#[serde(default)]` = empty, so a pre-v2.3.9 config LOADS unchanged, and
+    /// `skip_serializing_if` keeps the key out of the file entirely until there
+    /// is something to store — so a user who never opens the panel carries
+    /// nothing and their config round-trips byte-identically.
+    ///
+    /// The two halves are separate guarantees and only one of them is
+    /// `default`'s. `#[serde(default)]` alone covers LOADING a file that lacks
+    /// the key; on SAVE the TOML serializer still emits an empty
+    /// `[input.latency_reports]` table, so the first save after upgrading would
+    /// rewrite the file. Review on #414 caught the original claim here, and it
+    /// was settled by serializing a default `Config` and grepping the output
+    /// rather than by re-reading the derive.
     ///
     /// **Remembering a measurement is not applying it.** Nothing here changes
     /// `run_ahead`; the panel still requires an explicit Apply, which is the
     /// separation v2.3.6 built deliberately ("measured" and "applied" are two
     /// auditable steps). Persisting the recommendation would quietly convert one
     /// into the other across a restart.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub latency_reports: std::collections::BTreeMap<String, RememberedLatency>,
     /// v1.1.0 beta.1 (T-110-B2) — turbo/autofire on the A button: while held, A
     /// rapid-fires. Off by default (`false`) = byte-identical input. Applied
@@ -851,16 +861,24 @@ pub struct GraphicsConfig {
     #[serde(default)]
     pub shader_stack: crate::shader_pass::ShaderStackConfig,
     /// v1.2.0 C2 — saved named shader-stack presets (the CRT preset bank +
-    /// user-saved stacks). `#[serde(default)]` = empty, so a pre-C2 config is
-    /// byte-identical. Persisted under `[graphics.shader_presets]`.
+    /// user-saved stacks). `#[serde(default)]` = empty, so a pre-C2 config LOADS
+    /// unchanged. Persisted under `[graphics.shader_presets]`. Same correction as
+    /// `hd_packs` above: `serde(default)` says nothing about what SAVE writes.
     #[serde(default)]
     pub shader_presets: crate::shader_pass::ShaderPresetBank,
     /// v1.2.0 beta.2 (Workstream C3) — per-game HD-pack paths, keyed on the
     /// ROM SHA-256 (hex). When the loaded ROM's hash has an entry here AND the
     /// `hd-pack` feature is built in, the frontend loads the referenced pack
     /// (folder or `.zip`) and substitutes hi-res tiles at blit time. Empty by
-    /// default and `#[serde(default)]`, so a pre-C3 config is byte-identical
-    /// and the default presentation is unchanged. Presentation-only.
+    /// default and `#[serde(default)]`, so a pre-C3 config LOADS unchanged and
+    /// the default presentation is unchanged. Presentation-only.
+    ///
+    /// Deliberately says "loads", not "is byte-identical": `serde(default)` is a
+    /// LOAD guarantee only, and on save the TOML serializer emits an empty
+    /// `[graphics.hd_packs]` table. Left as-is rather than given a
+    /// `skip_serializing_if` like `input.latency_reports`, because that would
+    /// change the file this shipped feature writes; the wrong half here was the
+    /// claim, not the behaviour.
     #[serde(default)]
     pub hd_packs: std::collections::BTreeMap<String, std::path::PathBuf>,
     /// v1.5.0 "Lens" Workstream D1 — per-side overscan crop, in NES pixels. The
@@ -2130,6 +2148,40 @@ fn canonicalize_pad(pad: &PadBindings) -> PadBindings {
 
 #[cfg(test)]
 mod tests {
+
+    /// `#[serde(default)]` covers LOADING a config that lacks the key. It says
+    /// nothing about SAVING, and the TOML serializer emits an empty table for an
+    /// empty map — so a user who never opened the Latency Oracle would have had
+    /// their config rewritten with a bare `[input.latency_reports]` on the first
+    /// save after upgrading. Review on #414 caught the claim; this pins the fix.
+    ///
+    /// Both directions are asserted, because a `skip_serializing_if` that is too
+    /// eager would silently discard real measurements.
+    #[test]
+    fn an_empty_latency_map_is_not_written_but_a_populated_one_is() {
+        let empty = toml::to_string_pretty(&Config::default()).expect("serialize default");
+        assert!(
+            !empty.contains("latency_reports"),
+            "an empty map was written to the config, so an untouched file does \
+             not round-trip:\n{empty}"
+        );
+
+        let mut c = Config::default();
+        c.input.latency_reports.insert(
+            "deadbeef".to_owned(),
+            RememberedLatency {
+                frames: 3,
+                unanimous: true,
+                frame_micros: 16_639,
+            },
+        );
+        let filled = toml::to_string_pretty(&c).expect("serialize populated");
+        assert!(
+            filled.contains("latency_reports"),
+            "a real measurement was dropped on save:\n{filled}"
+        );
+        assert!(filled.contains("deadbeef"), "the ROM key was not written");
+    }
     use super::*;
     use tempfile::TempDir;
 

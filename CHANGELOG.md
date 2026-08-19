@@ -63,9 +63,11 @@ Post-v2.3.7 work, landed but not yet cut.
 
 - **A Latency Oracle measurement is remembered per game.** (#410.) Reopening a
   game shows what was measured last time instead of an empty panel, keyed on the
-  ROM SHA-256 in `[input]` — the same key shape `graphics.hd_packs` already
-  uses, `#[serde(default)]`, so a pre-existing config round-trips byte-identically
-  and a user who never opens the panel carries nothing.
+  ROM SHA-256 in `[input]` — the same key shape `graphics.hd_packs` already uses.
+  `#[serde(default)]` so an older config loads unchanged, plus
+  `skip_serializing_if` so the key stays out of the file until there is something
+  to store: a user who never opens the panel carries nothing and their config is
+  not rewritten.
 
   **Remembering is not applying.** Nothing here touches `run_ahead`, and
   restoring never queues a pending apply, so a depth measured in an earlier
