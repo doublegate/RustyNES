@@ -445,6 +445,24 @@ impl AudioProvenanceStash {
     pub const fn is_armed(&self) -> bool {
         self.state.is_some()
     }
+
+    /// The stashed per-CPU-cycle mix trace, or `None` when unarmed.
+    ///
+    /// v2.3.8 — read-only, so a detached stash can be inspected without being
+    /// put back into an emulator first. `rustynes-probe` captures a trial's
+    /// provenance precisely so it never touches a live `Nes` again; routing the
+    /// read through a scratch instance would undo that.
+    #[must_use]
+    pub fn mix_trace(&self) -> Option<&MixTrace> {
+        self.state.as_ref().map(|p| &p.mix_trace)
+    }
+
+    /// The stashed per-register write attribution, or `None` when unarmed.
+    /// Companion to [`Self::mix_trace`].
+    #[must_use]
+    pub fn register_attribution(&self) -> Option<&RegisterAttribution> {
+        self.state.as_ref().map(|p| &p.reg_attrib)
+    }
 }
 
 /// Everything audio provenance owns, behind ONE pointer.

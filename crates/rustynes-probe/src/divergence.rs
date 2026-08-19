@@ -38,6 +38,8 @@ use rustynes_core::rustynes_ppu::{FRAMEBUFFER_PIXELS, SCREEN_WIDTH};
 
 use crate::{Budget, Observable, Probe};
 use rustynes_core::Buttons;
+#[cfg(feature = "debug-hooks")]
+use rustynes_core::rustynes_apu::provenance::MixRecord;
 
 /// Where, within one frame, two configurations' output differs.
 ///
@@ -255,14 +257,163 @@ where
     )
 }
 
-/// Trials [`localise`] spends: two to detect, two to localise.
+/// Where, within one frame, two configurations' mixed audio first differs.
+///
+/// The audio counterpart of [`PixelDivergence`], and deliberately finer: the
+/// mix trace is per **CPU cycle**, so this localises to the cycle rather than to
+/// the frame. That is the sub-frame resolution work item B set out to reach, and
+/// it arrives for audio without bisection because the record already exists —
+/// once a trial is asked to keep one.
+#[cfg(feature = "debug-hooks")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AudioDivergence {
+    /// Zero-based frame index the divergence was detected at.
+    pub frame: u32,
+    /// Absolute CPU cycle of the first differing mixed sample.
+    pub cycle: u64,
+    /// What the baseline configuration mixed at that cycle.
+    pub baseline: MixRecord,
+    /// What the perturbed configuration mixed at that cycle.
+    pub variant: MixRecord,
+}
+
+/// The audio Lens's answer. Same three-way shape as [`Localisation`], and for
+/// the same reason: an exhausted budget is not an agreement.
+#[cfg(feature = "debug-hooks")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AudioLocalisation {
+    /// Both configurations mixed identically over every frame compared.
+    Identical,
+    /// They differ, at this cycle.
+    Differs(AudioDivergence),
+    /// The budget ran out, the two traces could not be aligned, or the coarse
+    /// detector and the per-cycle records disagree.
+    ///
+    /// **Not** a synonym for [`Self::Identical`].
+    Inconclusive,
+}
+
+/// Detect an audio divergence, then localise it to the CPU cycle that produced it.
+///
+/// Four trials: two to detect the frame under [`Observable::AudioEnergy`], two
+/// more that re-run to it **capturing their own provenance**. The captured mix
+/// traces are then compared record by record.
+///
+/// # Why the detector and the localiser look at different things
+///
+/// [`Observable::AudioEnergy`] is a quantised sum of `|amplitude|` over a frame —
+/// deliberately coarse, because exact float equality across a resampled stream
+/// would compare noise. It can therefore say *this frame sounds different* and
+/// nothing more. The mix trace is the opposite: exact, per cycle, and pre-
+/// decimation. Using the coarse instrument to find the frame and the exact one
+/// to find the cycle is the point of the split.
+///
+/// The cost of that split is that the two can disagree — a frame whose energy
+/// differs but whose records do not, or the reverse. That returns
+/// [`AudioLocalisation::Inconclusive`] rather than a guess: the two measurements
+/// disagreeing is a fact about this run, not an answer about the ROM.
+///
+/// # Panics
+///
+/// Panics if `nes` is running a different ROM than `probe`'s anchor.
+#[cfg(feature = "debug-hooks")]
+pub fn localise_audio<F, S>(
+    probe: &mut Probe,
+    nes: &mut Nes,
+    frames: u32,
+    mut setup: S,
+    mut input: F,
+) -> AudioLocalisation
+where
+    F: FnMut(u32) -> (Buttons, Buttons),
+    S: FnMut(&mut Nes),
+{
+    if probe.trials_remaining() < LOCALISE_TRIALS {
+        return AudioLocalisation::Inconclusive;
+    }
+
+    let Some(base) = probe.run(nes, frames, Observable::AudioEnergy, &mut input) else {
+        return AudioLocalisation::Inconclusive;
+    };
+    let Some(variant) =
+        probe.run_perturbed(nes, frames, Observable::AudioEnergy, &mut setup, &mut input)
+    else {
+        return AudioLocalisation::Inconclusive;
+    };
+    if base.len() != frames as usize || variant.len() != frames as usize {
+        return AudioLocalisation::Inconclusive;
+    }
+    let Some(n) = Probe::first_divergence(&base, &variant) else {
+        return AudioLocalisation::Identical;
+    };
+
+    let to = n + 1;
+    let Some((_, cap_a)) =
+        probe.run_capturing(nes, to, Observable::AudioEnergy, |_| {}, &mut input)
+    else {
+        return AudioLocalisation::Inconclusive;
+    };
+    let Some((_, cap_b)) =
+        probe.run_capturing(nes, to, Observable::AudioEnergy, &mut setup, &mut input)
+    else {
+        return AudioLocalisation::Inconclusive;
+    };
+
+    let (Some(ta), Some(tb)) = (cap_a.audio.mix_trace(), cap_b.audio.mix_trace()) else {
+        return AudioLocalisation::Inconclusive;
+    };
+
+    // The next two checks are fail-closed guards on the preconditions that make
+    // an index-wise comparison mean anything. **Neither is reachable under the
+    // current design, and neither is covered by a test** — a mutation deleting
+    // either one changes no observable behaviour, which was verified rather than
+    // assumed. They are kept because the preconditions are properties of code
+    // elsewhere, and a change there should surface as `Inconclusive` rather than
+    // as a confidently wrong cycle.
+    //
+    // Alignment: the trace is re-anchored at the start of every frame, so after
+    // a trial it holds frame `n` alone and `first_cycle` is that frame's first
+    // CPU cycle. Two trials replayed from the same anchor for the same number of
+    // frames therefore agree on it. If they ever did not, comparing by index
+    // would align cycle `k` of one against a different cycle of the other.
+    if ta.first_cycle() != tb.first_cycle() {
+        return AudioLocalisation::Inconclusive;
+    }
+    // Truncation: a truncated trace has silently dropped records, so "the first
+    // index that differs" stops being "the first cycle that differs". `MIX_CAP`
+    // is 36,864, sized for Dendy's 35,464-cycle frame — the worst case across
+    // every supported region — so one frame cannot overflow it today.
+    if ta.truncated() || tb.truncated() {
+        return AudioLocalisation::Inconclusive;
+    }
+
+    let (ra, rb) = (ta.records(), tb.records());
+    ra.iter().zip(rb.iter()).position(|(a, b)| a != b).map_or(
+        AudioLocalisation::Inconclusive,
+        |idx| {
+            AudioLocalisation::Differs(AudioDivergence {
+                frame: n,
+                // `idx` indexes a trace whose length is bounded by `MIX_CAP`, so
+                // the widening cannot lose information.
+                cycle: ta.first_cycle() + idx as u64,
+                baseline: ra[idx],
+                variant: rb[idx],
+            })
+        },
+    )
+}
+
+/// Trials one localisation spends: two to detect, two to localise.
+///
+/// The same figure for [`localise`] and `localise_audio`, because they are the
+/// same four-trial shape over different observables.
 ///
 /// Exported so a caller can size a [`Budget`] against the real cost instead of
 /// guessing, the same way `latency::budget_for` does. A ceiling with slack in it
 /// is not a ceiling.
 pub const LOCALISE_TRIALS: u32 = 4;
 
-/// A [`Budget`] that exactly admits one [`localise`] call over `frames` frames.
+/// A [`Budget`] that exactly admits one localisation over `frames` frames.
 #[must_use]
 pub const fn budget_for(frames: u32) -> Budget {
     Budget {
@@ -487,6 +638,110 @@ mod tests {
             LOCALISE_TRIALS - 1,
             "an up-front budget check must not spend trials before declining"
         );
+    }
+
+    /// An NROM that drives pulse 1's volume from work RAM, so poking one byte
+    /// changes what the APU mixes.
+    ///
+    /// ```text
+    /// $C000  LDA #$0F / STA $4015   ; enable the channels
+    /// $C005  LDA #$40 / STA $4002   ; pulse 1 timer low
+    /// $C00A  LDA #$08 / STA $4003   ; timer high + length load
+    /// $C00F  LDA $0000 / STA $4000  ; volume + duty from the perturbable byte
+    /// $C015  INC $0000
+    /// $C018  JMP $C00F
+    /// ```
+    #[cfg(feature = "debug-hooks")]
+    fn audio_wram_driven_nrom() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"NES\x1A");
+        bytes.push(1);
+        bytes.push(1);
+        bytes.push(0);
+        bytes.push(0);
+        bytes.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0u8; 16 * 1024];
+        prg[0..27].copy_from_slice(&[
+            0xA9, 0x0F, 0x8D, 0x15, 0x40, // LDA #$0F / STA $4015
+            0xA9, 0x40, 0x8D, 0x02, 0x40, // LDA #$40 / STA $4002
+            0xA9, 0x08, 0x8D, 0x03, 0x40, // LDA #$08 / STA $4003
+            0xAD, 0x00, 0x00, // LDA $0000
+            0x8D, 0x00, 0x40, // STA $4000
+            0xEE, 0x00, 0x00, // INC $0000
+            0x4C, 0x0F, 0xC0, // JMP $C00F
+        ]);
+        let len = prg.len();
+        prg[len - 6] = 0x00;
+        prg[len - 5] = 0xC0;
+        prg[len - 4] = 0x00;
+        prg[len - 3] = 0xC0;
+        prg[len - 2] = 0x00;
+        prg[len - 1] = 0xC0;
+        bytes.extend_from_slice(&prg);
+        bytes.extend_from_slice(&vec![0u8; 8 * 1024]);
+        bytes
+    }
+
+    #[cfg(feature = "debug-hooks")]
+    fn audio_warmed() -> Nes {
+        let mut n = Nes::from_rom(&audio_wram_driven_nrom()).expect("fixture parses");
+        for _ in 0..4 {
+            n.run_frame();
+        }
+        n
+    }
+
+    /// The audio Lens must resolve to a cycle, and the two records at that cycle
+    /// must actually differ — the claim, not a plausibility check around it.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn an_audio_perturbation_is_located_to_a_cycle() {
+        let mut n = audio_warmed();
+        let mut probe = Probe::anchor(&n, budget_for(10));
+
+        let got = localise_audio(&mut probe, &mut n, 10, |m| m.wram_mut()[0] ^= 0x0F, idle);
+
+        let AudioLocalisation::Differs(d) = got else {
+            panic!("expected a located audio divergence, got {got:?}");
+        };
+        assert_ne!(
+            d.baseline, d.variant,
+            "the located cycle's two records are equal, so it is not the cycle \
+             they diverge at"
+        );
+    }
+
+    /// The control, again. A Lens that reported a divergence unconditionally
+    /// would pass the test above.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn no_audio_perturbation_is_identical() {
+        let mut n = audio_warmed();
+        let mut probe = Probe::anchor(&n, budget_for(10));
+
+        assert_eq!(
+            localise_audio(&mut probe, &mut n, 10, |_| {}, idle),
+            AudioLocalisation::Identical
+        );
+    }
+
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn an_underfunded_audio_budget_is_inconclusive() {
+        let mut n = audio_warmed();
+        let mut probe = Probe::anchor(
+            &n,
+            Budget {
+                max_frames_per_trial: 10,
+                max_trials: LOCALISE_TRIALS - 1,
+            },
+        );
+
+        assert_eq!(
+            localise_audio(&mut probe, &mut n, 10, |m| m.wram_mut()[0] ^= 0x0F, idle),
+            AudioLocalisation::Inconclusive
+        );
+        assert_eq!(probe.trials_remaining(), LOCALISE_TRIALS - 1);
     }
 
     /// A truncated buffer is a caller error, and comparing the pixels that
