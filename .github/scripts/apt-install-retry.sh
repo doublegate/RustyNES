@@ -41,9 +41,28 @@ readonly UPDATE_TIMEOUT=180
 readonly INSTALL_TIMEOUT=300
 readonly ATTEMPTS=3
 
+# Elevation on the OUTSIDE, `timeout` on the inside. Review on #408 caught the
+# ordering and it is not cosmetic: with `timeout` outermost the SIGTERM goes to
+# the elevation helper, which may not forward it — leaving `apt-get` orphaned
+# while still holding the dpkg lock, so every subsequent retry fails on the lock
+# rather than on the original problem. A retry loop that guarantees its own
+# retries fail is worse than no retry loop at all.
+#
+# `DEBIAN_FRONTEND=noninteractive` for the same class of reason: a package that
+# prompts for configuration blocks on stdin that will never arrive in CI, burning
+# the whole timeout budget waiting for a human who is not there. Passed through
+# explicitly because the environment is scrubbed on elevation.
+#
+# Set via `env` rather than as a bare `VAR=value` argument to the elevation
+# helper. Both work on a standard GitHub runner (`ALL=(ALL) NOPASSWD:ALL`
+# implies the privilege), but the bare form additionally requires SETENV in
+# sudoers, so on a stricter host it fails outright — and it fails by refusing to
+# run at all, which would break the wrapper rather than degrade it. `env` is a
+# plain command and needs no such privilege. (Review on #409; both reviewers
+# raised it independently.)
 for attempt in $(seq 1 "$ATTEMPTS"); do
-    if timeout "$UPDATE_TIMEOUT" sudo apt-get update -qq &&
-        timeout "$INSTALL_TIMEOUT" sudo apt-get install -yq "$APT_PACKAGE"; then
+    if sudo env DEBIAN_FRONTEND=noninteractive timeout "$UPDATE_TIMEOUT" apt-get update -qq &&
+        sudo env DEBIAN_FRONTEND=noninteractive timeout "$INSTALL_TIMEOUT" apt-get install -yq "$APT_PACKAGE"; then
         echo "Installed ${APT_PACKAGE} on attempt ${attempt}."
         exit 0
     fi
