@@ -245,6 +245,23 @@ pub struct RenderPerf {
     /// observations were taken (a ROM is loaded and the arm ran twice).
     #[cfg(feature = "debug-hooks")]
     lock_gap_obs: u64,
+    /// v2.3.9 item C — produce-to-visible latency, one sample per presented
+    /// frame: from the emulation thread publishing the frame into the handoff to
+    /// the present that puts it on screen.
+    ///
+    /// **A real series, not a sum.** The end-to-end figure needs `work + lock +
+    /// wait` plus the frame's wait in the handoff, and those are separate
+    /// percentile series — adding two p95s is not the p95 of the sum, the same
+    /// defect `work` exists to avoid, in the addition direction rather than the
+    /// subtraction one. A distribution can only be built from per-sample totals,
+    /// so the total is measured per sample.
+    ///
+    /// Only the lock-free handoff path contributes. That is the only path where
+    /// a frame crosses a thread boundary and can therefore wait; on the
+    /// lock-holding path the frame is copied and presented inside one redraw,
+    /// so there is no queueing to measure and a sample would describe something
+    /// else.
+    present_lat: SampleRing,
     /// v2.3.3 — CPU time actually CONSUMED across the `work` span.
     ///
     /// `work` is wall time, so it cannot tell 27 ms of computation from 27 ms
@@ -279,6 +296,8 @@ pub struct RenderStats {
     pub total: IntervalStats,
     /// Blocking present alone.
     pub wait: IntervalStats,
+    /// v2.3.9 — produce-to-visible latency, one sample per presented frame.
+    pub present_lat: IntervalStats,
     /// `total - wait - lock`.
     pub work: IntervalStats,
     /// Emulator-mutex blocking on the winit thread.
@@ -346,11 +365,22 @@ impl RenderPerf {
             work: self.work.stats(),
             lock: self.lock.stats(),
             cpu: self.cpu.stats(),
+            present_lat: self.present_lat.stats(),
             #[cfg(feature = "debug-hooks")]
             lock_gap_hits: self.lock_gap_hits,
             #[cfg(feature = "debug-hooks")]
             lock_gap_obs: self.lock_gap_obs,
         }
+    }
+
+    /// v2.3.9 item C — record one presented frame's produce-to-visible latency.
+    ///
+    /// Called only when this redraw actually took a NEW frame from the handoff.
+    /// A redraw that re-presents the previous frame contributes nothing: its age
+    /// would be measured from a publish two redraws ago and would describe the
+    /// display's cadence rather than the pipeline's latency.
+    pub fn record_present_latency(&mut self, d: Duration) {
+        self.present_lat.push(d.as_secs_f32() * 1000.0);
     }
 
     /// v2.3.9 item B — record one redraw's two-acquisition observation.
@@ -384,6 +414,7 @@ impl RenderPerf {
         self.work.clear();
         self.lock.clear();
         self.cpu.clear();
+        self.present_lat.clear();
         // v2.3.9 — and the lock-gap counters, for exactly the reason the `wait`
         // comment above gives. A rate is a ratio over a population; carrying the
         // numerator and denominator across a ROM change or a pacing-regime
