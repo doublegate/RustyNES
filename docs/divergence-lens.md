@@ -201,13 +201,52 @@ is the failure mode this project has been bitten by repeatedly — see
 `docs/pixel-provenance.md`, where prose asserting an intent is what stopped
 anyone checking the code against it for four releases.
 
+## Why bisection was not built
+
+Work item B framed sub-frame localisation as a choice between two mechanisms:
+bisect the frame over ~17 partial re-runs, or read the per-cycle records that
+already exist. It asked for the cheap one to be proved viable before either was
+written.
+
+Proving it produced a **third** answer. For audio, riding the records works
+directly and resolves to a CPU cycle. For pixels, it does something better than
+bisection rather than cheaper: `localise_explained` returns the diverging pixel's
+`PixelProvenance` from **both** configurations, so the answer is *which causal
+input differs* — the winning layer, the pattern row, the nametable and attribute
+addresses, the palette entry, the emphasis mask — rather than *at which cycle the
+two runs parted*.
+
+That is the question a user chasing a rendering bug actually has. A cycle index
+says when; a differing `pattern_addr` says the two runs fetched different tile
+data, which is a lead. Bisection would have cost ~17 extra trials to produce the
+weaker answer.
+
+**Bisection is therefore not implemented, and that is a decision rather than an
+omission.** It remains the only route in a build without `debug-hooks`, where
+capture cannot exist at all. If a case appears where the cycle genuinely is the
+question — two runs whose causal inputs are identical but whose timing differs —
+bisection is the mechanism to reach for, and this section is the record of why it
+was not needed first.
+
+### A doc claim this section had to retract
+
+`differing_fields` was documented as possibly empty at a located pixel, on the
+reasoning that a colour could differ "through emphasis or greyscale rather than
+through anything in the causal chain". That is wrong. An index-framebuffer entry
+is `(emphasis << 6) | colour`, so if two entries differ then either the colour
+differs — reported as `color` — or the emphasis bits do, and those are carried in
+`color_mask`. There is no third way for the entry to change.
+
+The distinction is load-bearing rather than pedantic: under the permissive
+reading, an empty result is a legitimate outcome to render. Under the correct
+one, it means the two records did not come from the two configurations, which is
+a defect. A mutation that read both records from the same trial was caught only
+after the assertion was tightened to match.
+
 ## What the Lens deliberately does not do
 
-- **It does not localise a pixel divergence within the frame.** Frame `N` is
-  where the two differ by the end of the frame; the PPU rendered it over 89,342
-  cycles. Cycle bisection remains the fallback mechanism, and the only option in
-  a build without `debug-hooks`, where capture cannot exist. Whether it is worth
-  building is a measurement still to make.
+- **It does not bisect the frame for a pixel divergence, and it turns out it
+  does not need to.** See "Why bisection was not built" below.
 - **It does not compare two ROMs, or two differently configured instances.** The
   index-framebuffer argument above depends on one shared palette, and the trial
   engine asserts both sides run the same ROM.

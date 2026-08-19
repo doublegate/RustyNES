@@ -40,6 +40,8 @@ use crate::{Budget, Observable, Probe};
 use rustynes_core::Buttons;
 #[cfg(feature = "debug-hooks")]
 use rustynes_core::rustynes_apu::provenance::MixRecord;
+#[cfg(feature = "debug-hooks")]
+use rustynes_core::rustynes_ppu::provenance::PixelProvenance;
 
 /// Where, within one frame, two configurations' output differs.
 ///
@@ -466,6 +468,182 @@ where
     )
 }
 
+/// Why a located pixel differs — the causal inputs the two configurations
+/// disagree about.
+///
+/// This is item B's answer for the pixel path, and it is a **different** answer
+/// than the one the plan expected. Bisecting the frame would report *when* the
+/// two runs diverged, to a cycle. Reading the per-pixel record instead reports
+/// *what* differs about the pixel and therefore *who* wrote it — which tile,
+/// which pattern row, which palette entry, which layer won. A user chasing a
+/// rendering bug acts on the second and not the first.
+#[cfg(feature = "debug-hooks")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PixelCause {
+    /// The pixel this describes, as `(x, y)`.
+    pub pixel: (u16, u16),
+    /// The baseline configuration's record for it.
+    pub baseline: PixelProvenance,
+    /// The perturbed configuration's record for it.
+    pub variant: PixelProvenance,
+}
+
+#[cfg(feature = "debug-hooks")]
+impl PixelCause {
+    /// Names of the causal fields the two records disagree about, in the order
+    /// a reader should consider them: what was drawn, then where it came from,
+    /// then how it was coloured.
+    ///
+    /// Returned as names rather than a bitfield because the set is small, the
+    /// consumer is a panel, and a name survives a field being added in a way an
+    /// index does not.
+    ///
+    /// **At a pixel the index-framebuffer diff flagged, this cannot be empty**,
+    /// and that is worth stating because the first draft of this doc claimed the
+    /// opposite. An index-framebuffer entry is `(emphasis << 6) | colour`, so if
+    /// two entries differ then either the colour differs — reported as `color` —
+    /// or the emphasis bits do, and those live in `color_mask`. There is no
+    /// third way for the entry to change.
+    ///
+    /// So an empty result from a located divergence means the two records did
+    /// not come from the two configurations, which is a defect rather than a
+    /// finding. It is empty for *equal* records, which is why the pure test
+    /// covers that case directly.
+    #[must_use]
+    pub fn differing_fields(&self) -> Vec<&'static str> {
+        let (a, b) = (&self.baseline, &self.variant);
+        let mut out = Vec::new();
+        if a.layer != b.layer {
+            out.push("layer");
+        }
+        if a.pattern_addr != b.pattern_addr {
+            out.push("pattern_addr");
+        }
+        if a.nt_addr != b.nt_addr {
+            out.push("nt_addr");
+        }
+        if a.at_addr != b.at_addr {
+            out.push("at_addr");
+        }
+        if a.palette_addr != b.palette_addr {
+            out.push("palette_addr");
+        }
+        if a.palette_index != b.palette_index {
+            out.push("palette_index");
+        }
+        if a.color != b.color {
+            out.push("color");
+        }
+        if a.color_mask != b.color_mask {
+            out.push("color_mask");
+        }
+        if a.scanline != b.scanline || a.dot != b.dot {
+            out.push("emit_position");
+        }
+        out
+    }
+}
+
+/// Localise a divergence to pixels **and** explain the first one.
+///
+/// Same four trials as [`localise`]; the two localisation trials additionally
+/// capture their own provenance, so the causal record for the diverging pixel
+/// comes back with the divergence rather than requiring a fifth and sixth run.
+///
+/// The [`PixelCause`] is `None` when either trial's store has no record for that
+/// pixel — which happens legitimately, since the store is per frame and a pixel
+/// the PPU never emitted has nothing to report. `None` here means "no record",
+/// never "no difference".
+///
+/// # Panics
+///
+/// Panics if `nes` is running a different ROM than `probe`'s anchor.
+#[cfg(feature = "debug-hooks")]
+pub fn localise_explained<F, S>(
+    probe: &mut Probe,
+    nes: &mut Nes,
+    frames: u32,
+    setup: S,
+    input: F,
+) -> (Localisation, Option<PixelCause>)
+where
+    F: FnMut(u32) -> (Buttons, Buttons),
+    S: FnMut(&mut Nes),
+{
+    in_place(nes, |n| explained_inner(probe, n, frames, setup, input))
+}
+
+#[cfg(feature = "debug-hooks")]
+fn explained_inner<F, S>(
+    probe: &mut Probe,
+    nes: &mut Nes,
+    frames: u32,
+    mut setup: S,
+    mut input: F,
+) -> (Localisation, Option<PixelCause>)
+where
+    F: FnMut(u32) -> (Buttons, Buttons),
+    S: FnMut(&mut Nes),
+{
+    if probe.trials_remaining() < LOCALISE_TRIALS {
+        return (Localisation::Inconclusive, None);
+    }
+    let Some(base) = probe.run(nes, frames, Observable::IndexFramebuffer, &mut input) else {
+        return (Localisation::Inconclusive, None);
+    };
+    let Some(variant) = probe.run_perturbed(
+        nes,
+        frames,
+        Observable::IndexFramebuffer,
+        &mut setup,
+        &mut input,
+    ) else {
+        return (Localisation::Inconclusive, None);
+    };
+    if base.len() != frames as usize || variant.len() != frames as usize {
+        return (Localisation::Inconclusive, None);
+    }
+    let Some(n) = Probe::first_divergence(&base, &variant) else {
+        return (Localisation::Identical, None);
+    };
+
+    let to = n + 1;
+    let Some((_, cap_a)) =
+        probe.run_capturing(nes, to, Observable::IndexFramebuffer, |_| {}, &mut input)
+    else {
+        return (Localisation::Inconclusive, None);
+    };
+    let frame_a = nes.index_framebuffer().to_vec();
+    let Some((_, cap_b)) = probe.run_capturing(
+        nes,
+        to,
+        Observable::IndexFramebuffer,
+        &mut setup,
+        &mut input,
+    ) else {
+        return (Localisation::Inconclusive, None);
+    };
+    let frame_b = nes.index_framebuffer();
+
+    let Some(d) = diff_index_frames(n, &frame_a, frame_b) else {
+        return (Localisation::Inconclusive, None);
+    };
+
+    let (x, y) = (d.first.0 as usize, d.first.1 as usize);
+    let cause = cap_a
+        .pixel
+        .pixel_frame()
+        .and_then(|f| f.get(x, y))
+        .zip(cap_b.pixel.pixel_frame().and_then(|f| f.get(x, y)))
+        .map(|(baseline, variant)| PixelCause {
+            pixel: d.first,
+            baseline,
+            variant,
+        });
+
+    (Localisation::Differs(d), cause)
+}
+
 /// Trials one localisation spends: two to detect, two to localise.
 ///
 /// The same figure for [`localise`] and `localise_audio`, because they are the
@@ -726,6 +904,87 @@ mod tests {
             .get(0x4000)
             .expect("the caller's attribution survived the Lens");
         assert_eq!(before, after, "the Lens rewrote the caller's provenance");
+    }
+
+    /// The explained path must agree with the plain one about the divergence
+    /// itself, and additionally return a cause.
+    ///
+    /// Asserted as agreement rather than in isolation, because two functions
+    /// that localise the same thing differently is a worse defect than either
+    /// being wrong alone — and the explained path re-implements the same
+    /// sequence with capturing trials, which is exactly where a copy drifts.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn the_explained_path_agrees_with_the_plain_one() {
+        let perturb = |m: &mut Nes| m.wram_mut()[0] ^= 0xFF;
+
+        let mut n1 = warmed();
+        let mut p1 = Probe::anchor(&n1, budget_for(12));
+        let plain = localise(&mut p1, &mut n1, 12, perturb, idle);
+
+        let mut n2 = warmed();
+        let mut p2 = Probe::anchor(&n2, budget_for(12));
+        let (explained, cause) = localise_explained(&mut p2, &mut n2, 12, perturb, idle);
+
+        assert_eq!(
+            plain, explained,
+            "the explained path localised differently from the plain one"
+        );
+        let Localisation::Differs(d) = explained else {
+            panic!("expected a divergence, got {explained:?}");
+        };
+        let cause = cause.expect("the diverging pixel has a provenance record");
+        assert_eq!(
+            cause.pixel, d.first,
+            "the cause must describe the pixel the divergence named"
+        );
+
+        // The two records must come from the two DIFFERENT configurations, and
+        // asserting only "a cause exists" does not check that: reading both from
+        // the same trial yields a perfectly well-formed cause whose records are
+        // identical. Found by mutation — swapping the baseline read to the
+        // variant trial failed nothing until this assertion was added.
+        //
+        // Non-empty is guaranteed here rather than hoped for: the diff that
+        // located this pixel compares `(emphasis << 6) | colour`, so a differing
+        // entry means `color` or `color_mask` differs. There is no third way.
+        let fields = cause.differing_fields();
+        assert!(
+            fields.contains(&"color") || fields.contains(&"color_mask"),
+            "a located pixel must differ in colour or emphasis; got {fields:?}, \
+             which means both records came from the same trial"
+        );
+    }
+
+    /// `differing_fields` must name what actually differs and nothing else.
+    ///
+    /// Built from two records that differ in exactly one field, so a function
+    /// that returned every name — or none — fails. The empty case is asserted
+    /// separately because it is a legitimate outcome the caller has to render,
+    /// not an impossible one.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn differing_fields_names_exactly_what_differs() {
+        let base = PixelProvenance::default();
+        let mut other = base;
+        other.palette_index = base.palette_index.wrapping_add(1);
+        let cause = PixelCause {
+            pixel: (1, 1),
+            baseline: base,
+            variant: other,
+        };
+        assert_eq!(cause.differing_fields(), vec!["palette_index"]);
+
+        let same = PixelCause {
+            pixel: (1, 1),
+            baseline: base,
+            variant: base,
+        };
+        assert!(
+            same.differing_fields().is_empty(),
+            "identical records must report no differing fields; an empty result \
+             is a legitimate answer, not a failure"
+        );
     }
 
     /// The control. Without it, a Lens that reported a divergence unconditionally

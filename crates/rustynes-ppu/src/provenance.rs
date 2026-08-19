@@ -455,6 +455,18 @@ impl ProvenanceStash {
     pub const fn is_armed(&self) -> bool {
         self.prov_armed || self.write_attrib.is_some()
     }
+
+    /// The stashed per-pixel provenance frame, or `None` when unarmed.
+    ///
+    /// v2.3.8 — read-only, so a detached stash can be inspected without being
+    /// put back into an emulator first. The Divergence Lens captures a trial's
+    /// provenance precisely so it never touches a live `Nes` again; routing the
+    /// read through a scratch instance would undo that. Mirrors
+    /// `rustynes_apu::provenance::AudioProvenanceStash::mix_trace`.
+    #[must_use]
+    pub fn pixel_frame(&self) -> Option<&PixelProvenanceFrame> {
+        self.prov_frame.as_deref()
+    }
 }
 
 #[cfg(test)]
