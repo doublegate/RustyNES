@@ -9461,8 +9461,18 @@ impl ApplicationHandler<AppEvent> for App {
                 // so a narrower scope would not reach `record_redraw`. Set only on
                 // the lock-free handoff path — the only path where a frame crosses a
                 // thread boundary and can therefore wait.
+                //
+                // Deliberately UNANNOTATED. The type comes from `take_into`,
+                // which returns `web_time::Instant` — the crate's Instant
+                // everywhere in this file. Writing `Option<std::time::Instant>`
+                // here compiles only because `web_time` re-exports std's type on
+                // native, and this line is native-only; naming std's type would
+                // be a second, coincidentally-equal spelling of one thing.
+                // (Review on #412 proposed the inference form. Its stated reason
+                // was that the annotation fails to build — it does not — but the
+                // suggestion is right for this reason instead.)
                 #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
-                let mut present_stamp: Option<std::time::Instant> = None;
+                let mut present_stamp = None;
 
                 // v2.8.0 Phase 2 — display-sync regime (native): produce
                 // exactly one emulated frame per redraw, BEFORE presenting.

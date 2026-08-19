@@ -158,9 +158,18 @@ impl PresentBuffer {
 
     /// Consumer: if a new frame was published since the last call, swap it
     /// into the front slot and copy it into `out` (the present-staging buffer
-    /// the GPU uploads). Returns `true` when `out` was refreshed with a new
-    /// frame, `false` when there was nothing new (the caller keeps the
-    /// previously presented `out` — the display simply re-presents it).
+    /// the GPU uploads).
+    ///
+    /// Returns `Some(stamp)` when `out` was refreshed, where `stamp` is the
+    /// instant the emulation thread **published that frame** — carried per slot
+    /// so it travels with the frame it describes. Returns `None` when there was
+    /// nothing new, in which case the caller keeps the previously presented
+    /// `out` and the display simply re-presents it.
+    ///
+    /// The stamp is what makes a produce-to-visible measurement a real
+    /// distribution: the consumer records `stamp.elapsed()` after the present,
+    /// so one sample spans the whole pipeline rather than being assembled by
+    /// summing percentiles of its parts.
     pub fn take_into(&self, out: &mut Vec<u8>) -> Option<Instant> {
         // Cheap pre-check off the lock; the authoritative check is under it.
         if !self.has_new.load(Ordering::Relaxed) {
@@ -232,7 +241,7 @@ mod tests {
         let mut out = Vec::new();
         assert!(pb.take_into(&mut out).is_some());
         assert_eq!(out, frame);
-        // No new frame -> take returns false and leaves `out` intact.
+        // No new frame -> take returns `None` and leaves `out` intact.
         assert!(pb.take_into(&mut out).is_none());
         assert_eq!(out, frame);
     }
