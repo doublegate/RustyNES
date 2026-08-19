@@ -117,9 +117,15 @@ readonly ATTEMPTS=2
 # run at all, which would break the wrapper rather than degrade it. `env` is a
 # plain command and needs no such privilege. (Review on #409; both reviewers
 # raised it independently.)
+# `--` before the package name so a value beginning with a hyphen is treated as
+# an operand rather than as an option. `APT_PACKAGE` comes from a workflow `env:`
+# block and never from event data, so this is not closing a live injection path;
+# it is one token that makes the guarantee structural instead of dependent on
+# every future caller remembering where the value came from. (Both reviewers
+# raised it on #417.)
 apt_install() {
     sudo env DEBIAN_FRONTEND=noninteractive timeout "$INSTALL_TIMEOUT" \
-        apt-get install -yq --no-install-recommends "$APT_PACKAGE"
+        apt-get install -yq --no-install-recommends -- "$APT_PACKAGE"
 }
 
 apt_update() {
