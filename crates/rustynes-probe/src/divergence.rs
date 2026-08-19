@@ -26,12 +26,35 @@
 //! separate instances configured differently, and a future two-instance lens
 //! must revisit this rather than inherit it.
 //!
-//! # What this deliberately does not do
+//! # Sub-frame resolution: audio yes, pixels no
 //!
-//! It does not localise **within** a frame. Frame `N` is where the two differ by
-//! the end of the frame; the PPU rendered it over 89,342 cycles, and narrowing
-//! to the cycle is a separate mechanism with its own cost argument. See
-//! `to-dos/plans/v2.3.8-parallax-plan.md` item B.
+//! (Plain code spans, not intra-doc links: both items are `debug-hooks`-gated,
+//! so a default `cargo doc` cannot resolve them and the `-D warnings` gate
+//! fails. The same trap the workspace records for feature-only dependencies.)
+//!
+//! `localise_audio` **does** narrow below the frame, to an absolute CPU cycle,
+//! because the mix trace already records one entry per cycle once a trial is
+//! asked to capture it.
+//!
+//! The pixel path does not, and does not need to. Frame `N` is where the two
+//! differ by the end of the frame, and the PPU rendered it over 89,342 cycles —
+//! but `localise_explained` answers *which causal input differs* rather than
+//! *at which cycle they parted*, which is the question a rendering bug actually
+//! poses. Cycle bisection remains the fallback and the only route without
+//! `debug-hooks`. See `to-dos/plans/v2.3.8-parallax-plan.md` item B.
+//!
+//! # The `input` closure must be a pure function of the frame index
+//!
+//! Every entry point here runs **four** trials and passes the same `input`
+//! closure to each. The engine's whole licence to attribute a divergence to
+//! `setup` rests on `setup` being the only difference between two trials — so a
+//! closure carrying state across calls (a counter, an iterator, an RNG) breaks
+//! that silently: the baseline and the variant would receive different input
+//! sequences and the reported divergence would be attributable to either.
+//!
+//! Depend only on the `u32` frame index passed in. This cannot be enforced by
+//! the type system — `FnMut` is what lets a caller hold a buffer — so it is
+//! stated here and repeated on each entry point. (Raised in review on #407.)
 
 use rustynes_core::Nes;
 use rustynes_core::rustynes_ppu::{FRAMEBUFFER_PIXELS, SCREEN_WIDTH};
@@ -170,6 +193,8 @@ pub fn diff_index_frames(frame: u32, a: &[u16], b: &[u16]) -> Option<PixelDiverg
 /// between the two — the same contract, and the same licence to attribute a
 /// difference to it, that
 /// [`Probe::run_perturbed`](crate::Probe::run_perturbed) documents.
+///
+/// `input` must be a pure function of the frame index — see the module docs.
 ///
 /// # Panics
 ///

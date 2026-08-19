@@ -1,8 +1,9 @@
 # The Divergence Lens
 
-**Status:** v2.3.8 "Parallax". Core mechanism landed in `crates/rustynes-probe`;
-the panel surface is tracked separately. `debug-hooks` is required for the audio
-path and for capture; the pixel path works without it.
+**Status:** v2.3.8 "Parallax". Core mechanism in `crates/rustynes-probe`, surfaced
+at **Tools → Divergence Lens** (`debug-hooks`-gated, like its two predecessors).
+`debug-hooks` is required for the audio path and for provenance capture; the
+pixel-diff path works without it.
 
 ## The gap this closes
 
