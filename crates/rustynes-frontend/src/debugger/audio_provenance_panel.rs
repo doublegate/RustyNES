@@ -24,6 +24,7 @@
 
 use crate::debugger::source_map::SourceMap;
 use rustynes_core::Nes;
+use rustynes_core::rustynes_apu::provenance::{REG_BASE, REG_COUNT_U16};
 
 /// The APU register names, indexed from `$4000`.
 ///
@@ -287,8 +288,20 @@ pub fn show(
                             ui.label(egui::RichText::new("Written by").strong());
                             ui.end_row();
 
-                            for (i, name) in REG_NAMES.iter().enumerate() {
-                                let addr = 0x4000 + u16::try_from(i).unwrap_or(0);
+                            // Iterate the ADDRESS, not an index needing a cast.
+                            // The previous form was `0x4000 +
+                            // u16::try_from(i).unwrap_or(0)`, whose fallback
+                            // would silently fold an out-of-range index onto
+                            // `$4000` -- a wrong row rather than an absent one,
+                            // in a panel whose entire job is not to answer
+                            // wrongly. Zipping the address range against the
+                            // name table makes the bad case unrepresentable
+                            // instead of merely unlikely, and avoids an `as`
+                            // cast the workspace lints deny. (Review suggestion,
+                            // taken further than proposed.)
+                            for (off, name) in (0..REG_COUNT_U16).zip(REG_NAMES.iter()) {
+                                let i = usize::from(off);
+                                let addr = REG_BASE + off;
                                 let Some(w) = attrib.get(addr) else {
                                     continue;
                                 };
