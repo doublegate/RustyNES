@@ -7275,6 +7275,11 @@ impl App {
         perf_view.render_work = r.work;
         perf_view.render_lock = r.lock;
         perf_view.render_cpu = r.cpu;
+        #[cfg(feature = "debug-hooks")]
+        {
+            perf_view.lock_gap_hits = r.lock_gap_hits;
+            perf_view.lock_gap_obs = r.lock_gap_obs;
+        }
         // F16 — how many frames the compositor composited but never scanned
         // out, cumulative. A rising count means THIS SURFACE IS NOT BEING SHOWN;
         // it is the signal that distinguishes that from "this compositor reports
@@ -9726,9 +9731,19 @@ impl ApplicationHandler<AppEvent> for App {
                     // scope mirrors the common `else` branch exactly; the only reason
                     // this branch later re-takes the lock is that the debugger pass
                     // needs a live `&mut Nes`, which the common branch does not.
+                    // v2.3.9 item B — the emulator's cumulative cycle at the moment
+                    // the framebuffer the user will SEE is copied. Declared out here
+                    // so it outlives the scoped guard below and can be compared at
+                    // the egui pass; see `RenderPerf::record_lock_gap`.
+                    #[cfg(feature = "debug-hooks")]
+                    let cycle_at_fb: Option<u64>;
                     {
                         let mut guard = self.emu.lock_timed(&mut lock_wait);
                         let emu = &mut *guard;
+                        #[cfg(feature = "debug-hooks")]
+                        {
+                            cycle_at_fb = emu.nes.as_ref().map(rustynes_core::Nes::cycle);
+                        }
                         // Backfill the presented framebuffer into staging under the
                         // held lock (a ROM may or may not be loaded). The debugger
                         // panels read `nes` from the re-acquired lock below. v1.7.1
@@ -9942,6 +9957,22 @@ impl ApplicationHandler<AppEvent> for App {
                         // fold producer blocking into the UI phase, which is the
                         // same defect the F8 wait clock had.
                         let mut guard = self.emu.lock_timed(&mut lock_wait);
+                        // v2.3.9 item B — did the emulation thread take the lock
+                        // in the gap since the framebuffer copy? Recorded BEFORE
+                        // `run_shell_ui`, because that is the read whose
+                        // consistency with the presented frame is in question.
+                        // Both sides must be `Some` for the comparison to mean
+                        // anything: a redraw with no ROM loaded is not an
+                        // observation, and counting it would dilute the rate
+                        // toward zero — the denominator has to be redraws where
+                        // the race COULD have fired.
+                        #[cfg(feature = "debug-hooks")]
+                        if let (Some(before), Some(now)) = (
+                            cycle_at_fb,
+                            guard.nes.as_ref().map(rustynes_core::Nes::cycle),
+                        ) {
+                            self.render_perf.record_lock_gap(before != now);
+                        }
                         #[cfg(not(target_arch = "wasm32"))]
                         let t_ui = Instant::now();
                         let nes_for_render = guard.nes.as_mut();

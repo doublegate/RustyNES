@@ -220,6 +220,31 @@ pub struct RenderPerf {
     /// Subtracted out of `work` so that series finally means work alone:
     /// `work = total - wait - lock`.
     lock: SampleRing,
+    /// v2.3.9 item B — redraws where the emulator advanced BETWEEN the
+    /// framebuffer copy and the egui pass, and the total observed.
+    ///
+    /// The `needs_nes` render arm — taken exactly when a debugger or tool panel
+    /// is open — acquires the emulator lock TWICE per redraw: once to copy the
+    /// framebuffer the user will see, and again sixty lines later for
+    /// `run_shell_ui`, where panels read `&mut Nes`. The guard is dropped
+    /// between them so the composite work does not hold the emulator.
+    ///
+    /// If the emulation thread takes the lock in that gap, the screen shows
+    /// frame `N` while a panel describes `N+1` — which would be a confidently
+    /// wrong answer in Pixel Provenance, whose whole purpose is explaining the
+    /// pixel you are looking at.
+    ///
+    /// Counted rather than assumed. The plan recorded it as a hypothesis from
+    /// reading the lock structure, and this line has already retracted one
+    /// conclusion drawn from reading rather than measuring, so it is measured:
+    /// `hits` non-zero confirms the race fires, zero over a long capture with a
+    /// panel open bounds it.
+    #[cfg(feature = "debug-hooks")]
+    lock_gap_hits: u64,
+    /// Denominator for [`Self::lock_gap_hits`] — redraws where both
+    /// observations were taken (a ROM is loaded and the arm ran twice).
+    #[cfg(feature = "debug-hooks")]
+    lock_gap_obs: u64,
     /// v2.3.3 — CPU time actually CONSUMED across the `work` span.
     ///
     /// `work` is wall time, so it cannot tell 27 ms of computation from 27 ms
@@ -239,6 +264,13 @@ pub struct RenderPerf {
 /// theoretical risk.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RenderStats {
+    /// v2.3.9 item B — redraws where the emulator advanced between the
+    /// framebuffer copy and the egui pass. See `RenderPerf::record_lock_gap`.
+    #[cfg(feature = "debug-hooks")]
+    pub lock_gap_hits: u64,
+    /// Denominator for [`Self::lock_gap_hits`].
+    #[cfg(feature = "debug-hooks")]
+    pub lock_gap_obs: u64,
     /// egui shell build.
     pub ui: IntervalStats,
     /// GPU encode + submit + present.
@@ -314,6 +346,24 @@ impl RenderPerf {
             work: self.work.stats(),
             lock: self.lock.stats(),
             cpu: self.cpu.stats(),
+            #[cfg(feature = "debug-hooks")]
+            lock_gap_hits: self.lock_gap_hits,
+            #[cfg(feature = "debug-hooks")]
+            lock_gap_obs: self.lock_gap_obs,
+        }
+    }
+
+    /// v2.3.9 item B — record one redraw's two-acquisition observation.
+    ///
+    /// `advanced` is whether `Nes::cycle()` differed between the framebuffer
+    /// copy and the egui pass. The cycle counter is cumulative and monotonic,
+    /// and `produce_one_frame` holds the lock across a WHOLE frame, so any
+    /// change at all means at least one complete frame landed in the gap.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn record_lock_gap(&mut self, advanced: bool) {
+        self.lock_gap_obs = self.lock_gap_obs.saturating_add(1);
+        if advanced {
+            self.lock_gap_hits = self.lock_gap_hits.saturating_add(1);
         }
     }
 
@@ -688,6 +738,15 @@ pub struct PerfView {
     /// v2.3.3 F15 — interval between display-tick sends, milliseconds. See
     /// `PerfStats::tick_iv`.
     pub tick_iv: IntervalStats,
+    /// v2.3.9 item B — redraws where the emulator advanced between the
+    /// framebuffer copy and the egui pass, and the total observed. See
+    /// `RenderPerf::record_lock_gap` (plain code span: the method is
+    /// `debug-hooks`-gated, so a default doc build cannot resolve a link).
+    #[cfg(feature = "debug-hooks")]
+    pub lock_gap_hits: u64,
+    /// Denominator for [`Self::lock_gap_hits`].
+    #[cfg(feature = "debug-hooks")]
+    pub lock_gap_obs: u64,
     /// v2.3.3 — egui shell build cost (winit thread). See [`RenderPerf`].
     pub render_ui: IntervalStats,
     /// v2.3.3 — GPU encode + present cost (winit thread). See [`RenderPerf`].
@@ -826,6 +885,32 @@ pub struct PerfView {
     /// feature K — the most-recent produced-frame interval samples (ms,
     /// oldest-first) plotted as a secondary, fainter line.
     pub recent_produced_ms: Vec<f32>,
+}
+
+#[cfg(all(test, feature = "debug-hooks"))]
+mod lock_gap_tests {
+    use super::RenderPerf;
+
+    /// The counter must distinguish "the race did not fire" from "nothing was
+    /// observed". Both read as zero hits, and only the denominator separates
+    /// them — which is the whole reason a rate is reported rather than a count.
+    #[test]
+    fn an_unobserved_redraw_is_not_a_clean_one() {
+        let p = RenderPerf::default();
+        let s = p.stats();
+        assert_eq!((s.lock_gap_hits, s.lock_gap_obs), (0, 0));
+    }
+
+    #[test]
+    fn hits_and_observations_are_counted_separately() {
+        let mut p = RenderPerf::default();
+        p.record_lock_gap(false);
+        p.record_lock_gap(true);
+        p.record_lock_gap(false);
+        let s = p.stats();
+        assert_eq!(s.lock_gap_obs, 3, "every observation counts");
+        assert_eq!(s.lock_gap_hits, 1, "only the advancing redraw is a hit");
+    }
 }
 
 #[cfg(test)]

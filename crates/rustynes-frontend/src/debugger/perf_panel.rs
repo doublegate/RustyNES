@@ -258,6 +258,44 @@ pub fn show(
                     stats_row(ui, "produce cost", &v.produce_cost, v.target_ms);
                 });
 
+            // v2.3.9 item B — the two-acquisition race, MEASURED.
+            //
+            // The `needs_nes` render arm takes the emulator lock twice per
+            // redraw: once for the framebuffer the user sees, again for the egui
+            // pass where panels read `&mut Nes`. If the emulation thread takes it
+            // in between, the screen shows one frame while a panel describes the
+            // next — which in Pixel Provenance would be a confidently wrong
+            // answer.
+            //
+            // Shown as a rate rather than a verdict. Zero over a long capture
+            // BOUNDS the race; it does not prove absence, and the label says so
+            // rather than letting a reader infer it.
+            #[cfg(feature = "debug-hooks")]
+            if v.lock_gap_obs > 0 {
+                ui.separator();
+                // Percentage of observations, computed in f64 so a long capture
+                // does not lose precision the way an f32 ratio would.
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "display-only ratio; u64 counts here are far below 2^53"
+                )]
+                let pct = (v.lock_gap_hits as f64) * 100.0 / (v.lock_gap_obs as f64);
+                ui.label(egui::RichText::new("panel/screen frame skew").strong());
+                ui.label(format!(
+                    "{} of {} redraws ({pct:.1}%)",
+                    v.lock_gap_hits, v.lock_gap_obs
+                ))
+                .on_hover_text(
+                    "Redraws where the emulator advanced between the framebuffer \
+                     copy and the panel read, so a debugger panel described a \
+                     LATER frame than the one on screen. Counted only while a \
+                     panel that needs `&mut Nes` is open and a ROM is loaded — \
+                     that is when the race can fire at all. A zero here bounds \
+                     the effect over this capture; it is not proof it cannot \
+                     happen.",
+                );
+            }
+
             // feature K — the live frame-time sparkline (presented = bright,
             // produced = faint, with the frame-deadline reference line).
             ui.separator();
