@@ -63,6 +63,14 @@ pub struct LatencyPanel {
     pending_apply: Option<u32>,
     /// Status / error line.
     status: String,
+    /// v2.3.9 — what has already been written to the config this session.
+    ///
+    /// Session-only, never serialized. Two jobs, and the second is why it is a
+    /// value rather than a bool: it makes "has anything changed?" answerable
+    /// WITHOUT computing the ROM key, and that key is a SHA-256 hex string
+    /// allocated fresh each time. Computing it unconditionally allocated once
+    /// per frame for the whole time the panel was open. (Review on #410.)
+    persisted: Option<crate::config::RememberedLatency>,
 }
 
 impl LatencyPanel {
@@ -113,6 +121,24 @@ impl LatencyPanel {
         })
     }
 
+    /// v2.3.9 — the measurement to write to the config, if it differs from what
+    /// is already there.
+    ///
+    /// Returns `Some` at most once per distinct result, so the caller writes and
+    /// saves on a real change instead of every frame. Marks it persisted as a
+    /// side effect, which is why it takes `&mut self` — a pure query would leave
+    /// the caller to remember, and the caller forgetting is exactly how the
+    /// original version of this feature never wrote anything at all.
+    #[must_use]
+    pub fn take_unpersisted(&mut self) -> Option<crate::config::RememberedLatency> {
+        let current = self.remembered()?;
+        if self.persisted == Some(current) {
+            return None;
+        }
+        self.persisted = Some(current);
+        Some(current)
+    }
+
     /// Whether this session already holds a report — measured or remembered.
     ///
     /// The restore is driven off this rather than off a ROM-load hook, so it
@@ -151,6 +177,10 @@ impl LatencyPanel {
             trials_used: 0,
         });
         self.frame_ms = f64::from(r.frame_micros) / 1000.0;
+        // Already in the config — that is where it came from — so record it as
+        // persisted. Without this the next frame would treat it as a fresh
+        // measurement and write it straight back, saving the file for nothing.
+        self.persisted = Some(r);
         "Remembered from a previous session.".clone_into(&mut self.status);
     }
 
@@ -510,6 +540,52 @@ mod tests {
         assert!(panel.remembered().is_none());
     }
 
+    /// The write must happen at most once per distinct result.
+    ///
+    /// The original version wrote on every frame the panel was open and never
+    /// called `save()`, so it rewrote an in-memory map continuously and
+    /// persisted nothing. Both halves are pinned here: `take_unpersisted` yields
+    /// once and then stops, so the caller's `save()` cannot become a per-frame
+    /// file write.
+    #[test]
+    fn a_measurement_is_offered_for_writing_exactly_once() {
+        let mut panel = LatencyPanel {
+            report: Some(report(Some(3), Confidence::Unanimous)),
+            frame_ms: 16.639,
+            ..LatencyPanel::default()
+        };
+
+        let first = panel.take_unpersisted();
+        assert!(first.is_some(), "a fresh measurement must be offered");
+        assert!(
+            panel.take_unpersisted().is_none(),
+            "an unchanged measurement must not be rewritten every frame"
+        );
+
+        // A NEW measurement supersedes it and is offered again.
+        panel.report = Some(report(Some(1), Confidence::Unanimous));
+        let second = panel
+            .take_unpersisted()
+            .expect("a changed result is offered");
+        assert_eq!(second.frames, 1);
+    }
+
+    /// A RESTORED measurement came from the config, so it must not be written
+    /// back — otherwise opening a game would rewrite the file for nothing.
+    #[test]
+    fn a_restored_measurement_is_not_written_back() {
+        let mut panel = LatencyPanel::default();
+        panel.restore_remembered(crate::config::RememberedLatency {
+            frames: 2,
+            unanimous: true,
+            frame_micros: 16_639,
+        });
+        assert!(
+            panel.take_unpersisted().is_none(),
+            "a value read from the config must not be offered back to it"
+        );
+    }
+
     /// Restoring must NOT queue an Apply. Remembering a recommendation across a
     /// restart must never quietly become applying it — the same separation the
     /// live path keeps between "measured" and "applied".
@@ -674,11 +750,23 @@ mod tests {
             frame_ms: 16.639,
             status: "Measured in 7 trials.".to_owned(),
             measure_requested: true,
+            persisted: Some(crate::config::RememberedLatency {
+                frames: 2,
+                unanimous: true,
+                frame_micros: 16_639,
+            }),
         };
         panel.clear();
         assert!(
             panel.report.is_none(),
             "a stale report survived a ROM change"
+        );
+        // v2.3.9 — and the write-tracking, which is keyed to the OLD ROM. Left
+        // standing, the next game's first identical measurement would be treated
+        // as already written and never reach the config.
+        assert!(
+            panel.take_unpersisted().is_none(),
+            "no report, so nothing to offer"
         );
         assert_eq!(
             panel.take_pending_apply(),

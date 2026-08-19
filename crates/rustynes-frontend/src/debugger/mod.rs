@@ -2172,6 +2172,14 @@ impl DebuggerOverlay {
     /// whenever their `show_*` flag is set, REGARDLESS of whether the deep
     /// overlay is visible, so the menu bar can surface them directly. Panels
     /// that read `nes` (Cheats) no-op when `nes` is `None`.
+    /// v2.3.9 — the per-game config key for a loaded ROM.
+    ///
+    /// One definition so "per-game" means the same thing here as it does for
+    /// `graphics.hd_packs`, which uses this same helper and hash.
+    fn rom_key_of(nes: &Nes) -> String {
+        crate::save_state::hex_sha256(nes.rom_sha256())
+    }
+
     fn tool_panels(&mut self, ctx: &egui::Context, mut nes: Option<&mut Nes>, config: &mut Config) {
         // The locked-session gate, republished by `App` each frame from the exact
         // same condition `emu.write` uses. Read once here so every panel that
@@ -2208,11 +2216,16 @@ impl DebuggerOverlay {
             // v2.3.9 — the per-game key, computed from the LIVE `nes` under the
             // lock the caller already holds. Same helper and same convention as
             // `graphics.hd_packs`, so "per-game" means one thing in this config.
-            // `None` with no ROM loaded, which is why both the read and the write
-            // below are gated on it rather than on the panel being open.
-            let rom_sha256_key: Option<String> = nes
-                .as_deref()
-                .map(|n| crate::save_state::hex_sha256(n.rom_sha256()));
+            //
+            // Computed at the two sites that need it rather than once up front:
+            // `hex_sha256` allocates a fresh `String`, and computing it eagerly
+            // allocated once per frame for as long as the panel stayed open.
+            // Both sites are rare — a restore happens once per ROM, a write once
+            // per distinct measurement. (Review on #410.)
+            //
+            // A free helper rather than a closure over `nes`, because a closure
+            // holds the borrow for its whole lifetime and the panel below needs
+            // `nes` mutably.
             // v2.3.9 item C — the render-WORK series, read from the perf panel's
             // snapshot rather than plumbed separately, so there is one copy of
             // this data in the overlay. Only `work` is offered; see
@@ -2226,8 +2239,8 @@ impl DebuggerOverlay {
             // the next frame fills it from the new ROM's entry, without a fourth
             // per-panel clear and a matching restore to keep in sync.
             if !self.latency_ui.has_report()
-                && let Some(key) = rom_sha256_key.as_ref()
-                && let Some(remembered) = config.input.latency_reports.get(key).copied()
+                && let Some(key) = nes.as_deref().map(Self::rom_key_of)
+                && let Some(remembered) = config.input.latency_reports.get(&key).copied()
             {
                 self.latency_ui.restore_remembered(remembered);
             }
@@ -2248,25 +2261,26 @@ impl DebuggerOverlay {
             // Written here rather than inside the panel for the same reason the
             // Apply above is: the panel measures, the overlay owns the config.
             // Keyed on the ROM SHA-256 exactly as `graphics.hd_packs` is, so
-            // there is one convention for "per-game" rather than two.
+            // there is one convention for "per-game" rather than two — INCLUDING
+            // the `save()`, which that call site performs immediately after its
+            // insert and which the first version of this one omitted.
+            //
+            // Without it the entry lived in memory and died at quit: there is no
+            // save-on-exit handler, so nothing else would ever have written it.
+            // A persistence feature that does not persist. (Review on #410.)
+            //
+            // `take_unpersisted` yields at most once per distinct result, so a
+            // measurement left on screen does not rewrite the config file every
+            // frame.
             //
             // Remembering is NOT applying — nothing here touches `run_ahead`.
-            if let (Some(rom_key), Some(remembered)) =
-                (rom_sha256_key.as_ref(), self.latency_ui.remembered())
+            if let Some(remembered) = self.latency_ui.take_unpersisted()
+                && let Some(key) = nes.as_deref().map(Self::rom_key_of)
             {
-                let slot = config.input.latency_reports.entry(rom_key.clone());
-                match slot {
-                    std::collections::btree_map::Entry::Occupied(mut e) => {
-                        // Overwrite: a fresh measurement supersedes a remembered
-                        // one, because the newer run saw the current build.
-                        if *e.get() != remembered {
-                            e.insert(remembered);
-                        }
-                    }
-                    std::collections::btree_map::Entry::Vacant(e) => {
-                        e.insert(remembered);
-                    }
-                }
+                config.input.latency_reports.insert(key, remembered);
+                // Best-effort, matching `hd_packs`: a failed write must not take
+                // down the UI, and the measurement is still on screen either way.
+                let _ = config.save();
             }
         }
         // v2.3.6 workstream C — the RAM Atlas. Needs `&mut Nes`: it observes a
