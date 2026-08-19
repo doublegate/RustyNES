@@ -23,19 +23,19 @@ ignore = [
     # carries the identical `ttf-parser 0.25.1` and is affected equally. Revisit
     # when a future winit bump drops the ab_glyph/ttf-parser chain.
     "RUSTSEC-2026-0192",
-    # `quick-xml 0.39.4` — two real advisories (quadratic duplicate-attribute
-    # scan; unbounded NsReader namespace allocation), BOTH requiring
-    # attacker-controlled XML input. Our ONLY consumer is `wayland-scanner`
-    # 0.31.10, a PROC-MACRO that parses the vendored Wayland protocol XML
-    # files at COMPILE TIME — no runtime code path parses XML at all, and the
-    # inputs are trusted files shipped inside the wayland-protocols crates,
-    # never external data. No upgrade path exists: 0.39.4 is the max of its
-    # line, the fixes live in quick-xml >= 0.40, and wayland-scanner 0.31.10
-    # (its own max version) pins ^0.39. Revisit on the next wayland-scanner /
-    # smithay-client-toolkit release; remove these the moment the resolve
-    # moves quick-xml to >= 0.40.
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
+    # RETIRED in v2.3.9: `RUSTSEC-2026-0194` / `RUSTSEC-2026-0195` (quick-xml).
+    #
+    # Their entry said to "remove these the moment the resolve moves quick-xml
+    # to >= 0.40". It has: `Cargo.lock` now carries **0.41.0**, and
+    # `cargo deny` reports both as `advisory-not-detected` — "no crate matched
+    # advisory criteria" — which is the machine-readable form of the same fact.
+    #
+    # Left as a note rather than deleted silently, because an ignore list is
+    # only trustworthy if its entries expire. A stale ignore suppresses an
+    # advisory that no longer applies today and would suppress it again if a
+    # future resolve reintroduced the vulnerable version, with nobody looking.
+    # `advisory-not-detected` is a WARNING, not a failure, so nothing was going
+    # to surface this on its own.
 ]
 
 [licenses]
