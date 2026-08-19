@@ -1186,6 +1186,22 @@ impl DebuggerOverlay {
         // or CPU cycle describes one game's frame.
         #[cfg(feature = "debug-hooks")]
         self.divergence_ui.clear();
+        // v2.3.9 — the call stack and the access counters, which predate this
+        // hook by six releases and were never registered with it.
+        //
+        // Both are reconstructed from the previous cartridge and neither rebuilds
+        // itself. The call stack is a SHADOW of the 6502 stack, replayed from
+        // `exec_log` JSR/RTS pairs, so frames pushed under game A's PRG map sit
+        // under game B's until enough RTSs pop them -- which the new game has no
+        // reason to do, since it never made those calls.
+        //
+        // The access counters are worse than merely stale, because one of their
+        // outputs is a CLAIM rather than a tally: `uninit_read` means "read before
+        // ever written", and carried across a ROM change it reports
+        // uninitialized-RAM findings about a cartridge that is no longer loaded.
+        // A bug-finder answering about the wrong game is the exact shape this hook
+        // exists to prevent.
+        self.reset_debug_telemetry();
     }
 
     /// Returns `true` when the overlay is currently visible. The render
@@ -1754,8 +1770,27 @@ impl DebuggerOverlay {
     }
 
     /// v1.7.0 "Forge" Workstream C (C1/C2) — drop the call stack + zero the
-    /// access counters (on reset / power-cycle / save-state load, where the
-    /// reconstructed state would be stale).
+    /// access counters, where the reconstructed state would be stale.
+    ///
+    /// Called on **reset**, **power-cycle**, and (v2.3.9) every **ROM
+    /// transition**, via [`Self::clear_rom_bound_analysis`].
+    ///
+    /// # Not called on a save-state load, and that is a known gap
+    ///
+    /// This doc comment used to list "save-state load" among the callers. It was
+    /// never one: neither `nes.restore` site in `app.rs` calls this, so a loaded
+    /// state keeps a shadow call stack built for the abandoned timeline and an
+    /// `uninit_read` flag set from writes the restored RAM may already contain.
+    ///
+    /// The claim is corrected here rather than the call added, deliberately.
+    /// Patching the two sites that happen to be reachable would repeat the v2.3.6
+    /// provenance mistake of fixing the call site a report named instead of the
+    /// mechanism: the wasm load path restores inside a `spawn_local` task holding
+    /// only a cloned `EmuHandle`, with no `&mut self` to reach the overlay
+    /// through, and rewind and netplay rollback jump the timeline without passing
+    /// through either site at all. The mechanism-level fix is for the consumers to
+    /// notice the discontinuity themselves; it is scoped in the v2.3.9 plan and
+    /// not built here. Until then this comment states what is true.
     pub fn reset_debug_telemetry(&mut self) {
         self.callstack.clear();
         self.access_counter.reset();
