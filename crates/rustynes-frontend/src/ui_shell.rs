@@ -1420,6 +1420,23 @@ impl UiShell {
                             out.action = Some(MenuAction::OpenPanel(ToolPanel::RamAtlas));
                             ui.close();
                         }
+                        // v2.3.8 "Parallax" — the Divergence Lens: replay this
+                        // moment twice, with and without one work-RAM byte set,
+                        // and localise the difference to pixels or a CPU cycle.
+                        // Sits next to the RAM Atlas because it answers the
+                        // follow-up question the Atlas raises: the Atlas says an
+                        // address is live, this says what it changes.
+                        #[cfg(feature = "debug-hooks")]
+                        if ui
+                            .add_enabled(
+                                rom,
+                                egui::Button::new(ic(glyph::MEMORY, "Divergence Lens")),
+                            )
+                            .clicked()
+                        {
+                            out.action = Some(MenuAction::OpenPanel(ToolPanel::DivergenceLens));
+                            ui.close();
+                        }
                         // v1.8.9 "Backlog" — BasicBot input-search control panel.
                         if ui
                             .button(ic(glyph::WAND_MAGIC_SPARKLES, "BasicBot"))
