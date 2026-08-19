@@ -2205,12 +2205,32 @@ impl DebuggerOverlay {
         // "applied" stay two separate, auditable steps.
         if self.show_latency {
             let current = config.input.run_ahead;
+            // v2.3.9 — the per-game key, computed from the LIVE `nes` under the
+            // lock the caller already holds. Same helper and same convention as
+            // `graphics.hd_packs`, so "per-game" means one thing in this config.
+            // `None` with no ROM loaded, which is why both the read and the write
+            // below are gated on it rather than on the panel being open.
+            let rom_sha256_key: Option<String> = nes
+                .as_deref()
+                .map(|n| crate::save_state::hex_sha256(n.rom_sha256()));
             // v2.3.9 item C — the render-WORK series, read from the perf panel's
             // snapshot rather than plumbed separately, so there is one copy of
             // this data in the overlay. Only `work` is offered; see
             // `PerfPanelState::render_work` for why it is the only series that
             // can legitimately be added to the measured lag.
             let render_work = self.perf_ui.render_work();
+            // v2.3.9 — repopulate from the remembered measurement for THIS ROM,
+            // but only when nothing is on screen. Driven off "is there a report"
+            // rather than a ROM-load hook so it self-corrects: the shared
+            // `clear_rom_bound_analysis` empties it at every ROM transition and
+            // the next frame fills it from the new ROM's entry, without a fourth
+            // per-panel clear and a matching restore to keep in sync.
+            if !self.latency_ui.has_report()
+                && let Some(key) = rom_sha256_key.as_ref()
+                && let Some(remembered) = config.input.latency_reports.get(key).copied()
+            {
+                self.latency_ui.restore_remembered(remembered);
+            }
             latency_panel::show(
                 ctx,
                 &mut self.detached_panels,
@@ -2222,6 +2242,31 @@ impl DebuggerOverlay {
             );
             if let Some(depth) = self.latency_ui.take_pending_apply() {
                 config.input.run_ahead = depth;
+            }
+            // v2.3.9 — remember the measurement for this ROM.
+            //
+            // Written here rather than inside the panel for the same reason the
+            // Apply above is: the panel measures, the overlay owns the config.
+            // Keyed on the ROM SHA-256 exactly as `graphics.hd_packs` is, so
+            // there is one convention for "per-game" rather than two.
+            //
+            // Remembering is NOT applying — nothing here touches `run_ahead`.
+            if let (Some(rom_key), Some(remembered)) =
+                (rom_sha256_key.as_ref(), self.latency_ui.remembered())
+            {
+                let slot = config.input.latency_reports.entry(rom_key.clone());
+                match slot {
+                    std::collections::btree_map::Entry::Occupied(mut e) => {
+                        // Overwrite: a fresh measurement supersedes a remembered
+                        // one, because the newer run saw the current build.
+                        if *e.get() != remembered {
+                            e.insert(remembered);
+                        }
+                    }
+                    std::collections::btree_map::Entry::Vacant(e) => {
+                        e.insert(remembered);
+                    }
+                }
             }
         }
         // v2.3.6 workstream C — the RAM Atlas. Needs `&mut Nes`: it observes a
