@@ -176,6 +176,53 @@ change as the feature**, not after a bug report:
 - A control test proves a plain run populates the trace, so a failure of the
   run-ahead test cannot be misread as a bad assertion.
 
+### The same trap, three more times: the probe engine
+
+The list above is complete for *run-ahead* and was read as complete full stop.
+It was not. `Nes::restore_inner` clears both provenance stores, and run-ahead is
+not the only same-timeline restore in the tree — `rustynes-probe` has three
+more, none of which used the stash:
+
+| Path | What it restores | Whose provenance it destroyed |
+| --- | --- | --- |
+| `Probe::run_uncounted` | the anchor, once per trial | every trial; `latency::measure_in_place` runs up to **21** |
+| `latency::measure_in_place` | the caller's state, on the way out | the one restore that sits outside every per-trial guard |
+| `atlas_panel::TimelineGuard` | the live timeline after an observation | one per RAM Atlas observation |
+
+So running the **Latency Oracle** or the **RAM Atlas** emptied the Pixel
+Provenance and Audio Provenance panels. Both stores are cumulative — "which
+instruction last wrote this" has an answer that can be thousands of frames old,
+a palette byte from level load or a `$4008` linear-counter reload from init — so
+the loss was not repaired by the next frame. It was permanent for the session.
+
+Two things let it through, and both are worth naming because neither was
+carelessness:
+
+1. **The enumeration was of one caller, not of the mechanism.** `RunAhead::finish`
+   was the path the bug report named. The fix was correct there and stopped there.
+   The same shape had already been recorded once in `AGENTS.md` — a rewind-ring
+   fix that changed `measure_in_place`'s final restore and left all 21 trial
+   restores untouched — and this is the same function, missed the same way.
+2. **The test that should have caught it asserted something weaker than the
+   contract.** `measure_in_place_restores_the_live_timeline` compares
+   `nes.snapshot()` before and after. Provenance is deliberately **not** in the
+   snapshot, so the assertion was true while the state it did not cover was
+   being destroyed. "Restores the live timeline" was exactly the claim being
+   made, and the strongest available check of it did not check it.
+
+Closed in v2.3.7 by moving the stash into `rustynes_probe::TrialGuard` — the
+guard that already existed for rewind capture, which is the same category of
+state: unserialised, therefore not carried by a snapshot round trip, therefore
+the guard's job. Four independent mutations pin it, one per site plus one for
+each store, so a fix that put back only one store or guarded only one site
+fails.
+
+`rustynes-probe` also gains a `debug-hooks` passthrough feature, without which
+the guard would have been dead code in exactly the builds that need it: cargo's
+feature unification already switched on `rustynes-core/debug-hooks` for a
+frontend build, so the clearing was live, while a `cfg` in a crate that does not
+declare the feature is never true.
+
 Both assertions are floored at 20,000 records rather than "non-empty", because
 the APU's 8-cycle reset sequence alone produces eight records — a non-emptiness
 check would pass on a run that emulated nothing at all.

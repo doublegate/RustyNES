@@ -111,13 +111,33 @@ those offsets describe a timeline that no longer exists.
 kept are the **visible** frame's — one frame ahead of the restored persistent
 state, and exactly the frame on screen.
 
-This is the one caller that needs the exception, and not because its restore is
-different: because of *when* it happens. Run-ahead's rollback is the last thing
-before the frontend releases the emulator lock, so the UI's first chance to look
-is always after it. Clearing there discards the frame the user is looking at
-rather than a stale timeline. Every other caller — a user-driven save-state load,
-netplay rollback — still clears, and still should. The stash is a move of two
-boxed stores, skipped entirely when neither is armed.
+Run-ahead needs the exception because of *when* its restore happens, not because
+the restore is different. Its rollback is the last thing before the frontend
+releases the emulator lock, so the UI's first chance to look is always after it.
+Clearing there discards the frame the user is looking at rather than a stale
+timeline. A user-driven save-state load and a netplay rollback still clear, and
+still should. The stash is a move of two boxed stores, skipped entirely when
+neither is armed.
+
+> **This section used to call run-ahead "the one caller that needs the
+> exception."** It is not, and v2.3.7 found three more — all in `rustynes-probe`,
+> all restoring a state snapshotted from the same timeline moments earlier:
+> `Probe::run_uncounted` (once per trial, and a latency measurement runs up to
+> 21), `latency::measure_in_place` (the final restore, which sits outside every
+> per-trial guard), and the RAM Atlas panel's `TimelineGuard`. Running the
+> **Latency Oracle** or the **RAM Atlas** therefore emptied this panel. The
+> criterion in the paragraph above was right — a same-timeline restore whose
+> result the user keeps looking at — and the enumeration under it was wrong,
+> which is a more comfortable error to make than it looks: the rule was stated
+> correctly and then applied to exactly the one caller a bug report had named.
+> Closed by moving the stash into `rustynes_probe::TrialGuard`, the guard that
+> already held rewind capture for the same reason: state that lives outside the
+> save state is not carried by a snapshot round trip, so something has to carry
+> it deliberately. See `docs/audio-provenance.md` for the full account.
+
+That retraction is the second one this section has needed, and the first is kept
+below rather than deleted, because the pair is the point: the same store, missed
+twice, both times because a confident sentence stood where a check belonged.
 
 > **This paragraph used to say the opposite of the code.** Until v2.3.6 it read:
 > "Under run-ahead the per-frame `restore_quiet` therefore leaves exactly the

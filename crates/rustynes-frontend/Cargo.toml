@@ -147,7 +147,7 @@ browser-cheevos = []
 # alias just lets `cargo clippy -p rustynes-frontend --features debug-hooks`
 # resolve to the same build; it adds nothing (the dependency below is the real
 # enable). The output-only `debug-hooks` core code is determinism-neutral.
-debug-hooks = ["rustynes-core/debug-hooks"]
+debug-hooks = ["rustynes-core/debug-hooks", "rustynes-probe/debug-hooks"]
 
 # v1.6.0 "Studio" Workstream G — A/V recording (default OFF, native-only).
 #

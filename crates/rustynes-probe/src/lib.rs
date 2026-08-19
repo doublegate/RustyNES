@@ -220,9 +220,7 @@ impl Probe {
         // there changed only `measure_in_place`'s FINAL restore — which left
         // every trial's restore, the actual source, untouched. Fixed here at the
         // one site all trials share.
-        nes.restore_quiet(&self.snapshot)
-            .expect("probe anchor round-trips: it came from Nes::snapshot");
-
+        //
         // A trial's frames are re-simulated: they never happened on the user's
         // timeline. Letting them into the rewind ring would let the user rewind
         // *into a measurement* — the same reason run-ahead suppresses capture
@@ -235,7 +233,17 @@ impl Probe {
         // on a `Nes` the caller keeps using. That failure would be silent and
         // durable: rewind would simply stop recording, with nothing to indicate
         // why. (PR #392 review.)
-        let guard = CaptureGuard::suppress(nes);
+        //
+        // The guard is entered BEFORE the restore, not after. It carries the
+        // provenance stores as well as the rewind flag (see [`TrialGuard`]), and
+        // the restore on the very next line is one of the things they need
+        // protecting from — `restore_inner` clears both. Constructing it after
+        // would put the stores back intact and then have already lost them.
+        let guard = TrialGuard::enter(nes);
+        guard
+            .nes
+            .restore_quiet(&self.snapshot)
+            .expect("probe anchor round-trips: it came from Nes::snapshot");
 
         // The perturbation, if any: applied to the freshly-restored anchor before
         // frame 0, so it is the ONLY difference between this trial and a
@@ -365,14 +373,55 @@ impl Probe {
     }
 }
 
-/// Suppresses rewind capture for the lifetime of a trial and restores the
-/// caller's setting on drop — including on an unwinding panic.
+/// Holds the caller's *unserialised* emulator state across a trial and puts it
+/// back on drop — including on an unwinding panic.
+///
+/// Two things, for one reason. Both rewind capture and the provenance stores
+/// live outside the save state, so a probe's snapshot/restore round trip does
+/// not carry them: they are whatever the trial left behind. This guard is the
+/// list of everything in that category, and a new entry belongs here rather
+/// than in a second guard beside it.
+///
+/// # Rewind capture
+///
+/// Suppressed for the trial's frames. They are re-simulated and never happened
+/// on the user's timeline, so letting them into the ring would allow rewinding
+/// *into a measurement*.
 ///
 /// A plain save-and-restore around the trial body is correct on the happy path
 /// and wrong on the unwind: a panic inside `Nes::run_frame` or the perturbation
 /// closure would skip the restore and leave capture switched off on a `Nes` the
 /// caller keeps using. Rewind would then stop recording silently, with nothing
 /// to indicate why.
+///
+/// # Provenance (v2.3.7)
+///
+/// Both provenance stores are moved out for the duration and put back after.
+/// They are **cumulative**, which is what makes this necessary rather than
+/// tidy: pixel provenance's per-byte write attribution and audio provenance's
+/// per-register attribution answer "which instruction last wrote this", and
+/// "last" can be thousands of frames ago — a palette byte written at level
+/// load, a `$4008` linear-counter reload written once during init.
+///
+/// `Nes::restore_inner` clears both, correctly: a restored state's bytes were
+/// not written by any instruction this session executed, so keeping their PCs
+/// would report a timeline that no longer exists. But a probe's restore is the
+/// case that reasoning does not cover — it puts back the SAME timeline the user
+/// is still looking at, which is precisely what `Nes::take_provenance` and
+/// `Nes::take_audio_provenance` were added for. Only `RunAhead::finish` used
+/// them; every probe restore did not, so asking "how much input lag does this
+/// game have?" silently emptied both panels, and the RAM Atlas did the same.
+///
+/// The trial's own frames are left unrecorded rather than recorded and
+/// discarded: with the stores moved out, the emulator is unarmed for the
+/// duration, so a re-simulated frame cannot contribute an attribution to a
+/// timeline it never happened on.
+///
+/// This is the same defect class as the one v2.3.6 was written about — a
+/// rollback wiping a store before any UI could read it — and it went unnoticed
+/// for the same reason: `measure_in_place_restores_the_live_timeline` asserts
+/// the two snapshots match, and provenance is not IN the snapshot, so the
+/// weaker assertion passed while the state it did not cover was destroyed.
 ///
 /// Worth contrasting with the `Drop` guard declined for
 /// `latency::measure_in_place` on PR #385, because the reasoning genuinely
@@ -384,24 +433,65 @@ impl Probe {
 /// `panic = "abort"` argument does not rescue this case either: in a build that
 /// does unwind, this flag outlives the panic, whereas an advanced timeline in a
 /// dying process does not.
-pub(crate) struct CaptureGuard<'a> {
+pub(crate) struct TrialGuard<'a> {
     pub(crate) nes: &'a mut Nes,
     restore_to: bool,
+    /// The caller's pixel- and audio-provenance stores, moved out for the
+    /// duration so neither the anchor restore nor the trial's frames can touch
+    /// them.
+    ///
+    /// The field does not exist at all without `debug-hooks` — it is `cfg`d out
+    /// rather than present-and-empty — so there is no per-trial cost of any kind
+    /// in a build that cannot record provenance. With the feature on it is cheap
+    /// when unarmed: each stash is one moved `Option<Box<..>>`.
+    #[cfg(feature = "debug-hooks")]
+    provenance: (
+        rustynes_core::rustynes_ppu::ProvenanceStash,
+        rustynes_core::rustynes_apu::provenance::AudioProvenanceStash,
+    ),
 }
 
-impl<'a> CaptureGuard<'a> {
-    pub(crate) const fn suppress(nes: &'a mut Nes) -> Self {
+impl<'a> TrialGuard<'a> {
+    // Not `const fn`: with `debug-hooks` on it calls `Nes::take_provenance`,
+    // which allocates nothing but is not const. Clippy only sees the
+    // feature-off body, where the whole function is a bool read and a bool
+    // write, so it asks for a `const` the other configuration cannot provide.
+    // Allowed on that configuration alone rather than unconditionally, so the
+    // lint keeps working everywhere else in the crate.
+    #[cfg_attr(
+        not(feature = "debug-hooks"),
+        allow(
+            clippy::missing_const_for_fn,
+            reason = "const only in the feature-off body; see comment above"
+        )
+    )]
+    pub(crate) fn enter(nes: &'a mut Nes) -> Self {
         // The caller's setting, not an assumed `true`: someone who deliberately
         // disabled capture must not have it switched back on by a probe.
         let restore_to = nes.rewind_capture_enabled();
         nes.set_rewind_capture(false);
-        Self { nes, restore_to }
+        #[cfg(feature = "debug-hooks")]
+        let provenance = (nes.take_provenance(), nes.take_audio_provenance());
+        Self {
+            nes,
+            restore_to,
+            #[cfg(feature = "debug-hooks")]
+            provenance,
+        }
     }
 }
 
-impl Drop for CaptureGuard<'_> {
+impl Drop for TrialGuard<'_> {
     fn drop(&mut self) {
         self.nes.set_rewind_capture(self.restore_to);
+        #[cfg(feature = "debug-hooks")]
+        {
+            // `mem::take` because `Drop` has only `&mut self`. The guard is
+            // being destroyed, so leaving default stashes behind is invisible.
+            let (pixel, audio) = core::mem::take(&mut self.provenance);
+            self.nes.put_provenance(pixel);
+            self.nes.put_audio_provenance(audio);
+        }
     }
 }
 
@@ -491,6 +581,187 @@ mod tests {
 
     fn idle(_: u32) -> (Buttons, Buttons) {
         (Buttons::empty(), Buttons::empty())
+    }
+
+    /// An NROM that writes one APU register and then spins, so a test has a
+    /// register attribution with a *known* PC to look for.
+    ///
+    /// `synth_nrom` cannot serve here: it spins immediately, never touches
+    /// `$4000-$4017`, and the only writes in its lifetime come from `Apu::reset`
+    /// before provenance is armed — so its attribution table is empty, and a
+    /// test built on it would assert "still empty" and pass no matter what.
+    #[cfg(feature = "debug-hooks")]
+    fn reg_writing_nrom() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"NES\x1A");
+        bytes.push(1); // 16 KiB PRG
+        bytes.push(1); // 8 KiB CHR
+        bytes.push(0);
+        bytes.push(0);
+        bytes.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0u8; 16 * 1024];
+        // $C000: LDA #$3F / STA $4000 / JMP $C005 (spin on itself)
+        prg[0..8].copy_from_slice(&[0xA9, 0x3F, 0x8D, 0x00, 0x40, 0x4C, 0x05, 0xC0]);
+        let len = prg.len();
+        prg[len - 6] = 0x00; // NMI
+        prg[len - 5] = 0xC0;
+        prg[len - 4] = 0x00; // RESET
+        prg[len - 3] = 0xC0;
+        prg[len - 2] = 0x00; // IRQ
+        prg[len - 1] = 0xC0;
+        bytes.extend_from_slice(&prg);
+        bytes.extend_from_slice(&vec![0u8; 8 * 1024]);
+        bytes
+    }
+
+    /// A `Nes` with audio provenance armed and exactly one register write on the
+    /// record, plus that write.
+    #[cfg(feature = "debug-hooks")]
+    fn armed_with_a_recorded_write() -> (Nes, rustynes_core::rustynes_apu::provenance::RegWrite) {
+        let mut n = Nes::from_rom(&reg_writing_nrom()).expect("fixture parses");
+        n.set_audio_provenance(true);
+        // Three frames, not one. The first `run_frame` after construction
+        // returns on an already-pending frame-complete flag without executing an
+        // instruction, so a one-frame fixture leaves the PC at the reset vector
+        // and the attribution table empty — which would have made this helper's
+        // own premise assertion the thing under test.
+        for _ in 0..3 {
+            n.run_frame();
+        }
+        let rec = n
+            .register_attribution()
+            .expect("armed")
+            .get(0x4000)
+            .expect("premise: the fixture's STA $4000 was attributed");
+        assert_eq!(
+            rec.value, 0x3F,
+            "premise: the fixture wrote what it meant to"
+        );
+        (n, rec)
+    }
+
+    /// A probe trial must leave the caller's audio provenance EXACTLY as it
+    /// found it.
+    ///
+    /// Not "non-empty" — that weaker assertion is how an incomplete fix clears
+    /// review. The store must hold the same record, from the same PC, at the
+    /// same cycle: a trial that wiped it and let its own re-simulated frames
+    /// refill it would satisfy "non-empty" while reporting instructions that
+    /// never executed on this timeline.
+    ///
+    /// The defect this pins: `run_uncounted` restores the anchor with
+    /// `restore_quiet`, and `Nes::restore_inner` clears both provenance stores.
+    /// `latency::measure_in_place` runs up to 21 trials against the LIVE
+    /// emulator, so asking for a latency measurement emptied the Audio
+    /// Provenance panel — the same shape as the run-ahead rollback that left
+    /// Pixel Provenance broken for four releases.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn a_trial_preserves_the_callers_audio_provenance() {
+        let (mut n, before) = armed_with_a_recorded_write();
+        let mut probe = Probe::anchor(&n, Budget::default());
+
+        probe
+            .run(&mut n, 6, Observable::Framebuffer, idle)
+            .expect("within budget");
+
+        let after = n
+            .register_attribution()
+            .expect("the store is still armed after a trial")
+            .get(0x4000)
+            .expect("the attribution survived the trial");
+        assert_eq!(
+            before, after,
+            "a probe trial rewrote the caller's audio provenance"
+        );
+    }
+
+    /// The fourth cell of the matrix: `measure_in_place` x the PIXEL store.
+    ///
+    /// Added after review pointed out that the CHANGELOG claimed "four tests"
+    /// while three existed, and that the missing one was not a rounding error —
+    /// it is a real gap. The `measure_in_place` mutation fails only the AUDIO
+    /// test, so a final restore that put back the audio stash and dropped the
+    /// pixel one would have passed every test here.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn measure_in_place_preserves_the_callers_pixel_provenance() {
+        let mut n = Nes::from_rom(&reg_writing_nrom()).expect("fixture parses");
+        n.set_pixel_provenance(true);
+        for _ in 0..3 {
+            n.run_frame();
+        }
+        assert!(
+            n.pixel_provenance().is_some(),
+            "premise: the pixel store is armed"
+        );
+
+        let report =
+            crate::latency::measure_in_place(&mut n, crate::latency::LatencyConfig::default());
+        assert!(
+            report.trials_used > 0,
+            "premise: the measurement actually ran"
+        );
+
+        assert!(
+            n.pixel_provenance().is_some(),
+            "a latency measurement disarmed the caller's pixel provenance"
+        );
+    }
+
+    /// The same contract for the pixel-provenance store, which the same restore
+    /// clears through the same call. Asserted separately because they are two
+    /// stores behind two independent `take`/`put` pairs, and a fix that put back
+    /// only one would pass the other test.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn a_trial_preserves_the_callers_pixel_provenance() {
+        let mut n = Nes::from_rom(&reg_writing_nrom()).expect("fixture parses");
+        n.set_pixel_provenance(true);
+        for _ in 0..3 {
+            n.run_frame();
+        }
+        assert!(
+            n.pixel_provenance().is_some(),
+            "premise: the pixel store is armed"
+        );
+
+        let mut probe = Probe::anchor(&n, Budget::default());
+        probe
+            .run(&mut n, 6, Observable::Framebuffer, idle)
+            .expect("within budget");
+
+        assert!(
+            n.pixel_provenance().is_some(),
+            "a probe trial disarmed the caller's pixel provenance"
+        );
+    }
+
+    /// `latency::measure_in_place` runs its trials AND a final restore, and that
+    /// final restore sits outside every per-trial guard. Pinned separately for
+    /// exactly that reason: fixing `run_uncounted` alone leaves this path broken
+    /// while the per-trial test passes.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn measure_in_place_preserves_the_callers_audio_provenance() {
+        let (mut n, before) = armed_with_a_recorded_write();
+
+        let report =
+            crate::latency::measure_in_place(&mut n, crate::latency::LatencyConfig::default());
+        assert!(
+            report.trials_used > 0,
+            "premise: the measurement actually ran"
+        );
+
+        let after = n
+            .register_attribution()
+            .expect("the store is still armed after a measurement")
+            .get(0x4000)
+            .expect("the attribution survived the measurement");
+        assert_eq!(
+            before, after,
+            "a latency measurement rewrote the caller's audio provenance"
+        );
     }
 
     /// THE contract the whole engine rests on: two trials with identical inputs
