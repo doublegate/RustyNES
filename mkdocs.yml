@@ -137,6 +137,7 @@ nav:
       - Audio Provenance: audio-provenance.md
       - Latency Oracle: latency-oracle.md
       - RAM Atlas: ram-atlas.md
+      - Divergence Lens: divergence-lens.md
       - CRT / Composite Video: crt-composite.md
       - Netplay (WebRTC): netplay-webrtc.md
       - RetroAchievements: cheevos-browser.md
