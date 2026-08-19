@@ -125,6 +125,8 @@ mod game_db_panel;
 // v2.2.0 "Capstone" — read-only ROM Info browser (per-game DB + No-Intro CRC +
 // decoded cartridge header for the loaded ROM).
 mod atlas_panel;
+#[cfg(feature = "debug-hooks")]
+mod divergence_panel;
 mod latency_panel;
 mod rom_info_panel;
 // v1.5.0 "Lens" Workstream A4 — HD-pack per-pixel inspector (native + hd-pack).
@@ -201,6 +203,10 @@ pub enum ToolPanel {
     LatencyOracle,
     /// v2.3.6 — the RAM Atlas: what each byte of work RAM is for.
     RamAtlas,
+    /// v2.3.8 — the Divergence Lens: what a single work-RAM byte actually
+    /// changes, down to a pixel set or a CPU cycle.
+    #[cfg(feature = "debug-hooks")]
+    DivergenceLens,
     /// Live "Input Display" panel — the consolidated controller + expansion-
     /// device HUD (v1.7.0 "Forge" beta.5, #51; the v1.5.0 "Lens" Workstream A1
     /// Input Miniatures overlay absorbed the former standalone Input Display).
@@ -564,6 +570,7 @@ pub fn detached_window_meta(id: &'static str) -> (&'static str, (u32, u32)) {
         "rom_info" => ("ROM Info", (520, 520)),
         "latency_oracle" => ("Latency Oracle", (380, 420)),
         "ram_atlas" => ("RAM Atlas", (560, 620)),
+        "divergence_lens" => ("Divergence Lens", (420, 520)),
         "provenance" => ("Pixel Provenance", (520, 620)),
         "perf" => ("Performance", (560, 440)),
         "documentation" => ("Documentation", (780, 560)),
@@ -788,6 +795,11 @@ pub struct DebuggerOverlay {
     latency_ui: latency_panel::LatencyPanel,
     /// v2.3.6 — RAM Atlas panel state.
     atlas_ui: atlas_panel::AtlasPanel,
+    #[cfg(feature = "debug-hooks")]
+    divergence_ui: divergence_panel::DivergencePanel,
+    /// Whether the Divergence Lens window is open.
+    #[cfg(feature = "debug-hooks")]
+    show_divergence: bool,
     /// Pixel provenance inspector state (v2.3.2 "Lucid").
     provenance_ui: provenance_panel::ProvenancePanelState,
     /// CRC32 of the currently-loaded ROM (PRG+CHR, header-excluded), pushed by
@@ -1009,6 +1021,10 @@ impl DebuggerOverlay {
             rom_info_ui: rom_info_panel::RomInfoPanelState,
             latency_ui: latency_panel::LatencyPanel::default(),
             atlas_ui: atlas_panel::AtlasPanel::default(),
+            #[cfg(feature = "debug-hooks")]
+            divergence_ui: divergence_panel::DivergencePanel::default(),
+            #[cfg(feature = "debug-hooks")]
+            show_divergence: false,
             provenance_ui: provenance_panel::ProvenancePanelState::default(),
             rom_crc: None,
             rom_crc_full: None,
@@ -1166,6 +1182,10 @@ impl DebuggerOverlay {
         // v2.3.7 — Audio Provenance. Registered here rather than given its own
         // per-panel clear, which is the whole point of this hook existing.
         self.audio_provenance_ui.clear();
+        // v2.3.8 — the Divergence Lens, for the same reason: a located pixel set
+        // or CPU cycle describes one game's frame.
+        #[cfg(feature = "debug-hooks")]
+        self.divergence_ui.clear();
     }
 
     /// Returns `true` when the overlay is currently visible. The render
@@ -1542,6 +1562,8 @@ impl DebuggerOverlay {
             ToolPanel::RomInfo => self.show_rom_info = true,
             ToolPanel::LatencyOracle => self.show_latency = true,
             ToolPanel::RamAtlas => self.show_atlas = true,
+            #[cfg(feature = "debug-hooks")]
+            ToolPanel::DivergenceLens => self.show_divergence = true,
             ToolPanel::PixelProvenance => self.show_provenance = true,
             ToolPanel::AudioProvenance => self.show_audio_provenance = true,
             ToolPanel::InputDisplay => self.show_input_display = true,
@@ -2214,6 +2236,23 @@ impl DebuggerOverlay {
                 &mut self.detached_panels,
                 &mut self.show_atlas,
                 &mut self.atlas_ui,
+                nes.as_deref_mut(),
+                atlas_writes_locked,
+            );
+        }
+        // v2.3.8 "Parallax" — the Divergence Lens. Gated on the SAME predicate as
+        // the RAM Atlas above, and for identical reasons rather than by analogy:
+        // it advances the live `Nes` for four trials and pokes a work-RAM byte to
+        // define the perturbed configuration. Under netplay or a TAS the replayed
+        // frames reach peers before the anchor is restored, and under
+        // RetroAchievements hardcore the poke is the write the mode forbids.
+        #[cfg(feature = "debug-hooks")]
+        if self.show_divergence {
+            divergence_panel::show(
+                ctx,
+                &mut self.detached_panels,
+                &mut self.show_divergence,
+                &mut self.divergence_ui,
                 nes.as_deref_mut(),
                 atlas_writes_locked,
             );

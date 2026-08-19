@@ -59,6 +59,7 @@
 //! ```
 
 pub mod atlas;
+pub mod divergence;
 pub mod latency;
 
 use rustynes_core::{Buttons, Nes, ROM_HASH_TAG_LEN};
@@ -196,7 +197,8 @@ impl Probe {
         observable: Observable,
         setup: S,
         mut input: F,
-    ) -> Vec<u64>
+        capture: TrialProvenance,
+    ) -> (Vec<u64>, Option<CapturedProvenance>)
     where
         F: FnMut(u32) -> (Buttons, Buttons),
         S: FnOnce(&mut Nes),
@@ -245,6 +247,21 @@ impl Probe {
             .restore_quiet(&self.snapshot)
             .expect("probe anchor round-trips: it came from Nes::snapshot");
 
+        // v2.3.8 — arm FRESH provenance stores for this trial, when asked.
+        //
+        // Safe precisely because the guard has already moved the caller's stores
+        // aside: what accumulates here belongs to a re-simulated timeline, and
+        // there is no path by which it can reach the user's record. That
+        // separation is the precondition for capture existing at all, and it is
+        // v2.3.7's fix rather than anything this function does.
+        //
+        // Armed AFTER the restore, which would otherwise have cleared them.
+        #[cfg(feature = "debug-hooks")]
+        if capture == TrialProvenance::Capture {
+            guard.nes.set_pixel_provenance(true);
+            guard.nes.set_audio_provenance(true);
+        }
+
         // The perturbation, if any: applied to the freshly-restored anchor before
         // frame 0, so it is the ONLY difference between this trial and a
         // baseline one. That is what lets a divergence be attributed to it.
@@ -286,8 +303,26 @@ impl Probe {
 
             samples.push(sample(guard.nes, observable, &audio[..audio_len]));
         }
-        // `guard` restores the caller's capture setting as it drops here.
-        samples
+        // Harvest the trial's own stores BEFORE the guard drops, since dropping
+        // it puts the caller's back and would overwrite these.
+        #[cfg(feature = "debug-hooks")]
+        let captured = if capture == TrialProvenance::Capture {
+            Some(CapturedProvenance {
+                pixel: guard.nes.take_provenance(),
+                audio: guard.nes.take_audio_provenance(),
+            })
+        } else {
+            None
+        };
+        #[cfg(not(feature = "debug-hooks"))]
+        let captured = {
+            let _ = capture;
+            None
+        };
+
+        // `guard` restores the caller's rewind setting and provenance as it
+        // drops here.
+        (samples, captured)
     }
 
     /// Restore the anchor and run one **budgeted** trial.
@@ -315,7 +350,10 @@ impl Probe {
             return None;
         }
         self.trials_used += 1;
-        Some(self.run_uncounted(nes, frames, observable, |_| {}, input))
+        Some(
+            self.run_uncounted(nes, frames, observable, |_| {}, input, TrialProvenance::Off)
+                .0,
+        )
     }
 
     /// Restore the anchor, apply `setup`, then run one **budgeted** trial.
@@ -345,7 +383,57 @@ impl Probe {
             return None;
         }
         self.trials_used += 1;
-        Some(self.run_uncounted(nes, frames, observable, setup, input))
+        Some(
+            self.run_uncounted(nes, frames, observable, setup, input, TrialProvenance::Off)
+                .0,
+        )
+    }
+
+    /// Restore the anchor, apply `setup`, run one **budgeted** trial, and return
+    /// the provenance that trial produced alongside its samples.
+    ///
+    /// The trial runs with **fresh** stores armed, so what comes back describes
+    /// this re-simulation and nothing else. The caller's own provenance is held
+    /// aside for the duration and restored underneath, unchanged — that
+    /// separation is what makes capture safe rather than a way to write
+    /// instructions that never executed into the user's record, and it is
+    /// v2.3.7's fix rather than anything this method does.
+    ///
+    /// Counts against the same trial budget as every other trial. Prefer
+    /// [`Self::run_perturbed`] when the provenance is not going to be read: a
+    /// per-CPU-cycle mix trace is ~29,780 records a frame.
+    #[cfg(feature = "debug-hooks")]
+    pub fn run_capturing<F, S>(
+        &mut self,
+        nes: &mut Nes,
+        frames: u32,
+        observable: Observable,
+        setup: S,
+        input: F,
+    ) -> Option<(Vec<u64>, CapturedProvenance)>
+    where
+        F: FnMut(u32) -> (Buttons, Buttons),
+        S: FnOnce(&mut Nes),
+    {
+        if self.trials_remaining() == 0 {
+            return None;
+        }
+        self.trials_used += 1;
+        let (samples, captured) = self.run_uncounted(
+            nes,
+            frames,
+            observable,
+            setup,
+            input,
+            TrialProvenance::Capture,
+        );
+        // `Capture` was requested, so the engine produced a store; an absent one
+        // would be an engine bug rather than a caller error, and returning
+        // `None` here would report it as an exhausted budget.
+        Some((
+            samples,
+            captured.expect("a Capture trial always returns its stores"),
+        ))
     }
 
     /// The first frame index at which two trials differ, or `None` if they agree
@@ -372,6 +460,45 @@ impl Probe {
         common > 0 && Self::first_divergence(a, b).is_none()
     }
 }
+
+/// Whether a trial records provenance of its own.
+///
+/// Per-**trial** rather than per-[`Probe`] on purpose. Arming a per-CPU-cycle
+/// mix trace costs roughly 29,780 records a frame, so making it a property of
+/// the probe would bill the Latency Oracle's 21 trials — about 625k records —
+/// for a feature it never reads.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TrialProvenance {
+    /// The emulator stays unarmed for the trial. The default, and what every
+    /// existing caller wants: a re-simulated frame must not contribute an
+    /// attribution to a timeline it never happened on.
+    #[default]
+    Off,
+    /// Arm fresh stores for this trial and hand them back.
+    Capture,
+}
+
+/// The provenance a single trial produced, detached from the emulator.
+///
+/// Belongs to a re-simulated timeline, not the user's. It is returned rather
+/// than left on the `Nes` precisely so the two cannot be confused: the caller's
+/// own stores are restored underneath it as the trial ends.
+#[cfg(feature = "debug-hooks")]
+#[derive(Debug, Default)]
+pub struct CapturedProvenance {
+    /// Pixel provenance — per-byte write attribution and the per-pixel frame.
+    pub pixel: rustynes_core::rustynes_ppu::ProvenanceStash,
+    /// Audio provenance — per-register attribution and the per-cycle mix trace.
+    pub audio: rustynes_core::rustynes_apu::provenance::AudioProvenanceStash,
+}
+
+/// Placeholder in builds without `debug-hooks`, where provenance does not exist.
+///
+/// Kept as a type rather than `cfg`-ing every signature that mentions it, so the
+/// two configurations differ in one place instead of throughout the engine.
+#[cfg(not(feature = "debug-hooks"))]
+#[derive(Debug, Default)]
+pub struct CapturedProvenance;
 
 /// Holds the caller's *unserialised* emulator state across a trial and puts it
 /// back on drop — including on an unwinding panic.
@@ -686,15 +813,7 @@ mod tests {
     #[cfg(feature = "debug-hooks")]
     #[test]
     fn measure_in_place_preserves_the_callers_pixel_provenance() {
-        let mut n = Nes::from_rom(&reg_writing_nrom()).expect("fixture parses");
-        n.set_pixel_provenance(true);
-        for _ in 0..3 {
-            n.run_frame();
-        }
-        assert!(
-            n.pixel_provenance().is_some(),
-            "premise: the pixel store is armed"
-        );
+        let (mut n, before) = armed_with_a_pixel_record();
 
         let report =
             crate::latency::measure_in_place(&mut n, crate::latency::LatencyConfig::default());
@@ -703,9 +822,142 @@ mod tests {
             "premise: the measurement actually ran"
         );
 
+        let after = n
+            .pixel_provenance()
+            .expect("a latency measurement disarmed the caller's pixel provenance")
+            .get(PIXEL_PROBE.0, PIXEL_PROBE.1)
+            .expect("the record survived the measurement");
+        assert_eq!(
+            before, after,
+            "a latency measurement rewrote the caller's pixel provenance"
+        );
+    }
+
+    /// An NROM that writes `$4000` in a **loop**, so a trial replayed from any
+    /// anchor re-executes the write and produces its own attribution.
+    ///
+    /// `reg_writing_nrom` cannot serve: it writes once at reset and then spins,
+    /// so an anchor taken after that write is followed by frames that touch no
+    /// register at all. A capture test built on it asserts "the trial recorded
+    /// something" against a trial that correctly recorded nothing.
+    #[cfg(feature = "debug-hooks")]
+    fn reg_looping_nrom() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"NES\x1A");
+        bytes.push(1);
+        bytes.push(1);
+        bytes.push(0);
+        bytes.push(0);
+        bytes.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0u8; 16 * 1024];
+        // $C000: LDA #$3F / STA $4000 / JMP $C000
+        prg[0..8].copy_from_slice(&[0xA9, 0x3F, 0x8D, 0x00, 0x40, 0x4C, 0x00, 0xC0]);
+        let len = prg.len();
+        prg[len - 6] = 0x00;
+        prg[len - 5] = 0xC0;
+        prg[len - 4] = 0x00;
+        prg[len - 3] = 0xC0;
+        prg[len - 2] = 0x00;
+        prg[len - 1] = 0xC0;
+        bytes.extend_from_slice(&prg);
+        bytes.extend_from_slice(&vec![0u8; 8 * 1024]);
+        bytes
+    }
+
+    /// A `Nes` with pixel provenance armed, plus one pixel's recorded chain.
+    ///
+    /// Returns the actual record rather than a bare "is it armed" flag, so a
+    /// caller can assert the DATA came back and not merely the box that holds
+    /// it. Raised in review on #405: a regression that emptied the stash's
+    /// contents without dropping the stash would pass an `is_some()` check,
+    /// while the audio tests — which compare an exact `RegWrite` — would catch
+    /// the equivalent. The asymmetry was not defensible in a change whose whole
+    /// subject is assertions that are weaker than the contract they name.
+    #[cfg(feature = "debug-hooks")]
+    fn armed_with_a_pixel_record() -> (
+        Nes,
+        rustynes_core::rustynes_ppu::provenance::PixelProvenance,
+    ) {
+        let mut n = Nes::from_rom(&reg_writing_nrom()).expect("fixture parses");
+        n.set_pixel_provenance(true);
+        for _ in 0..3 {
+            n.run_frame();
+        }
+        let rec = n
+            .pixel_provenance()
+            .expect("premise: the pixel store is armed")
+            .get(PIXEL_PROBE.0, PIXEL_PROBE.1)
+            .expect("premise: the PPU emitted this pixel and recorded it");
+        (n, rec)
+    }
+
+    /// The pixel the preservation tests inspect. Mid-screen, so it is inside the
+    /// visible area on every region rather than near an edge where a timing
+    /// difference could legitimately change what was emitted.
+    #[cfg(feature = "debug-hooks")]
+    const PIXEL_PROBE: (usize, usize) = (128, 120);
+
+    /// A capturing trial must actually produce a store, and it must describe the
+    /// trial rather than be an empty shell.
+    ///
+    /// Read back by putting the stash into a scratch `Nes` and querying it
+    /// through the ordinary accessor, which exercises the round trip rather than
+    /// reaching past it.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn a_capturing_trial_records_its_own_provenance() {
+        let rom = reg_looping_nrom();
+        let mut n = Nes::from_rom(&rom).expect("fixture parses");
+        for _ in 0..3 {
+            n.run_frame();
+        }
+        let mut probe = Probe::anchor(&n, Budget::default());
+
+        let (samples, captured) = probe
+            .run_capturing(&mut n, 4, Observable::Framebuffer, |_| {}, idle)
+            .expect("within budget");
+        assert_eq!(samples.len(), 4, "premise: the trial ran its frames");
         assert!(
-            n.pixel_provenance().is_some(),
-            "a latency measurement disarmed the caller's pixel provenance"
+            captured.audio.is_armed(),
+            "a Capture trial returned an unarmed audio store"
+        );
+
+        let mut scratch = Nes::from_rom(&rom).expect("fixture parses");
+        scratch.put_audio_provenance(captured.audio);
+        let rec = scratch
+            .register_attribution()
+            .expect("the captured store is armed")
+            .get(0x4000)
+            .expect("the trial re-executed STA $4000 and recorded it");
+        assert_eq!(rec.value, 0x3F);
+    }
+
+    /// The contract that makes capture safe: the CALLER's provenance comes back
+    /// exactly as it was, not merely armed and not merely non-empty.
+    ///
+    /// A store the trial had refilled with its own re-simulated frames would
+    /// satisfy both weaker checks while reporting instructions that never
+    /// executed on the user's timeline — which is the whole failure this
+    /// separation exists to prevent.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn a_capturing_trial_leaves_the_callers_provenance_byte_identical() {
+        let (mut n, before) = armed_with_a_recorded_write();
+        let mut probe = Probe::anchor(&n, Budget::default());
+
+        let (_, captured) = probe
+            .run_capturing(&mut n, 4, Observable::Framebuffer, |_| {}, idle)
+            .expect("within budget");
+        assert!(captured.audio.is_armed(), "premise: the trial did capture");
+
+        let after = n
+            .register_attribution()
+            .expect("the caller's store is still armed")
+            .get(0x4000)
+            .expect("the caller's attribution survived a capturing trial");
+        assert_eq!(
+            before, after,
+            "a capturing trial leaked into the caller's audio provenance"
         );
     }
 
@@ -716,24 +968,21 @@ mod tests {
     #[cfg(feature = "debug-hooks")]
     #[test]
     fn a_trial_preserves_the_callers_pixel_provenance() {
-        let mut n = Nes::from_rom(&reg_writing_nrom()).expect("fixture parses");
-        n.set_pixel_provenance(true);
-        for _ in 0..3 {
-            n.run_frame();
-        }
-        assert!(
-            n.pixel_provenance().is_some(),
-            "premise: the pixel store is armed"
-        );
+        let (mut n, before) = armed_with_a_pixel_record();
 
         let mut probe = Probe::anchor(&n, Budget::default());
         probe
             .run(&mut n, 6, Observable::Framebuffer, idle)
             .expect("within budget");
 
-        assert!(
-            n.pixel_provenance().is_some(),
-            "a probe trial disarmed the caller's pixel provenance"
+        let after = n
+            .pixel_provenance()
+            .expect("a probe trial disarmed the caller's pixel provenance")
+            .get(PIXEL_PROBE.0, PIXEL_PROBE.1)
+            .expect("the record survived the trial");
+        assert_eq!(
+            before, after,
+            "a probe trial rewrote the caller's pixel provenance"
         );
     }
 
@@ -761,6 +1010,70 @@ mod tests {
         assert_eq!(
             before, after,
             "a latency measurement rewrote the caller's audio provenance"
+        );
+    }
+
+    fn varying_nrom() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"NES\x1A");
+        bytes.push(1);
+        bytes.push(1);
+        bytes.push(0);
+        bytes.push(0);
+        bytes.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0u8; 16 * 1024];
+        // $C000: INX / STX $2001 / JMP $C000 — emphasis bits churn every ~7
+        // cycles, and the index framebuffer packs them as (emphasis << 6), so
+        // the emitted pixel values genuinely vary frame to frame.
+        prg[0..6].copy_from_slice(&[0xE8, 0x8E, 0x01, 0x20, 0x4C, 0x00]);
+        prg[6] = 0xC0;
+        let len = prg.len();
+        prg[len - 6] = 0x00;
+        prg[len - 5] = 0xC0;
+        prg[len - 4] = 0x00;
+        prg[len - 3] = 0xC0;
+        prg[len - 2] = 0x00;
+        prg[len - 1] = 0xC0;
+        bytes.extend_from_slice(&prg);
+        bytes.extend_from_slice(&vec![0u8; 8 * 1024]);
+        bytes
+    }
+
+    /// A trial restores the anchor on the way IN and not on the way out, so the
+    /// emulator is left holding the trial's final frame.
+    ///
+    /// Pinned because the Divergence Lens reads the framebuffer off `nes` after
+    /// a trial and would otherwise be comparing two copies of the anchor while
+    /// reporting them as the diverging frame.
+    ///
+    /// `varying_nrom`, not `synth_nrom`, and that is the whole point: the plain
+    /// fixture renders a blank screen, where "left at the anchor" and "left at
+    /// the end" are byte-identical, so the test passes under both behaviours and
+    /// proves nothing. Checked here by asserting the fixture varies at all
+    /// before asserting anything about the engine.
+    #[test]
+    fn a_trial_leaves_the_emulator_at_its_end_state() {
+        let mut n = Nes::from_rom(&varying_nrom()).expect("fixture parses");
+        for _ in 0..4 {
+            n.run_frame();
+        }
+        let anchor_fb = n.index_framebuffer().to_vec();
+        assert!(
+            anchor_fb.iter().any(|&px| px != anchor_fb[0]),
+            "premise: this fixture emits a varying screen, so the assertion below \
+             can distinguish the anchor from the trial's end state"
+        );
+
+        let mut probe = Probe::anchor(&n, Budget::default());
+        let _ = probe
+            .run(&mut n, 12, Observable::IndexFramebuffer, idle)
+            .expect("within budget");
+
+        assert_ne!(
+            n.index_framebuffer(),
+            anchor_fb.as_slice(),
+            "a trial left the emulator at the anchor; the Divergence Lens reads \
+             the frame off `nes` after a trial and would silently compare anchors"
         );
     }
 

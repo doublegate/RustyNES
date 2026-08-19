@@ -337,9 +337,11 @@ impl PixelProvenance {
 }
 
 /// Screen width in pixels, and the stride of a [`PixelProvenanceFrame`].
-pub const SCREEN_W: usize = 256;
-/// Screen height in pixels.
-pub const SCREEN_H: usize = 240;
+///
+/// An alias, not a second definition: see [`crate::SCREEN_WIDTH`].
+pub const SCREEN_W: usize = crate::SCREEN_WIDTH;
+/// Screen height in pixels. Alias of [`crate::SCREEN_HEIGHT`].
+pub const SCREEN_H: usize = crate::SCREEN_HEIGHT;
 
 /// One frame of [`PixelProvenance`], indexed by `y * SCREEN_W + x`.
 ///
@@ -452,6 +454,18 @@ impl ProvenanceStash {
     #[must_use]
     pub const fn is_armed(&self) -> bool {
         self.prov_armed || self.write_attrib.is_some()
+    }
+
+    /// The stashed per-pixel provenance frame, or `None` when unarmed.
+    ///
+    /// v2.3.8 — read-only, so a detached stash can be inspected without being
+    /// put back into an emulator first. The Divergence Lens captures a trial's
+    /// provenance precisely so it never touches a live `Nes` again; routing the
+    /// read through a scratch instance would undo that. Mirrors
+    /// `rustynes_apu::provenance::AudioProvenanceStash::mix_trace`.
+    #[must_use]
+    pub fn pixel_frame(&self) -> Option<&PixelProvenanceFrame> {
+        self.prov_frame.as_deref()
     }
 }
 
