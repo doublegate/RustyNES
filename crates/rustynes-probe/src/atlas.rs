@@ -171,7 +171,9 @@ where
     // far larger than cache.
     let mut frame_major: Vec<u8> = Vec::with_capacity(WRAM_LEN * frames as usize);
     // Rewind capture is suppressed for the whole window, by the same guard a
-    // trial uses. These frames advance the live emulator and the caller rolls
+    // trial uses — which also moves the provenance stores out, so an
+    // observation's 180 rolled-back frames cannot contribute attributions to a
+    // timeline they never happened on (v2.3.7). These frames advance the live emulator and the caller rolls
     // them back, so they never happened on the user's timeline — letting them
     // into the ring would allow rewinding *into an observation*, which is exactly
     // the defect this crate had just fixed for `verify_liveness` and then
@@ -180,7 +182,7 @@ where
     // The guard also makes this panic-safe: an observation is 180 frames, and a
     // panic part-way through must not leave capture disabled on a `Nes` the
     // caller keeps using.
-    let guard = crate::CaptureGuard::suppress(nes);
+    let guard = crate::TrialGuard::enter(nes);
     for f in 0..frames {
         let (p1, p2) = input(f);
         guard.nes.set_buttons(0, p1);
@@ -737,7 +739,7 @@ mod tests {
     /// fixed for `verify_liveness` and then reintroduced one function away, caught
     /// in review on PR #392.
     ///
-    /// Mutation-checked: removing the `CaptureGuard` from `observe` fails this
+    /// Mutation-checked: removing the `TrialGuard` from `observe` fails this
     /// with the ring grown by the window length.
     #[test]
     fn observing_does_not_pollute_the_callers_rewind_ring() {

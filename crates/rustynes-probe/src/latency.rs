@@ -189,7 +189,13 @@ pub fn measure(nes: &mut Nes, anchor: &Nes, cfg: LatencyConfig) -> LatencyReport
 pub fn measure_in_place(nes: &mut Nes, cfg: LatencyConfig) -> LatencyReport {
     let restore_point = nes.snapshot();
     let mut probe = Probe::anchor(&*nes, budget_for(cfg));
-    let report = run_measurement(&mut probe, nes, cfg);
+    // v2.3.7 — the guard spans the measurement AND the final restore below,
+    // which is the whole point of putting it here rather than relying on the
+    // per-trial guards inside `run_measurement`. Those end with their trial, so
+    // the final restore on the way out sat outside all of them and cleared the
+    // provenance stores after every one of them had carefully preserved it.
+    let guard = crate::TrialGuard::enter(nes);
+    let report = run_measurement(&mut probe, &mut *guard.nes, cfg);
     // Put the user's timeline back exactly. A measurement that leaves the game
     // 400 frames further on would be a worse bug than the one it measures.
     //
@@ -205,8 +211,13 @@ pub fn measure_in_place(nes: &mut Nes, cfg: LatencyConfig) -> LatencyReport {
     // the snapshot format cannot round-trip itself; returning normally would
     // hand the user a report while leaving their game several hundred frames
     // ahead, which is precisely the outcome this line exists to prevent.
-    nes.restore_quiet(&restore_point)
+    guard
+        .nes
+        .restore_quiet(&restore_point)
         .expect("a snapshot taken from this instance restores to it");
+    // Explicit, so the order is stated rather than inferred from scope: the
+    // stores go back AFTER the restore that would otherwise have cleared them.
+    drop(guard);
     report
 }
 

@@ -81,6 +81,39 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **The Latency Oracle and the RAM Atlas no longer empty the provenance
+  panels.** Both drive the emulator and then put the timeline back, and
+  `Nes::restore_inner` clears the pixel- and audio-provenance stores — correctly
+  for a genuine timeline change, wrongly for a restore of the state the user is
+  still looking at. `rustynes-probe` had three such restores and none of them
+  used the `take_provenance` / `put_provenance` stash that v2.3.6 added for
+  exactly this: `Probe::run_uncounted` (once per trial, and a latency
+  measurement runs up to 21 of them), `latency::measure_in_place` (the final
+  restore, which sits outside every per-trial guard), and the RAM Atlas panel's
+  `TimelineGuard`. Both stores are **cumulative** — "which instruction last
+  wrote this" can point thousands of frames back, to a palette byte from level
+  load or a `$4008` reload from init — so the records were not rebuilt by the
+  next frame; they were gone for the session.
+
+  This is the defect class v2.3.6 was written about, found in three more places.
+  The v2.3.6 fix was correct at the call site the bug report named and stopped
+  there, and `docs/pixel-provenance.md` then described run-ahead as "the one
+  caller that needs the exception" — a correct rule with an incomplete
+  enumeration under it. Closed by moving the stash into
+  `rustynes_probe::TrialGuard`, the guard that already carried rewind capture
+  across a trial for the same underlying reason: state that lives outside the
+  save state is not carried by a snapshot round trip.
+
+  Pinned by four tests under four independent mutations — one per store and one
+  per site — so a fix that put back only one store, or guarded only one of the
+  two probe restores, fails. The existing
+  `measure_in_place_restores_the_live_timeline` could not have caught it: it
+  compares `nes.snapshot()` before and after, and provenance is deliberately not
+  in the snapshot, so it asserted something strictly weaker than the contract it
+  is named for. `rustynes-probe` gains a `debug-hooks` passthrough feature,
+  without which the guard would have compiled out in precisely the builds that
+  need it.
+
 - **VRC7 save states now carry the FM synthesizer, so rewind no longer garbles
   the music.** `Vrc7::save_state` wrote the *shadow* OPLL register bytes and
   never the live synthesizer — not `opll`, not `opll_clock_counter`, not

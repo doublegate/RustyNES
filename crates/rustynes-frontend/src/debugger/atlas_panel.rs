@@ -585,15 +585,33 @@ struct TimelineGuard<'a> {
     nes: &'a mut Nes,
     snapshot: Vec<u8>,
     restored: bool,
+    /// v2.3.7 — the pixel- and audio-provenance stores, held across the restore.
+    ///
+    /// The same reasoning as `rustynes_probe::TrialGuard`, and it has to be
+    /// repeated here because this guard owns its own restore: both stores live
+    /// OUTSIDE the save state, and `Nes::restore_quiet` clears them, so putting
+    /// the timeline back also emptied whatever the Pixel Provenance and Audio
+    /// Provenance panels had accumulated. Cumulative attribution is not
+    /// rebuilt by the next frame — a palette byte or a `$4008` write from level
+    /// load does not happen again — so the loss was permanent for the session.
+    #[cfg(feature = "debug-hooks")]
+    provenance: (
+        rustynes_core::rustynes_ppu::ProvenanceStash,
+        rustynes_core::rustynes_apu::provenance::AudioProvenanceStash,
+    ),
 }
 
 impl<'a> TimelineGuard<'a> {
     fn capture(nes: &'a mut Nes) -> Self {
         let snapshot = nes.snapshot();
+        #[cfg(feature = "debug-hooks")]
+        let provenance = (nes.take_provenance(), nes.take_audio_provenance());
         Self {
             nes,
             snapshot,
             restored: false,
+            #[cfg(feature = "debug-hooks")]
+            provenance,
         }
     }
 
@@ -612,6 +630,14 @@ impl Drop for TimelineGuard<'_> {
             // Unwind path only. Cannot report, so it must not panic here either —
             // a panic during unwinding aborts.
             let _ = self.nes.restore_quiet(&self.snapshot);
+        }
+        // AFTER any restore, on both paths, so the stores are put back into a
+        // timeline that has already stopped being rewritten.
+        #[cfg(feature = "debug-hooks")]
+        {
+            let (pixel, audio) = core::mem::take(&mut self.provenance);
+            self.nes.put_provenance(pixel);
+            self.nes.put_audio_provenance(audio);
         }
     }
 }

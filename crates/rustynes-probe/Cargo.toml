@@ -19,6 +19,18 @@ authors.workspace = true
 repository.workspace = true
 description = "Deterministic re-simulation probe: anchor, replay under variation, locate the first divergence"
 
+[features]
+# Off by default, forwarded from `rustynes-frontend/debug-hooks`.
+#
+# The probe crate needs to SEE this feature, not merely inherit its effects.
+# Cargo's feature unification means a frontend build with `debug-hooks` already
+# switches on `rustynes-core/debug-hooks`, so `Nes::restore_quiet` starts
+# clearing the provenance stores — while any `#[cfg(feature = "debug-hooks")]`
+# code in THIS crate stays compiled out, because a crate can only `cfg` on
+# features it declares. Without this passthrough the guard that preserves those
+# stores would be dead code in exactly the build that needs it.
+debug-hooks = ["rustynes-core/debug-hooks"]
+
 [dependencies]
 rustynes-core = { path = "../rustynes-core" }
 
