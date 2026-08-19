@@ -22,8 +22,10 @@ harder to recover than the diffs.
 
 ### Added
 
-- **The Divergence Lens — which pixels differ, not just which frame.** (#407,
-  v2.3.8 "Parallax" item A.) `Probe` could already say whether two
+- **The Divergence Lens — which pixels differ, not just which frame, and why.**
+  (#407, the whole of v2.3.8 "Parallax".) Surfaced as a panel under **Tools →
+  Analysis**, over a headless `rustynes_probe::divergence` core that is tested
+  independently of it. `Probe` could already say whether two
   configurations of the same ROM diverge and at which frame, because a trial
   reduces each frame to one `u64`. That reduction is the right shape for
   *detecting* a difference and the wrong shape for *explaining* one: a hash says
@@ -49,6 +51,19 @@ harder to recover than the diffs.
   up front for all four trials, so spending two on detection and then finding the
   localisation pair unaffordable cannot consume the budget that would have
   answered the question.
+
+  Beyond locating a difference, the Lens **explains** it. Trial-scoped
+  provenance capture lets a located pixel be handed to the machinery that already
+  answers "what wrote this, and from which instruction", so the answer is a cause
+  rather than a coordinate — and it closes v2.3.8 item B without bisection. An
+  **audio** lens resolves a divergence to the CPU cycle, the cadence at which the
+  mix is genuinely computed.
+
+  One defect was found and fixed inside the same work: the Lens left the emulator
+  **thirty frames ahead** of where it started. A trial restores the anchor on the
+  way in and not on the way out, which is deliberate — it is what lets the Lens
+  read the trial's final frame off `nes` directly — but the outermost caller has
+  to put the timeline back, and did not.
 
 - **A Latency Oracle measurement is remembered per game.** (#410.) Reopening a
   game shows what was measured last time instead of an empty panel, keyed on the
