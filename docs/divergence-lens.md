@@ -62,6 +62,32 @@ budget that would have answered the question on a second attempt.
 frames for every frame of a long trial is exactly the memory blow-up the `u64`
 reduction exists to avoid.
 
+## It leaves the emulator where it found it
+
+Both entry points snapshot the live state on the way in and restore it on the
+way out, the same contract `latency::measure_in_place` offers. A tool that
+answers "what does this byte change?" by leaving the user's game thirty frames
+further on than they left it is a worse bug than any it was asked about.
+
+This is not free, and it was not right the first time. `localise` originally ran
+its four trials and returned — because a trial restores the anchor on the way
+**in** and not on the way out, which is the property the pixel path relies on to
+read the diverging frame. The result was correct and the emulator was left
+advanced. A test asserting `nes.snapshot()` is unchanged across the call caught
+it.
+
+The restore is wrapped in the probe engine's `TrialGuard`, because
+`Nes::restore_inner` clears both provenance stores and this restore is exactly
+the same-timeline case that exception exists for. Without the guard, asking the
+Lens a question would empty the Pixel Provenance and Audio Provenance panels —
+the v2.3.7 defect reintroduced one layer up. **The snapshot comparison cannot
+catch that**, because provenance is deliberately not in the snapshot, so it is
+pinned by its own test and its own mutation.
+
+Both facts are structural rather than observed: every path out of `localise`
+goes through one wrapper, so "all six early returns restore" is a property of
+the shape rather than of inspection.
+
 ## The pixel path
 
 `divergence::localise` reports, for the first diverging frame:

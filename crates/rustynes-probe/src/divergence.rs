@@ -177,6 +177,51 @@ pub fn localise<F, S>(
     probe: &mut Probe,
     nes: &mut Nes,
     frames: u32,
+    setup: S,
+    input: F,
+) -> Localisation
+where
+    F: FnMut(u32) -> (Buttons, Buttons),
+    S: FnMut(&mut Nes),
+{
+    in_place(nes, |n| localise_inner(probe, n, frames, setup, input))
+}
+
+/// Run `body` against `nes` and put the live timeline back exactly.
+///
+/// The Lens drives the emulator for four trials, and a trial restores the anchor
+/// on the way IN and not on the way out — which item A relies on to read the
+/// diverging frame, and which would otherwise leave the user's game 30 frames
+/// further on than they left it. That is a worse bug than any this tool was
+/// asked about, and it is the contract `latency::measure_in_place` documents for
+/// the same reason.
+///
+/// Wrapped in a [`TrialGuard`](crate::TrialGuard) so the final restore does not
+/// clear the caller's provenance: `Nes::restore_inner` clears both stores, and
+/// this restore is the same-timeline case that exception exists for.
+///
+/// A closure rather than a restore after every early return: `localise` has six
+/// paths out, and "every one of them restores" is a property worth having
+/// structurally instead of by inspection.
+fn in_place<T>(nes: &mut Nes, body: impl FnOnce(&mut Nes) -> T) -> T {
+    let restore_point = nes.snapshot();
+    let guard = crate::TrialGuard::enter(nes);
+    let out = body(&mut *guard.nes);
+    guard
+        .nes
+        .restore_quiet(&restore_point)
+        .expect("a snapshot taken from this instance restores to it");
+    // Explicit, so the order is stated rather than inferred from scope: the
+    // provenance stores go back AFTER the restore that would have cleared them.
+    drop(guard);
+    out
+}
+
+/// [`localise`]'s body, without the timeline restore.
+fn localise_inner<F, S>(
+    probe: &mut Probe,
+    nes: &mut Nes,
+    frames: u32,
     mut setup: S,
     mut input: F,
 ) -> Localisation
@@ -318,6 +363,24 @@ pub enum AudioLocalisation {
 /// Panics if `nes` is running a different ROM than `probe`'s anchor.
 #[cfg(feature = "debug-hooks")]
 pub fn localise_audio<F, S>(
+    probe: &mut Probe,
+    nes: &mut Nes,
+    frames: u32,
+    setup: S,
+    input: F,
+) -> AudioLocalisation
+where
+    F: FnMut(u32) -> (Buttons, Buttons),
+    S: FnMut(&mut Nes),
+{
+    in_place(nes, |n| {
+        localise_audio_inner(probe, n, frames, setup, input)
+    })
+}
+
+/// [`localise_audio`]'s body, without the timeline restore.
+#[cfg(feature = "debug-hooks")]
+fn localise_audio_inner<F, S>(
     probe: &mut Probe,
     nes: &mut Nes,
     frames: u32,
@@ -599,6 +662,70 @@ mod tests {
             "the Lens reported a divergence that an independent replay of the \
              same two configurations does not produce"
         );
+    }
+
+    /// The Lens drives the emulator for four trials. It must put the live
+    /// timeline back, exactly as `latency::measure_in_place` does — a tool that
+    /// leaves the user's game 30 frames further on is a worse bug than the one it
+    /// was asked about.
+    #[test]
+    fn localise_restores_the_live_timeline() {
+        let mut n = warmed();
+        let before = n.snapshot();
+        let mut probe = Probe::anchor(&n, budget_for(12));
+
+        let _ = localise(&mut probe, &mut n, 12, |m| m.wram_mut()[0] ^= 0xFF, idle);
+
+        assert_eq!(n.snapshot(), before, "localise moved the live timeline");
+    }
+
+    /// The audio Lens restores too. Asserted separately because it is a second
+    /// entry point through the same wrapper, and a fix applied to one call site
+    /// of a shared path is this project's most-repeated defect.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn localise_audio_restores_the_live_timeline() {
+        let mut n = audio_warmed();
+        let before = n.snapshot();
+        let mut probe = Probe::anchor(&n, budget_for(10));
+
+        let _ = localise_audio(&mut probe, &mut n, 10, |m| m.wram_mut()[0] ^= 0x0F, idle);
+
+        assert_eq!(
+            n.snapshot(),
+            before,
+            "localise_audio moved the live timeline"
+        );
+    }
+
+    /// The restore above must not cost the user their provenance.
+    ///
+    /// `Nes::restore_inner` clears both stores, so a naive snapshot/restore
+    /// around the Lens would put the timeline back and empty the Audio
+    /// Provenance panel — the exact defect v2.3.7 closed for the probe engine,
+    /// reintroduced one layer up. The snapshot comparison above cannot catch it,
+    /// because provenance is deliberately not IN the snapshot.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn localise_preserves_the_callers_audio_provenance() {
+        let mut n = audio_warmed();
+        n.set_audio_provenance(true);
+        n.run_frame();
+        let before = n
+            .register_attribution()
+            .expect("premise: armed")
+            .get(0x4000)
+            .expect("premise: the fixture writes $4000 every loop");
+
+        let mut probe = Probe::anchor(&n, budget_for(10));
+        let _ = localise(&mut probe, &mut n, 10, |m| m.wram_mut()[0] ^= 0x0F, idle);
+
+        let after = n
+            .register_attribution()
+            .expect("the caller's store is still armed after the Lens")
+            .get(0x4000)
+            .expect("the caller's attribution survived the Lens");
+        assert_eq!(before, after, "the Lens rewrote the caller's provenance");
     }
 
     /// The control. Without it, a Lens that reported a divergence unconditionally
