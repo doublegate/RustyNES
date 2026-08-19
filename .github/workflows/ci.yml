@@ -568,9 +568,12 @@ jobs:
       # that package is unused — this gate is `cargo check` only.
       - name: Provision the aarch64 glibc headers for bindgen
         if: matrix.target == 'aarch64-unknown-linux-gnu'
+        env:
+          APT_PACKAGE: gcc-aarch64-linux-gnu
+        run: .github/scripts/apt-install-retry.sh
+      - name: Export the aarch64 bindgen sysroot
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -yq gcc-aarch64-linux-gnu
           echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include" >> "$GITHUB_ENV"
       # Provision the armhf glibc headers for bindgen, exactly as for aarch64
       # above. `gcc-arm-linux-gnueabihf` pulls `libc6-dev-armhf-cross`, landing
@@ -579,9 +582,12 @@ jobs:
       # `cargo check` only; the buildbot remains the authority on linking.
       - name: Provision the armhf glibc headers for bindgen
         if: matrix.target == 'armv7-unknown-linux-gnueabihf'
+        env:
+          APT_PACKAGE: gcc-arm-linux-gnueabihf
+        run: .github/scripts/apt-install-retry.sh
+      - name: Export the armhf bindgen sysroot
+        if: matrix.target == 'armv7-unknown-linux-gnueabihf'
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -yq gcc-arm-linux-gnueabihf
           echo "BINDGEN_EXTRA_CLANG_ARGS_armv7_unknown_linux_gnueabihf=--sysroot=/usr/arm-linux-gnueabihf -isystem /usr/arm-linux-gnueabihf/include" >> "$GITHUB_ENV"
       # Deliberately NOT the composite action's `targets:` input. That routes
       # through `dtolnay/rust-toolchain`, which installs the target for the
