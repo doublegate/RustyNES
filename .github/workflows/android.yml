@@ -38,6 +38,7 @@ jobs:
   cross-build:
     name: NDK cross-build + UniFFI bindings
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -100,6 +101,7 @@ jobs:
   gradle-bundle:
     name: Gradle bundle foss+play release (best-effort packaging)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     # Packaging is informational: the cross-build job above is the real link
     # gate. R8/Compose packaging pulls the full Android SDK, so a transient
     # tooling hiccup here must not fail the merge.

@@ -376,6 +376,22 @@ timeout, so one hung job silently skipped a release for five hours.
   mean anything. It was the second hung job that night; the first cost two hours
   on a PR.
 
+  **That fix covered `ci.yml` only, and the gap was found the way the first one
+  was — by being blocked.** During this release's own cut, `Clippy Security
+  Lints` hung for over two hours in a setup step, on a job whose observed runtime
+  is two to three minutes, holding the release PR. `security.yml` had no
+  `timeout-minutes` on any of its three jobs, and a sweep found five more
+  unbounded workflows: `android.yml`, `ios.yml`, `web.yml`,
+  `antigravity-review.yml`, and `release-auto.yml` — the release workflow itself.
+  All are now bounded, so the sweep across `.github/workflows/` comes back empty.
+
+  Two details worth keeping. `release-auto.yml`'s `build` job **cannot** carry a
+  timeout, because `timeout-minutes` is not valid on a job that uses `uses:`; its
+  budget lives on the jobs inside `release.yml`, which already had them. And
+  `antigravity-review.yml` is bounded *harder* than the hosted jobs rather than
+  softer, because it runs on the maintainer's own hardware, where a hung run
+  holds a real machine instead of a disposable VM.
+
 ## [2.3.6] - 2026-08-17 - "Sounding" (measuring, and what a measurement may claim)
 
 A *sounding* is a depth measured with its uncertainty attached, and that is what

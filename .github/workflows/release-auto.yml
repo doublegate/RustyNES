@@ -60,6 +60,10 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
+    # Bounded like every other job (v2.3.7). `build` below cannot carry one —
+    # `timeout-minutes` is not valid on a job that uses `uses:` — so its budget
+    # lives on the jobs inside `release.yml`.
+    timeout-minutes: 15
     outputs:
       should_release: ${{ steps.decide.outputs.should_release }}
       tag: ${{ steps.decide.outputs.tag }}
