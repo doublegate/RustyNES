@@ -62,7 +62,19 @@ jobs:
     runs-on: ubuntu-latest
     # Bounded like every other job (v2.3.7). `build` below cannot carry one —
     # `timeout-minutes` is not valid on a job that uses `uses:` — so its budget
-    # lives on the jobs inside `release.yml`.
+    # lives on the jobs inside `release.yml`, which already carry their own.
+    #
+    # Challenged in review on #406, which claimed the restriction was lifted in
+    # late 2022. It was not. GitHub's workflow-syntax and reuse-workflows pages
+    # state neither way, so it was checked against the schema rather than
+    # recalled; `actionlint` on exactly this shape:
+    #
+    #   when a reusable workflow is called with "uses", "timeout-minutes" is not
+    #   available. only following keys are allowed: "name", "uses", "with",
+    #   "secrets", "needs", "if", and "permissions"
+    #
+    # So adding one here is a hard syntax error, not the harmless no-op it would
+    # be if the key were merely ignored.
     timeout-minutes: 15
     outputs:
       should_release: ${{ steps.decide.outputs.should_release }}
