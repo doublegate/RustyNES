@@ -560,30 +560,40 @@ jobs:
         run: |
           echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot" >> "$GITHUB_ENV"
       # Provision the aarch64 glibc headers for bindgen (see the matrix note).
-      # `gcc-aarch64-linux-gnu` pulls `libc6-dev-arm64-cross`, which lands the
-      # aarch64 glibc headers under `/usr/aarch64-linux-gnu/include`; `--sysroot`
-      # sends clang there instead of the host's x86_64-only `/usr/include`, and
-      # the explicit `-isystem` guarantees the include dir is on the search path
-      # regardless of how the sysroot lays out `usr/include`. The cross linker in
-      # that package is unused — this gate is `cargo check` only.
+      # `libc6-dev-arm64-cross` lands the aarch64 glibc headers under
+      # `/usr/aarch64-linux-gnu/include`; `--sysroot` sends clang there instead of
+      # the host's x86_64-only `/usr/include`, and the explicit `-isystem`
+      # guarantees the include dir is on the search path regardless of how the
+      # sysroot lays out `usr/include`.
+      #
+      # This asked for `gcc-aarch64-linux-gnu` until v2.3.9, and the comment that
+      # stood here said why that was wrong without drawing the conclusion: it
+      # named `libc6-dev-arm64-cross` as the package that actually lands the
+      # headers, and stated that the cross linker is unused because this gate is
+      # `cargo check` only. So the step installed a whole cross toolchain to
+      # obtain a dependency it had already identified. The failure log makes the
+      # cost concrete — 20+ packages, of which `Get:20` alone is
+      # `gcc-13-aarch64-linux-gnu` at 21.1 MB, and it was mid-download when the
+      # install timeout fired. bindgen runs the HOST clang against the sysroot and
+      # never invokes the cross compiler.
       - name: Provision the aarch64 glibc headers for bindgen
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         env:
-          APT_PACKAGE: gcc-aarch64-linux-gnu
+          APT_PACKAGE: libc6-dev-arm64-cross
         run: .github/scripts/apt-install-retry.sh
       - name: Export the aarch64 bindgen sysroot
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include" >> "$GITHUB_ENV"
       # Provision the armhf glibc headers for bindgen, exactly as for aarch64
-      # above. `gcc-arm-linux-gnueabihf` pulls `libc6-dev-armhf-cross`, landing
-      # the 32-bit ARM glibc headers under `/usr/arm-linux-gnueabihf/include`.
-      # The cross linker in that package is unused here — this gate is
-      # `cargo check` only; the buildbot remains the authority on linking.
+      # above and narrowed for the same reason. `libc6-dev-armhf-cross` lands the
+      # 32-bit ARM glibc headers under `/usr/arm-linux-gnueabihf/include`; the
+      # cross compiler and linker are unused here, since this gate is
+      # `cargo check` only and the buildbot remains the authority on linking.
       - name: Provision the armhf glibc headers for bindgen
         if: matrix.target == 'armv7-unknown-linux-gnueabihf'
         env:
-          APT_PACKAGE: gcc-arm-linux-gnueabihf
+          APT_PACKAGE: libc6-dev-armhf-cross
         run: .github/scripts/apt-install-retry.sh
       - name: Export the armhf bindgen sysroot
         if: matrix.target == 'armv7-unknown-linux-gnueabihf'
