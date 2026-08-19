@@ -50,25 +50,53 @@ fi
 # from an unmeasured premise is a gate that fires on healthy runs, which is worse
 # than a loose one: it blocked three PRs while looking like infrastructure decay.
 #
-# Two changes, and the second is what makes the first affordable.
-#
 # `apt-get update` now runs ONLY after a direct install has failed. The runner
 # image ships a populated package index, so an index refresh does not belong on
-# the happy path at all -- it is the recovery step for the one case that needs it,
-# an index stale enough that the requested version has moved and install 404s.
-# Attempt 1 skips it, which removes the 180s that killed two of the three
-# attempts above before they ever reached the package.
+# the happy path -- it is the recovery step for the one case that needs it, an
+# index stale enough that the requested version has moved and install 404s.
 #
-# Worst case, stated as arithmetic rather than as "roughly an order of
-# magnitude" -- that phrasing is what went unchecked last time:
+# THE SECOND CALIBRATION, from this change's own first CI run. Do not tune these
+# numbers again without a `Fetched` line to point at.
 #
-#   300 + 15 + (300 + 300) + 30 + (300 + 300) = 1245s
+# The narrowed package (see the workflow step) made the provision succeed, and
+# the log gives the reason the old one could not:
 #
-# Under 21 minutes, inside the job's 25 with room for the `cargo check` that
-# follows it.
-readonly UPDATE_TIMEOUT=300
-readonly INSTALL_TIMEOUT=300
-readonly ATTEMPTS=3
+#   Fetched 4201 kB in 4min 45s (14.7 kB/s)
+#
+# Fourteen point seven kilobytes per second. The mirror is degraded by roughly
+# three orders of magnitude, which is why every bound derived from "healthy"
+# behaviour was wrong -- and why the previous 40 MB package set was hopeless:
+# at that rate it needed about 45 minutes, past the job budget entirely.
+#
+# Even at 4.2 MB it only just passed, and NOT the way the first draft of this
+# comment assumed. The real sequence was:
+#
+#   attempt 1  install downloaded all 4201 kB (285s), then was killed at 300s
+#              during dpkg unpack -- the download finished, the install did not
+#   attempt 2  update, then install: NO re-download, because the archives were
+#              already in /var/cache/apt/archives. Succeeded.
+#
+# So the run was rescued by apt's archive cache persisting across attempts. That
+# is a real and useful property -- each attempt makes progress rather than
+# starting over -- but it was undesigned and undocumented, which makes it the
+# same defect class as the bound it rescued: behaviour nobody wrote down.
+# Written down now, and no longer relied upon: INSTALL_TIMEOUT is sized so ONE
+# attempt completes at the worst speed actually observed.
+#
+#   285s download at 14.7 kB/s + dpkg unpack, so 600s is ~2x the worst observed.
+#
+# ATTEMPTS drops to 2 to keep the worst case inside the job's 25-minute budget,
+# stated as arithmetic rather than as "roughly an order of magnitude" -- that
+# phrasing is what went unchecked the first time:
+#
+#   600 + 15 + (180 + 600) = 1395s, plus ~45s of surrounding steps
+#
+# The third attempt is not a loss worth arguing for: attempt 2 already retries
+# with a refreshed index AND a warm download cache, which covers both the stale
+# index and the slow mirror. A third would only repeat attempt 2.
+readonly UPDATE_TIMEOUT=180
+readonly INSTALL_TIMEOUT=600
+readonly ATTEMPTS=2
 
 # Elevation on the OUTSIDE, `timeout` on the inside. Review on #408 caught the
 # ordering and it is not cosmetic: with `timeout` outermost the SIGTERM goes to
