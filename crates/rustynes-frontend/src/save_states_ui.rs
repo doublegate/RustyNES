@@ -308,7 +308,13 @@ fn format_modified(modified: Option<std::time::SystemTime>) -> String {
     }
 }
 
-/// The data-dir slot path, re-exported for the app to log / inspect.
+/// The data-dir slot path, for callers that need to log or inspect it.
+///
+/// "Re-exported for the app" overstated it: there is no in-repo call site, and
+/// review on #422 caught the claim. Kept as a thin `Option`-returning wrapper
+/// over `save_state::slot_path` for external and diagnostic use rather than
+/// deleted, because unlike the dead code this change removes it is `pub` and
+/// part of this module's surface, not an unreachable island.
 pub fn slot_path_for(data_dir: &Path, rom_sha256: &[u8; 32], slot: u8) -> Option<PathBuf> {
     save_state::slot_path(data_dir, rom_sha256, slot).ok()
 }
