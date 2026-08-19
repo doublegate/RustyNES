@@ -47,10 +47,21 @@ env:
 permissions:
   contents: read
 
+# Every job carries an explicit `timeout-minutes`, for the reason PR #400
+# established for `ci.yml` and this file was missed by: without one a job
+# inherits GitHub's SIX-HOUR default, and a hung job then blocks a release while
+# reporting nothing at all. That is not hypothetical here — `Clippy Security
+# Lints` hung for over two hours during the v2.3.7 cut, in a setup step, on a
+# job whose observed runtime is 2-3 minutes, and the release waited on it.
+#
+# Budgets are generous multiples of observed runtime (audit and deny complete in
+# under a minute, clippy in 2-3), because the purpose is to bound a hang, not to
+# police normal variance on a cold cache.
 jobs:
   audit:
     name: Dependency Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -72,6 +83,7 @@ jobs:
   deny:
     name: Cargo Deny Check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -87,6 +99,7 @@ jobs:
   clippy-security:
     name: Clippy Security Lints
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:

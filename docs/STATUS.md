@@ -1,6 +1,34 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.3.6** (2026-08-17) — **"Sounding"**, about measuring and
+> **Current release: v2.3.7** (2026-08-19) — **"Overtone"**, the instruction
+> behind every mixed cycle. **Audio Provenance** lands as the APU counterpart of
+> Pixel Provenance: a per-register write attribution (*what wrote this, and from
+> which instruction*) and a per-CPU-cycle mix trace (*what were the channels
+> actually doing*), at **Tools → Audio → Audio Provenance**. Output-only,
+> runtime-default-off, not serialized.
+>
+> The release's subject is the trap it inherited. Pixel Provenance shipped
+> non-functional for four releases because run-ahead's rollback cleared its store
+> before any UI could read it, so the carry landed in the **same change as the
+> feature**. The same defect then turned up in **three more places** — every
+> restore in `rustynes-probe` — so running the **Latency Oracle** or the **RAM
+> Atlas** silently emptied both provenance panels. The v2.3.6 fix had enumerated
+> one caller rather than the mechanism, and `measure_in_place_restores_the_live_timeline`
+> could not see the breach because provenance is deliberately not in the snapshot.
+>
+> Two defects were found by measurement rather than by reading: the new
+> `apu_throughput` bench reshaped the plumbing **three times** on regressions
+> invisible in the diff, and a randomized sweep of the save-state parse boundary
+> found **four** panics in VRC7's OPLL where hand-tracing found one — the
+> maximally-hostile all-`0xFF` payload *concealed* one of them. Also fixed:
+> `$4014` and `$4016` were documented as attributed and were not, the browser
+> demo applied no per-game header corrections, Rad Racer's roadside artifact,
+> VRC7 save states dropping the live FM synthesizer, and unbounded CI jobs.
+>
+> `rustynes-apu` and `rustynes-core` both change, so **AccuracyCoin 141/141
+> (100.00%, RAM decoder) and nestest 0-diff are VERIFIED, not asserted.**
+>
+> Built on **v2.3.6** (2026-08-17) — **"Sounding"**, about measuring and
 > about what a measurement is allowed to claim. **Two shipped features are found
 > never to have worked.** Pixel Provenance, the v2.3.2 marquee, returned an empty
 > report for every user on the default `run_ahead = 1` — its per-frame rollback is

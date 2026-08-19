@@ -74,6 +74,7 @@ jobs:
   build:
     name: build demo + docs
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -175,6 +176,7 @@ jobs:
 
   deploy:
     name: deploy to GitHub Pages
+    timeout-minutes: 15
     # Only publish from main / manual dispatch — PRs build + size-gate
     # but never deploy.
     if: github.event_name != 'pull_request'

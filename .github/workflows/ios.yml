@@ -30,6 +30,7 @@ jobs:
   testflight:
     name: Build xcframework + TestFlight upload
     runs-on: macos-latest
+    timeout-minutes: 60
     # The unattended SCHEDULED refresh is a clean no-op until signing is
     # provisioned: the maintainer sets the `IOS_SIGNING_READY` repo variable to
     # "true" once the App Store Connect key + fastlane match secrets exist, so a

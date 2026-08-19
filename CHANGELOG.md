@@ -14,6 +14,43 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.3.7] - 2026-08-19 - "Overtone" (the instruction behind every mixed cycle)
+
+An *overtone* is the structure inside a sound that a single pitch reading throws
+away, and that is what this release adds: the Audio Scope already showed the
+waveform and the Audio Mixer already set the gains, but nothing linked a sample
+back to the instruction that caused it. **Audio Provenance** closes that — a
+per-register write attribution answering *what wrote this, and from which
+instruction*, and a per-CPU-cycle mix trace answering *what were the channels
+actually doing*, deliberately shaped as the APU counterpart of Pixel Provenance.
+
+The release's real subject, though, is the trap the feature inherited. Pixel
+Provenance shipped **non-functional for four releases** because run-ahead's
+rollback cleared its store before any UI could read it, while a comment two lines
+above the clear asserted the opposite. Audio Provenance rides the identical
+rollback, so the carry landed in the **same change as the feature** rather than
+after a bug report. Then the same defect turned up in **three more places** —
+every restore in `rustynes-probe` — which meant running the Latency Oracle or the
+RAM Atlas silently emptied both provenance panels. The v2.3.6 fix had enumerated
+one caller rather than the mechanism, and the test named for the contract could
+not see the breach because provenance is deliberately not in the save state.
+
+Two defects were caught by measurement rather than by reading. `apu_throughput`,
+built for this release, reshaped the plumbing **three times** on regressions
+invisible in the diff; and a fuzz sweep of the save-state parse boundary found
+**four** panics in `VRC7`'s OPLL where hand-tracing had found one — the
+maximally-hostile fixed payload concealed one of them.
+
+Also fixed: `$4014` and `$4016` were documented as attributed and were not, since
+the bus handles them without routing through `Apu::write_register`; the browser
+demo applied **no** per-game header corrections; *Rad Racer*'s roadside artifact,
+where the PPU spliced a hybrid address from a stale `v`; VRC7 save states dropped
+the live FM synthesizer, so rewind garbled the music; and no CI job carried a
+timeout, so one hung job silently skipped a release for five hours.
+
+`rustynes-apu` and `rustynes-core` both change, so **AccuracyCoin 141/141
+(100.00%, RAM decoder) and nestest 0-diff are VERIFIED, not asserted.**
+
 ### Added
 
 - **Audio provenance — point at a moment in the frame and read why it sounds
@@ -338,6 +375,22 @@ cycle-accurate core later replaced.
   trip them for nothing) and roughly 2-3x for the jobs long enough for a ratio to
   mean anything. It was the second hung job that night; the first cost two hours
   on a PR.
+
+  **That fix covered `ci.yml` only, and the gap was found the way the first one
+  was — by being blocked.** During this release's own cut, `Clippy Security
+  Lints` hung for over two hours in a setup step, on a job whose observed runtime
+  is two to three minutes, holding the release PR. `security.yml` had no
+  `timeout-minutes` on any of its three jobs, and a sweep found five more
+  unbounded workflows: `android.yml`, `ios.yml`, `web.yml`,
+  `antigravity-review.yml`, and `release-auto.yml` — the release workflow itself.
+  All are now bounded, so the sweep across `.github/workflows/` comes back empty.
+
+  Two details worth keeping. `release-auto.yml`'s `build` job **cannot** carry a
+  timeout, because `timeout-minutes` is not valid on a job that uses `uses:`; its
+  budget lives on the jobs inside `release.yml`, which already had them. And
+  `antigravity-review.yml` is bounded *harder* than the hosted jobs rather than
+  softer, because it runs on the maintainer's own hardware, where a hung run
+  holds a real machine instead of a disposable VM.
 
 ## [2.3.6] - 2026-08-17 - "Sounding" (measuring, and what a measurement may claim)
 
