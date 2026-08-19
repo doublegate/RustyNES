@@ -31,7 +31,7 @@
 use rustynes_core::{Buttons, Nes};
 use rustynes_probe::Probe;
 use rustynes_probe::divergence::{
-    self, AudioLocalisation, Localisation, PixelDivergence, budget_for,
+    self, AudioLocalisation, Localisation, PixelCause, PixelDivergence, budget_for,
 };
 
 /// Frames each configuration is replayed for.
@@ -56,6 +56,12 @@ pub struct DivergencePanel {
     value: u8,
     /// The most recent video result, if one was run for this ROM.
     video: Option<Localisation>,
+    /// Why the located pixel differs, when the trials could record it.
+    ///
+    /// Separate from `video` rather than folded into it, because `None` here is
+    /// "no provenance record for that pixel" and NOT "no difference" — the two
+    /// would be indistinguishable inside a single optional.
+    cause: Option<PixelCause>,
     /// The most recent audio result, if one was run for this ROM.
     audio: Option<AudioLocalisation>,
     /// A run the user asked for; drained after the render so `nes` is never
@@ -71,6 +77,7 @@ impl Default for DivergencePanel {
             addr: 0,
             value: 0xFF,
             video: None,
+            cause: None,
             audio: None,
             requested: None,
             status: String::new(),
@@ -186,6 +193,9 @@ fn body(ui: &mut egui::Ui, state: &mut DivergencePanel, can_run: bool, writes_lo
         ui.separator();
         ui.strong("Video");
         video_result(ui, result);
+        if matches!(result, Localisation::Differs(_)) {
+            cause_body(ui, state.cause.as_ref());
+        }
     }
     if let Some(result) = state.audio {
         ui.separator();
@@ -258,6 +268,53 @@ fn pixel_body(ui: &mut egui::Ui, d: PixelDivergence) {
     ui.weak("Open Pixel Provenance and click that pixel for the instruction behind it.");
 }
 
+/// Render why the located pixel differs.
+///
+/// `None` means the trials recorded no provenance for that pixel, which is a
+/// real and distinct outcome from "nothing differs" — the store is per frame,
+/// and a pixel the PPU never emitted has nothing to report. Rendered as such
+/// rather than silently omitted, because a missing section reads as an answer.
+fn cause_body(ui: &mut egui::Ui, cause: Option<&PixelCause>) {
+    let Some(cause) = cause else {
+        ui.weak("No provenance record for that pixel, so the cause is unknown.");
+        return;
+    };
+    let fields = cause.differing_fields();
+    if fields.is_empty() {
+        // Not reachable for a located pixel — an index entry is
+        // `(emphasis << 6) | colour`, so a differing entry must differ in
+        // `color` or `color_mask`. Surfaced rather than hidden: if it ever
+        // appears, the two records did not come from the two configurations,
+        // and a blank section would make that invisible.
+        ui.weak("Records match — unexpected here; please report it.");
+        return;
+    }
+    ui.label(format!("Differs in: {}", fields.join(", ")));
+    let (a, b) = (&cause.baseline, &cause.variant);
+    if a.pattern_addr != b.pattern_addr {
+        ui.weak(format!(
+            "pattern ${:04X} -> ${:04X}  (different tile data fetched)",
+            a.pattern_addr, b.pattern_addr
+        ));
+    }
+    if a.nt_addr != b.nt_addr {
+        ui.weak(format!(
+            "nametable ${:04X} -> ${:04X}",
+            a.nt_addr, b.nt_addr
+        ));
+    }
+    if a.palette_addr != b.palette_addr {
+        ui.weak(format!(
+            "palette ${:04X} -> ${:04X}",
+            a.palette_addr, b.palette_addr
+        ));
+    }
+    if a.layer != b.layer {
+        ui.weak(format!("layer {:?} -> {:?}", a.layer, b.layer));
+    }
+    ui.weak(format!("emitted at scanline {} dot {}", a.scanline, a.dot));
+}
+
 /// Render an audio result.
 fn audio_result(ui: &mut egui::Ui, result: AudioLocalisation) {
     match result {
@@ -315,13 +372,14 @@ fn run(state: &mut DivergencePanel, nes: Option<&mut Nes>, lens: Lens) {
 
     match lens {
         Lens::Video => {
-            state.video = Some(divergence::localise(
-                &mut probe,
-                nes,
-                WINDOW_FRAMES,
-                setup,
-                idle,
-            ));
+            // The explained variant, which costs the same four trials: the two
+            // localisation runs capture their own provenance rather than running
+            // unarmed, so the cause arrives with the divergence instead of
+            // needing a fifth and sixth run.
+            let (result, cause) =
+                divergence::localise_explained(&mut probe, nes, WINDOW_FRAMES, setup, idle);
+            state.video = Some(result);
+            state.cause = cause;
         }
         Lens::Audio => {
             state.audio = Some(divergence::localise_audio(
@@ -361,6 +419,7 @@ const fn audio_text(result: AudioLocalisation) -> (&'static str, &'static str) {
 mod tests {
     use super::*;
     use rustynes_core::rustynes_apu::provenance::MixRecord;
+    use rustynes_core::rustynes_ppu::provenance::PixelProvenance;
     use rustynes_probe::divergence::AudioDivergence;
 
     fn a_pixel_divergence() -> PixelDivergence {
@@ -445,6 +504,11 @@ mod tests {
             addr: 0x123,
             value: 0x42,
             video: Some(Localisation::Differs(a_pixel_divergence())),
+            cause: Some(PixelCause {
+                pixel: (1, 2),
+                baseline: PixelProvenance::default(),
+                variant: PixelProvenance::default(),
+            }),
             audio: Some(AudioLocalisation::Identical),
             requested: Some(Lens::Video),
             status: "stale".to_owned(),
@@ -455,6 +519,11 @@ mod tests {
         assert!(
             panel.video.is_none(),
             "a located pixel set outlived its ROM"
+        );
+        assert!(
+            panel.cause.is_none(),
+            "a pixel cause outlived its ROM — it names tile and palette addresses \
+             from one game's frame"
         );
         assert!(panel.audio.is_none(), "a located cycle outlived its ROM");
         assert!(panel.requested.is_none(), "a queued run outlived its ROM");
