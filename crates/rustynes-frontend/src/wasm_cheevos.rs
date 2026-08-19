@@ -196,12 +196,13 @@ impl BrowserRaSession {
         // before returning. So we erase the borrow's lifetime to `'static`,
         // matching the native bridge's `ReadGuard` idiom.
         //
-        // SAFETY: the erased pointer is only dereferenced by `ra_do_frame`
-        // synchronously below, and `closure` is dropped at the end of this
-        // function, so the call can never outlive the real borrow.
-        #[allow(unsafe_code)] // localized lifetime erasure; see SAFETY above
-        let read_static: &mut (dyn FnMut(u16) -> u8 + 'static) =
-            unsafe { core::mem::transmute(read) };
+        #[allow(unsafe_code)] // localized lifetime erasure; see SAFETY below
+        let read_static: &mut (dyn FnMut(u16) -> u8 + 'static) = {
+            // SAFETY: the erased pointer is only dereferenced by `ra_do_frame`
+            // synchronously below, and `closure` is dropped at the end of this
+            // function, so the call can never outlive the real borrow.
+            unsafe { core::mem::transmute(read) }
+        };
         let closure = Closure::<dyn FnMut(u32) -> u32>::new(move |addr: u32| {
             u32::from(read_static((addr & 0xffff) as u16))
         });

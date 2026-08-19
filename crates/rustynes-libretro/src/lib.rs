@@ -856,18 +856,25 @@ impl Core for RustyNesLibretro {
         ctx: &mut LoadGameContext,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // We use `GET_GAME_INFO_EXT` directly via the raw environment callback.
+        //
+        // SAFETY: `cb` is a valid function pointer supplied by the libretro frontend
+        // via the environment context. If the callback returns true, the spec guarantees
+        // `ptr` is set to a valid, aligned, frontend-owned `RetroGameInfoExt` whose
+        // lifetime is at least as long as this `on_load_game` invocation.
+        // `as_ref()` returns `None` if `ptr` remains null (a spec-violating frontend
+        // that returns `true` without setting the pointer), ensuring we never produce
+        // a reference from an invalid address.
+        //
+        // The note was previously INSIDE the block, which is why the whole workspace
+        // satisfied the rule while a mechanical check could not see it. Moved above the
+        // `unsafe` token so `clippy::undocumented_unsafe_blocks` can verify it.
         let ext_info = unsafe {
             let generic_ctx: GenericContext = (&*ctx).into();
-            let cb = generic_ctx.environment_callback().unwrap();
+            let Some(cb) = generic_ctx.environment_callback() else {
+                return Err("libretro frontend supplied no environment callback".into());
+            };
             let mut ptr: *const RetroGameInfoExt = std::ptr::null();
 
-            // SAFETY: `cb` is a valid function pointer supplied by the libretro frontend
-            // via the environment context. If the callback returns true, the spec guarantees
-            // `ptr` is set to a valid, aligned, frontend-owned `RetroGameInfoExt` whose
-            // lifetime is at least as long as this `on_load_game` invocation.
-            // `as_ref()` returns `None` if `ptr` remains null (a spec-violating frontend
-            // that returns `true` without setting the pointer), ensuring we never produce
-            // a reference from an invalid address.
             if cb(
                 rust_libretro::sys::RETRO_ENVIRONMENT_GET_GAME_INFO_EXT,
                 std::ptr::addr_of_mut!(ptr).cast::<std::os::raw::c_void>(),

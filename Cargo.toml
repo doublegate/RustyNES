@@ -205,6 +205,18 @@ missing_docs = "warn"
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 nursery  = { level = "warn", priority = -1 }
+# Every `unsafe` block must carry a `// SAFETY:` comment. That has been a written
+# project rule since v1.0.0 and the codebase already followed it -- an audit of all
+# 91 unsafe sites in v2.3.9 found the justification present at every one. What was
+# missing was enforcement: one site had its note INSIDE the block rather than above
+# it, which satisfies a human reader and is invisible to any check.
+#
+# Enabling the lint turns the rule into a gate, which is this project's stated
+# preference (`AGENTS.md`: a rule the tooling enforces beats a rule you are merely
+# asked to follow). It is a `restriction`-group lint, so it is opted into by name
+# rather than arriving with `pedantic` or `nursery`.
+undocumented_unsafe_blocks = "warn"
+
 module_name_repetitions = "allow"
 similar_names = "allow"
 must_use_candidate = "allow"
