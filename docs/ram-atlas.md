@@ -240,16 +240,67 @@ measurement.
 - An atlas is ROM-bound and is discarded on every ROM transition via
   `DebuggerOverlay::clear_rom_bound_analysis`. 2048 stale labels are a worse lie
   than one stale number, because they look like a map.
+- **Send to RAM Watch** exports the selected address into Memory Compare's watch
+  list. See below.
+
+## Export to RAM Watch
+
+An atlas is deliberately discarded at every ROM transition, which is correct and
+has a cost: the address a user just *verified* by spending trials on it
+disappears with everything else. `Send to RAM Watch` is the way out — the
+destination is Memory Compare's existing watch list rather than a second list,
+because that is already the tool that keeps addresses.
+
+Four properties, each of which is the honesty rule applied to a different edge:
+
+- **The label carries the verdict AND its lens.** Liveness is relative to the
+  observable (`## Liveness is relative to its lens` above), so an unqualified
+  "LIVE" in a list that outlives this panel is exactly the over-claim the panel
+  exists to avoid. `Untested` is spelled out rather than left blank — once the
+  atlas is gone, an entry with no verdict and an entry that was never tested look
+  identical — and an untested export names **no** lens, because nothing was
+  observed through one.
+- **Every address is exportable**, including `Inert` and `Untested`. Restricting
+  the button to verified-live addresses would be the paternalistic reading of the
+  rule; the rule is that a claim carries its evidence, not that unverified
+  addresses are unusable. An `Untested` sparse byte is a good thing to watch while
+  forming a hypothesis, and `Inert` does not mean unused (`## What a label does
+  not mean`).
+- **The entry is byte-scoped and unfrozen.** The atlas's evidence is per byte, so
+  seeding a `u16` would attach a byte's verdict to a second address nothing was
+  observed about; the user can widen it afterwards, which is a decision they made.
+  A frozen watch entry writes to the game, and an export must not.
+- **A duplicate is reported as a duplicate.** A second click on an address already
+  watched did not grow the list. `SeedOutcome` keeps "added" and "already there"
+  apart, because reporting either as the other is a false report — the same
+  refusal that keeps `Untested` and `Inert` apart.
+
+The button is **not** gated on the netplay / TAS / hardcore predicate that gates
+Observe and Verify (`## Unavailable during locked sessions`): it writes to another
+panel's list and never advances the emulator.
+
+Memory Compare is drawn earlier in the overlay's pass than the atlas, so the
+seeded row itself appears on the **next** frame. The outcome is therefore also
+reported on the atlas's own status line, where the user is already looking — an
+export that silently succeeds and one that silently does nothing are otherwise
+indistinguishable.
 
 ## Deliberately not implemented
 
 Named here so they read as decisions rather than oversights:
 
-- **Export paths** — seeding the Watch and Cheat panels, the Lua API, and
-  RetroAchievements authoring. Additive on top of the labels; better shaped once
-  the labels have been used in anger.
-- **Per-game persistence** — an atlas keyed on the ROM hash via the
-  `rustynes-gamedb` overlay.
+- **The remaining export paths** — the Cheat panel, the Lua API, and
+  RetroAchievements authoring. RAM Watch is implemented (above); the other three
+  are additive on top of the same request/dispatch shape and better decided once
+  the first one has been used in anger. A cheat is also a *write*, so it needs the
+  locked-session predicate the watch export correctly does without.
+- **Per-game persistence** — an atlas keyed on the ROM hash. The obvious form
+  is unsafe: a restored verdict without its evidence is a claim that cannot be
+  checked, and this panel's whole argument is that its output can be. A restored
+  verdict *with* its evidence is still a statement about the game state the
+  observation ran in, which the next session does not share. The RAM Watch export
+  above is the durable path in the meantime, and RAM Watch already has `.wch`
+  save and load.
 - **Coordinate cross-referencing against OAM** — the original design sketched
   correlating candidate addresses against sprite X/Y. It is not implemented, and
   the `Behaviour` set makes no coordinate claim, so nothing currently over-states
