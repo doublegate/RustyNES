@@ -39,6 +39,20 @@ impl PerfPanelState {
         self.view = view;
     }
 
+    /// The render-WORK series from the current snapshot.
+    ///
+    /// v2.3.9 — exposed so the Latency Oracle can add the pipeline's own cost to
+    /// the game's internal lag without a second copy of the perf plumbing. Only
+    /// `work` is offered, deliberately: it is the one series that can be added to
+    /// a constant and still yield a real percentile. Summing it with
+    /// `render_lock` or `render_wait` would be summing two percentiles, which is
+    /// not the percentile of the sum — the error `RenderPerf::work` already
+    /// exists to avoid, in the addition direction.
+    #[must_use]
+    pub const fn render_work(&self) -> crate::perf::IntervalStats {
+        self.view.render_work
+    }
+
     /// Update the logging status line (destination path / error).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_log_note(&mut self, note: Option<String>) {
