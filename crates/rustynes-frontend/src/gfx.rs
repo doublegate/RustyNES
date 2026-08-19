@@ -930,7 +930,6 @@ impl Gfx {
     }
 
     /// Disable the NTSC filter (skip the post-pass).
-    #[allow(dead_code)]
     pub fn disable_ntsc(&mut self) {
         self.ntsc = None;
     }
@@ -988,7 +987,6 @@ impl Gfx {
     }
 
     /// Disable the CRT filter (skip the post-pass).
-    #[allow(dead_code)]
     pub fn disable_crt(&mut self) {
         self.crt = None;
     }

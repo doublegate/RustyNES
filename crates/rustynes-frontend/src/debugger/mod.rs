@@ -834,14 +834,12 @@ pub struct DebuggerOverlay {
     /// v1.7.0 "Forge" beta.5 (#55) — the toolbar HUD that displayed this was
     /// removed; the status bar shows FPS from its own `ShellFrame`. The setter
     /// + field are retained for the stable public API (and future panels).
-    #[allow(dead_code)]
     fps: f32,
     /// v1.4.0 Sprint 4.2 — current TAS movie record/playback status, pushed by
     /// [`DebuggerOverlay::set_movie_status`] from the pacing loop. v1.7.0
     /// "Forge" beta.5 (#55) — retained for the public API after the toolbar HUD
     /// that displayed it was removed (movie state is now in the menu + status
     /// bar).
-    #[allow(dead_code)]
     movie: MovieStatus,
     /// v2.7.1 — `RetroAchievements` badge-image cache (achievement icons in the
     /// panel rows + unlock toasts). Lazily created the first time a badge URL is

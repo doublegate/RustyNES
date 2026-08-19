@@ -2104,7 +2104,6 @@ impl Config {
     /// # Errors
     ///
     /// Returns [`ConfigError`] on I/O or serialization failure.
-    #[allow(dead_code)]
     pub fn save(&self) -> Result<(), ConfigError> {
         let Some(path) = Self::default_path() else {
             return Ok(());
@@ -2117,7 +2116,6 @@ impl Config {
     /// # Errors
     ///
     /// Returns [`ConfigError`] on I/O or serialization failure.
-    #[allow(dead_code)]
     pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;

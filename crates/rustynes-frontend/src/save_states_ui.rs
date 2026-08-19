@@ -309,7 +309,6 @@ fn format_modified(modified: Option<std::time::SystemTime>) -> String {
 }
 
 /// The data-dir slot path, re-exported for the app to log / inspect.
-#[allow(dead_code)]
 pub fn slot_path_for(data_dir: &Path, rom_sha256: &[u8; 32], slot: u8) -> Option<PathBuf> {
     save_state::slot_path(data_dir, rom_sha256, slot).ok()
 }

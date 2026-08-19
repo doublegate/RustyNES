@@ -326,7 +326,6 @@ pub struct LockstepBus {
     /// APU instance.
     pub(crate) apu: Apu,
     /// Cartridge metadata (kept for save-state and debugger).
-    #[allow(dead_code)]
     pub(crate) cart: Cartridge,
     /// Boxed mapper.
     pub(crate) mapper: Box<dyn Mapper>,
@@ -3259,6 +3258,29 @@ impl LockstepBus {
         // read1 loop to consume; drain_dma does no OAM work under the flag.
     }
 
+    // SUPERSEDED, UNREFERENCED, and retained pending a maintainer decision.
+    //
+    // These four methods -- `clock_oam_dma_cycle`, `service_dmc_dma`,
+    // `service_dmc_abort` and `service_dmc_dma_during_oam` -- form a closed
+    // island: they call each other and nothing outside calls any of them. That
+    // is why removing one attribute makes all four report at once, and why a
+    // `grep` for a single name finds a caller and looks reassuring.
+    //
+    // They are the legacy bus-side DMA service from the `mc-r1-*` staged
+    // master-clock migration. Those cargo features no longer exist anywhere in
+    // the workspace, and the master-clock scheduler has been the ONLY path since
+    // v2.0.0, so the "flag-off path" the surrounding comments still refer to
+    // cannot be taken. A nearby comment claiming "the legacy service below stays
+    // active for the default build" is false for the same reason.
+    //
+    // v2.3.9 removed 25 `#[allow(dead_code)]` attributes across the workspace
+    // that were no longer suppressing anything; these are among the two islands
+    // that genuinely were. Kept rather than deleted because cutting four methods
+    // out of `bus.rs` is a larger and riskier edit than the sweep that found
+    // them justifies -- unreferenced code cannot change behaviour, so this is a
+    // maintenance question, not a correctness one. The APU's equivalent pair was
+    // deleted in the same change because it was 34 self-contained lines.
+    #[allow(dead_code)]
     fn clock_oam_dma_cycle(&mut self, total: u32, alignment: u32) {
         let consumed = total - self.dma_cycles_owed; // 0, 1, ...
         if consumed < alignment {
@@ -3491,6 +3513,7 @@ impl LockstepBus {
     /// cascade that 6 prior single-delay tweaks could not.
     // Phase B: the DMC burst is CPU-driven-interleaved under R1, so this
     // bus-side burst is unused there (still used on the default path).
+    // Part of the superseded DMA-service island; see `clock_oam_dma_cycle`.
     #[allow(dead_code)]
     fn service_dmc_dma(&mut self, halted_addr: u16) {
         if !self.apu.dmc_dma_pending() || self.in_dmc_dma {
@@ -3527,6 +3550,7 @@ impl LockstepBus {
         self.in_dmc_dma = false;
     }
 
+    // Part of the superseded DMA-service island; see `clock_oam_dma_cycle`.
     #[allow(dead_code)]
     fn service_dmc_abort(&mut self, halted_addr: u16) {
         if !self.apu.dmc_abort_pending() || self.in_dmc_dma {
@@ -3543,6 +3567,7 @@ impl LockstepBus {
         self.in_dmc_dma = false;
     }
 
+    // Part of the superseded DMA-service island; see `clock_oam_dma_cycle`.
     #[allow(dead_code)]
     fn service_dmc_dma_during_oam(&mut self, total: u32, alignment: u32) {
         if !self.apu.dmc_dma_pending() || self.in_dmc_dma {

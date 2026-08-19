@@ -591,7 +591,6 @@ pub struct Ppu {
     pub(crate) oam: Box<[u8]>,
     /// Secondary OAM: up to 8 sprites for the next scanline. Populated
     /// during sprite evaluation in Sprint 2-3.
-    #[allow(dead_code)]
     pub(crate) secondary_oam: [u8; 32],
     /// Palette RAM: 32 entries, 6-bit each (high 2 bits open-bus on read).
     pub(crate) palette_ram: [u8; 32],

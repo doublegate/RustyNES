@@ -119,7 +119,6 @@ pub fn load_from_slot(
 // Sprint 5-3 will surface this in the egui modal ("recently used slots"
 // indicator). We allow `dead_code` rather than wait to land it.
 #[must_use]
-#[allow(dead_code)]
 pub fn slot_exists(data_dir: &Path, rom_sha256: &[u8; 32], slot: u8) -> bool {
     slot_path(data_dir, rom_sha256, slot).is_ok_and(|p| p.is_file())
 }
@@ -146,7 +145,6 @@ pub struct SlotMeta {
 /// # Errors
 ///
 /// Returns [`SaveError`] for an invalid slot index.
-#[allow(dead_code)] // used by the native Save-States window only.
 pub fn slot_meta(
     data_dir: &Path,
     rom_sha256: &[u8; 32],
