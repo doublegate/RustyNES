@@ -14,6 +14,102 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+Post-v2.3.7 work, landed but not yet cut.
+
+### Added
+
+- **The Divergence Lens — which pixels differ, not just which frame, and why.**
+  (#407, the whole of v2.3.8 "Parallax".) Surfaced as a panel under **Tools →
+  Analysis**, over a headless `rustynes_probe::divergence` core that is tested
+  independently of it. `Probe` could already say whether two
+  configurations of the same ROM diverge and at which frame, because a trial
+  reduces each frame to one `u64`. That reduction is the right shape for
+  *detecting* a difference and the wrong shape for *explaining* one: a hash says
+  frame 412 differs and cannot say which pixel, so it has nothing to hand to
+  Pixel Provenance, which is where an answer actually lives.
+
+  `divergence::localise` re-runs both configurations to the detected frame,
+  keeps the full output instead of its hash, and reports the *shape* of the
+  difference — population count, first pixel in raster order, and the inclusive
+  bounding box. Count and box separate kinds of bug from each other: one pixel is
+  a sprite or a palette entry, 256 in a row is a scanline, tens of thousands is a
+  scroll or a mode change.
+
+  It localises on the **index** framebuffer — 256x240 `u16`s of
+  `(emphasis << 6) | colour`, the PPU's own per-pixel output before the palette
+  lookup — which is half the bytes and at least as sensitive, since the RGBA
+  buffer is a pure function of it given the same palette.
+
+  Three answers, and the third is the point: `Identical`, `Differs`, and
+  **`Inconclusive`** for an exhausted budget or two trials that cannot be
+  compared. The Latency Oracle's precedent applies directly: "I stopped looking"
+  must not arrive wearing the same shape as "they agree". The budget is checked
+  up front for all four trials, so spending two on detection and then finding the
+  localisation pair unaffordable cannot consume the budget that would have
+  answered the question.
+
+  Beyond locating a difference, the Lens **explains** it. Trial-scoped
+  provenance capture lets a located pixel be handed to the machinery that already
+  answers "what wrote this, and from which instruction", so the answer is a cause
+  rather than a coordinate — and it closes v2.3.8 item B without bisection. An
+  **audio** lens resolves a divergence to the CPU cycle, the cadence at which the
+  mix is genuinely computed.
+
+  One defect was found and fixed inside the same work: the Lens left the emulator
+  **thirty frames ahead** of where it started. A trial restores the anchor on the
+  way in and not on the way out, which is deliberate — it is what lets the Lens
+  read the trial's final frame off `nes` directly — but the outermost caller has
+  to put the timeline back, and did not.
+
+- **A Latency Oracle measurement is remembered per game.** (#410.) Reopening a
+  game shows what was measured last time instead of an empty panel, keyed on the
+  ROM SHA-256 in `[input]` — the same key shape `graphics.hd_packs` already uses.
+  `#[serde(default)]` so an older config loads unchanged, plus
+  `skip_serializing_if` so the key stays out of the file until there is something
+  to store: a user who never opens the panel carries nothing and their config is
+  not rewritten.
+
+  **Remembering is not applying.** Nothing here touches `run_ahead`, and
+  restoring never queues a pending apply, so a depth measured in an earlier
+  session is still one explicit click from being applied. An **inconclusive**
+  result is not remembered at all: a stored "I could not tell" is
+  indistinguishable from a stored answer once it has lost the context that
+  produced it.
+
+- **The two-acquisition lock race is measured rather than reasoned about.**
+  (#409.) The `needs_nes` render arm — taken exactly when a debugger or tool
+  panel is open — acquires the emulator lock twice per redraw, and drops it in
+  between so composite work does not hold the emulator. If the emulation thread
+  takes the lock in that gap, the screen shows frame N while a panel describes
+  N+1.
+
+  `Nes::cycle()` is read at both acquisitions and compared: it is cumulative and
+  monotonic, and `produce_one_frame` holds the lock across a **whole** frame, so
+  any difference at all means at least one complete frame landed in the gap.
+  Both a hit count and a denominator are kept — "the race did not fire" and
+  "nothing was observed" both read as zero hits, and only the denominator
+  separates them.
+
+### Changed
+
+- **The accuracy battery runs at review time, scoped by path.** (#408.) `setup`
+  computed one `full` flag and `test-roms` ran only when it was true, so a
+  regular feature PR never ran the battery and an accuracy regression could not
+  be caught on the PR that caused it — #403 is the worked example. A second
+  `paths-filter` output covers the chip crates, core, `rustynes-gamedb`, the test
+  harness and `tests/`, and `test-roms` now runs when it *or* the existing full
+  flag is true. `rustynes-gamedb` is included for a non-obvious reason: it
+  rewrites the iNES header on load, so it changes what the emulator *is* before a
+  cycle runs.
+
+- **Provisioning steps are bounded, not just the jobs.** (#408, #409.) The
+  cross-compile gate's `apt-get update && apt-get install` were network fetches
+  with no timeout of their own, so a stalled mirror hung until the job timeout
+  fired and the run was reported as cancelled rather than as what it was — four
+  times during the v2.3.7 cut. Now one bounded, thrice-retried helper, with
+  elevation outside `timeout` so a killed fetch cannot orphan `apt-get` holding
+  the dpkg lock.
+
 ## [2.3.7] - 2026-08-19 - "Overtone" (the instruction behind every mixed cycle)
 
 An *overtone* is the structure inside a sound that a single pitch reading throws
