@@ -145,6 +145,22 @@ impl MemoryPanelState {
         self.heatmap
     }
 
+    /// Drop every freeze on a ROM change.
+    ///
+    /// A frozen byte is not a display state. [`Self::freeze_cheats`] feeds
+    /// `DebuggerOverlay::enabled_raw_cheats`, which the app applies after EVERY
+    /// frame, so a freeze set on one cartridge goes on writing into the next
+    /// one's memory at an address that almost certainly means something else
+    /// there — a silent, continuous modification of a game the user never
+    /// applied it to.
+    ///
+    /// Only the freezes go. The panel's cursor, its view mode and its heatmap
+    /// setting are preferences about how to look at memory, not claims about a
+    /// particular cartridge, and resetting them would be churn.
+    pub fn clear_rom_bound(&mut self) {
+        self.frozen.clear();
+    }
+
     /// The frozen CPU-RAM bytes as raw cheats, re-applied after every frame by
     /// the app's produce path (merged with the cheat panel's list). Empty when
     /// nothing is frozen, so the no-freeze path stays byte-identical.
@@ -460,6 +476,23 @@ mod tests {
         assert_eq!(parse_byte_seq(""), Some(vec![]));
         assert_eq!(parse_byte_seq("ZZ"), None);
         assert_eq!(parse_byte_seq("10 ZZ"), None);
+    }
+
+    /// The hex editor's freezes are the same hazard as the watch panel's: they
+    /// are re-applied after every frame, so one set on a previous cartridge goes
+    /// on writing into the next.
+    #[test]
+    fn a_rom_change_drops_every_hex_editor_freeze() {
+        let mut s = MemoryPanelState {
+            frozen: [(0x0071u16, 9u8), (0x0300, 3)].into_iter().collect(),
+            ..MemoryPanelState::default()
+        };
+        assert_eq!(s.freeze_cheats().len(), 2);
+        s.clear_rom_bound();
+        assert!(
+            s.freeze_cheats().is_empty(),
+            "a freeze from the previous cartridge is still being written"
+        );
     }
 
     #[test]

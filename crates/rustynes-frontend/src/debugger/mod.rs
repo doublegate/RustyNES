@@ -1202,6 +1202,15 @@ impl DebuggerOverlay {
         // A bug-finder answering about the wrong game is the exact shape this hook
         // exists to prevent.
         self.reset_debug_telemetry();
+        // v2.3.9 — the two memory panels' ROM-bound state. The RAM Search
+        // baseline and candidate set are derived from the previous cartridge;
+        // every freeze in either panel is an ACTIVE write, re-applied after each
+        // frame through `enabled_raw_cheats`, so a freeze set on one game keeps
+        // writing into the next one at an address that means something else
+        // there. Neither panel's user-authored list is discarded -- only the
+        // freezes and the derived search state. See each `clear_rom_bound`.
+        self.memory_compare_ui.clear_rom_bound();
+        self.memory_ui.clear_rom_bound();
     }
 
     /// Returns `true` when the overlay is currently visible. The render

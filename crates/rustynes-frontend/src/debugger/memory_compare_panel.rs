@@ -255,6 +255,41 @@ impl MemoryComparePanelState {
         self.watch_label_text.clear();
     }
 
+    /// Discard what a ROM change invalidates, and neutralise what it endangers.
+    ///
+    /// Two different treatments, because this panel holds two different kinds of
+    /// thing and collapsing them would be wrong in one direction or the other.
+    ///
+    /// **The RAM Search state is DERIVED and is discarded.** `baseline` is a
+    /// 2 KiB copy of the previous cartridge's work RAM and `candidates` is the
+    /// address set still matching it. Left standing, the next search step
+    /// compares the NEW game's RAM against the OLD game's baseline and presents
+    /// the result as a search in progress. That is worse than a stale label: a
+    /// RAM search's entire output is "these addresses hold the thing you are
+    /// looking for", so it is output a user acts on.
+    ///
+    /// **The watch list is USER-AUTHORED and is kept.** The user typed those
+    /// addresses or loaded them from a `.wch` file, and this panel offers no way
+    /// to get them back; discarding them would destroy work to prevent a display
+    /// problem.
+    ///
+    /// **But every freeze is cleared**, which is the part that matters. A frozen
+    /// entry is not display — `freeze_cheats` feeds `enabled_raw_cheats`, which
+    /// the app applies after EVERY frame, so a freeze set on game A goes on
+    /// writing into game B's memory at an address that means something else
+    /// there. The cheat panel already treats "a cheat belongs to a ROM" as true
+    /// and reloads per ROM hash; this path bypassed that. Keeping the row and
+    /// dropping the freeze preserves the user's list while stopping it acting on
+    /// a game it was never written for.
+    pub fn clear_rom_bound(&mut self) {
+        self.baseline = None;
+        self.candidates = None;
+        self.steps = 0;
+        for w in &mut self.watches {
+            w.frozen = None;
+        }
+    }
+
     /// Add a watch entry on behalf of another panel.
     ///
     /// The RAM Atlas classifies every byte of work RAM but deliberately offers
@@ -661,6 +696,61 @@ mod tests {
             s.watches[0].frozen.is_none(),
             "an exported watch arrived frozen, which would write to the game"
         );
+    }
+
+    /// A ROM change must not leave a frozen watch writing into the new game.
+    ///
+    /// `freeze_cheats` feeds the app's per-frame raw-cheat overlay, so a freeze
+    /// is an ACTIVE write, not a display state. The row itself is user-authored
+    /// and stays; only the freeze goes.
+    #[test]
+    fn a_rom_change_unfreezes_but_keeps_the_watch_list() {
+        let mut s = MemoryComparePanelState::default();
+        s.seed_watch(0x0071, "score".to_owned());
+        s.seed_watch(0x0300, "lives".to_owned());
+        s.watches[0].frozen = Some(9);
+        s.watches[1].frozen = Some(3);
+        assert_eq!(s.freeze_cheats().len(), 2);
+
+        s.clear_rom_bound();
+
+        assert_eq!(
+            s.watches.len(),
+            2,
+            "a ROM change destroyed the user's watch list"
+        );
+        assert_eq!(
+            s.watches[0].label, "score",
+            "the entry was rebuilt, not kept"
+        );
+        assert!(
+            s.freeze_cheats().is_empty(),
+            "a freeze from the previous cartridge is still being written"
+        );
+    }
+
+    /// The RAM Search state is derived from the previous cartridge's memory, so
+    /// it is discarded outright. Continuing a search across a ROM change would
+    /// compare the new game's RAM against the old game's baseline and present
+    /// the result as a search in progress.
+    #[test]
+    fn a_rom_change_discards_the_search_state() {
+        let mut s = MemoryComparePanelState {
+            baseline: Some(vec![0xAA; RAM_LEN as usize]),
+            candidates: Some(vec![0x10, 0x20, 0x30]),
+            steps: 4,
+            ..MemoryComparePanelState::default()
+        };
+        s.clear_rom_bound();
+        assert!(
+            s.baseline.is_none(),
+            "the previous game's baseline survived"
+        );
+        assert!(
+            s.candidates.is_none(),
+            "the previous game's candidates survived"
+        );
+        assert_eq!(s.steps, 0, "the step count survived its search");
     }
 
     #[test]
