@@ -813,15 +813,7 @@ mod tests {
     #[cfg(feature = "debug-hooks")]
     #[test]
     fn measure_in_place_preserves_the_callers_pixel_provenance() {
-        let mut n = Nes::from_rom(&reg_writing_nrom()).expect("fixture parses");
-        n.set_pixel_provenance(true);
-        for _ in 0..3 {
-            n.run_frame();
-        }
-        assert!(
-            n.pixel_provenance().is_some(),
-            "premise: the pixel store is armed"
-        );
+        let (mut n, before) = armed_with_a_pixel_record();
 
         let report =
             crate::latency::measure_in_place(&mut n, crate::latency::LatencyConfig::default());
@@ -830,9 +822,14 @@ mod tests {
             "premise: the measurement actually ran"
         );
 
-        assert!(
-            n.pixel_provenance().is_some(),
-            "a latency measurement disarmed the caller's pixel provenance"
+        let after = n
+            .pixel_provenance()
+            .expect("a latency measurement disarmed the caller's pixel provenance")
+            .get(PIXEL_PROBE.0, PIXEL_PROBE.1)
+            .expect("the record survived the measurement");
+        assert_eq!(
+            before, after,
+            "a latency measurement rewrote the caller's pixel provenance"
         );
     }
 
@@ -866,6 +863,39 @@ mod tests {
         bytes.extend_from_slice(&vec![0u8; 8 * 1024]);
         bytes
     }
+
+    /// A `Nes` with pixel provenance armed, plus one pixel's recorded chain.
+    ///
+    /// Returns the actual record rather than a bare "is it armed" flag, so a
+    /// caller can assert the DATA came back and not merely the box that holds
+    /// it. Raised in review on #405: a regression that emptied the stash's
+    /// contents without dropping the stash would pass an `is_some()` check,
+    /// while the audio tests — which compare an exact `RegWrite` — would catch
+    /// the equivalent. The asymmetry was not defensible in a change whose whole
+    /// subject is assertions that are weaker than the contract they name.
+    #[cfg(feature = "debug-hooks")]
+    fn armed_with_a_pixel_record() -> (
+        Nes,
+        rustynes_core::rustynes_ppu::provenance::PixelProvenance,
+    ) {
+        let mut n = Nes::from_rom(&reg_writing_nrom()).expect("fixture parses");
+        n.set_pixel_provenance(true);
+        for _ in 0..3 {
+            n.run_frame();
+        }
+        let rec = n
+            .pixel_provenance()
+            .expect("premise: the pixel store is armed")
+            .get(PIXEL_PROBE.0, PIXEL_PROBE.1)
+            .expect("premise: the PPU emitted this pixel and recorded it");
+        (n, rec)
+    }
+
+    /// The pixel the preservation tests inspect. Mid-screen, so it is inside the
+    /// visible area on every region rather than near an edge where a timing
+    /// difference could legitimately change what was emitted.
+    #[cfg(feature = "debug-hooks")]
+    const PIXEL_PROBE: (usize, usize) = (128, 120);
 
     /// A capturing trial must actually produce a store, and it must describe the
     /// trial rather than be an empty shell.
@@ -938,24 +968,21 @@ mod tests {
     #[cfg(feature = "debug-hooks")]
     #[test]
     fn a_trial_preserves_the_callers_pixel_provenance() {
-        let mut n = Nes::from_rom(&reg_writing_nrom()).expect("fixture parses");
-        n.set_pixel_provenance(true);
-        for _ in 0..3 {
-            n.run_frame();
-        }
-        assert!(
-            n.pixel_provenance().is_some(),
-            "premise: the pixel store is armed"
-        );
+        let (mut n, before) = armed_with_a_pixel_record();
 
         let mut probe = Probe::anchor(&n, Budget::default());
         probe
             .run(&mut n, 6, Observable::Framebuffer, idle)
             .expect("within budget");
 
-        assert!(
-            n.pixel_provenance().is_some(),
-            "a probe trial disarmed the caller's pixel provenance"
+        let after = n
+            .pixel_provenance()
+            .expect("a probe trial disarmed the caller's pixel provenance")
+            .get(PIXEL_PROBE.0, PIXEL_PROBE.1)
+            .expect("the record survived the trial");
+        assert_eq!(
+            before, after,
+            "a probe trial rewrote the caller's pixel provenance"
         );
     }
 
