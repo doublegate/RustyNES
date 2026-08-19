@@ -106,6 +106,7 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      accuracy: ${{ steps.filter.outputs.accuracy }}
     steps:
       # Full history: on `push`, dorny/paths-filter diffs against the before-SHA
       # using local git, so the default shallow clone (fetch-depth: 1) can miss
@@ -138,6 +139,34 @@ jobs:
               - '!NOTICE'
               - '!.gitignore'
               - '!.codegraph/**'
+            # v2.3.9 A5 — paths that can move an accuracy or visual vector.
+            #
+            # `test-roms` used to be FULL-run only, so a regular feature PR never
+            # ran the accuracy battery and a regression could not be caught on
+            # the PR that caused it: it landed, turned `main` red, and was fixed
+            # by a second PR. #396 (a PPU fix that legitimately moved
+            # `visual_regression__scanline_frame_180`) and #403 (the vector
+            # update that followed) are the worked example.
+            #
+            # Scoped by path rather than by event, because a vector can only move
+            # if something that PRODUCES one changed. Measured against the last
+            # 40 merged PRs: 11 touch these paths and 29 do not, so ~72% of PRs
+            # still pay nothing and the cost model the full-run flag exists for
+            # is preserved.
+            #
+            # `rustynes-gamedb` is in the list for a non-obvious reason: the
+            # per-game database rewrites the iNES header on load, so it changes
+            # what the emulator IS before a single cycle runs. That is how the
+            # v2.3.4 Sachen defect reached users.
+            accuracy:
+              - 'crates/rustynes-cpu/**'
+              - 'crates/rustynes-ppu/**'
+              - 'crates/rustynes-apu/**'
+              - 'crates/rustynes-mappers/**'
+              - 'crates/rustynes-core/**'
+              - 'crates/rustynes-gamedb/**'
+              - 'crates/rustynes-test-harness/**'
+              - 'tests/**'
 
   # fmt + clippy + rustdoc share one runner + one compile of the workspace's
   # dependency graph (clippy and rustdoc differ only in the final pass), so
@@ -330,14 +359,30 @@ jobs:
   test-roms:
     name: test (test-roms feature)
     # The SLOWEST job (release-mode compile + the heavy CPU / AccuracyCoin ROM
-    # batteries, ~20 min). FULL-run only: it is skipped on a regular feature PR
-    # and runs on push-to-`main` (every merge is accuracy-validated), the merge
-    # queue, dispatch, the weekly cron, and `release/*` PRs (so a release is
-    # proven before it is cut). This is the single biggest per-PR time/cost
-    # saving. Also gated on the fast lint job — don't pay the release compile
-    # when fmt/clippy already failed.
+    # batteries, ~20 min). Runs on a FULL run — push-to-`main` (every merge is
+    # accuracy-validated), the merge queue, dispatch, the weekly cron, and
+    # `release/*` PRs so a release is proven before it is cut — OR on any PR that
+    # touches a path able to move an accuracy or visual vector (the `accuracy`
+    # filter in the `changes` job, which carries the rationale).
+    #
+    # v2.3.9 A5. This was FULL-run only, which meant a regular feature PR never
+    # ran the battery, so an accuracy regression could not be caught on the PR
+    # that caused it — it landed, turned `main` red, and needed a second PR.
+    # Sharpening the point: `main`'s ruleset requires exactly ONE status context,
+    # `CI success`, and a SKIPPED job does not fail the aggregate. So the single
+    # gate on merging was reporting a pass for a property it had not tested.
+    #
+    # The per-PR saving the full-run flag exists for is preserved rather than
+    # traded away: measured over the last 40 merged PRs, 11 touch accuracy paths
+    # and 29 do not, so roughly 72% of PRs still skip this entirely.
+    #
+    # Also gated on the fast lint job — don't pay the release compile when
+    # fmt/clippy already failed.
     needs: [changes, lint, setup]
-    if: ${{ needs.changes.outputs.code == 'true' && needs.setup.outputs.full == 'true' }}
+    if: >-
+      ${{ needs.changes.outputs.code == 'true'
+      && (needs.setup.outputs.full == 'true'
+      || needs.changes.outputs.accuracy == 'true') }}
     runs-on: ubuntu-latest
     # Typical: ~29 min. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.
