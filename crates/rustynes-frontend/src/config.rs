@@ -863,7 +863,7 @@ pub struct GraphicsConfig {
     /// v1.2.0 C2 — saved named shader-stack presets (the CRT preset bank +
     /// user-saved stacks). `#[serde(default)]` = empty, so a pre-C2 config LOADS
     /// unchanged. Persisted under `[graphics.shader_presets]`. Same correction as
-    /// `hd_packs` above: `serde(default)` says nothing about what SAVE writes.
+    /// `hd_packs` below: `serde(default)` says nothing about what SAVE writes.
     #[serde(default)]
     pub shader_presets: crate::shader_pass::ShaderPresetBank,
     /// v1.2.0 beta.2 (Workstream C3) — per-game HD-pack paths, keyed on the
@@ -2149,6 +2149,9 @@ fn canonicalize_pad(pad: &PadBindings) -> PadBindings {
 #[cfg(test)]
 mod tests {
 
+    use super::*;
+    use tempfile::TempDir;
+
     /// `#[serde(default)]` covers LOADING a config that lacks the key. It says
     /// nothing about SAVING, and the TOML serializer emits an empty table for an
     /// empty map — so a user who never opened the Latency Oracle would have had
@@ -2182,8 +2185,6 @@ mod tests {
         );
         assert!(filled.contains("deadbeef"), "the ROM key was not written");
     }
-    use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn parse_pal_reads_64_colours_and_rejects_short() {
