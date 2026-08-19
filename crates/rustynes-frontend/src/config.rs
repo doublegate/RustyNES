@@ -2184,6 +2184,27 @@ mod tests {
             "a real measurement was dropped on save:\n{filled}"
         );
         assert!(filled.contains("deadbeef"), "the ROM key was not written");
+
+        // Round-trip both, because the string checks alone verify the KEY and
+        // say nothing about the VALUE. `skip_serializing_if` on a field whose
+        // `Deserialize` had drifted would still produce the right text and load
+        // back as something else, and it is the load side the documentation
+        // promises. (Review on #414.)
+        let empty_back: Config = toml::from_str(&empty).expect("empty config re-parses");
+        assert!(
+            empty_back.input.latency_reports.is_empty(),
+            "the omitted key did not come back as an empty map"
+        );
+        let filled_back: Config = toml::from_str(&filled).expect("populated config re-parses");
+        assert_eq!(
+            filled_back.input.latency_reports.get("deadbeef").copied(),
+            Some(RememberedLatency {
+                frames: 3,
+                unanimous: true,
+                frame_micros: 16_639,
+            }),
+            "the measurement did not survive a save/load round trip"
+        );
     }
 
     #[test]
