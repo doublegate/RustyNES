@@ -177,6 +177,26 @@ pub fn show(
                     ui.end_row();
                 });
 
+            // The adapter row above says "Four Score (P1..P4)", which is true of
+            // the CONSOLE and not of the movie. `FrameInput` holds two ports, so
+            // `MovieRecorder::capture` records P1 and P2 and drops P3 and P4 --
+            // a four-player recording replays as a different run.
+            //
+            // Surfaced right under the claim it qualifies, because the failure is
+            // silent at record time: nothing about a `.rnm` says which ports it
+            // could not hold, and the divergence only shows up on playback.
+            if info.four_score {
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    "Movies record P1 + P2 only — P3/P4 input is NOT captured.",
+                )
+                .on_hover_text(
+                    "The `.rnm` format stores two ports. A recording made with \
+                     the Four Score active will not replay the same run. \
+                     Widening it is a movie-format epoch change (ADR 0028).",
+                );
+            }
+
             ui.separator();
 
             // --- Controls ---

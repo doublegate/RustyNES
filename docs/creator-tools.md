@@ -44,6 +44,20 @@ what makes movie replay exact — see [`testing-strategy.md`](testing-strategy.m
 for the determinism contract. The `.rnm` deserializer is hardened against
 malformed input (bounded allocations; fuzz-tested, see `fuzz/`).
 
+**Movies record two ports.** `FrameInput` models P1 and P2, so a recording made
+with the **Four Score** adapter active captures half of what drove the run and
+replays as a different one. The console carries four ports and the emulator
+drives all four; the movie format does not. This is a documented limit rather
+than a defect being worked around: widening `FrameInput` is a `.rnm` format epoch
+change (ADR 0028), not an additive one, and the `.fm2` importer takes the same
+position — it keeps pads 1 and 2, drops 3 and 4, and preserves the `fourscore`
+flag so the caller is not misled.
+
+The failure is silent at record time, so it is surfaced where the claim is made:
+the Replay panel prints the caveat directly under the "Four Score (P1..P4)"
+topology row, and `rustynes verify` catches a divergent replay after the fact
+because its attestation folds in the video the run produced, not just the input.
+
 ## Scripting (Lua)
 
 An embedded Lua engine exposes an emulation API (memory peek/poke, frame hooks,
