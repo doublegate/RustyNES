@@ -267,6 +267,24 @@ impl WatchPanelState {
     pub fn clear_rom_bound(&mut self) {
         self.hits.clear();
         self.trace_rows.clear();
+        // The per-rule hit COUNTERS are derived too, and review on #419 caught
+        // that the first version of this kept them. "Breakpoint at $8004, 7
+        // hits" after a ROM change credits the new game with hits the old one
+        // scored -- the same false continuity as the log itself, in a place a
+        // reader trusts more because it looks like a property of the rule.
+        //
+        // `cond_error` is deliberately NOT reset, though the same review
+        // proposed it. It records that the user's condition source failed to
+        // PARSE, which is a fact about the text they typed and has nothing to do
+        // with which cartridge is loaded. Clearing it would assert the condition
+        // is valid when it still is not -- turning a true red flag into a
+        // silently broken rule, which is the opposite of this sweep's rule.
+        for bp in &mut self.breakpoints {
+            bp.hits = 0;
+        }
+        for wp in &mut self.watchpoints {
+            wp.hits = 0;
+        }
     }
 }
 impl WatchPanelState {
@@ -941,9 +959,9 @@ mod tests {
             enabled: true,
             lo: 0x8004,
             hi: 0x8004,
-            cond_src: String::new(),
+            cond_src: "bogus(".to_owned(),
             cond: None,
-            cond_error: false,
+            cond_error: true,
             hits: 7,
         });
         s.hits.push_back(HitRec {
@@ -974,6 +992,15 @@ mod tests {
             s.armed,
             "a ROM change silently disarmed the panel, so the next session's \
              breakpoints would never fire"
+        );
+        assert_eq!(
+            s.breakpoints[0].hits, 0,
+            "the previous cartridge's hit count was credited to the new game"
+        );
+        assert!(
+            s.breakpoints[0].cond_error,
+            "a parse error on the user's own condition text was cleared, which \
+             would present a broken rule as a working one"
         );
     }
 
