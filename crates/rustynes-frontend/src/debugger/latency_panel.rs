@@ -63,6 +63,14 @@ pub struct LatencyPanel {
     pending_apply: Option<u32>,
     /// Status / error line.
     status: String,
+    /// v2.3.9 — what has already been written to the config this session.
+    ///
+    /// Session-only, never serialized. Two jobs, and the second is why it is a
+    /// value rather than a bool: it makes "has anything changed?" answerable
+    /// WITHOUT computing the ROM key, and that key is a SHA-256 hex string
+    /// allocated fresh each time. Computing it unconditionally allocated once
+    /// per frame for the whole time the panel was open. (Review on #410.)
+    persisted: Option<crate::config::RememberedLatency>,
 }
 
 impl LatencyPanel {
@@ -79,6 +87,101 @@ impl LatencyPanel {
     /// longer exists. (PR #385 review.)
     pub fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    /// v2.3.9 — the measurement worth remembering across sessions, if any.
+    ///
+    /// `None` for an inconclusive report, deliberately: a stored "I could not
+    /// tell" is indistinguishable from a stored answer once it has lost the
+    /// context that produced it, and keeping those apart is this panel's whole
+    /// discipline. Better to re-measure than to show a remembered shrug.
+    ///
+    /// The frame duration travels with it so the millisecond figure is later
+    /// re-derived under the region it was MEASURED in — storing milliseconds
+    /// would silently restate a PAL measurement in NTSC units.
+    #[must_use]
+    pub fn remembered(&self) -> Option<crate::config::RememberedLatency> {
+        let report = self.report.as_ref()?;
+        let frames = report.frames?;
+        if report.confidence == Confidence::Inconclusive {
+            return None;
+        }
+        Some(crate::config::RememberedLatency {
+            frames,
+            unanimous: report.confidence == Confidence::Unanimous,
+            // Microseconds from the frame duration captured at measurement time.
+            // `frame_ms` is only ever set from `Nes::frame_duration`, so this is
+            // a unit conversion rather than a new source of truth.
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a console frame is ~16-20 ms; 1000x that is far inside u32"
+            )]
+            frame_micros: (self.frame_ms * 1000.0) as u32,
+        })
+    }
+
+    /// v2.3.9 — the measurement to write to the config, if it differs from what
+    /// is already there.
+    ///
+    /// Returns `Some` at most once per distinct result, so the caller writes and
+    /// saves on a real change instead of every frame. Marks it persisted as a
+    /// side effect, which is why it takes `&mut self` — a pure query would leave
+    /// the caller to remember, and the caller forgetting is exactly how the
+    /// original version of this feature never wrote anything at all.
+    #[must_use]
+    pub fn take_unpersisted(&mut self) -> Option<crate::config::RememberedLatency> {
+        let current = self.remembered()?;
+        if self.persisted == Some(current) {
+            return None;
+        }
+        self.persisted = Some(current);
+        Some(current)
+    }
+
+    /// Whether this session already holds a report — measured or remembered.
+    ///
+    /// The restore is driven off this rather than off a ROM-load hook, so it
+    /// self-corrects: `clear_rom_bound_analysis` empties the report at every ROM
+    /// transition, and the next frame repopulates it from the NEW ROM's entry.
+    /// One condition instead of a fourth per-panel clear plus a fourth restore.
+    #[must_use]
+    pub const fn has_report(&self) -> bool {
+        self.report.is_some()
+    }
+
+    /// v2.3.9 — restore a remembered measurement for a freshly-loaded ROM.
+    ///
+    /// Populates the report so the panel opens showing what was measured last
+    /// time, and **nothing else**: no `pending_apply`, so a remembered depth can
+    /// never be applied without the user pressing Apply in this session. That is
+    /// the same separation the live path keeps, extended across a restart —
+    /// persisting a recommendation must not quietly become persisting a setting.
+    pub fn restore_remembered(&mut self, r: crate::config::RememberedLatency) {
+        self.report = Some(LatencyReport {
+            frames: Some(r.frames),
+            confidence: if r.unanimous {
+                Confidence::Unanimous
+            } else {
+                Confidence::Majority
+            },
+            // Zeroed rather than invented. These describe the RUN that produced
+            // the measurement — which buttons reacted, which observable answered,
+            // how many trials were spent — and no honest value exists for them in
+            // a later session. The panel renders them as "0/0 buttons, 0 trials",
+            // which reads as "not from this session" and is exactly right.
+            reacting_buttons: 0,
+            probed_buttons: 0,
+            observable: None,
+            per_button: Vec::new(),
+            trials_used: 0,
+        });
+        self.frame_ms = f64::from(r.frame_micros) / 1000.0;
+        // Already in the config — that is where it came from — so record it as
+        // persisted. Without this the next frame would treat it as a fresh
+        // measurement and write it straight back, saving the file for nothing.
+        self.persisted = Some(r);
+        "Remembered from a previous session.".clone_into(&mut self.status);
     }
 
     /// Take a depth the user pressed **Apply** for, if any.
@@ -369,6 +472,137 @@ fn end_to_end_figure(
 mod tests {
     use super::*;
 
+    /// A conclusive measurement round-trips, and the frame duration travels
+    /// with it so the millisecond figure is later re-derived under the region it
+    /// was MEASURED in — not whatever is loaded now.
+    #[test]
+    fn a_conclusive_measurement_round_trips_with_its_region() {
+        let panel = LatencyPanel {
+            report: Some(report(Some(3), Confidence::Unanimous)),
+            frame_ms: 19.997, // PAL
+            ..LatencyPanel::default()
+        };
+
+        let remembered = panel.remembered().expect("conclusive results persist");
+        assert_eq!(remembered.frames, 3);
+        assert!(remembered.unanimous);
+        assert_eq!(remembered.frame_micros, 19_997);
+
+        let mut fresh = LatencyPanel::default();
+        fresh.restore_remembered(remembered);
+        assert!(fresh.has_report());
+        assert!(
+            (fresh.frame_ms - 19.997).abs() < 1e-9,
+            "a PAL measurement must not be restated in NTSC units"
+        );
+    }
+
+    /// An inconclusive report is NOT remembered. A stored "I could not tell" is
+    /// indistinguishable from a stored answer once it has lost its context, and
+    /// keeping those apart is this panel's whole discipline.
+    ///
+    /// **Two cases, because one of them passed for the wrong reason.** With
+    /// `frames: None` the `?` returns before the confidence is ever examined, so
+    /// that case alone leaves the confidence guard untested — a mutation deleting
+    /// it changed nothing. The second case pins the guard itself.
+    #[test]
+    fn an_inconclusive_measurement_is_not_remembered() {
+        let mut panel = LatencyPanel {
+            report: Some(report(None, Confidence::Inconclusive)),
+            frame_ms: 16.639,
+            ..LatencyPanel::default()
+        };
+        assert!(
+            panel.remembered().is_none(),
+            "no frame count, nothing to store"
+        );
+
+        // Inconclusive DESPITE a frame count. Defensive rather than observed —
+        // the measurement path reports `None` frames when it cannot tell — but
+        // the guard exists precisely so a future path that sets both cannot
+        // quietly persist a shrug, and an untested guard is not a guard.
+        panel.report = Some(report(Some(4), Confidence::Inconclusive));
+        assert!(
+            panel.remembered().is_none(),
+            "a frame count does not rescue an inconclusive verdict"
+        );
+    }
+
+    /// A report with a confidence but no frame count is likewise not
+    /// remembered — `frames: None` and `Some(0)` are different answers, and only
+    /// one of them is worth carrying to a later session.
+    #[test]
+    fn a_report_without_a_frame_count_is_not_remembered() {
+        let panel = LatencyPanel {
+            report: Some(report(None, Confidence::Majority)),
+            ..LatencyPanel::default()
+        };
+        assert!(panel.remembered().is_none());
+    }
+
+    /// The write must happen at most once per distinct result.
+    ///
+    /// The original version wrote on every frame the panel was open and never
+    /// called `save()`, so it rewrote an in-memory map continuously and
+    /// persisted nothing. Both halves are pinned here: `take_unpersisted` yields
+    /// once and then stops, so the caller's `save()` cannot become a per-frame
+    /// file write.
+    #[test]
+    fn a_measurement_is_offered_for_writing_exactly_once() {
+        let mut panel = LatencyPanel {
+            report: Some(report(Some(3), Confidence::Unanimous)),
+            frame_ms: 16.639,
+            ..LatencyPanel::default()
+        };
+
+        let first = panel.take_unpersisted();
+        assert!(first.is_some(), "a fresh measurement must be offered");
+        assert!(
+            panel.take_unpersisted().is_none(),
+            "an unchanged measurement must not be rewritten every frame"
+        );
+
+        // A NEW measurement supersedes it and is offered again.
+        panel.report = Some(report(Some(1), Confidence::Unanimous));
+        let second = panel
+            .take_unpersisted()
+            .expect("a changed result is offered");
+        assert_eq!(second.frames, 1);
+    }
+
+    /// A RESTORED measurement came from the config, so it must not be written
+    /// back — otherwise opening a game would rewrite the file for nothing.
+    #[test]
+    fn a_restored_measurement_is_not_written_back() {
+        let mut panel = LatencyPanel::default();
+        panel.restore_remembered(crate::config::RememberedLatency {
+            frames: 2,
+            unanimous: true,
+            frame_micros: 16_639,
+        });
+        assert!(
+            panel.take_unpersisted().is_none(),
+            "a value read from the config must not be offered back to it"
+        );
+    }
+
+    /// Restoring must NOT queue an Apply. Remembering a recommendation across a
+    /// restart must never quietly become applying it — the same separation the
+    /// live path keeps between "measured" and "applied".
+    #[test]
+    fn restoring_never_queues_an_apply() {
+        let mut panel = LatencyPanel::default();
+        panel.restore_remembered(crate::config::RememberedLatency {
+            frames: 2,
+            unanimous: true,
+            frame_micros: 16_639,
+        });
+        assert!(
+            panel.take_pending_apply().is_none(),
+            "a remembered depth is one click from being applied, never zero"
+        );
+    }
+
     fn work(count: usize, p95_ms: f32) -> crate::perf::IntervalStats {
         crate::perf::IntervalStats {
             count,
@@ -516,11 +750,23 @@ mod tests {
             frame_ms: 16.639,
             status: "Measured in 7 trials.".to_owned(),
             measure_requested: true,
+            persisted: Some(crate::config::RememberedLatency {
+                frames: 2,
+                unanimous: true,
+                frame_micros: 16_639,
+            }),
         };
         panel.clear();
         assert!(
             panel.report.is_none(),
             "a stale report survived a ROM change"
+        );
+        // v2.3.9 — and the write-tracking, which is keyed to the OLD ROM. Left
+        // standing, the next game's first identical measurement would be treated
+        // as already written and never reach the config.
+        assert!(
+            panel.take_unpersisted().is_none(),
+            "no report, so nothing to offer"
         );
         assert_eq!(
             panel.take_pending_apply(),

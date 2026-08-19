@@ -45,6 +45,34 @@ pub enum ConfigError {
     Serialize(#[from] toml::ser::Error),
 }
 
+/// One remembered Latency Oracle measurement (v2.3.9).
+///
+/// Deliberately NOT the whole `LatencyReport`. Persisting that type would pin
+/// the config format to a probe-crate struct that is free to grow, and most of
+/// it — per-button divergence frames, the observable used, trials spent — is
+/// diagnostic detail for the run that produced it, not something a later session
+/// can act on. What survives is what a returning user needs: the answer, how
+/// much to trust it, and the region it was measured under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RememberedLatency {
+    /// Measured internal lag in frames.
+    ///
+    /// Not `Option<u32>`: an inconclusive measurement is not remembered at all,
+    /// because a stored "I could not tell" is indistinguishable from a stored
+    /// answer once it has lost its context, and this panel's whole discipline is
+    /// keeping those two apart.
+    pub frames: u32,
+    /// Whether every reacting button agreed. A majority result is worth
+    /// remembering and worth labelling as approximate when it is shown again.
+    pub unanimous: bool,
+    /// Frame duration in microseconds at measurement time, so the millisecond
+    /// figure is re-derived under the region it was MEASURED in rather than
+    /// whatever is loaded now. Storing milliseconds directly would silently
+    /// restate a PAL measurement in NTSC units — the defect v2.3.5 fixed in the
+    /// libretro wrapper, arriving by a different route.
+    pub frame_micros: u32,
+}
+
 /// Player-1 / player-2 input bindings, plus the system bindings (quit,
 /// save state, load state, rewind, ...).
 ///
@@ -115,6 +143,23 @@ pub struct InputConfig {
     /// slow hosts. Native-only.
     #[serde(default = "default_run_ahead")]
     pub run_ahead: u32,
+    /// v2.3.9 — remembered Latency Oracle results, keyed on the ROM SHA-256
+    /// (hex), exactly as `graphics.hd_packs` is keyed.
+    ///
+    /// Lives in `[input]` because the report's one actionable output is a
+    /// run-ahead depth, which is the field directly above; a measurement and the
+    /// setting it recommends belong together.
+    ///
+    /// `#[serde(default)]` = empty, so a pre-v2.3.9 config round-trips
+    /// byte-identically and a user who never opens the panel carries nothing.
+    ///
+    /// **Remembering a measurement is not applying it.** Nothing here changes
+    /// `run_ahead`; the panel still requires an explicit Apply, which is the
+    /// separation v2.3.6 built deliberately ("measured" and "applied" are two
+    /// auditable steps). Persisting the recommendation would quietly convert one
+    /// into the other across a restart.
+    #[serde(default)]
+    pub latency_reports: std::collections::BTreeMap<String, RememberedLatency>,
     /// v1.1.0 beta.1 (T-110-B2) — turbo/autofire on the A button: while held, A
     /// rapid-fires. Off by default (`false`) = byte-identical input. Applied
     /// where input meets the NES, keyed on the emulated frame number, so it is
@@ -357,6 +402,7 @@ impl Default for InputConfig {
             four_score: false,
             expansion_device: ExpansionDevice::None,
             run_ahead: default_run_ahead(),
+            latency_reports: std::collections::BTreeMap::new(),
             turbo_a: false,
             turbo_b: false,
             turbo_period: default_turbo_period(),
