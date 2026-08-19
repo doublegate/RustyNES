@@ -3218,99 +3218,6 @@ impl LockstepBus {
         self.last_nmi_level = level;
     }
 
-    /// Drain any cycles owed to the DMA controllers (OAM DMA + DMC DMA)
-    /// before completing a CPU access.
-    ///
-    /// Called from `cpu_read` and `cpu_write`. DMC DMA preempts OAM DMA per
-    /// nesdev: while OAM DMA is running and a DMC DMA also fires, the DMC
-    /// fetch happens "between the dummy and DMA reads" of the OAM DMA,
-    /// stalling the OAM transfer for 3-4 extra cycles.  Our simpler model
-    /// services DMC DMA at the start of each cycle the bus controls; if
-    /// OAM DMA is in flight, the DMC DMA inserts itself between transfer
-    /// pairs.
-    // Under `mc-r1-full-cpu` the body reduces to the DMC-abort/idle handling;
-    // OAM moved to the CPU-driven `oam_dma_step`, so `&mut self`/`read_addr` are
-    // only lightly used here — silence the resulting lints under the flag.
-    #[allow(
-        clippy::unused_self,
-        clippy::needless_pass_by_ref_mut,
-        clippy::missing_const_for_fn
-    )]
-    fn drain_dma(&mut self, read_addr: Option<u16>) {
-        // Stage-D: under `mc-r1-full-cpu` the OAM DMA is CPU-driven (read1), so
-        // the legacy OAM block below (the only user of `read_addr` once the
-        // abort-cancel path owns aborts) is cfg'd out — silence the param.
-        let _ = read_addr;
-        // Sprint 3 iter 3 — under the `dmc-get-put-scheduler`
-        // feature, the abort is handled INSIDE `service_dmc_dma` /
-        // `service_dmc_dma_during_oam` (matching Mesen2's unified
-        // `RunDma` loop where the `processCycle` lambda checks
-        // `_abortDmcDma` per iteration). The pre-service abort
-        // call is preserved on the default-off path.
-        // accuracycoin-100 Phase 2: under `mc-r1-dmc-abort-cancel` the R1
-        // read1/write1 path OWNS the abort (get-cycle 1-halt Y=1 / put-write
-        // cancel Y=0). Skip the legacy `drain_dma` service — `drain_dma(None)`
-        // runs every R1 `cpu_clock` cycle and would `complete_dmc_abort` the
-        // pending abort BEFORE the read1 hook can see it (the inert-as-placed
-        // bug). The legacy service below stays active for the default build.
-        // Stage-D (`mc-r1-full-cpu`): OAM DMA is CPU-driven in `read1`
-        // (`oam_dma_step`), NOT bus-side burst — leave `dma_pending` set for the
-        // read1 loop to consume; drain_dma does no OAM work under the flag.
-    }
-
-    // SUPERSEDED, UNREFERENCED, and retained pending a maintainer decision.
-    //
-    // These four methods -- `clock_oam_dma_cycle`, `service_dmc_dma`,
-    // `service_dmc_abort` and `service_dmc_dma_during_oam` -- form a closed
-    // island: they call each other and nothing outside calls any of them. That
-    // is why removing one attribute makes all four report at once, and why a
-    // `grep` for a single name finds a caller and looks reassuring.
-    //
-    // They are the legacy bus-side DMA service from the `mc-r1-*` staged
-    // master-clock migration. Those cargo features no longer exist anywhere in
-    // the workspace, and the master-clock scheduler has been the ONLY path since
-    // v2.0.0, so the "flag-off path" the surrounding comments still refer to
-    // cannot be taken. A nearby comment claiming "the legacy service below stays
-    // active for the default build" is false for the same reason.
-    //
-    // v2.3.9 removed 25 `#[allow(dead_code)]` attributes across the workspace
-    // that were no longer suppressing anything; these are among the two islands
-    // that genuinely were. Kept rather than deleted because cutting four methods
-    // out of `bus.rs` is a larger and riskier edit than the sweep that found
-    // them justifies -- unreferenced code cannot change behaviour, so this is a
-    // maintenance question, not a correctness one. The APU's equivalent pair was
-    // deleted in the same change because it was 34 self-contained lines.
-    #[allow(dead_code)]
-    fn clock_oam_dma_cycle(&mut self, total: u32, alignment: u32) {
-        let consumed = total - self.dma_cycles_owed; // 0, 1, ...
-        if consumed < alignment {
-            // OAM DMA halt / alignment cycle — bus idle for the CPU,
-            // but the DMA controller owns it.  Trace as DmaRead with
-            // the halted CPU read address so the trace shows what the
-            // open-bus latch ended up driving (Session-21).
-            #[cfg(feature = "irq-timing-trace")]
-            self.set_trace_dma_access(BusAccess::DmaRead, self.dma_halt_addr, self.open_bus);
-            self.tick_one_cpu_cycle();
-            self.dma_cycles_owed -= 1;
-            return;
-        }
-        let xfer_idx = consumed - alignment; // 0..512
-        // Even xfer index: read; odd: write.
-        if xfer_idx & 1 == 0 {
-            let src_addr =
-                (u16::from(self.dma_page) << 8) | u16::try_from(xfer_idx >> 1).unwrap_or(0);
-            self.dma_byte = self.raw_oam_dma_read(src_addr);
-            #[cfg(feature = "irq-timing-trace")]
-            self.set_trace_dma_access(BusAccess::DmaRead, src_addr, self.dma_byte);
-        } else {
-            self.oam_dma_put();
-            #[cfg(feature = "irq-timing-trace")]
-            self.set_trace_dma_access(BusAccess::DmaWrite, 0x2004, self.dma_byte);
-        }
-        self.tick_one_cpu_cycle();
-        self.dma_cycles_owed -= 1;
-    }
-
     /// OAM-DMA source fetch (Session-26 / Sprint 2 iter 4).
     ///
     /// The 2A03 has three internal address buses (6502, OAM DMA, DMC
@@ -3484,136 +3391,6 @@ impl LockstepBus {
         self.trace_bus_access = access;
         self.trace_bus_addr = addr;
         self.trace_bus_data = data;
-    }
-
-    /// Service one DMC DMA transfer.
-    ///
-    /// Per nesdev §DMC DMA:
-    /// - Halt cycle (1 CPU cycle).
-    /// - Dummy cycle (1 CPU cycle).
-    /// - Optional alignment cycle if the DMA get would otherwise land on
-    ///   a put cycle.
-    /// - One memory-read/get cycle.
-    ///
-    /// While CPU is halted, the previous read is logically repeated.  For
-    /// `$4015` / `$4016` / `$4017` / `$2007` this has the documented
-    /// register-readout side-effect bug; PAL fixes it.
-    ///
-    /// v1.2 Sprint 3.2 — two implementations now coexist via the
-    /// `dmc-get-put-scheduler` cargo feature (ADR-0007). With the
-    /// flag OFF, the v1.0/v1.1 baseline ("phase-agnostic noop loop +
-    /// compensating delays") is preserved bit-identically — the four
-    /// delays `dmc_dma_short`, `dmc_dma_cooldown`, `dmc_abort_delay`,
-    /// `dmc_dma_delay` are still load-bearing. With the flag ON, the
-    /// new path uses Mesen2's get/put cycle alternation model
-    /// (`NesCpu.cpp:399-450`) — `dmc_need_halt` and
-    /// `dmc_need_dummy_read` on the APU are consumed cycle-by-cycle,
-    /// and the four compensating delays are NO-OPS under the new
-    /// model. The new path closes the cycle-2 implied-dummy-read
-    /// cascade that 6 prior single-delay tweaks could not.
-    // Phase B: the DMC burst is CPU-driven-interleaved under R1, so this
-    // bus-side burst is unused there (still used on the default path).
-    // Part of the superseded DMA-service island; see `clock_oam_dma_cycle`.
-    #[allow(dead_code)]
-    fn service_dmc_dma(&mut self, halted_addr: u16) {
-        if !self.apu.dmc_dma_pending() || self.in_dmc_dma {
-            return;
-        }
-        let addr = self.apu.dmc_dma_addr();
-        let noop_cycles = if self.apu.dmc_dma_short() { 2 } else { 3 };
-        self.in_dmc_dma = true;
-        self.capture_deferred_dma_replay();
-
-        for _ in 0..noop_cycles {
-            self.replay_dma_noop_read(halted_addr);
-            // Session-21: tag DMC halt/dummy/align cycles as DmaRead with
-            // the halted CPU address (which is what the open-bus latch
-            // sees on real silicon during those cycles).
-            #[cfg(feature = "irq-timing-trace")]
-            self.set_trace_dma_access(BusAccess::DmaRead, halted_addr, self.open_bus);
-            self.tick_one_cpu_cycle();
-        }
-
-        // Perform the actual sample read/get and deliver back to the APU.
-        let byte = self.dmc_dma_read(addr, halted_addr);
-        if self.apu.dmc_dma_deliver_before_tick() {
-            self.apu.complete_dmc_dma_before_get_tick(byte);
-            #[cfg(feature = "irq-timing-trace")]
-            self.set_trace_dma_access(BusAccess::DmaRead, addr, byte);
-            self.tick_one_cpu_cycle();
-        } else {
-            #[cfg(feature = "irq-timing-trace")]
-            self.set_trace_dma_access(BusAccess::DmaRead, addr, byte);
-            self.tick_one_cpu_cycle();
-            self.apu.complete_dmc_dma(byte);
-        }
-        self.in_dmc_dma = false;
-    }
-
-    // Part of the superseded DMA-service island; see `clock_oam_dma_cycle`.
-    #[allow(dead_code)]
-    fn service_dmc_abort(&mut self, halted_addr: u16) {
-        if !self.apu.dmc_abort_pending() || self.in_dmc_dma {
-            return;
-        }
-        self.in_dmc_dma = true;
-        self.replay_dma_noop_read(halted_addr);
-        // Session-21: abort halt cycle is observable from the bus as a
-        // DmaRead of the halted CPU address (open-bus driver retained).
-        #[cfg(feature = "irq-timing-trace")]
-        self.set_trace_dma_access(BusAccess::DmaRead, halted_addr, self.open_bus);
-        self.tick_one_cpu_cycle();
-        self.apu.complete_dmc_abort();
-        self.in_dmc_dma = false;
-    }
-
-    // Part of the superseded DMA-service island; see `clock_oam_dma_cycle`.
-    #[allow(dead_code)]
-    fn service_dmc_dma_during_oam(&mut self, total: u32, alignment: u32) {
-        if !self.apu.dmc_dma_pending() || self.in_dmc_dma {
-            return;
-        }
-        let addr = self.apu.dmc_dma_addr();
-        let noop_cycles = if self.apu.dmc_dma_short() { 2 } else { 3 };
-        let halted_addr = self.dma_halt_addr;
-        self.in_dmc_dma = true;
-        self.capture_deferred_dma_replay();
-
-        // DMC halt, dummy, and alignment no-op cycles overlap with OAM DMA.
-        // The 6502 core remains halted, but OAM can keep consuming its own
-        // read/write slots on those cycles.
-        for _ in 0..noop_cycles {
-            self.replay_dma_noop_read(halted_addr);
-            if self.dma_cycles_owed > 0 {
-                // clock_oam_dma_cycle owns its own trace tagging.
-                self.clock_oam_dma_cycle(total, alignment);
-            } else {
-                #[cfg(feature = "irq-timing-trace")]
-                self.set_trace_dma_access(BusAccess::DmaRead, halted_addr, self.open_bus);
-                self.tick_one_cpu_cycle();
-            }
-        }
-
-        // The actual DMC get owns the memory read cycle. If OAM still has a
-        // transfer pending, this skips one OAM slot and forces the next OAM
-        // read to realign on a later get cycle.
-        let byte = self.dmc_dma_read(addr, halted_addr);
-        let deliver_before_tick = self.apu.dmc_dma_deliver_before_tick();
-        if deliver_before_tick {
-            self.apu.complete_dmc_dma_before_get_tick(byte);
-        }
-        #[cfg(feature = "irq-timing-trace")]
-        self.set_trace_dma_access(BusAccess::DmaRead, addr, byte);
-        self.tick_one_cpu_cycle();
-        if self.dma_cycles_owed > 0 {
-            #[cfg(feature = "irq-timing-trace")]
-            self.set_trace_dma_access(BusAccess::DmaRead, halted_addr, self.open_bus);
-            self.tick_one_cpu_cycle();
-        }
-        if !deliver_before_tick {
-            self.apu.complete_dmc_dma(byte);
-        }
-        self.in_dmc_dma = false;
     }
 
     const fn capture_deferred_dma_replay(&mut self) {
@@ -4274,8 +4051,6 @@ impl LockstepBus {
 
 impl Bus for LockstepBus {
     fn cpu_read(&mut self, addr: u16) -> u8 {
-        // Drain any pending DMA before doing the requested access.
-        self.drain_dma(Some(addr));
         if self.deferred_dma_replay_addr != 0
             && self.open_bus == (self.deferred_dma_replay_addr >> 8) as u8
         {
@@ -4343,7 +4118,6 @@ impl Bus for LockstepBus {
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
-        self.drain_dma(None);
         self.open_bus = value;
         // Mirror the CPU-initiated write onto the internal data bus.
         // Symmetric with `raw_cpu_read`'s mirror — DMC DMA does not
@@ -4741,7 +4515,6 @@ impl Bus for LockstepBus {
                 self.commit_controller_strobe(value);
             }
         }
-        self.drain_dma(None);
         self.cycle = self.cycle.wrapping_add(1);
         self.ppu.on_cpu_cycle();
         // v2.8.0 Phase 4 — skip the virtual dispatch on boards whose
