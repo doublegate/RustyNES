@@ -800,6 +800,27 @@ impl MovieRecorder {
     /// frame *before* [`Nes::run_frame`], after the frontend has applied its
     /// `set_buttons` calls — this captures exactly the inputs the upcoming
     /// frame consumes.
+    ///
+    /// # Two ports only, including under a Four Score
+    ///
+    /// [`FrameInput`] models ports 0 and 1, so this reads `nes.buttons(0)` and
+    /// `nes.buttons(1)` and **nothing else**. The core itself carries four —
+    /// the frontend calls `set_buttons(2)` / `set_buttons(3)` whenever the Four
+    /// Score adapter is active — so recording a four-player session captures
+    /// half of what drove it, and replaying that movie diverges from the run it
+    /// came from.
+    ///
+    /// Stated here rather than left to be discovered, because the failure is
+    /// silent at record time: nothing about a `.rnm` says which ports it could
+    /// not hold, and the divergence only appears on playback. The frontend's
+    /// Replay panel says so where the topology is displayed, and
+    /// `Movie::verify`'s attestation catches it after the fact.
+    ///
+    /// Widening [`FrameInput`] is a `.rnm` format epoch change (ADR 0028), not
+    /// an additive one, which is why this is a documented limit rather than a
+    /// fix. The `.fm2` importer already takes the same position for the same
+    /// reason — it keeps pads 1 and 2, drops 3 and 4, and preserves the
+    /// `fourscore` flag so the caller is not silently misled.
     pub fn capture(&mut self, nes: &Nes) {
         self.frames.push(FrameInput {
             p1: nes.buttons(0),
