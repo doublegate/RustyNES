@@ -59,6 +59,7 @@
 //! ```
 
 pub mod atlas;
+pub mod divergence;
 pub mod latency;
 
 use rustynes_core::{Buttons, Nes, ROM_HASH_TAG_LEN};
@@ -761,6 +762,70 @@ mod tests {
         assert_eq!(
             before, after,
             "a latency measurement rewrote the caller's audio provenance"
+        );
+    }
+
+    fn varying_nrom() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"NES\x1A");
+        bytes.push(1);
+        bytes.push(1);
+        bytes.push(0);
+        bytes.push(0);
+        bytes.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0u8; 16 * 1024];
+        // $C000: INX / STX $2001 / JMP $C000 — emphasis bits churn every ~7
+        // cycles, and the index framebuffer packs them as (emphasis << 6), so
+        // the emitted pixel values genuinely vary frame to frame.
+        prg[0..6].copy_from_slice(&[0xE8, 0x8E, 0x01, 0x20, 0x4C, 0x00]);
+        prg[6] = 0xC0;
+        let len = prg.len();
+        prg[len - 6] = 0x00;
+        prg[len - 5] = 0xC0;
+        prg[len - 4] = 0x00;
+        prg[len - 3] = 0xC0;
+        prg[len - 2] = 0x00;
+        prg[len - 1] = 0xC0;
+        bytes.extend_from_slice(&prg);
+        bytes.extend_from_slice(&vec![0u8; 8 * 1024]);
+        bytes
+    }
+
+    /// A trial restores the anchor on the way IN and not on the way out, so the
+    /// emulator is left holding the trial's final frame.
+    ///
+    /// Pinned because the Divergence Lens reads the framebuffer off `nes` after
+    /// a trial and would otherwise be comparing two copies of the anchor while
+    /// reporting them as the diverging frame.
+    ///
+    /// `varying_nrom`, not `synth_nrom`, and that is the whole point: the plain
+    /// fixture renders a blank screen, where "left at the anchor" and "left at
+    /// the end" are byte-identical, so the test passes under both behaviours and
+    /// proves nothing. Checked here by asserting the fixture varies at all
+    /// before asserting anything about the engine.
+    #[test]
+    fn a_trial_leaves_the_emulator_at_its_end_state() {
+        let mut n = Nes::from_rom(&varying_nrom()).expect("fixture parses");
+        for _ in 0..4 {
+            n.run_frame();
+        }
+        let anchor_fb = n.index_framebuffer().to_vec();
+        assert!(
+            anchor_fb.iter().any(|&px| px != anchor_fb[0]),
+            "premise: this fixture emits a varying screen, so the assertion below \
+             can distinguish the anchor from the trial's end state"
+        );
+
+        let mut probe = Probe::anchor(&n, Budget::default());
+        let _ = probe
+            .run(&mut n, 12, Observable::IndexFramebuffer, idle)
+            .expect("within budget");
+
+        assert_ne!(
+            n.index_framebuffer(),
+            anchor_fb.as_slice(),
+            "a trial left the emulator at the anchor; the Divergence Lens reads \
+             the frame off `nes` after a trial and would silently compare anchors"
         );
     }
 

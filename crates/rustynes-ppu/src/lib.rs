@@ -49,7 +49,10 @@ pub use ppu::MASK_WRITE_DELAY;
 pub use ppu::ProvBgAddrs;
 pub use ppu::octal_trace;
 pub use ppu::read2007_diag;
-pub use ppu::{FRAMEBUFFER_LEN, PaletteInit, Ppu, PpuRegion, PpuRevision};
+pub use ppu::{
+    FRAMEBUFFER_LEN, FRAMEBUFFER_PIXELS, PaletteInit, Ppu, PpuRegion, PpuRevision, SCREEN_HEIGHT,
+    SCREEN_WIDTH,
+};
 #[cfg(feature = "hd-pack")]
 pub use ppu::{HD_CHR_RAM, HD_TILE_NONE, HdSprite, HdTileSource};
 #[cfg(feature = "debug-hooks")]

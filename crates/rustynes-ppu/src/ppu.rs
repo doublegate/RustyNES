@@ -16,12 +16,24 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 use alloc::boxed::Box;
 use alloc::vec;
 
+/// Visible screen width in pixels, and the stride of every per-pixel buffer the
+/// PPU exposes.
+///
+/// v2.3.8 — the single definition. `provenance::SCREEN_W` was a second copy of
+/// this number in a `debug-hooks`-gated module, which made the width
+/// unreachable from ungated code and invited a third copy rather than a
+/// dependency. It now aliases this.
+pub const SCREEN_WIDTH: usize = 256;
+
+/// Visible screen height in pixels. Companion to [`SCREEN_WIDTH`].
+pub const SCREEN_HEIGHT: usize = 240;
+
 /// RGBA8 framebuffer length in bytes (256 × 240 × 4).
-pub const FRAMEBUFFER_LEN: usize = 256 * 240 * 4;
+pub const FRAMEBUFFER_LEN: usize = SCREEN_WIDTH * SCREEN_HEIGHT * 4;
 
 /// Visible pixel count (256 × 240) — length of the parallel
 /// [`Ppu::index_framebuffer`] (one `u16` per pixel).
-pub const FRAMEBUFFER_PIXELS: usize = 256 * 240;
+pub const FRAMEBUFFER_PIXELS: usize = SCREEN_WIDTH * SCREEN_HEIGHT;
 
 /// v1.2.0 beta.2 (Workstream C3) — per-pixel HD-pack tile-source record.
 ///

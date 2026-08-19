@@ -337,9 +337,11 @@ impl PixelProvenance {
 }
 
 /// Screen width in pixels, and the stride of a [`PixelProvenanceFrame`].
-pub const SCREEN_W: usize = 256;
-/// Screen height in pixels.
-pub const SCREEN_H: usize = 240;
+///
+/// An alias, not a second definition: see [`crate::SCREEN_WIDTH`].
+pub const SCREEN_W: usize = crate::SCREEN_WIDTH;
+/// Screen height in pixels. Alias of [`crate::SCREEN_HEIGHT`].
+pub const SCREEN_H: usize = crate::SCREEN_HEIGHT;
 
 /// One frame of [`PixelProvenance`], indexed by `y * SCREEN_W + x`.
 ///
