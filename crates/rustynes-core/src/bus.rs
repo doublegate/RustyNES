@@ -4383,10 +4383,25 @@ impl Bus for LockstepBus {
                 // moved on to whichever instruction is being halted.
                 #[cfg(feature = "debug-hooks")]
                 self.ppu.latch_dma_attrib_context();
+                // v2.3.7 "Overtone" — `$4014` sits inside the `$4000-$4017`
+                // window the audio-provenance table reserves a slot for, but the
+                // arm below routes only `$4000-$4013 | $4015 | $4017` to
+                // `Apu::write_register`, where attribution is recorded. Record it
+                // here so the reserved slot is actually populated; nothing is
+                // dispatched to the APU, so the DMA behaviour is unchanged.
+                #[cfg(feature = "debug-hooks")]
+                self.apu
+                    .record_bus_handled_register_write(REG_OAM_DMA, value);
                 self.dma_pending = Some(value);
             }
             0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.write_register(addr, value),
             0x4016 => {
+                // v2.3.7 "Overtone" — same as `$4014` above: inside the
+                // provenance window, never routed to `Apu::write_register`, so
+                // attribute it here. The strobe itself is still buffered and
+                // committed by the code below; this only records the cause.
+                #[cfg(feature = "debug-hooks")]
+                self.apu.record_bus_handled_register_write(0x4016, value);
                 // Session-24 / Phase 3 (Controller Strobing): the
                 // controllers' OUT pins are only updated at the start
                 // of M2-low (PUT) cycles.  Buffer the write and

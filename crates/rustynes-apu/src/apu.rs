@@ -518,6 +518,30 @@ impl Apu {
         }
     }
 
+    /// Attribute a write in `$4000-$4017` that the bus does NOT route through
+    /// [`Self::write_register`].
+    ///
+    /// Two addresses in the range are not APU registers and are handled
+    /// entirely on the bus: `$4014` (OAM DMA, which arms a burst) and `$4016`
+    /// (controller strobe, which is buffered to the next M2-low boundary).
+    /// `Bus::write` dispatches only `$4000-$4013 | $4015 | $4017` to
+    /// `write_register`, so the attribution recorded there can never see those
+    /// two — yet the table reserves slots for them, because the range is what
+    /// the bus already classifies as an APU write and punching a hole in it
+    /// would invite off-by-one arithmetic at every call site.
+    ///
+    /// Without this entry point those two slots would stay permanently empty
+    /// while the docs claimed they were tracked. This records the cause exactly
+    /// as `write_register` would, and dispatches nothing — the emulation of both
+    /// addresses stays wherever the bus already implements it.
+    #[cfg(feature = "debug-hooks")]
+    pub const fn record_bus_handled_register_write(&mut self, addr: u16, value: u8) {
+        if let Some(p) = self.audio_prov.as_mut() {
+            p.reg_attrib
+                .record(addr, p.attrib_pc, p.attrib_cycle, value);
+        }
+    }
+
     /// Push the writing instruction's PC + cycle down, mirroring the PPU's
     /// write-attribution context. Called once per instruction by the core.
     #[cfg(feature = "debug-hooks")]

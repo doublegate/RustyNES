@@ -4289,6 +4289,75 @@ mod tests {
         );
     }
 
+    /// v2.3.7: `$4014` and `$4016` must actually be attributed.
+    ///
+    /// Both sit inside the `$4000-$4017` window the audio-provenance table
+    /// reserves slots for, and both are handled entirely on the bus — `Bus::write`
+    /// routes only `$4000-$4013 | $4015 | $4017` to `Apu::write_register`, which
+    /// is where attribution was recorded. So the two reserved slots could never
+    /// be filled, while `docs/audio-provenance.md` and the `REG_COUNT` doc
+    /// comment both stated they were "tracked anyway".
+    ///
+    /// Caught by the Antigravity reviewer on PR #404. This test fails without
+    /// `Apu::record_bus_handled_register_write` being called from both bus arms:
+    /// remove either call and the corresponding `get()` returns `None`.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn bus_handled_apu_window_writes_are_attributed() {
+        // `Bus::write` is the ordinary CPU write path both addresses travel.
+        use rustynes_cpu::Bus as _;
+
+        let mut nes = Nes::from_rom(&synth_nrom(16, 8)).expect("nrom builds");
+        nes.set_audio_provenance(true);
+        assert!(nes.audio_provenance_armed(), "premise: armed");
+
+        // Pin a known attribution context, then write both bus-handled
+        // addresses through the ordinary CPU write path.
+        nes.bus.apu.set_attrib_context(0xC123, 4_242);
+        nes.bus.write(0x4014, 0x02); // OAM DMA page
+        nes.bus.write(0x4016, 0x01); // controller strobe
+
+        let attrib = nes
+            .bus
+            .apu
+            .register_attribution()
+            .expect("armed, so the table exists");
+
+        let dma = attrib
+            .get(0x4014)
+            .expect("$4014 must be attributed — it is inside the reserved window");
+        assert_eq!(dma.pc, 0xC123, "$4014 attributed to the wrong instruction");
+        assert_eq!(dma.value, 0x02, "$4014 recorded the wrong value");
+
+        let strobe = attrib
+            .get(0x4016)
+            .expect("$4016 must be attributed — it is inside the reserved window");
+        assert_eq!(
+            strobe.pc, 0xC123,
+            "$4016 attributed to the wrong instruction"
+        );
+        assert_eq!(strobe.value, 0x01, "$4016 recorded the wrong value");
+
+        // A genuine APU register still works — the new path is additive, not a
+        // replacement for the one inside `write_register`.
+        nes.bus.write(0x4015, 0x0F);
+        assert_eq!(
+            attrib_value(&nes, 0x4015),
+            Some(0x0F),
+            "the normal write_register attribution path must be unaffected"
+        );
+    }
+
+    /// Small helper so the assertion above reads as one line.
+    #[cfg(feature = "debug-hooks")]
+    fn attrib_value(nes: &Nes, addr: u16) -> Option<u8> {
+        nes.bus
+            .apu
+            .register_attribution()
+            .and_then(|a| a.get(addr))
+            .map(|w| w.value)
+    }
+
     #[test]
     fn nsf_song_apis_are_inert_on_a_cartridge() {
         let mut nes = Nes::from_rom(&synth_nrom(16, 8)).expect("nrom builds");
