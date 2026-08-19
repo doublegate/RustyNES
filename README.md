@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.3.6-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.3.7-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -668,8 +668,32 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.3.6 "Sounding"** — about measuring, and
-about what a measurement is allowed to claim. Built on **v2.3.5 "Manifest"**,
+RustyNES's current release is **v2.3.7 "Overtone"** — point at a moment in the
+frame and read *why it sounds like that*. **Audio Provenance** is the APU
+counterpart of Pixel Provenance: a per-register write attribution answering
+*what wrote this, and from which instruction*, and a per-CPU-cycle mix trace
+answering *what were the channels actually doing*. The Audio Scope already
+plotted the waveform and the Audio Mixer already set the gains; nothing linked a
+sample back to the instruction that caused it.
+
+The release's real subject is the trap the feature inherited. Pixel Provenance
+shipped **non-functional for four releases** because run-ahead's rollback cleared
+its store before any UI could read it, so the carry landed in the **same change
+as the feature** here rather than after a bug report — and then the same defect
+turned up in **three more places**, every restore in `rustynes-probe`, which
+meant running the Latency Oracle or the RAM Atlas silently emptied both
+provenance panels. Two defects were caught by measurement rather than reading: a
+new APU throughput bench reshaped the plumbing three times on regressions
+invisible in the diff, and fuzzing the save-state parse boundary found **four**
+panics in VRC7's OPLL where hand-tracing found one. Also fixed: `$4014` and
+`$4016` were documented as attributed and were not, the browser demo applied no
+per-game header corrections, Rad Racer's roadside artifact, VRC7 save states
+dropping the live FM synthesizer, and unbounded CI jobs. `rustynes-apu` and
+`rustynes-core` both change, so **AccuracyCoin 141/141 and nestest 0-diff are
+verified, not asserted.**
+
+Built on **v2.3.6 "Sounding"** — about measuring, and about what a measurement is
+allowed to claim. Before that, **v2.3.5 "Manifest"**,
 which was about what the emulator
 tells the outside world about itself. A user reported RetroArch still showing the
 pre-relicense MIT/Apache-2.0 terms; it does, because RetroArch reads a **separate

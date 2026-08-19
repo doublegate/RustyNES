@@ -14,6 +14,43 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.3.7] - 2026-08-19 - "Overtone" (the instruction behind every mixed cycle)
+
+An *overtone* is the structure inside a sound that a single pitch reading throws
+away, and that is what this release adds: the Audio Scope already showed the
+waveform and the Audio Mixer already set the gains, but nothing linked a sample
+back to the instruction that caused it. **Audio Provenance** closes that — a
+per-register write attribution answering *what wrote this, and from which
+instruction*, and a per-CPU-cycle mix trace answering *what were the channels
+actually doing*, deliberately shaped as the APU counterpart of Pixel Provenance.
+
+The release's real subject, though, is the trap the feature inherited. Pixel
+Provenance shipped **non-functional for four releases** because run-ahead's
+rollback cleared its store before any UI could read it, while a comment two lines
+above the clear asserted the opposite. Audio Provenance rides the identical
+rollback, so the carry landed in the **same change as the feature** rather than
+after a bug report. Then the same defect turned up in **three more places** —
+every restore in `rustynes-probe` — which meant running the Latency Oracle or the
+RAM Atlas silently emptied both provenance panels. The v2.3.6 fix had enumerated
+one caller rather than the mechanism, and the test named for the contract could
+not see the breach because provenance is deliberately not in the save state.
+
+Two defects were caught by measurement rather than by reading. `apu_throughput`,
+built for this release, reshaped the plumbing **three times** on regressions
+invisible in the diff; and a fuzz sweep of the save-state parse boundary found
+**four** panics in `VRC7`'s OPLL where hand-tracing had found one — the
+maximally-hostile fixed payload concealed one of them.
+
+Also fixed: `$4014` and `$4016` were documented as attributed and were not, since
+the bus handles them without routing through `Apu::write_register`; the browser
+demo applied **no** per-game header corrections; *Rad Racer*'s roadside artifact,
+where the PPU spliced a hybrid address from a stale `v`; VRC7 save states dropped
+the live FM synthesizer, so rewind garbled the music; and no CI job carried a
+timeout, so one hung job silently skipped a release for five hours.
+
+`rustynes-apu` and `rustynes-core` both change, so **AccuracyCoin 141/141
+(100.00%, RAM decoder) and nestest 0-diff are VERIFIED, not asserted.**
+
 ### Added
 
 - **Audio provenance — point at a moment in the frame and read why it sounds
