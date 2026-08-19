@@ -286,8 +286,6 @@ impl WatchPanelState {
             wp.hits = 0;
         }
     }
-}
-impl WatchPanelState {
     /// `true` when any breakpoint or watchpoint exists (used to decide whether
     /// the per-frame exec/access logs must be armed).
     #[must_use]
