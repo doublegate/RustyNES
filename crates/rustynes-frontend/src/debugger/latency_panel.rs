@@ -152,7 +152,7 @@ impl LatencyPanel {
     /// failure into a flood. The user has been told, the measurement is still on
     /// screen, and re-measuring is an explicit retry. That trade is worth stating
     /// because the opposite choice looks more diligent and is worse.
-    pub fn note_persist_failure(&mut self, err: &dyn core::fmt::Display) {
+    pub fn note_persist_failure(&mut self, err: impl core::fmt::Display) {
         self.status = format!("Measured, but could not be saved: {err}");
     }
 
@@ -652,8 +652,12 @@ mod tests {
     /// A failed save must be visible in the panel, not only on stderr.
     ///
     /// The user opened this panel to ask about this game; "your measurement was
-    /// not saved" belongs beside the answer. A `let _ = save()` — the form review
-    /// flagged — put it nowhere at all.
+    /// not saved" belongs beside the answer. Discarding the save result — the
+    /// form this PR replaced — put it nowhere at all.
+    ///
+    /// The literal discard expression is deliberately NOT spelled out here. It
+    /// was, and a grep for it during verification matched this comment instead of
+    /// any code, reporting a defect that had already been fixed.
     #[test]
     fn a_failed_save_is_reported_in_the_panel() {
         let mut panel = LatencyPanel {
@@ -664,7 +668,7 @@ mod tests {
         let taken = panel.take_unpersisted();
         assert!(taken.is_some(), "premise: there was something to write");
 
-        panel.note_persist_failure(&"permission denied");
+        panel.note_persist_failure("permission denied");
 
         assert!(
             panel.status.contains("could not be saved"),
@@ -691,7 +695,7 @@ mod tests {
             ..LatencyPanel::default()
         };
         assert!(panel.take_unpersisted().is_some());
-        panel.note_persist_failure(&"disk full");
+        panel.note_persist_failure("disk full");
         assert!(
             panel.take_unpersisted().is_none(),
             "a failed write must not become a per-frame write attempt"
