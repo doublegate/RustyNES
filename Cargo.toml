@@ -207,9 +207,13 @@ pedantic = { level = "warn", priority = -1 }
 nursery  = { level = "warn", priority = -1 }
 # Every `unsafe` block must carry a `// SAFETY:` comment. That has been a written
 # project rule since v1.0.0 and the codebase already followed it -- an audit of all
-# 91 unsafe sites in v2.3.9 found the justification present at every one. What was
-# missing was enforcement: one site had its note INSIDE the block rather than above
-# it, which satisfies a human reader and is invisible to any check.
+# 91 unsafe sites found the justification present at every one. What was missing
+# was enforcement: TWO sites had their note somewhere a human reads correctly and
+# a checker cannot -- one inside the block, one separated from the `unsafe` token
+# by an attribute and a continuation line. The second compiles only under the
+# `browser-cheevos` wasm feature and surfaced only when the lint was run across
+# every gated combination, which is the reason to state the count rather than
+# round it down.
 #
 # Enabling the lint turns the rule into a gate, which is this project's stated
 # preference (`AGENTS.md`: a rule the tooling enforces beats a rule you are merely

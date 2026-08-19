@@ -865,9 +865,9 @@ impl Core for RustyNesLibretro {
         // that returns `true` without setting the pointer), ensuring we never produce
         // a reference from an invalid address.
         //
-        // The note was previously INSIDE the block, which is why the whole workspace
-        // satisfied the rule while a mechanical check could not see it. Moved above the
-        // `unsafe` token so `clippy::undocumented_unsafe_blocks` can verify it.
+        // The note sits above the `unsafe` token rather than inside the block so
+        // `clippy::undocumented_unsafe_blocks` can see it; the lint reads only the
+        // lines immediately preceding the block.
         let ext_info = unsafe {
             let generic_ctx: GenericContext = (&*ctx).into();
             let Some(cb) = generic_ctx.environment_callback() else {

@@ -196,13 +196,18 @@ impl BrowserRaSession {
         // before returning. So we erase the borrow's lifetime to `'static`,
         // matching the native bridge's `ReadGuard` idiom.
         //
+        // The attribute goes ABOVE the SAFETY note, not between it and the `let`.
+        // `clippy::undocumented_unsafe_blocks` looks at the line immediately
+        // preceding the statement, so an attribute sitting there hides the note
+        // and the lint fires -- measured both ways rather than assumed. (Review
+        // on #423 suggested the note alone would do; it does, but only in this
+        // order.)
         #[allow(unsafe_code)] // localized lifetime erasure; see SAFETY below
-        let read_static: &mut (dyn FnMut(u16) -> u8 + 'static) = {
-            // SAFETY: the erased pointer is only dereferenced by `ra_do_frame`
-            // synchronously below, and `closure` is dropped at the end of this
-            // function, so the call can never outlive the real borrow.
-            unsafe { core::mem::transmute(read) }
-        };
+        // SAFETY: the erased pointer is only dereferenced by `ra_do_frame`
+        // synchronously below, and `closure` is dropped at the end of this
+        // function, so the call can never outlive the real borrow.
+        let read_static: &mut (dyn FnMut(u16) -> u8 + 'static) =
+            unsafe { core::mem::transmute(read) };
         let closure = Closure::<dyn FnMut(u32) -> u32>::new(move |addr: u32| {
             u32::from(read_static((addr & 0xffff) as u16))
         });
