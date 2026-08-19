@@ -793,6 +793,9 @@ pub struct PerfView {
     /// Denominator for [`Self::lock_gap_hits`].
     #[cfg(feature = "debug-hooks")]
     pub lock_gap_obs: u64,
+    /// v2.3.9 item C — produce-to-visible latency, one sample per presented
+    /// frame. See [`RenderPerf`].
+    pub present_lat: IntervalStats,
     /// v2.3.3 — egui shell build cost (winit thread). See [`RenderPerf`].
     pub render_ui: IntervalStats,
     /// v2.3.3 — GPU encode + present cost (winit thread). See [`RenderPerf`].

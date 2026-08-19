@@ -2244,6 +2244,11 @@ impl DebuggerOverlay {
             {
                 self.latency_ui.restore_remembered(remembered);
             }
+            // v2.3.9 item C — the produce-to-visible series, from the same
+            // snapshot. Passed separately rather than folded into `render_work`
+            // because the two answer different questions and have different
+            // sample populations; the panel gates each on its own count.
+            let present_lat = self.perf_ui.present_lat();
             latency_panel::show(
                 ctx,
                 &mut self.detached_panels,
@@ -2252,6 +2257,7 @@ impl DebuggerOverlay {
                 nes.as_deref_mut(),
                 current,
                 render_work,
+                present_lat,
             );
             if let Some(depth) = self.latency_ui.take_pending_apply() {
                 config.input.run_ahead = depth;

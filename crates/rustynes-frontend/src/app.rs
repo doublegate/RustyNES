@@ -7275,6 +7275,7 @@ impl App {
         perf_view.render_work = r.work;
         perf_view.render_lock = r.lock;
         perf_view.render_cpu = r.cpu;
+        perf_view.present_lat = r.present_lat;
         #[cfg(feature = "debug-hooks")]
         {
             perf_view.lock_gap_hits = r.lock_gap_hits;
