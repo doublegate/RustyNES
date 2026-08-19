@@ -101,10 +101,19 @@ impl RunAhead {
     /// guarantee netplay rollback relies on).
     pub fn finish(&mut self, nes: &mut Nes) {
         let stash = nes.take_provenance();
+        // v2.3.7 "Overtone" — the audio stores ride the SAME rollback and would
+        // be wiped the same way. Carried around it for the identical reason,
+        // and added in the same change as the feature rather than after a user
+        // reports an empty panel: that is what the video side cost, four
+        // releases of a marquee feature that could never show anything.
+        let audio_stash = nes.take_audio_provenance();
         nes.restore_quiet(&self.snap_buf)
             .expect("run-ahead snapshot round-trips on the same instance");
         if stash.is_armed() {
             nes.put_provenance(stash);
+        }
+        if audio_stash.is_armed() {
+            nes.put_audio_provenance(audio_stash);
         }
         nes.set_rewind_capture(true);
     }
@@ -371,6 +380,86 @@ mod tests {
                 rec.dot, 0,
                 "run-ahead's rollback wiped the visible frame's provenance: the \
                  inspector panel can never see a record"
+            );
+        }
+    }
+
+    /// A frame's worth of mixed cycles, floored well under the NTSC 29,781 so
+    /// the assertion is about "a real frame ran" rather than an exact count.
+    ///
+    /// Deliberately NOT `> 0`: the APU's 8-cycle reset sequence alone produces
+    /// eight records, so a non-emptiness check passes on a run that emulated
+    /// nothing at all. That is the vacuous-assertion shape this project keeps
+    /// paying for.
+    const MIN_FRAME_MIXES: usize = 20_000;
+
+    /// CONTROL for [`runahead_preserves_audio_provenance`]: without run-ahead, a
+    /// plain run leaves a populated mix trace. If this fails, the run-ahead test
+    /// below proves nothing — the store would be empty for a reason unrelated to
+    /// the rollback.
+    ///
+    /// Runs three frames for the same reason the pixel-provenance control does:
+    /// a single `run_frame` immediately after `from_rom` can legitimately
+    /// advance **zero** cycles, because the PPU starts at a frame boundary.
+    /// Writing this with one frame is how I first "disproved" a feature that was
+    /// working correctly.
+    #[test]
+    fn plain_run_leaves_audio_provenance_populated() {
+        let bytes = rom("assorted/flowing_palette.nes");
+        let mut nes = Nes::from_rom(&bytes).expect("rom parses");
+        nes.set_audio_provenance(true);
+        let mut discard = vec![0.0f32; 8192];
+
+        for _ in 0..3u32 {
+            nes.run_frame();
+            let _ = nes.drain_audio_into(&mut discard);
+        }
+
+        let trace = nes.mix_trace().expect("armed, so the trace is allocated");
+        assert!(
+            trace.records().len() >= MIN_FRAME_MIXES,
+            "control failed: a plain run recorded {} mixed cycles, so the marker \
+             used by `runahead_preserves_audio_provenance` is not valid",
+            trace.records().len()
+        );
+    }
+
+    /// **The test whose absence cost the video side four releases.**
+    ///
+    /// Pixel Provenance shipped non-functional from v2.3.2 to v2.3.6 because
+    /// run-ahead's rollback cleared the store after the visible frame was
+    /// produced and before the UI could take the lock. Audio provenance rides
+    /// the identical rollback, so it gets the identical test — driving the real
+    /// produce path at `run_ahead = 1`, the default, and looking at the first
+    /// moment the UI actually could.
+    #[test]
+    fn runahead_preserves_audio_provenance() {
+        let bytes = rom("assorted/flowing_palette.nes");
+        let mut nes = Nes::from_rom(&bytes).expect("rom parses");
+        nes.enable_rewind();
+        nes.set_audio_provenance(true);
+
+        let mut ra = RunAhead::default();
+        let mut discard = vec![0.0f32; 8192];
+
+        for frame in 0..3u32 {
+            ra.run_frame_ahead(&mut nes, 1);
+            // The frontend harvests the visible framebuffer + audio here.
+            let _ = nes.drain_audio_into(&mut discard);
+            ra.finish(&mut nes);
+
+            // ...and only THEN releases the lock, so this is the first moment
+            // the UI could look.
+            assert!(
+                nes.audio_provenance_armed(),
+                "frame {frame}: the rollback disarmed audio provenance"
+            );
+            let trace = nes.mix_trace().expect("armed, so the trace is allocated");
+            assert!(
+                trace.records().len() >= MIN_FRAME_MIXES,
+                "frame {frame}: run-ahead's rollback wiped the visible frame's mix \
+                 trace ({} records) — the inspector panel can never see a record",
+                trace.records().len()
             );
         }
     }

@@ -14,6 +14,71 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Audio provenance — point at a moment in the frame and read why it sounds
+  like that.** The APU counterpart of pixel provenance, and deliberately the
+  same shape: a per-register write attribution answering *what wrote this, and
+  from which instruction*, and a per-CPU-cycle mix trace answering *what were
+  the channels actually doing*. Surfaced at **Tools → Audio → Audio
+  Provenance**. Output-only, runtime-default-off, and not serialized, so the
+  deterministic audio contract is unaffected whether it is armed or not.
+
+  Every ingredient but one already shipped — the Audio Scope plots the
+  waveforms, the Audio Mixer sets the gains, `Apu::pulse1_out()` and its
+  siblings expose live channel outputs, and the Event Viewer already classifies
+  `$4000-$4017` writes as `EventKind::ApuWrite`. What existed nowhere is the
+  link from a sample back to the instruction that caused it: `EventRec` carries
+  `kind / scanline / dot / addr / value` — no PC, no CPU cycle — and is
+  scanline-oriented rather than sample-oriented. So the event log is the
+  interception *point* this reuses; it is not the record.
+
+  The trace is per **CPU cycle**, the cadence at which the mix is genuinely
+  computed, rather than per output sample. `blip` decimates to 44.1 kHz — about
+  one sample per 40.6 CPU cycles — and an output sample is a weighted sum of
+  transitions across the filter kernel, not a copy of one instant. Recording at
+  output rate would mean picking which of those ~40 mixes "is" the sample, which
+  the signal chain cannot answer; the panel reports the cycle window and says so
+  instead. `MIX_CAP` is sized from **Dendy** (35,464 cycles/frame), not the NTSC
+  figure that comes to mind first, and reports `truncated()` rather than
+  returning a short buffer that looks complete.
+
+  Register rows carry their **side-band effects**, because naming the right
+  instruction and then describing the wrong effect is its own failure: a write
+  to `$4003` does not merely set the period, it also loads the length counter,
+  resets the duty sequencer and restarts the envelope. Those annotations were
+  confirmed against this emulator's own implementation, not from memory.
+
+  **The trap this feature inherited was closed in the same change as the
+  feature, not after a bug report.** Pixel provenance shipped non-functional for
+  four releases because run-ahead's per-frame rollback cleared the store before
+  the frontend released the emulator lock, so the UI could never observe a
+  populated record — and a comment asserted the opposite, which is what stopped
+  anyone checking. Audio provenance rides the identical rollback, so
+  `take_audio_provenance` / `put_audio_provenance` carry the state around
+  `restore_quiet` in `RunAhead::finish` from the outset. Save-state loads and
+  netplay rollback still clear, unchanged: those are genuine timeline changes,
+  and run-ahead's is not. The regression test drives the real produce path at
+  `run_ahead = 1` — the default — and is mutation-checked. Both it and its
+  control are floored at 20,000 records rather than "non-empty", because the
+  APU's reset sequence alone produces eight, so a non-emptiness check would pass
+  on a run that emulated nothing.
+
+  Spec: `docs/audio-provenance.md`. `rustynes-apu` gains a `debug-hooks`
+  feature, forwarded from the core's.
+
+### Changed
+
+- **Audio provenance costs the shipped default nothing when it is not armed.**
+  The feature is compiled into every build (the frontend enables the core's
+  `debug-hooks` unconditionally), so "default-off" describes the runtime arm
+  rather than the code. Two separate mechanisms were found charging the APU
+  hot path while disarmed — the mix record was being built before the arm was
+  tested, and the recording body was being inlined into the hot mix path — and
+  both are fixed; the disarmed path measures at baseline. The full measurement
+  chronology, including a diagnosis that was made, measured and rejected, is in
+  `docs/performance.md` §v2.3.7 C2 rather than here.
+
 ### Fixed
 
 - **VRC7 save states now carry the FM synthesizer, so rewind no longer garbles

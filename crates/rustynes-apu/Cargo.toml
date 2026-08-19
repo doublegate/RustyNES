@@ -23,6 +23,16 @@ workspace = true
 # would then quietly opt every consumer in to `std`, masking no_std regressions
 # from cross-target CI gates that build with `--no-default-features`.
 std = []
+# v2.3.7 "Overtone" — audio provenance: per-register write attribution (which
+# instruction wrote `$4000-$4017`) and a per-CPU-cycle trace of the channel
+# outputs actually mixed. Mirrors `rustynes-ppu/debug-hooks`, and like it the
+# feature is only half the gate: `rustynes-core` forwards it and the frontend
+# enables it unconditionally, so **the thing that is default-off is the runtime
+# ARM**, a lazily-allocated `Option` whose disarmed cost is one discriminant
+# test per register write and per mixed cycle. Output-only: nothing here is read
+# back into synthesis or carried in the save state, so the shipped default is
+# byte-identical and the determinism contract is untouched.
+debug-hooks = []
 
 [dependencies]
 bitflags.workspace = true

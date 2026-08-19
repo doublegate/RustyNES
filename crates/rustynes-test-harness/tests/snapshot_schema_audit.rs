@@ -314,6 +314,20 @@ const CHIPS: &[Chip] = &[
                  for the UI oscilloscope; documented as never read back into the mixer, the \
                  IRQ path, or any determinism-relevant state",
             ),
+            (
+                "audio_prov",
+                "output-only: v2.3.7 audio provenance -- per-register write attribution, the \
+                 per-CPU-cycle mix trace, and the PC/cycle context feeding them, all behind one \
+                 `Option<Box<..>>`. Never read by emulation. Deliberately NOT serialized for the \
+                 same reason the PPU's `write_attrib` is not -- a restored state's registers were \
+                 not written by any instruction this session ran, so carrying PCs across a restore \
+                 would report a timeline that no longer exists. The mix trace is per-FRAME by \
+                 construction (re-anchored by `begin_audio_provenance_frame`) and the context is \
+                 re-pushed before every instruction, so neither has anything a save state could \
+                 meaningfully carry. \
+                 CONSOLIDATED from four inline fields after `apu_throughput` measured +9% on the \
+                 DISARMED path with the state spread across the `Apu` struct",
+            ),
         ],
         known_gaps: &[],
     },

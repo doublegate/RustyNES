@@ -504,6 +504,9 @@ impl Nes {
         {
             self.bus.ppu.clear_write_attribution();
             self.bus.ppu.clear_pixel_provenance();
+            // v2.3.7 — same for audio: a cold boot ends the history the
+            // register attribution describes.
+            self.bus.apu.clear_audio_provenance_history();
         }
     }
 
@@ -520,6 +523,12 @@ impl Nes {
         // VBL detection or DMA-stall heavy frames before declaring "stuck".
         const MAX_CYCLES_PER_FRAME: u64 = 150_000;
         let start = self.bus.cycle();
+        // v2.3.7 "Overtone" — anchor this frame's mix trace. The trace is
+        // per-frame (the index IS the cycle offset from here); the REGISTER
+        // attribution deliberately is not, because "which instruction last wrote
+        // $4003" has an answer that legitimately predates this frame.
+        #[cfg(feature = "debug-hooks")]
+        self.bus.apu.begin_audio_provenance_frame(start);
         // T-110-C3 — the event viewer shows one frame; reset the log per frame.
         #[cfg(feature = "debug-hooks")]
         if self.bus.event_logging() {
@@ -602,6 +611,15 @@ impl Nes {
                 self.bus
                     .ppu
                     .set_attrib_context(self.cpu.pc, self.cpu.cycles);
+                // v2.3.7 "Overtone" — the same push-down for audio, so
+                // `Apu::write_register` can attribute a `$4000-$4017` write
+                // without `rustynes-cpu` knowing the feature exists. Same
+                // reasoning as the PPU line above: two unconditional stores are
+                // cheaper than testing an arm behind a `Box` across a crate
+                // boundary, in a block that already scans breakpoints.
+                self.bus
+                    .apu
+                    .set_attrib_context(self.cpu.pc, self.cpu.cycles);
                 // T-110-C2 — cycle trace: record the about-to-execute
                 // instruction's CPU state (ring-capped, oldest dropped).
                 if self.trace_enabled {
@@ -671,6 +689,10 @@ impl Nes {
         #[cfg(feature = "debug-hooks")]
         self.bus
             .ppu
+            .set_attrib_context(self.cpu.pc, self.cpu.cycles);
+        #[cfg(feature = "debug-hooks")]
+        self.bus
+            .apu
             .set_attrib_context(self.cpu.pc, self.cpu.cycles);
         self.cpu.step(&mut self.bus)
     }
@@ -897,6 +919,62 @@ impl Nes {
     #[must_use]
     pub fn pixel_provenance(&self) -> Option<&rustynes_ppu::PixelProvenanceFrame> {
         self.bus.ppu.pixel_provenance()
+    }
+
+    /// Arm or disarm **audio** provenance (v2.3.7 "Overtone").
+    ///
+    /// Off by default. Arming allocates the per-register write attribution and
+    /// the per-CPU-cycle mix trace; disarming frees both. Output-only — nothing
+    /// recorded is read back into synthesis or carried in the save state, so the
+    /// deterministic audio contract is unaffected either way.
+    #[cfg(feature = "debug-hooks")]
+    pub fn set_audio_provenance(&mut self, enabled: bool) {
+        self.bus.apu.set_audio_provenance(enabled);
+    }
+
+    /// Whether audio provenance is armed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub const fn audio_provenance_armed(&self) -> bool {
+        self.bus.apu.audio_provenance_armed()
+    }
+
+    /// The per-register write attribution — which instruction last wrote each of
+    /// `$4000-$4017` — or `None` when disarmed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn register_attribution(&self) -> Option<&rustynes_apu::provenance::RegisterAttribution> {
+        self.bus.apu.register_attribution()
+    }
+
+    /// This frame's per-CPU-cycle mix trace, or `None` when disarmed.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn mix_trace(&self) -> Option<&rustynes_apu::provenance::MixTrace> {
+        self.bus.apu.mix_trace()
+    }
+
+    /// Lift the audio provenance stores out for a same-timeline restore.
+    ///
+    /// The audio counterpart of [`Self::take_provenance`], and it exists for the
+    /// identical reason: run-ahead's rollback runs AFTER the visible frame is
+    /// produced and BEFORE the frontend releases the emulator lock, so a store
+    /// the restore clears can never be observed by the UI. That is exactly how
+    /// Pixel Provenance shipped non-functional from v2.3.2 to v2.3.6. Take
+    /// before the restore, [`Self::put_audio_provenance`] after.
+    ///
+    /// Save-state loads and netplay rollback still clear, unchanged — those are
+    /// genuine timeline changes. Run-ahead's rollback is not.
+    #[cfg(feature = "debug-hooks")]
+    #[must_use]
+    pub fn take_audio_provenance(&mut self) -> rustynes_apu::provenance::AudioProvenanceStash {
+        self.bus.apu.take_audio_provenance()
+    }
+
+    /// Put back stores taken by [`Self::take_audio_provenance`].
+    #[cfg(feature = "debug-hooks")]
+    pub fn put_audio_provenance(&mut self, stash: rustynes_apu::provenance::AudioProvenanceStash) {
+        self.bus.apu.put_audio_provenance(stash);
     }
 
     /// v2.3.6 — move both provenance stores out, leaving them unarmed.
@@ -2062,6 +2140,21 @@ impl Nes {
         {
             self.bus.ppu.clear_write_attribution();
             self.bus.ppu.clear_pixel_provenance();
+            // v2.3.7 — the audio register attribution is the same kind of claim
+            // about the same replaced timeline: a restored state's APU registers
+            // were not written by any instruction this session executed, so
+            // keeping their PCs would report a timeline that no longer exists.
+            //
+            // This was MISSING when audio provenance first landed, while
+            // `docs/audio-provenance.md` already asserted that "save-state loads
+            // and netplay rollback still clear" — prose describing behaviour the
+            // code did not have, which is the exact failure that let Pixel
+            // Provenance ship broken for four releases. Caught in review.
+            //
+            // Harmless for run-ahead: `RunAhead::finish` TAKES the store before
+            // `restore_quiet` and puts it back after, so `audio_prov` is `None`
+            // here and this call is a no-op on that path.
+            self.bus.apu.clear_audio_provenance_history();
         }
         Ok(())
     }
@@ -4194,6 +4287,75 @@ mod tests {
             calls < 12,
             "50 Hz must call `play` fewer times than 60 Hz frames (got {calls})"
         );
+    }
+
+    /// v2.3.7: `$4014` and `$4016` must actually be attributed.
+    ///
+    /// Both sit inside the `$4000-$4017` window the audio-provenance table
+    /// reserves slots for, and both are handled entirely on the bus — `Bus::write`
+    /// routes only `$4000-$4013 | $4015 | $4017` to `Apu::write_register`, which
+    /// is where attribution was recorded. So the two reserved slots could never
+    /// be filled, while `docs/audio-provenance.md` and the `REG_COUNT` doc
+    /// comment both stated they were "tracked anyway".
+    ///
+    /// Caught by the Antigravity reviewer on PR #404. This test fails without
+    /// `Apu::record_bus_handled_register_write` being called from both bus arms:
+    /// remove either call and the corresponding `get()` returns `None`.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn bus_handled_apu_window_writes_are_attributed() {
+        // `Bus::write` is the ordinary CPU write path both addresses travel.
+        use rustynes_cpu::Bus as _;
+
+        let mut nes = Nes::from_rom(&synth_nrom(16, 8)).expect("nrom builds");
+        nes.set_audio_provenance(true);
+        assert!(nes.audio_provenance_armed(), "premise: armed");
+
+        // Pin a known attribution context, then write both bus-handled
+        // addresses through the ordinary CPU write path.
+        nes.bus.apu.set_attrib_context(0xC123, 4_242);
+        nes.bus.write(0x4014, 0x02); // OAM DMA page
+        nes.bus.write(0x4016, 0x01); // controller strobe
+
+        let attrib = nes
+            .bus
+            .apu
+            .register_attribution()
+            .expect("armed, so the table exists");
+
+        let dma = attrib
+            .get(0x4014)
+            .expect("$4014 must be attributed — it is inside the reserved window");
+        assert_eq!(dma.pc, 0xC123, "$4014 attributed to the wrong instruction");
+        assert_eq!(dma.value, 0x02, "$4014 recorded the wrong value");
+
+        let strobe = attrib
+            .get(0x4016)
+            .expect("$4016 must be attributed — it is inside the reserved window");
+        assert_eq!(
+            strobe.pc, 0xC123,
+            "$4016 attributed to the wrong instruction"
+        );
+        assert_eq!(strobe.value, 0x01, "$4016 recorded the wrong value");
+
+        // A genuine APU register still works — the new path is additive, not a
+        // replacement for the one inside `write_register`.
+        nes.bus.write(0x4015, 0x0F);
+        assert_eq!(
+            attrib_value(&nes, 0x4015),
+            Some(0x0F),
+            "the normal write_register attribution path must be unaffected"
+        );
+    }
+
+    /// Small helper so the assertion above reads as one line.
+    #[cfg(feature = "debug-hooks")]
+    fn attrib_value(nes: &Nes, addr: u16) -> Option<u8> {
+        nes.bus
+            .apu
+            .register_attribution()
+            .and_then(|a| a.get(addr))
+            .map(|w| w.value)
     }
 
     #[test]
