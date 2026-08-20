@@ -7,12 +7,12 @@ rolling patch cadence rather than maintaining long-lived release branches, so
 security fixes land in the next patch release rather than being backported.
 Report against the latest release or `main`.
 
-| Version | Supported          | Notes |
-| ------- | ------------------ | ----- |
-| main    | :white_check_mark: | Where fixes land first |
-| 2.3.x   | :white_check_mark: | The current line |
-| 2.0.x - 2.2.x | :warning:    | Fixes are shipped forward into the current line, not backported |
-| < 2.0   | :x:                | Predates the v2.0.0 "Timebase" scheduler rewrite; save-state and movie epochs differ (ADR 0028) |
+| Version       | Supported | Notes |
+| ------------- | --------- | ----- |
+| main          | Yes       | Where fixes land first |
+| 2.3.x         | Yes       | The current line |
+| 2.0.x - 2.2.x | Partial   | Fixes are shipped forward into the current line, not backported |
+| < 2.0         | No        | Predates the v2.0.0 "Timebase" scheduler rewrite; save-state and movie epochs differ (ADR 0028) |
 
 Two boundaries are worth stating explicitly, because they change what a report
 means rather than merely how old it is:
