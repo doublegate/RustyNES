@@ -114,6 +114,33 @@ Requested and actual are recorded separately because they can legitimately diffe
 a ROM that jams stops advancing frames, and the export still succeeds. What must
 never happen is the manifest claiming a frame count that was not simulated.
 
+## The null-DUT gate
+
+`crates/rustynes-cosim/tests/null_dut_self_diff.rs` is rung 0's half of the
+ladder that lives here: feed RustyNES's own golden back in as if it were the DUT
+and require zero divergences. It asserts three things, and the second and third
+exist because the first alone proves less than it appears to.
+
+- **Two independent exports are byte-identical** across the boot trace, the index
+  framebuffer, work RAM, the cycle count and the call count. This is the
+  determinism contract observed at this crate's boundary; if it fails, a
+  pre-generated golden is *not* the trace a lockstep run would produce and
+  replay-as-oracle is unsound.
+- **A one-bit corruption is caught.** A comparator that always reports agreement
+  passes a self-diff trivially.
+- **Five frames is five NTSC frames' worth of cycles**, in six `run_frame()`
+  calls. Checked in integer half-cycles, without trusting the counter that
+  produced the number.
+
+Verified against the real `cpu_boot_trace_diff` CLI as well as in-process: it
+reports `All 5464 aligned records match` and exits 0 on the self-diff, and on a
+one-bit corruption reports the divergence at cycle 561, PC `$C419`, naming the
+field and both values. The zero therefore comes from a tool that can tell the
+difference, not from one that cannot.
+
+The other half of rung 0 -- hash-checkpoint agreement with full capture over a
+100k-cycle window, and the Verilator side of the writers -- is v2.4.2.
+
 ## Replay, not lockstep
 
 Build time: RustyNES emits goldens. Run time: Verilator runs the DUT, the C++
