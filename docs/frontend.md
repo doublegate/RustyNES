@@ -1195,6 +1195,33 @@ frontend details belong here rather than in those specs:
   matters more than clearing its report — a stale report is cosmetic, a stale
   `pending_apply` is one click from applying a depth measured on another
   cartridge.
+
+  **v2.3.9 widened this from "analysis results" to "anything bound to the
+  cartridge", after the hook was found to be missing the one member of the set
+  that could do damage.** Both memory panels' *freezes* feed the app's raw-cheat
+  overlay, which is applied after every frame, and neither panel was registered
+  with the hook — so a byte frozen while playing one game went on being written
+  into the next, every frame, at an address that means something else there. That
+  is not a stale label; it is an active write into the wrong game, and it is the
+  reason the hook now covers every panel rather than the ones whose output looked
+  analytical.
+
+  The rule the sweep settled on, and the one a new panel should be measured
+  against: **derived output is discarded, user-authored input is kept, and only
+  input that actively *writes* is neutralised.** So RAM Search baselines,
+  reconstructed call stacks, access counters and debug telemetry are cleared —
+  they describe a cartridge that is gone — while watch lists and breakpoints
+  survive, because the user typed those and would have to retype them. Breakpoints
+  stay *armed*: a breakpoint halts, which is visible and recoverable, where a
+  freeze writes, which is silent and continuous. The asymmetry is the whole point
+  of the rule.
+
+  Two negatives are recorded here because establishing them cost time and the next
+  reader would otherwise re-derive them: the **header editor looks ROM-bound and is
+  not** — it is a standalone file tool that operates on a path, not on the loaded
+  cartridge — and the event panel, trace status and HD-pixel coordinates are
+  per-frame state or preferences, rebuilt or intentionally persistent rather than
+  carried across a transition.
 - **The RAM Atlas address list is virtualized** (`ScrollArea::show_rows`). With
   untouched addresses shown it is 2,048 rows, and building that many selectable
   labels per frame is a cost with no purpose. Virtualization needs a uniform row
