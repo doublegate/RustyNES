@@ -2254,6 +2254,17 @@ impl Config {
             fs::metadata(&target).ok().map(|m| m.permissions().mode())
         };
 
+        // Retry once past an occupied scratch name.
+        //
+        // `create_new` turns a collision into a failed save, and there is one way
+        // a collision can happen without an attacker: a crashed run leaves an
+        // orphaned scratch file, the OS later reuses that pid, and the new run's
+        // first save picks the same seq. Unlikely, and a lost save is a real cost
+        // for a user who would have no idea why. Advancing the counter and trying
+        // again turns it into nothing at all -- the next name cannot be the same
+        // one, since the counter only increases within a process. (Review on #425
+        // raised the pid-reuse case against the plan; it applies here.)
+        let mut tmp = tmp;
         let write_result = (|| -> std::io::Result<()> {
             use std::io::Write as _;
             let mut opts = fs::OpenOptions::new();
@@ -2279,7 +2290,16 @@ impl Config {
                 use std::os::unix::fs::OpenOptionsExt as _;
                 opts.mode(mode);
             }
-            let mut f = opts.open(&tmp)?;
+            let mut f = match opts.open(&tmp) {
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let seq = SCRATCH_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let mut retry = target.as_os_str().to_os_string();
+                    retry.push(format!(".{}.{seq}.tmp", std::process::id()));
+                    tmp = PathBuf::from(retry);
+                    opts.open(&tmp)?
+                }
+                other => other?,
+            };
             f.write_all(s.as_bytes())?;
             f.sync_all()
         })();
@@ -2326,11 +2346,29 @@ impl Config {
         // update until the containing directory is synced. Best-effort, and
         // Unix-gated: opening a directory as a `File` is not portable, and
         // `MoveFileEx` on Windows already orders the metadata write.
+        //
+        // A bare filename's parent is `Some("")`, and `File::open("")` fails with
+        // `ENOENT` -- so without the fallback the sync would silently not happen
+        // for a relative target, which is a durability step quietly skipped rather
+        // than a failure anyone sees. `.` is the directory an empty parent means.
+        // (Review on #420. `create_dir_all("")` was checked in the same pass and
+        // returns `Ok`, so the claim that a bare filename aborts the save does not
+        // reproduce -- only the sync was affected.)
         #[cfg(unix)]
-        if let Some(parent) = target.parent()
-            && let Ok(dir) = fs::File::open(parent)
         {
-            let _ = dir.sync_all();
+            let parent = target.parent().map_or_else(
+                || PathBuf::from("."),
+                |p| {
+                    if p.as_os_str().is_empty() {
+                        PathBuf::from(".")
+                    } else {
+                        p.to_path_buf()
+                    }
+                },
+            );
+            if let Ok(dir) = fs::File::open(&parent) {
+                let _ = dir.sync_all();
+            }
         }
 
         Ok(())
