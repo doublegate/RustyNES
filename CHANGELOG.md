@@ -61,7 +61,21 @@ cycle-accurate core later replaced.
   mid-session orphans one scratch file per save it made, and pid reuse restarts the
   counter at zero, so two orphans defeat one retry.
 
-  Getting the last one under test surfaced something else. Reaching the exhaustion
+  A second review round then found a **fourth**, in the fix for the third: on
+  exhaustion the last name tried is one that **already existed** — an orphan, or a
+  scratch file a colliding instance is actively writing — and the cleanup deleted
+  it. A failed save took another process's in-progress data with it. The defect
+  predated the loop, which widened it from one chance to eight; the scratch path
+  is now `Option`al and assigned only on a successful create.
+
+  **The first test written for that fix did not test it.** It forced a failure by
+  writing to a directory, which fails at the *rename* — a branch where the scratch
+  file genuinely is ours — so it passed against the defect and the fix alike. Two
+  mutations reported NOT CAUGHT, which is the only reason it was noticed; the
+  scratch-name source is now injectable so the exhaustion branch is reachable
+  without predicting global state.
+
+  Getting the third one under test surfaced something else. Reaching the exhaustion
   branch through `write_atomic` means predicting the process-global `SCRATCH_SEQ`
   and planting a decoy at every name the call will pick — and **that prediction
   races**, because every parallel test calling `write_atomic` consumes sequence

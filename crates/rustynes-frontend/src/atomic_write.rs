@@ -194,9 +194,11 @@ const SCRATCH_ATTEMPTS: u32 = 8;
 /// How many times to attempt the rename before giving up.
 ///
 /// Only ever more than one on Windows (see `is_transient_rename_error`). Five
-/// attempts with the backoff below is a worst case of 310 ms, which is a long
-/// time in a UI frame and a short one against losing a save the user believes
-/// happened.
+/// attempts sleep FOUR times — the loop returns on the fifth failure rather than
+/// backing off after it — so the worst case is 10 + 20 + 40 + 80 = **150 ms**,
+/// which is a long time in a UI frame and a short one against losing a save the
+/// user believes happened. (This read 310 ms until review; that would be the
+/// figure if a fifth sleep of 160 ms happened, and it does not.)
 const RENAME_ATTEMPTS: u32 = 5;
 
 /// Base backoff between rename attempts, doubled each time: 10, 20, 40, 80, 160.
@@ -386,6 +388,31 @@ where
 /// `RENAME_ATTEMPTS` transient failures returns the last error rather than
 /// succeeding quietly.
 pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
+    write_atomic_with(path, contents, scratch_name)
+}
+
+/// `write_atomic`, with the scratch-name source injected.
+///
+/// The seam exists for one specific test. The exhaustion branch -- where every
+/// candidate name is occupied and nothing of ours is ever created -- is where the
+/// cleanup must NOT delete anything, and reaching it through the real
+/// `scratch_name` means predicting the process-global `SCRATCH_SEQ` and planting
+/// a decoy at every name it will pick. That prediction races every parallel test
+/// that calls `write_atomic` (see `open_fresh_scratch`).
+///
+/// It was not obvious this seam was needed. The first attempt at the test forced
+/// a failure by writing to a directory, which fails at the *rename* -- a branch
+/// where the scratch file genuinely is ours -- so it exercised the wrong path
+/// entirely and passed against both the fix and the defect. Two mutations
+/// reported NOT CAUGHT, which is the only reason that was noticed.
+///
+/// # Errors
+///
+/// As [`write_atomic`].
+fn write_atomic_with<N>(path: &Path, contents: &[u8], mut scratch: N) -> io::Result<()>
+where
+    N: FnMut(&Path) -> PathBuf,
+{
     let target = resolve_write_target(path);
     if let Some(parent) = target.parent()
         && !parent.as_os_str().is_empty()
@@ -404,7 +431,7 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
         fs::metadata(&target).ok().map(|m| m.permissions().mode())
     };
 
-    let mut tmp = PathBuf::new();
+    let mut tmp: Option<PathBuf> = None;
 
     let write_result = (|| -> io::Result<()> {
         use std::io::Write as _;
@@ -428,19 +455,36 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
         // it, and the save fails outright for a reason the user cannot act on. A
         // bounded loop costs one `open` per orphan and is bounded so a directory
         // that rejects creation for some other persistent reason still terminates.
-        let mut f = open_fresh_scratch(|| {
-            tmp = scratch_name(&target);
-            opts.open(&tmp)
+        //
+        // `tmp` is assigned ONLY on a successful create, which is load-bearing
+        // rather than tidy: on exhaustion the last name tried is a file that
+        // already existed and belongs to somebody else -- an orphan, or a scratch
+        // file a colliding instance is actively writing. Assigning it and then
+        // running the cleanup below would delete that file. Review caught this;
+        // the bug predated the loop (a single retry could reach it too) and the
+        // loop widened it from one chance to eight.
+        let (created, mut f) = open_fresh_scratch(|| {
+            let candidate = scratch(&target);
+            opts.open(&candidate).map(|f| (candidate, f))
         })?;
+        tmp = Some(created);
         f.write_all(contents)?;
         f.sync_all()
     })();
     if let Err(e) = write_result {
-        // Best-effort: if the write failed because the disk is full, the remove
-        // may fail too, and the original file is still intact.
-        let _ = fs::remove_file(&tmp);
+        // Only if this process created it. `None` means the scratch open never
+        // succeeded, so there is nothing of ours to remove and anything at those
+        // names belongs to someone else.
+        //
+        // Best-effort past that: if the write failed because the disk is full,
+        // the remove may fail too, and the original file is still intact.
+        if let Some(t) = &tmp {
+            let _ = fs::remove_file(t);
+        }
         return Err(e);
     }
+    // Past this point the create succeeded, so the scratch file is ours.
+    let tmp = tmp.expect("the scratch file exists once the write succeeded");
 
     // The exact mode, after creation. `open(2)` masks the requested mode with the
     // umask, so creation alone can land narrower; this makes it exact.
@@ -813,6 +857,42 @@ mod tests {
         });
         assert_eq!(r.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(calls, 1, "a non-transient error was retried");
+    }
+
+    /// A failed write must not delete a file it did not create.
+    ///
+    /// On exhaustion the last name tried is one that ALREADY EXISTED — an orphan
+    /// from a crashed run, or a scratch file a colliding instance is actively
+    /// writing. The cleanup used to remove it unconditionally, so a save that
+    /// failed took another process's in-progress data with it. Found in review;
+    /// the defect predated the bounded loop, which widened it from one chance to
+    /// eight.
+    ///
+    /// Driven through `write_atomic_with` with a fixed name generator, so every
+    /// attempt collides and the exhaustion branch is reached deterministically.
+    /// An earlier version of this test forced failure by writing to a directory
+    /// and passed against the defect, because that fails at the *rename*, where
+    /// the scratch file genuinely is ours.
+    #[test]
+    fn a_failed_write_does_not_delete_a_file_it_did_not_create() {
+        const OTHERS: &[u8] = b"someone elses in-progress data";
+
+        let d = tempdir();
+        let p = d.join("f.txt");
+        let occupied = d.join("occupied.tmp");
+        fs::write(&occupied, OTHERS).expect("plant");
+
+        let taken = occupied.clone();
+        let e = write_atomic_with(&p, b"payload", |_| taken.clone())
+            .expect_err("every candidate name was occupied; this must fail");
+        assert_eq!(e.kind(), io::ErrorKind::AlreadyExists);
+
+        assert_eq!(
+            fs::read(&occupied).expect("the other process's file must still exist"),
+            OTHERS,
+            "a failed write deleted a file it did not create"
+        );
+        assert!(!p.exists(), "a failed write must not create the target");
     }
 
     /// A failed write must leave the existing file intact.
