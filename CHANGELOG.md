@@ -16,6 +16,151 @@ cycle-accurate core later replaced.
 
 ### Added
 
+- **One atomic, durable file write for every path that persists user data.**
+  (v2.4.0 item C.) The seven-property write sequence v2.3.9 built for
+  `Config::save_to` is extracted into `crate::atomic_write` and adopted everywhere.
+  The plan named three call sites; there were **four**, and the fourth is the
+  instructive one.
+
+  `save_state.rs` matters most and was named last: **a truncated save state is a
+  user's game progress**, a worse loss than a truncated config, and it was still
+  using the bare `fs::write` the config path had already been fixed for. It is also
+  the path most likely to be written under load — rewind capture, run-ahead and
+  netplay rollback all produce save states.
+
+  `per_game.rs` was not in the plan at all, because it *looks* correct: it writes a
+  sibling temp file and renames, so a sweep for `fs::write`-onto-a-target clears
+  it. It held two of seven. No `fsync`, so the rename could commit a directory
+  entry pointing at bytes that never reached the medium; and a **fixed** scratch
+  name shared across every process and concurrent call — the exact failure the
+  mechanism exists to prevent, reintroduced by the mechanism. A partially-correct
+  implementation is harder to spot than an absent one.
+
+  The config path **gains** something it never had: a bounded retry past a
+  transient Windows sharing violation. `MoveFileEx` fails if another process has
+  the target open, and an antivirus scanner or search indexer reading `config.toml`
+  is enough. POSIX has no such constraint, which is why it went unnoticed — and why
+  it would have surfaced as a Windows user reporting a save that failed for no
+  visible reason. When the attempts are exhausted the error **propagates**.
+
+  **Review then found three more places the module reported success it had not
+  earned**, and the shape was the same each time: an error discarded at a call
+  site, under a comment explaining the *rest* of the operation. `set_permissions`
+  was swallowed — and the mode being applied is the mode the target **already
+  had**, so a failure replaces a 0600 file with one at the umask default, *wider
+  than what it replaced*, and says nothing. The parent-directory `sync_all` was
+  swallowed along with the `File::open` that fed it, so the entire durability
+  barrier could be a no-op while the module's own table claimed "yes" for Unix;
+  `EIO` — the exact condition the sync exists to detect — was reported as success.
+  Both now propagate, the sync excepting only the two errnos that mean *this
+  filesystem does not offer the barrier* (`EINVAL`, and `EBADF` on some network
+  mounts), since failing a save outright on those mounts is a worse answer than
+  proceeding. And the occupied-scratch retry was **one** attempt, on the reasoning
+  that the counter cannot repeat a name within a process — true, and beside the
+  point, because the collision comes from a *previous* process: a run that crashed
+  mid-session orphans one scratch file per save it made, and pid reuse restarts the
+  counter at zero, so two orphans defeat one retry.
+
+  A second review round then found a **fourth**, in the fix for the third: on
+  exhaustion the last name tried is one that **already existed** — an orphan, or a
+  scratch file a colliding instance is actively writing — and the cleanup deleted
+  it. A failed save took another process's in-progress data with it. The defect
+  predated the loop, which widened it from one chance to eight; the scratch path
+  is now `Option`al and assigned only on a successful create.
+
+  **The first test written for that fix did not test it.** It forced a failure by
+  writing to a directory, which fails at the *rename* — a branch where the scratch
+  file genuinely is ours — so it passed against the defect and the fix alike. Two
+  mutations reported NOT CAUGHT, which is the only reason it was noticed; the
+  scratch-name source is now injectable so the exhaustion branch is reachable
+  without predicting global state.
+
+  A sixth round made the `cheats.rs` swallow blocking after three rounds of my
+  deferring it, and the deferral was wrong on its facts: I had claimed the fix
+  needed UI plumbing with nowhere to put the error, and the panel already had
+  three error fields rendered in exactly the idiom needed. `cheats::save` now
+  returns `io::Result<()>`, `persist_cheats` stores the failure in a `save_error`
+  field cleared on a ROM change like every other one, and the panel reports it
+  **above the lists**, because the message is not about any single edit — it says
+  the whole list on screen is not on disk.
+
+  A fifth round found the one defect none of the local gates could see: the
+  transient-rename predicate was a `const fn` calling `io::Error::kind`, which is
+  not `const` — `E0015`, and **only on Windows**, because the call sat behind
+  `#[cfg(windows)]`. PR runs here are Linux-only and the full matrix runs on
+  `main`, so it would have turned `main` red after merge rather than failing the
+  PR that caused it. Verified against a minimal crate before being believed, since
+  a plausible reviewer claim had already proved false once this release.
+
+  The fix is not just dropping `const`. The Windows logic moved into an
+  always-compiled function reached through `cfg!(windows) && …` instead of
+  `#[cfg(windows)]`, so it is parsed, type-checked and borrow-checked on Linux
+  while short-circuiting away at runtime exactly as before. Restoring the `const`
+  now fails **on Linux** with the same `E0015` — the defect class moved from
+  "invisible until another platform builds it" to "fails the PR". Also from that
+  round: `SYMLINK_DEPTH` matches Linux's own `MAXSYMLINKS` of 40 rather than a
+  smaller number, because where the kernel resolves a chain and this gives up, the
+  two disagree about where the file *is*.
+
+  A third round found no blocking issues and two worthwhile refinements: `ENOTSUP`
+  / `EOPNOTSUPP` joins the excused set, since the list is *ways a filesystem says
+  there is no barrier here* and leaving one out fails a save on that mount; and
+  the parent-directory resolution loses an allocation. Mutating the second turned
+  up a **pre-existing untested property** — the fallback that maps a bare relative
+  filename's `Some("")` parent to `.`, without which `File::open("")` returns
+  `ENOENT`. Documented as load-bearing since it was written, never tested, and it
+  matters *more* now: while the sync was best-effort, losing it meant a durability
+  step quietly skipped, but now that it propagates, losing it makes `write_atomic`
+  **fail outright** for any relative target.
+
+  Getting the third one under test surfaced something else. Reaching the exhaustion
+  branch through `write_atomic` means predicting the process-global `SCRATCH_SEQ`
+  and planting a decoy at every name the call will pick — and **that prediction
+  races**, because every parallel test calling `write_atomic` consumes sequence
+  values. Measured rather than assumed: a serialising mutex over the three tests
+  that *peek* at the counter still failed 2 runs in 5, because the tests doing the
+  consuming are precisely the ones that never look at it. **The pre-existing
+  single-decoy test had been latently flaky since it was written and had simply
+  never lost the race.** All three decisions are now named functions driven
+  directly, which is the fourth time this release that "extract it so a test can
+  reach it" was the actual fix.
+
+  Two mutations forced design changes rather than confirming the design. The retry
+  loop's predicate had to become a **parameter**: hard-wired, the exhaustion branch
+  is unreachable on Unix, and a mutation making it return `Ok(())` — silently
+  reporting a save that never happened — went **uncaught**. And the mode test was
+  asserting less than its name claimed, since `opts.mode(0o600)` at creation
+  already yields 0600 under any ordinary umask. Two properties are **not**
+  observable in-process and the module says so: `fsync` (needs a power loss) and
+  creation-mode (a race-window narrowing, where a test can only see the end state).
+  Neither should be deleted on the evidence that no test fails.
+
+- **A timeline generation counter, and the telemetry that reads it.** (v2.4.0 item
+  B.) v2.3.9 cleared stale debug telemetry on a ROM change and recorded that it
+  could not clear it on a save-state load: of the four ways the emulator jumps
+  timeline, only one is reachable from a patchable frontend call site — wasm
+  load-state restores inside a `spawn_local` task, and rewind happens entirely
+  inside the core.
+
+  `Nes` now carries a session-local `timeline_generation`, and `restore_inner`'s
+  existing `clear_rewind` parameter already draws exactly the needed distinction,
+  so it is reused rather than duplicated. **This departs from the plan's
+  enumeration deliberately:** the plan listed netplay rollback as a bump site and
+  also stated the mechanism that forbids it — a same-timeline restore must *not*
+  bump. Netplay rollback and run-ahead both go through `restore_quiet` precisely
+  because they are same-timeline; bumping there would clear a user's telemetry
+  sixty times a second, which is worse than the defect being fixed. Both directions
+  are pinned by tests.
+
+  **The counter is not serialized**, and that is load-bearing rather than a
+  preference: serializing it would put an *old* value back on restore, so loading a
+  state saved earlier in the same session could hand a consumer a generation it has
+  already seen. The plan asked for an entry in `snapshot_schema_audit.rs`; that file
+  audits the four chips, not `Nes`, so the property is pinned by an **executable**
+  assertion instead — snapshot at generation N, advance past N, restore, and assert
+  it did not come back to N. Simulating serialization makes it fail with exactly
+  that diagnostic.
+
 - **A standing release-anchor audit — the drift v2.3.9 corrected by hand cannot
   recur silently.** `crates/rustynes-test-harness/tests/release_anchor_audit.rs`
   pins **15 anchors across 10 documents** against `[workspace.package] version`:
@@ -50,7 +195,43 @@ cycle-accurate core later replaced.
   `(current)` marker, and a renamed CHANGELOG section — each fail the test they
   should and only that test.
 
+### Fixed
+
+- **Two shipped features stop writing empty tables into an untouched config.**
+  (v2.4.0 item D.) `graphics.hd_packs` (v1.5.0) and `graphics.shader_presets`
+  (v1.2.0) both documented a pre-feature config as "byte-identical". Both were
+  byte-identical only until the first save: `#[serde(default)]` is a **load**
+  guarantee, and the TOML serializer emits an empty table for an empty collection.
+  v2.3.9 corrected the prose and deliberately left the behaviour, because changing
+  what a shipped feature writes is a separate decision; this is that decision.
+
+  Both directions are tested, because a one-directional test passes just as happily
+  against a field that never persists anything — and the over-eager direction is
+  the dangerous one: an `is_empty` returning `true` unconditionally would silently
+  discard a user's saved presets on every save, a data-loss bug wearing the shape of
+  a tidiness fix. A third test asserts the property once for **the field that does
+  not exist yet**, since the defect being fixed is precisely "a field was added and
+  the save-side property was not considered".
+
 ### Changed
+
+- **The owed upstream libretro sync is filed, and it was smaller than expected.**
+  (v2.4.0 item A.) `libretro-super#2074` bumps `display_version` v2.3.5 → v2.3.9 —
+  **one line**. Everything else was already correct upstream, including
+  `license = "GPLv3+"`. Verified before pushing: the branch file is now
+  **byte-identical** to this repository's copy, which is the property
+  `libretro_info_audit.rs` exists to make possible.
+
+  `libretro/docs#1180` needed nothing — it is a **pull request** open since
+  2026-08-16, `MERGEABLE/CLEAN`, unreviewed, not an issue. The misreading that
+  nearly produced a duplicate is recorded because it is reusable: `gh api
+  repos/OWNER/REPO/issues/N` **returns pull requests**, since GitHub's issues
+  endpoint serves both.
+
+  `AGENTS.md` now carries the cadence rule: **upstream PRs are opened only on
+  MINOR/MAJOR releases** (`vX.Y.0` where X or Y changed). Patch releases do not
+  sync; the next is **v2.5.0**. A **licence change overrides and syncs
+  immediately** — the rule that incident produced in the first place.
 
 - **`to-dos/DEFERRED-AND-CARRYOVER-FEATURES.md` swept entry by entry**, against
   `main` @ `fdfb2c04`. Eleven entries struck, each carrying its evidence inline —

@@ -17,7 +17,60 @@ set -euo pipefail
 # clamp, so log() must already exist. (Defined later, a clamp that fires would die with
 # `log: command not found` under set -e instead of warning — a latent misconfiguration trap.)
 log() { printf '[agy-review] %s\n' "$*" >&2; }
+
+# A capture that is only a BACKEND ERROR, not a review. When agy's upstream is down it prints
+# something like:
+#
+#   Error: Eligibility check failed: UNAVAILABLE (code 503): The service is currently unavailable.
+#
+# That text is non-empty, so have_text() alone treats it as a valid review, POSTs it as the
+# review comment, and the job exits 0 -- a green check for a review that never happened. Observed
+# on SLAC PR #14: the `review` check passed in 7 seconds with that string as its entire body,
+# twice. A control that cannot fail is worse than no control.
+#
+# The match is deliberately ANCHORED to the start of the capture rather than being a substring
+# search. A genuine review may legitimately quote a 503, an "UNAVAILABLE" constant, or an
+# eligibility check while reviewing retry logic -- and aborting on that would be the
+# false-positive the OAuth guard's design notes warn about. agy's backend failures occupy the
+# WHOLE capture and begin with `Error:`, so requiring the error at the top, in a capture short
+# enough to contain nothing else, separates the two without a content heuristic.
+#
+# Adopted FROM SLAC, which had it while the template and the other installs did not.
+# >>> SELFTEST-EXTRACT: service-error guard
+# `have_text` lives INSIDE this block, not above it: `backend_outage_should_fail` calls it, so
+# an extracted block without it is not self-contained and the selftest cannot run it. It is a
+# general helper used throughout the script -- the marker is a comment, so its position
+# changes nothing about where the function is defined.
 have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
+AGY_ERROR_RE='^[[:space:]]*Error:.*(Eligibility check failed|UNAVAILABLE|unavailable|RESOURCE_EXHAUSTED|INTERNAL|DEADLINE_EXCEEDED|code [45][0-9]{2})'
+# Captures longer than this are assumed to be real reviews even if they open with an error line:
+# a genuine review is thousands of bytes, a bare backend error is a couple of hundred.
+AGY_ERROR_MAX_BYTES="${AGY_ERROR_MAX_BYTES:-2000}"
+# `head -n 1`, not `head -n 5`. grep matches line-by-line, so scanning five lines
+# means "any of the first five lines is an error line" -- which would discard a short,
+# genuine review whose heading is on line 1 and which happens to discuss `Error: ...
+# UNAVAILABLE` on line 3. That is the false positive the anchoring was supposed to
+# prevent, reintroduced by the very check meant to enforce it. The invariant is that a
+# backend failure IS the whole capture, so only the first line can carry it.
+service_error_present() {
+  [ -s "$1" ] || return 1
+  [ "$(wc -c < "$1")" -le "$AGY_ERROR_MAX_BYTES" ] || return 1
+  head -n 1 "$1" | grep -qE "$AGY_ERROR_RE"
+}
+
+# True when the run must FAIL rather than post: the backend errored at least once and no review
+# survived. A separate named function rather than an inline condition, because a structural grep
+# for the condition is too weak to notice it being disabled -- `if false && [ ... ]` still
+# contains the text a grep looks for, and that mutation came back NOT CAUGHT.
+#
+# The `have_text` half is redundant today (the retry loop truncates the capture whenever it
+# counts a backend error) and is kept deliberately: it makes the "post nothing" guarantee
+# independent of that truncation surviving a future edit.
+backend_outage_should_fail() {
+  [ "${1:-0}" -gt 0 ] || return 1
+  ! have_text "$2"
+}
+# <<< SELFTEST-EXTRACT
 # Guarding against a leak of agy's interactive Google OAuth login flow. When agy's cached
 # session lapses on the runner, `--print` emits the login prompt (a live OAuth URL + "paste the
 # authorization code here") instead of a review; that text is non-empty, so have_text() alone
@@ -44,6 +97,7 @@ have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
 # would miss a URL emitted as `.../o/oauth2?client_id=…` or bare `.../o/oauth2` (a leak). The
 # scheme is what keeps a review's bare-pattern quote from matching, so dropping the trailing
 # slash loses no safety.
+# >>> SELFTEST-EXTRACT: oauth guard
 OAUTH_URL_RE='https?://accounts\.google\.com/o/oauth2'
 
 # The single guard, used at BOTH the retry-loop capture (Layer 1) and the assembled body before
@@ -54,6 +108,7 @@ OAUTH_URL_RE='https?://accounts\.google\.com/o/oauth2'
 # URL is always present in a real login flow, so it alone is both necessary and sufficient; a
 # lapse is detected AND a leak is blocked by the same unconditional check.
 oauth_url_present() { [ -s "$1" ] && grep -qiE "$OAUTH_URL_RE" "$1"; }
+# <<< SELFTEST-EXTRACT
 
 # --- configuration (all env-overridable from the workflow) ---------------------
 AGY_BIN="${AGY_BIN:-agy}"
@@ -100,21 +155,33 @@ AGY_RETRIES="${AGY_RETRIES:-3}"            # attempts to get a usable agy respon
 AGY_RETRY_DELAY="${AGY_RETRY_DELAY:-15}"   # base backoff seconds between retries (grows per attempt)
 MARKER="<!-- antigravity-pr-review -->"
 
-# The jq program that picks which prior review comments to delete. Named, and exercised directly
-# by `scripts/agy-review-selftest.sh`, because this filter has now been wrong TWICE in ways
-# nothing observed: first the just-posted comment was not excluded (so it deleted itself), then
-# jq's `--arg` was handed to `gh api`, which has no such flag (so the whole step died silently and
-# stale comments accumulated). Both were invisible from the outside — the review still posted.
+# The comment body's format -- sentinels plus the split/trim helpers -- lives in a sourceable
+# file so `agy-review-selftest.sh` can test the REAL implementation rather than a copy of it.
+# This script does its work at top level and so cannot itself be sourced.
+# shellcheck source=scripts/_agy_comment_body.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/_agy_comment_body.sh"
+
+MAX_BODY_BYTES="${MAX_BODY_BYTES:-60000}"
+
+# The jq program that finds THIS bot's existing review comment on the PR, so it can be edited
+# rather than replaced. Named, and exercised directly by `scripts/agy-review-selftest.sh`,
+# because its predecessor (which selected comments to DELETE) was wrong twice in ways nothing
+# observed: first the just-posted comment was not excluded, so a run deleted its own review;
+# then jq's `--arg` was handed to `gh api`, which has no such flag, so the step died silently.
+# Both were invisible from the outside — the review still posted.
 #
-# The two `select`s that matter: the AUTHOR filter (without it, any user could put the marker in a
-# comment and have this bot delete arbitrary comments) and the ID exclusion (without it, the run
-# deletes the comment it just published).
-SELECT_STALE_JQ='.[]
+# The AUTHOR filter is load-bearing, not cosmetic: without it, any user could put the marker
+# (an HTML comment, invisible when rendered) in a PR comment and have this bot edit it. Only
+# ever touch our own bot's comments. `first` picks the OLDEST match, so if duplicates exist
+# from an older version of this script, the canonical thread is the one that keeps growing.
+# >>> SELFTEST-EXTRACT: ours-comment filter
+SELECT_OURS_JQ='[ .[]
   | select(.user.type == "Bot" and .user.login == "github-actions[bot]")
-  | select(.body | contains($marker))
-  | select(.id != $new_id)
-  | .id'
-readonly SELECT_STALE_JQ
+  | select(.body | contains($marker)) ]
+  | first
+  | .id // empty'
+readonly SELECT_OURS_JQ
+# <<< SELFTEST-EXTRACT
 
 REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY not set}"
 
@@ -155,6 +222,9 @@ diff_file= diff_err= meta_file= prompt_file= out_file= raw= body_file= agy_diff_
 # Set to 1 if agy printed its interactive OAuth login flow instead of a review (lapsed session);
 # gates the no-post abort below. Pre-declared so `${auth_failed:-0}` is set-u-safe on every path.
 auth_failed=0
+# Counts backend-error captures across attempts; see `service_error_present`. Pre-declared so
+# `${service_errors:-0}` is set-u-safe even on paths that never enter the retry loop.
+service_errors=0
 # Set when the large-diff fallback below creates refs/agy/* so the trap can remove them.
 agy_refs_created=
 cleanup() {
@@ -544,6 +614,21 @@ for (( attempt=1; attempt<=AGY_RETRIES; attempt++ )); do
   # reading it would post that session's output into a public PR comment (data
   # leak). The PTY path above plus the retry loop cover agy issue #76 without it.
 
+  # A backend error is TRANSIENT, so it retries like empty output rather than aborting the way a
+  # lapsed session does -- but it must never be mistaken for a review. Blank the capture so no
+  # later path can post it, and let the loop try again.
+  #
+  # A COUNTER, not a per-attempt flag. A boolean reset each attempt reflects only the last one,
+  # so a 503 on attempt 1 followed by empty output on attempt 3 would report the generic "no
+  # output" cause, and the reverse would claim the backend was down on every attempt when it was
+  # down on one. Both exit non-zero, so nothing unsafe -- but the log line is the only thing
+  # telling a human which outage they are looking at.
+  if service_error_present "$out_file"; then
+    log "agy returned a backend error rather than a review (attempt ${attempt}/${AGY_RETRIES}): $(head -n 1 "$out_file")"
+    : > "$out_file"
+    service_errors=$(( ${service_errors:-0} + 1 ))
+  fi
+
   have_text "$out_file" && break
   if [ "$attempt" -lt "$AGY_RETRIES" ]; then
     delay=$(( AGY_RETRY_DELAY * attempt ))
@@ -558,6 +643,17 @@ exec 9>&- 2>/dev/null || true    # release the agy lock so the next queued job p
 # blanked $out_file above so nothing is postable. Exit non-zero WITHOUT posting anything.
 if [ "${auth_failed:-0}" = "1" ]; then
   log "aborting without posting: agy requires re-authentication on the runner host (no review was produced)."
+  exit 1
+fi
+
+# A persistent backend failure is reported as its own cause, and it FAILS THE JOB. Posting the
+# error as a review comment (the previous behaviour) produced a passing check for a review that
+# never ran; posting nothing and exiting non-zero makes the outage visible where it matters.
+# The `! have_text` is redundant today -- the loop truncates $out_file whenever it counts a
+# backend error -- and is kept deliberately: it makes the "post nothing" guarantee independent
+# of that truncation surviving a future edit.
+if backend_outage_should_fail "${service_errors:-0}" "$out_file"; then
+  log "agy's backend returned an error on ${service_errors} of ${AGY_RETRIES} attempt(s) and no review was produced. Failing the check rather than posting the error as a review. Re-run with '/agy-review' once the service recovers."
   exit 1
 fi
 
@@ -600,65 +696,102 @@ if oauth_url_present "$body_file"; then
   exit 1
 fi
 
-# --- post fresh, THEN replace any prior review comment --------------------------
-# Publish-before-delete, deliberately: if this ordering were reversed and posting failed
-# afterward (a transient gh/API error), the PR would be left with NO review comment at all
-# instead of the still-valid prior one. Posting first means a failure here can only ever
-# leave a harmless duplicate, never a silent loss of the last review.
-# The posted comment's id comes from the POST itself, not from a read-back. `gh pr comment`
-# prints the new comment's URL, whose trailing `#issuecomment-<id>` is authoritative the instant
-# it returns. Re-querying the comment list to find "the newest one with our marker" raced with
-# GitHub's own read replication: right after posting, the list can still omit it, and then the
-# exclusion below matched nothing and the script deleted the comment it had just published --
-# turning publish-before-delete into publish-then-destroy, the exact failure the ordering exists
-# to prevent.
+# --- edit our existing comment, appending the previous round to its archive ------
+# One comment per PR, edited in place: newest round on top, earlier rounds folded into a
+# collapsed `<details>` below. NOTHING IS DELETED. The previous design posted fresh and
+# deleted the prior comment, which kept the PR tidy at the cost of destroying any round
+# nobody had read yet — and left no evidence a round had happened at all.
+#
+# Fail-closed in the direction that matters: every step below falls back to a plain POST of
+# the new review. A duplicate comment is noise; failing to publish a review, or losing one, is
+# not. The lookup happens BEFORE the post so a PATCH is possible at all, but a failed lookup
+# costs only the archive, never the review.
+prior_id=""
+prior_body_file="$(mktemp)"
+if prior_json="$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate 2>/dev/null)"; then
+  prior_id="$(printf '%s' "$prior_json" | jq -r --arg marker "$MARKER" "$SELECT_OURS_JQ" 2>/dev/null || true)"
+  if [ -n "$prior_id" ] && [ "$prior_id" != "null" ]; then
+    printf '%s' "$prior_json" \
+      | jq -r --argjson id "$prior_id" '.[] | select(.id == $id) | .body' > "$prior_body_file" 2>/dev/null \
+      || : > "$prior_body_file"
+  else
+    prior_id=""
+  fi
+else
+  log "warning: could not list PR comments; posting a fresh review without the archive"
+fi
+
+if [ -n "$prior_id" ] && [ -s "$prior_body_file" ]; then
+  # Split the prior body into its newest round (everything after the marker, before the
+  # archive) and the archive's existing inner rounds. `awk` rather than `sed`, because the
+  # sentinels must match whole lines and a review body legitimately contains regex
+  # metacharacters, backslashes and HTML.
+  prior_head="$(agy_body_head "$MARKER" < "$prior_body_file")"
+  prior_archive="$(agy_body_archive < "$prior_body_file")"
+
+  archived_file="$(mktemp)"
+  {
+    printf '%s\n' "$AGY_ROUND_MARK"
+    printf '<details>\n<summary>Round reviewed at %s</summary>\n\n' \
+      "$(date -u +'%Y-%m-%d %H:%M UTC')"
+    printf '%s\n' "$prior_head"
+    printf '\n</details>\n'
+    printf '%s\n' "$prior_archive"
+  } > "$archived_file"
+
+  # Drop the oldest rounds until the whole comment fits, and SAY SO. A silent truncation
+  # here would look identical to "there were never any earlier rounds", which is the exact
+  # confusion this whole change exists to remove.
+  dropped=0
+  while :; do
+    combined_size=$(( $(wc -c < "$body_file") + $(wc -c < "$archived_file") + 200 ))
+    [ "$combined_size" -le "$MAX_BODY_BYTES" ] && break
+    # Remove the LAST `<details>` block (the oldest round) from the archive.
+    trimmed="$(mktemp)"
+    agy_drop_oldest_round < "$archived_file" > "$trimmed" || { rm -f "$trimmed"; break; }
+    mv "$trimmed" "$archived_file"
+    dropped=$(( dropped + 1 ))
+  done
+
+  {
+    printf '\n%s\n' "$AGY_ARCHIVE_START"
+    if [ "$dropped" -gt 0 ]; then
+      printf '<sub>%d earlier round(s) dropped to stay under GitHub'"'"'s comment size limit.</sub>\n\n' "$dropped"
+    fi
+    printf '<details>\n<summary><b>Earlier review rounds</b> (newest first)</summary>\n\n'
+    cat "$archived_file"
+    printf '\n</details>\n'
+    printf '%s\n' "$AGY_ARCHIVE_END"
+  } >> "$body_file"
+  rm -f "$archived_file"
+
+  # Re-run the OAuth guard on the ASSEMBLED body. The archive is text this script published
+  # earlier and so has already passed the guard once, but the body is what gets published now
+  # and the guard's contract is that it runs on exactly that.
+  if oauth_url_present "$body_file"; then
+    log "refusing to post: the assembled comment body contains a live OAuth authorization URL."
+    exit 1
+  fi
+
+  # The body goes through STDIN as JSON, never through argv. At `MAX_BODY_BYTES`
+  # the comment can approach 60 KB, and a single execve argument is capped at
+  # `MAX_ARG_STRLEN` (128 KB on Linux) -- close enough that a future raise of that
+  # bound would start failing with E2BIG, and the failure would look like a
+  # GitHub error rather than a local limit. `--rawfile` also makes the value a
+  # JSON string by construction, so no shell quoting or `-F` type-coercion can
+  # reinterpret a body that happens to look like a number or a boolean.
+  if jq -n --rawfile b "$body_file" '{body: $b}' \
+       | gh api -X PATCH "repos/${REPO}/issues/comments/${prior_id}" --input - >/dev/null 2>&1; then
+    log "updated review comment ${prior_id} on ${REPO}#${PR} (earlier rounds archived in place)"
+    rm -f "$prior_body_file"
+    exit 0
+  fi
+  log "warning: could not edit comment ${prior_id}; posting a fresh review instead"
+fi
+rm -f "$prior_body_file"
+
 if ! post_output="$(gh pr comment "$PR" --repo "$REPO" --body-file "$body_file" 2>&1)"; then
-  # Nothing is deleted when the post fails: the prior review comment is still the best
-  # information the PR has, and removing it would leave no review at all.
   log "failed to post review to ${REPO}#${PR}: ${post_output}"
   exit 1
 fi
 log "posted review to ${REPO}#${PR}"
-new_comment_id="$(printf '%s\n' "$post_output" | sed -n 's/.*#issuecomment-\([0-9][0-9]*\).*/\1/p' | tail -n 1)"
-
-# A failed delete is logged, not swallowed: silently ignoring it would let a transient API/perms
-# error leave the old comment in place alongside the new one, so runs accumulate duplicates.
-# The author filter is load-bearing, not cosmetic: without it, ANY user could put the
-# marker (an HTML comment) in a PR comment and have this bot delete arbitrary comments on
-# the next run. Only ever delete OUR OWN bot's prior review comments -- and only ones from
-# BEFORE this run (the just-posted comment's own id is excluded so it can never delete itself).
-if [ -z "$new_comment_id" ]; then
-  # FAIL CLOSED. Without a known id there is no way to tell the new comment from the old ones,
-  # and the safe direction is unambiguous: a leftover duplicate is noise, deleting the review
-  # that was just posted is data loss.
-  log "warning: could not determine the posted comment id; leaving prior review comments in place"
-else
-  # `--arg`/`--argjson` rather than shell interpolation into the filter: the marker is an HTML
-  # comment today, but a quote or a backslash in it would otherwise break the jq program itself
-  # rather than simply not matching.
-  #
-  # Those are JQ flags, so the JSON is fetched raw and piped into a real `jq` — `gh api` has no
-  # `--arg`/`--argjson` of its own and rejects them. Handing them to `gh api --jq` made it exit
-  # non-zero on every run; with the old `2>/dev/null` swallowing the message and `set -o pipefail`
-  # in force, the script then died *after* posting, so the stale comments were never deleted and
-  # the job went red for a reason nothing printed. stderr is kept this time for exactly that
-  # reason. (`--paginate` without `--jq` emits one JSON array per page; `jq` reads that stream
-  # fine, applying `.[]` to each.)
-  stale_ids="$(
-    gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
-      | jq -r --arg marker "$MARKER" --argjson new_id "$new_comment_id" "$SELECT_STALE_JQ"
-  )" || {
-    log "warning: could not list prior review comments; leaving them in place"
-    stale_ids=""
-  }
-  while read -r cid; do
-    [ -n "$cid" ] || continue
-    if ! gh api -X DELETE "repos/${REPO}/issues/comments/${cid}" >/dev/null 2>&1; then
-      log "warning: could not delete prior review comment ${cid}; a duplicate may result"
-    fi
-  done <<< "$stale_ids"
-fi
-
-# The delete loop above is the last real work; end on a defined status so a stray non-zero from
-# it can never be mistaken for "the review failed" once the comment is already published.
-exit 0

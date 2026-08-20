@@ -644,8 +644,47 @@ pub struct PreparedShell {
     pixels_per_point: f32,
 }
 
+/// v2.4.0 item B — remembers the last `Nes::timeline_generation` seen, and
+/// reports when it changes.
+///
+/// A separate type rather than an `Option<u64>` field on the overlay, for one
+/// reason: `DebuggerOverlay::new` needs a window and a wgpu device, so anything
+/// living only inside it cannot be unit-tested. The decision this makes — adopt,
+/// ignore, or report a jump — is exactly the part worth testing, and it needs no
+/// GPU to exercise. (The same argument produced the injectable predicate in
+/// `crate::atomic_write`.)
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TimelineWatch {
+    seen: Option<u64>,
+}
+
+impl TimelineWatch {
+    /// Record `generation`; returns `true` if this is a jump the caller should
+    /// react to.
+    ///
+    /// The FIRST observation adopts rather than reporting. A fresh `Nes` starts
+    /// its counter at zero, so "never observed" and "observed a zero" have to be
+    /// distinguishable — otherwise loading a ROM and immediately loading a save
+    /// state compares 0 against 0 and misses the jump.
+    pub fn observe(&mut self, generation: u64) -> bool {
+        self.seen
+            .replace(generation)
+            .is_some_and(|prev| prev != generation)
+    }
+
+    /// Drop the remembered value, so the next `observe` adopts.
+    ///
+    /// Called on a ROM change: a generation from the previous cartridge is not
+    /// comparable with the new `Nes`'s, which restarts at zero.
+    pub const fn forget(&mut self) {
+        self.seen = None;
+    }
+}
+
 /// State of the debugger overlay.
 pub struct DebuggerOverlay {
+    /// v2.4.0 item B — tracks `Nes::timeline_generation` across frames.
+    timeline: TimelineWatch,
     /// egui frontend state (window-event integration).
     state: egui_winit::State,
     /// egui rendering pipeline (wgpu-backed).
@@ -943,6 +982,8 @@ impl DebuggerOverlay {
         Self {
             state,
             renderer,
+            // v2.4.0 item B — no observation yet; the first frame adopts.
+            timeline: TimelineWatch::default(),
             visible: false,
             // Default the CPU/PPU sub-windows CLOSED so opening the debugger
             // (`~`) just shows the toolbar; the user opens the panels they want
@@ -1175,6 +1216,11 @@ impl DebuggerOverlay {
     /// entry point means the next ROM-bound analysis panel is one line away from
     /// being correct instead of one omission away from being wrong.
     pub fn clear_rom_bound_analysis(&mut self) {
+        // v2.4.0 item B — forget the generation as well. A fresh `Nes` restarts
+        // the counter at zero, so a value remembered from the previous cartridge
+        // is not comparable with the new one's; forgetting makes the next frame
+        // adopt rather than compare.
+        self.timeline.forget();
         self.clear_latency_report();
         self.atlas_ui.clear();
         // v2.3.7 — Audio Provenance. Registered here rather than given its own
@@ -1729,6 +1775,14 @@ impl DebuggerOverlay {
     /// engine's `on_frame`. Purely observational (it only reads `nes`), so
     /// determinism is unaffected.
     pub fn pump_watchpoints(&mut self, nes: &mut Nes) {
+        // v2.4.0 item B — did the emulator jump somewhere else on its timeline
+        // since the last frame? Checked here rather than at each call site that
+        // could cause one, because two of the four cannot be reached from a call
+        // site at all: the wasm load-state path restores inside a `spawn_local`
+        // task holding only a cloned handle, and rewind happens entirely inside
+        // the core. v2.3.9 patched the two that WERE reachable and recorded that
+        // it had covered one case of four.
+        self.sync_timeline(nes.timeline_generation());
         // Refresh the hex-editor heatmap from THIS frame's access log first
         // (before `watch_ui.pump` re-arms the flag for the next frame).
         self.memory_ui.refresh_heatmap(nes);
@@ -1807,6 +1861,28 @@ impl DebuggerOverlay {
     pub fn reset_debug_telemetry(&mut self) {
         self.callstack.clear();
         self.access_counter.reset();
+    }
+
+    /// v2.4.0 item B — clear timeline-bound telemetry when the core has jumped.
+    ///
+    /// Takes the generation rather than the `Nes` so it can be tested without
+    /// constructing an emulator, and so the one comparison lives in one place.
+    ///
+    /// The first observation ADOPTS the current value instead of treating it as a
+    /// change. Otherwise every ROM load would clear telemetry twice — once via
+    /// `clear_rom_bound_analysis` and once here — which is harmless but makes the
+    /// two mechanisms indistinguishable when debugging which of them fired.
+    ///
+    /// Only the telemetry that is *reconstructed from a run* is cleared. Watch
+    /// lists, breakpoints and the source map are user-authored and survive, under
+    /// the same rule v2.3.9 settled for ROM transitions: derived output is
+    /// discarded, user-authored input is kept. A timeline jump is a weaker event
+    /// than a cartridge change, so it can only ever clear a subset of what that
+    /// hook does — never more.
+    pub fn sync_timeline(&mut self, generation: u64) {
+        if self.timeline.observe(generation) {
+            self.reset_debug_telemetry();
+        }
     }
 
     /// v1.7.0 "Forge" Workstream C (C3) — load a ca65/cc65 `.dbg` file's `text`
@@ -3159,7 +3235,58 @@ impl DebuggerOverlay {
 
 #[cfg(test)]
 mod tests {
-    use super::chip_panels_open;
+    use super::{TimelineWatch, chip_panels_open};
+
+    /// The first observation must ADOPT, not report a jump.
+    ///
+    /// A fresh `Nes` starts at generation zero. Without this, every ROM load
+    /// would clear telemetry twice — once via `clear_rom_bound_analysis`, once
+    /// here — which is harmless but makes the two mechanisms indistinguishable
+    /// when working out which of them fired.
+    #[test]
+    fn the_first_observation_adopts() {
+        let mut w = TimelineWatch::default();
+        assert!(!w.observe(0), "the first observation reported a jump");
+        assert!(!w.observe(0), "an unchanged generation reported a jump");
+    }
+
+    /// A changed generation is a jump, exactly once.
+    #[test]
+    fn a_changed_generation_reports_once() {
+        let mut w = TimelineWatch::default();
+        assert!(!w.observe(7));
+        assert!(w.observe(8), "the change was not reported");
+        assert!(!w.observe(8), "the same change was reported twice");
+    }
+
+    /// `forget` must make the next observation adopt rather than compare.
+    ///
+    /// This is what makes a ROM change safe: the new `Nes` restarts at zero, and
+    /// comparing that against a value remembered from the previous cartridge is
+    /// meaningless in both directions — it can report a jump that did not happen,
+    /// or (when the old value happened to be zero) miss one that did.
+    #[test]
+    fn forget_makes_the_next_observation_adopt() {
+        let mut w = TimelineWatch::default();
+        assert!(!w.observe(5));
+        w.forget();
+        assert!(
+            !w.observe(0),
+            "after a ROM change, a fresh core's zero was compared against the old \
+             cartridge's generation"
+        );
+        assert!(w.observe(1), "tracking did not resume after forget");
+    }
+
+    /// The counter is `u64` and the core bumps with `wrapping_add`, so wrap is
+    /// reachable in principle. Whatever it wraps to must still register as a
+    /// change, because "different" is the only property this type needs.
+    #[test]
+    fn a_wrapped_generation_still_reads_as_a_change() {
+        let mut w = TimelineWatch::default();
+        assert!(!w.observe(u64::MAX));
+        assert!(w.observe(0), "a wrap to zero was not reported as a change");
+    }
 
     /// A minimal mirror of the overlay's chip `show_*` flags + the cached
     /// `visible` field, driven by the SAME [`chip_panels_open`] predicate the

@@ -143,29 +143,42 @@ pub fn load(data_dir: &Path, rom_sha256: &[u8; 32]) -> Cheats {
 /// the `cheats` directory if missing. Best-effort: failures are logged, not
 /// fatal.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn save(data_dir: &Path, rom_sha256: &[u8; 32], genie: &[CheatEntry], raw: &[RawCheat]) {
+/// Persist a ROM's cheat lists.
+///
+/// # Errors
+///
+/// Returns the underlying [`std::io::Error`] if the directory cannot be created
+/// or the file cannot be written, and an [`std::io::ErrorKind::InvalidData`]
+/// error if the lists cannot be serialized.
+///
+/// The error PROPAGATES rather than being printed. It used to go to `stderr`,
+/// which on a windowed build nobody is reading — the user saw a cheat list that
+/// looked saved and was not. Same defect class as the latency-config save fixed
+/// in #411, and the same fix: hand it to a caller that can show it.
+pub fn save(
+    data_dir: &Path,
+    rom_sha256: &[u8; 32],
+    genie: &[CheatEntry],
+    raw: &[RawCheat],
+) -> std::io::Result<()> {
     let path = cheat_path(data_dir, rom_sha256);
-    if let Some(parent) = path.parent()
-        && let Err(e) = fs::create_dir_all(parent)
-    {
-        eprintln!(
-            "rustynes: cheats dir {} create failed: {e}",
-            parent.display()
-        );
-        return;
-    }
+    // No `create_dir_all` here: `write_atomic` creates the parent itself, and doing
+    // it twice meant a failure surfaced with one function's path context or the
+    // other's depending on which won. Removed on review, matching `save_state.rs`.
     let file = CheatFile {
         cheats: genie.to_vec(),
         raw: raw.to_vec(),
     };
-    match toml::to_string_pretty(&file) {
-        Ok(s) => {
-            if let Err(e) = fs::write(&path, s) {
-                eprintln!("rustynes: cheats {} write failed: {e}", path.display());
-            }
-        }
-        Err(e) => eprintln!("rustynes: cheats serialize failed: {e}"),
-    }
+    // A serialization failure is not an I/O failure, but the caller has one error
+    // channel and one thing to tell the user -- "your cheats did not save" -- so it
+    // is mapped rather than given a bespoke error type for a case that cannot
+    // happen with these types.
+    let text = toml::to_string_pretty(&file)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    // Atomic + durable, via the shared helper (v2.4.0 item C). This was
+    // `fs::write`, so an interruption truncated the user's whole cheat
+    // list for that ROM.
+    crate::atomic_write::write_atomic(&path, text.as_bytes())
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -212,7 +225,7 @@ mod tests {
                 enabled: false,
             },
         ];
-        save(tmp.path(), &h(0x42), &genie, &raw);
+        save(tmp.path(), &h(0x42), &genie, &raw).expect("save");
         let back = load(tmp.path(), &h(0x42));
         assert_eq!(back.genie, genie);
         assert_eq!(back.raw, raw);
@@ -229,7 +242,8 @@ mod tests {
                 enabled: true,
             }],
             &[],
-        );
+        )
+        .expect("save");
         save(
             tmp.path(),
             &h(0x02),
@@ -238,7 +252,8 @@ mod tests {
                 enabled: true,
             }],
             &[],
-        );
+        )
+        .expect("save");
         assert_eq!(load(tmp.path(), &h(0x01)).genie[0].code, "AAAAAA");
         assert_eq!(load(tmp.path(), &h(0x02)).genie[0].code, "BBBBBB");
     }
@@ -283,5 +298,41 @@ mod tests {
         assert_eq!(back.raw[0].value, 10);
         assert_eq!(back.raw[0].compare, None);
         assert!(back.raw[0].enabled);
+    }
+
+    /// A save that cannot happen must REPORT, not print.
+    ///
+    /// The error used to go to `stderr`, which nobody reads on a windowed build,
+    /// so a failed save looked exactly like a successful one and the user lost
+    /// their cheat list for that ROM. Raised as blocking in three consecutive
+    /// review rounds before the deferral stopped being defensible -- the panel
+    /// already had an error-display idiom, so "it needs UI plumbing" was wrong.
+    ///
+    /// Forced by pointing the data dir at a FILE: `create_dir_all` then cannot
+    /// create the parent, which is the first fallible step.
+    #[test]
+    fn a_save_that_cannot_happen_returns_an_error() {
+        let tmp = TempDir::new().unwrap();
+        let blocker = tmp.path().join("not-a-dir");
+        std::fs::write(&blocker, b"x").expect("seed");
+
+        let e = save(
+            &blocker,
+            &h(0x99),
+            &[CheatEntry {
+                code: "AAAAAA".into(),
+                enabled: true,
+            }],
+            &[],
+        )
+        .expect_err("saving under a regular file must fail, not print and return");
+        assert!(
+            matches!(
+                e.kind(),
+                std::io::ErrorKind::NotADirectory | std::io::ErrorKind::AlreadyExists
+            ),
+            "unexpected kind {:?}; the point is that SOME error reaches the caller",
+            e.kind()
+        );
     }
 }

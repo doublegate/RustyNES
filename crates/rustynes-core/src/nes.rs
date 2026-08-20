@@ -173,9 +173,59 @@ pub struct Nes {
     /// Whether the per-frame exec-PC log is recording. Default `false`.
     #[cfg(feature = "debug-hooks")]
     exec_logging: bool,
+    /// v2.4.0 item B — a monotonic marker that changes whenever this `Nes`
+    /// jumps to a different point on its timeline.
+    ///
+    /// **Session-local, and deliberately NOT serialized.** The counter's only job
+    /// is to be *different* after a discontinuity. Serializing it would put an
+    /// OLD value back on restore, so loading a state saved earlier in the same
+    /// session could hand a consumer a generation it has already seen — and the
+    /// consumer would conclude nothing jumped at the exact moment something did.
+    /// A session-local monotonic counter cannot do that: it only ever increases,
+    /// so any restore produces a value no consumer has seen.
+    ///
+    /// It exists because the alternative — each consumer remembering the last
+    /// `cycle()` it saw and noticing a non-monotonic step — cannot see a restore
+    /// to a LATER state. The counter can, and needs no cooperation from any call
+    /// site, which matters because two of the four timeline jumps (wasm
+    /// load-state, and rewind) are not reachable from a patchable frontend call
+    /// site at all.
+    ///
+    /// # It is NOT part of the save state, deliberately
+    ///
+    /// The counter is session-local: it is not written by `snapshot`, not read by
+    /// `restore`, and a loaded state does not carry its own value across. What a
+    /// restore does instead is **increment the live counter**, which is the
+    /// correct reading of the event — "the timeline you were on has been replaced"
+    /// — and is true regardless of which state was loaded.
+    ///
+    /// Serializing it would be actively wrong in two ways. Loading the same slot
+    /// twice would restore the same generation twice, so a consumer comparing
+    /// against its last-seen value would miss the second load entirely. And a
+    /// value from another session says nothing about this one: the counter is only
+    /// ever meaningful as a comparison against the previous value *this process*
+    /// observed, which is why `timeline_generation()` documents that comparing it
+    /// across two `Nes` instances is meaningless.
+    ///
+    /// A consequence worth stating: because it lives outside the snapshot, the
+    /// `snapshot_schema_audit` test cannot see it, so nothing mechanical will
+    /// notice if this reasoning is ever invalidated.
+    timeline_generation: u64,
 }
 
 impl Nes {
+    /// The current timeline generation — see the field's documentation.
+    ///
+    /// A consumer holds the last value it saw and clears itself when this
+    /// differs. It is meaningless to compare across two different `Nes`
+    /// instances: a fresh one starts at zero, which is why ROM changes are
+    /// handled by their own hook (`DebuggerOverlay::clear_rom_bound_analysis`)
+    /// rather than by this counter.
+    #[must_use]
+    pub const fn timeline_generation(&self) -> u64 {
+        self.timeline_generation
+    }
+
     /// Returns a reference to the internal WRAM.
     pub fn wram(&self) -> &[u8] {
         self.bus.ram.as_ref()
@@ -243,6 +293,7 @@ impl Nes {
             exec_log: Vec::new(),
             #[cfg(feature = "debug-hooks")]
             exec_logging: false,
+            timeline_generation: 0,
         })
     }
 
@@ -282,6 +333,7 @@ impl Nes {
             exec_log: Vec::new(),
             #[cfg(feature = "debug-hooks")]
             exec_logging: false,
+            timeline_generation: 0,
         })
     }
 
@@ -350,6 +402,7 @@ impl Nes {
             exec_log: Vec::new(),
             #[cfg(feature = "debug-hooks")]
             exec_logging: false,
+            timeline_generation: 0,
         })
     }
 
@@ -411,6 +464,7 @@ impl Nes {
             exec_log: Vec::new(),
             #[cfg(feature = "debug-hooks")]
             exec_logging: false,
+            timeline_generation: 0,
         })
     }
 
@@ -488,12 +542,18 @@ impl Nes {
 
     /// Reset (warm boot). Preserves WRAM; reloads PC from `$FFFC/D`.
     pub fn reset(&mut self) {
+        // v2.4.0 item B — a warm reset lands somewhere else on the timeline, so a
+        // reconstructed call stack and the access counters describe a run that no
+        // longer exists.
+        self.timeline_generation = self.timeline_generation.wrapping_add(1);
         self.bus.reset();
         self.cpu.reset(&mut self.bus);
     }
 
     /// Power-cycle (cold boot). Zeroes WRAM, re-rolls phase, reloads vectors.
     pub fn power_cycle(&mut self) {
+        // v2.4.0 item B — see `reset`; a cold boot is the larger discontinuity.
+        self.timeline_generation = self.timeline_generation.wrapping_add(1);
         self.bus.power_cycle();
         // Cold-boot path: see comment in `from_rom`.
         self.cpu = Cpu::power_on();
@@ -2078,6 +2138,28 @@ impl Nes {
     /// ([`Self::restore`] — the ring is invalidated) from same-timeline
     /// machine restores ([`Self::restore_quiet`] — the ring stays).
     fn restore_inner(&mut self, data: &[u8], clear_rewind: bool) -> Result<(), SnapshotError> {
+        // v2.4.0 item B — a timeline jump, but only when this is a LOUD restore.
+        //
+        // `clear_rewind` already draws exactly the distinction the counter needs,
+        // so it is reused rather than duplicated: `true` means a user-driven load
+        // that invalidates the rewind history, `false` means a same-timeline
+        // machine-driven restore (run-ahead's per-frame rollback, netplay's
+        // rollback-resimulate) where the history stays valid.
+        //
+        // A same-timeline restore must NOT bump. That is the same rule the
+        // provenance stash follows from the other direction — every same-timeline
+        // restore has to carry the state that lives outside the save state — and
+        // getting it wrong here would clear a consumer's telemetry sixty times a
+        // second under run-ahead, which is worse than the stale-telemetry defect
+        // this counter exists to fix.
+        //
+        // Bumped BEFORE the restore can fail, deliberately. A partially-applied
+        // restore is a discontinuity whether or not it completed, and a consumer
+        // that keeps stale telemetry because the jump errored is the bug in its
+        // most confusing form.
+        if clear_rewind {
+            self.timeline_generation = self.timeline_generation.wrapping_add(1);
+        }
         // Restore bus first — it consumes BUS / PPU / APU / MAP sections.
         self.bus.restore(data)?;
         // Then walk the sections again to find the CPU body.
@@ -3412,6 +3494,115 @@ mod tests {
         assert_ne!(nes.cycle(), cycle_at_6, "captured frame 5, not frame 6");
     }
 
+    // ---- v2.4.0 item B — the timeline generation counter ----
+
+    /// A LOUD restore is a timeline jump and must bump the generation.
+    ///
+    /// This is the defect the counter exists for: v2.3.9 cleared stale debug
+    /// telemetry on a ROM change and could not clear it on a save-state load,
+    /// because two of the four jump paths are not reachable from a patchable
+    /// frontend call site.
+    #[test]
+    fn a_loud_restore_bumps_the_timeline_generation() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.run_frame();
+        let blob = nes.snapshot();
+        let before = nes.timeline_generation();
+        nes.run_frame();
+        nes.restore(&blob).expect("restore");
+        assert!(
+            nes.timeline_generation() > before,
+            "a user-driven load did not register as a timeline jump"
+        );
+    }
+
+    /// A QUIET restore is the SAME timeline and must NOT bump.
+    ///
+    /// Run-ahead restores every frame and netplay rollback restores on every
+    /// correction. Bumping here would clear a consumer's telemetry sixty times a
+    /// second — worse than the stale-telemetry defect the counter fixes.
+    #[test]
+    fn a_quiet_restore_does_not_bump_the_timeline_generation() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.run_frame();
+        let blob = nes.snapshot();
+        let before = nes.timeline_generation();
+        nes.run_frame();
+        nes.restore_quiet(&blob).expect("quiet restore");
+        assert_eq!(
+            nes.timeline_generation(),
+            before,
+            "a same-timeline restore was reported as a jump; under run-ahead this \
+             fires every frame"
+        );
+    }
+
+    /// Rewind is a jump, and it reaches the counter without its own call site.
+    #[test]
+    fn rewind_bumps_the_timeline_generation() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.enable_rewind_with(2 * 1024 * 1024, 1);
+        for _ in 0..4 {
+            nes.run_frame();
+        }
+        let before = nes.timeline_generation();
+        assert!(nes.rewind_step_back(), "step back");
+        assert!(
+            nes.timeline_generation() > before,
+            "rewind did not register as a timeline jump"
+        );
+    }
+
+    /// Reset and power-cycle are discontinuities too.
+    #[test]
+    fn reset_and_power_cycle_bump_the_timeline_generation() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        let a = nes.timeline_generation();
+        nes.reset();
+        let b = nes.timeline_generation();
+        assert!(b > a, "warm reset did not bump");
+        nes.power_cycle();
+        assert!(nes.timeline_generation() > b, "power cycle did not bump");
+    }
+
+    /// **The counter must not be serialized**, and this is the assertion that
+    /// pins it.
+    ///
+    /// Serializing it would put an OLD value back on restore, so loading a state
+    /// saved earlier in the same session could hand a consumer a generation it
+    /// has already seen — and the consumer would conclude nothing jumped at the
+    /// exact moment something did. This test reproduces precisely that shape:
+    /// snapshot at generation N, advance the generation past N, then restore. If
+    /// the counter round-tripped, the value would come back as N.
+    #[test]
+    fn a_restore_never_hands_back_a_generation_a_consumer_has_seen() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.run_frame();
+        let blob = nes.snapshot();
+        let at_snapshot = nes.timeline_generation();
+
+        // Advance the generation well past the snapshot's value.
+        for _ in 0..3 {
+            nes.reset();
+        }
+        let seen = nes.timeline_generation();
+        assert!(seen > at_snapshot);
+
+        nes.restore(&blob).expect("restore");
+        assert!(
+            nes.timeline_generation() > seen,
+            "the generation went BACKWARDS to {} (a consumer had already seen {seen}), \
+             so the counter is being carried in the save state -- which defeats its \
+             only purpose",
+            nes.timeline_generation()
+        );
+    }
+
     #[test]
     fn rewind_disabled_no_op() {
         let rom = synth_nrom(16, 8);
@@ -4387,5 +4578,55 @@ mod tests {
         assert!(!nes.zapper_temporal_light());
         nes.set_zapper_temporal_light(true);
         assert!(nes.zapper_temporal_light());
+    }
+
+    /// The timeline counter is session-local: a save state neither carries it nor
+    /// restores it, and loading one ADVANCES the live counter instead.
+    ///
+    /// Documented on the field, and untestable by `snapshot_schema_audit` for the
+    /// very reason that makes it true -- the counter lives outside the snapshot,
+    /// so that audit cannot see it. Pinned here instead, because the two ways
+    /// serializing it would be wrong are both silent: loading the same slot twice
+    /// would restore the same generation twice and a consumer would miss the
+    /// second load, and a value from another session means nothing in this one.
+    #[test]
+    fn the_timeline_counter_is_session_local_and_advances_on_restore() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).expect("parse");
+        nes.run_frame();
+        let state = nes.snapshot();
+        let before = nes.timeline_generation();
+
+        nes.restore(&state).expect("restore");
+        let after_first = nes.timeline_generation();
+        assert!(
+            after_first > before,
+            "a restore must advance the timeline counter: {before} -> {after_first}"
+        );
+
+        // The SECOND load of the SAME slot must advance it again. This is the
+        // assertion that would fail if the counter were serialized -- the restored
+        // value would be identical both times and a consumer comparing against its
+        // last-seen value would never notice the second load.
+        nes.restore(&state).expect("restore again");
+        assert!(
+            nes.timeline_generation() > after_first,
+            "reloading the same slot must still register as a new timeline"
+        );
+
+        // And a snapshot taken now must not encode it: a fresh `Nes` restored from
+        // this state starts its own count rather than adopting ours.
+        let mut fresh = Nes::from_rom(&rom).expect("parse");
+        assert_eq!(
+            fresh.timeline_generation(),
+            0,
+            "a fresh Nes must start at zero"
+        );
+        fresh.restore(&nes.snapshot()).expect("restore into fresh");
+        assert_eq!(
+            fresh.timeline_generation(),
+            1,
+            "the fresh instance must count its own restores, not inherit a stored value"
+        );
     }
 }
