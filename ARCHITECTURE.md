@@ -1,8 +1,8 @@
 # RustyNES Architecture
 
-**Document Version:** 2.0.0
-**Last Updated:** 2026-06-13
-**Applies to:** RustyNES v1.0.0
+**Document Version:** 2.1.0
+**Last Updated:** 2026-08-20
+**Applies to:** RustyNES v2.3.9 (the scheduling model is v2.0.0 "Timebase" onward)
 
 This document fixes the high-level architecture of RustyNES. The per-subsystem specs under `docs/` (`cpu-6502.md`, `ppu-2c02.md`, `apu-2a03.md`, `mappers.md`, `scheduler.md`) take these decisions as given and elaborate one chip each. After reading this you should know the workspace shape, the scheduling model, the public boundary, and the load-bearing invariants. The canonical, always-current architecture spec is [`docs/architecture.md`](docs/architecture.md); this file is the top-level companion.
 
@@ -25,7 +25,7 @@ This document fixes the high-level architecture of RustyNES. The per-subsystem s
 
 ## System Overview
 
-RustyNES is a cycle-accurate NES emulator structured as a Cargo workspace of `rustynes-*` crates. The emulation core is a single-threaded, deterministic state machine; the frontend wraps it with `winit` + `wgpu` + `cpal` + `egui` (native and wasm32). The accuracy bar is Mesen2 / higan / ares: tight lockstep at PPU-dot resolution on a master-clock-precise timebase.
+RustyNES is a cycle-accurate NES emulator structured as a Cargo workspace of `rustynes-*` crates. The emulation core is a single-threaded, deterministic state machine; the frontend wraps it with `winit` + `wgpu` + `cpal` + `egui` (native and wasm32). The accuracy bar is Mesen2 / higan / ares: tight lockstep at PPU-dot resolution on a master-clock-precise timebase, expressed since v2.0.0 "Timebase" as a single canonical cycle counter with a split-around-the-access PPU catch-up (ADR 0029).
 
 The reader should keep the [load-bearing decisions](#the-load-bearing-decisions) in mind — reading any subsystem doc without them will mislead.
 
@@ -74,11 +74,35 @@ rustynes/
 
 ## Scheduling Model
 
-### Master clock = the PPU dot
+> **v2.0.0 "Timebase" (ADR 0029) — read this before the two subsections
+> below.** They describe the ORIGINAL v0.9.0 → v1.10.0 dot-lockstep design
+> (`tick_one_dot`, five independently-incremented counters). That model is
+> **historical**: it is kept for context, per this project's documentation
+> convention, and is no longer what the shipping scheduler does.
+>
+> The current model is **one-clock, every-cycle-bus-access**.
+> `Cpu::start_cycle` / `Cpu::end_cycle` advance `master_clock` by the region's
+> φ1/φ2 split (NTSC: asymmetric 5/7 on a read, 7/5 on a write; PAL 16;
+> Dendy 15) and pull the PPU to `master_clock − PPU_OFFSET` at **both** halves
+> via `Bus::run_ppu_to`, one dot per iteration rather than a coarse batch — so
+> the CPU's bus access lands BETWEEN the two PPU catch-ups. Every instruction
+> cycle is a real bus access; there are no busless filler cycles. DMA is a
+> unified, per-cycle-interleaved engine rather than a separate stepping mode.
+> `LockstepBus::cycle` is the ONE canonical per-cycle counter, and
+> `Cpu::cycles` / `Apu::cpu_cycle` are **assigned** from it, never independently
+> incremented.
+>
+> The *consequence* that made lockstep the right choice is unchanged, which is
+> why the decision below still stands: a mid-instruction PPU event is visible to
+> the rest of the instruction without a per-quirk patch. Only the mechanism
+> moved. See [`docs/adr/0029-one-clock-every-cycle-timebase.md`](docs/adr/0029-one-clock-every-cycle-timebase.md)
+> and [`docs/scheduler.md`](docs/scheduler.md).
+
+### Master clock = the PPU dot (historical — see the note above)
 
 NTSC PPU: 5.369318 MHz. PAL/Dendy: 5.320342 MHz. The CPU advances 1/3 of the time on NTSC/Dendy and 1/3.2 on PAL. The APU clocks every other CPU cycle (once per 6 PPU dots NTSC). Region timing is `Region`-derived **data**, not a build-time fork.
 
-### Tick structure
+### Tick structure (historical — see the note above)
 
 ```rust
 Nes::run_frame() {
@@ -97,7 +121,9 @@ Nes::tick_one_dot() {
 }
 ```
 
-`cpu_phase_offset` accounts for the random initial CPU/PPU alignment at power-on (seeded so save states stay deterministic; cold reset re-randomizes). When the CPU performs a memory access, the bus fans it out to the right device — the PPU and APU do not re-sync inside the bus call because they were already advanced in lockstep above.
+`cpu_phase_offset` accounts for the random initial CPU/PPU alignment at power-on (seeded so save states stay deterministic; cold reset re-randomizes). In the dot-lockstep model above, the bus fanned a CPU access out to the right device without re-syncing the PPU or APU, because both had already been advanced by the enclosing dot loop.
+
+Under the shipped one-clock model that ordering is explicit rather than implicit: `start_cycle` pulls the PPU forward, the bus access happens, then `end_cycle` pulls it forward again. That is what makes a register write land at a defined dot instead of at whatever dot the loop happened to be on — and it is why `LockstepBus::cycle` has to be the single counter, since two counters advanced by two rules is exactly the bug the split is designed to make unrepresentable.
 
 ---
 

@@ -2,13 +2,27 @@
 
 ## Supported Versions
 
-RustyNES is at its first stable release, **v1.0.0**. Security updates are provided for the following versions:
+The current release is **v2.3.9 "Crucible"**. RustyNES ships from `main` on a
+rolling patch cadence rather than maintaining long-lived release branches, so
+security fixes land in the next patch release rather than being backported.
+Report against the latest release or `main`.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| main    | :white_check_mark: |
-| 1.0.x   | :white_check_mark: |
-| < 1.0   | :x:                |
+| Version | Supported          | Notes |
+| ------- | ------------------ | ----- |
+| main    | :white_check_mark: | Where fixes land first |
+| 2.3.x   | :white_check_mark: | The current line |
+| 2.0.x - 2.2.x | :warning:    | Fixes are shipped forward into the current line, not backported |
+| < 2.0   | :x:                | Predates the v2.0.0 "Timebase" scheduler rewrite; save-state and movie epochs differ (ADR 0028) |
+
+Two boundaries are worth stating explicitly, because they change what a report
+means rather than merely how old it is:
+
+- **v2.0.0 "Timebase"** is the one deliberate breaking release (ADR 0003 /
+  ADR 0028). A `.rns` save state or `.rnm` movie written before it is refused
+  with a clear error rather than reinterpreted, so a pre-v2.0.0 parsing report
+  is not reproducible against a current build by design.
+- **v2.2.9** relicensed the project to **GPL-3.0-or-later** (ADR 0036). That is
+  a licensing correction, not a SemVer break — no public API or format moved.
 
 ## Security Considerations for Emulators
 

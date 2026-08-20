@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.3.7-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.3.9-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -668,7 +668,57 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.3.7 "Overtone"** — point at a moment in the
+RustyNES's current release is **v2.3.9 "Crucible"** — a crucible tests to
+destruction rather than inspects, and that is what this release does to the
+project's own gates: what they cover, what they only *appear* to cover, and where
+a regression could still reach `main` unchallenged. The v2.3.x line added five
+tools in four releases, and the recurring finding across all of them was never
+that the emulation was wrong. It was that **a check reported a pass it had not
+earned**, and this release went looking for the rest of them.
+
+**The docs-only CI skip had never worked.** `dorny/paths-filter`'s
+`predicate-quantifier` defaults to `some`, which includes a file if it matches
+*any* pattern — so the `code` filter's leading `'**'` matched everything and all
+seven `!` exclusions under it were dead from the day they were written. A
+markdown-only PR logged `Filter code = true`, a markdown file matching a filter
+whose entire purpose is excluding markdown. It stopped being merely wasteful the
+day two docs-only PRs were *blocked* by an ARM cross-compile failure on jobs that
+should never have been scheduled. The fix needed **two** filter steps, because
+the quantifier is step-level and the two filters need opposite settings: `code`
+needs `every`, while `accuracy` is a list of **alternatives** and would become
+unsatisfiable under it — the one-line version would have silently disabled the
+accuracy battery while repairing a different gate.
+
+**The accuracy battery now runs at review time.** `test-roms` was full-run only,
+so a regression landed on `main` rather than on the PR that caused it; it is now
+path-filtered over the chip crates, the core, `rustynes-gamedb`, the harness and
+`tests/`, measured first at 11 of the last 40 merged PRs so ~72% still pay
+nothing. **A freeze from one cartridge kept writing into the next** — an active
+per-frame write into the wrong game, closed by a ROM-transition sweep across
+every panel under one rule: derived output is discarded, user-authored input is
+kept, and only input that actively *writes* is neutralised. **The config file is
+now written atomically and durably** — seven properties, five of them from review
+rather than the first draft. Plus **257 lines of dead code removed**, the
+SAFETY-comment rule made a clippy gate, and two `cargo deny` advisory ignores
+retired on their own stated condition. `rustynes-apu` and `rustynes-core` both
+change, so **AccuracyCoin 141/141 and nestest 0-diff are verified, not asserted.**
+
+Built on **v2.3.8 "Parallax"** — which pixels differ, not just which frame.
+`Probe` could already say whether two configurations of the same ROM diverge and
+*at which frame*, and could say nothing about where or why: a trial reduces each
+frame to one `u64`, the right shape for detecting a difference and the wrong
+shape for explaining one. The **Divergence Lens** re-runs both configurations to
+the detected frame, keeps the full output instead of its hash, and reports the
+*shape* of the difference — population count, first pixel in raster order, and
+the inclusive bounding box — which separates kinds of bug from each other: one
+pixel is a sprite or a palette entry, 256 in a row is a scanline, tens of
+thousands is a scroll or a mode change. It localises on the **index**
+framebuffer, the PPU's own per-pixel output before the palette lookup, and hands
+the located pixel to Pixel Provenance so the answer is a cause rather than a
+coordinate. Its third verdict is the point: `Inconclusive` never arrives wearing
+the same shape as `Identical`.
+
+Built on **v2.3.7 "Overtone"** — point at a moment in the
 frame and read *why it sounds like that*. **Audio Provenance** is the APU
 counterpart of Pixel Provenance: a per-register write attribution answering
 *what wrote this, and from which instruction*, and a per-CPU-cycle mix trace
@@ -692,7 +742,7 @@ dropping the live FM synthesizer, and unbounded CI jobs. `rustynes-apu` and
 `rustynes-core` both change, so **AccuracyCoin 141/141 and nestest 0-diff are
 verified, not asserted.**
 
-Built on **v2.3.6 "Sounding"** — about measuring, and about what a measurement is
+Before that, **v2.3.6 "Sounding"** — about measuring, and about what a measurement is
 allowed to claim. Before that, **v2.3.5 "Manifest"**,
 which was about what the emulator
 tells the outside world about itself. A user reported RetroArch still showing the

@@ -160,6 +160,57 @@ only the first: **141/141 (100.00%)** on the authoritative RAM decoder, nestest
   this is disclosed at three levels, with the caveat printed directly under the
   claim it qualifies.
 
+### Documentation
+
+- **The release anchors are re-synchronised, and two of them were wrong about
+  more than the version number.** Every "current release" claim outside the
+  CHANGELOG had drifted, each by a different amount, which is what happens when
+  the same fact is written down in eight places: `README.md` and `docs/STATUS.md`
+  said v2.3.7, `VERSION-PLAN.md` said v2.3.6 (its release table stopped at
+  v2.3.5, still marked `(current)`), `to-dos/ROADMAP.md` said v2.3.3 in one place
+  and v2.2.5 in another, `SUPPORT.md` said v2.3.0, and the root `ROADMAP.md` said
+  v2.0.4. All now read **v2.3.9**, with v2.3.8 and v2.3.7 demoted into the
+  historical trail rather than dropped.
+
+  Two carried a claim worth more than the version:
+
+  - **`SECURITY.md` still offered support for `1.0.x` and marked `< 1.0`
+    unsupported** — a policy table describing a project two major versions and
+    eleven months behind the tree, on the one document a reporter reads before
+    deciding whether a finding is worth sending. Rewritten for the rolling
+    patch cadence RustyNES actually ships on, and it now names the two
+    boundaries that change what a report *means* rather than merely how old it
+    is: v2.0.0 "Timebase" (a pre-v2.0.0 `.rns`/`.rnm` is refused with a clear
+    error rather than reinterpreted, so such a parsing report is not
+    reproducible against a current build **by design**, ADR 0028) and v2.2.9
+    (the GPL-3.0-or-later relicence is a licensing correction, not a SemVer
+    break, ADR 0036).
+  - **The root `ARCHITECTURE.md` presented the retired dot-lockstep scheduler as
+    the current design** — `tick_one_dot`, the `% 3` phase test, and the claim
+    that the bus need not re-sync the PPU "because they were already advanced in
+    lockstep above". `docs/architecture.md` and `docs/scheduler.md` each carry a
+    v2.0.0 banner correcting exactly this and label their historical
+    subsections; the root companion had neither, so the one architecture
+    document a newcomer opens first was the one describing a scheduler that has
+    not existed since 2026-07-03. It now carries the same banner and the same
+    labels, and states the part that did **not** change: lockstep was chosen so
+    that a mid-instruction PPU event is visible to the rest of the instruction
+    without a per-quirk patch, and that consequence survives the mechanism
+    moving. This project has been bitten before by prose asserting an intent the
+    code does not implement; a spec describing the previous implementation is
+    the same failure with a longer fuse.
+
+- **The user guide covers the tools that shipped since it was last touched.**
+  `docs/user-guide/analysis-tools.md` documented three tools and the menu had
+  five: **Divergence Lens** (v2.3.8) and **Audio Provenance** (v2.3.7) were
+  reachable in the UI and absent from the guide, and the menu reference listed
+  neither. Both are added, along with v2.3.9's **RAM Atlas → RAM Watch** export
+  — including why the lens travels with the address (liveness is relative to
+  what was observed, so an unqualified "LIVE" in a watch list is a claim nobody
+  can check) and why the cheat, Lua and RetroAchievements exports are
+  deliberately still absent (a cheat is a **write**, so it needs a
+  locked-session predicate the watch export correctly does without).
+
 ## [2.3.8] - 2026-08-20 - "Parallax" (which pixels differ, not just which frame)
 
 Cut from its own boundary commit (#407's merge) rather than from `main`, so its
