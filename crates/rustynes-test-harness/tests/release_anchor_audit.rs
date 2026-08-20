@@ -79,11 +79,28 @@ fn workspace_package_field(key: &str) -> String {
     for line in manifest.lines() {
         let t = line.trim();
         if t.starts_with('[') {
-            // `starts_with` rather than `==`: a table header may carry a trailing
-            // inline comment, and an exact match would silently skip the table --
-            // which fails OPEN, since `in_table` would stay false and the panic at
-            // the bottom would blame a missing key. (Review on #427.)
-            in_table = t.starts_with("[workspace.package]");
+            // Strip an inline comment, THEN compare exactly.
+            //
+            // An exact `==` against the RAW line silently skips a header carrying
+            // a trailing comment, and does so confusingly: `in_table` stays false
+            // and the panic at the bottom blames a missing key rather than the
+            // header. That is the hole this closes. (Review on #427.)
+            //
+            // Review also raised a second concern against the `starts_with` form
+            // that preceded this -- that it would match SUB-TABLES like
+            // `[workspace.package.metadata]` and read `version` from the wrong
+            // section. **That one does not hold, and it was checked rather than
+            // assumed:** the literal ends with `]`, and the sub-table has `.`
+            // at that position, so `"[workspace.package.metadata]"
+            // .starts_with("[workspace.package]")` is `false`. Injecting such a
+            // sub-table above the real one and running the audit confirms it --
+            // both forms read `2.3.9`.
+            //
+            // The exact form is kept anyway, because it is correct without
+            // requiring the reader to notice that the closing bracket is doing
+            // the work. `sub_table_headers_do_not_match_the_workspace_package_table`
+            // pins the property so the reasoning cannot be lost.
+            in_table = t.split('#').next().unwrap_or(t).trim() == "[workspace.package]";
             continue;
         }
         if !in_table {
@@ -139,6 +156,24 @@ fn version_core(v: &str) -> &str {
 /// impossible — the guard stays, because the day someone does that work this
 /// audit should not be the thing that then blocks the release for a reason
 /// unrelated to the anchors.
+/// A TOML sub-table header must not be mistaken for the table itself.
+///
+/// Review on #427 raised this as a blocking defect against the `starts_with`
+/// form. It is not one — the literal ends with `]` and a sub-table has `.` there
+/// — but the property is worth pinning rather than left to a reader spotting a
+/// closing bracket, and the parser now states it structurally.
+#[test]
+fn sub_table_headers_do_not_match_the_workspace_package_table() {
+    // The claim that was checked rather than accepted.
+    assert!(!"[workspace.package.metadata]".starts_with("[workspace.package]"));
+    // What the parser actually does, in both shapes it must handle.
+    let exact = |t: &str| t.split('#').next().unwrap_or(t).trim() == "[workspace.package]";
+    assert!(exact("[workspace.package]"));
+    assert!(exact("[workspace.package] # pinned"));
+    assert!(!exact("[workspace.package.metadata]"));
+    assert!(!exact("[workspace.dependencies]"));
+}
+
 #[test]
 fn version_core_drops_a_prerelease_or_build_suffix() {
     assert_eq!(version_core("2.3.9"), "2.3.9");
@@ -274,6 +309,14 @@ fn parse_version_prefix(s: &str) -> Option<String> {
 /// Panics when the marker is absent. That is the fail-closed contract: a
 /// reworded anchor must break this test loudly, because the alternative is an
 /// audit that reports success while checking nothing.
+///
+/// The excerpts in the panic messages are built with `chars().take(n)`, never a
+/// byte slice. These documents are full of em-dashes and arrows, so
+/// `&text[at..at + 24]` can land inside a multi-byte character and panic **while
+/// formatting the diagnostic** -- destroying the message that explains the real
+/// failure and replacing it with a byte-index error about the reporting code.
+/// A diagnostic that can crash the diagnosis is worse than no diagnostic.
+/// (Review on #427.)
 fn versions_at(text: &str, anchor: &Anchor) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let mut from = 0usize;
@@ -285,7 +328,7 @@ fn versions_at(text: &str, anchor: &Anchor) -> Vec<(usize, String)> {
                 anchor.path,
                 anchor.marker,
                 anchor.what,
-                &text[at..(at + 24).min(text.len())]
+                text[at..].chars().take(24).collect::<String>()
             )
         });
         out.push((at, v));
@@ -495,7 +538,7 @@ fn every_anchor_that_quotes_a_codename_quotes_the_changelog_codename() {
                     "{}: {} opens a codename after v{found} and never closes it: {:?}",
                     anchor.path,
                     anchor.what,
-                    &rest[..rest.len().min(40)]
+                    rest.chars().take(40).collect::<String>()
                 )
             };
             checked += 1;
@@ -549,7 +592,7 @@ fn the_version_plan_table_marks_exactly_the_current_release() {
         marked.len(),
         marked
             .iter()
-            .map(|l| format!("  {}", &l[..l.len().min(90)]))
+            .map(|l| format!("  {}", l.chars().take(90).collect::<String>()))
             .collect::<Vec<_>>()
             .join("\n")
     );
