@@ -192,11 +192,29 @@ reads before the `.info`. The correction is:
 +- GPL-3.0-or-later
 ```
 
-### Why these are not opened automatically
+### Status — both filed, 2026-08-20
+
+- **`libretro-super#2074`** — opened today. One line, `display_version` v2.3.5 ->
+  v2.3.9. Verified before pushing: the branch's `dist/info/rustynes_libretro.info`
+  is now **byte-identical** to this repository's copy, which is the property
+  `libretro_info_audit.rs` exists to make possible — the sync is a copy rather
+  than a re-derivation.
+- **`libretro/docs#1180`** — **already open since 2026-08-16**, and it is a PULL
+  REQUEST, not an issue. Re-verified today: `OPEN`, `MERGEABLE / CLEAN`, `+1/-1`,
+  **zero comments** — correct, still applicable, simply unreviewed upstream. A
+  second PR would be a duplicate.
+
+  Worth recording the misreading that nearly produced one: `gh api
+  repos/libretro/docs/issues/1180` returns the PR, because GitHub's *issues*
+  endpoint serves pull requests too. That is what made an earlier pass here
+  describe it as "an open issue" and conclude the docs fix still needed filing.
+  Use `gh pr view` when the question is whether a change is already proposed.
+
+### Why these are opened by hand rather than by tooling
 
 Both are pull requests against third-party repositories — outward-facing actions
-on projects this one does not own. They are prepared here and left for a
-maintainer to open, which is also why the audit in
+on projects this one does not own, so they are a maintainer decision rather than
+something a sync script should perform. It is also why the audit in
 `crates/rustynes-test-harness/tests/libretro_info_audit.rs` deliberately cannot
 see upstream: a test that could would be a test that silently disagreed with a
 repository nobody here controls.
