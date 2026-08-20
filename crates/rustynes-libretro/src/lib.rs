@@ -857,6 +857,24 @@ impl Core for RustyNesLibretro {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // We use `GET_GAME_INFO_EXT` directly via the raw environment callback.
         //
+        // Split into the smallest unsafe regions the type system allows, so the
+        // early return is no longer buried inside a block evaluated as an
+        // expression. (Review on #423 proposed lifting the callback extraction out
+        // entirely; that is not possible -- `environment_callback` is itself an
+        // `unsafe fn`, so it needs a block of its own. Trying it is what
+        // established that, and the suggestion is right about the shape.)
+        let generic_ctx: GenericContext = (&*ctx).into();
+
+        // SAFETY: `ctx` is the live `LoadGameContext` the frontend passed into
+        // this call, so the environment callback it carries is the frontend's own
+        // and is valid for the duration of `on_load_game`. Reading it performs no
+        // dereference of its own.
+        let cb = unsafe { generic_ctx.environment_callback() };
+        let Some(cb) = cb else {
+            return Err("libretro frontend supplied no environment callback".into());
+        };
+        let mut ptr: *const RetroGameInfoExt = std::ptr::null();
+
         // SAFETY: `cb` is a valid function pointer supplied by the libretro frontend
         // via the environment context. If the callback returns true, the spec guarantees
         // `ptr` is set to a valid, aligned, frontend-owned `RetroGameInfoExt` whose
@@ -869,12 +887,6 @@ impl Core for RustyNesLibretro {
         // `clippy::undocumented_unsafe_blocks` can see it; the lint reads only the
         // lines immediately preceding the block.
         let ext_info = unsafe {
-            let generic_ctx: GenericContext = (&*ctx).into();
-            let Some(cb) = generic_ctx.environment_callback() else {
-                return Err("libretro frontend supplied no environment callback".into());
-            };
-            let mut ptr: *const RetroGameInfoExt = std::ptr::null();
-
             if cb(
                 rust_libretro::sys::RETRO_ENVIRONMENT_GET_GAME_INFO_EXT,
                 std::ptr::addr_of_mut!(ptr).cast::<std::os::raw::c_void>(),
