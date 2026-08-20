@@ -58,6 +58,8 @@
 // justify each use.
 #![allow(unsafe_code)]
 
+use std::io;
+
 use core::ffi::{c_char, c_int, c_uchar, c_uint, c_ulonglong, c_void};
 
 use rustynes_core::Nes;
@@ -161,6 +163,27 @@ impl Oracle {
 // ---------------------------------------------------------------------------
 // C ABI
 // ---------------------------------------------------------------------------
+
+/// Map a write failure to a C return code that CARRIES THE CAUSE.
+///
+/// The sentinels `-1`..`-9` mean "the call was malformed" (null handle, bad path,
+/// nothing to write). Anything at or below `-100` is `-(100 + errno)`, so a C
+/// caller can recover the OS error and say *why* the write failed rather than
+/// only that it did.
+///
+/// It previously returned a flat `-3` for every I/O failure, which review
+/// correctly called a swallowed error: a full disk, a read-only directory and a
+/// permission denial were indistinguishable to the testbench, and the testbench
+/// is the only thing that sees this. The information exists at the boundary --
+/// discarding it there is the one place it cannot be recovered later.
+///
+/// `-3` remains for an error with no `raw_os_error`, which on these paths means
+/// a Rust-side error rather than a syscall failure.
+fn write_error_code(e: &io::Error) -> c_int {
+    e.raw_os_error()
+        .and_then(|n| c_int::try_from(100i64 + i64::from(n)).ok())
+        .map_or(-3, |n| -n)
+}
 
 /// Create an oracle from ROM bytes.
 ///
@@ -400,7 +423,7 @@ pub unsafe extern "C" fn rn_write_cpu_boot_trace(
     o.take_cpu_boot_trace_binary()
         .map_or(-4, |bytes| match std::fs::write(p, bytes) {
             Ok(()) => 0,
-            Err(_) => -3,
+            Err(e) => write_error_code(&e),
         })
 }
 
@@ -419,7 +442,7 @@ pub unsafe extern "C" fn rn_write_irq_trace_csv(handle: *mut c_void, path: *cons
     o.take_irq_trace_csv()
         .map_or(-4, |csv| match std::fs::write(p, csv) {
             Ok(()) => 0,
-            Err(_) => -3,
+            Err(e) => write_error_code(&e),
         })
 }
 
