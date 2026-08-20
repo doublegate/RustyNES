@@ -80,6 +80,14 @@ pub struct CheatPanelState {
     enc_result: String,
     /// Last encoder error (cleared on a successful encode).
     enc_error: String,
+    /// Last cheat-file save error (cleared on a successful save).
+    ///
+    /// Shown in the panel rather than printed. `cheats::save` used to write this
+    /// to `stderr`, which nobody reads on a windowed build — so a save that
+    /// failed looked exactly like one that worked, and the user lost their cheat
+    /// list for that ROM without a signal. Same defect class as the swallowed
+    /// latency-config save fixed in #411.
+    save_error: String,
     /// v1.8.9 / v2.1.3 — the loaded ROM's category-grouped DB codes, cached so
     /// the pick-list does not re-query + sort + group the database every frame.
     /// Keyed on the ROM's CRC *set* (`Vec<u32>` — the header-excluded + full-file
@@ -109,6 +117,10 @@ impl CheatPanelState {
         self.enc_compare_text.clear();
         self.enc_result.clear();
         self.enc_error.clear();
+        // A save error names the PREVIOUS ROM's cheat file, so carrying it across
+        // a ROM change would report a failure against a game it never touched --
+        // the stale-panel-state seam this project has hit three times.
+        self.save_error.clear();
     }
 
     /// The currently-ENABLED raw RAM cheats, cloned for the app's produce
@@ -209,6 +221,18 @@ pub fn show(
 /// The window body. Returns `true` if the cheat set changed this frame.
 fn body(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crcs: &[u32]) -> bool {
     let mut changed = false;
+
+    // A failed save is reported FIRST, above the lists it failed to persist. It
+    // used to go to `stderr`, which nobody reads on a windowed build -- so the
+    // panel showed a cheat list that looked saved and was not. Placed at the top
+    // rather than beside the add-fields because it is not about any one edit: it
+    // says the whole list on screen is not on disk.
+    if !state.save_error.is_empty() {
+        ui.colored_label(
+            egui::Color32::from_rgb(0xE0, 0x40, 0x40),
+            state.save_error.clone(),
+        );
+    }
 
     ui.horizontal(|ui| {
         let r = ui.add(
@@ -665,8 +689,10 @@ fn resync_nes(state: &mut CheatPanelState, nes: &mut Nes) {
 /// Persist the in-memory cheat lists (Game Genie + raw RAM) to the per-ROM
 /// file (native only).
 #[cfg(not(target_arch = "wasm32"))]
-fn persist_cheats(state: &CheatPanelState, persist: Option<&CheatPersist>) {
-    if let Some(p) = persist {
-        crate::cheats::save(&p.data_dir, &p.rom_sha256, &state.cheats, &state.raw);
+fn persist_cheats(state: &mut CheatPanelState, persist: Option<&CheatPersist>) {
+    let Some(p) = persist else { return };
+    match crate::cheats::save(&p.data_dir, &p.rom_sha256, &state.cheats, &state.raw) {
+        Ok(()) => state.save_error.clear(),
+        Err(e) => state.save_error = format!("cheats not saved: {e}"),
     }
 }

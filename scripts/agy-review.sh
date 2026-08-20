@@ -772,8 +772,15 @@ if [ -n "$prior_id" ] && [ -s "$prior_body_file" ]; then
     exit 1
   fi
 
-  if gh api -X PATCH "repos/${REPO}/issues/comments/${prior_id}" \
-       -f body="$(cat "$body_file")" >/dev/null 2>&1; then
+  # The body goes through STDIN as JSON, never through argv. At `MAX_BODY_BYTES`
+  # the comment can approach 60 KB, and a single execve argument is capped at
+  # `MAX_ARG_STRLEN` (128 KB on Linux) -- close enough that a future raise of that
+  # bound would start failing with E2BIG, and the failure would look like a
+  # GitHub error rather than a local limit. `--rawfile` also makes the value a
+  # JSON string by construction, so no shell quoting or `-F` type-coercion can
+  # reinterpret a body that happens to look like a number or a boolean.
+  if jq -n --rawfile b "$body_file" '{body: $b}' \
+       | gh api -X PATCH "repos/${REPO}/issues/comments/${prior_id}" --input - >/dev/null 2>&1; then
     log "updated review comment ${prior_id} on ${REPO}#${PR} (earlier rounds archived in place)"
     rm -f "$prior_body_file"
     exit 0

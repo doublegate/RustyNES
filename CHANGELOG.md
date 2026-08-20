@@ -75,6 +75,15 @@ cycle-accurate core later replaced.
   scratch-name source is now injectable so the exhaustion branch is reachable
   without predicting global state.
 
+  A sixth round made the `cheats.rs` swallow blocking after three rounds of my
+  deferring it, and the deferral was wrong on its facts: I had claimed the fix
+  needed UI plumbing with nowhere to put the error, and the panel already had
+  three error fields rendered in exactly the idiom needed. `cheats::save` now
+  returns `io::Result<()>`, `persist_cheats` stores the failure in a `save_error`
+  field cleared on a ROM change like every other one, and the panel reports it
+  **above the lists**, because the message is not about any single edit — it says
+  the whole list on screen is not on disk.
+
   A fifth round found the one defect none of the local gates could see: the
   transient-rename predicate was a `const fn` calling `io::Error::kind`, which is
   not `const` — `E0015`, and **only on Windows**, because the call sat behind
