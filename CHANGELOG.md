@@ -14,6 +14,13 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-08-20 - "Fabric" (RustyNES as the oracle a new implementation is verified against)
+
+This release also carries **v2.4.0 "Concordance"**, which merged to `main` and was never
+tagged; entries below marked *(v2.4.0 item)* belong to it. Two further entries — the
+standing release-anchor audit and the deferred-backlog sweep — belong to neither, having
+landed between the two, and are called out where they appear.
+
 ### Added
 
 - **`rustynes-cosim` — RustyNES as a co-simulation oracle for an FPGA
@@ -221,7 +228,7 @@ cycle-accurate core later replaced.
   that diagnostic.
 
 - **A standing release-anchor audit — the drift v2.3.9 corrected by hand cannot
-  recur silently.** `crates/rustynes-test-harness/tests/release_anchor_audit.rs`
+  recur silently.** (Landed between v2.4.0 and v2.4.1; part of neither.) `crates/rustynes-test-harness/tests/release_anchor_audit.rs`
   pins **15 anchors across 10 documents** against `[workspace.package] version`:
   the README badge and Current Release section, `docs/STATUS.md`, both `AGENTS.md`
   anchors plus its "never claim a later version" guard, `VERSION-PLAN.md` (header
@@ -292,7 +299,8 @@ cycle-accurate core later replaced.
   sync; the next is **v2.5.0**. A **licence change overrides and syncs
   immediately** — the rule that incident produced in the first place.
 
-- **`to-dos/DEFERRED-AND-CARRYOVER-FEATURES.md` swept entry by entry**, against
+- **`to-dos/DEFERRED-AND-CARRYOVER-FEATURES.md` swept entry by entry** (landed
+  between v2.4.0 and v2.4.1; part of neither), against
   `main` @ `fdfb2c04`. Eleven entries struck, each carrying its evidence inline —
   a file that exists, a workflow line number, a test that says so — rather than a
   bare tick, so a closure can be disagreed with.
