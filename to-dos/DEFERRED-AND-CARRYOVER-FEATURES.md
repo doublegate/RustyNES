@@ -772,15 +772,16 @@ account, or a hosted deploy (all also listed under their theme above).
   struck with an explanation instead of silently.)* the
   `scripting` / `scripting,hd-pack` / `retroachievements` (and the new
   `script-ipc` / `browser-cheevos`) clippy combos ran **only locally / in the
-  pre-commit hook**; promoting a feature-powerset clippy into the CI lint job
-  closes a real coverage gap (`--fix` can strip cfg-gated code another feature
-  needs). Source: the CI-optimization memory note (PR #120 proposals). Target:
-  **TBD**. Files: `.github/workflows/`.
+  pre-commit hook**, and the gap that mattered (`--fix` can strip cfg-gated code
+  another feature needs) is closed — by enumeration in the CI lint job rather
+  than by a feature powerset. Source: the CI-optimization memory note (PR #120
+  proposals). Files: `.github/workflows/ci.yml`.
 - `[x]` **Free arm64 CI leg** — *(SHIPPED, commit `b39889cc`. Evidence:
   `ubuntu-24.04-arm` is in BOTH matrix arms of `.github/workflows/ci.yml`
   (lines 249 and 252), so it runs on the light PR matrix as well as the full one;
-  `test (ubuntu-24.04-arm)` was observed green on PR #426.)* `ubuntu-24.04-arm` is
-  free on public repos and runs in parallel. Source: CI-optimization note.
+  `test (ubuntu-24.04-arm)` was observed green on PR #426.)* `ubuntu-24.04-arm`
+  was free on public repos and ran in parallel, which is why it was proposed.
+  Source: CI-optimization note.
 - `[x]` **`dorny/paths-filter` per-job skips** — *(CLOSED v2.3.9 "Crucible". The
   `CI success` aggregator this entry names as the prerequisite exists at
   `.github/workflows/ci.yml:712`, `always()` over all nine job groups; the `lint`
@@ -848,6 +849,12 @@ account, or a hosted deploy (all also listed under their theme above).
   `_ppuBusAddress` (+ 3-dot-delayed `v`, bus not re-synced during render); **ares**
   models only the `$2007` side (`io.busAddress`); **higan** blocks `$2007` during
   render. **ATTEMPTED in v2.0.1 and deferred — see [ADR 0030](../docs/adr/0030-accuracycoin-ale-read-hybrid-addresses-octal-latch.md).**
+  *(Everything from here to the end of this entry describes that FIRST,
+  reverted attempt. It is kept because it is the reason the SECOND attempt took
+  the shape it did: the 2-cycle-ALE refactor named at its end as one of two
+  possible routes is exactly what v2.0.3 then built and shipped. Read it as the
+  record of a rejected approach, not as open work -- the item is closed above,
+  and the `139/141` figures below are the state during that attempt.)*
   The bounded attempt added the `octal_latch` + one-shot hybrid-fetch hook and confirmed
   the tracking is inert (still 139/141), but RustyNES's single-step fetch model does not
   hold the per-cycle multiplexed-bus low byte the tests probe, so the corruption lands on
