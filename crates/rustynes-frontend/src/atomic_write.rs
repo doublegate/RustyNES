@@ -264,9 +264,15 @@ pub fn resolve_write_target(path: &Path) -> PathBuf {
 /// How many broken-symlink hops to follow before giving up.
 ///
 /// Bounded because a chain can be a cycle, on which `read_link` succeeds
-/// indefinitely. Linux's own limit is 40; eight is far past any real dotfiles
-/// arrangement and keeps a pathological path cheap.
-const SYMLINK_DEPTH: usize = 8;
+/// indefinitely.
+///
+/// Matches Linux's own `MAXSYMLINKS` of 40 rather than picking a smaller number.
+/// The earlier value of 8 was justified as "far past any real dotfiles
+/// arrangement", which is true and beside the point: where the kernel would
+/// resolve a chain and this function gives up, the two disagree about where the
+/// file *is*, and the write lands somewhere the user did not mean. Costs one
+/// `read_link` per level, and only on a chain already known to be broken.
+const SYMLINK_DEPTH: usize = 40;
 
 /// Is this rename failure one a retry could plausibly clear?
 ///
@@ -281,16 +287,43 @@ const SYMLINK_DEPTH: usize = 8;
 /// genuinely forbid it — a condition retrying cannot change, and retrying would
 /// only delay an error the caller needs now.
 #[must_use]
-pub const fn is_transient_rename_error(e: &io::Error) -> bool {
-    #[cfg(windows)]
-    {
-        matches!(e.kind(), io::ErrorKind::PermissionDenied)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = e;
-        false
-    }
+pub fn is_transient_rename_error(e: &io::Error) -> bool {
+    // `cfg!`, not `#[cfg]`, and that is the whole point. `cfg!` is a compile-time
+    // boolean in an ordinary expression, so the Windows predicate is PARSED,
+    // TYPE-CHECKED and borrow-checked on every platform, while `&&` short-circuits
+    // it away on non-Windows and the optimizer drops the branch entirely. Runtime
+    // behaviour is identical to the `#[cfg]` form; what changes is that a Linux
+    // `cargo check` now compiles the Windows logic.
+    //
+    // The `#[cfg]` form is what let a defect through: the body was `const` and
+    // called `io::Error::kind`, which is not a `const fn`, so it was `E0015` on
+    // Windows and invisible on Linux, where the branch was never compiled. PR runs
+    // here are Linux-only and the full matrix runs on `main`, so it would have
+    // turned `main` red after merge. Caught in review, not by a gate.
+    cfg!(windows) && is_windows_sharing_violation(e)
+}
+
+/// The Windows half of the predicate, compiled on **every** platform.
+///
+/// Two reasons, and the second is why it exists at all.
+///
+/// It is not `const`: `io::Error::kind` is not a `const fn`, so a `const`
+/// wrapper is `E0015: cannot call non-const method` — but only where the body is
+/// compiled. `is_transient_rename_error` was `const` with the call behind
+/// `#[cfg(windows)]`, so it compiled cleanly on Linux and would have failed the
+/// Windows job **after merge**: PR runs are Linux-only here, and the full matrix
+/// runs on `main`. Caught in review rather than by a gate.
+///
+/// And it is NOT `cfg`-gated, which is the actual fix. Windows-only code behind a
+/// `#[cfg]` is never type-checked by a Linux PR build, so any error in it is
+/// invisible until the platform that compiles it runs — which is exactly what
+/// happened. Reached through `cfg!(windows) && …` instead, the logic is compiled
+/// everywhere and exercised by the test below on whatever platform the suite runs.
+fn is_windows_sharing_violation(e: &io::Error) -> bool {
+    // `MoveFileEx` reports both `ERROR_ACCESS_DENIED` and `ERROR_SHARING_VIOLATION`
+    // as `PermissionDenied` through `std::io`, and only the second is transient —
+    // std does not distinguish them, so the retry covers both.
+    matches!(e.kind(), io::ErrorKind::PermissionDenied)
 }
 
 /// The retry loop, over an arbitrary rename operation.
@@ -960,6 +993,48 @@ mod tests {
         sync_parent_dir(Path::new("f.txt"))
             .expect("an empty parent must fall back to `.`, not open \"\"");
         sync_parent_dir(Path::new("./f.txt")).expect("an explicit `.` parent must work");
+    }
+
+    /// The Windows sharing-violation predicate, exercised on EVERY platform.
+    ///
+    /// This is the point of routing through `cfg!(windows) && …` rather than
+    /// `#[cfg(windows)]`: the Windows logic is compiled and testable on Linux, so
+    /// a defect in it fails here instead of on `main` after merge. The previous
+    /// form hid an `E0015` (a `const fn` calling the non-const
+    /// `io::Error::kind`) that no PR run could have seen.
+    #[test]
+    fn the_windows_sharing_violation_predicate_is_checked_on_every_platform() {
+        assert!(
+            is_windows_sharing_violation(&io::Error::from(io::ErrorKind::PermissionDenied)),
+            "MoveFileEx reports a sharing violation as PermissionDenied; it must retry"
+        );
+        for kind in [
+            io::ErrorKind::NotFound,
+            io::ErrorKind::AlreadyExists,
+            io::ErrorKind::InvalidInput,
+        ] {
+            assert!(
+                !is_windows_sharing_violation(&io::Error::from(kind)),
+                "{kind:?} is not transient; retrying it would only delay the error"
+            );
+        }
+    }
+
+    /// ...and on Unix the public predicate stays unconditionally false, so the
+    /// single-attempt guarantee holds. `cfg!` must not have changed that.
+    #[cfg(unix)]
+    #[test]
+    fn unix_never_treats_a_rename_error_as_transient() {
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::NotFound,
+            io::ErrorKind::AlreadyExists,
+        ] {
+            assert!(
+                !is_transient_rename_error(&io::Error::from(kind)),
+                "POSIX rename has no sharing violation; {kind:?} must not be retried"
+            );
+        }
     }
 
     /// A post-rename sync failure must not read as "nothing was written".

@@ -75,6 +75,24 @@ cycle-accurate core later replaced.
   scratch-name source is now injectable so the exhaustion branch is reachable
   without predicting global state.
 
+  A fifth round found the one defect none of the local gates could see: the
+  transient-rename predicate was a `const fn` calling `io::Error::kind`, which is
+  not `const` — `E0015`, and **only on Windows**, because the call sat behind
+  `#[cfg(windows)]`. PR runs here are Linux-only and the full matrix runs on
+  `main`, so it would have turned `main` red after merge rather than failing the
+  PR that caused it. Verified against a minimal crate before being believed, since
+  a plausible reviewer claim had already proved false once this release.
+
+  The fix is not just dropping `const`. The Windows logic moved into an
+  always-compiled function reached through `cfg!(windows) && …` instead of
+  `#[cfg(windows)]`, so it is parsed, type-checked and borrow-checked on Linux
+  while short-circuiting away at runtime exactly as before. Restoring the `const`
+  now fails **on Linux** with the same `E0015` — the defect class moved from
+  "invisible until another platform builds it" to "fails the PR". Also from that
+  round: `SYMLINK_DEPTH` matches Linux's own `MAXSYMLINKS` of 40 rather than a
+  smaller number, because where the kernel resolves a chain and this gives up, the
+  two disagree about where the file *is*.
+
   A third round found no blocking issues and two worthwhile refinements: `ENOTSUP`
   / `EOPNOTSUPP` joins the excused set, since the list is *ways a filesystem says
   there is no barrier here* and leaving one out fails a save on that mount; and
