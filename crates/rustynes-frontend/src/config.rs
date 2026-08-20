@@ -861,10 +861,20 @@ pub struct GraphicsConfig {
     #[serde(default)]
     pub shader_stack: crate::shader_pass::ShaderStackConfig,
     /// v1.2.0 C2 — saved named shader-stack presets (the CRT preset bank +
-    /// user-saved stacks). `#[serde(default)]` = empty, so a pre-C2 config LOADS
-    /// unchanged. Persisted under `[graphics.shader_presets]`. Same correction as
-    /// `hd_packs` below: `serde(default)` says nothing about what SAVE writes.
-    #[serde(default)]
+    /// user-saved stacks). Persisted under `[graphics.shader_presets]`.
+    ///
+    /// `#[serde(default)]` is a **load** guarantee — it says nothing about what
+    /// SAVE writes. v2.3.9 corrected the claim here and deliberately left the
+    /// behaviour, because changing what a shipped feature writes is a separate
+    /// decision from fixing a false claim. v2.4.0 item D is where that decision
+    /// belongs, and `skip_serializing_if` is it: an empty bank now writes
+    /// nothing, so a user who has never saved a preset carries a config that
+    /// round-trips byte-identically instead of gaining an empty table on their
+    /// first save.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::shader_pass::ShaderPresetBank::is_empty"
+    )]
     pub shader_presets: crate::shader_pass::ShaderPresetBank,
     /// v1.2.0 beta.2 (Workstream C3) — per-game HD-pack paths, keyed on the
     /// ROM SHA-256 (hex). When the loaded ROM's hash has an entry here AND the
@@ -873,13 +883,15 @@ pub struct GraphicsConfig {
     /// default and `#[serde(default)]`, so a pre-C3 config LOADS unchanged and
     /// the default presentation is unchanged. Presentation-only.
     ///
-    /// Deliberately says "loads", not "is byte-identical": `serde(default)` is a
-    /// LOAD guarantee only, and on save the TOML serializer emits an empty
-    /// `[graphics.hd_packs]` table. Left as-is rather than given a
-    /// `skip_serializing_if` like `input.latency_reports`, because that would
-    /// change the file this shipped feature writes; the wrong half here was the
-    /// claim, not the behaviour.
-    #[serde(default)]
+    /// `serde(default)` is a **load** guarantee only: it said nothing about what
+    /// SAVE wrote, and the TOML serializer emitted an empty `[graphics.hd_packs]`
+    /// table on the first save. v2.3.9 corrected that claim and deliberately left
+    /// the behaviour alone, because changing what a shipped feature writes is a
+    /// separate decision. v2.4.0 item D makes it: `skip_serializing_if` keeps the
+    /// key out of the file until there is a mapping to store, matching
+    /// `input.latency_reports`, so "loads unchanged" and "round-trips
+    /// byte-identically" are now both true rather than only the first.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub hd_packs: std::collections::BTreeMap<String, std::path::PathBuf>,
     /// v1.5.0 "Lens" Workstream D1 — per-side overscan crop, in NES pixels. The
     /// legacy [`Self::hide_overscan`] toggle is the equivalent of an
@@ -2214,6 +2226,110 @@ mod tests {
             }),
             "the measurement did not survive a save/load round trip"
         );
+    }
+
+    /// v2.4.0 item D — `graphics.hd_packs` must not write an empty table.
+    ///
+    /// Same defect as `latency_reports` above, in a field that shipped in v1.5.0
+    /// and carried the same false "byte-identical" claim ever since. v2.3.9
+    /// corrected the prose and deliberately left the behaviour, because changing
+    /// what a shipped feature writes is a separate decision; this is that
+    /// decision.
+    ///
+    /// Both directions, because a `skip_serializing_if` that is too eager would
+    /// silently discard a user's HD-pack mappings — a one-directional test passes
+    /// just as happily against a field that never persists anything at all.
+    #[test]
+    fn an_empty_hd_pack_map_is_not_written_but_a_populated_one_is() {
+        let empty = toml::to_string_pretty(&Config::default()).expect("serialize default");
+        assert!(
+            !empty.contains("hd_packs"),
+            "an empty hd_packs table was written, so an untouched config does not \
+             round-trip byte-identically:\n{empty}"
+        );
+
+        let mut c = Config::default();
+        c.graphics
+            .hd_packs
+            .insert("smb3".to_owned(), std::path::PathBuf::from("/packs/smb3"));
+        let filled = toml::to_string_pretty(&c).expect("serialize populated");
+        assert!(
+            filled.contains("hd_packs"),
+            "a real HD-pack mapping was dropped on save:\n{filled}"
+        );
+
+        let empty_back: Config = toml::from_str(&empty).expect("empty config re-parses");
+        assert!(
+            empty_back.graphics.hd_packs.is_empty(),
+            "the omitted key did not come back as an empty map"
+        );
+        let filled_back: Config = toml::from_str(&filled).expect("populated config re-parses");
+        assert_eq!(
+            filled_back.graphics.hd_packs.get("smb3"),
+            Some(&std::path::PathBuf::from("/packs/smb3")),
+            "the HD-pack mapping did not survive a save/load round trip"
+        );
+    }
+
+    /// v2.4.0 item D — `graphics.shader_presets` must not write an empty table.
+    ///
+    /// The v1.2.0 half of the same pair. `ShaderPresetBank` is a struct rather
+    /// than a bare map, so this one needed an `is_empty` on the type before
+    /// `skip_serializing_if` could name anything — which is why it was easy to
+    /// leave behind when `latency_reports` got the treatment.
+    #[test]
+    fn an_empty_shader_preset_bank_is_not_written_but_a_populated_one_is() {
+        let empty = toml::to_string_pretty(&Config::default()).expect("serialize default");
+        assert!(
+            !empty.contains("shader_presets"),
+            "an empty shader_presets table was written:\n{empty}"
+        );
+
+        let mut c = Config::default();
+        c.graphics.shader_presets.presets.insert(
+            "my-crt".to_owned(),
+            crate::shader_pass::ShaderStackConfig::default(),
+        );
+        let filled = toml::to_string_pretty(&c).expect("serialize populated");
+        assert!(
+            filled.contains("shader_presets"),
+            "a saved shader preset was dropped on save:\n{filled}"
+        );
+        assert!(filled.contains("my-crt"), "the preset name was not written");
+
+        let empty_back: Config = toml::from_str(&empty).expect("empty config re-parses");
+        assert!(
+            empty_back.graphics.shader_presets.is_empty(),
+            "the omitted key did not come back as an empty bank"
+        );
+        let filled_back: Config = toml::from_str(&filled).expect("populated config re-parses");
+        assert!(
+            filled_back
+                .graphics
+                .shader_presets
+                .presets
+                .contains_key("my-crt"),
+            "the preset did not survive a save/load round trip"
+        );
+    }
+
+    /// The whole point of item D, stated once as a property rather than per field.
+    ///
+    /// A default config must serialize to something that carries **no empty
+    /// tables at all** for the three opt-in collections. Written as its own test
+    /// because the per-field ones would each still pass if a FOURTH such field
+    /// were added tomorrow without the attribute — this is the one that would
+    /// start failing.
+    #[test]
+    fn a_default_config_writes_no_empty_opt_in_tables() {
+        let text = toml::to_string_pretty(&Config::default()).expect("serialize default");
+        for key in ["latency_reports", "hd_packs", "shader_presets"] {
+            assert!(
+                !text.contains(key),
+                "`{key}` was written for a default config, so an untouched file \
+                 does not round-trip byte-identically:\n{text}"
+            );
+        }
     }
 
     /// A CHAIN of symlinks resolves all the way to the real file.

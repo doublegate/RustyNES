@@ -393,6 +393,17 @@ pub struct ShaderPresetBank {
 }
 
 impl ShaderPresetBank {
+    /// Is the bank empty — no user-saved presets at all?
+    ///
+    /// Exists for `Config`'s `skip_serializing_if` (v2.4.0 item D). A bank with
+    /// no presets writes nothing, so a user who has never saved one keeps a
+    /// config that genuinely round-trips byte-identically rather than gaining an
+    /// empty `[graphics.shader_presets]` table on their first save.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.presets.is_empty()
+    }
+
     /// Resolve a preset by name for the per-game apply path (v2.1.9 B6): a user
     /// preset of that name wins, else a built-in of the same name, else `None`
     /// (an unknown name applies nothing, keeping the load byte-identical).
