@@ -2121,7 +2121,110 @@ impl Config {
             fs::create_dir_all(parent)?;
         }
         let s = toml::to_string_pretty(self)?;
-        fs::write(path, s)?;
+
+        // Written to a sibling temporary file and RENAMED over the target,
+        // rather than `fs::write` straight onto it.
+        //
+        // `fs::write` truncates first and then writes. Anything that interrupts
+        // it -- a crash, a kill, a full disk -- leaves the user holding a
+        // truncated or empty `config.toml`, which is every keybinding, palette,
+        // shader preset, HD-pack mapping and per-game setting they have.
+        //
+        // That stopped being a theoretical window when saves became automatic.
+        // This is called from more than a dozen places, several of them not user
+        // actions at all: closing a ROM, changing a mixer slider, and (v2.3.9)
+        // finishing a Latency Oracle measurement all save without being asked.
+        //
+        // `rename` within a directory is atomic on both platforms this ships on:
+        // POSIX guarantees it, and `std::fs::rename` maps to `MoveFileEx` with
+        // `MOVEFILE_REPLACE_EXISTING` on Windows. The temp file is a SIBLING for
+        // exactly that reason -- across a filesystem boundary `rename` is not a
+        // rename at all, and a `$TMPDIR` on another mount would silently degrade
+        // this back to a copy.
+        //
+        // A failed rename leaves the old config intact and the temp file behind,
+        // which is the right way round: the stale-but-valid file is the one worth
+        // keeping. The temp file is removed on a write failure so a full disk
+        // does not accumulate them.
+        //
+        // The temp name carries the PROCESS ID. A bare `.tmp` is shared, so two
+        // RustyNES instances saving at once would write the same scratch file and
+        // one would rename the other's half-written bytes over the config -- the
+        // failure this function exists to prevent, reintroduced by its own
+        // mechanism. A stale `<pid>.tmp` left by a crashed run also cannot block a
+        // later save, because that run has a different id. (Review on #420.)
+        //
+        // `tempfile::NamedTempFile` would give the same guarantee more tidily, and
+        // is deliberately not used: `tempfile` is a DEV-dependency here, and
+        // promoting it to a runtime dependency of a binary that ships to users is
+        // a supply-chain decision, not a cleanup.
+        let mut tmp_os = path.as_os_str().to_os_string();
+        tmp_os.push(format!(".{}.tmp", std::process::id()));
+        let tmp = PathBuf::from(tmp_os);
+
+        // Write, then FSYNC, then rename -- in that order, and the fsync is not
+        // optional.
+        //
+        // `fs::write` returns once the bytes are in the OS page cache, not once
+        // they are on the medium. `rename` is atomic with respect to other
+        // processes, but a power loss between the two leaves the directory entry
+        // pointing at a file whose contents never reached disk: an empty or
+        // truncated config, which is precisely the outcome this function claims to
+        // prevent. Review on #420 caught that the first version stopped one step
+        // short and would have shipped a durability guarantee it did not have.
+        let write_result = (|| -> std::io::Result<()> {
+            use std::io::Write as _;
+            let mut f = fs::File::create(&tmp)?;
+            f.write_all(s.as_bytes())?;
+            f.sync_all()
+        })();
+        if let Err(e) = write_result {
+            // Best-effort: if the write failed because the disk is full, the
+            // remove may fail too, and the original config is still intact.
+            let _ = fs::remove_file(&tmp);
+            return Err(e.into());
+        }
+
+        // Carry the existing file's permissions onto the replacement.
+        //
+        // This is the one thing write-then-rename gives up relative to a
+        // truncating write, and review on #420 caught it: `fs::write` onto an
+        // existing file preserves that file's mode, while a fresh temp file
+        // takes the process umask default and the rename carries that mode with
+        // it. A user who had tightened `config.toml` to 0600 would have found it
+        // quietly widened by an automatic save they never asked for.
+        //
+        // Best-effort, and only when there IS an existing file to copy from: a
+        // first-ever save has no prior mode, and a filesystem that cannot report
+        // or set one should not cost the user an atomic write. Unix-gated
+        // because that is where the mode lives; on Windows the ACL is inherited
+        // from the parent directory rather than carried on the file, so
+        // `MoveFileEx` already produces the right result.
+        #[cfg(unix)]
+        if let Ok(meta) = fs::metadata(path) {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = meta.permissions().mode();
+            let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(mode));
+        }
+
+        if let Err(e) = fs::rename(&tmp, path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(e.into());
+        }
+
+        // Durability of the RENAME itself, as opposed to the file's contents.
+        //
+        // On POSIX the directory entry created by `rename` is also only a cache
+        // update until the containing directory is synced. Best-effort, and
+        // Unix-gated: opening a directory as a `File` is not portable, and
+        // `MoveFileEx` on Windows already orders the metadata write.
+        #[cfg(unix)]
+        if let Some(parent) = path.parent()
+            && let Ok(dir) = fs::File::open(parent)
+        {
+            let _ = dir.sync_all();
+        }
+
         Ok(())
     }
 }
@@ -2203,6 +2306,101 @@ mod tests {
             }),
             "the measurement did not survive a save/load round trip"
         );
+    }
+
+    /// A FAILED rename must not leave its scratch file behind either.
+    ///
+    /// Added because a mutation exposed the gap rather than because it was
+    /// planned: deleting the cleanup on the rename-failure path left every test
+    /// passing. The success path is easy to cover and the failure path is the one
+    /// that accumulates litter on a user's disk.
+    ///
+    /// `rename`-onto-a-directory is the portable way to force the failure -- it
+    /// fails on Unix (`EISDIR`/`ENOTDIR`) and on Windows -- without needing a
+    /// read-only mount or a full disk.
+    #[test]
+    fn a_failed_rename_cleans_up_after_itself() {
+        let tmpdir = TempDir::new().expect("temp dir");
+        let path = tmpdir.path().join("config.toml");
+        // The target is a DIRECTORY, so the rename cannot succeed.
+        std::fs::create_dir(&path).expect("mkdir");
+
+        let err = Config::default().save_to(&path);
+        assert!(err.is_err(), "renaming onto a directory reported success");
+
+        let leftovers: Vec<_> = std::fs::read_dir(tmpdir.path())
+            .expect("read dir")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "config.toml")
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "a failed save left its scratch file behind: {leftovers:?}"
+        );
+        assert!(path.is_dir(), "the existing target was destroyed");
+    }
+
+    /// A save must not leave a truncated config behind, and must not leave its
+    /// temporary file behind either.
+    ///
+    /// Both halves are asserted. A `save_to` that wrote to the temp file and
+    /// never renamed would leave the target stale and pass a "no `.tmp` file"
+    /// check only by accident; one that renamed but wrote nothing would pass a
+    /// round-trip check on an empty file.
+    #[test]
+    fn saving_leaves_no_temp_file_and_a_readable_config() {
+        // `TempDir` rather than a hand-named directory under `temp_dir()`: it is
+        // already this module's convention, cannot collide between concurrent
+        // runs, and cleans up even when an assertion panics. (Review on #420.)
+        let tmpdir = TempDir::new().expect("temp dir");
+        let path = tmpdir.path().join("nested").join("config.toml");
+
+        let mut c = Config::default();
+        c.input.turbo_a = true;
+        c.save_to(&path).expect("save");
+
+        // Assert on the DIRECTORY, not on a reconstructed temp filename. The
+        // scratch name now carries the process id, so a test that rebuilt
+        // `path + ".tmp"` would be checking a file that never existed under any
+        // implementation -- an assertion that passes for the wrong reason.
+        let leftovers: Vec<_> = std::fs::read_dir(path.parent().expect("parent"))
+            .expect("read dir")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "config.toml")
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "a scratch file survived a successful save: {leftovers:?}"
+        );
+
+        let back: Config = toml::from_str(&std::fs::read_to_string(&path).expect("read"))
+            .expect("the written config did not parse");
+        assert!(back.input.turbo_a, "the saved value did not round-trip");
+
+        // Overwriting an existing file is the common case (`rename` must replace).
+        c.input.turbo_a = false;
+        c.save_to(&path).expect("second save");
+        let back2: Config =
+            toml::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
+        assert!(
+            !back2.input.turbo_a,
+            "the second save did not replace the first"
+        );
+
+        // The mode of an existing file must survive the replacement.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+            c.save_to(&path).expect("third save");
+            let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
+            assert_eq!(
+                mode, 0o600,
+                "an atomic save widened the user's file permissions"
+            );
+        }
     }
 
     #[test]
