@@ -29,7 +29,7 @@ What actually happened.
 
 **RustyNES Version:**
 
-- Version: [e.g., v0.1.0 or git commit hash]
+- Version: [e.g., v2.3.9, or a git commit hash if you built from source]
 - Build: [Release/Debug]
 
 **Operating System:**
