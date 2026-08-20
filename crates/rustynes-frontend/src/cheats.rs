@@ -160,7 +160,10 @@ pub fn save(data_dir: &Path, rom_sha256: &[u8; 32], genie: &[CheatEntry], raw: &
     };
     match toml::to_string_pretty(&file) {
         Ok(s) => {
-            if let Err(e) = fs::write(&path, s) {
+            // Atomic + durable, via the shared helper (v2.4.0 item C). This was
+            // `fs::write`, so an interruption truncated the user's whole cheat
+            // list for that ROM.
+            if let Err(e) = crate::atomic_write::write_atomic(&path, s.as_bytes()) {
                 eprintln!("rustynes: cheats {} write failed: {e}", path.display());
             }
         }

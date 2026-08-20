@@ -2111,276 +2111,31 @@ impl Config {
         self.save_to(&path)
     }
 
-    /// Where a save should actually land, following a symlink to its target.
-    ///
-    /// `fs::write` follows a symlink and writes through to the file it points at;
-    /// `fs::rename` replaces the link. Writing to the link's own path would
-    /// therefore convert a user's symlinked `config.toml` -- a dotfiles-repository
-    /// setup -- into a regular file on the first automatic save.
-    ///
-    /// Two cases, and the second is the one that is easy to miss:
-    ///
-    /// * An **intact** link resolves through `canonicalize`.
-    /// * A **broken** link -- pointing at a file that does not exist yet, which is
-    ///   exactly a freshly-created dotfiles link awaiting its first save --
-    ///   makes `canonicalize` fail with `NotFound`. Falling back to the link's own
-    ///   path there would destroy the very setup the resolution exists to protect,
-    ///   so the link is read by hand instead and its destination used, relative to
-    ///   the link's own directory when it is not absolute. (Review on #420 found
-    ///   this surviving inside the fix for the intact case.)
-    ///
-    /// Anything that is not a symlink -- including a path that does not exist at
-    /// all, the first-ever save -- falls back to the path as given, which is
-    /// correct: there is nothing to follow.
-    fn resolve_write_target(path: &Path) -> PathBuf {
-        if let Ok(real) = fs::canonicalize(path) {
-            return real;
-        }
-        // `read_link` fails with `EINVAL` when the path is not a link at all, which
-        // is how "no symlink to follow" is distinguished from "broken symlink"
-        // without a second `symlink_metadata` call.
-        match fs::read_link(path) {
-            Ok(dest) if dest.is_absolute() => dest,
-            Ok(dest) => match path.parent() {
-                Some(dir) => dir.join(dest),
-                None => dest,
-            },
-            Err(_) => path.to_path_buf(),
-        }
-    }
-
     /// Save to an explicit path.
     ///
     /// # Errors
     ///
     /// Returns [`ConfigError`] on I/O or serialization failure.
     pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
-        let target = Self::resolve_write_target(path);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        // Serialize, then hand the bytes to the shared atomic writer.
+        //
+        // The seven-property write sequence that used to live inline here moved
+        // to `crate::atomic_write` in v2.4.0 (item C), unchanged in behaviour on
+        // Unix and with one ADDITION this path never had: a bounded retry past a
+        // transient Windows sharing violation. On Windows `MoveFileEx` fails if
+        // another process has the target open, and an antivirus scanner or search
+        // indexer reading `config.toml` is enough -- a save that failed for no
+        // visible reason, on a platform this project's CI does not run the suite
+        // on. POSIX has no such constraint, which is why it went unnoticed here.
+        //
+        // The full rationale for each property, and the platform table, is in
+        // that module's docs rather than duplicated at each of the four call
+        // sites it now serves.
         let s = toml::to_string_pretty(self)?;
-
-        // Written to a sibling temporary file and RENAMED over the target,
-        // rather than `fs::write` straight onto it.
-        //
-        // `fs::write` truncates first and then writes. Anything that interrupts
-        // it -- a crash, a kill, a full disk -- leaves the user holding a
-        // truncated or empty `config.toml`, which is every keybinding, palette,
-        // shader preset, HD-pack mapping and per-game setting they have.
-        //
-        // That stopped being a theoretical window when saves became automatic.
-        // This is called from more than a dozen places, several of them not user
-        // actions at all: closing a ROM, changing a mixer slider, and (v2.3.9)
-        // finishing a Latency Oracle measurement all save without being asked.
-        //
-        // `rename` within a directory is atomic on both platforms this ships on:
-        // POSIX guarantees it, and `std::fs::rename` maps to `MoveFileEx` with
-        // `MOVEFILE_REPLACE_EXISTING` on Windows. The temp file is a SIBLING for
-        // exactly that reason -- across a filesystem boundary `rename` is not a
-        // rename at all, and a `$TMPDIR` on another mount would silently degrade
-        // this back to a copy.
-        //
-        // A failed rename leaves the old config intact and the temp file behind,
-        // which is the right way round: the stale-but-valid file is the one worth
-        // keeping. The temp file is removed on a write failure so a full disk
-        // does not accumulate them.
-        //
-        // The temp name carries the PROCESS ID. A bare `.tmp` is shared, so two
-        // RustyNES instances saving at once would write the same scratch file and
-        // one would rename the other's half-written bytes over the config -- the
-        // failure this function exists to prevent, reintroduced by its own
-        // mechanism. A stale `<pid>.tmp` left by a crashed run also cannot block a
-        // later save, because that run has a different id. (Review on #420.)
-        //
-        // `tempfile::NamedTempFile` would give the same guarantee more tidily, and
-        // is deliberately not used: `tempfile` is a DEV-dependency here, and
-        // promoting it to a runtime dependency of a binary that ships to users is
-        // a supply-chain decision, not a cleanup.
-        // Resolve a SYMLINKED config to its target before choosing where to write.
-        //
-        // `fs::write` follows a symlink and writes through to the file it points
-        // at. `fs::rename` replaces the link itself. Without this, a user who has
-        // symlinked `config.toml` into a dotfiles repository -- a common setup --
-        // would find the link silently replaced by a regular file on the first
-        // automatic save, and their repository stops receiving changes. That is a
-        // behaviour regression introduced by the fix, not by the bug. (Review on
-        // #420.)
-        //
-
-        // The scratch name carries the process id AND a per-call counter.
-        //
-        // A bare `.tmp` is shared across processes: two RustyNES instances saving
-        // at once would write the same file and one would rename the other's
-        // half-written bytes over the config -- the failure this function exists
-        // to prevent, reintroduced by its own mechanism. The pid closes that.
-        //
-        // The counter closes the same hole WITHIN a process. Config saves are
-        // driven from the UI thread today, so two concurrent calls are not
-        // reachable, but "not reachable today" is a property of the callers rather
-        // than of this function, and a monotonic counter costs one relaxed fetch-add
-        // to make the guarantee structural. (Review on #420 raised it.)
-        //
-        // `tempfile::NamedTempFile` would give both properties more tidily and is
-        // deliberately not used: `tempfile` is a DEV-dependency here, and promoting
-        // it to a runtime dependency of a binary that ships to users is a
-        // supply-chain decision, not a cleanup.
-        let seq = SCRATCH_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let mut tmp_os = target.as_os_str().to_os_string();
-        tmp_os.push(format!(".{}.{seq}.tmp", std::process::id()));
-        let tmp = PathBuf::from(tmp_os);
-
-        // Write, then FSYNC, then rename -- in that order, and the fsync is not
-        // optional.
-        //
-        // `fs::write` returns once the bytes are in the OS page cache, not once
-        // they are on the medium. `rename` is atomic with respect to other
-        // processes, but a power loss between the two leaves the directory entry
-        // pointing at a file whose contents never reached disk: an empty or
-        // truncated config, which is precisely the outcome this function claims to
-        // prevent. Review on #420 caught that the first version stopped one step
-        // short and would have shipped a durability guarantee it did not have.
-        // The mode to create the scratch file WITH, read before it exists.
-        //
-        // Applying it at creation rather than chmod-ing afterwards closes a window
-        // in which the file exists at the umask default -- briefly wider than the
-        // config the user tightened. `open(2)` applies `mode & ~umask`, so this can
-        // only ever be narrower than asked; the exact mode is still set below,
-        // which makes the pair a narrow-then-correct sequence rather than a
-        // widen-then-narrow one. (Review on #420.)
-        #[cfg(unix)]
-        let existing_mode = {
-            use std::os::unix::fs::PermissionsExt;
-            fs::metadata(&target).ok().map(|m| m.permissions().mode())
-        };
-
-        // Retry once past an occupied scratch name.
-        //
-        // `create_new` turns a collision into a failed save, and there is one way
-        // a collision can happen without an attacker: a crashed run leaves an
-        // orphaned scratch file, the OS later reuses that pid, and the new run's
-        // first save picks the same seq. Unlikely, and a lost save is a real cost
-        // for a user who would have no idea why. Advancing the counter and trying
-        // again turns it into nothing at all -- the next name cannot be the same
-        // one, since the counter only increases within a process. (Review on #425
-        // raised the pid-reuse case against the plan; it applies here.)
-        let mut tmp = tmp;
-        let write_result = (|| -> std::io::Result<()> {
-            use std::io::Write as _;
-            let mut opts = fs::OpenOptions::new();
-            // `create_new` rather than `create`: exclusive creation, so the open
-            // FAILS if anything is already at that path instead of truncating it.
-            //
-            // `File::create` follows symlinks and truncates, so a predictable
-            // scratch name is a CWE-377 surface -- something pre-created there as a
-            // link to another file would be silently truncated and overwritten by
-            // the save. The scratch file is a sibling of the user's own config
-            // rather than a world-writable directory, so an attacker who can plant
-            // it already owns the config; that makes this defence in depth rather
-            // than a live hole, and it costs one call. (Review on #420.)
-            //
-            // Exclusive creation was NOT safe to adopt while the scratch name was a
-            // bare `.tmp`: a stale file from a crashed run would then have failed
-            // every subsequent save. With the pid and the per-call counter in the
-            // name, a previous run cannot collide, so the failure mode that ruled
-            // this out no longer exists.
-            opts.write(true).create_new(true);
-            #[cfg(unix)]
-            if let Some(mode) = existing_mode {
-                use std::os::unix::fs::OpenOptionsExt as _;
-                opts.mode(mode);
-            }
-            let mut f = match opts.open(&tmp) {
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let seq = SCRATCH_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let mut retry = target.as_os_str().to_os_string();
-                    retry.push(format!(".{}.{seq}.tmp", std::process::id()));
-                    tmp = PathBuf::from(retry);
-                    opts.open(&tmp)?
-                }
-                other => other?,
-            };
-            f.write_all(s.as_bytes())?;
-            f.sync_all()
-        })();
-        if let Err(e) = write_result {
-            // Best-effort: if the write failed because the disk is full, the
-            // remove may fail too, and the original config is still intact.
-            let _ = fs::remove_file(&tmp);
-            return Err(e.into());
-        }
-
-        // Carry the existing file's permissions onto the replacement.
-        //
-        // This is the one thing write-then-rename gives up relative to a
-        // truncating write, and review on #420 caught it: `fs::write` onto an
-        // existing file preserves that file's mode, while a fresh temp file
-        // takes the process umask default and the rename carries that mode with
-        // it. A user who had tightened `config.toml` to 0600 would have found it
-        // quietly widened by an automatic save they never asked for.
-        //
-        // Best-effort, and only when there IS an existing file to copy from: a
-        // first-ever save has no prior mode, and a filesystem that cannot report
-        // or set one should not cost the user an atomic write. Unix-gated
-        // because that is where the mode lives; on Windows the ACL is inherited
-        // from the parent directory rather than carried on the file, so
-        // `MoveFileEx` already produces the right result.
-        // The exact mode, after creation. `open(2)` masks the requested mode with
-        // the umask, so creation alone can land narrower than the original; this
-        // makes it exact. Best-effort, and only when there was a prior file to copy
-        // from.
-        #[cfg(unix)]
-        if let Some(mode) = existing_mode {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(mode));
-        }
-
-        if let Err(e) = fs::rename(&tmp, &target) {
-            let _ = fs::remove_file(&tmp);
-            return Err(e.into());
-        }
-
-        // Durability of the RENAME itself, as opposed to the file's contents.
-        //
-        // On POSIX the directory entry created by `rename` is also only a cache
-        // update until the containing directory is synced. Best-effort, and
-        // Unix-gated: opening a directory as a `File` is not portable, and
-        // `MoveFileEx` on Windows already orders the metadata write.
-        //
-        // A bare filename's parent is `Some("")`, and `File::open("")` fails with
-        // `ENOENT` -- so without the fallback the sync would silently not happen
-        // for a relative target, which is a durability step quietly skipped rather
-        // than a failure anyone sees. `.` is the directory an empty parent means.
-        // (Review on #420. `create_dir_all("")` was checked in the same pass and
-        // returns `Ok`, so the claim that a bare filename aborts the save does not
-        // reproduce -- only the sync was affected.)
-        #[cfg(unix)]
-        {
-            let parent = target.parent().map_or_else(
-                || PathBuf::from("."),
-                |p| {
-                    if p.as_os_str().is_empty() {
-                        PathBuf::from(".")
-                    } else {
-                        p.to_path_buf()
-                    }
-                },
-            );
-            if let Ok(dir) = fs::File::open(&parent) {
-                let _ = dir.sync_all();
-            }
-        }
-
+        crate::atomic_write::write_atomic(path, s.as_bytes())?;
         Ok(())
     }
 }
-
-/// Monotonic sequence for [`Config::save_to`]'s scratch filenames.
-///
-/// Module scope rather than a function-local `static`, because clippy's
-/// `items_after_statements` fires on the latter -- and it is right that an item
-/// declared mid-function reads as if it were scoped to that point when it is not.
-static SCRATCH_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Rewrite every keycode value of a [`PadBindings`] to its canonical
 /// current winit-0.30 `KeyCode` spelling. Used by [`Config::migrate_legacy`]

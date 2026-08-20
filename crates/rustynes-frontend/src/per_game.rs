@@ -268,16 +268,27 @@ pub fn save_overlay(crc: u32, cfg: &PerGameConfig) -> std::io::Result<()> {
             Err(e) => return Err(e),
         }
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let json = serde_json::to_vec_pretty(cfg)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    // Atomic write: serialize to a sibling temp file, then rename over the
-    // target (atomic on the same filesystem).
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(&tmp, &path)
+
+    // Atomic + durable, via the shared helper (v2.4.0 item C).
+    //
+    // This path already wrote a sibling temp file and renamed, so it LOOKED
+    // correct and a sweep for `fs::write`-straight-onto-a-target would have
+    // cleared it. It held two of the seven properties. The two that mattered:
+    //
+    // - No `fsync` before the rename, so the rename could commit a directory
+    //   entry pointing at bytes that never reached the medium -- the precise
+    //   outcome write-then-rename is adopted to prevent.
+    // - A FIXED scratch name, `path.with_extension("json.tmp")`, shared by every
+    //   process and every concurrent call. Two instances saving at once would
+    //   write the same scratch file and one would rename the other's
+    //   half-written bytes over the overlay: the failure the mechanism exists to
+    //   prevent, reintroduced by the mechanism itself.
+    //
+    // A partially-correct implementation is harder to spot than an absent one,
+    // which is the argument for a shared helper rather than a per-site pattern.
+    crate::atomic_write::write_atomic(&path, &json)
 }
 
 #[cfg(test)]

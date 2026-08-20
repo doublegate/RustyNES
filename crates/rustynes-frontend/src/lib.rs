@@ -16,6 +16,14 @@
 #![warn(missing_docs)]
 
 pub mod app;
+/// v2.4.0 item C — one durable, atomic file write shared by every path that
+/// persists user data (config, save states, cheats, per-game overlays).
+///
+/// Extracted from `config::Config::save_to`, whose seven properties took five
+/// rounds of review to arrive at. Three other paths were writing user data with
+/// the bare truncating call that fix exists to replace — including save states,
+/// where the loss is a user's game progress.
+pub mod atomic_write;
 pub mod audio;
 // v1.7.0 "Forge" H3 — frontend stereo output DSP (panning / Schroeder reverb /
 // headphone crossfeed). Bypass-by-default (center pan, 0% reverb, 0 crossfeed)

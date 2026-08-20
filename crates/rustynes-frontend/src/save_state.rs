@@ -95,7 +95,19 @@ pub fn save_to_slot(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| map_io(parent, e))?;
     }
-    fs::write(&path, state).map_err(|e| map_io(&path, e))?;
+    // Atomic + durable, via the shared helper (v2.4.0 item C).
+    //
+    // This was `fs::write`, which truncates and then writes. An interruption in
+    // that window -- a crash, a kill, a full disk -- left the user holding a
+    // truncated save state, and a save state is a user's GAME PROGRESS. The
+    // config path was fixed for exactly this in v2.3.9 while this one, where the
+    // loss is worse, kept the bare call.
+    //
+    // Save states are also the path most likely to be written under load:
+    // rewind capture, run-ahead and netplay rollback all produce them, and a
+    // user hitting F1 during a busy frame is the ordinary case rather than an
+    // edge one.
+    crate::atomic_write::write_atomic(&path, state).map_err(|e| map_io(&path, e))?;
     Ok(path)
 }
 
