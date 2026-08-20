@@ -328,13 +328,13 @@ impl CpuBootTrace {
 
     /// Number of records captured so far.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.records.len()
     }
 
     /// True if no records have been captured.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 
@@ -412,7 +412,7 @@ impl CpuBootTrace {
             ));
         }
         let body = &buf[HEADER_SIZE..];
-        if body.len() % RECORD_SIZE != 0 {
+        if !body.len().is_multiple_of(RECORD_SIZE) {
             return Err(alloc::format!(
                 "body length {} is not a multiple of RECORD_SIZE={RECORD_SIZE}",
                 body.len()

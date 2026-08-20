@@ -221,7 +221,7 @@ else
 fi
 
 # The script must not delete comments any more. A reintroduced DELETE is the regression that
-# would silently restore the destructive behaviour this design replaced.
+# would silently restore the destructive behavior this design replaced.
 if grep -qE 'gh api +-X +DELETE' "$SCRIPT_DIR/agy-review.sh"; then
   echo "  FAIL  agy-review.sh deletes comments again; the archive design forbids it"
   fails=$((fails + 1))

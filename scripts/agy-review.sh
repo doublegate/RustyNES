@@ -647,7 +647,7 @@ if [ "${auth_failed:-0}" = "1" ]; then
 fi
 
 # A persistent backend failure is reported as its own cause, and it FAILS THE JOB. Posting the
-# error as a review comment (the previous behaviour) produced a passing check for a review that
+# error as a review comment (the previous behavior) produced a passing check for a review that
 # never ran; posting nothing and exiting non-zero makes the outage visible where it matters.
 # The `! have_text` is redundant today -- the loop truncates $out_file whenever it counts a
 # backend error -- and is kept deliberately: it makes the "post nothing" guarantee independent

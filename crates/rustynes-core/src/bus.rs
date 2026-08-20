@@ -3041,16 +3041,20 @@ impl LockstepBus {
             };
             self.ppu.tick(&mut adapter);
             self.sample_nmi_edge();
-            if self.irq_trace.is_some() {
-                if let Some(level) = self.trace_a12_latest.take() {
-                    if let Some(t) = self.irq_trace.as_mut() {
-                        t.notify_a12_count = t.notify_a12_count.saturating_add(1);
-                    }
-                    // The PPU already filters to transitions only; every
-                    // `notify_a12` call IS a level change.  Record it.
-                    self.trace_a12_scratch.push(A12Event { sub_dot, level });
-                    self.trace_last_a12 = level;
+            // The `is_some()` guard is load-bearing beyond the borrow below:
+            // it keeps `take()` -- which CLEARS `trace_a12_latest` -- from
+            // running when tracing is off.  Short-circuit evaluation in the
+            // let-chain preserves that exactly.
+            if self.irq_trace.is_some()
+                && let Some(level) = self.trace_a12_latest.take()
+            {
+                if let Some(t) = self.irq_trace.as_mut() {
+                    t.notify_a12_count = t.notify_a12_count.saturating_add(1);
                 }
+                // The PPU already filters to transitions only; every
+                // `notify_a12` call IS a level change.  Record it.
+                self.trace_a12_scratch.push(A12Event { sub_dot, level });
+                self.trace_last_a12 = level;
             }
             if sub_dot == 0 {
                 // M2-low IRQ snapshot: taken AFTER sub-dot 0 has ticked

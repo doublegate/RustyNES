@@ -16,6 +16,65 @@ cycle-accurate core later replaced.
 
 ### Added
 
+- **`rustynes-cosim` — RustyNES as a co-simulation oracle for an FPGA
+  device-under-test.**
+  **The crate is excluded from the workspace, and that is the load-bearing
+  detail.** It enables `cpu-boot-trace` and `irq-timing-trace` on
+  `rustynes-core`, and cargo unifies features across a workspace build — so as a
+  member it made `cargo build --workspace` compile the core **once** with the
+  union. Measured through `--message-format=json`:
+  `['cpu-boot-trace', 'debug-hooks', 'default', 'hd-pack', 'irq-timing-trace', 'std']`.
+
+  That is not a performance footnote. `irq-timing-trace` selects a **different**
+  `for sub_dot in 0..3` loop in `Bus::tick_one_cpu_cycle`, so CI's
+  `cargo test --workspace --release --features test-roms` — the accuracy battery —
+  was validating a scheduler no user runs. The same shape as the v2.3.4 defect
+  where the coverage harness tested a load path no user runs. The measured cost is
+  **+1.2% to +1.9%** on `full_frame`, *below* this project's own 3% bar, which is
+  worth stating precisely because it shows the percentage was never the reason.
+
+  Exclusion has a price: an excluded package cannot use `field.workspace = true`,
+  so its version, edition, rust-version, license and lint tables are duplicated,
+  and `--workspace` no longer formats, lints or tests it. Both halves are
+  mechanically closed rather than trusted — `cosim_manifest_audit.rs` asserts every
+  duplicated value still equals the workspace's **and** that the crate is still in
+  `exclude` (four mutations, all caught), and CI gains explicit `fmt`, `clippy` and
+  `test` steps for it. The clippy step earned its place on its first run, reporting
+  a `must_use_candidate` that `--workspace` had never surfaced.
+ (v2.4.1, opening the "Fabric" line; ADR 0037.) A new
+  additive crate, absent from the default build, that exposes the emulator through
+  a narrow C ABI a Verilator testbench can link, plus a `nes_golden_export` CLI
+  that emits the five golden formats an external NES implementation is compared
+  against. Spec: `docs/mister.md`. The emulation core is untouched.
+
+  **RustyNES is not being ported to FPGA and cannot be.** A MiSTer core is
+  SystemVerilog compiled into a Cyclone V bitstream. What the line builds is a new
+  NES implementation written from public hardware documentation, in a sibling
+  repository, with RustyNES as its *verification oracle* — the one role it is
+  uniquely equipped for. The reference firewall extends to HDL accordingly:
+  `NES_MiSTer` and `fpganes` `rtl/` are strict black boxes.
+
+  Building it immediately found two things the crate was not looking for.
+
+  **No CI invocation had ever enabled `cpu-boot-trace` or `irq-timing-trace` for
+  clippy**, so those two `rustynes-core` modules had never passed the lint gate.
+  Turning them on surfaced six pre-existing findings. This crate now enables both
+  *unconditionally* rather than re-exposing them as its own optional features — a
+  build without them would compile, link, run, and export **empty** goldens, an
+  absence of signal that reads exactly like agreement.
+
+  And **the first `run_frame()` after power-on advances nothing at all.** The PPU
+  is constructed at dot 340 of the pre-render line, so the 7-cycle reset sequence
+  ticks past the frame wrap and leaves `frame_complete` latched; the first call
+  consumes the latch and returns having stepped zero cycles. Measured, not
+  inferred. Every other caller in the workspace runs thousands of frames, so one
+  lost frame is invisible to them — but a bare `for _ in 0..n` loop would have
+  emitted an (n−1)-frame golden under a manifest claiming n, which is a provenance
+  record wrong in the one direction that matters. `Oracle::advance_frames` gates on
+  the **frame counter** instead, and the quirk is pinned by a test that names it,
+  so a future core change that removes it fails loudly rather than silently
+  altering every golden's length.
+
 - **One atomic, durable file write for every path that persists user data.**
   (v2.4.0 item C.) The seven-property write sequence v2.3.9 built for
   `Config::save_to` is extracted into `crate::atomic_write` and adopted everywhere.

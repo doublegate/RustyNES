@@ -1,0 +1,55 @@
+[package]
+name = "rustynes-cosim"
+description = "RustyNES as a co-simulation oracle for an external HDL device-under-test"
+# Spelled out rather than inherited: this package is deliberately OUTSIDE the
+# workspace (see the `exclude` note in the root manifest), and an excluded package
+# cannot use `field.workspace = true`.
+#
+# The duplication is PINNED, not merely noticed: `cosim_manifest_audit.rs` in
+# `rustynes-test-harness` asserts these values still match the workspace's, so
+# drift fails a test instead of accumulating quietly.
+version = "2.3.9"
+edition = "2024"
+rust-version = "1.96"
+license = "GPL-3.0-or-later"
+authors = ["DoubleGate <parobek@gmail.com>"]
+repository = "https://github.com/doublegate/RustyNES"
+keywords = ["nes", "emulator", "fpga", "verilator", "co-simulation"]
+categories = ["emulators", "development-tools::testing"]
+publish = false
+
+[lib]
+# `rlib` so the golden-export binary and the crate's own tests can use the safe
+# Rust API directly; `staticlib`/`cdylib` so a Verilator C++ testbench can link
+# the same code through the C ABI. Same shape as `rustynes-libretro`, minus its
+# artifact-name override — nothing downstream renames this one.
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+# Duplicated from `[workspace.lints]` for the same reason as the package fields
+# above, and pinned by the same audit -- so this crate cannot quietly hold itself
+# to a lower standard than the rest of the project.
+[lints.rust]
+unsafe_code = "warn"
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "warn"
+
+[dependencies]
+# The trace features are NOT optional here. This crate exists to emit them, and a
+# build without them would produce an oracle that silently exports nothing —
+# exactly the "absence of a signal read as a signal" failure this project keeps
+# catching. Making them mandatory means a misconfigured build fails to compile
+# rather than producing empty goldens.
+rustynes-core = { path = "../rustynes-core", features = [
+    "cpu-boot-trace",
+    "irq-timing-trace",
+] }
+
+sha2 = { version = "0.11", default-features = false }
+
+[[bin]]
+name = "nes_golden_export"
+path = "src/bin/nes_golden_export.rs"
