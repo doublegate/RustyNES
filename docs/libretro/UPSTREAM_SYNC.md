@@ -136,3 +136,67 @@ Provide a clear description of what changed in RustyNES to warrant the update.
 Once the Libretro maintainers accept and merge your PR(s) into their upstream `master` branch, your commits become a permanent part of their history.
 
 At this point, you can safely navigate to your repository settings on GitHub and **delete the fork**. When you need to make another update in the future, simply return to Step 1.
+
+---
+
+## Pending sync — measured 2026-08-20, against upstream `master`
+
+v2.4.0 item A. The obligation this file exists to discharge, with the **actual
+diff** rather than a description of one, so the human step is a copy and not a
+re-derivation. That is the same reason `libretro_info_audit.rs` exists: the v2.3.5
+incident happened because a re-derivation was asked of a human and not performed.
+
+Both surfaces were fetched read-only and compared. The result is smaller than
+expected, and the shape is worth recording.
+
+### 1. `libretro/libretro-super` — `dist/info/rustynes_libretro.info`
+
+**One line.** Everything else is already in sync — including `license = "GPLv3+"`,
+which `libretro-super#2069` landed on 2026-08-16, and the description's
+`174 mapper families`.
+
+```diff
+-display_version = "v2.3.5"
++display_version = "v2.3.9"
+```
+
+Confirmed by diffing the upstream file against this repo's copy: two changed
+lines total, which is the one field and its counterpart.
+
+That the licence is already correct upstream is the part worth noting. The v2.3.5
+release found `.info` advertising MIT/Apache-2.0 eleven days after the GPL
+relicense; that specific failure is closed, and what remains is ordinary version
+drift of four releases.
+
+### 2. `libretro/docs` — `docs/library/rustynes.md`
+
+**Still wrong, and it is the licence again.** The page reads:
+
+```markdown
+The RustyNES core is licensed under
+
+- MIT OR Apache-2.0
+```
+
+RustyNES has been **GPL-3.0-or-later** since v2.2.9 (ADR 0036), as a derivative
+work of GPL emulators. `libretro/docs#1180` is open against exactly this and was
+filed at the time; it has not been actioned upstream.
+
+This is the surface the v2.3.5 work did **not** reach, and it is the one a user
+reads before the `.info`. The correction is:
+
+```diff
+ The RustyNES core is licensed under
+
+-- MIT OR Apache-2.0
++- GPL-3.0-or-later
+```
+
+### Why these are not opened automatically
+
+Both are pull requests against third-party repositories — outward-facing actions
+on projects this one does not own. They are prepared here and left for a
+maintainer to open, which is also why the audit in
+`crates/rustynes-test-harness/tests/libretro_info_audit.rs` deliberately cannot
+see upstream: a test that could would be a test that silently disagreed with a
+repository nobody here controls.
