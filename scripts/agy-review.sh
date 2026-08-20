@@ -17,7 +17,60 @@ set -euo pipefail
 # clamp, so log() must already exist. (Defined later, a clamp that fires would die with
 # `log: command not found` under set -e instead of warning — a latent misconfiguration trap.)
 log() { printf '[agy-review] %s\n' "$*" >&2; }
+
+# A capture that is only a BACKEND ERROR, not a review. When agy's upstream is down it prints
+# something like:
+#
+#   Error: Eligibility check failed: UNAVAILABLE (code 503): The service is currently unavailable.
+#
+# That text is non-empty, so have_text() alone treats it as a valid review, POSTs it as the
+# review comment, and the job exits 0 -- a green check for a review that never happened. Observed
+# on SLAC PR #14: the `review` check passed in 7 seconds with that string as its entire body,
+# twice. A control that cannot fail is worse than no control.
+#
+# The match is deliberately ANCHORED to the start of the capture rather than being a substring
+# search. A genuine review may legitimately quote a 503, an "UNAVAILABLE" constant, or an
+# eligibility check while reviewing retry logic -- and aborting on that would be the
+# false-positive the OAuth guard's design notes warn about. agy's backend failures occupy the
+# WHOLE capture and begin with `Error:`, so requiring the error at the top, in a capture short
+# enough to contain nothing else, separates the two without a content heuristic.
+#
+# Adopted FROM SLAC, which had it while the template and the other installs did not.
+# >>> SELFTEST-EXTRACT: service-error guard
+# `have_text` lives INSIDE this block, not above it: `backend_outage_should_fail` calls it, so
+# an extracted block without it is not self-contained and the selftest cannot run it. It is a
+# general helper used throughout the script -- the marker is a comment, so its position
+# changes nothing about where the function is defined.
 have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
+AGY_ERROR_RE='^[[:space:]]*Error:.*(Eligibility check failed|UNAVAILABLE|unavailable|RESOURCE_EXHAUSTED|INTERNAL|DEADLINE_EXCEEDED|code [45][0-9]{2})'
+# Captures longer than this are assumed to be real reviews even if they open with an error line:
+# a genuine review is thousands of bytes, a bare backend error is a couple of hundred.
+AGY_ERROR_MAX_BYTES="${AGY_ERROR_MAX_BYTES:-2000}"
+# `head -n 1`, not `head -n 5`. grep matches line-by-line, so scanning five lines
+# means "any of the first five lines is an error line" -- which would discard a short,
+# genuine review whose heading is on line 1 and which happens to discuss `Error: ...
+# UNAVAILABLE` on line 3. That is the false positive the anchoring was supposed to
+# prevent, reintroduced by the very check meant to enforce it. The invariant is that a
+# backend failure IS the whole capture, so only the first line can carry it.
+service_error_present() {
+  [ -s "$1" ] || return 1
+  [ "$(wc -c < "$1")" -le "$AGY_ERROR_MAX_BYTES" ] || return 1
+  head -n 1 "$1" | grep -qE "$AGY_ERROR_RE"
+}
+
+# True when the run must FAIL rather than post: the backend errored at least once and no review
+# survived. A separate named function rather than an inline condition, because a structural grep
+# for the condition is too weak to notice it being disabled -- `if false && [ ... ]` still
+# contains the text a grep looks for, and that mutation came back NOT CAUGHT.
+#
+# The `have_text` half is redundant today (the retry loop truncates the capture whenever it
+# counts a backend error) and is kept deliberately: it makes the "post nothing" guarantee
+# independent of that truncation surviving a future edit.
+backend_outage_should_fail() {
+  [ "${1:-0}" -gt 0 ] || return 1
+  ! have_text "$2"
+}
+# <<< SELFTEST-EXTRACT
 # Guarding against a leak of agy's interactive Google OAuth login flow. When agy's cached
 # session lapses on the runner, `--print` emits the login prompt (a live OAuth URL + "paste the
 # authorization code here") instead of a review; that text is non-empty, so have_text() alone
@@ -44,6 +97,7 @@ have_text() { [ -s "$1" ] && grep -q '[^[:space:]]' "$1"; }
 # would miss a URL emitted as `.../o/oauth2?client_id=…` or bare `.../o/oauth2` (a leak). The
 # scheme is what keeps a review's bare-pattern quote from matching, so dropping the trailing
 # slash loses no safety.
+# >>> SELFTEST-EXTRACT: oauth guard
 OAUTH_URL_RE='https?://accounts\.google\.com/o/oauth2'
 
 # The single guard, used at BOTH the retry-loop capture (Layer 1) and the assembled body before
@@ -54,6 +108,7 @@ OAUTH_URL_RE='https?://accounts\.google\.com/o/oauth2'
 # URL is always present in a real login flow, so it alone is both necessary and sufficient; a
 # lapse is detected AND a leak is blocked by the same unconditional check.
 oauth_url_present() { [ -s "$1" ] && grep -qiE "$OAUTH_URL_RE" "$1"; }
+# <<< SELFTEST-EXTRACT
 
 # --- configuration (all env-overridable from the workflow) ---------------------
 AGY_BIN="${AGY_BIN:-agy}"
@@ -119,12 +174,14 @@ MAX_BODY_BYTES="${MAX_BODY_BYTES:-60000}"
 # (an HTML comment, invisible when rendered) in a PR comment and have this bot edit it. Only
 # ever touch our own bot's comments. `first` picks the OLDEST match, so if duplicates exist
 # from an older version of this script, the canonical thread is the one that keeps growing.
+# >>> SELFTEST-EXTRACT: ours-comment filter
 SELECT_OURS_JQ='[ .[]
   | select(.user.type == "Bot" and .user.login == "github-actions[bot]")
   | select(.body | contains($marker)) ]
   | first
   | .id // empty'
 readonly SELECT_OURS_JQ
+# <<< SELFTEST-EXTRACT
 
 REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY not set}"
 
@@ -162,17 +219,16 @@ log "reviewing ${REPO}#${PR}"
 # Remove every temp file on exit. Pre-declared so the trap is safe under `set -u` even if the
 # script exits before a given file is created.
 diff_file= diff_err= meta_file= prompt_file= out_file= raw= body_file= agy_diff_file= agy_work_dir=
-# The archive path's two temporaries. Declared here rather than left to their assignment,
-# so the trap frees them on every exit -- including the `exit 0` after a successful edit.
-prior_body_file= archived_file=
 # Set to 1 if agy printed its interactive OAuth login flow instead of a review (lapsed session);
 # gates the no-post abort below. Pre-declared so `${auth_failed:-0}` is set-u-safe on every path.
 auth_failed=0
+# Counts backend-error captures across attempts; see `service_error_present`. Pre-declared so
+# `${service_errors:-0}` is set-u-safe even on paths that never enter the retry loop.
+service_errors=0
 # Set when the large-diff fallback below creates refs/agy/* so the trap can remove them.
 agy_refs_created=
 cleanup() {
-  rm -f "$diff_file" "$diff_err" "$meta_file" "$prompt_file" "$out_file" "$raw" "$body_file" \
-        "$agy_diff_file" "$prior_body_file" "$archived_file"
+  rm -f "$diff_file" "$diff_err" "$meta_file" "$prompt_file" "$out_file" "$raw" "$body_file" "$agy_diff_file"
   # Remove the gitignored diff-handoff scratch dir once its file is gone. `rmdir` only unlinks an
   # empty dir, so a concurrent run's file (a different $$) is never clobbered; a non-empty dir is
   # gitignored and harmless if left behind.
@@ -558,6 +614,21 @@ for (( attempt=1; attempt<=AGY_RETRIES; attempt++ )); do
   # reading it would post that session's output into a public PR comment (data
   # leak). The PTY path above plus the retry loop cover agy issue #76 without it.
 
+  # A backend error is TRANSIENT, so it retries like empty output rather than aborting the way a
+  # lapsed session does -- but it must never be mistaken for a review. Blank the capture so no
+  # later path can post it, and let the loop try again.
+  #
+  # A COUNTER, not a per-attempt flag. A boolean reset each attempt reflects only the last one,
+  # so a 503 on attempt 1 followed by empty output on attempt 3 would report the generic "no
+  # output" cause, and the reverse would claim the backend was down on every attempt when it was
+  # down on one. Both exit non-zero, so nothing unsafe -- but the log line is the only thing
+  # telling a human which outage they are looking at.
+  if service_error_present "$out_file"; then
+    log "agy returned a backend error rather than a review (attempt ${attempt}/${AGY_RETRIES}): $(head -n 1 "$out_file")"
+    : > "$out_file"
+    service_errors=$(( ${service_errors:-0} + 1 ))
+  fi
+
   have_text "$out_file" && break
   if [ "$attempt" -lt "$AGY_RETRIES" ]; then
     delay=$(( AGY_RETRY_DELAY * attempt ))
@@ -572,6 +643,17 @@ exec 9>&- 2>/dev/null || true    # release the agy lock so the next queued job p
 # blanked $out_file above so nothing is postable. Exit non-zero WITHOUT posting anything.
 if [ "${auth_failed:-0}" = "1" ]; then
   log "aborting without posting: agy requires re-authentication on the runner host (no review was produced)."
+  exit 1
+fi
+
+# A persistent backend failure is reported as its own cause, and it FAILS THE JOB. Posting the
+# error as a review comment (the previous behaviour) produced a passing check for a review that
+# never ran; posting nothing and exiting non-zero makes the outage visible where it matters.
+# The `! have_text` is redundant today -- the loop truncates $out_file whenever it counts a
+# backend error -- and is kept deliberately: it makes the "post nothing" guarantee independent
+# of that truncation surviving a future edit.
+if backend_outage_should_fail "${service_errors:-0}" "$out_file"; then
+  log "agy's backend returned an error on ${service_errors} of ${AGY_RETRIES} attempt(s) and no review was produced. Failing the check rather than posting the error as a review. Re-run with '/agy-review' once the service recovers."
   exit 1
 fi
 
@@ -680,6 +762,7 @@ if [ -n "$prior_id" ] && [ -s "$prior_body_file" ]; then
     printf '\n</details>\n'
     printf '%s\n' "$AGY_ARCHIVE_END"
   } >> "$body_file"
+  rm -f "$archived_file"
 
   # Re-run the OAuth guard on the ASSEMBLED body. The archive is text this script published
   # earlier and so has already passed the guard once, but the body is what gets published now
@@ -692,10 +775,13 @@ if [ -n "$prior_id" ] && [ -s "$prior_body_file" ]; then
   if gh api -X PATCH "repos/${REPO}/issues/comments/${prior_id}" \
        -f body="$(cat "$body_file")" >/dev/null 2>&1; then
     log "updated review comment ${prior_id} on ${REPO}#${PR} (earlier rounds archived in place)"
+    rm -f "$prior_body_file"
     exit 0
   fi
   log "warning: could not edit comment ${prior_id}; posting a fresh review instead"
 fi
+rm -f "$prior_body_file"
+
 if ! post_output="$(gh pr comment "$PR" --repo "$REPO" --body-file "$body_file" 2>&1)"; then
   log "failed to post review to ${REPO}#${PR}: ${post_output}"
   exit 1

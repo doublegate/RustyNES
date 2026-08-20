@@ -30,10 +30,32 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 extract_marker() {
   sed -n 's/^MARKER="\(.*\)"$/\1/p' "$SCRIPT_DIR/agy-review.sh" | head -n 1
 }
+# Extraction is delimited by explicit `SELFTEST-EXTRACT` markers rather than by matching the
+# declaration's own syntax. Adopted FROM SLAC, and it is the better mechanism: the `sed` range
+# it replaced ended at the first line closing with a quote, so a filter whose body ever ended a
+# line that way would be silently TRUNCATED -- and a truncated jq program can still compile and
+# still return ids, which is exactly the silent-wrong-answer this file exists to prevent.
+# Markers also let a guard be several statements rather than one assignment, which is what makes
+# the OAuth and service-error guards testable at all.
+extract_block() {
+  sed -n "/^# >>> SELFTEST-EXTRACT: $1\$/,/^# <<< SELFTEST-EXTRACT\$/p" "$SCRIPT_DIR/agy-review.sh"
+}
 extract_filter() {
-  sed -n "/^SELECT_OURS_JQ='/,/'\$/p" "$SCRIPT_DIR/agy-review.sh" \
+  extract_block "ours-comment filter" \
+    | sed -n "/^SELECT_OURS_JQ='/,/'\$/p" \
     | sed "1s/^SELECT_OURS_JQ='//; \$s/'\$//"
 }
+
+# Every marked block must exist and be sourceable. A renamed or unbalanced marker would
+# otherwise extract EMPTY, and an empty guard sources fine and asserts nothing -- the same
+# absence-reads-as-agreement failure the markers were adopted to prevent.
+for guard in "service-error guard" "oauth guard" "ours-comment filter"; do
+  blk="$(extract_block "$guard")"
+  [ -n "$blk" ] || { echo "FAIL: SELFTEST-EXTRACT block '$guard' is missing or empty" >&2; exit 1; }
+  printf '%s\n' "$blk" | bash -n - 2>/dev/null \
+    || { echo "FAIL: extracted block '$guard' is not valid shell (unbalanced markers?)" >&2; exit 1; }
+  eval "$blk"
+done
 
 MARKER="$(extract_marker)"
 FILTER="$(extract_filter)"
@@ -191,6 +213,54 @@ if sed -e ':a' -e '/\\$/{N;s/\\\n//;ba' -e '}' "$SCRIPT_DIR/agy-review.sh" \
 else
   echo "  ok    --arg/--argjson are not passed to \`gh api\`"
 fi
+
+# --- the service-error guard ---------------------------------------------------
+# When agy's upstream is down it prints an error, not a review. That text is non-empty, so
+# `have_text` alone treats it as a valid review and POSTs it -- a green check for a review that
+# never ran. Observed twice on SLAC PR #14, where the check passed in 7 seconds with the error
+# string as its entire body. A control that cannot fail is worse than no control.
+se() { printf '%s' "$1" > "$TMPD/cap"; service_error_present "$TMPD/cap" && echo MATCH || echo NOMATCH; }
+TMPD="$(mktemp -d)"
+trap 'rm -rf "$TMPD"' EXIT
+
+check "a bare backend 503 is caught" "MATCH" \
+  "$(se 'Error: Eligibility check failed: UNAVAILABLE (code 503): The service is currently unavailable.')"
+check "RESOURCE_EXHAUSTED is caught" "MATCH" "$(se 'Error: RESOURCE_EXHAUSTED')"
+
+# The false positives the anchoring exists to avoid. A genuine review may quote a 503 while
+# reviewing retry logic, and aborting on that would be the very failure the OAuth guard's design
+# notes warn about.
+check "a review DISCUSSING a 503 is not caught" "NOMATCH" \
+  "$(se "$(printf '## Review\n\nThe retry path should handle Error: UNAVAILABLE (code 503) here.\n')")"
+check "an error on line 3 is not caught (only line 1 counts)" "NOMATCH" \
+  "$(se "$(printf '## Review\n\nError: UNAVAILABLE (code 503)\n')")"
+check "an empty capture is not caught" "NOMATCH" "$(se '')"
+
+# The ANCHOR, tested where it is the only thing that matters: the error text is on LINE ONE but
+# not at its start. `head -n 1` cannot exclude this; only `^` can. Without this fixture the
+# anchor could be deleted and every other check still passed.
+check "a heading MENTIONING an error mid-line is not caught" "NOMATCH" \
+  "$(se '## Review of the Error: UNAVAILABLE (code 503) retry path')"
+
+# ...and the anchored form still matches with leading whitespace, which the regex allows.
+check "a leading-whitespace error is still caught" "MATCH" \
+  "$(se '   Error: UNAVAILABLE (code 503)')"
+
+# The size cap is what separates "the error IS the whole capture" from "a review mentions one".
+long="Error: UNAVAILABLE (code 503) $(head -c 3000 /dev/zero | tr '\0' 'x')"
+check "a long capture opening with an error is not caught" "NOMATCH" "$(se "$long")"
+
+# The script must FAIL rather than post when the backend errored and nothing was produced.
+# Called, not grepped for: `if false && [ "${service_errors:-0}" -gt 0 ]` still contains what a
+# structural grep looks for, and that mutation came back NOT CAUGHT.
+: > "$TMPD/empty"
+printf 'a real review\n' > "$TMPD/review"
+check "outage + no review  -> fail the job" "0" \
+  "$(backend_outage_should_fail 2 "$TMPD/empty"; echo $?)"
+check "outage + a review   -> do not fail"  "1" \
+  "$(backend_outage_should_fail 2 "$TMPD/review"; echo $?)"
+check "no outage + no review -> not THIS guard's job" "1" \
+  "$(backend_outage_should_fail 0 "$TMPD/empty"; echo $?)"
 
 if [ "$fails" -ne 0 ]; then
   echo "$fails check(s) failed" >&2
