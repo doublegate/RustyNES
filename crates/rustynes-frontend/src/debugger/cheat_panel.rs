@@ -228,9 +228,17 @@ fn body(ui: &mut egui::Ui, state: &mut CheatPanelState, rom_crcs: &[u32]) -> boo
     // rather than beside the add-fields because it is not about any one edit: it
     // says the whole list on screen is not on disk.
     if !state.save_error.is_empty() {
-        ui.colored_label(
-            egui::Color32::from_rgb(0xE0, 0x40, 0x40),
-            state.save_error.clone(),
+        // Wrapped, not truncated. An OS-level I/O error can be long, and an
+        // unwrapped label widens the window to fit it — the panel's other error
+        // fields carry short messages this crate authored, so they never showed
+        // the problem. Truncating would be worse than wrapping here: the tail of
+        // an I/O error is usually the part naming the actual cause.
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(state.save_error.clone())
+                    .color(egui::Color32::from_rgb(0xE0, 0x40, 0x40)),
+            )
+            .wrap(),
         );
     }
 

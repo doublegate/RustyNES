@@ -113,6 +113,14 @@
 //!   umask default. A test can only observe the end state, so the window is
 //!   invisible to it by construction.
 //!
+//! - **The production backoff wiring (`rename_with_retry` passing
+//!   `RENAME_BACKOFF_MS` rather than `0`).** Zeroing it is invisible here, and not
+//!   because the test is weak: on Unix `is_transient_rename_error` is always
+//!   `false`, so the loop never sleeps at all and there is nothing to observe on
+//!   the platform CI runs. Only a Windows run could see it. The *duration* is
+//!   pinned instead, through `total_backoff_ms`, which is the half that carries
+//!   the actual decision.
+//!
 //! Both are kept for the reason they were added, and neither should be removed on
 //! the evidence that "no test fails". That inference is the failure this project
 //! has been bitten by more than once; an untested property is not an unnecessary
@@ -193,21 +201,55 @@ const SCRATCH_ATTEMPTS: u32 = 8;
 
 /// How many times to attempt the rename before giving up.
 ///
-/// Only ever more than one on Windows (see `is_transient_rename_error`). Five
-/// attempts sleep FOUR times — the loop returns on the fifth failure rather than
-/// backing off after it — so the worst case is 10 + 20 + 40 + 80 = **150 ms**,
-/// which is a long time in a UI frame and a short one against losing a save the
-/// user believes happened. (This read 310 ms until review; that would be the
-/// figure if a fifth sleep of 160 ms happened, and it does not.)
-const RENAME_ATTEMPTS: u32 = 5;
+/// Only ever more than one on Windows (see `is_transient_rename_error`).
+///
+/// `N` attempts sleep `N - 1` times — the loop returns on the last failure rather
+/// than backing off after it — so eight attempts give
+/// 10 + 20 + 40 + 80 + 160 + 320 + 640 = **1270 ms** of total backoff.
+///
+/// It was five attempts (150 ms) until review pointed out that Windows Defender
+/// can hold a lock on a newly written file for longer than that while it scans,
+/// so the retry would exhaust before the lock cleared and the save would fail for
+/// a reason that resolves itself a moment later.
+///
+/// **That timing claim is not one this project can verify** — there is no Windows
+/// runner in the PR matrix and no measurement behind it here. It was adopted
+/// anyway because the direction is safe and the trade is one-sided: the cost is a
+/// longer stall on a save that is *already failing*, and the benefit is not losing
+/// a save the user believes happened. If it is ever measured, this comment is the
+/// place the number belongs.
+///
+/// (The doc read 310 ms until an earlier round — that would be the figure if a
+/// fifth sleep of 160 ms happened, and it did not.)
+const RENAME_ATTEMPTS: u32 = 8;
 
-/// Base backoff between rename attempts, doubled each time: 10, 20, 40, 80, 160.
+/// Base backoff between rename attempts, doubled each time: 10, 20, 40, 80, 160,
+/// 320, 640.
 ///
 /// The `sleep` this drives is unreachable off Windows, which matters on **wasm**
 /// specifically: `std::thread::sleep` cannot block on `wasm32-unknown-unknown`.
 /// It is never called there because `is_transient_rename_error` is `false` on
 /// every non-Windows target, so the loop returns on the first error.
 const RENAME_BACKOFF_MS: u64 = 10;
+
+/// Total time the retry loop will wait before giving up, in milliseconds.
+///
+/// Derived rather than written down, so it cannot drift from the two constants it
+/// summarises. Exists to be ASSERTED: the reason for the current attempt count is
+/// a required total (long enough to outlast a Windows Defender scan lock), and a
+/// test comparing an attempt count against `RENAME_ATTEMPTS` pins nothing — both
+/// sides move together. A mutation reducing the count to its old value came back
+/// NOT CAUGHT for exactly that reason.
+/// `#[cfg(test)]` because nothing in the shipped path needs the sum — the loop
+/// sleeps per attempt and never asks for the total. It is a derivation of two
+/// production constants that exists so a test can assert the property they were
+/// chosen for, which is a legitimate reason for a test-only item and a poor
+/// reason to keep dead code in the binary.
+#[cfg(test)]
+const fn total_backoff_ms() -> u64 {
+    // N attempts sleep N-1 times, doubling: base * (2^(N-1) - 1).
+    RENAME_BACKOFF_MS * ((1u64 << (RENAME_ATTEMPTS - 1)) - 1)
+}
 
 /// Resolve a symlinked target to the file it points at.
 ///
@@ -339,7 +381,14 @@ fn is_windows_sharing_violation(e: &io::Error) -> bool {
 ///
 /// Propagates the final error when the attempts are exhausted rather than
 /// reporting success or falling silent.
-fn rename_with_retry_using<F, P>(mut op: F, transient: P) -> io::Result<()>
+///
+/// `base_backoff_ms` is a parameter for a duller reason than the other two: the
+/// exhaustion test drives the loop to its limit, and with the production value it
+/// really sleeps the full 1270 ms — measurably, it took the module's suite from
+/// 0.15 s to 1.27 s. Tests pass `0`, which changes nothing they assert (the loop's
+/// contract is the attempt COUNT and the propagated error, not the wall time) and
+/// gives the suite its second back.
+fn rename_with_retry_using<F, P>(mut op: F, transient: P, base_backoff_ms: u64) -> io::Result<()>
 where
     F: FnMut() -> io::Result<()>,
     P: Fn(&io::Error) -> bool,
@@ -353,9 +402,11 @@ where
                 if attempt >= RENAME_ATTEMPTS || !transient(&e) {
                     return Err(e);
                 }
-                std::thread::sleep(std::time::Duration::from_millis(
-                    RENAME_BACKOFF_MS << (attempt - 1),
-                ));
+                if base_backoff_ms > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        base_backoff_ms << (attempt - 1),
+                    ));
+                }
             }
         }
     }
@@ -363,7 +414,11 @@ where
 
 /// `fs::rename`, retried past a transient Windows sharing violation.
 fn rename_with_retry(from: &Path, to: &Path) -> io::Result<()> {
-    rename_with_retry_using(|| fs::rename(from, to), is_transient_rename_error)
+    rename_with_retry_using(
+        || fs::rename(from, to),
+        is_transient_rename_error,
+        RENAME_BACKOFF_MS,
+    )
 }
 
 /// Apply `mode` to `path` through `op`.
@@ -1240,6 +1295,7 @@ mod tests {
                 Ok(())
             },
             is_transient_rename_error,
+            0,
         )
         .expect("should succeed");
         assert_eq!(calls, 1, "a successful rename must not be retried");
@@ -1259,6 +1315,7 @@ mod tests {
                 Err(io::Error::new(io::ErrorKind::NotFound, "gone"))
             },
             |e| e.kind() == io::ErrorKind::PermissionDenied,
+            0,
         );
         assert!(r.is_err());
         assert_eq!(calls, 1, "a NotFound rename must not be retried");
@@ -1279,12 +1336,26 @@ mod tests {
                 Err(io::Error::new(io::ErrorKind::PermissionDenied, "busy"))
             },
             |_| true,
+            0,
         );
         let e = r.expect_err("exhausting the attempts must not report success");
         assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(
             calls, RENAME_ATTEMPTS,
             "the loop must make exactly RENAME_ATTEMPTS attempts before giving up"
+        );
+
+        // ...and the attempt count must still buy the total wait it exists for.
+        // Asserting `calls == RENAME_ATTEMPTS` alone pins NOTHING: both sides move
+        // together, so reducing the constant satisfies it while silently halving
+        // the time the retry outlasts. Established by mutation — that change came
+        // back NOT CAUGHT until this assertion existed.
+        assert!(
+            total_backoff_ms() >= 500,
+            "the retry must wait at least 500 ms in total before giving up \
+             (a Windows Defender scan lock can outlast a shorter budget); \
+             {RENAME_ATTEMPTS} attempts at {RENAME_BACKOFF_MS} ms give {} ms",
+            total_backoff_ms()
         );
     }
 
@@ -1301,6 +1372,7 @@ mod tests {
                 Err(io::Error::new(io::ErrorKind::PermissionDenied, "busy"))
             },
             is_transient_rename_error,
+            0,
         );
         assert!(r.is_err());
         assert_eq!(calls, 1, "POSIX rename has no transient sharing violation");
