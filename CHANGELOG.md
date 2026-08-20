@@ -14,7 +14,207 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-Post-v2.3.7 work, landed but not yet cut.
+## [2.3.9] - 2026-08-20 - "Crucible" (what the gates actually cover)
+
+A crucible is where something is tested to destruction rather than inspected, and
+that is what this release does to the project's own gates: what they cover, what
+they only appear to cover, and where a regression could still reach `main`
+unchallenged.
+
+Deliberately not a feature release. The v2.3.x line added five tools in four
+releases, and the recurring finding across all of them was never that the
+emulation was wrong — it was that **a check reported a pass it had not earned.**
+
+**`rustynes-apu` and `rustynes-core` both change**, so AccuracyCoin is verified
+rather than asserted, and re-run after the second round of deletions rather than
+only the first: **141/141 (100.00%)** on the authoritative RAM decoder, nestest
+0-diff.
+
+### Added
+
+- **A Latency Oracle measurement is remembered per game.** (#410.) Reopening a
+  game shows what was measured last time instead of an empty panel, keyed on the
+  ROM SHA-256 in `[input]` — the same key shape `graphics.hd_packs` already uses.
+  `#[serde(default)]` so an older config loads unchanged, plus
+  `skip_serializing_if` so the key stays out of the file until there is something
+  to store: a user who never opens the panel carries nothing and their config is
+  not rewritten.
+
+  **Remembering is not applying.** Nothing here touches `run_ahead`, and
+  restoring never queues a pending apply, so a depth measured in an earlier
+  session is still one explicit click from being applied. An **inconclusive**
+  result is not remembered at all: a stored "I could not tell" is
+  indistinguishable from a stored answer once it has lost the context that
+  produced it.
+
+- **The two-acquisition lock race is measured rather than reasoned about.**
+  (#409.) The `needs_nes` render arm — taken exactly when a debugger or tool
+  panel is open — acquires the emulator lock twice per redraw, and drops it in
+  between so composite work does not hold the emulator. If the emulation thread
+  takes the lock in that gap, the screen shows frame N while a panel describes
+  N+1.
+
+  `Nes::cycle()` is read at both acquisitions and compared: it is cumulative and
+  monotonic, and `produce_one_frame` holds the lock across a **whole** frame, so
+  any difference at all means at least one complete frame landed in the gap.
+  Both a hit count and a denominator are kept — "the race did not fire" and
+  "nothing was observed" both read as zero hits, and only the denominator
+  separates them.
+
+- **A RAM Atlas address can leave the panel.** (#413.) `Send to RAM Watch`
+  exports a classified address into Memory Compare's watch list, carrying the
+  verdict **and the lens that produced it** — liveness is relative to the
+  observable, and the watch list is exactly where an unqualified "LIVE" would
+  outlive the panel that qualified it. `Untested` is spelled out and cites no
+  lens, because nothing was observed through one. Every address is exportable,
+  including `Inert`: the rule is that a claim carries its evidence, not that
+  unverified addresses are unusable.
+
+- **A real produce-to-visible latency series, and the end-to-end figure it makes
+  possible.** (#412.) The interim figure was valid only because its lag term is a
+  *constant*; the vblank wait and lock contention could not simply be added on,
+  because `p95(A) + p95(B)` is not `p95(A + B)`. `PresentBuffer` now stamps each
+  frame at publish and the redraw records `stamp.elapsed()` after the present, so
+  one sample spans the whole pipeline. The panel reports both figures, gated
+  independently, and says which one it is showing.
+
+- **The SAFETY-comment rule is a gate rather than a request.** (#423.)
+  `clippy::undocumented_unsafe_blocks` is enabled workspace-wide. All 91 unsafe
+  sites already carried a justification; two had it where a human reads correctly
+  and a checker cannot — one of them reachable only under the `browser-cheevos`
+  wasm feature, so it surfaced only when the gate ran across every gated
+  combination. The gate is demonstrated to fail, not assumed to.
+
+### Changed
+
+- **The accuracy battery runs at review time, scoped by path.** (#408.) `setup`
+  computed one `full` flag and `test-roms` ran only when it was true, so a
+  regular feature PR never ran the battery and an accuracy regression could not
+  be caught on the PR that caused it — #403 is the worked example. A second
+  `paths-filter` output covers the chip crates, core, `rustynes-gamedb`, the test
+  harness and `tests/`, and `test-roms` now runs when it *or* the existing full
+  flag is true. `rustynes-gamedb` is included for a non-obvious reason: it
+  rewrites the iNES header on load, so it changes what the emulator *is* before a
+  cycle runs.
+
+- **Provisioning steps are bounded, not just the jobs.** (#408, #409.) The
+  cross-compile gate's `apt-get update && apt-get install` were network fetches
+  with no timeout of their own, so a stalled mirror hung until the job timeout
+  fired and the run was reported as cancelled rather than as what it was — four
+  times during the v2.3.7 cut. Now one bounded, thrice-retried helper, with
+  elevation outside `timeout` so a killed fetch cannot orphan `apt-get` holding
+  the dpkg lock.
+
+- **The docs-only CI skip is repaired — it had never worked.** (#418.)
+  `dorny/paths-filter`'s `predicate-quantifier` defaults to `some`, so `'**'`
+  matched everything and all seven `!` exclusions were dead from the day they were
+  written. A markdown-only PR logged `Filter code = true`. Fixed with two filter
+  steps, because the quantifier is step-level and `accuracy` is a list of
+  alternatives that `every` would make unsatisfiable — silently disabling the
+  accuracy battery while fixing a different gate.
+
+- **The ARM provisioning installs headers rather than a toolchain.** (#417.) The
+  step asked for a whole cross compiler to obtain a header package the comment
+  above it had already named, and whose linker it stated was unused. Its timeouts
+  were calibrated against an unmeasured claim; the log gave the real number,
+  `Fetched 4201 kB in 4min 45s (14.7 kB/s)`.
+
+- **257 lines of dead code removed**, plus 25 `#[allow(dead_code)]` attributes
+  that were suppressing nothing. (#422.) Two `mc-r1-*` islands whose cargo
+  features exist nowhere in the workspace, and `drain_dma` — called on every CPU
+  read, every CPU write and every bus cycle, with an empty body and comments
+  claiming the legacy service below it "stays active for the default build".
+
+- **Two `cargo deny` advisory ignores retired.** (#424.) Their own entry said to
+  remove them once the resolve moved past quick-xml 0.40, and it had.
+  `advisory-not-detected` is a warning, so nothing surfaced it.
+
+### Fixed
+
+- **A freeze from one cartridge kept writing into the next.** (#419.) Both memory
+  panels' freezes feed the per-frame raw-cheat overlay, and neither was registered
+  with the ROM-transition hook — so a byte frozen in one game went on being written
+  into the next at an address that means something else there. The sweep that found
+  it now covers every panel under one rule: derived output is discarded,
+  user-authored input is kept, and only input that actively **writes** is
+  neutralised.
+
+- **The call stack and access counters survived a ROM change.** (#415.) Both are
+  reconstructed telemetry that does not rebuild itself, and `uninit_read` is a
+  *claim* rather than a tally — carried across a ROM change it reported
+  uninitialized-RAM findings about a cartridge no longer loaded.
+
+- **The config file is written atomically and durably.** (#420.) `fs::write`
+  truncates then writes, so an interruption left a truncated `config.toml` — every
+  keybinding, palette, shader preset and per-game setting. Now a sibling scratch
+  file, `fsync`, exclusive creation, mode carried across, symlink resolved
+  (including a **broken** link, the freshly-created dotfiles case), and the parent
+  directory synced.
+
+- **A failed latency-config save is reported instead of swallowed.** (#411.)
+
+- **Movies record two ports, and now say so.** (#421.) `FrameInput` models P1 and
+  P2, so a recording made with the Four Score adapter captures half of what drove
+  the run — while the Replay panel printed "Four Score (P1..P4)" at the moment a
+  user decides to press Record. Widening the format is a `.rnm` epoch change, so
+  this is disclosed at three levels, with the caveat printed directly under the
+  claim it qualifies.
+
+### Documentation
+
+- **The release anchors are re-synchronised, and two of them were wrong about
+  more than the version number.** Every "current release" claim outside the
+  CHANGELOG had drifted, each by a different amount, which is what happens when
+  the same fact is written down in eight places: `README.md` and `docs/STATUS.md`
+  said v2.3.7, `VERSION-PLAN.md` said v2.3.6 (its release table stopped at
+  v2.3.5, still marked `(current)`), `to-dos/ROADMAP.md` said v2.3.3 in one place
+  and v2.2.5 in another, `SUPPORT.md` said v2.3.0, and the root `ROADMAP.md` said
+  v2.0.4. All now read **v2.3.9**, with v2.3.8 and v2.3.7 demoted into the
+  historical trail rather than dropped.
+
+  Two carried a claim worth more than the version:
+
+  - **`SECURITY.md` still offered support for `1.0.x` and marked `< 1.0`
+    unsupported** — a policy table describing a project two major versions and
+    eleven months behind the tree, on the one document a reporter reads before
+    deciding whether a finding is worth sending. Rewritten for the rolling
+    patch cadence RustyNES actually ships on, and it now names the two
+    boundaries that change what a report *means* rather than merely how old it
+    is: v2.0.0 "Timebase" (a pre-v2.0.0 `.rns`/`.rnm` is refused with a clear
+    error rather than reinterpreted, so such a parsing report is not
+    reproducible against a current build **by design**, ADR 0028) and v2.2.9
+    (the GPL-3.0-or-later relicence is a licensing correction, not a SemVer
+    break, ADR 0036).
+  - **The root `ARCHITECTURE.md` presented the retired dot-lockstep scheduler as
+    the current design** — `tick_one_dot`, the `% 3` phase test, and the claim
+    that the bus need not re-sync the PPU "because they were already advanced in
+    lockstep above". `docs/architecture.md` and `docs/scheduler.md` each carry a
+    v2.0.0 banner correcting exactly this and label their historical
+    subsections; the root companion had neither, so the one architecture
+    document a newcomer opens first was the one describing a scheduler that has
+    not existed since 2026-07-03. It now carries the same banner and the same
+    labels, and states the part that did **not** change: lockstep was chosen so
+    that a mid-instruction PPU event is visible to the rest of the instruction
+    without a per-quirk patch, and that consequence survives the mechanism
+    moving. This project has been bitten before by prose asserting an intent the
+    code does not implement; a spec describing the previous implementation is
+    the same failure with a longer fuse.
+
+- **The user guide covers the tools that shipped since it was last touched.**
+  `docs/user-guide/analysis-tools.md` documented three tools and the menu had
+  five: **Divergence Lens** (v2.3.8) and **Audio Provenance** (v2.3.7) were
+  reachable in the UI and absent from the guide, and the menu reference listed
+  neither. Both are added, along with v2.3.9's **RAM Atlas → RAM Watch** export
+  — including why the lens travels with the address (liveness is relative to
+  what was observed, so an unqualified "LIVE" in a watch list is a claim nobody
+  can check) and why the cheat, Lua and RetroAchievements exports are
+  deliberately still absent (a cheat is a **write**, so it needs a
+  locked-session predicate the watch export correctly does without).
+
+## [2.3.8] - 2026-08-20 - "Parallax" (which pixels differ, not just which frame)
+
+Cut from its own boundary commit (#407's merge) rather than from `main`, so its
+artifacts contain exactly the Divergence Lens. See the `v2.3.8` tag.
 
 ### Added
 
@@ -60,55 +260,6 @@ Post-v2.3.7 work, landed but not yet cut.
   way in and not on the way out, which is deliberate — it is what lets the Lens
   read the trial's final frame off `nes` directly — but the outermost caller has
   to put the timeline back, and did not.
-
-- **A Latency Oracle measurement is remembered per game.** (#410.) Reopening a
-  game shows what was measured last time instead of an empty panel, keyed on the
-  ROM SHA-256 in `[input]` — the same key shape `graphics.hd_packs` already uses.
-  `#[serde(default)]` so an older config loads unchanged, plus
-  `skip_serializing_if` so the key stays out of the file until there is something
-  to store: a user who never opens the panel carries nothing and their config is
-  not rewritten.
-
-  **Remembering is not applying.** Nothing here touches `run_ahead`, and
-  restoring never queues a pending apply, so a depth measured in an earlier
-  session is still one explicit click from being applied. An **inconclusive**
-  result is not remembered at all: a stored "I could not tell" is
-  indistinguishable from a stored answer once it has lost the context that
-  produced it.
-
-- **The two-acquisition lock race is measured rather than reasoned about.**
-  (#409.) The `needs_nes` render arm — taken exactly when a debugger or tool
-  panel is open — acquires the emulator lock twice per redraw, and drops it in
-  between so composite work does not hold the emulator. If the emulation thread
-  takes the lock in that gap, the screen shows frame N while a panel describes
-  N+1.
-
-  `Nes::cycle()` is read at both acquisitions and compared: it is cumulative and
-  monotonic, and `produce_one_frame` holds the lock across a **whole** frame, so
-  any difference at all means at least one complete frame landed in the gap.
-  Both a hit count and a denominator are kept — "the race did not fire" and
-  "nothing was observed" both read as zero hits, and only the denominator
-  separates them.
-
-### Changed
-
-- **The accuracy battery runs at review time, scoped by path.** (#408.) `setup`
-  computed one `full` flag and `test-roms` ran only when it was true, so a
-  regular feature PR never ran the battery and an accuracy regression could not
-  be caught on the PR that caused it — #403 is the worked example. A second
-  `paths-filter` output covers the chip crates, core, `rustynes-gamedb`, the test
-  harness and `tests/`, and `test-roms` now runs when it *or* the existing full
-  flag is true. `rustynes-gamedb` is included for a non-obvious reason: it
-  rewrites the iNES header on load, so it changes what the emulator *is* before a
-  cycle runs.
-
-- **Provisioning steps are bounded, not just the jobs.** (#408, #409.) The
-  cross-compile gate's `apt-get update && apt-get install` were network fetches
-  with no timeout of their own, so a stalled mirror hung until the job timeout
-  fired and the run was reported as cancelled rather than as what it was — four
-  times during the v2.3.7 cut. Now one bounded, thrice-retried helper, with
-  elevation outside `timeout` so a killed fetch cannot orphan `apt-get` holding
-  the dpkg lock.
 
 ## [2.3.7] - 2026-08-19 - "Overtone" (the instruction behind every mixed cycle)
 

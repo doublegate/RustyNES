@@ -1,6 +1,127 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.3.7** (2026-08-19) — **"Overtone"**, the instruction
+> **Current release: v2.3.9** (2026-08-20) — **"Crucible"**, what the gates
+> actually cover. A crucible tests to destruction rather than inspects, and this
+> release does that to the project's own checks: what they cover, what they only
+> *appear* to cover, and where a regression could still reach `main`
+> unchallenged. The v2.3.x line added five tools in four releases, and the
+> recurring finding across all of them was never that the emulation was wrong —
+> it was that **a check reported a pass it had not earned.**
+>
+> **The docs-only CI skip had never worked.** `dorny/paths-filter`'s
+> `predicate-quantifier` defaults to `some`, which includes a file if it matches
+> **any** pattern — so the `code` filter's leading `'**'` matched everything and
+> all seven `!` exclusions under it were dead from the day they were written.
+> Proven from a run rather than the docs: a PR changing exactly one file logged
+> `Filter code = true` / `Matching files: AGENTS.md`, a markdown file matching a
+> filter whose entire purpose is excluding markdown. Every documentation PR in
+> the project's history had been running the full matrix, and that stopped being
+> merely wasteful the day two docs-only PRs were *blocked* by an ARM
+> cross-compile failure on jobs that should never have been scheduled. Fixed
+> with **two** filter steps, because the quantifier is step-level and the two
+> filters need opposite settings: `code` needs `every`, while `accuracy` is a
+> list of **alternatives** and would become unsatisfiable under it — the naive
+> one-line fix would have silently disabled the accuracy battery while repairing
+> a different gate. Both directions are now observed on real PRs.
+>
+> **The accuracy battery now runs at review time.** `test-roms` was full-run
+> only, so a regression landed on `main` rather than on the PR that caused it.
+> It is now also triggered by a path filter covering the chip crates, the core,
+> `rustynes-gamedb`, the harness and `tests/` — measured first: 11 of the last
+> 40 merged PRs touch those paths, so ~72% still pay nothing. `rustynes-gamedb`
+> is in the list for a non-obvious reason — it rewrites the iNES header on load,
+> so it changes what the emulator **is** before a cycle runs.
+>
+> **Bounds were calibrated against a measurement, not a claim.** The ARM
+> provisioning step failed on three consecutive PRs with no apt error in the log
+> at all — only two `update` timeouts at exactly the bound, and an install killed
+> mid-download. The log then gave the real number: `Fetched 4201 kB in 4min 45s
+> (14.7 kB/s)`, three orders of magnitude below normal, which is why the previous
+> ~40 MB package set was *hopeless* rather than unlucky (roughly 45 minutes; no
+> timeout could have saved it). The step was also installing the wrong thing, and
+> the comment above it said so without drawing the conclusion: bindgen runs the
+> **host** clang against `--sysroot` and never invokes the cross compiler, so
+> `libc6-dev-<arch>-cross` alone lands the headers the gate needs.
+>
+> **A freeze from one cartridge kept writing into the next** — not a stale label
+> but an active, per-frame write into the wrong game. Both memory panels'
+> freezes feed the app's raw-cheat overlay, applied after every frame, and
+> neither was registered with the ROM-transition hook. The sweep that found it
+> now covers every panel under one rule: **derived output is discarded,
+> user-authored input is kept, and only input that actively *writes* is
+> neutralised.** So RAM Search baselines and reconstructed call stacks are
+> cleared; watch lists and breakpoints survive, and breakpoints stay *armed*,
+> because a breakpoint halts (visible, recoverable) where a freeze writes
+> (silent, continuous). Two negatives are recorded too, because they cost time to
+> establish: the header editor **looks** ROM-bound and is not, and the event
+> panel / trace status / HD-pixel coordinates are per-frame state or preferences.
+>
+> **The config file is written atomically and durably.** `fs::write` truncates
+> then writes, so an interruption left the user holding a truncated
+> `config.toml` — every keybinding, palette, shader preset and per-game setting.
+> That window stopped being theoretical when saves became automatic. Seven
+> properties, and **five of them came from review rather than the first draft**:
+> a sibling scratch file, `fsync` before rename, a parent-directory sync,
+> `create_new(true)` (CWE-377), the mode applied at creation, symlink resolution
+> including a **broken** link, and a pid + per-call counter in the scratch name.
+>
+> **Two shipped features told the truth for the first time.** Movies record two
+> ports — `FrameInput` models P1 and P2 — while the Replay panel printed "Four
+> Score (P1..P4)" at the moment a user decides to press Record; widening the
+> format is a `.rnm` epoch change, so this is disclosed at three levels rather
+> than papered over. And a Latency Oracle measurement is remembered per game,
+> with a failed save now reported instead of swallowed — remembering is still not
+> applying: nothing here touches `run_ahead`.
+>
+> Also: **257 lines of dead code removed** — an APU pair (34), a closed
+> `LockstepBus` DMA-service island (183), and `drain_dma` (40), a function called
+> on every CPU read, every CPU write and every bus cycle whose entire body was
+> `let _ = read_addr;`. Alongside them, **25 of 29 `#[allow(dead_code)]`
+> attributes were suppressing nothing**, established by stripping them and
+> re-running clippy across all eight gated combinations. The **SAFETY-comment
+> rule is now a gate** (`clippy::undocumented_unsafe_blocks`, demonstrated to
+> fail), and two `cargo deny` advisory ignores were retired on their own stated
+> condition.
+>
+> `rustynes-apu` and `rustynes-core` both change, so **AccuracyCoin 141/141
+> (100.00%, RAM decoder) and nestest 0-diff are VERIFIED, not asserted** — re-run
+> again after the second round of deletions rather than only after the first.
+>
+> Built on **v2.3.8** (2026-08-20) — **"Parallax"**, which pixels differ, not
+> just which frame. Parallax is the apparent shift of an object seen from two
+> positions, and the displacement is the measurement. `Probe` could already say
+> whether two configurations of the same ROM diverge and **at which frame**, and
+> could say nothing about where or why: a trial reduces each frame to one `u64`,
+> the right shape for *detecting* a difference and the wrong shape for
+> *explaining* one — a hash says frame 412 differs and has nothing to hand to
+> Pixel Provenance, which is where an answer actually lives.
+> `divergence::localise` re-runs both configurations to the detected frame, keeps
+> the full output instead of its hash, and reports the **shape** of the
+> difference: population count, first pixel in raster order, and the inclusive
+> bounding box. Count and box separate kinds of bug from each other — one pixel
+> is a sprite or a palette entry, 256 in a row is a scanline, tens of thousands
+> is a scroll or a mode change. It localises on the **index** framebuffer
+> (256x240 `u16`s of `(emphasis << 6) | colour`, the PPU's own per-pixel output
+> before the palette lookup) — half the bytes and at least as sensitive, since
+> the RGBA buffer is a pure function of it given the same palette. Three answers,
+> and the third is the point: `Identical`, `Differs`, and **`Inconclusive`** for
+> an exhausted budget or two trials that cannot be compared — the Latency
+> Oracle's precedent applies directly, "I stopped looking" must not arrive
+> wearing the same shape as "they agree". The budget is checked up front for all
+> four trials, so spending two on detection and then finding the localisation
+> pair unaffordable cannot consume the budget that would have answered the
+> question. Beyond locating a difference the Lens **explains** it:
+> trial-scoped provenance capture hands a located pixel to the machinery that
+> already answers "what wrote this, and from which instruction", and an audio
+> lens resolves a divergence to the CPU cycle. One defect was found and fixed
+> inside the same work — the Lens left the emulator **thirty frames ahead** of
+> where it started, because a trial restores the anchor on the way in and not on
+> the way out (deliberate — it is what lets the Lens read the trial's final frame
+> off `nes` directly) and the outermost caller has to put the timeline back, and
+> did not. Cut from its own boundary commit rather than from `main`, so its
+> artifacts contain exactly the Divergence Lens.
+>
+> Built on **v2.3.7** (2026-08-19) — **"Overtone"**, the instruction
 > behind every mixed cycle. **Audio Provenance** lands as the APU counterpart of
 > Pixel Provenance: a per-register write attribution (*what wrote this, and from
 > which instruction*) and a per-CPU-cycle mix trace (*what were the channels
@@ -28,7 +149,7 @@
 > `rustynes-apu` and `rustynes-core` both change, so **AccuracyCoin 141/141
 > (100.00%, RAM decoder) and nestest 0-diff are VERIFIED, not asserted.**
 >
-> Built on **v2.3.6** (2026-08-17) — **"Sounding"**, about measuring and
+> Before that, **v2.3.6** (2026-08-17) — **"Sounding"**, about measuring and
 > about what a measurement is allowed to claim. **Two shipped features are found
 > never to have worked.** Pixel Provenance, the v2.3.2 marquee, returned an empty
 > report for every user on the default `run_ahead = 1` — its per-frame rollback is

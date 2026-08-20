@@ -27,7 +27,7 @@ The scheduler is the heart of the cycle-accurate emulator: it advances the PPU, 
 
 ## Design
 
-### One tick = one PPU dot
+### One tick = one PPU dot (historical — see the v2.0.0 note above)
 
 ```rust
 fn tick_one_dot(&mut self) {
@@ -41,7 +41,7 @@ fn tick_one_dot(&mut self) {
 
 `cpu_phase` is a per-power-on offset (0, 1, or 2) representing the random initial CPU/PPU alignment per real hardware. Reset does not change it. Cold power-cycle re-rolls it from a deterministic PRNG seeded by the user (default 0).
 
-### CPU tick
+### CPU tick (historical — see the v2.0.0 note above)
 
 ```rust
 fn cpu_tick(&mut self) {

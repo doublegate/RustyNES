@@ -56,10 +56,10 @@ Grouped by task since **v2.3.6**; the menu had grown to twenty flat entries.
 |------|-----|-------|
 | Cheats… | | Game Genie and raw RAM cheats. Kept at the top level as the most-used panel |
 | Movies & Recording ▸ | `F6` / `F7` / `F8` | Record / Play / Branch a TAS movie; import & export `.fm2` / `.bk2` and `.srt` subtitles; TAStudio; Replay / TAS; Record A/V…; Export Last 30s (`.rnm`) |
-| Audio ▸ | | NSF Player (NSF / NSFe playback), Audio Mixer (per-channel balance, scopes, VU) |
+| Audio ▸ | | NSF Player (NSF / NSFe playback), Audio Mixer (per-channel balance, scopes, VU), Audio Provenance (what wrote each APU register, and the per-CPU-cycle mix trace) — see [Analysis tools](./analysis-tools.md#audio-provenance) |
 | Input ▸ | | Input Display (pads + every expansion peripheral), Virtual Pad (on-screen controller, native only) |
 | Game Data ▸ | | ROM Info (read-only browser), ROM Database (per-game override editor) |
-| Analysis ▸ | | Latency Oracle, Pixel Provenance, RAM Atlas, BasicBot — see [Analysis tools](./analysis-tools.md) |
+| Analysis ▸ | | Latency Oracle, Pixel Provenance, RAM Atlas, Divergence Lens, BasicBot — see [Analysis tools](./analysis-tools.md) |
 | HD Pack ▸ | | Load / unload an HD pack, Pixel Inspector, Build HD Pack (native, opt-in feature) |
 | Netplay… | | Host or join a rollback session (native only) |
 | RetroAchievements… | | Login, achievements, leaderboards (native only, opt-in feature) |

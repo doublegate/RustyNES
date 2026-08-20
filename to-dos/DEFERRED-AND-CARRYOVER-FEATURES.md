@@ -9,6 +9,15 @@
 > train) against the **current code on `main`**. Items already shipped since they
 > were written are excluded; everything below was verified still-outstanding.
 >
+> **Audit currency (2026-08-20).** The most recent entry-level reconciliation in
+> this file is **v2.3.4** (2026-08-15). The five releases since — **v2.3.5
+> "Manifest"**, **v2.3.6 "Sounding"**, **v2.3.7 "Overtone"**, **v2.3.8
+> "Parallax"** and **v2.3.9 "Crucible"** — have **not** been swept through it, so
+> an item below may have been closed without its entry being struck. This note
+> exists rather than a silent re-date because an unaudited catalogue that *looks*
+> audited is worse than one that admits its cut-off: check `CHANGELOG.md` for
+> anything dated after 2026-08-15 before treating an entry here as open.
+>
 > **Reconciled against `main` @ `de682d8` on 2026-06-19** (the v1.7.0 "Forge"
 > baseline; the entries below remain the authoritative deferred backlog).
 >

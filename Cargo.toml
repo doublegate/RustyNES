@@ -44,10 +44,19 @@ default-members = ["crates/rustynes-libretro"]
 # closed on every push for want of release notes. It is right to fail closed;
 # the fix is not to leave `main` red for the whole development window.
 #
-# So: bump this as part of the release cut, together with the CHANGELOG's
-# `[Unreleased]` -> `[X.Y.Z]` rename and `rustynes_libretro.info`'s
-# `display_version`, and not before.
-version = "2.3.7"
+# So: bump this as part of the release cut, together with the CHANGELOG entry and
+# `rustynes_libretro.info`'s `display_version`, and not before.
+#
+# On the CHANGELOG half: this file used to say "`[Unreleased]` -> `[X.Y.Z]`
+# rename", which is module 70's wording but NOT what this repo does. The
+# `## [Unreleased]` header is permanent and stays at the top, empty; a release
+# PROMOTES its accumulated entries into a new `## [X.Y.Z] - <date> - "<Codename>"
+# (<theme>)` section inserted directly below it. Renaming the header instead
+# would delete the section the next development window writes into, and
+# `release-auto.yml` reads the `## [X.Y.Z]` line for BOTH the release body
+# fallback and the title codename — so the date and quoted codename are load-
+# bearing, not decoration.
+version = "2.3.9"
 edition = "2024"
 rust-version = "1.96"
 license = "GPL-3.0-or-later"
