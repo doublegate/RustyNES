@@ -16,6 +16,41 @@ cycle-accurate core later replaced.
 
 ### Added
 
+- **`rustynes-cosim` — RustyNES as a co-simulation oracle for an FPGA
+  device-under-test.** (v2.4.1, opening the "Fabric" line; ADR 0037.) A new
+  additive crate, absent from the default build, that exposes the emulator through
+  a narrow C ABI a Verilator testbench can link, plus a `nes_golden_export` CLI
+  that emits the five golden formats an external NES implementation is compared
+  against. Spec: `docs/mister.md`. The emulation core is untouched.
+
+  **RustyNES is not being ported to FPGA and cannot be.** A MiSTer core is
+  SystemVerilog compiled into a Cyclone V bitstream. What the line builds is a new
+  NES implementation written from public hardware documentation, in a sibling
+  repository, with RustyNES as its *verification oracle* — the one role it is
+  uniquely equipped for. The reference firewall extends to HDL accordingly:
+  `NES_MiSTer` and `fpganes` `rtl/` are strict black boxes.
+
+  Building it immediately found two things the crate was not looking for.
+
+  **No CI invocation had ever enabled `cpu-boot-trace` or `irq-timing-trace` for
+  clippy**, so those two `rustynes-core` modules had never passed the lint gate.
+  Turning them on surfaced six pre-existing findings. This crate now enables both
+  *unconditionally* rather than re-exposing them as its own optional features — a
+  build without them would compile, link, run, and export **empty** goldens, an
+  absence of signal that reads exactly like agreement.
+
+  And **the first `run_frame()` after power-on advances nothing at all.** The PPU
+  is constructed at dot 340 of the pre-render line, so the 7-cycle reset sequence
+  ticks past the frame wrap and leaves `frame_complete` latched; the first call
+  consumes the latch and returns having stepped zero cycles. Measured, not
+  inferred. Every other caller in the workspace runs thousands of frames, so one
+  lost frame is invisible to them — but a bare `for _ in 0..n` loop would have
+  emitted an (n−1)-frame golden under a manifest claiming n, which is a provenance
+  record wrong in the one direction that matters. `Oracle::advance_frames` gates on
+  the **frame counter** instead, and the quirk is pinned by a test that names it,
+  so a future core change that removes it fails loudly rather than silently
+  altering every golden's length.
+
 - **One atomic, durable file write for every path that persists user data.**
   (v2.4.0 item C.) The seven-property write sequence v2.3.9 built for
   `Config::save_to` is extracted into `crate::atomic_write` and adopted everywhere.

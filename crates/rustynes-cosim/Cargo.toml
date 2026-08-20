@@ -1,0 +1,39 @@
+[package]
+name = "rustynes-cosim"
+description = "RustyNES as a co-simulation oracle for an external HDL device-under-test"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords = ["nes", "emulator", "fpga", "verilator", "co-simulation"]
+categories = ["emulators", "development-tools::testing"]
+publish = false
+
+[lib]
+# `rlib` so the golden-export binary and the crate's own tests can use the safe
+# Rust API directly; `staticlib`/`cdylib` so a Verilator C++ testbench can link
+# the same code through the C ABI. Same shape as `rustynes-libretro`, minus its
+# artifact-name override — nothing downstream renames this one.
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# The trace features are NOT optional here. This crate exists to emit them, and a
+# build without them would produce an oracle that silently exports nothing —
+# exactly the "absence of a signal read as a signal" failure this project keeps
+# catching. Making them mandatory means a misconfigured build fails to compile
+# rather than producing empty goldens.
+rustynes-core = { workspace = true, features = [
+    "cpu-boot-trace",
+    "irq-timing-trace",
+] }
+
+sha2.workspace = true
+
+[[bin]]
+name = "nes_golden_export"
+path = "src/bin/nes_golden_export.rs"

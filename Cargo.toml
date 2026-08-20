@@ -20,6 +20,7 @@ members = [
     "crates/rustynes-hdpack",
     "crates/rustynes-ra",
     "crates/rustynes-libretro",
+    "crates/rustynes-cosim",
 ]
 # The libretro buildbot's shared CI templates run a bare, unscoped
 # `cargo build --release --target <triple>` from the repo root (no `-p`,
