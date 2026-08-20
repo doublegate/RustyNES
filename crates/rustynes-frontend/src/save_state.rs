@@ -92,9 +92,11 @@ pub fn save_to_slot(
     state: &[u8],
 ) -> Result<PathBuf, SaveError> {
     let path = slot_path(data_dir, rom_sha256, slot)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| map_io(parent, e))?;
-    }
+    // No `create_dir_all` here: `write_atomic` creates the parent itself, and
+    // doing it twice meant a failure surfaced with this function's path context
+    // in one case and the helper's in the other. Removed on review, matching
+    // `per_game.rs`.
+
     // Atomic + durable, via the shared helper (v2.4.0 item C).
     //
     // This was `fs::write`, which truncates and then writes. An interruption in

@@ -233,15 +233,40 @@ pub fn resolve_write_target(path: &Path) -> PathBuf {
     if let Ok(real) = fs::canonicalize(path) {
         return real;
     }
-    match fs::read_link(path) {
-        Ok(dest) if dest.is_absolute() => dest,
-        Ok(dest) => match path.parent() {
-            Some(dir) => dir.join(dest),
-            None => dest,
-        },
-        Err(_) => path.to_path_buf(),
+    // A BROKEN chain, followed by hand: `canonicalize` fails outright when the
+    // final target does not exist, so it cannot resolve `link1 -> link2 ->
+    // missing`. Following one level was enough for the dotfiles case that
+    // motivated this and wrong for the general one -- it would replace `link2`
+    // with a regular file rather than writing through to where the chain points.
+    //
+    // Bounded at `SYMLINK_DEPTH`, because a chain can be a CYCLE (`a -> b -> a`)
+    // and `read_link` succeeds forever on one. On exhaustion the last resolved
+    // path is returned rather than an error: this function's whole job is to pick
+    // a write target, and a pathological chain should degrade to "write where you
+    // were told", not fail a save.
+    let mut cur = path.to_path_buf();
+    for _ in 0..SYMLINK_DEPTH {
+        let Ok(dest) = fs::read_link(&cur) else {
+            break;
+        };
+        cur = if dest.is_absolute() {
+            dest
+        } else {
+            match cur.parent() {
+                Some(dir) => dir.join(dest),
+                None => dest,
+            }
+        };
     }
+    cur
 }
+
+/// How many broken-symlink hops to follow before giving up.
+///
+/// Bounded because a chain can be a cycle, on which `read_link` succeeds
+/// indefinitely. Linux's own limit is 40; eight is far past any real dotfiles
+/// arrangement and keeps a pathological path cheap.
+const SYMLINK_DEPTH: usize = 8;
 
 /// Is this rename failure one a retry could plausibly clear?
 ///
@@ -379,19 +404,39 @@ where
 /// file's mode across on Unix, renames over the target, and syncs the parent
 /// directory.
 ///
-/// On failure the scratch file is removed and the **existing file is left
-/// untouched** — a stale-but-valid file is the one worth keeping.
+/// On failure **before the rename** the scratch file is removed and the existing
+/// file is left untouched — a stale-but-valid file is the one worth keeping.
+///
+/// # One failure happens AFTER the target is replaced
+///
+/// The parent-directory sync is the last step, and it necessarily runs *after*
+/// the rename it exists to make durable. So a `sync_parent_dir` failure returns
+/// `Err` from a call in which **the target was successfully replaced** — the new
+/// contents are on disk and were `fsync`ed before the rename; what is uncertain
+/// is whether the directory entry survives a power loss.
+///
+/// This is stated rather than hidden because the two obvious alternatives are
+/// both worse. Swallowing it is the defect review found in the first version of
+/// this module: a genuine `EIO` from the storage layer reported as success.
+/// Rolling the rename back would mean writing the old contents again, turning a
+/// durability warning into a second full write that can itself fail.
+///
+/// Callers that distinguish "not written" from "written, durability unconfirmed"
+/// should treat an error from this function as the latter only when the target's
+/// mtime has advanced; none in this repository need to, since all of them
+/// surface the error to the user rather than acting on it.
 ///
 /// # Errors
 ///
 /// Returns the underlying [`io::Error`] from any step. A rename that fails after
 /// `RENAME_ATTEMPTS` transient failures returns the last error rather than
-/// succeeding quietly.
+/// succeeding quietly. A post-rename sync failure is wrapped so its message says
+/// the data was written; see [`post_rename_sync_error`].
 pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
-    write_atomic_with(path, contents, scratch_name)
+    write_atomic_with(path, contents, scratch_name, sync_parent_dir)
 }
 
-/// `write_atomic`, with the scratch-name source injected.
+/// `write_atomic`, with the scratch-name source and the parent sync injected.
 ///
 /// The seam exists for one specific test. The exhaustion branch -- where every
 /// candidate name is occupied and nothing of ours is ever created -- is where the
@@ -400,7 +445,13 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
 /// a decoy at every name it will pick. That prediction races every parallel test
 /// that calls `write_atomic` (see `open_fresh_scratch`).
 ///
-/// It was not obvious this seam was needed. The first attempt at the test forced
+/// The parent sync is injected for the same reason and a different failure: it
+/// runs AFTER the rename, so its error is returned from a call in which the
+/// target was already replaced. Asserting that contract needs a sync that fails
+/// on demand, and the real one only fails on a directory that is writable but not
+/// readable -- not something a unit test should be arranging.
+///
+/// It was not obvious the first seam was needed. The first attempt at the test forced
 /// a failure by writing to a directory, which fails at the *rename* -- a branch
 /// where the scratch file genuinely is ours -- so it exercised the wrong path
 /// entirely and passed against both the fix and the defect. Two mutations
@@ -409,9 +460,15 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
 /// # Errors
 ///
 /// As [`write_atomic`].
-fn write_atomic_with<N>(path: &Path, contents: &[u8], mut scratch: N) -> io::Result<()>
+fn write_atomic_with<N, S>(
+    path: &Path,
+    contents: &[u8],
+    mut scratch: N,
+    sync_parent: S,
+) -> io::Result<()>
 where
     N: FnMut(&Path) -> PathBuf,
+    S: Fn(&Path) -> io::Result<()>,
 {
     let target = resolve_write_target(path);
     if let Some(parent) = target.parent()
@@ -508,7 +565,24 @@ where
         return Err(e);
     }
 
-    sync_parent_dir(&target)
+    sync_parent(&target).map_err(|e| post_rename_sync_error(&e))
+}
+
+/// Label a parent-sync failure as post-rename, so the message cannot be read as
+/// "nothing was written".
+///
+/// The kind is preserved so callers matching on [`io::ErrorKind`] still see the
+/// real cause; only the message gains the qualifier. Separated from the call site
+/// so a test can assert the wording without needing a directory that is writable
+/// but not readable.
+fn post_rename_sync_error(e: &io::Error) -> io::Error {
+    io::Error::new(
+        e.kind(),
+        format!(
+            "the file was written and renamed into place, but its directory entry \
+             could not be synced, so the rename may not survive a power loss: {e}"
+        ),
+    )
 }
 
 /// A scratch path beside `target`, carrying the pid and a per-call counter.
@@ -884,6 +958,118 @@ mod tests {
         sync_parent_dir(Path::new("./f.txt")).expect("an explicit `.` parent must work");
     }
 
+    /// A post-rename sync failure must not read as "nothing was written".
+    ///
+    /// The parent-directory sync is the last step and necessarily runs *after*
+    /// the rename it exists to make durable, so its failure returns `Err` from a
+    /// call in which the target WAS replaced. That contradicts the plain reading
+    /// of "on failure the existing file is left untouched", which is why the
+    /// message now says what actually happened. Found in review.
+    #[test]
+    fn a_post_rename_sync_failure_says_the_data_was_written() {
+        let e = post_rename_sync_error(&io::Error::from_raw_os_error(5));
+        let msg = e.to_string();
+        assert!(
+            msg.contains("was written"),
+            "the message must not imply the write was skipped: {msg}"
+        );
+        assert!(
+            msg.contains("power loss"),
+            "the message must name what is actually uncertain: {msg}"
+        );
+        assert_eq!(
+            e.kind(),
+            io::Error::from_raw_os_error(5).kind(),
+            "the underlying kind must survive, or callers matching on it break"
+        );
+    }
+
+    /// `write_atomic` must APPLY the post-rename label, not merely define it.
+    ///
+    /// The first test for this called `post_rename_sync_error` directly, which
+    /// asserts the helper behaves and says nothing about whether the call site
+    /// uses it — a mutation deleting the `map_err` came back NOT CAUGHT. Same
+    /// lesson as the scratch-cleanup test two definitions up, in a new shape:
+    /// testing a helper is not testing the code that was supposed to call it.
+    ///
+    /// Also pins the contract the label exists to describe: on a post-rename sync
+    /// failure the call returns `Err` **and the target holds the new contents**.
+    #[test]
+    fn a_post_rename_sync_failure_still_leaves_the_new_contents_in_place() {
+        let d = tempdir();
+        let p = d.join("f.txt");
+        fs::write(&p, b"old").expect("seed");
+
+        let e = write_atomic_with(&p, b"new", scratch_name, |_| {
+            Err(io::Error::from_raw_os_error(5)) // EIO
+        })
+        .expect_err("a failing parent sync must not report success");
+
+        assert!(
+            e.to_string().contains("was written"),
+            "write_atomic did not apply the post-rename label: {e}"
+        );
+        assert_eq!(
+            fs::read(&p).expect("target must exist"),
+            b"new",
+            "the rename had already happened; the target must hold the NEW bytes"
+        );
+    }
+
+    /// A broken symlink CHAIN must resolve to its end, not to the middle.
+    ///
+    /// `canonicalize` cannot help here — it fails outright when the final target
+    /// does not exist — so the chain is followed by hand. Following one level
+    /// replaced `link2` with a regular file instead of writing through to where
+    /// the chain points. Raised in review three times before it was fixed.
+    #[cfg(unix)]
+    #[test]
+    fn a_broken_symlink_chain_resolves_to_its_end() {
+        use std::os::unix::fs::symlink;
+        let d = tempdir();
+        let missing = d.join("final.txt");
+        let link2 = d.join("link2");
+        let link1 = d.join("link1");
+        symlink(&missing, &link2).expect("link2 -> final");
+        symlink(&link2, &link1).expect("link1 -> link2");
+
+        write_atomic(&link1, b"payload").expect("write through the chain");
+
+        assert_eq!(
+            fs::read(&missing).expect("the chain's end must hold the payload"),
+            b"payload"
+        );
+        assert!(
+            fs::symlink_metadata(&link2)
+                .expect("link2 must survive")
+                .is_symlink(),
+            "the intermediate link was replaced by a regular file"
+        );
+    }
+
+    /// A symlink CYCLE must terminate rather than spin.
+    ///
+    /// `read_link` succeeds forever on `a -> b -> a`, so the resolver is bounded.
+    /// It degrades to a write target rather than an error: picking where to write
+    /// is this function's whole job, and a pathological chain should not fail a
+    /// save.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_cycle_terminates() {
+        use std::os::unix::fs::symlink;
+        let d = tempdir();
+        let a = d.join("a");
+        let b = d.join("b");
+        symlink(&b, &a).expect("a -> b");
+        symlink(&a, &b).expect("b -> a");
+        // The assertion is that this RETURNS at all.
+        let resolved = resolve_write_target(&a);
+        assert!(
+            resolved == a || resolved == b,
+            "a cycle must resolve to one of its own links, got {resolved:?}"
+        );
+    }
+
     /// A failed write must not delete a file it did not create.
     ///
     /// On exhaustion the last name tried is one that ALREADY EXISTED — an orphan
@@ -908,7 +1094,7 @@ mod tests {
         fs::write(&occupied, OTHERS).expect("plant");
 
         let taken = occupied.clone();
-        let e = write_atomic_with(&p, b"payload", |_| taken.clone())
+        let e = write_atomic_with(&p, b"payload", |_| taken.clone(), sync_parent_dir)
             .expect_err("every candidate name was occupied; this must fail");
         assert_eq!(e.kind(), io::ErrorKind::AlreadyExists);
 
