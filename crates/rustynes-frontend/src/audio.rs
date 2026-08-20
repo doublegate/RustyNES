@@ -237,7 +237,6 @@ impl SampleQueue {
 
     /// v1.0.0 — the current master output gain.
     #[must_use]
-    #[allow(dead_code)] // read in tests + as a UI mirror.
     pub fn gain(&self) -> f32 {
         #[allow(clippy::cast_possible_truncation)] // low 32 bits hold the f32.
         f32::from_bits(self.inner.gain.load(Ordering::Relaxed) as u32)
@@ -448,7 +447,6 @@ impl SampleQueue {
     }
 
     /// Number of buffered samples (racy snapshot; informational).
-    #[allow(dead_code)] // Used by tests + the Performance panel.
     pub fn len(&self) -> usize {
         let tail = self.inner.tail.load(Ordering::Acquire);
         let head = self.inner.head.load(Ordering::Acquire);
@@ -456,21 +454,18 @@ impl SampleQueue {
     }
 
     /// True if the queue is empty.
-    #[allow(dead_code)] // Used by tests + the Performance panel.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Total samples dropped at the ring cap / by hard resync so far
     /// (overruns). v2.8.0 health counter for the Performance panel.
-    #[allow(dead_code)] // wasm builds render the panel without native audio.
     pub fn overrun_dropped(&self) -> u64 {
         self.inner.overrun_dropped.load(Ordering::Relaxed)
     }
 
     /// Total short callback fills (underruns) so far. v2.8.0 health counter
     /// for the Performance panel.
-    #[allow(dead_code)] // wasm builds render the panel without native audio.
     pub fn underruns(&self) -> u64 {
         self.inner.underruns.load(Ordering::Relaxed)
     }
@@ -596,7 +591,6 @@ pub struct AudioOutput {
     pub sample_rate: u32,
     /// Number of channels (we render mono, but duplicate to fill stereo).
     /// Informational; the duplication happens inside the audio callback.
-    #[allow(dead_code)]
     pub channels: u16,
     /// Producer-side queue handle (push from the emulator thread).
     pub queue: SampleQueue,
@@ -619,7 +613,6 @@ pub struct AudioOutput {
 impl AudioOutput {
     /// Open the default output device with the pre-v2.8.0 defaults (device
     /// default rate, 60 ms latency target, DRC on). Kept for tests.
-    #[allow(dead_code)]
     pub fn try_default() -> Result<Self, AudioError> {
         Self::try_new(None, 60, true, None)
     }
@@ -830,7 +823,6 @@ impl AudioOutput {
     }
 
     /// The latency target in samples (Performance panel readout).
-    #[allow(dead_code)]
     #[must_use]
     pub const fn latency_target_samples(&self) -> usize {
         self.latency_samples

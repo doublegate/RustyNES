@@ -115,11 +115,13 @@ pub fn load_from_slot(
 }
 
 /// `true` if a slot file exists.
-//
-// Sprint 5-3 will surface this in the egui modal ("recently used slots"
-// indicator). We allow `dead_code` rather than wait to land it.
+///
+/// Part of this module's public API, with no in-crate caller today: the
+/// "recently used slots" indicator an early note anticipated was never built.
+/// It needs no `#[allow(dead_code)]` and never did -- `pub` items in a lib
+/// target are exempt from dead-code analysis. Exercised by
+/// `slot_exists_returns_true_only_after_save`.
 #[must_use]
-#[allow(dead_code)]
 pub fn slot_exists(data_dir: &Path, rom_sha256: &[u8; 32], slot: u8) -> bool {
     slot_path(data_dir, rom_sha256, slot).is_ok_and(|p| p.is_file())
 }
@@ -146,7 +148,6 @@ pub struct SlotMeta {
 /// # Errors
 ///
 /// Returns [`SaveError`] for an invalid slot index.
-#[allow(dead_code)] // used by the native Save-States window only.
 pub fn slot_meta(
     data_dir: &Path,
     rom_sha256: &[u8; 32],

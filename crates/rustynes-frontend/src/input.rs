@@ -857,7 +857,6 @@ impl InputState {
     // Used by the unit tests; the binary always goes through
     // [`Self::from_config`] with config-loaded bindings.
     #[must_use]
-    #[allow(dead_code)]
     pub fn with_defaults() -> Self {
         Self::from_config(&InputConfig::default())
     }

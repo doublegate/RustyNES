@@ -176,7 +176,6 @@ pub struct Apu {
     /// is suppressed and this decrements; at 0 the arm fires. Default 0.
     // (W3-Stage-3: also dead under `mc-r1-dmc-delayed-4015`, which supersedes
     // the halt-subpos pre-arm with the emergent consume-edge arm.)
-    #[allow(dead_code)]
     pub(crate) subpos_arm_countdown: u8,
     /// Latches the one-byte looping edge where the next reload request is
     /// lost because it is raised too soon after a DMA get. Cleared when a
@@ -326,14 +325,6 @@ pub const CHANNEL_MASK_ALL: u8 = 0x3F;
 pub const CHANNEL_GAIN_UNITY: [f32; 6] = [1.0; 6];
 
 impl Apu {
-    const fn dmc_abort_delay_for(cycles_until_output: u16) -> Option<u8> {
-        match cycles_until_output {
-            2 => Some(2),
-            3 => Some(3),
-            _ => None,
-        }
-    }
-
     /// New APU.
     #[must_use]
     pub fn new(region: Region, sample_rate: u32) -> Self {
@@ -1936,33 +1927,6 @@ impl Apu {
             if pre_fire_window {
                 self.dmc_set_implicit_abort = true;
             }
-        }
-    }
-
-    // W3-Stage-3: under `mc-r1-dmc-delayed-4015` the explicit abort is
-    // emergent from the delayed-status service gate, so this floor scheduling
-    // compensation has no caller (superseded, retained for the flag-off path).
-    #[allow(dead_code)]
-    fn schedule_explicit_dmc_abort_if_needed(&mut self) {
-        if self.dmc.bits_remaining != 1 || self.dmc.sample_buffer.is_none() {
-            return;
-        }
-        // `first_apu_clock` is "CPU cycles until the next APU (DMC) clock". The
-        // DMC clocks on `apu_phase`-true, so `apu_phase ? 2 : 1` is correct.
-        let first_apu_clock = if self.apu_phase { 2 } else { 1 };
-        let cycles_until_output = first_apu_clock + self.dmc.timer.saturating_mul(2);
-        if cycles_until_output == 1 {
-            self.pending_dmc_dma = true;
-            self.dmc_dma_is_load = false;
-            self.dmc_dma_short = false;
-            self.dmc_dma_addr = self.dmc.dma_addr();
-            self.dmc_need_halt = true;
-            self.dmc_need_dummy_read = true;
-            self.pending_dmc_abort = true;
-            return;
-        }
-        if let Some(delay) = Self::dmc_abort_delay_for(cycles_until_output) {
-            self.dmc_abort_delay = delay;
         }
     }
 
