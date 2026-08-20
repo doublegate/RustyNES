@@ -47,11 +47,25 @@ agy_body_archive() {
     $0 == s { inside = 1 }' || true
 }
 
-# Drop the OLDEST archived round -- the last `<details>` block. Exits non-zero when there is
-# none left to drop, so a caller trimming to a size limit terminates rather than spinning.
+# Delimits one archived round. Emitted by the caller ahead of each round's `<details>`.
+#
+# A dedicated sentinel, NOT the `<details>` tag itself. Matching `/^<details>$/` looked
+# equivalent and was a data-corruption bug: a review body legitimately contains `<details>`
+# blocks -- folded logs, collapsed code, another bot's summary, and the archived rounds are
+# themselves nested `<details>` -- so the cut could land INSIDE a round and leave torn HTML
+# plus half a review. The sentinel is an HTML comment, so it is invisible when rendered and
+# cannot occur by accident in prose the way a tag can. Found in review.
+AGY_ROUND_MARK='<!-- agy-round -->'
+
+# Drop the OLDEST archived round -- everything from the last round marker onward.
+#
+# Exits non-zero when there is no marker to cut at, so a caller trimming to a size limit
+# terminates rather than spinning. That is also the fail-safe direction for an archive written
+# by an older version of this script: with no markers present, nothing is dropped and the edit
+# simply fails on size, rather than the archive being silently mangled.
 agy_drop_oldest_round() {
-  awk '
-    /^<details>$/ { starts[++n] = NR }
+  awk -v m="$AGY_ROUND_MARK" '
+    $0 == m { starts[++n] = NR }
     { line[NR] = $0 }
     END {
       cut = (n > 0) ? starts[n] : 0

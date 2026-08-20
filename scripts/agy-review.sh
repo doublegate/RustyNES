@@ -731,6 +731,7 @@ if [ -n "$prior_id" ] && [ -s "$prior_body_file" ]; then
 
   archived_file="$(mktemp)"
   {
+    printf '%s\n' "$AGY_ROUND_MARK"
     printf '<details>\n<summary>Round reviewed at %s</summary>\n\n' \
       "$(date -u +'%Y-%m-%d %H:%M UTC')"
     printf '%s\n' "$prior_head"

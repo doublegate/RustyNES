@@ -162,9 +162,9 @@ pub fn save(
     raw: &[RawCheat],
 ) -> std::io::Result<()> {
     let path = cheat_path(data_dir, rom_sha256);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    // No `create_dir_all` here: `write_atomic` creates the parent itself, and doing
+    // it twice meant a failure surfaced with one function's path context or the
+    // other's depending on which won. Removed on review, matching `save_state.rs`.
     let file = CheatFile {
         cheats: genie.to_vec(),
         raw: raw.to_vec(),

@@ -188,9 +188,37 @@ check "the head never carries the marker into the archive" "" \
 # Trimming must terminate: with no `<details>` left, dropping fails rather than looping.
 check "dropping from an empty archive fails rather than spinning" "1" \
   "$(printf 'no rounds here\n' | agy_drop_oldest_round >/dev/null 2>&1; echo $?)"
+
+# An archive written by an OLDER version has no round markers. Nothing must be dropped:
+# the edit then fails on size, which is recoverable, rather than the archive being mangled.
+check "an unmarked (legacy) archive drops nothing" "1" \
+  "$(printf '<details>\nNEW\n</details>\n<details>\nOLD\n</details>\n' \
+     | agy_drop_oldest_round >/dev/null 2>&1; echo $?)"
+
+marked_archive="$(printf '%s\n<details>\nNEW\n</details>\n%s\n<details>\nOLD\n</details>\n' \
+  "$AGY_ROUND_MARK" "$AGY_ROUND_MARK")"
 check "dropping removes the OLDEST round, keeping the newest" \
-  "$(printf '<details>\nNEW\n</details>')" \
-  "$(printf '<details>\nNEW\n</details>\n<details>\nOLD\n</details>\n' | agy_drop_oldest_round)"
+  "$(printf '%s\n<details>\nNEW\n</details>' "$AGY_ROUND_MARK")" \
+  "$(printf '%s\n' "$marked_archive" | agy_drop_oldest_round)"
+
+# THE BUG THIS SENTINEL EXISTS FOR. A review body legitimately contains `<details>` blocks
+# -- folded logs, collapsed code, another bot's summary -- and matching the tag itself cut
+# INSIDE a round, leaving torn HTML and half a review. The newest round below carries its own
+# `<details>`; dropping the oldest must not touch it.
+nested="$(printf '%s\n<details>\n<summary>Round</summary>\n<details>\nfolded log\n</details>\nfinding\n</details>\n%s\n<details>\nOLD\n</details>\n' \
+  "$AGY_ROUND_MARK" "$AGY_ROUND_MARK")"
+check "a <details> INSIDE a round is not mistaken for a round boundary" \
+  "$(printf '%s\n<details>\n<summary>Round</summary>\n<details>\nfolded log\n</details>\nfinding\n</details>' "$AGY_ROUND_MARK")" \
+  "$(printf '%s\n' "$nested" | agy_drop_oldest_round)"
+
+# The writer must actually EMIT the sentinel, or every archive is legacy-shaped and the trim
+# silently never fires -- the comment would then grow until the edit fails.
+if grep -q 'AGY_ROUND_MARK' "$SCRIPT_DIR/agy-review.sh"; then
+  echo "  ok    agy-review.sh emits the round sentinel"
+else
+  echo "  FAIL  agy-review.sh never emits AGY_ROUND_MARK; the archive would never trim"
+  fails=$((fails + 1))
+fi
 
 # The script must not delete comments any more. A reintroduced DELETE is the regression that
 # would silently restore the destructive behaviour this design replaced.
