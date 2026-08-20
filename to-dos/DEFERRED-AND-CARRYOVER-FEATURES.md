@@ -9,6 +9,16 @@
 > train) against the **current code on `main`**. Items already shipped since they
 > were written are excluded; everything below was verified still-outstanding.
 >
+> **Amended 2026-08-20 (review on #427).** That sentence describes the file as it
+> was FIRST built and no longer describes the file. Resolved items are now
+> **retained** and marked `[x]` with the evidence that closed them — a release, a
+> commit, a file, a test — rather than being deleted. Two reasons, both learned
+> here: a struck entry with its evidence is a closure a reader can *disagree
+> with*, where a deleted one is unreviewable; and the same item was twice
+> re-proposed after being silently dropped. So: `[ ]` is open, `[x]` is closed
+> **and cited**, and absence means it was never catalogued rather than that it was
+> finished.
+>
 > **Swept 2026-08-20, against `main` @ `fdfb2c04` (v2.3.9 "Crucible").** The
 > v2.3.5 → v2.3.9 window was reconciled entry by entry. **Eleven** entries were
 > struck; each carries the evidence inline — a file that exists, a workflow line
@@ -146,10 +156,21 @@ each but that are **not present in `crates/` on `main`** (verified absent: no
   frontend + `crates/rustynes-script`.
 - `[x]` **Multi-monitor / detachable tool windows** — *(SHIPPED v2.3.0 "Datum II",
   commit `be4fbef0`. Evidence: `crates/rustynes-frontend/src/detached.rs`, whose
-  own preamble records that v2.2.9's `show_viewport_immediate` affordance merely
-  **embedded** the panel and that v2.3.0 replaced it with the real
-  `set_embed_viewports(false)` multi-viewport path — so the Windows-10
-  trapped-window report is genuinely closed, not the stopgap.)* egui multi-viewport
+  `DetachedManager` creates **real OS windows**, each with its own
+  `egui_winit::State` and `egui_wgpu::Renderer` over a `winit` window — so the
+  Windows-10 trapped-window report is genuinely closed, not the v2.2.9 stopgap
+  where `show_viewport_immediate` merely **embedded** the panel in the single main
+  viewport.*
+  *
+  **Correction, review on #427:** this entry first cited
+  `set_embed_viewports(false)` as the mechanism. That is wrong — the string
+  appears in `detached.rs` exactly once, in a comment explaining why egui's
+  native multi-viewport path was **rejected** (an immediate viewport is rendered
+  by a re-entrant callback needing `&ActiveEventLoop`, valid only during event
+  dispatch). Citing an API the module explicitly does not call, having read the
+  name in the comment that rules it out, is the same failure this sweep exists to
+  correct — committed while performing it. The closure itself stands; only the
+  attribution was wrong.)* egui multi-viewport
   so the debugger/TAStudio panels can pop out into OS windows. Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) H9. Target: **v1.7.x (beta.5)**. Files:
   `crates/rustynes-frontend/src/debugger/`.

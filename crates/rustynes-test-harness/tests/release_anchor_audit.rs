@@ -323,21 +323,72 @@ fn the_changelog_has_a_section_for_the_workspace_version() {
     let version = workspace_package_field("version");
     let header = changelog_header(&version);
 
-    // Format: `## [X.Y.Z] - YYYY-MM-DD - "Codename" (theme)`. release-auto.yml
-    // strips the version and date prefix to derive the title, so a header
-    // missing either degrades the published title to a bare `RustyNES vX.Y.Z`.
+    // The header must match what `release-auto.yml` actually parses, component by
+    // component:
+    //
+    //     ## [X.Y.Z] - YYYY-MM-DD - "Codename" (theme)
+    //
+    // The first version asserted only that the tail contained " - " and a
+    // non-empty quoted string. Review on #427 caught that as too loose, and it
+    // was: `## [2.3.9] - "Crucible"` satisfies both and would still have degraded
+    // the published title, because the workflow's sed strips `- <date> -` and
+    // finds nothing to strip. An audit that passes the malformed input it exists
+    // to reject is worse than no audit, so each component is checked separately.
     let after_version = header
         .split_once(']')
         .expect("CHANGELOG header has no closing `]`")
         .1;
+
+    // ` - YYYY-MM-DD - ` -- the shape the workflow's
+    // `s/^## \[[^]]*\][[:space:]]*-[[:space:]]*[0-9-]+[[:space:]]*-[[:space:]]*//`
+    // removes. A date it cannot match leaves the whole prefix in the title.
+    let tail = after_version.strip_prefix(" - ").unwrap_or_else(|| {
+        panic!(
+            "CHANGELOG header for {version} does not continue ` - <date> - ...`, \
+             which `release-auto.yml` strips to build the release title:\n  {header}"
+        )
+    });
+    let (date, rest) = tail.split_once(" - ").unwrap_or_else(|| {
+        panic!(
+            "CHANGELOG header for {version} has no ` - ` after the date, so the \
+             title would keep the date prefix:\n  {header}"
+        )
+    });
+    let date_parts: Vec<&str> = date.split('-').collect();
     assert!(
-        after_version.contains(" - "),
-        "CHANGELOG header for {version} is missing the ` - <date> - <theme>` tail, \
-         which `release-auto.yml` parses to build the release title:\n  {header}"
+        date_parts.len() == 3
+            && date_parts[0].len() == 4
+            && date_parts[1].len() == 2
+            && date_parts[2].len() == 2
+            && date_parts
+                .iter()
+                .all(|p| p.chars().all(|c| c.is_ascii_digit())),
+        "CHANGELOG header for {version} has `{date}` where an ISO YYYY-MM-DD date \
+         belongs. `release-auto.yml` matches `[0-9-]+`, so a malformed date is \
+         either left in the title or swallows part of the codename:\n  {header}"
+    );
+
+    // `"Codename" (theme)` -- what becomes the title's suffix.
+    let codename = codename_of(&header);
+    assert!(
+        !codename.is_empty(),
+        "CHANGELOG header for {version} has an empty codename:\n  {header}"
     );
     assert!(
-        !codename_of(&header).is_empty(),
-        "CHANGELOG header for {version} has an empty codename:\n  {header}"
+        rest.starts_with('"'),
+        "CHANGELOG header for {version} does not begin its theme with a quoted \
+         codename:\n  {header}"
+    );
+    let after_codename = rest[1..]
+        .split_once('"')
+        .expect("codename_of already proved the closing quote exists")
+        .1;
+    let theme = after_codename.trim();
+    assert!(
+        theme.starts_with('(') && theme.ends_with(')') && theme.len() > 2,
+        "CHANGELOG header for {version} has no parenthesised theme after the \
+         codename. Every release in this file carries one, and it is half of what \
+         the published title says:\n  {header}"
     );
 }
 
@@ -364,8 +415,19 @@ fn every_anchor_that_quotes_a_codename_quotes_the_changelog_codename() {
             let Some(rest) = tail.strip_prefix(" \"") else {
                 continue; // this anchor states a version only -- legitimate
             };
+            // An OPENING quote with no closing one is malformed, not
+            // "version-only". The first version `continue`d here, so a broken
+            // release claim slipped through as long as some OTHER anchor kept
+            // `checked > 0` — a fail-OPEN inside the test whose stated property is
+            // failing closed. Review on #427 caught it. Reaching the `continue`
+            // above is legitimate; reaching this point is not.
             let Some(close) = rest.find('"') else {
-                continue;
+                panic!(
+                    "{}: {} opens a codename after v{found} and never closes it: {:?}",
+                    anchor.path,
+                    anchor.what,
+                    &rest[..rest.len().min(40)]
+                )
             };
             checked += 1;
             let name = &rest[..close];
