@@ -79,7 +79,11 @@ fn workspace_package_field(key: &str) -> String {
     for line in manifest.lines() {
         let t = line.trim();
         if t.starts_with('[') {
-            in_table = t == "[workspace.package]";
+            // `starts_with` rather than `==`: a table header may carry a trailing
+            // inline comment, and an exact match would silently skip the table --
+            // which fails OPEN, since `in_table` would stay false and the panic at
+            // the bottom would blame a missing key. (Review on #427.)
+            in_table = t.starts_with("[workspace.package]");
             continue;
         }
         if !in_table {
@@ -88,10 +92,67 @@ fn workspace_package_field(key: &str) -> String {
         if let Some((k, v)) = t.split_once('=')
             && k.trim() == key
         {
+            // Strip a trailing inline comment before unquoting, so
+            // `version = "2.3.9" # pinned` yields `2.3.9` rather than
+            // `2.3.9" # pinned`. (Review on #427.)
+            let v = v.split('#').next().unwrap_or(v);
             return v.trim().trim_matches('"').to_owned();
         }
     }
     panic!("`[workspace.package]` has no `{key}` key");
+}
+
+/// The `MAJOR.MINOR.PATCH` core of a version, dropping any `SemVer` pre-release or
+/// build suffix.
+///
+/// The audit compares release *lines*, not exact `SemVer` strings, and that is a
+/// decision rather than a shortcut. Review on #427 found the reason: with a
+/// pre-release workspace version such as `2.4.0-rc.1`, comparing the raw strings
+/// fails every anchor even when all of them are correct, because `v2.4.0-rc.1` in
+/// prose parses back as `2.4.0`. Worse, the README badge is
+/// `badge/version-v2.3.9-blue.svg`, where the hyphen is a URL delimiter and not a
+/// pre-release marker at all — so "just parse the suffix too" turns the badge into
+/// version `2.3.9-blue.svg`.
+///
+/// Comparing the numeric core sidesteps both. The cost is that an anchor reading
+/// `v2.4.0` while the tree is at `2.4.0-rc.1` passes, which is the right call:
+/// whether prose names a pre-release suffix is a maintainer style choice, while
+/// naming the wrong release line is the error this audit exists to catch.
+fn version_core(v: &str) -> &str {
+    v.split(['-', '+']).next().unwrap_or(v)
+}
+
+/// `version_core` is tested directly, because the situation it exists for cannot
+/// be reached through `Cargo.toml`.
+///
+/// Setting `[workspace.package] version = "2.3.9-rc.1"` to reproduce the reported
+/// failure does not reach this audit at all — **cargo** rejects it first:
+///
+/// ```text
+/// error: failed to select a version for the requirement `rustynes-apu = "^2.0.0"`
+/// candidate versions found which didn't match: 2.3.9-rc.1
+/// ```
+///
+/// A caret requirement does not match a pre-release, so every intra-workspace
+/// dependency would have to be rewritten before the workspace could carry a
+/// pre-release version. That makes the scenario unreachable *today* rather than
+/// impossible — the guard stays, because the day someone does that work this
+/// audit should not be the thing that then blocks the release for a reason
+/// unrelated to the anchors.
+#[test]
+fn version_core_drops_a_prerelease_or_build_suffix() {
+    assert_eq!(version_core("2.3.9"), "2.3.9");
+    assert_eq!(version_core("2.4.0-rc.1"), "2.4.0");
+    assert_eq!(version_core("2.4.0-beta.5"), "2.4.0");
+    assert_eq!(version_core("2.4.0+build.7"), "2.4.0");
+    // The README badge is `badge/version-v2.3.9-blue.svg`, where the hyphen is a
+    // URL delimiter. `parse_version_prefix` already stops at it, so the badge
+    // never reaches here carrying a suffix -- pinned so a future "parse the
+    // suffix too" change cannot silently turn the badge into `2.3.9-blue.svg`.
+    assert_eq!(
+        parse_version_prefix("2.3.9-blue.svg").as_deref(),
+        Some("2.3.9")
+    );
 }
 
 /// One place a document states the current release version.
@@ -228,7 +289,10 @@ fn versions_at(text: &str, anchor: &Anchor) -> Vec<(usize, String)> {
             )
         });
         out.push((at, v));
-        from = at;
+        // Resume past the parsed version rather than at its start. `at` alone is
+        // safe today because every marker is longer than zero, but resuming after
+        // what was just consumed is what the loop means. (Review on #427.)
+        from = at + out.last().expect("just pushed").1.len();
     }
     assert!(
         !out.is_empty(),
@@ -292,14 +356,15 @@ fn codename_of(header: &str) -> String {
 #[test]
 fn every_release_anchor_names_the_workspace_version() {
     let version = workspace_package_field("version");
+    let expected = version_core(&version);
     let mut wrong: Vec<String> = Vec::new();
 
     for anchor in ANCHORS {
         let text = read(anchor.path);
         for (_, found) in versions_at(&text, anchor) {
-            if found != version {
+            if found != expected {
                 wrong.push(format!(
-                    "  {} -- {} says v{found}, workspace is {version}",
+                    "  {} -- {} says v{found}, workspace is {expected}",
                     anchor.path, anchor.what
                 ));
             }
@@ -407,12 +472,16 @@ fn every_anchor_that_quotes_a_codename_quotes_the_changelog_codename() {
     for anchor in ANCHORS {
         let text = read(anchor.path);
         for (at, found) in versions_at(&text, anchor) {
-            if found != version {
+            if found != version_core(&version) {
                 continue; // reported by the version test; do not double-report
             }
-            // A codename, when present, follows as ` "Name"`.
-            let tail = &text[at + found.len()..];
-            let Some(rest) = tail.strip_prefix(" \"") else {
+            // A codename, when present, follows as ` "Name"` -- but the space
+            // count is a prose detail, not a contract. Matching exactly one space
+            // let a document write two and silently bypass the check while some
+            // OTHER anchor kept `checked > 0`, which is the same fail-open shape
+            // as the unterminated quote below. (Review on #427.)
+            let tail = text[at + found.len()..].trim_start_matches(' ');
+            let Some(rest) = tail.strip_prefix('"') else {
                 continue; // this anchor states a version only -- legitimate
             };
             // An OPENING quote with no closing one is malformed, not
