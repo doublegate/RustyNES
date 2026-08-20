@@ -14,6 +14,99 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.3.8] - 2026-08-20 - "Parallax" (which pixels differ, not just which frame)
+
+Parallax is the apparent shift of an object seen from two positions, and the
+displacement is the measurement. That is what this release adds: `Probe` could
+already say whether two configurations of the same ROM diverge and **at which
+frame**, and could say nothing at all about **where** or **why**.
+
+A trial reduces each frame to one `u64`, which is the right shape for detecting a
+difference and the wrong shape for explaining one. A hash says frame 412 differs
+and has nothing to hand to Pixel Provenance, which is where an answer actually
+lives.
+
+**`rustynes-apu`, `rustynes-ppu` and `rustynes-core` all change**, so AccuracyCoin
+was re-run rather than reasoned about: **141/141 (100.00%)** on the authoritative
+RAM decoder, nestest 0-diff.
+
+### Added
+
+- **The Divergence Lens — which pixels differ, and why.** Surfaced as a panel
+  under **Tools → Analysis**, over a headless `rustynes_probe::divergence` core
+  tested independently of it.
+
+  `localise` re-runs both configurations to the detected frame, keeps the full
+  output instead of its hash, and reports the *shape* of the difference —
+  population count, first pixel in raster order, and the inclusive bounding box.
+  Count and box separate kinds of bug from each other: one pixel is a sprite or a
+  palette entry, 256 in a row is a scanline, tens of thousands is a scroll or a
+  mode change. `is_single_scanline` is offered rather than left to call sites,
+  because it is the distinction a caller acts on and the inclusive comparison is
+  easy to get wrong.
+
+  It localises on the **index** framebuffer — 256x240 `u16`s of
+  `(emphasis << 6) | colour`, the PPU's own per-pixel output before the palette
+  lookup — which is half the bytes and at least as sensitive, since the RGBA
+  buffer is a pure function of it given the same palette. That proviso holds
+  because both trials run on the same instance and therefore share whatever
+  palette is loaded; it is written down rather than assumed, because a future
+  two-instance lens would have to revisit it.
+
+  Three answers, and the third is the point: `Identical`, `Differs`, and
+  **`Inconclusive`** for an exhausted budget or two trials that cannot be
+  compared. The Latency Oracle's precedent applies directly — `None` and `Some(0)`
+  were never collapsed there, and "I stopped looking" must not arrive wearing the
+  same shape as "they agree". The budget is checked **up front** for all four
+  trials, mirroring `atlas::verify_liveness`: spending two on detection and then
+  finding the localisation pair unaffordable would consume the budget that would
+  have answered the question. Detection disagreeing with the pixel diff also
+  returns `Inconclusive` rather than picking a winner.
+
+- **The answer is a cause, not a coordinate.** Trial-scoped provenance capture
+  hands a located pixel to the machinery that already answers *what wrote this,
+  and from which instruction*, so `localise_explained` returns the diverging
+  pixel's provenance from **both** configurations: the winning layer, the pattern
+  row, the nametable and attribute addresses, the palette entry, the emphasis
+  mask.
+
+  That closed the sub-frame item **without bisection**, and the plan's framing was
+  wrong rather than merely unresolved. It had offered a choice between
+  bisect-the-frame and ride-the-records; proving the cheap one viable produced a
+  third answer that is *better* rather than cheaper. A cycle index says *when*; a
+  differing `pattern_addr` says the two runs fetched different tile data, which is
+  a lead. Bisection would have spent about seventeen extra trials to produce the
+  weaker answer, and is therefore not implemented — as a decision, recorded in
+  `docs/divergence-lens.md` so the question is not rediscovered.
+
+- **An audio lens, resolving to the CPU cycle.** For audio the records ride
+  directly, so `localise_audio` reports the diverging cycle rather than a frame.
+
+### Fixed
+
+- **The Lens left the emulator thirty frames ahead of where it started.** A trial
+  restores the anchor on the way *in* and not on the way out — which is
+  deliberate, and is what lets the Lens read the trial's final frame straight off
+  `nes` — but the outermost caller has to put the timeline back, and did not.
+  Through the panel, *asking a question advanced the user's game*. Both entry
+  points now restore through one wrapper, and that restore is guarded so it does
+  not clear the caller's provenance, which is the v2.3.7 defect one layer up.
+
+### Notes
+
+- **No new engine primitive was needed**, and the estimate that one would be was
+  wrong in the cheap direction. The same trial-restore asymmetry that caused the
+  bug above is what makes the diverging frame readable.
+
+- **A documentation claim was retracted mid-implementation.** `differing_fields`
+  was documented as possibly empty at a located pixel. It cannot be: an
+  index-framebuffer entry is `(emphasis << 6) | colour`, so a differing entry
+  means `colour` or the emphasis mask differs. Under the permissive reading an
+  empty result is something to render; under the correct one it means the two
+  records did not come from the two configurations. A mutation reading both from
+  the same trial was caught only once the assertion was tightened to match the
+  stricter claim.
+
 ## [2.3.7] - 2026-08-19 - "Overtone" (the instruction behind every mixed cycle)
 
 An *overtone* is the structure inside a sound that a single pitch reading throws
