@@ -14,6 +14,71 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **A standing release-anchor audit — the drift v2.3.9 corrected by hand cannot
+  recur silently.** `crates/rustynes-test-harness/tests/release_anchor_audit.rs`
+  pins **15 anchors across 10 documents** against `[workspace.package] version`:
+  the README badge and Current Release section, `docs/STATUS.md`, both `AGENTS.md`
+  anchors plus its "never claim a later version" guard, `VERSION-PLAN.md` (header
+  *and* the `(current)` row of its release table), `to-dos/ROADMAP.md`,
+  `SUPPORT.md`, `SECURITY.md`, the root `ROADMAP.md`, `OVERVIEW.md` and
+  `ARCHITECTURE.md`.
+
+  Modelled deliberately on `libretro_info_audit.rs`, which exists because the
+  libretro `.info` `display_version` drifted from the workspace and advertised the
+  wrong licence for eleven days. Same failure, same shape of fix: the manifest is
+  the single source of truth and every other statement of the fact is *compared*
+  against it rather than maintained beside it. At v2.3.9 those anchors held **six
+  different values**, the oldest four releases stale.
+
+  Three assertions beyond the version itself. The CHANGELOG must carry a section
+  for the workspace version with a parseable `- <date> - "<Codename>"` tail,
+  because `release-auto.yml` reads that exact line twice — for the body fallback
+  and for the release title — and it has broken a release before. Any anchor that
+  quotes a codename must quote the CHANGELOG's, since a right version beside the
+  previous release's codename is the more confusing error: the number looks
+  correct, so the sentence around it gets trusted. And `VERSION-PLAN.md`'s table
+  must mark exactly one row `(current)` — at v2.3.9 it marked v2.3.5, three
+  releases behind its own header.
+
+  **It fails closed.** A marker that matches nothing is a failure, never a pass;
+  an audit that finds zero anchors and reports success is indistinguishable from
+  one that found them all correct, which is the defect class v2.3.9 was about.
+  Proven by mutation rather than asserted: five independent mutations — a drifted
+  badge version, a stale codename, an anchor reworded out of existence, a moved
+  `(current)` marker, and a renamed CHANGELOG section — each fail the test they
+  should and only that test.
+
+### Changed
+
+- **`to-dos/DEFERRED-AND-CARRYOVER-FEATURES.md` swept entry by entry**, against
+  `main` @ `fdfb2c04`. Eleven entries struck, each carrying its evidence inline —
+  a file that exists, a workflow line number, a test that says so — rather than a
+  bare tick, so a closure can be disagreed with.
+
+  Most of what the sweep found was stale by far more than the five releases it was
+  scoped to. **The whole of §6a — the four items (A1-A4) defining the timebase
+  rewrite — shipped in v2.0.0 "Timebase" on 2026-07-03**, six weeks and roughly
+  twenty releases earlier, and §6's preamble still described AccuracyCoin as
+  "100% / 139/139" when it has been an exact **141/141** since v2.0.3. A backlog
+  listing the project's designated MAJOR release as pending is not untidy; it is
+  misleading about what the emulator is.
+
+  Three entries were closed by something **other than what they proposed**, and
+  say so rather than being quietly ticked: the feature-combo clippy gap is closed
+  by *enumerating* the combos in CI (eight invocations, including the wasm32 ones)
+  rather than by adopting `cargo-hack`, which leaves a real residual — a new
+  feature is uncovered until someone adds a line; `merge_group` stays open but its
+  companion clause shipped, so the entry is **narrowed** to the merge queue alone;
+  and R3 turned out to be a **harness artifact** rather than an emulation
+  residual, so A4 is not what fixed it, and conflating the two would inflate what
+  the refactor is credited with.
+
+  §7's mapper entries below the v2.3.4 line are **explicitly not swept** — they
+  need a ROM corpus to adjudicate, and asserting them from source alone would be
+  the over-claim this catalogue exists to avoid.
+
 ## [2.3.9] - 2026-08-20 - "Crucible" (what the gates actually cover)
 
 A crucible is where something is tested to destruction rather than inspected, and
