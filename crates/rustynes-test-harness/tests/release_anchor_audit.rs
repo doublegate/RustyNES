@@ -112,6 +112,14 @@ fn workspace_package_field(key: &str) -> String {
             // Strip a trailing inline comment before unquoting, so
             // `version = "2.3.9" # pinned` yields `2.3.9` rather than
             // `2.3.9" # pinned`. (Review on #427.)
+            //
+            // Naive for a general TOML value -- it would truncate a string that
+            // legitimately contains `#`. Correct for every key this helper is
+            // asked for (`version`, `license`), and the function is private to
+            // this audit. A future caller wanting a `#`-bearing value needs a real
+            // parser, not a patch here; the reason a `toml` dependency is not
+            // pulled in for a documentation audit is that it would be the only
+            // thing this test target needs it for.
             let v = v.split('#').next().unwrap_or(v);
             return v.trim().trim_matches('"').to_owned();
         }
@@ -162,6 +170,37 @@ fn version_core(v: &str) -> &str {
 /// form. It is not one — the literal ends with `]` and a sub-table has `.` there
 /// — but the property is worth pinning rather than left to a reader spotting a
 /// closing bracket, and the parser now states it structurally.
+/// Markdown emphasis between the version and its codename must not skip the
+/// codename check, and a version-only anchor must still be skipped.
+///
+/// Latent rather than live: no anchor is written `**v2.3.9** "Crucible"` today.
+/// Pinned so a reformat cannot quietly reopen the hole. (Review on #427.)
+#[test]
+fn emphasis_between_version_and_codename_does_not_skip_the_check() {
+    // Would have been skipped before: emphasis, then the codename.
+    assert!(skip_to_codename("** \"Crucible\"").starts_with('"'));
+    assert!(skip_to_codename("  \"Crucible\"").starts_with('"'));
+    // The shapes that legitimately have no codename must STILL be skipped.
+    assert!(!skip_to_codename("** (2026-08-20)").starts_with('"'));
+    assert!(!skip_to_codename(" (the scheduling model is v2.0.0)").starts_with('"'));
+    assert!(!skip_to_codename("-blue.svg").starts_with('"'));
+}
+
+/// A version at the end of a sentence must parse, not panic.
+///
+/// `parse_version_prefix` consumed contiguous dots, so `v2.3.9.` yielded four
+/// parts and returned `None` — which the caller turns into a panic. Fail-closed
+/// is right for a missing marker; a full stop is not a missing marker.
+#[test]
+fn trailing_prose_punctuation_does_not_break_version_parsing() {
+    assert_eq!(parse_version_prefix("2.3.9.").as_deref(), Some("2.3.9"));
+    assert_eq!(parse_version_prefix("2.3.9...").as_deref(), Some("2.3.9"));
+    assert_eq!(parse_version_prefix("2.3.9").as_deref(), Some("2.3.9"));
+    // Still rejects things that are genuinely not a version.
+    assert_eq!(parse_version_prefix("2.3").as_deref(), None);
+    assert_eq!(parse_version_prefix("2.3.9.4").as_deref(), None);
+}
+
 #[test]
 fn sub_table_headers_do_not_match_the_workspace_package_table() {
     // The claim that was checked rather than accepted.
@@ -286,6 +325,21 @@ const ANCHORS: &[Anchor] = &[
     },
 ];
 
+/// Skip whatever sits between a version and a codename that follows it.
+///
+/// A named function rather than an inline `trim_start_matches`, so the test can
+/// exercise THIS code instead of a copy of it. The first attempt asserted the
+/// property against a local closure duplicating the same call — and a mutation
+/// removing the production stripping went uncaught, because the test was never
+/// looking at it. A test that reimplements what it checks is testing itself.
+///
+/// Strips spaces and markdown emphasis. Both were fail-opens found by review on
+/// #427: a second space, or `**v2.3.9** "Crucible"`, sent the codename check down
+/// its legitimate "no codename here" path and silently skipped that anchor.
+fn skip_to_codename(after_version: &str) -> &str {
+    after_version.trim_start_matches([' ', '*'])
+}
+
 /// Read a `MAJOR.MINOR.PATCH` starting at `s[0]`, stopping at the first
 /// character that cannot be part of one.
 ///
@@ -295,7 +349,11 @@ fn parse_version_prefix(s: &str) -> Option<String> {
     let end = s
         .find(|c: char| !c.is_ascii_digit() && c != '.')
         .unwrap_or(s.len());
-    let v = &s[..end];
+    // Trailing dots are prose punctuation, not version components. A sentence
+    // ending "...is at v2.3.9." would otherwise yield four parts, return `None`,
+    // and PANIC -- a false failure caused by a full stop. Fail-closed is right for
+    // a missing marker; it is not right for a period. (Review on #427.)
+    let v = s[..end].trim_end_matches('.');
     let parts: Vec<&str> = v.split('.').collect();
     (parts.len() == 3
         && parts
@@ -518,12 +576,26 @@ fn every_anchor_that_quotes_a_codename_quotes_the_changelog_codename() {
             if found != version_core(&version) {
                 continue; // reported by the version test; do not double-report
             }
-            // A codename, when present, follows as ` "Name"` -- but the space
-            // count is a prose detail, not a contract. Matching exactly one space
-            // let a document write two and silently bypass the check while some
-            // OTHER anchor kept `checked > 0`, which is the same fail-open shape
-            // as the unterminated quote below. (Review on #427.)
-            let tail = text[at + found.len()..].trim_start_matches(' ');
+            // A codename, when present, follows as ` "Name"` -- but the exact
+            // punctuation between the version and the quote is a prose detail,
+            // not a contract. Two separate fail-opens were found here by review
+            // on #427, both the same shape: something the check did not expect
+            // sent it down `continue`, silently skipping that anchor's codename
+            // while another anchor kept `checked > 0`.
+            //
+            //   * two spaces instead of one;
+            //   * markdown emphasis, e.g. `**v2.3.9** "Crucible"`.
+            //
+            // NEITHER is live today -- every anchor currently reads
+            // `v2.3.9 "Crucible"` with a single space, and the emphasis case was
+            // checked against all ten documents rather than assumed. Both are
+            // latent, and a fail-open that waits for a reformat is exactly the
+            // kind this audit exists to remove.
+            //
+            // Stripping `*` as well as spaces keeps the version-only anchors
+            // working: `**v2.3.9** (2026-08-20)` strips to `(2026-08-20`, which
+            // is not a quote, so it still takes the legitimate `continue`.
+            let tail = skip_to_codename(&text[at + found.len()..]);
             let Some(rest) = tail.strip_prefix('"') else {
                 continue; // this anchor states a version only -- legitimate
             };
