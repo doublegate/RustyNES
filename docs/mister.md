@@ -44,6 +44,36 @@ A pure wrapper over `rustynes-core`. It adds **no** core API and changes **no**
 core behaviour; it is additive, absent from the default build, and its presence
 cannot move AccuracyCoin or nestest.
 
+### It is excluded from the workspace, deliberately
+
+`rustynes-cosim` is in the root manifest's `[workspace] exclude`, not its
+`members`. That is not tidiness — it is the only mechanism that makes the
+isolation real.
+
+The crate enables `cpu-boot-trace` and `irq-timing-trace` on `rustynes-core`, and
+**cargo unifies features across a workspace build**. As a member, it made
+`cargo build --workspace` compile the core once with the union, so every
+workspace build linked the **instrumented** per-cycle PPU tick loop —
+`irq-timing-trace` selects a different `for sub_dot in 0..3` loop, not an inert
+branch. CI's accuracy battery is `cargo test --workspace --release --features
+test-roms`, so it was validating a scheduler no user runs.
+
+The measured cost was +1.2% to +1.9% on `full_frame`, *below* this project's 3%
+adoption bar. Stated precisely because it shows the fix was never about speed: a
+gate pointed at the wrong code path is wrong at any percentage.
+
+**What exclusion costs, and how each cost is closed:**
+
+| Cost | Closed by |
+|---|---|
+| Cannot use `field.workspace = true`; version/edition/license/lints duplicated | `cosim_manifest_audit.rs` asserts every duplicated value equals the workspace's |
+| Someone re-adds it to `members` | the same audit asserts it is still in `exclude` |
+| `cargo fmt --all` / `clippy --workspace` / `test --workspace` do not reach it | explicit `fmt`, `clippy` and `test` steps in `ci.yml` |
+| Its dependencies leave the workspace `cargo deny` graph | today only `sha2`, already in the graph; re-check if that changes |
+
+The clippy step justified itself immediately, reporting a `must_use_candidate`
+that `cargo clippy --workspace` had never surfaced.
+
 ### Crate types
 
 `["rlib", "staticlib", "cdylib"]` - `rlib` so the golden-export binary and the

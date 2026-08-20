@@ -17,7 +17,31 @@ cycle-accurate core later replaced.
 ### Added
 
 - **`rustynes-cosim` — RustyNES as a co-simulation oracle for an FPGA
-  device-under-test.** (v2.4.1, opening the "Fabric" line; ADR 0037.) A new
+  device-under-test.**
+  **The crate is excluded from the workspace, and that is the load-bearing
+  detail.** It enables `cpu-boot-trace` and `irq-timing-trace` on
+  `rustynes-core`, and cargo unifies features across a workspace build — so as a
+  member it made `cargo build --workspace` compile the core **once** with the
+  union. Measured through `--message-format=json`:
+  `['cpu-boot-trace', 'debug-hooks', 'default', 'hd-pack', 'irq-timing-trace', 'std']`.
+
+  That is not a performance footnote. `irq-timing-trace` selects a **different**
+  `for sub_dot in 0..3` loop in `Bus::tick_one_cpu_cycle`, so CI's
+  `cargo test --workspace --release --features test-roms` — the accuracy battery —
+  was validating a scheduler no user runs. The same shape as the v2.3.4 defect
+  where the coverage harness tested a load path no user runs. The measured cost is
+  **+1.2% to +1.9%** on `full_frame`, *below* this project's own 3% bar, which is
+  worth stating precisely because it shows the percentage was never the reason.
+
+  Exclusion has a price: an excluded package cannot use `field.workspace = true`,
+  so its version, edition, rust-version, license and lint tables are duplicated,
+  and `--workspace` no longer formats, lints or tests it. Both halves are
+  mechanically closed rather than trusted — `cosim_manifest_audit.rs` asserts every
+  duplicated value still equals the workspace's **and** that the crate is still in
+  `exclude` (four mutations, all caught), and CI gains explicit `fmt`, `clippy` and
+  `test` steps for it. The clippy step earned its place on its first run, reporting
+  a `must_use_candidate` that `--workspace` had never surfaced.
+ (v2.4.1, opening the "Fabric" line; ADR 0037.) A new
   additive crate, absent from the default build, that exposes the emulator through
   a narrow C ABI a Verilator testbench can link, plus a `nes_golden_export` CLI
   that emits the five golden formats an external NES implementation is compared

@@ -273,6 +273,22 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy (-D warnings)
         run: cargo clippy --workspace --all-targets -- -D warnings
+      # `rustynes-cosim` is EXCLUDED from the workspace, so `--workspace` above
+      # does not reach it. That exclusion is deliberate -- as a member it made
+      # `cargo build --workspace` unify its trace features onto `rustynes-core`,
+      # so the accuracy battery validated an instrumented scheduler no user runs
+      # (see the `exclude` note in the root Cargo.toml). The cost of excluding it
+      # is that its lints and tests need naming explicitly, which is what these
+      # two steps are. Without them the crate would simply stop being checked,
+      # and nothing would say so.
+      - name: "rustfmt (excluded crate: rustynes-cosim)"
+        run: cargo fmt --manifest-path crates/rustynes-cosim/Cargo.toml --check
+      - name: "clippy (excluded crate: rustynes-cosim)"
+        run: >
+          cargo clippy --manifest-path crates/rustynes-cosim/Cargo.toml
+          --all-targets -- -D warnings
+      - name: "test (excluded crate: rustynes-cosim)"
+        run: cargo test --manifest-path crates/rustynes-cosim/Cargo.toml
       - name: rustdoc (-D warnings)
         run: cargo doc --workspace --no-deps
       # Feature-gated clippy combos CLAUDE.md mandates. These previously ran

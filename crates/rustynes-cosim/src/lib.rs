@@ -90,6 +90,12 @@ impl Oracle {
     }
 
     /// The emulator, for the safe Rust callers (the golden-export binary).
+    ///
+    /// `#[must_use]` because discarding a borrow of the emulator is always a
+    /// mistake. Surfaced by the standalone lint run that this crate's exclusion
+    /// from the workspace made necessary -- `cargo clippy --workspace` had not
+    /// reported it, so the explicit CI step earned its place on its first run.
+    #[must_use]
     pub const fn nes(&self) -> &Nes {
         &self.nes
     }

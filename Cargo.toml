@@ -20,8 +20,28 @@ members = [
     "crates/rustynes-hdpack",
     "crates/rustynes-ra",
     "crates/rustynes-libretro",
-    "crates/rustynes-cosim",
 ]
+
+# `rustynes-cosim` is deliberately NOT a member.
+#
+# It enables `cpu-boot-trace` and `irq-timing-trace` on `rustynes-core`, and
+# cargo unifies features across a workspace build: with it as a member,
+# `cargo build --workspace` compiled `rustynes-core` ONCE with the union, so
+# every workspace build -- including CI's accuracy battery -- linked the
+# INSTRUMENTED per-cycle PPU tick loop rather than the shipped one. Measured:
+# `--message-format=json` reported the core built with
+# `['cpu-boot-trace', 'debug-hooks', 'default', 'hd-pack', 'irq-timing-trace', 'std']`,
+# and the instrumented loop costs +1.2% to +1.9% on `full_frame`.
+#
+# The cost is not the point. `irq-timing-trace` selects a DIFFERENT
+# `for sub_dot in 0..3` loop, so `cargo test --workspace --release --features
+# test-roms` was validating a scheduler no user runs -- the same shape as the
+# v2.3.4 defect where the coverage harness tested a load path no user runs.
+#
+# Excluding it is what makes that impossible rather than merely unlikely. Its
+# own tests and lints run from explicit invocations in CI; see
+# `.github/workflows/ci.yml`.
+exclude = ["crates/rustynes-cosim"]
 # The libretro buildbot's shared CI templates run a bare, unscoped
 # `cargo build --release --target <triple>` from the repo root (no `-p`,
 # no `--manifest-path` — the script is centrally maintained and can't be
