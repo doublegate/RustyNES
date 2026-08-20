@@ -11,6 +11,14 @@ yanked = "deny"
 # the tree. Keep this list minimal — only "unmaintained"/"unsound" informational
 # advisories on transitive deps with no safe upgrade; never suppress a real
 # exploitable vulnerability.
+#
+# EVERY entry must carry the condition under which it expires, and must be
+# removed once that condition is met. An ignore that has outlived its reason
+# suppresses an advisory that does not apply today AND would suppress it again if
+# a future resolve reintroduced the vulnerable version, with nobody looking.
+# `cargo deny` flags an expired entry as `advisory-not-detected` ("no crate
+# matched advisory criteria") — but that is a WARNING, not a failure, so it only
+# surfaces to someone reading the output rather than the exit code.
 ignore = [
     # `ttf-parser` unmaintained. NOT a vulnerability — an informational
     # "unmaintained" advisory. It is a pure transitive dep of `winit` (which the
@@ -23,19 +31,6 @@ ignore = [
     # carries the identical `ttf-parser 0.25.1` and is affected equally. Revisit
     # when a future winit bump drops the ab_glyph/ttf-parser chain.
     "RUSTSEC-2026-0192",
-    # `quick-xml 0.39.4` — two real advisories (quadratic duplicate-attribute
-    # scan; unbounded NsReader namespace allocation), BOTH requiring
-    # attacker-controlled XML input. Our ONLY consumer is `wayland-scanner`
-    # 0.31.10, a PROC-MACRO that parses the vendored Wayland protocol XML
-    # files at COMPILE TIME — no runtime code path parses XML at all, and the
-    # inputs are trusted files shipped inside the wayland-protocols crates,
-    # never external data. No upgrade path exists: 0.39.4 is the max of its
-    # line, the fixes live in quick-xml >= 0.40, and wayland-scanner 0.31.10
-    # (its own max version) pins ^0.39. Revisit on the next wayland-scanner /
-    # smithay-client-toolkit release; remove these the moment the resolve
-    # moves quick-xml to >= 0.40.
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
 ]
 
 [licenses]
