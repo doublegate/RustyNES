@@ -101,7 +101,21 @@ jobs:
           # MAX_PROMPT_BYTES: "125000"     # inline/file threshold + hard backstop on the argv prompt
           # STYLE_GUIDE: .github/agy-review.md   # style guide, loaded if present
         run: |
-          # `_agy_comment_body.sh` is sourced by the reviewer at startup, so a
-          # missing or non-executable copy fails the run rather than degrading it.
-          chmod +x scripts/agy-review.sh scripts/_agy_print.sh scripts/_agy_comment_body.sh
+          # The workflow and the scripts come from DIFFERENT REFS: for a `pull_request`
+          # event GitHub runs this YAML from the PR branch, while the checkout step
+          # above deliberately fetches the DEFAULT branch to get the scripts. So a
+          # change that adds a script file breaks its own PR -- the new workflow
+          # chmods a file the default branch does not have yet. Observed exactly
+          # once, on the PR that introduced `_agy_comment_body.sh`.
+          #
+          # The two required files are chmod'd unconditionally; anything added later
+          # is chmod'd only if present, so the workflow stays compatible with both
+          # the old and the new script set. A genuinely missing required file still
+          # fails loudly -- `agy-review.sh` sources it and dies -- rather than being
+          # papered over here.
+          chmod +x scripts/agy-review.sh scripts/_agy_print.sh
+          for opt in scripts/_agy_comment_body.sh; do
+            [ -f "$opt" ] && chmod +x "$opt"
+          done
+          true
           scripts/agy-review.sh

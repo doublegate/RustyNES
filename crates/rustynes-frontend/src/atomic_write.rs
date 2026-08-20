@@ -431,7 +431,11 @@ where
 /// Returns the underlying [`io::Error`] from any step. A rename that fails after
 /// `RENAME_ATTEMPTS` transient failures returns the last error rather than
 /// succeeding quietly. A post-rename sync failure is wrapped so its message says
-/// the data was written; see [`post_rename_sync_error`].
+/// the data was written; see `post_rename_sync_error`.
+///
+/// (A plain code span, not an intra-doc link: `write_atomic` is public and that function
+/// is private, which `rustdoc::private-intra-doc-links` rejects under `-D warnings`. Same
+/// rule this repo already applies to feature-gated dependency names.)
 pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
     write_atomic_with(path, contents, scratch_name, sync_parent_dir)
 }
