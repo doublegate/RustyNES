@@ -106,10 +106,12 @@ usually what you want), *audio*, or *work RAM* (which reports almost everything
 live, because your poke *is* a work-RAM change — true and useless). Every verdict
 names the lens it used, because liveness depends on it.
 
-**Not available during netplay, TAS recording or playback, or RetroAchievements
-hardcore.** Both actions advance the emulator and Verify changes memory, so they
-would diverge a session other people are synchronised to, or make a memory write
-hardcore mode exists to forbid. The panel says which reason applies.
+**Observe and Verify are unavailable during netplay, TAS recording or playback, or
+RetroAchievements hardcore** — the two *actions*, not the panel. Both advance the
+emulator and Verify changes memory, so they would diverge a session other people
+are synchronised to, or make a memory write hardcore mode exists to forbid. The
+panel stays open and everything already classified stays readable and
+exportable; it says which reason applies.
 
 **Why there is no "verify everything".** Verification costs two re-simulations per
 address, so all 2048 would be over four thousand runs and tens of minutes. The
@@ -124,8 +126,9 @@ that decided the label — so you can disagree with it.
 verdict **and the lens that produced it**. The lens travels with the address on
 purpose: liveness is relative to what was observed, so an unqualified "LIVE" in a
 watch list would outlive the panel that qualified it and become a claim nobody can
-check. The export is a read, so unlike **Verify** it is available in a locked
-session.
+check. The export is a pure read of a result the panel already holds, so unlike
+**Observe** and **Verify** it stays available in a locked session — it advances
+nothing and writes nothing.
 
 The remaining exports — cheat, Lua, and RetroAchievements authoring — are
 deliberately not built yet. A cheat is a **write**, so it needs a locked-session
