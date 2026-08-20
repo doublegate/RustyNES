@@ -538,17 +538,11 @@ fn scratch_name(target: &Path) -> PathBuf {
 /// empty parent means.
 #[cfg(unix)]
 fn sync_parent_dir(target: &Path) -> io::Result<()> {
-    let parent = target.parent().map_or_else(
-        || PathBuf::from("."),
-        |p| {
-            if p.as_os_str().is_empty() {
-                PathBuf::from(".")
-            } else {
-                p.to_path_buf()
-            }
-        },
-    );
-    let dir = fs::File::open(&parent)?;
+    let parent = target
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let dir = fs::File::open(parent)?;
     match dir.sync_all() {
         Ok(()) => Ok(()),
         Err(e) if directory_fsync_is_unsupported(&e) => Ok(()),
@@ -579,7 +573,14 @@ pub fn directory_fsync_is_unsupported(e: &io::Error) -> bool {
     // written inline so the comparison reads as a decision, and spelled out
     // rather than pulled from `libc`, which this crate does not depend on.
     const EBADF: i32 = 9;
-    matches!(e.kind(), io::ErrorKind::InvalidInput) || e.raw_os_error() == Some(EBADF)
+    // `Unsupported` covers `ENOTSUP` / `EOPNOTSUPP`, which some network
+    // filesystems return here instead of `EINVAL`. Added on review: the set is a
+    // list of ways a filesystem says "no barrier available", and leaving one out
+    // fails a save on that mount for a path that otherwise fully succeeded.
+    matches!(
+        e.kind(),
+        io::ErrorKind::InvalidInput | io::ErrorKind::Unsupported
+    ) || e.raw_os_error() == Some(EBADF)
 }
 
 /// No-op off Unix.
@@ -859,6 +860,30 @@ mod tests {
         assert_eq!(calls, 1, "a non-transient error was retried");
     }
 
+    /// A bare relative filename must still get its parent synced.
+    ///
+    /// `Path::new("f.txt").parent()` is `Some("")`, not `None`, and
+    /// `File::open("")` fails with `ENOENT`. The fallback to `.` was already
+    /// documented as load-bearing, but nothing tested it — a mutation deleting
+    /// the filter passed the whole suite.
+    ///
+    /// It matters MORE now than when it was written. While the sync was
+    /// best-effort, losing the fallback meant a durability step quietly skipped.
+    /// Now that it propagates, losing it means `write_atomic` **fails outright**
+    /// for any relative target, which is a working call site turned into an error.
+    ///
+    /// Called directly rather than through `write_atomic`, because reaching it
+    /// that way needs a relative target and therefore a `set_current_dir` — which
+    /// is process-global and races the parallel suite, the same trap
+    /// `open_fresh_scratch` documents.
+    #[cfg(unix)]
+    #[test]
+    fn a_bare_relative_target_syncs_the_current_directory() {
+        sync_parent_dir(Path::new("f.txt"))
+            .expect("an empty parent must fall back to `.`, not open \"\"");
+        sync_parent_dir(Path::new("./f.txt")).expect("an explicit `.` parent must work");
+    }
+
     /// A failed write must not delete a file it did not create.
     ///
     /// On exhaustion the last name tried is one that ALREADY EXISTED — an orphan
@@ -1032,6 +1057,12 @@ mod tests {
         assert!(
             directory_fsync_is_unsupported(&ebadf),
             "EBADF must be excused -- some network mounts answer it"
+        );
+        let unsupported = io::Error::from(io::ErrorKind::Unsupported);
+        assert!(
+            directory_fsync_is_unsupported(&unsupported),
+            "ENOTSUP/EOPNOTSUPP must be excused -- some network filesystems \
+             answer it instead of EINVAL"
         );
 
         for (errno, name) in [(5, "EIO"), (28, "ENOSPC"), (13, "EACCES")] {

@@ -75,6 +75,17 @@ cycle-accurate core later replaced.
   scratch-name source is now injectable so the exhaustion branch is reachable
   without predicting global state.
 
+  A third round found no blocking issues and two worthwhile refinements: `ENOTSUP`
+  / `EOPNOTSUPP` joins the excused set, since the list is *ways a filesystem says
+  there is no barrier here* and leaving one out fails a save on that mount; and
+  the parent-directory resolution loses an allocation. Mutating the second turned
+  up a **pre-existing untested property** — the fallback that maps a bare relative
+  filename's `Some("")` parent to `.`, without which `File::open("")` returns
+  `ENOENT`. Documented as load-bearing since it was written, never tested, and it
+  matters *more* now: while the sync was best-effort, losing it meant a durability
+  step quietly skipped, but now that it propagates, losing it makes `write_atomic`
+  **fail outright** for any relative target.
+
   Getting the third one under test surfaced something else. Reaching the exhaustion
   branch through `write_atomic` means predicting the process-global `SCRATCH_SEQ`
   and planting a decoy at every name the call will pick — and **that prediction
