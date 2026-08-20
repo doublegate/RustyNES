@@ -163,3 +163,56 @@ fn rustynes_cosim_is_excluded_from_the_workspace() {
         "rustynes-cosim must be listed in the workspace `exclude`"
     );
 }
+
+/// The excluded crate's lockfile must be **tracked**.
+///
+/// `.gitignore` carries a bare `Cargo.lock`, which matches at any depth, and a
+/// `!/Cargo.lock` re-include that names only the workspace root. That pairing
+/// was written when there was exactly one lockfile. Excluding
+/// `rustynes-cosim` from the workspace gave it its own resolve and its own
+/// lockfile, which the bare rule then silently ignored -- so CI re-resolved its
+/// dependency graph on every run.
+///
+/// That matters more here than for an ordinary crate: this one emits the
+/// goldens an external NES implementation is verified against, and its manifest
+/// records the emulator version rather than the resolve. A dependency moving
+/// underneath it would be invisible in exactly the artifact whose job is to
+/// establish provenance.
+#[test]
+fn the_excluded_crates_lockfile_is_tracked() {
+    let root = repo_root();
+    let lock = root.join("crates/rustynes-cosim/Cargo.lock");
+    assert!(
+        lock.is_file(),
+        "crates/rustynes-cosim/Cargo.lock is missing; an excluded package has \
+         its own resolve and the lockfile must be committed with it"
+    );
+
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args([
+            "ls-files",
+            "--error-unmatch",
+            "crates/rustynes-cosim/Cargo.lock",
+        ])
+        .output();
+
+    // A source tarball with no .git is a legitimate way to build this; skip
+    // rather than fail, and say so, so a skip is never mistaken for a pass.
+    let Ok(out) = out else {
+        eprintln!("skipping: git is unavailable");
+        return;
+    };
+    if !root.join(".git").exists() {
+        eprintln!("skipping: not a git checkout");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "crates/rustynes-cosim/Cargo.lock exists but is NOT tracked by git -- \
+         check the `!/crates/rustynes-cosim/Cargo.lock` re-include in .gitignore.\n\
+         stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

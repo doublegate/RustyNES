@@ -14,6 +14,88 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Rolling per-cycle hash checkpoints — the rung-0 comparison surface.**
+  (v2.4.2, continuing the "Fabric" line.) `crates/rustynes-cosim/src/checkpoint.rs`,
+  a `checkpoint_diff` CLI, an `rn_write_checkpoints` C ABI entry point, and a
+  `<stem>.ckpt.bin` golden. The emulation core is untouched.
+
+  The constraint nobody budgets for in co-simulation is trace *volume*, not
+  simulation time, and the figure is now **measured rather than projected**:
+  3 frames of AccuracyCoin is 89,343 CPU cycles, which is **5,372,427 bytes** of
+  `irq.csv` against **352 bytes** of `ckpt.bin` — a factor of **15,263**. So both
+  sides chain a hash over the per-cycle tuple and compare checkpoints; the first
+  mismatch names a 4096-cycle window, and only that window is re-run with full
+  capture.
+
+  **What is hashed is a decision about hardware, not about convenience.**
+  `CycleRecord` carries 29 fields and most of them are `RustyNES`'s *model* —
+  `dmc_abort_delay_post`, `apu_phase_post`, `dma_cycles_owed`. Gating on them
+  would force an independent implementation to transliterate a Rust data
+  structure, which is bad hardware and, on a programme built on never reading a
+  reference implementation, an odd form of self-derivation. `Observable` is the
+  subset a device-under-test can genuinely produce, `from_cycle_record` is the
+  single place the partition is applied, and a test perturbs **every** dropped
+  field at once and asserts the hash does not move — with its converse, so it
+  cannot pass by dropping everything.
+
+  Two subsets needed their caveats stated rather than buried. **The IRQ line is
+  one wire**: `CycleRecord` attributes each sample to the mapper or the APU,
+  hardware has a single wire-OR'd /IRQ pin that cannot, so the pairs are OR'd
+  before hashing — hashing them apart would fail a correct DUT for disagreeing
+  about something it cannot observe. And **`pc` is DUT-observable, not
+  pin-observable**; it is in because the testbench wrapper can expose the
+  register, but a `pc`-only mismatch means something weaker than a bus mismatch.
+  `a12_events` is excluded for **scope**, not observability — A12 transitions
+  genuinely are visible on the cartridge connector — and becomes a gate when the
+  PPU rung opens.
+
+  **The hash is FNV-1a 64 for exactly one reason: a C++ testbench can
+  reimplement it without a library.** The top risk at this rung is a
+  format-packing mismatch masquerading as an RTL bug, so `encode` fixes a
+  16-byte little-endian layout with an explicit zero pad byte — the C++ side
+  cannot hash uninitialised struct padding — and both layout and hash are pinned
+  to a hardcoded vector. A reordered field fails that test rather than producing
+  a phantom RTL defect.
+
+  **Three answers, and the third is the point.** `checkpoint_diff` exits `0`
+  identical, `1` diverged with the window printed, and **`3` inconclusive**. A
+  truncated run, a DUT that stopped early, and two runs at different intervals
+  all produce "no divergence was found"; reporting that as agreement is this
+  project's recurring failure. Cycle **alignment is checked before the hash**,
+  because two streams checkpointing at different cycles cover different spans, so
+  calling their difference a divergence would send a re-run at a window where
+  nothing is wrong. All three answers are demonstrated on real exported output,
+  not only in unit tests.
+
+  Two hazards found while building it, both pinned rather than worked around.
+  `IrqTrace::push` **silently drops** records at capacity behind an `overflow`
+  counter nobody has to read, so a hash over an overflowed trace covers fewer
+  cycles than it claims and would be blamed on the DUT — `take_checkpoints` now
+  refuses with the capacity to retry with, and the exporter aborts rather than
+  writing a short stream. And `Bus::take_irq_trace` **moves** the trace out, so
+  asking for the CSV and then the checkpoints returns `None` for whichever came
+  second, which is indistinguishable from "never armed";
+  `Oracle::take_irq_artifacts` derives both from one take.
+
+### Fixed
+
+- **The excluded crate's lockfile was silently gitignored, so CI re-resolved it
+  on every run.** `.gitignore` carries a bare `Cargo.lock` — which matches at any
+  depth — paired with a `!/Cargo.lock` re-include naming only the workspace root.
+  That was written when there was exactly one lockfile. Excluding
+  `rustynes-cosim` from the workspace in v2.4.1 gave it its own resolve and its
+  own lockfile, which the bare rule then ignored.
+
+  It matters more here than for an ordinary crate: this crate emits the goldens
+  an external NES implementation is verified against, and its manifest records
+  the emulator version rather than the dependency resolve — so a dependency
+  moving underneath it would be invisible in exactly the artifact whose job is to
+  establish provenance. The lockfile is now committed, and
+  `cosim_manifest_audit.rs` asserts it is **tracked** rather than merely present
+  (demonstrated to fail by un-tracking it and re-running).
+
 ## [2.4.1] - 2026-08-20 - "Fabric" (RustyNES as the oracle a new implementation is verified against)
 
 This release also carries **v2.4.0 "Concordance"**, which merged to `main` and was never

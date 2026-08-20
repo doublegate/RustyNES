@@ -5,6 +5,7 @@
 //! ```text
 //! nes_golden_export --rom <path> --out <dir> [--seed N] [--frames N]
 //!                   [--boot-trace START..END] [--irq-trace CAP]
+//!                   [--checkpoint-interval N]
 //! ```
 //!
 //! Writes, under `<dir>`:
@@ -13,6 +14,7 @@
 //! |---|---|---|
 //! | `<stem>.boot.bin` | `CpuBootTrace` binary | `cpu_boot_trace_diff` |
 //! | `<stem>.irq.csv` | per-cycle IRQ/bus CSV | `scripts/irq_trace_cross_diff.py` |
+//! | `<stem>.ckpt.bin` | rolling per-cycle hash checkpoints | `checkpoint_diff` |
 //! | `<stem>.index_fb.bin` | 256x240 LE `u16` | the testbench's frame comparison |
 //! | `<stem>.ram.bin` | 2 KiB CPU work RAM | `accuracy_coin_catalog::decode_results` |
 //! | `<stem>.manifest.txt` | provenance | humans, and the drift guard below |
@@ -43,12 +45,14 @@ struct Args {
     frames: u32,
     boot_trace: Option<(u64, u64)>,
     irq_trace: Option<usize>,
+    checkpoint_interval: u64,
 }
 
 fn usage() -> ! {
     eprintln!(
         "usage: nes_golden_export --rom <path> --out <dir> [--seed N] [--frames N]\n\
-         \x20                       [--boot-trace START..END] [--irq-trace CAP]"
+         \x20                       [--boot-trace START..END] [--irq-trace CAP]\n\
+         \x20                       [--checkpoint-interval N]"
     );
     std::process::exit(2)
 }
@@ -58,6 +62,7 @@ fn parse_args() -> Args {
     let (mut rom, mut out) = (None, None);
     let (mut seed, mut frames) = (0u64, 60u32);
     let (mut boot_trace, mut irq_trace) = (None, None);
+    let mut checkpoint_interval = rustynes_cosim::checkpoint::DEFAULT_INTERVAL;
 
     let mut i = 0;
     while i < argv.len() {
@@ -92,6 +97,14 @@ fn parse_args() -> Args {
                 irq_trace = Some(need(i).parse().unwrap_or_else(|_| usage()));
                 i += 2;
             }
+            "--checkpoint-interval" => {
+                checkpoint_interval = need(i).parse().unwrap_or_else(|_| usage());
+                if checkpoint_interval == 0 {
+                    eprintln!("--checkpoint-interval must be non-zero");
+                    usage();
+                }
+                i += 2;
+            }
             _ => usage(),
         }
     }
@@ -102,6 +115,7 @@ fn parse_args() -> Args {
         frames,
         boot_trace,
         irq_trace,
+        checkpoint_interval,
     }
 }
 
@@ -214,9 +228,28 @@ fn main() {
             None => eprintln!("  WARNING: boot trace was armed but returned nothing"),
         }
     }
+    // ONE take, two artifacts. `Bus::take_irq_trace` moves the trace out, so
+    // asking for the CSV and then the checkpoints would silently yield an
+    // unarmed-looking `None` for whichever came second.
+    let mut checkpoint_count = 0usize;
     if args.irq_trace.is_some() {
-        match o.take_irq_trace_csv() {
-            Some(csv) => write(&suffixed(&base, "irq.csv"), csv.as_bytes()),
+        match o.take_irq_artifacts(args.checkpoint_interval) {
+            Some(a) => {
+                write(&suffixed(&base, "irq.csv"), a.csv.as_bytes());
+                match a.checkpoints {
+                    Ok(ck) => {
+                        checkpoint_count = ck.len();
+                        write(
+                            &suffixed(&base, "ckpt.bin"),
+                            &rustynes_cosim::checkpoint::to_bytes(&ck),
+                        );
+                    }
+                    // Refuse rather than emitting a short stream: a hash over a
+                    // trace that dropped records covers fewer cycles than it
+                    // claims, and the DUT would be blamed for our truncation.
+                    Err(e) => panic!("  ERROR: {e}"),
+                }
+            }
             None => eprintln!("  WARNING: irq trace was armed but returned nothing"),
         }
     }
@@ -231,7 +264,9 @@ fn main() {
          cpu_cycles   = {}\n\
          emulator     = rustynes {}\n\
          index_fb_len = {}\n\
-         ram_len      = {}\n",
+         ram_len      = {}\n\
+         ckpt_interval= {}\n\
+         ckpt_count   = {}\n",
         args.rom.display(),
         sha256_hex(&rom),
         args.seed,
@@ -242,6 +277,8 @@ fn main() {
         env!("CARGO_PKG_VERSION"),
         INDEX_FB_LEN,
         RAM_LEN,
+        args.checkpoint_interval,
+        checkpoint_count,
     );
     write(&suffixed(&base, "manifest.txt"), manifest.as_bytes());
     println!("done; {cycles} CPU cycles simulated");

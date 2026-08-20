@@ -12,8 +12,18 @@ crates/*/target/
 **/*.rs.bk
 *.bench
 # This workspace ships a binary app — commit the lock (re-include it).
+#
+# `Cargo.lock` with no slash matches at ANY depth, so the re-include below has
+# to name every lockfile we keep. That was written when there was exactly one.
+# `crates/rustynes-cosim` is EXCLUDED from the workspace, so it resolves its own
+# dependency graph into its own lockfile — which this rule was silently
+# ignoring, leaving CI to re-resolve it on every run. That crate emits the
+# goldens an external NES implementation is verified against, and its manifest
+# records the emulator version, not the resolve, so a dependency moving under it
+# would be invisible in exactly the artifact meant to establish provenance.
 Cargo.lock
 !/Cargo.lock
+!/crates/rustynes-cosim/Cargo.lock
 
 # --- Native build & FFI artifacts ---
 *.so
