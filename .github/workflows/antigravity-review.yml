@@ -67,7 +67,13 @@ jobs:
       # branch throughout. Consequence worth knowing: a PR that edits the reviewer or the
       # style guide is reviewed by the version already on the default branch until it merges.
       - name: Check out repo (for the style guide + scripts)
-        uses: actions/checkout@v7
+        # SHA-pinned, not `@v7`: this job runs on a SELF-HOSTED runner -- the
+        # maintainer's own machine -- so a compromised tag would execute there
+        # rather than in a disposable VM. Verified to be exactly what `v7`
+        # resolves to (v7.0.1, 2026-07-17). The trailing `# v7` is the form
+        # Dependabot's github-actions ecosystem reads to keep the pin current.
+        # Adopted FROM RustySNES and SLAC, which had it while the template did not.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           # Not `fetch-depth: 0`: the large-diff fallback fetches exactly the two refs it
