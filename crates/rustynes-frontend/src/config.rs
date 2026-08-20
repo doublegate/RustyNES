@@ -2204,9 +2204,46 @@ impl Config {
         // truncated config, which is precisely the outcome this function claims to
         // prevent. Review on #420 caught that the first version stopped one step
         // short and would have shipped a durability guarantee it did not have.
+        // The mode to create the scratch file WITH, read before it exists.
+        //
+        // Applying it at creation rather than chmod-ing afterwards closes a window
+        // in which the file exists at the umask default -- briefly wider than the
+        // config the user tightened. `open(2)` applies `mode & ~umask`, so this can
+        // only ever be narrower than asked; the exact mode is still set below,
+        // which makes the pair a narrow-then-correct sequence rather than a
+        // widen-then-narrow one. (Review on #420.)
+        #[cfg(unix)]
+        let existing_mode = {
+            use std::os::unix::fs::PermissionsExt;
+            fs::metadata(&target).ok().map(|m| m.permissions().mode())
+        };
+
         let write_result = (|| -> std::io::Result<()> {
             use std::io::Write as _;
-            let mut f = fs::File::create(&tmp)?;
+            let mut opts = fs::OpenOptions::new();
+            // `create_new` rather than `create`: exclusive creation, so the open
+            // FAILS if anything is already at that path instead of truncating it.
+            //
+            // `File::create` follows symlinks and truncates, so a predictable
+            // scratch name is a CWE-377 surface -- something pre-created there as a
+            // link to another file would be silently truncated and overwritten by
+            // the save. The scratch file is a sibling of the user's own config
+            // rather than a world-writable directory, so an attacker who can plant
+            // it already owns the config; that makes this defence in depth rather
+            // than a live hole, and it costs one call. (Review on #420.)
+            //
+            // Exclusive creation was NOT safe to adopt while the scratch name was a
+            // bare `.tmp`: a stale file from a crashed run would then have failed
+            // every subsequent save. With the pid and the per-call counter in the
+            // name, a previous run cannot collide, so the failure mode that ruled
+            // this out no longer exists.
+            opts.write(true).create_new(true);
+            #[cfg(unix)]
+            if let Some(mode) = existing_mode {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                opts.mode(mode);
+            }
+            let mut f = opts.open(&tmp)?;
             f.write_all(s.as_bytes())?;
             f.sync_all()
         })();
@@ -2232,10 +2269,13 @@ impl Config {
         // because that is where the mode lives; on Windows the ACL is inherited
         // from the parent directory rather than carried on the file, so
         // `MoveFileEx` already produces the right result.
+        // The exact mode, after creation. `open(2)` masks the requested mode with
+        // the umask, so creation alone can land narrower than the original; this
+        // makes it exact. Best-effort, and only when there was a prior file to copy
+        // from.
         #[cfg(unix)]
-        if let Ok(meta) = fs::metadata(&target) {
+        if let Some(mode) = existing_mode {
             use std::os::unix::fs::PermissionsExt;
-            let mode = meta.permissions().mode();
             let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(mode));
         }
 
@@ -2345,6 +2385,60 @@ mod tests {
             }),
             "the measurement did not survive a save/load round trip"
         );
+    }
+
+    /// The scratch file is created EXCLUSIVELY, so anything already sitting at
+    /// that path is a hard failure rather than something to truncate.
+    ///
+    /// `File::create` follows symlinks and truncates, which makes a predictable
+    /// scratch name a CWE-377 surface. `create_new` turns that into a failed save.
+    /// The save must still leave the real config untouched, which is the half that
+    /// matters: a hostile or merely stale scratch file must not cost the user
+    /// their settings. (Review on #420.)
+    #[cfg(unix)]
+    #[test]
+    fn an_occupied_scratch_path_fails_the_save_without_truncating_it() {
+        let tmpdir = TempDir::new().expect("temp dir");
+        let path = tmpdir.path().join("config.toml");
+        let mut c = Config::default();
+        c.input.turbo_a = true;
+        c.save_to(&path).expect("first save");
+
+        // Occupy every scratch name this process can produce next, by driving the
+        // counter and planting a decoy at each candidate. One of them will be the
+        // name the next save picks.
+        let decoy = tmpdir.path().join("decoy.txt");
+        std::fs::write(&decoy, "do not truncate me").expect("decoy");
+        let mut planted = Vec::new();
+        for seq in 0..64u64 {
+            let mut name = path.as_os_str().to_os_string();
+            name.push(format!(".{}.{seq}.tmp", std::process::id()));
+            let p = std::path::PathBuf::from(name);
+            if std::os::unix::fs::symlink(&decoy, &p).is_ok() {
+                planted.push(p);
+            }
+        }
+        assert!(!planted.is_empty(), "planted no decoys");
+
+        // The save must fail rather than follow a planted link.
+        let mut c2 = Config::default();
+        c2.input.turbo_b = true;
+        let _ = c2.save_to(&path);
+
+        assert_eq!(
+            std::fs::read_to_string(&decoy).expect("decoy readable"),
+            "do not truncate me",
+            "the save followed a planted symlink and truncated its target"
+        );
+        let back: Config = toml::from_str(&std::fs::read_to_string(&path).expect("read"))
+            .expect("config still parses");
+        assert!(
+            back.input.turbo_a && !back.input.turbo_b,
+            "a failed save damaged the existing config"
+        );
+        for p in planted {
+            let _ = std::fs::remove_file(p);
+        }
     }
 
     /// A symlinked config must stay a symlink.
