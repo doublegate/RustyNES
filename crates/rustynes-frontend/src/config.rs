@@ -2111,13 +2111,52 @@ impl Config {
         self.save_to(&path)
     }
 
+    /// Where a save should actually land, following a symlink to its target.
+    ///
+    /// `fs::write` follows a symlink and writes through to the file it points at;
+    /// `fs::rename` replaces the link. Writing to the link's own path would
+    /// therefore convert a user's symlinked `config.toml` -- a dotfiles-repository
+    /// setup -- into a regular file on the first automatic save.
+    ///
+    /// Two cases, and the second is the one that is easy to miss:
+    ///
+    /// * An **intact** link resolves through `canonicalize`.
+    /// * A **broken** link -- pointing at a file that does not exist yet, which is
+    ///   exactly a freshly-created dotfiles link awaiting its first save --
+    ///   makes `canonicalize` fail with `NotFound`. Falling back to the link's own
+    ///   path there would destroy the very setup the resolution exists to protect,
+    ///   so the link is read by hand instead and its destination used, relative to
+    ///   the link's own directory when it is not absolute. (Review on #420 found
+    ///   this surviving inside the fix for the intact case.)
+    ///
+    /// Anything that is not a symlink -- including a path that does not exist at
+    /// all, the first-ever save -- falls back to the path as given, which is
+    /// correct: there is nothing to follow.
+    fn resolve_write_target(path: &Path) -> PathBuf {
+        if let Ok(real) = fs::canonicalize(path) {
+            return real;
+        }
+        // `read_link` fails with `EINVAL` when the path is not a link at all, which
+        // is how "no symlink to follow" is distinguished from "broken symlink"
+        // without a second `symlink_metadata` call.
+        match fs::read_link(path) {
+            Ok(dest) if dest.is_absolute() => dest,
+            Ok(dest) => match path.parent() {
+                Some(dir) => dir.join(dest),
+                None => dest,
+            },
+            Err(_) => path.to_path_buf(),
+        }
+    }
+
     /// Save to an explicit path.
     ///
     /// # Errors
     ///
     /// Returns [`ConfigError`] on I/O or serialization failure.
     pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
-        if let Some(parent) = path.parent() {
+        let target = Self::resolve_write_target(path);
+        if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
         let s = toml::to_string_pretty(self)?;
@@ -2168,9 +2207,6 @@ impl Config {
         // behaviour regression introduced by the fix, not by the bug. (Review on
         // #420.)
         //
-        // `canonicalize` fails when the path does not exist yet, which is exactly
-        // the first-save case, so it falls back to the path as given.
-        let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
 
         // The scratch name carries the process id AND a per-call counter.
         //
@@ -2384,6 +2420,88 @@ mod tests {
                 frame_micros: 16_639,
             }),
             "the measurement did not survive a save/load round trip"
+        );
+    }
+
+    /// A CHAIN of symlinks resolves all the way to the real file.
+    ///
+    /// Added because a mutation exposed that the intact-link test did not need
+    /// `canonicalize` at all: `read_link` alone satisfies it, since one hop is
+    /// enough for a single link. It is not enough for a chain -- `read_link`
+    /// resolves exactly one level, so `a -> b -> c` would write to `b` and destroy
+    /// the second link. `canonicalize` is what makes the multi-hop case correct,
+    /// and this is what makes that load-bearing rather than incidental.
+    #[cfg(unix)]
+    #[test]
+    fn saving_through_a_chain_of_symlinks_reaches_the_real_file() {
+        let tmpdir = TempDir::new().expect("temp dir");
+        let real = tmpdir.path().join("real.toml");
+        let mid = tmpdir.path().join("mid.toml");
+        let link = tmpdir.path().join("config.toml");
+        std::fs::write(&real, "").expect("seed");
+        std::os::unix::fs::symlink(&real, &mid).expect("link 1");
+        std::os::unix::fs::symlink(&mid, &link).expect("link 2");
+
+        let mut c = Config::default();
+        c.input.turbo_a = true;
+        c.save_to(&link).expect("save through the chain");
+
+        for l in [&link, &mid] {
+            assert!(
+                std::fs::symlink_metadata(l)
+                    .expect("stat")
+                    .file_type()
+                    .is_symlink(),
+                "a link in the chain was replaced by a regular file: {}",
+                l.display()
+            );
+        }
+        let back: Config =
+            toml::from_str(&std::fs::read_to_string(&real).expect("read")).expect("parses");
+        assert!(
+            back.input.turbo_a,
+            "the save did not reach the end of the chain"
+        );
+    }
+
+    /// A BROKEN symlink must be followed too, not replaced.
+    ///
+    /// The intact-link case was fixed first and left this one behind: a freshly
+    /// created dotfiles link whose target does not exist yet makes `canonicalize`
+    /// fail with `NotFound`, and falling back to the link's own path destroys
+    /// exactly the setup the resolution exists to protect. It is the more likely
+    /// of the two in practice -- `ln -s` then launch is the natural order.
+    /// (Review on #420 found it surviving inside the fix for the intact case.)
+    #[cfg(unix)]
+    #[test]
+    fn saving_through_a_broken_symlink_creates_the_target_and_keeps_the_link() {
+        let tmpdir = TempDir::new().expect("temp dir");
+        let dotfiles = tmpdir.path().join("dotfiles");
+        std::fs::create_dir(&dotfiles).expect("mkdir");
+        let real = dotfiles.join("config.toml"); // deliberately does NOT exist
+        let link = tmpdir.path().join("config.toml");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        assert!(
+            !real.exists(),
+            "the target must not exist for this test to mean anything"
+        );
+
+        let mut c = Config::default();
+        c.input.turbo_a = true;
+        c.save_to(&link).expect("save through the broken link");
+
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .expect("stat link")
+                .file_type()
+                .is_symlink(),
+            "the save replaced a broken symlink with a regular file"
+        );
+        let back: Config = toml::from_str(&std::fs::read_to_string(&real).expect("read target"))
+            .expect("target parses");
+        assert!(
+            back.input.turbo_a,
+            "the save did not populate the link's target"
         );
     }
 
