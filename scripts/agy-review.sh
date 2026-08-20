@@ -100,21 +100,31 @@ AGY_RETRIES="${AGY_RETRIES:-3}"            # attempts to get a usable agy respon
 AGY_RETRY_DELAY="${AGY_RETRY_DELAY:-15}"   # base backoff seconds between retries (grows per attempt)
 MARKER="<!-- antigravity-pr-review -->"
 
-# The jq program that picks which prior review comments to delete. Named, and exercised directly
-# by `scripts/agy-review-selftest.sh`, because this filter has now been wrong TWICE in ways
-# nothing observed: first the just-posted comment was not excluded (so it deleted itself), then
-# jq's `--arg` was handed to `gh api`, which has no such flag (so the whole step died silently and
-# stale comments accumulated). Both were invisible from the outside — the review still posted.
+# The comment body's format -- sentinels plus the split/trim helpers -- lives in a sourceable
+# file so `agy-review-selftest.sh` can test the REAL implementation rather than a copy of it.
+# This script does its work at top level and so cannot itself be sourced.
+# shellcheck source=scripts/_agy_comment_body.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/_agy_comment_body.sh"
+
+MAX_BODY_BYTES="${MAX_BODY_BYTES:-60000}"
+
+# The jq program that finds THIS bot's existing review comment on the PR, so it can be edited
+# rather than replaced. Named, and exercised directly by `scripts/agy-review-selftest.sh`,
+# because its predecessor (which selected comments to DELETE) was wrong twice in ways nothing
+# observed: first the just-posted comment was not excluded, so a run deleted its own review;
+# then jq's `--arg` was handed to `gh api`, which has no such flag, so the step died silently.
+# Both were invisible from the outside — the review still posted.
 #
-# The two `select`s that matter: the AUTHOR filter (without it, any user could put the marker in a
-# comment and have this bot delete arbitrary comments) and the ID exclusion (without it, the run
-# deletes the comment it just published).
-SELECT_STALE_JQ='.[]
+# The AUTHOR filter is load-bearing, not cosmetic: without it, any user could put the marker
+# (an HTML comment, invisible when rendered) in a PR comment and have this bot edit it. Only
+# ever touch our own bot's comments. `first` picks the OLDEST match, so if duplicates exist
+# from an older version of this script, the canonical thread is the one that keeps growing.
+SELECT_OURS_JQ='[ .[]
   | select(.user.type == "Bot" and .user.login == "github-actions[bot]")
-  | select(.body | contains($marker))
-  | select(.id != $new_id)
-  | .id'
-readonly SELECT_STALE_JQ
+  | select(.body | contains($marker)) ]
+  | first
+  | .id // empty'
+readonly SELECT_OURS_JQ
 
 REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY not set}"
 
@@ -152,13 +162,17 @@ log "reviewing ${REPO}#${PR}"
 # Remove every temp file on exit. Pre-declared so the trap is safe under `set -u` even if the
 # script exits before a given file is created.
 diff_file= diff_err= meta_file= prompt_file= out_file= raw= body_file= agy_diff_file= agy_work_dir=
+# The archive path's two temporaries. Declared here rather than left to their assignment,
+# so the trap frees them on every exit -- including the `exit 0` after a successful edit.
+prior_body_file= archived_file=
 # Set to 1 if agy printed its interactive OAuth login flow instead of a review (lapsed session);
 # gates the no-post abort below. Pre-declared so `${auth_failed:-0}` is set-u-safe on every path.
 auth_failed=0
 # Set when the large-diff fallback below creates refs/agy/* so the trap can remove them.
 agy_refs_created=
 cleanup() {
-  rm -f "$diff_file" "$diff_err" "$meta_file" "$prompt_file" "$out_file" "$raw" "$body_file" "$agy_diff_file"
+  rm -f "$diff_file" "$diff_err" "$meta_file" "$prompt_file" "$out_file" "$raw" "$body_file" \
+        "$agy_diff_file" "$prior_body_file" "$archived_file"
   # Remove the gitignored diff-handoff scratch dir once its file is gone. `rmdir` only unlinks an
   # empty dir, so a concurrent run's file (a different $$) is never clobbered; a non-empty dir is
   # gitignored and harmless if left behind.
@@ -600,65 +614,90 @@ if oauth_url_present "$body_file"; then
   exit 1
 fi
 
-# --- post fresh, THEN replace any prior review comment --------------------------
-# Publish-before-delete, deliberately: if this ordering were reversed and posting failed
-# afterward (a transient gh/API error), the PR would be left with NO review comment at all
-# instead of the still-valid prior one. Posting first means a failure here can only ever
-# leave a harmless duplicate, never a silent loss of the last review.
-# The posted comment's id comes from the POST itself, not from a read-back. `gh pr comment`
-# prints the new comment's URL, whose trailing `#issuecomment-<id>` is authoritative the instant
-# it returns. Re-querying the comment list to find "the newest one with our marker" raced with
-# GitHub's own read replication: right after posting, the list can still omit it, and then the
-# exclusion below matched nothing and the script deleted the comment it had just published --
-# turning publish-before-delete into publish-then-destroy, the exact failure the ordering exists
-# to prevent.
+# --- edit our existing comment, appending the previous round to its archive ------
+# One comment per PR, edited in place: newest round on top, earlier rounds folded into a
+# collapsed `<details>` below. NOTHING IS DELETED. The previous design posted fresh and
+# deleted the prior comment, which kept the PR tidy at the cost of destroying any round
+# nobody had read yet — and left no evidence a round had happened at all.
+#
+# Fail-closed in the direction that matters: every step below falls back to a plain POST of
+# the new review. A duplicate comment is noise; failing to publish a review, or losing one, is
+# not. The lookup happens BEFORE the post so a PATCH is possible at all, but a failed lookup
+# costs only the archive, never the review.
+prior_id=""
+prior_body_file="$(mktemp)"
+if prior_json="$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate 2>/dev/null)"; then
+  prior_id="$(printf '%s' "$prior_json" | jq -r --arg marker "$MARKER" "$SELECT_OURS_JQ" 2>/dev/null || true)"
+  if [ -n "$prior_id" ] && [ "$prior_id" != "null" ]; then
+    printf '%s' "$prior_json" \
+      | jq -r --argjson id "$prior_id" '.[] | select(.id == $id) | .body' > "$prior_body_file" 2>/dev/null \
+      || : > "$prior_body_file"
+  else
+    prior_id=""
+  fi
+else
+  log "warning: could not list PR comments; posting a fresh review without the archive"
+fi
+
+if [ -n "$prior_id" ] && [ -s "$prior_body_file" ]; then
+  # Split the prior body into its newest round (everything after the marker, before the
+  # archive) and the archive's existing inner rounds. `awk` rather than `sed`, because the
+  # sentinels must match whole lines and a review body legitimately contains regex
+  # metacharacters, backslashes and HTML.
+  prior_head="$(agy_body_head "$MARKER" < "$prior_body_file")"
+  prior_archive="$(agy_body_archive < "$prior_body_file")"
+
+  archived_file="$(mktemp)"
+  {
+    printf '<details>\n<summary>Round reviewed at %s</summary>\n\n' \
+      "$(date -u +'%Y-%m-%d %H:%M UTC')"
+    printf '%s\n' "$prior_head"
+    printf '\n</details>\n'
+    printf '%s\n' "$prior_archive"
+  } > "$archived_file"
+
+  # Drop the oldest rounds until the whole comment fits, and SAY SO. A silent truncation
+  # here would look identical to "there were never any earlier rounds", which is the exact
+  # confusion this whole change exists to remove.
+  dropped=0
+  while :; do
+    combined_size=$(( $(wc -c < "$body_file") + $(wc -c < "$archived_file") + 200 ))
+    [ "$combined_size" -le "$MAX_BODY_BYTES" ] && break
+    # Remove the LAST `<details>` block (the oldest round) from the archive.
+    trimmed="$(mktemp)"
+    agy_drop_oldest_round < "$archived_file" > "$trimmed" || { rm -f "$trimmed"; break; }
+    mv "$trimmed" "$archived_file"
+    dropped=$(( dropped + 1 ))
+  done
+
+  {
+    printf '\n%s\n' "$AGY_ARCHIVE_START"
+    if [ "$dropped" -gt 0 ]; then
+      printf '<sub>%d earlier round(s) dropped to stay under GitHub'"'"'s comment size limit.</sub>\n\n' "$dropped"
+    fi
+    printf '<details>\n<summary><b>Earlier review rounds</b> (newest first)</summary>\n\n'
+    cat "$archived_file"
+    printf '\n</details>\n'
+    printf '%s\n' "$AGY_ARCHIVE_END"
+  } >> "$body_file"
+
+  # Re-run the OAuth guard on the ASSEMBLED body. The archive is text this script published
+  # earlier and so has already passed the guard once, but the body is what gets published now
+  # and the guard's contract is that it runs on exactly that.
+  if oauth_url_present "$body_file"; then
+    log "refusing to post: the assembled comment body contains a live OAuth authorization URL."
+    exit 1
+  fi
+
+  if gh api -X PATCH "repos/${REPO}/issues/comments/${prior_id}" \
+       -f body="$(cat "$body_file")" >/dev/null 2>&1; then
+    log "updated review comment ${prior_id} on ${REPO}#${PR} (earlier rounds archived in place)"
+    exit 0
+  fi
+  log "warning: could not edit comment ${prior_id}; posting a fresh review instead"
+fi
 if ! post_output="$(gh pr comment "$PR" --repo "$REPO" --body-file "$body_file" 2>&1)"; then
-  # Nothing is deleted when the post fails: the prior review comment is still the best
-  # information the PR has, and removing it would leave no review at all.
   log "failed to post review to ${REPO}#${PR}: ${post_output}"
   exit 1
 fi
 log "posted review to ${REPO}#${PR}"
-new_comment_id="$(printf '%s\n' "$post_output" | sed -n 's/.*#issuecomment-\([0-9][0-9]*\).*/\1/p' | tail -n 1)"
-
-# A failed delete is logged, not swallowed: silently ignoring it would let a transient API/perms
-# error leave the old comment in place alongside the new one, so runs accumulate duplicates.
-# The author filter is load-bearing, not cosmetic: without it, ANY user could put the
-# marker (an HTML comment) in a PR comment and have this bot delete arbitrary comments on
-# the next run. Only ever delete OUR OWN bot's prior review comments -- and only ones from
-# BEFORE this run (the just-posted comment's own id is excluded so it can never delete itself).
-if [ -z "$new_comment_id" ]; then
-  # FAIL CLOSED. Without a known id there is no way to tell the new comment from the old ones,
-  # and the safe direction is unambiguous: a leftover duplicate is noise, deleting the review
-  # that was just posted is data loss.
-  log "warning: could not determine the posted comment id; leaving prior review comments in place"
-else
-  # `--arg`/`--argjson` rather than shell interpolation into the filter: the marker is an HTML
-  # comment today, but a quote or a backslash in it would otherwise break the jq program itself
-  # rather than simply not matching.
-  #
-  # Those are JQ flags, so the JSON is fetched raw and piped into a real `jq` — `gh api` has no
-  # `--arg`/`--argjson` of its own and rejects them. Handing them to `gh api --jq` made it exit
-  # non-zero on every run; with the old `2>/dev/null` swallowing the message and `set -o pipefail`
-  # in force, the script then died *after* posting, so the stale comments were never deleted and
-  # the job went red for a reason nothing printed. stderr is kept this time for exactly that
-  # reason. (`--paginate` without `--jq` emits one JSON array per page; `jq` reads that stream
-  # fine, applying `.[]` to each.)
-  stale_ids="$(
-    gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
-      | jq -r --arg marker "$MARKER" --argjson new_id "$new_comment_id" "$SELECT_STALE_JQ"
-  )" || {
-    log "warning: could not list prior review comments; leaving them in place"
-    stale_ids=""
-  }
-  while read -r cid; do
-    [ -n "$cid" ] || continue
-    if ! gh api -X DELETE "repos/${REPO}/issues/comments/${cid}" >/dev/null 2>&1; then
-      log "warning: could not delete prior review comment ${cid}; a duplicate may result"
-    fi
-  done <<< "$stale_ids"
-fi
-
-# The delete loop above is the last real work; end on a defined status so a stray non-zero from
-# it can never be mistaken for "the review failed" once the comment is already published.
-exit 0

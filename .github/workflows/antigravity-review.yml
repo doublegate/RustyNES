@@ -95,5 +95,7 @@ jobs:
           # MAX_PROMPT_BYTES: "125000"     # inline/file threshold + hard backstop on the argv prompt
           # STYLE_GUIDE: .github/agy-review.md   # style guide, loaded if present
         run: |
-          chmod +x scripts/agy-review.sh scripts/_agy_print.sh
+          # `_agy_comment_body.sh` is sourced by the reviewer at startup, so a
+          # missing or non-executable copy fails the run rather than degrading it.
+          chmod +x scripts/agy-review.sh scripts/_agy_print.sh scripts/_agy_comment_body.sh
           scripts/agy-review.sh

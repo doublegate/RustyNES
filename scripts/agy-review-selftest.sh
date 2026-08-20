@@ -31,15 +31,33 @@ extract_marker() {
   sed -n 's/^MARKER="\(.*\)"$/\1/p' "$SCRIPT_DIR/agy-review.sh" | head -n 1
 }
 extract_filter() {
-  sed -n "/^SELECT_STALE_JQ='/,/'\$/p" "$SCRIPT_DIR/agy-review.sh" \
-    | sed "1s/^SELECT_STALE_JQ='//; \$s/'\$//"
+  sed -n "/^SELECT_OURS_JQ='/,/'\$/p" "$SCRIPT_DIR/agy-review.sh" \
+    | sed "1s/^SELECT_OURS_JQ='//; \$s/'\$//"
 }
 
 MARKER="$(extract_marker)"
 FILTER="$(extract_filter)"
 
 [ -n "$MARKER" ] || { echo "FAIL: could not extract MARKER from agy-review.sh" >&2; exit 1; }
-[ -n "$FILTER" ] || { echo "FAIL: could not extract SELECT_STALE_JQ from agy-review.sh" >&2; exit 1; }
+[ -n "$FILTER" ] || { echo "FAIL: could not extract SELECT_OURS_JQ from agy-review.sh" >&2; exit 1; }
+
+# The REAL body-format implementation, sourced rather than reimplemented. The first version of
+# these checks inlined its own copy of the `awk` pipeline, and a mutation deleting the marker
+# strip from the script came back NOT CAUGHT -- a test that reimplements its subject agrees with
+# itself forever. `agy-review.sh` cannot be sourced (it works at top level), which is exactly
+# why the format lives in its own file.
+# shellcheck source=scripts/_agy_comment_body.sh
+. "$SCRIPT_DIR/_agy_comment_body.sh"
+[ -n "${AGY_ARCHIVE_START:-}" ] || { echo "FAIL: _agy_comment_body.sh defined no AGY_ARCHIVE_START" >&2; exit 1; }
+[ -n "${AGY_ARCHIVE_END:-}" ]   || { echo "FAIL: _agy_comment_body.sh defined no AGY_ARCHIVE_END" >&2; exit 1; }
+
+# The script must actually USE the shared helper, or these checks test a file nothing runs.
+grep -q '_agy_comment_body.sh' "$SCRIPT_DIR/agy-review.sh" \
+  || { echo "FAIL: agy-review.sh does not source _agy_comment_body.sh" >&2; exit 1; }
+for fn in agy_body_head agy_body_archive agy_drop_oldest_round; do
+  grep -q "$fn" "$SCRIPT_DIR/agy-review.sh" \
+    || { echo "FAIL: agy-review.sh does not call $fn" >&2; exit 1; }
+done
 
 # A non-empty extraction is not the same as a COMPLETE one. The `sed` range above ends at the
 # first line closing with a quote, so a filter whose body ever ends a line that way would be
@@ -51,14 +69,14 @@ FILTER="$(extract_filter)"
 #      prefix of one.
 # The named args must be supplied here too: the filter references `$marker`/`$new_id`, and jq
 # rejects an undefined variable at COMPILE time — so omitting them fails a perfectly good program.
-if ! printf '[]' | jq --arg marker x --argjson new_id 0 "$FILTER" >/dev/null 2>&1; then
-  echo "FAIL: extracted SELECT_STALE_JQ is not a valid jq program (truncated?):" >&2
+if ! printf '[]' | jq --arg marker x "$FILTER" >/dev/null 2>&1; then
+  echo "FAIL: extracted SELECT_OURS_JQ is not a valid jq program (truncated?):" >&2
   printf '%s\n' "$FILTER" >&2
   exit 1
 fi
 case "$(printf '%s' "$FILTER" | tr -d '[:space:]')" in
-  *'|.id') : ;;
-  *) echo "FAIL: extracted SELECT_STALE_JQ does not end in '| .id'; extraction truncated" >&2
+  *'|.id//empty') : ;;
+  *) echo "FAIL: extracted SELECT_OURS_JQ does not end in '| .id // empty'; extraction truncated" >&2
      printf '%s\n' "$FILTER" >&2
      exit 1 ;;
 esac
@@ -66,20 +84,19 @@ esac
 fixture() {
   cat <<JSON
 [
-  {"id": 111, "user": {"type": "Bot",  "login": "github-actions[bot]"}, "body": "$MARKER\nold review"},
-  {"id": 222, "user": {"type": "Bot",  "login": "github-actions[bot]"}, "body": "$MARKER\nolder still"},
-  {"id": 333, "user": {"type": "User", "login": "someone"},             "body": "$MARKER\nnot ours"},
-  {"id": 444, "user": {"type": "Bot",  "login": "other-bot"},           "body": "$MARKER\nwrong bot"},
-  {"id": 555, "user": {"type": "Bot",  "login": "github-actions[bot]"}, "body": "an ordinary bot comment"},
-  {"id": 999, "user": {"type": "Bot",  "login": "github-actions[bot]"}, "body": "$MARKER\nJUST POSTED"}
+  {"id":  50, "user": {"type": "User", "login": "someone"},             "body": "$MARKER\nimpostor, posted FIRST"},
+  {"id":  60, "user": {"type": "Bot",  "login": "other-bot"},           "body": "$MARKER\nwrong bot, also early"},
+  {"id":  70, "user": {"type": "Bot",  "login": "github-actions[bot]"}, "body": "an ordinary bot comment"},
+  {"id": 111, "user": {"type": "Bot",  "login": "github-actions[bot]"}, "body": "$MARKER\nour canonical thread"},
+  {"id": 222, "user": {"type": "Bot",  "login": "github-actions[bot]"}, "body": "$MARKER\na later duplicate"}
 ]
 JSON
 }
 
 # Ids as a single space-separated line, with no trailing space — so the expected values below read
 # as what they are rather than carrying padding an assertion would have to mirror.
-select_ids() {
-  fixture | jq -r --arg marker "$MARKER" --argjson new_id "$1" "$FILTER" | sort -n | paste -sd' ' -
+select_id() {
+  fixture | jq -r --arg marker "$MARKER" "$FILTER"
 }
 
 fails=0
@@ -97,23 +114,70 @@ check() {
 
 echo "agy-review comment-selection self-test"
 
-# The whole point: the comment just published is never selected for deletion.
-check "excludes the just-posted comment" "111 222" "$(select_ids 999)"
+# The whole point: exactly ONE comment is chosen, and it is the OLDEST of ours -- so the canonical
+# thread keeps growing rather than a new one starting whenever a duplicate exists.
+check "selects the oldest of OUR OWN marked comments" "111" "$(select_id)"
 
 # The author filter is a security control, not tidiness: without it any user could paste the
-# marker into a comment and have the bot delete comments on the next run.
-check "ignores other users and other bots" "111 222" "$(select_ids 999)"
+# marker (invisible when rendered) into a comment and have the bot EDIT it -- previously, delete it.
+check "never selects another user or another bot" "111" "$(select_id)"
 
 # A bot comment without the marker is somebody else's feature (a CI summary, a deploy note).
-check "ignores bot comments without the marker" "111 222" "$(select_ids 999)"
+check "ignores bot comments without the marker" "111" "$(select_id)"
 
-# Regression #1, pinned: an unknown id must not select everything. The caller now refuses to run
-# the delete at all in this case, but the filter itself is checked so the two guards are
-# independent rather than one relying on the other.
-check "an id of 0 still excludes nothing real" "111 222 999" "$(select_ids 0)"
+# No comment of ours yet: the filter must yield EMPTY, not `null`. The caller tests the result with
+# `[ -n ... ]`, and the string "null" is non-empty -- it would be used as a comment id and every
+# edit would 404 into the fallback, silently reverting to the post-fresh path this replaced.
+check "yields empty when we have no comment yet" "" \
+  "$(printf '[{"id":1,"user":{"type":"User","login":"a"},"body":"hi"}]' \
+     | jq -r --arg marker "$MARKER" "$FILTER")"
 
-# A different id in the set behaves the same way, so the exclusion is genuinely by value.
-check "excludes whichever id it is given" "222 999" "$(select_ids 111)"
+check "yields empty for an empty comment list" "" \
+  "$(printf '[]' | jq -r --arg marker "$MARKER" "$FILTER")"
+
+# --- the archive round-trip ----------------------------------------------------
+# A body split into head + archive and reassembled must lose neither. The failure this guards is
+# not a crash: an `awk` that mismatched the sentinels would produce a body that renders fine and
+# quietly contains only the newest round, which is indistinguishable from a first review.
+round_trip_body="$(printf '%s\nNEWEST ROUND\n%s\n<details>\nOLDER ROUND\n</details>\n%s\n' \
+  "$MARKER" "$AGY_ARCHIVE_START" "$AGY_ARCHIVE_END")"
+
+head_part="$(printf '%s\n' "$round_trip_body" | agy_body_head "$MARKER")"
+archive_part="$(printf '%s\n' "$round_trip_body" | agy_body_archive)"
+
+check "the head split drops the marker and stops at the archive" "NEWEST ROUND" "$head_part"
+check "the archive split returns only the archived rounds" \
+  "$(printf '<details>\nOLDER ROUND\n</details>')" "$archive_part"
+
+# A body with NO archive yet (the first round) must split to a head and an empty archive, not to
+# an empty head -- the first re-review is exactly when this path runs for the first time.
+first_body="$(printf '%s\nFIRST ROUND\n' "$MARKER")"
+check "a body with no archive still yields its head" "FIRST ROUND" \
+  "$(printf '%s\n' "$first_body" | agy_body_head "$MARKER")"
+check "a body with no archive yields an empty archive" "" \
+  "$(printf '%s\n' "$first_body" | agy_body_archive)"
+
+# The head must NOT carry the marker forward: an archived round that still contains it would
+# make every future run's `contains($marker)` match inside the archive, and the split would
+# then cut at the wrong place. A mutation removing the strip must fail here.
+check "the head never carries the marker into the archive" "" \
+  "$(printf '%s\nX\n' "$MARKER" | agy_body_head "$MARKER" | grep -F -x "$MARKER" || true)"
+
+# Trimming must terminate: with no `<details>` left, dropping fails rather than looping.
+check "dropping from an empty archive fails rather than spinning" "1" \
+  "$(printf 'no rounds here\n' | agy_drop_oldest_round >/dev/null 2>&1; echo $?)"
+check "dropping removes the OLDEST round, keeping the newest" \
+  "$(printf '<details>\nNEW\n</details>')" \
+  "$(printf '<details>\nNEW\n</details>\n<details>\nOLD\n</details>\n' | agy_drop_oldest_round)"
+
+# The script must not delete comments any more. A reintroduced DELETE is the regression that
+# would silently restore the destructive behaviour this design replaced.
+if grep -qE 'gh api +-X +DELETE' "$SCRIPT_DIR/agy-review.sh"; then
+  echo "  FAIL  agy-review.sh deletes comments again; the archive design forbids it"
+  fails=$((fails + 1))
+else
+  echo "  ok    agy-review.sh never deletes a comment"
+fi
 
 # Regression #2, pinned: `--arg`/`--argjson` belong to jq. If they are ever moved onto `gh api`
 # again, that command exits non-zero — assert the flags are not passed to `gh api` in the script.
