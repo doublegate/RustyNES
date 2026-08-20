@@ -190,6 +190,26 @@ pub struct Nes {
     /// site, which matters because two of the four timeline jumps (wasm
     /// load-state, and rewind) are not reachable from a patchable frontend call
     /// site at all.
+    ///
+    /// # It is NOT part of the save state, deliberately
+    ///
+    /// The counter is session-local: it is not written by `snapshot`, not read by
+    /// `restore`, and a loaded state does not carry its own value across. What a
+    /// restore does instead is **increment the live counter**, which is the
+    /// correct reading of the event — "the timeline you were on has been replaced"
+    /// — and is true regardless of which state was loaded.
+    ///
+    /// Serializing it would be actively wrong in two ways. Loading the same slot
+    /// twice would restore the same generation twice, so a consumer comparing
+    /// against its last-seen value would miss the second load entirely. And a
+    /// value from another session says nothing about this one: the counter is only
+    /// ever meaningful as a comparison against the previous value *this process*
+    /// observed, which is why `timeline_generation()` documents that comparing it
+    /// across two `Nes` instances is meaningless.
+    ///
+    /// A consequence worth stating: because it lives outside the snapshot, the
+    /// `snapshot_schema_audit` test cannot see it, so nothing mechanical will
+    /// notice if this reasoning is ever invalidated.
     timeline_generation: u64,
 }
 
@@ -4558,5 +4578,55 @@ mod tests {
         assert!(!nes.zapper_temporal_light());
         nes.set_zapper_temporal_light(true);
         assert!(nes.zapper_temporal_light());
+    }
+
+    /// The timeline counter is session-local: a save state neither carries it nor
+    /// restores it, and loading one ADVANCES the live counter instead.
+    ///
+    /// Documented on the field, and untestable by `snapshot_schema_audit` for the
+    /// very reason that makes it true -- the counter lives outside the snapshot,
+    /// so that audit cannot see it. Pinned here instead, because the two ways
+    /// serializing it would be wrong are both silent: loading the same slot twice
+    /// would restore the same generation twice and a consumer would miss the
+    /// second load, and a value from another session means nothing in this one.
+    #[test]
+    fn the_timeline_counter_is_session_local_and_advances_on_restore() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).expect("parse");
+        nes.run_frame();
+        let state = nes.snapshot();
+        let before = nes.timeline_generation();
+
+        nes.restore(&state).expect("restore");
+        let after_first = nes.timeline_generation();
+        assert!(
+            after_first > before,
+            "a restore must advance the timeline counter: {before} -> {after_first}"
+        );
+
+        // The SECOND load of the SAME slot must advance it again. This is the
+        // assertion that would fail if the counter were serialized -- the restored
+        // value would be identical both times and a consumer comparing against its
+        // last-seen value would never notice the second load.
+        nes.restore(&state).expect("restore again");
+        assert!(
+            nes.timeline_generation() > after_first,
+            "reloading the same slot must still register as a new timeline"
+        );
+
+        // And a snapshot taken now must not encode it: a fresh `Nes` restored from
+        // this state starts its own count rather than adopting ours.
+        let mut fresh = Nes::from_rom(&rom).expect("parse");
+        assert_eq!(
+            fresh.timeline_generation(),
+            0,
+            "a fresh Nes must start at zero"
+        );
+        fresh.restore(&nes.snapshot()).expect("restore into fresh");
+        assert_eq!(
+            fresh.timeline_generation(),
+            1,
+            "the fresh instance must count its own restores, not inherit a stored value"
+        );
     }
 }

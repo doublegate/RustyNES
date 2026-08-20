@@ -1197,6 +1197,36 @@ mod tests {
         fs::create_dir(&dir_target).expect("mkdir");
         assert!(write_atomic(&dir_target, b"nope").is_err());
         assert_eq!(fs::read(&p).unwrap(), b"good");
+
+        // ...and it leaves NO scratch file behind.
+        //
+        // Scope, stated precisely, because a mutation established it: this reaches
+        // the RENAME-failure cleanup, not the write-failure one. The scratch create,
+        // write and `fsync` all succeed here; it is renaming a file over a directory
+        // that fails. Removing that cleanup is caught; removing the write-failure
+        // cleanup is NOT, and this test should not be read as covering it.
+        //
+        // Review suggested a `Drop` guard on the grounds that an early return via
+        // `?` orphans the temporary. It does not: the `?` returns from the CLOSURE,
+        // so `write_result` is `Err` and its cleanup runs — the same shape as the
+        // branch asserted here. Only a PANIC can orphan a scratch file, and the
+        // bounded scratch loop exists so that is survivable.
+        // Matched on OUR scratch prefix rather than the `.tmp` extension: it is
+        // what `scratch_name` actually produces, it cannot collide with a `.tmp`
+        // this test did not create, and it sidesteps clippy's case-sensitivity
+        // lint on extension comparisons -- which is a fair complaint about
+        // matching an extension and irrelevant to matching a generated name.
+        let ours = format!(".{}.", std::process::id());
+        let strays: Vec<_> = fs::read_dir(&d)
+            .expect("read tempdir")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(&ours))
+            .collect();
+        assert!(
+            strays.is_empty(),
+            "a failed write orphaned scratch file(s): {strays:?}"
+        );
     }
 
     // ---- the retry loop, exercised on every platform ----
