@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.3.9-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.4.1-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -668,9 +668,43 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.3.9 "Crucible"** — a crucible tests to
-destruction rather than inspects, and that is what this release does to the
-project's own gates: what they cover, what they only *appear* to cover, and where
+RustyNES's current release is **v2.4.1 "Fabric"**, which opens the
+**v2.4.1 → v2.5.0 "Fabric"** line: a new NES core written in SystemVerilog from
+public hardware documentation, in a sibling repository, with this emulator as its
+**verification oracle**. RustyNES is not being ported to FPGA and cannot be — a
+MiSTer core is SystemVerilog compiled into a Cyclone V bitstream, and Rust does
+not become one. What is buildable is a *new* implementation verified against this
+one, and `crates/rustynes-cosim` is the boundary between them: a narrow C ABI a
+Verilator testbench links, plus a `nes_golden_export` CLI emitting the five golden
+formats an external implementation is compared against. The provenance firewall
+extends to HDL accordingly — `NES_MiSTer` and `fpganes` `rtl/` are strict black
+boxes, instantiable as opaque modules to compare *outputs*, never readable as
+source.
+
+**The crate is excluded from the workspace, and that is the load-bearing detail.**
+It enables `cpu-boot-trace` and `irq-timing-trace` on the core, and cargo unifies
+features across a workspace build — so as a member it made `cargo build
+--workspace` compile the core once with the union. `irq-timing-trace` selects a
+*different* per-dot loop in `Bus::tick_one_cpu_cycle`, so CI's accuracy battery
+was validating a scheduler no user runs. The measured cost was **+1.2% to +1.9%**,
+*below* this project's own 3% bar — published precisely because it shows
+performance was never the argument. Two more findings came out of building it:
+**the first `run_frame()` after power-on advances zero cycles** (the reset
+sequence leaves `frame_complete` latched, so a bare loop emits an (n−1)-frame
+golden under a manifest claiming n), and **no CI invocation had ever linted the
+two trace-gated core modules**, which held six pre-existing findings.
+
+This release also carries **v2.4.0 "Concordance"**, which merged to `main` and was
+never tagged: every path that persists user data now writes atomically and
+durably — including save states, where a truncated write is a user's game
+progress — plus a session-local timeline generation counter, and a standing
+audit pinning **15 release anchors across 10 documents** to the workspace version.
+`rustynes-core` changes in both halves, so the accuracy contract is **verified,
+not asserted**: AccuracyCoin **141/141 (100.00%)** on the authoritative RAM
+decoder, nestest 0-diff.
+
+Built on **v2.3.9 "Crucible"** — a crucible tests to destruction rather than
+inspects, and that is what that release did to the project's own gates: what they cover, what they only *appear* to cover, and where
 a regression could still reach `main` unchallenged. The v2.3.x line added five
 tools in four releases, and the recurring finding across all of them was never
 that the emulation was wrong. It was that **a check reported a pass it had not

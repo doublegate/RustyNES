@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-The current release is **v2.3.9 "Crucible"**. RustyNES ships from `main` on a
+The current release is **v2.4.1 "Fabric"**, which also carries the never-tagged v2.4.0 "Concordance". RustyNES ships from `main` on a
 rolling patch cadence rather than maintaining long-lived release branches, so
 security fixes land in the next patch release rather than being backported.
 Report against the latest release or `main`.

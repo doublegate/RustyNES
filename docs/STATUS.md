@@ -1,8 +1,34 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.3.9** (2026-08-20) — **"Crucible"**, what the gates
-> actually cover. A crucible tests to destruction rather than inspects, and this
-> release does that to the project's own checks: what they cover, what they only
+> **Current release: v2.4.1** (2026-08-20) — **"Fabric"**, RustyNES as the
+> oracle a new implementation is verified against. It opens the
+> **v2.4.1 → v2.5.0 "Fabric"** line: a new NES core in SystemVerilog, written
+> from public hardware documentation in a sibling repository, with this emulator
+> as its verification oracle. RustyNES is not being ported to FPGA and cannot be;
+> `crates/rustynes-cosim` is the boundary — a narrow C ABI a Verilator testbench
+> links, plus a `nes_golden_export` CLI. The firewall extends to HDL: `NES_MiSTer`
+> and `fpganes` `rtl/` are strict black boxes.
+>
+> **The crate is excluded from the workspace, and that is the load-bearing
+> detail.** Cargo unifies features across a workspace build, and this crate
+> enables `irq-timing-trace`, which selects a *different* per-dot loop in
+> `Bus::tick_one_cpu_cycle` — so CI's accuracy battery was validating a scheduler
+> no user runs. Measured cost **+1.2% to +1.9%**, below the project's own 3% bar,
+> which is why the percentage was never the argument. Also found while building
+> it: **the first `run_frame()` after power-on advances zero cycles**, and **two
+> trace-gated core modules had never been linted** (six pre-existing findings).
+>
+> It also carries **v2.4.0 "Concordance"**, which merged to `main` and was never
+> tagged: atomic, durable writes on every path that persists user data (four call
+> sites, and four further silent successes found in review), a session-local
+> `Nes::timeline_generation()` counter, and a standing audit pinning **15 release
+> anchors across 10 documents**. `rustynes-core` changes in both halves, so
+> **AccuracyCoin 141/141 (100.00%, RAM decoder) and nestest 0-diff are verified,
+> not asserted.**
+>
+> Built on **v2.3.9 "Crucible"** — what the gates actually cover. A crucible tests
+> to destruction rather than inspects, and that release did that to the project's
+> own checks: what they cover, what they only
 > *appear* to cover, and where a regression could still reach `main`
 > unchallenged. The v2.3.x line added five tools in four releases, and the
 > recurring finding across all of them was never that the emulation was wrong —
