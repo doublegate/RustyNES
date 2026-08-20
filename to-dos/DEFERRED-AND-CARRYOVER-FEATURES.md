@@ -9,14 +9,31 @@
 > train) against the **current code on `main`**. Items already shipped since they
 > were written are excluded; everything below was verified still-outstanding.
 >
-> **Audit currency (2026-08-20).** The most recent entry-level reconciliation in
-> this file is **v2.3.4** (2026-08-15). The five releases since — **v2.3.5
-> "Manifest"**, **v2.3.6 "Sounding"**, **v2.3.7 "Overtone"**, **v2.3.8
-> "Parallax"** and **v2.3.9 "Crucible"** — have **not** been swept through it, so
-> an item below may have been closed without its entry being struck. This note
-> exists rather than a silent re-date because an unaudited catalogue that *looks*
-> audited is worse than one that admits its cut-off: check `CHANGELOG.md` for
-> anything dated after 2026-08-15 before treating an entry here as open.
+> **Swept 2026-08-20, against `main` @ `fdfb2c04` (v2.3.9 "Crucible").** The
+> v2.3.5 → v2.3.9 window was reconciled entry by entry. **Eleven** entries were
+> struck; each carries the evidence inline — a file that exists, a workflow line
+> number, or a test that says so — rather than a bare `[x]`, so the closure can be
+> disagreed with.
+>
+> **Most of what this sweep found was stale by far more than five releases.** The
+> whole of §6a — the four items (A1–A4) that define the timebase rewrite — shipped
+> in **v2.0.0 "Timebase" on 2026-07-03**, six weeks and roughly twenty releases
+> before this sweep, and §6's own preamble still described AccuracyCoin as
+> "100% / 139/139" when it has been an exact **141/141** since v2.0.3. A backlog
+> that lists the project's designated MAJOR release as pending is not merely
+> untidy; it is actively misleading about what the emulator is.
+>
+> **Three entries were closed by something other than what they proposed**, and
+> are struck with that distinction stated rather than quietly ticked: the
+> feature-combo clippy gap is closed by *enumerating* the combos in CI rather than
+> by adopting `cargo-hack`; `merge_group` is still open but its companion clause
+> (a light PR matrix) shipped and the entry is narrowed; and R3 turned out to be a
+> **harness artifact** rather than an emulation residual, which is a different
+> kind of "fixed".
+>
+> **Not swept: §7 (mapper / coverage gaps) below the entries already dated
+> v2.3.4.** Those need a ROM corpus to adjudicate, and asserting them from the
+> source alone would be the exact over-claim this catalogue exists to avoid.
 >
 > **Reconciled against `main` @ `de682d8` on 2026-06-19** (the v1.7.0 "Forge"
 > baseline; the entries below remain the authoritative deferred backlog).
@@ -48,7 +65,7 @@
 >   i18n H5 + **web/wasm H6** (§8a/b/c), the `full` alias (§11f), Kid Icarus FDS
 >   (§12b).
 > - **Open + CI-doable → the v1.8.9 "Backlog" beta train** (additive/off-by-default,
->   core byte-identical, AccuracyCoin 139/139 held): the §1 creator tooling (Virtual
+>   core byte-identical, AccuracyCoin held — 139/139 then, an exact 141/141 since v2.0.3): the §1 creator tooling (Virtual
 >   Pad, Input Macros, BasicBot, multi-viewport, A/V codec depth, FDS Firmware
 >   Manager, Multi-Disk Bundler, Batch Runner, `.fm2` rerecord-count export), §2
 >   `userdata` SQLite, §4d RA-HUD visual finish, §5b HD-pack spatial conditions, §7
@@ -119,12 +136,21 @@ each but that are **not present in `crates/` on `main`** (verified absent: no
   the TAStudio piano-roll pattern-paint. Source: [v1.7.0](plans/v1.7.0-forge-plan.md)
   H9 (pairs with the v1.6.0 piano-roll). Target: **v1.7.x (beta.5)**. Files:
   `crates/rustynes-frontend/src/tastudio*` + input layer.
-- `[ ]` **BasicBot** — a save-state-anchored brute-force search tool (pairs with
+- `[x]` **BasicBot** — *(SHIPPED, earlier than this sweep's window: v1.8.9-beta.4,
+  commit `91ef3b70` "feat: BasicBot control panel (Tools -> BasicBot)". Evidence:
+  `crates/rustynes-frontend/src/debugger/basic_bot_panel.rs` exists, and
+  `docs/user-guide/analysis-tools.md` documents it as present in the Tools →
+  Analysis submenu.)* a save-state-anchored brute-force search tool (pairs with
   the B1 `tastudio.*` API + Lua `frameadvance`). Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) H9. Target: **v1.7.x (beta.5)**. Files:
   frontend + `crates/rustynes-script`.
-- `[ ]` **Multi-monitor / detachable tool windows** — egui multi-viewport so the
-  debugger/TAStudio panels can pop out into OS windows. Source:
+- `[x]` **Multi-monitor / detachable tool windows** — *(SHIPPED v2.3.0 "Datum II",
+  commit `be4fbef0`. Evidence: `crates/rustynes-frontend/src/detached.rs`, whose
+  own preamble records that v2.2.9's `show_viewport_immediate` affordance merely
+  **embedded** the panel and that v2.3.0 replaced it with the real
+  `set_embed_viewports(false)` multi-viewport path — so the Windows-10
+  trapped-window report is genuinely closed, not the stopgap.)* egui multi-viewport
+  so the debugger/TAStudio panels can pop out into OS windows. Source:
   [v1.7.0](plans/v1.7.0-forge-plan.md) H9. Target: **v1.7.x (beta.5)**. Files:
   `crates/rustynes-frontend/src/debugger/`.
 - `[ ]` **A/V dump-options depth (codec / sync)** — extend the v1.6.0 `av_record`
@@ -264,10 +290,21 @@ the v1.7.0 **H1/H2** workstream + a maintainer-manual deploy/verify.
 
 ## 6. Accuracy → v2.0.0 "Timebase" (the master-clock rewrite, ADR 0002)
 
+> **Swept 2026-08-20 — §6a is DONE.** All four items (A1-A4) shipped in
+> **v2.0.0 "Timebase"** on 2026-07-03; they are struck below with their evidence.
+> What remains open in this section is §6b's residuals R1, R2, R4 and R5 plus the
+> sub-cycle items in §6c. **Two figures in the paragraph below were wrong and are
+> corrected here rather than left as historical texture:** AccuracyCoin is an
+> exact **141/141 (100.00%)** on the RAM decoder — not 139/139 — and has been
+> since **v2.0.3**, and the section's framing of the timebase rewrite as a future
+> release is six weeks and ~20 releases out of date.
+
 All remaining hard-tier accuracy residuals share **one root cause** and converge
 on the v2.0.0 one-clock + every-cycle-bus-access refactor. They are **outside the
-AccuracyCoin oracle** (zero production-ROM impact; AccuracyCoin is 100% / 139/139
-on the shipping default core). The maintainer's standing decision through v1.7.0
+AccuracyCoin oracle** (zero production-ROM impact; AccuracyCoin is an exact
+**141/141** on the shipping default core, up from 139/139 when this paragraph was
+written — the denominator grew in the v2.0.1 re-sync and v2.0.3 closed the two new
+tests). The maintainer's standing decision through v1.7.0
 is "keep deferring" point-fixes (ADR 0002 stop-condition; 15+ documented
 rollbacks); v2.0.0 is the one release licensed to break save-state/determinism and
 take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
@@ -275,21 +312,31 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
 
 ### 6a. The timebase rewrite itself
 
-- `[ ]` **One monotonic master clock (A1)** — collapse the five-counter substrate
+- `[x]` **One monotonic master clock (A1)** — *(SHIPPED v2.0.0 "Timebase",
+  2026-07-03, ADR 0029. `LockstepBus::cycle` is now the ONE canonical per-cycle
+  counter; `Cpu::cycles` and `Apu::cpu_cycle` are **assigned** from it rather than
+  independently incremented.)* collapse the five-counter substrate
   (`Cpu::master_clock`, `Cpu::cycles`, `LockstepBus::cycle`/`ppu_clock`,
   `Apu::cpu_cycle` + `apu_phase`/`put_cycle` parity + DMC byte-timer) to a single
   `master_clock: u64` with everything else derived by fixed arithmetic. Target:
   **v2.0.0**. Files: `crates/rustynes-cpu/src/cpu.rs`,
   `crates/rustynes-core/src/bus.rs`, `crates/rustynes-apu/src/apu.rs`.
-- `[ ]` **Every cycle is a bus access (A2)** — replace the `dispatch()`-length +
+- `[x]` **Every cycle is a bus access (A2)** — *(SHIPPED v2.0.0 "Timebase",
+  ADR 0029. Every instruction cycle is a real bus access — no busless filler — and
+  DMA is the unified per-cycle-interleaved engine rather than a separate stepping
+  mode. This was the "make-or-break stop-or-go gate" below; it went.)* replace the `dispatch()`-length +
   `idle_tick` burn-loop and the `dma-cycle-budget` hack with a per-cycle
   read/write/dummy-read model (interleaved DMA). The make-or-break beta.2
   stop-or-go gate. Target: **v2.0.0**. Files: `crates/rustynes-cpu/src/cpu.rs`,
   `crates/rustynes-core/src/bus.rs`.
-- `[ ]` **Reload arm invisible to its own cycle (A3)** — `pending_dmc_dma_next`
-  latch promoted at the next boundary. Target: **v2.0.0**. Files:
+- `[x]` **Reload arm invisible to its own cycle (A3)** — *(SHIPPED v2.0.0.
+  Evidence: `pending_dmc_dma_next` exists at `crates/rustynes-apu/src/apu.rs:117`
+  and is carried in the APU snapshot, so it survives save-state round-trip.)*
+  `pending_dmc_dma_next` latch promoted at the next boundary. Target: **v2.0.0**. Files:
   `crates/rustynes-apu/src/apu.rs`.
-- `[ ]` **Cycle-accurate reset (A4)** — replace the function-call `Nes::reset()`
+- `[x]` **Cycle-accurate reset (A4)** — *(SHIPPED v2.0.0. The warm reset is a
+  clocked sequence including the `$4017` re-write — see `docs/cpu-6502.md` +
+  `docs/apu-2a03.md`.)* replace the function-call `Nes::reset()`
   with a real reset sequence (reset-vector-delay cycles + frame-counter re-arm).
   Target: **v2.0.0**. Files: `crates/rustynes-core/src/nes.rs`.
 
@@ -304,8 +351,14 @@ take this on. See [v2.0.0 plan](plans/v2.0.0-master-clock-plan.md) and
 - `[ ]` **R2 — `mmc3_test_2/4` #2 reload-to-0 cadence + MMC6 variant** — same M2
   sub-cycle axis as R1. Site: `tests/m004_mmc3.rs:187,207`. Target: **v2.0.0
   (escape-hatch-able)**.
-- `[ ]` **R3 — `apu_reset/len_ctrs_enabled` (FAIL #3)** — needs A4's
-  cycle-accurate reset. Site: `tests/apu_reset.rs:113`. Target: **v2.0.0**.
+- `[x]` **R3 — `apu_reset/len_ctrs_enabled` (FAIL #3)** — *(CLOSED v2.0.0 beta.3,
+  and **not** in the way this entry predicted. `crates/rustynes-test-harness/tests/apu_reset.rs:107`
+  records it verbatim: the FAIL #3 was a **harness artifact**, not an emulation
+  residual, so A4 was not what fixed it. Worth keeping visible — a residual that
+  dissolves under a corrected measurement is a different outcome from one the
+  refactor closed, and conflating the two inflates what the refactor is credited
+  with.)* needs A4's cycle-accurate reset. Site: `tests/apu_reset.rs:113`.
+  Target: **v2.0.0**.
 - `[ ]` **R4 — `apu_reset/4017_written` (FAIL #3)** — same cycle-accurate-reset
   axis. Site: `tests/apu_reset.rs:138`. Target: **v2.0.0**.
 - `[ ]` **R5 — DMC reload-DMA span `Y=3` vs hardware `Y=4`** — five-counter parity
@@ -686,21 +739,46 @@ account, or a hosted deploy (all also listed under their theme above).
 
 ## 11. CI / tooling follow-ups (proposed, not yet implemented)
 
-- `[ ]` **`cargo-hack` mutually-exclusive feature clippy in CI** — the
+- `[x]` **`cargo-hack` mutually-exclusive feature clippy in CI** — *(CLOSED by a
+  DIFFERENT mechanism than proposed, so read the distinction rather than the tick.
+  `cargo-hack` was never adopted; instead the combos are **enumerated explicitly**
+  in `.github/workflows/ci.yml` — `scripting` (line 286), `scripting,hd-pack`
+  (288), `retroachievements` (290), `full` (297), `rustynes-mappers
+  --no-default-features` (311), and three wasm32 combos including
+  `browser-cheevos` (483, 485, 491). The coverage gap the entry describes is
+  closed; the powerset tool is not in use, and enumeration means a NEW feature is
+  not covered until someone adds a line. That residual risk is the reason this is
+  struck with an explanation instead of silently.)* the
   `scripting` / `scripting,hd-pack` / `retroachievements` (and the new
-  `script-ipc` / `browser-cheevos`) clippy combos run **only locally / in the
+  `script-ipc` / `browser-cheevos`) clippy combos ran **only locally / in the
   pre-commit hook**; promoting a feature-powerset clippy into the CI lint job
   closes a real coverage gap (`--fix` can strip cfg-gated code another feature
   needs). Source: the CI-optimization memory note (PR #120 proposals). Target:
   **TBD**. Files: `.github/workflows/`.
-- `[ ]` **Free arm64 CI leg** — `ubuntu-24.04-arm` is free on public repos and runs
-  in parallel. Source: CI-optimization note. Target: **TBD**.
-- `[ ]` **`dorny/paths-filter` per-job skips** — needs a `ci-success` aggregator
-  job. A doc-only paths-filter gate already landed (#124); broader per-job skips
-  remain proposed. Source: CI-optimization note. Target: **TBD**.
-- `[ ]` **`merge_group` + PR-Ubuntu-only matrix** — the highest runner-minute
-  saver but higher risk; maintainer decision pending. Source: CI-optimization note.
-  Target: **TBD (maintainer decision)**.
+- `[x]` **Free arm64 CI leg** — *(SHIPPED, commit `b39889cc`. Evidence:
+  `ubuntu-24.04-arm` is in BOTH matrix arms of `.github/workflows/ci.yml`
+  (lines 249 and 252), so it runs on the light PR matrix as well as the full one;
+  `test (ubuntu-24.04-arm)` was observed green on PR #426.)* `ubuntu-24.04-arm` is
+  free on public repos and runs in parallel. Source: CI-optimization note.
+- `[x]` **`dorny/paths-filter` per-job skips** — *(CLOSED v2.3.9 "Crucible". The
+  `CI success` aggregator this entry names as the prerequisite exists at
+  `.github/workflows/ci.yml:712`, `always()` over all nine job groups; the `lint`
+  job and its siblings gate on `needs.changes.outputs.code`; and v2.3.9 added a
+  SECOND filter step so `test-roms` is path-gated at review time. The reason it
+  needed two steps is worth carrying: `predicate-quantifier` is **step-level**,
+  `code` needs `every` for its `!` exclusions to work at all, and `accuracy` is a
+  list of ALTERNATIVES that becomes unsatisfiable under `every` — a one-step fix
+  would have silently disabled the accuracy battery while repairing the other
+  gate.)* needs a `ci-success` aggregator job. A doc-only paths-filter gate landed
+  in #124; the broader per-job skips followed.
+- `[ ]` **`merge_group`** — *(NARROWED 2026-08-20: the companion clause, a light
+  PR matrix, has **shipped**. `.github/workflows/ci.yml:246-252` selects
+  `["ubuntu-latest", "ubuntu-24.04-arm"]` for a regular PR and the full four-OS set
+  otherwise — with `release/*` head branches deliberately taking the FULL matrix,
+  which is why a release PR still runs macOS and Windows. Only the merge queue
+  itself remains, and no `merge_group` trigger exists in any workflow.)* the
+  highest runner-minute saver but higher risk; maintainer decision pending.
+  Source: CI-optimization note. Target: **TBD (maintainer decision)**.
 - `[ ]` **`cargo-nextest` adoption** — ~1.3–1.5× test speedup but needs a separate
   `cargo test --doc` step and no retries. Source: CI-optimization note. Target:
   **TBD**.
@@ -726,7 +804,14 @@ account, or a hosted deploy (all also listed under their theme above).
   Files: `tests/roms/AccuracyCoin/`, `tests/roms/accuracycoin/`,
   `crates/rustynes-test-harness/src/accuracy_coin_catalog.rs`.
 
-- `[ ]` **Pass the two new AccuracyCoin PPU tests — `"ALE + Read"` + `"Hybrid Addresses"`** —
+- `[x]` **Pass the two new AccuracyCoin PPU tests — `"ALE + Read"` + `"Hybrid Addresses"`** —
+  *(CLOSED v2.0.3, by the first of the two routes this entry names. The 2-cycle-ALE
+  fetch model was promoted from the experimental `mc-ppu-2cycle-ale` flag to the
+  unconditional, only PPU fetch path (ADR 0030), both experimental flags were
+  retired, and the shipped default has scored an exact **141/141 (100.00%)** on the
+  RAM decoder ever since — verified again on this tree by
+  `accuracycoin_pass_rate_meets_floor`. The `139/141` and "100% / 139/139" figures
+  elsewhere in this file predate that and are wrong.)*
   the accuracy gap opened by the v2.0.1 re-sync above. Both hinge on the PPU **octal
   latch** (the 74LS373 that multiplexes PA0-7 with the CHR data bus via the ALE
   signal; `AccuracyCoin.asm:2541-2614` is the authoritative cycle-level spec, nesdev
