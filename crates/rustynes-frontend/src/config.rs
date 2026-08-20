@@ -2158,8 +2158,40 @@ impl Config {
         // is deliberately not used: `tempfile` is a DEV-dependency here, and
         // promoting it to a runtime dependency of a binary that ships to users is
         // a supply-chain decision, not a cleanup.
-        let mut tmp_os = path.as_os_str().to_os_string();
-        tmp_os.push(format!(".{}.tmp", std::process::id()));
+        // Resolve a SYMLINKED config to its target before choosing where to write.
+        //
+        // `fs::write` follows a symlink and writes through to the file it points
+        // at. `fs::rename` replaces the link itself. Without this, a user who has
+        // symlinked `config.toml` into a dotfiles repository -- a common setup --
+        // would find the link silently replaced by a regular file on the first
+        // automatic save, and their repository stops receiving changes. That is a
+        // behaviour regression introduced by the fix, not by the bug. (Review on
+        // #420.)
+        //
+        // `canonicalize` fails when the path does not exist yet, which is exactly
+        // the first-save case, so it falls back to the path as given.
+        let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+
+        // The scratch name carries the process id AND a per-call counter.
+        //
+        // A bare `.tmp` is shared across processes: two RustyNES instances saving
+        // at once would write the same file and one would rename the other's
+        // half-written bytes over the config -- the failure this function exists
+        // to prevent, reintroduced by its own mechanism. The pid closes that.
+        //
+        // The counter closes the same hole WITHIN a process. Config saves are
+        // driven from the UI thread today, so two concurrent calls are not
+        // reachable, but "not reachable today" is a property of the callers rather
+        // than of this function, and a monotonic counter costs one relaxed fetch-add
+        // to make the guarantee structural. (Review on #420 raised it.)
+        //
+        // `tempfile::NamedTempFile` would give both properties more tidily and is
+        // deliberately not used: `tempfile` is a DEV-dependency here, and promoting
+        // it to a runtime dependency of a binary that ships to users is a
+        // supply-chain decision, not a cleanup.
+        let seq = SCRATCH_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut tmp_os = target.as_os_str().to_os_string();
+        tmp_os.push(format!(".{}.{seq}.tmp", std::process::id()));
         let tmp = PathBuf::from(tmp_os);
 
         // Write, then FSYNC, then rename -- in that order, and the fsync is not
@@ -2201,13 +2233,13 @@ impl Config {
         // from the parent directory rather than carried on the file, so
         // `MoveFileEx` already produces the right result.
         #[cfg(unix)]
-        if let Ok(meta) = fs::metadata(path) {
+        if let Ok(meta) = fs::metadata(&target) {
             use std::os::unix::fs::PermissionsExt;
             let mode = meta.permissions().mode();
             let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(mode));
         }
 
-        if let Err(e) = fs::rename(&tmp, path) {
+        if let Err(e) = fs::rename(&tmp, &target) {
             let _ = fs::remove_file(&tmp);
             return Err(e.into());
         }
@@ -2219,7 +2251,7 @@ impl Config {
         // Unix-gated: opening a directory as a `File` is not portable, and
         // `MoveFileEx` on Windows already orders the metadata write.
         #[cfg(unix)]
-        if let Some(parent) = path.parent()
+        if let Some(parent) = target.parent()
             && let Ok(dir) = fs::File::open(parent)
         {
             let _ = dir.sync_all();
@@ -2228,6 +2260,13 @@ impl Config {
         Ok(())
     }
 }
+
+/// Monotonic sequence for [`Config::save_to`]'s scratch filenames.
+///
+/// Module scope rather than a function-local `static`, because clippy's
+/// `items_after_statements` fires on the latter -- and it is right that an item
+/// declared mid-function reads as if it were scoped to that point when it is not.
+static SCRATCH_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Rewrite every keycode value of a [`PadBindings`] to its canonical
 /// current winit-0.30 `KeyCode` spelling. Used by [`Config::migrate_legacy`]
@@ -2305,6 +2344,44 @@ mod tests {
                 frame_micros: 16_639,
             }),
             "the measurement did not survive a save/load round trip"
+        );
+    }
+
+    /// A symlinked config must stay a symlink.
+    ///
+    /// `fs::write` follows a symlink and writes through to its target;
+    /// `fs::rename` replaces the link itself. Without resolving the path first,
+    /// the atomic-write fix would silently convert a user's `config.toml` symlink
+    /// -- a dotfiles-repository setup is the common case -- into a regular file on
+    /// the first automatic save, and their repository would stop receiving
+    /// changes. That is a regression introduced by the fix rather than by the bug,
+    /// which is why it is pinned rather than left to the reasoning. (Review on
+    /// #420.)
+    #[cfg(unix)]
+    #[test]
+    fn saving_through_a_symlink_writes_the_target_and_keeps_the_link() {
+        let tmpdir = TempDir::new().expect("temp dir");
+        let real = tmpdir.path().join("real-config.toml");
+        let link = tmpdir.path().join("config.toml");
+        std::fs::write(&real, "").expect("seed target");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+
+        let mut c = Config::default();
+        c.input.turbo_a = true;
+        c.save_to(&link).expect("save through the link");
+
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .expect("stat link")
+                .file_type()
+                .is_symlink(),
+            "the save replaced the symlink with a regular file"
+        );
+        let back: Config = toml::from_str(&std::fs::read_to_string(&real).expect("read target"))
+            .expect("target parses");
+        assert!(
+            back.input.turbo_a,
+            "the save did not reach the symlink's target"
         );
     }
 
