@@ -43,6 +43,36 @@ cycle-accurate core later replaced.
   it would have surfaced as a Windows user reporting a save that failed for no
   visible reason. When the attempts are exhausted the error **propagates**.
 
+  **Review then found three more places the module reported success it had not
+  earned**, and the shape was the same each time: an error discarded at a call
+  site, under a comment explaining the *rest* of the operation. `set_permissions`
+  was swallowed — and the mode being applied is the mode the target **already
+  had**, so a failure replaces a 0600 file with one at the umask default, *wider
+  than what it replaced*, and says nothing. The parent-directory `sync_all` was
+  swallowed along with the `File::open` that fed it, so the entire durability
+  barrier could be a no-op while the module's own table claimed "yes" for Unix;
+  `EIO` — the exact condition the sync exists to detect — was reported as success.
+  Both now propagate, the sync excepting only the two errnos that mean *this
+  filesystem does not offer the barrier* (`EINVAL`, and `EBADF` on some network
+  mounts), since failing a save outright on those mounts is a worse answer than
+  proceeding. And the occupied-scratch retry was **one** attempt, on the reasoning
+  that the counter cannot repeat a name within a process — true, and beside the
+  point, because the collision comes from a *previous* process: a run that crashed
+  mid-session orphans one scratch file per save it made, and pid reuse restarts the
+  counter at zero, so two orphans defeat one retry.
+
+  Getting the last one under test surfaced something else. Reaching the exhaustion
+  branch through `write_atomic` means predicting the process-global `SCRATCH_SEQ`
+  and planting a decoy at every name the call will pick — and **that prediction
+  races**, because every parallel test calling `write_atomic` consumes sequence
+  values. Measured rather than assumed: a serialising mutex over the three tests
+  that *peek* at the counter still failed 2 runs in 5, because the tests doing the
+  consuming are precisely the ones that never look at it. **The pre-existing
+  single-decoy test had been latently flaky since it was written and had simply
+  never lost the race.** All three decisions are now named functions driven
+  directly, which is the fourth time this release that "extract it so a test can
+  reach it" was the actual fix.
+
   Two mutations forced design changes rather than confirming the design. The retry
   loop's predicate had to become a **parameter**: hard-wired, the exhaustion branch
   is unreachable on Unix, and a mutation making it return `Ok(())` — silently

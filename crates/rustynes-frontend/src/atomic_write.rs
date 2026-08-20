@@ -122,6 +122,54 @@
 //! and the broken-link path), the exact mode after creation, the occupied-scratch
 //! retry, exhaustion propagating rather than reporting success, and the Unix
 //! single-attempt guarantee.
+//!
+//! # Two failures that were reported as success, and are not any more
+//!
+//! Found in review of the change that introduced this module, and worth recording
+//! because both had the same shape: an error deliberately discarded at a call
+//! site, under a comment explaining the *rest* of the operation.
+//!
+//! - **`set_permissions` (property 5).** Discarded with `let _ =`. The mode being
+//!   applied is the mode the target **already had**, so a failure replaces a file
+//!   at `0600` with one at the umask default — **wider than what it replaced** —
+//!   and reports success. It now propagates, after removing the scratch file.
+//! - **The parent-directory `sync_all` (property 6).** Both the `File::open` and
+//!   the `sync_all` were discarded, so the entire durability barrier could be a
+//!   no-op while the table above claimed "yes" for Unix. It now propagates —
+//!   *except* for the two errnos that mean the filesystem does not offer the
+//!   barrier (`EINVAL`, and `EBADF` on some network mounts), since failing a save
+//!   outright on those mounts would be a worse answer than proceeding. `EIO` —
+//!   the exact condition the sync exists to detect — no longer passes as success.
+//!
+//! Both decisions are **extracted into named functions** (`apply_mode_using`,
+//! `directory_fsync_is_unsupported`) for the same reason `rename_with_retry_using`
+//! is: on Unix neither failure can be arranged in a unit test against a file this
+//! process just created and owns, so hard-wired call sites would leave both
+//! propagation paths permanently unexercised. An unexercised error path is how the
+//! swallowed versions survived review to begin with.
+//!
+//! # One orphan was not enough
+//!
+//! Property 7's collision handling was a **single** retry, on the reasoning that
+//! advancing the counter cannot repeat a name within a process. True, and beside
+//! the point: the collision comes from a *previous* process. A run that crashed
+//! mid-session orphans one scratch file per save it made, and the OS reusing that
+//! pid restarts the counter at zero -- so two orphans defeat one retry and the
+//! save fails outright, for a reason the user cannot act on. It is now a loop
+//! bounded at `SCRATCH_ATTEMPTS`; bounded rather than bare, because a directory
+//! rejecting creation for a persistent reason would otherwise hang, and a hang is
+//! a worse answer than an error.
+//!
+//! The exhaustion branch is driven through `open_fresh_scratch` rather than
+//! through `write_atomic`, and that is not a stylistic choice. Reaching it the
+//! other way means predicting the process-global `SCRATCH_SEQ` and planting a
+//! decoy at every name the call will pick -- a prediction that **races**, because
+//! `cargo test` runs in parallel and every sibling test calling `write_atomic`
+//! consumes sequence values. Measured rather than assumed: a serialising mutex
+//! over the three tests that *peek* at the counter still failed 2 runs in 5,
+//! because the tests doing the consuming are precisely the ones that never look
+//! at it. The single-decoy test had been latently flaky since it was written and
+//! had simply never lost the race.
 
 use std::fs;
 use std::io;
@@ -134,6 +182,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// `items_after_statements` fires on the latter — and it is right that an item
 /// declared mid-function reads as if it were scoped to that point when it is not.
 static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// How many scratch names to try before giving up.
+///
+/// One per orphaned scratch file left by a crashed run whose pid the OS later
+/// reused. Eight is far past any plausible orphan count and still terminates
+/// promptly if the directory is rejecting creation for a persistent reason --
+/// which is the case a bare `loop` would hang on.
+const SCRATCH_ATTEMPTS: u32 = 8;
 
 /// How many times to attempt the rename before giving up.
 ///
@@ -250,6 +306,70 @@ fn rename_with_retry(from: &Path, to: &Path) -> io::Result<()> {
     rename_with_retry_using(|| fs::rename(from, to), is_transient_rename_error)
 }
 
+/// Apply `mode` to `path` through `op`.
+///
+/// The indirection exists so a test can reach the failure branch. On Unix
+/// `set_permissions` on a file this process just created and owns does not fail
+/// for any cause a unit test can arrange, so a hard-wired call would leave the
+/// propagation path permanently unexercised -- and an unexercised error path is
+/// how the swallowed version survived review in the first place.
+#[cfg(unix)]
+fn apply_mode_using<F>(path: &Path, mode: u32, op: F) -> io::Result<()>
+where
+    F: Fn(&Path, u32) -> io::Result<()>,
+{
+    op(path, mode)
+}
+
+/// The real mode application: `chmod` to exactly `mode`.
+#[cfg(unix)]
+fn set_permissions_mode(path: &Path, mode: u32) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+}
+
+/// Open a scratch file, advancing past names a crashed run left behind.
+///
+/// `open` must pick a **fresh** name each call and return the opened file. The
+/// loop retries only `AlreadyExists`; every other error propagates on the first
+/// occurrence.
+///
+/// Bounded at `SCRATCH_ATTEMPTS`, because a bare `loop` would hang on a directory
+/// that rejects creation for some persistent reason -- and a hang is a worse
+/// answer than an error.
+///
+/// # Why this is a separate function
+///
+/// The single retry it replaced was correct for one orphan and wrong for two, and
+/// review found that rather than a test, because the only way to exercise the
+/// exhaustion branch through `write_atomic` is to predict the process-global
+/// `SCRATCH_SEQ` and plant a decoy at every name it will pick. That prediction
+/// **races**: `cargo test` runs in parallel and any sibling test calling
+/// `write_atomic` consumes sequence values, so the decoys land at names nothing
+/// asks for. Measured, not theorised -- a serialising mutex over the three tests
+/// that peek at the counter still failed 2 runs in 5, because the tests doing the
+/// consuming are the ones that never look at it.
+///
+/// Driving the loop directly removes the global from the test entirely. Same
+/// reasoning as `rename_with_retry_using` two definitions up.
+fn open_fresh_scratch<T, F>(mut open: F) -> io::Result<T>
+where
+    F: FnMut() -> io::Result<T>,
+{
+    let mut attempt: u32 = 0;
+    loop {
+        match open() {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                attempt += 1;
+                if attempt >= SCRATCH_ATTEMPTS {
+                    return Err(e);
+                }
+            }
+            other => return other,
+        }
+    }
+}
+
 /// Write `contents` to `path` atomically and durably.
 ///
 /// Creates the parent directory if needed, resolves a symlinked target, writes to
@@ -284,7 +404,7 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
         fs::metadata(&target).ok().map(|m| m.permissions().mode())
     };
 
-    let mut tmp = scratch_name(&target);
+    let mut tmp = PathBuf::new();
 
     let write_result = (|| -> io::Result<()> {
         use std::io::Write as _;
@@ -297,17 +417,21 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
             use std::os::unix::fs::OpenOptionsExt as _;
             opts.mode(mode);
         }
-        // Retry once past an occupied scratch name. A crashed run can orphan a
-        // scratch file, the OS later reuses that pid, and the new run's first save
-        // picks the same seq. Advancing the counter cannot produce the same name
-        // again, since it only increases within a process.
-        let mut f = match opts.open(&tmp) {
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                tmp = scratch_name(&target);
-                opts.open(&tmp)?
-            }
-            other => other?,
-        };
+        // Advance past an occupied scratch name, up to `SCRATCH_ATTEMPTS` times.
+        // A crashed run can orphan scratch files, the OS later reuses that pid,
+        // and the new run's counter restarts at zero -- so its first save picks a
+        // name that already exists. Advancing cannot repeat a name within a
+        // process, since the counter only increases.
+        //
+        // This was a single retry, which review correctly showed is not enough:
+        // a crashed run that orphaned BOTH `.pid.0.tmp` and `.pid.1.tmp` defeats
+        // it, and the save fails outright for a reason the user cannot act on. A
+        // bounded loop costs one `open` per orphan and is bounded so a directory
+        // that rejects creation for some other persistent reason still terminates.
+        let mut f = open_fresh_scratch(|| {
+            tmp = scratch_name(&target);
+            opts.open(&tmp)
+        })?;
         f.write_all(contents)?;
         f.sync_all()
     })();
@@ -320,10 +444,19 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
 
     // The exact mode, after creation. `open(2)` masks the requested mode with the
     // umask, so creation alone can land narrower; this makes it exact.
+    //
+    // The error PROPAGATES, and the scratch file is removed first. Swallowing it
+    // was wrong in the one direction that matters: the mode being restored is the
+    // mode the file already had, so a target at 0600 whose `set_permissions`
+    // fails is replaced by one at the umask default -- which is WIDER. Reporting
+    // success there hands the caller a file with weaker permissions than the one
+    // it replaced, and says nothing. Found in review of the PR that introduced it.
     #[cfg(unix)]
-    if let Some(mode) = existing_mode {
-        use std::os::unix::fs::PermissionsExt as _;
-        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(mode));
+    if let Some(mode) = existing_mode
+        && let Err(e) = apply_mode_using(&tmp, mode, set_permissions_mode)
+    {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
     }
 
     if let Err(e) = rename_with_retry(&tmp, &target) {
@@ -331,8 +464,7 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
         return Err(e);
     }
 
-    sync_parent_dir(&target);
-    Ok(())
+    sync_parent_dir(&target)
 }
 
 /// A scratch path beside `target`, carrying the pid and a per-call counter.
@@ -361,22 +493,49 @@ fn scratch_name(target: &Path) -> PathBuf {
 /// failure anyone sees, which is the worse of the two. `.` is the directory an
 /// empty parent means.
 #[cfg(unix)]
-fn sync_parent_dir(target: &Path) {
-    {
-        let parent = target.parent().map_or_else(
-            || PathBuf::from("."),
-            |p| {
-                if p.as_os_str().is_empty() {
-                    PathBuf::from(".")
-                } else {
-                    p.to_path_buf()
-                }
-            },
-        );
-        if let Ok(dir) = fs::File::open(&parent) {
-            let _ = dir.sync_all();
-        }
+fn sync_parent_dir(target: &Path) -> io::Result<()> {
+    let parent = target.parent().map_or_else(
+        || PathBuf::from("."),
+        |p| {
+            if p.as_os_str().is_empty() {
+                PathBuf::from(".")
+            } else {
+                p.to_path_buf()
+            }
+        },
+    );
+    let dir = fs::File::open(&parent)?;
+    match dir.sync_all() {
+        Ok(()) => Ok(()),
+        Err(e) if directory_fsync_is_unsupported(&e) => Ok(()),
+        Err(e) => Err(e),
     }
+}
+
+/// True when a directory `fsync` failure means "this filesystem does not offer
+/// the barrier", rather than "the write failed".
+///
+/// `fsync` on a directory is a POSIX-*blessed* idiom, not a POSIX-*guaranteed*
+/// one. Some filesystems answer `EINVAL`; a few network mounts answer `EBADF`
+/// because the descriptor was not opened writable. Neither means the rename
+/// failed to commit, so treating them as write failures would break saving
+/// outright on those mounts -- on a path that otherwise fully succeeded.
+///
+/// Every OTHER error propagates. **That is the change**: previously all of them
+/// were discarded, so a genuine `EIO` from the storage layer -- the exact
+/// condition the sync exists to detect -- was reported to the caller as success.
+///
+/// Extracted rather than written inline as a `matches!` guard for the reason
+/// `rename_with_retry_using` was: a decision buried in a call site that cannot be
+/// reached from a test is a decision nothing checks. Here the excusable and
+/// non-excusable cases are both one function call away.
+#[cfg(unix)]
+pub fn directory_fsync_is_unsupported(e: &io::Error) -> bool {
+    // `EBADF` is 9 on every Unix ABI RustyNES builds for. Named rather than
+    // written inline so the comparison reads as a decision, and spelled out
+    // rather than pulled from `libc`, which this crate does not depend on.
+    const EBADF: i32 = 9;
+    matches!(e.kind(), io::ErrorKind::InvalidInput) || e.raw_os_error() == Some(EBADF)
 }
 
 /// No-op off Unix.
@@ -386,8 +545,22 @@ fn sync_parent_dir(target: &Path) {
 /// only visible on a non-Unix target, so it failed the **wasm32** gate while
 /// native clippy passed. `const` states the truth: on Windows `MoveFileEx`
 /// already orders the metadata write, and on wasm there is no directory to sync.
+///
+/// The `unnecessary_wraps` allow is the same story a second time. Once the Unix
+/// arm started propagating its `sync_all` failure, this arm had to match its
+/// signature — and an always-`Ok` return is exactly what that lint objects to, on
+/// non-Unix targets only. Clippy's suggested fix (return `()`) would break the
+/// parity the shared call site depends on, since `write_atomic` ends in
+/// `sync_parent_dir(&target)` as its tail expression. Caught by the wasm32 gate
+/// again, which native clippy cannot reach.
 #[cfg(not(unix))]
-const fn sync_parent_dir(_target: &Path) {}
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "signature parity with the Unix arm, which genuinely can fail"
+)]
+const fn sync_parent_dir(_target: &Path) -> io::Result<()> {
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -571,6 +744,77 @@ mod tests {
         assert_eq!(fs::read(&p).unwrap(), b"payload");
     }
 
+    /// TWO occupied scratch names must not cost the save either.
+    ///
+    /// The single retry this replaced survived one decoy and failed on two --
+    /// which is the real scenario, not a contrived one: a run that crashed
+    /// mid-session orphans one scratch file per save it had made, and the OS
+    /// reusing that pid restarts the counter at zero. Found in review.
+    #[test]
+    fn two_occupied_scratch_names_do_not_lose_the_write() {
+        let d = tempdir();
+        let p = d.join("f.txt");
+        let next = SCRATCH_SEQ.load(Ordering::Relaxed);
+        for offset in 0..2 {
+            let mut decoy = p.as_os_str().to_os_string();
+            decoy.push(format!(".{}.{}.tmp", std::process::id(), next + offset));
+            fs::write(PathBuf::from(decoy), b"decoy").expect("plant decoy");
+        }
+        write_atomic(&p, b"payload").expect("write should survive two collisions");
+        assert_eq!(fs::read(&p).unwrap(), b"payload");
+    }
+
+    /// ...but the loop is BOUNDED: it gives up rather than spinning.
+    ///
+    /// Driven directly rather than through `write_atomic`, because reaching the
+    /// exhaustion branch that way means predicting the process-global
+    /// `SCRATCH_SEQ`, and that prediction races with every parallel test that
+    /// calls `write_atomic`. See `open_fresh_scratch`.
+    #[test]
+    fn the_scratch_loop_is_bounded_and_reports_failure() {
+        let mut calls = 0u32;
+        let r: io::Result<()> = open_fresh_scratch(|| {
+            calls += 1;
+            Err(io::Error::from(io::ErrorKind::AlreadyExists))
+        });
+        let e = r.expect_err("the scratch loop must give up rather than spin");
+        assert_eq!(e.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            calls, SCRATCH_ATTEMPTS,
+            "the loop must try exactly SCRATCH_ATTEMPTS names before giving up"
+        );
+    }
+
+    /// The loop must succeed as soon as a name is free, not keep going.
+    #[test]
+    fn the_scratch_loop_stops_at_the_first_free_name() {
+        let mut calls = 0u32;
+        let got = open_fresh_scratch(|| {
+            calls += 1;
+            if calls < 3 {
+                Err(io::Error::from(io::ErrorKind::AlreadyExists))
+            } else {
+                Ok(calls)
+            }
+        })
+        .expect("should succeed on the third name");
+        assert_eq!(got, 3);
+        assert_eq!(calls, 3, "the loop kept going past a free name");
+    }
+
+    /// Only `AlreadyExists` is retried. Anything else is a real failure and must
+    /// surface on the first occurrence rather than after eight pointless tries.
+    #[test]
+    fn the_scratch_loop_does_not_retry_other_errors() {
+        let mut calls = 0u32;
+        let r: io::Result<()> = open_fresh_scratch(|| {
+            calls += 1;
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        });
+        assert_eq!(r.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(calls, 1, "a non-transient error was retried");
+    }
+
     /// A failed write must leave the existing file intact.
     #[test]
     fn a_failed_write_leaves_the_original_intact() {
@@ -660,5 +904,63 @@ mod tests {
         );
         assert!(r.is_err());
         assert_eq!(calls, 1, "POSIX rename has no transient sharing violation");
+    }
+
+    /// A failing mode application must PROPAGATE, not be reported as success.
+    ///
+    /// The direction matters and is why this was a blocking finding rather than a
+    /// nitpick: the mode being applied is the mode the target *already had*, so a
+    /// swallowed failure replaces a 0600 file with one at the umask default --
+    /// **wider** than what it replaced -- and tells the caller nothing.
+    #[cfg(unix)]
+    #[test]
+    fn a_failing_mode_application_propagates() {
+        let dir = tempdir();
+        let p = dir.join("m");
+        let r = apply_mode_using(&p, 0o600, |_, _| {
+            Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied"))
+        });
+        assert!(r.is_err(), "a failing mode op reported success");
+        assert_eq!(r.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    /// ...and the succeeding case still succeeds, so the test above is not
+    /// passing merely because the helper always fails.
+    #[cfg(unix)]
+    #[test]
+    fn a_succeeding_mode_application_is_ok() {
+        let dir = tempdir();
+        let p = dir.join("m");
+        fs::write(&p, b"x").expect("seed");
+        apply_mode_using(&p, 0o600, set_permissions_mode).expect("real chmod failed");
+    }
+
+    /// The two excusable directory-fsync errors are excused, and nothing else is.
+    ///
+    /// `EIO` is the case that matters: it is the exact condition the parent-dir
+    /// sync exists to detect, and the previous code discarded it along with
+    /// everything else.
+    #[cfg(unix)]
+    #[test]
+    fn only_the_unsupported_directory_fsync_errors_are_excused() {
+        let einval = io::Error::from(io::ErrorKind::InvalidInput);
+        assert!(
+            directory_fsync_is_unsupported(&einval),
+            "EINVAL must be excused -- some filesystems answer it for dir fsync"
+        );
+        let ebadf = io::Error::from_raw_os_error(9);
+        assert!(
+            directory_fsync_is_unsupported(&ebadf),
+            "EBADF must be excused -- some network mounts answer it"
+        );
+
+        for (errno, name) in [(5, "EIO"), (28, "ENOSPC"), (13, "EACCES")] {
+            let e = io::Error::from_raw_os_error(errno);
+            assert!(
+                !directory_fsync_is_unsupported(&e),
+                "{name} must PROPAGATE -- it is a real write failure, not an \
+                 unsupported barrier"
+            );
+        }
     }
 }
