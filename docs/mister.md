@@ -6,6 +6,7 @@ change to `crates/rustynes-cosim` or the golden formats it emits.
 **Decision record:** [ADR 0037](adr/0037-mister-fpga-core-independent-hdl-implementation.md).
 **Execution plan:** [`to-dos/plans/v2.5.0-fabric-plan.md`](../to-dos/plans/v2.5.0-fabric-plan.md).
 **Research archive:** [`to-dos/plans/research/v2.5.0-research-mister-fpga.md`](../to-dos/plans/research/v2.5.0-research-mister-fpga.md).
+**Device-under-test:** <https://github.com/doublegate/RustyNES_MiSTer> (private).
 
 ---
 
@@ -16,9 +17,33 @@ by Quartus 17.0.2 into a Cyclone V bitstream; Rust does not become a bitstream.
 
 What the "Fabric" line builds is a **new NES implementation in SystemVerilog,
 written from public hardware documentation**, in a sibling repository
-(`RustyNES_MiSTer`), with **RustyNES as its verification oracle**. This document
-specifies the boundary between the two - the one part that lives in this
-repository.
+([`doublegate/RustyNES_MiSTer`](https://github.com/doublegate/RustyNES_MiSTer),
+private), with **RustyNES as its verification oracle**. This document specifies
+the boundary between the two - the one part that lives in this repository.
+
+The sibling repository holds the harness at rung 0 and **no RTL**, which is the
+ladder's design rather than a gap: the testbench must be shown able to recognise
+agreement before anything is compared. Two of its files matter to readers of
+this document, because they are the other half of what is specified here.
+
+`tb/checkpoint.h` reimplements this repository's checkpoint encoding in C++, and
+`tb/checkpoint_selftest.cpp` asserts it against **the same hardcoded vector**
+`the_wire_encoding_is_pinned_to_a_fixed_vector` pins on this side. That pairing
+is the whole guard against the top-ranked risk at this rung: a packing
+disagreement between the two halves produces a hash mismatch that is
+indistinguishable from a wrong DUT, and would be debugged as one. **Changing
+`Observable::encode` here without changing `checkpoint.h` there breaks
+co-simulation in the way that is hardest to diagnose** - so the selftest is the
+first thing to run after touching either.
+
+Its licence audit also settled a question this side had left open. ADR 0037
+recorded that a GPL-2.0-**only** file anywhere in the MiSTer framework's `sys/`
+would force the RTL to GPL-2.0-or-later. All 57 files were read: **there is no
+such file**, and four are GPL-3.0-or-later - including `hps_io.sv`, which no core
+functions without. GPL-2.0-or-later combines upward and GPL-3.0-or-later does not
+reduce, so the combined bitstream must be **GPL-3.0-or-later**, which is already
+this project's licence. The hedge is inverted by the evidence rather than
+confirmed by it.
 
 ## The firewall applies to HDL
 
