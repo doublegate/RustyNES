@@ -152,6 +152,23 @@ cycle-accurate core later replaced.
   because a positive control alone is satisfiable by a comparison that always
   agrees.
 
+- **The `CpuBootTrace` wire layout is pinned to a literal, on both sides of the
+  co-simulation boundary.** The testbench writes this format so
+  `cpu_boot_trace_diff` — already written, already tested, and already used
+  against a third-party reference emulator — reads a device-under-test's output
+  with **no modification at all**. Demonstrated rather than asserted: a
+  C++-written 256-record trace loads and reports "All 256 aligned records match",
+  and a corrupted register is located at `cyc=307 PC=$C064 A=$64` vs `A=$9B`.
+
+  Both sides are anchored to the **same hardcoded bytes** rather than to each
+  other, so a drift on either fails its own test instead of the two quietly
+  agreeing on something wrong — or disagreeing at co-simulation time, where a
+  format difference is indistinguishable from a DUT defect.
+
+  The pinned record uses **`scanline = -1`** deliberately: the pre-render line is
+  negative, and a writer that clamped or saturated rather than writing two's
+  complement would pass every test that only ever used a positive scanline.
+
 ### Fixed
 
 - **The excluded crate's lockfile was silently gitignored, so CI re-resolved it
