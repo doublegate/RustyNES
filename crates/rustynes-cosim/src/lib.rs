@@ -58,6 +58,8 @@
 // justify each use.
 #![allow(unsafe_code)]
 
+pub mod checkpoint;
+
 use std::io;
 
 use core::ffi::{c_char, c_int, c_uchar, c_uint, c_ulonglong, c_void};
@@ -161,10 +163,123 @@ impl Oracle {
     }
 
     /// The per-cycle IRQ/bus trace as CSV, or `None` if unarmed.
+    ///
+    /// **Consumes the trace.** A second call returns `None`, and so does a
+    /// subsequent [`Self::take_checkpoints`] -- see
+    /// [`Self::take_irq_artifacts`] for the reason that matters.
     pub fn take_irq_trace_csv(&mut self) -> Option<String> {
         self.nes.bus_mut().take_irq_trace().map(|t| t.to_csv())
     }
+
+    /// Both IRQ-trace artifacts from **one** take.
+    ///
+    /// # Why this exists rather than calling the two takers in sequence
+    ///
+    /// `Bus::take_irq_trace` moves the trace out. So a caller that wants the
+    /// CSV *and* the checkpoints gets whichever it asked for first and `None`
+    /// for the other -- and `None` on the checkpoint side is indistinguishable
+    /// from "the trace was never armed", which the exporter would report as a
+    /// missing-output warning rather than as the ordering bug it is.
+    ///
+    /// Pinned by `tests::taking_the_csv_first_leaves_no_trace_for_checkpoints`,
+    /// so the hazard is a documented behaviour rather than a surprise.
+    pub fn take_irq_artifacts(&mut self, interval: u64) -> Option<IrqArtifacts> {
+        let trace = self.nes.bus_mut().take_irq_trace()?;
+        let dropped = trace.overflow();
+        let checkpoints = if dropped > 0 {
+            Err(CheckpointError::TraceOverflowed {
+                dropped,
+                kept: trace.len(),
+            })
+        } else {
+            let mut h = checkpoint::Hasher::new(interval);
+            for r in trace.records() {
+                h.push(&checkpoint::Observable::from_cycle_record(r));
+            }
+            Ok(h.finish())
+        };
+        Some(IrqArtifacts {
+            csv: trace.to_csv(),
+            checkpoints,
+        })
+    }
+
+    /// Rolling hash checkpoints over the observable per-cycle tuple, or `None`
+    /// if the IRQ trace was never armed.
+    ///
+    /// # This refuses rather than truncating
+    ///
+    /// `IrqTrace::push` **silently drops** records once the buffer reaches the
+    /// capacity it was armed with, advancing an `overflow` counter nobody has
+    /// to read. A checkpoint stream computed over a dropped-record trace is a
+    /// hash of *fewer cycles than it claims*, and the two sides would then
+    /// disagree for a reason that has nothing to do with the DUT -- the exact
+    /// "format-packing mismatch masquerading as an RTL bug" this rung exists to
+    /// rule out. Worse, it would look like a legitimate divergence.
+    ///
+    /// So an overflowed trace returns [`CheckpointError::TraceOverflowed`] with
+    /// the count, not a shorter stream. Raise the capacity and re-run.
+    ///
+    /// # Errors
+    ///
+    /// [`CheckpointError::TraceOverflowed`] if the trace dropped any record.
+    pub fn take_checkpoints(
+        &mut self,
+        interval: u64,
+    ) -> Option<Result<Vec<checkpoint::Checkpoint>, CheckpointError>> {
+        let trace = self.nes.bus_mut().take_irq_trace()?;
+        let dropped = trace.overflow();
+        if dropped > 0 {
+            return Some(Err(CheckpointError::TraceOverflowed {
+                dropped,
+                kept: trace.len(),
+            }));
+        }
+        let mut h = checkpoint::Hasher::new(interval);
+        for r in trace.records() {
+            h.push(&checkpoint::Observable::from_cycle_record(r));
+        }
+        Some(Ok(h.finish()))
+    }
 }
+
+/// Both artifacts derived from a single take of the per-cycle trace.
+#[derive(Debug, Clone)]
+pub struct IrqArtifacts {
+    /// The per-cycle CSV.
+    pub csv: String,
+    /// The checkpoint stream, or why it could not be produced.
+    pub checkpoints: Result<Vec<checkpoint::Checkpoint>, CheckpointError>,
+}
+
+/// Why a checkpoint stream could not be produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckpointError {
+    /// The per-cycle trace hit its capacity and dropped records, so any hash
+    /// over it would cover fewer cycles than it claims.
+    TraceOverflowed {
+        /// Records the trace discarded.
+        dropped: u64,
+        /// Records it kept.
+        kept: usize,
+    },
+}
+
+impl core::fmt::Display for CheckpointError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::TraceOverflowed { dropped, kept } => write!(
+                f,
+                "per-cycle trace overflowed: kept {kept} records and dropped {dropped}; \
+                 a checkpoint hash over a truncated trace would read as a DUT divergence. \
+                 Re-run with --irq-trace at least {}",
+                *kept as u64 + dropped
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CheckpointError {}
 
 // ---------------------------------------------------------------------------
 // C ABI
@@ -433,7 +548,51 @@ pub unsafe extern "C" fn rn_write_cpu_boot_trace(
         })
 }
 
+/// Write the checkpoint stream to `path`: repeated `(u64 through_cycle,
+/// u64 hash)`, little-endian, no header.
+///
+/// Returns `0` on success. `-1` null handle, `-2` bad path, `-4` the trace was
+/// never armed, **`-5` the trace overflowed and dropped records** (a hash over
+/// it would cover fewer cycles than it claims and would read as a DUT
+/// divergence -- raise the capacity and re-run), `-6` interval was zero.
+/// Anything at or below `-100` is `-(100 + errno)` from the write itself.
+///
+/// # Safety
+///
+/// `handle` must come from [`rn_open`] and not have been closed. `path` must be
+/// a valid NUL-terminated C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rn_write_checkpoints(
+    handle: *mut c_void,
+    path: *const c_char,
+    interval: c_ulonglong,
+) -> c_int {
+    if interval == 0 {
+        // Rejected here rather than reaching `Hasher::new`'s assert: a panic
+        // across the C ABI is undefined behaviour, so the guard has to be on
+        // this side of the boundary.
+        return -6;
+    }
+    let oracle = oracle!(handle, -1);
+    // SAFETY: as above.
+    let Some(path) = (unsafe { cstr_to_path(path) }) else {
+        return -2;
+    };
+    match oracle.take_checkpoints(interval) {
+        None => -4,
+        Some(Err(_)) => -5,
+        Some(Ok(ck)) => match std::fs::write(path, checkpoint::to_bytes(&ck)) {
+            Ok(()) => 0,
+            Err(e) => write_error_code(&e),
+        },
+    }
+}
+
 /// Write the IRQ/bus trace CSV to `path`. Returns 0 on success, negative on error.
+///
+/// **Consumes the trace**, so a subsequent [`rn_write_checkpoints`] returns
+/// `-4` ("never armed"). A testbench wanting both must write the checkpoints
+/// first, or use the Rust-side [`Oracle::take_irq_artifacts`].
 ///
 /// # Safety
 ///
@@ -490,6 +649,104 @@ mod tests {
         rom[vec_base + 4] = 0x00; // IRQ lo
         rom[vec_base + 5] = 0x80;
         rom
+    }
+
+    /// An unarmed trace yields no checkpoints -- and `None` is not an empty
+    /// stream, because an empty stream would compare `Inconclusive` while
+    /// `None` says the question was never asked.
+    #[test]
+    fn checkpoints_are_none_when_the_trace_was_never_armed() {
+        let mut o = Oracle::new(&nrom(), 0).expect("rom");
+        o.advance_frames(1);
+        assert!(o.take_checkpoints(checkpoint::DEFAULT_INTERVAL).is_none());
+    }
+
+    /// The same run hashed twice agrees -- the null-DUT self-diff for this
+    /// format. Without it, a later red result is ambiguous between "the RTL is
+    /// wrong" and "the hasher is not a function of the trace".
+    #[test]
+    fn the_same_run_produces_the_same_checkpoints() {
+        let run = |seed: u64| {
+            let mut o = Oracle::new(&nrom(), seed).expect("rom");
+            o.enable_irq_trace(200_000);
+            o.advance_frames(2);
+            o.take_checkpoints(checkpoint::DEFAULT_INTERVAL)
+                .expect("armed")
+                .expect("no overflow")
+        };
+        let a = run(0);
+        let b = run(0);
+        assert!(!a.is_empty(), "two frames must produce checkpoints");
+        assert_eq!(
+            checkpoint::compare(&a, &b),
+            checkpoint::Comparison::Identical {
+                checkpoints: a.len()
+            }
+        );
+    }
+
+    /// **A capacity-limited trace silently drops records**, so a hash over it
+    /// covers fewer cycles than it claims -- and would then read as a DUT
+    /// divergence rather than as our own truncation. It must refuse.
+    #[test]
+    fn an_overflowed_trace_refuses_to_produce_checkpoints() {
+        let mut o = Oracle::new(&nrom(), 0).expect("rom");
+        o.enable_irq_trace(64); // far below one frame of CPU cycles
+        o.advance_frames(2);
+        match o.take_checkpoints(checkpoint::DEFAULT_INTERVAL) {
+            Some(Err(CheckpointError::TraceOverflowed { dropped, kept })) => {
+                assert_eq!(kept, 64);
+                assert!(dropped > 0, "the trace must report what it discarded");
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    /// The refusal must say how to fix itself; a testbench operator sees only
+    /// this string.
+    #[test]
+    fn the_overflow_error_names_the_capacity_to_retry_with() {
+        let e = CheckpointError::TraceOverflowed {
+            dropped: 100,
+            kept: 64,
+        };
+        let s = e.to_string();
+        assert!(
+            s.contains("164"),
+            "must name the capacity to retry with: {s}"
+        );
+        assert!(s.contains("dropped 100"), "{s}");
+    }
+
+    /// The consuming hazard, pinned so it is a documented behaviour rather
+    /// than a surprise: the CSV taker moves the trace out, so a checkpoint
+    /// request afterwards returns `None` -- which reads exactly like "never
+    /// armed".
+    #[test]
+    fn taking_the_csv_first_leaves_no_trace_for_checkpoints() {
+        let mut o = Oracle::new(&nrom(), 0).expect("rom");
+        o.enable_irq_trace(200_000);
+        o.advance_frames(1);
+        assert!(o.take_irq_trace_csv().is_some());
+        assert!(
+            o.take_checkpoints(checkpoint::DEFAULT_INTERVAL).is_none(),
+            "if this ever returns Some, the trace stopped being consumed and \
+             `take_irq_artifacts` can be simplified away"
+        );
+    }
+
+    /// The combined taker returns both from one take, which the two single
+    /// takers structurally cannot.
+    #[test]
+    fn the_combined_taker_returns_both_artifacts() {
+        let mut o = Oracle::new(&nrom(), 0).expect("rom");
+        o.enable_irq_trace(200_000);
+        o.advance_frames(1);
+        let a = o
+            .take_irq_artifacts(checkpoint::DEFAULT_INTERVAL)
+            .expect("armed");
+        assert!(a.csv.starts_with("cpu_cycle,"));
+        assert!(!a.checkpoints.expect("no overflow").is_empty());
     }
 
     /// The power-on latch, pinned rather than worked around silently.

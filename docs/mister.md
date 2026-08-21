@@ -122,6 +122,7 @@ every golden's length.
 | `<stem>.irq.csv` | per-CPU-cycle IRQ/bus CSV, two samples per cycle | `scripts/irq_trace_cross_diff.py` |
 | `<stem>.index_fb.bin` | 256x240 little-endian `u16`, **pre-palette** | the testbench's frame comparison |
 | `<stem>.ram.bin` | 2 KiB CPU work RAM | `accuracy_coin_catalog::decode_results` |
+| `<stem>.ckpt.bin` | rolling per-cycle hash checkpoints, `(u64 through_cycle, u64 hash)` LE, headerless | `checkpoint_diff` |
 | `<stem>.manifest.txt` | provenance | humans, and the drift guard below |
 
 The framebuffer is exported **pre-palette** on purpose: a palette difference must
@@ -201,8 +202,92 @@ impact: zero.
 A 4200-frame AccuracyCoin run is ~125 M CPU cycles, which as per-cycle CSV is
 ~7.5 GB per side. Both sides instead chain a 64-bit hash over the per-cycle tuple
 and compare checkpoints every 4096 cycles - **244 KB** for a full run. On the
-first mismatch, binary-search the window and re-run only that window with full
-capture and waveforms.
+first mismatch, re-run only that window with full capture and waveforms.
+
+Implemented in `crates/rustynes-cosim/src/checkpoint.rs`. **Measured on a real
+export** rather than projected: 3 frames of AccuracyCoin is 89,343 CPU cycles,
+which is **5,372,427 bytes** of `irq.csv` against **352 bytes** of `ckpt.bin` -
+a factor of **15,263**.
+
+#### What is hashed, and what deliberately is not
+
+`CycleRecord` carries 29 fields, and most of them are *`RustyNES`'s model*, not
+hardware. `checkpoint::Observable` is the subset an external device-under-test
+can genuinely produce, and `Observable::from_cycle_record` is the single place
+the partition is applied - so widening it has to pass
+`model_internal_state_cannot_cause_a_divergence`, which perturbs every dropped
+field at once and asserts the hash does not move.
+
+| In | Why |
+|---|---|
+| `cpu_cycle` | the axis both sides count on |
+| `bus_access`, `bus_addr`, `bus_data` | pin-visible |
+| `put_cycle` | the R/W phase half of the M2 cycle - pin-visible |
+| `nmi_line` | a pin |
+| `irq_line_at_low`, `irq_line_at_high` | the /IRQ pin, sampled twice per cycle |
+| `pc` | **not** pin-visible; see below |
+
+Two caveats are stated rather than buried.
+
+**The IRQ line is one wire.** `CycleRecord` splits its samples into
+`irq_pending_mapper_*` and `irq_pending_apu_*`, which is `RustyNES` *attributing*
+the assertion to a source. Hardware has a single wire-OR'd /IRQ input and cannot
+make that distinction, so the pairs are OR'd before hashing. Hashing them apart
+would fail a correct DUT for disagreeing about something it cannot observe.
+
+**`pc` is DUT-observable, not pin-observable.** The 6502 does not expose its
+program counter. It is in because the testbench wrapper can expose the internal
+register and rung 1 compares it directly - but a `pc`-only mismatch means
+something weaker than a bus mismatch.
+
+`ppu_scanline`, `ppu_dot`, `ppu_frame` and `a12_events` are out. `a12_events` is
+the sharpest case: A12 transitions genuinely are observable on the cartridge
+connector, so it is excluded for **scope**, not observability, and becomes a gate
+when the PPU rung opens.
+
+#### The hash must be reimplementable in ten lines of C++
+
+The top risk at rung 0 is a format-packing mismatch masquerading as an RTL bug.
+So the hash is **FNV-1a 64** - chosen for exactly one property, that a testbench
+can reimplement it without a library - and `Observable::encode` defines a fixed
+**16-byte little-endian** layout with an explicit zero pad byte, so the C++ side
+cannot hash uninitialised struct padding. Both are pinned to a hardcoded vector
+by `the_wire_encoding_is_pinned_to_a_fixed_vector`; a reordered field fails that
+test rather than producing a phantom RTL defect on the next co-simulation run.
+
+#### Three answers, and the third is the point
+
+`checkpoint_diff <reference.ckpt.bin> <candidate.ckpt.bin>` exits `0` identical,
+`1` diverged (printing the window to re-run), `2` usage/IO, and **`3`
+inconclusive**. A truncated run, a DUT that stopped early, and two runs at
+different intervals all produce "no divergence was found", and reporting that as
+agreement is this project's recurring failure. A green job must mean the streams
+were compared and matched, never that there was nothing to compare.
+
+Cycle **alignment is checked before the hash**: two streams checkpointing at
+different cycles cover different spans, so a hash difference between them says
+nothing, and calling it a divergence would send a full-capture re-run at a window
+where nothing is wrong.
+
+#### A capacity-limited trace refuses rather than truncating
+
+`IrqTrace::push` silently drops records once it reaches the capacity it was armed
+with, advancing an `overflow` counter nobody has to read. A checkpoint stream
+computed over a dropped-record trace hashes *fewer cycles than it claims*, and
+the two sides then disagree for a reason that has nothing to do with the DUT -
+which is worse than useless, because it looks like a legitimate divergence. So
+`Oracle::take_checkpoints` returns `CheckpointError::TraceOverflowed` naming the
+capacity to retry with, `rn_write_checkpoints` returns `-5`, and the exporter
+aborts rather than writing a short stream.
+
+#### One take, two artifacts
+
+`Bus::take_irq_trace` **moves** the trace out, so asking for the CSV and then the
+checkpoints yields `None` for whichever came second - and `None` is
+indistinguishable from "never armed". `Oracle::take_irq_artifacts` derives both
+from a single take; the hazard is pinned by
+`taking_the_csv_first_leaves_no_trace_for_checkpoints` so it is a documented
+behaviour rather than a surprise.
 
 ## What is a gate and what is diagnostic
 
