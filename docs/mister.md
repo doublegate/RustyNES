@@ -148,6 +148,7 @@ every golden's length.
 | `<stem>.index_fb.bin` | 256x240 little-endian `u16`, **pre-palette** | the testbench's frame comparison |
 | `<stem>.ram.bin` | 2 KiB CPU work RAM | `accuracy_coin_catalog::decode_results` |
 | `<stem>.ckpt.bin` | rolling per-cycle hash checkpoints, `(u64 through_cycle, u64 hash)` LE, headerless | `checkpoint_diff` |
+| `<stem>.obs.bin` | full-capture observable stream, repeated 16-byte records | the testbench's self-diff, and a located-window re-run |
 | `<stem>.manifest.txt` | provenance | humans, and the drift guard below |
 
 The framebuffer is exported **pre-palette** on purpose: a palette difference must
@@ -323,6 +324,61 @@ meant both "no prior checkpoint" and "cycle zero", so the first window read as
 `(0, 0]` - empty. It is now `Option<u64>`, and `Divergence::contains` is offered
 so call sites do not reimplement a boundary that is half-open at one end and
 open-ended at the other.
+
+#### The CSV cannot re-derive the checkpoints, so `.obs.bin` exists
+
+Found by trying to build the rung-0 self-diff on the CSV. `irq.csv` carries **23
+columns**, and neither `pc` nor `put_cycle_post` is among them - two of the nine
+observable fields are simply absent. So an external testbench reading the CSV
+cannot reproduce the checkpoint hashes, and "feed `RustyNES`'s golden back in as
+if it were the DUT and get zero divergences" was not implementable as designed.
+
+`<stem>.obs.bin` closes that: repeated 16-byte records in the **same wire
+encoding the hash folds**, headerless. It is the only artifact the checkpoints
+can be independently re-derived from, and it is also the input a re-run of a
+located window consumes - so it would have been needed regardless.
+
+Additive. The CSV is untouched, which matters because `scripts/irq_trace_cross_diff.py`
+and the committed `golden/irq_trace/*.csv` both depend on its shape.
+
+`Observable::decode` is the inverse, and it **refuses what it does not
+understand**: a non-zero reserved pad byte, an undefined flag bit, an unknown
+bus-access code, a short record, a stream length that is not a multiple of 16.
+None of that is pedantry - reading a record from a newer producer as though
+nothing had changed is how a *format* divergence gets reported as a *DUT*
+divergence.
+
+The stream is emitted even when the checkpoints are refused for overflow. A hash
+over a truncated trace claims a coverage it does not have; the records
+themselves are just records, and are worth keeping for a re-run.
+
+#### The rung-0 self-diff, measured
+
+The oracle's own output fed back in as though it were the DUT, across the
+repository boundary:
+
+```console
+$ tb/selfdiff_check.sh
+1/3 exporting goldens from the oracle
+2/3 re-deriving checkpoints on this side
+re-derived 22 checkpoints from 89335 records
+3/3 comparing
+checkpoints match: 22 compared, 0 divergences
+
+negative control: one flipped bit must be located
+DIVERGED at checkpoint 10
+  window to re-run with full capture: cycles (40967, 45063]  (4096 cycles)
+
+rung 0 self-diff: agreement recognised, and disagreement located
+```
+
+89,335 records of AccuracyCoin, re-derived in C++ from `.obs.bin` alone, hashing
+to byte-identical checkpoints. The negative control runs **in the same
+invocation**, because a positive control alone is satisfiable by a comparison
+that always agrees.
+
+It is not in CI: it needs both repositories and a test ROM. It exits **77** and
+says why when it cannot run - a skip that reports itself, never a silent pass.
 
 #### A capacity-limited trace refuses rather than truncating
 

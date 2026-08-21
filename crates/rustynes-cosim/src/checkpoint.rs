@@ -225,6 +225,89 @@ impl Observable {
     }
 }
 
+impl Observable {
+    /// Parse one record written by [`Self::encode`].
+    ///
+    /// The inverse exists because the **golden `.irq.csv` cannot reconstruct an
+    /// `Observable`** — it has 23 columns and neither `pc` nor `put_cycle_post`
+    /// is among them. Without a decodable observable stream there is no way for
+    /// an external testbench to re-derive the checkpoint hashes from a golden,
+    /// which is exactly the rung-0 self-diff: feed `RustyNES`'s own output back
+    /// in as if it were the DUT and require zero divergences.
+    ///
+    /// # Errors
+    ///
+    /// If `bytes` is not exactly [`ENCODED_LEN`] long, or if the flag byte has
+    /// a bit set that this version does not define. The second check is not
+    /// pedantry: byte 15 is a reserved pad, and a producer that starts writing
+    /// something there is a producer this reader no longer understands. Failing
+    /// loudly beats silently ignoring a field that has come to mean something.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the `expect` converts an 8-byte subslice of a slice
+    /// the `try_into` above has already fixed at 16 bytes. It is an `expect`
+    /// rather than a fallback so a future change to the record width fails
+    /// loudly instead of silently decoding garbage.
+    pub fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
+        let b: [u8; ENCODED_LEN] = bytes
+            .try_into()
+            .map_err(|_| "observable record is not 16 bytes")?;
+        if b[14] & 0xF0 != 0 {
+            return Err("observable record has undefined flag bits set");
+        }
+        if b[15] != 0 {
+            return Err("observable record has a non-zero pad byte");
+        }
+        if b[13] > 4 {
+            return Err("observable record has an unknown bus-access code");
+        }
+        Ok(Self {
+            cpu_cycle: u64::from_le_bytes(b[0..8].try_into().expect("8 bytes")),
+            pc: u16::from_le_bytes([b[8], b[9]]),
+            bus_addr: u16::from_le_bytes([b[10], b[11]]),
+            bus_data: b[12],
+            bus_access: b[13],
+            put_cycle: b[14] & 1 != 0,
+            nmi_line: b[14] & 2 != 0,
+            irq_line_at_low: b[14] & 4 != 0,
+            irq_line_at_high: b[14] & 8 != 0,
+        })
+    }
+}
+
+/// Serialize an observable stream: repeated 16-byte [`Observable::encode`]
+/// records, headerless.
+///
+/// This is the **full-capture** golden — the input a re-run of a located window
+/// needs, and the only artifact from which the checkpoint hashes can be
+/// independently re-derived.
+#[must_use]
+pub fn observables_to_bytes(records: &[Observable]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(records.len() * ENCODED_LEN);
+    for r in records {
+        out.extend_from_slice(&r.encode());
+    }
+    out
+}
+
+/// Parse an observable stream written by [`observables_to_bytes`].
+///
+/// # Errors
+///
+/// If the length is not a multiple of [`ENCODED_LEN`], or if any record is
+/// malformed. A trailing partial record means the producer was interrupted, and
+/// a truncated stream that parses is a truncated comparison that passes.
+pub fn observables_from_bytes(bytes: &[u8]) -> Result<Vec<Observable>, &'static str> {
+    if !bytes.len().is_multiple_of(ENCODED_LEN) {
+        return Err("observable stream length is not a multiple of 16 bytes");
+    }
+    bytes
+        .chunks_exact(ENCODED_LEN)
+        .map(Observable::decode)
+        .collect()
+}
+
 /// One emitted checkpoint: the hash of every cycle up to and including
 /// `through_cycle`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1136,6 +1219,105 @@ mod tests {
         assert_eq!(first_full_capture_difference(&long, &short), Some(60));
         assert_eq!(first_full_capture_difference(&short, &long), Some(60));
         assert_eq!(first_full_capture_difference(&long, &long), None);
+    }
+
+    /// Every record must survive `encode` -> `decode` unchanged, or the
+    /// self-diff is comparing a lossy copy against the original and calling the
+    /// difference a DUT defect.
+    #[test]
+    fn every_observable_round_trips_through_the_wire_encoding() {
+        for cycle in 0..512u64 {
+            let o = obs(cycle);
+            let back = Observable::decode(&o.encode()).expect("round trip");
+            assert_eq!(o, back, "cycle {cycle} did not survive the round trip");
+        }
+        // Every bus-access code, including the DMA ones the CSV writer spells
+        // with lowercase letters.
+        for code in 0..=4u8 {
+            let mut o = obs(1);
+            o.bus_access = code;
+            assert_eq!(
+                Observable::decode(&o.encode()).expect("rt").bus_access,
+                code
+            );
+        }
+        // Every flag combination, so a bit-order slip cannot hide.
+        for bits in 0..16u8 {
+            let mut o = obs(1);
+            o.put_cycle = bits & 1 != 0;
+            o.nmi_line = bits & 2 != 0;
+            o.irq_line_at_low = bits & 4 != 0;
+            o.irq_line_at_high = bits & 8 != 0;
+            assert_eq!(
+                Observable::decode(&o.encode()).expect("rt"),
+                o,
+                "flags {bits:#06b}"
+            );
+        }
+    }
+
+    /// The decoder refuses what it does not understand rather than silently
+    /// ignoring it.
+    ///
+    /// Byte 15 is a reserved pad and bits 4-7 of byte 14 are undefined. A
+    /// producer writing something there is a producer this reader no longer
+    /// understands, and reading its records as if nothing had changed is how a
+    /// format divergence becomes a DUT divergence.
+    #[test]
+    fn the_decoder_rejects_records_it_does_not_understand() {
+        let good = obs(7).encode();
+        assert!(Observable::decode(&good).is_ok());
+
+        let mut pad = good;
+        pad[15] = 1;
+        assert!(Observable::decode(&pad).is_err(), "non-zero pad accepted");
+
+        let mut flags = good;
+        flags[14] |= 0x10;
+        assert!(
+            Observable::decode(&flags).is_err(),
+            "undefined flag bit accepted"
+        );
+
+        let mut access = good;
+        access[13] = 5;
+        assert!(
+            Observable::decode(&access).is_err(),
+            "unknown access code accepted"
+        );
+
+        assert!(
+            Observable::decode(&good[..15]).is_err(),
+            "short record accepted"
+        );
+        assert!(
+            observables_from_bytes(&good[..15]).is_err(),
+            "truncated stream accepted"
+        );
+    }
+
+    /// **The rung-0 self-diff, in miniature.** Hashing the decoded stream must
+    /// reproduce the checkpoints hashed from the originals — otherwise an
+    /// external testbench reading `.obs.bin` gets different numbers from the
+    /// `.ckpt.bin` beside it, and the disagreement looks like a DUT defect.
+    #[test]
+    fn checkpoints_re_derived_from_the_observable_stream_match() {
+        let records: Vec<Observable> = (0..10_000).map(obs).collect();
+        let direct = hash_stream(&records, DEFAULT_INTERVAL);
+
+        let bytes = observables_to_bytes(&records);
+        assert_eq!(bytes.len(), records.len() * ENCODED_LEN);
+        let parsed = observables_from_bytes(&bytes).expect("parse");
+        assert_eq!(parsed, records, "the stream is not a faithful copy");
+
+        let re_derived = hash_stream(&parsed, DEFAULT_INTERVAL);
+        assert_eq!(
+            compare(&direct, &re_derived),
+            Comparison::Identical {
+                checkpoints: direct.len()
+            },
+            "checkpoints re-derived from the observable stream do not match"
+        );
     }
 
     #[test]

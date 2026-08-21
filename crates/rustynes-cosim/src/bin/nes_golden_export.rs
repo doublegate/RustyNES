@@ -15,6 +15,7 @@
 //! | `<stem>.boot.bin` | `CpuBootTrace` binary | `cpu_boot_trace_diff` |
 //! | `<stem>.irq.csv` | per-cycle IRQ/bus CSV | `scripts/irq_trace_cross_diff.py` |
 //! | `<stem>.ckpt.bin` | rolling per-cycle hash checkpoints | `checkpoint_diff` |
+//! | `<stem>.obs.bin` | full-capture observable stream, 16-byte records | the testbench's self-diff, and a window re-run |
 //! | `<stem>.index_fb.bin` | 256x240 LE `u16` | the testbench's frame comparison |
 //! | `<stem>.ram.bin` | 2 KiB CPU work RAM | `accuracy_coin_catalog::decode_results` |
 //! | `<stem>.manifest.txt` | provenance | humans, and the drift guard below |
@@ -164,6 +165,48 @@ fn write(path: &Path, bytes: &[u8]) {
     println!("  wrote {} ({} bytes)", path.display(), bytes.len());
 }
 
+/// Write the three artifacts derived from the per-cycle trace, and return the
+/// counts the manifest records.
+///
+/// One take, three artifacts. `Bus::take_irq_trace` **moves** the trace out, so
+/// asking for the CSV and then the checkpoints would silently yield an
+/// unarmed-looking `None` for whichever came second -- and `None` there is
+/// indistinguishable from "the trace was never armed".
+fn write_irq_artifacts(o: &mut Oracle, base: &Path, interval: u64) -> (usize, usize) {
+    let Some(a) = o.take_irq_artifacts(interval) else {
+        eprintln!("  WARNING: irq trace was armed but returned nothing");
+        return (0, 0);
+    };
+    write(&suffixed(base, "irq.csv"), a.csv.as_bytes());
+
+    // Written BEFORE the checkpoints, and outside the `Err` arm below, on
+    // purpose. This is the full-capture stream: it is the only artifact the
+    // checkpoint hashes can be independently re-derived from -- the CSV cannot,
+    // because it carries neither `pc` nor `put_cycle_post` -- and it is what a
+    // re-run of a located window consumes. An overflowed trace still holds real
+    // records, and those are worth keeping even when hashing them would claim a
+    // coverage they do not have.
+    let observable_count = a.observables.len();
+    write(
+        &suffixed(base, "obs.bin"),
+        &rustynes_cosim::checkpoint::observables_to_bytes(&a.observables),
+    );
+
+    match a.checkpoints {
+        Ok(ck) => {
+            write(
+                &suffixed(base, "ckpt.bin"),
+                &rustynes_cosim::checkpoint::to_bytes(&ck),
+            );
+            (ck.len(), observable_count)
+        }
+        // Refuse rather than emitting a short stream: a hash over a trace that
+        // dropped records covers fewer cycles than it claims, and the DUT would
+        // be blamed for our truncation.
+        Err(e) => panic!("  ERROR: {e}"),
+    }
+}
+
 fn main() {
     let args = parse_args();
     let rom =
@@ -228,31 +271,11 @@ fn main() {
             None => eprintln!("  WARNING: boot trace was armed but returned nothing"),
         }
     }
-    // ONE take, two artifacts. `Bus::take_irq_trace` moves the trace out, so
-    // asking for the CSV and then the checkpoints would silently yield an
-    // unarmed-looking `None` for whichever came second.
-    let mut checkpoint_count = 0usize;
-    if args.irq_trace.is_some() {
-        match o.take_irq_artifacts(args.checkpoint_interval) {
-            Some(a) => {
-                write(&suffixed(&base, "irq.csv"), a.csv.as_bytes());
-                match a.checkpoints {
-                    Ok(ck) => {
-                        checkpoint_count = ck.len();
-                        write(
-                            &suffixed(&base, "ckpt.bin"),
-                            &rustynes_cosim::checkpoint::to_bytes(&ck),
-                        );
-                    }
-                    // Refuse rather than emitting a short stream: a hash over a
-                    // trace that dropped records covers fewer cycles than it
-                    // claims, and the DUT would be blamed for our truncation.
-                    Err(e) => panic!("  ERROR: {e}"),
-                }
-            }
-            None => eprintln!("  WARNING: irq trace was armed but returned nothing"),
-        }
-    }
+    let (checkpoint_count, observable_count) = if args.irq_trace.is_some() {
+        write_irq_artifacts(&mut o, &base, args.checkpoint_interval)
+    } else {
+        (0, 0)
+    };
 
     let manifest = format!(
         "rom          = {}\n\
@@ -266,7 +289,8 @@ fn main() {
          index_fb_len = {}\n\
          ram_len      = {}\n\
          ckpt_interval= {}\n\
-         ckpt_count   = {}\n",
+         ckpt_count   = {}\n\
+         obs_count    = {}\n",
         args.rom.display(),
         sha256_hex(&rom),
         args.seed,
@@ -279,6 +303,7 @@ fn main() {
         RAM_LEN,
         args.checkpoint_interval,
         checkpoint_count,
+        observable_count,
     );
     write(&suffixed(&base, "manifest.txt"), manifest.as_bytes());
     println!("done; {cycles} CPU cycles simulated");
