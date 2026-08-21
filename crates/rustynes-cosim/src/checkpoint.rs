@@ -353,8 +353,17 @@ pub enum InconclusiveReason {
 pub struct Divergence {
     /// Index of the first differing checkpoint.
     pub index: usize,
-    /// Last cycle known to agree. Zero when the very first window differs.
-    pub after_cycle: u64,
+    /// Last cycle known to agree, or `None` when the **first** window differs
+    /// and so nothing is known to agree.
+    ///
+    /// This is an `Option` rather than a zero sentinel, and the distinction is
+    /// not decorative: cycle 0 is a real cycle. With `0` meaning both "no prior
+    /// checkpoint" and "cycle zero", the window `(0, through]` excludes cycle 0
+    /// — so a divergence *at* the very first cycle reported a window that did
+    /// not contain it, and a full-capture re-run of that window would have
+    /// found nothing. Caught by the acceptance sweep at `len = 1`, which is
+    /// exactly the degenerate case a hand-written test set omits.
+    pub after_cycle: Option<u64>,
     /// Last cycle of the first differing window.
     pub through_cycle: u64,
     /// The reference hash at that checkpoint.
@@ -364,10 +373,34 @@ pub struct Divergence {
 }
 
 impl Divergence {
-    /// Cycles in the window a full-capture re-run must cover.
+    /// Whether `cycle` falls in the window a full-capture re-run must cover.
+    ///
+    /// Offered rather than left to call sites because the boundary is half-open
+    /// on one end and open-ended on the other, and that is easy to get wrong in
+    /// exactly the direction that hides a bug — the same reason
+    /// `divergence::is_single_scanline` exists in `rustynes-probe`.
     #[must_use]
-    pub const fn window_len(&self) -> u64 {
-        self.through_cycle - self.after_cycle
+    pub const fn contains(&self, cycle: u64) -> bool {
+        match self.after_cycle {
+            // The first window: everything up to and including `through_cycle`.
+            None => cycle <= self.through_cycle,
+            Some(after) => after < cycle && cycle <= self.through_cycle,
+        }
+    }
+
+    /// Cycles in the window a full-capture re-run must cover, or `None` for the
+    /// first window, whose start is wherever the run began rather than a cycle
+    /// this comparison observed.
+    ///
+    /// `None` rather than an assumed `through_cycle + 1`: that answer is only
+    /// right if the run started at cycle 0, and a checkpoint stream carries no
+    /// evidence that it did.
+    #[must_use]
+    pub const fn window_len(&self) -> Option<u64> {
+        match self.after_cycle {
+            None => None,
+            Some(after) => Some(self.through_cycle - after),
+        }
     }
 }
 
@@ -398,9 +431,9 @@ pub fn compare(reference: &[Checkpoint], candidate: &[Checkpoint]) -> Comparison
             return Comparison::Diverged(Divergence {
                 index: i,
                 after_cycle: if i == 0 {
-                    0
+                    None
                 } else {
-                    reference[i - 1].through_cycle
+                    Some(reference[i - 1].through_cycle)
                 },
                 through_cycle: reference[i].through_cycle,
                 reference_hash: reference[i].hash,
@@ -419,6 +452,82 @@ pub fn compare(reference: &[Checkpoint], candidate: &[Checkpoint]) -> Comparison
     }
     Comparison::Identical {
         checkpoints: common,
+    }
+}
+
+/// The first cycle at which two full-capture record streams differ.
+///
+/// This is the answer checkpoints are an *approximation* of, and it exists so
+/// the approximation can be checked against it rather than trusted.
+///
+/// Returns `None` when the streams are identical over their common prefix
+/// **and** the same length. A shorter stream is a difference: a run that
+/// stopped early differs from one that did not, at the first cycle it no longer
+/// has.
+#[must_use]
+pub fn first_full_capture_difference(
+    reference: &[Observable],
+    candidate: &[Observable],
+) -> Option<u64> {
+    let common = reference.len().min(candidate.len());
+    for i in 0..common {
+        if reference[i] != candidate[i] {
+            return Some(reference[i].cpu_cycle);
+        }
+    }
+    if reference.len() == candidate.len() {
+        return None;
+    }
+    // The longer stream's first unmatched record is where they part.
+    let longer = if reference.len() > candidate.len() {
+        reference
+    } else {
+        candidate
+    };
+    Some(longer[common].cpu_cycle)
+}
+
+/// Whether a [`Comparison`] correctly localises a known full-capture
+/// difference.
+///
+/// **This is the v2.4.2 acceptance gate**, expressed as a function rather than
+/// as prose in a plan, so it is executable.
+///
+/// The contract checkpoints have to honour is narrow and worth stating exactly,
+/// because a looser reading of it is satisfiable by a broken implementation:
+///
+/// - If full capture says the streams are identical, the comparison must say
+///   `Identical`. Anything else is a **false positive**, and a gate that cries
+///   wolf gets switched off.
+/// - If full capture says they first differ at cycle `k`, the comparison must
+///   not say `Identical` — that is a **false negative**, which is the failure
+///   that matters, because it passes a wrong DUT.
+/// - When it says `Diverged`, the reported window must **contain `k`**. A
+///   divergence report that names the wrong window sends a full-capture re-run
+///   somewhere nothing is wrong, which is worse than no report: it spends the
+///   debugging budget and returns "no problem here".
+/// - `Inconclusive` is acceptable for a real difference — it is an honest "I
+///   could not answer" — but never for identical streams.
+// Clippy wants the two `false` arms merged. They stay apart because they name
+// two DIFFERENT failure modes, and the comments on them are the point of the
+// function: a false positive gets a gate switched off, while a false negative
+// passes a wrong DUT. Merging them into one pattern deletes exactly the
+// distinction this predicate exists to draw.
+#[allow(clippy::match_same_arms)]
+#[must_use]
+pub const fn localisation_is_consistent(
+    comparison: &Comparison,
+    first_difference: Option<u64>,
+) -> bool {
+    match (comparison, first_difference) {
+        (Comparison::Identical { .. }, None) => true,
+        // A false positive: the streams agree and the gate says otherwise.
+        (Comparison::Identical { .. }, Some(_)) => false,
+        // The failure that matters: a real difference reported as agreement.
+        (Comparison::Diverged(_) | Comparison::Inconclusive { .. }, None) => false,
+        (Comparison::Diverged(d), Some(k)) => d.contains(k),
+        // Honest refusal on a real difference.
+        (Comparison::Inconclusive { .. }, Some(_)) => true,
     }
 }
 
@@ -621,13 +730,15 @@ mod tests {
         match compare(&reference, &candidate) {
             Comparison::Diverged(d) => {
                 assert_eq!(d.index, 1, "cycle 5000 falls in the second window");
-                assert_eq!(d.after_cycle, 4095);
+                assert_eq!(d.after_cycle, Some(4095));
                 assert_eq!(d.through_cycle, 8191);
-                assert_eq!(d.window_len(), 4096);
+                assert_eq!(d.window_len(), Some(4096));
                 assert!(
-                    (d.after_cycle..=d.through_cycle).contains(&5000),
+                    d.contains(5000),
                     "the reported window must contain the corrupted cycle"
                 );
+                assert!(!d.contains(4095), "the window is open at its start");
+                assert!(d.contains(8191), "and closed at its end");
             }
             other => panic!("expected a divergence, got {other:?}"),
         }
@@ -815,6 +926,216 @@ mod tests {
     #[should_panic(expected = "checkpoint interval must be non-zero")]
     fn a_zero_interval_is_rejected() {
         let _ = Hasher::new(0);
+    }
+
+    /// A tiny deterministic PRNG. Deliberately not a dependency: this crate
+    /// emits the goldens an external implementation is verified against, and
+    /// its lockfile is committed, so every dependency added here is one more
+    /// thing that can move underneath a provenance artifact.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            self.0 >> 11
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    fn hash_stream(records: &[Observable], interval: u64) -> Vec<Checkpoint> {
+        let mut h = Hasher::new(interval);
+        for r in records {
+            h.push(r);
+        }
+        h.finish()
+    }
+
+    /// Perturb one observable field of one record, chosen by the PRNG so the
+    /// sweep is not silently exercising the same field every time.
+    fn perturb(r: &mut Observable, which: u64) {
+        match which % 8 {
+            0 => r.pc ^= 1,
+            1 => r.bus_addr ^= 1,
+            2 => r.bus_data ^= 1,
+            3 => r.bus_access = if r.bus_access == 1 { 2 } else { 1 },
+            4 => r.put_cycle = !r.put_cycle,
+            5 => r.nmi_line = !r.nmi_line,
+            6 => r.irq_line_at_low = !r.irq_line_at_low,
+            _ => r.irq_line_at_high = !r.irq_line_at_high,
+        }
+    }
+
+    /// **The v2.4.2 acceptance gate: the hash checkpoints agree with full
+    /// capture.**
+    ///
+    /// Checkpoints are an approximation of "where do these two runs first
+    /// differ", traded for four orders of magnitude of disk. The whole scheme
+    /// is worthless if the approximation can disagree with the answer, so this
+    /// sweeps a corruption across every position in a run and asserts the
+    /// checkpoint comparison localises what full capture finds — never missing
+    /// a real difference, never inventing one, and never naming a window that
+    /// does not contain it.
+    ///
+    /// The last of those three is the one worth the effort. A divergence report
+    /// naming the wrong window sends a full-capture re-run somewhere nothing is
+    /// wrong, spends the debugging budget, and returns "no problem here" — which
+    /// reads as evidence the DUT is fine.
+    #[test]
+    fn checkpoints_localise_what_full_capture_finds() {
+        let mut rng = Lcg(0x5EED_1234_ABCD_0001);
+        let mut cases = 0;
+
+        // Lengths chosen around the interval boundary on purpose: exactly one
+        // window, one short of a boundary, exactly on one, and several with a
+        // partial tail.
+        for &len in &[1u64, 2, 4095, 4096, 4097, 8192, 8193, 10_000, 12_288] {
+            let reference: Vec<Observable> = (0..len).map(obs).collect();
+            let ref_ck = hash_stream(&reference, DEFAULT_INTERVAL);
+
+            // Identical must never report a difference.
+            assert!(
+                localisation_is_consistent(
+                    &compare(&ref_ck, &hash_stream(&reference, DEFAULT_INTERVAL)),
+                    first_full_capture_difference(&reference, &reference),
+                ),
+                "len {len}: identical streams were not reported identical"
+            );
+            cases += 1;
+
+            // Then a corruption at every position for short runs, and a
+            // randomised sweep for long ones.
+            let positions: Vec<u64> = if len <= 16 {
+                (0..len).collect()
+            } else {
+                let mut v = vec![
+                    0,
+                    1,
+                    len - 2,
+                    len - 1,
+                    DEFAULT_INTERVAL - 1,
+                    DEFAULT_INTERVAL,
+                ];
+                v.retain(|&p| p < len);
+                for _ in 0..40 {
+                    v.push(rng.below(len));
+                }
+                v
+            };
+
+            for pos in positions {
+                let mut candidate = reference.clone();
+                perturb(
+                    &mut candidate[usize::try_from(pos).expect("fits")],
+                    rng.next(),
+                );
+
+                let k = first_full_capture_difference(&reference, &candidate);
+                assert_eq!(
+                    k,
+                    Some(pos),
+                    "len {len}: full capture should first differ at the perturbed cycle"
+                );
+
+                let cmp = compare(&ref_ck, &hash_stream(&candidate, DEFAULT_INTERVAL));
+                assert!(
+                    localisation_is_consistent(&cmp, k),
+                    "len {len}, corrupted cycle {pos}: checkpoints did not localise \
+                     the difference full capture found.\n  comparison = {cmp:?}"
+                );
+                // For a same-length corruption the answer must be a located
+                // window, not a refusal -- `Inconclusive` here would mean the
+                // gate degraded to "I could not tell" on the one case it exists
+                // to handle.
+                assert!(
+                    matches!(cmp, Comparison::Diverged(_)),
+                    "len {len}, cycle {pos}: expected a located window, got {cmp:?}"
+                );
+                cases += 1;
+            }
+        }
+        assert!(cases > 300, "the sweep must actually sweep; ran {cases}");
+        eprintln!("checkpoint/full-capture agreement: {cases} cases");
+    }
+
+    /// The gate predicate must itself be able to fail, or the sweep above is
+    /// asserting nothing. Each arm is driven directly.
+    #[test]
+    fn the_gate_predicate_rejects_each_way_of_being_wrong() {
+        let identical = Comparison::Identical { checkpoints: 3 };
+        let diverged = Comparison::Diverged(Divergence {
+            index: 1,
+            after_cycle: Some(4095),
+            through_cycle: 8191,
+            reference_hash: 1,
+            candidate_hash: 2,
+        });
+        let inconclusive = Comparison::Inconclusive {
+            reason: InconclusiveReason::Empty,
+        };
+
+        // Correct outcomes.
+        assert!(localisation_is_consistent(&identical, None));
+        assert!(localisation_is_consistent(&diverged, Some(5000)));
+        assert!(localisation_is_consistent(&diverged, Some(8191)));
+        assert!(localisation_is_consistent(&inconclusive, Some(5000)));
+
+        // False negative: a real difference reported as agreement. The one that
+        // passes a wrong DUT.
+        assert!(!localisation_is_consistent(&identical, Some(5000)));
+        // False positive: agreement reported as a divergence.
+        assert!(!localisation_is_consistent(&diverged, None));
+        assert!(!localisation_is_consistent(&inconclusive, None));
+        // Right answer, wrong window -- the case that wastes a re-run.
+        assert!(!localisation_is_consistent(&diverged, Some(4095)));
+        assert!(!localisation_is_consistent(&diverged, Some(8192)));
+    }
+
+    /// The degenerate case the acceptance sweep found: a divergence at cycle
+    /// **zero**, in the first window.
+    ///
+    /// With `after_cycle` as a plain `u64`, "no prior checkpoint" and "cycle 0"
+    /// were the same value, so the window `(0, 0]` was empty and did not
+    /// contain the very cycle that differed. A full-capture re-run of it would
+    /// have found nothing and read as evidence the DUT was fine.
+    #[test]
+    fn a_divergence_at_cycle_zero_is_inside_its_own_window() {
+        let a = vec![obs(0)];
+        let mut b = vec![obs(0)];
+        b[0].bus_data ^= 1;
+
+        let cmp = compare(&hash_stream(&a, 1), &hash_stream(&b, 1));
+        let Comparison::Diverged(d) = cmp else {
+            panic!("expected a divergence, got {cmp:?}");
+        };
+        assert_eq!(d.after_cycle, None, "nothing precedes the first window");
+        assert_eq!(d.through_cycle, 0);
+        assert!(
+            d.contains(0),
+            "the window must contain the cycle that differs"
+        );
+        assert_eq!(
+            d.window_len(),
+            None,
+            "the first window's start is where the run began, which a checkpoint \
+             stream carries no evidence of"
+        );
+        assert!(localisation_is_consistent(&cmp, Some(0)));
+    }
+
+    /// A truncated run differs from a complete one, and full capture must say
+    /// so — otherwise the sweep's "identical" arm is satisfiable by a stream
+    /// that simply stops.
+    #[test]
+    fn a_shorter_stream_differs_at_its_first_missing_cycle() {
+        let long: Vec<Observable> = (0..100).map(obs).collect();
+        let short: Vec<Observable> = (0..60).map(obs).collect();
+        assert_eq!(first_full_capture_difference(&long, &short), Some(60));
+        assert_eq!(first_full_capture_difference(&short, &long), Some(60));
+        assert_eq!(first_full_capture_difference(&long, &long), None);
     }
 
     #[test]

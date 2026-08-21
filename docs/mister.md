@@ -294,6 +294,36 @@ different cycles cover different spans, so a hash difference between them says
 nothing, and calling it a divergence would send a full-capture re-run at a window
 where nothing is wrong.
 
+#### The gate: checkpoints agree with full capture
+
+Checkpoints approximate "where do these two runs first differ", traded for four
+orders of magnitude of disk, and the scheme is worthless if the approximation
+can disagree with the answer. `first_full_capture_difference` computes the answer
+directly; `localisation_is_consistent` states the contract, as a function rather
+than as prose here.
+
+| full capture says | the comparison must |
+|---|---|
+| identical | report `Identical` - anything else is a false positive, and a gate that cries wolf gets switched off |
+| first differs at `k` | **not** report `Identical` - that false negative passes a wrong DUT |
+| first differs at `k`, and it reports `Diverged` | name a window **containing `k`** |
+| first differs at `k` | `Inconclusive` is an acceptable, honest refusal |
+| identical | `Inconclusive` is **not** acceptable |
+
+The third row is the one worth the effort. A divergence report naming the wrong
+window sends a full-capture re-run somewhere nothing is wrong, spends the
+debugging budget, and returns "no problem here" - which reads as evidence the DUT
+is fine.
+
+A sweep drives 331 cases across every run length around the interval boundary,
+corrupting a different observable field at a different position each time. It
+found a real defect on its first run: **a divergence at cycle zero was reported
+in a window that did not contain it.** `after_cycle` was a `u64` in which `0`
+meant both "no prior checkpoint" and "cycle zero", so the first window read as
+`(0, 0]` - empty. It is now `Option<u64>`, and `Divergence::contains` is offered
+so call sites do not reimplement a boundary that is half-open at one end and
+open-ended at the other.
+
 #### A capacity-limited trace refuses rather than truncating
 
 `IrqTrace::push` silently drops records once it reaches the capacity it was armed

@@ -50,17 +50,26 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Comparison::Diverged(d) => {
+            // The first window is printed open-ended rather than as `(0, N]`.
+            // Cycle 0 is a real cycle, so a `0` lower bound would exclude the
+            // very cycle that differs when the run diverges immediately -- and
+            // an operator would re-run a window that cannot contain the
+            // problem, then read "nothing found" as the DUT being fine.
+            let window = match (d.after_cycle, d.window_len()) {
+                (Some(after), Some(len)) => {
+                    format!("cycles ({after}, {}]  ({len} cycles)", d.through_cycle)
+                }
+                _ => format!(
+                    "cycles from the start of the run through {} inclusive",
+                    d.through_cycle
+                ),
+            };
             println!(
                 "DIVERGED at checkpoint {}\n  \
-                 window to re-run with full capture: cycles ({}, {}]  ({} cycles)\n  \
+                 window to re-run with full capture: {}\n  \
                  reference hash = {:#018x}\n  \
                  candidate hash = {:#018x}",
-                d.index,
-                d.after_cycle,
-                d.through_cycle,
-                d.window_len(),
-                d.reference_hash,
-                d.candidate_hash,
+                d.index, window, d.reference_hash, d.candidate_hash,
             );
             ExitCode::from(1)
         }
