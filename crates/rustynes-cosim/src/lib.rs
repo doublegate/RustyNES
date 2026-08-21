@@ -799,6 +799,60 @@ mod tests {
         assert!(!a.checkpoints.expect("no overflow").is_empty());
     }
 
+    /// The `CpuBootTrace` wire format, pinned to a literal.
+    ///
+    /// The C++ testbench writes this format so `cpu_boot_trace_diff` reads a
+    /// DUT's output unmodified. Both sides are anchored to the **same
+    /// hardcoded bytes** rather than to each other -- so if either
+    /// implementation drifts, its own test fails, instead of the two agreeing
+    /// on something wrong or disagreeing at co-simulation time where it would
+    /// look like a DUT defect.
+    #[test]
+    fn the_boot_trace_record_layout_is_pinned() {
+        use rustynes_core::cpu_boot_trace::{
+            BINARY_MAGIC, CPU_BOOT_TRACE_SCHEMA_VERSION, CpuBootRecord, HEADER_SIZE, RECORD_SIZE,
+        };
+        assert_eq!(BINARY_MAGIC, b"RUSTYNES_CPU");
+        assert_eq!(CPU_BOOT_TRACE_SCHEMA_VERSION, 1);
+        assert_eq!(HEADER_SIZE, 16);
+        assert_eq!(RECORD_SIZE, 32);
+
+        let r = CpuBootRecord {
+            cycle: 0x0102_0304_0506_0708,
+            frame: 0x1122_3344,
+            // Negative on purpose: the pre-render line is -1, and a writer that
+            // clamped or saturated instead of writing two's complement would
+            // pass every test using a positive scanline.
+            scanline: -1,
+            dot: 0x0155,
+            pc: 0xC5F5,
+            a: 0x11,
+            x: 0x22,
+            y: 0x33,
+            p: 0x24,
+            s: 0xFD,
+            opcode: 0x4C,
+            op1: 0xF5,
+            op2: 0xC5,
+            flags: 0x01,
+        };
+        assert_eq!(
+            r.to_bytes(),
+            [
+                0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, // cycle
+                0x44, 0x33, 0x22, 0x11, // frame
+                0xFF, 0xFF, // scanline = -1
+                0x55, 0x01, // dot
+                0xF5, 0xC5, // pc
+                0x11, 0x22, 0x33, 0x24, 0xFD, // a x y p s
+                0x4C, 0xF5, 0xC5, // opcode op1 op2
+                0x01, // flags
+                0x00, 0x00, 0x00, 0x00, 0x00, // pad to 32
+            ],
+            "boot-trace record layout changed; the C++ writer must change with it"
+        );
+    }
+
     /// The power-on latch, pinned rather than worked around silently.
     ///
     /// If this test ever fails it means the core stopped swallowing the first
