@@ -79,6 +79,47 @@ cycle-accurate core later replaced.
   second, which is indistinguishable from "never armed";
   `Oracle::take_irq_artifacts` derives both from one take.
 
+- **The v2.4.2 acceptance gate, executable: the hash checkpoints agree with
+  full capture.** Checkpoints are an *approximation* of "where do these two runs
+  first differ", traded for four orders of magnitude of disk. The whole scheme
+  is worthless if the approximation can disagree with the answer, so
+  `first_full_capture_difference` computes the answer directly and
+  `localisation_is_consistent` states the contract the approximation must honour
+  — as a function rather than as prose in a plan.
+
+  The contract is narrow on purpose, because a looser reading is satisfiable by
+  a broken implementation. Identical streams must report `Identical` (a **false
+  positive** gets a gate switched off). A real difference must never report
+  `Identical` (a **false negative** passes a wrong DUT). And when it reports a
+  divergence, **the named window must contain the difference** — a report naming
+  the wrong window sends a full-capture re-run somewhere nothing is wrong,
+  spends the debugging budget, and returns "no problem here", which reads as
+  evidence the DUT is fine. `Inconclusive` is acceptable for a real difference
+  and never for identical streams.
+
+  A sweep drives **331 cases**: every run length around the interval boundary
+  (1, 2, 4095, 4096, 4097, 8192, 8193, 10 000, 12 288), a corruption at every
+  position for short runs and a randomised sweep for long ones, and a different
+  observable field perturbed each time so it is not silently exercising one
+  field. Both the gate predicate and the sweep are demonstrated to fail — a
+  one-character mutation to `Divergence::contains` reddens two tests.
+
+- **A divergence at cycle zero was reported in a window that did not contain
+  it**, found by that sweep at `len = 1` — the degenerate case a hand-written
+  test set omits. `Divergence::after_cycle` was a `u64` in which `0` meant both
+  "no prior checkpoint" and "cycle zero", so the first window read as `(0, 0]`,
+  which is empty. A full-capture re-run of it would have found nothing, and
+  "nothing found" reads as evidence the DUT is fine.
+
+  `after_cycle` is now `Option<u64>`, which removes the sentinel collision
+  rather than special-casing it, and `Divergence::contains` is offered so call
+  sites do not reimplement a boundary that is half-open at one end and
+  open-ended at the other. `window_len` returns `Option<u64>`: for the first
+  window the span begins wherever the run began, and a checkpoint stream carries
+  no evidence that it began at cycle 0 — so the honest answer is "unknown", not
+  an assumed `through_cycle + 1`. `checkpoint_diff` prints that window
+  open-ended rather than as `(0, N]`.
+
 ### Fixed
 
 - **The excluded crate's lockfile was silently gitignored, so CI re-resolved it
