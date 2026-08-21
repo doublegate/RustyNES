@@ -198,9 +198,15 @@ impl Oracle {
             }
             Ok(h.finish())
         };
+        let observables: Vec<checkpoint::Observable> = trace
+            .records()
+            .iter()
+            .map(checkpoint::Observable::from_cycle_record)
+            .collect();
         Some(IrqArtifacts {
             csv: trace.to_csv(),
             checkpoints,
+            observables,
         })
     }
 
@@ -250,6 +256,19 @@ pub struct IrqArtifacts {
     pub csv: String,
     /// The checkpoint stream, or why it could not be produced.
     pub checkpoints: Result<Vec<checkpoint::Checkpoint>, CheckpointError>,
+    /// The full-capture observable stream.
+    ///
+    /// **Not derivable from `csv`.** The CSV carries 23 columns and neither
+    /// `pc` nor `put_cycle_post` is among them, so an external testbench cannot
+    /// re-derive the checkpoint hashes from it -- which is exactly the rung-0
+    /// self-diff. This is the artifact that makes that possible, and it is also
+    /// the input a full-capture re-run of a located window needs.
+    ///
+    /// Emitted even when `checkpoints` is an `Err`: an overflowed trace still
+    /// contains real cycles, and the records it *did* keep are worth having for
+    /// a re-run, even though hashing them would claim a coverage they do not
+    /// have.
+    pub observables: Vec<checkpoint::Observable>,
 }
 
 /// Why a checkpoint stream could not be produced.
@@ -546,6 +565,37 @@ pub unsafe extern "C" fn rn_write_cpu_boot_trace(
             Ok(()) => 0,
             Err(e) => write_error_code(&e),
         })
+}
+
+/// Write the full-capture observable stream to `path`: repeated 16-byte
+/// records in the same wire encoding the checkpoint hash folds.
+///
+/// Returns `0` on success, `-1` null handle, `-2` bad path, `-4` the trace was
+/// never armed. Anything at or below `-100` is `-(100 + errno)`.
+///
+/// Unlike [`rn_write_checkpoints`] this does **not** refuse an overflowed
+/// trace. A hash over a truncated trace claims a coverage it does not have; the
+/// records themselves are simply the records, and are worth having for a
+/// full-capture re-run.
+///
+/// # Safety
+///
+/// `handle` must come from [`rn_open`] and not have been closed. `path` must be
+/// a valid NUL-terminated C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rn_write_observables(handle: *mut c_void, path: *const c_char) -> c_int {
+    let oracle = oracle!(handle, -1);
+    // SAFETY: as above.
+    let Some(p) = (unsafe { cstr_to_path(path) }) else {
+        return -2;
+    };
+    match oracle.take_irq_artifacts(checkpoint::DEFAULT_INTERVAL) {
+        None => -4,
+        Some(a) => match std::fs::write(p, checkpoint::observables_to_bytes(&a.observables)) {
+            Ok(()) => 0,
+            Err(e) => write_error_code(&e),
+        },
+    }
 }
 
 /// Write the checkpoint stream to `path`: repeated `(u64 through_cycle,

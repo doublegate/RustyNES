@@ -120,6 +120,38 @@ cycle-accurate core later replaced.
   an assumed `through_cycle + 1`. `checkpoint_diff` prints that window
   open-ended rather than as `(0, N]`.
 
+- **`<stem>.obs.bin`, the full-capture observable golden — because the CSV
+  cannot re-derive the checkpoints.** Found by trying to build the rung-0
+  self-diff on the CSV: `irq.csv` carries **23 columns** and neither `pc` nor
+  `put_cycle_post` is among them, so two of the nine observable fields are
+  simply absent from it. An external testbench reading the CSV therefore cannot
+  reproduce the checkpoint hashes, and "feed `RustyNES`'s golden back in as if
+  it were the DUT and get zero divergences" — the rung-0 gate — was not
+  implementable as designed.
+
+  The new golden is repeated 16-byte records in the **same wire encoding the
+  hash folds**, headerless. It is the only artifact the checkpoints can be
+  independently re-derived from, and it is also the input a re-run of a located
+  window consumes, so it would have been needed regardless. Additive: the CSV is
+  untouched, which matters because `scripts/irq_trace_cross_diff.py` and the
+  committed `golden/irq_trace/*.csv` both depend on its shape.
+
+  `Observable::decode` is the inverse and **refuses what it does not
+  understand** — a non-zero reserved pad byte, an undefined flag bit, an unknown
+  bus-access code, a short record, a stream length that is not a multiple of 16.
+  Reading a record from a newer producer as though nothing had changed is how a
+  *format* divergence gets reported as a *DUT* divergence. The stream is emitted
+  even when the checkpoints are refused for overflow: a hash over a truncated
+  trace claims a coverage it does not have, while the records themselves are
+  just records.
+
+  Measured across the repository boundary, not only in unit tests: **89,335
+  records** of AccuracyCoin, re-derived in C++ from `.obs.bin` alone, hashing to
+  byte-identical checkpoints — and a one-bit corruption at the halfway record
+  located to the 4096-cycle window containing it, in the same invocation,
+  because a positive control alone is satisfiable by a comparison that always
+  agrees.
+
 ### Fixed
 
 - **The excluded crate's lockfile was silently gitignored, so CI re-resolved it
