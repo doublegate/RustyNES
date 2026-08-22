@@ -2,7 +2,7 @@
 
 **Document Version:** 2.0.4
 **Last Updated:** 2026-07-08
-**Project Status:** v2.4.5 "Compass" released — the current head of the line, on v2.4.4 "Ignition" and **v2.4.4 "Ignition"** and v2.4.3 "Touchstone" and v2.4.2 "Cairn" and v2.4.1 "Fabric", on the v2.0.0 "Timebase" MAJOR cut. **This file is a historical snapshot of the v1.0.0 cut**; see [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md) for the authoritative forward roadmap and [`docs/STATUS.md`](docs/STATUS.md) for current state.
+**Project Status:** v2.4.5 "Compass" released — the current head of the line, on **v2.4.4 "Ignition"** and v2.4.3 "Touchstone" and v2.4.2 "Cairn" and v2.4.1 "Fabric", on the v2.0.0 "Timebase" MAJOR cut. **This file is a historical snapshot of the v1.0.0 cut**; see [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md) for the authoritative forward roadmap and [`docs/STATUS.md`](docs/STATUS.md) for current state.
 
 ---
 

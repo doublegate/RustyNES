@@ -68,7 +68,9 @@ A one-directional crate graph keeps each chip (`rustynes-cpu`, `rustynes-ppu`, `
 
 ## Emulation Approach
 
-RustyNES uses **cycle-accurate, dot-level** emulation rather than scanline-based shortcuts. The scheduler advances one PPU dot at a time; the CPU advances on the appropriate dot for the region; the APU advances every other CPU cycle. The Bus owns all mutable device state, and the CPU borrows it during `tick()` — the architectural choice (per the TetaNES postmortem) that avoids the borrow-checker fight a split bus creates. See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`docs/scheduler.md`](docs/scheduler.md).
+RustyNES uses **cycle-accurate** emulation rather than scanline-based shortcuts. Since **v2.0.0 "Timebase"** the scheduler is a single canonical cycle counter in which every CPU cycle is a real bus access, with a split-around-the-access `start_cycle`/`end_cycle` PPU catch-up (ADR 0002 / ADR 0029). The APU advances every other CPU cycle.
+
+> This paragraph described the **retired** five-counter dot-lockstep model — "the scheduler advances one PPU dot at a time" — which v2.0.0 replaced outright and which is no longer a path in the code. Corrected in v2.4.5, found by review rather than by a gate: release anchors are pinned by `release_anchor_audit`, and ordinary architecture prose is not. The Bus owns all mutable device state, and the CPU borrows it during `tick()` — the architectural choice (per the TetaNES postmortem) that avoids the borrow-checker fight a split bus creates. See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`docs/scheduler.md`](docs/scheduler.md).
 
 ---
 
@@ -77,7 +79,7 @@ RustyNES uses **cycle-accurate, dot-level** emulation rather than scanline-based
 1. **Emulation enthusiasts** — reference-grade accuracy with a modern, themeable desktop UX and an in-app debugger.
 2. **The TAS community** — frame-perfect deterministic `.rnm` movie record / playback / branching built directly on the determinism contract.
 3. **Netplay users** — GGPO-style rollback netplay (2–4 players), native (UDP) and in the browser (WebRTC).
-4. **Homebrew developers** — broad mapper coverage (51 families), FDS, an instruction/PPU/memory debugger, and an embeddable `no_std` core.
+4. **Homebrew developers** — broad mapper coverage (174 families), FDS, an instruction/PPU/memory debugger, and an embeddable `no_std` core.
 5. **Rust developers** — a clean, modular workspace and a reusable 6502 CPU crate.
 
 ---

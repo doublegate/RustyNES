@@ -193,6 +193,96 @@ fn tracked_markdown() -> Vec<String> {
         .collect()
 }
 
+/// `**vX.Y.Z "Codename"** (current)` -- the label form, not any nearby word.
+///
+/// Deliberately narrow. A proximity match on `(current)` also catches prose
+/// QUOTING the defect: `.github/release-notes/v2.3.9.md` and `CHANGELOG.md` both
+/// say *"v2.3.5, still marked `(current)`"*, which is a correct historical
+/// statement and must not be flagged. Requiring the bold version-and-codename
+/// immediately before separates the two with no escape hatch needed.
+fn current_labels(text: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let mut rest = line;
+        while let Some(at) = rest.find("**v") {
+            let tail = &rest[at..];
+            // `**vX.Y.Z "Code"** (current)`
+            let ok = tail
+                .strip_prefix("**v")
+                .and_then(|s| s.split_once(" \""))
+                .filter(|(v, _)| {
+                    let mut it = v.split('.');
+                    (0..3).all(|_| it.next().is_some_and(|n| n.parse::<u64>().is_ok()))
+                        && it.next().is_none()
+                })
+                .and_then(|(v, r)| r.split_once("\"** (current)").map(|_| v.to_string()));
+            if let Some(v) = ok {
+                out.push((i + 1, v));
+            }
+            rest = &rest[at + 3..];
+        }
+    }
+    out
+}
+
+#[test]
+fn exactly_one_release_is_labelled_current_and_it_is_this_one() {
+    let root = repo_root();
+    let current = workspace_version();
+    let mut findings = Vec::new();
+    let mut total = 0usize;
+
+    for rel in &tracked_markdown() {
+        let Ok(text) = std::fs::read_to_string(root.join(rel)) else {
+            continue;
+        };
+        for (line, v) in current_labels(&text) {
+            total += 1;
+            if v != current {
+                findings.push(format!(
+                    "  {rel}:{line}  labels v{v} `(current)`, but the workspace is at {current}"
+                ));
+            }
+        }
+    }
+
+    println!("release-state: {total} `(current)` label(s) found");
+    assert!(
+        findings.is_empty(),
+        "stale `(current)` labels:\n{}\n\n\
+         A release labelled current in prose is a claim about release state, and \
+         `release_anchor_audit` does not see it -- it pins the anchors and the \
+         VERSION-PLAN table, not the narrative beside them. This is where the \
+         drift went after those were gated: v2.3.9 NOTICED `v2.3.5 ... still \
+         marked (current)`, corrected the anchors, left the label, and added a \
+         second one for itself.",
+        findings.join("\n")
+    );
+    // Fail closed: the workspace release must be labelled somewhere.
+    assert!(
+        total > 0,
+        "no `(current)` label found at all; the pattern is wrong"
+    );
+}
+
+#[test]
+fn the_current_label_scanner_ignores_prose_quoting_the_defect() {
+    assert_eq!(
+        current_labels(r#"| **v2.4.5 "Compass"** (current) | x |"#).len(),
+        1
+    );
+    assert_eq!(
+        current_labels(r#"**v2.3.5 "Manifest"** (current)."#)[0].1,
+        "2.3.5"
+    );
+    // The historical quotation, which is correct prose and must not be flagged.
+    assert!(current_labels("v2.3.5, still marked `(current)`").is_empty());
+    assert!(current_labels("the table stopped at v2.3.5, still marked `(current)`").is_empty());
+    // A version with no codename, or no label, is not a claim.
+    assert!(current_labels("**v2.4.5** (current)").is_empty());
+    assert!(current_labels(r#"**v2.4.5 "Compass"** shipped"#).is_empty());
+}
+
 #[test]
 fn no_shipped_release_is_described_as_unshipped() {
     let root = repo_root();

@@ -260,6 +260,26 @@ def selftest() -> int:
           'the current release is **v2.4.5 "Compass"** (the core reaches memory, '
           'on **v2.4.4 "Ignition"** — the first real RTL)')
 
+    # PERIOD and DATED_CODE were added without selftests and review caught it.
+    # A shape with no test is a shape whose transform nobody has run.
+    line_period = 'The current release is **v2.4.4 "Ignition"**.'
+    check("classify period", classify(line_period, "The current release is **v", old), "PERIOD")
+    check("demote period", demote(line_period, "The current release is **v", old, new, LEAD),
+          'The current release is **v2.4.5 "Compass"**.')
+
+    line_dated = '> **Current release: v2.4.4** (2026-08-22) — **"Ignition"**, the first real RTL.'
+    check("classify dated_code", classify(line_dated, "**Current release: v", old), "DATED_CODE")
+    check("demote dated_code", demote(line_dated, "**Current release: v", old, new, LEAD),
+          '> **Current release: v2.4.5** (2026-08-22) — **"Compass"**, the core reaches memory. '
+          'Built on **v2.4.4 "Ignition"** (2026-08-22) — the first real RTL.')
+
+    # The CHAIN double-insertion that reached ROADMAP.md: the predecessor must
+    # appear exactly ONCE after a chain extension.
+    chain = 'The current release is **v2.4.4 "Ignition"**, on **v2.4.3 "Touchstone"**'
+    extended = re.sub(r'(,\s*on\s+)', r'\1**v2.4.4 "Ignition"** and ',
+                      chain.replace('**v2.4.4 "Ignition"**', '**v2.4.5 "Compass"**', 1), count=1)
+    check("chain names the predecessor once", extended.count('v2.4.4 "Ignition"'), 1)
+
     # An unclassifiable line must raise, never be bumped mechanically.
     try:
         demote('**Current release: v2.4.4 "Ignition"** blah', "**Current release: v", old, new, LEAD)
@@ -300,7 +320,7 @@ def main() -> int:
 
     edits: dict[Path, str] = {}
     marker_index: dict[Path, list[tuple[str, str]]] = {}
-    demoted_files: dict[Path, bool] = {}
+    demoted_files: set[Path] = set()
     unknown: list[str] = []
     counts = {"BARE": 0, "DASH": 0, "PAREN": 0, "CHAIN": 0,
               "PERIOD": 0, "DATED_CODE": 0}
@@ -320,20 +340,30 @@ def main() -> int:
                     line = demote(line, marker, old, new, args.lead)
                     counts[shape] += 1
                     if shape != "PERIOD":
-                        demoted_files[p] = True
+                        demoted_files.add(p)
                 elif shape == "CHAIN":
                     # `..., on **v2.4.3 ...` -- the previous release is already
                     # named behind this one, so extend the chain rather than
                     # replacing it.
+                    #
+                    # EXACTLY ONE insertion. An earlier version ran two
+                    # substitutions, one anchored on `, on ` and one on
+                    # ` released — ..., on `, and a line matching BOTH got the
+                    # predecessor inserted twice: `on v2.4.4 "Ignition" and
+                    # **v2.4.4 "Ignition"** and v2.4.3 ...`. Caught in review,
+                    # not by the tool, which is the point -- the tool's own
+                    # output needs checking too.
                     line = line.replace(
                         f'{marker}{old.version} "{old.codename}"',
                         f'{marker}{new.version} "{new.codename}"', 1)
-                    line = re.sub(r'(,\s*on\s*)', rf'\1**v{old.version} "{old.codename}"** and ',
-                                  line, count=1)
-                    line = re.sub(r'( released\s*—\s*[^,]*,\s*on\s*)',
-                                  rf'\1v{old.version} "{old.codename}" and ', line, count=1)
+                    line, n_sub = re.subn(
+                        r'(,\s*on\s+)', rf'\1**v{old.version} "{old.codename}"** and ',
+                        line, count=1)
+                    if n_sub != 1:
+                        unknown.append(
+                            f"{path}: CHAIN shape has no `, on ` to extend: {line[:100]}")
                     counts["CHAIN"] += 1
-                    demoted_files[p] = True
+                    demoted_files.add(p)
                 else:
                     unknown.append(f"{path}: {shape}: {line[:100]}")
             out.append(line)
@@ -376,7 +406,7 @@ def main() -> int:
         # demotion was actually expected: a PERIOD or BARE anchor has no
         # description to demote, so the old codename legitimately disappears
         # from a file that carries no release chain.
-        if p.suffix == ".md" and demoted_files.get(p) and old.codename not in text:
+        if p.suffix == ".md" and p in demoted_files and old.codename not in text:
             problems.append(f"{rel}: {old.codename!r} vanished -- demoted releases must survive, "
                             f"not be overwritten")
     if problems:
