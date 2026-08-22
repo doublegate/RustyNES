@@ -429,3 +429,80 @@ co-simulation will drive the RTL confidently toward its bug.
 Every rung is therefore labelled by whether it has an **independent** oracle:
 nestest (Nintendulator) and the blargg ROMs do; trace fields with no Mesen2
 counterpart do not, and are advisory only.
+
+## The two risks that had to be settled before any RTL
+
+Both were settled in v2.4.3, and **both were answered by evidence that
+contradicted what the plan assumed**. That is the point of running the
+experiment rather than reasoning about it.
+
+### Risk 1 — the `sys/` licence, which inverted its own hedge
+
+The plan required this *before any RTL is written*, because relicensing after ten
+thousand lines exist is precisely the failure
+`docs/originality-and-provenance.md` documents. Every file under
+`Template_MiSTer`'s `sys/` was read and classified by its own grant, with comment
+markers stripped and whitespace collapsed before matching.
+
+| Classification | Files |
+|---|---|
+| GPL-2.0-or-later | 9 |
+| **GPL-3.0-or-later** | **4** |
+| GPL by reference, no version stated | 4 |
+| Copyright, no grant | 4 |
+| No header | 36 |
+| **GPL-2.0-only** | **0** |
+| | **57 total** |
+
+The hedge was that a GPL-2.0-**only** file would force the RTL *down* to
+GPL-2.0-or-later. There is no such file, and the binding constraint runs the
+other way: `ddr_svc.sv`, `hps_io.sv`, `scandoubler.v` and `sd_card.sv` are
+GPL-3.0-or-later, and **`hps_io.sv` is not optional** — it is how a core receives
+a ROM from the HPS and how the OSD reaches it. GPL-2.0-or-later may be combined
+into a GPL-3 work because "or later" permits the upgrade; GPL-3.0-or-later cannot
+be reduced to GPL-2.
+
+**The combined bitstream must be GPL-3.0-or-later, which is already RustyNES's
+licence.** No relicensing is needed.
+
+### Risk 4 — the Quartus subset, fitted rather than read
+
+Quartus 17.0.2's SystemVerilog subset is materially narrower than Verilator's,
+and a construct rejected after ten thousand lines exist invalidates not one file
+but the style every file was written in. The acceptance criterion was never "it
+compiles" — it was a fitted netlist **and its resource report**, because only the
+second catches a 2 KiB memory that became 16,384 flip-flops, and Quartus does
+that silently.
+
+Quartus Prime Lite 17.0.2 Build 602, device 5CSEBA6U23I7, defaults throughout:
+
+```text
+Analysis & Synthesis was successful. 0 errors, 0 warnings
+Fitter was successful.               0 errors, 4 warnings
+
+Total block memory bits  ; 16,384 / 5,662,720 ( < 1 % )
+M10K blocks              ; 2 / 553
+Total registers          ; 29
+Logic utilization (ALMs) ; 17 / 41,910 ( < 1 % )
+```
+
+**29 registers, not 16,413.** The inference style that worked is a
+`logic [7:0] mem [0:2047]` with one synchronous read port on a registered
+address, one synchronous write port, and **no asynchronous read** — an async read
+is the usual reason an array becomes registers. Quartus produced a Simple Dual
+Port ALTSYNCRAM unaided, populated its MIF from the `initial` block (which is how
+a boot ROM lands *inside* the block), and one-hot encoded the `enum` as a state
+machine.
+
+**This is now the required style, and every commit adding a memory quotes its
+resource line** — because the failure is silent in isolation and only becomes
+unfittable in aggregate.
+
+Nine constructs are **fitted**. Plain `case`, `priority case` and `$bits` are
+deliberately left *documented*: the kitchen sink does not exercise them, and
+"near-certainly fine" is the phrase the subset policy exists to refuse.
+Extending the subset means extending that module and re-fitting.
+
+The four fitter warnings are 58 unconstrained pins and a missing `.sdc`, in a
+module with no pinout and no timing constraints. Timing closure is a rung-6
+question.

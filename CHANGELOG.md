@@ -14,6 +14,116 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.4.3] - 2026-08-22 - "Touchstone" (what the synthesiser accepts, and what the licence requires)
+
+### Added
+
+- **The RTL subset is FITTED rather than documented — Fabric risk 4 is closed.**
+  (v2.4.3, continuing the "Fabric" line.) Quartus Prime Lite **17.0.2 Build 602**
+  is installed and `rtl/kitchen_sink.sv` in the sibling `RustyNES_MiSTer`
+  repository has been through `quartus_map` + `quartus_fit` to a
+  placed-and-routed netlist on a **5CSEBA6U23I7** — the DE10-Nano and
+  SuperStation One part. The emulation core is untouched.
+
+  The plan called this the risk whose failure is **retroactive**: Quartus 17.0.2's
+  SystemVerilog subset is materially narrower than Verilator's, and a construct
+  rejected after ten thousand lines exist invalidates not one file but the style
+  every file was written in. The acceptance criterion was never "it compiles" —
+  it was a fitted netlist **and its resource report**, because only the second
+  catches a 2 KiB memory that became 16,384 flip-flops.
+
+  ```text
+  Analysis & Synthesis was successful. 0 errors, 0 warnings
+  Fitter was successful.               0 errors, 4 warnings
+
+  Total block memory bits  ; 16,384 / 5,662,720 ( < 1 % )
+  M10K blocks              ; 2 / 553
+  Total registers          ; 29
+  Logic utilization (ALMs) ; 17 / 41,910 ( < 1 % )
+  ```
+
+  **29 registers, not 16,413.** The 2 KiB `logic [7:0] mem [0:2047]` inferred as
+  two M10K blocks from the *source style* alone — no `ramstyle` attribute, no
+  synthesis pragma. That failure mode is silent: Quartus emits a log warning and
+  the build still succeeds, so an accidentally-registered memory fits on its own
+  and only makes the design unfittable in aggregate.
+
+  Two findings the fit was not looking for. The **MIF column is populated**
+  (`altsyncram ... Simple Dual Port ; 2048 ; 8 ; 16384 ; db/kitchen_sink.ram0_...`),
+  so the `initial` block became a real memory-initialisation file — which is what
+  makes a boot ROM land *inside* the block rather than being written at runtime.
+  And the `enum` was recognised as a state machine and **one-hot encoded**, not
+  flattened into anonymous logic. Zero synthesis warnings is the stronger half of
+  that first line: not merely "no errors", but nothing to say about any construct
+  present.
+
+  **Nine constructs are promoted to `fitted`; three are deliberately not.**
+  `kitchen_sink.sv` does not exercise plain `case`, `priority case` or `$bits`,
+  so those keep the *documented* status while their neighbours advance. Plain
+  `case` is near-certainly fine and `$bits` is an elaboration-time function — and
+  "near-certainly" is the word that document exists to refuse. No permitted
+  construct failed, and nothing moved to the forbidden table.
+
+- **The `sys/` licence audit inverts the plan's own hedge — Fabric risk 1 is
+  closed.** The plan required this **before any RTL is written**, because
+  relicensing after ten thousand lines exist is precisely the failure
+  `docs/originality-and-provenance.md` documents. Every file under
+  `Template_MiSTer`'s `sys/` was read and classified by its own grant, with
+  comment markers stripped and whitespace collapsed before matching.
+
+  | Classification | Files |
+  |---|---|
+  | GPL-2.0-or-later | 9 |
+  | **GPL-3.0-or-later** | **4** |
+  | GPL by reference, no version stated | 4 |
+  | Copyright, no grant | 4 |
+  | No header | 36 |
+  | **GPL-2.0-only** | **0** |
+  | | **57 total** |
+
+  The plan hedged that a GPL-2.0-**only** file would force the RTL *down* to
+  GPL-2.0-or-later. **There is no such file, and the constraint runs the other
+  way.** Four files are GPL-3.0-or-later — `ddr_svc.sv`, `hps_io.sv`,
+  `scandoubler.v`, `sd_card.sv` — and `hps_io.sv` is **not optional**: it is how
+  a MiSTer core receives a ROM from the HPS and how the OSD reaches it. No core
+  functions without it. GPL-2.0-or-later may be combined into a GPL-3 work
+  because "or later" permits the upgrade; GPL-3.0-or-later cannot be reduced to
+  GPL-2. So the combined bitstream **must** be GPL-3.0-or-later — which is
+  already RustyNES's licence. No relicensing is needed, and the hedge is
+  inverted by evidence rather than by argument.
+
+### Fixed
+
+- **A stale success message in the RTL-subset policy checker.** `check_rtl_subset.py`
+  printed "the subset itself is unproven until `quartus/synth.sh` produces a
+  fitted netlist" on every green run. That was true when written and is now
+  false, and a success message that describes a state the project has left is
+  how a check quietly stops meaning anything. It now names the fit date and says
+  that a construct added *since* then is what remains unproven.
+
+### Notes
+
+- **The Quartus install is recorded because it is reusable, and three of its
+  findings would each have cost an afternoon.** The
+  `Quartus-lite-17.0.2.602-linux.tar` bundle is **two-stage** — base 17.0.0.595
+  installers plus a separate `QuartusSetup-17.0.2.602-linux.run` update — and the
+  bundle's own `setup.sh` runs **only the base**, its last line being an `exec` on
+  the 17.0.0 installer. A naive install therefore lands on **17.0.0**, which
+  `synth.sh`'s `*17.0*` pattern would have waved through; the install script
+  asserts `Version 17.0.2` exactly. 17.0 has **no `--accept_eula` flag** (it
+  arrived in 17.1, and an unknown flag is a hard error to a BitRock installer, not
+  a warning). And `--disable-components` accepts **device families by name**, so
+  the install is scoped to Cyclone V and skips ModelSim, the GUI help and five
+  unused families — **11 GB rather than roughly 30**.
+
+- **17.0.2 specifically, and the reason is not device support.** Quartus Prime
+  Lite **25.1 does still support Cyclone V** — Lite is the only edition that does.
+  Three other things rule it out: `Template_MiSTer` pins v17.0.x in writing;
+  `sys/` is mandated verbatim and carries Platform Designer IP generated under
+  17.0, which a newer Quartus compiles only after a **one-way IP upgrade**; and a
+  newer Quartus is the *more permissive* tool, so a pass under 25.1 would report
+  success for a property it never tested.
+
 ## [2.4.2] - 2026-08-22 - "Cairn" (checkpoints, and what a device can actually observe)
 
 ### Added
