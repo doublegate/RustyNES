@@ -227,7 +227,7 @@ impact: zero.
 
 A 4200-frame AccuracyCoin run is ~125 M CPU cycles, which as per-cycle CSV is
 ~7.5 GB per side. Both sides instead chain a 64-bit hash over the per-cycle tuple
-and compare checkpoints every 4096 cycles - **244 KB** for a full run. On the
+and compare checkpoints every 4096 cycles - **~480 KB** for a full run. On the
 first mismatch, re-run only that window with full capture and waveforms.
 
 Implemented in `crates/rustynes-cosim/src/checkpoint.rs`. **Measured on a real
