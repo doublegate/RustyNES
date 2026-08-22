@@ -1,6 +1,13 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.4.1** (2026-08-20) — **"Fabric"**, RustyNES as the
+> **Current release: v2.4.2** (2026-08-22) — **"Cairn"**, the rung-0 compare
+> surface: rolling per-cycle hash checkpoints (measured at **15,263x** smaller
+> than the equivalent CSV), the v2.4.2 acceptance gate made executable, and the
+> partition between what RustyNES *models* and what a device can *observe* — the
+> IRQ pair OR'd before hashing because hardware has one wire-OR'd /IRQ pin. The
+> emulation core is untouched.
+>
+> Built on **v2.4.1** (2026-08-20) — **"Fabric"**, RustyNES as the
 > oracle a new implementation is verified against. It opens the
 > **v2.4.1 → v2.5.0 "Fabric"** line: a new NES core in SystemVerilog, written
 > from public hardware documentation in a sibling repository, with this emulator

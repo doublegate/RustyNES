@@ -14,6 +14,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-08-22 - "Cairn" (checkpoints, and what a device can actually observe)
+
 ### Added
 
 - **Rolling per-cycle hash checkpoints — the rung-0 comparison surface.**
