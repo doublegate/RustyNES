@@ -14,6 +14,72 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.4.4] - 2026-08-22 - "Ignition" (the first RTL, and the reset sequence that corrected our own spec)
+
+### Added
+
+- **The 6502's reset sequence and the single-byte implied group, in
+  SystemVerilog.** (v2.4.4, continuing the "Fabric" line. RTL lives in the
+  sibling repository, pinned at `RustyNES_MiSTer@7f092bd`.) The first real RTL
+  of the programme, unblocked because v2.4.3 settled both risks the plan
+  required answered before any existed: the subset is fitted and the licence is
+  GPL-3.0-or-later. **The emulation core is untouched.**
+
+  Reset plus seventeen implied opcodes match the oracle on all seven CPU fields:
+
+  ```text
+  All 29 aligned records match under the chosen comparator
+    (skip-fields: ["scanline", "dot", "frame", "flags"])
+  ```
+
+  **The DUT is the third writer of the oracle's `CpuBootTrace` format**, after
+  the oracle itself and `scripts/mesen2_cpu_boot_trace.lua`, and
+  `cpu_boot_trace_diff` reads it with **no modification**. `--skip-fields`
+  already existed, so this rung needed no oracle-side change at all — which is
+  what replay-rather-than-lockstep was chosen for.
+
+- **The oracle settled a question our own documentation could not.** Reset is
+  **eight cycles, not seven**: the oracle's first record carries cycle 8, so
+  reset occupies 0..7. `docs/cpu-6502.md` says **both** — *"Reset is a special
+  7-cycle sequence"* in its Reset section and *"runs its 8 cycles"* in the
+  v2.0.0 note. The first draft implemented seven, from the prose.
+
+  Prose that contradicts itself cannot be the spec; an executable oracle can.
+  This is the failure mode the whole programme is built around, arriving on the
+  very first opcode group.
+
+### Fixed
+
+- **`docs/cpu-6502.md`'s Reset section**, which said seven where the shipped
+  model does eight. Corrected rather than left as a second, wrong statement
+  beside the right one.
+
+### Notes
+
+- **A mutation the test ROM was built to catch came back NOT CAUGHT, and the
+  fault was the ROM.** `TSX` leaves `X = $FD`, so `N=1, Z=0`. A `TXS` that
+  wrongly computes flags from `X` computes `N=1, Z=0` — *the values already
+  there*. The wrong answer coincided with the right one and the test was
+  silently inert. Two instructions now land `Y` at `$00` with `Z=1, N=0` before
+  `TXS`; `mkrom.py` says so at the site, because the pair looks like filler and
+  deleting it disarms the test with no symptom.
+
+- **A harness bug made every mutation report a catch, including the baseline.**
+  `cargo run` was invoked from the wrong repository and failed identically every
+  time. Only the baseline control made it visible — without it, four failed
+  invocations would have read as four successes.
+
+- **ADR 0037 nearly eroded without a symptom.** The first draft put observation
+  ports on the *synthesisable* module. Unconnected outputs optimise away
+  identically, so nothing visibly breaks — which is precisely how that rule
+  erodes. Observation now lives in `tb/cpu6502_cosim.sv`, reached by
+  hierarchical reference, and the synthesisable module is exactly what Quartus
+  will see.
+
+- Unimplemented opcodes **halt** rather than behaving as `NOP`: a silent
+  two-cycle NOP would desynchronise the trace and report the divergence far from
+  its cause.
+
 ## [2.4.3] - 2026-08-22 - "Touchstone" (what the synthesiser accepts, and what the licence requires)
 
 ### Added

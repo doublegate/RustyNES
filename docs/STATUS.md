@@ -1,6 +1,11 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.4.3** (2026-08-22) — **"Touchstone"**, the two Fabric
+> **Current release: v2.4.4** (2026-08-22) — **"Ignition"**, the first real RTL -- the 6502's eight-cycle reset and the implied opcode group, matching the oracle on all seven CPU fields (29
+> records, `RustyNES_MiSTer@7f092bd`). The oracle settled a question our own
+> prose could not: reset is EIGHT cycles, and `docs/cpu-6502.md` said both
+> seven and eight. The emulation core is untouched.
+>
+> Built on **v2.4.3** (2026-08-22) — **"Touchstone"**, the two Fabric
 > risks settled before any RTL exists. **Risk 4, the Quartus subset, is FITTED**:
 > 17.0.2 on a 5CSEBA6U23I7 gave a placed-and-routed netlist with 0 synthesis
 > warnings, and the 2 KiB array inferred as **2 M10K blocks / 29 registers** — not
