@@ -1,6 +1,15 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.4.2** (2026-08-22) — **"Cairn"**, the rung-0 compare
+> **Current release: v2.4.3** (2026-08-22) — **"Touchstone"**, the two Fabric
+> risks settled before any RTL exists. **Risk 4, the Quartus subset, is FITTED**:
+> 17.0.2 on a 5CSEBA6U23I7 gave a placed-and-routed netlist with 0 synthesis
+> warnings, and the 2 KiB array inferred as **2 M10K blocks / 29 registers** — not
+> 16,413 — from the source style alone. **Risk 1, the `sys/` licence, inverts the
+> plan's hedge**: 57 files, **zero GPL-2.0-only**, and a non-optional
+> GPL-3.0-or-later `hps_io.sv` forces the bitstream up to GPL-3.0-or-later. The
+> emulation core is untouched.
+>
+> Built on **v2.4.2** (2026-08-22) — **"Cairn"**, the rung-0 compare
 > surface: rolling per-cycle hash checkpoints (measured at **15,263x** smaller
 > than the equivalent CSV), the v2.4.2 acceptance gate made executable, and the
 > partition between what RustyNES *models* and what a device can *observe* — the
