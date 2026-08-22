@@ -83,7 +83,7 @@ families (v1.6.0); the writable/programmable "Forge" tools + audio depth +
 web/wasm parity + i18n + mapper breadth → **168 families** (v1.7.0/v1.7.1); and
 the **Android app** (v1.8.0 … v1.8.8 "Atlas").
 
-**In development — v1.8.9:** the 13-PR Dependabot consolidation (#180), the
+**Shipped 2026-06-25 — v1.8.9** (this paragraph is a historical snapshot of what was then in flight): the 13-PR Dependabot consolidation (#180), the
 dormant `rustynes-monetization` crate build-out (later removed entirely — see
 ADR 0035; RustyNES is permanently open-source and income-free), and a held UX
 fix.
