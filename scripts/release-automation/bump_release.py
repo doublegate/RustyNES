@@ -109,27 +109,56 @@ def workspace_version(root: Path) -> str:
 # defect the module docstring describes.
 
 def classify(line: str, marker: str, old: Release) -> str:
-    """BARE | DASH | PAREN | CHAIN | UNKNOWN, judged on the OLD text."""
+    """BARE | DASH | PAREN | CHAIN | PERIOD | DATED_CODE | UNKNOWN."""
     at = line.find(marker + old.version)
     if at < 0:
         return "ABSENT"
     rest = line[at + len(marker) + len(old.version):]
+    # `docs/STATUS.md` puts the codename AFTER the date, in its own bold:
+    #   **Current release: v2.4.4** (2026-08-22) - **"Ignition"**, <desc>
+    # The version and the codename are not adjacent, so the adjacency test below
+    # cannot see it.
+    if re.match(r'\*{0,2}\s*\(\d{4}-\d{2}-\d{2}\)\s*(?:—|--)\s*\*\*"'
+                + re.escape(old.codename) + r'"\*\*', rest):
+        return "DATED_CODE"
     if f'"{old.codename}"' not in rest[:40]:
         # No codename beside the version: nothing describes a release here.
         return "BARE"
-    tail = rest.split(f'"{old.codename}"', 1)[1]
-    tail = re.sub(r'^\*{0,2}\s*(?:\(\d{4}-\d{2}-\d{2}\))?\s*', '', tail)
-    if tail.startswith((", on ", " released — ", " released -- ")):
+    raw = rest.split(f'"{old.codename}"', 1)[1]
+    # CHAIN is judged on the RAW tail. Stripping the closing bold and an
+    # optional date also consumes the space those markers begin with, which is
+    # what made `**Project Status:** v2.4.4 "Ignition" released — ...`
+    # unclassifiable twice: once from eating the space, once from putting the
+    # test after the strip. Judge it before anything is removed.
+    if raw.lstrip("*").startswith((", on ", " released ")):
         return "CHAIN"
-    if tail.startswith(("—", "--", "-")):
+    tail = re.sub(r'^\*{0,2}\s*(?:\(\d{4}-\d{2}-\d{2}\))?', '', raw)
+    head = tail.lstrip()
+    if head.startswith(("—", "--", "-")):
         return "DASH"
-    if tail.startswith("("):
+    if head.startswith("("):
         return "PAREN"
+    if head.startswith((".", ";")):
+        # The statement ends at the codename: nothing describes the release, so
+        # there is nothing to demote -- swap both and stop.
+        return "PERIOD"
     return "UNKNOWN"
 
 
 def demote(line: str, marker: str, old: Release, new: Release, lead: str) -> str:
     """Rewrite one anchor line: new release in front, old one demoted behind it."""
+    if classify(line, marker, old) == "DATED_CODE":
+        # `**Current release: v2.4.4** (2026-08-22) - **"Ignition"**, <desc>`
+        pat = (re.escape(marker) + re.escape(old.version)
+               + r'(?P<b>\*{0,2})\s*\((?P<d>\d{4}-\d{2}-\d{2})\)\s*(?P<dash>—|--)\s*'
+               + r'\*\*"' + re.escape(old.codename) + r'"\*\*(?P<sep>,?\s*)')
+        mm = re.search(pat, line)
+        if not mm:
+            raise ValueError("DATED_CODE shape changed under us")
+        rest = line[mm.end():]
+        return (line[:mm.start()] + marker + new.version + mm["b"]
+                + f' ({new.date}) {mm["dash"]} **"{new.codename}"**, {lead} '
+                + f'Built on **v{old.version} "{old.codename}"** ({mm["d"]}) {mm["dash"]} ' + rest)
     at = line.find(marker + old.version)
     head = line[:at + len(marker)]
     rest = line[at + len(marker):]
@@ -148,6 +177,10 @@ def demote(line: str, marker: str, old: Release, new: Release, lead: str) -> str
     date_old = m["date"] or ""
 
     shape = classify(line, marker, old)
+    if shape == "PERIOD":
+        # Nothing follows the codename but punctuation, so there is no
+        # description to demote. Swap and stop.
+        return (f'{head}{new.version} "{new.codename}"{m["bold"]}{date_new}{desc}')
     if shape == "DASH":
         sep = re.match(r'\s*(—|--|-)\s*', desc)
         body = desc[sep.end():]
@@ -266,11 +299,15 @@ def main() -> int:
     print(f"{old.version} \"{old.codename}\"  ->  {new.version} \"{new.codename}\"\n")
 
     edits: dict[Path, str] = {}
+    marker_index: dict[Path, list[tuple[str, str]]] = {}
+    demoted_files: dict[Path, bool] = {}
     unknown: list[str] = []
-    counts = {"BARE": 0, "DASH": 0, "PAREN": 0, "CHAIN": 0}
+    counts = {"BARE": 0, "DASH": 0, "PAREN": 0, "CHAIN": 0,
+              "PERIOD": 0, "DATED_CODE": 0}
 
     for path, marker in anchors(root):
         p = root / path
+        marker_index.setdefault(p, []).append((path, marker))
         text = edits.get(p, p.read_text())
         out = []
         for line in text.split("\n"):
@@ -279,9 +316,11 @@ def main() -> int:
                 if shape == "BARE":
                     line = line.replace(marker + old.version, marker + new.version)
                     counts["BARE"] += 1
-                elif shape in ("DASH", "PAREN"):
+                elif shape in ("DASH", "PAREN", "PERIOD", "DATED_CODE"):
                     line = demote(line, marker, old, new, args.lead)
                     counts[shape] += 1
+                    if shape != "PERIOD":
+                        demoted_files[p] = True
                 elif shape == "CHAIN":
                     # `..., on **v2.4.3 ...` -- the previous release is already
                     # named behind this one, so extend the chain rather than
@@ -294,6 +333,7 @@ def main() -> int:
                     line = re.sub(r'( released\s*—\s*[^,]*,\s*on\s*)',
                                   rf'\1v{old.version} "{old.codename}" and ', line, count=1)
                     counts["CHAIN"] += 1
+                    demoted_files[p] = True
                 else:
                     unknown.append(f"{path}: {shape}: {line[:100]}")
             out.append(line)
@@ -322,9 +362,21 @@ def main() -> int:
         rel = p.relative_to(root)
         # The doubled-bold-marker bug, which reached two separate release cuts:
         # `**Current release: ` + `**v2.4.5 ...` yields `**Current release: **v`.
-        for bad in re.findall(r'\*\*[^*\n]{0,40}:\s*\*\*v\d', text):
-            problems.append(f"{rel}: doubled bold marker: {bad!r}")
-        if p.suffix == ".md" and new.codename in text and old.codename not in text:
+        #
+        # Detected against the ACTUAL markers rather than by pattern. A general
+        # `\*\*...:\s*\*\*v\d` regex flags ordinary prose -- `**the v2.1.x
+        # accuracy line**: **v2.1.0 ...` is correct markdown -- and a check that
+        # cries wolf on correct text is a check that gets switched off.
+        for _, marker in marker_index.get(p, []):
+            if marker.endswith("v"):
+                broken = marker[:-1] + "**v"
+                if broken in text:
+                    problems.append(f"{rel}: doubled bold marker: {broken!r}")
+        # A demoted release must still be named. Only meaningful where a
+        # demotion was actually expected: a PERIOD or BARE anchor has no
+        # description to demote, so the old codename legitimately disappears
+        # from a file that carries no release chain.
+        if p.suffix == ".md" and demoted_files.get(p) and old.codename not in text:
             problems.append(f"{rel}: {old.codename!r} vanished -- demoted releases must survive, "
                             f"not be overwritten")
     if problems:
@@ -333,8 +385,7 @@ def main() -> int:
             print(f"  {pr}", file=sys.stderr)
         return 1
 
-    print(f"classified: {counts['BARE']} bare, {counts['DASH']} dash, "
-          f"{counts['PAREN']} paren, {counts['CHAIN']} chain\n")
+    print("classified: " + ", ".join(f"{v} {k.lower()}" for k, v in counts.items() if v) + "\n")
     for p, text in sorted(edits.items()):
         before = p.read_text()
         if before == text:
