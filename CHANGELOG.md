@@ -14,6 +14,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-08-22 - "Cairn" (checkpoints, and what a device can actually observe)
+
 ### Added
 
 - **Rolling per-cycle hash checkpoints — the rung-0 comparison surface.**
@@ -168,6 +170,46 @@ cycle-accurate core later replaced.
   The pinned record uses **`scanline = -1`** deliberately: the pre-render line is
   negative, and a writer that clamped or saturated rather than writing two's
   complement would pass every test that only ever used a positive scanline.
+
+- **Ordinary status prose is now gated too — `release_state_prose_audit.rs`.**
+  `release_anchor_audit` pins 15 fixed markers and fails closed when one goes
+  missing, which is the right shape for *the* canonical current-release
+  statement in each document and is why a doubled bold marker on this cut failed
+  loudly rather than silently checking 14 of 15. It cannot cover prose that has
+  no marker, and review found that **the drift did not stop when the anchors
+  were gated; it moved into the prose beside them**: `to-dos/ROADMAP.md`
+  announced *"Next up — v2.4.0 Concordance"* for a release that shipped inside <!-- release-state: not-a-claim -->
+  v2.4.1 and is deliberately never tagged — in the very change documenting why
+  it has no tag — still read *"In development — the v2.0.0 tag itself"* for a <!-- release-state: not-a-claim -->
+  tag pushed 2026-07-03, and `to-dos/README.md` read *"In development — v1.8.9"*, <!-- release-state: not-a-claim -->
+  roughly fifteen releases stale, which nothing had flagged at all.
+
+  So this is a **pattern** check rather than a marker list: a status label
+  (`Next up`, `In development`, `Planned for`, `Upcoming`) naming a version at or
+  below the workspace version is a contradiction that needs no judgement to
+  detect. Discovery is `git ls-files` intersected with `.markdownlintignore` —
+  tracked files *are* the definition of this project's own content (the vendored
+  `nesdev_wiki/` beside the checkout is 2,655 untracked markdown files), and the
+  frozen-tree list is read from the file that already encodes it rather than
+  duplicated into a second copy that could drift.
+
+  **A companion rule was drafted and rejected on measurement.** "A `latest
+  release` or `the current line` claim must name the workspace version" fires on
+  `docs/ios.md`, which correctly says *"The current line is v1.9.9 'Workshop'"* —
+  scoped to the **iOS train**, not the project release. The phrase legitimately
+  scopes to a platform line, so the rule cannot separate a stale claim from a
+  correct one without judgement, and a gate with false positives gets switched
+  off. Recorded as a measured rejection rather than shipped and tuned.
+
+  **Mutation testing changed the design.** The escape hatch was first any line
+  containing the word "historical" — and the very first line written against it
+  said "this paragraph is a historical snapshot" for unrelated reasons, so a
+  mutation reintroducing the exact defect the gate exists for came back **NOT
+  CAUGHT**, silently exempted by the prose beside it. The marker is now
+  `<!-- release-state: not-a-claim -->`, which cannot be claimed by accident. The rename came from the gate failing on its own documentation: explaining the defect requires quoting it, and a quotation is not a historical snapshot — so the marker says the line is not making a claim, which is true of both.
+  Five mutations: the bare defect and the incidentally-worded one both fail, the
+  explicit marker exempts, a future version does not trip it, and inverting the
+  predicate renders the gate inert — proving the comparison is load-bearing.
 
 ### Fixed
 
