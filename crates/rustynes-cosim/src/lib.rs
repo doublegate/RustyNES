@@ -202,14 +202,15 @@ impl Oracle {
                 break;
             }
         }
-        // Leave both pins released, so a caller reusing the oracle does not
-        // inherit an asserted line.
-        if nmi_at.is_some() {
-            self.nes.inject_nmi(false);
-        }
-        if irq_at.is_some() {
-            self.nes.inject_irq(false);
-        }
+        // Leave both pins released, UNCONDITIONALLY -- not only the ones this
+        // call asserted. The guarded form protects exactly the case that cannot
+        // happen (this call left a pin high that it never touched) and skips the
+        // case that can: a pin left high by an EARLIER call, or by a bug in this
+        // one's loop. The `Oracle` outlives the run, so that state rides into
+        // the next comparison, where a stuck interrupt line looks like a core
+        // defect rather than like leaked harness state.
+        self.nes.inject_nmi(false);
+        self.nes.inject_irq(false);
         executed
     }
 

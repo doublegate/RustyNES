@@ -53,11 +53,20 @@ fn cited_paths(text: &str) -> Vec<String> {
     out
 }
 
-/// Backticked spans that look like a path: a directory separator and a dot.
+/// Backticked spans that could be a path: the allowed character set and a dot.
+///
+/// Deliberately does NOT require a `/`. `cited_paths` is built on this, and a
+/// slash requirement there makes the bare-filename check below structurally
+/// incapable of firing -- the extractor would drop exactly the defect the check
+/// exists to catch, and the check would then pass over an empty list forever.
+///
+/// That is not hypothetical: it was introduced in this very file while
+/// refactoring for `unrecognised_extensions`, which DOES want a slash, and it
+/// survived a mutation pass because the bare-filename test fed a hand-built
+/// vector straight to the predicate instead of through the pipeline.
 fn spans(text: &str) -> impl Iterator<Item = &str> {
     text.split('`').skip(1).step_by(2).filter(|s: &&str| {
         !s.is_empty()
-            && s.contains('/')
             && s.contains('.')
             && s.chars()
                 .all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c))
@@ -75,7 +84,10 @@ fn spans(text: &str) -> impl Iterator<Item = &str> {
 /// widen the pattern and hope.
 fn unrecognised_extensions(text: &str) -> Vec<&str> {
     spans(text)
-        .filter(|s| !EXTS.iter().any(|e| s.ends_with(e)))
+        // The slash requirement lives HERE, not in `spans`. Guessing whether an
+        // arbitrary backticked token is a path needs it; extracting citations
+        // must not, or bare filenames vanish before anything can object to them.
+        .filter(|s| s.contains('/') && !EXTS.iter().any(|e| s.ends_with(e)))
         .collect()
 }
 
@@ -332,4 +344,44 @@ fn a_citation_with_an_unrecognised_extension_is_reported_not_dropped() {
     // And a span that is not path-shaped must not be reported as one.
     let prose = "the `v` register, `$2005`, and `ppu-state-trace`";
     assert!(unrecognised_extensions(prose).is_empty());
+
+    // A VERSION STRING is the realistic false positive, and these documents are
+    // full of them. `v2.5.3` passes the character set and contains dots, so
+    // without the slash requirement in `unrecognised_extensions` it would be
+    // reported as a citation with an unknown extension -- a hard failure on a
+    // document that is perfectly correct.
+    let versions = "shipped in `v2.5.3`, built on `v2.4.9`";
+    assert!(
+        unrecognised_extensions(versions).is_empty(),
+        "a version string is not a path-like citation"
+    );
+    assert!(
+        cited_paths(versions).is_empty(),
+        "and it is not a citation either"
+    );
+}
+
+#[test]
+fn a_bare_filename_survives_extraction_and_is_then_reported() {
+    // END TO END, through `cited_paths` -- not a hand-built vector fed to the
+    // predicate. That distinction is the whole finding: with a slash filter in
+    // the shared extractor, `cited_paths` silently dropped bare filenames, so
+    // `bare_filenames` evaluated an empty list and passed forever. The audit was
+    // structurally blind to the exact defect it claims to catch, and the
+    // predicate-level test could not see it because it bypassed the extractor.
+    let doc = "| Pulse | `nesdev_wiki/APU_Pulse.xhtml`, `APU_Sweep.xhtml` |";
+    let cited = cited_paths(doc);
+    assert!(
+        cited.iter().any(|c| c == "APU_Sweep.xhtml"),
+        "the extractor must SURFACE a bare filename, not drop it: {cited:?}"
+    );
+    assert_eq!(
+        bare_filenames(&cited),
+        vec![&"APU_Sweep.xhtml".to_owned()],
+        "and the shape check must then report it"
+    );
+
+    // The real table cell that produced the original three defects has exactly
+    // this shape: a fully-qualified path followed by a bare one.
+    assert!(cited.iter().any(|c| c == "nesdev_wiki/APU_Pulse.xhtml"));
 }
