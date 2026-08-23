@@ -83,6 +83,16 @@ cycle-accurate core later replaced.
   (v2.5.8). Every run prints how many records each side dropped, because a
   narrowing that is not announced reads as full coverage.
 
+### Security
+
+- **`--fetch-trace` no longer accepts an unbounded capacity.** `FetchTrace`
+  clamped only its initial allocation, so a large argument would have grown the
+  buffer without bound — `--fetch-trace 1000000000` reallocating its way to
+  twelve gigabytes. The stored capacity is now clamped to `MAX_CAPACITY`
+  (1,048,576 records, 12 MiB) and the CLI **refuses** an argument above it rather
+  than clamping silently, because a clamp the caller never learns about produces
+  a golden covering less than the run it claims to. Raised in review of #450.
+
 ### Documentation
 
 A release-wide sweep of the documents this release touches, and what it found.
@@ -118,6 +128,11 @@ A release-wide sweep of the documents this release touches, and what it found.
 
 - **AccuracyCoin 141/141 (100.00%, RAM decoder)** and **nestest 0-diff**.
   `rustynes-ppu` changed, so both were run rather than asserted.
+- `fetch_trace` gains **five unit tests** — it had none. The byte layout is
+  asserted against hand-written expected bytes rather than against `to_bytes`'s
+  own output, because a test that builds its expectation with the function under
+  test agrees with itself forever. Three mutations (byte order, the capacity
+  clamp, a ring-buffer overwrite) are all CAUGHT.
 
 ## [2.5.3] - 2026-08-23 - "Hysteresis" (toggling rendering takes effect three dots after the write)
 

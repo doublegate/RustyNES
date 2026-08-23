@@ -135,7 +135,24 @@ fn parse_args() -> Args {
                 i += 2;
             }
             "--fetch-trace" => {
-                fetch_trace = Some(need(i).parse().unwrap_or_else(|_| usage()));
+                let cap: usize = need(i).parse().unwrap_or_else(|_| usage());
+                // Validated HERE, at the boundary, rather than left to clamp
+                // silently inside the trace. `FetchTrace` caps its own storage
+                // so no argument can make it allocate without bound -- but a
+                // clamp the caller never learns about produces a golden covering
+                // less than the run, and the whole point of the drop counter is
+                // that such a golden must not pass unnoticed. Refusing the
+                // argument says so before a single cycle is simulated.
+                if cap == 0 || cap > rustynes_core::rustynes_ppu::fetch_trace::MAX_CAPACITY {
+                    eprintln!(
+                        "--fetch-trace must be between 1 and {} (got {cap}); a window \
+                         needing more than that wants to be shorter, not buffered \
+                         larger -- three frames of a rendering ROM is under ten thousand",
+                        rustynes_core::rustynes_ppu::fetch_trace::MAX_CAPACITY
+                    );
+                    usage();
+                }
+                fetch_trace = Some(cap);
                 i += 2;
             }
             "--checkpoint-interval" => {

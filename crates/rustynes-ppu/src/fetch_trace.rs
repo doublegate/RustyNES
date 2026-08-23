@@ -104,15 +104,42 @@ pub struct FetchTrace {
     dropped: u64,
 }
 
+/// The most reads one trace will ever hold, however large a capacity is asked
+/// for: 1,048,576 records, 12 MiB at [`RECORD_SIZE`].
+///
+/// The cap is on the STORED capacity and not merely on the initial allocation.
+/// Clamping only the allocation, as an earlier version did, still lets a caller
+/// grow the buffer without bound — a `--fetch-trace 1000000000` would have
+/// reallocated its way to twelve gigabytes rather than being refused. A
+/// co-simulation window that needs more than a million reads wants a shorter
+/// window, not a larger buffer: three full frames of a rendering ROM is under
+/// ten thousand.
+///
+/// Exceeding it is not silent. Records past the cap are counted as `dropped`,
+/// and `nes_golden_export` exits non-zero on a non-zero drop count — so a
+/// clamped run fails loudly instead of writing a golden that covers less than
+/// the run it claims to.
+pub const MAX_CAPACITY: usize = 1 << 20;
+
 impl FetchTrace {
-    /// A trace that records at most `capacity` reads.
+    /// A trace that records at most `capacity` reads, clamped to
+    /// [`MAX_CAPACITY`].
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
+        let capacity = capacity.min(MAX_CAPACITY);
         Self {
-            records: Vec::with_capacity(capacity.min(1 << 20)),
+            records: Vec::with_capacity(capacity),
             capacity,
             dropped: 0,
         }
+    }
+
+    /// The number of reads this trace will hold before dropping — the requested
+    /// capacity after clamping, which is what a caller must check against its
+    /// own request to know whether it was clamped.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.capacity
     }
 
     /// Record one read, or count it as dropped once full.
@@ -147,5 +174,119 @@ impl FetchTrace {
             out.extend_from_slice(&r.to_bytes());
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The encoding is a WIRE FORMAT: a Verilator testbench in another
+    /// repository writes these bytes and `fetch_diff.py` reads them. A field
+    /// silently changing width or order would be caught only by a divergence in
+    /// a co-simulation run, which is several steps from the cause.
+    ///
+    /// The expected bytes are written out by hand rather than produced by
+    /// calling `to_bytes`. A test that builds its expectation with the function
+    /// under test agrees with itself forever — the failure mode recorded in
+    /// `AGENTS.md` after a v2.4.0 test reimplemented its own subject.
+    #[test]
+    fn record_encoding_is_the_documented_byte_layout() {
+        let rec = FetchRecord {
+            frame: 0x1234_5678,
+            scanline: -1,
+            dot: 0x0155,
+            addr: 0x23C0,
+        };
+        let bytes = rec.to_bytes();
+        assert_eq!(bytes.len(), RECORD_SIZE);
+        assert_eq!(
+            bytes,
+            [
+                0x78, 0x56, 0x34, 0x12, // frame,    u32 LE
+                0xFF, 0xFF, //             scanline, i16 LE (-1)
+                0x55, 0x01, //             dot,      u16 LE
+                0xC0, 0x23, //             addr,     u16 LE
+                0x00, 0x00, //             reserved
+            ]
+        );
+    }
+
+    #[test]
+    fn record_round_trips_including_a_negative_scanline() {
+        // -1 is the pre-render line and the only negative value this field
+        // carries, so it is the case a wrong signedness would break.
+        for rec in [
+            FetchRecord {
+                frame: 0,
+                scanline: -1,
+                dot: 0,
+                addr: 0,
+            },
+            FetchRecord {
+                frame: u32::MAX,
+                scanline: 260,
+                dot: 340,
+                addr: 0x3FFF,
+            },
+            FetchRecord {
+                frame: 3,
+                scanline: 35,
+                dot: 130,
+                addr: 0x2000,
+            },
+        ] {
+            let back =
+                FetchRecord::from_bytes(&rec.to_bytes()).expect("a full-length record must decode");
+            assert_eq!(back, rec);
+        }
+    }
+
+    #[test]
+    fn a_short_buffer_decodes_to_none_rather_than_panicking() {
+        let full = FetchRecord {
+            frame: 1,
+            scanline: 2,
+            dot: 3,
+            addr: 4,
+        }
+        .to_bytes();
+        for n in 0..RECORD_SIZE {
+            assert!(
+                FetchRecord::from_bytes(&full[..n]).is_none(),
+                "{n} bytes must not decode"
+            );
+        }
+        assert!(FetchRecord::from_bytes(&full).is_some());
+    }
+
+    #[test]
+    fn capacity_is_clamped_and_the_clamp_is_observable() {
+        // The observable part is what makes the clamp safe to rely on: a caller
+        // that asked for more can compare its request against `capacity()`.
+        let t = FetchTrace::with_capacity(usize::MAX);
+        assert_eq!(t.capacity(), MAX_CAPACITY);
+        let t = FetchTrace::with_capacity(10);
+        assert_eq!(t.capacity(), 10);
+    }
+
+    #[test]
+    fn pushes_past_capacity_are_counted_not_wrapped() {
+        let mut t = FetchTrace::with_capacity(2);
+        for dot in 0..5u16 {
+            t.push(FetchRecord {
+                frame: 0,
+                scanline: 0,
+                dot,
+                addr: dot,
+            });
+        }
+        assert_eq!(t.records().len(), 2);
+        assert_eq!(t.dropped(), 3);
+        // The records KEPT are the first ones, not the last: a ring buffer here
+        // would silently answer a question about the end of a run with data from
+        // its middle.
+        assert_eq!(t.records()[0].dot, 0);
+        assert_eq!(t.records()[1].dot, 1);
     }
 }
