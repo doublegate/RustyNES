@@ -23,27 +23,38 @@
 
 use rustynes_cosim::Oracle;
 
-/// Resolved from `CARGO_MANIFEST_DIR` rather than written relative to the
-/// working directory: `cargo test` runs from the package root, but a test
-/// invoked another way does not, and a path that silently resolves to nothing
-/// would make this test pass by skipping.
+/// `nestest.nes`, which lives in THIS repository under `tests/roms/` and is
+/// committed (CC0). The first version of this test used a ROM from the sibling
+/// FPGA repository and passed locally while failing every CI job with
+/// "No such file or directory" — a test depending on a corpus that exists only
+/// on one machine, which `AGENTS.md` already records as a repeat offender.
+///
+/// nestest is also the better exerciser: it drives the fast path 124,165 times
+/// over four frames, against zero for several AccuracyCoin sub-tests that never
+/// enable rendering at all.
+///
+/// Resolved from `CARGO_MANIFEST_DIR` rather than the working directory: a
+/// relative path that silently resolves to nothing would make this test pass by
+/// failing to find its subject.
 fn rom_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
         .expect("the cosim crate sits two levels below the repository root")
-        .parent()
-        .expect("the sibling repository is beside this one")
-        .join("RustyNES_MiSTer/tb/roms/ppufetch.nes")
+        .join("tests/roms/nestest/nestest.nes")
 }
 
 fn trace_with_fast_path(enabled: bool) -> (Vec<u8>, u64, u64) {
     let path = rom_path();
     let rom = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let mut o = Oracle::new(&rom, 0).expect("ppufetch.nes must load");
+    let mut o = Oracle::new(&rom, 0).expect("nestest.nes must load");
     o.nes_mut().set_fast_dotloop(enabled);
-    o.enable_fetch_trace(200_000);
-    o.advance_frames(3);
+    o.enable_fetch_trace(1_000_000);
+    // EIGHT frames, and the number is measured rather than picked. nestest does
+    // not render immediately: at four frames the fast path runs only 1,282 times
+    // and the exerciser assertion below correctly refuses the comparison. At six
+    // it reaches 124,165. Eight leaves margin without approaching the trace cap.
+    o.advance_frames(8);
     let hits = o.nes().bus().ppu().fast_path_hits;
     let (bytes, dropped) = o
         .take_fetch_trace()
@@ -58,10 +69,10 @@ fn the_fast_dot_path_records_exactly_the_same_fetches() {
 
     // FIRST: prove the subject was reached. Without this the test passes when
     // the fast path is never entered, which is exactly how a check comes back
-    // green having compared two runs of the same code. Measured: 11,755 dots
-    // take it on this ROM with the flag on, and none with it off.
+    // green having compared two runs of the same code. Measured at six
+    // frames: 124,165 dots take it with the flag on, and none with it off.
     assert!(
-        fast_hits > 1000,
+        fast_hits > 10_000,
         "the fast path ran only {fast_hits} times — this test would then be \
          comparing the general path against itself and proving nothing"
     );
@@ -74,9 +85,9 @@ fn the_fast_dot_path_records_exactly_the_same_fetches() {
     // Non-empty first. Two empty traces are byte-identical and prove nothing —
     // the same trap `fetch_diff.py` refuses in the DUT repository.
     assert!(
-        fast.len() > 16 + 12 * 1000,
-        "the fast-path trace holds only {} bytes; this ROM renders 24 scanlines \
-         twice, so an almost-empty trace means the capture never armed",
+        fast.len() > 16 + 12 * 10_000,
+        "the fast-path trace holds only {} bytes; nestest renders continuously, \
+         so an almost-empty trace means the capture never armed",
         fast.len()
     );
     assert_eq!(
