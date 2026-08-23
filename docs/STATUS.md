@@ -21,6 +21,16 @@
 > IRQ pair OR'd before hashing because hardware has one wire-OR'd /IRQ pin. The
 > emulation core is untouched.
 >
+> **Rung 1 as of v2.4.8: five ROMs, 1110 records** (147 / 140 / 286 / 179 / 358),
+> matching the oracle on all seven CPU fields, with eight mutations demonstrated
+> to break the gate. **What it does NOT verify is stated rather than implied:**
+> the read-modify-write double write — hardware writing the unmodified byte back
+> before the modified one — changes no register, flag, final memory content or
+> cycle count, so skipping it or emitting the wrong value both come back **NOT
+> CAUGHT**. That is a rung-2 property, scoped to **v2.4.9** together with the
+> undocumented opcodes; the interrupt half stays at **v2.5.0**, which needs pins
+> `cpu6502` does not yet have. Detail: `docs/mister.md`.
+>
 > Built on **v2.4.1** (2026-08-20) — **"Fabric"**, RustyNES as the
 > oracle a new implementation is verified against. It opens the
 > **v2.4.1 → v2.5.0 "Fabric"** line: a new NES core in SystemVerilog, written

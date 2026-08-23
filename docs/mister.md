@@ -594,5 +594,5 @@ difference where instruction boundaries still agree.
 The undocumented opcodes are **not** delivered and also move to v2.4.9.
 
 Rung 1's own gate -- nestest 0-diff over >= 8000 instructions -- is not met yet:
-the four ROMs are hand-built opcode groups, not nestest. Rung 2, the per-cycle
+the five ROMs are hand-built opcode groups, not nestest. Rung 2, the per-cycle
 bus and interrupt comparison, has not begun.
