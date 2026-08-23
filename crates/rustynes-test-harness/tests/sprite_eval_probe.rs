@@ -10,9 +10,23 @@
 //! repository and is NOT part of any shipped release; the current release is
 //! v2.5.5 "Raster". This probe exists because that in-progress gate went red on
 //! essentially every `$2004` read (1,284 of 59,993 compared cycles) and two
-//! plausible fixes moved the count by six in opposite directions. That is guessing with a gate attached. The v2.5.3
-//! probe beside this one settled its question in one run by asking what the
-//! oracle actually does rather than what it plausibly does; this asks the same.
+//! plausible fixes moved the count by six in opposite directions. That is
+//! guessing with a gate attached. The v2.5.3 probe beside this one settled its
+//! question in one run by asking what the oracle actually does rather than what
+//! it plausibly does; this asks the same, and the gate is now green.
+//!
+//! Two environment variables steer it. `EV_SL` selects the scanline (default
+//! 55); `EV_ALL` prints every dot instead of only the dots where the state
+//! changes. The second exists because the transition filter is right for reading
+//! and wrong for diffing -- a suppressed line and an absent line are the same
+//! thing to a comparison script, and the sub-cycle offset between the two sides
+//! can only be recovered from a table with no holes in it.
+//!
+//! Frame indices do NOT correspond between the two sides. The oracle's counter
+//! and a testbench's differ because the first `run_frame()` after power-on
+//! advances zero cycles, and this ROM does not enable rendering until its third
+//! frame -- so the oracle's frame 1 has `mask = 00` and nothing to compare at
+//! all. Pick the frame by what it CONTAINS, never by its number.
 #![cfg(feature = "ppu-state-trace")]
 
 use std::path::{Path, PathBuf};
@@ -43,7 +57,16 @@ fn sprite_evaluation_dot_by_dot() {
     // which of the three phases disagrees, so the window must contain all three.
     let cfg = PpuTraceConfig {
         frame_range: 0..=3,
-        scanline_range: Some(55..=55),
+        scanline_range: Some(
+            std::env::var("EV_SL")
+                .ok()
+                .and_then(|s| s.parse::<i16>().ok())
+                .unwrap_or(55)
+                ..=std::env::var("EV_SL")
+                    .ok()
+                    .and_then(|s| s.parse::<i16>().ok())
+                    .unwrap_or(55),
+        ),
         dot_range: Some(0..=340),
     };
     nes.bus_mut()
@@ -97,7 +120,7 @@ fn sprite_evaluation_dot_by_dot() {
         );
         // Only transitions, so the interesting dots are not buried under 341
         // lines of unchanged state.
-        if prev.as_ref() != Some(&key) {
+        if std::env::var("EV_ALL").is_ok() || prev.as_ref() != Some(&key) {
             println!(
                 "  f{} dot{:>3}  bus={:02X} mask={:02X} n={:>2} m={} found={} sec={:>2} copy={} ovf={} done={} latch={:02X}",
                 r.frame,
