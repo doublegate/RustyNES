@@ -25,6 +25,23 @@ Cargo.lock
 !/Cargo.lock
 !/crates/rustynes-cosim/Cargo.lock
 
+# Golden-export output. `nes_golden_export` writes these wherever `--out` points,
+# and none of them belong in the tree: they are reproducible from a pinned
+# commit, and a committed copy is a copy that drifts.
+#
+# The re-include below is not decoration. A BARE pattern matches at any depth,
+# which is exactly how `Cargo.lock` silently ignored the excluded crate's
+# lockfile until v2.4.2 -- so the committed golden trees are named explicitly,
+# and a binary golden deliberately added there will not be swallowed.
+*.ckpt.bin
+*.obs.bin
+*.boot.bin
+*.index_fb.bin
+*.ram.bin
+*.manifest.txt
+!/golden/**
+!/crates/rustynes-test-harness/golden/**
+
 # --- Native build & FFI artifacts ---
 *.so
 *.dylib

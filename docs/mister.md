@@ -506,3 +506,70 @@ Extending the subset means extending that module and re-fitting.
 The four fitter warnings are 58 unconstrained pins and a missing `.sdc`, in a
 module with no pinout and no timing constraints. Timing closure is a rung-6
 question.
+
+## Rung 1 — the 6502, and where it has actually got to
+
+Three opcode groups have closed. **573 records across three ROMs**, matching the
+oracle on all seven CPU fields, with the gate demonstrated to fail on seven
+independent mutations at each of the last two steps. The RTL lives in the sibling
+repository; `RustyNES_MiSTer/docs/rung1-6502.md` is its detailed record.
+
+| release | scope | records |
+|---|---|---|
+| v2.4.4 "Ignition" | the eight-cycle reset and the single-byte implied group | 29 |
+| v2.4.5 "Compass" | immediate / zero page / absolute; loads, stores, all eight branches | 140 |
+| v2.4.6 "Abacus" | three indexed modes with the page-cross penalty; `ADC`/`SBC`; the compares | 286 |
+
+The two earlier ROMs are re-run on every change, which is how the v2.4.5 datapath
+rewrite was shown not to regress v2.4.4.
+
+### What the rung has established beyond the opcodes
+
+**The DUT is the third writer of `CpuBootTrace`**, after the oracle itself and
+`scripts/mesen2_cpu_boot_trace.lua`. `cpu_boot_trace_diff` reads it with no
+modification, and `--skip-fields` already existed -- so the entire rung has
+needed **no oracle-side change**. That is the payoff of replay-rather-than-
+lockstep stated concretely: the comparison tooling does not know one side is
+hardware.
+
+**The oracle corrected our own specification.** `docs/cpu-6502.md` said reset was
+a 7-cycle sequence in one section and 8 in another. An independent implementation
+written *from that document* implemented seven and diverged on its first record.
+Reset is eight; the document is fixed. A second implementation built from a spec
+is a way of testing that spec, and this is what it found on day one.
+
+**Three tests read correctly and verified nothing**, each found by mutation and
+not by reading:
+
+- `TXS` after `TSX` -- a wrongly-flagging `TXS` computes exactly the flags `TSX`
+  had already left, so the wrong answer coincided with the right one.
+- A store and load in the *same* addressing mode -- self-consistent under any
+  address mutation, so it tests round-tripping rather than addressing.
+- A read of RAM the program had not written -- the oracle powers on with
+  deterministic **seeded** work RAM while a flat-memory testbench starts at zero,
+  so the divergence had nothing to do with the CPU.
+
+Designing each case so the **wrong answer differs from the right one** is now the
+default rather than a correction.
+
+### What CI does and does not check
+
+The sibling repository's `cpu-smoke` builds the core and runs the ROMs to
+completion, and its workflow step name says it is **not** the accuracy gate --
+because the oracle's goldens are not vendored there. They are reproducible from a
+pinned oracle commit, and a second copy would be a drifting copy.
+
+The accuracy comparison is `make -C tb cpu-gate GOLDEN=...`. Automating it needs
+golden fetching from a pinned commit, which is **not built yet and is not
+pretended to be**. That is the largest remaining hole in this rung's
+infrastructure and it is named here rather than left to be discovered.
+
+### Still open
+
+The undocumented opcodes, planned for v2.4.4-v2.4.6, are **not** delivered and
+move to the v2.4.7-v2.4.9 window alongside the stack group, `JMP` (including the
+indirect page-boundary bug), and read-modify-write with its double write.
+
+Rung 1's own gate -- nestest 0-diff over >= 8000 instructions -- is not met yet:
+the three ROMs are hand-built opcode groups, not nestest. Rung 2, the per-cycle
+bus and interrupt comparison, has not begun.
