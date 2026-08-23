@@ -315,10 +315,10 @@ mod inner {
                 continue;
             }
             // Blank line between disjoint windows (separates loop iterations).
-            if let Some(pc) = prev_cycle {
-                if r.cpu_cycle > pc + 1 {
-                    out.push('\n');
-                }
+            if let Some(pc) = prev_cycle
+                && r.cpu_cycle > pc + 1
+            {
+                out.push('\n');
             }
             prev_cycle = Some(r.cpu_cycle);
             let access = match r.bus_access {

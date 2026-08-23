@@ -258,15 +258,15 @@ fn run(args: &Args) -> Result<bool, String> {
 
     // First check: anchor mismatch (different starting frame/
     // scanline/dot suggests capture windows are misaligned).
-    if let (Some(rf), Some(af)) = (reference.records().first(), actual.records().first()) {
-        if (rf.frame, rf.scanline, rf.dot) != (af.frame, af.scanline, af.dot) {
-            println!(
-                "WARNING: reference starts at ({},{},{}) but actual starts at ({},{},{}); \
-                 alignment by record index may be misleading. Consider re-running both \
-                 captures with identical PpuTraceConfig windows.",
-                rf.frame, rf.scanline, rf.dot, af.frame, af.scanline, af.dot
-            );
-        }
+    if let (Some(rf), Some(af)) = (reference.records().first(), actual.records().first())
+        && (rf.frame, rf.scanline, rf.dot) != (af.frame, af.scanline, af.dot)
+    {
+        println!(
+            "WARNING: reference starts at ({},{},{}) but actual starts at ({},{},{}); \
+             alignment by record index may be misleading. Consider re-running both \
+             captures with identical PpuTraceConfig windows.",
+            rf.frame, rf.scanline, rf.dot, af.frame, af.scanline, af.dot
+        );
     }
 
     let r_recs = reference.records();

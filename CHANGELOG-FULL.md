@@ -2,7 +2,19 @@
 
 This is the comprehensive, deep-detail changelog: full per-release engineering
 narrative, engine lineage, ADR references, PR trains, and technical rationale.
-See [CHANGELOG.md](CHANGELOG.md) for the concise, readable summary.
+See [CHANGELOG.md](CHANGELOG.md) for the concise, readable summary — and for the
+**complete** release list, which this file is not.
+
+> **Coverage boundary: this file ends at [2.0.4] (2026-07-08).** It has not been
+> extended since, while RustyNES has shipped through v2.5.4. That is a real gap
+> and it is recorded here rather than left for a reader to discover by scrolling.
+> For v2.0.5 onward, the equivalent depth is in `.github/release-notes/`, the
+> published GitHub Releases, and `VERSION-PLAN.md`'s per-release rows.
+>
+> It is deliberately **not** backfilled. This file's value is detail written while
+> the work was fresh; reconstructing it from summaries would produce confident
+> prose nobody measured, which is the failure mode this project spends most of its
+> review effort on.
 
 All notable changes to RustyNES will be documented in this file.
 

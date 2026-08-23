@@ -1,11 +1,23 @@
 # Changelog
 
 This is the concise, readable summary of notable changes to RustyNES — a few
-tight highlights per release. For the full per-version detail (engineering
-narrative, engine lineage, ADR references, PR trains, and technical rationale),
-see [CHANGELOG-FULL.md](CHANGELOG-FULL.md). The format is based on
-[Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and the project adheres
-to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+tight highlights per release, and **the complete list of releases**. The format
+is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and the
+project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+**Where the deep per-release detail lives, stated accurately.**
+[CHANGELOG-FULL.md](CHANGELOG-FULL.md) carries the full engineering narrative for
+**v0.1.0 through v2.0.4 only** — it has not been extended since, and this line
+used to advertise it as covering every version, which it does not. From **v2.0.5
+onward** the equivalent depth lives in three places: the per-release notes under
+[`.github/release-notes/`](.github/release-notes/) (v1.10.0 onward, with a few
+gaps), the published GitHub Releases, and the per-release rows in
+[VERSION-PLAN.md](VERSION-PLAN.md). `docs/STATUS.md` remains the single source of
+truth for current state.
+
+Backfilling CHANGELOG-FULL from those summaries is deliberately **not** done: the
+detail it promises is the kind that has to be written while the work is fresh, and
+reconstructing it after the fact would produce confident prose nobody measured.
 
 RustyNES's cycle-accurate emulation core arrived in v1.0.0; the `v0.9.x` rows are
 the documentary lineage of how that core was built (not standalone user
@@ -13,6 +25,131 @@ releases), and `v0.1.0`–`v0.8.6` are the original pre-1.0 engine that the
 cycle-accurate core later replaced.
 
 ## [Unreleased]
+
+## [2.5.4] - 2026-08-23 - "Escapement" (the background fetch pipeline, and an access two dots early that five gates could not see)
+
+### Added
+
+- **Rung 3's background fetch pipeline, gate green.** `rtl/ppu2c02.sv` issues
+  NT / AT / pattern-low / pattern-high fetches on the documented 8-dot cadence,
+  compared against the oracle as an **address-bus** trace: **6,247 background
+  fetches, 0 divergences** on scanline, dot and address across two rendering
+  windows, with **eight mutations all CAUGHT** and the baseline verified passing
+  first.
+- **`ppu-fetch-trace`**, a default-off feature on `rustynes-ppu` /
+  `rustynes-core` recording the address of every PPU VRAM read with its frame,
+  scanline and dot. Hooked at the single choke point `Ppu::read_vram`, not at
+  each call site, so a fetch path added later cannot escape it silently.
+  Output-only and deliberately outside the save state.
+- `make -C tb ppu-fetch-gate` and `tb/fetch_diff.py` in the DUT repository, plus
+  a `fetch` gate in the mutation harness.
+
+### Fixed
+
+- **The testbench presented each CPU access two dots early.** A 6502 commits a
+  write and samples a read at **phi2**, the last of the cycle's three PPU dots;
+  `tb/cpu_main.cpp` presented it on the second, alongside the boot record. So
+  enabling rendering through `$2001` took effect two dots early, and so did
+  disabling it — the DUT issued one extra nametable fetch at each window's
+  leading edge and dropped one at its trailing edge. One quantity, wrong by one
+  constant, at both edges.
+- **Five gates stayed green across the move, in both directions**, and that is
+  not evidence it was harmless: rung 1's registers on nine ROMs, rung 2's
+  per-cycle bus, the interrupt sweep, and the v2.5.2 register and v2.5.3 scroll
+  gates all read state **once per CPU cycle**, so a uniform two-dot shift inside
+  a cycle moves nothing any of them compare. This is the rung's first gate keyed
+  to the dot counter and the first that could see it.
+- **Six clippy findings in `ppu-state-trace` that no CI invocation had ever
+  reached.** No workflow named any of the four trace features, and
+  `--workspace --all-targets` covers default features only, so the
+  `rustynes-cosim` clippy step compiled those modules as *dependencies*, where
+  warnings are not denied. CI gains one explicit step per feature.
+- The `nes_golden_export` usage text, which documented neither `--fetch-trace`
+  nor any of the four injection flags.
+
+### Changed
+
+- **nestest's verified window more than doubled, 27,388 -> 59,554 cycles.** It
+  was bounded by a missing peripheral rather than a CPU defect — nestest reads
+  `$2002` at cycle 27,396 and the testbench had no PPU to answer. The bound is
+  now the two-frame golden's length, an artifact budget rather than a wall.
+- `tb/roms/ppufetch.nes` gains a second rendering window at `$2800` with
+  background patterns at `$1000`. Two mutations had come back NOT CAUGHT against
+  a gate that was working correctly, because the ROM held `v[11]` and `ctrl[4]`
+  at zero throughout: the gate was not blind, the stimulus was. Fetch count
+  3,099 -> 6,247, and both mutations to CAUGHT.
+- The fetch comparison is **narrowed to the background window** (dots 1-256 and
+  321-336), excluding sprite fetches (v2.5.7) and the two dummy nametable reads
+  (v2.5.8). Every run prints how many records each side dropped, because a
+  narrowing that is not announced reads as full coverage.
+
+### Fixed (continued)
+
+- **A one-record coverage hole in five of eleven rung-1 gate invocations.**
+  `cpu_boot_trace_diff` required the DUT trace to *equal* the reference in
+  length; it now requires it to **cover** the reference — a short actual fails
+  because part of the reference window was never compared, and a longer one
+  passes with the surplus announced. Under that rule `opgroup3`, `opgroup5`,
+  `opgroup6`, `ppuregs` and `ppuscroll` were genuinely short by one record each.
+  Five extra cycles on each window closes it, the same five for every one.
+  Initially diagnosed as a benign boundary artifact and deferred; that diagnosis
+  was wrong and is corrected in place rather than quietly replaced.
+- **Three more never-linted clippy findings**, in `cpu_boot_trace_diff`,
+  `ppu_trace_diff` and `trace_dma_4015` — binaries the MiSTer rung gates run on
+  every comparison. The four trace steps added above lint `rustynes-core`; these
+  live behind the same feature names on `rustynes-test-harness`, which no
+  invocation reached. A fifth CI step now covers them.
+
+### Security
+
+- **`--fetch-trace` no longer accepts an unbounded capacity.** `FetchTrace`
+  clamped only its initial allocation, so a large argument would have grown the
+  buffer without bound — `--fetch-trace 1000000000` reallocating its way to
+  twelve gigabytes. The stored capacity is now clamped to `MAX_CAPACITY`
+  (1,048,576 records, 12 MiB) and the CLI **refuses** an argument above it rather
+  than clamping silently, because a clamp the caller never learns about produces
+  a golden covering less than the run it claims to. Raised in review of #450.
+
+### Documentation
+
+A release-wide sweep of the documents this release touches, and what it found.
+
+- **`.gitignore` did not cover three of the golden exporter's nine artifacts.**
+  `*.ram.bin` does not match `<stem>.ram_init.bin` — the suffixes differ — so the
+  seeded work RAM every co-simulation gate now requires was never ignored;
+  `irq.csv` had been uncovered since v2.4.2, and `fetch.bin` arrived with this
+  release. Found by testing each suffix with `git check-ignore` rather than by
+  reading the list, and each pattern verified to match nothing tracked before
+  being added.
+- **Both changelog headers advertised a coverage neither has.**
+  `CHANGELOG-FULL.md` stops at `[2.0.4]` while `CHANGELOG.md` described it as
+  holding "the full per-version detail" for every release. Both now state the
+  boundary and name where the depth actually lives from v2.0.5 onward. It is
+  deliberately not backfilled: reconstructing that detail from summaries would
+  produce confident prose nobody measured.
+- **README corrections.** `nes_golden_export` emits nine artifacts, not the five
+  claimed since v2.4.1; the trace-lint gap is described as closed rather than
+  open; and the "Fabric" line is marked delivered, with the current v2.5.1 →
+  v2.7.0 line named.
+- **`docs/testing-strategy.md` gained the co-simulation layer** it had never
+  described — the gate/diagnostic partition, the mutation requirement, and the
+  fact that these gates do **not** run in CI.
+- **The MiSTer to-dos were three sprints stale.** `TASKS.md` still had v2.5.1's
+  injection API unchecked; `IMPLEMENTATION_PLAN.md` said the PPU was "Not
+  started" and quoted the superseded 27,388-cycle nestest bound; `SPRINT_PLAN.md`
+  gained a status column. Its standing rule "a rung may not start until the one
+  below is green in CI" is corrected — that is **not currently achievable**, and
+  a rule nobody can satisfy is a rule that quietly stops being applied.
+
+### Verified
+
+- **AccuracyCoin 141/141 (100.00%, RAM decoder)** and **nestest 0-diff**.
+  `rustynes-ppu` changed, so both were run rather than asserted.
+- `fetch_trace` gains **five unit tests** — it had none. The byte layout is
+  asserted against hand-written expected bytes rather than against `to_bytes`'s
+  own output, because a test that builds its expectation with the function under
+  test agrees with itself forever. Three mutations (byte order, the capacity
+  clamp, a ring-buffer overwrite) are all CAUGHT.
 
 ## [2.5.3] - 2026-08-23 - "Hysteresis" (toggling rendering takes effect three dots after the write)
 

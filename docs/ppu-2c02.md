@@ -526,6 +526,28 @@ kevtris green, identically with `hd-pack` on and off). The whole export is
 `#[cfg(feature = "hd-pack")]`-gated, so the default and `no_std` builds carry no memory
 or codegen cost.
 
+### Fetch-address trace (`ppu-fetch-trace`, v2.5.4, default-off)
+
+`crates/rustynes-ppu/src/fetch_trace.rs` records the address of every PPU VRAM
+read, tagged with the frame, scanline and dot it was issued on — 12 bytes per
+record, magic `RNESFTCH`, schema 1. It exists so an independent implementation
+can be compared against the **address bus**, which a 2C02 drives on real pins:
+two correct implementations cannot disagree about it, unlike the latches behind
+it, which are this project's decomposition of what was fetched.
+
+The hook sits at the single choke point, `Ppu::read_vram`, rather than at each
+call site — a per-site hook is how a fetch path added later escapes the trace
+silently. It is **output-only**: no extra VRAM reads, no A12 or mapper events,
+no emulation state mutated, and deliberately **not** in the save state (so
+`snapshot_schema_audit` carries it as an explicit exclusion with its reason).
+The whole module is `#[cfg(feature = "ppu-fetch-trace")]`-gated, so the default
+and `no_std` builds carry no memory or codegen cost, and AccuracyCoin
+(RAM) 141/141 plus nestest 0-diff were re-verified with it present.
+
+**The trace is a gate; the latches are not.** See
+`RustyNES_MiSTer/docs/rung3-ppu.md` for the full partition and for what a
+fetch-address comparison cannot adjudicate.
+
 ## Edge cases and gotchas
 
 1. **Mid-scanline scroll write.** Writing PPUSCROLL or PPUADDR mid-scanline shifts the BG tile fetch immediately. Common technique for status bars on top + scrolling playfield below; *Battletoads*, *Megaman III*, *Felix the Cat* all exercise this.

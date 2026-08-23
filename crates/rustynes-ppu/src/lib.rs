@@ -27,6 +27,8 @@
 extern crate alloc;
 
 mod bus;
+#[cfg(feature = "ppu-fetch-trace")]
+pub mod fetch_trace;
 mod palette;
 mod palette_gen;
 mod ppu;

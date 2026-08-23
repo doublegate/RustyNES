@@ -4,7 +4,7 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
 
 ## v2.5.1 — the interrupt sweep (rung 2 completes)
 
-- [ ] Implement ADR 0038's injection API behind `cosim-interrupt-inject`
+- [x] Implement ADR 0038's injection API behind `cosim-interrupt-inject`
 - [x] **Precondition A:** structural, not benchmarked — `inject_` appears **0**
       times in the expanded default core and **17** with the feature on, measured
       with a live control. When the default build emits none of it there is no
@@ -23,15 +23,22 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
 ## v2.5.2 – v2.5.8 — rung 3, the 2C02
 
 - [x] v2.5.2 register file `$2000-$2007`, VRAM/palette bus, mirroring — **12,840 records, 0 divergences**, 8 mutations all caught; also the post-reset masking window, which the plan did not anticipate
-- [ ] v2.5.3 `v`/`t`/`x`/`w` and the `$2005`/`$2006` sequence
-- [ ] v2.5.4 background fetch pipeline (NT/AT/pattern), shift registers
-- [ ] v2.5.5 background rendering into `index_framebuffer`
+- [x] v2.5.3 `v`/`t`/`x`/`w` and the `$2005`/`$2006` sequence — **19,813 records, 0 divergences**; bus gate 49,993/49,993; and a 3-dot delay on toggling rendering that the plan did not anticipate, adjudicated by the wiki because both implementations were self-consistent
+- [x] v2.5.4 background fetch pipeline (NT/AT/pattern) — **6,247 background fetches, 0 divergences**, 8 mutations all caught. Gated on the ADDRESS BUS, not the latches. Found that the testbench presented every CPU access two dots early (a 6502 commits at phi2) — invisible to all five existing gates, which sample once per CPU cycle. nestest's window went **27,388 → 59,554 cycles**. Shift registers and fine-X are NOT here: they are diagnostic, and the pixel they feed is v2.5.5's gate
+- [ ] v2.5.5 background rendering into `index_framebuffer` — shift registers, fine-X mux, palette lookup
 - [ ] v2.5.6 **sprite evaluation FSM** — the hardest item
 - [ ] v2.5.7 sprite rendering, priority, sprite-0 hit, overflow
 - [ ] v2.5.8 VBlank/NMI timing, odd-frame skip, `$2002` race — **rung 3 closes**
-- [ ] Write `docs/mister-ppu-rung.md` gate/diagnostic partition **before** v2.5.2
-- [ ] On rung 3 close: re-run nestest **unbounded** and the 5 M-cycle window,
-      which v2.5.0 could not reach
+- [x] Write the rung-3 gate/diagnostic partition **before** the rung — landed as
+      the sibling's `docs/rung3-ppu.md`, not `docs/mister-ppu-rung.md` as planned
+      here (it belongs beside the RTL it constrains). v2.5.3 is the proof it
+      works: `ppu-state-trace` located the bug and never became a gate
+- [~] On rung 3 close: re-run nestest **unbounded** and the 5 M-cycle window,
+      which v2.5.0 could not reach. **Partly done at v2.5.4**: the window was
+      never a CPU wall, only a missing `$2002` answer, so it moved 27,388 →
+      59,554 cycles the moment the register file existed. It is now bounded by
+      the two-frame golden's length — an artifact budget — so "unbounded" means
+      exporting more frames, not finding a new failure
 
 ## v2.5.9 – v2.6.2 — rung 4, the 2A03
 

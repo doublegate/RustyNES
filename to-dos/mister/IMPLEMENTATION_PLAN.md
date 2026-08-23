@@ -12,8 +12,8 @@ what is next, and what each release owes.
 
 | Component | State |
 |---|---|
-| 6502 | **Done.** `rtl/cpu6502.sv`, nine opcode-group ROMs, 2115 records on rung 1, 4537 cycles on the bus gate, 27,388 cycles of nestest |
-| PPU | **Not started** |
+| 6502 | **Done.** `rtl/cpu6502.sv`, nine opcode-group ROMs, 2115 records on rung 1; the bus gate at 49,993 cycles on `ppuscroll`; **59,554 cycles of nestest** (was 27,388 — the old bound was a missing `$2002` answer, not a CPU wall, and it moved the moment the PPU register file existed); the interrupt sweep at 60 injection points |
+| PPU | **Three of seven steps.** `rtl/ppu2c02.sv`: the register file (v2.5.2, 12,840 records), the scroll address logic (v2.5.3, 19,813 records) and the background fetch pipeline (v2.5.4, 6,247 fetches). **No sprites, no pixel output, no VBlank/NMI timing.** Next is v2.5.5, background rendering into `index_framebuffer` |
 | APU | **Not started** |
 | Cartridge / mappers | **Not started** |
 | SDRAM controller | **Not started** |
@@ -37,7 +37,15 @@ v2.7.0 are **milestones, not dates**.
 
 ## Standing rules for every release in this line
 
-1. **A rung may not start until the one below is green in CI.**
+1. **A rung may not start until the one below is green.** As written this said
+   "green in CI", and that is **not currently achievable** — none of the DUT
+   gates run in CI, because they need the oracle's goldens and a `cargo` build of
+   `rustynes-cosim`, neither of which exists in the sibling repository's
+   workflows. They are run by hand and their results recorded in the per-rung
+   docs. Fetching goldens from a pinned oracle commit is the missing piece, and
+   until it is built this rule means "green on a recorded manual run" — said
+   plainly, because a rule nobody can satisfy is a rule that quietly stops being
+   applied.
 2. **Every new gate is demonstrated to fail by mutation** before it is trusted —
    three outcomes (CAUGHT / NOT CAUGHT / BUILD-FAILED), baseline captured once
    into a file the harness refuses to overwrite.

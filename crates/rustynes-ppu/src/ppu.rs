@@ -964,6 +964,16 @@ pub struct Ppu {
     /// serialized — they are regenerated on the next emitted frame, so a state
     /// loaded while paused shows correct NTSC from the first frame after resume.
     pub(crate) index_framebuffer: Box<[u16]>,
+    /// How many dots took the specialized fast path (`ppu-fetch-trace` only).
+    ///
+    /// Not telemetry. It exists so a test can assert it EXERCISED the fast path
+    /// rather than passing because the path was never entered — the failure this
+    /// project keeps finding, where a check agrees about something it never
+    /// reached. A review of #450 claimed the fast path bypasses the fetch trace;
+    /// the test refuting that is worthless unless it can show the path ran, and
+    /// this is how it shows it.
+    #[cfg(feature = "ppu-fetch-trace")]
+    pub fast_path_hits: u64,
 
     /// Free-running PPU master-cycle counter (one increment per [`Self::tick`]),
     /// the basis for the per-frame NTSC colour phase. Output-only / cosmetic
@@ -1044,6 +1054,9 @@ pub struct Ppu {
     /// `docs/adr/0005-ppu-state-trace.md`.
     #[cfg(feature = "ppu-state-trace")]
     pub(crate) state_trace: Option<crate::state_trace::PpuStateTrace>,
+    /// Per-dot PPU bus address capture. See [`crate::fetch_trace`].
+    #[cfg(feature = "ppu-fetch-trace")]
+    pub(crate) fetch_trace: Option<crate::fetch_trace::FetchTrace>,
 
     /// v1.2.0 beta.2 (Workstream C3) — per-pixel HD-pack tile-source buffer
     /// (256 × 240 [`HdTileSource`] records), written in [`Self::emit_pixel`]
@@ -1364,6 +1377,8 @@ impl Ppu {
             power_up_palette: PaletteInit::Zeroed,
             framebuffer: vec![0u8; FRAMEBUFFER_LEN].into_boxed_slice(),
             index_framebuffer: vec![0u16; FRAMEBUFFER_PIXELS].into_boxed_slice(),
+            #[cfg(feature = "ppu-fetch-trace")]
+            fast_path_hits: 0,
             dot_counter: 0,
             frame_ntsc_phase: 0,
             extra_scanlines: 0,
@@ -1375,6 +1390,8 @@ impl Ppu {
             fast_dotloop: true,
             #[cfg(feature = "ppu-state-trace")]
             state_trace: None,
+            #[cfg(feature = "ppu-fetch-trace")]
+            fetch_trace: None,
             #[cfg(feature = "hd-pack")]
             hd_tile_source: vec![HdTileSource::default(); FRAMEBUFFER_PIXELS].into_boxed_slice(),
             #[cfg(feature = "hd-pack")]
@@ -1773,6 +1790,22 @@ impl Ppu {
     #[cfg(feature = "ppu-state-trace")]
     pub fn enable_state_trace(&mut self, trace: crate::state_trace::PpuStateTrace) {
         self.state_trace = Some(trace);
+    }
+
+    /// Install a per-dot PPU bus address capture.
+    ///
+    /// The address bus is pin-observable, which is what makes it usable as a
+    /// gate by an independent reimplementation; see [`crate::fetch_trace`] for
+    /// why the address is captured rather than derived.
+    #[cfg(feature = "ppu-fetch-trace")]
+    pub fn enable_fetch_trace(&mut self, trace: crate::fetch_trace::FetchTrace) {
+        self.fetch_trace = Some(trace);
+    }
+
+    /// Remove and return the fetch trace, if one was installed.
+    #[cfg(feature = "ppu-fetch-trace")]
+    pub const fn take_fetch_trace(&mut self) -> Option<crate::fetch_trace::FetchTrace> {
+        self.fetch_trace.take()
     }
 
     /// Take the accumulated state trace, leaving the PPU's trace
@@ -2887,6 +2920,20 @@ impl Ppu {
     #[allow(clippy::needless_pass_by_ref_mut)]
     fn read_vram<B: PpuBus>(&mut self, bus: &mut B, addr: u16) -> u8 {
         let a = addr & 0x3FFF;
+        // Every PPU bus read passes through here -- pattern fetches, nametable
+        // and attribute fetches, sprite pattern fetches, and `$2007`. Capturing
+        // at the choke point rather than at each call site is what makes the
+        // trace complete by construction: a fetch added later cannot forget to
+        // record itself.
+        #[cfg(feature = "ppu-fetch-trace")]
+        if let Some(trace) = self.fetch_trace.as_mut() {
+            trace.push(crate::fetch_trace::FetchRecord {
+                frame: u32::try_from(self.frame).unwrap_or(u32::MAX),
+                scanline: self.scanline,
+                dot: self.dot,
+                addr: a,
+            });
+        }
         let val = if a < 0x2000 {
             bus.ppu_read(a)
         } else {
@@ -3074,6 +3121,10 @@ impl Ppu {
             && !self.oam_corruption_disabled
             && !self.oam_corruption_disabled_instant
         {
+            #[cfg(feature = "ppu-fetch-trace")]
+            {
+                self.fast_path_hits = self.fast_path_hits.saturating_add(1);
+            }
             self.tick_visible_render_fast(bus);
             return;
         }
@@ -3700,6 +3751,13 @@ impl Ppu {
         self.rendering_enabled_delayed = rendering;
     }
 
+    // Dead under `ppu-state-trace`, and legitimately so: the dispatch above is
+    // `#[cfg(not(feature = "ppu-state-trace"))]`, because the trace hook must
+    // observe EVERY dot and the fast path exists precisely to skip per-dot work.
+    // Live by default, dead under one feature -- the one shape that earns an
+    // `allow` rather than a deletion. Scoped to that feature so the attribute
+    // cannot silently start suppressing a real finding in the default build.
+    #[cfg_attr(feature = "ppu-state-trace", allow(dead_code))]
     #[inline]
     fn tick_visible_render_fast<B: PpuBus>(&mut self, bus: &mut B) {
         let dot = self.dot;

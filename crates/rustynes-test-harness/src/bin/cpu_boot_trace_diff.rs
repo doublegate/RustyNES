@@ -429,14 +429,15 @@ fn run(args: &Args) -> Result<bool, String> {
 
     let r_recs = reference.records();
     let a_recs = actual.records();
-    if let (Some(rf), Some(af)) = (r_recs.first(), a_recs.first()) {
-        if rf.cycle != af.cycle && !args.align_by_cycle {
-            println!(
-                "NOTE: reference starts at cycle {} but actual starts at cycle {}; \
-                 pass --align-by-cycle to skip-ahead.",
-                rf.cycle, af.cycle
-            );
-        }
+    if let (Some(rf), Some(af)) = (r_recs.first(), a_recs.first())
+        && rf.cycle != af.cycle
+        && !args.align_by_cycle
+    {
+        println!(
+            "NOTE: reference starts at cycle {} but actual starts at cycle {}; \
+             pass --align-by-cycle to skip-ahead.",
+            rf.cycle, af.cycle
+        );
     }
 
     let (r_start, a_start) = if args.align_by_cycle {
@@ -502,14 +503,45 @@ fn run(args: &Args) -> Result<bool, String> {
             return Ok(false);
         }
     }
-    if r_view.len() != a_view.len() {
-        println!(
-            "Length mismatch: reference={} actual={} (compared first {} aligned records)",
-            r_view.len(),
-            a_view.len(),
-            len
-        );
-        any_diff = true;
+    // The REFERENCE defines the span that must be covered, and the two lengths
+    // are not required to be equal.
+    //
+    // They were, until this changed, and the asymmetry matters. The oracle's
+    // window is set by `--boot-trace`; the DUT's by `--cycles`. Those two
+    // rarely land on the same instruction boundary, so five of eleven gated
+    // ROMs printed "All N aligned records match" and then failed on a
+    // one-record difference. An exit code that is permanently non-zero on a
+    // passing gate is an exit code people stop reading -- and during v2.5.4 a
+    // pass/fail classifier did exactly that, grepping this tool's prose instead
+    // and matching "Length mismatch" on the substring "match". The gate was
+    // right and the reader was wrong, which is the harder direction to notice.
+    //
+    // So: a SHORT actual still fails, because part of the reference window was
+    // never compared and that is a coverage hole. A LONGER actual passes, and
+    // the surplus is ANNOUNCED rather than ignored -- those records were not
+    // checked against anything, and a narrowing nobody is told about reads as
+    // full coverage.
+    match a_view.len().cmp(&r_view.len()) {
+        core::cmp::Ordering::Less => {
+            println!(
+                "Actual trace is SHORT: reference={} actual={} — {} reference record(s) \
+                 were never compared, so this run does not cover the reference window.",
+                r_view.len(),
+                a_view.len(),
+                r_view.len() - a_view.len()
+            );
+            any_diff = true;
+        }
+        core::cmp::Ordering::Greater => {
+            println!(
+                "Actual trace runs {} record(s) past the reference; those were not \
+                 compared against anything (reference={} actual={}).",
+                a_view.len() - r_view.len(),
+                r_view.len(),
+                a_view.len()
+            );
+        }
+        core::cmp::Ordering::Equal => {}
     }
     if !any_diff {
         println!(

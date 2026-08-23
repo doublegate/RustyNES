@@ -17,6 +17,7 @@
 //! | `<stem>.ckpt.bin` | rolling per-cycle hash checkpoints | `checkpoint_diff` |
 //! | `<stem>.obs.bin` | full-capture observable stream, 16-byte records | the testbench's self-diff, and a window re-run |
 //! | `<stem>.index_fb.bin` | 256x240 LE `u16` | the testbench's frame comparison |
+//! | `<stem>.fetch.bin` | per-dot PPU bus addresses, 12-byte records | rung 3's background-fetch gate |
 //! | `<stem>.ram.bin` | 2 KiB CPU work RAM | `accuracy_coin_catalog::decode_results` |
 //! | `<stem>.ram_init.bin` | 2 KiB CPU work RAM **before** execution | a co-simulation testbench, so its flat memory starts where the oracle's does |
 //! | `<stem>.manifest.txt` | provenance | humans, and the drift guard below |
@@ -47,6 +48,8 @@ struct Args {
     frames: u32,
     boot_trace: Option<(u64, u64)>,
     irq_trace: Option<usize>,
+    /// Capacity for the per-dot PPU bus-address capture (rung 3's v2.5.4 gate).
+    fetch_trace: Option<usize>,
     checkpoint_interval: u64,
     /// v2.5.1 — rung 2's interrupt sweep. Instruction-indexed, not
     /// cycle-indexed: this side cannot assert a pin mid-instruction, so a
@@ -61,7 +64,9 @@ fn usage() -> ! {
     eprintln!(
         "usage: nes_golden_export --rom <path> --out <dir> [--seed N] [--frames N]\n\
          \x20                       [--boot-trace START..END] [--irq-trace CAP]\n\
-         \x20                       [--checkpoint-interval N]"
+         \x20                       [--fetch-trace CAP] [--checkpoint-interval N]\n\
+         \x20                       [--inject-instructions N] [--inject-hold N]\n\
+         \x20                       [--inject-nmi-at N] [--inject-irq-at N]"
     );
     std::process::exit(2)
 }
@@ -71,6 +76,7 @@ fn parse_args() -> Args {
     let (mut rom, mut out) = (None, None);
     let (mut seed, mut frames) = (0u64, 60u32);
     let (mut boot_trace, mut irq_trace) = (None, None);
+    let mut fetch_trace: Option<usize> = None;
     let mut checkpoint_interval = rustynes_cosim::checkpoint::DEFAULT_INTERVAL;
     let (mut inject_instructions, mut inject_hold) = (0u64, 1u64);
     let (mut inject_nmi_at, mut inject_irq_at) = (None, None);
@@ -128,6 +134,27 @@ fn parse_args() -> Args {
                 irq_trace = Some(need(i).parse().unwrap_or_else(|_| usage()));
                 i += 2;
             }
+            "--fetch-trace" => {
+                let cap: usize = need(i).parse().unwrap_or_else(|_| usage());
+                // Validated HERE, at the boundary, rather than left to clamp
+                // silently inside the trace. `FetchTrace` caps its own storage
+                // so no argument can make it allocate without bound -- but a
+                // clamp the caller never learns about produces a golden covering
+                // less than the run, and the whole point of the drop counter is
+                // that such a golden must not pass unnoticed. Refusing the
+                // argument says so before a single cycle is simulated.
+                if cap == 0 || cap > rustynes_core::rustynes_ppu::fetch_trace::MAX_CAPACITY {
+                    eprintln!(
+                        "--fetch-trace must be between 1 and {} (got {cap}); a window \
+                         needing more than that wants to be shorter, not buffered \
+                         larger -- three frames of a rendering ROM is under ten thousand",
+                        rustynes_core::rustynes_ppu::fetch_trace::MAX_CAPACITY
+                    );
+                    usage();
+                }
+                fetch_trace = Some(cap);
+                i += 2;
+            }
             "--checkpoint-interval" => {
                 checkpoint_interval = need(i).parse().unwrap_or_else(|_| usage());
                 if checkpoint_interval == 0 {
@@ -146,6 +173,7 @@ fn parse_args() -> Args {
         frames,
         boot_trace,
         irq_trace,
+        fetch_trace,
         checkpoint_interval,
         inject_instructions,
         inject_nmi_at,
@@ -335,6 +363,33 @@ fn warn_if_incomplete(args: &Args, o: &Oracle, calls: u64, frames_actual: u64) {
     }
 }
 
+/// Write the per-dot PPU bus-address golden, when the trace was armed.
+///
+/// A DROPPED count is a TRUNCATED window, and a comparison over one that does
+/// not know it is truncated claims a coverage it does not have. It is reported
+/// loudly rather than folded into the manifest where nobody looks.
+fn write_fetch_trace(o: &mut Oracle, base: &Path) {
+    if let Some((bytes, dropped)) = o.take_fetch_trace() {
+        write(&suffixed(base, "fetch.bin"), &bytes);
+        if dropped > 0 {
+            // FAILS, rather than warning. A truncated golden is not a smaller
+            // golden: the DUT captures the whole run, so the comparator sees a
+            // length mismatch and reports a divergence whose real cause is an
+            // export-side capacity. Worse, this project has already been bitten
+            // by a warning that fired on every run and was never seen, because
+            // the caller redirected stderr -- so a warning here is a signal that
+            // may not arrive. The file is written FIRST and kept: its records
+            // are real, and a partial capture is still worth inspecting by hand.
+            eprintln!(
+                "  ERROR: fetch trace dropped {dropped} read(s) -- --fetch-trace \
+                 capacity is too small, so the golden covers less than the run. \
+                 The truncated file was written; re-run with a larger capacity."
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
 fn run_scale(args: &Args) -> String {
     if args.inject_instructions > 0 {
         format!("{} instructions, injected", args.inject_instructions)
@@ -406,6 +461,9 @@ fn main() {
     if let Some(cap) = args.irq_trace {
         o.enable_irq_trace(cap);
     }
+    if let Some(cap) = args.fetch_trace {
+        o.enable_fetch_trace(cap);
+    }
 
     // `advance_frames`, not a `run_frame()` loop: the first call after power-on
     // is swallowed by the frame_complete latch the reset sequence leaves set, so
@@ -451,6 +509,8 @@ fn main() {
         fb_bytes.extend_from_slice(&px.to_le_bytes());
     }
     write(&suffixed(&base, "index_fb.bin"), &fb_bytes);
+
+    write_fetch_trace(&mut o, &base);
 
     // Checked BEFORE the write, and checked on `ram_init` specifically. The
     // assert below covers the post-run `ram`, so this buffer had no length check

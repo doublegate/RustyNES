@@ -146,6 +146,27 @@ const CHIPS: &[Chip] = &[
                 "state_trace",
                 "diagnostic: `ppu-state-trace` ring buffer, output-only",
             ),
+            (
+                "fast_path_hits",
+                "diagnostic: `ppu-fetch-trace` counter of how many dots took the \
+                 specialized fast dot path. It exists so a test can assert it EXERCISED \
+                 the fast path rather than passing because the path was never entered -- \
+                 a review of #450 claimed the fast path bypasses the fetch trace, and the \
+                 test refuting that is worthless unless it can show the path ran. Nothing \
+                 in the PPU reads it, so a restore that discards it cannot change a dot; \
+                 and carrying it across a save would make the count describe two \
+                 different runs stitched together, which is worse than not carrying it.",
+            ),
+            (
+                "fetch_trace",
+                "diagnostic: `ppu-fetch-trace` capture of the addresses the PPU drives on \
+                 its own bus. Output-only and never read back into emulation -- nothing \
+                 in the PPU consults it, so a restore that discards it cannot change a \
+                 single dot. Excluded rather than serialized for the same reason as \
+                 `state_trace` beside it, and NOT because it is inconvenient to carry: \
+                 this file's own docs record that the default answer is to SERIALIZE, \
+                 and it has been right three times out of three.",
+            ),
             // The scanline-classification cache. Deliberately recomputed rather
             // than carried: it is a pure function of `scanline` + `region`, both
             // serialized, and `restore` resets the key to the `Ppu::new` sentinel

@@ -38,6 +38,15 @@ Cargo.lock
 *.boot.bin
 *.index_fb.bin
 *.ram.bin
+# Three artifacts this list had grown apart from, found by testing each suffix
+# against `git check-ignore` rather than by reading the list. `*.ram.bin` does
+# NOT match `<stem>.ram_init.bin` -- the suffixes differ -- so the seeded work
+# RAM every gate now requires was never covered; `irq.csv` has been uncovered
+# since v2.4.2; `fetch.bin` arrived with v2.5.4. Each was verified to match
+# nothing tracked before being added.
+*.ram_init.bin
+*.fetch.bin
+*.irq.csv
 # Broader than its siblings, and knowingly so: `nes_golden_export` names this
 # `<rom-stem>.manifest.txt`, with no suffix that distinguishes it from any other
 # manifest. Nothing tracked matches it today. If a manifest ever needs tracking,

@@ -8,7 +8,7 @@ description = "RustyNES as a co-simulation oracle for an external HDL device-und
 # The duplication is PINNED, not merely noticed: `cosim_manifest_audit.rs` in
 # `rustynes-test-harness` asserts these values still match the workspace's, so
 # drift fails a test instead of accumulating quietly.
-version = "2.5.3"
+version = "2.5.4"
 edition = "2024"
 rust-version = "1.96"
 license = "GPL-3.0-or-later"
@@ -46,6 +46,11 @@ undocumented_unsafe_blocks = "warn"
 rustynes-core = { path = "../rustynes-core", features = [
     "cpu-boot-trace",
     "irq-timing-trace",
+    # v2.5.4 (rung 3). The per-dot PPU bus-address capture the background-fetch
+    # gate compares. Enabled here and NOWHERE else, for the same reason the two
+    # above are: this crate is excluded from the workspace precisely so a trace
+    # feature cannot unify into the accuracy battery's build of the core.
+    "ppu-fetch-trace",
     # v2.4.9. Populates CycleRecord.pc, which is 0 without it -- so every
     # Observable the bus gate reads carried pc=0 and could not name the
     # instruction at a divergence. Enabled only after checking empirically

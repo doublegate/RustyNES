@@ -128,6 +128,51 @@ covers the *commercial* library (gitignored under
   `tests/roms/external/mapper-NNN-NAME/` are gitignored and entirely
   the user's responsibility.
 
+## Layer 4.7 — co-simulation against an independent implementation (since v2.4.1)
+
+The layers above all ask "does RustyNES agree with a reference?" This one inverts
+it: RustyNES becomes the **oracle** an independently-written SystemVerilog NES
+core is verified against (ADR 0037; `docs/mister.md`). The core lives in a sibling
+repository and is written from public hardware documentation only — the
+provenance firewall extends to HDL, so third-party `rtl/` is a strict black box.
+
+`crates/rustynes-cosim` is the boundary. It is **excluded from the workspace on
+purpose**: it enables trace features on `rustynes-core`, and cargo unifies
+features across a workspace build, so as a member it would have made the accuracy
+battery validate an instrumented scheduler no user runs. Its `nes_golden_export`
+binary emits the golden artifacts a testbench consumes — nine files as of v2.5.4,
+enumerated in that binary's module docs.
+
+Verification is a **ladder**, and a rung may not start until the one below is
+green. Each rung's compare surface is fixed **before** the rung starts, splitting
+every field into one of two roles:
+
+- **Gate** — something a physical device can produce, so a mismatch fails the
+  rung. Register values at instruction boundaries, per-cycle bus address / data /
+  access type, per-dot PPU fetch addresses, the pre-palette index framebuffer.
+- **Diagnostic** — RustyNES's *model*, not a hardware fact. `ppu-state-trace`'s
+  internal latches and FSM fields explain a failure and may never cause one,
+  because they encode this project's decomposition rather than the chip's.
+
+Two properties of this layer are worth stating because they are easy to lose:
+
+1. **A gate only tests at the resolution it samples.** Five gates that read state
+   once per CPU cycle stayed green, in both directions, across a defect that
+   moved an access two dots *within* a cycle (v2.5.4). "No existing check sees
+   it" is a statement about the checks.
+2. **Every new gate is demonstrated to fail by mutation** before it is trusted,
+   with three outcomes — CAUGHT / NOT CAUGHT / BUILD-FAILED — and a baseline
+   captured once and verified passing first. A NOT CAUGHT can indict the
+   **stimulus** rather than the gate: a bit the test ROM never sets is a bit no
+   comparison over that ROM can adjudicate.
+
+**These gates do not run in CI**, and saying so is part of the layer's honesty:
+they need the oracle's goldens and a build of the excluded crate, neither of
+which exists in the sibling repository's workflows. They are run by hand and
+recorded in that repository's per-rung docs, each of which carries a
+**"what this rung cannot verify"** section. Fetching goldens from a pinned oracle
+commit is the missing piece that would automate them.
+
 ## Layer 5 — fuzz testing
 
 `cargo-fuzz` harnesses for:
