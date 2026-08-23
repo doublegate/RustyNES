@@ -1,0 +1,64 @@
+# RustyNES MiSTer core — task board
+
+Legend: `[ ]` open · `[~]` in progress · `[x]` done
+
+## v2.5.1 — the interrupt sweep (rung 2 completes)
+
+- [ ] Implement ADR 0038's injection API behind `cosim-interrupt-inject`
+- [ ] **Precondition A:** zero hot-path cost, asserted by `full_frame` benchmark
+- [ ] **Precondition B:** byte-identical output with the feature ABSENT *and*
+      PRESENT-BUT-UNUSED (AccuracyCoin 141/141 + nestest 0-diff, both cases)
+- [ ] Sweep: NMI and IRQ at every offset across ~20 hazard opcodes
+- [ ] `docs/rung2-interrupts.md` in the sibling repo, with its cannot-verify section
+- [ ] If either precondition fails: **the decision is void** — record it and fall
+      back to option B (wait for rung 4's `cpu_interrupts_v2`)
+
+## v2.5.2 – v2.5.8 — rung 3, the 2C02
+
+- [ ] v2.5.2 register file `$2000-$2007`, VRAM/palette bus, mirroring
+- [ ] v2.5.3 `v`/`t`/`x`/`w` and the `$2005`/`$2006` sequence
+- [ ] v2.5.4 background fetch pipeline (NT/AT/pattern), shift registers
+- [ ] v2.5.5 background rendering into `index_framebuffer`
+- [ ] v2.5.6 **sprite evaluation FSM** — the hardest item
+- [ ] v2.5.7 sprite rendering, priority, sprite-0 hit, overflow
+- [ ] v2.5.8 VBlank/NMI timing, odd-frame skip, `$2002` race — **rung 3 closes**
+- [ ] Write `docs/mister-ppu-rung.md` gate/diagnostic partition **before** v2.5.2
+- [ ] On rung 3 close: re-run nestest **unbounded** and the 5 M-cycle window,
+      which v2.5.0 could not reach
+
+## v2.5.9 – v2.6.2 — rung 4, the 2A03
+
+- [ ] v2.5.9 pulse channels + frame counter
+- [ ] v2.6.0 triangle + noise
+- [ ] v2.6.1 DMC, and its DMA stealing back into the CPU
+- [ ] v2.6.2 frame-counter IRQ edges; blargg APU battery — **rung 4 closes**
+- [ ] Run `cpu_interrupts_v2` — the independent interrupt oracle, now reachable
+
+## v2.6.3 – v2.6.4 — rung 5, NROM + AccuracyCoin
+
+- [ ] v2.6.3 NROM cartridge; first end-to-end AccuracyCoin run
+- [ ] v2.6.4 status vector identical **entry-for-entry**, including `Skipped` and
+      `NotRun` — **rung 5 closes**. State a floor, not a target
+
+## v2.6.5 – v2.6.6 — rung 6, MiSTer integration and hardware
+
+- [ ] v2.6.5 `sys/` verbatim; `emu` module; `hps_io`; `CE_PIXEL` video; `CONF_STR`
+      OSD; `VIDEO_ARX/ARY` at **8:7, set deliberately**; `files.qip`, `.sdc`,
+      `clean.bat`; **Quartus timing closure**; first `.rbf`
+- [ ] v2.6.6 hardware bring-up: DE10-Nano + SDRAM add-on, SuperStation One,
+      **one `.rbf` boots both**; on-device AccuracyCoin — **rung 6 closes**
+
+## v2.6.7 – v2.6.9 — rung 7, memory and mappers
+
+- [ ] v2.6.7 SDRAM controller from spec (ADR first)
+- [ ] v2.6.8 MMC1, UxROM, CNROM, AxROM
+- [ ] v2.6.9 **MMC3** — A12 filtering, IRQ counter — **rung 7 closes**
+
+## v2.7.0 — the contribution package
+
+- [ ] Requirements checklist green (`contribution-checklist.md`)
+- [ ] `releases/RustyNES_YYYYMMDD.rbf`
+- [ ] Unique Home folder chosen
+- [ ] Email `newcores@misterfpga.org`
+- [ ] **Decide deliberately** whether to transfer the repository to MiSTer-devel —
+      acceptance means the repo moves, and that is one-way
