@@ -523,8 +523,9 @@ repository; `RustyNES_MiSTer/docs/rung1-6502.md` is its detailed record.
 The two earlier ROMs are re-run on every change, which is how the v2.4.5 datapath
 rewrite was shown not to regress v2.4.4.
 
-The counts are the records the gate compares **today**, not the count each release
-reported at the time. `opgroup1` closed v2.4.4 over a 0..64 cycle window and was
+The counts are **measured** -- each one from running `cpu-gate` against a freshly
+exported golden -- rather than carried forward from the release that introduced
+the ROM. `opgroup1` closed v2.4.4 over a 0..64 cycle window and was
 reported then as 29 records; v2.4.5 widened every ROM's window to catch the
 addressing modes, and the same ROM now yields 147. Both numbers are true of
 different windows, which is exactly why a table mixing them would not add up --
