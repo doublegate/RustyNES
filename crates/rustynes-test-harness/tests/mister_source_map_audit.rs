@@ -25,6 +25,22 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
+/// Removes a temp directory on the way out, including during a panic.
+///
+/// A Drop guard rather than a trailing `remove_dir_all`: the trailing form does
+/// not run when an assert fires -- i.e. exactly when the test failed and the
+/// next run is most likely to trip over the leftovers.
+struct Cleanup(PathBuf);
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        // Ignored deliberately, and ONLY here: best-effort cleanup of a temp
+        // directory during unwinding, where there is nothing to report an error
+        // to. Every other error in this file is checked.
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 const MAP: &str = "ref-docs/2026-08-23-fpga-nes-hardware-source-map.md";
 
 /// Extensions the corpus actually contains. `xhtml` is the load-bearing entry:
@@ -73,6 +89,24 @@ fn spans(text: &str) -> impl Iterator<Item = &str> {
     })
 }
 
+/// Does this token end the way a filename ends?
+///
+/// The discriminator is the character class after the final dot: a filename's
+/// extension is letters (`board.pdf`, `notes.txt`), a version string's last
+/// component is digits (`v2.5.3`, `v2.4.9`). These documents are full of both,
+/// so the audit must separate them or it either misses real citations or fails
+/// on correct prose.
+fn looks_like_a_filename(s: &str) -> bool {
+    match s.rsplit_once('.') {
+        Some((stem, ext)) => {
+            !stem.is_empty()
+                && (1..=5).contains(&ext.len())
+                && ext.chars().all(|c| c.is_ascii_alphabetic())
+        }
+        None => false,
+    }
+}
+
 /// Path-like spans whose extension `cited_paths` does not recognise.
 ///
 /// Without this the extractor FAILS OPEN. A new citation such as
@@ -84,10 +118,17 @@ fn spans(text: &str) -> impl Iterator<Item = &str> {
 /// widen the pattern and hope.
 fn unrecognised_extensions(text: &str) -> Vec<&str> {
     spans(text)
-        // The slash requirement lives HERE, not in `spans`. Guessing whether an
-        // arbitrary backticked token is a path needs it; extracting citations
-        // must not, or bare filenames vanish before anything can object to them.
-        .filter(|s| s.contains('/') && !EXTS.iter().any(|e| s.ends_with(e)))
+        // Path-like means EITHER a slash, OR a filename-shaped ending. The
+        // slash alone is not enough: `file.pdf` has no slash, so it fell
+        // through `cited_paths` (wrong extension) AND through here (no slash),
+        // vanishing from both -- the same blindness as the bare-filename case,
+        // one extension away.
+        //
+        // The ending test is what keeps a VERSION STRING out. `v2.5.3`'s final
+        // dot is followed by digits; a filename's is followed by letters.
+        .filter(|s| {
+            (s.contains('/') || looks_like_a_filename(s)) && !EXTS.iter().any(|e| s.ends_with(e))
+        })
         .collect()
 }
 
@@ -263,7 +304,15 @@ fn a_checkout_without_the_upstream_corpus_still_checks_what_it_has() {
         "rustynes-source-map-audit-ci-shape-{}",
         std::process::id()
     ));
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _guard = Cleanup(tmp.clone());
+    // NotFound is the expected case on a clean machine, so it is not an error.
+    // Anything else IS: a permission problem here would otherwise surface as a
+    // confusing failure in `create_dir_all` below.
+    match std::fs::remove_dir_all(&tmp) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => panic!("could not clear {}: {e}", tmp.display()),
+    }
     std::fs::create_dir_all(tmp.join("docs")).expect("create synthetic docs/");
     std::fs::write(tmp.join("docs/ppu-2c02.md"), "x").expect("write");
 
@@ -297,8 +346,6 @@ fn a_checkout_without_the_upstream_corpus_still_checks_what_it_has() {
         1,
         "a citation into an absent tree is reported, not counted as verified"
     );
-
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
@@ -350,6 +397,14 @@ fn a_citation_with_an_unrecognised_extension_is_reported_not_dropped() {
     // without the slash requirement in `unrecognised_extensions` it would be
     // reported as a citation with an unknown extension -- a hard failure on a
     // document that is perfectly correct.
+    // A BARE filename with an unrecognised extension. It has no slash, so it
+    // escapes a slash-only path test; and its extension is not in EXTS, so it
+    // escapes `cited_paths`. Without the filename-shape test it vanishes from
+    // both -- the bare-filename blindness again, one extension away.
+    let bare_pdf = "see `board.pdf` for the pinout";
+    assert_eq!(unrecognised_extensions(bare_pdf), vec!["board.pdf"]);
+    assert!(cited_paths(bare_pdf).is_empty());
+
     let versions = "shipped in `v2.5.3`, built on `v2.4.9`";
     assert!(
         unrecognised_extensions(versions).is_empty(),
