@@ -509,9 +509,9 @@ question.
 
 ## Rung 1 — the 6502, and where it has actually got to
 
-Five opcode groups have closed. **1110 records across five ROMs**, matching the
-oracle on all seven CPU fields, with the gate demonstrated to fail on eight
-independent mutations at the latest step and seven at each of the three before it. The RTL lives in the sibling
+Seven opcode groups have closed. **1663 records across seven ROMs**, matching
+the oracle on all seven CPU fields -- and, from v2.4.9, on the **per-cycle bus**
+for the three most recent. The RTL lives in the sibling
 repository; `RustyNES_MiSTer/docs/rung1-6502.md` is its detailed record.
 
 | release | scope | records |
@@ -521,6 +521,7 @@ repository; `RustyNES_MiSTer/docs/rung1-6502.md` is its detailed record.
 | v2.4.6 "Abacus" | three indexed modes with the page-cross penalty; `ADC`/`SBC`; the compares | 286 |
 | v2.4.7 "Keystone" | the stack group, `JSR`/`RTS`/`RTI`, `JMP` and its page-boundary bug | 179 |
 | v2.4.8 "Palimpsest" | read-modify-write: `ASL`/`LSR`/`ROL`/`ROR` and `INC`/`DEC`, accumulator plus four memory modes | 358 |
+| v2.4.9 "Plumbline II" | the logical group; the undocumented opcodes; **and rung 2's bus half** | 236 + 317 |
 
 The earlier ROMs are re-run on every change, which is how the v2.4.5 datapath
 rewrite was shown not to regress v2.4.4.
@@ -576,8 +577,12 @@ infrastructure and it is named here rather than left to be discovered.
 
 ### Still open
 
+**The gap below is CLOSED as of v2.4.9.** `make -C tb cpu-bus-gate` catches both
+mutations, and the section is kept rather than deleted because the reasoning is
+what makes the gate's scope legible.
+
 Read-modify-write closed in v2.4.8 -- but its **double write did not**, in the
-sense that nothing here verifies it. Two mutations (skip the dummy write; emit
+sense that nothing at rung 1 verifies it. Two mutations (skip the dummy write; emit
 the modified value instead of the old one) both come back **NOT CAUGHT**,
 because neither changes a register, a flag, the final memory contents or the
 cycle count, and those are the only things `CpuBootTrace` carries.

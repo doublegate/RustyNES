@@ -14,6 +14,50 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.4.9] - 2026-08-23 - "Plumbline II" (the bus half of rung 2, and what it found the day it existed)
+
+### Added
+
+- **Rung 2's per-cycle bus comparison** (`RustyNES_MiSTer@715952b`). `make -C tb
+  cpu-bus-gate` compares `bus_addr`, `bus_data` and `bus_access` against the
+  oracle's `.obs.bin`. **Both mutations v2.4.8 recorded as NOT CAUGHT are caught
+  by it** — the release named for the read-modify-write double write can finally
+  verify one.
+- **`<stem>.ram_init.bin`**, the power-on work RAM captured before a cycle runs.
+  The oracle fills its 2 KiB from a seeded PRNG, so a zeroed testbench disagrees
+  on every read of a location the program has not written. Exported as a golden
+  rather than reimplemented in C++, where a second copy of a PRNG would drift.
+- **The logical group** — `AND`, `ORA`, `EOR`, `BIT` across six addressing modes.
+  Documented opcodes that were simply missing, and a hard prerequisite for the
+  undocumented combinations.
+- **The undocumented opcodes** — `LAX`, `SAX`, `SLO`/`RLA`/`SRE`/`RRA`/`DCP`/`ISC`,
+  and the multi-byte `NOP`s. Rung 1 now stands at **seven ROMs, 1663 records**.
+
+### Fixed
+
+- **Indexed read-modify-write skipped its dummy read.** The RMW branch drove the
+  bus only from the access cycle onward, leaving earlier cycles at `addr = pc`.
+- **`STA $xxxx,X` without a page cross wrote TWICE.** The comment above the line
+  said *"`we` stays low even for a store"*; the code read
+  `we = d_ir.writes && !idx_page_cross`. Identical memory, cycles and registers —
+  and on hardware a mapper register written twice is not one written once.
+
+### Notes
+
+- **`pc` is populated but deliberately not compared.** Enabling
+  `cpu-instr-cycle-trace` fills it — verified observation-only first, all 900
+  records differing in *those two bytes and nothing else*. But the two sides mean
+  different things by it and agree on only **45%** of cycles, so it labels
+  divergences instead of gating them.
+- **Three tests agreed with their own mutations**, each a wrong answer coinciding
+  with a right one: `SLO`'s flags, `DCP` writing `A` (twice), and one mutant that
+  did not compile — reported as its own outcome, never as a catch.
+- **Interrupts remain v2.5.0.** `cpu6502` has no `nmi_n`/`irq_n` pins, so
+  `put_cycle`, `nmi_line` and both IRQ samples are skipped — stated on every
+  successful run rather than left to documentation.
+- No crate under `rustynes-{cpu,ppu,apu,mappers,core}` changes, so **AccuracyCoin
+  141/141 (100.00%, RAM decoder) and nestest 0-diff hold by construction.**
+
 ## [2.4.8] - 2026-08-23 - "Palimpsest" (read-modify-write, and a gate that cannot see its own subject)
 
 ### Added
