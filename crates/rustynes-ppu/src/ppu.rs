@@ -1874,6 +1874,7 @@ impl Ppu {
             secondary_oam: self.secondary_oam,
             oam_fnv1a64: crate::state_trace::fnv1a64(&self.oam),
             nmi_line: self.nmi_line,
+            oam_bus_copybuffer: self.oam_data_bus_observed(),
         }
     }
 
@@ -2489,10 +2490,7 @@ impl Ppu {
                 // (`oam_data_bus_read`) reproduces this per AccuracyCoin
                 // `$2004 Stress`; see Mesen2 `NesPpu.cpp:298-313/361-380`.
                 {
-                    if self.scanline <= 239
-                        && self.is_render_scanline()
-                        && self.mask.rendering_enabled()
-                    {
+                    if self.oam_data_bus_is_live() {
                         let v = self.oam_data_bus_read();
                         self.touch_open_bus(v);
                         return v;
@@ -4706,6 +4704,46 @@ impl Ppu {
     /// dot it carries `oam_bus_copybuffer` (the sprite-eval data latch
     /// maintained by [`Self::tick_oam_bus`]). Caller has already checked
     /// `scanline <= 239 && rendering`.
+    /// Is the isolated OAM-data-bus model the thing a `$2004` read observes
+    /// right now?
+    ///
+    /// EXTRACTED so the register read and the diagnostic trace cannot drift.
+    /// `tick_oam_bus` runs only on visible scanlines with rendering enabled, so
+    /// off that window `oam_bus_copybuffer` holds whatever the last rendered dot
+    /// left in it. `cpu_read_register` has always guarded against that; the
+    /// v2.5.6 state-trace field did not, and would have reported a stale
+    /// secondary-OAM byte as though it were the `$2004` value for the dot --
+    /// which defeats the entire reason that field exists.
+    #[must_use]
+    pub(crate) const fn oam_data_bus_is_live(&self) -> bool {
+        self.scanline <= 239 && self.is_render_scanline() && self.mask.rendering_enabled()
+    }
+
+    /// What a `$2004` read would return at this exact dot, model included.
+    ///
+    /// This is the diagnostic counterpart of the `$2004` arm in
+    /// `cpu_read_register`, minus that arm's side effects (open-bus touch, OAM
+    /// decay refresh) -- a trace must not perturb what it observes.
+    /// Feature-gated rather than `#[allow(dead_code)]`: its only caller is
+    /// `build_state_record`, which is itself behind `ppu-state-trace`. An item
+    /// that is live under one feature and dead by default is the case that
+    /// earns an attribute — and compiling it out entirely is better than
+    /// suppressing the warning about it.
+    #[cfg(feature = "ppu-state-trace")]
+    #[must_use]
+    pub(crate) fn oam_data_bus_observed(&self) -> u8 {
+        if self.oam_data_bus_is_live() {
+            self.oam_data_bus_read()
+        } else {
+            let v = self.oam[self.oam_addr as usize];
+            if (self.oam_addr & 0x03) == 0x02 {
+                v & 0xE3
+            } else {
+                v
+            }
+        }
+    }
+
     fn oam_data_bus_read(&self) -> u8 {
         if (257..=320).contains(&self.dot) {
             let phase = (self.dot - 257) % 8;

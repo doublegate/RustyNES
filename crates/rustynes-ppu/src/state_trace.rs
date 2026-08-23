@@ -75,7 +75,7 @@ use core::ops::RangeInclusive;
 /// Version history:
 ///
 /// * `1` (2026-05-20): initial Session-10 schema.
-pub const PPU_TRACE_SCHEMA_VERSION: u16 = 1;
+pub const PPU_TRACE_SCHEMA_VERSION: u16 = 2;
 
 /// Magic bytes prefixing every binary trace file. ASCII
 /// "`RUSTYNES_PPU`" — distinguishes our format from Mesen2 native
@@ -85,7 +85,7 @@ pub const BINARY_MAGIC: &[u8; 12] = b"RUSTYNES_PPU";
 /// Length of a single [`PpuStateRecord`] in the packed binary layout.
 ///
 /// Stable for the lifetime of [`PPU_TRACE_SCHEMA_VERSION`].
-pub const RECORD_SIZE: usize = 113;
+pub const RECORD_SIZE: usize = 114;
 
 /// Header length (magic + 2-byte schema version + 2-byte
 /// reserved-for-flags). Records start at this offset.
@@ -212,6 +212,23 @@ pub struct PpuStateRecord {
     // === NMI line ===
     /// `true` when the PPU is asserting NMI.
     pub nmi_line: bool,
+
+    // === OAM data bus ===
+    /// What `$2004` returns while rendering — the value the OAM data bus is
+    /// presenting this dot.
+    ///
+    /// **This is a different thing from the `sprite_eval_*` fields above, and
+    /// the distinction is why it is here.** Those come from the real evaluation
+    /// FSM; this comes from `tick_oam_bus`, a separate side-effect-free model
+    /// that never touches it. On a line where the FSM halts and holds, this
+    /// keeps changing — both correct, and not the same quantity.
+    ///
+    /// Added at schema 2 because a co-simulation gate on `$2004` was being
+    /// diagnosed against `sprite_eval_read_latch`, and two changes faithful to
+    /// that field moved the DUT *away* from the observable. A diagnostic that
+    /// does not expose what the gate reads sends you to the wrong place
+    /// confidently.
+    pub oam_bus_copybuffer: u8,
 }
 
 /// Total record size as packed by [`PpuStateRecord::to_bytes`].
@@ -237,8 +254,8 @@ const fn compute_record_size() -> usize {
     let bg = 2 + 2 + 2 + 2 + 1 + 1 + 1 + 1;
     // 32-byte secondary OAM
     let secondary = 32;
-    // OAM FNV-1a (8 bytes) + NMI line (1 byte)
-    let tail = 8 + 1;
+    // OAM FNV-1a (8 bytes) + NMI line (1 byte) + OAM data bus (1 byte)
+    let tail = 8 + 1 + 1;
     anchor + regs + scroll + eval + spr + bg + secondary + tail
 }
 
@@ -325,6 +342,7 @@ impl PpuStateRecord {
         copy_arr32(&mut buf, &mut i, &self.secondary_oam);
         copy_u64(&mut buf, &mut i, self.oam_fnv1a64);
         copy_bool(&mut buf, &mut i, self.nmi_line);
+        copy_u8(&mut buf, &mut i, self.oam_bus_copybuffer);
 
         debug_assert_eq!(i, RECORD_SIZE, "PpuStateRecord packer underflow/overflow");
         buf
@@ -429,6 +447,7 @@ impl PpuStateRecord {
         let secondary_oam = read_arr32(buf, &mut i);
         let oam_fnv1a64 = read_u64(buf, &mut i);
         let nmi_line = read_bool(buf, &mut i);
+        let oam_bus_copybuffer = read_u8(buf, &mut i);
         debug_assert_eq!(i, RECORD_SIZE);
 
         Some(Self {
@@ -468,6 +487,7 @@ impl PpuStateRecord {
             secondary_oam,
             oam_fnv1a64,
             nmi_line,
+            oam_bus_copybuffer,
         })
     }
 }
@@ -729,7 +749,7 @@ impl PpuStateTrace {
              spr_shift_lo,spr_shift_hi,spr_attr,spr_x,\
              bg_shift_lo,bg_shift_hi,at_shift_lo,at_shift_hi,\
              nt_latch,at_latch,bg_lo_latch,bg_hi_latch,\
-             secondary_oam,oam_fnv1a64,nmi_line\n",
+             secondary_oam,oam_fnv1a64,nmi_line,oam_bus\n",
         );
         let write_arr = |out: &mut String, a: &[u8]| {
             let mut first = true;
@@ -787,7 +807,13 @@ impl PpuStateTrace {
                 r.bg_hi_latch,
             );
             write_arr(&mut out, &r.secondary_oam);
-            let _ = writeln!(out, ",{:016X},{}", r.oam_fnv1a64, u8::from(r.nmi_line));
+            let _ = writeln!(
+                out,
+                ",{:016X},{},{:02X}",
+                r.oam_fnv1a64,
+                u8::from(r.nmi_line),
+                r.oam_bus_copybuffer
+            );
         }
         out
     }
@@ -836,6 +862,7 @@ mod tests {
             sprite_eval_overflow_search: false,
             sprite_eval_done: false,
             sprite_eval_read_latch: 0x77,
+            oam_bus_copybuffer: 0x5A,
             spr_count: 5,
             spr_zero_in_line: true,
             spr_shift_lo: [1, 2, 3, 4, 5, 6, 7, 8],
@@ -966,9 +993,19 @@ mod tests {
 
     #[test]
     fn csv_header_includes_all_columns() {
-        let cfg = PpuTraceConfig::all(0..=0);
+        // `sample_record()` is frame 42, and this config used to be
+        // `all(0..=0)` -- so `maybe_push` FILTERED IT OUT and the CSV was a
+        // header with no rows. The test still passed, because it only ever
+        // looked at the header. Asserting a row value is what exposed it.
+        let cfg = PpuTraceConfig::all(42..=42);
         let mut trace = PpuStateTrace::with_capacity(2, cfg);
         trace.maybe_push(sample_record());
+        assert_eq!(
+            trace.records().len(),
+            1,
+            "the sample record must survive the config filter, or every row \
+             assertion below is vacuous"
+        );
         let csv = trace.to_csv();
         let header = csv.lines().next().expect("header");
         for column in [
@@ -986,12 +1023,38 @@ mod tests {
             "secondary_oam",
             "oam_fnv1a64",
             "nmi_line",
+            "oam_bus",
         ] {
             assert!(
                 header.contains(column),
                 "header missing `{column}`: {header}"
             );
         }
+
+        // The header is half the contract. A column can be NAMED and carry the
+        // wrong value, or be dropped from the row while the name survives --
+        // and this test passed on both counts before `oam_bus` was asserted
+        // here, which is exactly how a serialization regression reaches a
+        // golden. `sample_record` sets it to 0x5A and the row ends with it.
+        let row = csv.lines().nth(1).expect("one record was pushed");
+        let last = row.rsplit(',').next().expect("non-empty row");
+        assert_eq!(
+            last, "5A",
+            "final CSV column should be oam_bus_copybuffer as two hex digits; row: {row}"
+        );
+
+        // And the two must line up: whatever position the header gives
+        // `oam_bus`, the row must carry the value at that same index. A column
+        // appended to one and not the other is the drift this guards.
+        let idx = header
+            .split(',')
+            .position(|c| c == "oam_bus")
+            .expect("header names oam_bus");
+        assert_eq!(
+            row.split(',').nth(idx),
+            Some("5A"),
+            "oam_bus header index {idx} does not carry the record's value; row: {row}"
+        );
     }
 
     /// Guard against silent layout drift: if the field set

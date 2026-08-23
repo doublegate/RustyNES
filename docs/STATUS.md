@@ -1,20 +1,26 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.5.5** (2026-08-23) — **"Raster"**, the first full frame, and three blind spots in the stimulus that fed it. Built on **v2.5.4 "Escapement"** (2026-08-23) — the background fetch pipeline, and an access two dots early that five gates could not see. Built on **v2.5.3 "Hysteresis"** (2026-08-23) — toggling rendering takes effect three dots after the write, and four instruments to prove it. Built on **v2.5.2 "Dormant"** (2026-08-23) — the 2C02 register file, and a gate that passed while testing nothing. Built on **v2.5.1 "Retrace"** (2026-08-23) — the interrupt sweep closes rung 2, and a gate reported a pass it could not have earned. Built on **v2.5.0 "Rungwork"** (2026-08-23) — the 6502 rung, and the two gates it cannot reach. Built on **v2.4.9 "Plumbline II"** (2026-08-23) — the bus half of rung 2, and what it found the day it existed. Built on **v2.4.8 "Palimpsest"** (2026-08-23) — read-modify-write, and a gate that cannot see its own subject. Built on **v2.4.7 "Keystone"** (2026-08-23) — the stack closes, and a dead line proves itself dead. Built on **v2.4.6 "Abacus"** (2026-08-22) — the core learns arithmetic. Built on **v2.4.5 "Compass"** (2026-08-22) — the core reaches memory, and chooses. Built on **v2.4.4 "Ignition"** (2026-08-22) — the first real RTL -- the 6502's eight-cycle reset and the implied opcode group, matching the oracle on all seven CPU fields (29
+> **Current release: v2.5.6** (2026-08-23) — **"Vestige"**, Sprite evaluation closes: all 59,993 overlapping cycles match, seven of eight mutations caught, and the fix is a byte index that outlives the walk that set it. Built on **v2.5.5 "Raster"** (2026-08-23) — the first full frame, and three blind spots in the stimulus that fed it. Built on **v2.5.4 "Escapement"** (2026-08-23) — the background fetch pipeline, and an access two dots early that five gates could not see. Built on **v2.5.3 "Hysteresis"** (2026-08-23) — toggling rendering takes effect three dots after the write, and four instruments to prove it. Built on **v2.5.2 "Dormant"** (2026-08-23) — the 2C02 register file, and a gate that passed while testing nothing. Built on **v2.5.1 "Retrace"** (2026-08-23) — the interrupt sweep closes rung 2, and a gate reported a pass it could not have earned. Built on **v2.5.0 "Rungwork"** (2026-08-23) — the 6502 rung, and the two gates it cannot reach. Built on **v2.4.9 "Plumbline II"** (2026-08-23) — the bus half of rung 2, and what it found the day it existed. Built on **v2.4.8 "Palimpsest"** (2026-08-23) — read-modify-write, and a gate that cannot see its own subject. Built on **v2.4.7 "Keystone"** (2026-08-23) — the stack closes, and a dead line proves itself dead. Built on **v2.4.6 "Abacus"** (2026-08-22) — the core learns arithmetic. Built on **v2.4.5 "Compass"** (2026-08-22) — the core reaches memory, and chooses. Built on **v2.4.4 "Ignition"** (2026-08-22) — the first real RTL -- the 6502's eight-cycle reset and the implied opcode group, matching the oracle on all seven CPU fields (29
 > records, `RustyNES_MiSTer@7f092bd`). The oracle settled a question our own
 > prose could not: reset is EIGHT cycles, and `docs/cpu-6502.md` said both
 > seven and eight. The emulation core is untouched.
 >
-> **Rung 3 as of v2.5.5: four steps closed.** The register file (12,840
-> records), the scroll address logic (19,813 records) and the background fetch
-> pipeline (**6,247 fetches, 0 divergences, 8 of 8 mutations caught**) and
+> **Rung 3 as of v2.5.6: five steps closed.** The register file (12,840
+> records), the scroll address logic (19,813 records), the background fetch
+> pipeline (**6,247 fetches, 0 divergences, 8 of 8 mutations caught**),
 > background rendering (**all 61,440 pixels, 15 of 15 mutations caught** — the
-> first full frame). nestest's
+> first full frame) and **sprite evaluation** (**all 59,993 overlapping cycles
+> match, 9 of 9 behavioural mutants caught**), which the programme plan named the
+> hardest single item in it. nestest's
 > verified window went **27,388 → 59,554 cycles** — it was bounded by a missing
 > peripheral, not a CPU defect. **What it does NOT verify is stated rather than
 > implied:** sprite fetches are excluded by construction (v2.5.7), the two dummy
 > nametable reads with them (v2.5.8), and the latch-to-shift cascade and fine-X
-> stay **diagnostic** — the pixel is the gate, and that is v2.5.5. `sys/` is
+> stay **diagnostic** — the pixel is the gate, and that is v2.5.5. Two
+> sprite-evaluation mutants are **INERT** rather than uncaught, each proved
+> byte-identical: the `eval_ovf_cnt` reset is unreachable code, and
+> `sprite_overflow` reaches the CPU only via `$2002`, which this gate does not
+> read (v2.5.7). `sys/` is
 > still empty; there is no `.rbf`. Detail: `docs/mister.md`.
 >
 > Built on **v2.4.3** (2026-08-22) — **"Touchstone"**, the two Fabric

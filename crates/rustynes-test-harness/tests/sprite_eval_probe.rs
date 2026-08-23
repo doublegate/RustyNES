@@ -10,9 +10,23 @@
 //! repository and is NOT part of any shipped release; the current release is
 //! v2.5.5 "Raster". This probe exists because that in-progress gate went red on
 //! essentially every `$2004` read (1,284 of 59,993 compared cycles) and two
-//! plausible fixes moved the count by six in opposite directions. That is guessing with a gate attached. The v2.5.3
-//! probe beside this one settled its question in one run by asking what the
-//! oracle actually does rather than what it plausibly does; this asks the same.
+//! plausible fixes moved the count by six in opposite directions. That is
+//! guessing with a gate attached. The v2.5.3 probe beside this one settled its
+//! question in one run by asking what the oracle actually does rather than what
+//! it plausibly does; this asks the same, and the gate is now green.
+//!
+//! Two environment variables steer it. `EV_SL` selects the scanline (default
+//! 55); `EV_ALL` prints every dot instead of only the dots where the state
+//! changes. The second exists because the transition filter is right for reading
+//! and wrong for diffing -- a suppressed line and an absent line are the same
+//! thing to a comparison script, and the sub-cycle offset between the two sides
+//! can only be recovered from a table with no holes in it.
+//!
+//! Frame indices do NOT correspond between the two sides. The oracle's counter
+//! and a testbench's differ because the first `run_frame()` after power-on
+//! advances zero cycles, and this ROM does not enable rendering until its third
+//! frame -- so the oracle's frame 1 has `mask = 00` and nothing to compare at
+//! all. Pick the frame by what it CONTAINS, never by its number.
 #![cfg(feature = "ppu-state-trace")]
 
 use std::path::{Path, PathBuf};
@@ -41,9 +55,37 @@ fn sprite_evaluation_dot_by_dot() {
     // The bus gate's first divergence is CPU cycle 34,919, which is frame 1 a
     // little past scanline 45. Capture that whole scanline: the question is
     // which of the three phases disagrees, so the window must contain all three.
+    // Parsed ONCE, and range-checked. Parsing it twice to build the inclusive
+    // range read as harmless duplication and is not: the two reads could return
+    // different values if the environment changed between them, producing an
+    // inverted or empty range that captures nothing -- and a probe that captures
+    // nothing looks exactly like a scanline where nothing happened.
+    //
+    // A malformed or out-of-range value is REFUSED rather than silently
+    // replaced. `EV_SL=999` parses fine and names a scanline the PPU never
+    // emits, so the run would produce an empty trace and the reader would draw
+    // a conclusion from it. NTSC has scanlines 0..=239 visible with 261 the
+    // pre-render line.
+    let scanline: i16 = std::env::var("EV_SL").map_or(55, |s| {
+        let v: i16 = s
+            .parse()
+            .unwrap_or_else(|e| panic!("EV_SL={s:?} is not an integer: {e}"));
+        assert!(
+            (0..=261).contains(&v),
+            "EV_SL={v} is outside the NTSC scanline range 0..=261; the PPU \
+             never emits it and the trace would be empty"
+        );
+        v
+    });
+
+    // Read ONCE. It was inside the per-record loop, which queries the
+    // environment for every trace record -- up to 1,023 syscalls for a
+    // three-frame window, to answer a question whose value cannot change.
+    let print_all = std::env::var("EV_ALL").is_ok();
+
     let cfg = PpuTraceConfig {
         frame_range: 0..=3,
-        scanline_range: Some(55..=55),
+        scanline_range: Some(scanline..=scanline),
         dot_range: Some(0..=340),
     };
     nes.bus_mut()
@@ -84,6 +126,7 @@ fn sprite_evaluation_dot_by_dot() {
     let mut prev = None;
     for r in recs {
         let key = (
+            r.oam_bus_copybuffer,
             r.mask,
             r.sprite_eval_n,
             r.sprite_eval_m,
@@ -96,11 +139,12 @@ fn sprite_evaluation_dot_by_dot() {
         );
         // Only transitions, so the interesting dots are not buried under 341
         // lines of unchanged state.
-        if prev.as_ref() != Some(&key) {
+        if print_all || prev.as_ref() != Some(&key) {
             println!(
-                "  f{} dot{:>3}  mask={:02X} n={:>2} m={} found={} sec={:>2} copy={} ovf={} done={} latch={:02X}",
+                "  f{} dot{:>3}  bus={:02X} mask={:02X} n={:>2} m={} found={} sec={:>2} copy={} ovf={} done={} latch={:02X}",
                 r.frame,
                 r.dot,
+                r.oam_bus_copybuffer,
                 r.mask,
                 r.sprite_eval_n,
                 r.sprite_eval_m,
