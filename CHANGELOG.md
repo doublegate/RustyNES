@@ -83,6 +83,23 @@ cycle-accurate core later replaced.
   (v2.5.8). Every run prints how many records each side dropped, because a
   narrowing that is not announced reads as full coverage.
 
+### Fixed (continued)
+
+- **A one-record coverage hole in five of eleven rung-1 gate invocations.**
+  `cpu_boot_trace_diff` required the DUT trace to *equal* the reference in
+  length; it now requires it to **cover** the reference — a short actual fails
+  because part of the reference window was never compared, and a longer one
+  passes with the surplus announced. Under that rule `opgroup3`, `opgroup5`,
+  `opgroup6`, `ppuregs` and `ppuscroll` were genuinely short by one record each.
+  Five extra cycles on each window closes it, the same five for every one.
+  Initially diagnosed as a benign boundary artifact and deferred; that diagnosis
+  was wrong and is corrected in place rather than quietly replaced.
+- **Three more never-linted clippy findings**, in `cpu_boot_trace_diff`,
+  `ppu_trace_diff` and `trace_dma_4015` — binaries the MiSTer rung gates run on
+  every comparison. The four trace steps added above lint `rustynes-core`; these
+  live behind the same feature names on `rustynes-test-harness`, which no
+  invocation reached. A fifth CI step now covers them.
+
 ### Security
 
 - **`--fetch-trace` no longer accepts an unbounded capacity.** `FetchTrace`

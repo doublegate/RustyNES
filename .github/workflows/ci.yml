@@ -316,6 +316,16 @@ jobs:
         run: cargo clippy -p rustynes-core --all-targets --features ppu-state-trace -- -D warnings
       - name: clippy (ppu-fetch-trace)
         run: cargo clippy -p rustynes-core --all-targets --features ppu-fetch-trace -- -D warnings
+      # The HARNESS's trace-gated binaries, which the four steps above do not
+      # reach: they lint `rustynes-core` with each feature, and
+      # `cpu_boot_trace_diff` / `irq_trace_diff` live behind the same feature
+      # names on `rustynes-test-harness`. Adding the core steps surfaced six
+      # findings; adding this one surfaced another, in a binary the MiSTer rung
+      # gates run on every comparison.
+      - name: clippy (harness — trace-gated binaries)
+        run: >
+          cargo clippy -p rustynes-test-harness --all-targets
+          --features cpu-boot-trace,irq-timing-trace,ppu-state-trace -- -D warnings
       - name: rustdoc (-D warnings)
         run: cargo doc --workspace --no-deps
       # Feature-gated clippy combos CLAUDE.md mandates. These previously ran
