@@ -14,6 +14,55 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.4.8] - 2026-08-23 - "Palimpsest" (read-modify-write, and a gate that cannot see its own subject)
+
+### Added
+
+- **The 6502's read-modify-write group**, in SystemVerilog in the sibling
+  repository (`RustyNES_MiSTer@0cb628f`): `ASL`, `LSR`, `ROL`, `ROR`, `INC`,
+  `DEC`, across the accumulator form and four memory modes -- 28 opcodes. Rung 1
+  now stands at **five ROMs, 1110 records**, matching the oracle on all seven CPU
+  fields. `opgroup5` contributes 358 and every construct in it is new; the four
+  earlier ROMs re-run unchanged at 147 / 140 / 286 / 179.
+- **`tb/mutate.sh`**, a mutation harness that cannot promote a mutant to
+  baseline: the baseline is captured once into a file it refuses to overwrite, it
+  must **pass** the gate before any mutation runs, it reports three outcomes
+  rather than two, and a trap restores on exit.
+
+### Fixed
+
+- **The mutation harness had been measuring against its own mutants.** It
+  captured the pristine copy at *source* time and restored at the **start** of
+  each run, so the last mutant of a batch survived and re-sourcing captured it as
+  the new baseline. Two mutations were silently live in the tree while later
+  results were measured against them, all reported CAUGHT for free -- and the
+  gate's own first PASS had been against a stale binary.
+- **A ROM gap the mutation pass found**: "zero-page indexed RMW uses a 16-bit
+  add" came back NOT CAUGHT, because every zero-page-indexed access stayed below
+  `$FF`, where an 8-bit add and a 16-bit one agree on every byte. `$20 + $F5` was
+  added, with a sentinel at `$0115` that a straying access would disturb.
+
+### Notes
+
+- **The release is named for something rung 1 cannot verify.** Hardware writes
+  the *unmodified* byte back before the modified one. Skipping that write, or
+  emitting the modified value instead, changes no register, flag, final memory
+  content or cycle count -- and `CpuBootTrace` carries exactly those. Both
+  mutations come back **NOT CAUGHT**, and that is recorded rather than glossed.
+  It matters on hardware: the middle write reaches mapper registers and I/O, and
+  writing twice to `$2007` is not writing once.
+- **Rung 2's bus half is scoped for v2.4.9**, beside the undocumented opcodes,
+  which is where those two become verifiable. The compare surface already exists
+  on both sides (`Observable`, byte-identical encoding, selftested), so the work
+  is a trace writer rather than a new format.
+- **RMW is a flag on the existing addressing modes, not four new ones** -- four
+  would have taken `am_e` from 14 values to 18 and overflowed its four bits, the
+  exact defect v2.4.7 hit on `op_e`.
+- Written from public documentation only. No reference NES core was opened; none
+  is present in the tree.
+- No crate under `rustynes-{cpu,ppu,apu,mappers,core}` changes, so **AccuracyCoin
+  141/141 (100.00%, RAM decoder) and nestest 0-diff hold by construction.**
+
 ## [2.4.7] - 2026-08-23 - "Keystone" (the stack closes, and a dead line proves itself dead)
 
 ### Added

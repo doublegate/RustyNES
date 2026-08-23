@@ -509,9 +509,9 @@ question.
 
 ## Rung 1 — the 6502, and where it has actually got to
 
-Four opcode groups have closed. **752 records across four ROMs**, matching the
-oracle on all seven CPU fields, with the gate demonstrated to fail on seven
-independent mutations at each of the last three steps. The RTL lives in the sibling
+Five opcode groups have closed. **1110 records across five ROMs**, matching the
+oracle on all seven CPU fields, with the gate demonstrated to fail on eight
+independent mutations at the latest step and seven at each of the three before it. The RTL lives in the sibling
 repository; `RustyNES_MiSTer/docs/rung1-6502.md` is its detailed record.
 
 | release | scope | records |
@@ -520,6 +520,7 @@ repository; `RustyNES_MiSTer/docs/rung1-6502.md` is its detailed record.
 | v2.4.5 "Compass" | immediate / zero page / absolute; loads, stores, all eight branches | 140 |
 | v2.4.6 "Abacus" | three indexed modes with the page-cross penalty; `ADC`/`SBC`; the compares | 286 |
 | v2.4.7 "Keystone" | the stack group, `JSR`/`RTS`/`RTI`, `JMP` and its page-boundary bug | 179 |
+| v2.4.8 "Palimpsest" | read-modify-write: `ASL`/`LSR`/`ROL`/`ROR` and `INC`/`DEC`, accumulator plus four memory modes | 358 |
 
 The earlier ROMs are re-run on every change, which is how the v2.4.5 datapath
 rewrite was shown not to regress v2.4.4.
@@ -575,10 +576,23 @@ infrastructure and it is named here rather than left to be discovered.
 
 ### Still open
 
-The stack group and `JMP` (including the indirect page-boundary bug) closed in
-v2.4.7. The undocumented opcodes and read-modify-write with its double write are
-**not** delivered and move to the v2.4.8-v2.4.9 window.
+Read-modify-write closed in v2.4.8 -- but its **double write did not**, in the
+sense that nothing here verifies it. Two mutations (skip the dummy write; emit
+the modified value instead of the old one) both come back **NOT CAUGHT**,
+because neither changes a register, a flag, the final memory contents or the
+cycle count, and those are the only things `CpuBootTrace` carries.
+
+That is scoped to **v2.4.9**, beside the undocumented opcodes, rather than left
+to v2.5.0: the bus half of rung 2 needs no new RTL. `Observable` already exists
+on both sides with a byte-identical encoding, the oracle already emits it as
+`.obs.bin`, and `cpu6502` already exposes its whole bus. Wiring a writer produced
+**7 divergences across 793 cycles** on a program rung 1 scores 358/358 -- two
+causes, one harness fidelity (the testbench zeroes RAM the oracle seeds, so every
+dummy read of unwritten memory diverges) and one a genuine per-cycle access
+difference where instruction boundaries still agree.
+
+The undocumented opcodes are **not** delivered and also move to v2.4.9.
 
 Rung 1's own gate -- nestest 0-diff over >= 8000 instructions -- is not met yet:
-the four ROMs are hand-built opcode groups, not nestest. Rung 2, the per-cycle
+the five ROMs are hand-built opcode groups, not nestest. Rung 2, the per-cycle
 bus and interrupt comparison, has not begun.
