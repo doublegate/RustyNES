@@ -301,6 +301,15 @@ fn tag_claims(text: &str) -> Vec<(usize, String)> {
     const LOOKBACK: usize = 220;
     let mut out = Vec::new();
     for (i, line) in text.lines().enumerate() {
+        // Prose QUOTING the defect is not the defect. The `(current)` rule solves
+        // this structurally by matching only the bold label form; "the current tag"
+        // has no such form, so this rule matches by proximity and therefore DOES
+        // catch quotations -- reintroducing exactly the problem that rule's comment
+        // warns about. It found this project's own release notes describing the
+        // drift they fixed. So the established per-line marker applies here too.
+        if line.contains(NOT_A_CLAIM) {
+            continue;
+        }
         for phrase in TAG_PHRASES {
             let mut from = 0usize;
             while let Some(off) = line[from..].find(phrase) {
@@ -341,6 +350,13 @@ fn no_superseded_release_is_called_the_current_tag() {
         }
     }
 
+    // Deliberately NOT fail-closed on `total == 0`, unlike the `(current)` rule
+    // above. A `(current)` label MUST exist somewhere -- the workspace release has
+    // to be marked -- but no document is obliged to phrase anything as "the
+    // current tag", so requiring one would force the corpus to keep a wording it
+    // may legitimately drop. The count is printed so a zero is VISIBLE rather than
+    // silently reading as coverage: this rule guards phrasing that exists, it does
+    // not assert that it exists.
     println!("release-state: {total} current-tag claim(s) found");
     assert!(
         findings.is_empty(),
@@ -349,7 +365,8 @@ fn no_superseded_release_is_called_the_current_tag() {
          after the previous one was gated: the anchors, then the `(current)` \
          labels, then the unshipped-status labels, and now the narrative sentence \
          that names a tag in different words. Extend the phrase list rather than \
-         correcting the sentence alone.",
+         correcting the sentence alone. If a line QUOTES a past claim rather than \
+         making one, append the not-a-claim marker to it.",
         findings.join("\n")
     );
 }

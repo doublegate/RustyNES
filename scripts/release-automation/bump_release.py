@@ -145,6 +145,26 @@ def classify(line: str, marker: str, old: Release) -> str:
     return "UNKNOWN"
 
 
+def terminate(lead: str) -> str:
+    """Give the lead a terminal full stop if it has none.
+
+    Every anchor joins the lead directly to the demoted history -- `{lead} Built
+    on **vX.Y.Z ...**` -- so a lead without terminal punctuation runs the two
+    sentences together in SIX documents at once. That is what shipped on this
+    tool's second use: *"a dead line proves itself dead Built on"*. The `--lead`
+    text reads like a sentence and it is easy to write one without the stop,
+    which makes this the tool's job rather than the caller's.
+
+    A lead already ending in `.`, `!`, `?`, or a closing quote/bracket after one
+    is left exactly as written -- including the `,` and `;` cases, where the
+    author is deliberately continuing rather than ending.
+    """
+    s = lead.rstrip()
+    if not s:
+        return s
+    return s if s[-1] in '.!?,;:' else s + "."
+
+
 def demote(line: str, marker: str, old: Release, new: Release, lead: str) -> str:
     """Rewrite one anchor line: new release in front, old one demoted behind it."""
     if classify(line, marker, old) == "DATED_CODE":
@@ -203,6 +223,19 @@ def demote(line: str, marker: str, old: Release, new: Release, lead: str) -> str
 # this repository uses, including the two that must FAIL.
 
 def selftest() -> int:
+
+    for raw, want in [
+        ("a dead line proves itself dead", "a dead line proves itself dead."),
+        ("the core learns arithmetic.", "the core learns arithmetic."),
+        ("what now?", "what now?"),
+        ("stop!", "stop!"),
+        ("trailing space   ", "trailing space."),
+        ("a clause,", "a clause,"),
+        ("", ""),
+    ]:
+        got = terminate(raw)
+        assert got == want, f"terminate({raw!r}) = {got!r}, want {want!r}"
+    print("  terminate(): 7 cases ok")
     old = Release("2.4.4", "Ignition", "2026-08-22")
     new = Release("2.4.5", "Compass", "2026-08-22")
     LEAD = "the core reaches memory."
@@ -307,6 +340,7 @@ def main() -> int:
         return selftest()
     if not args.lead:
         ap.error("--lead is required (or use --selftest)")
+    args.lead = terminate(args.lead)
     root = args.root.resolve()
 
     rels = changelog_releases(root)

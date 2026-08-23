@@ -1,7 +1,7 @@
 # RustyNES Overview
 
 **Document Version:** 2.1.0
-**Last Updated:** 2026-08-20
+**Last Updated:** 2026-08-23
 **Applies to:** RustyNES v2.4.7
 
 ---
@@ -32,7 +32,7 @@ As of **v1.0.0**, that vision was realized: RustyNES clears the Mesen2 / higan /
 
 ### 1. Accuracy first, speed second
 
-The PPU is the master clock and CPU/PPU/APU/mappers run in tight lockstep at PPU-dot resolution on a master-clock-precise timebase. This makes sub-instruction edge cases (sprite-zero hit at a precise dot, mid-scanline scroll writes, mapper IRQ timing) correct by construction rather than patched per-quirk. Performance work is byte-identical by construction and gated by a commercial-ROM regression oracle.
+Every CPU cycle is a real bus access, driven from a single canonical cycle counter with a split-around-the-access PPU catch-up, on a master-clock-precise timebase -- the v2.0.0 "Timebase" model, which replaced the earlier five-counter PPU-dot lockstep outright. The accuracy it buys is the same dot-resolution accuracy; the mechanism is not. This makes sub-instruction edge cases (sprite-zero hit at a precise dot, mid-scanline scroll writes, mapper IRQ timing) correct by construction rather than patched per-quirk. Performance work is byte-identical by construction and gated by a commercial-ROM regression oracle.
 
 ### 2. Determinism as a contract
 
@@ -86,10 +86,10 @@ RustyNES uses **cycle-accurate** emulation rather than scanline-based shortcuts.
 
 ## Feature Summary
 
-| Area | What ships in v1.0.0 |
+| Area | What ships today |
 |------|----------------------|
-| **Accuracy** | PPU-dot lockstep, master-clock timebase, AccuracyCoin 100%, `nestest` 0-diff |
-| **Cartridges** | 51 mapper families incl. expansion audio (VRC6/VRC7-OPLL/Sunsoft 5B/N163/MMC5) |
+| **Accuracy** | One-clock scheduler (v2.0.0 "Timebase"), master-clock timebase, AccuracyCoin **141/141 (100.00%)**, `nestest` 0-diff |
+| **Cartridges** | **174** mapper families incl. expansion audio (VRC6/VRC7-OPLL/Sunsoft 5B/N163/MMC5) |
 | **Platforms** | iNES / NES 2.0, Famicom Disk System (real-BIOS boot, read/write, multi-side), Vs. System / PlayChoice-10 RGB |
 | **Online** | Rollback netplay, UDP (native) + WebRTC (browser), 2–4 players |
 | **Achievements** | RetroAchievements (opt-in, native-only) — login, hardcore, toasts, badges |
