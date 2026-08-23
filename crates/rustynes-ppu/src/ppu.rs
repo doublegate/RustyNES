@@ -1044,6 +1044,9 @@ pub struct Ppu {
     /// `docs/adr/0005-ppu-state-trace.md`.
     #[cfg(feature = "ppu-state-trace")]
     pub(crate) state_trace: Option<crate::state_trace::PpuStateTrace>,
+    /// Per-dot PPU bus address capture. See [`crate::fetch_trace`].
+    #[cfg(feature = "ppu-fetch-trace")]
+    pub(crate) fetch_trace: Option<crate::fetch_trace::FetchTrace>,
 
     /// v1.2.0 beta.2 (Workstream C3) — per-pixel HD-pack tile-source buffer
     /// (256 × 240 [`HdTileSource`] records), written in [`Self::emit_pixel`]
@@ -1375,6 +1378,8 @@ impl Ppu {
             fast_dotloop: true,
             #[cfg(feature = "ppu-state-trace")]
             state_trace: None,
+            #[cfg(feature = "ppu-fetch-trace")]
+            fetch_trace: None,
             #[cfg(feature = "hd-pack")]
             hd_tile_source: vec![HdTileSource::default(); FRAMEBUFFER_PIXELS].into_boxed_slice(),
             #[cfg(feature = "hd-pack")]
@@ -1773,6 +1778,22 @@ impl Ppu {
     #[cfg(feature = "ppu-state-trace")]
     pub fn enable_state_trace(&mut self, trace: crate::state_trace::PpuStateTrace) {
         self.state_trace = Some(trace);
+    }
+
+    /// Install a per-dot PPU bus address capture.
+    ///
+    /// The address bus is pin-observable, which is what makes it usable as a
+    /// gate by an independent reimplementation; see [`crate::fetch_trace`] for
+    /// why the address is captured rather than derived.
+    #[cfg(feature = "ppu-fetch-trace")]
+    pub fn enable_fetch_trace(&mut self, trace: crate::fetch_trace::FetchTrace) {
+        self.fetch_trace = Some(trace);
+    }
+
+    /// Remove and return the fetch trace, if one was installed.
+    #[cfg(feature = "ppu-fetch-trace")]
+    pub const fn take_fetch_trace(&mut self) -> Option<crate::fetch_trace::FetchTrace> {
+        self.fetch_trace.take()
     }
 
     /// Take the accumulated state trace, leaving the PPU's trace
@@ -2887,6 +2908,20 @@ impl Ppu {
     #[allow(clippy::needless_pass_by_ref_mut)]
     fn read_vram<B: PpuBus>(&mut self, bus: &mut B, addr: u16) -> u8 {
         let a = addr & 0x3FFF;
+        // Every PPU bus read passes through here -- pattern fetches, nametable
+        // and attribute fetches, sprite pattern fetches, and `$2007`. Capturing
+        // at the choke point rather than at each call site is what makes the
+        // trace complete by construction: a fetch added later cannot forget to
+        // record itself.
+        #[cfg(feature = "ppu-fetch-trace")]
+        if let Some(trace) = self.fetch_trace.as_mut() {
+            trace.push(crate::fetch_trace::FetchRecord {
+                frame: u32::try_from(self.frame).unwrap_or(u32::MAX),
+                scanline: self.scanline,
+                dot: self.dot,
+                addr: a,
+            });
+        }
         let val = if a < 0x2000 {
             bus.ppu_read(a)
         } else {

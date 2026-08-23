@@ -23,6 +23,13 @@ default = []
 # `docs/ppu-trace-tooling.md` for usage. Enable with
 # `cargo test --features ppu-state-trace ...`.
 ppu-state-trace = []
+# v2.5.4 (rung 3) — per-dot capture of the addresses the PPU drives on its own
+# bus, for the MiSTer co-simulation's background-fetch gate. The address bus is
+# real pins on a 2C02, so it is a legitimate gate for an independent
+# reimplementation; the internal latches are not, and are deliberately NOT
+# captured here. Off by default: with the feature disabled the module is not
+# compiled and the read path is unchanged.
+ppu-fetch-trace = []
 # v1.2.0 beta.2 (Workstream C3) — per-frame HD-pack tile-source telemetry.
 # Off by default so the shipped / wasm / no_std builds are byte-identical to
 # today. When enabled, `emit_pixel` writes one `HdTileSource` record per visible

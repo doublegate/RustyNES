@@ -66,6 +66,7 @@ use core::ffi::{c_char, c_int, c_uchar, c_uint, c_ulonglong, c_void};
 
 use rustynes_core::Nes;
 use rustynes_core::cpu_boot_trace::{CpuBootTrace, CpuBootTraceConfig};
+use rustynes_core::rustynes_ppu::fetch_trace::FetchTrace;
 
 /// Opaque handle handed to C. One live `Nes` plus the buffers its accessors
 /// borrow from.
@@ -224,6 +225,28 @@ impl Oracle {
     /// Arm the per-cycle IRQ/bus trace.
     pub fn enable_irq_trace(&mut self, capacity: usize) {
         self.nes.bus_mut().enable_irq_trace(capacity);
+    }
+
+    /// Arm the per-dot PPU bus-address capture (rung 3's v2.5.4 gate).
+    ///
+    /// The address bus is pin-observable, which is what lets an independent
+    /// reimplementation be FAILED on it. The internal latches are deliberately
+    /// not captured: which register holds a byte between fetch and use is a
+    /// decomposition choice, not a hardware fact.
+    pub fn enable_fetch_trace(&mut self, capacity: usize) {
+        self.nes
+            .bus_mut()
+            .ppu_mut()
+            .enable_fetch_trace(FetchTrace::with_capacity(capacity));
+    }
+
+    /// The fetch trace in its binary interchange format, or `None` if unarmed.
+    ///
+    /// Also reports how many reads did NOT fit, because a comparison over a
+    /// silently truncated window claims a coverage it does not have.
+    pub fn take_fetch_trace(&mut self) -> Option<(Vec<u8>, u64)> {
+        let trace = self.nes.bus_mut().ppu_mut().take_fetch_trace()?;
+        Some((trace.to_binary(), trace.dropped()))
     }
 
     /// The boot trace in its binary interchange format, or `None` if unarmed.

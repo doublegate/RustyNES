@@ -34,6 +34,10 @@ irq-timing-trace = ["std"]
 # inside `Ppu::tick`. Enable with
 # `cargo test --features ppu-state-trace ...`.
 ppu-state-trace = ["std", "rustynes-ppu/ppu-state-trace"]
+# v2.5.4 (rung 3) — forward the PPU's per-dot bus-address capture, so the
+# co-simulation exporter can emit it as a golden. Off by default; the shipped
+# build does not compile it.
+ppu-fetch-trace = ["std", "rustynes-ppu/ppu-fetch-trace"]
 # v2.2.3 P2 — forward to `rustynes-ppu/ppu-idle-line-fast`. Off by default
 # (measured a regression; see that crate's manifest and `docs/performance.md`).
 ppu-idle-line-fast = ["rustynes-ppu/ppu-idle-line-fast"]
