@@ -18,6 +18,7 @@
 //! | `<stem>.obs.bin` | full-capture observable stream, 16-byte records | the testbench's self-diff, and a window re-run |
 //! | `<stem>.index_fb.bin` | 256x240 LE `u16` | the testbench's frame comparison |
 //! | `<stem>.ram.bin` | 2 KiB CPU work RAM | `accuracy_coin_catalog::decode_results` |
+//! | `<stem>.ram_init.bin` | 2 KiB CPU work RAM **before** execution | a co-simulation testbench, so its flat memory starts where the oracle's does |
 //! | `<stem>.manifest.txt` | provenance | humans, and the drift guard below |
 //!
 //! # The manifest is not decoration
@@ -218,6 +219,22 @@ fn main() {
     std::fs::create_dir_all(&args.out).expect("create out dir");
 
     let mut o = Oracle::new(&rom, args.seed).unwrap_or_else(|e| panic!("parse rom: {e}"));
+
+    // The power-on work RAM, captured BEFORE a single cycle runs.
+    //
+    // `Nes::from_rom_with_power_on_seed` fills the 2 KiB from a seeded PRNG, so
+    // it is deterministic but NOT zero -- and a co-simulation testbench with
+    // flat, zeroed memory therefore disagrees with the oracle on every read of
+    // a location the program has not written. Those reads are real: the dummy
+    // read of an un-indexed zero-page address is one, and it lands on unwritten
+    // RAM constantly.
+    //
+    // Exported as a golden rather than reproduced in the testbench, because
+    // reimplementing the oracle's PRNG in C++ is precisely the parallel
+    // second implementation that drifts. The DUT loads these bytes; it does not
+    // compute them.
+    let ram_init = o.nes().bus().ram_bytes().to_vec();
+
     if let Some((start, end)) = args.boot_trace {
         // Capacity is the window, not the whole run: a bounded window is the
         // design, because a full AccuracyCoin run would be ~1 GB of records.
@@ -260,6 +277,8 @@ fn main() {
         fb_bytes.extend_from_slice(&px.to_le_bytes());
     }
     write(&suffixed(&base, "index_fb.bin"), &fb_bytes);
+
+    write(&suffixed(&base, "ram_init.bin"), &ram_init);
 
     let ram = o.nes().bus().ram_bytes();
     assert_eq!(ram.len(), RAM_LEN, "unexpected work RAM length");
