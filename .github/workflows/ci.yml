@@ -297,6 +297,17 @@ jobs:
       # unlinted: v2.4.1 found six pre-existing `-D warnings` errors sitting in
       # `cpu_boot_trace.rs` and `irq_trace.rs` the moment anything reached them.
       # Named one per feature rather than combined, so a failure says WHICH.
+      #
+      # `-p rustynes-core` is deliberate and it DOES lint `rustynes-ppu` too --
+      # a review of #450 called this ineffective on the general rule that clippy
+      # lints only the selected package. That rule does not hold for a workspace
+      # member: cargo runs clippy-driver through RUSTC_WORKSPACE_WRAPPER, which
+      # covers every workspace member in the graph, and `-D warnings` reaches
+      # them. Measured, not argued -- reverting one `const fn` fix in
+      # `rustynes-ppu/src/state_trace.rs` makes this exact step fail with
+      # "could not compile `rustynes-ppu`", and it is clean again when restored.
+      # `-p rustynes-core` is therefore the BROADER target, since it also lints
+      # the core's own feature-gated code. Do not narrow it to `-p rustynes-ppu`.
       - name: clippy (cpu-boot-trace)
         run: cargo clippy -p rustynes-core --all-targets --features cpu-boot-trace -- -D warnings
       - name: clippy (irq-timing-trace)

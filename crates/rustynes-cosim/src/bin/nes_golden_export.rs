@@ -355,10 +355,20 @@ fn write_fetch_trace(o: &mut Oracle, base: &Path) {
     if let Some((bytes, dropped)) = o.take_fetch_trace() {
         write(&suffixed(base, "fetch.bin"), &bytes);
         if dropped > 0 {
+            // FAILS, rather than warning. A truncated golden is not a smaller
+            // golden: the DUT captures the whole run, so the comparator sees a
+            // length mismatch and reports a divergence whose real cause is an
+            // export-side capacity. Worse, this project has already been bitten
+            // by a warning that fired on every run and was never seen, because
+            // the caller redirected stderr -- so a warning here is a signal that
+            // may not arrive. The file is written FIRST and kept: its records
+            // are real, and a partial capture is still worth inspecting by hand.
             eprintln!(
-                "  WARNING: fetch trace dropped {dropped} read(s) -- capacity too small, \
-                 so the golden covers less than the run"
+                "  ERROR: fetch trace dropped {dropped} read(s) -- --fetch-trace \
+                 capacity is too small, so the golden covers less than the run. \
+                 The truncated file was written; re-run with a larger capacity."
             );
+            std::process::exit(1);
         }
     }
 }

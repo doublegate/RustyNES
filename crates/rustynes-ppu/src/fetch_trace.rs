@@ -77,11 +77,16 @@ impl FetchRecord {
         if buf.len() < RECORD_SIZE {
             return None;
         }
+        // `try_into().ok()?` rather than hand-indexed byte arrays: the slice
+        // lengths come from the field widths themselves, so a field that moves
+        // cannot silently read the neighbouring one. It propagates rather than
+        // panicking, which is why there is no `unwrap` here even though the
+        // length check above already makes every conversion infallible.
         Some(Self {
-            frame: u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
-            scanline: i16::from_le_bytes([buf[4], buf[5]]),
-            dot: u16::from_le_bytes([buf[6], buf[7]]),
-            addr: u16::from_le_bytes([buf[8], buf[9]]),
+            frame: u32::from_le_bytes(buf[0..4].try_into().ok()?),
+            scanline: i16::from_le_bytes(buf[4..6].try_into().ok()?),
+            dot: u16::from_le_bytes(buf[6..8].try_into().ok()?),
+            addr: u16::from_le_bytes(buf[8..10].try_into().ok()?),
         })
     }
 }
