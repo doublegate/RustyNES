@@ -964,6 +964,16 @@ pub struct Ppu {
     /// serialized — they are regenerated on the next emitted frame, so a state
     /// loaded while paused shows correct NTSC from the first frame after resume.
     pub(crate) index_framebuffer: Box<[u16]>,
+    /// How many dots took the specialized fast path (`ppu-fetch-trace` only).
+    ///
+    /// Not telemetry. It exists so a test can assert it EXERCISED the fast path
+    /// rather than passing because the path was never entered — the failure this
+    /// project keeps finding, where a check agrees about something it never
+    /// reached. A review of #450 claimed the fast path bypasses the fetch trace;
+    /// the test refuting that is worthless unless it can show the path ran, and
+    /// this is how it shows it.
+    #[cfg(feature = "ppu-fetch-trace")]
+    pub fast_path_hits: u64,
 
     /// Free-running PPU master-cycle counter (one increment per [`Self::tick`]),
     /// the basis for the per-frame NTSC colour phase. Output-only / cosmetic
@@ -1367,6 +1377,8 @@ impl Ppu {
             power_up_palette: PaletteInit::Zeroed,
             framebuffer: vec![0u8; FRAMEBUFFER_LEN].into_boxed_slice(),
             index_framebuffer: vec![0u16; FRAMEBUFFER_PIXELS].into_boxed_slice(),
+            #[cfg(feature = "ppu-fetch-trace")]
+            fast_path_hits: 0,
             dot_counter: 0,
             frame_ntsc_phase: 0,
             extra_scanlines: 0,
@@ -3109,6 +3121,10 @@ impl Ppu {
             && !self.oam_corruption_disabled
             && !self.oam_corruption_disabled_instant
         {
+            #[cfg(feature = "ppu-fetch-trace")]
+            {
+                self.fast_path_hits = self.fast_path_hits.saturating_add(1);
+            }
             self.tick_visible_render_fast(bus);
             return;
         }

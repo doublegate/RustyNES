@@ -14,6 +14,26 @@
 //! A test that reimplements its subject agrees with itself forever, so the
 //! address is captured where the PPU actually asks for it.
 //!
+//! # READS only, and why writes are deliberately absent
+//!
+//! A real 2C02 drives its address bus on writes too — a `$2007` write asserts an
+//! address exactly as a fetch does — so a trace of reads alone is not a complete
+//! picture of the bus. That omission was raised in review of #450 as a
+//! correctness defect, and it is a scoped decision rather than an oversight.
+//!
+//! Adding writes today would BREAK the gate, for a reason unrelated to any RTL.
+//! The DUT captures a dot only while its background fetch pipeline is driving
+//! the bus; it has no write path to capture, because `$2007`-during-rendering is
+//! v2.5.8's subject. Recording writes here would put records in the reference
+//! that the DUT cannot produce, and the comparator — which requires the two
+//! sequences to correspond — would report a divergence caused entirely by the
+//! oracle having been made more complete than its counterpart.
+//!
+//! So the rule is the one this project applies to every narrowing: the scope is
+//! stated rather than assumed. This is a trace of VRAM **reads**; the comparator
+//! narrows further, to the background-fetch dots, and prints what it excluded on
+//! every run. Writes join it when the DUT can drive them.
+//!
 //! # Cost
 //!
 //! Behind the `ppu-fetch-trace` feature and off unless a trace is installed. The
