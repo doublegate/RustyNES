@@ -49,8 +49,11 @@ after a stimulus change, not only after a code change.**
 `fb_diff.py` refuses a reference frame too uniform to test anything and is
 demonstrated firing in all four paths; the window is **read** from the oracle's
 manifest rather than transcribed. `docs/golden-fetching.md` in the sibling
-repository now specifies the standing "until golden fetching exists" note that
-had sat across six releases.
+repository now specifies the standing note that had sat across six releases —
+including the requirement that golden fetching use a **pinned oracle commit**.
+That pin is not a detail: the determinism contract covers the framebuffer and
+audio and says *nothing* about trace-format stability, so an unpinned fetcher
+would turn the DUT's CI red for a reason unrelated to its RTL.
 
 ## Rung 3 continues: the background fetch pipeline (v2.5.4)
 

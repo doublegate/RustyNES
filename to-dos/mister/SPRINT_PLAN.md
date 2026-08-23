@@ -10,7 +10,7 @@ per-rung doc records what the rung cannot verify.
 | M3 | v2.5.3 | `v`/`t`/`x`/`w`, `$2005`/`$2006` | Mid-frame scroll writes | **done** — 19,813 records |
 | M4 | v2.5.4 | Background fetch pipeline | Per-dot fetch addresses | **done** — 6,247 fetches |
 | M5 | v2.5.5 | Background render → `index_framebuffer` | First frame, popcount 0 | **done** — 61,440 pixels |
-| M6 | v2.5.6 | **Sprite evaluation FSM** | `$2004` reads on the CPU bus | in progress |
+| M6 | v2.5.6 | **Sprite evaluation FSM** | Evaluation behaviour as seen through `$2004` reads on the CPU bus — the only pin-observable window onto it, and the method the wiki says the behaviour was characterised by | in progress |
 | M7 | v2.5.7 | Sprite render, priority, sprite-0, overflow | blargg sprite ROMs | — |
 | M8 | v2.5.8 | VBlank/NMI, odd-frame skip, `$2002` race | **Rung 3 closes**; nestest unbounded | — |
 | M9 | v2.5.9 | APU pulse + frame counter | `MixRecord` integer levels | — |
