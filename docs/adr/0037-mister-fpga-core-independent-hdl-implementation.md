@@ -94,7 +94,7 @@ cycle-exact 6502, gated on nestest 0-diff and per-cycle bus equality. PPU, APU a
 MiSTer integration become the v2.6-v2.9 programme. Stating this now is better
 than discovering it at v2.4.6.
 
-**8. The emulation core is untouched.** No behaviour change to
+**8. The emulation core is untouched.** **AMENDED by [ADR 0038](0038-cosim-interrupt-injection-api.md) (2026-08-23):** one default-off, feature-gated interrupt-injection API is admitted for rung 2's sweep, under constraints that void the decision if the byte-identity or zero-cost checks fail. The claim is therefore "untouched in the default build", and must be restated that way rather than quoted unqualified. No behaviour change to
 `rustynes-{cpu,ppu,apu,mappers,core}`, no new hot-path API. AccuracyCoin stays at
 141/141 on the RAM decoder and nestest stays 0-diff. `rustynes-cosim` is additive
 and absent from the default build.
