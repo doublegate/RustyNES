@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-The current release is **v2.4.9 "Plumbline II"**, on **v2.4.8 "Palimpsest"** and **v2.4.7 "Keystone"** and **v2.4.6 "Abacus"** and **v2.4.5 "Compass"** and **v2.4.4 "Ignition"** and **v2.4.3 "Touchstone"** and **v2.4.2 "Cairn"** and **v2.4.1 "Fabric"**, which also carries the never-tagged v2.4.0 "Concordance". RustyNES ships from `main` on a
+The current release is **v2.5.0 "Rungwork"**, on **v2.4.9 "Plumbline II"** and **v2.4.8 "Palimpsest"** and **v2.4.7 "Keystone"** and **v2.4.6 "Abacus"** and **v2.4.5 "Compass"** and **v2.4.4 "Ignition"** and **v2.4.3 "Touchstone"** and **v2.4.2 "Cairn"** and **v2.4.1 "Fabric"**, which also carries the never-tagged v2.4.0 "Concordance". RustyNES ships from `main` on a
 rolling patch cadence rather than maintaining long-lived release branches, so
 security fixes land in the next patch release rather than being backported.
 Report against the latest release or `main`.
@@ -10,7 +10,8 @@ Report against the latest release or `main`.
 | Version       | Supported | Notes |
 | ------------- | --------- | ----- |
 | main          | Yes       | Where fixes land first |
-| 2.4.x         | Yes       | The current line |
+| 2.5.x         | Yes       | The current line |
+| 2.4.x         | Partial   | Fixes are shipped forward into the current line, not backported |
 | 2.3.x         | Partial   | Fixes are shipped forward into the current line, not backported |
 | 2.0.x - 2.2.x | Partial   | Fixes are shipped forward into the current line, not backported |
 | < 2.0         | No        | Predates the v2.0.0 "Timebase" scheduler rewrite; save-state and movie epochs differ (ADR 0028) |

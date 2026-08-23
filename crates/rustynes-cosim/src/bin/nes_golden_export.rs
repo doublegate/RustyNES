@@ -278,6 +278,16 @@ fn main() {
     }
     write(&suffixed(&base, "index_fb.bin"), &fb_bytes);
 
+    // Checked BEFORE the write, and checked on `ram_init` specifically. The
+    // assert below covers the post-run `ram`, so this buffer had no length check
+    // at all -- a co-simulation testbench mirrors these bytes through $1FFF and
+    // a short read would place them wrongly rather than fail, which is a
+    // divergence at an unrelated address instead of an error here.
+    assert_eq!(
+        ram_init.len(),
+        RAM_LEN,
+        "unexpected power-on work RAM length"
+    );
     write(&suffixed(&base, "ram_init.bin"), &ram_init);
 
     let ram = o.nes().bus().ram_bytes();
