@@ -4596,6 +4596,16 @@ impl Bus for LockstepBus {
     }
 
     fn irq_level(&self) -> bool {
+        // Bound BEFORE the expression rather than as an inline `#[cfg]` block
+        // inside it. The two forms compile identically -- the default build
+        // still emits nothing named `inject_`, which is ADR 0038's structural
+        // gate -- but a `cfg` block in the middle of a boolean chain is hard to
+        // read, and this chain is the wire-OR of every /IRQ source.
+        #[cfg(feature = "cosim-interrupt-inject")]
+        let injected = self.inject_irq;
+        #[cfg(not(feature = "cosim-interrupt-inject"))]
+        let injected = false;
+
         // v2.8.0 Phase 4 — boards without an IRQ source have the default
         // `irq_pending() == false`; skip the per-cycle virtual call.
         // v2.0.0 beta.5 — `vs_external_irq` is the DualSystem partner
@@ -4608,16 +4618,7 @@ impl Bus for LockstepBus {
             // `vs_external_irq` beside it -- which is the precedent: an external
             // IRQ source already joins the wire-OR here, and this is the same
             // shape with a different driver.
-            || {
-                #[cfg(feature = "cosim-interrupt-inject")]
-                {
-                    self.inject_irq
-                }
-                #[cfg(not(feature = "cosim-interrupt-inject"))]
-                {
-                    false
-                }
-            }
+            || injected
     }
 
     fn nmi_level(&self) -> bool {

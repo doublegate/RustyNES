@@ -313,6 +313,19 @@ fn validate_injection(args: &Args) {
 /// named `run_frame_calls`, and the pin positions and hold that produced the
 /// stimulus were recorded nowhere at all. A DUT could not reproduce or audit the
 /// golden from the artifact -- which is the manifest's entire job.
+/// How much work this run performs, in the unit that run actually uses.
+///
+/// An injection run completes no frames, so describing it in frames is not a
+/// rounding error -- it is the wrong unit, and it is what made the frame-count
+/// warning fire on every correct sweep export.
+fn run_scale(args: &Args) -> String {
+    if args.inject_instructions > 0 {
+        format!("{} instructions, injected", args.inject_instructions)
+    } else {
+        format!("{} frames", args.frames)
+    }
+}
+
 fn run_mode_block(args: &Args, calls: u64, frames_actual: u64) -> String {
     if args.inject_instructions > 0 {
         format!(
@@ -399,7 +412,13 @@ fn main() {
     };
     let frames_actual = o.nes().frame() - frame_before;
     let cycles = o.nes().cycle();
-    if frames_actual != u64::from(args.frames) {
+    // The frame check applies to a FRAME run only. An injection run steps
+    // instructions and completes no frames at all, so this fired on every
+    // correct sweep export -- "requested 1 frames, simulated 0", with nothing
+    // wrong and the CPU not jammed. A warning that cries wolf on every valid run
+    // is how a real one comes to be ignored, and this one was invisible to me
+    // because the sweep script redirects stderr.
+    if args.inject_instructions == 0 && frames_actual != u64::from(args.frames) {
         // Reachable when the CPU jams. Emit the goldens anyway -- a jammed ROM
         // is a legitimate thing to compare a DUT against -- but never let the
         // manifest claim a frame count that was not simulated.
@@ -411,7 +430,7 @@ fn main() {
     }
 
     let base = args.out.join(&stem);
-    println!("exporting goldens for {} ({} frames):", stem, args.frames);
+    println!("exporting goldens for {stem} ({}):", run_scale(&args));
 
     let fb = o.nes().index_framebuffer();
     assert_eq!(
