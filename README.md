@@ -672,15 +672,19 @@ RustyNES's current release is **v2.5.4 "Escapement"** — the background fetch p
 
 It builds on **v2.4.2 "Cairn"** — the **rung-0 compare surface**. A cairn is a marker set along a route so you can tell you are still on it, which is what a rolling per-cycle hash checkpoint is. The constraint nobody budgets for in co-simulation is trace *volume*, not simulation time, and it is now **measured**: 3 frames of AccuracyCoin is 89,343 CPU cycles, **5,372,427 bytes** of `irq.csv` against **352 bytes** of `ckpt.bin` — a factor of **15,263** — so both sides chain a hash and compare every 4096 cycles, and only the divergent window is re-run with full capture. **What is hashed is a decision about hardware, not about convenience**: `CycleRecord` carries 29 fields and most are RustyNES's *model*, so `Observable` is the subset a device can genuinely produce, the IRQ pair is OR'd before hashing because hardware has one wire-OR'd /IRQ pin, and `pc` is marked DUT-observable rather than pin-observable. The emulation core is untouched.
 
-It builds on **v2.4.1 "Fabric"**, which opens the
-**v2.4.1 → v2.5.0 "Fabric"** line: a new NES core written in SystemVerilog from
+It builds on **v2.4.1 "Fabric"**, which opened the
+**v2.4.1 → v2.5.0 "Fabric"** line — now delivered, and continued by the
+**v2.5.1 → v2.7.0** line that builds the rest of the console (rung 3, the 2C02,
+is three steps in as of v2.5.4). Fabric's subject was: a new NES core written in SystemVerilog from
 public hardware documentation, in a sibling repository, with this emulator as its
 **verification oracle**. RustyNES is not being ported to FPGA and cannot be — a
 MiSTer core is SystemVerilog compiled into a Cyclone V bitstream, and Rust does
 not become one. What is buildable is a *new* implementation verified against this
 one, and `crates/rustynes-cosim` is the boundary between them: a narrow C ABI a
-Verilator testbench links, plus a `nes_golden_export` CLI emitting the five golden
-formats an external implementation is compared against. The provenance firewall
+Verilator testbench links, plus a `nes_golden_export` CLI emitting the golden
+formats an external implementation is compared against — nine files as of v2.5.4,
+enumerated in the crate's module docs rather than counted here, because the set
+grows with each rung (v2.5.4 added the per-dot fetch-address trace). The provenance firewall
 extends to HDL accordingly — `NES_MiSTer` and `fpganes` `rtl/` are strict black
 boxes, instantiable as opaque modules to compare *outputs*, never readable as
 source.
@@ -696,7 +700,9 @@ performance was never the argument. Two more findings came out of building it:
 **the first `run_frame()` after power-on advances zero cycles** (the reset
 sequence leaves `frame_complete` latched, so a bare loop emits an (n−1)-frame
 golden under a manifest claiming n), and **no CI invocation had ever linted the
-two trace-gated core modules**, which held six pre-existing findings.
+two trace-gated core modules**, which held six pre-existing findings. That gap is
+closed as of v2.5.4: there are now four trace features and CI lints each by name,
+which immediately surfaced six more findings in `ppu-state-trace`.
 
 This release also carries **v2.4.0 "Concordance"**, which merged to `main` and was
 never tagged: every path that persists user data now writes atomically and

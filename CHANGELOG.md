@@ -1,11 +1,23 @@
 # Changelog
 
 This is the concise, readable summary of notable changes to RustyNES — a few
-tight highlights per release. For the full per-version detail (engineering
-narrative, engine lineage, ADR references, PR trains, and technical rationale),
-see [CHANGELOG-FULL.md](CHANGELOG-FULL.md). The format is based on
-[Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and the project adheres
-to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+tight highlights per release, and **the complete list of releases**. The format
+is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and the
+project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+**Where the deep per-release detail lives, stated accurately.**
+[CHANGELOG-FULL.md](CHANGELOG-FULL.md) carries the full engineering narrative for
+**v0.1.0 through v2.0.4 only** — it has not been extended since, and this line
+used to advertise it as covering every version, which it does not. From **v2.0.5
+onward** the equivalent depth lives in three places: the per-release notes under
+[`.github/release-notes/`](.github/release-notes/) (v1.10.0 onward, with a few
+gaps), the published GitHub Releases, and the per-release rows in
+[VERSION-PLAN.md](VERSION-PLAN.md). `docs/STATUS.md` remains the single source of
+truth for current state.
+
+Backfilling CHANGELOG-FULL from those summaries is deliberately **not** done: the
+detail it promises is the kind that has to be written while the work is fresh, and
+reconstructing it after the fact would produce confident prose nobody measured.
 
 RustyNES's cycle-accurate emulation core arrived in v1.0.0; the `v0.9.x` rows are
 the documentary lineage of how that core was built (not standalone user
@@ -70,6 +82,37 @@ cycle-accurate core later replaced.
   321-336), excluding sprite fetches (v2.5.7) and the two dummy nametable reads
   (v2.5.8). Every run prints how many records each side dropped, because a
   narrowing that is not announced reads as full coverage.
+
+### Documentation
+
+A release-wide sweep of the documents this release touches, and what it found.
+
+- **`.gitignore` did not cover three of the golden exporter's nine artifacts.**
+  `*.ram.bin` does not match `<stem>.ram_init.bin` — the suffixes differ — so the
+  seeded work RAM every co-simulation gate now requires was never ignored;
+  `irq.csv` had been uncovered since v2.4.2, and `fetch.bin` arrived with this
+  release. Found by testing each suffix with `git check-ignore` rather than by
+  reading the list, and each pattern verified to match nothing tracked before
+  being added.
+- **Both changelog headers advertised a coverage neither has.**
+  `CHANGELOG-FULL.md` stops at `[2.0.4]` while `CHANGELOG.md` described it as
+  holding "the full per-version detail" for every release. Both now state the
+  boundary and name where the depth actually lives from v2.0.5 onward. It is
+  deliberately not backfilled: reconstructing that detail from summaries would
+  produce confident prose nobody measured.
+- **README corrections.** `nes_golden_export` emits nine artifacts, not the five
+  claimed since v2.4.1; the trace-lint gap is described as closed rather than
+  open; and the "Fabric" line is marked delivered, with the current v2.5.1 →
+  v2.7.0 line named.
+- **`docs/testing-strategy.md` gained the co-simulation layer** it had never
+  described — the gate/diagnostic partition, the mutation requirement, and the
+  fact that these gates do **not** run in CI.
+- **The MiSTer to-dos were three sprints stale.** `TASKS.md` still had v2.5.1's
+  injection API unchecked; `IMPLEMENTATION_PLAN.md` said the PPU was "Not
+  started" and quoted the superseded 27,388-cycle nestest bound; `SPRINT_PLAN.md`
+  gained a status column. Its standing rule "a rung may not start until the one
+  below is green in CI" is corrected — that is **not currently achievable**, and
+  a rule nobody can satisfy is a rule that quietly stops being applied.
 
 ### Verified
 
