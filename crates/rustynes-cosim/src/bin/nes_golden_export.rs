@@ -306,6 +306,35 @@ fn validate_injection(args: &Args) {
 /// An injection run completes no frames, so describing it in frames is not a
 /// rounding error -- it is the wrong unit, and it is what made the frame-count
 /// warning fire on every correct sweep export.
+/// Warn when a run did not do what was asked -- in the unit that run uses.
+///
+/// Both arms matter, and the second was briefly LOST. Gating the frame warning
+/// on the run mode fixed a warning that fired on every correct injection export,
+/// and in doing so removed the jam signal from injection runs entirely, because
+/// that warning was the only thing checking them. A jammed CPU would then have
+/// produced a short golden in silence -- the exact failure the frame warning
+/// exists to prevent, moved rather than fixed.
+fn warn_if_incomplete(args: &Args, o: &Oracle, calls: u64, frames_actual: u64) {
+    if args.inject_instructions > 0 {
+        if calls != args.inject_instructions {
+            eprintln!(
+                "  WARNING: requested {} instructions, executed {calls} (CPU jammed: {})",
+                args.inject_instructions,
+                o.nes().is_jammed()
+            );
+        }
+    } else if frames_actual != u64::from(args.frames) {
+        // Reachable when the CPU jams. Emit the goldens anyway -- a jammed ROM
+        // is a legitimate thing to compare a DUT against -- but never let the
+        // manifest claim a frame count that was not simulated.
+        eprintln!(
+            "  WARNING: requested {} frames, simulated {frames_actual} (CPU jammed: {})",
+            args.frames,
+            o.nes().is_jammed()
+        );
+    }
+}
+
 fn run_scale(args: &Args) -> String {
     if args.inject_instructions > 0 {
         format!("{} instructions, injected", args.inject_instructions)
@@ -406,16 +435,7 @@ fn main() {
     // wrong and the CPU not jammed. A warning that cries wolf on every valid run
     // is how a real one comes to be ignored, and this one was invisible to me
     // because the sweep script redirects stderr.
-    if args.inject_instructions == 0 && frames_actual != u64::from(args.frames) {
-        // Reachable when the CPU jams. Emit the goldens anyway -- a jammed ROM
-        // is a legitimate thing to compare a DUT against -- but never let the
-        // manifest claim a frame count that was not simulated.
-        eprintln!(
-            "  WARNING: requested {} frames, simulated {frames_actual} (CPU jammed: {})",
-            args.frames,
-            o.nes().is_jammed()
-        );
-    }
+    warn_if_incomplete(&args, &o, calls, frames_actual);
 
     let base = args.out.join(&stem);
     println!("exporting goldens for {stem} ({}):", run_scale(&args));
