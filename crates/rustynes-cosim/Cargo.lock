@@ -98,7 +98,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-apu"
-version = "2.4.5"
+version = "2.4.6"
 dependencies = [
  "bitflags",
  "libm",
@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-core"
-version = "2.4.5"
+version = "2.4.6"
 dependencies = [
  "bitflags",
  "lz4_flex",
@@ -121,7 +121,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cosim"
-version = "2.4.5"
+version = "2.4.6"
 dependencies = [
  "rustynes-core",
  "sha2",
@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cpu"
-version = "2.4.5"
+version = "2.4.6"
 dependencies = [
  "bitflags",
  "thiserror",
@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mappers"
-version = "2.4.5"
+version = "2.4.6"
 dependencies = [
  "bitflags",
  "rustynes-apu",
@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-ppu"
-version = "2.4.5"
+version = "2.4.6"
 dependencies = [
  "bitflags",
  "libm",

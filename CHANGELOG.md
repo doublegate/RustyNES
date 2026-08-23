@@ -14,6 +14,36 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.4.6] - 2026-08-22 - "Abacus" (the core learns arithmetic, and what overflow actually means)
+
+### Added
+
+- **Indexed addressing, `ADC`/`SBC`, and the compare group.** (v2.4.6, continuing the "Fabric" line. RTL pinned at `RustyNES_MiSTer@26d0fd9`.) Three indexed modes — `zp,X`/`zp,Y`, `abs,X`, `abs,Y` — with their page-cross penalty; `ADC` and `SBC` across six addressing modes each; and `CMP`/`CPX`/`CPY`. **The emulation core is untouched.**
+
+  Three ROMs, **573 records**, matching the oracle on all seven CPU fields, with seven independent mutations demonstrated to break it:
+
+  | ROM | records | covers |
+  |---|---|---|
+  | `opgroup1` | 147/147 | v2.4.4's reset and implied group, unchanged |
+  | `opgroup2` | 140/140 | v2.4.5's addressing modes, loads, stores, branches, unchanged |
+  | `opgroup3` | **286/286** | every construct new in this release |
+
+- **Zero-page indexing wraps inside page zero.** The add is 8-bit, so `$FE + $05` is `$0003` and not `$0103`. An implementation that indexes with a 16-bit add is wrong *only* for programs that index past `$FF` — exactly the kind of defect that survives casual testing — so the ROM does it deliberately and reads the result back through a *different* addressing mode.
+
+- **Absolute indexing pays for its page cross, and a write pays always.** A read whose low-byte add did not carry takes four cycles; one that carried takes five. A **write takes five regardless**, because the CPU has already driven the unfixed address and must not write there. An implementation that lets a store take the read fast path agrees on every register and differs only on `cycle` — which is why the trace compares it.
+
+- **`ADC` and `SBC` share one adder.** `SBC` feeds it `~M`, which is why the 6502 has no separate subtractor and why `SBC`'s carry means *no borrow*. Overflow is **signed** overflow — set when the operands share a sign and the result does not, `(~(a ^ m) & (a ^ r))[7]` — and the ROM covers `$7F + $01` (overflow, no carry), `$80 + $FF` (both), and `$10 + $10` (neither). One case cannot separate "V computed from carry" from "V stuck high"; three can.
+
+- **A compare is a subtract whose result is discarded.** The register is not written and **V is not touched**: a compare has no signed-overflow meaning, and setting it there is a common quiet error. The ROM stores `A` after the compare sequence and reads it back to prove it survived.
+
+### Notes
+
+- **Every case in the new ROM is built so the wrong answer differs from the right one**, and that is now the default rather than a correction. v2.4.4 and v2.4.5 each shipped a test whose wrong answer coincided with the right one — `TXS` after `TSX` computing the flags already present, and a store/load pair in the same addressing mode that round-trips through *any* wrong address — and both came back NOT CAUGHT under mutation.
+
+- **The instruction-set asymmetry is recorded because it reads like a typo.** `LDX`/`STX` index by Y; `LDY`/`STY` index by X. An index register cannot index itself, so there is no `LDX zp,X`. The decode says so at the site.
+
+- Mutations, all caught: indexed **write** taking the read fast path; zero-page index not wrapping in page zero; V computed from carry rather than signed overflow; `SBC` not inverting its operand; `ADC` ignoring carry-in; compare setting carry inverted; and `zp,X` omitting its un-indexed dummy read.
+
 ## [2.4.5] - 2026-08-22 - "Compass" (the core reaches memory, and chooses)
 
 ### Added
