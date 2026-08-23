@@ -15,6 +15,46 @@ plus four dated files in `ref-docs/` (contribution requirements, the MiSTer
 framework, the hardware **source map**, and alternative FPGA targets).
 **Device-under-test:** <https://github.com/doublegate/RustyNES_MiSTer> (private).
 
+## Rung 3 continues: the scroll address logic (v2.5.3)
+
+`inc_x`, `inc_y`, `copy_x` and `copy_y` at their documented dots, the
+`$2007`-during-rendering dual increment, and -- found by the rung rather than
+planned into it -- **a 3-dot delay on toggling rendering**.
+
+**Gates:** `ppuscroll` **19,813 records / 0 divergences**; rung 2's bus
+comparison on the same ROM **49,993 of 49,993 cycles matching** on `pc`,
+`bus_addr`, `bus_data` and `bus_access`; phase identical throughout.
+
+> "Toggling rendering takes effect approximately 3-4 dots after the write. This
+> delay is required by Battletoads to avoid a crash."
+> -- `nesdev_wiki/PPU_registers.xhtml`
+
+This core applied a `$2001` write immediately. The rendering window was a full
+CPU cycle too wide **at both ends**, costing exactly one coarse-X increment and
+invisible to everything except a read-back of `v`.
+
+**Both implementations were self-consistent; only the documentation could say
+which was wrong.** The oracle can be wrong -- here it was not, and that was
+established rather than assumed, which is the rung-labelling rule from ADR 0037
+doing its job.
+
+**Four instruments, each killing the previous hypothesis**, and the order
+mattered more than any one of them:
+
+1. `tb/phase_delta.py` over every instruction boundary: the phase offset was
+   constant, then zero once the *testbench* was fixed -- **and the gate still
+   failed**. That proved the two faults independent and stopped an alignment
+   change being credited with a fix it had not made.
+2. Rung 2's bus gate on `ppuscroll`: 3 of 49,993 cycles diverged, all read-back
+   *values*, with the `$2001` writes byte-identical. Write-timing refuted.
+3. `ppu-state-trace` on the oracle -- the designated **diagnostic** -- showed `v`
+   incrementing at 112, 120, 128, 136, 144 **and 152**. The sixth increment was
+   at the END of the window, not the start.
+4. The wiki adjudicated.
+
+**The diagnostic never became a gate**, which is what `docs/rung3-ppu.md`
+reserves it for.
+
 ## Rung 3 has started (v2.5.2)
 
 `rtl/ppu2c02.sv` implements the 2C02's CPU-visible register file: `$2000-$2007`

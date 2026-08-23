@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-The current release is **v2.5.2 "Dormant"**, on **v2.5.1 "Retrace"** and **v2.5.0 "Rungwork"** and **v2.4.9 "Plumbline II"** and **v2.4.8 "Palimpsest"** and **v2.4.7 "Keystone"** and **v2.4.6 "Abacus"** and **v2.4.5 "Compass"** and **v2.4.4 "Ignition"** and **v2.4.3 "Touchstone"** and **v2.4.2 "Cairn"** and **v2.4.1 "Fabric"**, which also carries the never-tagged v2.4.0 "Concordance". RustyNES ships from `main` on a
+The current release is **v2.5.3 "Hysteresis"**, on **v2.5.2 "Dormant"** and **v2.5.1 "Retrace"** and **v2.5.0 "Rungwork"** and **v2.4.9 "Plumbline II"** and **v2.4.8 "Palimpsest"** and **v2.4.7 "Keystone"** and **v2.4.6 "Abacus"** and **v2.4.5 "Compass"** and **v2.4.4 "Ignition"** and **v2.4.3 "Touchstone"** and **v2.4.2 "Cairn"** and **v2.4.1 "Fabric"**, which also carries the never-tagged v2.4.0 "Concordance". RustyNES ships from `main` on a
 rolling patch cadence rather than maintaining long-lived release branches, so
 security fixes land in the next patch release rather than being backported.
 Report against the latest release or `main`.
