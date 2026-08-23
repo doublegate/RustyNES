@@ -38,8 +38,13 @@ cycle-accurate core later replaced.
   passing first. This was the step the plan named as the hardest single item in
   the programme.
 - **`oam_bus_copybuffer` in `PpuStateRecord`**, at schema **2** (`RECORD_SIZE`
-  113 → 114). Filled from `Ppu::oam_data_bus_read()` — the same call a CPU read
-  of `$2004` makes. Diagnostic, never a gate, and outside the save state.
+  113 → 114). Filled from `Ppu::oam_data_bus_observed()` — what a CPU read of
+  `$2004` would return at that dot, guard included, minus that path's side
+  effects. Diagnostic, never a gate. **The trace is outside the save state; the
+  PPU field it reads is not** — `Ppu::oam_bus_copybuffer` is emulation state and
+  has been serialized since v2.0. An earlier draft of this entry said "outside
+  the save state" without distinguishing the two, which reads as a claim about
+  the PPU field and would be wrong.
 - `EV_SL` and `EV_ALL` on the sprite probe, and `EV_SL` / `EV_CYC` dumps in the
   sibling's testbench. `EV_CYC` is what turns a divergence reported *by cycle*
   into a scanline and a dot.

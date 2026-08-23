@@ -993,9 +993,19 @@ mod tests {
 
     #[test]
     fn csv_header_includes_all_columns() {
-        let cfg = PpuTraceConfig::all(0..=0);
+        // `sample_record()` is frame 42, and this config used to be
+        // `all(0..=0)` -- so `maybe_push` FILTERED IT OUT and the CSV was a
+        // header with no rows. The test still passed, because it only ever
+        // looked at the header. Asserting a row value is what exposed it.
+        let cfg = PpuTraceConfig::all(42..=42);
         let mut trace = PpuStateTrace::with_capacity(2, cfg);
         trace.maybe_push(sample_record());
+        assert_eq!(
+            trace.records().len(),
+            1,
+            "the sample record must survive the config filter, or every row \
+             assertion below is vacuous"
+        );
         let csv = trace.to_csv();
         let header = csv.lines().next().expect("header");
         for column in [
@@ -1013,12 +1023,38 @@ mod tests {
             "secondary_oam",
             "oam_fnv1a64",
             "nmi_line",
+            "oam_bus",
         ] {
             assert!(
                 header.contains(column),
                 "header missing `{column}`: {header}"
             );
         }
+
+        // The header is half the contract. A column can be NAMED and carry the
+        // wrong value, or be dropped from the row while the name survives --
+        // and this test passed on both counts before `oam_bus` was asserted
+        // here, which is exactly how a serialization regression reaches a
+        // golden. `sample_record` sets it to 0x5A and the row ends with it.
+        let row = csv.lines().nth(1).expect("one record was pushed");
+        let last = row.rsplit(',').next().expect("non-empty row");
+        assert_eq!(
+            last, "5A",
+            "final CSV column should be oam_bus_copybuffer as two hex digits; row: {row}"
+        );
+
+        // And the two must line up: whatever position the header gives
+        // `oam_bus`, the row must carry the value at that same index. A column
+        // appended to one and not the other is the drift this guards.
+        let idx = header
+            .split(',')
+            .position(|c| c == "oam_bus")
+            .expect("header names oam_bus");
+        assert_eq!(
+            row.split(',').nth(idx),
+            Some("5A"),
+            "oam_bus header index {idx} does not carry the record's value; row: {row}"
+        );
     }
 
     /// Guard against silent layout drift: if the field set

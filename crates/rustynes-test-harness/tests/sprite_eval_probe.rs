@@ -55,18 +55,37 @@ fn sprite_evaluation_dot_by_dot() {
     // The bus gate's first divergence is CPU cycle 34,919, which is frame 1 a
     // little past scanline 45. Capture that whole scanline: the question is
     // which of the three phases disagrees, so the window must contain all three.
+    // Parsed ONCE, and range-checked. Parsing it twice to build the inclusive
+    // range read as harmless duplication and is not: the two reads could return
+    // different values if the environment changed between them, producing an
+    // inverted or empty range that captures nothing -- and a probe that captures
+    // nothing looks exactly like a scanline where nothing happened.
+    //
+    // A malformed or out-of-range value is REFUSED rather than silently
+    // replaced. `EV_SL=999` parses fine and names a scanline the PPU never
+    // emits, so the run would produce an empty trace and the reader would draw
+    // a conclusion from it. NTSC has scanlines 0..=239 visible with 261 the
+    // pre-render line.
+    let scanline: i16 = std::env::var("EV_SL").map_or(55, |s| {
+        let v: i16 = s
+            .parse()
+            .unwrap_or_else(|e| panic!("EV_SL={s:?} is not an integer: {e}"));
+        assert!(
+            (0..=261).contains(&v),
+            "EV_SL={v} is outside the NTSC scanline range 0..=261; the PPU \
+             never emits it and the trace would be empty"
+        );
+        v
+    });
+
+    // Read ONCE. It was inside the per-record loop, which queries the
+    // environment for every trace record -- up to 1,023 syscalls for a
+    // three-frame window, to answer a question whose value cannot change.
+    let print_all = std::env::var("EV_ALL").is_ok();
+
     let cfg = PpuTraceConfig {
         frame_range: 0..=3,
-        scanline_range: Some(
-            std::env::var("EV_SL")
-                .ok()
-                .and_then(|s| s.parse::<i16>().ok())
-                .unwrap_or(55)
-                ..=std::env::var("EV_SL")
-                    .ok()
-                    .and_then(|s| s.parse::<i16>().ok())
-                    .unwrap_or(55),
-        ),
+        scanline_range: Some(scanline..=scanline),
         dot_range: Some(0..=340),
     };
     nes.bus_mut()
@@ -120,7 +139,7 @@ fn sprite_evaluation_dot_by_dot() {
         );
         // Only transitions, so the interesting dots are not buried under 341
         // lines of unchanged state.
-        if std::env::var("EV_ALL").is_ok() || prev.as_ref() != Some(&key) {
+        if print_all || prev.as_ref() != Some(&key) {
             println!(
                 "  f{} dot{:>3}  bus={:02X} mask={:02X} n={:>2} m={} found={} sec={:>2} copy={} ovf={} done={} latch={:02X}",
                 r.frame,
