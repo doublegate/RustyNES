@@ -316,10 +316,18 @@ fn tag_claims(text: &str) -> Vec<(usize, String)> {
                 let at = from + off;
                 // Character count, not byte offset: these lines carry em-dashes
                 // and arrows, and a byte window would cut mid-character.
-                let chars: Vec<char> = line[..at].chars().collect();
-                let start = chars.len().saturating_sub(LOOKBACK);
-                let before: String = chars[start..].iter().collect();
-                if let Some(v) = versions_near(&before, 0, before.chars().count()).pop() {
+                // Byte index, but arrived at through `char_indices`, so it is
+                // always a character boundary: these lines are full of em-dashes
+                // and arrows, and `&s[a..b]` off a boundary panics WHILE
+                // formatting the diagnostic -- replacing the message that
+                // explains the failure with one about the reporting code.
+                let start = line[..at]
+                    .char_indices()
+                    .rev()
+                    .nth(LOOKBACK - 1)
+                    .map_or(0, |(i, _)| i);
+                let before = &line[start..at];
+                if let Some(v) = versions_near(before, 0, before.chars().count()).pop() {
                     out.push((i + 1, v));
                 }
                 from = at + phrase.len();
@@ -391,6 +399,37 @@ fn the_tag_claim_scanner_reads_backward_and_needs_a_version() {
         tag_claims("— v2.4.6 → “Abacus” — the current tag")[0].1,
         "2.4.6"
     );
+    // And the case that actually exercises the CUT: a line long enough that the
+    // lookback truncates, with multi-byte characters straddling where it lands.
+    //
+    // A SINGLE long fixture is not enough, and assuming it was is how the first
+    // TWO versions of this test passed a mutation replacing the boundary-safe
+    // index with a raw `at - LOOKBACK`. Whether that byte offset falls inside a
+    // character depends on the exact layout, and the first fixture landed on a
+    // boundary by luck. The second swept the padding but placed it BEFORE the
+    // repeats, which shifts the phrase and the repeats equally -- so the residue
+    // never changed and the sweep was inert while looking thorough.
+    //
+    // `"— arrow "` is a 10-byte unit whose em-dash occupies bytes 0..2, and only
+    // offsets 1 and 2 are inside it. Sweeping the padding AFTER the repeats
+    // across 0..12 covers the whole period, so at least one cut must land there
+    // whatever the surrounding lengths are -- which is the property that makes
+    // this robust rather than a third lucky constant. (Today it is pad 6 and 7.)
+    for pad in 0..12 {
+        let long = format!(
+            "v2.4.6 {}{} the current tag",
+            "— arrow ".repeat(60),
+            " ".repeat(pad)
+        );
+        assert!(
+            long.chars().count() > 220,
+            "the fixture must exceed LOOKBACK"
+        );
+        // A raw byte offset panics here rather than returning anything.
+        assert!(tag_claims(&long).is_empty(), "pad={pad}");
+    }
+    let near = format!("v2.4.6 {} the current tag", "— ".repeat(20));
+    assert_eq!(tag_claims(&near)[0].1, "2.4.6");
 }
 
 #[test]
