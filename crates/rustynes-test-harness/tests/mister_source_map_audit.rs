@@ -27,6 +27,12 @@ fn workspace_root() -> PathBuf {
 
 const MAP: &str = "ref-docs/2026-08-23-fpga-nes-hardware-source-map.md";
 
+/// Extensions the corpus actually contains. `xhtml` is the load-bearing entry:
+/// the nesdev pages are all `.xhtml`, and an earlier hand-run of this check used
+/// a pattern without it, reporting "4 cited paths, 0 missing" against a file
+/// holding 32 citations.
+const EXTS: [&str; 4] = [".md", ".txt", ".html", ".xhtml"];
+
 /// Every backticked path-looking span in the document.
 ///
 /// Deliberately extension-driven rather than "anything in backticks": the file
@@ -38,22 +44,39 @@ const MAP: &str = "ref-docs/2026-08-23-fpga-nes-hardware-source-map.md";
 /// file holding 32 citations, and the reassuring number came from a pattern that
 /// could not match the extension every real citation uses.
 fn cited_paths(text: &str) -> Vec<String> {
-    const EXTS: [&str; 4] = [".md", ".txt", ".html", ".xhtml"];
-    let mut out: Vec<String> = text
-        .split('`')
-        .skip(1)
-        .step_by(2)
-        .filter(|s| {
-            EXTS.iter().any(|e| s.ends_with(e))
-                && !s.is_empty()
-                && s.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c))
-        })
+    let mut out: Vec<String> = spans(text)
+        .filter(|s| EXTS.iter().any(|e| s.ends_with(e)))
         .map(str::to_owned)
         .collect();
     out.sort_unstable();
     out.dedup();
     out
+}
+
+/// Backticked spans that look like a path: a directory separator and a dot.
+fn spans(text: &str) -> impl Iterator<Item = &str> {
+    text.split('`').skip(1).step_by(2).filter(|s: &&str| {
+        !s.is_empty()
+            && s.contains('/')
+            && s.contains('.')
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c))
+    })
+}
+
+/// Path-like spans whose extension `cited_paths` does not recognise.
+///
+/// Without this the extractor FAILS OPEN. A new citation such as
+/// `ref-docs/board.pdf` is silently dropped, the existing 32 still clear the
+/// minimum-count check, and the audit reports success over a source nobody
+/// verified. That is the same shape as the `.xhtml` omission this file already
+/// records -- a pattern that cannot match looks exactly like content that is
+/// not there -- so the fix is to make the unmatched case LOUD rather than to
+/// widen the pattern and hope.
+fn unrecognised_extensions(text: &str) -> Vec<&str> {
+    spans(text)
+        .filter(|s| !EXTS.iter().any(|e| s.ends_with(e)))
+        .collect()
 }
 
 /// Citations with no directory component.
@@ -113,6 +136,18 @@ fn every_cited_source_is_well_formed_and_resolves_where_it_can() {
         "extracted only {} citations from {MAP}; the pattern is wrong, \
          and a pattern that matches nothing looks exactly like a clean document",
         cited.len()
+    );
+
+    // ---- Tier 0: the extractor saw everything path-shaped. ----
+    let unknown = unrecognised_extensions(&text);
+    assert!(
+        unknown.is_empty(),
+        "{MAP} contains {} path-like span(s) whose extension the extractor does \
+         not recognise: {unknown:#?}\n\
+         They are being SILENTLY DROPPED, so they are never existence-checked \
+         while the citation count still clears its minimum. Add the extension to \
+         EXTS, or stop citing it as a path.",
+        unknown.len()
     );
 
     // ---- Tier 1: shape. Always checked, corpus or no corpus. ----
@@ -263,4 +298,19 @@ fn a_bare_filename_is_rejected() {
     );
     assert_eq!(found[0], "APU_Sweep.xhtml");
     assert_eq!(found[1], "MMC1_pinout.xhtml");
+}
+
+#[test]
+fn a_citation_with_an_unrecognised_extension_is_reported_not_dropped() {
+    // The failure mode CodeRabbit named on #447, driven directly: a new citation
+    // whose extension is outside the allow-list must be LOUD, not invisible.
+    // Before this, adding `ref-docs/board.pdf` left the 32 known citations still
+    // clearing the >= 20 threshold, so the audit passed over an unverified
+    // source.
+    let text = "see `nesdev_wiki/PPU_rendering.xhtml` and `ref-docs/board.pdf`";
+    assert_eq!(unrecognised_extensions(text), vec!["ref-docs/board.pdf"]);
+
+    // And a span that is not path-shaped must not be reported as one.
+    let prose = "the `v` register, `$2005`, and `ppu-state-trace`";
+    assert!(unrecognised_extensions(prose).is_empty());
 }

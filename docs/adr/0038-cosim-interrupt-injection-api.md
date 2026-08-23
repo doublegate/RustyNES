@@ -105,14 +105,26 @@ constraints. **Each one is a condition of acceptance, not a recommendation.**
    with the toolchain, and always read the control first:
 
    ```bash
-   off=$(cargo +nightly rustc -p rustynes-core --lib --profile check \
-           -- -Zunpretty=expanded 2>/dev/null | grep -c inject_)
-   on=$(cargo +nightly rustc -p rustynes-core --lib --profile check \
-           --features cosim-interrupt-inject \
-           -- -Zunpretty=expanded 2>/dev/null | grep -c inject_)
+   # Each expansion is captured and its STATUS checked before anything is
+   # counted. Piping cargo straight into `grep -c` hides a failed expansion the
+   # same way the `cargo expand` version hid a missing binary: the count comes
+   # back 0 and the gate reads that as success. `grep -c` is deliberately NOT
+   # used under `set -e` either -- zero matches exits 1, which would abort the
+   # very case the gate is looking for.
+   expand() {
+     local out
+     out=$(cargo +nightly rustc -p rustynes-core --lib --profile check "$@" \
+             -- -Zunpretty=expanded 2>/dev/null) || return 1
+     [ -n "$out" ] || return 1          # an empty expansion is not a clean one
+     printf '%s\n' "$out" | grep -c inject_ || true
+   }
+   off=$(expand) || { echo "default expansion FAILED -- gate not run" >&2; exit 1; }
+   on=$(expand --features cosim-interrupt-inject) \
+       || { echo "feature expansion FAILED -- gate not run" >&2; exit 1; }
    # off must be 0 AND on must be > 0. A zero `on` means the instrument is dead,
    # not that the feature is clean -- which is exactly how the first run of this
    # gate passed twice while measuring nothing at all.
+   [ "$off" -eq 0 ] && [ "$on" -gt 0 ] || { echo "gate FAILED: off=$off on=$on" >&2; exit 1; }
    ```
 
    Measured 2026-08-23: **off = 0, on = 17.**
@@ -136,9 +148,15 @@ constraints. **Each one is a condition of acceptance, not a recommendation.**
 
    | measurement | result |
    |---|---|
-   | 2a — `cargo expand \| grep -c inject_`, default build | **0** — decisive |
+   | 2a — expanded-source `inject_` count, default build (command above) | **off = 0, on = 17** — decisive |
    | Same-tree noise floor (baseline vs itself) | **±1.2%** — the calibrated band |
-   | Same-tree A/B, feature ON vs OFF | +1.3% / −1.4% / +1.7% / −1.0% — **inside the floor**, mixed signs |
+   | Same-tree A/B, feature ON vs OFF | +1.3% / −1.4% / +1.7% / −1.0% — **mixed signs, no consistent direction**; three of the four marginally EXCEED the ±1.2% floor |
+
+   The A/B row previously read "inside the floor". It is not: +1.3, −1.4 and +1.7
+   all lie outside ±1.2. The claim was wrong and is corrected rather than the
+   band being widened to fit it. What the row actually shows is a signal with no
+   consistent direction, which is what a null looks like on an instrument whose
+   floor is about this size -- and it is moot either way, because 2a is 0.
 
    **Pass: 2a is 0.** The rest is calibration, not a gate — because when 2a is 0
    the off build *is* the previous build, and there is no quantity left to

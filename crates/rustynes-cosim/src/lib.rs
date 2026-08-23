@@ -182,11 +182,19 @@ impl Oracle {
             // Assert on entry to the target instruction, release once `hold`
             // instructions have run. Both edges land on a boundary the DUT can
             // name by counting `o_sync`.
+            //
+            // `executed - k < hold` rather than `executed < k + hold`: the
+            // second form can overflow `u64` on a hostile `--inject-hold`,
+            // panicking in a debug build and WRAPPING in a release one -- which
+            // would silently release the pin instead of holding it, and a sweep
+            // would then report agreement about a stimulus that was never
+            // applied. The subtraction is guarded by the `>=` that precedes it.
+            let asserted = |k: u64| executed >= k && executed - k < hold;
             if let Some(k) = nmi_at {
-                self.nes.inject_nmi(executed >= k && executed < k + hold);
+                self.nes.inject_nmi(asserted(k));
             }
             if let Some(k) = irq_at {
-                self.nes.inject_irq(executed >= k && executed < k + hold);
+                self.nes.inject_irq(asserted(k));
             }
             self.nes.step_instruction();
             executed += 1;

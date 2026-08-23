@@ -5,17 +5,24 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
 ## v2.5.1 — the interrupt sweep (rung 2 completes)
 
 - [ ] Implement ADR 0038's injection API behind `cosim-interrupt-inject`
-- [ ] **Precondition A:** zero hot-path cost, asserted by `full_frame` benchmark
-- [ ] **Precondition B:** byte-identical output with the feature ABSENT *and*
-      PRESENT-BUT-UNUSED (AccuracyCoin 141/141 + nestest 0-diff, both cases)
-- [ ] Sweep: NMI and IRQ at every offset across ~20 hazard opcodes
-- [ ] `docs/rung2-interrupts.md` in the sibling repo, with its cannot-verify section
-- [ ] If either precondition fails: **the decision is void** — record it and fall
-      back to option B (wait for rung 4's `cpu_interrupts_v2`)
+- [x] **Precondition A:** structural, not benchmarked — `inject_` appears **0**
+      times in the expanded default core and **17** with the feature on, measured
+      with a live control. When the default build emits none of it there is no
+      hot-path quantity left to measure.
+- [x] **Precondition B:** AccuracyCoin **141/141** (RAM decoder) and nestest
+      0-diff, verified rather than asserted, because `rustynes-core` changed.
+- [x] Sweep: NMI, IRQ **and both together** at every offset across 20
+      instructions — **60 injection points, 0 divergences**.
+- [x] Rung-2 interrupt findings recorded in the sibling's `docs/rung1-6502.md`,
+      with its cannot-verify section. (Kept there rather than in a new
+      `rung2-interrupts.md`: the sweep is rung 2's interrupt half and its
+      findings are inseparable from the rung-1 ROMs they were found against.)
+- [x] Neither precondition failed, so the fallback to option B (waiting for rung
+      4's `cpu_interrupts_v2`) was not needed.
 
 ## v2.5.2 – v2.5.8 — rung 3, the 2C02
 
-- [ ] v2.5.2 register file `$2000-$2007`, VRAM/palette bus, mirroring
+- [x] v2.5.2 register file `$2000-$2007`, VRAM/palette bus, mirroring — **12,840 records, 0 divergences**, 8 mutations all caught; also the post-reset masking window, which the plan did not anticipate
 - [ ] v2.5.3 `v`/`t`/`x`/`w` and the `$2005`/`$2006` sequence
 - [ ] v2.5.4 background fetch pipeline (NT/AT/pattern), shift registers
 - [ ] v2.5.5 background rendering into `index_framebuffer`

@@ -253,6 +253,93 @@ fn write_irq_artifacts(o: &mut Oracle, base: &Path, interval: u64) -> (usize, us
     }
 }
 
+/// Refuse an injection request that would silently produce a NON-INJECTED golden.
+///
+/// Every combination rejected here runs to completion and emits a plausible
+/// artifact with no pin ever asserted -- and a sweep comparing two non-injected
+/// runs agrees, reporting a pass for a stimulus that was never applied. That is
+/// this programme's recurring failure mode, so it is refused at the boundary
+/// rather than diagnosed later.
+///
+/// Returns the reason rather than exiting, so the rules are testable without a
+/// process boundary.
+fn injection_error(args: &Args) -> Option<String> {
+    let pinned = args.inject_nmi_at.is_some() || args.inject_irq_at.is_some();
+    if pinned && args.inject_instructions == 0 {
+        return Some(
+            "--inject-{nmi,irq}-instr requires a non-zero --inject-instructions; without it \
+             the run falls back to a frame advance and no pin is ever asserted"
+                .to_owned(),
+        );
+    }
+    if args.inject_instructions == 0 {
+        return None;
+    }
+    if !pinned {
+        return Some(
+            "--inject-instructions was given with neither --inject-nmi-instr nor \
+             --inject-irq-instr; the run would assert no pin at all"
+                .to_owned(),
+        );
+    }
+    if args.inject_hold == 0 {
+        return Some("--inject-hold must be non-zero; a zero hold never asserts a pin".to_owned());
+    }
+    for (name, at) in [("nmi", args.inject_nmi_at), ("irq", args.inject_irq_at)] {
+        if let Some(k) = at
+            && k >= args.inject_instructions
+        {
+            return Some(format!(
+                "--inject-{name}-instr {k} is outside the {} instruction(s) this run executes; \
+                 the pin would never be asserted",
+                args.inject_instructions
+            ));
+        }
+    }
+    None
+}
+
+fn validate_injection(args: &Args) {
+    if let Some(why) = injection_error(args) {
+        eprintln!("{why}");
+        usage();
+    }
+}
+
+/// The manifest lines describing WHICH KIND OF RUN produced these goldens.
+///
+/// An injection run is not a frame run, and the manifest must not describe it as
+/// one: `calls` counts executed INSTRUCTIONS there, while the shared field is
+/// named `run_frame_calls`, and the pin positions and hold that produced the
+/// stimulus were recorded nowhere at all. A DUT could not reproduce or audit the
+/// golden from the artifact -- which is the manifest's entire job.
+fn run_mode_block(args: &Args, calls: u64, frames_actual: u64) -> String {
+    if args.inject_instructions > 0 {
+        format!(
+            "run_mode     = instruction-injection\n\
+             instr_req    = {}\n\
+             instr_actual = {calls}\n\
+             inject_nmi_at= {}\n\
+             inject_irq_at= {}\n\
+             inject_hold  = {}\n",
+            args.inject_instructions,
+            args.inject_nmi_at
+                .map_or_else(|| "none".to_owned(), |v| v.to_string()),
+            args.inject_irq_at
+                .map_or_else(|| "none".to_owned(), |v| v.to_string()),
+            args.inject_hold,
+        )
+    } else {
+        format!(
+            "run_mode     = frames\n\
+             frames_req   = {}\n\
+             frames_actual= {frames_actual}\n\
+             run_frame_calls = {calls}\n",
+            args.frames,
+        )
+    }
+}
+
 fn main() {
     let args = parse_args();
     let rom =
@@ -298,6 +385,8 @@ fn main() {
     // number of instructions with a pin asserted for part of the run, which is
     // the stimulus rung 2 compares. A frame advance would run past the window
     // and bury the divergence under thousands of unrelated cycles.
+    validate_injection(&args);
+
     let calls = if args.inject_instructions > 0 {
         o.run_with_injection(
             args.inject_instructions,
@@ -364,13 +453,13 @@ fn main() {
         (0, 0)
     };
 
+    let mode_block = run_mode_block(&args, calls, frames_actual);
+
     let manifest = format!(
         "rom          = {}\n\
          rom_sha256   = {}\n\
          seed         = {}\n\
-         frames_req   = {}\n\
-         frames_actual= {}\n\
-         run_frame_calls = {}\n\
+         {}\
          cpu_cycles   = {}\n\
          emulator     = rustynes {}\n\
          index_fb_len = {}\n\
@@ -381,9 +470,7 @@ fn main() {
         args.rom.display(),
         sha256_hex(&rom),
         args.seed,
-        args.frames,
-        frames_actual,
-        calls,
+        mode_block,
         cycles,
         env!("CARGO_PKG_VERSION"),
         INDEX_FB_LEN,
