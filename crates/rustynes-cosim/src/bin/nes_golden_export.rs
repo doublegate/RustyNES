@@ -48,6 +48,13 @@ struct Args {
     boot_trace: Option<(u64, u64)>,
     irq_trace: Option<usize>,
     checkpoint_interval: u64,
+    /// v2.5.1 — rung 2's interrupt sweep. Instruction-indexed, not
+    /// cycle-indexed: this side cannot assert a pin mid-instruction, so a
+    /// cycle-indexed sweep would not be comparable. See `Oracle::run_with_injection`.
+    inject_instructions: u64,
+    inject_nmi_at: Option<u64>,
+    inject_irq_at: Option<u64>,
+    inject_hold: u64,
 }
 
 fn usage() -> ! {
@@ -65,8 +72,14 @@ fn parse_args() -> Args {
     let (mut seed, mut frames) = (0u64, 60u32);
     let (mut boot_trace, mut irq_trace) = (None, None);
     let mut checkpoint_interval = rustynes_cosim::checkpoint::DEFAULT_INTERVAL;
+    let (mut inject_instructions, mut inject_hold) = (0u64, 1u64);
+    let (mut inject_nmi_at, mut inject_irq_at) = (None, None);
 
     let mut i = 0;
+    // Every value-taking arm below advances `i` by TWO, not one: this loop has
+    // no trailing increment, so stepping by one leaves `i` on the value, which
+    // then falls through to `_ => usage()` and prints the help text as though
+    // the FLAG were unknown. Stated once here rather than four times inline.
     while i < argv.len() {
         let need = |i: usize| -> &String { argv.get(i + 1).unwrap_or_else(|| usage()) };
         match argv[i].as_str() {
@@ -95,6 +108,22 @@ fn parse_args() -> Args {
                 ));
                 i += 2;
             }
+            "--inject-instructions" => {
+                inject_instructions = need(i).parse().unwrap_or_else(|_| usage());
+                i += 2;
+            }
+            "--inject-nmi-instr" => {
+                inject_nmi_at = Some(need(i).parse().unwrap_or_else(|_| usage()));
+                i += 2;
+            }
+            "--inject-irq-instr" => {
+                inject_irq_at = Some(need(i).parse().unwrap_or_else(|_| usage()));
+                i += 2;
+            }
+            "--inject-hold" => {
+                inject_hold = need(i).parse().unwrap_or_else(|_| usage());
+                i += 2;
+            }
             "--irq-trace" => {
                 irq_trace = Some(need(i).parse().unwrap_or_else(|_| usage()));
                 i += 2;
@@ -118,6 +147,10 @@ fn parse_args() -> Args {
         boot_trace,
         irq_trace,
         checkpoint_interval,
+        inject_instructions,
+        inject_nmi_at,
+        inject_irq_at,
+        inject_hold,
     }
 }
 
@@ -208,6 +241,135 @@ fn write_irq_artifacts(o: &mut Oracle, base: &Path, interval: u64) -> (usize, us
     }
 }
 
+/// Refuse an injection request that would silently produce a NON-INJECTED golden.
+///
+/// Every combination rejected here runs to completion and emits a plausible
+/// artifact with no pin ever asserted -- and a sweep comparing two non-injected
+/// runs agrees, reporting a pass for a stimulus that was never applied. That is
+/// this programme's recurring failure mode, so it is refused at the boundary
+/// rather than diagnosed later.
+///
+/// Returns the reason rather than exiting, so the rules are testable without a
+/// process boundary.
+fn injection_error(args: &Args) -> Option<String> {
+    let pinned = args.inject_nmi_at.is_some() || args.inject_irq_at.is_some();
+    if pinned && args.inject_instructions == 0 {
+        return Some(
+            "--inject-{nmi,irq}-instr requires a non-zero --inject-instructions; without it \
+             the run falls back to a frame advance and no pin is ever asserted"
+                .to_owned(),
+        );
+    }
+    if args.inject_instructions == 0 {
+        return None;
+    }
+    if !pinned {
+        return Some(
+            "--inject-instructions was given with neither --inject-nmi-instr nor \
+             --inject-irq-instr; the run would assert no pin at all"
+                .to_owned(),
+        );
+    }
+    if args.inject_hold == 0 {
+        return Some("--inject-hold must be non-zero; a zero hold never asserts a pin".to_owned());
+    }
+    for (name, at) in [("nmi", args.inject_nmi_at), ("irq", args.inject_irq_at)] {
+        if let Some(k) = at
+            && k >= args.inject_instructions
+        {
+            return Some(format!(
+                "--inject-{name}-instr {k} is outside the {} instruction(s) this run executes; \
+                 the pin would never be asserted",
+                args.inject_instructions
+            ));
+        }
+    }
+    None
+}
+
+fn validate_injection(args: &Args) {
+    if let Some(why) = injection_error(args) {
+        eprintln!("{why}");
+        usage();
+    }
+}
+
+/// The manifest lines describing WHICH KIND OF RUN produced these goldens.
+///
+/// An injection run is not a frame run, and the manifest must not describe it as
+/// one: `calls` counts executed INSTRUCTIONS there, while the shared field is
+/// named `run_frame_calls`, and the pin positions and hold that produced the
+/// stimulus were recorded nowhere at all. A DUT could not reproduce or audit the
+/// golden from the artifact -- which is the manifest's entire job.
+/// How much work this run performs, in the unit that run actually uses.
+///
+/// An injection run completes no frames, so describing it in frames is not a
+/// rounding error -- it is the wrong unit, and it is what made the frame-count
+/// warning fire on every correct sweep export.
+/// Warn when a run did not do what was asked -- in the unit that run uses.
+///
+/// Both arms matter, and the second was briefly LOST. Gating the frame warning
+/// on the run mode fixed a warning that fired on every correct injection export,
+/// and in doing so removed the jam signal from injection runs entirely, because
+/// that warning was the only thing checking them. A jammed CPU would then have
+/// produced a short golden in silence -- the exact failure the frame warning
+/// exists to prevent, moved rather than fixed.
+fn warn_if_incomplete(args: &Args, o: &Oracle, calls: u64, frames_actual: u64) {
+    if args.inject_instructions > 0 {
+        if calls != args.inject_instructions {
+            eprintln!(
+                "  WARNING: requested {} instructions, executed {calls} (CPU jammed: {})",
+                args.inject_instructions,
+                o.nes().is_jammed()
+            );
+        }
+    } else if frames_actual != u64::from(args.frames) {
+        // Reachable when the CPU jams. Emit the goldens anyway -- a jammed ROM
+        // is a legitimate thing to compare a DUT against -- but never let the
+        // manifest claim a frame count that was not simulated.
+        eprintln!(
+            "  WARNING: requested {} frames, simulated {frames_actual} (CPU jammed: {})",
+            args.frames,
+            o.nes().is_jammed()
+        );
+    }
+}
+
+fn run_scale(args: &Args) -> String {
+    if args.inject_instructions > 0 {
+        format!("{} instructions, injected", args.inject_instructions)
+    } else {
+        format!("{} frames", args.frames)
+    }
+}
+
+fn run_mode_block(args: &Args, calls: u64, frames_actual: u64) -> String {
+    if args.inject_instructions > 0 {
+        format!(
+            "run_mode     = instruction-injection\n\
+             instr_req    = {}\n\
+             instr_actual = {calls}\n\
+             inject_nmi_at= {}\n\
+             inject_irq_at= {}\n\
+             inject_hold  = {}\n",
+            args.inject_instructions,
+            args.inject_nmi_at
+                .map_or_else(|| "none".to_owned(), |v| v.to_string()),
+            args.inject_irq_at
+                .map_or_else(|| "none".to_owned(), |v| v.to_string()),
+            args.inject_hold,
+        )
+    } else {
+        format!(
+            "run_mode     = frames\n\
+             frames_req   = {}\n\
+             frames_actual= {frames_actual}\n\
+             run_frame_calls = {calls}\n",
+            args.frames,
+        )
+    }
+}
+
 fn main() {
     let args = parse_args();
     let rom =
@@ -249,22 +411,34 @@ fn main() {
     // is swallowed by the frame_complete latch the reset sequence leaves set, so
     // a bare loop emits an (N-1)-frame golden under a manifest claiming N.
     let frame_before = o.nes().frame();
-    let calls = o.advance_frames(u64::from(args.frames));
+    // The interrupt sweep runs INSTEAD of the frame advance: it steps a bounded
+    // number of instructions with a pin asserted for part of the run, which is
+    // the stimulus rung 2 compares. A frame advance would run past the window
+    // and bury the divergence under thousands of unrelated cycles.
+    validate_injection(&args);
+
+    let calls = if args.inject_instructions > 0 {
+        o.run_with_injection(
+            args.inject_instructions,
+            args.inject_nmi_at,
+            args.inject_irq_at,
+            args.inject_hold,
+        )
+    } else {
+        o.advance_frames(u64::from(args.frames))
+    };
     let frames_actual = o.nes().frame() - frame_before;
     let cycles = o.nes().cycle();
-    if frames_actual != u64::from(args.frames) {
-        // Reachable when the CPU jams. Emit the goldens anyway -- a jammed ROM
-        // is a legitimate thing to compare a DUT against -- but never let the
-        // manifest claim a frame count that was not simulated.
-        eprintln!(
-            "  WARNING: requested {} frames, simulated {frames_actual} (CPU jammed: {})",
-            args.frames,
-            o.nes().is_jammed()
-        );
-    }
+    // The frame check applies to a FRAME run only. An injection run steps
+    // instructions and completes no frames at all, so this fired on every
+    // correct sweep export -- "requested 1 frames, simulated 0", with nothing
+    // wrong and the CPU not jammed. A warning that cries wolf on every valid run
+    // is how a real one comes to be ignored, and this one was invisible to me
+    // because the sweep script redirects stderr.
+    warn_if_incomplete(&args, &o, calls, frames_actual);
 
     let base = args.out.join(&stem);
-    println!("exporting goldens for {} ({} frames):", stem, args.frames);
+    println!("exporting goldens for {stem} ({}):", run_scale(&args));
 
     let fb = o.nes().index_framebuffer();
     assert_eq!(
@@ -306,13 +480,13 @@ fn main() {
         (0, 0)
     };
 
+    let mode_block = run_mode_block(&args, calls, frames_actual);
+
     let manifest = format!(
         "rom          = {}\n\
          rom_sha256   = {}\n\
          seed         = {}\n\
-         frames_req   = {}\n\
-         frames_actual= {}\n\
-         run_frame_calls = {}\n\
+         {}\
          cpu_cycles   = {}\n\
          emulator     = rustynes {}\n\
          index_fb_len = {}\n\
@@ -323,9 +497,7 @@ fn main() {
         args.rom.display(),
         sha256_hex(&rom),
         args.seed,
-        args.frames,
-        frames_actual,
-        calls,
+        mode_block,
         cycles,
         env!("CARGO_PKG_VERSION"),
         INDEX_FB_LEN,

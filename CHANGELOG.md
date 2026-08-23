@@ -14,6 +14,81 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-08-23 - "Retrace" (a return address, and a gate that reported a pass it could not have earned)
+
+### Added
+
+- **The interrupt sweep, and rung 2 closes** (`RustyNES_MiSTer@9425d73`).
+  `tb/interrupt_sweep.py` asserts /NMI, /IRQ, or **both together** before
+  instruction K and holds it, for every K across a hazard program, driving
+  identical stimulus into both sides: **60 injection points, 0 divergences** on
+  all seven CPU fields (20 instructions x three pin configurations).
+- **The core-side injection API** ([ADR 0038](docs/adr/0038-cosim-interrupt-injection-api.md)),
+  behind a default-off `cosim-interrupt-inject` feature that only the excluded
+  `rustynes-cosim` crate enables. `Nes::inject_nmi` / `inject_irq` drive the
+  **level functions** the CPU actually samples, and `Oracle::run_with_injection`
+  steps instructions while toggling the pins.
+- **`mister_source_map_audit.rs`**, pinning every citation in the new hardware
+  **source map** to a file that exists. Under the firewall those pages are the
+  *only* permitted sources, so a dangling citation is a behaviour with no source.
+- **The v2.5.1 -> v2.7.0 programme** ([`to-dos/plans/v2.7.0-mister-core-plan.md`](to-dos/plans/v2.7.0-mister-core-plan.md)),
+  four dated `ref-docs/` research files, and `to-dos/mister/`.
+
+### Fixed
+
+- **A hardware interrupt pushed the wrong return address.** `RTI` returned one
+  byte too high. The cause was a **shared block with two writers**: the generic
+  operand-fetch step advances PC at `tcyc == 1` for every addressing mode except
+  three, and `AM_BRK` was not among them. `BRK` and a hardware interrupt *share*
+  that mode and disagree about it -- `BRK` advances over its second byte, an
+  interrupt does not -- so for `BRK` both writers assigned the same value and the
+  fault was invisible. **`BRK` passing 186/186 is what kept it hidden**: the only
+  opcode exercising the mode was the one on which the defect did not show.
+- **The injection was wired to a dead path.** It first targeted `Bus::poll_nmi` /
+  `poll_irq`, which look like the right functions and are not the ones the
+  production CPU uses -- it samples `nmi_level()` / `irq_level()` every cycle and
+  edge-detects itself. The oracle never took an injected NMI while the DUT always
+  did. Moving it took **IRQ 0/8 to 4/8 and NMI 0/8 to 5/8**.
+- **Second-to-last-cycle interrupt recognition** in the DUT, per the documented
+  rule. It did not move the sweep's numbers and is in because the rule says so;
+  said plainly rather than credited with a fix it did not make.
+- **`mutate.sh` announced a baseline it had not captured.** Sourced from a
+  non-bash shell, `BASH_SOURCE` was unset and `ROOT` resolved to `/`; the `cp`
+  failed and the next line still printed "captured baseline". It now fails there,
+  and the echo is joined to the copy with `&&`.
+
+### Changed
+
+- **ADR 0038's own gate 2a reported a false pass.** As written it piped
+  `cargo expand` -- a separate binary, not installed here -- through
+  `2>/dev/null | grep -c inject_`, so it counted an empty stream and printed the
+  **0 it was looking for** while measuring nothing. Caught by the control, not by
+  reading: the same command with the feature *enabled* also returned 0. Replaced
+  with the toolchain's own expander, and the ADR now requires reading the control
+  first. **Measured: off = 0, on = 17.**
+- **The sweep gained its both-pins case because a mutation found the gap.**
+  Inverting NMI/IRQ priority came back NOT CAUGHT: sweeping one pin at a time,
+  an inverted priority is indistinguishable from a correct one. It is caught now.
+- **A published finding is retracted.** The previous commit reported this core's
+  interrupt sequence as **five cycles where hardware is seven**. It was seven
+  throughout; two cycle numbers were differenced without checking which
+  instruction each belonged to. The real fault was in the harness -- `cur_instr`
+  was `0` before the first opcode fetch, so `--nmi-at-instr 0` asserted the pin
+  throughout the eight-cycle reset. Retracted in place rather than deleted,
+  because it was published as a defect against the RTL.
+- **nestest 0-diff and the 5 M-cycle window are reclassified, not carried.** Both
+  stop at a `$2002` read where *both sides address it* and only the data differs
+  -- the DUT has no PPU. They are rung-3 acceptance criteria.
+
+### Verified
+
+`rustynes-core` changes (the feature gate, its fields and setters), so the
+accuracy numbers are **verified, not asserted**: **AccuracyCoin 141/141 (100.00%,
+RAM decoder)**, **nestest 0-diff**, workspace **2233 passed / 128 suites / 0
+failed**. DUT side: lint 0 findings, nine opcode-group ROMs **2115 records / 0
+divergences** (`opgroup8` unchanged at 186), sweep **60/60**. Seven mutations
+against the sweep: five CAUGHT, two NOT CAUGHT and both explained.
+
 ## [2.5.0] - 2026-08-23 - "Rungwork" (the 6502 rung, and the two gates it cannot reach)
 
 ### Added

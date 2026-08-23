@@ -95,22 +95,73 @@ constraints. **Each one is a condition of acceptance, not a recommendation.**
    field and every injected branch is behind `#[cfg(feature =
    "cosim-interrupt-inject")]`, so a default build emits none of it. Verify by
    grepping the expanded source:
-   `cargo expand -p rustynes-core --lib 2>/dev/null | grep -c inject_` **must be
-   0** for the default build. This is a proof, not a sample.
+   **must be 0** for the default build. This is a proof, not a sample.
 
-   **2b — corroborating measurement.** Against a `main` baseline on the *same
-   runner in one session*, criterion's default 100 samples:
+   **Do not run it as `cargo expand ... 2>/dev/null | grep -c inject_`.** That
+   was this ADR's first wording and it is a trap: `cargo-expand` is a separate
+   binary and is not installed on this workstation, so the redirect swallows
+   "no such command", `grep -c` counts an empty stream, and the gate reports the
+   **0 it is looking for** while measuring nothing. Use the expander that ships
+   with the toolchain, and always read the control first:
 
-   ```console
-   git worktree add /tmp/bench-main main
-   cargo bench -p rustynes-core --bench full_frame -- --save-baseline main   # in the worktree
-   cargo bench -p rustynes-core --bench full_frame -- --baseline main        # in the branch, feature OFF
+   ```bash
+   # Each expansion is captured and its STATUS checked before anything is
+   # counted. Piping cargo straight into `grep -c` hides a failed expansion the
+   # same way the `cargo expand` version hid a missing binary: the count comes
+   # back 0 and the gate reads that as success. `grep -c` is deliberately NOT
+   # used under `set -e` either -- zero matches exits 1, which would abort the
+   # very case the gate is looking for.
+   expand() {
+     local out
+     out=$(cargo +nightly rustc -p rustynes-core --lib --profile check "$@" \
+             -- -Zunpretty=expanded 2>/dev/null) || return 1
+     [ -n "$out" ] || return 1          # an empty expansion is not a clean one
+     printf '%s\n' "$out" | grep -c inject_ || true
+   }
+   off=$(expand) || { echo "default expansion FAILED -- gate not run" >&2; exit 1; }
+   on=$(expand --features cosim-interrupt-inject) \
+       || { echo "feature expansion FAILED -- gate not run" >&2; exit 1; }
+   # off must be 0 AND on must be > 0. A zero `on` means the instrument is dead,
+   # not that the feature is clean -- which is exactly how the first run of this
+   # gate passed twice while measuring nothing at all.
+   [ "$off" -eq 0 ] && [ "$on" -gt 0 ] || { echo "gate FAILED: off=$off on=$on" >&2; exit 1; }
    ```
 
-   **Pass: all four `full_frame` workloads within ±1.0%.** If 2a is 0 and 2b
-   exceeds that band, the finding is the measurement environment, not the
-   feature — record it and re-run rather than accepting a number that cannot be
-   caused by code that does not exist.
+   Measured 2026-08-23: **off = 0, on = 17.**
+
+   **2b — a calibrated same-tree control, NOT a cross-tree comparison.**
+
+   The first draft of this gate said "against a `main` worktree baseline". That
+   instrument was tried and is **invalid**, and the measurement that retired it is
+   worth keeping: the default build measured **+3.3%** on `flowing_palette`
+   against a `main` worktree whose source, post-`cfg`-expansion, is *provably
+   identical* — every added line in `bus.rs` is behind the feature gate, and 2a
+   reports 0. Two builds of the same code in different absolute paths differ in
+   embedded strings and therefore in layout, and that is what was being measured.
+
+   Reproducible, too: two runs gave +2.9% and +3.3%, so it is not thermal drift.
+   A stable number from an instrument that cannot be measuring what it claims is
+   worse than a noisy one, because it invites exactly the argument this
+   constraint exists to prevent.
+
+   What is valid, **measured on this implementation**:
+
+   | measurement | result |
+   |---|---|
+   | 2a — expanded-source `inject_` count, default build (command above) | **off = 0, on = 17** — decisive |
+   | Same-tree noise floor (baseline vs itself) | **±1.2%** — the calibrated band |
+   | Same-tree A/B, feature ON vs OFF | +1.3% / −1.4% / +1.7% / −1.0% — **mixed signs, no consistent direction**; three of the four marginally EXCEED the ±1.2% floor |
+
+   The A/B row previously read "inside the floor". It is not: +1.3, −1.4 and +1.7
+   all lie outside ±1.2. The claim was wrong and is corrected rather than the
+   band being widened to fit it. What the row actually shows is a signal with no
+   consistent direction, which is what a null looks like on an instrument whose
+   floor is about this size -- and it is moot either way, because 2a is 0.
+
+   **Pass: 2a is 0.** The rest is calibration, not a gate — because when 2a is 0
+   the off build *is* the previous build, and there is no quantity left to
+   measure. The ON-vs-OFF row is recorded for the co-simulation crate's own
+   information, not as a merge condition.
 
    Both are *preconditions of merging*, not follow-ups.
 

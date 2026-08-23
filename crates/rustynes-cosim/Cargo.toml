@@ -8,7 +8,7 @@ description = "RustyNES as a co-simulation oracle for an external HDL device-und
 # The duplication is PINNED, not merely noticed: `cosim_manifest_audit.rs` in
 # `rustynes-test-harness` asserts these values still match the workspace's, so
 # drift fails a test instead of accumulating quietly.
-version = "2.5.0"
+version = "2.5.1"
 edition = "2024"
 rust-version = "1.96"
 license = "GPL-3.0-or-later"
@@ -51,6 +51,10 @@ rustynes-core = { path = "../rustynes-core", features = [
     # instruction at a divergence. Enabled only after checking empirically
     # that it changes NOTHING else: see the comparison in the commit body.
     "cpu-instr-cycle-trace",
+    # v2.5.1 (ADR 0038). Rung 2's sweep needs the same interrupt stimulus on both
+    # sides; nothing else in the workspace enables this, and `cosim_manifest_audit`
+    # asserts this crate stays excluded so cargo cannot unify it into the battery.
+    "cosim-interrupt-inject",
 ] }
 
 sha2 = { version = "0.11", default-features = false }

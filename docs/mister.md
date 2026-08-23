@@ -3,10 +3,45 @@
 **Spec, not history.** Update this file in the same change as any behaviour
 change to `crates/rustynes-cosim` or the golden formats it emits.
 
-**Decision record:** [ADR 0037](adr/0037-mister-fpga-core-independent-hdl-implementation.md).
-**Execution plan:** [`to-dos/plans/v2.5.0-fabric-plan.md`](../to-dos/plans/v2.5.0-fabric-plan.md).
-**Research archive:** [`to-dos/plans/research/v2.5.0-research-mister-fpga.md`](../to-dos/plans/research/v2.5.0-research-mister-fpga.md).
+**Decision records:** [ADR 0037](adr/0037-mister-fpga-core-independent-hdl-implementation.md)
+(the programme and the HDL firewall) ·
+[ADR 0038](adr/0038-cosim-interrupt-injection-api.md) (the interrupt-injection API).
+**Execution plan:** [`to-dos/plans/v2.7.0-mister-core-plan.md`](../to-dos/plans/v2.7.0-mister-core-plan.md)
+-- **supersedes** [`v2.5.0-fabric-plan.md`](../to-dos/plans/v2.5.0-fabric-plan.md),
+which is delivered.
+**Execution tracking:** [`to-dos/mister/`](../to-dos/mister/).
+**Research archive:** [`to-dos/plans/research/v2.5.0-research-mister-fpga.md`](../to-dos/plans/research/v2.5.0-research-mister-fpga.md),
+plus four dated files in `ref-docs/` (contribution requirements, the MiSTer
+framework, the hardware **source map**, and alternative FPGA targets).
 **Device-under-test:** <https://github.com/doublegate/RustyNES_MiSTer> (private).
+
+## Rung 2 is closed (v2.5.1)
+
+Its interrupt half was the last piece. `tb/interrupt_sweep.py` asserts /NMI,
+/IRQ, or **both together** before instruction K and holds it, for every K across
+a hazard program, driving identical stimulus into both sides: **60 injection
+points, 0 divergences** on all seven CPU fields.
+
+It found two defects, and the second is the one worth remembering. A hardware
+interrupt pushed a return address **one byte too high**, because `AM_BRK` fell
+through a generic operand-fetch increment shared with every other addressing
+mode. `BRK` and a hardware interrupt share that mode and *disagree* about it --
+`BRK` advances over its second byte, an interrupt does not -- so for `BRK` two
+writers assigned the same value and the fault was invisible. **`BRK` passing
+186/186 is what kept it hidden**: the only opcode exercising the mode was the one
+on which the bug did not show.
+
+The oracle side is [ADR 0038](adr/0038-cosim-interrupt-injection-api.md)'s
+`cosim-interrupt-inject` feature. Its precondition -- that a default build emits
+none of it -- is **measured, with a live control**: `inject_` appears 0 times in
+the expanded default core and **17** times with the feature on. The control is not
+ceremony. The ADR's original command piped a missing `cargo-expand` through
+`grep -c`, which reports the 0 it is looking for while measuring nothing.
+
+**Two v2.5.0 gates remain open and are reclassified, not carried.** nestest 0-diff
+and the 5 M-cycle window both stop at a `$2002` read where *both sides address it*
+and only the data differs -- the DUT has no PPU. They are rung-3 acceptance
+criteria.
 
 ---
 

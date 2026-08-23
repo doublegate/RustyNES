@@ -1251,6 +1251,39 @@ impl Nes {
         &mut self.bus
     }
 
+    /// Assert or release the external /NMI pin. **Co-simulation only.**
+    ///
+    /// v2.5.1, [ADR 0038]. Rung 2's interrupt sweep needs the same stimulus on
+    /// both sides, and this emulator had no way to receive it: its /NMI comes
+    /// from the PPU and its /IRQ from the APU frame counter or a mapper, none of
+    /// which exist at the CPU rung of the co-simulation.
+    ///
+    /// `true` asserts the pin. It is OR'd into the CPU's existing poll and
+    /// consumed on the edge exactly as a PPU-generated NMI is, so the CPU cannot
+    /// tell the two apart -- which is the property that makes the sweep test the
+    /// CPU rather than the injection. It does **not** bypass the poll, force a
+    /// vector, or short-circuit the sequence.
+    ///
+    /// Gated behind `cosim-interrupt-inject`, which nothing in the workspace
+    /// enables. A default build does not contain this method or its state.
+    ///
+    /// [ADR 0038]: https://github.com/doublegate/RustyNES/blob/main/docs/adr/0038-cosim-interrupt-injection-api.md
+    #[cfg(feature = "cosim-interrupt-inject")]
+    pub const fn inject_nmi(&mut self, asserted: bool) {
+        self.bus.set_inject_nmi(asserted);
+    }
+
+    /// Assert or release the external /IRQ pin. **Co-simulation only.**
+    ///
+    /// Level-sensitive, as the pin is: it is masked by `I` through the CPU's own
+    /// logic, and a pulse shorter than a poll is missed. Holding it asserted
+    /// across several cycles is how a real device drives it. See
+    /// [`Self::inject_nmi`] for the contract and the ADR.
+    #[cfg(feature = "cosim-interrupt-inject")]
+    pub const fn inject_irq(&mut self, asserted: bool) {
+        self.bus.set_inject_irq(asserted);
+    }
+
     /// Borrow the CPU (debugger / tests).
     #[must_use]
     pub const fn cpu(&self) -> &Cpu {
