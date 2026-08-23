@@ -516,12 +516,19 @@ repository; `RustyNES_MiSTer/docs/rung1-6502.md` is its detailed record.
 
 | release | scope | records |
 |---|---|---|
-| v2.4.4 "Ignition" | the eight-cycle reset and the single-byte implied group | 29 |
+| v2.4.4 "Ignition" | the eight-cycle reset and the single-byte implied group | 147 |
 | v2.4.5 "Compass" | immediate / zero page / absolute; loads, stores, all eight branches | 140 |
 | v2.4.6 "Abacus" | three indexed modes with the page-cross penalty; `ADC`/`SBC`; the compares | 286 |
 
 The two earlier ROMs are re-run on every change, which is how the v2.4.5 datapath
 rewrite was shown not to regress v2.4.4.
+
+The counts are the records the gate compares **today**, not the count each release
+reported at the time. `opgroup1` closed v2.4.4 over a 0..64 cycle window and was
+reported then as 29 records; v2.4.5 widened every ROM's window to catch the
+addressing modes, and the same ROM now yields 147. Both numbers are true of
+different windows, which is exactly why a table mixing them would not add up --
+the totals here are all measured under the current windows.
 
 ### What the rung has established beyond the opcodes
 

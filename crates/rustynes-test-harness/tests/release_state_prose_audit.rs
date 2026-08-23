@@ -283,6 +283,98 @@ fn the_current_label_scanner_ignores_prose_quoting_the_defect() {
     assert!(current_labels(r#"**v2.4.5 "Compass"** shipped"#).is_empty());
 }
 
+/// Phrases that name a release as the one currently tagged.
+///
+/// Narrower than it could be, on purpose. `current release` appears 14 times and
+/// `the latest release` 3, and most are generic prose with no version attached;
+/// a rule over those would report findings nobody can act on, which is how a
+/// check gets switched off. These two are the exact wording that drifted.
+const TAG_PHRASES: &[&str] = &["current tag", "latest tag"];
+
+/// `... v2.3.9 "Crucible" (the current tag)` -- the version this claims is tagged.
+///
+/// The version precedes the phrase, so this scans BACKWARD and takes the
+/// nearest one. A phrase with no version in reach is not a claim about any
+/// particular release (`README.md` says a header "can lag ... the latest tag"
+/// and names nothing), so it yields nothing rather than a finding.
+fn tag_claims(text: &str) -> Vec<(usize, String)> {
+    const LOOKBACK: usize = 220;
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        for phrase in TAG_PHRASES {
+            let mut from = 0usize;
+            while let Some(off) = line[from..].find(phrase) {
+                let at = from + off;
+                // Character count, not byte offset: these lines carry em-dashes
+                // and arrows, and a byte window would cut mid-character.
+                let before: String = line[..at].chars().rev().take(LOOKBACK).collect();
+                let before: String = before.chars().rev().collect();
+                if let Some(v) = versions_near(&before, 0, before.chars().count()).pop() {
+                    out.push((i + 1, v));
+                }
+                from = at + phrase.len();
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn no_superseded_release_is_called_the_current_tag() {
+    let root = repo_root();
+    let current = workspace_version();
+    let mut findings = Vec::new();
+    let mut total = 0usize;
+
+    for rel in &tracked_markdown() {
+        let Ok(text) = std::fs::read_to_string(root.join(rel)) else {
+            continue;
+        };
+        for (line, v) in tag_claims(&text) {
+            total += 1;
+            if v != current {
+                findings.push(format!(
+                    "  {rel}:{line}  calls v{v} the current tag, but the workspace is at {current}"
+                ));
+            }
+        }
+    }
+
+    println!("release-state: {total} current-tag claim(s) found");
+    assert!(
+        findings.is_empty(),
+        "stale current-tag claims:\n{}\n\n\
+         This is the FOURTH place this project's release-state drift has moved to \
+         after the previous one was gated: the anchors, then the `(current)` \
+         labels, then the unshipped-status labels, and now the narrative sentence \
+         that names a tag in different words. Extend the phrase list rather than \
+         correcting the sentence alone.",
+        findings.join("\n")
+    );
+}
+
+#[test]
+fn the_tag_claim_scanner_reads_backward_and_needs_a_version() {
+    assert_eq!(
+        tag_claims(r#"... -> **v2.4.6 "Abacus"**, the current tag)."#)[0].1,
+        "2.4.6"
+    );
+    // The NEAREST version wins, not the first on the line.
+    assert_eq!(
+        tag_claims("v2.1.0 -> v2.2.0 -> v2.3.9 (the current tag).")[0].1,
+        "2.3.9"
+    );
+    // No version in reach is not a claim about any release.
+    assert!(tag_claims("its version can lag behind the latest tag").is_empty());
+    // A version far outside the lookback is not the subject of the phrase.
+    assert!(tag_claims(&format!("v2.3.9{} the current tag", " ".repeat(400))).is_empty());
+    // Multibyte prose must not panic the backward scan.
+    assert_eq!(
+        tag_claims("— v2.4.6 → “Abacus” — the current tag")[0].1,
+        "2.4.6"
+    );
+}
+
 #[test]
 fn no_shipped_release_is_described_as_unshipped() {
     let root = repo_root();
