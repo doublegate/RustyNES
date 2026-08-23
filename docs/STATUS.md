@@ -5,6 +5,16 @@
 > prose could not: reset is EIGHT cycles, and `docs/cpu-6502.md` said both
 > seven and eight. The emulation core is untouched.
 >
+> **Rung 3 as of v2.5.4: three steps closed.** The register file (12,840
+> records), the scroll address logic (19,813 records) and the background fetch
+> pipeline (**6,247 fetches, 0 divergences, 8 of 8 mutations caught**). nestest's
+> verified window went **27,388 → 59,554 cycles** — it was bounded by a missing
+> peripheral, not a CPU defect. **What it does NOT verify is stated rather than
+> implied:** sprite fetches are excluded by construction (v2.5.7), the two dummy
+> nametable reads with them (v2.5.8), and the latch-to-shift cascade and fine-X
+> stay **diagnostic** — the pixel is the gate, and that is v2.5.5. `sys/` is
+> still empty; there is no `.rbf`. Detail: `docs/mister.md`.
+>
 > Built on **v2.4.3** (2026-08-22) — **"Touchstone"**, the two Fabric
 > risks settled before any RTL exists. **Risk 4, the Quartus subset, is FITTED**:
 > 17.0.2 on a 5CSEBA6U23I7 gave a placed-and-routed netlist with 0 synthesis
