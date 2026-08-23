@@ -30,7 +30,7 @@
 // difference this project insists on stating, and it is not worth blurring for
 // two lint findings that reach no shipped build.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rustynes_core::Nes;
 use rustynes_core::rustynes_ppu::state_trace::{PpuStateTrace, PpuTraceConfig};
@@ -38,9 +38,19 @@ use rustynes_core::rustynes_ppu::state_trace::{PpuStateTrace, PpuTraceConfig};
 #[test]
 #[ignore = "diagnostic, run explicitly"]
 fn scroll_window_v_progression() {
-    let rom_path = PathBuf::from(
-        std::env::var("SCROLL_ROM")
-            .unwrap_or_else(|_| "../../`RustyNES`_MiSTer/tb/roms/ppuscroll.nes".to_owned()),
+    // DERIVED, not a hand-counted `../`. The default is the sibling repository,
+    // and an integration test's working directory is the PACKAGE root, not the
+    // workspace root -- so a literal relative path needs three levels and reads
+    // like a typo at any of them. `CARGO_MANIFEST_DIR` removes the guess.
+    let rom_path = std::env::var("SCROLL_ROM").map_or_else(
+        |_| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .ancestors()
+                .nth(3)
+                .expect("workspace parent")
+                .join("RustyNES_MiSTer/tb/roms/ppuscroll.nes")
+        },
+        PathBuf::from,
     );
     let rom =
         std::fs::read(&rom_path).unwrap_or_else(|e| panic!("read {}: {e}", rom_path.display()));
