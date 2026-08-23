@@ -86,14 +86,44 @@ constraints. **Each one is a condition of acceptance, not a recommendation.**
    `cosim-interrupt-inject` feature. The default build, every shipped binary and
    every existing CI invocation compile as though it does not exist.
 
-2. **Zero hot-path cost when off.** No branch, no field, no state on
-   `Bus::tick_one_cpu_cycle` or any path a user's frame runs through. This is
-   asserted by measurement, not by inspection: the `full_frame` benches must be
-   within noise, and the check is a *precondition of merging*, not a follow-up.
+2. **Zero hot-path cost when off**, with an executable gate. No branch, no
+   field, no state on `Bus::tick_one_cpu_cycle` or any path a user's frame runs
+   through. *"Within noise" is not a pass/fail criterion*, so the gate is two
+   checks and the first is decisive:
 
-3. **Byte-identical default output, verified.** AccuracyCoin **141/141 (RAM
-   decoder)** and nestest 0-diff re-run with the feature absent *and* present-but-
-   unused. A feature that changes behaviour when merely compiled in is the
+   **2a — structural, and the one that actually settles it.** Every injected
+   field and every injected branch is behind `#[cfg(feature =
+   "cosim-interrupt-inject")]`, so a default build emits none of it. Verify by
+   grepping the expanded source:
+   `cargo expand -p rustynes-core --lib 2>/dev/null | grep -c inject_` **must be
+   0** for the default build. This is a proof, not a sample.
+
+   **2b — corroborating measurement.** Against a `main` baseline on the *same
+   runner in one session*, criterion's default 100 samples:
+
+   ```console
+   git worktree add /tmp/bench-main main
+   cargo bench -p rustynes-core --bench full_frame -- --save-baseline main   # in the worktree
+   cargo bench -p rustynes-core --bench full_frame -- --baseline main        # in the branch, feature OFF
+   ```
+
+   **Pass: all four `full_frame` workloads within ±1.0%.** If 2a is 0 and 2b
+   exceeds that band, the finding is the measurement environment, not the
+   feature — record it and re-run rather than accepting a number that cannot be
+   caused by code that does not exist.
+
+   Both are *preconditions of merging*, not follow-ups.
+
+3. **Byte-identical default output, verified.** **RustyNES's own** AccuracyCoin
+   **141/141 (RAM decoder)** and **RustyNES's own** full-run nestest 0-diff,
+   re-run with the feature absent *and* present-but-unused.
+
+   *These are the oracle's results, not the DUT's.* The co-simulated core's
+   nestest evidence is **bounded at cycle 27396** by its first `$2002` read, and
+   nothing in this ADR extends it — full-run DUT verification is deferred to
+   rung 3, when a PPU exists. Spelling that out because the two "nestest 0-diff"
+   claims in this programme mean different things and a reader can reasonably
+   take the wrong one. A feature that changes behaviour when merely compiled in is the
    `irq-timing-trace` defect — a different per-dot loop selected by a trace flag —
    and that one reached the accuracy battery itself. This is the specific failure
    this constraint exists to prevent, and it is why "present but unused" is a

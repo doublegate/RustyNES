@@ -606,6 +606,12 @@ causes, one harness fidelity (the testbench zeroes RAM the oracle seeds, so ever
 dummy read of unwritten memory diverges) and one a genuine per-cycle access
 difference where instruction boundaries still agree.
 
+> **Historical, as of v2.4.9.** The two paragraphs below were true when written
+> and are both superseded: the undocumented opcodes landed in v2.4.9, rung 2's
+> bus half is live, and nestest now runs to 27,388 cycles. Kept rather than
+> deleted because the reasoning still explains why the rung was scoped that way
+> -- but the authoritative status is the section at the top of this file.
+
 The undocumented opcodes are **not** delivered and also move to v2.4.9.
 
 Rung 1's own gate -- nestest 0-diff over >= 8000 instructions -- is not met yet:
