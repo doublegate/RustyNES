@@ -146,6 +146,16 @@ const CHIPS: &[Chip] = &[
                 "state_trace",
                 "diagnostic: `ppu-state-trace` ring buffer, output-only",
             ),
+            (
+                "fetch_trace",
+                "diagnostic: `ppu-fetch-trace` capture of the addresses the PPU drives on \
+                 its own bus. Output-only and never read back into emulation -- nothing \
+                 in the PPU consults it, so a restore that discards it cannot change a \
+                 single dot. Excluded rather than serialized for the same reason as \
+                 `state_trace` beside it, and NOT because it is inconvenient to carry: \
+                 this file's own docs record that the default answer is to SERIALIZE, \
+                 and it has been right three times out of three.",
+            ),
             // The scanline-classification cache. Deliberately recomputed rather
             // than carried: it is a pure function of `scanline` + `region`, both
             // serialized, and `restore` resets the key to the `Ppu::new` sentinel
