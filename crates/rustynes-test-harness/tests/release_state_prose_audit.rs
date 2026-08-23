@@ -307,8 +307,9 @@ fn tag_claims(text: &str) -> Vec<(usize, String)> {
                 let at = from + off;
                 // Character count, not byte offset: these lines carry em-dashes
                 // and arrows, and a byte window would cut mid-character.
-                let before: String = line[..at].chars().rev().take(LOOKBACK).collect();
-                let before: String = before.chars().rev().collect();
+                let chars: Vec<char> = line[..at].chars().collect();
+                let start = chars.len().saturating_sub(LOOKBACK);
+                let before: String = chars[start..].iter().collect();
                 if let Some(v) = versions_near(&before, 0, before.chars().count()).pop() {
                     out.push((i + 1, v));
                 }

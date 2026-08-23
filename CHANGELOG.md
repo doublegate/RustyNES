@@ -14,6 +14,66 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.4.7] - 2026-08-23 - "Keystone" (the stack closes, and a dead line proves itself dead)
+
+### Added
+
+- **The 6502's stack group, `JSR`/`RTS`/`RTI`, and `JMP` in both forms**, in
+  SystemVerilog in the sibling repository (`RustyNES_MiSTer@3560c98`). Four ROMs,
+  **752 records**, matching the oracle on all seven CPU fields, with seven
+  mutations demonstrated to break the gate. `opgroup4` contributes 179 records and
+  every construct in it is new to this release; the three earlier ROMs are re-run
+  unchanged at 147 / 140 / 286.
+- **`JMP ($xxFF)` reproduces the hardware page-boundary bug.** The high byte comes
+  from `$C100`, not `$C200`. The ROM places a vector at `$C1FF` and a *distinct*
+  sentinel at `$C200`, so an implementation that "corrects" the bug with a 16-bit
+  increment lands somewhere visibly wrong rather than somewhere plausible.
+- **A third rule in `release_state_prose_audit`** — a superseded release called
+  "the current tag" in narrative prose. This is the fourth location the project's
+  release-state drift has occupied, each move following the previous one being
+  gated.
+
+### Fixed
+
+- **`JMP` indirect read the wrong pointer**, found by the oracle before any
+  mutation was tried: `JMP ($C090)` reached `$77A0`. Cycle 3 latched the fetched
+  vector low byte into `adl`, destroying the pointer low byte, so cycle 4 computed
+  `{adh, vector_low + 1}`. A third latch fixes it. The divergence named the
+  instruction and the wrong value said which byte had been read — the rung working
+  as designed.
+- **`cpu-gate` hardcoded `--cycles 301` for every ROM**, so the documented accuracy
+  command compared only the first 136 of `opgroup3`'s 286 records. It failed closed,
+  so no false pass was possible, but the two most recent ROMs could not be gated by
+  the published invocation. Each window now lives in one variable both targets read.
+- **The rung-1 record table did not add up** — 573 claimed above rows summing to
+  455, because `opgroup1` was carrying the count from the 0..64 window v2.4.4 closed
+  over beside two counts measured under the current windows. All four are now
+  **measured**, not carried forward.
+- **A superseded release was called "the current tag"** in `to-dos/ROADMAP.md`, six
+  releases stale.
+
+### Changed
+
+- **`op_e` widened to six bits.** Verilator rejected the 33rd value in a five-bit
+  enum. The rejection is the good outcome: a silently-wrapped enum decodes one
+  opcode as another with no diagnostic anywhere.
+- **A `JSR` arm was dead code, and a mutation is what proved it.** The mutation
+  targeted `store_val`, which the `AM_JSR` bus block never reads — it drives `dout`
+  directly. A mutation that cannot fail is evidence about the code it mutated, not
+  about the test. Removed; re-run against the real site, it diverges.
+
+### Notes
+
+- **The oracle/DUT window pairing is off by one and now documented.** The oracle's
+  `--boot-trace 0..N` yields N records where the harness's `--cycles N` yields N−1.
+  Get it wrong and the diff reports a one-record length mismatch indistinguishable,
+  at a glance, from the CPU halting a cycle early.
+- Written from public documentation only — the NESdev wiki's 6502 cycle-time,
+  instruction and addressing-mode pages, and this project's own `docs/cpu-6502.md`.
+  No reference NES core was opened; none is present in the tree.
+- No crate under `rustynes-{cpu,ppu,apu,mappers,core}` changes, so **AccuracyCoin
+  141/141 (100.00%, RAM decoder) and nestest 0-diff hold by construction.**
+
 ## [2.4.6] - 2026-08-22 - "Abacus" (the core learns arithmetic, and what overflow actually means)
 
 ### Added

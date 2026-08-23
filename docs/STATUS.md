@@ -1,6 +1,6 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.4.6** (2026-08-22) — **"Abacus"**, the core learns arithmetic. Built on **v2.4.5 "Compass"** (2026-08-22) — the core reaches memory, and chooses. Built on **v2.4.4 "Ignition"** (2026-08-22) — the first real RTL -- the 6502's eight-cycle reset and the implied opcode group, matching the oracle on all seven CPU fields (29
+> **Current release: v2.4.7** (2026-08-23) — **"Keystone"**, the stack closes, and a dead line proves itself dead Built on **v2.4.6 "Abacus"** (2026-08-22) — the core learns arithmetic. Built on **v2.4.5 "Compass"** (2026-08-22) — the core reaches memory, and chooses. Built on **v2.4.4 "Ignition"** (2026-08-22) — the first real RTL -- the 6502's eight-cycle reset and the implied opcode group, matching the oracle on all seven CPU fields (29
 > records, `RustyNES_MiSTer@7f092bd`). The oracle settled a question our own
 > prose could not: reset is EIGHT cycles, and `docs/cpu-6502.md` said both
 > seven and eight. The emulation core is untouched.
