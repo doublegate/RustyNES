@@ -30,7 +30,7 @@ use rustynes_cosim::Oracle;
 /// on one machine, which `AGENTS.md` already records as a repeat offender.
 ///
 /// nestest is also the better exerciser: it drives the fast path 124,165 times
-/// over four frames, against zero for several AccuracyCoin sub-tests that never
+/// over six frames, against zero for several `AccuracyCoin` sub-tests that never
 /// enable rendering at all.
 ///
 /// Resolved from `CARGO_MANIFEST_DIR` rather than the working directory: a
