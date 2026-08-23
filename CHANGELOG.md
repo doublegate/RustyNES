@@ -14,6 +14,55 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-08-23 - "Rungwork" (the 6502 rung, and the two gates it cannot reach)
+
+### Added
+
+- **Interrupts in the DUT** (`RustyNES_MiSTer@27171cd`): `nmi_n` and `irq_n`, the
+  /NMI **edge latch** and level-sampled /IRQ, `BRK`, the three vectors, `RTI`, the
+  **NMI/`BRK` hijack** decided at the push rather than at entry, and **delayed-`I`**
+  falling out of where the poll sits rather than needing a special case.
+- **The indirect addressing modes** — `(zp,X)` and `(zp),Y` across seven operation
+  groups. The last documented addressing gap.
+- **`pc` compared, and agreeing on 100% of cycles** — 3551/3551. The wrapper now
+  derives an instruction-scoped PC matching the oracle's definition.
+- **nestest as a bounded gate** — **27,388 cycles**, 8571 instructions, no
+  unimplemented opcode, matching on `pc`, `bus_addr`, `bus_data`, `bus_access`.
+- **[ADR 0038](docs/adr/0038-cosim-interrupt-injection-api.md)** — a test-only,
+  default-off interrupt-injection API, with six constraints and a written
+  fallback if two of them fail.
+
+### Fixed
+
+- **`RTS` read the incremented address** on its final cycle; hardware reads the
+  pulled address and increments at that cycle's end.
+- **`AM_IZX`'s `default` arm caught cycle 1**, driving an effective address before
+  the pointer byte had been read.
+- **`AM_IZY` tested the wrong page-cross signal** (`idx_page_cross` rather than
+  `izy_cross`), taking five cycles where hardware takes six.
+- **`AM_IZY` wrote at the unfixed address** when the index did not carry.
+- **`build()` stamped over every ROM's interrupt vectors**, so `opgroup8`'s
+  handlers were unreachable — and *both sides would have agreed on the same wrong
+  ROM*.
+- **`cpu-gate` and `cpu-bus-gate` ran the DUT with different memory.** `RAM_INIT`
+  is now required by both.
+
+### Notes
+
+- **Two of this release's own stated gates are structurally blocked, and neither
+  is a defect.** nestest 0-diff and the 5 M-cycle bus window both need a PPU —
+  nestest's first `$2002` read is where it stops, with *both sides addressing
+  `$2002`* and only the data differing. That is rung 3 by design.
+- **The interrupt-injection sweep has no oracle.** `rustynes-core` exposes no
+  injection API; its /IRQ comes from the APU or a mapper and its /NMI from the
+  PPU. So the pins, hijack and delayed-`I` are **implemented and not
+  oracle-verified**; `BRK` *is* verified, since a software interrupt needs no pin.
+  ADR 0038 records the decision and its conditions.
+- **No upstream libretro sync.** The cadence rule is amended: the next sync waits
+  for the MiSTer core to be **complete**, not for the next `vX.Y.0`.
+- No crate under `rustynes-{cpu,ppu,apu,mappers,core}` changes, so **AccuracyCoin
+  141/141 (100.00%, RAM decoder) and nestest 0-diff hold by construction.**
+
 ## [2.4.9] - 2026-08-23 - "Plumbline II" (the bus half of rung 2, and what it found the day it existed)
 
 ### Added

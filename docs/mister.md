@@ -509,9 +509,19 @@ question.
 
 ## Rung 1 — the 6502, and where it has actually got to
 
-Seven opcode groups have closed. **1663 records across seven ROMs**, matching
-the oracle on all seven CPU fields -- and, from v2.4.9, on the **per-cycle bus**
-for the three most recent. The RTL lives in the sibling
+Nine opcode groups have closed. **2115 records across nine ROMs** on rung 1,
+**4537 cycles** on the per-cycle bus gate, and **27,388 cycles of nestest** --
+all matching the oracle, and `pc` agreeing on **3551 of 3551** cycles.
+
+**Two of v2.5.0's stated gates do not close, and neither is a defect.** nestest
+0-diff over the whole run and per-cycle equality over a 5 M-cycle window both
+need a PPU: nestest reads `$2002` at cycle 27396, *both sides address it*, and
+only the data differs -- a missing peripheral, rung 3 by design. The
+interrupt-injection sweep has no oracle-side stimulus at all, so the pins, the
+hijack and delayed-`I` are implemented and **not oracle-verified**; `BRK` is,
+because a software interrupt needs no pin. `docs/adr/0038-cosim-interrupt-injection-api.md`
+records the decision that would unblock the sweep, and the two preconditions
+that void it. The RTL lives in the sibling
 repository; `RustyNES_MiSTer/docs/rung1-6502.md` is its detailed record.
 
 | release | scope | records |
