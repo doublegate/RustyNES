@@ -8,7 +8,7 @@ description = "RustyNES as a co-simulation oracle for an external HDL device-und
 # The duplication is PINNED, not merely noticed: `cosim_manifest_audit.rs` in
 # `rustynes-test-harness` asserts these values still match the workspace's, so
 # drift fails a test instead of accumulating quietly.
-version = "2.4.7"
+version = "2.4.8"
 edition = "2024"
 rust-version = "1.96"
 license = "GPL-3.0-or-later"
