@@ -48,8 +48,11 @@ cycle-accurate core later replaced.
 
 - The overflow search now **ends** where the hardware ends it — the in-range hit
   plus the three entries step 3a owes — instead of walking to `n = 63`.
-- `eval_ovf_cnt` joins the per-line arm at the end of the secondary-OAM clear.
-  Every sibling counter was already there.
+- `eval_ovf_cnt` joins the per-line arm at the end of the secondary-OAM clear —
+  **defensive, not a fix.** It is unreachable: measured zero at 528 window ends
+  across three ROMs, byte-identical with it removed, and bounded structurally at
+  5 decide-steps of margin. Kept because the oracle clears its counterpart at
+  cycle 65 and the margin is thin.
 
 ### Fixed
 
@@ -81,12 +84,19 @@ cycle-accurate core later replaced.
 - **A change rejected against a broken baseline is not a rejected change.** The
   overflow halt was recorded as a regression at 39 → 68. Re-measured once phase 4
   was itself correct, it is right, and worth 28 of the 39.
-- **The eighth mutation is NOT CAUGHT, and it indicts the stimulus.** Removing
-  the `eval_ovf_cnt` reset changes nothing on this ROM: a stale count needs an
-  overflow hit within two write dots of dot 251, and the search always completes
-  long before then. The reset is kept because the oracle resets its counterpart
-  at cycle 65 — the fix is right and the gate cannot currently prove it, and both
-  halves are stated rather than the table reporting a clean sweep.
+- **Nine of nine behavioural mutants CAUGHT, and two proved INERT** — by byte
+  comparison against the baseline, not by reading the code. A first pass reported
+  one of them as an uncaught defect the stimulus could not reach; that was
+  **wrong and is retracted**. The `eval_ovf_cnt` reset is *unreachable*, not
+  under-exercised: a probe fires zero times at 528 window ends while its inverted
+  predicate fires 528, removing the reset yields a byte-identical trace, and the
+  bound is structural (88 decide steps to the latest possible hit, consumed by
+  91, in a 96-step window). The second inert mutant — the hit not setting
+  `sprite_overflow` — is *out of scope*: that flag reaches the CPU only through
+  `$2002`, and the ROM contains zero `$2002` reads against sixteen `$2004` reads
+  per iteration. **NOT CAUGHT has meant four different things in this project,
+  and only a byte comparison separates "the mutant did nothing" from "the gate is
+  blind."**
 
 ## [2.5.5] - 2026-08-23 - "Raster" (the first full frame, and three blind spots in the stimulus that fed it)
 

@@ -44,10 +44,16 @@ phase 4 copies `OAM[n][0]`, but pinning the byte index to 0 is right on scanline
 so the low half keeps whatever ended the walk. Three of the four paths that
 finish evaluation clear it; the sprite-eval bug path does not.
 
-**The eighth mutation is NOT CAUGHT and it indicts the stimulus.** A stale
-`eval_ovf_cnt` needs an overflow hit within two write dots of dot 251, which this
-ROM never produces. The reset is kept because the oracle resets its counterpart
-at cycle 65 — the fix is right and the gate cannot currently prove it.
+**Two mutants are INERT rather than uncaught, and a first pass got that wrong.**
+The `eval_ovf_cnt` reset was reported as fixing a latent defect the stimulus
+could not reach; the stale count in fact cannot occur — a probe fires zero times
+at 528 window ends while its inverted predicate fires 528, the trace is
+byte-identical without the reset, and the bound is structural (88 decide steps to
+the latest hit, consumed by 91, in a 96-step window). It is kept as defensive
+code, not as a fix. The second inert mutant is out of *scope* rather than
+unreachable: `sprite_overflow` reaches the CPU only via `$2002`, which this ROM
+never reads. Both were classified by byte comparison, because NOT CAUGHT has
+meant four different things here.
 
 Detail: `docs/rung3-ppu.md` in the sibling repository.
 

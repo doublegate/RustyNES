@@ -10,16 +10,17 @@
 > pipeline (**6,247 fetches, 0 divergences, 8 of 8 mutations caught**),
 > background rendering (**all 61,440 pixels, 15 of 15 mutations caught** — the
 > first full frame) and **sprite evaluation** (**all 59,993 overlapping cycles
-> match, 7 of 8 mutations caught**), which the programme plan named the hardest
-> single item in it. nestest's
+> match, 9 of 9 behavioural mutants caught**), which the programme plan named the
+> hardest single item in it. nestest's
 > verified window went **27,388 → 59,554 cycles** — it was bounded by a missing
 > peripheral, not a CPU defect. **What it does NOT verify is stated rather than
 > implied:** sprite fetches are excluded by construction (v2.5.7), the two dummy
 > nametable reads with them (v2.5.8), and the latch-to-shift cascade and fine-X
-> stay **diagnostic** — the pixel is the gate, and that is v2.5.5. The eighth
-> sprite-evaluation mutation is **NOT CAUGHT**, and it indicts the stimulus
-> rather than the gate: a stale `eval_ovf_cnt` needs an overflow hit within two
-> write dots of dot 251, which this ROM never produces. `sys/` is
+> stay **diagnostic** — the pixel is the gate, and that is v2.5.5. Two
+> sprite-evaluation mutants are **INERT** rather than uncaught, each proved
+> byte-identical: the `eval_ovf_cnt` reset is unreachable code, and
+> `sprite_overflow` reaches the CPU only via `$2002`, which this gate does not
+> read (v2.5.7). `sys/` is
 > still empty; there is no `.rbf`. Detail: `docs/mister.md`.
 >
 > Built on **v2.4.3** (2026-08-22) — **"Touchstone"**, the two Fabric
