@@ -95,8 +95,27 @@ constraints. **Each one is a condition of acceptance, not a recommendation.**
    field and every injected branch is behind `#[cfg(feature =
    "cosim-interrupt-inject")]`, so a default build emits none of it. Verify by
    grepping the expanded source:
-   `cargo expand -p rustynes-core --lib 2>/dev/null | grep -c inject_` **must be
-   0** for the default build. This is a proof, not a sample.
+   **must be 0** for the default build. This is a proof, not a sample.
+
+   **Do not run it as `cargo expand ... 2>/dev/null | grep -c inject_`.** That
+   was this ADR's first wording and it is a trap: `cargo-expand` is a separate
+   binary and is not installed on this workstation, so the redirect swallows
+   "no such command", `grep -c` counts an empty stream, and the gate reports the
+   **0 it is looking for** while measuring nothing. Use the expander that ships
+   with the toolchain, and always read the control first:
+
+   ```bash
+   off=$(cargo +nightly rustc -p rustynes-core --lib --profile check \
+           -- -Zunpretty=expanded 2>/dev/null | grep -c inject_)
+   on=$(cargo +nightly rustc -p rustynes-core --lib --profile check \
+           --features cosim-interrupt-inject \
+           -- -Zunpretty=expanded 2>/dev/null | grep -c inject_)
+   # off must be 0 AND on must be > 0. A zero `on` means the instrument is dead,
+   # not that the feature is clean -- which is exactly how the first run of this
+   # gate passed twice while measuring nothing at all.
+   ```
+
+   Measured 2026-08-23: **off = 0, on = 17.**
 
    **2b — a calibrated same-tree control, NOT a cross-tree comparison.**
 
