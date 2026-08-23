@@ -14,6 +14,56 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.5.3] - 2026-08-23 - "Hysteresis" (toggling rendering takes effect three dots after the write)
+
+### Added
+
+- **The scroll address logic** (`RustyNES_MiSTer@dbae44d`): `inc_x`, `inc_y`,
+  `copy_x` and `copy_y` at their documented dots, and the `$2007`-during-rendering
+  dual increment. The 29-versus-31 coarse-Y asymmetry is transcribed from the
+  wiki's pseudocode, not remembered.
+- **`tb/phase_delta.py`**, reporting the PPU phase relationship at *every*
+  instruction boundary and printing each transition — one line means a constant
+  offset, many mean drift. A spot reading cannot tell those apart, and this
+  question was answered three times from spot readings with a different answer
+  each time.
+- **`scroll_window_probe.rs`**, the `ppu-state-trace` diagnostic that located the
+  fault. Diagnostic only, `#[ignore]`d and feature-gated.
+
+### Fixed
+
+- **Toggling rendering now takes effect three dots after the write.** This core
+  applied a `$2001` write immediately; the rendering window was a full CPU cycle
+  too wide **at both ends**, costing exactly one coarse-X increment and invisible
+  to everything except a read-back of `v`. Documented behaviour —
+  *"approximately 3-4 dots after the write. This delay is required by Battletoads
+  to avoid a crash."*
+- **The PPU never reset in the testbench.** Verilator initialises `rst_n` to 0, so
+  setting it to 0 produces no negedge, and `ppu_clk` was idle during reset
+  assertion — the reset block never executed. The tell was that changing the
+  power-on position did not move the measurement **at all**.
+- **The boot record was sampled two dots early**, before the cycle's dots rather
+  than after two of them.
+- **`mkrom.py` now refuses an `ORG` onto a byte the program has already written.**
+  The next instruction overwrites it, and if that byte is a branch *offset* the
+  result assembles, runs, and tests nothing. The guard found **two more
+  instances** immediately, one in the already-shipped v2.5.2 ROM.
+
+### Changed
+
+- The `ppuscroll` fill is **1 KiB with a page-distinguishing value**. 64 bytes
+  was too small for `v` after rendering, and `value = offset` cannot see a
+  nametable toggle, which moves `v` by ±1024 without changing the low byte.
+
+### Verified
+
+`rustynes-core` is **untouched**, so AccuracyCoin is **inherited, not re-run**.
+DUT side: `ppuscroll` **19,813 records / 0 divergences**; rung 2's bus comparison
+on the same ROM **49,993 of 49,993 cycles matching**; phase identical; `ppuregs`
+12,840; nine opcode-group ROMs 2115; interrupt sweep 24/24. Mutations: no-delay
+CAUGHT, 2 dots CAUGHT, **4 dots NOT CAUGHT** — the wiki says "3-4", so this ROM
+pins the delay only to the documentation's own tolerance.
+
 ## [2.5.2] - 2026-08-23 - "Dormant" (the register file, and a gate that passed while testing nothing)
 
 ### Added
