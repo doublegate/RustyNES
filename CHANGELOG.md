@@ -49,10 +49,14 @@ cycle-accurate core later replaced.
 - The overflow search now **ends** where the hardware ends it — the in-range hit
   plus the three entries step 3a owes — instead of walking to `n = 63`.
 - `eval_ovf_cnt` joins the per-line arm at the end of the secondary-OAM clear —
-  **defensive, not a fix.** It is unreachable: measured zero at 528 window ends
-  across three ROMs, byte-identical with it removed, and bounded structurally at
-  5 decide-steps of margin. Kept because the oracle clears its counterpart at
-  cycle 65 and the margin is thin.
+  **defensive, not a fix.** It is unreachable: zero at every window end,
+  byte-identical with it removed, and bounded structurally at 5 decide-steps of
+  margin. Kept because the oracle clears its counterpart at cycle 65 and the
+  margin is thin — and **the bound is now a standing check** rather than a
+  measurement in a document: the sibling's testbench verifies it on every gate
+  run, exits non-zero if it ever breaks, and reports its denominator
+  (`0 violations in 528 window ends`) so a zero cannot read as a silence.
+  Demonstrated firing on a mutant that removes the count's decrement.
 
 ### Fixed
 
