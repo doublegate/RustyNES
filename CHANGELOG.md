@@ -26,6 +26,58 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.5.5] - 2026-08-23 - "Raster" (the first full frame, and three blind spots in the stimulus that fed it)
+
+### Added
+
+- **Rung 3's background rendering, gate green.** `rtl/ppu2c02.sv` in the sibling
+  repository gains the pattern and attribute shift registers, the fine-X
+  multiplexer, the palette lookup and a per-pixel index — and produces the first
+  full frame this core has drawn. **All 61,440 pixels match** the oracle's index
+  framebuffer, with **fifteen mutations all CAUGHT** and the baseline verified
+  passing first.
+- `make -C tb ppu-render-gate` and `tb/fb_diff.py`, which report the **shape** of
+  any difference — population count, first pixel in raster order, inclusive
+  bounding box, worst rows — because a bare count is unactionable.
+- `docs/golden-fetching.md` in the sibling repository, specifying the standing
+  "until golden fetching from a pinned oracle commit exists" note that had sat
+  across six releases without anyone recording what it required.
+
+### Changed
+
+- **The oracle needed no change at all.** `index_fb.bin` has been exported since
+  v2.4.1, so this is the third rung step in a row costing the oracle side
+  nothing. That is what choosing the compare surface *before* the rung buys.
+- The render gate **reads** its cycle window from the oracle's manifest beside
+  the golden rather than keeping a copy; there is no `CYCLES_ppurender`.
+
+### Fixed
+
+- **A one-pixel horizontal shift, and the incomplete fix is what identified it.**
+  The shift registers and the dot counter advance on the same edge, so the
+  documented "shift on dots 2–257" applied each shift one dot after the pixel
+  that should show it. Moving only the shift window took the first wrong pixel
+  from x=9 to x=17 — one tile further in — which is what proved the reload was
+  out of phase too. The resolution **removes** a register rather than adding a
+  knob: the reload is the pattern-high fetch's own dot, so it takes `chr_din`
+  directly and `bg_hi_latch` no longer exists.
+
+### Verified
+
+- **AccuracyCoin 141/141 (100.00%, RAM decoder)** and **nestest 0-diff**.
+- **Five NOT CAUGHT mutations indicted the STIMULUS, not the gate** — and one of
+  them three times over, for three different reasons: horizontal arrangement
+  aliasing the two nametables, a zero coarse-X scroll whose only wrap `copy_x`
+  undid before it reached a pixel, and a fill whose 256-period ramp made both
+  nametables byte-identical. Each fix looked like it had closed the hole; only
+  re-running the mutation showed it had not. **Re-run mutations after a stimulus
+  change, not only after a code change.**
+- `fb_diff.py`'s anti-trivial guard is **demonstrated firing** in all four paths.
+  Two identical backdrop frames agree perfectly, which is a sharper trap than an
+  empty window — an empty window at least looks empty. The instructive case: a
+  frame with 9 distinct values and 100 non-modal pixels clears the distinct-count
+  threshold and is refused only by the second, so the two are not redundant.
+
 ## [2.5.4] - 2026-08-23 - "Escapement" (the background fetch pipeline, and an access two dots early that five gates could not see)
 
 ### Added

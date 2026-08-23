@@ -15,6 +15,43 @@ plus four dated files in `ref-docs/` (contribution requirements, the MiSTer
 framework, the hardware **source map**, and alternative FPGA targets).
 **Device-under-test:** <https://github.com/doublegate/RustyNES_MiSTer> (private).
 
+## Rung 3 continues: background rendering (v2.5.5)
+
+The shift registers, the fine-X multiplexer, the palette lookup and a per-pixel
+index — the first full frame this core has drawn.
+
+**Gate:** `ppurender` **all 61,440 pixels match**, **fifteen mutations all
+CAUGHT**, baseline verified passing first. The surface is the **index**
+framebuffer, pre-palette, so a palette-table difference cannot masquerade as a
+rendering one — different bugs, different rungs.
+
+**The oracle needed no change at all.** `index_fb.bin` has been exported since
+v2.4.1: the third rung step in a row costing the oracle side nothing, which is
+what choosing the compare surface *before* the rung buys.
+
+**The fault was one pixel, and the incomplete fix identified the mechanism.** The
+first run differed on 46,730 of 61,440 pixels, which reads as a broken renderer
+and was not: 13 distinct values on both sides, near-identical histograms, and
+`act[x] == ref[x-1]`. The shift registers and the dot counter advance on the same
+edge, so the documented "shift on dots 2-257" applied each shift one dot after
+the pixel that should show it. Moving only the shift window took the first wrong
+pixel from x=9 to x=17 — one tile further in — which is what proved the reload
+was out of phase too. The resolution **removes** a register: the reload is the
+pattern-high fetch's own dot, so it takes `chr_din` directly.
+
+**Five NOT CAUGHT mutations indicted the stimulus, not the gate** — and one of
+them three times, for three different reasons: horizontal arrangement aliasing
+the nametables, a zero coarse-X scroll whose only wrap `copy_x` undid before it
+reached a pixel, and a fill whose 256-period ramp made both nametables
+byte-identical. Each fix looked like it had closed the hole. **Re-run mutations
+after a stimulus change, not only after a code change.**
+
+`fb_diff.py` refuses a reference frame too uniform to test anything and is
+demonstrated firing in all four paths; the window is **read** from the oracle's
+manifest rather than transcribed. `docs/golden-fetching.md` in the sibling
+repository now specifies the standing "until golden fetching exists" note that
+had sat across six releases.
+
 ## Rung 3 continues: the background fetch pipeline (v2.5.4)
 
 NT / AT / pattern-low / pattern-high fetches on the documented 8-dot cadence,

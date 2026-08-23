@@ -13,7 +13,7 @@ what is next, and what each release owes.
 | Component | State |
 |---|---|
 | 6502 | **Done.** `rtl/cpu6502.sv`, nine opcode-group ROMs, 2115 records on rung 1; the bus gate at 49,993 cycles on `ppuscroll`; **59,554 cycles of nestest** (was 27,388 — the old bound was a missing `$2002` answer, not a CPU wall, and it moved the moment the PPU register file existed); the interrupt sweep at 60 injection points |
-| PPU | **Three of seven steps.** `rtl/ppu2c02.sv`: the register file (v2.5.2, 12,840 records), the scroll address logic (v2.5.3, 19,813 records) and the background fetch pipeline (v2.5.4, 6,247 fetches). **No sprites, no pixel output, no VBlank/NMI timing.** Next is v2.5.5, background rendering into `index_framebuffer` |
+| PPU | **Four of seven steps.** `rtl/ppu2c02.sv`: the register file (v2.5.2, 12,840 records), the scroll address logic (v2.5.3, 19,813 records) the background fetch pipeline (v2.5.4, 6,247 fetches) and background rendering (v2.5.5, **all 61,440 pixels**, the first full frame). **No sprites, no VBlank/NMI timing.** v2.5.6, sprite evaluation, is in progress |
 | APU | **Not started** |
 | Cartridge / mappers | **Not started** |
 | SDRAM controller | **Not started** |
