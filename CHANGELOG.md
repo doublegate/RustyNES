@@ -26,6 +26,68 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.5.6] - 2026-08-23 - "Vestige" (sprite evaluation closes, and a byte index that outlives the walk that set it)
+
+### Added
+
+- **Rung 3's sprite evaluation, gate green.** `rtl/ppu2c02.sv` in the sibling
+  repository gains the evaluation FSM, secondary OAM, the eight-sprite limit, the
+  documented overflow-search bug and the wiki's step 4 — compared as what a CPU
+  read of `$2004` returns while rendering. **All 59,993 overlapping cycles
+  match**, with **seven of eight mutations CAUGHT** and the baseline verified
+  passing first. This was the step the plan named as the hardest single item in
+  the programme.
+- **`oam_bus_copybuffer` in `PpuStateRecord`**, at schema **2** (`RECORD_SIZE`
+  113 → 114). Filled from `Ppu::oam_data_bus_read()` — the same call a CPU read
+  of `$2004` makes. Diagnostic, never a gate, and outside the save state.
+- `EV_SL` and `EV_ALL` on the sprite probe, and `EV_SL` / `EV_CYC` dumps in the
+  sibling's testbench. `EV_CYC` is what turns a divergence reported *by cycle*
+  into a scanline and a dot.
+
+### Changed
+
+- The overflow search now **ends** where the hardware ends it — the in-range hit
+  plus the three entries step 3a owes — instead of walking to `n = 63`.
+- `eval_ovf_cnt` joins the per-line arm at the end of the secondary-OAM clear.
+  Every sibling counter was already there.
+
+### Fixed
+
+- **Phase 4 keeps the byte index it inherited.** The wiki says `OAM[n][0]`, and
+  pinning the index to 0 is right on one scanline and wrong on the next: phase 4
+  advances only the high half of the address, so the low half keeps whatever
+  ended the walk. Three of the four paths that finish evaluation clear it; the
+  sprite-eval bug path does not. Line 55 ends via the overflow count and walks at
+  `m = 0`; line 58 ends via the bug wrap and walks at `m = 3`.
+- `eval_hold` — a latched byte two earlier findings had been built on — is
+  **removed**, along with its reset and all four assignments. It became dead the
+  moment the write dot presented `sec_oam[sec_idx]`, and Verilator's
+  `UNUSEDSIGNAL` said so before the gate ran.
+
+### Verified
+
+- **AccuracyCoin 141/141 (100.00%, RAM decoder)** and **nestest 0-diff** —
+  `rustynes-ppu` changed, so both were re-run rather than asserted. Workspace
+  tests: 0 failures. `rustynes-core` still builds for `thumbv7em-none-eabihf`.
+- **Regression across every earlier rung:** `ppu-render-gate` all 61,440 pixels
+  match, `ppu-fetch-gate` all 6,247 compared fetches match, `nestest-gate` all
+  59,554 overlapping cycles match, `check_rtl_subset.py` clean.
+- **A field name that matches is not a behaviour that matches.** Two changes had
+  been made faithful to the trace's `sprite_eval_*` fields and both made things
+  worse (41 → 112, 39 → 68). Those fields belong to the oracle's real FSM;
+  `$2004` comes from `tick_oam_bus`, a second, side-effect-free model. **The gate
+  observed the model the trace did not expose**, which is why the schema-2 field
+  above had to exist before any further RTL edit was worth making.
+- **A change rejected against a broken baseline is not a rejected change.** The
+  overflow halt was recorded as a regression at 39 → 68. Re-measured once phase 4
+  was itself correct, it is right, and worth 28 of the 39.
+- **The eighth mutation is NOT CAUGHT, and it indicts the stimulus.** Removing
+  the `eval_ovf_cnt` reset changes nothing on this ROM: a stale count needs an
+  overflow hit within two write dots of dot 251, and the search always completes
+  long before then. The reset is kept because the oracle resets its counterpart
+  at cycle 65 — the fix is right and the gate cannot currently prove it, and both
+  halves are stated rather than the table reporting a clean sweep.
+
 ## [2.5.5] - 2026-08-23 - "Raster" (the first full frame, and three blind spots in the stimulus that fed it)
 
 ### Added

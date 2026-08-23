@@ -15,6 +15,42 @@ plus four dated files in `ref-docs/` (contribution requirements, the MiSTer
 framework, the hardware **source map**, and alternative FPGA targets).
 **Device-under-test:** <https://github.com/doublegate/RustyNES_MiSTer> (private).
 
+## Rung 3 continues: sprite evaluation (v2.5.6)
+
+The evaluation FSM, secondary OAM, the eight-sprite limit, the documented
+overflow-search bug and the wiki's step 4. **All 59,993 overlapping cycles
+match**, with **seven of eight mutations CAUGHT** and the baseline verified
+passing first. The programme plan named this the hardest single item in it.
+
+**The gate observed a model the diagnostic did not expose**, and that is the
+finding worth carrying out of this step. `ppu-state-trace` carries
+`sprite_eval_n`, `sprite_eval_m` and `sprite_eval_found`, which belong to the
+oracle's *real* evaluation FSM. What a CPU read of `$2004` returns does not come
+from that machine: it comes from `tick_oam_bus`, a second, side-effect-free model
+kept alongside it. So two edits made faithful to the traced fields each moved the
+DUT **away** from the observable — 41 → 112 and 39 → 68 — and were reverted as
+regressions. Adding `oam_bus_copybuffer` to `PpuStateRecord` at schema 2 is what
+made every later measurement valid; it immediately showed the FSM sitting frozen
+at `n = 34` while the bus kept walking for the rest of the line.
+
+**One of those two regressions was then right.** The overflow halt had been
+measured while phase 4 was itself mis-implemented, so it moved the DUT into a
+broken destination. Re-measured against a correct phase 4 it is worth 28 of the
+39. *A change rejected against a broken baseline is not a rejected change.*
+
+**And the fix that closed it is the opposite of the obvious one.** The wiki says
+phase 4 copies `OAM[n][0]`, but pinning the byte index to 0 is right on scanline
+55 and wrong on scanline 58: phase 4 advances only the high half of the address,
+so the low half keeps whatever ended the walk. Three of the four paths that
+finish evaluation clear it; the sprite-eval bug path does not.
+
+**The eighth mutation is NOT CAUGHT and it indicts the stimulus.** A stale
+`eval_ovf_cnt` needs an overflow hit within two write dots of dot 251, which this
+ROM never produces. The reset is kept because the oracle resets its counterpart
+at cycle 65 — the fix is right and the gate cannot currently prove it.
+
+Detail: `docs/rung3-ppu.md` in the sibling repository.
+
 ## Rung 3 continues: background rendering (v2.5.5)
 
 The shift registers, the fine-X multiplexer, the palette lookup and a per-pixel
