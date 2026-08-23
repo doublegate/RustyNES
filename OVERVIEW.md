@@ -2,7 +2,7 @@
 
 **Document Version:** 2.1.0
 **Last Updated:** 2026-08-20
-**Applies to:** RustyNES v2.4.4
+**Applies to:** RustyNES v2.4.5
 
 ---
 
@@ -22,9 +22,9 @@
 
 RustyNES is the **definitive NES emulator for the modern era** — combining cycle-perfect accuracy with a complete contemporary feature set and the safety guarantees of Rust. It is more than an emulator: it is a platform for NES preservation, competitive online play, tool-assisted speedrunning, and homebrew development.
 
-As of **v1.0.0**, that vision was realized: RustyNES clears the Mesen2 / higan / ares accuracy bar, ships a polished desktop application and a browser build, and supports the full platform surface — netplay, achievements, TAS movies, a debugger, FDS, and arcade (Vs. / PlayChoice-10) hardware. Since then the additive v1.x line added three more platforms (native Android, iOS / iPadOS, and a Libretro / RetroArch core), **v2.0.0 "Timebase"** replaced the scheduler substrate with the one-clock / every-cycle-bus-access model (ADR 0029 — the one deliberate breaking release), and the v2.1.x → v2.3.x lines deepened accuracy, presentation, and analysis tooling. The current release is **v2.4.4 "Ignition"**, which also carries the never-tagged v2.4.0 "Concordance".
+As of **v1.0.0**, that vision was realized: RustyNES clears the Mesen2 / higan / ares accuracy bar, ships a polished desktop application and a browser build, and supports the full platform surface — netplay, achievements, TAS movies, a debugger, FDS, and arcade (Vs. / PlayChoice-10) hardware. Since then the additive v1.x line added three more platforms (native Android, iOS / iPadOS, and a Libretro / RetroArch core), **v2.0.0 "Timebase"** replaced the scheduler substrate with the one-clock / every-cycle-bus-access model (ADR 0029 — the one deliberate breaking release), and the v2.1.x → v2.3.x lines deepened accuracy, presentation, and analysis tooling. The current release is **v2.4.5 "Compass"**. The never-tagged v2.4.0 "Concordance" shipped inside **v2.4.1 "Fabric"** — this sentence had attached that fact to whichever release was current, carried forward by three mechanical version bumps, and said it of v2.4.2, v2.4.3 and v2.4.4 in turn.
 
-> RustyNES's emulation core descends from an extensively-documented accuracy program. Where this and related docs reference deep "v1.x"/"v2.x" engine narrative, read it as upstream engine lineage (engineering history), not as RustyNES release versions. Two distinct "v2.0"s exist and must not be conflated: the engine-lineage v2.0 master-clock work shipped as RustyNES **v1.0.0**, while RustyNES's own **v2.0.0 "Timebase"** (2026-07-03) is the later release that *replaced* that same scheduler. The current release is **v2.4.4**.
+> RustyNES's emulation core descends from an extensively-documented accuracy program. Where this and related docs reference deep "v1.x"/"v2.x" engine narrative, read it as upstream engine lineage (engineering history), not as RustyNES release versions. Two distinct "v2.0"s exist and must not be conflated: the engine-lineage v2.0 master-clock work shipped as RustyNES **v1.0.0**, while RustyNES's own **v2.0.0 "Timebase"** (2026-07-03) is the later release that *replaced* that same scheduler. The current release is **v2.4.5**.
 
 ---
 
@@ -68,7 +68,9 @@ A one-directional crate graph keeps each chip (`rustynes-cpu`, `rustynes-ppu`, `
 
 ## Emulation Approach
 
-RustyNES uses **cycle-accurate, dot-level** emulation rather than scanline-based shortcuts. The scheduler advances one PPU dot at a time; the CPU advances on the appropriate dot for the region; the APU advances every other CPU cycle. The Bus owns all mutable device state, and the CPU borrows it during `tick()` — the architectural choice (per the TetaNES postmortem) that avoids the borrow-checker fight a split bus creates. See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`docs/scheduler.md`](docs/scheduler.md).
+RustyNES uses **cycle-accurate** emulation rather than scanline-based shortcuts. Since **v2.0.0 "Timebase"** the scheduler is a single canonical cycle counter in which every CPU cycle is a real bus access, with a split-around-the-access `start_cycle`/`end_cycle` PPU catch-up (ADR 0002 / ADR 0029). The APU advances every other CPU cycle.
+
+> This paragraph described the **retired** five-counter dot-lockstep model — "the scheduler advances one PPU dot at a time" — which v2.0.0 replaced outright and which is no longer a path in the code. Corrected in v2.4.5, found by review rather than by a gate: release anchors are pinned by `release_anchor_audit`, and ordinary architecture prose is not. The Bus owns all mutable device state, and the CPU borrows it during `tick()` — the architectural choice (per the TetaNES postmortem) that avoids the borrow-checker fight a split bus creates. See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`docs/scheduler.md`](docs/scheduler.md).
 
 ---
 
@@ -77,7 +79,7 @@ RustyNES uses **cycle-accurate, dot-level** emulation rather than scanline-based
 1. **Emulation enthusiasts** — reference-grade accuracy with a modern, themeable desktop UX and an in-app debugger.
 2. **The TAS community** — frame-perfect deterministic `.rnm` movie record / playback / branching built directly on the determinism contract.
 3. **Netplay users** — GGPO-style rollback netplay (2–4 players), native (UDP) and in the browser (WebRTC).
-4. **Homebrew developers** — broad mapper coverage (51 families), FDS, an instruction/PPU/memory debugger, and an embeddable `no_std` core.
+4. **Homebrew developers** — broad mapper coverage (174 families), FDS, an instruction/PPU/memory debugger, and an embeddable `no_std` core.
 5. **Rust developers** — a clean, modular workspace and a reusable 6502 CPU crate.
 
 ---

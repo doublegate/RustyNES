@@ -14,6 +14,81 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.4.5] - 2026-08-22 - "Compass" (the core reaches memory, and chooses)
+
+### Added
+
+- **Three addressing modes, the load/store group, and all eight branches.**
+  (v2.4.5, continuing the "Fabric" line. RTL pinned at
+  `RustyNES_MiSTer@b01a656`.) Immediate, zero page and absolute;
+  `LDA`/`LDX`/`LDY` and `STA`/`STX`/`STY` across them; `BPL`/`BMI`/`BVC`/`BVS`/
+  `BCC`/`BCS`/`BNE`/`BEQ`. **The emulation core is untouched.**
+
+  Two ROMs, **287 records**, matching the oracle on all seven CPU fields:
+
+  | ROM | records | what it covers |
+  |---|---|---|
+  | `opgroup1` | 147/147 | v2.4.4's reset and implied group — unchanged by the rewrite |
+  | `opgroup2` | 140/140 | every construct new in this release |
+
+  The ordering is not arbitrary. **Loads are what finally let a test program put
+  an arbitrary value in a register** — until now `A`, `X` and `Y` could only hold
+  what power-on and increments reached from zero. **Stores are the first writes
+  this core has ever performed.** And **branches are the first opcodes to read a
+  flag**, which retires the dated lint waiver `p` carried since v2.4.4 — the
+  outcome a dated waiver exists for.
+
+- **A page-crossing branch, placed deliberately rather than stumbled into.** An
+  `ORG` directive exists in the ROM assembler for exactly one test: at `$C0FC`
+  the next instruction is `$C0FE`, and `+$10` lands at `$C10E` — a different
+  page, so the taken branch costs **four** cycles instead of three. An
+  implementation that fixes the high byte without spending the cycle agrees on
+  every register and disagrees only on `cycle`, which is why the trace compares
+  it.
+
+### Fixed
+
+- **Write intent was sampled after the clock edge.** `we` and `dout` are
+  combinational functions of `state`/`tcyc`, and those change **on** the posedge
+  — so reading them afterwards reads the *next* cycle's plan. Every store
+  silently did nothing, and the symptom surfaced at a later `LDA`, several
+  instructions after the cycle that was actually wrong.
+
+### Notes
+
+- **Never read RAM a test program has not written.** The oracle powers on with
+  deterministic **seeded** work RAM; a flat-memory testbench starts at zero. A
+  read of an untouched address therefore diverges for a reason that has nothing
+  to do with the CPU — observed as the oracle returning `$36` from `$0003` where
+  the harness returned `$00`, which read at first as "the absolute store is
+  broken". Test ROMs now write a sentinel before reading.
+
+- **A read-back in the same addressing mode tests round-tripping, not
+  addressing.** `STA $10` followed by `LDA $10` is self-consistent under any
+  address mutation: send both to `$0110` and it still passes. Two mutants — zero
+  page to the wrong page, and absolute with its address bytes swapped — came
+  back **NOT CAUGHT**. Each mode is now cross-checked by a *different* mode, and
+  the ROM says so at the site.
+
+  That is the third time in two releases a mutation exposed a test that read
+  correctly and verified nothing.
+
+- **A mutant that does not compile is not a catch.** Forcing `br_fixup = 1'b0`
+  left `br_sum[8]` and `adl[7]` unused, so Verilator refused to build it and the
+  run reported a build failure where a naive harness would have counted a catch.
+  Inverting the condition keeps both signals live and tests the same property.
+
+- **One decoder, called twice.** v2.4.4 had two duplicated `case` blocks — over
+  `din` at fetch and over `ir` during execution — which had to agree by hand
+  across seventeen arms. They did, and would not have kept doing so: a mode added
+  to one and not the other is an instruction that decodes differently depending
+  on when you look. A function returning a packed struct removes the possibility
+  rather than documenting it.
+
+- The branch condition is expressed as the 6502's own encoding — opcode bits
+  `7:6` select the flag, bit `5` the sense — rather than eight arms, because
+  eight arms is eight chances to invert one.
+
 ## [2.4.4] - 2026-08-22 - "Ignition" (the first RTL, and the reset sequence that corrected our own spec)
 
 ### Added
