@@ -15,6 +15,32 @@ plus four dated files in `ref-docs/` (contribution requirements, the MiSTer
 framework, the hardware **source map**, and alternative FPGA targets).
 **Device-under-test:** <https://github.com/doublegate/RustyNES_MiSTer> (private).
 
+## Rung 3 has started (v2.5.2)
+
+`rtl/ppu2c02.sv` implements the 2C02's CPU-visible register file: `$2000-$2007`
+with `$2008-$3FFF` mirroring, the VRAM/palette bus and its read buffer, palette
+and nametable mirroring, OAM, and the data-bus latch. **12,840 records, 0
+divergences, 8 mutations all caught.**
+
+The compare surface is CPU-visible reads, carried by rung 2's **existing** bus
+comparison -- a step that needs no new oracle format cannot be failed by one.
+`docs/rung3-ppu.md` in the sibling was written **before** the rung and fixes
+which fields may fail it (`index_framebuffer`, register reads, `nmi_line`, public
+test ROMs) and which may only explain a failure (`ppu-state-trace`, `v`/`t`/`x`/`w`,
+shift registers, anything RGBA).
+
+**The step also landed a behaviour the plan did not anticipate**: writes to
+PPUCTRL, PPUMASK, PPUSCROLL and PPUADDR are ignored for **~29,658 CPU clocks**
+after reset. Not modelling it made the DUT disagree on every VRAM and palette
+access while open bus and OAM stayed correct -- so the register file *looked*
+right.
+
+**And the ROM passed on its first run while testing nothing.** Four defects, each
+making both sides agree about a behaviour neither was being asked about; all four
+found by mutation, none visible by reading. The lesson is recorded in the
+sibling's `docs/rung3-ppu.md`: a passing gate is evidence only once something has
+been shown to make it fail.
+
 ## Rung 2 is closed (v2.5.1)
 
 Its interrupt half was the last piece. `tb/interrupt_sweep.py` asserts /NMI,

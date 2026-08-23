@@ -14,6 +14,48 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.5.2] - 2026-08-23 - "Dormant" (the register file, and a gate that passed while testing nothing)
+
+### Added
+
+- **The 2C02's CPU-visible register file** (`RustyNES_MiSTer@d98ea3f`), opening
+  rung 3. `$2000-$2007` and their `$2008-$3FFF` mirroring, the VRAM/palette bus
+  with its **read buffer**, palette mirroring (`$3F10`/`$3F14`/`$3F18`/`$3F1C`),
+  nametable mirroring, OAM, and the PPU data-bus latch — written from
+  `nesdev_wiki` pages only, per the source map landed in v2.5.1.
+- **The post-reset masking window.** Writes to PPUCTRL, PPUMASK, PPUSCROLL and
+  PPUADDR are ignored for **~29,658 CPU clocks** after reset, and the
+  PPUSCROLL/PPUADDR latch does not toggle either; PPUSTATUS, OAMADDR, OAMDATA
+  and PPUDATA work immediately.
+- **`docs/rung3-ppu.md`**, written **before** the rung started, fixing which
+  fields may *fail* this rung and which may only *explain* a failure.
+
+### Fixed
+
+- **Four defects in the test ROM, every one found by mutation.** The ROM passed
+  on its first run and **every mutation came back NOT CAUGHT**: the gate invoked
+  `cargo` from the wrong tree so no comparison ran; absolute operands were
+  written as one entry, assembling to `STA $xx00` with the following opcode as
+  its high byte (**1 PPU access in 800 cycles**, against 71 after the fix); an
+  unrelated open-bus probe wrote `$5A` to PPUMASK and **enabled rendering**; and
+  a branch offset landed on the operand byte of `LDX #$00`, i.e. `BRK`.
+- **Two further coverage gaps, also found by mutation**: the `$2007` increment
+  *amount* was never read back, and the masking window was implemented and never
+  verified.
+
+### Changed
+
+- Mirroring is labelled by **which address line drives CIRAM A10**, not by
+  "horizontal"/"vertical" — the nesdev iNES page prints both words for the same
+  bit.
+
+### Verified
+
+`rustynes-core` is **untouched**; the emulator does not change. DUT side: lint 0
+findings, RTL subset clean, **12,840 records / 0 divergences** on the register
+ROM with **8 mutations all caught**, nine opcode-group ROMs at 2115 records, and
+the interrupt sweep 24/24.
+
 ## [2.5.1] - 2026-08-23 - "Retrace" (a return address, and a gate that reported a pass it could not have earned)
 
 ### Added

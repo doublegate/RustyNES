@@ -291,6 +291,24 @@ fn the_current_label_scanner_ignores_prose_quoting_the_defect() {
 /// check gets switched off. These two are the exact wording that drifted.
 const TAG_PHRASES: &[&str] = &["current tag", "latest tag"];
 
+// "current release" is DELIBERATELY not in that list, and extending it was tried
+// and MEASURED on #448 before being rejected.
+//
+// CodeRabbit found a real instance the tag rule cannot see: `docs/STATUS.md`
+// declared v2.5.2 current on line 3 and v2.2.0 "Capstone" current two thousand
+// lines later. Both lines are fixed. But generalising the rule to the phrase
+// produced **10 distinct findings across 7 files**, and inspection put nearly all
+// of them in legitimate historical narrative -- a v2.3.9 release note correctly
+// recording what was current in its own era, `AGENTS.md`'s "Built on ..." chain,
+// `CHANGELOG-FULL.md`. Gating it would mean scattering not-a-claim markers
+// through the corpus to silence correct prose, which is how a check earns being
+// switched off.
+//
+// The narrow rule stays narrow. A stale "current release" in a LIVING status
+// document is caught by review, as this one was; the phrase is too ambiguous to
+// gate without more markers than it is worth. Recorded with the number so the
+// next person does not re-derive it.
+
 /// `... v2.3.9 "Crucible" (the current tag)` -- the version this claims is tagged.
 ///
 /// The version precedes the phrase, so this scans BACKWARD and takes the
