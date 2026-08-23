@@ -521,6 +521,23 @@ pub struct LockstepBus {
     last_nmi_level: bool,
     /// Latched NMI edge (consumed by `poll_nmi`).
     nmi_edge_latch: bool,
+    /// v2.5.1 (ADR 0038) — externally asserted /NMI, for co-simulation only.
+    ///
+    /// Active-high here (`true` = the pin is asserted, i.e. /NMI low). It is
+    /// OR'd into the poll rather than replacing it, so an injected NMI and a
+    /// PPU-generated one are the same event to the CPU -- which is the point:
+    /// the API sets the pin the CPU samples and does nothing else. It does not
+    /// bypass the poll, force a vector, or short-circuit the sequence.
+    ///
+    /// The field does not exist in a default build.
+    #[cfg(feature = "cosim-interrupt-inject")]
+    inject_nmi: bool,
+    /// v2.5.1 (ADR 0038) — externally asserted /IRQ. Level-sensitive, exactly
+    /// as the pin is, so it is masked by `I` through the CPU's own logic and a
+    /// pulse shorter than a poll is missed. Modelling it as a latch would make
+    /// injected IRQs behave unlike real ones.
+    #[cfg(feature = "cosim-interrupt-inject")]
+    inject_irq: bool,
 
     /// v2.0 master-clock R1 substrate (Phase 1): PPU progress in master-clock
     /// units, consumed by `run_ppu_to(target)` (ticks a dot while
@@ -888,6 +905,10 @@ impl LockstepBus {
             dma_total: 0,
             last_nmi_level: false,
             nmi_edge_latch: false,
+            #[cfg(feature = "cosim-interrupt-inject")]
+            inject_nmi: false,
+            #[cfg(feature = "cosim-interrupt-inject")]
+            inject_irq: false,
             ppu_clock: 0,
             cpu_div_cached,
             ppu_div_cached,
@@ -1186,6 +1207,18 @@ impl LockstepBus {
             *byte = next();
         }
         self.open_bus = next();
+    }
+
+    /// Assert or release the injected /NMI pin. See [`crate::Nes::inject_nmi`].
+    #[cfg(feature = "cosim-interrupt-inject")]
+    pub const fn set_inject_nmi(&mut self, asserted: bool) {
+        self.inject_nmi = asserted;
+    }
+
+    /// Assert or release the injected /IRQ pin. See [`crate::Nes::inject_irq`].
+    #[cfg(feature = "cosim-interrupt-inject")]
+    pub const fn set_inject_irq(&mut self, asserted: bool) {
+        self.inject_irq = asserted;
     }
 
     /// Borrow the framebuffer (RGBA8, 256x240).
@@ -4571,9 +4604,40 @@ impl Bus for LockstepBus {
         (self.mapper_caps.irq_source && self.mapper.irq_pending())
             || self.apu.irq_line()
             || self.vs_external_irq
+            // v2.5.1 (ADR 0038). Level-sensitive and OR'd, exactly like
+            // `vs_external_irq` beside it -- which is the precedent: an external
+            // IRQ source already joins the wire-OR here, and this is the same
+            // shape with a different driver.
+            || {
+                #[cfg(feature = "cosim-interrupt-inject")]
+                {
+                    self.inject_irq
+                }
+                #[cfg(not(feature = "cosim-interrupt-inject"))]
+                {
+                    false
+                }
+            }
     }
 
     fn nmi_level(&self) -> bool {
+        // v2.5.1 (ADR 0038). Injected here and NOT in `poll_nmi`, because
+        // `poll_nmi` is not the path the production CPU uses: it samples this
+        // LEVEL every cycle and edge-detects it itself (`nmi_first_tick` ->
+        // `pending_nmi` -> `armed_nmi`).
+        //
+        // The first implementation injected at `poll_nmi`, which looks like the
+        // right function and is dead for this path. The rung-2 sweep found it on
+        // its first real run -- the DUT took the injected NMI and the oracle did
+        // not -- which is exactly the defect class a co-simulation exists to
+        // catch, arriving in the harness rather than in the RTL.
+        //
+        // A LEVEL, not a latch: the CPU does its own edge detection, so
+        // consuming it here would make an injected NMI behave unlike a PPU one.
+        #[cfg(feature = "cosim-interrupt-inject")]
+        if self.inject_nmi {
+            return true;
+        }
         self.ppu.nmi_line()
     }
 

@@ -98,19 +98,33 @@ constraints. **Each one is a condition of acceptance, not a recommendation.**
    `cargo expand -p rustynes-core --lib 2>/dev/null | grep -c inject_` **must be
    0** for the default build. This is a proof, not a sample.
 
-   **2b — corroborating measurement.** Against a `main` baseline on the *same
-   runner in one session*, criterion's default 100 samples:
+   **2b — a calibrated same-tree control, NOT a cross-tree comparison.**
 
-   ```console
-   git worktree add /tmp/bench-main main
-   cargo bench -p rustynes-core --bench full_frame -- --save-baseline main   # in the worktree
-   cargo bench -p rustynes-core --bench full_frame -- --baseline main        # in the branch, feature OFF
-   ```
+   The first draft of this gate said "against a `main` worktree baseline". That
+   instrument was tried and is **invalid**, and the measurement that retired it is
+   worth keeping: the default build measured **+3.3%** on `flowing_palette`
+   against a `main` worktree whose source, post-`cfg`-expansion, is *provably
+   identical* — every added line in `bus.rs` is behind the feature gate, and 2a
+   reports 0. Two builds of the same code in different absolute paths differ in
+   embedded strings and therefore in layout, and that is what was being measured.
 
-   **Pass: all four `full_frame` workloads within ±1.0%.** If 2a is 0 and 2b
-   exceeds that band, the finding is the measurement environment, not the
-   feature — record it and re-run rather than accepting a number that cannot be
-   caused by code that does not exist.
+   Reproducible, too: two runs gave +2.9% and +3.3%, so it is not thermal drift.
+   A stable number from an instrument that cannot be measuring what it claims is
+   worse than a noisy one, because it invites exactly the argument this
+   constraint exists to prevent.
+
+   What is valid, **measured on this implementation**:
+
+   | measurement | result |
+   |---|---|
+   | 2a — `cargo expand \| grep -c inject_`, default build | **0** — decisive |
+   | Same-tree noise floor (baseline vs itself) | **±1.2%** — the calibrated band |
+   | Same-tree A/B, feature ON vs OFF | +1.3% / −1.4% / +1.7% / −1.0% — **inside the floor**, mixed signs |
+
+   **Pass: 2a is 0.** The rest is calibration, not a gate — because when 2a is 0
+   the off build *is* the previous build, and there is no quantity left to
+   measure. The ON-vs-OFF row is recorded for the co-simulation crate's own
+   information, not as a merge condition.
 
    Both are *preconditions of merging*, not follow-ups.
 

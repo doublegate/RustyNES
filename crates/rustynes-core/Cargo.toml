@@ -47,6 +47,24 @@ ppu-idle-line-fast = ["rustynes-ppu/ppu-idle-line-fast"]
 cpu-boot-trace = ["std"]
 # v2.0 R1c-1 diagnostic — per-instruction (PC, cpu_cycle) trace. Forward to rustynes-cpu.
 cpu-instr-cycle-trace = ["rustynes-cpu/cpu-instr-cycle-trace"]
+# v2.5.1 (ADR 0038) — a TEST-ONLY interrupt-injection API for rung 2's sweep.
+#
+# Rung 2 needs NMI and IRQ asserted at chosen cycles on BOTH sides of the
+# co-simulation, and the oracle had no way to receive that stimulus: its /IRQ
+# comes from the APU frame counter or a mapper and its /NMI from the PPU, none
+# of which exist at the CPU rung.
+#
+# ADR 0038 admits this under six constraints. Two are preconditions of merging
+# and are measured, not assumed: ZERO hot-path cost when off, and byte-identical
+# default output verified with the feature ABSENT *and* PRESENT-BUT-UNUSED. The
+# second case is distinct because `irq-timing-trace` above selects a DIFFERENT
+# per-dot loop merely by being compiled in -- the exact failure this guards.
+#
+# Consumed ONLY by the excluded `rustynes-cosim` crate. Nothing in the workspace
+# enables it; `cosim_manifest_audit.rs` asserts that crate stays excluded, and
+# that assertion is load-bearing here, because cargo unifies features across a
+# workspace build.
+cosim-interrupt-inject = []
 # v1.1.0 beta.2 (Workstream C) — debugger devtools hooks: PC/exec breakpoints (and,
 # later, the trace logger + event viewer) checked in the `run_frame` loop. Off by
 # default so the headless test/bench builds keep a byte-identical hot path + the

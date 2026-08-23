@@ -141,6 +141,70 @@ impl Oracle {
         calls
     }
 
+    /// Run `instructions` instructions, asserting an interrupt pin for part of
+    /// the run. **Co-simulation only**, behind `cosim-interrupt-inject`.
+    ///
+    /// # Why instruction boundaries rather than cycles
+    ///
+    /// The plan's rung-2 sweep asks for "NMI and IRQ at every master-clock
+    /// offset". That is **not reachable**, and the reason is structural rather
+    /// than an oversight: `Nes` exposes `run_frame()` and `step_instruction()`
+    /// and nothing finer, so this side cannot assert a pin mid-instruction. A
+    /// cycle-step API would be new hot-path core API, which ADR 0037's contract
+    /// forbids and ADR 0038 did not authorise.
+    ///
+    /// So the sweep injects **before instruction `at`** and holds for `hold`
+    /// instructions, on both sides — the DUT counts `o_sync` pulses to the same
+    /// index. That is deterministic, exactly comparable, and it does exercise
+    /// the hazards the sweep exists for: an interrupt arriving during a
+    /// branch-page-cross, an RMW, a `BRK`, or a `PLP`/`SEI`/`CLI` delayed-`I`
+    /// window is still an interrupt arriving *during* that instruction.
+    ///
+    /// **What it does not reach**, stated so it is not mistaken for coverage:
+    /// two different cycle offsets *within* one instruction are indistinguishable
+    /// here. Closing that needs the cycle-step API above, and it is deferred
+    /// rather than quietly skipped.
+    ///
+    /// No `cfg` here: this crate enables `rustynes-core/cosim-interrupt-inject`
+    /// mandatorily, exactly as it does the trace features, so a build of this
+    /// crate without it would produce an oracle that silently cannot inject --
+    /// the "absence of a signal read as a signal" failure the manifest comment
+    /// above is about.
+    pub fn run_with_injection(
+        &mut self,
+        instructions: u64,
+        nmi_at: Option<u64>,
+        irq_at: Option<u64>,
+        hold: u64,
+    ) -> u64 {
+        let mut executed = 0u64;
+        while executed < instructions {
+            // Assert on entry to the target instruction, release once `hold`
+            // instructions have run. Both edges land on a boundary the DUT can
+            // name by counting `o_sync`.
+            if let Some(k) = nmi_at {
+                self.nes.inject_nmi(executed >= k && executed < k + hold);
+            }
+            if let Some(k) = irq_at {
+                self.nes.inject_irq(executed >= k && executed < k + hold);
+            }
+            self.nes.step_instruction();
+            executed += 1;
+            if self.nes.is_jammed() {
+                break;
+            }
+        }
+        // Leave both pins released, so a caller reusing the oracle does not
+        // inherit an asserted line.
+        if nmi_at.is_some() {
+            self.nes.inject_nmi(false);
+        }
+        if irq_at.is_some() {
+            self.nes.inject_irq(false);
+        }
+        executed
+    }
+
     /// Arm the per-instruction boot trace over a cycle window.
     pub fn enable_cpu_boot_trace(&mut self, capacity: usize, start: u64, end: u64) {
         let cfg = CpuBootTraceConfig::cycles(start..=end);

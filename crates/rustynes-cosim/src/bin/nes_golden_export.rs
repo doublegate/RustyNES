@@ -48,6 +48,13 @@ struct Args {
     boot_trace: Option<(u64, u64)>,
     irq_trace: Option<usize>,
     checkpoint_interval: u64,
+    /// v2.5.1 — rung 2's interrupt sweep. Instruction-indexed, not
+    /// cycle-indexed: this side cannot assert a pin mid-instruction, so a
+    /// cycle-indexed sweep would not be comparable. See `Oracle::run_with_injection`.
+    inject_instructions: u64,
+    inject_nmi_at: Option<u64>,
+    inject_irq_at: Option<u64>,
+    inject_hold: u64,
 }
 
 fn usage() -> ! {
@@ -65,6 +72,8 @@ fn parse_args() -> Args {
     let (mut seed, mut frames) = (0u64, 60u32);
     let (mut boot_trace, mut irq_trace) = (None, None);
     let mut checkpoint_interval = rustynes_cosim::checkpoint::DEFAULT_INTERVAL;
+    let (mut inject_instructions, mut inject_hold) = (0u64, 1u64);
+    let (mut inject_nmi_at, mut inject_irq_at) = (None, None);
 
     let mut i = 0;
     while i < argv.len() {
@@ -95,6 +104,38 @@ fn parse_args() -> Args {
                 ));
                 i += 2;
             }
+            "--inject-instructions" => {
+                inject_instructions = need(i).parse().unwrap_or_else(|_| usage());
+                // `i += 2`, not 1: this loop has NO trailing increment, so a
+                // value-taking arm must step past both tokens. Using 1 leaves
+                // `i` on the value, which falls through to `_ => usage()` and
+                // prints the help text as though the FLAG were unknown.
+                i += 2;
+            }
+            "--inject-nmi-instr" => {
+                inject_nmi_at = Some(need(i).parse().unwrap_or_else(|_| usage()));
+                // `i += 2`, not 1: this loop has NO trailing increment, so a
+                // value-taking arm must step past both tokens. Using 1 leaves
+                // `i` on the value, which falls through to `_ => usage()` and
+                // prints the help text as though the FLAG were unknown.
+                i += 2;
+            }
+            "--inject-irq-instr" => {
+                inject_irq_at = Some(need(i).parse().unwrap_or_else(|_| usage()));
+                // `i += 2`, not 1: this loop has NO trailing increment, so a
+                // value-taking arm must step past both tokens. Using 1 leaves
+                // `i` on the value, which falls through to `_ => usage()` and
+                // prints the help text as though the FLAG were unknown.
+                i += 2;
+            }
+            "--inject-hold" => {
+                inject_hold = need(i).parse().unwrap_or_else(|_| usage());
+                // `i += 2`, not 1: this loop has NO trailing increment, so a
+                // value-taking arm must step past both tokens. Using 1 leaves
+                // `i` on the value, which falls through to `_ => usage()` and
+                // prints the help text as though the FLAG were unknown.
+                i += 2;
+            }
             "--irq-trace" => {
                 irq_trace = Some(need(i).parse().unwrap_or_else(|_| usage()));
                 i += 2;
@@ -118,6 +159,10 @@ fn parse_args() -> Args {
         boot_trace,
         irq_trace,
         checkpoint_interval,
+        inject_instructions,
+        inject_nmi_at,
+        inject_irq_at,
+        inject_hold,
     }
 }
 
@@ -249,7 +294,20 @@ fn main() {
     // is swallowed by the frame_complete latch the reset sequence leaves set, so
     // a bare loop emits an (N-1)-frame golden under a manifest claiming N.
     let frame_before = o.nes().frame();
-    let calls = o.advance_frames(u64::from(args.frames));
+    // The interrupt sweep runs INSTEAD of the frame advance: it steps a bounded
+    // number of instructions with a pin asserted for part of the run, which is
+    // the stimulus rung 2 compares. A frame advance would run past the window
+    // and bury the divergence under thousands of unrelated cycles.
+    let calls = if args.inject_instructions > 0 {
+        o.run_with_injection(
+            args.inject_instructions,
+            args.inject_nmi_at,
+            args.inject_irq_at,
+            args.inject_hold,
+        )
+    } else {
+        o.advance_frames(u64::from(args.frames))
+    };
     let frames_actual = o.nes().frame() - frame_before;
     let cycles = o.nes().cycle();
     if frames_actual != u64::from(args.frames) {
