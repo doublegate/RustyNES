@@ -3735,6 +3735,13 @@ impl Ppu {
         self.rendering_enabled_delayed = rendering;
     }
 
+    // Dead under `ppu-state-trace`, and legitimately so: the dispatch above is
+    // `#[cfg(not(feature = "ppu-state-trace"))]`, because the trace hook must
+    // observe EVERY dot and the fast path exists precisely to skip per-dot work.
+    // Live by default, dead under one feature -- the one shape that earns an
+    // `allow` rather than a deletion. Scoped to that feature so the attribute
+    // cannot silently start suppressing a real finding in the default build.
+    #[cfg_attr(feature = "ppu-state-trace", allow(dead_code))]
     #[inline]
     fn tick_visible_render_fast<B: PpuBus>(&mut self, bus: &mut B) {
         let dot = self.dot;

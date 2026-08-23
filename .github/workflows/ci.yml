@@ -289,6 +289,22 @@ jobs:
           --all-targets -- -D warnings
       - name: "test (excluded crate: rustynes-cosim)"
         run: cargo test --manifest-path crates/rustynes-cosim/Cargo.toml
+      # The four TRACE features, linted explicitly. `--workspace --all-targets`
+      # covers each crate's DEFAULT feature set only, and the step above lints
+      # the `rustynes-cosim` package while compiling `rustynes-core` and
+      # `rustynes-ppu` as DEPENDENCIES -- where warnings are not denied. So
+      # every `#[cfg(feature = "...-trace")]` module in the chip crates was
+      # unlinted: v2.4.1 found six pre-existing `-D warnings` errors sitting in
+      # `cpu_boot_trace.rs` and `irq_trace.rs` the moment anything reached them.
+      # Named one per feature rather than combined, so a failure says WHICH.
+      - name: clippy (cpu-boot-trace)
+        run: cargo clippy -p rustynes-core --all-targets --features cpu-boot-trace -- -D warnings
+      - name: clippy (irq-timing-trace)
+        run: cargo clippy -p rustynes-core --all-targets --features irq-timing-trace -- -D warnings
+      - name: clippy (ppu-state-trace)
+        run: cargo clippy -p rustynes-core --all-targets --features ppu-state-trace -- -D warnings
+      - name: clippy (ppu-fetch-trace)
+        run: cargo clippy -p rustynes-core --all-targets --features ppu-fetch-trace -- -D warnings
       - name: rustdoc (-D warnings)
         run: cargo doc --workspace --no-deps
       # Feature-gated clippy combos CLAUDE.md mandates. These previously ran

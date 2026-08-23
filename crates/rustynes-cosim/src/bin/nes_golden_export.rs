@@ -64,7 +64,9 @@ fn usage() -> ! {
     eprintln!(
         "usage: nes_golden_export --rom <path> --out <dir> [--seed N] [--frames N]\n\
          \x20                       [--boot-trace START..END] [--irq-trace CAP]\n\
-         \x20                       [--checkpoint-interval N]"
+         \x20                       [--fetch-trace CAP] [--checkpoint-interval N]\n\
+         \x20                       [--inject-instructions N] [--inject-hold N]\n\
+         \x20                       [--inject-nmi-at N] [--inject-irq-at N]"
     );
     std::process::exit(2)
 }

@@ -15,6 +15,57 @@ plus four dated files in `ref-docs/` (contribution requirements, the MiSTer
 framework, the hardware **source map**, and alternative FPGA targets).
 **Device-under-test:** <https://github.com/doublegate/RustyNES_MiSTer> (private).
 
+## Rung 3 continues: the background fetch pipeline (v2.5.4)
+
+NT / AT / pattern-low / pattern-high fetches on the documented 8-dot cadence,
+compared against the oracle as an **address-bus** trace -- real pins, so a
+correct chip cannot differ, which is what makes it a gate rather than a
+diagnostic under `docs/rung3-ppu.md`'s partition.
+
+**Gate:** `ppufetch` **6,247 background fetches / 0 divergences** on scanline,
+dot and address, across two rendering windows. **Eight mutations, all CAUGHT**,
+baseline verified passing first.
+
+**The comparison is narrowed and says so on every run.** A rendering scanline
+issues 154 fetches; this gate compares the 136 background ones (dots 1-256 and
+321-336) and excludes sprite fetches (257-320, v2.5.7) and the two dummy
+nametable reads (337-340, v2.5.8). `fetch_diff.py` prints the excluded count for
+both sides -- 811 and 0 today -- because a narrowing that is not announced reads
+as full coverage.
+
+**The finding: the CPU access was presented two dots early, and no existing gate
+could see it.** The DUT issued one extra nametable fetch at the leading edge of
+each rendering window and dropped one at the trailing edge, both by the same two
+dots -- one quantity wrong by one constant, not two faults. The cause was in
+`tb/cpu_main.cpp`, which presented the access on the second of the cycle's three
+PPU dots; a 6502 commits a write and samples a read at **phi2**, the third.
+
+Five gates stayed green across the move, **in both directions**: rung 1's
+registers on nine ROMs, rung 2's per-cycle bus, the interrupt sweep, and the
+v2.5.2 register and v2.5.3 scroll gates. That is not evidence the shift was
+harmless. Every one of them reads state **once per CPU cycle**, so a uniform
+two-dot shift in when a write lands *inside* a cycle moves nothing they compare.
+This is the rung's first gate keyed to the DOT counter, and the first that could
+see it.
+
+**nestest more than doubled.** Rung 2's window was bounded at 27,396 cycles by a
+missing peripheral -- nestest reads `$2002` there and the testbench had no PPU to
+answer. With the register file answering it now matches for **59,554 cycles**,
+2.18x the old extent, and the bound is an artifact budget rather than a wall.
+
+**Two mutations came back NOT CAUGHT against a correct gate**, because the ROM
+rendered from `$2000` with `PPUCTRL = 0` and so held `v[11]` and `ctrl[4]` at
+zero throughout. The gate was not blind; the stimulus was. A second rendering
+window at `$2800` with background patterns at `$1000` took the fetch count from
+3,099 to 6,247 and both mutations to CAUGHT.
+
+**Also closed: four trace features had never been linted.** No CI invocation
+named `cpu-boot-trace`, `irq-timing-trace`, `ppu-state-trace` or the new
+`ppu-fetch-trace`, and `--workspace --all-targets` reaches default features
+only, so the `rustynes-cosim` clippy step compiled those modules **as
+dependencies**, where warnings are not denied. One explicit step per feature
+now; `ppu-state-trace` had **six** `-D warnings` errors waiting in it.
+
 ## Rung 3 continues: the scroll address logic (v2.5.3)
 
 `inc_x`, `inc_y`, `copy_x` and `copy_y` at their documented dots, the

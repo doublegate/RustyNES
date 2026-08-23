@@ -543,15 +543,15 @@ impl PpuTraceConfig {
         if !self.frame_range.contains(&frame) {
             return false;
         }
-        if let Some(r) = self.scanline_range.as_ref() {
-            if !r.contains(&scanline) {
-                return false;
-            }
+        if let Some(r) = self.scanline_range.as_ref()
+            && !r.contains(&scanline)
+        {
+            return false;
         }
-        if let Some(r) = self.dot_range.as_ref() {
-            if !r.contains(&dot) {
-                return false;
-            }
+        if let Some(r) = self.dot_range.as_ref()
+            && !r.contains(&dot)
+        {
+            return false;
         }
         true
     }
@@ -587,13 +587,13 @@ impl PpuStateTrace {
 
     /// Number of records captured so far.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.records.len()
     }
 
     /// True if no records have been captured.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 
@@ -684,7 +684,7 @@ impl PpuStateTrace {
         }
         // Skip the 2-byte reserved field.
         let body = &buf[HEADER_SIZE..];
-        if body.len() % RECORD_SIZE != 0 {
+        if !body.len().is_multiple_of(RECORD_SIZE) {
             return Err(alloc::format!(
                 "body length {} is not a multiple of RECORD_SIZE={RECORD_SIZE}",
                 body.len()
