@@ -111,7 +111,11 @@ fn classify<'a>(root: &Path, cited: &'a [String]) -> Classified<'a> {
         let top = c.split('/').next().unwrap_or("");
         if root.join(top).is_dir() {
             out.checked += 1;
-            if !root.join(c).exists() {
+            // `is_file`, not `exists`: a citation is a document. `exists()`
+            // returns true for a directory, so a path that happened to match a
+            // directory name would report as a verified source when nothing
+            // readable is there.
+            if !root.join(c).is_file() {
                 out.missing.push(c);
             }
         } else {
@@ -239,28 +243,43 @@ fn a_checkout_without_the_upstream_corpus_still_checks_what_it_has() {
     // The first version of this audit checked existence unconditionally. It
     // passed here, where the corpus is present, and failed every CI job. This
     // test is the one that would have caught that before pushing.
-    let tmp = std::env::temp_dir().join("rustynes-source-map-audit-ci-shape");
+    // Per-process, not a fixed global path. Cargo runs tests concurrently, and a
+    // previously aborted run can leave the directory behind -- either way a fixed
+    // name makes this test fail for a reason that has nothing to do with its
+    // subject, which is the worst kind of flake in an audit.
+    let tmp = std::env::temp_dir().join(format!(
+        "rustynes-source-map-audit-ci-shape-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(tmp.join("docs")).expect("create synthetic docs/");
     std::fs::write(tmp.join("docs/ppu-2c02.md"), "x").expect("write");
 
+    // A citation naming a DIRECTORY. `exists()` would call this verified;
+    // `is_file()` reports it. Without this case the distinction is untestable --
+    // the real document cites no directory, so mutating `is_file` back to
+    // `exists` comes back NOT CAUGHT, which is how the weaker check survived
+    // review in the first place.
+    std::fs::create_dir_all(tmp.join("docs/subdir")).expect("create synthetic dir");
     let cited = vec![
         "docs/ppu-2c02.md".to_owned(), // present -> checked, found
         "docs/absent.md".to_owned(),   // present tree -> checked, MISSING
+        "docs/subdir".to_owned(),      // a DIRECTORY -> must be MISSING
         "nesdev_wiki/PPU_rendering.xhtml".to_owned(), // tree absent -> unavailable
     ];
     let c = classify(&tmp, &cited);
 
     assert_eq!(
-        c.checked, 2,
-        "both docs/ citations are in a tree that exists"
+        c.checked, 3,
+        "all three docs/ citations are in a tree that exists"
     );
     assert_eq!(
         c.missing.len(),
-        1,
-        "a missing file in a PRESENT tree must be a failure"
+        2,
+        "a missing file AND a directory-shaped citation must both be failures"
     );
-    assert_eq!(c.missing[0], "docs/absent.md");
+    assert!(c.missing.iter().any(|m| *m == "docs/absent.md"));
+    assert!(c.missing.iter().any(|m| *m == "docs/subdir"));
     assert_eq!(
         c.unavailable.len(),
         1,
