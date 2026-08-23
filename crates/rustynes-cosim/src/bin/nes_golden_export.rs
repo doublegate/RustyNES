@@ -76,6 +76,10 @@ fn parse_args() -> Args {
     let (mut inject_nmi_at, mut inject_irq_at) = (None, None);
 
     let mut i = 0;
+    // Every value-taking arm below advances `i` by TWO, not one: this loop has
+    // no trailing increment, so stepping by one leaves `i` on the value, which
+    // then falls through to `_ => usage()` and prints the help text as though
+    // the FLAG were unknown. Stated once here rather than four times inline.
     while i < argv.len() {
         let need = |i: usize| -> &String { argv.get(i + 1).unwrap_or_else(|| usage()) };
         match argv[i].as_str() {
@@ -106,34 +110,18 @@ fn parse_args() -> Args {
             }
             "--inject-instructions" => {
                 inject_instructions = need(i).parse().unwrap_or_else(|_| usage());
-                // `i += 2`, not 1: this loop has NO trailing increment, so a
-                // value-taking arm must step past both tokens. Using 1 leaves
-                // `i` on the value, which falls through to `_ => usage()` and
-                // prints the help text as though the FLAG were unknown.
                 i += 2;
             }
             "--inject-nmi-instr" => {
                 inject_nmi_at = Some(need(i).parse().unwrap_or_else(|_| usage()));
-                // `i += 2`, not 1: this loop has NO trailing increment, so a
-                // value-taking arm must step past both tokens. Using 1 leaves
-                // `i` on the value, which falls through to `_ => usage()` and
-                // prints the help text as though the FLAG were unknown.
                 i += 2;
             }
             "--inject-irq-instr" => {
                 inject_irq_at = Some(need(i).parse().unwrap_or_else(|_| usage()));
-                // `i += 2`, not 1: this loop has NO trailing increment, so a
-                // value-taking arm must step past both tokens. Using 1 leaves
-                // `i` on the value, which falls through to `_ => usage()` and
-                // prints the help text as though the FLAG were unknown.
                 i += 2;
             }
             "--inject-hold" => {
                 inject_hold = need(i).parse().unwrap_or_else(|_| usage());
-                // `i += 2`, not 1: this loop has NO trailing increment, so a
-                // value-taking arm must step past both tokens. Using 1 leaves
-                // `i` on the value, which falls through to `_ => usage()` and
-                // prints the help text as though the FLAG were unknown.
                 i += 2;
             }
             "--irq-trace" => {
