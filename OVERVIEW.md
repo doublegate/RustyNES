@@ -1,7 +1,7 @@
 # RustyNES Overview
 
 **Document Version:** 2.1.0
-**Last Updated:** 2026-08-23
+**Last Updated:** 2026-08-24
 **Applies to:** RustyNES v2.5.7
 
 ---

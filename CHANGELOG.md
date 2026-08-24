@@ -92,7 +92,8 @@ cycle-accurate core later replaced.
   change. The tenth (sprite-0 flag read from the register only) is caught by
   `ppuspr020` at **exactly one divergence: the read landing on the hit dot**.
   The `$2004` readback-off-by-one mutant reproduced the old catalog's exact
-  count, 110. Classified non-gaps, each with evidence and an owner: the vblank
+  count, 110. The remaining NOT CAUGHT results are classified, each with
+  evidence and an owner — three deferred coverage gaps and two inert mutants: the vblank
   register-only read (stimulus gap on the v2.5.8 race dot), the skip-check delay
   (blargg `10-even_odd_timing`, needs v2.5.8's VBlank sync), `chr_wr` (measured
   **0** assertions across all eight CHR-ROM test ROMs; reachable at v2.6.3), and
