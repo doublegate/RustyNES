@@ -127,6 +127,7 @@ fn sprite_evaluation_dot_by_dot() {
     for r in recs {
         let key = (
             r.oam_bus_copybuffer,
+            r.status,
             r.mask,
             r.sprite_eval_n,
             r.sprite_eval_m,
@@ -141,10 +142,11 @@ fn sprite_evaluation_dot_by_dot() {
         // lines of unchanged state.
         if print_all || prev.as_ref() != Some(&key) {
             println!(
-                "  f{} dot{:>3}  bus={:02X} mask={:02X} n={:>2} m={} found={} sec={:>2} copy={} ovf={} done={} latch={:02X}",
+                "  f{} dot{:>3}  bus={:02X} status={:02X} mask={:02X} n={:>2} m={} found={} sec={:>2} copy={} ovf={} done={} latch={:02X}",
                 r.frame,
                 r.dot,
                 r.oam_bus_copybuffer,
+                r.status,
                 r.mask,
                 r.sprite_eval_n,
                 r.sprite_eval_m,
