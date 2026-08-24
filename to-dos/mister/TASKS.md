@@ -28,7 +28,7 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
 - [x] v2.5.5 background rendering into `index_framebuffer` — **all 61,440 pixels match**, 15 mutations all caught. The oracle needed NO change (the golden has existed since v2.4.1). Five NOT CAUGHT mutations indicted the STIMULUS, one of them three times over
 - [x] v2.5.6 **sprite evaluation FSM** — 59,993/59,993 cycles, 9/9 behavioural mutants caught
 - [x] v2.5.7 sprite rendering, priority, sprite-0 hit, overflow — every rung gate exact (zero divergences), all ten catalog mutations CAUGHT, `PPU_LEAD=2` phase fix + odd-frame skip + `cpu_ce`
-- [ ] v2.5.8 VBlank/NMI timing, `$2002` race, the skip's `$2001`-across-339 edge — **rung 3 closes**
+- [x] v2.5.8 VBlank/NMI timing, `$2002` race, the skip's write-boundary edge — **RUNG 3 CLOSED**: four ROMs, 12/12 mutations CAUGHT, nestest 5,002,992 cycles, two structures deleted
 - [x] Write the rung-3 gate/diagnostic partition **before** the rung — landed as
       the sibling's `docs/rung3-ppu.md`, not `docs/mister-ppu-rung.md` as planned
       here (it belongs beside the RTL it constrains). v2.5.3 is the proof it

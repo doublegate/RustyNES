@@ -1,29 +1,25 @@
 # RustyNES — Project Status Matrix
 
-> **Current release: v2.5.7** (2026-08-24) — **"Collimation"**, sprite rendering closes exact — the phase was wrong by two dots, and every window was compensating. Built on **v2.5.6 "Vestige"** (2026-08-23) — Sprite evaluation closes: all 59,993 overlapping cycles match, nine of nine behavioural mutants caught and two proved inert (announced as seven of eight at the cut), and the fix is a byte index that outlives the walk that set it. Built on **v2.5.5 "Raster"** (2026-08-23) — the first full frame, and three blind spots in the stimulus that fed it. Built on **v2.5.4 "Escapement"** (2026-08-23) — the background fetch pipeline, and an access two dots early that five gates could not see. Built on **v2.5.3 "Hysteresis"** (2026-08-23) — toggling rendering takes effect three dots after the write, and four instruments to prove it. Built on **v2.5.2 "Dormant"** (2026-08-23) — the 2C02 register file, and a gate that passed while testing nothing. Built on **v2.5.1 "Retrace"** (2026-08-23) — the interrupt sweep closes rung 2, and a gate reported a pass it could not have earned. Built on **v2.5.0 "Rungwork"** (2026-08-23) — the 6502 rung, and the two gates it cannot reach. Built on **v2.4.9 "Plumbline II"** (2026-08-23) — the bus half of rung 2, and what it found the day it existed. Built on **v2.4.8 "Palimpsest"** (2026-08-23) — read-modify-write, and a gate that cannot see its own subject. Built on **v2.4.7 "Keystone"** (2026-08-23) — the stack closes, and a dead line proves itself dead. Built on **v2.4.6 "Abacus"** (2026-08-22) — the core learns arithmetic. Built on **v2.4.5 "Compass"** (2026-08-22) — the core reaches memory, and chooses. Built on **v2.4.4 "Ignition"** (2026-08-22) — the first real RTL -- the 6502's eight-cycle reset and the implied opcode group, matching the oracle on all seven CPU fields (29
+> **Current release: v2.5.8** (2026-08-24) — **"Blanking"**, VBlank, NMI and the PPUSTATUS race close rung 3 — and both fixes were deletions. Built on **v2.5.7 "Collimation"** (2026-08-24) — sprite rendering closes exact — the phase was wrong by two dots, and every window was compensating. Built on **v2.5.6 "Vestige"** (2026-08-23) — Sprite evaluation closes: all 59,993 overlapping cycles match, nine of nine behavioural mutants caught and two proved inert (announced as seven of eight at the cut), and the fix is a byte index that outlives the walk that set it. Built on **v2.5.5 "Raster"** (2026-08-23) — the first full frame, and three blind spots in the stimulus that fed it. Built on **v2.5.4 "Escapement"** (2026-08-23) — the background fetch pipeline, and an access two dots early that five gates could not see. Built on **v2.5.3 "Hysteresis"** (2026-08-23) — toggling rendering takes effect three dots after the write, and four instruments to prove it. Built on **v2.5.2 "Dormant"** (2026-08-23) — the 2C02 register file, and a gate that passed while testing nothing. Built on **v2.5.1 "Retrace"** (2026-08-23) — the interrupt sweep closes rung 2, and a gate reported a pass it could not have earned. Built on **v2.5.0 "Rungwork"** (2026-08-23) — the 6502 rung, and the two gates it cannot reach. Built on **v2.4.9 "Plumbline II"** (2026-08-23) — the bus half of rung 2, and what it found the day it existed. Built on **v2.4.8 "Palimpsest"** (2026-08-23) — read-modify-write, and a gate that cannot see its own subject. Built on **v2.4.7 "Keystone"** (2026-08-23) — the stack closes, and a dead line proves itself dead. Built on **v2.4.6 "Abacus"** (2026-08-22) — the core learns arithmetic. Built on **v2.4.5 "Compass"** (2026-08-22) — the core reaches memory, and chooses. Built on **v2.4.4 "Ignition"** (2026-08-22) — the first real RTL -- the 6502's eight-cycle reset and the implied opcode group, matching the oracle on all seven CPU fields (29
 > records, `RustyNES_MiSTer@7f092bd`). The oracle settled a question our own
 > prose could not: reset is EIGHT cycles, and `docs/cpu-6502.md` said both
 > seven and eight. The emulation core is untouched.
 >
-> **Rung 3 as of v2.5.7: six steps closed, and every gate exact.** The register
-> file (12,841 records), the scroll address logic (49,998 cycles), the
-> background fetch pipeline (**7,058 fetches** — the v2.5.4 narrowing is
-> removed: sprite fetches and the 337/339 dummies are compared now), background
-> rendering (**all 61,440 pixels** — the first full frame), sprite evaluation
-> (**all 59,993 cycles**), and **sprite rendering, priority, sprite-0 hit and
-> overflow** — three edge ROMs at 119,115 cycles each, the sprite fetch trace at
-> 88,685, all three index framebuffers, and **`ppu-phase-gate`** (98,562
-> records, `scanline`/`dot` only over twelve frames). **Zero divergences
-> anywhere in the rung for the first time**, after v2.5.7's finding that the
-> CPU–PPU power-on phase was wrong by two dots with every OAM window
-> compensating (`PPU_LEAD=2`; windows at documented-minus-one, which is
-> registered-assignment semantics and no residual fudge). **All ten of the
-> mutation catalog are CAUGHT** — the tenth by `ppuspr020` at exactly one
-> divergence — plus five odd-frame-skip mutants and `cpu_ce` (the register file
-> had been gated by nothing, latent until v2.6.5). Deferred with owners named:
-> the VBlank race stimulus and the skip-check delay (v2.5.8), `chr_wr`
-> (v2.6.3). `sys/` is still empty; there is no `.rbf`. Detail: `docs/mister.md`
-> and the sibling's `docs/rung3-ppu.md`.
+> **Rung 3 as of v2.5.8: CLOSED.** All seven steps green and every gate exact:
+> the register file (12,841 records), the scroll address logic (49,998 cycles),
+> the background fetch pipeline (7,058 fetches), background rendering (61,440
+> pixels), sprite evaluation (59,993 cycles), sprite rendering / priority /
+> sprite-0 / overflow (three edge ROMs at 119,115 cycles each, sprite fetches
+> at 88,685, `ppu-phase-gate` at 98,562), and **VBlank / NMI / the `$2002`
+> race** — four purpose-built ROMs at 714,729 / 714,730 / 1,191,220 / 714,730
+> cycles, **twelve of twelve mutations CAUGHT**, and **nestest 0-diff at
+> 5,002,992 cycles: the 5M-cycle window, an acceptance criterion standing since
+> v2.5.0, closes.** Both v2.5.8 fixes were DELETIONS — the testbench's cycle
+> split corrected to the oracle's `[1 | access | 2]` (the pulse-stretcher built
+> first measured dead and removed), and `render_for_skip` proved to be the
+> rendering enable itself. The next divergence anywhere is an APU or controller
+> surface, which is rung 4 (v2.5.9+). `sys/` is still empty; there is no
+> `.rbf`. Detail: `docs/mister.md` and the sibling's `docs/rung3-ppu.md`.
 >
 > Built on **v2.4.3** (2026-08-22) — **"Touchstone"**, the two Fabric
 > risks settled before any RTL exists. **Risk 4, the Quartus subset, is FITTED**:

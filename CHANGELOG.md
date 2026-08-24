@@ -26,6 +26,64 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.5.8] - 2026-08-24 - "Blanking" (VBlank, NMI and the PPUSTATUS race close rung 3 — and both fixes were deletions)
+
+### Added
+
+- **Rung 3 closes.** The sibling's `rtl/ppu2c02.sv` gains the VBlank flag's full
+  CPU-visible behaviour: the set at 241/1, the pre-render clear, the destructive
+  `$2002` read, **`suppress_vbl`** (a read landing one PPU clock before the set
+  suppresses the flag — and the NMI — for that frame), and the read-on-the-set-dot
+  case, which needs no register at all: the read's clear is the last assignment
+  in the `always_ff` and wins over the same-edge set. **The PPU's /NMI reaches
+  the CPU for the first time**, wire-ANDed with the harness injection pin.
+- **Four purpose-built VBlank ROMs** (`ppuvbl022`–`025`), each with its stimulus
+  **measured from the oracle's own trace before anything ran**: the read race
+  (one read on *each* of dots 0/1/2 of scanline 241), NMI delivery with reads
+  racing it (21 deliveries, 21 line edges, 2 race-dot reads), `$2001` toggles
+  swept across pre-render dot 339 at one-dot grain, and the late NMI enable
+  (`$2000` bit 7 re-enabled mid-VBL — two deliveries per frame). A first draft
+  put a handler inside the power-on NOP slide and reset *executed* it — both
+  sides agreed, because both read the same wrong ROM; the stimulus measurement
+  (nmi_line never rose) is what caught it.
+- **nestest 0-diff at 5,002,992 cycles — the 5M-cycle window, an acceptance
+  criterion standing since v2.5.0, closes.** En route the window went 59,554 →
+  357,360 (the harness now serves open-bus `$40` for `$4016`/`$4017`) → 5M.
+
+### Fixed
+
+- **The testbench's cycle split was `[2 pre-dots | access | 1 post]`; the
+  oracle's is `[1 | access | 2]`** (`read_split(12) = (5,7)`). A `$2002` read
+  racing the VBL set produces a **~2-dot /NMI pulse**, and the DUT's
+  end-of-cycle sample sat one dot after the access where the oracle's phi2
+  sample sits two — one NMI in 24 frames was missed. `PPU_LEAD=3` with
+  `ACCESS_DOT=1` keeps the access on the same absolute dot and moves the cycle
+  boundary; the pulse-stretcher built first was then **measured dead and
+  deleted**.
+- **The skip-check delay does not exist.** `ppuvbl024` caught the DUT skipping
+  ten pre-renders the oracle never skipped — invisible to the bus gate for
+  eight frames, because NMI delivery quantizes away single-dot drifts. The
+  delay pipe samples the *pre-write* mask on the commit edge, so the oracle's
+  two-PPU-clock rule plus that asymmetry lands exactly on the rendering enable
+  itself: **`render_for_skip` is deleted** and the skip condition reads
+  `rendering`.
+
+### Verified
+
+- **Twelve of twelve mutations CAUGHT**, three at exactly one divergence. The
+  last — an undelayed skip check — differs on exactly one landing (an enable
+  write at pre-render dot 338 of an odd frame) that is **unreachable by any
+  fixed-cadence ROM**: the CPU's 3-dot quantum and the skip's 1-dot drift
+  co-evolve, locking odd-frame landings to one residue mod 3. `ppuvbl024`
+  breaks the cadence once — one frame branches past both writes, skips, and
+  shifts the class onto dot 338 for the rest of the run. Caught at 4,792
+  divergences.
+- Every rung-3 gate exact: the four VBlank ROMs at 714,729 / 714,730 /
+  **1,191,220** / 714,730 cycles, and every earlier surface unchanged.
+- **Zero emulation-core changes** — the oracle-side diff is documentation only —
+  so **AccuracyCoin holds 141/141 (100.00%, RAM decoder)** and nestest stays
+  0-diff by construction.
+
 ## [2.5.7] - 2026-08-24 - "Collimation" (sprite rendering closes exact — the phase was wrong by two dots, and every window was compensating)
 
 ### Added
