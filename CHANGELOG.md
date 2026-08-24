@@ -26,6 +26,57 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.1] - 2026-08-24 - "Interleave" (the DMC and its DMA cycle steal in the MiSTer co-simulation DUT, cycle-exact on the bus. The emulation core is unchanged)
+
+The DMC reads its own samples by stopping the CPU and taking a cycle. This
+release implements that in the SystemVerilog DUT and proves it cycle-exact
+against the oracle's per-cycle bus, which is the criterion the plan set for this
+step. The emulation core is untouched.
+
+### Added
+
+- **The DMC channel**: the memory reader, the 7-bit delta-modulation output unit
+  with its 8-bit shift register and bits-remaining counter, the 16-entry rate
+  table (the register value is an **index**, not a period), the loop flag and the
+  end-of-sample IRQ.
+- **The DMA cycle steal**, implemented from `nesdev_wiki/DMA.xhtml`: halt (read
+  cycles only), a dummy cycle, an optional alignment cycle, then the get — with
+  the load halting on a get cycle and reloads on a put. The CPU has no RDY pin;
+  holding its clock enable low for a cycle removes exactly one cycle of progress
+  while the APU and PPU keep running, which is what a stolen cycle is.
+- **`apudmc037`**, gated twice: on channel levels and on the per-cycle bus,
+  because the DMA's cost and placement reach the CPU and not the mixer.
+
+### Fixed
+
+- **The DMC timer ticked on the wrong APU phase**, playing every sample two CPU
+  cycles early.
+- **The alignment test was inverted** — the wiki conditions it on whether the
+  *next* cycle is a get, not the current one, which cost the load burst a cycle.
+- **The stolen cycles were not marked as DMA** in the bus trace, so 195 cycles
+  were compared as ordinary reads while their timing was already correct.
+- **The data bus is held across a halt**: for all 144 residual cycles the
+  oracle's value was frozen for the whole burst, with only the get driving a new
+  one.
+
+### Verified
+
+- **The bus gate is exact**: 323,661 diverging cycles to **0**. All 357,360
+  overlapping cycles match on `pc`, `bus_addr`, `bus_data` and `bus_access`, and
+  the DMA is 49 bursts of 195 cycles against the oracle's 49 and 195.
+- **32 gates green across rungs 1-4; 46 of 46 mutations CAUGHT**, 0 NOT CAUGHT,
+  0 BUILD-FAILED.
+- **AccuracyCoin 141/141 (100.00%, RAM decoder)** and nestest 0-diff, by
+  construction: no file under the chip crates changes.
+
+### Retracted
+
+- **The pre-registered risk that the DMA's stall placement was oracle-defined.**
+  It was recorded before the work started, from the oracle's own comment
+  describing its scheduler as calibrated. `DMA.xhtml` documents the whole
+  sequence precisely, so the risk did not exist. A note that an implementation
+  was *calibrated* says nothing about whether documentation exists.
+
 ## [2.6.0] - 2026-08-24 - "Assay" (the triangle, the noise channel and the sweep unit in the MiSTer co-simulation DUT — and an audit of how much of the APU was fitted to the oracle rather than derived from documentation. The emulation core is unchanged)
 
 An assay tests a metal to find out what it is actually made of. This release does
