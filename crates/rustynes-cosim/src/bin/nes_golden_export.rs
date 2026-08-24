@@ -50,6 +50,7 @@ struct Args {
     irq_trace: Option<usize>,
     /// Capacity for the per-dot PPU bus-address capture (rung 3's v2.5.4 gate).
     fetch_trace: Option<usize>,
+    apu_trace: Option<usize>,
     checkpoint_interval: u64,
     /// v2.5.1 — rung 2's interrupt sweep. Instruction-indexed, not
     /// cycle-indexed: this side cannot assert a pin mid-instruction, so a
@@ -64,7 +65,7 @@ fn usage() -> ! {
     eprintln!(
         "usage: nes_golden_export --rom <path> --out <dir> [--seed N] [--frames N]\n\
          \x20                       [--boot-trace START..END] [--irq-trace CAP]\n\
-         \x20                       [--fetch-trace CAP] [--checkpoint-interval N]\n\
+         \x20                       [--fetch-trace CAP] [--apu-trace CAP] [--checkpoint-interval N]\n\
          \x20                       [--inject-instructions N] [--inject-hold N]\n\
          \x20                       [--inject-nmi-at N] [--inject-irq-at N]"
     );
@@ -77,6 +78,7 @@ fn parse_args() -> Args {
     let (mut seed, mut frames) = (0u64, 60u32);
     let (mut boot_trace, mut irq_trace) = (None, None);
     let mut fetch_trace: Option<usize> = None;
+    let mut apu_trace: Option<usize> = None;
     let mut checkpoint_interval = rustynes_cosim::checkpoint::DEFAULT_INTERVAL;
     let (mut inject_instructions, mut inject_hold) = (0u64, 1u64);
     let (mut inject_nmi_at, mut inject_irq_at) = (None, None);
@@ -135,24 +137,11 @@ fn parse_args() -> Args {
                 i += 2;
             }
             "--fetch-trace" => {
-                let cap: usize = need(i).parse().unwrap_or_else(|_| usage());
-                // Validated HERE, at the boundary, rather than left to clamp
-                // silently inside the trace. `FetchTrace` caps its own storage
-                // so no argument can make it allocate without bound -- but a
-                // clamp the caller never learns about produces a golden covering
-                // less than the run, and the whole point of the drop counter is
-                // that such a golden must not pass unnoticed. Refusing the
-                // argument says so before a single cycle is simulated.
-                if cap == 0 || cap > rustynes_core::rustynes_ppu::fetch_trace::MAX_CAPACITY {
-                    eprintln!(
-                        "--fetch-trace must be between 1 and {} (got {cap}); a window \
-                         needing more than that wants to be shorter, not buffered \
-                         larger -- three frames of a rendering ROM is under ten thousand",
-                        rustynes_core::rustynes_ppu::fetch_trace::MAX_CAPACITY
-                    );
-                    usage();
-                }
-                fetch_trace = Some(cap);
+                fetch_trace = Some(parse_fetch_cap(need(i)));
+                i += 2;
+            }
+            "--apu-trace" => {
+                apu_trace = Some(parse_apu_cap(need(i)));
                 i += 2;
             }
             "--checkpoint-interval" => {
@@ -174,6 +163,7 @@ fn parse_args() -> Args {
         boot_trace,
         irq_trace,
         fetch_trace,
+        apu_trace,
         checkpoint_interval,
         inject_instructions,
         inject_nmi_at,
@@ -363,6 +353,64 @@ fn warn_if_incomplete(args: &Args, o: &Oracle, calls: u64, frames_actual: u64) {
     }
 }
 
+/// Parse and validate `--fetch-trace`'s capacity.
+///
+/// Validated HERE, at the boundary, rather than left to clamp silently inside
+/// the trace. `FetchTrace` caps its own storage so no argument can make it
+/// allocate without bound -- but a clamp the caller never learns about produces
+/// a golden covering less than the run, and the whole point of the drop counter
+/// is that such a golden must not pass unnoticed. Refusing the argument says so
+/// before a single cycle is simulated.
+fn parse_fetch_cap(raw: &str) -> usize {
+    let cap: usize = raw.parse().unwrap_or_else(|_| usage());
+    if cap == 0 || cap > rustynes_core::rustynes_ppu::fetch_trace::MAX_CAPACITY {
+        eprintln!(
+            "--fetch-trace must be between 1 and {} (got {cap}); a window \
+             needing more than that wants to be shorter, not buffered \
+             larger -- three frames of a rendering ROM is under ten thousand",
+            rustynes_core::rustynes_ppu::fetch_trace::MAX_CAPACITY
+        );
+        usage();
+    }
+    cap
+}
+
+/// Parse and validate `--apu-trace`'s capacity.
+///
+/// Extracted from `parse_args` to keep that function under the line limit, and
+/// validated at the boundary rather than clamped later: the cap is in RECORDS
+/// and one record is one CPU cycle, so a 24-frame run wants ~715,000. A
+/// capacity smaller than the run yields a well-formed SHORTER file, which is
+/// indistinguishable from a shorter run -- the failure this project keeps
+/// catching, and the reason the drop counter exists at all.
+fn parse_apu_cap(raw: &str) -> usize {
+    let cap: usize = raw.parse().unwrap_or_else(|_| usage());
+    if cap == 0 {
+        eprintln!("--apu-trace capacity must be non-zero");
+        usage();
+    }
+    cap
+}
+
+/// Write rung 4's per-CPU-cycle channel-level golden, when armed.
+///
+/// Fails loudly on a dropped record for the same reason `write_fetch_trace`
+/// does: a truncated golden is not a smaller golden. The comparator sees a
+/// length mismatch and reports a divergence whose real cause is an export-side
+/// capacity, which is a divergence about the wrong thing.
+fn write_apu_trace(o: &mut Oracle, base: &Path) {
+    if let Some((bytes, dropped)) = o.take_apu_trace() {
+        write(&suffixed(base, "apu.bin"), &bytes);
+        if dropped > 0 {
+            eprintln!(
+                "  ERROR: apu trace dropped {dropped} record(s) -- --apu-trace \
+                 capacity is too small, so the golden covers less than the run."
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Write the per-dot PPU bus-address golden, when the trace was armed.
 ///
 /// A DROPPED count is a TRUNCATED window, and a comparison over one that does
@@ -464,6 +512,9 @@ fn main() {
     if let Some(cap) = args.fetch_trace {
         o.enable_fetch_trace(cap);
     }
+    if let Some(cap) = args.apu_trace {
+        o.enable_apu_trace(cap);
+    }
 
     // `advance_frames`, not a `run_frame()` loop: the first call after power-on
     // is swallowed by the frame_complete latch the reset sequence leaves set, so
@@ -511,6 +562,7 @@ fn main() {
     write(&suffixed(&base, "index_fb.bin"), &fb_bytes);
 
     write_fetch_trace(&mut o, &base);
+    write_apu_trace(&mut o, &base);
 
     // Checked BEFORE the write, and checked on `ram_init` specifically. The
     // assert below covers the post-run `ram`, so this buffer had no length check
