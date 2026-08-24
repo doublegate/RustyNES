@@ -15,6 +15,39 @@ plus four dated files in `ref-docs/` (contribution requirements, the MiSTer
 framework, the hardware **source map**, and alternative FPGA targets).
 **Device-under-test:** <https://github.com/doublegate/RustyNES_MiSTer> (private).
 
+## Rung 3 continues: sprite rendering, and the phase (v2.5.7)
+
+Sprite rendering, priority, the sprite-0 hit and its no-hit-at-x=255 quirk, the
+left-8 masks, the garbage nametable fetches and the 337/339 dummies — and the
+release's real finding: **the CPU–PPU power-on phase was wrong by two dots, and
+every OAM window was compensating.** The boot traces agreed on `scanline`/`dot`
+at every instruction boundary while the per-cycle mappings differed by exactly
+two — a phase error hidden by an equal record-point offset, two errors
+cancelling. `PPU_LEAD=2` (the earlier sweep tried 0 and 3; the answer sat
+between them) moves every window from documented-minus-three to
+**documented-minus-one, which is registered-assignment semantics and no residual
+fudge** — the code came to what the RTL's comments had claimed all along.
+
+**Every gate in the rung is exact for the first time**: `ppuspr019/020/021`
+119,115 cycles each, `ppuscroll` 49,998, `ppusprender` 119,114, `ppusprite`
+59,993, `ppuregs` 12,841, fetch traces 7,058 / 88,685 (the v2.5.4 narrowing is
+**removed** — sprite fetches and the dummies are compared now), all three index
+framebuffers 61,440, `nestest` 59,554 — plus **`ppu-phase-gate`**, new: the
+inverse of `cpu-gate`'s skip list, `scanline`/`dot` only over twelve frames,
+98,562 records, the only gate that can see the **odd-frame skipped dot**'s
+one-dot-per-odd-frame drift (implemented this release; five mutations CAUGHT).
+
+**All ten of the rung's mutation catalog are CAUGHT**, re-run in full at the
+corrected phase — the tenth (sprite-0 flag read from the register only) by
+`ppuspr020` at exactly one divergence, the read landing on the hit dot. Also
+found by instrument rather than argument: `PPU_SUBDOT` (master-clock-resolution
+clocking, built to test the half-dot between `read_split` and `write_split` —
+unobservable, now measured) exposed **a register file gated by nothing**; fixed
+with `cpu_ce`, a one-clock commit strobe, latent until v2.6.5 where a held
+address would have latched twelve times per access. Deferred with owners named:
+the VBlank-race stimulus and the skip-check delay (v2.5.8), `chr_wr` (v2.6.3).
+Full record: the sibling's `docs/rung3-ppu.md`.
+
 ## Rung 3 continues: sprite evaluation (v2.5.6)
 
 The evaluation FSM, secondary OAM, the eight-sprite limit, the documented
@@ -108,12 +141,13 @@ diagnostic under `docs/rung3-ppu.md`'s partition.
 dot and address, across two rendering windows. **Eight mutations, all CAUGHT**,
 baseline verified passing first.
 
-**The comparison is narrowed and says so on every run.** A rendering scanline
-issues 154 fetches; this gate compares the 136 background ones (dots 1-256 and
-321-336) and excludes sprite fetches (257-320, v2.5.7) and the two dummy
-nametable reads (337-340, v2.5.8). `fetch_diff.py` prints the excluded count for
-both sides -- 811 and 0 today -- because a narrowing that is not announced reads
-as full coverage.
+**The comparison was narrowed and said so on every run.** At this release a
+rendering scanline issued 154 fetches and the gate compared the 136 background
+ones (dots 1-256 and 321-336), excluding sprite fetches and the two dummy
+nametable reads; `fetch_diff.py` printed the excluded count for both sides
+because a narrowing that is not announced reads as full coverage. **The
+narrowing is gone as of v2.5.7** -- `COMPARED_DOT_SPANS` is `(1, 340)`, sprite
+fetches and the dummies included.
 
 **The finding: the CPU access was presented two dots early, and no existing gate
 could see it.** The DUT issued one extra nametable fetch at the leading edge of

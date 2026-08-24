@@ -10,9 +10,9 @@ per-rung doc records what the rung cannot verify.
 | M3 | v2.5.3 | `v`/`t`/`x`/`w`, `$2005`/`$2006` | Mid-frame scroll writes | **done** — 19,813 records |
 | M4 | v2.5.4 | Background fetch pipeline | Per-dot fetch addresses | **done** — 6,247 fetches |
 | M5 | v2.5.5 | Background render → `index_framebuffer` | First frame, popcount 0 | **done** — 61,440 pixels |
-| M6 | v2.5.6 | **Sprite evaluation FSM** | Evaluation behaviour as seen through `$2004` reads on the CPU bus — the only pin-observable window onto it, and the method the wiki says the behaviour was characterised by | in progress |
-| M7 | v2.5.7 | Sprite render, priority, sprite-0, overflow | blargg sprite ROMs | — |
-| M8 | v2.5.8 | VBlank/NMI, odd-frame skip, `$2002` race | **Rung 3 closes**; nestest unbounded | — |
+| M6 | v2.5.6 | **Sprite evaluation FSM** | Evaluation behaviour as seen through `$2004` reads on the CPU bus — the only pin-observable window onto it, and the method the wiki says the behaviour was characterised by | **done** — 59,993 cycles exact |
+| M7 | v2.5.7 | Sprite render, priority, sprite-0, overflow | Three purpose-built sprite-0 edge ROMs + four bus/fb surfaces (the blargg sprite ROMs need VBlank sync, which is v2.5.8) | **done** — every rung gate exact; all ten mutations CAUGHT; `PPU_LEAD=2` |
+| M8 | v2.5.8 | VBlank/NMI, `$2002` race (odd-frame skip landed in v2.5.7; its `$2001`-across-dot-339 edge remains) | **Rung 3 closes**; nestest unbounded | — |
 | M9 | v2.5.9 | APU pulse + frame counter | `MixRecord` integer levels | — |
 | M10 | v2.6.0 | APU triangle + noise | Same | — |
 | M11 | v2.6.1 | APU DMC + DMA stealing | Cycle-exact CPU stall | — |

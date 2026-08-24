@@ -26,6 +26,81 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.5.7] - 2026-08-24 - "Collimation" (sprite rendering closes exact — the phase was wrong by two dots, and every window was compensating)
+
+### Added
+
+- **Rung 3's sprite rendering, priority, sprite-0 hit and overflow — and the
+  whole rung goes exact.** The sibling's `rtl/ppu2c02.sv` gains the eight sprite
+  slots, the priority mux, the left-8 masks, the sprite-0 hit with its
+  documented no-hit-at-x=255 quirk, the garbage nametable fetches and the
+  dots-337/339 dummy fetches — and then the release's real finding lands:
+  **`PPU_LEAD=2`**. The CPU–PPU power-on phase was wrong by two dots, and it was
+  invisible because two errors cancelled — the boot traces agreed on
+  `scanline`/`dot` at every instruction boundary while the per-cycle mappings
+  differed by exactly two, a phase offset hidden by an equal record-point
+  offset. With the phase corrected, the OAM windows move from
+  documented-minus-three to **documented-minus-one — registered-assignment
+  semantics, no residual fudge** — and every gate in the rung reports **zero
+  divergences for the first time**: `ppuspr019/020/021` 119,115 cycles each,
+  `ppuscroll` 49,998, `ppusprender` 119,114, `ppusprite` 59,993, `ppuregs`
+  12,841 records, fetch traces 7,058 and 88,685, all three index framebuffers
+  61,440 pixels, `nestest` 59,554.
+- **The odd-frame skipped dot**, and the gate that can see it. `ppuspr020`'s
+  last divergence was a *drift* — first frame exact, second frame one read late
+  — because the DUT never skipped pre-render dot 339 on odd rendering frames.
+  The skip lands gated on a two-dot-delayed rendering enable (the oracle's
+  `mask_skip_pipe1` pair), and **`ppu-phase-gate`** — the inverse of
+  `cpu-gate`'s skip list, comparing *only* `scanline`/`dot` over twelve frames —
+  is the gate that pins it: 98,562 records, with five skip mutations CAUGHT.
+- **Three sprite-0 edge ROMs** (`ppuspr019/020/021`): transparent background,
+  X=248 boundary, and X=255 — each setting sprite 0 once before rendering, after
+  a one-ROM draft that rewrote OAM mid-frame produced 3,454 divergences of pure
+  reasoning burden.
+- **`PPU_SUBDOT`, a master-clock-resolution instrument** — four `ppu_clk` pulses
+  per dot with `ce` on one — built to test whether the half-dot between
+  `read_split` and `write_split` is observable. The half-dot is confirmed
+  unobservable, **measured rather than argued**; what the instrument found
+  instead is the `cpu_ce` defect below.
+- `status` in the sprite-eval probe's printout (`sprite_eval_probe.rs`) — the
+  `$2002` half of a divergence, next to the `$2004` half it already printed.
+
+### Fixed
+
+- **The DUT's CPU register file was gated by nothing** — every `$2000`–`$2007`
+  write, `$2002`'s destructive read and `$2007`'s buffer advance latched on
+  *every* clock edge, correct only because the harness pulsed the decode for
+  exactly one pulse per CPU cycle. Latent until v2.6.5, where `nes_top` holds a
+  decoded address for the full 12-master-clock cycle and every write would latch
+  twelve times. Fixed with `cpu_ce`, a one-clock commit strobe separate from the
+  decode; all four sub-dot phases are byte-identical after it, and the pre-fix
+  behaviour is CAUGHT by two independent gates.
+
+### Changed
+
+- **Reads and writes can be placed on different dots in the testbench, and the
+  measurement says they coincide.** `ppufetch` pins the write to dot 2,
+  `ppuscroll` independently rules out dot 0, and `ppuspr020`'s then-residual was
+  unchanged across all eight placements — a hypothesis removed, not a knob
+  tuned. The oracle's two-master-clock write offset is half a dot: below dot
+  resolution, and now demonstrated so.
+
+### Verified
+
+- **All ten of the rung's mutation catalog are CAUGHT** — re-run in full at the
+  corrected phase, because a phase change is more invasive than a stimulus
+  change. The tenth (sprite-0 flag read from the register only) is caught by
+  `ppuspr020` at **exactly one divergence: the read landing on the hit dot**.
+  The `$2004` readback-off-by-one mutant reproduced the old catalog's exact
+  count, 110. Classified non-gaps, each with evidence and an owner: the vblank
+  register-only read (stimulus gap on the v2.5.8 race dot), the skip-check delay
+  (blargg `10-even_odd_timing`, needs v2.5.8's VBlank sync), `chr_wr` (measured
+  **0** assertions across all eight CHR-ROM test ROMs; reachable at v2.6.3), and
+  two provably inert mutants.
+- **Zero emulation-core changes** — the oracle-side diff is one diagnostic
+  printout in the test harness — so **AccuracyCoin holds 141/141 (100.00%, RAM
+  decoder)** and nestest stays 0-diff by construction.
+
 ## [2.5.6] - 2026-08-23 - "Vestige" (sprite evaluation closes, and a byte index that outlives the walk that set it)
 
 ### Added
