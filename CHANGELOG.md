@@ -26,6 +26,77 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-08-24 - "Assay" (the triangle, the noise channel and the sweep unit **in the MiSTer co-simulation DUT** — and an audit of how much of the APU was fitted to the oracle rather than derived from documentation. The emulation core is unchanged)
+
+An assay tests a metal to find out what it is actually made of. This release does
+that to the APU rung: it asks, for every behaviour, whether it was written from
+public hardware documentation or tuned until it agreed with RustyNES — and then
+acts on the answer. The emulation core is untouched.
+
+### Added
+
+- **Triangle and noise channels** in the SystemVerilog DUT: the 32-step sequencer
+  folded from a 5-bit counter, the linear counter and its reload flag, a 15-bit
+  LFSR with bit-1 / bit-6 tap selection, and the 16-entry period table (the
+  register value is an **index**, not a period).
+- **The sweep unit**, which v2.5.9 deferred and had modelled only the mute for.
+  Its period update was **absent entirely**, which made `sweep_mutes` correct and
+  untestable: a period nothing updates can never reach an overflowing target.
+- **`docs/apu-oracle-vs-documentation.md`** — the ledger this release is named
+  for. Every place the DUT follows the oracle rather than the wiki, sorted by
+  risk, each with the text it is measured against and the independent check that
+  would adjudicate it. Maintained going forward, with an explicit rule: an item
+  closes only when a gate exercises it **and** a mutation against it is CAUGHT.
+- **Nine new gate ROMs** — `aputri028`, `apunoise029`, `apusweep030`,
+  `apuquarter031`, `apuquarter032`, `apuneg033`, `apusweepdiv034`,
+  `apuquarter5_035`, `apuirq036` — taking rung 4 from two to **eleven**, plus a
+  `bus` mode for the mutation harness. `tb/regress.sh` runs all 30 gates across
+  rungs 1–4 in one invocation.
+
+### Fixed
+
+- **Two errors that were cancelling each other.** The `$4017` reset delay was
+  keyed on the **mode bit**, which the wiki never mentions — it keys on the
+  write's APU-cycle parity — and it was exact *only* in combination with the
+  5-step sequencer's step 2 held one tick off the convention its fifteen siblings
+  follow. Either correction alone costs 2 cycles, in **opposite directions**;
+  both together are exact. The fitted rule was not merely unfalsified, it was
+  **load-bearing** for a second error. All sixteen sequencer constants are now
+  uniformly documented − 1, with nothing fitted.
+- **The frame IRQ's coincident-read rule was inverted**, under a source comment
+  asserting the ordering was correct. A `$4015` read landing on the assertion
+  edge returned 0 *and* destroyed the assertion, so the flag never came back. The
+  wiki says such a read returns 1 and is not cleared.
+- **The frame IRQ was asserted on only one half of its APU cycle**, where the
+  wiki lists both the GET and PUT halves.
+- **The APU observation point** was one cycle early — the testbench sampled
+  channel levels before a cycle's clock edges while the oracle emits its record
+  after. Identified from the shape of the residual: all 5,076 remaining
+  divergences satisfied `dut[c] == oracle[c-1]`, unanimously.
+- **The power-on APU divider phase** was inverted, verified independent of the
+  above rather than merely sufficient.
+
+### Verified
+
+- **The oracle passes blargg's APU battery 29/29** (`apu_test` 8/8, `apu_reset`
+  6/6, `apu_mixer` 4/4, `blargg_apu_2005` 11/11) — run for the first time in this
+  programme, and recorded per audit item because it means different things in
+  different places.
+- **30 gates green across rungs 1–4; 35 of 35 mutations CAUGHT**, 0 NOT CAUGHT,
+  0 BUILD-FAILED.
+- **AccuracyCoin 141/141 (100.00%, RAM decoder)** and nestest 0-diff. The
+  emulation core is untouched by this release, so these hold by construction —
+  the changes are in the sibling DUT, the co-simulation crate, and documentation.
+
+### Retracted
+
+- v2.5.9 characterised its residual as a **`$4003` write-parity sensitivity**. It
+  was not: it was the inverted power-on tick parity plus the observation point.
+- The `apuquarter032` residual was characterised as a **rounding effect** on a
+  counter that must round half-APU-cycle steps. It was not: it was one sequencer
+  constant off by one, and correcting it closed the residual with no change to
+  any rounding logic.
+
 ## [2.5.9] - 2026-08-24 - "Overture" (rung 4 opens: the two pulse channels, the frame counter, and four ROM defects the stimulus measurement found first)
 
 ### Added

@@ -951,3 +951,48 @@ The undocumented opcodes are **not** delivered and also move to v2.4.9.
 Rung 1's own gate -- nestest 0-diff over >= 8000 instructions -- is not met yet:
 the five ROMs are hand-built opcode groups, not nestest. Rung 2, the per-cycle
 bus and interrupt comparison, has not begun.
+
+## Rung 4 — the 2A03, and the audit it prompted
+
+Rung 4 opened at v2.5.9 with the two pulse channels and the frame counter, and
+**v2.6.0 "Assay"** adds the triangle, the noise channel and the sweep unit. Eleven
+gate ROMs, 35 of 35 mutations CAUGHT, and 30 gates green across rungs 1–4.
+
+Detail lives in the sibling repository (`docs/rung4-apu.md`), but two things
+belong here because they are about the *programme*, not about the APU.
+
+### The oracle is an emulator, and rung 4 is where that stopped being abstract
+
+Every rung-4 gate compares the DUT against RustyNES. A shared error between the
+two is therefore invisible **by construction**: the DUT is tuned until it agrees,
+and agreement with a wrong reference is indistinguishable from correctness.
+
+`docs/apu-oracle-vs-documentation.md` in the sibling repo is the response —
+a standing ledger of every place the DUT follows the oracle rather than the NESdev
+wiki, sorted by risk, each with the documentation text it is measured against and
+the independent check that would adjudicate it. Its maintenance rule is the load-
+bearing part: **an item closes only when a gate exercises it *and* a mutation
+against it is CAUGHT.**
+
+The independent check was run at v2.6.0 for the first time: **the oracle passes
+blargg's APU battery 29/29**. That is recorded per item rather than as a headline,
+because it means different things in different places — for two items it moved
+suspicion off the oracle and onto the RTL, and for one there is no adjudicating
+ROM at all, which is itself the finding.
+
+### Two errors that were cancelling, and what that says about mutation testing
+
+The `$4017` reset delay had been keyed on the mode bit, which the wiki never
+mentions. It was exact *only* in combination with a second constant held one tick
+off its documented value; either correction alone costs 2 cycles, in opposite
+directions. The fitted rule was not merely unfalsified by the stimulus — it was
+**load-bearing for a second error**, which is why it survived both a mutation
+catalog and a documentation audit that looked directly at it.
+
+This is the third time the programme has found two errors cancelling (v2.5.7's
+`PPU_LEAD`, v2.6.0's own observation point), and the first where one propped up
+the other rather than merely coinciding with it. **A green mutation catalog does
+not establish that constants are individually right** — only that the combination
+in the tree is not detectably wrong on the current stimulus. Cross-checking each
+constant against documentation is a separate activity, and rung 4 is where the
+programme learned to do it.
