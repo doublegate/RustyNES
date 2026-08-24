@@ -15,6 +15,44 @@ plus four dated files in `ref-docs/` (contribution requirements, the MiSTer
 framework, the hardware **source map**, and alternative FPGA targets).
 **Device-under-test:** <https://github.com/doublegate/RustyNES_MiSTer> (private).
 
+## Rung 3 CLOSES: VBlank, NMI, the `$2002` race (v2.5.8)
+
+The VBlank flag's full CPU-visible behaviour — the set, the clear, the
+destructive read, `suppress_vbl` for the one-clock-before race, and **the PPU's
+/NMI wired to the CPU for the first time**. Four ROMs carry it, every one with
+its stimulus measured from the oracle's trace before any gate ran; a first
+draft put a handler inside the power-on NOP slide and reset executed it, both
+sides agreeing because both read the same wrong ROM.
+
+**Both structural fixes were deletions.** The testbench's cycle split was
+`[2 pre-dots | access | 1 post]` and the oracle's is `[1 | access | 2]`
+(`read_split(12) = (5,7)`): a ~2-dot /NMI pulse from a read racing the VBL set
+was invisible to the DUT's end-of-cycle sample, and `PPU_LEAD=3` +
+`ACCESS_DOT=1` (same absolute access dot, moved boundary) fixed it — the
+pulse-stretcher built first was measured dead and deleted. And
+`render_for_skip` — v2.5.7's deferred skip-check delay — does not exist: the
+oracle's two-PPU-clock rule plus the commit-edge sampling asymmetry lands
+exactly on the rendering enable, so the extra tap was deleted and the pipe
+shrank to one stage. `ppuvbl024` had caught the DUT skipping ten pre-renders
+the oracle never skipped, invisible to the bus gate for eight frames because
+NMI delivery quantizes away single-dot drifts.
+
+**Twelve of twelve mutations CAUGHT** — the last via a cadence-breaking frame,
+because its one firing landing (enable at pre-render dot 338, odd frame) is
+unreachable by any fixed-cadence ROM: the 3-dot CPU quantum and the skip's
+1-dot drift lock odd-frame landings to one residue mod 3.
+
+**Reproducing it:** none of these is a CI gate, so the exact invocations and
+the non-zero count each prints are recorded in the sibling's
+`docs/rung3-ppu.md` under *Reproducing v2.5.8, exactly* -- including that
+`--irq-trace` is **mandatory** for every PPU golden export, without which no
+`obs.bin` is written and the bus gate cannot run at all.
+
+**nestest 0-diff at 5,002,992 cycles — the 5M window closes**, and with it
+rung 3's acceptance criteria in full. The harness serves open-bus `$40` for
+`$4016`/`$4017`; the next divergence anywhere is an APU or controller surface,
+which is rung 4. Full record: the sibling's `docs/rung3-ppu.md`.
+
 ## Rung 3 continues: sprite rendering, and the phase (v2.5.7)
 
 Sprite rendering, priority, the sprite-0 hit and its no-hit-at-x=255 quirk, the
