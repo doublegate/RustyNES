@@ -683,3 +683,81 @@ fn the_version_plan_table_marks_exactly_the_current_release() {
          header."
     );
 }
+
+/// A release-line CHAIN that ends by naming its last entry "the current
+/// release" must name the CURRENT one.
+///
+/// This is a different shape from [`ANCHORS`] and needs its own check because
+/// of it: an `Anchor` marker is text immediately FOLLOWED by the version, and
+/// here the version comes first — `**v2.5.8 "Blanking"**, the current release`
+/// — so no marker in that table can reach it.
+///
+/// It earns a test by having drifted three releases running: the phrase named
+/// v2.5.6 at the v2.5.7 cut, was corrected to v2.5.7 by review, and named
+/// v2.5.7 again at the v2.5.8 cut. Three consecutive releases is not a lapse,
+/// it is an unguarded anchor — and the bump script cannot help, because it
+/// rewrites `marker`-shaped sites only.
+#[test]
+fn a_chain_that_names_its_tail_the_current_release_names_the_current_one() {
+    const PHRASE: &str = ", the current release";
+    // Every document that carries a release-line chain. Listed rather than
+    // globbed: a glob would silently start covering new files, and a check
+    // whose scope moves on its own cannot be reasoned about at a release cut.
+    const DOCS: &[&str] = &[
+        "to-dos/ROADMAP.md",
+        "VERSION-PLAN.md",
+        "README.md",
+        "AGENTS.md",
+        "docs/STATUS.md",
+        "ROADMAP.md",
+    ];
+
+    let version = workspace_package_field("version");
+    let expected = version_core(&version);
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+
+    for doc in DOCS {
+        let text = read(doc);
+        for (idx, _) in text.match_indices(PHRASE) {
+            checked += 1;
+            // Walk back to the `v` of the version token that precedes it. The
+            // tail looks like `**v2.5.8 "Blanking"**, the current release`, so
+            // the nearest `v` before the phrase begins the version.
+            let before = &text[..idx];
+            let Some(v_at) = before.rfind('v') else {
+                wrong.push(format!("  {doc} -- \"{PHRASE}\" with no version before it"));
+                continue;
+            };
+            match parse_version_prefix(&before[v_at + 1..]) {
+                Some(found) if found == expected => {}
+                Some(found) => wrong.push(format!(
+                    "  {doc} -- a chain ends \"v{found}{PHRASE}\", workspace is {expected}"
+                )),
+                None => wrong.push(format!(
+                    "  {doc} -- \"{PHRASE}\" is not preceded by a parseable version"
+                )),
+            }
+        }
+    }
+
+    // Fail closed. A corpus where the phrase appears nowhere would pass this
+    // test while checking nothing, which is the failure this project has
+    // recorded more than once.
+    assert!(
+        checked > 0,
+        "no document contains \"{PHRASE}\" -- either the release-line chains were \
+         reworded (update DOCS and this test's premise) or the check is now \
+         inert, and an inert check reports a pass it has not earned"
+    );
+
+    assert!(
+        wrong.is_empty(),
+        "{} release-line chain(s) end by calling an OLD release current \
+         (workspace = {version}):\n{}\n\n\
+         The chain's last entry and the \"current release\" label are one claim, \
+         so extending the chain and moving the label are one edit.",
+        wrong.len(),
+        wrong.join("\n")
+    );
+}

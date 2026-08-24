@@ -42,6 +42,12 @@ because its one firing landing (enable at pre-render dot 338, odd frame) is
 unreachable by any fixed-cadence ROM: the 3-dot CPU quantum and the skip's
 1-dot drift lock odd-frame landings to one residue mod 3.
 
+**Reproducing it:** none of these is a CI gate, so the exact invocations and
+the non-zero count each prints are recorded in the sibling's
+`docs/rung3-ppu.md` under *Reproducing v2.5.8, exactly* -- including that
+`--irq-trace` is **mandatory** for every PPU golden export, without which no
+`obs.bin` is written and the bus gate cannot run at all.
+
 **nestest 0-diff at 5,002,992 cycles — the 5M window closes**, and with it
 rung 3's acceptance criteria in full. The harness serves open-bus `$40` for
 `$4016`/`$4017`; the next divergence anywhere is an APU or controller surface,
