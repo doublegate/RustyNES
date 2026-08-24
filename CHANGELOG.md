@@ -26,7 +26,7 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [2.6.0] - 2026-08-24 - "Assay" (the triangle, the noise channel and the sweep unit — and an audit of how much of the APU was fitted to the oracle rather than derived from documentation)
+## [2.6.0] - 2026-08-24 - "Assay" (the triangle, the noise channel and the sweep unit **in the MiSTer co-simulation DUT** — and an audit of how much of the APU was fitted to the oracle rather than derived from documentation. The emulation core is unchanged)
 
 An assay tests a metal to find out what it is actually made of. This release does
 that to the APU rung: it asks, for every behaviour, whether it was written from
@@ -47,9 +47,11 @@ acts on the answer. The emulation core is untouched.
   risk, each with the text it is measured against and the independent check that
   would adjudicate it. Maintained going forward, with an explicit rule: an item
   closes only when a gate exercises it **and** a mutation against it is CAUGHT.
-- **Five new gate ROMs** (`apusweep030`, `apuquarter031`, `apuquarter5_035`,
-  `apuneg033`, `apusweepdiv034`, `apuirq036`) and a `bus` mode for the mutation
-  harness. `tb/regress.sh` runs all 30 gates across rungs 1–4 in one invocation.
+- **Nine new gate ROMs** — `aputri028`, `apunoise029`, `apusweep030`,
+  `apuquarter031`, `apuquarter032`, `apuneg033`, `apusweepdiv034`,
+  `apuquarter5_035`, `apuirq036` — taking rung 4 from two to **eleven**, plus a
+  `bus` mode for the mutation harness. `tb/regress.sh` runs all 30 gates across
+  rungs 1–4 in one invocation.
 
 ### Fixed
 
