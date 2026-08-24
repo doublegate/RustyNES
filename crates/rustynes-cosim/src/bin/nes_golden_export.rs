@@ -105,6 +105,15 @@ fn parse_args() -> Args {
             }
             "--frames" => {
                 frames = need(i).parse().unwrap_or_else(|_| usage());
+                // Rejected at the boundary. A zero-frame run never reaches a
+                // frame boundary, so an armed APU trace is never drained, and
+                // `write_apu_trace`'s emptiness invariant then fires with a
+                // message blaming "some run path" for what is plain invalid
+                // input. A panic is the wrong report for a bad argument.
+                if frames == 0 {
+                    eprintln!("--frames must be at least 1 (got 0)");
+                    usage();
+                }
                 i += 2;
             }
             "--boot-trace" => {
@@ -400,8 +409,14 @@ fn parse_fetch_cap(raw: &str) -> usize {
 /// catching, and the reason the drop counter exists at all.
 fn parse_apu_cap(raw: &str) -> usize {
     let cap: usize = raw.parse().unwrap_or_else(|_| usage());
-    if cap == 0 {
-        eprintln!("--apu-trace capacity must be non-zero");
+    if cap == 0 || cap > rustynes_cosim::MAX_APU_TRACE_CAPACITY {
+        eprintln!(
+            "--apu-trace must be between 1 and {} records (got {cap}); one \
+             record is one CPU cycle, so a 24-frame run wants ~715,000. An \
+             unbounded value reaches Vec::with_capacity directly and aborts \
+             the process in the allocator.",
+            rustynes_cosim::MAX_APU_TRACE_CAPACITY
+        );
         usage();
     }
     cap
@@ -430,14 +445,20 @@ fn write_apu_trace(o: &mut Oracle, base: &Path) {
              reports success while covering nothing. Some run path armed the \
              trace without draining it at a frame boundary."
         );
-        write(&suffixed(base, "apu.bin"), &bytes);
+        // Checked BEFORE writing, not after. Writing a golden and then exiting
+        // non-zero leaves a truncated `.bin` on disk that looks like every
+        // other golden, and the next run of a gate against it compares a window
+        // shorter than the manifest claims. The exit code fails a pipeline; the
+        // file outlives it.
         if dropped > 0 {
             eprintln!(
                 "  ERROR: apu trace dropped {dropped} record(s) -- --apu-trace \
-                 capacity is too small, so the golden covers less than the run."
+                 capacity is too small, so the golden covers less than the run. \
+                 No file written."
             );
             std::process::exit(1);
         }
+        write(&suffixed(base, "apu.bin"), &bytes);
     }
 }
 

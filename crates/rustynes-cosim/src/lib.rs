@@ -71,6 +71,24 @@ use rustynes_core::rustynes_ppu::fetch_trace::FetchTrace;
 /// Bytes per rung-4 channel-level record. See [`Oracle::take_apu_trace`].
 const APU_REC_LEN: usize = 16;
 
+/// Upper bound on `--apu-trace`'s capacity, in RECORDS.
+///
+/// One record is one CPU cycle, so this is 8,388,608 cycles -- roughly 281 NTSC
+/// frames, and 134 MB once multiplied by [`APU_REC_LEN`]. Comfortably above any
+/// legitimate rung-4 stimulus (a 24-frame run wants ~715,000) and bounded.
+///
+/// The bound exists because the capacity is external input that reaches
+/// `Vec::with_capacity` directly: without it `--apu-trace 99999999999999` asks
+/// the allocator for a petabyte and the process aborts. `fetch_trace` has had
+/// its own `MAX_CAPACITY` since it was written; this one was missing, and the
+/// asymmetry between the two parsers is what made it easy to miss.
+///
+/// A capacity ABOVE this is refused at the CLI boundary rather than clamped,
+/// because a silently clamped capacity produces a short golden that claims to
+/// cover the whole run. `enable_apu_trace` clamps as well, but only as a
+/// library-level backstop for callers that bypass the CLI.
+pub const MAX_APU_TRACE_CAPACITY: usize = 1 << 23;
+
 /// Opaque handle handed to C. One live `Nes` plus the buffers its accessors
 /// borrow from.
 pub struct Oracle {
@@ -177,6 +195,12 @@ impl Oracle {
     /// "absence of a signal read as a signal" failure the crate's manifest
     /// comment describes.
     pub fn enable_apu_trace(&mut self, capacity: usize) {
+        // Clamped, not trusted. The CLI refuses an over-large capacity outright
+        // -- a silently shortened golden is worse than a rejected argument --
+        // and this is the backstop for any caller that does not go through it.
+        // `cap` takes the CLAMPED value so the dropped-record accounting is
+        // measured against what is actually stored.
+        let capacity = capacity.min(MAX_APU_TRACE_CAPACITY);
         self.nes.set_audio_provenance(true);
         self.apu_trace = Some(ApuTrace {
             bytes: Vec::with_capacity(capacity.saturating_mul(APU_REC_LEN)),
@@ -197,7 +221,7 @@ impl Oracle {
         if let Some(trace) = self.nes.mix_trace() {
             let first = trace.first_cycle();
             for (i, r) in trace.records().iter().enumerate() {
-                if acc.bytes.len() / APU_REC_LEN >= acc.cap {
+                if acc.bytes.len() >= acc.cap.saturating_mul(APU_REC_LEN) {
                     acc.dropped += 1;
                     continue;
                 }
@@ -1296,6 +1320,42 @@ mod tests {
     /// `advance_frames(5)` must simulate five NTSC frames' worth of cycles, and it
     /// must take SIX `run_frame()` calls to do it -- the first after power-on is
     /// swallowed by the `frame_complete` latch the reset sequence leaves set. A bare
+
+    /// An over-large `--apu-trace` capacity is CLAMPED, not honoured.
+    ///
+    /// `enable_apu_trace` multiplies the capacity by `APU_REC_LEN` and hands
+    /// the product to `Vec::with_capacity`, so an unbounded value asks the
+    /// allocator for more memory than exists and aborts the process. The CLI
+    /// refuses such a value outright; this pins the library-level backstop for
+    /// callers that do not go through it.
+    ///
+    /// `cap` must take the CLAMPED value too. If it kept the requested one, the
+    /// dropped-record accounting would be measured against a capacity the
+    /// buffer does not have, and a truncated golden would report zero drops.
+    #[test]
+    fn an_over_large_apu_trace_capacity_is_clamped() {
+        let rom = std::fs::read(rom_path()).expect("test rom");
+        let mut o = Oracle::new(&rom, 0).expect("oracle");
+        o.enable_apu_trace(usize::MAX);
+        assert_eq!(
+            o.apu_trace.as_ref().expect("armed").cap,
+            MAX_APU_TRACE_CAPACITY,
+            "the stored cap must be the clamped one, not the requested one"
+        );
+    }
+
+    /// A capacity at or below the bound is left exactly as asked.
+    ///
+    /// The companion to the clamp test: a bound that also altered ordinary
+    /// values would silently shorten every golden this tool has ever produced.
+    #[test]
+    fn an_ordinary_apu_trace_capacity_is_untouched() {
+        let rom = std::fs::read(rom_path()).expect("test rom");
+        let mut o = Oracle::new(&rom, 0).expect("oracle");
+        o.enable_apu_trace(400_000);
+        assert_eq!(o.apu_trace.as_ref().expect("armed").cap, 400_000);
+    }
+
     /// `for _ in 0..5` loop lands at 4.0 frames here, under a manifest claiming 5.
     #[test]
     fn five_frames_requested_is_five_frames_of_cycles() {
