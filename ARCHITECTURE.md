@@ -2,7 +2,7 @@
 
 **Document Version:** 2.1.0
 **Last Updated:** 2026-08-20
-**Applies to:** RustyNES v2.5.9 (the scheduling model is v2.0.0 "Timebase" onward)
+**Applies to:** RustyNES v2.6.0 (the scheduling model is v2.0.0 "Timebase" onward)
 
 This document fixes the high-level architecture of RustyNES. The per-subsystem specs under `docs/` (`cpu-6502.md`, `ppu-2c02.md`, `apu-2a03.md`, `mappers.md`, `scheduler.md`) take these decisions as given and elaborate one chip each. After reading this you should know the workspace shape, the scheduling model, the public boundary, and the load-bearing invariants. The canonical, always-current architecture spec is [`docs/architecture.md`](docs/architecture.md); this file is the top-level companion.
 
