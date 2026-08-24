@@ -687,7 +687,10 @@ mod tests {
         args.inject_instructions = 8;
         args.inject_nmi_at = Some(2);
         let err = injection_error(&args).expect("the combination must be refused");
-        assert!(err.contains("--apu-trace"), "message names the option: {err}");
+        assert!(
+            err.contains("--apu-trace"),
+            "message names the option: {err}"
+        );
 
         // Neither half alone is refused for this reason: a frame run with the
         // trace armed is the normal case, and an injection run without it is
