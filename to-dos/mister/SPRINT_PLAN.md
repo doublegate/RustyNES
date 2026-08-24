@@ -29,7 +29,7 @@ per-rung doc records what the rung cannot verify.
 **Status is a claim about a recorded manual run, not about CI.** None of the DUT
 gates run in the sibling repository's workflows — they need the oracle's goldens
 and a `cargo` build of `rustynes-cosim`. Results live in that repo's
-`docs/rung1-6502.md` and `docs/rung3-ppu.md`.
+`docs/rung1-6502.md`, `docs/rung3-ppu.md` and `docs/rung4-apu.md`.
 
 ## Re-planning triggers
 

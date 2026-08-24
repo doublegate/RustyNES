@@ -684,6 +684,53 @@ fn the_version_plan_table_marks_exactly_the_current_release() {
     );
 }
 
+/// The version token immediately preceding `before`'s end, if there is one.
+///
+/// Extracted rather than inlined into the audit so a test can call the REAL
+/// decision. A first version of the test restated the scan as a local closure
+/// and would have agreed with itself forever -- the exact shape this project
+/// recorded in v2.4.0, three times in one release.
+///
+/// The `v` must START a token: without that, the scan accepts the `v` inside an
+/// identifier, and `rev2.5.9, the current release` parses as version 2.5.9
+/// while containing no version token at all.
+fn version_before(before: &str) -> Option<String> {
+    before
+        .char_indices()
+        .rev()
+        .filter(|&(_, c)| c == 'v')
+        .filter(|&(at, _)| {
+            before[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|p| !p.is_alphanumeric() && p != '_')
+        })
+        .find_map(|(at, _)| parse_version_prefix(&before[at + 1..]))
+}
+
+/// The reverse `v` scan must not accept a `v` inside a word.
+///
+/// Two live inputs make this concrete rather than theoretical, and BOTH were
+/// found after the check shipped: a codename containing the letter (`"Overture"`
+/// broke the first version outright), and an identifier ending in a version
+/// (`rev2.5.9` parses as `2.5.9` and would satisfy the audit while containing no
+/// version token at all).
+#[test]
+fn the_version_scan_requires_a_token_boundary() {
+    let scan = version_before;
+
+    assert_eq!(scan("**v2.5.9 \"Overture\"**").as_deref(), Some("2.5.9"));
+    assert_eq!(scan("v2.5.9").as_deref(), Some("2.5.9"));
+    // A `v` that begins no token is not a version marker.
+    assert_eq!(scan("rev2.5.9"), None);
+    assert_eq!(scan("_v2.5.9"), None);
+    // ...and the surrounding prose must not defeat a real one.
+    assert_eq!(
+        scan("shipped v2.5.9 (rev2 of the plan)").as_deref(),
+        Some("2.5.9")
+    );
+}
+
 /// A release-line CHAIN that ends by naming its last entry "the current
 /// release" must name the CURRENT one.
 ///
@@ -730,11 +777,7 @@ fn a_chain_that_names_its_tail_the_current_release_names_the_current_one() {
             // the check was written. A codename is free text; only a `v`
             // followed by a version is a version.
             let before = &text[..idx];
-            let found = before
-                .char_indices()
-                .rev()
-                .filter(|&(_, c)| c == 'v')
-                .find_map(|(at, _)| parse_version_prefix(&before[at + 1..]));
+            let found = version_before(before);
             match found {
                 Some(f) if f == expected => {}
                 Some(f) => wrong.push(format!(

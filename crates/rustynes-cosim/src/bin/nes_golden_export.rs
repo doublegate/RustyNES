@@ -270,6 +270,21 @@ fn write_irq_artifacts(o: &mut Oracle, base: &Path, interval: u64) -> (usize, us
 /// Returns the reason rather than exiting, so the rules are testable without a
 /// process boundary.
 fn injection_error(args: &Args) -> Option<String> {
+    // The APU trace is drained at FRAME boundaries, in `advance_frames`, and an
+    // injection run steps instructions and completes no frames -- so the two
+    // together would write a well-formed, EMPTY `.apu.bin` with a dropped count
+    // of zero. That is the exact shape this project keeps catching: a golden
+    // whose emptiness is indistinguishable from a run that produced nothing.
+    // Refused here rather than papered over with a warning, because a warning
+    // on stderr is a signal that may never arrive.
+    if args.apu_trace.is_some() && args.inject_instructions > 0 {
+        return Some(
+            "--apu-trace needs a frame run: the channel-level trace is drained at \
+             frame boundaries, and an injection run completes no frames, so the \
+             golden would be silently empty"
+                .to_owned(),
+        );
+    }
     let pinned = args.inject_nmi_at.is_some() || args.inject_irq_at.is_some();
     if pinned && args.inject_instructions == 0 {
         return Some(
@@ -624,7 +639,55 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{sha256_hex, suffixed};
+    /// `--apu-trace` with instruction injection must be REFUSED, not silently
+    /// emptied.
+    ///
+    /// The trace drains at frame boundaries and an injection run completes no
+    /// frames, so the combination would write a well-formed empty golden whose
+    /// dropped count is zero -- indistinguishable from a run that produced
+    /// nothing. This calls the real validator rather than restating its rule.
+    #[test]
+    fn apu_trace_with_injection_is_refused() {
+        // Built explicitly rather than from a `Default`: `Args` has no
+        // default and giving it one would invent a "valid" argument set that
+        // no invocation produces.
+        let base = || Args {
+            rom: std::path::PathBuf::from("/dev/null"),
+            out: std::path::PathBuf::from("/tmp"),
+            seed: 0,
+            frames: 1,
+            boot_trace: None,
+            irq_trace: None,
+            fetch_trace: None,
+            apu_trace: None,
+            checkpoint_interval: 4096,
+            inject_instructions: 0,
+            inject_nmi_at: None,
+            inject_irq_at: None,
+            inject_hold: 1,
+        };
+
+        let mut args = base();
+        args.apu_trace = Some(1000);
+        args.inject_instructions = 8;
+        args.inject_nmi_at = Some(2);
+        let err = injection_error(&args).expect("the combination must be refused");
+        assert!(err.contains("--apu-trace"), "message names the option: {err}");
+
+        // Neither half alone is refused for this reason: a frame run with the
+        // trace armed is the normal case, and an injection run without it is
+        // rung 2's sweep.
+        let mut frames_only = base();
+        frames_only.apu_trace = Some(1000);
+        assert!(injection_error(&frames_only).is_none());
+
+        let mut sweep_only = base();
+        sweep_only.inject_instructions = 8;
+        sweep_only.inject_nmi_at = Some(2);
+        assert!(injection_error(&sweep_only).is_none());
+    }
+
+    use super::{Args, injection_error, sha256_hex, suffixed};
     use std::path::Path;
 
     /// A dot in the ROM name must not eat part of the golden's filename.
