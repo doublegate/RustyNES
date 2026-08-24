@@ -556,6 +556,26 @@ fn the_changelog_has_a_section_for_the_workspace_version() {
          codename. Every release in this file carries one, and it is half of what \
          the published title says:\n  {header}"
     );
+
+    // The theme becomes the published release TITLE, and a GitHub release title
+    // is PLAIN TEXT -- it is not markdown-rendered. So emphasis markers that
+    // read correctly everywhere else in this file appear literally there.
+    //
+    // v2.6.0 shipped with `**in the MiSTer co-simulation DUT**` in its title,
+    // asterisks and all. The markers were added for a good reason -- a review
+    // asked for the claim to be scoped to the sibling DUT -- and they were
+    // correct in the eight anchor documents that DO render markdown. Only this
+    // one string crosses into a plain-text surface, which is exactly why
+    // nothing caught it: every other consumer of the same words was fine.
+    for marker in ["**", "__", "`"] {
+        assert!(
+            !theme.contains(marker),
+            "CHANGELOG header for {version} carries the markdown marker {marker:?} \
+             in its theme. That theme is parsed by release-auto.yml into the \
+             GitHub release title, which is NOT markdown-rendered, so the marker \
+             appears literally to every reader:\n  {header}"
+        );
+    }
 }
 
 /// Anchors that quote a codename must quote the CHANGELOG's codename.
