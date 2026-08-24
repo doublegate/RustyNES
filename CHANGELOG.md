@@ -69,6 +69,19 @@ step. The emulation core is untouched.
 - **AccuracyCoin 141/141 (100.00%, RAM decoder)** and nestest 0-diff, by
   construction: no file under the chip crates changes.
 
+### Known limitations
+
+Both are recorded with the measurement that established them, in
+`docs/apu-oracle-vs-documentation.md` in the sibling repository.
+
+- **The DMA / register-read conflict is not modelled.** A sample fetch coinciding
+  with a register that has read side effects corrupts the transfer on hardware,
+  and the oracle reproduces it. This harness reads a flat array and has no bus to
+  corrupt, so `apudmc037` deliberately avoids provoking it.
+- **"DMA can only halt on CPU read cycles" is implemented but not exercised.** Of
+  `apudmc037`'s 49 bursts, zero are preceded by a write cycle, and removing the
+  condition produces byte-identical output.
+
 ### Retracted
 
 - **The pre-registered risk that the DMA's stall placement was oracle-defined.**
