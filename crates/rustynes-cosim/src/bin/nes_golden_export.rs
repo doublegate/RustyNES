@@ -415,6 +415,21 @@ fn parse_apu_cap(raw: &str) -> usize {
 /// capacity, which is a divergence about the wrong thing.
 fn write_apu_trace(o: &mut Oracle, base: &Path) {
     if let Some((bytes, dropped)) = o.take_apu_trace() {
+        // ARMED BUT EMPTY is a defect, not a short run. `injection_error`
+        // already refuses the one combination known to produce it, and this is
+        // the backstop for the ones nobody has thought of yet: any future path
+        // that arms the trace and never drains it would otherwise ship a
+        // 0-byte golden and report success, because `dropped` stays 0.
+        //
+        // Defence in depth, deliberately -- the guard upstream states the rule
+        // and this states the invariant, and the two fail for different
+        // reasons. Raised in review after the upstream guard was already in.
+        assert!(
+            !bytes.is_empty(),
+            "the APU trace was armed and produced no records -- a 0-byte golden \
+             reports success while covering nothing. Some run path armed the \
+             trace without draining it at a frame boundary."
+        );
         write(&suffixed(base, "apu.bin"), &bytes);
         if dropped > 0 {
             eprintln!(

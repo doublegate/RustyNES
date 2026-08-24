@@ -209,6 +209,10 @@ impl Oracle {
                 // rather than against the chip.
                 acc.bytes
                     .extend_from_slice(&[r.pulse1, r.pulse2, r.triangle, r.noise, r.dmc]);
+                // Pad 13 data bytes (8 cycle + 5 levels) out to APU_REC_LEN.
+                // A power-of-two stride keeps the comparator's indexing trivial
+                // and leaves room for the three channels v2.6.0/v2.6.1 add
+                // without changing the record size under an existing golden.
                 acc.bytes.extend_from_slice(&[0u8; 3]);
             }
             // The APU flags its own per-frame truncation; fold it in rather than
