@@ -75,7 +75,7 @@ jobs:
       # Reason 2 was an ACTIVE constraint until the v1.3.0 pin bump (1.86 vs
       # cargo-audit's 1.88); it is slack today and can bind again after an MSRV
       # change in either direction, so it is kept rather than deleted as history.
-      - uses: taiki-e/install-action@v2.86.1
+      - uses: taiki-e/install-action@v2.86.5
         with:
           tool: cargo-audit
       - run: cargo audit
@@ -91,7 +91,7 @@ jobs:
       # Prebuilt binary for the same two reasons as the audit job above: it is
       # much faster than compiling cargo-deny, and it keeps the security gate
       # independent of this repo's rustc pin. Policy lives in `deny.toml`.
-      - uses: taiki-e/install-action@v2.86.1
+      - uses: taiki-e/install-action@v2.86.5
         with:
           tool: cargo-deny
       - run: cargo deny check
