@@ -721,21 +721,27 @@ fn a_chain_that_names_its_tail_the_current_release_names_the_current_one() {
         let text = read(doc);
         for (idx, _) in text.match_indices(PHRASE) {
             checked += 1;
-            // Walk back to the `v` of the version token that precedes it. The
-            // tail looks like `**v2.5.8 "Blanking"**, the current release`, so
-            // the nearest `v` before the phrase begins the version.
+            // Walk back to the nearest `v` that actually BEGINS A VERSION, not
+            // merely the nearest `v`. The tail looks like
+            // `**v2.5.9 "Overture"**, the current release` -- and "Overture"
+            // contains a `v`, which is what the first version of this check
+            // found. It reported the document as unparseable when the document
+            // was fine and the parser was not, on the very next release after
+            // the check was written. A codename is free text; only a `v`
+            // followed by a version is a version.
             let before = &text[..idx];
-            let Some(v_at) = before.rfind('v') else {
-                wrong.push(format!("  {doc} -- \"{PHRASE}\" with no version before it"));
-                continue;
-            };
-            match parse_version_prefix(&before[v_at + 1..]) {
-                Some(found) if found == expected => {}
-                Some(found) => wrong.push(format!(
-                    "  {doc} -- a chain ends \"v{found}{PHRASE}\", workspace is {expected}"
+            let found = before
+                .char_indices()
+                .rev()
+                .filter(|&(_, c)| c == 'v')
+                .find_map(|(at, _)| parse_version_prefix(&before[at + 1..]));
+            match found {
+                Some(f) if f == expected => {}
+                Some(f) => wrong.push(format!(
+                    "  {doc} -- a chain ends \"v{f}{PHRASE}\", workspace is {expected}"
                 )),
                 None => wrong.push(format!(
-                    "  {doc} -- \"{PHRASE}\" is not preceded by a parseable version"
+                    "  {doc} -- \"{PHRASE}\" is not preceded by any parseable version"
                 )),
             }
         }
