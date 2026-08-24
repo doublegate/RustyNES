@@ -26,7 +26,7 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [2.6.0] - 2026-08-24 - "Assay" (the triangle, the noise channel and the sweep unit **in the MiSTer co-simulation DUT** — and an audit of how much of the APU was fitted to the oracle rather than derived from documentation. The emulation core is unchanged)
+## [2.6.0] - 2026-08-24 - "Assay" (the triangle, the noise channel and the sweep unit in the MiSTer co-simulation DUT — and an audit of how much of the APU was fitted to the oracle rather than derived from documentation. The emulation core is unchanged)
 
 An assay tests a metal to find out what it is actually made of. This release does
 that to the APU rung: it asks, for every behaviour, whether it was written from
