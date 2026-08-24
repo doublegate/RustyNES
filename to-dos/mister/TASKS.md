@@ -42,7 +42,7 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
 
 ## v2.5.9 – v2.6.2 — rung 4, the 2A03
 
-- [ ] v2.5.9 pulse channels + frame counter
+- [x] v2.5.9 **APU pulse channels + frame counter** — rung 4 OPEN: two ROMs, 9/10 mutations CAUGHT, one characterised 1-tick residual carried to v2.6.0
 - [ ] v2.6.0 triangle + noise
 - [ ] v2.6.1 DMC, and its DMA stealing back into the CPU
 - [ ] v2.6.2 frame-counter IRQ edges; blargg APU battery — **rung 4 closes**

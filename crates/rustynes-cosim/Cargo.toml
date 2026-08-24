@@ -8,7 +8,7 @@ description = "RustyNES as a co-simulation oracle for an external HDL device-und
 # The duplication is PINNED, not merely noticed: `cosim_manifest_audit.rs` in
 # `rustynes-test-harness` asserts these values still match the workspace's, so
 # drift fails a test instead of accumulating quietly.
-version = "2.5.8"
+version = "2.5.9"
 edition = "2024"
 rust-version = "1.96"
 license = "GPL-3.0-or-later"
@@ -60,6 +60,16 @@ rustynes-core = { path = "../rustynes-core", features = [
     # sides; nothing else in the workspace enables this, and `cosim_manifest_audit`
     # asserts this crate stays excluded so cargo cannot unify it into the battery.
     "cosim-interrupt-inject",
+    # v2.5.9 (rung 4). Reaches `rustynes-apu/debug-hooks`, whose per-CPU-cycle
+    # `MixTrace` carries the five channels' INTEGER DAC inputs -- the rung-4
+    # gate per `RustyNES_MiSTer/docs/rung4-apu.md`. The `f32` mix fields in the
+    # same record are diagnostics and are deliberately NOT exported.
+    #
+    # The feature is compile-time; the runtime ARM is separate and default-off,
+    # so enabling it here changes no emulated behaviour. That is VERIFIED, not
+    # assumed: exporting a golden with and without it produces byte-identical
+    # `obs.bin`, `index_fb.bin` and `ram.bin`.
+    "debug-hooks",
 ] }
 
 sha2 = { version = "0.11", default-features = false }

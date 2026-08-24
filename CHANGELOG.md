@@ -26,6 +26,84 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.5.9] - 2026-08-24 - "Overture" (rung 4 opens: the two pulse channels, the frame counter, and four ROM defects the stimulus measurement found first)
+
+### Added
+
+- **Rung 4 opens.** `rtl/apu2a03.sv` in the sibling repository gains both pulse
+  channels — timer, 8-step duty sequencer, length counter, envelope and the
+  sweep **mute** — plus the frame counter in both modes with its IRQ, and the
+  `$4015`/`$4017` register file. Written from the NESdev wiki; no emulator or
+  HDL source consulted, per ADR 0037. Triangle, noise and DMC are v2.6.0/v2.6.1
+  and are driven to zero.
+- **The gate/diagnostic partition, written BEFORE the rung** (the sibling's
+  `docs/rung4-apu.md`). The APU is the hardest chip in the console to gate
+  honestly, because what it *produces* is an analog level and what an emulator
+  computes is a number. **Gates:** the `$4015` read value, the `/IRQ` pin, and
+  each channel's **integer** DAC input, all per CPU cycle. **Diagnostics:**
+  `MixRecord`'s `f32` `mixed`/`external` (RustyNES's non-linear mixer,
+  decimator and expansion gain — a modelling choice), the frame-sequencer step
+  index (internal, no pin), and `apu_phase`.
+- **`--apu-trace` on `nes_golden_export`**, exporting the five integer channel
+  levels per CPU cycle as 16-byte records with an **explicit** cycle — the
+  records are drained per frame, so an index-implied cycle would be wrong the
+  moment a frame boundary shifted anything. `rustynes-cosim` enables
+  `debug-hooks`; that this changes no emulated behaviour is **verified, not
+  assumed** — `obs.bin`, `index_fb.bin` and `ram.bin` are byte-identical with
+  and without it.
+- **Two rung-4 stimulus ROMs** (`apupulse026`, `apulen027`) covering both
+  pulses at different periods, duties and volumes, the frame IRQ and its
+  interrupt sequence, the 4-step and 5-step modes, the inhibit flag, and a
+  length counter that expires against one that is halted.
+
+### Fixed
+
+- **The duty sequencer counts up.** Counting down gave the right period and the
+  right levels with the wrong phase — pulse 1 three sequencer steps late and
+  pulse 2 five.
+- **The 4-step sequence constants must be consistently 0-based.** `fc_count`
+  reads V on tick V+1, so each documented step is V−1. Three of four were and
+  the last was written as the wiki's own number, putting the frame IRQ **3 CPU
+  cycles late** (29,830 against 29,827, measured) and the last length-counter
+  clock of every frame with it.
+- **`$4017` bit 7 clocks a quarter and half frame *immediately*** — a latched
+  flag clocked on the next APU tick left exactly two divergent cycles at a
+  length expiry.
+- **The `$4017` sequencer-reset delay depends on bit 7.** The wiki says "3 or 4
+  CPU clock cycles" without saying which applies when, and at this resolution
+  the two are distinguishable: each constant fixed one ROM and broke the other,
+  and a parity rule on `apu_phase` separated nothing because both ROMs' writes
+  land on the same phase. Bit 7 — the bit that also fires the immediate clock —
+  does separate them.
+
+### Verified
+
+- **`apulen027` is exact on both surfaces** (178,668 cycles each), and
+  `apupulse026`'s bus surface is 3 of 178,668.
+- **`apupulse026`'s channel levels are 1,000 of 178,668 — 500 runs of exactly
+  two cycles, one per pulse edge.** A uniform one-APU-tick offset, not a
+  structural fault, and a **phase sensitivity the first stimulus hid**: adding a
+  five-cycle counter initialisation — an *odd* number — flipped which
+  `apu_phase` the `$4003` writes land on. Two candidate fixes were tried and
+  **both rejected by measurement**; the wiki is right that the period divider is
+  not reset. Carried to v2.6.0 with the ROM that exposes it already written.
+- **Nine of ten mutations CAUGHT.** Two were NOT CAUGHT on the first pass and
+  **both indicted the stimulus rather than the gate** — a halt flag whose
+  channel's length was too long to expire in the window, and an inhibit bit only
+  ever set in 5-step mode where the IRQ cannot fire anyway. Both ROMs were
+  changed and both are now caught. The tenth is the sweep mute's threshold,
+  out of stimulus regardless (both ROMs use periods 64 and 84, so any threshold
+  below 64 is inert) and belonging to the sweep unit this rung defers.
+- **The stimulus measurement found four ROM defects before any gate ran** —
+  length index 3 is **2**, not 254; the 6502 boots with I set, so without `CLI`
+  zero IRQs are taken despite five real line edges; two channels at the same
+  volume are indistinguishable in a channel-level golden; and power-on work RAM
+  is **seeded, not zeroed**, so an uninitialised counter came up `0x7D` and the
+  handler's `CMP #3` never matched.
+- **Zero emulation-core changes.** The oracle-side diff is the excluded
+  `rustynes-cosim` crate plus documentation, so **AccuracyCoin holds 141/141
+  (100.00%, RAM decoder)** and nestest stays 0-diff by construction.
+
 ## [2.5.8] - 2026-08-24 - "Blanking" (VBlank, NMI and the PPUSTATUS race close rung 3 — and both fixes were deletions)
 
 ### Added

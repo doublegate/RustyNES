@@ -15,6 +15,34 @@ plus four dated files in `ref-docs/` (contribution requirements, the MiSTer
 framework, the hardware **source map**, and alternative FPGA targets).
 **Device-under-test:** <https://github.com/doublegate/RustyNES_MiSTer> (private).
 
+## Rung 4 OPENS: the pulse channels and the frame counter (v2.5.9)
+
+Both pulses -- timer, 8-step duty sequencer, length counter, envelope, the
+sweep MUTE -- plus the frame counter in both modes with its IRQ and the
+`$4015`/`$4017` register file. Triangle, noise and DMC are v2.6.0/v2.6.1.
+
+**The partition was fixed before the rung** (the sibling's `docs/rung4-apu.md`),
+because the APU is the hardest chip here to gate honestly: what it produces is
+an analog level and what an emulator computes is a number. Gates are the
+`$4015` read value, the `/IRQ` pin and each channel's **integer** DAC input;
+`MixRecord`'s `f32` mix fields, the sequencer step index and `apu_phase` are
+diagnostics. `--apu-trace` on `nes_golden_export` exports the integer levels
+only.
+
+**The stimulus measurement found four ROM defects before any gate ran** --
+length index 3 is 2 and not 254, the 6502 boots with I set so `CLI` is
+mandatory, two channels at one volume are indistinguishable, and power-on work
+RAM is seeded rather than zeroed. Four findings in the DUT: the duty sequencer
+counts UP, the 4-step constants must be consistently 0-based, `$4017` bit 7
+clocks a quarter and half frame IMMEDIATELY, and the `$4017` reset delay depends
+on bit 7 -- which the wiki's "3 or 4 CPU clock cycles" does not settle.
+
+`apulen027` is exact on both surfaces; `apupulse026`'s bus surface is 3 and its
+channel levels 1,000 -- **500 runs of exactly two cycles, one per edge**, a
+uniform one-tick `$4003` write-parity sensitivity the first stimulus hid. Two
+fixes tried, both rejected by measurement. v2.6.0's first item. **Nine of ten
+mutations CAUGHT**, the two exceptions both indicting the stimulus.
+
 ## Rung 3 CLOSES: VBlank, NMI, the `$2002` race (v2.5.8)
 
 The VBlank flag's full CPU-visible behaviour — the set, the clear, the

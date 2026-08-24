@@ -50,6 +50,7 @@ struct Args {
     irq_trace: Option<usize>,
     /// Capacity for the per-dot PPU bus-address capture (rung 3's v2.5.4 gate).
     fetch_trace: Option<usize>,
+    apu_trace: Option<usize>,
     checkpoint_interval: u64,
     /// v2.5.1 — rung 2's interrupt sweep. Instruction-indexed, not
     /// cycle-indexed: this side cannot assert a pin mid-instruction, so a
@@ -64,7 +65,7 @@ fn usage() -> ! {
     eprintln!(
         "usage: nes_golden_export --rom <path> --out <dir> [--seed N] [--frames N]\n\
          \x20                       [--boot-trace START..END] [--irq-trace CAP]\n\
-         \x20                       [--fetch-trace CAP] [--checkpoint-interval N]\n\
+         \x20                       [--fetch-trace CAP] [--apu-trace CAP] [--checkpoint-interval N]\n\
          \x20                       [--inject-instructions N] [--inject-hold N]\n\
          \x20                       [--inject-nmi-at N] [--inject-irq-at N]"
     );
@@ -77,6 +78,7 @@ fn parse_args() -> Args {
     let (mut seed, mut frames) = (0u64, 60u32);
     let (mut boot_trace, mut irq_trace) = (None, None);
     let mut fetch_trace: Option<usize> = None;
+    let mut apu_trace: Option<usize> = None;
     let mut checkpoint_interval = rustynes_cosim::checkpoint::DEFAULT_INTERVAL;
     let (mut inject_instructions, mut inject_hold) = (0u64, 1u64);
     let (mut inject_nmi_at, mut inject_irq_at) = (None, None);
@@ -103,6 +105,15 @@ fn parse_args() -> Args {
             }
             "--frames" => {
                 frames = need(i).parse().unwrap_or_else(|_| usage());
+                // Rejected at the boundary. A zero-frame run never reaches a
+                // frame boundary, so an armed APU trace is never drained, and
+                // `write_apu_trace`'s emptiness invariant then fires with a
+                // message blaming "some run path" for what is plain invalid
+                // input. A panic is the wrong report for a bad argument.
+                if frames == 0 {
+                    eprintln!("--frames must be at least 1 (got 0)");
+                    usage();
+                }
                 i += 2;
             }
             "--boot-trace" => {
@@ -135,24 +146,11 @@ fn parse_args() -> Args {
                 i += 2;
             }
             "--fetch-trace" => {
-                let cap: usize = need(i).parse().unwrap_or_else(|_| usage());
-                // Validated HERE, at the boundary, rather than left to clamp
-                // silently inside the trace. `FetchTrace` caps its own storage
-                // so no argument can make it allocate without bound -- but a
-                // clamp the caller never learns about produces a golden covering
-                // less than the run, and the whole point of the drop counter is
-                // that such a golden must not pass unnoticed. Refusing the
-                // argument says so before a single cycle is simulated.
-                if cap == 0 || cap > rustynes_core::rustynes_ppu::fetch_trace::MAX_CAPACITY {
-                    eprintln!(
-                        "--fetch-trace must be between 1 and {} (got {cap}); a window \
-                         needing more than that wants to be shorter, not buffered \
-                         larger -- three frames of a rendering ROM is under ten thousand",
-                        rustynes_core::rustynes_ppu::fetch_trace::MAX_CAPACITY
-                    );
-                    usage();
-                }
-                fetch_trace = Some(cap);
+                fetch_trace = Some(parse_fetch_cap(need(i)));
+                i += 2;
+            }
+            "--apu-trace" => {
+                apu_trace = Some(parse_apu_cap(need(i)));
                 i += 2;
             }
             "--checkpoint-interval" => {
@@ -174,6 +172,7 @@ fn parse_args() -> Args {
         boot_trace,
         irq_trace,
         fetch_trace,
+        apu_trace,
         checkpoint_interval,
         inject_instructions,
         inject_nmi_at,
@@ -280,6 +279,21 @@ fn write_irq_artifacts(o: &mut Oracle, base: &Path, interval: u64) -> (usize, us
 /// Returns the reason rather than exiting, so the rules are testable without a
 /// process boundary.
 fn injection_error(args: &Args) -> Option<String> {
+    // The APU trace is drained at FRAME boundaries, in `advance_frames`, and an
+    // injection run steps instructions and completes no frames -- so the two
+    // together would write a well-formed, EMPTY `.apu.bin` with a dropped count
+    // of zero. That is the exact shape this project keeps catching: a golden
+    // whose emptiness is indistinguishable from a run that produced nothing.
+    // Refused here rather than papered over with a warning, because a warning
+    // on stderr is a signal that may never arrive.
+    if args.apu_trace.is_some() && args.inject_instructions > 0 {
+        return Some(
+            "--apu-trace needs a frame run: the channel-level trace is drained at \
+             frame boundaries, and an injection run completes no frames, so the \
+             golden would be silently empty"
+                .to_owned(),
+        );
+    }
     let pinned = args.inject_nmi_at.is_some() || args.inject_irq_at.is_some();
     if pinned && args.inject_instructions == 0 {
         return Some(
@@ -360,6 +374,91 @@ fn warn_if_incomplete(args: &Args, o: &Oracle, calls: u64, frames_actual: u64) {
             args.frames,
             o.nes().is_jammed()
         );
+    }
+}
+
+/// Parse and validate `--fetch-trace`'s capacity.
+///
+/// Validated HERE, at the boundary, rather than left to clamp silently inside
+/// the trace. `FetchTrace` caps its own storage so no argument can make it
+/// allocate without bound -- but a clamp the caller never learns about produces
+/// a golden covering less than the run, and the whole point of the drop counter
+/// is that such a golden must not pass unnoticed. Refusing the argument says so
+/// before a single cycle is simulated.
+fn parse_fetch_cap(raw: &str) -> usize {
+    let cap: usize = raw.parse().unwrap_or_else(|_| usage());
+    if cap == 0 || cap > rustynes_core::rustynes_ppu::fetch_trace::MAX_CAPACITY {
+        eprintln!(
+            "--fetch-trace must be between 1 and {} (got {cap}); a window \
+             needing more than that wants to be shorter, not buffered \
+             larger -- three frames of a rendering ROM is under ten thousand",
+            rustynes_core::rustynes_ppu::fetch_trace::MAX_CAPACITY
+        );
+        usage();
+    }
+    cap
+}
+
+/// Parse and validate `--apu-trace`'s capacity.
+///
+/// Extracted from `parse_args` to keep that function under the line limit, and
+/// validated at the boundary rather than clamped later: the cap is in RECORDS
+/// and one record is one CPU cycle, so a 24-frame run wants ~715,000. A
+/// capacity smaller than the run yields a well-formed SHORTER file, which is
+/// indistinguishable from a shorter run -- the failure this project keeps
+/// catching, and the reason the drop counter exists at all.
+fn parse_apu_cap(raw: &str) -> usize {
+    let cap: usize = raw.parse().unwrap_or_else(|_| usage());
+    if cap == 0 || cap > rustynes_cosim::MAX_APU_TRACE_CAPACITY {
+        eprintln!(
+            "--apu-trace must be between 1 and {} records (got {cap}); one \
+             record is one CPU cycle, so a 24-frame run wants ~715,000. An \
+             unbounded value reaches Vec::with_capacity directly and aborts \
+             the process in the allocator.",
+            rustynes_cosim::MAX_APU_TRACE_CAPACITY
+        );
+        usage();
+    }
+    cap
+}
+
+/// Write rung 4's per-CPU-cycle channel-level golden, when armed.
+///
+/// Fails loudly on a dropped record for the same reason `write_fetch_trace`
+/// does: a truncated golden is not a smaller golden. The comparator sees a
+/// length mismatch and reports a divergence whose real cause is an export-side
+/// capacity, which is a divergence about the wrong thing.
+fn write_apu_trace(o: &mut Oracle, base: &Path) {
+    if let Some((bytes, dropped)) = o.take_apu_trace() {
+        // ARMED BUT EMPTY is a defect, not a short run. `injection_error`
+        // already refuses the one combination known to produce it, and this is
+        // the backstop for the ones nobody has thought of yet: any future path
+        // that arms the trace and never drains it would otherwise ship a
+        // 0-byte golden and report success, because `dropped` stays 0.
+        //
+        // Defence in depth, deliberately -- the guard upstream states the rule
+        // and this states the invariant, and the two fail for different
+        // reasons. Raised in review after the upstream guard was already in.
+        assert!(
+            !bytes.is_empty(),
+            "the APU trace was armed and produced no records -- a 0-byte golden \
+             reports success while covering nothing. Some run path armed the \
+             trace without draining it at a frame boundary."
+        );
+        // Checked BEFORE writing, not after. Writing a golden and then exiting
+        // non-zero leaves a truncated `.bin` on disk that looks like every
+        // other golden, and the next run of a gate against it compares a window
+        // shorter than the manifest claims. The exit code fails a pipeline; the
+        // file outlives it.
+        if dropped > 0 {
+            eprintln!(
+                "  ERROR: apu trace dropped {dropped} record(s) -- --apu-trace \
+                 capacity is too small, so the golden covers less than the run. \
+                 No file written."
+            );
+            std::process::exit(1);
+        }
+        write(&suffixed(base, "apu.bin"), &bytes);
     }
 }
 
@@ -464,6 +563,9 @@ fn main() {
     if let Some(cap) = args.fetch_trace {
         o.enable_fetch_trace(cap);
     }
+    if let Some(cap) = args.apu_trace {
+        o.enable_apu_trace(cap);
+    }
 
     // `advance_frames`, not a `run_frame()` loop: the first call after power-on
     // is swallowed by the frame_complete latch the reset sequence leaves set, so
@@ -511,6 +613,7 @@ fn main() {
     write(&suffixed(&base, "index_fb.bin"), &fb_bytes);
 
     write_fetch_trace(&mut o, &base);
+    write_apu_trace(&mut o, &base);
 
     // Checked BEFORE the write, and checked on `ram_init` specifically. The
     // assert below covers the post-run `ram`, so this buffer had no length check
@@ -572,7 +675,58 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{sha256_hex, suffixed};
+    /// `--apu-trace` with instruction injection must be REFUSED, not silently
+    /// emptied.
+    ///
+    /// The trace drains at frame boundaries and an injection run completes no
+    /// frames, so the combination would write a well-formed empty golden whose
+    /// dropped count is zero -- indistinguishable from a run that produced
+    /// nothing. This calls the real validator rather than restating its rule.
+    #[test]
+    fn apu_trace_with_injection_is_refused() {
+        // Built explicitly rather than from a `Default`: `Args` has no
+        // default and giving it one would invent a "valid" argument set that
+        // no invocation produces.
+        let base = || Args {
+            rom: std::path::PathBuf::from("/dev/null"),
+            out: std::path::PathBuf::from("/tmp"),
+            seed: 0,
+            frames: 1,
+            boot_trace: None,
+            irq_trace: None,
+            fetch_trace: None,
+            apu_trace: None,
+            checkpoint_interval: 4096,
+            inject_instructions: 0,
+            inject_nmi_at: None,
+            inject_irq_at: None,
+            inject_hold: 1,
+        };
+
+        let mut args = base();
+        args.apu_trace = Some(1000);
+        args.inject_instructions = 8;
+        args.inject_nmi_at = Some(2);
+        let err = injection_error(&args).expect("the combination must be refused");
+        assert!(
+            err.contains("--apu-trace"),
+            "message names the option: {err}"
+        );
+
+        // Neither half alone is refused for this reason: a frame run with the
+        // trace armed is the normal case, and an injection run without it is
+        // rung 2's sweep.
+        let mut frames_only = base();
+        frames_only.apu_trace = Some(1000);
+        assert!(injection_error(&frames_only).is_none());
+
+        let mut sweep_only = base();
+        sweep_only.inject_instructions = 8;
+        sweep_only.inject_nmi_at = Some(2);
+        assert!(injection_error(&sweep_only).is_none());
+    }
+
+    use super::{Args, injection_error, sha256_hex, suffixed};
     use std::path::Path;
 
     /// A dot in the ROM name must not eat part of the golden's filename.

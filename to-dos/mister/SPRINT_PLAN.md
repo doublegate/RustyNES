@@ -13,7 +13,7 @@ per-rung doc records what the rung cannot verify.
 | M6 | v2.5.6 | **Sprite evaluation FSM** | Evaluation behaviour as seen through `$2004` reads on the CPU bus — the only pin-observable window onto it, and the method the wiki says the behaviour was characterised by | **done** — 59,993 cycles exact |
 | M7 | v2.5.7 | Sprite render, priority, sprite-0, overflow | Three purpose-built sprite-0 edge ROMs + four bus/fb surfaces (the blargg sprite ROMs need VBlank sync, which is v2.5.8) | **done** — every rung gate exact; all ten mutations CAUGHT; `PPU_LEAD=2` |
 | M8 | v2.5.8 | VBlank/NMI, `$2002` race, the skip's write-boundary edge | **Rung 3 CLOSED**; nestest at 5,002,992 cycles | **done** — 12/12 mutations; both fixes were deletions |
-| M9 | v2.5.9 | APU pulse + frame counter | `MixRecord` integer levels | — |
+| M9 | v2.5.9 | **APU pulse channels + frame counter** | `$4015`, the `/IRQ` pin, and the integer channel levels per CPU cycle | **done** — rung 4 open; 9/10 mutations; one characterised residual |
 | M10 | v2.6.0 | APU triangle + noise | Same | — |
 | M11 | v2.6.1 | APU DMC + DMA stealing | Cycle-exact CPU stall | — |
 | M12 | v2.6.2 | Frame-counter IRQ; blargg APU battery | **Rung 4 closes**; `cpu_interrupts_v2` | — |
@@ -29,7 +29,7 @@ per-rung doc records what the rung cannot verify.
 **Status is a claim about a recorded manual run, not about CI.** None of the DUT
 gates run in the sibling repository's workflows — they need the oracle's goldens
 and a `cargo` build of `rustynes-cosim`. Results live in that repo's
-`docs/rung1-6502.md` and `docs/rung3-ppu.md`.
+`docs/rung1-6502.md`, `docs/rung3-ppu.md` and `docs/rung4-apu.md`.
 
 ## Re-planning triggers
 

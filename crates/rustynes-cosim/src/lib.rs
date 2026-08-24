@@ -68,10 +68,50 @@ use rustynes_core::Nes;
 use rustynes_core::cpu_boot_trace::{CpuBootTrace, CpuBootTraceConfig};
 use rustynes_core::rustynes_ppu::fetch_trace::FetchTrace;
 
+/// Bytes per rung-4 channel-level record. See [`Oracle::take_apu_trace`].
+const APU_REC_LEN: usize = 16;
+
+/// Upper bound on `--apu-trace`'s capacity, in RECORDS.
+///
+/// One record is one CPU cycle, so this is 8,388,608 cycles -- roughly 281 NTSC
+/// frames, and 134 MB once multiplied by [`APU_REC_LEN`]. Comfortably above any
+/// legitimate rung-4 stimulus (a 24-frame run wants ~715,000) and bounded.
+///
+/// The bound exists because the capacity is external input that reaches
+/// `Vec::with_capacity` directly: without it `--apu-trace 99999999999999` asks
+/// the allocator for a petabyte and the process aborts. `fetch_trace` has had
+/// its own `MAX_CAPACITY` since it was written; this one was missing, and the
+/// asymmetry between the two parsers is what made it easy to miss.
+///
+/// A capacity ABOVE this is refused at the CLI boundary rather than clamped,
+/// because a silently clamped capacity produces a short golden that claims to
+/// cover the whole run. `enable_apu_trace` clamps as well, but only as a
+/// library-level backstop for callers that bypass the CLI.
+pub const MAX_APU_TRACE_CAPACITY: usize = 1 << 23;
+
 /// Opaque handle handed to C. One live `Nes` plus the buffers its accessors
 /// borrow from.
 pub struct Oracle {
     nes: Nes,
+    /// Rung 4's per-CPU-cycle channel levels, accumulated ACROSS frames.
+    ///
+    /// The APU's own `MixTrace` is sized for one frame and is re-anchored by
+    /// `begin_audio_provenance_frame`, so a multi-frame run must drain it at
+    /// every frame boundary or lose everything but the last. That drain lives
+    /// in [`Self::advance_frames`], which is the only place frames are stepped.
+    apu_trace: Option<ApuTrace>,
+}
+
+/// Accumulated rung-4 channel levels, and whether the cap dropped any.
+///
+/// `dropped` is carried rather than inferred from the length: a golden that is
+/// short because the capacity ran out and one that is short because the run was
+/// short are the same file, and only this flag separates them.
+struct ApuTrace {
+    /// 16 bytes per record; see [`Oracle::take_apu_trace`] for the layout.
+    bytes: Vec<u8>,
+    cap: usize,
+    dropped: u64,
 }
 
 impl Oracle {
@@ -88,7 +128,10 @@ impl Oracle {
     /// Returns `Err` if the ROM does not parse.
     pub fn new(rom: &[u8], seed: u64) -> Result<Self, String> {
         Nes::from_rom_with_power_on_seed(rom, seed)
-            .map(|nes| Self { nes })
+            .map(|nes| Self {
+                nes,
+                apu_trace: None,
+            })
             .map_err(|e| format!("{e:?}"))
     }
 
@@ -133,6 +176,7 @@ impl Oracle {
         while self.nes.frame() < target {
             self.nes.run_frame();
             calls += 1;
+            self.drain_apu_frame();
             // A jammed CPU (JAM/KIL/STP) stops advancing frames; without this
             // the loop would spin forever on a ROM that halts.
             if self.nes.is_jammed() {
@@ -140,6 +184,84 @@ impl Oracle {
             }
         }
         calls
+    }
+
+    /// Arm rung 4's channel-level capture.
+    ///
+    /// Two separate things are switched on, and conflating them is how this
+    /// would silently export nothing: the `debug-hooks` FEATURE is compile-time
+    /// (declared in this crate's manifest), and the runtime ARM is this call.
+    /// The feature without the arm yields an empty trace, which is exactly the
+    /// "absence of a signal read as a signal" failure the crate's manifest
+    /// comment describes.
+    pub fn enable_apu_trace(&mut self, capacity: usize) {
+        // Clamped, not trusted. The CLI refuses an over-large capacity outright
+        // -- a silently shortened golden is worse than a rejected argument --
+        // and this is the backstop for any caller that does not go through it.
+        // `cap` takes the CLAMPED value so the dropped-record accounting is
+        // measured against what is actually stored.
+        let capacity = capacity.min(MAX_APU_TRACE_CAPACITY);
+        self.nes.set_audio_provenance(true);
+        self.apu_trace = Some(ApuTrace {
+            bytes: Vec::with_capacity(capacity.saturating_mul(APU_REC_LEN)),
+            cap: capacity,
+            dropped: 0,
+        });
+    }
+
+    /// Drain this frame's channel levels and re-anchor the APU's own trace.
+    ///
+    /// Called once per completed frame. The APU store holds a single frame's
+    /// worth, so skipping this loses every frame but the last -- and would do it
+    /// silently, since the resulting golden is a well-formed shorter file.
+    fn drain_apu_frame(&mut self) {
+        let Some(acc) = self.apu_trace.as_mut() else {
+            return;
+        };
+        if let Some(trace) = self.nes.mix_trace() {
+            let first = trace.first_cycle();
+            for (i, r) in trace.records().iter().enumerate() {
+                if acc.bytes.len() >= acc.cap.saturating_mul(APU_REC_LEN) {
+                    acc.dropped += 1;
+                    continue;
+                }
+                let cycle = first.saturating_add(i as u64);
+                acc.bytes.extend_from_slice(&cycle.to_le_bytes());
+                // The five INTEGER levels only. `mixed` and `external` are
+                // `f32` and are diagnostics per docs/rung4-apu.md -- exporting
+                // them would invite a gate against RustyNES's mixer arithmetic
+                // rather than against the chip.
+                acc.bytes
+                    .extend_from_slice(&[r.pulse1, r.pulse2, r.triangle, r.noise, r.dmc]);
+                // Pad 13 data bytes (8 cycle + 5 levels) out to APU_REC_LEN.
+                // A power-of-two stride keeps the comparator's indexing trivial
+                // and leaves room for the three channels v2.6.0/v2.6.1 add
+                // without changing the record size under an existing golden.
+                acc.bytes.extend_from_slice(&[0u8; 3]);
+            }
+            // The APU flags its own per-frame truncation; fold it in rather than
+            // letting a full frame look like a complete one.
+            if trace.truncated() {
+                acc.dropped += 1;
+            }
+        }
+        // No re-anchor here: `Nes::run_frame` calls
+        // `begin_audio_provenance_frame` at ITS start, so the store is already
+        // cleared for the next frame by the time the next call returns. Doing
+        // it again from here would be a second, redundant clear -- and one that
+        // could only ever be wrong, since it would run at a different cycle.
+    }
+
+    /// Take the accumulated channel-level golden and the dropped count.
+    ///
+    /// Record layout, 16 bytes, little-endian: `u64` CPU cycle, then pulse 1,
+    /// pulse 2, triangle, noise and DMC as `u8`, then three padding bytes. The
+    /// cycle is stored EXPLICITLY rather than implied by the index, because the
+    /// records are drained per frame and an index-implied cycle would be wrong
+    /// the moment a frame boundary shifted anything.
+    #[must_use]
+    pub fn take_apu_trace(&mut self) -> Option<(Vec<u8>, u64)> {
+        self.apu_trace.take().map(|a| (a.bytes, a.dropped))
     }
 
     /// Run `instructions` instructions, asserting an interrupt pin for part of
@@ -1219,5 +1341,40 @@ mod tests {
             FRAMES + 1,
             "expected one swallowed power-on call plus {FRAMES} real frames"
         );
+    }
+
+    /// An over-large `--apu-trace` capacity is CLAMPED, not honoured.
+    ///
+    /// `enable_apu_trace` multiplies the capacity by `APU_REC_LEN` and hands
+    /// the product to `Vec::with_capacity`, so an unbounded value asks the
+    /// allocator for more memory than exists and aborts the process. The CLI
+    /// refuses such a value outright; this pins the library-level backstop for
+    /// callers that do not go through it.
+    ///
+    /// `cap` must take the CLAMPED value too. If it kept the requested one, the
+    /// dropped-record accounting would be measured against a capacity the
+    /// buffer does not have, and a truncated golden would report zero drops.
+    #[test]
+    fn an_over_large_apu_trace_capacity_is_clamped() {
+        let rom = std::fs::read(rom_path()).expect("test rom");
+        let mut o = Oracle::new(&rom, 0).expect("oracle");
+        o.enable_apu_trace(usize::MAX);
+        assert_eq!(
+            o.apu_trace.as_ref().expect("armed").cap,
+            MAX_APU_TRACE_CAPACITY,
+            "the stored cap must be the clamped one, not the requested one"
+        );
+    }
+
+    /// A capacity at or below the bound is left exactly as asked.
+    ///
+    /// The companion to the clamp test: a bound that also altered ordinary
+    /// values would silently shorten every golden this tool has ever produced.
+    #[test]
+    fn an_ordinary_apu_trace_capacity_is_untouched() {
+        let rom = std::fs::read(rom_path()).expect("test rom");
+        let mut o = Oracle::new(&rom, 0).expect("oracle");
+        o.enable_apu_trace(400_000);
+        assert_eq!(o.apu_trace.as_ref().expect("armed").cap, 400_000);
     }
 }
