@@ -1320,6 +1320,28 @@ mod tests {
     /// `advance_frames(5)` must simulate five NTSC frames' worth of cycles, and it
     /// must take SIX `run_frame()` calls to do it -- the first after power-on is
     /// swallowed by the `frame_complete` latch the reset sequence leaves set. A bare
+    /// `for _ in 0..5` loop lands at 4.0 frames here, under a manifest claiming 5.
+    #[test]
+    fn five_frames_requested_is_five_frames_of_cycles() {
+        let (_, _, _, cycles, calls) = export(SEED, FRAMES);
+
+        let expected_half_cycles = FRAMES * HALF_CYCLES_PER_FRAME;
+        let actual_half_cycles = cycles * 2;
+        let delta = actual_half_cycles.abs_diff(expected_half_cycles);
+        assert!(
+            delta <= HALF_CYCLE_TOLERANCE,
+            "requested {FRAMES} frames but simulated {cycles} cycles; expected about \
+             {} (off by {delta} half-cycles, tolerance {HALF_CYCLE_TOLERANCE}) -- an \
+             off-by-one here means every golden is short by a frame under a manifest \
+             that claims otherwise",
+            expected_half_cycles / 2
+        );
+        assert_eq!(
+            calls,
+            FRAMES + 1,
+            "expected one swallowed power-on call plus {FRAMES} real frames"
+        );
+    }
 
     /// An over-large `--apu-trace` capacity is CLAMPED, not honoured.
     ///
@@ -1354,28 +1376,5 @@ mod tests {
         let mut o = Oracle::new(&rom, 0).expect("oracle");
         o.enable_apu_trace(400_000);
         assert_eq!(o.apu_trace.as_ref().expect("armed").cap, 400_000);
-    }
-
-    /// `for _ in 0..5` loop lands at 4.0 frames here, under a manifest claiming 5.
-    #[test]
-    fn five_frames_requested_is_five_frames_of_cycles() {
-        let (_, _, _, cycles, calls) = export(SEED, FRAMES);
-
-        let expected_half_cycles = FRAMES * HALF_CYCLES_PER_FRAME;
-        let actual_half_cycles = cycles * 2;
-        let delta = actual_half_cycles.abs_diff(expected_half_cycles);
-        assert!(
-            delta <= HALF_CYCLE_TOLERANCE,
-            "requested {FRAMES} frames but simulated {cycles} cycles; expected about \
-             {} (off by {delta} half-cycles, tolerance {HALF_CYCLE_TOLERANCE}) -- an \
-             off-by-one here means every golden is short by a frame under a manifest \
-             that claims otherwise",
-            expected_half_cycles / 2
-        );
-        assert_eq!(
-            calls,
-            FRAMES + 1,
-            "expected one swallowed power-on call plus {FRAMES} real frames"
-        );
     }
 }
