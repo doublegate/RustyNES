@@ -364,7 +364,7 @@ dependencies {
     // PlayGames.kt). DISTINCT from RetroAchievements (rustynes-ra). The PGS sign-in
     // also reads the manifest <meta-data app_id>, which is a maintainer-supplied
     // placeholder (@string/game_services_project_id) until the Play Games project lands.
-    "playImplementation"("com.google.android.gms:play-services-games-v2:21.0.0")
+    "playImplementation"("com.google.android.gms:play-services-games-v2:22.0.0")
     // v1.8.8 "Atlas" (Workstream L): Play Integrity API — the anti-tamper layer. 1.6.0
     // (SafetyNet Attestation was turned down Jan 2025; this is the modern replacement).
     // Linked but DORMANT: no token is requested until behind the default-off
