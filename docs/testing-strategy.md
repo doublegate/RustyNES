@@ -141,8 +141,12 @@ provenance firewall extends to HDL, so third-party `rtl/` is a strict black box.
 purpose**: it enables trace features on `rustynes-core`, and cargo unifies
 features across a workspace build, so as a member it would have made the accuracy
 battery validate an instrumented scheduler no user runs. Its `nes_golden_export`
-binary emits the golden artifacts a testbench consumes — nine files as of v2.5.4,
-enumerated in that binary's module docs.
+binary emits the golden artifacts a testbench consumes — **ten as of v2.6.3**
+(`obs.bin`, `boot.bin`, `apu.bin`, `ckpt.bin`, `fetch.bin`, `index_fb.bin`,
+`irq.csv`, `ram.bin`, `ram_init.bin`, `manifest.txt`), enumerated in that
+binary's module docs. All ten are gitignored; `*.apu.bin` was the fourth to be
+missed and is the reason the check beside those patterns is now written as a
+command rather than a list to read.
 
 Verification is a **ladder**, and a rung may not start until the one below is
 green. Each rung's compare surface is fixed **before** the rung starts, splitting

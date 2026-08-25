@@ -899,8 +899,10 @@ green: rung 0 the compare surface, rung 1 the 6502, rung 2 the bus and
 interrupts, rung 3 the 2C02, rung 4 the 2A03, rung 5 AccuracyCoin parity, rung 6
 hardware bring-up, rung 7 mappers. **Rungs 0-4 are closed; rung 5 is the current
 work** — the NROM cartridge, the work RAM, the CPU bus, the controller ports and
-DMC DMA are all landed and gated (50 gates green), and assembling the core's own
-top level is what remains. Every rung is labelled in
+DMC DMA are all landed and gated (**66 gates green**), the core's own top level
+assembles them, and it divides one master clock rather than taking its clock
+enables from the testbench. The first end-to-end AccuracyCoin run is what
+remains. Every rung is labelled in
 [`docs/mister.md`](docs/mister.md) by whether it has an **independent** oracle —
 because 141/141 on AccuracyCoin is not the same as "matches silicon", and a rung
 verified only against this emulator inherits whatever this emulator has wrong.
