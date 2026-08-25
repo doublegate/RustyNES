@@ -291,7 +291,7 @@ dependencies {
     // 1.5.0-alpha line and are deliberately not pulled in here). Bumped from
     // 2024.12.01 so the adaptive APIs (Window Size Classes, ListDetailPaneScaffold)
     // and a current Compose runtime are available.
-    val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
+    val composeBom = platform("androidx.compose:compose-bom:2026.08.00")
     implementation(composeBom)
     implementation("androidx.core:core-ktx:1.19.0")
     // v1.8.8 "Atlas" (Workstream B): per-app language. AppCompat 1.6.0+ supplies the
@@ -312,9 +312,9 @@ dependencies {
     // currentWindowAdaptiveInfo()/WindowSizeClass (the single layout driver);
     // -layout carries ListDetailPaneScaffold; -navigation carries the predictive-
     // back-aware NavigableListDetailPaneScaffold for the expanded two-pane.
-    implementation("androidx.compose.material3.adaptive:adaptive:1.2.0")
-    implementation("androidx.compose.material3.adaptive:adaptive-layout:1.2.0")
-    implementation("androidx.compose.material3.adaptive:adaptive-navigation:1.2.0")
+    implementation("androidx.compose.material3.adaptive:adaptive:1.3.0")
+    implementation("androidx.compose.material3.adaptive:adaptive-layout:1.3.0")
+    implementation("androidx.compose.material3.adaptive:adaptive-navigation:1.3.0")
     // WindowInfoTracker / FoldingFeature for foldable-posture awareness.
     implementation("androidx.window:window:1.5.1")
     // v1.8.8 "Atlas" (Workstream K): Android-12+ system splash via the back-compat
@@ -346,7 +346,7 @@ dependencies {
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     // UniFFI's generated Kotlin loads the cdylib through JNA; the `@aar`
     // classifier pulls the Android-native JNA dispatcher.
-    implementation("net.java.dev.jna:jna:5.18.1@aar")
+    implementation("net.java.dev.jna:jna:5.19.1@aar")
     // v2.0.1 (ADR 0025): the optional Google Play services below are PLAY-FLAVOR ONLY.
     // `playImplementation` keeps these proprietary Google-Play SDKs out of the `foss`
     // (F-Droid/sideload) artifact entirely — the `foss` variant links none of them (its
@@ -364,7 +364,7 @@ dependencies {
     // PlayGames.kt). DISTINCT from RetroAchievements (rustynes-ra). The PGS sign-in
     // also reads the manifest <meta-data app_id>, which is a maintainer-supplied
     // placeholder (@string/game_services_project_id) until the Play Games project lands.
-    "playImplementation"("com.google.android.gms:play-services-games-v2:21.0.0")
+    "playImplementation"("com.google.android.gms:play-services-games-v2:22.0.0")
     // v1.8.8 "Atlas" (Workstream L): Play Integrity API — the anti-tamper layer. 1.6.0
     // (SafetyNet Attestation was turned down Jan 2025; this is the modern replacement).
     // Linked but DORMANT: no token is requested until behind the default-off
