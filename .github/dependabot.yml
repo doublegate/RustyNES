@@ -46,6 +46,12 @@ updates:
         versions: [">=0.36"]
       - dependency-name: "wgpu"
         versions: [">=30"]
+      # `naga` is a DIRECT dependency of `rustynes-frontend` (WGSL validation),
+      # not merely a wgpu transitive, so Dependabot would propose 30 on its own
+      # and the hold would be broken from a direction the four entries above do
+      # not cover. Caught in review on the v2.6.3 refresh.
+      - dependency-name: "naga"
+        versions: [">=30"]
     # Group minor and patch updates together
     groups:
       development-dependencies:
@@ -62,10 +68,13 @@ updates:
   # Maintain the Android build's Gradle tier.
   #
   # Added with the v2.6.3 dependency refresh, because that refresh could not
-  # safely hand-bump it: AGP 9.2.1, Gradle 9.4.1, the bundled KGP 2.3.10 and
-  # `androidx.baselineprofile` 1.5.0-alpha06 are an INTERLOCKED set, each pin
-  # carrying its own written reason in `android/build.gradle.kts`, and none of
-  # them is verifiable without an Android SDK + NDK. Dependabot proposes them
+  # safely hand-bump it: the Android Gradle Plugin, the Gradle wrapper, AGP's
+  # bundled Kotlin plugin and `androidx.baselineprofile` are an INTERLOCKED set,
+  # each pin carrying its own written reason, and none of them is verifiable
+  # without an Android SDK + NDK. The versions themselves are deliberately NOT
+  # repeated here -- `android/build.gradle.kts` and
+  # `android/gradle/wrapper/gradle-wrapper.properties` are the sources of truth,
+  # and a copy in a comment is a copy that goes stale. Dependabot proposes them
   # ONE AT A TIME against a CI job that actually builds, which is the only
   # mechanism that makes such a bump checkable rather than hopeful.
   #

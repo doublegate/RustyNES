@@ -75,7 +75,11 @@ cycle-accurate core later replaced.
 - **egui / egui-wgpu / egui-winit 0.36 and wgpu 30** remain held. The hold names
   `egui-winit` **0.36.1** as the broken version and 0.36.1 is still the newest
   published, so there is nothing new to re-test — the hold stands on its own
-  stated terms rather than by inertia. `naga` 30 is held with them.
+  stated terms rather than by inertia. **`naga` 30 is held with them, and now
+  enforced** — it is a *direct* dependency of `rustynes-frontend` (WGSL
+  validation), not merely a wgpu transitive, so Dependabot would have
+  proposed it on its own and broken the hold from a direction the existing
+  four ignore entries did not cover. Caught in review.
 - **`getrandom`** stays at the 0.2 + 0.3 pair. Those shims exist to activate a
   wasm backend for `piccolo`'s *transitive* tree (`rand` → 0.2, `ahash` → 0.3);
   declaring 0.4 would add a third major that nothing uses.
