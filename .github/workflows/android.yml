@@ -144,7 +144,15 @@ jobs:
       # would also fan out to both, but the explicit tasks make the intent legible.
       - name: Bundle release AABs (foss + play, unsigned)
         working-directory: android
-        run: ./gradlew :app:bundleFossRelease :app:bundlePlayRelease --no-daemon
+        # `--warning-mode all` because the summary line -- "Deprecated Gradle
+        # features were used in this build, making it incompatible with Gradle
+        # 10" -- names nothing. Gradle says so itself: "You can use
+        # '--warning-mode all' to show the individual deprecation warnings and
+        # determine if they come from your own scripts or plugins."
+        #
+        # A warning that cannot be attributed is a warning nobody acts on, and
+        # this one has a deadline attached to it.
+        run: ./gradlew :app:bundleFossRelease :app:bundlePlayRelease --no-daemon --warning-mode all
       - name: Upload AABs
         uses: actions/upload-artifact@v7
         with:
