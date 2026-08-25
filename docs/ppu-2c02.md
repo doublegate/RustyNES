@@ -433,7 +433,7 @@ Per `ref-docs/research-report.md` §Internal scroll registers:
 - **OAMADDR write during rendering**: glitches OAMADDR's high 6 bits; OAM data is not modified during rendering writes.
 - **OAMADDR ≥ 8 at rendering start**: row at `OAMADDR & 0xF8` is copied to OAM[0..=7]. (2C02G bug.)
 - **`$2004` attribute-byte read mask**: every 4th OAM byte (at offset 2 within each 4-byte sprite group) is the attribute byte and has bits 2-4 unimplemented; reads return 0 in those bits regardless of what was stored.  Writes still store the full byte.  Required by `ppu_open_bus.nes`.
-- **Open-bus**: PPUSTATUS bits 4-0 reflect last-written-or-read PPU bus value with per-bit-group decay (3-30 ms hardware; we use a coarser 600 ms approximation for emulation).  Three independent decay groups: bits 0-4, bit 5, bits 6-7.  Writes refresh all three groups; reads of $2002 refresh only bits 5-7 (the lower 5 bits' value AND timer carry over); palette $2007 reads refresh only bits 0-5 (the high 2 bits' value AND timer carry over).  Required by `cpu_dummy_writes_ppumem` and `ppu_open_bus` tests 7 and 9.
+- **Open-bus**: PPUSTATUS bits 4-0 reflect last-written-or-read PPU bus value with per-bit-group decay (3-30 ms hardware; we use a coarser **558.7 ms** approximation for emulation — one million CPU cycles at NTSC, the same number the MiSTer DUT carries as 3,000,000 dots).  Three independent decay groups: bits 0-4, bit 5, bits 6-7.  Writes refresh all three groups; reads of $2002 refresh only bits 5-7 (the lower 5 bits' value AND timer carry over); palette $2007 reads refresh only bits 0-5 (the high 2 bits' value AND timer carry over).  Required by `cpu_dummy_writes_ppumem` and `ppu_open_bus` tests 7 and 9.
 - **PPUCTRL NMI bit 0→1 while VBL set**: triggers NMI immediately.
 - **Post-reset window**: writes to `$2000`/`$2001`/`$2005`/`$2006` ignored for ~29,658 NTSC CPU cycles after reset (33,132 PAL).
 
@@ -571,6 +571,6 @@ fetch-address comparison cannot adjudicate.
 
 ## Open questions
 
-- **Open-bus decay model.** Per-bit-group with ~600 ms decay (Mesen approach), three timers — bits 0-4 / bit 5 / bits 6-7 — independently refreshed by writes and the subset of reads that drive each bit group.  See "Open-bus" entry above and `Ppu::refresh_open_bus`.
+- **Open-bus decay model.** Per-bit-group with **558.7 ms** decay (one million CPU cycles at NTSC; the "~600 ms" this line and `Ppu`'s comment carried was wrong by 7%), three timers — bits 0-4 / bit 5 / bits 6-7 — independently refreshed by writes and the subset of reads that drive each bit group.  See "Open-bus" entry above and `Ppu::refresh_open_bus`.
 - **2C02 vs 2C07 differences.** PAL-only behaviors (no odd-frame skip; different post-reset masking window). Implement region as a parameter; don't fork the PPU code.
 - **Vs. System PPU variants (2C03, 2C04, 2C05).** Out of v1.0 scope; design `Ppu` so a future `Ppu2C03` could share most code.
