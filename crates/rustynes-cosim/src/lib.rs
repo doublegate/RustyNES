@@ -170,21 +170,6 @@ impl Oracle {
     /// quirk being fixed in the core later: this loop's meaning does not change.
     ///
     /// Returns the number of `run_frame()` calls actually made.
-    /// Set controller `port`'s button bits.
-    ///
-    /// A console input, not a debug hook: several accuracy ROMs will not start
-    /// without one. `AccuracyCoin` in particular sits on its title screen until
-    /// START is pressed, and two emulators agreeing about an idle title screen
-    /// is agreement about a question neither was asked -- which is exactly how
-    /// the first co-simulation run of it read as a pass.
-    ///
-    /// Bits follow `Buttons`: A, B, Select, Start, Up, Down, Left, Right from
-    /// bit 0, matching the order the pad shifts them out.
-    pub fn set_buttons(&mut self, port: usize, bits: u8) {
-        self.nes
-            .set_buttons(port, rustynes_core::Buttons::from_bits_truncate(bits));
-    }
-
     pub fn advance_frames(&mut self, frames: u64) -> u64 {
         let target = self.nes.frame().saturating_add(frames);
         let mut calls = 0u64;
@@ -199,6 +184,21 @@ impl Oracle {
             }
         }
         calls
+    }
+
+    /// Set controller `port`'s button bits.
+    ///
+    /// A console input, not a debug hook: several accuracy ROMs will not start
+    /// without one. `AccuracyCoin` in particular sits on its title screen until
+    /// START is pressed, and two emulators agreeing about an idle title screen
+    /// is agreement about a question neither was asked -- which is exactly how
+    /// the first co-simulation run of it read as a pass.
+    ///
+    /// Bits follow `Buttons`: A, B, Select, Start, Up, Down, Left, Right from
+    /// bit 0, matching the order the pad shifts them out.
+    pub const fn set_buttons(&mut self, port: usize, bits: u8) {
+        self.nes
+            .set_buttons(port, rustynes_core::Buttons::from_bits_truncate(bits));
     }
 
     /// Arm rung 4's channel-level capture.

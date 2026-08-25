@@ -79,6 +79,29 @@ fn usage() -> ! {
     std::process::exit(2)
 }
 
+/// Parse a `--press-start A:B` spec, or exit.
+///
+/// Refused rather than guessed at if it does not parse or the window is empty:
+/// a silently-ignored press produces a golden of an idle title screen, which is
+/// precisely the artifact this option exists to stop being mistaken for a run.
+fn parse_press_start(spec: &str) -> (u64, u64) {
+    let (a, b) = spec.split_once(':').unwrap_or_else(|| usage());
+    let a: u64 = a.parse().unwrap_or_else(|_| usage());
+    let b: u64 = b.parse().unwrap_or_else(|_| usage());
+    if b <= a {
+        eprintln!("--press-start A:B needs B > A (got {a}:{b})");
+        std::process::exit(2);
+    }
+    (a, b)
+}
+
+// A flat match over CLI flags, two lines past the limit since `--press-start`
+// was added. Allowed rather than split: every arm assigns one of a dozen `mut`
+// locals, so a helper would have to take them all by `&mut` and would be harder
+// to read than the table it replaced -- and the two parses with real logic
+// (`parse_press_start`, and the trace ranges) are already extracted. Same
+// judgement as `Bus::unified_dma_cycle_impl` in the core.
+#[allow(clippy::too_many_lines)]
 fn parse_args() -> Args {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let (mut rom, mut out) = (None, None);
@@ -113,26 +136,12 @@ fn parse_args() -> Args {
             }
             "--press-start" => {
                 // `A:B` -- hold START on port 1 from frame A until frame B.
-                //
-                // Refused rather than guessed at if it does not parse or if the
-                // window is empty: a silently-ignored press produces a golden of an
-                // idle title screen, which is precisely the artifact this option
-                // exists to stop being mistaken for a run.
-                let spec = need(i);
-                let (a, b) = spec.split_once(':').unwrap_or_else(|| usage());
-                let a: u64 = a.parse().unwrap_or_else(|_| usage());
-                let b: u64 = b.parse().unwrap_or_else(|_| usage());
-                if b <= a {
-                    eprintln!("--press-start A:B needs B > A (got {a}:{b})");
-                    std::process::exit(2);
-                }
-                press_start = Some((a, b));
-                // The loop has NO trailing increment -- this file says so a few
-                // lines above -- so every value-taking arm must advance `i` by
-                // two itself. Omitting it here spun the parser at 100% CPU
-                // forever, never reaching the simulation at all. It looked
-                // exactly like a slow export for thirteen minutes; what gave it
-                // away was the output directory never being created.
+                // See `parse_press_start` for why a bad spec exits.
+                press_start = Some(parse_press_start(need(i)));
+                // Omitting this `i += 2` (see above: no trailing increment)
+                // spun the parser at 100% CPU for thirteen minutes, never
+                // reaching the simulation. The tell was the output directory
+                // never being created.
                 i += 2;
             }
             "--frames" => {
@@ -557,6 +566,37 @@ fn run_mode_block(args: &Args, calls: u64, frames_actual: u64) -> String {
     }
 }
 
+/// Advance `total` frames, optionally holding START across `[a, b)`.
+///
+/// Split out of `main` so it stays under the line limit, and because the
+/// segmentation is a statement about the run rather than about argument
+/// handling: the press lands on the same frames the oracle's own
+/// `AccuracyCoin` runner uses -- idle, hold START, release, run on.
+///
+/// `advance_frames` is used for each leg rather than a `run_frame()` loop, for
+/// the reason that function documents: the first call after power-on completes
+/// no frame, so a leg counted in calls would be a leg short.
+fn run_frames_with_optional_press(
+    o: &mut Oracle,
+    total: u64,
+    press_start: Option<(u64, u64)>,
+) -> u64 {
+    const START: u8 = 1 << 3; // Buttons::START
+    let Some((a, b)) = press_start else {
+        return o.advance_frames(total);
+    };
+    // Clamped, so a window past the end of the run shortens rather than
+    // underflowing `b - a` or `total - b`.
+    let a = a.min(total);
+    let b = b.min(total);
+    let mut calls = o.advance_frames(a);
+    o.set_buttons(0, START);
+    calls += o.advance_frames(b - a);
+    o.set_buttons(0, 0);
+    calls += o.advance_frames(total - b);
+    calls
+}
+
 fn main() {
     let args = parse_args();
     let rom =
@@ -618,26 +658,7 @@ fn main() {
             args.inject_hold,
         )
     } else {
-        match args.press_start {
-            None => o.advance_frames(u64::from(args.frames)),
-            Some((a, b)) => {
-                // Segmented, so the press lands on the same frames the oracle's
-                // own AccuracyCoin runner uses: idle, hold START, release, run
-                // on. `advance_frames` is used for each leg rather than a
-                // `run_frame()` loop, for the same reason it is used above --
-                // the first call after power-on completes no frame.
-                const START: u8 = 1 << 3; // Buttons::START
-                let total = u64::from(args.frames);
-                let a = a.min(total);
-                let b = b.min(total);
-                let mut calls = o.advance_frames(a);
-                o.set_buttons(0, START);
-                calls += o.advance_frames(b - a);
-                o.set_buttons(0, 0);
-                calls += o.advance_frames(total - b);
-                calls
-            }
-        }
+        run_frames_with_optional_press(&mut o, u64::from(args.frames), args.press_start)
     };
     let frames_actual = o.nes().frame() - frame_before;
     let cycles = o.nes().cycle();
