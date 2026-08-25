@@ -104,6 +104,44 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
   `palette_ram`, work RAM) is already serialized, and the selections themselves
   are config re-applied on load like `region`.
 
+- **NROM provides PRG-RAM at `$6000-$7FFF` where the board has none, and the
+  MiSTer co-simulation DUT found it (2026-08-25, v2.6.3 rung 5).**
+  `crates/rustynes-mappers/src/m000_nrom.rs` allocates 8 KiB of PRG-RAM
+  unconditionally so accesses "don't fall off the edge". `cpu_read` returns
+  `self.prg_ram[addr - 0x6000]` and `cpu_write` stores into it, so the window
+  behaves as **real, writable RAM**: an *unwritten* location reads `$00`
+  (the array is zero-filled at construction) and a written one reads back what
+  was stored. On hardware an NROM board decodes nothing there and the read
+  floats — it returns **open bus**, the last value the data bus held, whether
+  or not the program has written to that address.
+
+  This is the emulator default `nesdev_wiki/Open_bus_behavior.xhtml` names as a
+  problem in its own words (public source:
+  <https://www.nesdev.org/wiki/Open_bus_behavior>): *"A few games read the region $6000-7FFF but have no
+  WRAM present here. This can be a problem for emulators, as the original iNES
+  file format had no way to specify a lack of WRAM, leaving the emulator to
+  provide WRAM behavior in that region by default. The NES 2.0 format corrects
+  this with a WRAM size field."* The page then names titles that break on the
+  WRAM answer — **Low G Man** (a crash in Chapter 1 Scene 3B, or boomerang
+  graphical glitches) and **Battletoads & Double Dragon** (a `$00` read at the
+  end of level 1 crashes it).
+
+  **Not fixed here, and the reason is scope rather than doubt.** The fix is a
+  behaviour change to the shipped emulator on every iNES-header NROM cartridge,
+  so it needs the NES 2.0 WRAM-size field honoured where present, a decision
+  about iNES-header defaults, the per-game database consulted, and the full
+  accuracy battery plus the commercial-ROM oracle re-run — the same shape as the
+  header-override hazard that froze *Wizards & Warriors* (ADR 0031). It is a
+  correctness item with a citation and named symptoms, recorded rather than
+  quietly carried.
+
+  **How it was found is the point.** The v2.6.3 co-simulation step wrote a
+  `cpu_bus` module from the wiki and ran it against this emulator; the DUT and
+  the oracle agreed on `$4016`, `$4017`, `$5000` and `$5C34` and disagreed only
+  in `$6000-$7FFF`. This is the first time the verification ladder has found the
+  **oracle** wrong rather than the DUT, which the v2.5.0 plan listed in advance
+  as risk 6: *"the oracle can be wrong. 141/141 is not 'matches silicon'."*
+
 ## Ignored-test dispositions (all 20)
 
 Every `#[ignore]`'d test in the workspace, with its disposition. **None is an

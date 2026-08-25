@@ -61,7 +61,42 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
 
 ## v2.6.3 – v2.6.4 — rung 5, NROM + AccuracyCoin
 
-- [ ] v2.6.3 NROM cartridge; first end-to-end AccuracyCoin run
+- [~] v2.6.3 NROM cartridge; first end-to-end AccuracyCoin run
+  - [x] `rtl/cart/cart_nrom.sv` — written from `nesdev_wiki/NROM.xhtml`
+        (public source: <https://www.nesdev.org/wiki/NROM>),
+        instantiated beneath the existing gates and cross-checked per access
+        rather than trusted. Runtime write port, not `$readmemh`: on MiSTer the
+        image arrives from `hps_io` at runtime, so the port that ships is the
+        port that is tested
+  - [x] `rtl/wram.sv` — 2 KiB and the `$0000-$1FFF` decode. **50 gates green**,
+        5 mutations CAUGHT. Its mirroring was invisible to the entire prior
+        corpus: all 48 ROMs stay inside `$0000-$07FF`, so three mirror-only
+        mutations came back **NOT CAUGHT** against `blargg03`'s 893,410 cycles
+        and CAUGHT against the new `wrammirror044`. A stimulus NOT CAUGHT — the
+        fourth distinct meaning that verdict has had here
+  - [x] The harness's own memory model was wrong first: it wrote `mem[addr]`
+        unmirrored, so a correctly-mirrored RAM would have been reported as the
+        defect. Fixed before the RTL was trusted
+  - [x] `rtl/cpu_bus.sv` — the address decode, read mux and open-bus latch.
+        **The flat 64 KiB array no longer answers the CPU**; the RTL bus does,
+        and the harness's array survives only as a model scoped to the windows
+        it can independently speak for. The testbench's hardcoded `$40` for a
+        `$4016` read is now DERIVED from the latch
+  - [x] `rtl/controller.sv` — the standard pad's shift register. `cpu_bus`
+        first returned a bare 0 in D0, which is not a model of "no controller"
+        but a model of nothing, and diverged from the oracle on the NINTH read
+  - [x] **Found the ORACLE wrong, not the DUT** — NROM provides PRG-RAM at
+        `$6000-$7FFF` where the board has none. Recorded in
+        `docs/accuracy-ledger.md` with the wiki citation and the games the wiki
+        names as breaking on it. First time the ladder has caught the oracle;
+        risk 6 in the v2.5.0 plan
+  - [ ] **DMA is still `tb/cpu_main.cpp`.** On stalled cycles the bus mux is
+        not the requester, which is also why two mutations are provably inert
+        today and should flip to CAUGHT when it moves
+  - [ ] **`rtl/nes_top.sv` is still a shell.** The chips are tied together by
+        the co-simulation wrapper rather than by the core's own top level
+  - [ ] First end-to-end AccuracyCoin run — blocked on the above, and NOT
+        attempted. Producing a status vector is v2.6.3; matching it is v2.6.4
 - [ ] v2.6.4 status vector identical **entry-for-entry**, including `Skipped` and
       `NotRun` — **rung 5 closes**. State a floor, not a target
 
