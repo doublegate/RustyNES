@@ -496,9 +496,10 @@ fn parse_result_code(text: &str) -> Option<u8> {
             .take_while(char::is_ascii_hexdigit)
             .take(2)
             .collect();
-        if !digits.is_empty()
-            && let Ok(v) = u8::from_str_radix(&digits, 16)
-        {
+        // No emptiness check: `u8::from_str_radix("", 16)` returns
+        // `Err(ParseIntError { kind: Empty })`, so the `Ok` guard already
+        // rejects a bare `$`. Verified rather than assumed.
+        if let Ok(v) = u8::from_str_radix(&digits, 16) {
             found = Some(v);
         }
     }
@@ -526,10 +527,29 @@ pub fn run_nes_result_code(
     let mut frames = 0u64;
     let mut text = String::new();
     let mut prev: Option<u8> = None;
+    // The screen as it stands after the first rendered frame. A code is only
+    // accepted once the screen has CHANGED from this.
+    //
+    // Without that guard the runner latches whatever `$NN` is on screen first,
+    // and `parse_result_code` deliberately takes the LAST `$NN` because a title
+    // may legitimately contain one — so a titled ROM would report its title's
+    // hex value as the verdict at frame 2, before the test had run. The ROMs in
+    // `blargg_apu_2005.07.30` carry no title and settle at frames 11-26, so this
+    // never bit here; the guard is for the next corpus, and for the case the
+    // comment on `parse_result_code` already described.
+    let mut initial: Option<String> = None;
     while frames < max_frames {
         nes.run_frame();
         frames += 1;
         decode_screen_text_into(&nes, &mut text);
+        if initial.is_none() {
+            initial = Some(text.clone());
+            continue;
+        }
+        if initial.as_deref() == Some(text.as_str()) {
+            prev = None;
+            continue;
+        }
         let cur = parse_result_code(&text);
         if let Some(code) = cur
             && prev == Some(code)
