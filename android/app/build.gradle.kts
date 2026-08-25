@@ -291,7 +291,7 @@ dependencies {
     // 1.5.0-alpha line and are deliberately not pulled in here). Bumped from
     // 2024.12.01 so the adaptive APIs (Window Size Classes, ListDetailPaneScaffold)
     // and a current Compose runtime are available.
-    val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
+    val composeBom = platform("androidx.compose:compose-bom:2026.08.00")
     implementation(composeBom)
     implementation("androidx.core:core-ktx:1.19.0")
     // v1.8.8 "Atlas" (Workstream B): per-app language. AppCompat 1.6.0+ supplies the
