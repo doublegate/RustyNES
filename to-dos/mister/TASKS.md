@@ -47,7 +47,7 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
       of the APU was fitted to the oracle rather than derived from documentation
 - [x] v2.6.1 **DMC, and its DMA stealing back into the CPU** — cycle-exact on the bus
 - [x] v2.6.2 **frame-counter IRQ edges; blargg APU battery — rung 4 CLOSES.**
-      Battery **11/11 exact**, **46 gates green, 0 failed**, catalog 54 entries.
+      Battery **11/11 exact**, **48 gates green, 0 failed**, catalog 56 entries, **56/56 mutations CAUGHT**.
       Six root causes (ledger 8.3-8.9), the largest being that the frame
       sequencer counted APU cycles where the documentation's step positions are
       CPU cycles — which forced every constant to be calibrated per step.

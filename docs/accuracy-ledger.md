@@ -60,6 +60,31 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
 
 - **Holy Mapperel bank-reachability + IRQ net** (v2.1.5, `crates/rustynes-test-harness/tests/holy_mapperel.rs`, `--features test-roms`): the 17 committed zlib-licensed ROMs (`tests/roms/holy_mapperel/`) each run to their settled result screen, pinned by an `insta` framebuffer-hash snapshot with settled + non-blank structural guards. Catches silent mapper-detection / bank-layout / RAM-sizing / IRQ regressions the `AccuracyCoin` / blargg suites don't cover; **all 17** detect + reach all banks with detailed code `0000` as of v2.2.3 A2, which closed the last two residuals (the MMC1 WRAM write-protect and the FME-7 open-bus-on-disabled-RAM rows above).
 
+- **`tests/roms/extra/apu`: four failing ROMs no gate has ever seen (surfaced
+  v2.6.2, NOT yet investigated).** Nineteen ROMs sit in that directory
+  referenced by nothing in the workspace. They had been dismissed as
+  audio-output-only on the strength of a `$6000` probe — but `$6000` is unmapped
+  on this vintage and reads back `0`, which is blargg's *success* code, so that
+  probe cannot distinguish "passed" from "not present". It is the same false
+  oracle that made the NTSC `blargg_apu_2005` suite vacuous for five minor
+  releases.
+
+  Re-read with the on-screen decoder: nine are genuinely audio-only
+  (`apu_dmc_pitch`, `apu_env`, `apu_lin_ctr`, `apu_noise_pitch`,
+  `apu_phase_reset`, `apu_square_pitch`, `apu_sweep_cutoff`, `apu_sweep_sub`,
+  `apu_triangle_pitch`), and **ten report a verdict** — `apu_test_1` through
+  `apu_test_10`, of which **`_1`, `_2`, `_5` and `_6` report `TEST FAILED`**.
+  They settle in 5-6 frames, are plain NROM with CHR-ROM, render correctly, and
+  their SHA-256s differ from every ROM in `nes-test-roms/apu_test/rom_singles/`,
+  so they are a distinct corpus rather than duplicates of the suite that passes
+  8/8. They carry no title text, so what each tests is not yet known.
+
+  Recorded rather than acted on: identifying and fixing four APU defects is its
+  own work item with its own risk to AccuracyCoin 141/141 and to byte-identity.
+  What is *not* acceptable is leaving the previous "cannot help" claim standing,
+  because it was reached with a reader that cannot tell a pass from an unmapped
+  address.
+
 ## Notes
 
 - **Determinism boundary.** Display-only work (the NTSC composite filter/shader

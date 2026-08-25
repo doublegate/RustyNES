@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.2] - 2026-08-24 - "Witness" (rung 4 closes — blargg's APU battery as the first independent oracle since rung 1, six defects no self-written gate could see, and a suite that had been asserting nothing for five minor releases. The emulation core is unchanged)
+
 ### Fixed
 
 - **The NTSC `blargg_apu_2005` suite asserted nothing, and had since it was
@@ -53,6 +55,29 @@ cycle-accurate core later replaced.
   the corpus had no row at all, while the PAL half's row documented the same
   false-oracle correction in detail — which is part of why the NTSC half went
   unmigrated for five minor releases.
+
+### Added (MiSTer co-simulation DUT — sibling repository)
+
+- **Rung 4 closes.** blargg's `blargg_apu_2005.07.30` battery went from 0 of 11
+  to **11 of 11 exact** against the DUT — the first rung-4 evidence with an
+  *independent* oracle, and every one of the six root causes was invisible to
+  the gates this project had written for itself. **48 gates green, 0 failed;
+  56 of 56 mutations CAUGHT.**
+- The frame sequencer now counts **CPU cycles** with the documented step
+  positions (7457 / 14913 / 22371 / 29828 / 29829 / 29830), derived from the
+  wiki's APU-cycle table plus its GET/PUT column — "3728, PUT" is CPU
+  `2*3728+1`. No rounding and no per-step calibration, which the previous
+  model's own comment had flagged as the sign its origin was wrong.
+- Six defects: a `$4017` reset counted as a sequence wrap; the reset landing one
+  CPU cycle late; `$4015` not seeing a same-cycle length clock; a sequence with
+  29,831 states instead of 29,830 (a drift, not an offset); the length halt
+  applying a cycle early; and the mode-1 immediate clock firing at the write
+  rather than the reset landing, plus the reload drop.
+- Two of the six rules are **absent from the nesdev wiki** and stated in
+  blargg's own `readme.txt`: the length-halt delay and the reload drop.
+- New ROMs `apuconflict039`, `apudmawrite038`, `apuinhibit040`, `apupower041`
+  and `apureload042`, closing ledger items 6.3, 6.4, 3.6, 8.10 and 8.11.
+  `apuirq036` is restored as a gate, demoted through 7.1 and 7.2 and now exact.
 
 ### Note
 
