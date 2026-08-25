@@ -5,18 +5,32 @@
 > prose could not: reset is EIGHT cycles, and `docs/cpu-6502.md` said both
 > seven and eight. The emulation core is untouched.
 >
-> **Rung 3 CLOSED; rung 4 OPEN as of v2.5.9.** Rung 3's seven steps are all
+> **Rungs 3 and 4 CLOSED; rung 5 IN PROGRESS.** Rung 3's seven steps are all
 > green and every gate exact — the register file, scroll, background fetch,
 > background rendering, sprite evaluation, sprite rendering, and VBlank/NMI with
 > the `$2002` race — capped by **nestest 0-diff at 5,002,992 cycles**, the
-> 5M-cycle window standing since v2.5.0. **Rung 4 opens with the two pulse
-> channels and the frame counter**: `apulen027` exact on both surfaces (178,668
-> cycles each), `apupulse026`'s bus surface 3 of 178,668, and its channel levels
-> 1,000 of 178,668 — **500 runs of exactly two cycles, one per pulse edge**, a
-> uniform one-tick `$4003` write-parity sensitivity carried to v2.6.0 with the
-> ROM that exposes it already written. **Nine of ten mutations CAUGHT**, and the
-> two that were not both indicted the stimulus rather than the gate. Triangle,
-> noise and DMC are v2.6.0/v2.6.1. `sys/` is still empty; there is no `.rbf`.
+> 5M-cycle window standing since v2.5.0. **Rung 4 closed at v2.6.2** with the
+> blargg APU battery **11 of 11 exact** and 54 of 54 mutations CAUGHT.
+>
+> **Rung 5 has the console assembled.** NROM, work RAM, the CPU bus, controller
+> ports and DMC DMA are landed and gated; `nes_top` ties them together carrying
+> **no observation ports**, so the unit Quartus compiles is the unit that lints
+> clean. The DUT's 6502 now decodes **all 256 opcodes**, and **blargg's
+> `instr_test-v5` battery is a standing gate at 16 of 16 exact** — rung 1's first
+> *independent* oracle, taking the suite to **66 gates green, 0 failed**. It
+> found three defects the self-written corpus had missed: `RRA` taking the
+> pre-instruction carry into its ADC stage, the indirect RMW forms addressing
+> the indexed target during their pointer fetch, and the PPU I/O-bus latch never
+> decaying. **The ladder also caught the ORACLE for the first time** — NROM
+> provides PRG-RAM where the board has none (`docs/accuracy-ledger.md`).
+>
+> What remains for v2.6.3 is the **clock divider**: `ce`/`ppu_ce`/`ppu_access`
+> still arrive from the testbench, because rung 3's phase calibration was built
+> on its driving them, so moving them inside is a change to the timing substrate
+> rather than a rewiring. The first AccuracyCoin run has been attempted and
+> produced **two false passes before a real one** — the ROM idles on its title
+> screen until START is pressed, and only the framebuffer half had a guard that
+> refused. `sys/` is still empty; there is no `.rbf`.
 > Detail: `docs/mister.md` and the sibling's `docs/rung3-ppu.md` and
 > `docs/rung4-apu.md`.
 >

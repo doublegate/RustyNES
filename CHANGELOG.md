@@ -41,6 +41,47 @@ cycle-accurate core later replaced.
   accuracy-ledger entry below records. No `rustynes-*` crate changes, so
   AccuracyCoin and nestest are untouched by construction.
 
+- **The DUT's 6502 decodes all 256 opcodes, and an independent oracle now says
+  so (sibling repository).** The five `SH`-group stores — `SHA` (`$93`/`$9F`),
+  `TAS` (`$9B`), `SHY` (`$9C`), `SHX` (`$9E`) — close the decoder at **256 of
+  256**. They are address mangling rather than arithmetic: the value stored is
+  `reg & (base_high + 1)`, and on a page cross the address's own high byte
+  becomes `addr_high & reg`.
+
+  More importantly, **blargg's `instr_test-v5` battery is now a standing gate** —
+  sixteen third-party ROMs, ~2.68 M cycles each, compared per cycle, **16 of 16
+  exact**, taking the suite from 50 gates to **66**. Every rung-1 ROM before
+  these was written inside the project, so the rung could only ask questions
+  someone there thought to ask. These found **three defects the entire
+  self-written corpus had missed**, and none was in the opcodes the battery was
+  run to validate:
+
+  - `RRA` fed its `ADC` stage `p[FLAG_C]`, the carry from *before* the
+    instruction, instead of the one the rotate had just produced. **The
+    instruction's own bus trace was identical on both sides** — read, dummy
+    write, write — and only the accumulator differed, by one, surfacing nine
+    cycles later in the `STA` that spilled it. A gate on the memory side of
+    read-modify-write would have passed it.
+  - The 8-cycle indirect read-modify-write forms addressed the indexed target
+    during their *pointer* fetch cycles.
+  - The PPU I/O-bus latch never decayed — a 2C02 defect reached from a CPU ROM,
+    three rungs after rung 3 closed.
+
+  The decay is implemented, and **the fitted part is disclosed in the RTL
+  itself**. That the latch decays, in three independent groups, and which
+  accesses refresh which group, are documented facts. The *deadline* is not:
+  the wiki says 3-30 ms "faster when the PPU is warm", RustyNES uses ~600 ms and
+  its own source calls that a coarser approximation. Measuring the corpus
+  settles that it cannot adjudicate between them — a documentation-derived
+  deadline anywhere in the 3-30 ms band would turn **fifteen currently-green
+  gates red, because the oracle would be the one diverging**, and exactly one
+  ROM observes the latch past 600 ms at all. So the constant is a `localparam`
+  labelled as the oracle's, and a mutation halving it is demonstrated **inert**
+  — which is the measurement confirmed by execution rather than argued.
+
+  Still no `rustynes-*` crate changes; AccuracyCoin and nestest remain untouched
+  by construction.
+
 - **Android dependency refresh.** AGP **9.2.1 → 9.3.2** (both
   `com.android.application` and `com.android.test`), the Compose compiler plugin
   **2.3.10 → 2.3.21**, `androidx.baselineprofile` and `benchmark-macro-junit4`

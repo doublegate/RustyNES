@@ -982,6 +982,44 @@ Rung 1's own gate -- nestest 0-diff over >= 8000 instructions -- is not met yet:
 the five ROMs are hand-built opcode groups, not nestest. Rung 2, the per-cycle
 bus and interrupt comparison, has not begun.
 
+### Rung 1 gets an independent oracle (v2.6.3)
+
+The whole rung above was measured against ROMs **written in this project**, and
+the section before this one says exactly what that cannot cover. That limitation
+is now partly lifted.
+
+blargg's `instr_test-v5/rom_singles` — sixteen third-party ROMs, ~2.68 M cycles
+each, predating this programme by two decades and between them exercising all
+256 opcodes — runs as a standing section of the sibling's `regress.sh`, compared
+on rung 2's per-cycle bus surface. **16 of 16 exact**, taking the suite from 50
+gates to **66**.
+
+It is the first *independent* oracle rung 1 has had, and it earned that
+description immediately by finding **three defects the self-written corpus had
+missed**, none of them in the undocumented opcodes the battery was run to
+validate:
+
+| ROM | defect |
+| --- | --- |
+| `06-absolute` | `RRA` fed its `ADC` stage the carry from *before* the instruction rather than the one the rotate produced |
+| `08-ind_x` | the 8-cycle indirect RMW forms addressed the indexed target during their *pointer* fetch cycles |
+| `03-immediate` | the PPU I/O-bus latch never decayed — a 2C02 defect, reached from a CPU ROM, three rungs after rung 3 closed |
+
+The `RRA` finding is the one worth carrying forward, because of what it says
+about compare surfaces rather than about the 6502. **The instruction's own bus
+trace was identical on both sides** — read `$FF`, dummy-write `$FF`, write
+`$7F` — and the divergence appeared nine cycles later in the `STA` that spilled
+the accumulator, off by exactly one. A gate on the memory side of
+read-modify-write would have passed it, and so would this rung's own
+register-boundary trace had the next instruction not stored the accumulator
+straight away.
+
+Two hooks were needed to run third-party ROMs at all, and both are about **not
+transcribing a number**: the window comes from each golden's own manifest rather
+than a `CYCLES_<rom>` line, and the board's `$6000-$7FFF` work RAM is presented
+per-ROM (blargg reports through it) rather than by default — NROM has none, which
+is the oracle defect recorded above.
+
 ## Rung 4 — the 2A03, and the audit it prompted
 
 Rung 4 opened at v2.5.9 with the two pulse channels and the frame counter, and

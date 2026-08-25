@@ -102,14 +102,52 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
         that two inert open-bus mutations would flip to CAUGHT once DMA drove
         the bus. They did not, and a third joined them. The cause is stimulus:
         no ROM in the corpus both runs DMC fetches and reads open bus
-  - [ ] **`rtl/nes_top.sv` is still a shell** — the one remaining piece. Every
-        part exists and is gated, but they are tied together by the
-        co-simulation wrapper rather than by the core's own top level, and that
-        top level must also divide the master clock. That is the apparatus rung
-        3's phase calibration was built on, so it is a change to the timing
-        substrate rather than a rewiring — named as its own step for that reason
-  - [ ] First end-to-end AccuracyCoin run — blocked on the above, and NOT
-        attempted. Producing a status vector is v2.6.3; matching it is v2.6.4
+  - [x] **The decoder closes at 256 of 256** with the five `SH`-group stores
+        (`SHA` `$93`/`$9F`, `TAS` `$9B`, `SHY` `$9C`, `SHX` `$9E`). Address
+        mangling in the store path, not arithmetic: `reg & (base_high + 1)`
+        stored, and on a page cross the address's high byte becomes
+        `addr_high & reg`
+  - [x] **blargg's `instr_test-v5` battery is a standing gate — rung 1's first
+        INDEPENDENT oracle.** Sixteen third-party ROMs, ~2.68 M cycles each,
+        **16 of 16 exact**; the suite goes 50 → **66 gates**. Three defects the
+        self-written corpus had missed, none of them in the opcodes the battery
+        was run to validate: `RRA`'s ADC stage taking the pre-instruction carry
+        (bus trace IDENTICAL — only the accumulator differed, by one, nine
+        cycles later), the indirect RMW forms addressing the indexed target
+        during their pointer fetch, and the PPU I/O-bus latch never decaying
+  - [x] **PPU open-bus decay**, and the constant disclosed as fitted. Mechanism
+        and grouping are documented facts; the deadline is a band (3-30 ms,
+        temperature-dependent) where the oracle uses ~600 ms. Measured: a
+        documentation-derived deadline would turn **fifteen green gates red
+        because the ORACLE would be diverging**, and only one ROM observes the
+        latch past 600 ms — so the deadline is a `localparam` labelled as the
+        oracle's, and halving it is demonstrated **inert**
+  - [ ] A purpose-built decay stimulus, to close the three mutations that are
+        inert **on this ROM** (which timer gates which bits, and where the
+        deadline sits inside a 1.27 s gap). Named as a step, not a silence — and
+        note it would confirm this core matches 600 ms, not what hardware does
+  - [x] **`rtl/nes_top.sv` assembles the console** and carries **not one
+        observation port** — everything the gates read is reached
+        hierarchically from the co-simulation wrapper, which is legal in
+        simulation and impossible in synthesis (ADR 0037). It lints clean
+        standalone, which is the unit Quartus compiles; the wrapper is never in
+        `files.qip`
+  - [ ] **The clock divider is what remains.** `ce`, `ppu_ce` and `ppu_access`
+        still arrive from outside, because the testbench drives the dot phase
+        and rung 3's whole phase calibration (`PPU_LEAD`, `ACCESS_DOT`) is built
+        on its doing so. A finished top level divides one 21.477 MHz master
+        clock — PPU every four, CPU every twelve. That is a change to the
+        **timing substrate**, not a rewiring, which is why it is its own step.
+        Not a fudge in the meantime: on MiSTer a core takes `clk_sys` and its
+        enables from `sys/`, so explicit clock-enable inputs are a real shape —
+        just not yet the shape that generates them
+  - [ ] First end-to-end AccuracyCoin run — attempted, and it produced **two
+        false passes before a real one**. The first reported RAM 2048/2048 and
+        pixels 0/61440 identical: both true and worthless, because AccuracyCoin
+        idles on its title screen until START is pressed. `fb_diff.py` REFUSED
+        the framebuffer half ("2 distinct values, need 8"); the RAM half had no
+        such guard. With START pressed, 208 of 2048 bytes change. Producing a
+        status vector is v2.6.3; matching it is v2.6.4
 - [ ] v2.6.4 status vector identical **entry-for-entry**, including `Skipped` and
       `NotRun` — **rung 5 closes**. State a floor, not a target
 
