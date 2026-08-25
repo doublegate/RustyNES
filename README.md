@@ -524,6 +524,8 @@ assigned tests is the authoritative source.
 | **AccuracyCoin**            | **100% (141/141)** — every assigned test passes, including the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses"), via the promoted 2-cycle-ALE fetch model (v2.0.3, ADR 0030) |
 | nestest                     | 0-diff vs the Nintendulator golden log                                |
 | blargg `cpu_interrupts_v2`  | 5/5 strict · SH\* 6/6                                                  |
+| blargg `blargg_apu_2005`    | 11/11 NTSC — length counters + table, frame-IRQ flag and timing, clock jitter, length timing in both frame-counter modes, reset timing, length halt/reload ordering |
+| blargg `pal_apu_tests`      | 10/10 PAL — the region-calibrated rebuild of the same corpus, forced to PAL timing |
 | `region_timing`             | 4/4 (PAL **3.2:1**) · `$2007` Stress 170/170                          |
 | Commercial-ROM oracle       | 99 titles (60-ROM gate + 39-title survey), SHA-256-pinned, byte-identical |
 
@@ -632,10 +634,11 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | [Scheduler](docs/scheduler.md)          | The master-clock lockstep model                                   |
 | [CHANGELOG.md](CHANGELOG.md)            | Version history and release notes                                 |
 | [Documentation handbook](https://doublegate.github.io/RustyNES/docs/) | The Material-for-MkDocs site rendering the subsystem specs + user guide (also on GitHub Pages) |
-| [Roadmap](to-dos/ROADMAP.md)            | The forward roadmap — the v2.2.6 → v2.3.0 de-monetization + NESdev-remediation line and beyond |
-| [Release plans](to-dos/plans/README.md) | Per-release design plans (v1.0.0 → the v2.0.0 "Timebase" set and the v2.1.x "Fathom" line) + the reference-emulator research dives that fed them |
+| [Roadmap](to-dos/ROADMAP.md)            | The forward roadmap — currently the **v2.5.1 → v2.7.0 MiSTer core** line (the v2.2.6 → v2.3.0 de-monetization + NESdev-remediation line is complete) |
+| [Release plans](to-dos/plans/README.md) | Per-release design plans (v1.0.0 → the v2.0.0 "Timebase" set, the v2.1.x "Fathom" line, and the current [v2.7.0 MiSTer core plan](to-dos/plans/v2.7.0-mister-core-plan.md)) + the reference-emulator research dives that fed them |
 | [iOS / iPadOS App](docs/ios.md)         | Native SwiftUI shell over Metal (wgpu) — v1.9.x TestFlight        |
 | [Libretro Core](docs/libretro/WALKTHROUGH.md) | Libretro core architecture, snapshot determinism, and RetroArch setup |
+| [MiSTer co-simulation](docs/mister.md) | The **v2.5.1 → v2.7.0** programme: a NEW NES core in SystemVerilog, written from public documentation in a sibling repository, with this emulator as its verification oracle. The rung ladder, the compare surfaces, and what each rung cannot verify |
 
 ### Hardware and subsystem specs
 
@@ -648,12 +651,14 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | Testing    | [docs/testing-strategy.md](docs/testing-strategy.md) |
 | Netplay    | [docs/netplay-webrtc.md](docs/netplay-webrtc.md) |
 
-Architecture Decision Records live in [`docs/adr/`](docs/adr/) (0001–0036, including
+Architecture Decision Records live in [`docs/adr/`](docs/adr/) (0001–0038, including
 0028–0029 the v2.0.0 "Timebase" one-clock timebase + save-state/movie-format break,
 0030 the AccuracyCoin 2-cycle-ALE / octal-latch closure, 0031 the game-database
 must-not-override-mapper-controlled-state gate, 0032 the Vs. `DualSystem` desktop
-presentation, 0035 RustyNES is permanently non-commercial, and 0036 the relicense to
-GPL-3.0-or-later as a derivative work). (The deeper engine-development audit logs are
+presentation, 0035 RustyNES is permanently non-commercial, 0036 the relicense to
+GPL-3.0-or-later as a derivative work, 0037 the provenance firewall extended to
+HDL for the MiSTer co-simulation programme, and 0038 the co-simulation
+interrupt-injection API). (The deeper engine-development audit logs are
 kept locally, outside the public repo.)
 
 The hosted GitHub Pages deployment serves **three** sections from one artifact: the
@@ -873,23 +878,40 @@ through v2.0.0 "Timebase" and the v1.x line — is in [`CHANGELOG.md`](CHANGELOG
 
 ## Roadmap
 
-The **v2.2.6 → v2.3.0** line — de-monetization (ADR 0035) plus a pass through
-NESdev-forum feedback, all on the v2.0.0 "Timebase" core — is now **complete**:
+The active line is **v2.5.1 → v2.7.0 — the MiSTer core**. It builds a **new** NES
+core in SystemVerilog, written from public hardware documentation in the sibling
+`RustyNES_MiSTer` repository, with this emulator as its **verification oracle**.
 
-- **Shipped:** v2.2.6 "Almanac" (de-monetization; permanently open-source and income-free),
-  v2.2.7 "Timbre II" (VRC6 / Sunsoft 5B expansion-audio fidelity), v2.2.8 "Aperture II"
-  (gamma-correct scanlines), v2.2.9 "Studio II" (TAStudio wiring, `.bk2` playback,
-  tool-window detach), and **v2.3.0 "Datum II"** — true multi-viewport OS-window detach,
-  the emulator-lock frame-pacing fix, a −5.1% PPU optimization, and the PPU-accuracy
-  capstone (both forum-reported items verified already-correct), holding
-  **AccuracyCoin 141/141**.
-- **Next:** no line is locked. Candidates include a free-app store launch (no
-  monetization, per ADR 0035), further frontend performance work, and continued
-  mapper / accuracy breadth. See [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md).
+**RustyNES is not being ported to FPGA and cannot be** — a MiSTer core is
+SystemVerilog compiled by Quartus into a Cyclone V bitstream, and high-level
+synthesis of a cycle-accurate emulator's control flow does not produce usable
+hardware. What is buildable is a new implementation verified against this one,
+and `crates/rustynes-cosim` is the boundary: a narrow C ABI a Verilator
+testbench links, plus a `nes_golden_export` CLI emitting golden traces.
 
-A **free** mobile store listing (Google Play / F-Droid / App Store) is a possible later,
-unversioned step with **no** monetization attached (ADR 0035). Per-release scope beyond the
-current step is planning, not a shipped promise.
+Progress is a **rung ladder**, and a rung may not open until the one below is
+green: rung 0 the compare surface, rung 1 the 6502, rung 2 the bus and
+interrupts, rung 3 the 2C02, rung 4 the 2A03, rung 5 AccuracyCoin parity, rung 6
+hardware bring-up, rung 7 mappers. Rungs 0-3 are closed; rung 4 is the current
+work. Every rung is labelled in [`docs/mister.md`](docs/mister.md) by whether it
+has an **independent** oracle — because 141/141 on AccuracyCoin is not the same
+as "matches silicon", and a rung verified only against this emulator inherits
+whatever this emulator has wrong.
+
+**The emulation core is unchanged by this line.** Releases in it touch the
+co-simulation apparatus and the DUT, not the shipped emulator, so AccuracyCoin
+141/141 and nestest 0-diff hold throughout — verified rather than assumed on any
+release that does touch a chip crate.
+
+Two risks are accepted in writing rather than discovered later: `NES_MiSTer`
+already scores 121/125 on AccuracyCoin and real Famicom AV hardware scores about
+the same, so there is no published accuracy headroom and **the core may be
+declined as a duplicate** (Retro Remake / openFPGA are planned routes, not
+contingencies); and **the oracle can be wrong**.
+
+A **free** mobile store listing (Google Play / F-Droid / App Store) remains a
+possible later, unversioned step with **no** monetization attached (ADR 0035).
+Per-release scope beyond the current step is planning, not a shipped promise.
 
 The longer forward arc lives as research-grounded design plans in
 [`to-dos/plans/`](to-dos/plans/README.md); see [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md)

@@ -171,6 +171,19 @@ write-on-the-clock-cycle coincidence the ROMs probe. blargg's PAL
 to `PASSED`; NTSC AccuracyCoin (141/141), `blargg_apu_2005` (11/11) and the
 `f2a_*` length-race pins (`f2_accuracy_audit.rs`) are all unchanged.
 
+> **How the NTSC 11/11 is read matters, and until v2.6.2 it was not read at
+> all.** The NTSC suite asserted `$6000 == 0` through `run_nes_blargg`. These
+> ROMs are plain NROM with no PRG-RAM, so `$6000` reads back `0` forever — and
+> `0` is blargg's *success* code, making all eleven assertions vacuous. The PAL
+> half of the corpus had the identical defect fixed in v2.1.5; the NTSC half was
+> never migrated. Nor does the PAL fix transfer: these ROMs report a **numeric
+> result code**, not `PASSED`/`FAILED`, so the screen decoder calls all eleven
+> `Unresolved`. `run_nes_result_code` decodes the code per the corpus's own
+> `tests.txt` ("a result code of 1 always indicates that all tests were
+> passed"). The figure is unchanged; it is now earned, and demonstrated to fail
+> — moving the 4-step half-frame clock is caught by two ROMs and the frame IRQ
+> by seven.
+
 ### Reset behavior (v2.0.0 "Timebase", promoted in beta.4)
 
 Per the blargg `apu_reset` spec and nesdev ("At reset, `$4017` mode is

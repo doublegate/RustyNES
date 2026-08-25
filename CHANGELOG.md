@@ -26,6 +26,43 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The NTSC `blargg_apu_2005` suite asserted nothing, and had since it was
+  written.** It read the `$6000` status protocol, but these 2005-era ROMs are
+  plain NROM with no PRG-RAM, so `$6000` reads back `0` forever — and `0` is
+  blargg's *success* code. All eleven assertions were statements about an
+  unmapped address. The identical defect was found and fixed for the PAL half of
+  the same corpus in v2.1.5, whose header has described it as "a false oracle
+  that validated nothing" ever since; the NTSC half was never migrated. Reusing
+  the PAL fix is also wrong — these ROMs report a numeric result code rather than
+  `PASSED`/`FAILED`, so the screen decoder returns `Unresolved` for all eleven.
+  The suite now uses `run_nes_result_code` per the corpus's own `tests.txt`
+  ("a result code of 1 always indicates that all tests were passed"), and **all
+  eleven genuinely pass**, settling in 11-26 frames instead of exhausting an
+  1800-frame budget. The 11/11 figure is unchanged; it is now earned.
+  `vacuity_of_the_6000_protocol_on_this_corpus` pins the reason as an executable
+  fact rather than a comment.
+
+### Added
+
+- `run_nes_result_code` / `CodeVerdict` in `rustynes-test-harness` — the third
+  reader this corpus family needs, keeping `Passed`, `Failed(n)` and
+  `Unresolved` distinct so an exhausted budget can never read as agreement.
+- A `blargg_apu_2005` row in `docs/STATUS.md`'s suite table. The NTSC half of
+  the corpus had no row at all, while the PAL half's row documented the same
+  false-oracle correction in detail — which is part of why the NTSC half went
+  unmigrated for five minor releases.
+
+### Note
+
+The emulation core is **unchanged**: only `rustynes-test-harness` and
+documentation are touched here, so AccuracyCoin 141/141 (RAM decoder) and
+nestest 0-diff hold by construction rather than by re-measurement. The
+co-simulation DUT work this release accompanies lives in the sibling
+`RustyNES_MiSTer` repository, where blargg's battery went from 0 of 11 to
+**11 of 11** and closed rung 4.
+
 ## [2.6.1] - 2026-08-24 - "Interleave" (the DMC and its DMA cycle steal in the MiSTer co-simulation DUT, cycle-exact on the bus. The emulation core is unchanged)
 
 The DMC reads its own samples by stopping the CPU and taking a cycle. This
