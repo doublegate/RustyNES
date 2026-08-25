@@ -312,9 +312,9 @@ dependencies {
     // currentWindowAdaptiveInfo()/WindowSizeClass (the single layout driver);
     // -layout carries ListDetailPaneScaffold; -navigation carries the predictive-
     // back-aware NavigableListDetailPaneScaffold for the expanded two-pane.
-    implementation("androidx.compose.material3.adaptive:adaptive:1.2.0")
-    implementation("androidx.compose.material3.adaptive:adaptive-layout:1.2.0")
-    implementation("androidx.compose.material3.adaptive:adaptive-navigation:1.2.0")
+    implementation("androidx.compose.material3.adaptive:adaptive:1.3.0")
+    implementation("androidx.compose.material3.adaptive:adaptive-layout:1.3.0")
+    implementation("androidx.compose.material3.adaptive:adaptive-navigation:1.3.0")
     // WindowInfoTracker / FoldingFeature for foldable-posture awareness.
     implementation("androidx.window:window:1.5.1")
     // v1.8.8 "Atlas" (Workstream K): Android-12+ system splash via the back-compat
