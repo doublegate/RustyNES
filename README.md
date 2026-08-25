@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.6.1-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.6.2-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -524,6 +524,8 @@ assigned tests is the authoritative source.
 | **AccuracyCoin**            | **100% (141/141)** — every assigned test passes, including the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses"), via the promoted 2-cycle-ALE fetch model (v2.0.3, ADR 0030) |
 | nestest                     | 0-diff vs the Nintendulator golden log                                |
 | blargg `cpu_interrupts_v2`  | 5/5 strict · SH\* 6/6                                                  |
+| blargg `blargg_apu_2005`    | 11/11 NTSC — length counters + table, frame-IRQ flag and timing, clock jitter, length timing in both frame-counter modes, reset timing, length halt/reload ordering |
+| blargg `pal_apu_tests`      | 10/10 PAL — the region-calibrated rebuild of the same corpus, forced to PAL timing |
 | `region_timing`             | 4/4 (PAL **3.2:1**) · `$2007` Stress 170/170                          |
 | Commercial-ROM oracle       | 99 titles (60-ROM gate + 39-title survey), SHA-256-pinned, byte-identical |
 
@@ -632,10 +634,11 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | [Scheduler](docs/scheduler.md)          | The master-clock lockstep model                                   |
 | [CHANGELOG.md](CHANGELOG.md)            | Version history and release notes                                 |
 | [Documentation handbook](https://doublegate.github.io/RustyNES/docs/) | The Material-for-MkDocs site rendering the subsystem specs + user guide (also on GitHub Pages) |
-| [Roadmap](to-dos/ROADMAP.md)            | The forward roadmap — the v2.2.6 → v2.3.0 de-monetization + NESdev-remediation line and beyond |
-| [Release plans](to-dos/plans/README.md) | Per-release design plans (v1.0.0 → the v2.0.0 "Timebase" set and the v2.1.x "Fathom" line) + the reference-emulator research dives that fed them |
+| [Roadmap](to-dos/ROADMAP.md)            | The forward roadmap — currently the **v2.5.1 → v2.7.0 MiSTer core** line (the v2.2.6 → v2.3.0 de-monetization + NESdev-remediation line is complete) |
+| [Release plans](to-dos/plans/README.md) | Per-release design plans (v1.0.0 → the v2.0.0 "Timebase" set, the v2.1.x "Fathom" line, and the current [v2.7.0 MiSTer core plan](to-dos/plans/v2.7.0-mister-core-plan.md)) + the reference-emulator research dives that fed them |
 | [iOS / iPadOS App](docs/ios.md)         | Native SwiftUI shell over Metal (wgpu) — v1.9.x TestFlight        |
 | [Libretro Core](docs/libretro/WALKTHROUGH.md) | Libretro core architecture, snapshot determinism, and RetroArch setup |
+| [MiSTer co-simulation](docs/mister.md) | The **v2.5.1 → v2.7.0** programme: a NEW NES core in SystemVerilog, written from public documentation in a sibling repository, with this emulator as its verification oracle. The rung ladder, the compare surfaces, and what each rung cannot verify |
 
 ### Hardware and subsystem specs
 
@@ -648,12 +651,14 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | Testing    | [docs/testing-strategy.md](docs/testing-strategy.md) |
 | Netplay    | [docs/netplay-webrtc.md](docs/netplay-webrtc.md) |
 
-Architecture Decision Records live in [`docs/adr/`](docs/adr/) (0001–0036, including
+Architecture Decision Records live in [`docs/adr/`](docs/adr/) (0001–0038, including
 0028–0029 the v2.0.0 "Timebase" one-clock timebase + save-state/movie-format break,
 0030 the AccuracyCoin 2-cycle-ALE / octal-latch closure, 0031 the game-database
 must-not-override-mapper-controlled-state gate, 0032 the Vs. `DualSystem` desktop
-presentation, 0035 RustyNES is permanently non-commercial, and 0036 the relicense to
-GPL-3.0-or-later as a derivative work). (The deeper engine-development audit logs are
+presentation, 0035 RustyNES is permanently non-commercial, 0036 the relicense to
+GPL-3.0-or-later as a derivative work, 0037 the provenance firewall extended to
+HDL for the MiSTer co-simulation programme, and 0038 the co-simulation
+interrupt-injection API). (The deeper engine-development audit logs are
 kept locally, outside the public repo.)
 
 The hosted GitHub Pages deployment serves **three** sections from one artifact: the
@@ -668,7 +673,7 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.6.1 "Interleave"** — the DMC and its DMA cycle steal in the MiSTer co-simulation DUT, cycle-exact on the bus. The emulation core is unchanged. Built on **v2.6.0 "Assay"** — the triangle, the noise channel and the sweep unit **in the MiSTer co-simulation DUT** — and an audit of how much of the APU was fitted to the oracle rather than derived from documentation. The emulation core is unchanged. Built on **v2.5.9 "Overture"** — rung 4 opens: the two pulse channels, the frame counter, and four ROM defects the stimulus measurement found first. Built on **v2.5.8 "Blanking"** — VBlank, NMI and the PPUSTATUS race close rung 3 — and both fixes were deletions. Built on **v2.5.7 "Collimation"** — sprite rendering closes exact — the phase was wrong by two dots, and every window was compensating. Built on **v2.5.6 "Vestige"** — Sprite evaluation closes: all 59,993 overlapping cycles match, nine of nine behavioural mutants caught and two proved inert (announced as seven of eight at the cut), and the fix is a byte index that outlives the walk that set it. Built on **v2.5.5 "Raster"** — the first full frame, and three blind spots in the stimulus that fed it. Built on **v2.5.4 "Escapement"** — the background fetch pipeline, and an access two dots early that five gates could not see. Built on **v2.5.3 "Hysteresis"** — toggling rendering takes effect three dots after the write, and four instruments to prove it. Built on **v2.5.2 "Dormant"** — the 2C02 register file, and a gate that passed while testing nothing. Built on **v2.5.1 "Retrace"** — the interrupt sweep closes rung 2, and a gate reported a pass it could not have earned. Built on **v2.5.0 "Rungwork"** — the 6502 rung, and the two gates it cannot reach. Built on **v2.4.9 "Plumbline II"** — the bus half of rung 2, and what it found the day it existed. Built on **v2.4.8 "Palimpsest"** — read-modify-write, and a gate that cannot see its own subject. Built on **v2.4.7 "Keystone"** — the stack closes, and a dead line proves itself dead. Built on **v2.4.6 "Abacus"** — the core learns arithmetic. Built on **v2.4.5 "Compass"** — the core reaches memory, and chooses. Built on **v2.4.4 "Ignition"** — the first real RTL. The 6502's eight-cycle reset and the seventeen single-byte implied opcodes, in SystemVerilog in the sibling repository (`RustyNES_MiSTer@7f092bd`), matching the oracle on all seven CPU fields -- 29 records, and the gate demonstrated to fail on four mutations. The DUT is the **third writer** of the oracle's `CpuBootTrace` format, so `cpu_boot_trace_diff` reads it with no modification and the rung needed no oracle-side change at all. **The oracle settled a question our own prose could not**: reset is EIGHT cycles, and `docs/cpu-6502.md` said both seven and eight -- corrected here. A mutation the test ROM was built to catch came back NOT CAUGHT because `TSX` leaves exactly the flags a wrongly-flagging `TXS` would compute, and a harness bug made every mutation report a catch including the baseline. The emulation core is untouched. It builds on **v2.4.3 "Touchstone"** — what the synthesiser accepts, and what the licence requires. A touchstone is a stone you rub gold against; the streak tells you what the metal actually is. This release settles the **two Fabric-plan risks that had to be answered before any RTL exists**, and both were answered by evidence that contradicted what the plan assumed. **Risk 4, the Quartus subset, is FITTED**: Quartus Prime Lite 17.0.2 Build 602 on a 5CSEBA6U23I7 produced a placed-and-routed netlist with **0 synthesis warnings**, and the 2 KiB array inferred as **2 M10K blocks with 29 total registers** — not 16,413 — from the source style alone, no `ramstyle` attribute. The `initial` block became a real MIF (so a boot ROM lands inside the block) and the `enum` was one-hot encoded. Nine constructs are promoted to *fitted*; plain `case`, `priority case` and `$bits` are deliberately left *documented* because the kitchen sink does not exercise them. **Risk 1, the `sys/` licence, inverts the plan's own hedge**: 57 files, **zero GPL-2.0-only**, and `hps_io.sv` — GPL-3.0-or-later and not optional, since it is how a core receives a ROM and reaches the OSD — forces the combined bitstream **up** to GPL-3.0-or-later, already RustyNES's licence. The emulation core is untouched.
+RustyNES's current release is **v2.6.2 "Witness"** — rung 4 closes: blargg APU battery 11/11 on the co-simulation DUT, six defects no self-written gate could see, and a suite that had been asserting nothing for five minor releases. The emulation core is unchanged. Built on **v2.6.1 "Interleave"** — the DMC and its DMA cycle steal in the MiSTer co-simulation DUT, cycle-exact on the bus. The emulation core is unchanged. Built on **v2.6.0 "Assay"** — the triangle, the noise channel and the sweep unit **in the MiSTer co-simulation DUT** — and an audit of how much of the APU was fitted to the oracle rather than derived from documentation. The emulation core is unchanged. Built on **v2.5.9 "Overture"** — rung 4 opens: the two pulse channels, the frame counter, and four ROM defects the stimulus measurement found first. Built on **v2.5.8 "Blanking"** — VBlank, NMI and the PPUSTATUS race close rung 3 — and both fixes were deletions. Built on **v2.5.7 "Collimation"** — sprite rendering closes exact — the phase was wrong by two dots, and every window was compensating. Built on **v2.5.6 "Vestige"** — Sprite evaluation closes: all 59,993 overlapping cycles match, nine of nine behavioural mutants caught and two proved inert (announced as seven of eight at the cut), and the fix is a byte index that outlives the walk that set it. Built on **v2.5.5 "Raster"** — the first full frame, and three blind spots in the stimulus that fed it. Built on **v2.5.4 "Escapement"** — the background fetch pipeline, and an access two dots early that five gates could not see. Built on **v2.5.3 "Hysteresis"** — toggling rendering takes effect three dots after the write, and four instruments to prove it. Built on **v2.5.2 "Dormant"** — the 2C02 register file, and a gate that passed while testing nothing. Built on **v2.5.1 "Retrace"** — the interrupt sweep closes rung 2, and a gate reported a pass it could not have earned. Built on **v2.5.0 "Rungwork"** — the 6502 rung, and the two gates it cannot reach. Built on **v2.4.9 "Plumbline II"** — the bus half of rung 2, and what it found the day it existed. Built on **v2.4.8 "Palimpsest"** — read-modify-write, and a gate that cannot see its own subject. Built on **v2.4.7 "Keystone"** — the stack closes, and a dead line proves itself dead. Built on **v2.4.6 "Abacus"** — the core learns arithmetic. Built on **v2.4.5 "Compass"** — the core reaches memory, and chooses. Built on **v2.4.4 "Ignition"** — the first real RTL. The 6502's eight-cycle reset and the seventeen single-byte implied opcodes, in SystemVerilog in the sibling repository (`RustyNES_MiSTer@7f092bd`), matching the oracle on all seven CPU fields -- 29 records, and the gate demonstrated to fail on four mutations. The DUT is the **third writer** of the oracle's `CpuBootTrace` format, so `cpu_boot_trace_diff` reads it with no modification and the rung needed no oracle-side change at all. **The oracle settled a question our own prose could not**: reset is EIGHT cycles, and `docs/cpu-6502.md` said both seven and eight -- corrected here. A mutation the test ROM was built to catch came back NOT CAUGHT because `TSX` leaves exactly the flags a wrongly-flagging `TXS` would compute, and a harness bug made every mutation report a catch including the baseline. The emulation core is untouched. It builds on **v2.4.3 "Touchstone"** — what the synthesiser accepts, and what the licence requires. A touchstone is a stone you rub gold against; the streak tells you what the metal actually is. This release settles the **two Fabric-plan risks that had to be answered before any RTL exists**, and both were answered by evidence that contradicted what the plan assumed. **Risk 4, the Quartus subset, is FITTED**: Quartus Prime Lite 17.0.2 Build 602 on a 5CSEBA6U23I7 produced a placed-and-routed netlist with **0 synthesis warnings**, and the 2 KiB array inferred as **2 M10K blocks with 29 total registers** — not 16,413 — from the source style alone, no `ramstyle` attribute. The `initial` block became a real MIF (so a boot ROM lands inside the block) and the `enum` was one-hot encoded. Nine constructs are promoted to *fitted*; plain `case`, `priority case` and `$bits` are deliberately left *documented* because the kitchen sink does not exercise them. **Risk 1, the `sys/` licence, inverts the plan's own hedge**: 57 files, **zero GPL-2.0-only**, and `hps_io.sv` — GPL-3.0-or-later and not optional, since it is how a core receives a ROM and reaches the OSD — forces the combined bitstream **up** to GPL-3.0-or-later, already RustyNES's licence. The emulation core is untouched.
 
 It builds on **v2.4.2 "Cairn"** — the **rung-0 compare surface**. A cairn is a marker set along a route so you can tell you are still on it, which is what a rolling per-cycle hash checkpoint is. The constraint nobody budgets for in co-simulation is trace *volume*, not simulation time, and it is now **measured**: 3 frames of AccuracyCoin is 89,343 CPU cycles, **5,372,427 bytes** of `irq.csv` against **352 bytes** of `ckpt.bin` — a factor of **15,263** — so both sides chain a hash and compare every 4096 cycles, and only the divergent window is re-run with full capture. **What is hashed is a decision about hardware, not about convenience**: `CycleRecord` carries 29 fields and most are RustyNES's *model*, so `Observable` is the subset a device can genuinely produce, the IRQ pair is OR'd before hashing because hardware has one wire-OR'd /IRQ pin, and `pc` is marked DUT-observable rather than pin-observable. The emulation core is untouched.
 
@@ -873,23 +878,40 @@ through v2.0.0 "Timebase" and the v1.x line — is in [`CHANGELOG.md`](CHANGELOG
 
 ## Roadmap
 
-The **v2.2.6 → v2.3.0** line — de-monetization (ADR 0035) plus a pass through
-NESdev-forum feedback, all on the v2.0.0 "Timebase" core — is now **complete**:
+The active line is **v2.5.1 → v2.7.0 — the MiSTer core**. It builds a **new** NES
+core in SystemVerilog, written from public hardware documentation in the sibling
+`RustyNES_MiSTer` repository, with this emulator as its **verification oracle**.
 
-- **Shipped:** v2.2.6 "Almanac" (de-monetization; permanently open-source and income-free),
-  v2.2.7 "Timbre II" (VRC6 / Sunsoft 5B expansion-audio fidelity), v2.2.8 "Aperture II"
-  (gamma-correct scanlines), v2.2.9 "Studio II" (TAStudio wiring, `.bk2` playback,
-  tool-window detach), and **v2.3.0 "Datum II"** — true multi-viewport OS-window detach,
-  the emulator-lock frame-pacing fix, a −5.1% PPU optimization, and the PPU-accuracy
-  capstone (both forum-reported items verified already-correct), holding
-  **AccuracyCoin 141/141**.
-- **Next:** no line is locked. Candidates include a free-app store launch (no
-  monetization, per ADR 0035), further frontend performance work, and continued
-  mapper / accuracy breadth. See [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md).
+**RustyNES is not being ported to FPGA and cannot be** — a MiSTer core is
+SystemVerilog compiled by Quartus into a Cyclone V bitstream, and high-level
+synthesis of a cycle-accurate emulator's control flow does not produce usable
+hardware. What is buildable is a new implementation verified against this one,
+and `crates/rustynes-cosim` is the boundary: a narrow C ABI a Verilator
+testbench links, plus a `nes_golden_export` CLI emitting golden traces.
 
-A **free** mobile store listing (Google Play / F-Droid / App Store) is a possible later,
-unversioned step with **no** monetization attached (ADR 0035). Per-release scope beyond the
-current step is planning, not a shipped promise.
+Progress is a **rung ladder**, and a rung may not open until the one below is
+green: rung 0 the compare surface, rung 1 the 6502, rung 2 the bus and
+interrupts, rung 3 the 2C02, rung 4 the 2A03, rung 5 AccuracyCoin parity, rung 6
+hardware bring-up, rung 7 mappers. Rungs 0-3 are closed; rung 4 is the current
+work. Every rung is labelled in [`docs/mister.md`](docs/mister.md) by whether it
+has an **independent** oracle — because 141/141 on AccuracyCoin is not the same
+as "matches silicon", and a rung verified only against this emulator inherits
+whatever this emulator has wrong.
+
+**The emulation core is unchanged by this line.** Releases in it touch the
+co-simulation apparatus and the DUT, not the shipped emulator, so AccuracyCoin
+141/141 and nestest 0-diff hold throughout — verified rather than assumed on any
+release that does touch a chip crate.
+
+Two risks are accepted in writing rather than discovered later: `NES_MiSTer`
+already scores 121/125 on AccuracyCoin and real Famicom AV hardware scores about
+the same, so there is no published accuracy headroom and **the core may be
+declined as a duplicate** (Retro Remake / openFPGA are planned routes, not
+contingencies); and **the oracle can be wrong**.
+
+A **free** mobile store listing (Google Play / F-Droid / App Store) remains a
+possible later, unversioned step with **no** monetization attached (ADR 0035).
+Per-release scope beyond the current step is planning, not a shipped promise.
 
 The longer forward arc lives as research-grounded design plans in
 [`to-dos/plans/`](to-dos/plans/README.md); see [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md)

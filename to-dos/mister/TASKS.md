@@ -43,10 +43,21 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
 ## v2.5.9 – v2.6.2 — rung 4, the 2A03
 
 - [x] v2.5.9 **APU pulse channels + frame counter** — rung 4 OPEN: two ROMs, 9/10 mutations CAUGHT, one characterised 1-tick residual carried to v2.6.0
-- [ ] v2.6.0 triangle + noise
-- [ ] v2.6.1 DMC, and its DMA stealing back into the CPU
-- [ ] v2.6.2 frame-counter IRQ edges; blargg APU battery — **rung 4 closes**
+- [x] v2.6.0 **triangle + noise** (plus the sweep unit) — and an audit of how much
+      of the APU was fitted to the oracle rather than derived from documentation
+- [x] v2.6.1 **DMC, and its DMA stealing back into the CPU** — cycle-exact on the bus
+- [x] v2.6.2 **frame-counter IRQ edges; blargg APU battery — rung 4 CLOSES.**
+      Battery **11/11 exact**, **48 gates green, 0 failed**, catalog 56 entries, **56/56 mutations CAUGHT**.
+      Six root causes (ledger 8.3-8.9), the largest being that the frame
+      sequencer counted APU cycles where the documentation's step positions are
+      CPU cycles — which forced every constant to be calibrated per step.
+      Two of the six rules are absent from the nesdev wiki and stated in
+      blargg's own `readme.txt`: the length-halt delay and the reload drop.
 - [ ] Run `cpu_interrupts_v2` — the independent interrupt oracle, now reachable
+- [ ] **Carried from v2.6.2:** the power-up `$4017` rewrite (blargg's readme:
+      the APU acts as if `$4017` were written with `$00` 9-12 clocks before the
+      first instruction). The oracle models it, the DUT does not, and no ROM in
+      the battery isolates it — see ledger 8.10
 
 ## v2.6.3 – v2.6.4 — rung 5, NROM + AccuracyCoin
 

@@ -219,8 +219,16 @@ fn classify_screen(text: &str) -> Option<ScreenVerdict> {
 /// Run a blargg **on-screen-reporting** test ROM and decode its rendered
 /// `PASSED` / `FAILED: #<n>` verdict, optionally forcing PAL region.
 ///
-/// This is the honest oracle for the 2005-era blargg APU corpora (see
-/// [`ScreenVerdict`] for why the `$6000` runners cannot be trusted on them).
+/// This is the honest oracle for the `pal_apu_tests` corpus (see
+/// [`ScreenVerdict`] for why the `$6000` runners cannot be trusted on it).
+///
+/// It is **not** the right reader for `blargg_apu_2005.07.30`, despite that
+/// corpus being the same vintage and testing the same behaviour. Those ROMs
+/// never print `PASSED` or `FAILED`: their own `tests.txt` says each "reports a
+/// result code on screen", and "a result code of 1 always indicates that all
+/// tests were passed". Run through here every one of them returns
+/// [`ScreenVerdict::Unresolved`] while the screen plainly reads `$01`. Use
+/// [`run_nes_result_code`] for that corpus.
 /// The machine is stepped a frame at a time; as soon as the nametable text
 /// resolves to a terminal verdict the run returns early (these ROMs write the
 /// verdict line only once, at the very end, so the first appearance is
@@ -435,6 +443,134 @@ pub fn run_nes_blargg_reset(rom_bytes: &[u8], max_frames: u64) -> Result<NesTest
         status,
         message,
         cycles,
+        frames,
+    })
+}
+
+/// Verdict decoded from a blargg **numeric result-code** ROM.
+///
+/// The `blargg_apu_2005.07.30` corpus reports this way rather than with the
+/// `PASSED` / `FAILED: #<n>` words [`ScreenVerdict`] decodes. Its `tests.txt`
+/// states the convention: *"Each ROM runs several tests and reports a result
+/// code on screen … A result code of 1 always indicates that all tests were
+/// passed. Other result codes indicate a problem or behavior that isn't
+/// implemented as stated"*, and each ROM's section lists what each code means.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodeVerdict {
+    /// The screen settled on `$01` — blargg's "all tests passed" code.
+    Passed,
+    /// The screen settled on `$NN` with `NN != 1`. The corpus's `tests.txt`
+    /// names the failure per ROM and per code.
+    Failed(u8),
+    /// No result code settled within the frame budget. Never a pass: it means
+    /// the ROM hung, never rendered, or the decode missed — three things that
+    /// must not be reported as agreement.
+    Unresolved,
+}
+
+/// Outcome of running a blargg numeric-result-code ROM.
+#[derive(Debug, Clone)]
+pub struct CodeTestResult {
+    /// Decoded terminal verdict.
+    pub verdict: CodeVerdict,
+    /// The trimmed nametable text at the settling frame, surfaced in assertion
+    /// messages so a failure names itself.
+    pub text: String,
+    /// Frames run until the code settled (or the budget was exhausted).
+    pub frames: u64,
+}
+
+/// Parse the **last** `$NN` hex code rendered on screen.
+///
+/// The last one rather than the first because blargg's text engine leaves the
+/// test title above the code, and a title can legitimately contain a `$`.
+fn parse_result_code(text: &str) -> Option<u8> {
+    let mut found = None;
+    let bytes = text.as_bytes();
+    for (i, &c) in bytes.iter().enumerate() {
+        if c != b'$' {
+            continue;
+        }
+        let digits: String = text[i + 1..]
+            .chars()
+            .take_while(char::is_ascii_hexdigit)
+            .take(2)
+            .collect();
+        // No emptiness check: `u8::from_str_radix("", 16)` returns
+        // `Err(ParseIntError { kind: Empty })`, so the `Ok` guard already
+        // rejects a bare `$`. Verified rather than assumed.
+        if let Ok(v) = u8::from_str_radix(&digits, 16) {
+            found = Some(v);
+        }
+    }
+    found
+}
+
+/// Run a blargg **numeric-result-code** test ROM and decode its on-screen code.
+///
+/// The code must be **stable across two consecutive frames** before it is
+/// accepted. blargg's text engine renders a line over several writes, so a
+/// single-frame read can catch a half-drawn value; requiring it twice costs one
+/// frame and removes that class of false verdict.
+///
+/// # Errors
+///
+/// Returns the underlying [`RomError`] if the bytes don't parse.
+pub fn run_nes_result_code(
+    rom_bytes: &[u8],
+    max_frames: u64,
+    force_pal: bool,
+) -> Result<CodeTestResult, RomError> {
+    let owned = force_pal.then(|| pal_forced_copy(rom_bytes)).flatten();
+    let bytes: &[u8] = owned.as_deref().unwrap_or(rom_bytes);
+    let mut nes = Nes::from_rom(bytes)?;
+    let mut frames = 0u64;
+    let mut text = String::new();
+    let mut prev: Option<u8> = None;
+    // The screen as it stands after the first rendered frame. A code is only
+    // accepted once the screen has CHANGED from this.
+    //
+    // Without that guard the runner latches whatever `$NN` is on screen first,
+    // and `parse_result_code` deliberately takes the LAST `$NN` because a title
+    // may legitimately contain one — so a titled ROM would report its title's
+    // hex value as the verdict at frame 2, before the test had run. The ROMs in
+    // `blargg_apu_2005.07.30` carry no title and settle at frames 11-26, so this
+    // never bit here; the guard is for the next corpus, and for the case the
+    // comment on `parse_result_code` already described.
+    let mut initial: Option<String> = None;
+    while frames < max_frames {
+        nes.run_frame();
+        frames += 1;
+        decode_screen_text_into(&nes, &mut text);
+        if initial.is_none() {
+            initial = Some(text.clone());
+            continue;
+        }
+        if initial.as_deref() == Some(text.as_str()) {
+            prev = None;
+            continue;
+        }
+        let cur = parse_result_code(&text);
+        if let Some(code) = cur
+            && prev == Some(code)
+        {
+            let verdict = if code == 1 {
+                CodeVerdict::Passed
+            } else {
+                CodeVerdict::Failed(code)
+            };
+            return Ok(CodeTestResult {
+                verdict,
+                text,
+                frames,
+            });
+        }
+        prev = cur;
+    }
+    decode_screen_text_into(&nes, &mut text);
+    Ok(CodeTestResult {
+        verdict: CodeVerdict::Unresolved,
+        text,
         frames,
     })
 }

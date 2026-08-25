@@ -26,6 +26,68 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.2] - 2026-08-24 - "Witness" (rung 4 closes — blargg's APU battery as the first independent oracle since rung 1, six defects no self-written gate could see, and a suite that had been asserting nothing for five minor releases. The emulation core is unchanged)
+
+### Fixed
+
+- **The NTSC `blargg_apu_2005` suite asserted nothing, and had since it was
+  written.** It read the `$6000` status protocol, but these 2005-era ROMs are
+  plain NROM with no PRG-RAM, so `$6000` reads back `0` forever — and `0` is
+  blargg's *success* code. All eleven assertions were statements about an
+  unmapped address. The identical defect was found and fixed for the PAL half of
+  the same corpus in v2.1.5, whose header has described it as "a false oracle
+  that validated nothing" ever since; the NTSC half was never migrated. Reusing
+  the PAL fix is also wrong — these ROMs report a numeric result code rather than
+  `PASSED`/`FAILED`, so the screen decoder returns `Unresolved` for all eleven.
+  The suite now uses `run_nes_result_code` per the corpus's own `tests.txt`
+  ("a result code of 1 always indicates that all tests were passed"), and **all
+  eleven genuinely pass**, settling in 11-26 frames instead of exhausting an
+  1800-frame budget. The 11/11 figure is unchanged; it is now earned.
+  `vacuity_of_the_6000_protocol_on_this_corpus` pins the reason as an executable
+  fact rather than a comment.
+
+### Added
+
+- `run_nes_result_code` / `CodeVerdict` in `rustynes-test-harness` — the third
+  reader this corpus family needs, keeping `Passed`, `Failed(n)` and
+  `Unresolved` distinct so an exhausted budget can never read as agreement.
+- A `blargg_apu_2005` row in `docs/STATUS.md`'s suite table. The NTSC half of
+  the corpus had no row at all, while the PAL half's row documented the same
+  false-oracle correction in detail — which is part of why the NTSC half went
+  unmigrated for five minor releases.
+
+### Added (MiSTer co-simulation DUT — sibling repository)
+
+- **Rung 4 closes.** blargg's `blargg_apu_2005.07.30` battery went from 0 of 11
+  to **11 of 11 exact** against the DUT — the first rung-4 evidence with an
+  *independent* oracle, and every one of the six root causes was invisible to
+  the gates this project had written for itself. **48 gates green, 0 failed;
+  56 of 56 mutations CAUGHT.**
+- The frame sequencer now counts **CPU cycles** with the documented step
+  positions (7457 / 14913 / 22371 / 29828 / 29829 / 29830), derived from the
+  wiki's APU-cycle table plus its GET/PUT column — "3728, PUT" is CPU
+  `2*3728+1`. No rounding and no per-step calibration, which the previous
+  model's own comment had flagged as the sign its origin was wrong.
+- Six defects: a `$4017` reset counted as a sequence wrap; the reset landing one
+  CPU cycle late; `$4015` not seeing a same-cycle length clock; a sequence with
+  29,831 states instead of 29,830 (a drift, not an offset); the length halt
+  applying a cycle early; and the mode-1 immediate clock firing at the write
+  rather than the reset landing, plus the reload drop.
+- Two of the six rules are **absent from the nesdev wiki** and stated in
+  blargg's own `readme.txt`: the length-halt delay and the reload drop.
+- New ROMs `apuconflict039`, `apudmawrite038`, `apuinhibit040`, `apupower041`
+  and `apureload042`, closing ledger items 6.3, 6.4, 3.6, 8.10 and 8.11.
+  `apuirq036` is restored as a gate, demoted through 7.1 and 7.2 and now exact.
+
+### Note
+
+The emulation core is **unchanged**: only `rustynes-test-harness` and
+documentation are touched here, so AccuracyCoin 141/141 (RAM decoder) and
+nestest 0-diff hold by construction rather than by re-measurement. The
+co-simulation DUT work this release accompanies lives in the sibling
+`RustyNES_MiSTer` repository, where blargg's battery went from 0 of 11 to
+**11 of 11** and closed rung 4.
+
 ## [2.6.1] - 2026-08-24 - "Interleave" (the DMC and its DMA cycle steal in the MiSTer co-simulation DUT, cycle-exact on the bus. The emulation core is unchanged)
 
 The DMC reads its own samples by stopping the CPU and taking a cycle. This
