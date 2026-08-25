@@ -10,7 +10,7 @@
 // Kotlin itself. The Compose compiler plugin is still a separate, explicitly
 // versioned plugin (kept below, bumped to a Kotlin matching AGP 9.2's bundled KGP).
 plugins {
-    id("com.android.application") version "9.2.1" apply false
+    id("com.android.application") version "9.3.2" apply false
     // v1.8.8 "Atlas" (Workstream J): the Macrobenchmark `:baselineprofile` module is
     // a `com.android.test` module — declare that plugin id here so it resolves for
     // the new module (it shares AGP's 9.2.1 version coordinate).
