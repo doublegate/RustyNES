@@ -135,15 +135,31 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
         simulation and impossible in synthesis (ADR 0037). It lints clean
         standalone, which is the unit Quartus compiles; the wrapper is never in
         `files.qip`
-  - [ ] **The clock divider is what remains.** `ce`, `ppu_ce` and `ppu_access`
-        still arrive from outside, because the testbench drives the dot phase
-        and rung 3's whole phase calibration (`PPU_LEAD`, `ACCESS_DOT`) is built
-        on its doing so. A finished top level divides one 21.477 MHz master
-        clock — PPU every four, CPU every twelve. That is a change to the
-        **timing substrate**, not a rewiring, which is why it is its own step.
-        Not a fudge in the meantime: on MiSTer a core takes `clk_sys` and its
-        enables from `sys/`, so explicit clock-enable inputs are a real shape —
-        just not yet the shape that generates them
+  - [x] **The clock divider lands — `nes_top` takes ONE 21.477272 MHz master
+        clock** and derives `ce`, `ppu_ce` and `ppu_access` itself. Built in the
+        oracle's v2.0.0 "Timebase" shape: two independent accumulators in
+        master-clock units, never reset to one another, because a modulo-`CPU_DIV`
+        phase counter looks right on NTSC and **cannot express PAL at all**
+        (16/5 = 3.2 dots per CPU cycle). Retargeting is a parameter change.
+        `ACCESS_MC` and `PPU_OFFSET` are derived from the oracle's read/write
+        split, not swept; `LEAD_CPU_CYCLES` is measured. Five testbench phase
+        knobs retired — they existed to FIND this phase and the answer is now
+        compiled into the core
+  - [x] **Four enables that were never enabling.** The old testbench tied `ce`
+        high and pulsed `clk` once per CPU cycle, so the clock did the gating
+        the enable was for and **any ungated `always_ff` was correct only by
+        accident**. Under a real master clock each fires twelve times: the PPU
+        register block (found v2.5.7), the open-bus decay reload, the DMC's DMA
+        acknowledge (`dmc_cur_addr` advanced by TWELVE per sample — 324,182 of
+        357,360 cycles diverged), and the frame-counter IRQ set points
+        (`fc_irq_line` rose 11 master clocks early, so the IRQ was taken one
+        instruction sooner; `blargg08` caught it). **66 of 66 green**
+  - [x] A compensating fix was found AND REJECTED: delaying `apu_irq_n` by one
+        `ce` also gave 66 of 66, and is indistinguishable from the real fix by
+        gate result. `cpu6502.sv` already implements the oracle's
+        second-to-last-cycle recognition, correctly gated, so a second delay
+        would have cancelled an APU-side error. Looking for the cause after the
+        fix worked is what separated them
   - [ ] First end-to-end AccuracyCoin run — attempted, and it produced **two
         false passes before a real one**. The first reported RAM 2048/2048 and
         pixels 0/61440 identical: both true and worthless, because AccuracyCoin

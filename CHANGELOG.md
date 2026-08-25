@@ -41,6 +41,38 @@ cycle-accurate core later replaced.
   accuracy-ledger entry below records. No `rustynes-*` crate changes, so
   AccuracyCoin and nestest are untouched by construction.
 
+- **The MiSTer DUT runs on one master clock (sibling repository).** `nes_top`
+  took its clock enables as inputs and the testbench generated the dot phase; it
+  now takes a single 21.477272 MHz master clock and derives `ce`, `ppu_ce` and
+  `ppu_access` itself — the shape Quartus compiles.
+
+  It is built in **RustyNES's own v2.0.0 "Timebase" shape**: two independent
+  accumulators in master-clock units, never reset to one another. That is not a
+  stylistic choice — a modulo-`CPU_DIV` phase counter looks equivalent on NTSC
+  and cannot express PAL at all, where 16 master clocks per CPU cycle and 5 per
+  dot is 3.2 dots per cycle. `ACCESS_MC` and the PPU phase offset are derived
+  from the oracle's `read_split`/`write_split`, not swept. Five testbench phase
+  knobs are retired: they existed to find this phase, and the answer is now
+  compiled into the core.
+
+  **It found four enables that were never enabling.** The old testbench tied `ce`
+  high and pulsed the clock once per CPU cycle, so the clock did the gating the
+  enable was supposed to do and any ungated `always_ff` was correct only by
+  accident — under a real master clock each fires twelve times. Two were already
+  known (the PPU register block at v2.5.7, the open-bus decay reload); two were
+  not: the **DMC's DMA acknowledge**, where the sample pointer advanced by TWELVE
+  per byte and 324,182 of 357,360 cycles diverged, and the **frame-counter IRQ
+  set points**, where `fc_irq_line` rose eleven master clocks early so the CPU
+  took the interrupt one instruction sooner — caught by blargg's `08.irq_timing`,
+  a third-party ROM rather than our own trace agreeing with itself.
+
+  A compensating fix was found **and rejected**: delaying the APU's IRQ by one
+  cycle also gave 66 of 66 and is indistinguishable from the real fix by gate
+  result. `cpu6502.sv` already implements the oracle's second-to-last-cycle
+  recognition, correctly gated, so a second delay would have cancelled an
+  APU-side error. Looking for a cause *after* the fix worked is what separated
+  them. Suite: **66 gates green, 0 failed.**
+
 - **The DUT's 6502 decodes all 256 opcodes, and an independent oracle now says
   so (sibling repository).** The five `SH`-group stores — `SHA` (`$93`/`$9F`),
   `TAS` (`$9B`), `SHY` (`$9C`), `SHX` (`$9E`) — close the decoder at **256 of

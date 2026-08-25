@@ -24,10 +24,17 @@
 > decaying. **The ladder also caught the ORACLE for the first time** — NROM
 > provides PRG-RAM where the board has none (`docs/accuracy-ledger.md`).
 >
-> What remains for v2.6.3 is the **clock divider**: `ce`/`ppu_ce`/`ppu_access`
-> still arrive from the testbench, because rung 3's phase calibration was built
-> on its driving them, so moving them inside is a change to the timing substrate
-> rather than a rewiring. The first AccuracyCoin run has been attempted and
+> **The clock divider has landed**: `nes_top` takes ONE 21.477272 MHz master
+> clock and derives every enable, in the oracle's own accumulator shape — which
+> matters because a per-cycle phase counter looks right on NTSC and cannot
+> express PAL's 3.2 dots per CPU cycle at all. It found **four enables that were
+> never enabling**: the old testbench tied `ce` high and pulsed the clock once
+> per CPU cycle, so any ungated `always_ff` was correct only by accident. Two
+> were already known; two were not — the DMC's DMA acknowledge (the sample
+> pointer advanced by TWELVE per byte) and the frame-counter IRQ set points (the
+> /IRQ line rose eleven master clocks early, so the CPU took the interrupt one
+> instruction sooner, which `blargg08` caught). The first AccuracyCoin run has
+> been attempted and
 > produced **two false passes before a real one** — the ROM idles on its title
 > screen until START is pressed, and only the framebuffer half had a guard that
 > refused. `sys/` is still empty; there is no `.rbf`.
