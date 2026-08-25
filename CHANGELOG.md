@@ -28,6 +28,19 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **MiSTer co-simulation, rung 5 (sibling repository).** The NROM cartridge, the
+  work RAM, the console's CPU bus, the controller ports and DMC DMA are landed
+  and gated at **50 gates green**. The DUT's CPU is driven by the RTL bus and a
+  DMC fetch is a real bus cycle by a second requester — no flat testbench array
+  in either path. Assembling `nes_top` is what remains, and because that top
+  level must divide the master clock — the apparatus rung 3's phase calibration
+  was built on — it is a change to the timing substrate rather than a rewiring,
+  and is named as its own step.
+
+  **The ladder caught the oracle for the first time**, which is what the
+  accuracy-ledger entry below records. No `rustynes-*` crate changes, so
+  AccuracyCoin and nestest are untouched by construction.
+
 - **Dependency and toolchain-adjacent refresh.** 17 crates moved to their newest
   semver-compatible versions (including `cc` 1.4.3 → 1.4.4 and `log` 0.4.33 →
   0.4.34), `directories` 5 → 6, and four GitHub Actions advanced —

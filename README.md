@@ -892,11 +892,22 @@ testbench links, plus a `nes_golden_export` CLI emitting golden traces.
 Progress is a **rung ladder**, and a rung may not open until the one below is
 green: rung 0 the compare surface, rung 1 the 6502, rung 2 the bus and
 interrupts, rung 3 the 2C02, rung 4 the 2A03, rung 5 AccuracyCoin parity, rung 6
-hardware bring-up, rung 7 mappers. Rungs 0-3 are closed; rung 4 is the current
-work. Every rung is labelled in [`docs/mister.md`](docs/mister.md) by whether it
-has an **independent** oracle — because 141/141 on AccuracyCoin is not the same
-as "matches silicon", and a rung verified only against this emulator inherits
-whatever this emulator has wrong.
+hardware bring-up, rung 7 mappers. **Rungs 0-4 are closed; rung 5 is the current
+work** — the NROM cartridge, the work RAM, the CPU bus, the controller ports and
+DMC DMA are all landed and gated (50 gates green), and assembling the core's own
+top level is what remains. Every rung is labelled in
+[`docs/mister.md`](docs/mister.md) by whether it has an **independent** oracle —
+because 141/141 on AccuracyCoin is not the same as "matches silicon", and a rung
+verified only against this emulator inherits whatever this emulator has wrong.
+
+**Rung 5 has already shown why that caveat is not decorative.** A `cpu_bus`
+module written from the wiki disagreed with this emulator at `$6000-$7FFF`: an
+NROM board decodes nothing there and reads open bus, while RustyNES allocates
+8 KiB of PRG-RAM unconditionally. The wiki names that emulator default as a
+problem and lists games that crash on it. **The DUT is the more accurate of the
+two**, and the finding is recorded in
+[`docs/accuracy-ledger.md`](docs/accuracy-ledger.md) rather than fixed inside a
+co-simulation step — it changes shipped behaviour on every iNES NROM cartridge.
 
 **The emulation core is unchanged by this line.** Releases in it touch the
 co-simulation apparatus and the DUT, not the shipped emulator, so AccuracyCoin

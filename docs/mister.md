@@ -764,6 +764,36 @@ Every rung is therefore labelled by whether it has an **independent** oracle:
 nestest (Nintendulator) and the blargg ROMs do; trace fields with no Mesen2
 counterpart do not, and are advisory only.
 
+### It happened, at rung 5 (2026-08-25)
+
+This stopped being a stated risk and became a measurement.
+
+`rtl/cpu_bus.sv` was written from `nesdev_wiki/CPU_memory_map.xhtml` and
+`Open_bus_behavior.xhtml` and run against this emulator. The two agreed on
+`$4016`, `$4017`, `$5000` and `$5C34` — including the open-bus value, which the
+DUT *derives* from a latch where the testbench had hardcoded `$40` — and
+disagreed only in `$6000-$7FFF`.
+
+**The DUT was right.** An NROM board decodes nothing there, so the window reads
+open bus. `crates/rustynes-mappers/src/m000_nrom.rs` allocates 8 KiB of PRG-RAM
+unconditionally so accesses "don't fall off the edge", which is the iNES-era
+emulator default the wiki names as a problem in its own words — and it lists
+games that break on the WRAM answer, *Low G Man* and *Battletoads & Double
+Dragon* among them.
+
+Three things this establishes, in order of how much they matter:
+
+1. **The ladder can catch the oracle.** That was asserted when the programme was
+   planned and is now demonstrated, which is a different kind of claim.
+2. **The correct response was to record, not to fix.** Changing it alters
+   shipped behaviour on every iNES-header NROM cartridge and needs the NES 2.0
+   WRAM-size field, the per-game database and the full accuracy battery. It is
+   in [`accuracy-ledger.md`](accuracy-ledger.md) with its citation.
+3. **The gate ROM was narrowed rather than the DUT bent.** `busopen045` reads
+   `$4020-$5FFF` and not `$6000-$7FFF`, because a gate that fails for the
+   oracle's limitation rather than the DUT's teaches the wrong lesson and
+   eventually gets switched off.
+
 ## The two risks that had to be settled before any RTL
 
 Both were settled in v2.4.3, and **both were answered by evidence that
