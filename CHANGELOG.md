@@ -41,7 +41,6 @@ cycle-accurate core later replaced.
   accuracy-ledger entry below records. No `rustynes-*` crate changes, so
   AccuracyCoin and nestest are untouched by construction.
 
-
 - **Android dependency refresh.** AGP **9.2.1 → 9.3.2** (both
   `com.android.application` and `com.android.test`), the Compose compiler plugin
   **2.3.10 → 2.3.21**, `androidx.baselineprofile` and `benchmark-macro-junit4`

@@ -19,9 +19,20 @@
 //
 // A related measurement, so it is not re-derived: AGP 9.2.1 and 9.3.2 declare
 // the SAME `kotlin-gradle-plugin` coordinate (2.2.10) in their published POMs.
-// That coordinate is AGP's OWN runtime dependency, not the Kotlin the build
-// compiles user code with — the working pairing of AGP 9.2.1 with a 2.3.x
-// Compose compiler plugin is the evidence that the two are different numbers.
+//
+// THAT COORDINATE IS AGP'S OWN RUNTIME DEPENDENCY, not the Kotlin the build
+// compiles user code with. The distinction matters because reading it the other
+// way leads straight to a real-sounding conclusion — "the Compose compiler
+// plugin must equal the Kotlin compiler version, so 2.3.x against 2.2.10 will
+// break the build" — which is correct about Kotlin and wrong about what that
+// POM entry means. It was raised in review on exactly those grounds.
+//
+// Settled by building rather than by argument: with AGP 9.3.2 and the Compose
+// compiler plugin at 2.3.21, `bundleFossRelease` + `bundlePlayRelease` report
+// BUILD SUCCESSFUL in 17m20s, Compose compilation and R8 included. The
+// pre-existing pairing of AGP 9.2.1 with a 2.3.x plugin had been building for
+// releases before that.
+//
 // The Compose compiler plugin below is the version this build does control.
 plugins {
     id("com.android.application") version "9.3.2" apply false
