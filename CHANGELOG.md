@@ -69,15 +69,24 @@ cycle-accurate core later replaced.
 
   The decay is implemented, and **the fitted part is disclosed in the RTL
   itself**. That the latch decays, in three independent groups, and which
-  accesses refresh which group, are documented facts. The *deadline* is not:
-  the wiki says 3-30 ms "faster when the PPU is warm", RustyNES uses ~600 ms and
-  its own source calls that a coarser approximation. Measuring the corpus
-  settles that it cannot adjudicate between them — a documentation-derived
-  deadline anywhere in the 3-30 ms band would turn **fifteen currently-green
-  gates red, because the oracle would be the one diverging**, and exactly one
-  ROM observes the latch past 600 ms at all. So the constant is a `localparam`
-  labelled as the oracle's, and a mutation halving it is demonstrated **inert**
-  — which is the measurement confirmed by execution rather than argued.
+  accesses refresh which group, are documented facts. The *deadline* is not: the
+  wiki says 3-30 ms "faster when the PPU is warm", and RustyNES uses 558.7 ms.
+
+  **Swept against the full 66-gate suite**, not argued: 30 ms (the documented
+  upper bound) fails 9 gates, 50 ms fails 5, 100 ms 3, 200 ms 2, 300 ms 1, and
+  558.7 ms is the first value that fails none. The binding constraint is one
+  measurable property of one ROM — `10-branches` has a longest gap between
+  group-0 refreshes of 936,697 CPU cycles, or 2,810,091 dots — and that
+  prediction was **tested**: 2,809,000 dots leaves 52 divergences and 2,811,000
+  is exact, so the corpus demands ≥ 523.4 ms.
+
+  **The documentation and the corpus are therefore incompatible by a factor of
+  ~17**, and this rung has no independent oracle to say which describes a 2C02.
+  That is risk 6 of the Fabric plan — the oracle can be wrong — arriving as a
+  measurement rather than a caveat, and the first time in this programme that
+  documentation and oracle have been shown to contradict each other on a
+  quantity a gate depends on. The constant stays the oracle's, stays labelled
+  fitted, and stays a `localparam` so it can move when something can adjudicate.
 
   Still no `rustynes-*` crate changes; AccuracyCoin and nestest remain untouched
   by construction.

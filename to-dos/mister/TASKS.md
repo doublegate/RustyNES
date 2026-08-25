@@ -116,12 +116,15 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
         cycles later), the indirect RMW forms addressing the indexed target
         during their pointer fetch, and the PPU I/O-bus latch never decaying
   - [x] **PPU open-bus decay**, and the constant disclosed as fitted. Mechanism
-        and grouping are documented facts; the deadline is a band (3-30 ms,
-        temperature-dependent) where the oracle uses ~600 ms. Measured: a
-        documentation-derived deadline would turn **fifteen green gates red
-        because the ORACLE would be diverging**, and only one ROM observes the
-        latch past 600 ms — so the deadline is a `localparam` labelled as the
-        oracle's, and halving it is demonstrated **inert**
+        and grouping are documented facts; the deadline is not. **Swept
+        against the full suite**: 30 ms (the documented bound) fails 9 gates,
+        100 ms fails 3, 300 ms fails 1, and 558.7 ms is the first that fails
+        none. The binding constraint is `10-branches`'s longest inter-refresh
+        gap, 2,810,091 dots — predicted and then tested at 2,809,000 (52
+        divergences) vs 2,811,000 (exact). **Documentation and corpus are
+        incompatible by ~17x**, with no independent oracle to adjudicate: risk 6
+        arriving as a measurement. The constant stays the oracle's, labelled
+        fitted, in a `localparam`
   - [ ] A purpose-built decay stimulus, to close the three mutations that are
         inert **on this ROM** (which timer gates which bits, and where the
         deadline sits inside a 1.27 s gap). Named as a step, not a silence — and
