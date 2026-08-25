@@ -46,6 +46,13 @@ struct Args {
     out: PathBuf,
     seed: u64,
     frames: u32,
+    /// Hold START on port 1 between these two frame numbers, `A..B`.
+    ///
+    /// Several accuracy ROMs do not start on their own. `AccuracyCoin` sits on
+    /// its title screen indefinitely, and a golden exported without this
+    /// captures an idle menu -- which a DUT reproduces perfectly while running
+    /// none of the tests.
+    press_start: Option<(u64, u64)>,
     boot_trace: Option<(u64, u64)>,
     irq_trace: Option<usize>,
     /// Capacity for the per-dot PPU bus-address capture (rung 3's v2.5.4 gate).
@@ -82,6 +89,7 @@ fn parse_args() -> Args {
     let mut checkpoint_interval = rustynes_cosim::checkpoint::DEFAULT_INTERVAL;
     let (mut inject_instructions, mut inject_hold) = (0u64, 1u64);
     let (mut inject_nmi_at, mut inject_irq_at) = (None, None);
+    let mut press_start: Option<(u64, u64)> = None;
 
     let mut i = 0;
     // Every value-taking arm below advances `i` by TWO, not one: this loop has
@@ -101,6 +109,30 @@ fn parse_args() -> Args {
             }
             "--seed" => {
                 seed = need(i).parse().unwrap_or_else(|_| usage());
+                i += 2;
+            }
+            "--press-start" => {
+                // `A:B` -- hold START on port 1 from frame A until frame B.
+                //
+                // Refused rather than guessed at if it does not parse or if the
+                // window is empty: a silently-ignored press produces a golden of an
+                // idle title screen, which is precisely the artifact this option
+                // exists to stop being mistaken for a run.
+                let spec = need(i);
+                let (a, b) = spec.split_once(':').unwrap_or_else(|| usage());
+                let a: u64 = a.parse().unwrap_or_else(|_| usage());
+                let b: u64 = b.parse().unwrap_or_else(|_| usage());
+                if b <= a {
+                    eprintln!("--press-start A:B needs B > A (got {a}:{b})");
+                    std::process::exit(2);
+                }
+                press_start = Some((a, b));
+                // The loop has NO trailing increment -- this file says so a few
+                // lines above -- so every value-taking arm must advance `i` by
+                // two itself. Omitting it here spun the parser at 100% CPU
+                // forever, never reaching the simulation at all. It looked
+                // exactly like a slow export for thirteen minutes; what gave it
+                // away was the output directory never being created.
                 i += 2;
             }
             "--frames" => {
@@ -169,6 +201,7 @@ fn parse_args() -> Args {
         out: out.unwrap_or_else(|| usage()),
         seed,
         frames,
+        press_start,
         boot_trace,
         irq_trace,
         fetch_trace,
@@ -585,7 +618,26 @@ fn main() {
             args.inject_hold,
         )
     } else {
-        o.advance_frames(u64::from(args.frames))
+        match args.press_start {
+            None => o.advance_frames(u64::from(args.frames)),
+            Some((a, b)) => {
+                // Segmented, so the press lands on the same frames the oracle's
+                // own AccuracyCoin runner uses: idle, hold START, release, run
+                // on. `advance_frames` is used for each leg rather than a
+                // `run_frame()` loop, for the same reason it is used above --
+                // the first call after power-on completes no frame.
+                const START: u8 = 1 << 3; // Buttons::START
+                let total = u64::from(args.frames);
+                let a = a.min(total);
+                let b = b.min(total);
+                let mut calls = o.advance_frames(a);
+                o.set_buttons(0, START);
+                calls += o.advance_frames(b - a);
+                o.set_buttons(0, 0);
+                calls += o.advance_frames(total - b);
+                calls
+            }
+        }
     };
     let frames_actual = o.nes().frame() - frame_before;
     let cycles = o.nes().cycle();
@@ -692,6 +744,7 @@ mod tests {
             out: std::path::PathBuf::from("/tmp"),
             seed: 0,
             frames: 1,
+            press_start: None,
             boot_trace: None,
             irq_trace: None,
             fetch_trace: None,
