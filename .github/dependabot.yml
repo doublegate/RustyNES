@@ -46,6 +46,12 @@ updates:
         versions: [">=0.36"]
       - dependency-name: "wgpu"
         versions: [">=30"]
+      # `naga` is a DIRECT dependency of `rustynes-frontend` (WGSL validation),
+      # not merely a wgpu transitive, so Dependabot would propose 30 on its own
+      # and the hold would be broken from a direction the four entries above do
+      # not cover. Caught in review on the v2.6.3 refresh.
+      - dependency-name: "naga"
+        versions: [">=30"]
     # Group minor and patch updates together
     groups:
       development-dependencies:
@@ -58,6 +64,37 @@ updates:
         update-types:
           - "minor"
           - "patch"
+
+  # Maintain the Android build's Gradle tier.
+  #
+  # Added with the v2.6.3 dependency refresh, because that refresh could not
+  # safely hand-bump it: the Android Gradle Plugin, the Gradle wrapper, AGP's
+  # bundled Kotlin plugin and `androidx.baselineprofile` are an INTERLOCKED set,
+  # each pin carrying its own written reason, and none of them is verifiable
+  # without an Android SDK + NDK. The versions themselves are deliberately NOT
+  # repeated here -- `android/build.gradle.kts` and
+  # `android/gradle/wrapper/gradle-wrapper.properties` are the sources of truth,
+  # and a copy in a comment is a copy that goes stale. Dependabot proposes them
+  # ONE AT A TIME against a CI job that actually builds, which is the only
+  # mechanism that makes such a bump checkable rather than hopeful.
+  #
+  # `android.yml` is deliberately NOT a required check -- accuracy is never
+  # gated on a device toolchain -- so a red Android job blocks nothing and a
+  # merged-anyway bump is the risk here. Read the job before merging one.
+  - package-ecosystem: "gradle"
+    directory: "/android"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "android"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
 
   # Maintain GitHub Actions
   - package-ecosystem: "github-actions"

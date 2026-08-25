@@ -6,7 +6,7 @@
 repos:
   # General file fixes
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       # The three hooks below REWRITE files rather than just checking them, so
       # they must not touch trees we do not author. Without this exclusion a
@@ -66,7 +66,7 @@ repos:
 
   # Markdown linting
   - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: v0.39.0
+    rev: v0.49.1
     hooks:
       - id: markdownlint
         args: [--config, .markdownlint.json]
@@ -76,7 +76,8 @@ repos:
   # Pinned to the version installed here, matching how every other hook in this
   # file is pinned: an unpinned linter that gains a rule turns a green tree red
   # on someone else's machine, which is the trap `markdownlint` already documents
-  # (the local binary reports rules the pinned v0.39.0 does not).
+  # (which markdownlint hit at v0.39.0: the local binary reported MD060 and
+  # the pin did not, until v0.49.1 brought the two together).
   #
   # Added because a review disagreement on #406 could not be settled from
   # GitHub's own documentation — whether `timeout-minutes` is valid on a job that

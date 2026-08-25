@@ -26,6 +26,67 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependency and toolchain-adjacent refresh.** 17 crates moved to their newest
+  semver-compatible versions (including `cc` 1.4.3 → 1.4.4 and `log` 0.4.33 →
+  0.4.34), `directories` 5 → 6, and four GitHub Actions advanced —
+  `actions/setup-java` v5 → v6, `actions/download-artifact` v7 → v8,
+  `taiki-e/install-action` 2.86.1 → 2.86.7, and `dtolnay/rust-toolchain`'s SHA
+  pin to the current `v1`. Both action majors are ESM migrations that are
+  transparent to the caller; `download-artifact` v8 additionally promotes a
+  digest mismatch from a warning to an error, which is a gate getting stricter
+  rather than a behaviour change. AccuracyCoin **141/141 (100.00%, RAM
+  decoder)** and nestest 0-diff **verified, not asserted**.
+
+- **`markdownlint-cli` v0.39.0 → v0.49.1, and MD060 becomes a live gate.** The
+  pin had been held since v2.3.9 precisely because the newer binary reported a
+  rule the pinned one did not — recorded at the time as a hazard rather than
+  measured. Measured now: the rule is `MD060/table-column-style`, and its
+  inferred default reads this corpus as style `compact`, producing **1,936
+  findings across 122 files** and nothing else. Every one of those is a table
+  the project already writes the same way, so the fix is to pin the style in
+  use (`leading_and_trailing`) rather than to rewrite 122 documents or silence
+  the rule: that measures **zero** findings and changes no document. The style
+  is pinned rather than left `consistent`, which would accept a file whose
+  tables are uniformly the other way.
+
+- **`.pre-commit-config.yaml` hooks:** `pre-commit-hooks` v4.5.0 → v6.0.0.
+  Neither hook v6 removes (`check-byte-order-marker`, `fix-encoding-pragma`) is
+  used here, and both of its new minimums are met. `actionlint` is already at
+  the newest release and matches the locally built binary, so it does not move.
+
+- **Gradle wrapper 9.4.1 → 9.7.1**, and Dependabot gains the `gradle` ecosystem.
+  AGP 9.2.1 / the bundled KGP 2.3.10 / `androidx.baselineprofile`
+  1.5.0-alpha06 are deliberately **not** hand-bumped: they are an interlocked
+  set whose pins each carry a written reason, and none is verifiable without an
+  Android SDK and NDK. Dependabot proposes them one at a time against a job
+  that builds, which is what makes such a bump checkable.
+
+### Fixed
+
+- **The Trunk `wasm_bindgen` CLI pin was stale against the lockfile** — `0.2.126`
+  against a resolved `0.2.127`, drifted in #397 and never corrected. Stated
+  honestly: the Pages deploy has been **passing** throughout, so this restores a
+  stated invariant rather than fixing an outage.
+
+### Held, deliberately
+
+- **egui / egui-wgpu / egui-winit 0.36 and wgpu 30** remain held. The hold names
+  `egui-winit` **0.36.1** as the broken version and 0.36.1 is still the newest
+  published, so there is nothing new to re-test — the hold stands on its own
+  stated terms rather than by inertia. **`naga` 30 is held with them, and now
+  enforced** — it is a *direct* dependency of `rustynes-frontend` (WGSL
+  validation), not merely a wgpu transitive, so Dependabot would have
+  proposed it on its own and broken the hold from a direction the existing
+  four ignore entries did not cover. Caught in review.
+- **`getrandom`** stays at the 0.2 + 0.3 pair. Those shims exist to activate a
+  wasm backend for `piccolo`'s *transitive* tree (`rand` → 0.2, `ahash` → 0.3);
+  declaring 0.4 would add a third major that nothing uses.
+- **Rust 1.96.0** and **Quartus 17.0.2** are unchanged. A compiler bump does not
+  belong in a dependency refresh, and 1.97 is where the libretro build image's
+  injected `-C ar` stops being a warning and becomes a hard error.
+
 ## [2.6.2] - 2026-08-24 - "Witness" (rung 4 closes — blargg's APU battery as the first independent oracle since rung 1, six defects no self-written gate could see, and a suite that had been asserting nothing for five minor releases. The emulation core is unchanged)
 
 ### Fixed

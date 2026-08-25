@@ -113,9 +113,12 @@ runs:
     # The trailing `# v1` is the convention Dependabot's `github-actions`
     # ecosystem (already enabled in `.github/dependabot.yml`) reads to keep the
     # pin current, so this does not trade a supply-chain risk for a stale-action
-    # one. Verified: `refs/tags/v1` -> e97e2d8c at time of pinning.
+    # one. Verified against `refs/tags/v1` at each bump: e97e2d8c originally,
+    # 6c977a6c as of the v2.6.3 dependency refresh. The 13 commits between
+    # them were reviewed rather than trusted -- runner updates, patch-release
+    # table entries, a cross-device-copy fix and checkout bumps.
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+      uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
       with:
         toolchain: ${{ steps.resolve.outputs.toolchain }}
         targets: ${{ inputs.targets }}
