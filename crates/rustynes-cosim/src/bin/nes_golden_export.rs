@@ -46,7 +46,12 @@ struct Args {
     out: PathBuf,
     seed: u64,
     frames: u32,
-    /// Hold START on port 1 between these two frame numbers, `A..B`.
+    /// Hold START on port 1 across a half-open frame window.
+    ///
+    /// Spelled `--press-start A:B` on the command line; the window itself is
+    /// `A..B`, i.e. START is down for frames `A` through `B - 1`. The two
+    /// notations were mixed here -- the field said `A..B` where a reader would
+    /// take it for the CLI syntax -- so both are now stated.
     ///
     /// Several accuracy ROMs do not start on their own. `AccuracyCoin` sits on
     /// its title screen indefinitely, and a golden exported without this
@@ -74,7 +79,8 @@ fn usage() -> ! {
          \x20                       [--boot-trace START..END] [--irq-trace CAP]\n\
          \x20                       [--fetch-trace CAP] [--apu-trace CAP] [--checkpoint-interval N]\n\
          \x20                       [--inject-instructions N] [--inject-hold N]\n\
-         \x20                       [--inject-nmi-at N] [--inject-irq-at N]"
+         \x20                       [--inject-nmi-at N] [--inject-irq-at N]\n\
+         \x20                       [--press-start A:B]"
     );
     std::process::exit(2)
 }
