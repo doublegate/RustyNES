@@ -572,5 +572,19 @@ fetch-address comparison cannot adjudicate.
 ## Open questions
 
 - **Open-bus decay model.** Per-bit-group with **558.7 ms** decay (one million CPU cycles at NTSC; the "~600 ms" this line and `Ppu`'s comment carried was wrong by 7%), three timers — bits 0-4 / bit 5 / bits 6-7 — independently refreshed by writes and the subset of reads that drive each bit group.  See "Open-bus" entry above and `Ppu::refresh_open_bus`.
+  **The deadline is a deliberate, measured deviation from the documentation, not
+  an approximation nobody checked.** `PPU_registers.xhtml` says "at least one bit
+  ... decays after 3ms to 30ms, faster when the PPU is warm"; this model is ~19x
+  slower. Swept at v2.6.3: `ppu_open_bus.nes` constrains only `< 1000 ms` (its
+  decay checks are 100 x `delay_msec 10` loops asserting the value has reached
+  zero) and passes at 3, 10, 20, 30 and 100 ms — with AccuracyCoin still 141/141,
+  nestest matching its golden log and all eight `nes_blargg` tests green at 30 ms.
+  A documentation-derived value is therefore **available**, and is not taken:
+  moving it changes shipped behaviour for every game that reads open bus after a
+  long gap, and nothing here can adjudicate which value a 2C02 actually has.
+  Recorded so the next person does not re-derive the sweep. The MiSTer DUT
+  carries the identical value as 3,000,000 dots and is **not** free to move it —
+  its goldens come from this model, and its corpus forces `>= 523.4 ms`; see
+  `RustyNES_MiSTer/docs/oracle-vs-documentation.md` §1.1.
 - **2C02 vs 2C07 differences.** PAL-only behaviors (no odd-frame skip; different post-reset masking window). Implement region as a parameter; don't fork the PPU code.
 - **Vs. System PPU variants (2C03, 2C04, 2C05).** Out of v1.0 scope; design `Ppu` so a future `Ppu2C03` could share most code.
