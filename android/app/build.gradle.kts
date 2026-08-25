@@ -197,8 +197,12 @@ android {
     // directories — adding them to `.java` (the pre-AGP-9 way) no longer feeds the
     // Kotlin compiler, so the binding types (NesController, NpStatus, …) go
     // unresolved. See AGP 9 built-in-Kotlin migration notes.
-    sourceSets["main"].kotlin.srcDir(uniffiGenDir)
-    sourceSets["main"].jniLibs.srcDir(jniLibsDir)
+    // `srcDir(Any)` is deprecated in AGP 9 in favour of the `directories`
+    // mutable set. Verified against the interface rather than the warning text:
+    // `AndroidSourceDirectorySet.getDirectories()` returns `Set<String>`, so it
+    // takes PATHS, not `File`s -- hence `.path` on both.
+    sourceSets["main"].kotlin.directories.add(uniffiGenDir.path)
+    sourceSets["main"].jniLibs.directories.add(jniLibsDir.path)
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -251,7 +255,7 @@ composeCompiler {
 // drop them into `jniLibs/<abi>/`. Requires the Android Rust targets + cargo-ndk
 // (`rustup target add aarch64-linux-android x86_64-linux-android;
 //   cargo install cargo-ndk`) and ANDROID_NDK_HOME (or an SDK-resolved NDK).
-val cargoNdkBuild by tasks.registering(Exec::class) {
+val cargoNdkBuild = tasks.register<Exec>("cargoNdkBuild") {
     group = "rust"
     description = "Cross-compile rustynes-mobile + rustynes-android into jniLibs via cargo-ndk."
     workingDir = workspaceRoot
@@ -270,7 +274,7 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
 
 // Generate the Kotlin bindings from the compiled arm64 cdylib (the UniFFI API is
 // target-independent, so any built library serves as the source of truth).
-val uniffiBindgen by tasks.registering(Exec::class) {
+val uniffiBindgen = tasks.register<Exec>("uniffiBindgen") {
     group = "rust"
     description = "Generate Kotlin bindings for the rustynes-mobile control surface via UniFFI."
     dependsOn(cargoNdkBuild)
@@ -309,7 +313,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     // v1.8.8 "Atlas" (Workstream A): adaptive layouts. `adaptive` carries
-    // currentWindowAdaptiveInfo()/WindowSizeClass (the single layout driver);
+    // currentWindowAdaptiveInfoV2()/WindowSizeClass (the single layout driver);
     // -layout carries ListDetailPaneScaffold; -navigation carries the predictive-
     // back-aware NavigableListDetailPaneScaffold for the expanded two-pane.
     implementation("androidx.compose.material3.adaptive:adaptive:1.3.0")

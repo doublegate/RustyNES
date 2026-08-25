@@ -28,6 +28,27 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **Gradle 10 deprecations cleared in the Android build.** Four call sites, each
+  verified against the artifact rather than against the warning text:
+
+  - `AndroidSourceDirectorySet.srcDir(Any)` → the `directories` mutable set. The
+    interface was read out of the **pinned AGP 9.3.2** `gradle-api` jar, not a
+    cached older one: `getDirectories()` returns `Set<String>`, so it takes
+    paths and the call sites pass `.path` rather than a `File`.
+  - Two Kotlin DSL **delegated properties** (`by tasks.registering(Exec::class)`)
+    → `tasks.register<Exec>("name")`. Gradle's own upgrade guide is explicit:
+    all Kotlin DSL property delegates — `registering`, `creating`, `existing`,
+    `getting` — are deprecated and scheduled for removal in Gradle 10.
+  - `currentWindowAdaptiveInfo()` → `currentWindowAdaptiveInfoV2()`, confirmed
+    present in `material3.adaptive` 1.3.0. Behaviour here is unchanged: both
+    breakpoints tested are "at least", so a window that now reports the new L or
+    XL width class still satisfies EXPANDED.
+
+  The build also now runs with **`--warning-mode all`**, because the summary
+  line ("Deprecated Gradle features were used in this build, making it
+  incompatible with Gradle 10") names nothing — and a warning that cannot be
+  attributed is one nobody acts on, with a deadline attached.
+
 - **MiSTer co-simulation, rung 5 (sibling repository).** The NROM cartridge, the
   work RAM, the console's CPU bus, the controller ports and DMC DMA are landed
   and gated at **50 gates green**. The DUT's CPU is driven by the RTL bus and a

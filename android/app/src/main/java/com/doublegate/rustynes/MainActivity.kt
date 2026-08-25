@@ -45,7 +45,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
 import androidx.window.core.layout.WindowSizeClass
 import androidx.compose.material3.Button
 import androidx.compose.material3.ColorScheme
@@ -1014,7 +1014,13 @@ private fun EmulatorScreen(
     // screenWidthDp threshold. `compact` width (< 600 dp) is the phone / folded
     // cover screen; `medium` (>= 600 dp) and `expanded` (>= 840 dp) are tablets,
     // the Z Fold inner display, and resizable desktop windows.
-    val windowSizeClass = currentWindowAdaptiveInfo().windowSizeClass
+    // V2 rather than `currentWindowAdaptiveInfo()`, which is deprecated: the
+    // original cannot report the L and XL width classes. Nothing below changes
+    // -- both breakpoints tested here are "at least", so a window that now
+    // reports L or XL still satisfies EXPANDED. Confirmed against the artifact:
+    // `currentWindowAdaptiveInfoV2` is present in adaptive 1.3.0 and takes no
+    // caller-supplied parameters.
+    val windowSizeClass = currentWindowAdaptiveInfoV2().windowSizeClass
     val isMediumWidth = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
     val isExpandedWidth = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND)
 
