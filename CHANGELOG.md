@@ -41,6 +41,35 @@ cycle-accurate core later replaced.
   accuracy-ledger entry below records. No `rustynes-*` crate changes, so
   AccuracyCoin and nestest are untouched by construction.
 
+- **Android dependency refresh.** AGP **9.2.1 → 9.3.2** (both
+  `com.android.application` and `com.android.test`), the Compose compiler plugin
+  **2.3.10 → 2.3.21**, `androidx.baselineprofile` and `benchmark-macro-junit4`
+  **1.5.0-alpha06 → 1.5.0-rc01**, `compose-bom` **2026.06.00 → 2026.08.00**, the
+  three `material3.adaptive` artifacts **1.2.0 → 1.3.0**, `jna` **5.18.1 →
+  5.19.1**, and `play-services-games-v2` **21.0.0 → 22.0.0**.
+
+  This is the `gradle` Dependabot ecosystem added in the previous refresh doing
+  exactly what it was added for: it opened five PRs on its first run, against a
+  set that could not be hand-bumped safely before because nothing proposed them
+  one at a time. Two of the bumps here are **not** among those five — the Compose
+  compiler plugin and `baselineprofile` — because the ecosystem's
+  `open-pull-requests-limit` is 5 and all five slots were taken.
+
+  **The interlock was measured rather than assumed.** AGP 9.2.1 and 9.3.2 declare
+  the *same* `kotlin-gradle-plugin` coordinate (2.2.10) in their published POMs,
+  so crossing that minor does not move the Kotlin requirement. Recorded in
+  `android/build.gradle.kts` alongside a second fact worth not re-deriving:
+  **there is no `kotlin-gradle-plugin` version in this build to set at all.**
+  AGP 9 bundles it and the standalone `org.jetbrains.kotlin.android` plugin was
+  deliberately dropped, so the Compose compiler plugin is the only Kotlin
+  coordinate this build controls. To move Kotlin, move AGP.
+
+  `androidx.baselineprofile` moves **alpha → rc within the same 1.5.0 line** —
+  the same supported-AGP window with fewer unknowns, not a new dependency
+  decision.
+
+  Rust, GitHub Actions and the pre-commit hooks are unchanged: re-checked at the
+  same time and all already current from the previous refresh.
 - **Dependency and toolchain-adjacent refresh.** 17 crates moved to their newest
   semver-compatible versions (including `cc` 1.4.3 → 1.4.4 and `log` 0.4.33 →
   0.4.34), `directories` 5 → 6, and four GitHub Actions advanced —
