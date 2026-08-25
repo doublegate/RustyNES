@@ -230,7 +230,7 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Download the promoted PGO binary
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: ${{ needs.pgo.outputs.artifact }}
           path: pgo-bin

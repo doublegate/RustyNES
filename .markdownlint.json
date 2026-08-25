@@ -7,6 +7,16 @@
 
   "MD024": { "siblings_only": true },
 
+  "_comment_MD060": [
+    "table-column-style, new since the v0.39.0 pin. Its inferred default reads",
+    "this corpus as style 'compact' and then reports 1936 findings across 122",
+    "files -- every one of them a table this project already writes the same",
+    "way. Pinned to the style actually in use, which measures ZERO findings and",
+    "rewrites nothing. Deliberately NOT 'consistent': that would accept a file",
+    "whose tables are uniformly the other style, which is not the intent."
+  ],
+  "MD060": { "style": "leading_and_trailing" },
+
   "MD034": true,
   "MD036": true,
   "MD051": true

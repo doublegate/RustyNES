@@ -59,6 +59,34 @@ updates:
           - "minor"
           - "patch"
 
+  # Maintain the Android build's Gradle tier.
+  #
+  # Added with the v2.6.3 dependency refresh, because that refresh could not
+  # safely hand-bump it: AGP 9.2.1, Gradle 9.4.1, the bundled KGP 2.3.10 and
+  # `androidx.baselineprofile` 1.5.0-alpha06 are an INTERLOCKED set, each pin
+  # carrying its own written reason in `android/build.gradle.kts`, and none of
+  # them is verifiable without an Android SDK + NDK. Dependabot proposes them
+  # ONE AT A TIME against a CI job that actually builds, which is the only
+  # mechanism that makes such a bump checkable rather than hopeful.
+  #
+  # `android.yml` is deliberately NOT a required check -- accuracy is never
+  # gated on a device toolchain -- so a red Android job blocks nothing and a
+  # merged-anyway bump is the risk here. Read the job before merging one.
+  - package-ecosystem: "gradle"
+    directory: "/android"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "android"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
   # Maintain GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
