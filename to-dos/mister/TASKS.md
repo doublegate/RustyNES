@@ -90,11 +90,24 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
         `docs/accuracy-ledger.md` with the wiki citation and the games the wiki
         names as breaking on it. First time the ladder has caught the oracle;
         risk 6 in the v2.5.0 plan
-  - [ ] **DMA is still `tb/cpu_main.cpp`.** On stalled cycles the bus mux is
-        not the requester, which is also why two mutations are provably inert
-        today and should flip to CAUGHT when it moves
-  - [ ] **`rtl/nes_top.sv` is still a shell.** The chips are tied together by
-        the co-simulation wrapper rather than by the core's own top level
+  - [x] `rtl/dma.sv` — the documented four-phase DMC sequence, load-bearing.
+        The byte comes off `cpu_bus` at the DMA's own address, so a DMC fetch is
+        a real bus cycle by a **second requester**. Two ordering defects found
+        by side-by-side comparison, in opposite directions: the load delay one
+        cycle late (non-blocking assignment), then one cycle early (a `$4015`
+        write landing on an APU phase edge must be armed AND decremented by it)
+  - [x] `rtl/controller.sv` — and the address mux placed at the CONSOLE level,
+        not inside the read mux, so the memories see the DMA's address
+  - [x] **Prediction recorded as WRONG.** The previous step predicted in writing
+        that two inert open-bus mutations would flip to CAUGHT once DMA drove
+        the bus. They did not, and a third joined them. The cause is stimulus:
+        no ROM in the corpus both runs DMC fetches and reads open bus
+  - [ ] **`rtl/nes_top.sv` is still a shell** — the one remaining piece. Every
+        part exists and is gated, but they are tied together by the
+        co-simulation wrapper rather than by the core's own top level, and that
+        top level must also divide the master clock. That is the apparatus rung
+        3's phase calibration was built on, so it is a change to the timing
+        substrate rather than a rewiring — named as its own step for that reason
   - [ ] First end-to-end AccuracyCoin run — blocked on the above, and NOT
         attempted. Producing a status vector is v2.6.3; matching it is v2.6.4
 - [ ] v2.6.4 status vector identical **entry-for-entry**, including `Skipped` and
