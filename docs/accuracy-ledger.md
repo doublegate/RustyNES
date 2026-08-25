@@ -107,12 +107,17 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
 - **NROM provides PRG-RAM at `$6000-$7FFF` where the board has none, and the
   MiSTer co-simulation DUT found it (2026-08-25, v2.6.3 rung 5).**
   `crates/rustynes-mappers/src/m000_nrom.rs` allocates 8 KiB of PRG-RAM
-  unconditionally so accesses "don't fall off the edge", so a read of that
-  window returns `$00`. On hardware an NROM board decodes nothing there and the
-  read floats — it returns **open bus**, the last value the data bus held.
+  unconditionally so accesses "don't fall off the edge". `cpu_read` returns
+  `self.prg_ram[addr - 0x6000]` and `cpu_write` stores into it, so the window
+  behaves as **real, writable RAM**: an *unwritten* location reads `$00`
+  (the array is zero-filled at construction) and a written one reads back what
+  was stored. On hardware an NROM board decodes nothing there and the read
+  floats — it returns **open bus**, the last value the data bus held, whether
+  or not the program has written to that address.
 
   This is the emulator default `nesdev_wiki/Open_bus_behavior.xhtml` names as a
-  problem in its own words: *"A few games read the region $6000-7FFF but have no
+  problem in its own words (public source:
+  <https://www.nesdev.org/wiki/Open_bus_behavior>): *"A few games read the region $6000-7FFF but have no
   WRAM present here. This can be a problem for emulators, as the original iNES
   file format had no way to specify a lack of WRAM, leaving the emulator to
   provide WRAM behavior in that region by default. The NES 2.0 format corrects

@@ -62,7 +62,8 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
 ## v2.6.3 – v2.6.4 — rung 5, NROM + AccuracyCoin
 
 - [~] v2.6.3 NROM cartridge; first end-to-end AccuracyCoin run
-  - [x] `rtl/cart/cart_nrom.sv` — written from `nesdev_wiki/NROM.xhtml`,
+  - [x] `rtl/cart/cart_nrom.sv` — written from `nesdev_wiki/NROM.xhtml`
+        (public source: <https://www.nesdev.org/wiki/NROM>),
         instantiated beneath the existing gates and cross-checked per access
         rather than trusted. Runtime write port, not `$readmemh`: on MiSTer the
         image arrives from `hps_io` at runtime, so the port that ships is the
