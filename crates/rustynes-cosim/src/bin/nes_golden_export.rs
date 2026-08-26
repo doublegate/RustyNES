@@ -85,20 +85,32 @@ fn usage() -> ! {
     std::process::exit(2)
 }
 
-/// Parse a `--press-start A:B` spec, or exit.
+/// Parse a `--press-start A:B` spec. `None` for anything this option should
+/// refuse.
 ///
-/// Refused rather than guessed at if it does not parse or the window is empty:
-/// a silently-ignored press produces a golden of an idle title screen, which is
-/// precisely the artifact this option exists to stop being mistaken for a run.
+/// Split from the exiting wrapper below so a test can reach the DECISION. The
+/// wrapper calls `usage()`, which calls `std::process::exit`, so a test of the
+/// rejecting paths through it would take the test process with it -- and the
+/// rejecting paths are the ones worth testing, since the whole point of this
+/// option is that a silently-ignored press produces a golden of an idle title
+/// screen, which is precisely the artifact it exists to stop being mistaken for
+/// a run.
+fn parse_press_start_spec(spec: &str) -> Option<(u64, u64)> {
+    let (a, b) = spec.split_once(':')?;
+    let a: u64 = a.parse().ok()?;
+    let b: u64 = b.parse().ok()?;
+    // An empty or inverted window is refused rather than clamped: `B == A` holds
+    // START for zero frames, which is indistinguishable from not passing the
+    // flag at all.
+    (b > a).then_some((a, b))
+}
+
+/// Parse a `--press-start A:B` spec, or exit.
 fn parse_press_start(spec: &str) -> (u64, u64) {
-    let (a, b) = spec.split_once(':').unwrap_or_else(|| usage());
-    let a: u64 = a.parse().unwrap_or_else(|_| usage());
-    let b: u64 = b.parse().unwrap_or_else(|_| usage());
-    if b <= a {
-        eprintln!("--press-start A:B needs B > A (got {a}:{b})");
-        std::process::exit(2);
-    }
-    (a, b)
+    parse_press_start_spec(spec).unwrap_or_else(|| {
+        eprintln!("--press-start A:B needs two frame numbers with B > A (got {spec:?})");
+        usage()
+    })
 }
 
 // A flat match over CLI flags, two lines past the limit since `--press-start`
@@ -754,6 +766,38 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn press_start_spec_accepts_a_well_formed_window() {
+        assert_eq!(super::parse_press_start_spec("2:5"), Some((2, 5)));
+        assert_eq!(super::parse_press_start_spec("0:1"), Some((0, 1)));
+        // No upper bound is imposed here -- `run_frames_with_optional_press`
+        // clamps to the run length, so a window past the end shortens rather
+        // than being rejected at parse time.
+        assert_eq!(
+            super::parse_press_start_spec("100:4000000000"),
+            Some((100, 4_000_000_000))
+        );
+    }
+
+    #[test]
+    fn press_start_spec_refuses_an_empty_or_inverted_window() {
+        // `B == A` is the one most likely to be typed by accident, and it holds
+        // START for zero frames -- indistinguishable from omitting the flag.
+        assert_eq!(super::parse_press_start_spec("5:5"), None);
+        assert_eq!(super::parse_press_start_spec("9:2"), None);
+    }
+
+    #[test]
+    fn press_start_spec_refuses_malformed_input() {
+        for bad in ["", "5", "5:", ":5", "a:5", "5:b", "5:5:5", "-1:5", "5 : 9"] {
+            assert_eq!(
+                super::parse_press_start_spec(bad),
+                None,
+                "should have refused {bad:?}"
+            );
+        }
+    }
+
     /// `--apu-trace` with instruction injection must be REFUSED, not silently
     /// emptied.
     ///
