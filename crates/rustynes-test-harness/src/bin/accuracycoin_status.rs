@@ -68,7 +68,7 @@ fn describe(s: TestStatus) -> String {
 /// A vector with no test result at all describes a run that executed nothing.
 /// Reporting that as agreement is the failure this tool exists to prevent.
 fn vacuous(v: &[TestStatus]) -> bool {
-    v.iter().all(|s| matches!(s, TestStatus::NotRun))
+    v.iter().all(|s| *s == TestStatus::NotRun)
 }
 
 /// Entries that are `NotRun` on **both** sides.
@@ -115,6 +115,22 @@ fn executed_on_both(a: &[TestStatus], b: &[TestStatus]) -> usize {
 /// the message. The defect was in the sentence, so the sentence is what a test
 /// has to be able to see.
 fn coverage_line(a: &[TestStatus], b: &[TestStatus]) -> String {
+    // The arithmetic below subtracts two `zip`-derived counts from `a.len()`,
+    // and `zip` truncates silently to the shorter side -- so unequal lengths
+    // would report the tail of `a` as "on one side only", which is a third
+    // wrong count in a tool whose subject is counts that describe the wrong
+    // set. The invariant holds upstream (`decode_results` returns one entry per
+    // catalog entry or refuses the dump; see `decoded_vectors_are_always_catalog_length`
+    // and `a_short_dump_is_refused`), so this cannot fire today. It is here
+    // because the coupling is otherwise invisible at the point that depends on
+    // it. Raised in review of v2.6.4.
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "coverage arithmetic needs equal-length vectors; got {} and {}",
+        a.len(),
+        b.len()
+    );
     let dead = both_not_run(a, b);
     let both = executed_on_both(a, b);
     format!(
@@ -260,6 +276,17 @@ fn main() -> ExitCode {
 mod tests {
     use super::{both_not_run, coverage_gate, coverage_line, describe, executed_on_both, vacuous};
     use rustynes_test_harness::accuracy_coin_catalog::{TestStatus, catalog, decode_results};
+
+    /// The guard the v2.6.4 review asked for, demonstrated to fire. It cannot
+    /// be reached through `main` — both vectors come from `decode_results` —
+    /// so a test is the only thing that can reach it at all.
+    #[test]
+    #[should_panic(expected = "coverage arithmetic needs equal-length vectors")]
+    fn coverage_arithmetic_refuses_unequal_lengths() {
+        let a = vec![TestStatus::Pass; catalog().len()];
+        let b = vec![TestStatus::Pass; catalog().len() - 1];
+        let _ = coverage_line(&a, &b);
+    }
 
     /// The SENTENCE, not the predicates behind it. Reverting the line to the
     /// subtraction the review flagged came back NOT CAUGHT while the tests only
