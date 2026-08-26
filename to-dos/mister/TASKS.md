@@ -183,6 +183,21 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
         v2.6.4
 - [ ] v2.6.4 status vector identical **entry-for-entry**, including `Skipped` and
       `NotRun` — **rung 5 closes**. State a floor, not a target
+  - [x] All four remaining disagreements closed (`Dummy write cycles`,
+        `Open Bus`, `Interrupt flag latency`, `NMI Overlap BRK`). Every rule that
+        closed the last three is stated by AccuracyCoin's own source and two of
+        them by no nesdev page. Three sub-test ROMs are standing **verdict**
+        gates; suite 69 → **72 green, 0 failed**
+  - [x] **The acceptance wording needed one more clause.** It was met with **58
+        of 146 entries `NotRun` on BOTH sides** — the 600-frame window reaches
+        the CPU catalog and asks nothing about the APU, PPU, sprite-evaluation
+        or PPU-misc suites. Measured: **4500 frames executes all 146**
+        (134,012,761 cycles). `accuracycoin_status` now prints coverage on every
+        comparison and **refuses** when any entry is unrun on both sides
+  - [ ] The wide-window comparison itself. Its first run found a real RTL defect
+        at cycle 20,636,325 (`ppu_sel` following the halted CPU on a cycle the
+        DMA owned — ledger 3.12), fixed; the full-catalog agreement is the
+        measurement that decides whether the rung closes
 
 ## v2.6.5 – v2.6.6 — rung 6, MiSTer integration and hardware
 
