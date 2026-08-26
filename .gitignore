@@ -47,6 +47,17 @@ Cargo.lock
 *.ram_init.bin
 *.fetch.bin
 *.irq.csv
+# A FOURTH, found the same way and for the same reason: `apu.bin` arrived with
+# rung 4 (the 2A03's per-cycle channel levels) at v2.5.9 and was never added, so
+# every APU golden the sibling's gates consume has been offered for commit since.
+# Verified to match nothing tracked before being added.
+#
+# The pattern here is now four for four: this list grows when a rung adds a
+# format, and nothing makes it. Checking is one line --
+#   for s in ckpt obs boot index_fb ram ram_init fetch apu; do
+#     git check-ignore -q "x.$s.bin" || echo "NOT IGNORED: $s"; done
+# -- and reading the list instead is what missed the previous three.
+*.apu.bin
 # Broader than its siblings, and knowingly so: `nes_golden_export` names this
 # `<rom-stem>.manifest.txt`, with no suffix that distinguishes it from any other
 # manifest. Nothing tracked matches it today. If a manifest ever needs tracking,

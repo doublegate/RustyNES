@@ -639,6 +639,7 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | [iOS / iPadOS App](docs/ios.md)         | Native SwiftUI shell over Metal (wgpu) — v1.9.x TestFlight        |
 | [Libretro Core](docs/libretro/WALKTHROUGH.md) | Libretro core architecture, snapshot determinism, and RetroArch setup |
 | [MiSTer co-simulation](docs/mister.md) | The **v2.5.1 → v2.7.0** programme: a NEW NES core in SystemVerilog, written from public documentation in a sibling repository, with this emulator as its verification oracle. The rung ladder, the compare surfaces, and what each rung cannot verify |
+| [Accuracy ledger](docs/accuracy-ledger.md) | Known residuals in this emulator, including the ones the co-simulation ladder found **in the oracle rather than the DUT** — the first being NROM's PRG-RAM window, which this emulator provides and the board does not |
 
 ### Hardware and subsystem specs
 
@@ -679,17 +680,21 @@ It builds on **v2.4.2 "Cairn"** — the **rung-0 compare surface**. A cairn is a
 
 It builds on **v2.4.1 "Fabric"**, which opened the
 **v2.4.1 → v2.5.0 "Fabric"** line — now delivered, and continued by the
-**v2.5.1 → v2.7.0** line that builds the rest of the console (rung 3, the 2C02,
-is three steps in as of v2.5.4). Fabric's subject was: a new NES core written in SystemVerilog from
+**v2.5.1 → v2.7.0** line that builds the rest of the console. **Rung 3 (the
+2C02) closed at v2.5.8 and rung 4 (the 2A03) at v2.6.2**; rung 5 — the NROM
+cartridge and the console's own bus — is in progress, with the sibling at
+**66 gates green** and its `nes_top` now dividing one master clock rather than
+taking its clock enables from the testbench. Fabric's subject was: a new NES core written in SystemVerilog from
 public hardware documentation, in a sibling repository, with this emulator as its
 **verification oracle**. RustyNES is not being ported to FPGA and cannot be — a
 MiSTer core is SystemVerilog compiled into a Cyclone V bitstream, and Rust does
 not become one. What is buildable is a *new* implementation verified against this
 one, and `crates/rustynes-cosim` is the boundary between them: a narrow C ABI a
 Verilator testbench links, plus a `nes_golden_export` CLI emitting the golden
-formats an external implementation is compared against — nine files as of v2.5.4,
-enumerated in the crate's module docs rather than counted here, because the set
-grows with each rung (v2.5.4 added the per-dot fetch-address trace). The provenance firewall
+formats an external implementation is compared against — **ten as of v2.6.3**
+(`obs.bin`, `boot.bin`, `apu.bin`, `ckpt.bin`, `fetch.bin`, `index_fb.bin`,
+`irq.csv`, `ram.bin`, `ram_init.bin`, `manifest.txt`), enumerated in the crate's
+module docs rather than counted here, because the set grows with each rung. The provenance firewall
 extends to HDL accordingly — `NES_MiSTer` and `fpganes` `rtl/` are strict black
 boxes, instantiable as opaque modules to compare *outputs*, never readable as
 source.
@@ -894,8 +899,10 @@ green: rung 0 the compare surface, rung 1 the 6502, rung 2 the bus and
 interrupts, rung 3 the 2C02, rung 4 the 2A03, rung 5 AccuracyCoin parity, rung 6
 hardware bring-up, rung 7 mappers. **Rungs 0-4 are closed; rung 5 is the current
 work** — the NROM cartridge, the work RAM, the CPU bus, the controller ports and
-DMC DMA are all landed and gated (50 gates green), and assembling the core's own
-top level is what remains. Every rung is labelled in
+DMC DMA are all landed and gated (**66 gates green**), the core's own top level
+assembles them, and it divides one master clock rather than taking its clock
+enables from the testbench. The first end-to-end AccuracyCoin run is what
+remains. Every rung is labelled in
 [`docs/mister.md`](docs/mister.md) by whether it has an **independent** oracle —
 because 141/141 on AccuracyCoin is not the same as "matches silicon", and a rung
 verified only against this emulator inherits whatever this emulator has wrong.

@@ -2279,10 +2279,34 @@ impl Ppu {
         self.post_reset_mask_remaining = self.post_reset_mask_remaining.saturating_sub(1);
         // Open-bus decay: per-bit-group, three independent timers.  When a
         // group's timer hits 0 those bits clear in the latch.  Per
-        // docs/ppu-2c02.md, real hardware decays in 3-30 ms; we use ~600 ms
-        // (≈ 1,073,447 CPU cycles at NTSC, rounded to one million).  This is
-        // conservative but well within the window the `ppu_open_bus` test
-        // cares about.
+        // docs/ppu-2c02.md, real hardware decays in 3-30 ms; we use
+        // **558.7 ms** — one million CPU cycles at NTSC.
+        //
+        // The figure in this comment used to read "~600 ms (≈ 1,073,447 CPU
+        // cycles at NTSC, rounded to one million)".  The arithmetic in the
+        // parenthesis is right and the headline is not: one million cycles is
+        // 558.7 ms, so "rounded" was a 7% cut, not a rounding.  Corrected here
+        // because the MiSTer co-simulation DUT has to reproduce this number
+        // exactly and was quoting the wrong one back.
+        //
+        // SWEPT (v2.6.3), because "conservative but well within the window the
+        // `ppu_open_bus` test cares about" turned out to understate how much
+        // slack there is.  That ROM's decay checks are 100 × `delay_msec 10`
+        // loops asserting the value has reached zero, so its only real
+        // constraint is < 1000 ms — and it passes at **3, 10, 20, 30 and
+        // 100 ms** as well.  AccuracyCoin holds 141/141 (RAM decoder), nestest
+        // matches its golden log, and all eight `nes_blargg` tests pass at
+        // 30 ms, the documented upper bound.
+        //
+        // So this constant is NOT forced by the corpus: a documentation-derived
+        // value is measurably available.  It is kept at one million because
+        // changing it changes shipped emulator behaviour for every game that
+        // reads open bus after a long gap, and no test in this repository can
+        // adjudicate which is right — the wiki's band and this model differ by
+        // ~19×, and neither has an independent oracle here.  Recorded as a
+        // deliberate hold rather than a derivation.  See
+        // `RustyNES_MiSTer/docs/rung3-ppu.md`, where the same constant is
+        // reproduced as 3,000,000 dots and the DUT-side sweep is written up.
         // NOTE (v2.3.1 G5): reformulating this as a deadline comparison instead
         // of a per-cycle decrement was measured by DELETING the loop outright —
         // the ceiling any reformulation could reach — and the ceiling is ZERO.

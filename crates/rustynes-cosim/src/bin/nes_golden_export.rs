@@ -46,6 +46,18 @@ struct Args {
     out: PathBuf,
     seed: u64,
     frames: u32,
+    /// Hold START on port 1 across a half-open frame window.
+    ///
+    /// Spelled `--press-start A:B` on the command line; the window itself is
+    /// `A..B`, i.e. START is down for frames `A` through `B - 1`. The two
+    /// notations were mixed here -- the field said `A..B` where a reader would
+    /// take it for the CLI syntax -- so both are now stated.
+    ///
+    /// Several accuracy ROMs do not start on their own. `AccuracyCoin` sits on
+    /// its title screen indefinitely, and a golden exported without this
+    /// captures an idle menu -- which a DUT reproduces perfectly while running
+    /// none of the tests.
+    press_start: Option<(u64, u64)>,
     boot_trace: Option<(u64, u64)>,
     irq_trace: Option<usize>,
     /// Capacity for the per-dot PPU bus-address capture (rung 3's v2.5.4 gate).
@@ -67,11 +79,47 @@ fn usage() -> ! {
          \x20                       [--boot-trace START..END] [--irq-trace CAP]\n\
          \x20                       [--fetch-trace CAP] [--apu-trace CAP] [--checkpoint-interval N]\n\
          \x20                       [--inject-instructions N] [--inject-hold N]\n\
-         \x20                       [--inject-nmi-at N] [--inject-irq-at N]"
+         \x20                       [--inject-nmi-at N] [--inject-irq-at N]\n\
+         \x20                       [--press-start A:B]"
     );
     std::process::exit(2)
 }
 
+/// Parse a `--press-start A:B` spec. `None` for anything this option should
+/// refuse.
+///
+/// Split from the exiting wrapper below so a test can reach the DECISION. The
+/// wrapper calls `usage()`, which calls `std::process::exit`, so a test of the
+/// rejecting paths through it would take the test process with it -- and the
+/// rejecting paths are the ones worth testing, since the whole point of this
+/// option is that a silently-ignored press produces a golden of an idle title
+/// screen, which is precisely the artifact it exists to stop being mistaken for
+/// a run.
+fn parse_press_start_spec(spec: &str) -> Option<(u64, u64)> {
+    let (a, b) = spec.split_once(':')?;
+    let a: u64 = a.parse().ok()?;
+    let b: u64 = b.parse().ok()?;
+    // An empty or inverted window is refused rather than clamped: `B == A` holds
+    // START for zero frames, which is indistinguishable from not passing the
+    // flag at all.
+    (b > a).then_some((a, b))
+}
+
+/// Parse a `--press-start A:B` spec, or exit.
+fn parse_press_start(spec: &str) -> (u64, u64) {
+    parse_press_start_spec(spec).unwrap_or_else(|| {
+        eprintln!("--press-start A:B needs two frame numbers with B > A (got {spec:?})");
+        usage()
+    })
+}
+
+// A flat match over CLI flags, two lines past the limit since `--press-start`
+// was added. Allowed rather than split: every arm assigns one of a dozen `mut`
+// locals, so a helper would have to take them all by `&mut` and would be harder
+// to read than the table it replaced -- and the two parses with real logic
+// (`parse_press_start`, and the trace ranges) are already extracted. Same
+// judgement as `Bus::unified_dma_cycle_impl` in the core.
+#[allow(clippy::too_many_lines)]
 fn parse_args() -> Args {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let (mut rom, mut out) = (None, None);
@@ -82,6 +130,7 @@ fn parse_args() -> Args {
     let mut checkpoint_interval = rustynes_cosim::checkpoint::DEFAULT_INTERVAL;
     let (mut inject_instructions, mut inject_hold) = (0u64, 1u64);
     let (mut inject_nmi_at, mut inject_irq_at) = (None, None);
+    let mut press_start: Option<(u64, u64)> = None;
 
     let mut i = 0;
     // Every value-taking arm below advances `i` by TWO, not one: this loop has
@@ -101,6 +150,16 @@ fn parse_args() -> Args {
             }
             "--seed" => {
                 seed = need(i).parse().unwrap_or_else(|_| usage());
+                i += 2;
+            }
+            "--press-start" => {
+                // `A:B` -- hold START on port 1 from frame A until frame B.
+                // See `parse_press_start` for why a bad spec exits.
+                press_start = Some(parse_press_start(need(i)));
+                // Omitting this `i += 2` (see above: no trailing increment)
+                // spun the parser at 100% CPU for thirteen minutes, never
+                // reaching the simulation. The tell was the output directory
+                // never being created.
                 i += 2;
             }
             "--frames" => {
@@ -169,6 +228,7 @@ fn parse_args() -> Args {
         out: out.unwrap_or_else(|| usage()),
         seed,
         frames,
+        press_start,
         boot_trace,
         irq_trace,
         fetch_trace,
@@ -524,6 +584,37 @@ fn run_mode_block(args: &Args, calls: u64, frames_actual: u64) -> String {
     }
 }
 
+/// Advance `total` frames, optionally holding START across `[a, b)`.
+///
+/// Split out of `main` so it stays under the line limit, and because the
+/// segmentation is a statement about the run rather than about argument
+/// handling: the press lands on the same frames the oracle's own
+/// `AccuracyCoin` runner uses -- idle, hold START, release, run on.
+///
+/// `advance_frames` is used for each leg rather than a `run_frame()` loop, for
+/// the reason that function documents: the first call after power-on completes
+/// no frame, so a leg counted in calls would be a leg short.
+fn run_frames_with_optional_press(
+    o: &mut Oracle,
+    total: u64,
+    press_start: Option<(u64, u64)>,
+) -> u64 {
+    const START: u8 = 1 << 3; // Buttons::START
+    let Some((a, b)) = press_start else {
+        return o.advance_frames(total);
+    };
+    // Clamped, so a window past the end of the run shortens rather than
+    // underflowing `b - a` or `total - b`.
+    let a = a.min(total);
+    let b = b.min(total);
+    let mut calls = o.advance_frames(a);
+    o.set_buttons(0, START);
+    calls += o.advance_frames(b - a);
+    o.set_buttons(0, 0);
+    calls += o.advance_frames(total - b);
+    calls
+}
+
 fn main() {
     let args = parse_args();
     let rom =
@@ -585,7 +676,7 @@ fn main() {
             args.inject_hold,
         )
     } else {
-        o.advance_frames(u64::from(args.frames))
+        run_frames_with_optional_press(&mut o, u64::from(args.frames), args.press_start)
     };
     let frames_actual = o.nes().frame() - frame_before;
     let cycles = o.nes().cycle();
@@ -675,6 +766,38 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn press_start_spec_accepts_a_well_formed_window() {
+        assert_eq!(super::parse_press_start_spec("2:5"), Some((2, 5)));
+        assert_eq!(super::parse_press_start_spec("0:1"), Some((0, 1)));
+        // No upper bound is imposed here -- `run_frames_with_optional_press`
+        // clamps to the run length, so a window past the end shortens rather
+        // than being rejected at parse time.
+        assert_eq!(
+            super::parse_press_start_spec("100:4000000000"),
+            Some((100, 4_000_000_000))
+        );
+    }
+
+    #[test]
+    fn press_start_spec_refuses_an_empty_or_inverted_window() {
+        // `B == A` is the one most likely to be typed by accident, and it holds
+        // START for zero frames -- indistinguishable from omitting the flag.
+        assert_eq!(super::parse_press_start_spec("5:5"), None);
+        assert_eq!(super::parse_press_start_spec("9:2"), None);
+    }
+
+    #[test]
+    fn press_start_spec_refuses_malformed_input() {
+        for bad in ["", "5", "5:", ":5", "a:5", "5:b", "5:5:5", "-1:5", "5 : 9"] {
+            assert_eq!(
+                super::parse_press_start_spec(bad),
+                None,
+                "should have refused {bad:?}"
+            );
+        }
+    }
+
     /// `--apu-trace` with instruction injection must be REFUSED, not silently
     /// emptied.
     ///
@@ -692,6 +815,7 @@ mod tests {
             out: std::path::PathBuf::from("/tmp"),
             seed: 0,
             frames: 1,
+            press_start: None,
             boot_trace: None,
             irq_trace: None,
             fetch_trace: None,

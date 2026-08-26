@@ -62,6 +62,88 @@ cycle-accurate core later replaced.
   accuracy-ledger entry below records. No `rustynes-*` crate changes, so
   AccuracyCoin and nestest are untouched by construction.
 
+- **The MiSTer DUT runs on one master clock (sibling repository).** `nes_top`
+  took its clock enables as inputs and the testbench generated the dot phase; it
+  now takes a single 21.477272 MHz master clock and derives `ce`, `ppu_ce` and
+  `ppu_access` itself — the shape Quartus compiles.
+
+  It is built in **RustyNES's own v2.0.0 "Timebase" shape**: two independent
+  accumulators in master-clock units, never reset to one another. That is not a
+  stylistic choice — a modulo-`CPU_DIV` phase counter looks equivalent on NTSC
+  and cannot express PAL at all, where 16 master clocks per CPU cycle and 5 per
+  dot is 3.2 dots per cycle. `ACCESS_MC` and the PPU phase offset are derived
+  from the oracle's `read_split`/`write_split`, not swept. Five testbench phase
+  knobs are retired: they existed to find this phase, and the answer is now
+  compiled into the core.
+
+  **It found four enables that were never enabling.** The old testbench tied `ce`
+  high and pulsed the clock once per CPU cycle, so the clock did the gating the
+  enable was supposed to do and any ungated `always_ff` was correct only by
+  accident — under a real master clock each fires twelve times. Two were already
+  known (the PPU register block at v2.5.7, the open-bus decay reload); two were
+  not: the **DMC's DMA acknowledge**, where the sample pointer advanced by TWELVE
+  per byte and 324,182 of 357,360 cycles diverged, and the **frame-counter IRQ
+  set points**, where `fc_irq_line` rose eleven master clocks early so the CPU
+  took the interrupt one instruction sooner — caught by blargg's `08.irq_timing`,
+  a third-party ROM rather than our own trace agreeing with itself.
+
+  A compensating fix was found **and rejected**: delaying the APU's IRQ by one
+  cycle also gave 66 of 66 and is indistinguishable from the real fix by gate
+  result. `cpu6502.sv` already implements the oracle's second-to-last-cycle
+  recognition, correctly gated, so a second delay would have cancelled an
+  APU-side error. Looking for a cause *after* the fix worked is what separated
+  them. Suite: **66 gates green, 0 failed.**
+
+- **The DUT's 6502 decodes all 256 opcodes, and an independent oracle now says
+  so (sibling repository).** The five `SH`-group stores — `SHA` (`$93`/`$9F`),
+  `TAS` (`$9B`), `SHY` (`$9C`), `SHX` (`$9E`) — close the decoder at **256 of
+  256**. They are address mangling rather than arithmetic: the value stored is
+  `reg & (base_high + 1)`, and on a page cross the address's own high byte
+  becomes `addr_high & reg`.
+
+  More importantly, **blargg's `instr_test-v5` battery is now a standing gate** —
+  sixteen third-party ROMs, ~2.68 M cycles each, compared per cycle, **16 of 16
+  exact**, taking the suite from 50 gates to **66**. Every rung-1 ROM before
+  these was written inside the project, so the rung could only ask questions
+  someone there thought to ask. These found **three defects the entire
+  self-written corpus had missed**, and none was in the opcodes the battery was
+  run to validate:
+
+  - `RRA` fed its `ADC` stage `p[FLAG_C]`, the carry from *before* the
+    instruction, instead of the one the rotate had just produced. **The
+    instruction's own bus trace was identical on both sides** — read, dummy
+    write, write — and only the accumulator differed, by one, surfacing nine
+    cycles later in the `STA` that spilled it. A gate on the memory side of
+    read-modify-write would have passed it.
+  - The 8-cycle indirect read-modify-write forms addressed the indexed target
+    during their *pointer* fetch cycles.
+  - The PPU I/O-bus latch never decayed — a 2C02 defect reached from a CPU ROM,
+    three rungs after rung 3 closed.
+
+  The decay is implemented, and **the fitted part is disclosed in the RTL
+  itself**. That the latch decays, in three independent groups, and which
+  accesses refresh which group, are documented facts. The *deadline* is not: the
+  wiki says 3-30 ms "faster when the PPU is warm", and RustyNES uses 558.7 ms.
+
+  **Swept against the full 66-gate suite**, not argued: 30 ms (the documented
+  upper bound) fails 9 gates, 50 ms fails 5, 100 ms 3, 200 ms 2, 300 ms 1, and
+  558.7 ms is the first value that fails none. The binding constraint is one
+  measurable property of one ROM — `10-branches` has a longest gap between
+  group-0 refreshes of 936,697 CPU cycles, or 2,810,091 dots — and that
+  prediction was **tested**: 2,809,000 dots leaves 52 divergences and 2,811,000
+  is exact, so the corpus demands ≥ 523.4 ms.
+
+  **The documentation and the corpus are therefore incompatible by a factor of
+  ~17**, and this rung has no independent oracle to say which describes a 2C02.
+  That is risk 6 of the Fabric plan — the oracle can be wrong — arriving as a
+  measurement rather than a caveat, and the first time in this programme that
+  documentation and oracle have been shown to contradict each other on a
+  quantity a gate depends on. The constant stays the oracle's, stays labelled
+  fitted, and stays a `localparam` so it can move when something can adjudicate.
+
+  Still no `rustynes-*` crate changes; AccuracyCoin and nestest remain untouched
+  by construction.
+
 - **Android dependency refresh.** AGP **9.2.1 → 9.3.2** (both
   `com.android.application` and `com.android.test`), the Compose compiler plugin
   **2.3.10 → 2.3.21**, `androidx.baselineprofile` and `benchmark-macro-junit4`

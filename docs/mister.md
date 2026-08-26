@@ -982,6 +982,115 @@ Rung 1's own gate -- nestest 0-diff over >= 8000 instructions -- is not met yet:
 the five ROMs are hand-built opcode groups, not nestest. Rung 2, the per-cycle
 bus and interrupt comparison, has not begun.
 
+### Rung 1 gets an independent oracle (v2.6.3)
+
+The whole rung above was measured against ROMs **written in this project**, and
+the section before this one says exactly what that cannot cover. That limitation
+is now partly lifted.
+
+blargg's `instr_test-v5/rom_singles` — sixteen third-party ROMs, ~2.68 M cycles
+each, predating this programme by two decades and between them exercising all
+256 opcodes — runs as a standing section of the sibling's `regress.sh`, compared
+on rung 2's per-cycle bus surface. **16 of 16 exact**, taking the suite from 50
+gates to **66**.
+
+It is the first *independent* oracle rung 1 has had, and it earned that
+description immediately by finding **three defects the self-written corpus had
+missed**, none of them in the undocumented opcodes the battery was run to
+validate:
+
+| ROM | defect |
+| --- | --- |
+| `06-absolute` | `RRA` fed its `ADC` stage the carry from *before* the instruction rather than the one the rotate produced |
+| `08-ind_x` | the 8-cycle indirect RMW forms addressed the indexed target during their *pointer* fetch cycles |
+| `03-immediate` | the PPU I/O-bus latch never decayed — a 2C02 defect, reached from a CPU ROM, three rungs after rung 3 closed |
+
+The `RRA` finding is the one worth carrying forward, because of what it says
+about compare surfaces rather than about the 6502. **The instruction's own bus
+trace was identical on both sides** — read `$FF`, dummy-write `$FF`, write
+`$7F` — and the divergence appeared nine cycles later in the `STA` that spilled
+the accumulator, off by exactly one. A gate on the memory side of
+read-modify-write would have passed it, and so would this rung's own
+register-boundary trace had the next instruction not stored the accumulator
+straight away.
+
+Two hooks were needed to run third-party ROMs at all, and both are about **not
+transcribing a number**: the window comes from each golden's own manifest rather
+than a `CYCLES_<rom>` line, and the board's `$6000-$7FFF` work RAM is presented
+per-ROM (blargg reports through it) rather than by default — NROM has none, which
+is the oracle defect recorded above.
+
+## Rung 5 — the console, and the master-clock substrate
+
+NROM, the work RAM, the CPU bus, the controller ports and DMC DMA are landed and
+gated in the sibling; `nes_top` assembles them, carries **no observation ports**,
+and as of v2.6.3 **divides one 21.477272 MHz master clock** rather than taking
+its clock enables from the testbench.
+
+### The divider is this repository's own substrate, in SystemVerilog
+
+The obvious shape — a modulo-`CPU_DIV` phase counter with the dot at
+`phase[1:0] == 3` — looks equivalent on NTSC and is a dead end. PAL is 16 master
+clocks per CPU cycle and 5 per dot, i.e. **3.2 dots per CPU cycle**, and no
+counter that restarts each CPU cycle can hold a fractional ratio.
+
+`Bus::run_ppu_to` does not do that. It keeps `master_clock` and `ppu_clock` as
+**independent accumulators in master-clock units** and emits a dot whenever
+`ppu_clock + ppu_divider <= master_clock`, letting dot boundaries drift across
+the CPU cycle — which is exactly what PAL does. The DUT copies that structure, so
+retargeting is a parameter change (NTSC 12/4, PAL 16/5, Dendy 15/5).
+
+Two constants come from `Cpu` rather than from a sweep. `read_split(12)` is
+(5, 7) and `write_split(12)` is (7, 5) — `CPU_DIV/2 ∓ PPU_OFFSET` — with the PPU
+run to that point minus `PPU_OFFSET`. On NTSC a read observes at master clock 5
+and a write commits at 7, and **both fall inside the same dot**, which is why the
+DUT's earlier read/write placement sweep measured them onto one dot: this model
+predicted it. `PPU_OFFSET` is also applied as a real phase offset between the
+accumulators, so a cycle's last dot commits *before* the CPU rather than on the
+same edge.
+
+### What it found: an enable that is constant is not an enable
+
+The DUT's testbench used to tie `ce` high and pulse `clk` once per CPU cycle. The
+clock was doing the gating the enable was supposed to do, so **any `always_ff`
+not gated by `ce` was correct only by accident** — under a real master clock each
+fires twelve times. Four sites, two of them previously unknown:
+
+| site | symptom |
+|---|---|
+| PPU CPU-register block (v2.5.7) | a held address latched twelve times per access |
+| open-bus decay reload | refresh never observed; `$2002` read `$00` for `$1F` |
+| DMC DMA acknowledge | the sample pointer advanced by **twelve** per byte; 91% of cycles diverged |
+| frame-counter IRQ set points | `/IRQ` rose eleven master clocks early; the CPU took the interrupt **one instruction sooner** |
+
+The last was caught by blargg's `08.irq_timing` — third-party, so an independent
+oracle rather than our own trace agreeing with itself.
+
+### A fix that worked, and was rejected
+
+Delaying the APU's `/IRQ` by one cycle in `nes_top` also produced 66 of 66, and
+is **indistinguishable from the real fix by gate result**. It was not adopted:
+`Cpu::handle_interrupts` samples IRQ at phi2 into `mc_run_irq` and dispatches on
+`mc_prev_run_irq` — the one-cycle register this codebase calls
+"second-to-last-cycle recognition" — and the DUT's `cpu6502.sv` already
+implements exactly that, correctly gated. A second delay outside it would have
+cancelled an APU-side error rather than corrected it.
+
+**This is the general hazard of an oracle-defined compare surface**, stated once
+so rungs 6 and 7 inherit it: a fix that greens the gate is not evidence the fix
+is right. Continuing to look for a cause after the symptom cleared is the only
+thing that separated the two here.
+
+### Where the three-way disagreements are recorded
+
+The sibling's `docs/oracle-vs-documentation.md` is the umbrella ledger: per
+subsystem, where the DUT, this emulator and the public documentation differed,
+which won, and why — using the same six categories as the APU chapter that
+preceded it. It carries the one entry so far where **this emulator** was the one
+that was wrong (NROM's PRG-RAM window), and the sharpest category-1 entry yet:
+the PPU's open-bus decay deadline, where the documentation says 3-30 ms, this
+emulator uses 558.7 ms, and the DUT's corpus forces >= 523.4 ms.
+
 ## Rung 4 — the 2A03, and the audit it prompted
 
 Rung 4 opened at v2.5.9 with the two pulse channels and the frame counter, and

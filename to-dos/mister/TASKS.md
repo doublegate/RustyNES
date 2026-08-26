@@ -102,14 +102,71 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
         that two inert open-bus mutations would flip to CAUGHT once DMA drove
         the bus. They did not, and a third joined them. The cause is stimulus:
         no ROM in the corpus both runs DMC fetches and reads open bus
-  - [ ] **`rtl/nes_top.sv` is still a shell** — the one remaining piece. Every
-        part exists and is gated, but they are tied together by the
-        co-simulation wrapper rather than by the core's own top level, and that
-        top level must also divide the master clock. That is the apparatus rung
-        3's phase calibration was built on, so it is a change to the timing
-        substrate rather than a rewiring — named as its own step for that reason
-  - [ ] First end-to-end AccuracyCoin run — blocked on the above, and NOT
-        attempted. Producing a status vector is v2.6.3; matching it is v2.6.4
+  - [x] **The decoder closes at 256 of 256** with the five `SH`-group stores
+        (`SHA` `$93`/`$9F`, `TAS` `$9B`, `SHY` `$9C`, `SHX` `$9E`). Address
+        mangling in the store path, not arithmetic: `reg & (base_high + 1)`
+        stored, and on a page cross the address's high byte becomes
+        `addr_high & reg`
+  - [x] **blargg's `instr_test-v5` battery is a standing gate — rung 1's first
+        INDEPENDENT oracle.** Sixteen third-party ROMs, ~2.68 M cycles each,
+        **16 of 16 exact**; the suite goes 50 → **66 gates**. Three defects the
+        self-written corpus had missed, none of them in the opcodes the battery
+        was run to validate: `RRA`'s ADC stage taking the pre-instruction carry
+        (bus trace IDENTICAL — only the accumulator differed, by one, nine
+        cycles later), the indirect RMW forms addressing the indexed target
+        during their pointer fetch, and the PPU I/O-bus latch never decaying
+  - [x] **PPU open-bus decay**, and the constant disclosed as fitted. Mechanism
+        and grouping are documented facts; the deadline is not. **Swept
+        against the full suite**: 30 ms (the documented bound) fails 9 gates,
+        100 ms fails 3, 300 ms fails 1, and 558.7 ms is the first that fails
+        none. The binding constraint is `10-branches`'s longest inter-refresh
+        gap, 2,810,091 dots — predicted and then tested at 2,809,000 (52
+        divergences) vs 2,811,000 (exact). **Documentation and corpus are
+        incompatible by ~17x**, with no independent oracle to adjudicate: risk 6
+        arriving as a measurement. The constant stays the oracle's, labelled
+        fitted, in a `localparam`
+  - [ ] A purpose-built decay stimulus, to close the three mutations that are
+        inert **on this ROM** (which timer gates which bits, and where the
+        deadline sits inside a 1.27 s gap). Named as a step, not a silence — and
+        note it would confirm this core matches 600 ms, not what hardware does
+  - [x] **`rtl/nes_top.sv` assembles the console** and carries **not one
+        observation port** — everything the gates read is reached
+        hierarchically from the co-simulation wrapper, which is legal in
+        simulation and impossible in synthesis (ADR 0037). It lints clean
+        standalone, which is the unit Quartus compiles; the wrapper is never in
+        `files.qip`
+  - [x] **The clock divider lands — `nes_top` takes ONE 21.477272 MHz master
+        clock** and derives `ce`, `ppu_ce` and `ppu_access` itself. Built in the
+        oracle's v2.0.0 "Timebase" shape: two independent accumulators in
+        master-clock units, never reset to one another, because a modulo-`CPU_DIV`
+        phase counter looks right on NTSC and **cannot express PAL at all**
+        (16/5 = 3.2 dots per CPU cycle). Retargeting is a parameter change.
+        `ACCESS_MC` and `PPU_OFFSET` are derived from the oracle's read/write
+        split, not swept; `LEAD_CPU_CYCLES` is measured. Five testbench phase
+        knobs retired — they existed to FIND this phase and the answer is now
+        compiled into the core
+  - [x] **Four enables that were never enabling.** The old testbench tied `ce`
+        high and pulsed `clk` once per CPU cycle, so the clock did the gating
+        the enable was for and **any ungated `always_ff` was correct only by
+        accident**. Under a real master clock each fires twelve times: the PPU
+        register block (found v2.5.7), the open-bus decay reload, the DMC's DMA
+        acknowledge (`dmc_cur_addr` advanced by TWELVE per sample — 324,182 of
+        357,360 cycles diverged), and the frame-counter IRQ set points
+        (`fc_irq_line` rose 11 master clocks early, so the IRQ was taken one
+        instruction sooner; `blargg08` caught it). **66 of 66 green**
+  - [x] A compensating fix was found AND REJECTED: delaying `apu_irq_n` by one
+        `ce` also gave 66 of 66, and is indistinguishable from the real fix by
+        gate result. `cpu6502.sv` already implements the oracle's
+        second-to-last-cycle recognition, correctly gated, so a second delay
+        would have cancelled an APU-side error. Looking for the cause after the
+        fix worked is what separated them
+  - [ ] First end-to-end AccuracyCoin run — attempted, and it produced **two
+        false passes before a real one**. The first reported RAM 2048/2048 and
+        pixels 0/61440 identical: both true and worthless, because AccuracyCoin
+        idles on its title screen until START is pressed. `fb_diff.py` REFUSED
+        the framebuffer half ("2 distinct values, need 8"); the RAM half had no
+        such guard. With START pressed, 208 of 2048 bytes change. Producing a
+        status vector is v2.6.3; matching it is v2.6.4
 - [ ] v2.6.4 status vector identical **entry-for-entry**, including `Skipped` and
       `NotRun` — **rung 5 closes**. State a floor, not a target
 
