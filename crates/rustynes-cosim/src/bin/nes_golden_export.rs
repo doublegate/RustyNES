@@ -574,12 +574,26 @@ fn run_mode_block(args: &Args, calls: u64, frames_actual: u64) -> String {
             args.inject_hold,
         )
     } else {
+        // `press_start` is recorded, and its absence is recorded too.
+        //
+        // The manifest exists so a golden's provenance is recoverable from the
+        // golden. A controller press changes what the ROM EXECUTES -- an
+        // AccuracyCoin export without one captures an idle title screen and
+        // with one captures 88 test results -- so a manifest that omits it
+        // describes two completely different runs identically.
+        //
+        // Found by needing it: the shipped `AccuracyCoin` golden plainly
+        // contains a pressed run (80 clean passes), and its own manifest could
+        // not say what window produced them.
         format!(
             "run_mode     = frames\n\
              frames_req   = {}\n\
              frames_actual= {frames_actual}\n\
-             run_frame_calls = {calls}\n",
+             run_frame_calls = {calls}\n\
+             press_start  = {}\n",
             args.frames,
+            args.press_start
+                .map_or_else(|| "none".to_owned(), |(a, b)| format!("{a}:{b}")),
         )
     }
 }

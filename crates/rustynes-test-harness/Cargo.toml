@@ -120,6 +120,17 @@ name = "dump_battery_ram"
 path = "src/bin/dump_battery_ram.rs"
 required-features = ["test-roms"]
 
+# v2.6.3 — AccuracyCoin's status vector, decoded and compared ENTRY FOR ENTRY.
+#
+# Rung 5's acceptance is a comparable status vector, not a byte-equal work RAM:
+# 2 KiB of RAM answers a different question, reporting scratch bytes as failures
+# and reporting two idle title screens as a pass. `required-features` because the
+# catalog it decodes against lives behind `test-roms`.
+[[bin]]
+name = "accuracycoin_status"
+path = "src/bin/accuracycoin_status.rs"
+required-features = ["test-roms"]
+
 # v2.3.6 — Zapper light-timing probe. Answers, from the game's own `$4017`
 # traffic, whether a light-gun title ever sees light: per frame it pairs each
 # read's returned byte (bit 3 = light NOT detected) with whether the aim point
