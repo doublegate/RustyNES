@@ -171,3 +171,101 @@ fn main() -> ExitCode {
         ExitCode::FAILURE
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{describe, vacuous};
+    use rustynes_test_harness::accuracy_coin_catalog::{TestStatus, catalog, decode_results};
+
+    /// The guard this tool exists for. A vector of nothing but `NotRun`
+    /// describes a run that executed no tests, and reporting two of those as
+    /// agreement is the failure mode the whole binary is built to refuse.
+    #[test]
+    fn an_all_not_run_vector_is_vacuous() {
+        let v = vec![TestStatus::NotRun; catalog().len()];
+        assert!(vacuous(&v), "a vector of only NotRun must be vacuous");
+    }
+
+    /// The other half, and the half a mutation to `all` would break silently:
+    /// **one** real result is enough to make a vector non-vacuous. Without this
+    /// an `any`-for-`all` swap still passes the test above.
+    #[test]
+    fn one_real_result_is_enough_to_be_non_vacuous() {
+        let mut v = vec![TestStatus::NotRun; catalog().len()];
+        v[0] = TestStatus::Pass;
+        assert!(!vacuous(&v), "a single Pass must defeat the vacuity guard");
+
+        let mut v = vec![TestStatus::NotRun; catalog().len()];
+        *v.last_mut().expect("catalog is non-empty") = TestStatus::Fail(7);
+        assert!(
+            !vacuous(&v),
+            "a single Fail must defeat the guard too -- a run that executed \
+             tests and failed them is a real run"
+        );
+    }
+
+    /// `Skipped` is a verdict the ROM writes deliberately (`$FF`), not an
+    /// absence. A vector of skips is a run that happened, so it must NOT be
+    /// refused as vacuous -- only `NotRun` means "never executed".
+    #[test]
+    fn skipped_is_not_the_same_as_never_run() {
+        let v = vec![TestStatus::Skipped; catalog().len()];
+        assert!(
+            !vacuous(&v),
+            "Skipped is a result the ROM wrote; only NotRun is an absence"
+        );
+    }
+
+    /// An all-zero work RAM is what a run that never left the title screen
+    /// actually looks like on disk, and it must decode to a vacuous vector.
+    /// This pins the guard to the real input rather than to a hand-built
+    /// vector -- `$00` is `NotRun`, and that link is what makes the guard fire.
+    #[test]
+    fn a_blank_work_ram_decodes_to_a_vacuous_vector() {
+        let ram = vec![0u8; 2048];
+        let v = decode_results(&ram).expect("2 KiB is long enough for the catalog");
+        assert_eq!(v.len(), catalog().len());
+        assert!(
+            vacuous(&v),
+            "blank work RAM is an idle run, not a passing one"
+        );
+    }
+
+    /// Both decoded vectors are `catalog().len()` by construction, because
+    /// `decode_results` maps over the catalog. The comparison in `main` zips
+    /// three iterators and `zip` truncates silently, so that equal-length
+    /// property is what keeps it from reporting agreement over a prefix while
+    /// claiming the full count. Pinned here so a future change to
+    /// `decode_results` that returns a shorter vector fails loudly.
+    #[test]
+    fn decoded_vectors_are_always_catalog_length() {
+        for len in [2048usize, 4096] {
+            let ram = vec![0u8; len];
+            let v = decode_results(&ram).expect("long enough");
+            assert_eq!(
+                v.len(),
+                catalog().len(),
+                "decode_results must return one entry per catalog entry"
+            );
+        }
+    }
+
+    /// A short dump is refused rather than decoded into a short vector, which
+    /// is what would make the `zip` above truncate.
+    #[test]
+    fn a_short_dump_is_refused() {
+        assert!(decode_results(&[0u8; 8]).is_none());
+    }
+
+    /// The codes are what a reader acts on, so a status must not render as a
+    /// bare variant name that drops its code.
+    #[test]
+    fn describe_carries_the_code() {
+        assert_eq!(describe(TestStatus::Pass), "Pass");
+        assert_eq!(describe(TestStatus::NotRun), "NotRun");
+        assert_eq!(describe(TestStatus::Skipped), "Skipped");
+        assert_eq!(describe(TestStatus::PassWithCode(1)), "Pass(code 1)");
+        assert_eq!(describe(TestStatus::Fail(7)), "Fail(code 7)");
+        assert_eq!(describe(TestStatus::Unknown(0xAB)), "Unknown($AB)");
+    }
+}
