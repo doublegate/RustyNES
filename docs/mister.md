@@ -1099,8 +1099,11 @@ in the plan's v2.6.3 row asked for.
 
 The comparison is `accuracycoin_status`, on this side. It reads a work-RAM
 dump, decodes it against the 146-entry catalog in
-`accuracy_coin_catalog.rs`, prints one line per catalog entry, and given two
-dumps names every disagreement **by test rather than by address**. First
+`accuracy_coin_catalog.rs`, and reports by test rather than by address. It
+filters in both modes rather than dumping all 146 rows: given one dump it
+prints the entries that are **not a clean `Pass`**, and given two it prints only
+the entries where they **disagree**. The vector is decoded in full either way --
+what is filtered is the output, not the comparison. First
 measurement: **137 of 146 entries agree, 9 differ**, six of those sharing one
 failure code — five `SH`-group stores and Open Bus — which reads as one shared
 address-bus cause rather than six independent defects.

@@ -34,9 +34,10 @@ cycle-accurate core later replaced.
   Rung 5's stated acceptance is a status vector comparable **entry for
   entry** — including `Skipped` and `NotRun` — between the oracle and the
   co-simulation DUT. `accuracycoin_status` is the oracle half: it reads a
-  work-RAM dump, decodes it against the 146-entry catalog, prints one line
-  per entry, and given two dumps names every disagreement **by test rather
-  than by address**.
+  work-RAM dump, decodes it against the 146-entry catalog, and reports **by
+  test rather than by address** — printing the entries that are not a clean
+  `Pass` given one dump, and only the entries that disagree given two. The
+  full vector is compared either way; the filtering is on the output.
 
   Producing one is this release's deliverable; making the two agree is
   v2.6.4. The first end-to-end DUT run reports **137 of 146 entries
