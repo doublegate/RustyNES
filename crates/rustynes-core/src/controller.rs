@@ -54,6 +54,20 @@ pub struct Controller {
     pub(crate) shift: u8,
     /// Strobe state (last bit-0 written to `$4016`).
     pub(crate) strobe: bool,
+    /// A shift is owed to the CLK edge that ENDS the current read.
+    ///
+    /// `CLK` is low only while `$4016`/`$4017` is being read, and the shift
+    /// register advances on its LOW-TO-HIGH transition — i.e. when the read
+    /// ends, not when it begins (nesdev *Controller reading*). A run of
+    /// consecutive read cycles therefore holds `CLK` low throughout and
+    /// produces ONE rising edge, so it advances the register once and returns
+    /// the same bit each time. Shifting on the read instead made every read
+    /// its own clock, which is Famicom wiring, not NES.
+    ///
+    /// It is applied lazily, on the next read that is NOT a continuation of the
+    /// run, because a read is the only thing that can observe it. That makes it
+    /// state which outlives an instruction, so it is serialized.
+    pub(crate) pending_shift: bool,
 }
 
 impl Controller {
@@ -64,6 +78,7 @@ impl Controller {
             buttons: Buttons::empty(),
             shift: 0,
             strobe: false,
+            pending_shift: false,
         }
     }
 
@@ -93,6 +108,10 @@ impl Controller {
         if new_strobe {
             self.shift = self.buttons.bits();
         }
+        // A strobe reloads the register, so an owed shift has nothing left to
+        // advance. Dropping it here keeps a strobe the clean reset it is on
+        // hardware rather than leaving a stale edge to fire on the next read.
+        self.pending_shift = false;
         self.strobe = new_strobe;
     }
 
@@ -102,15 +121,22 @@ impl Controller {
     ///
     /// Per the wiki, when the shift register has been emptied subsequent
     /// reads return 1.
-    pub const fn read(&mut self) -> u8 {
+    /// `continues_run` is true when the immediately preceding CPU cycle was
+    /// also a read of this same port — the case an absolute-indexed
+    /// read-modify-write (`SLO $4016,X`) and a DMC-DMA-interrupted read both
+    /// produce. `CLK` stays low across such a run, so the register does not
+    /// advance between the reads and both see the same bit.
+    pub const fn read(&mut self, continues_run: bool) -> u8 {
         if self.strobe {
-            self.buttons.bits() & 1
-        } else {
-            let bit = self.shift & 1;
+            return self.buttons.bits() & 1;
+        }
+        if self.pending_shift && !continues_run {
+            // The previous run ended: its rising edge lands here.
             // Shift in 1s from the left so post-empty reads yield 1.
             self.shift = (self.shift >> 1) | 0x80;
-            bit
         }
+        self.pending_shift = true;
+        self.shift & 1
     }
 
     /// Side-effect-free sample of the next bit (debugger).
@@ -118,6 +144,10 @@ impl Controller {
     pub const fn peek(&self) -> u8 {
         if self.strobe {
             self.buttons.bits() & 1
+        } else if self.pending_shift {
+            // A debugger peek must show what the NEXT read would return, and
+            // that read lands the owed edge first.
+            ((self.shift >> 1) | 0x80) & 1
         } else {
             self.shift & 1
         }
@@ -135,11 +165,11 @@ mod tests {
         c.write_strobe(1);
         c.write_strobe(0);
         for _ in 0..8 {
-            assert_eq!(c.read(), 0);
+            assert_eq!(c.read(false), 0);
         }
         // After 8 reads, ROMs see 1s.
         for _ in 0..4 {
-            assert_eq!(c.read(), 1);
+            assert_eq!(c.read(false), 1);
         }
     }
 
@@ -152,7 +182,7 @@ mod tests {
         // A, B, Select, Start, Up, Down, Left, Right
         let expected = [1u8, 0, 1, 0, 0, 1, 0, 0];
         for &want in &expected {
-            assert_eq!(c.read(), want);
+            assert_eq!(c.read(false), want);
         }
     }
 
@@ -162,7 +192,7 @@ mod tests {
         c.set_buttons(Buttons::A);
         c.write_strobe(1);
         for _ in 0..16 {
-            assert_eq!(c.read(), 1, "while strobing, $4016 returns A bit");
+            assert_eq!(c.read(false), 1, "while strobing, $4016 returns A bit");
         }
     }
 
@@ -171,9 +201,9 @@ mod tests {
         let mut c = Controller::new();
         c.write_strobe(1);
         c.set_buttons(Buttons::A);
-        assert_eq!(c.read(), 1);
+        assert_eq!(c.read(false), 1);
         c.set_buttons(Buttons::empty());
-        assert_eq!(c.read(), 0);
+        assert_eq!(c.read(false), 0);
     }
 
     #[test]
@@ -184,12 +214,12 @@ mod tests {
         c.write_strobe(0);
         // Change buttons mid-readout — should NOT affect this scan.
         c.set_buttons(Buttons::A | Buttons::B);
-        assert_eq!(c.read(), 1, "A");
-        assert_eq!(c.read(), 0, "B (latched as not pressed)");
+        assert_eq!(c.read(false), 1, "A");
+        assert_eq!(c.read(false), 0, "B (latched as not pressed)");
         // New strobe latches the new state.
         c.write_strobe(1);
         c.write_strobe(0);
-        assert_eq!(c.read(), 1, "A");
-        assert_eq!(c.read(), 1, "B (now latched as pressed)");
+        assert_eq!(c.read(false), 1, "A");
+        assert_eq!(c.read(false), 1, "B (now latched as pressed)");
     }
 }

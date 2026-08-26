@@ -372,6 +372,16 @@ pub struct LockstepBus {
     /// Per-port Four Score read counter (0-7 = primary pad, 8-15 = secondary
     /// pad, 16-23 = signature, then 1s). Reset on each strobe.
     four_score_idx: [u8; 2],
+    /// CPU cycle of the most recent read of each controller port, or
+    /// `u64::MAX` for "never".
+    ///
+    /// `CLK` on the controller port is LOW only while `$4016`/`$4017` is being
+    /// read, and the shift register advances on its low-to-high transition —
+    /// when the read ENDS. Consecutive read cycles hold it low throughout and
+    /// so produce one edge between them, not two. This is what says whether a
+    /// read continues such a run. Every CPU cycle is a bus access in this core
+    /// (ADR 0029), so cycle adjacency IS address-bus continuity.
+    port_read_cycle: [u64; 2],
     /// Per-port Four Score signature shift register, reloaded on each strobe
     /// (port 0 = `0x08`, port 1 = `0x04`; shifted out LSB-first).
     four_score_sig: [u8; 2],
@@ -863,6 +873,7 @@ impl LockstepBus {
             power_up_palette: PaletteInit::Zeroed,
             controllers34: [Controller::new(); 2],
             four_score_idx: [0; 2],
+            port_read_cycle: [u64::MAX; 2],
             four_score_sig: [0; 2],
             #[cfg(feature = "debug-hooks")]
             controller_polled: false,
@@ -2411,6 +2422,24 @@ impl LockstepBus {
         &self.controllers34
     }
 
+    /// The CPU cycle of `port`'s most recent read (`u64::MAX` = never), for
+    /// the save state.
+    #[must_use]
+    pub const fn port_read_cycle(&self, port: usize) -> u64 {
+        self.port_read_cycle[port]
+    }
+
+    /// Restore the controller-port CLK run state: four `pending_shift` flags
+    /// (ports 1-2 then the Four Score's 3-4) and the two per-port read cycles.
+    pub const fn set_controller_run_state(&mut self, pending: [bool; 4], cycles: [u64; 2]) {
+        self.controllers[0].pending_shift = pending[0];
+        self.controllers[1].pending_shift = pending[1];
+        self.controllers34[0].pending_shift = pending[2];
+        self.controllers34[1].pending_shift = pending[3];
+        self.port_read_cycle[0] = cycles[0];
+        self.port_read_cycle[1] = cycles[1];
+    }
+
     /// Enable/disable the Four Score 4-player adapter. Off by default; while
     /// off, `$4016`/`$4017` behave exactly as the standard two controllers
     /// (byte-identical reads — determinism + save-states unaffected).
@@ -2526,6 +2555,16 @@ impl LockstepBus {
     /// advancing the shift register. Four Score off → just
     /// `controllers[port].read()`; on → the multiplexed 24-read sequence
     /// (primary pad → secondary pad → signature → 1s).
+    /// Does a read of `port` on this cycle continue an unbroken run of reads
+    /// of the same port? Records this cycle as the port's latest read either
+    /// way, so callers must invoke it exactly once per read.
+    const fn port_continues_run(&mut self, port: usize) -> bool {
+        let last = self.port_read_cycle[port];
+        let cont = last != u64::MAX && self.cycle == last.wrapping_add(1);
+        self.port_read_cycle[port] = self.cycle;
+        cont
+    }
+
     fn read_port(&mut self, port: usize) -> u8 {
         // v1.6.0 Workstream A3 (`TAStudio` lag log): any read of $4016/$4017
         // counts as the game polling input this frame. Output-only; gated.
@@ -2563,14 +2602,15 @@ impl LockstepBus {
         if let Some(d) = &mut self.expansion_device[port] {
             return d.read();
         }
+        let cont = self.port_continues_run(port);
         if !self.four_score || self.controllers[port].strobe {
-            return self.controllers[port].read();
+            return self.controllers[port].read(cont);
         }
         let idx = self.four_score_idx[port];
         let bit = if idx < 8 {
-            self.controllers[port].read()
+            self.controllers[port].read(cont)
         } else if idx < 16 {
-            self.controllers34[port].read()
+            self.controllers34[port].read(cont)
         } else if idx < 24 {
             let b = self.four_score_sig[port] & 1;
             self.four_score_sig[port] = (self.four_score_sig[port] >> 1) | 0x80;
@@ -3480,10 +3520,12 @@ impl LockstepBus {
                 self.apu.clear_frame_irq_immediate_for_dma();
             }
             0x4016 => {
-                let _ = self.controllers[0].read();
+                let cont = self.port_continues_run(0);
+                let _ = self.controllers[0].read(cont);
             }
             0x4017 => {
-                let _ = self.controllers[1].read();
+                let cont = self.port_continues_run(1);
+                let _ = self.controllers[1].read(cont);
             }
             _ => {}
         }
@@ -3510,12 +3552,14 @@ impl LockstepBus {
                 // built-in microphone. Default-off (mic released) leaves `mic`
                 // = 0, so the returned byte is byte-identical to prior releases.
                 let mic = u8::from(self.famicom_mic) << 2;
-                let v = (sample & 0xE0) | self.controllers[0].read() | mic;
+                let cont = self.port_continues_run(0);
+                let v = (sample & 0xE0) | self.controllers[0].read(cont) | mic;
                 self.open_bus = v;
                 v
             }
             0x4017 => {
-                let v = (sample & 0xE0) | self.controllers[1].read();
+                let cont = self.port_continues_run(1);
+                let v = (sample & 0xE0) | self.controllers[1].read(cont);
                 self.open_bus = v;
                 v
             }
@@ -5129,13 +5173,19 @@ mod four_score_tests {
         // more (dmc_halt + 3 uni_oam flags + uni_oam_addr u16 + ppu_clock
         // u64 + dma_mc_consumed u64); the v2.1.0 tail appends 2 more (one
         // expansion-device tag byte per port, both `None`); the v1.1.0 beta.1
-        // tail appends 1 more (the nametable mirroring-override tag, `None`).
-        // Truncating all 36 simulates a pre-v1.7.0 save, which must still load
-        // with the adapter off (and no expansion device / override).
+        // tail appends 1 more (the nametable mirroring-override tag, `None`);
+        // the v2.6.5 tail appends 20 more (four `pending_shift` bools and two
+        // `port_read_cycle` u64s -- the controller-port CLK run state).
+        // Truncating all 56 simulates a pre-v1.7.0 save, which must still load
+        // with the adapter off (and no expansion device / override / run state).
+        //
+        // The constant is deliberately literal rather than computed: it is the
+        // tail's LAYOUT written down, and it is what made a v2.6.5 append fail
+        // loudly here instead of silently shifting every field behind it.
         let mut bus = test_bus();
         bus.set_four_score(true);
         let blob = crate::bus_snapshot::encode_bus(&bus);
-        let old = &blob[..blob.len() - 36];
+        let old = &blob[..blob.len() - 56];
         let mut restored = test_bus();
         restored.set_four_score(true); // prove decode actively turns it off
         crate::bus_snapshot::decode_bus(&mut restored, old).unwrap();

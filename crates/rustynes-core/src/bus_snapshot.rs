@@ -92,6 +92,27 @@ pub fn encode_bus(bus: &LockstepBus) -> Vec<u8> {
     // v1.1.0 beta.1 (T-110-B4) — per-game nametable mirroring override (trailing
     // field; pre-v1.1.0 blobs lack it and decode as `None` = no override).
     w.u8(encode_mirroring_override(bus.mirroring_override()));
+    // v2.6.5 — the controller-port CLK run state, appended at the tail rather
+    // than folded into `encode_controller`, which sits in the middle of this
+    // section and cannot grow without breaking every earlier blob.
+    //
+    // Both halves outlive an instruction and so must be carried: a `$4016` read
+    // is the last cycle of `LDA $4016`, so a snapshot taken at that instruction
+    // boundary has a shift owed and a run open. Restoring without them makes
+    // the next read return a bit the timeline already delivered.
+    //
+    // Pre-v2.6.5 blobs lack these bytes and decode as "no shift owed, no run" —
+    // which is the state after any strobe, so a restored pre-v2.6.5 save
+    // behaves exactly as it did when it was written.
+    for c in bus.controllers_ref() {
+        w.bool(c.pending_shift);
+    }
+    for c in bus.controllers34_ref() {
+        w.bool(c.pending_shift);
+    }
+    for port in 0..2 {
+        w.u64(bus.port_read_cycle(port));
+    }
     w.into_vec()
 }
 
@@ -414,6 +435,24 @@ pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotErro
         None
     };
     bus.set_mirroring_override(mirroring_override);
+    // v2.6.5 — controller-port CLK run state (trailing-default: pre-v2.6.5
+    // blobs have no bytes left and decode as "no shift owed, no run open",
+    // which is the post-strobe state and so reproduces how they behaved when
+    // they were written).
+    if r.remaining() >= 4 + 2 * 8 {
+        let mut pending = [false; 4];
+        for p in &mut pending {
+            *p = r.bool()?;
+        }
+        let mut cycles = [0u64; 2];
+        for c in &mut cycles {
+            *c = r.u64()?;
+        }
+        // Through a setter, not the locals above: those were installed into the
+        // bus a hundred lines earlier and mutating them here would decode
+        // cleanly and restore nothing.
+        bus.set_controller_run_state(pending, cycles);
+    }
     bus.set_bus_misc_state(BusMiscState {
         dma_pending,
         dma_cycles_owed,
