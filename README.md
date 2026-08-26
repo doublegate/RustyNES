@@ -683,8 +683,12 @@ It builds on **v2.4.1 "Fabric"**, which opened the
 **v2.5.1 → v2.7.0** line that builds the rest of the console. **Rung 3 (the
 2C02) closed at v2.5.8 and rung 4 (the 2A03) at v2.6.2**; rung 5 — the NROM
 cartridge and the console's own bus — is in progress, with the sibling at
-**66 gates green** and its `nes_top` now dividing one master clock rather than
-taking its clock enables from the testbench. Fabric's subject was: a new NES core written in SystemVerilog from
+**72 gates green** and its `nes_top` now dividing one master clock rather than
+taking its clock enables from the testbench. AccuracyCoin's status vector agrees
+entry for entry, and the number to read beside that is **how many entries the
+run reaches**: the window used through v2.6.3 covered 88 of 146 and asked
+nothing about the PPU or APU suites, so the golden moved to a measured
+4500-frame window where all 146 execute. Fabric's subject was: a new NES core written in SystemVerilog from
 public hardware documentation, in a sibling repository, with this emulator as its
 **verification oracle**. RustyNES is not being ported to FPGA and cannot be — a
 MiSTer core is SystemVerilog compiled into a Cyclone V bitstream, and Rust does
@@ -899,10 +903,11 @@ green: rung 0 the compare surface, rung 1 the 6502, rung 2 the bus and
 interrupts, rung 3 the 2C02, rung 4 the 2A03, rung 5 AccuracyCoin parity, rung 6
 hardware bring-up, rung 7 mappers. **Rungs 0-4 are closed; rung 5 is the current
 work** — the NROM cartridge, the work RAM, the CPU bus, the controller ports and
-DMC DMA are all landed and gated (**66 gates green**), the core's own top level
+DMC DMA are all landed and gated (**72 gates green**), the core's own top level
 assembles them, and it divides one master clock rather than taking its clock
-enables from the testbench. The first end-to-end AccuracyCoin run is what
-remains. Every rung is labelled in
+enables from the testbench. AccuracyCoin runs end to end and its status vector
+is compared entry for entry; what remains is coverage — the run window is now
+wide enough to execute all 146 entries rather than the CPU half. Every rung is labelled in
 [`docs/mister.md`](docs/mister.md) by whether it has an **independent** oracle —
 because 141/141 on AccuracyCoin is not the same as "matches silicon", and a rung
 verified only against this emulator inherits whatever this emulator has wrong.

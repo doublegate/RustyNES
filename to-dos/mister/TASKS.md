@@ -174,10 +174,13 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
         diffs two of them **entry for entry**, including `Skipped` and
         `NotRun`, naming disagreements by test rather than by address. It
         refuses an all-`NotRun` vector — the case that looks like success to a
-        naive comparison. **First measurement: 137 of 146 agree, 9 differ**, six
-        sharing one failure code (five `SH`-group stores and Open Bus), which
-        reads as one shared address-bus cause. Producing the vector is v2.6.3;
-        matching it is v2.6.4
+        naive comparison. **First measurement: 137 of 146 agree, 9 differ**. The
+        reading that six of those "shared one failure code" and so shared a
+        cause is **retracted** (v2.6.4): `TEST_Fail` reports
+        `(ErrorCode << 2) | 2` and the runner sets `ErrorCode` to 1 before every
+        routine, so a code is an index WITHIN one routine and two entries
+        sharing it share nothing. Producing the vector is v2.6.3; matching it is
+        v2.6.4
 - [ ] v2.6.4 status vector identical **entry-for-entry**, including `Skipped` and
       `NotRun` — **rung 5 closes**. State a floor, not a target
 

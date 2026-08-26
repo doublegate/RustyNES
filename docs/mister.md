@@ -1111,6 +1111,35 @@ address-bus cause rather than six independent defects.
 **Producing the vector is v2.6.3's deliverable. Making the two agree is
 v2.6.4**, and the plan says so in its own acceptance row.
 
+**The "six sharing one failure code" reading was wrong, and v2.6.4 measured why.**
+AccuracyCoin's `TEST_Fail` reports `(ErrorCode << 2) | 2` and the runner sets
+`ErrorCode` to 1 before *every* test routine, so the code is an index **within
+one routine**: `Open Bus`'s code 7 is its own seventh assertion and `SHA (abs),Y`'s
+code 7 is that routine's seventh. Two entries sharing a code share nothing. What
+actually closed the five `SH` entries was the SH group's RDY-conditional store
+and its addressing-mode-dependent dummy cycle — a real shared cause, identified
+from the opcodes. `Open Bus` was untouched by that work and remained, which
+should have refuted the shape argument at the time.
+
+**And the number underneath the agreement.** Once all nine closed, the vector
+reported identical entry for entry across all 146 — with **58 of those entries
+`NotRun` on both sides**. The comparator was right; the run window was short.
+Broken down by suite, 600 frames reaches the CPU catalog and stops partway
+through `CPU Interrupts`, so the run asked the DUT nothing about the APU, PPU,
+sprite-evaluation or PPU-misc suites — the chips rungs 3 and 4 exist for.
+Measured rather than estimated, **4500 frames reaches all 146** (134,012,761
+cycles), and that is the golden the gate now uses. A pass count is a claim about
+what ran, and what ran has to be measured separately.
+
+Decoding the codes properly is also what closed two of the last three, in
+v2.6.4: `Open Bus` (a `$4015` read does not drive the data bus, and its D5 is
+open bus) and `Interrupt flag latency` (the interrupt poll is the second-to-last
+cycle, and branches poll before cycles 2 and 4 but never before 3). Both rules
+are stated by the test ROM's own comments and by neither of the nesdev pages the
+implementation was written from. `NMI Overlap BRK` is carried to v2.6.5 with its
+disagreement measured per sweep step rather than as one byte — see the sibling's
+`docs/rung5-accuracycoin.md`.
+
 Two properties are worth recording, because both are about what the comparison
 *refuses* rather than what it reports:
 

@@ -17,7 +17,7 @@
 > **no observation ports**, so the unit Quartus compiles is the unit that lints
 > clean. The DUT's 6502 now decodes **all 256 opcodes**, and **blargg's
 > `instr_test-v5` battery is a standing gate at 16 of 16 exact** — rung 1's first
-> *independent* oracle, taking the suite to **66 gates green, 0 failed**. It
+> *independent* oracle, taking the suite to **72 gates green, 0 failed**. It
 > found three defects the self-written corpus had missed: `RRA` taking the
 > pre-instruction carry into its ADC stage, the indirect RMW forms addressing
 > the indexed target during their pointer fetch, and the PPU I/O-bus latch never
@@ -40,10 +40,20 @@
 > which decodes a work-RAM dump against the 146-entry catalog and compares two
 > of them **entry for entry**, including `Skipped` and `NotRun`, naming every
 > disagreement by test rather than by address. First measurement: **137 of 146
-> entries agree, 9 differ**, six sharing one failure code — five `SH`-group
-> stores and Open Bus — which is a pattern a pass count of 137 would have
-> hidden. **Producing the vector is v2.6.3's deliverable; making the two agree
-> is v2.6.4.** Reaching it cost **two false passes before a real one**: the ROM
+> entries agree, 9 differ** — a pattern a pass count of 137 would have hidden.
+> (v2.6.3 read six of those as "sharing one failure code" and therefore one
+> cause; **retracted in v2.6.4** — `TEST_Fail` reports `(ErrorCode << 2) | 2`
+> and the runner sets `ErrorCode` to 1 before every routine, so a code indexes
+> within one routine and two entries sharing it share nothing.)
+>
+> **v2.6.4 closed all nine and then found the number underneath them.** The
+> vector reported identical entry for entry across all 146 — with **58 of those
+> entries `NotRun` on both sides**, because the 600-frame window reaches the CPU
+> suites and stops partway through `CPU Interrupts`. It asks nothing about the
+> APU, PPU, sprite-evaluation or PPU-misc suites. The golden is now the measured
+> **4500-frame** window where all 146 execute (134,012,761 cycles). Read the
+> coverage number beside the agreement number; a pass count is a claim about
+> what ran. Reaching it cost **two false passes before a real one**: the ROM
 > idles on its title screen until START is pressed, and only the framebuffer
 > half had a guard that refused. `sys/` is still empty; there is no `.rbf`.
 > Detail: `docs/mister.md` and the sibling's `docs/rung3-ppu.md` and

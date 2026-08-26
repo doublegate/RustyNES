@@ -71,6 +71,56 @@ fn vacuous(v: &[TestStatus]) -> bool {
     v.iter().all(|s| matches!(s, TestStatus::NotRun))
 }
 
+/// Entries that are `NotRun` on **both** sides.
+///
+/// The vacuity guard above catches an all-`NotRun` vector. It does not catch the
+/// PARTIAL case, and v2.6.4 walked straight into it: this tool reported
+/// "IDENTICAL entry for entry across all 146 entries" while **58 of the 146**
+/// were `NotRun` on both sides, because the run window reached the CPU suites
+/// and stopped. Two consoles agreeing about a test neither executed is not
+/// evidence about that test, and the suites that went unasked were the APU and
+/// PPU ones -- exactly what the preceding rungs exist for.
+///
+/// A comparison is only the rung-5 gate when the whole catalog EXECUTED, so this
+/// is reported on every two-file run and refused when non-zero.
+fn both_not_run(a: &[TestStatus], b: &[TestStatus]) -> usize {
+    a.iter()
+        .zip(b)
+        .filter(|(x, y)| matches!(x, TestStatus::NotRun) && matches!(y, TestStatus::NotRun))
+        .count()
+}
+
+/// Report how much of the catalog the two runs actually EXECUTED, and refuse a
+/// partial comparison.
+///
+/// Returns `Some(exit)` when the comparison must not proceed. Split out of
+/// `main` so it can be tested directly: the property it enforces is the one
+/// v2.6.4 found missing, and a check that only exists inside `main` is a check
+/// no test can reach.
+fn coverage_gate(a: &[TestStatus], b: &[TestStatus]) -> Option<ExitCode> {
+    // Printed unconditionally so the number is visible even on a clean run -- a
+    // reader who sees only "identical" has no way to tell how much of the
+    // catalog that sentence covers.
+    let dead = both_not_run(a, b);
+    println!(
+        "\ncoverage: {} of {} entries executed on both sides ({} NotRun on both)",
+        a.len() - dead,
+        a.len(),
+        dead
+    );
+    if dead == 0 {
+        return None;
+    }
+    eprintln!(
+        "\nPARTIAL: {dead} entries are NotRun on BOTH sides, so this comparison \
+         says nothing about them. AccuracyCoin needs a long enough window to \
+         reach the whole catalog -- 4500 frames executes all 146, where 600 \
+         reaches only the CPU suites. Re-export the golden with more --frames; \
+         agreement over a subset is not the rung-5 gate."
+    );
+    Some(ExitCode::from(4))
+}
+
 fn main() -> ExitCode {
     let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
     if args.is_empty() || args.len() > 2 {
@@ -143,6 +193,10 @@ fn main() -> ExitCode {
         return ExitCode::from(3);
     }
 
+    if let Some(code) = coverage_gate(&a, &b) {
+        return code;
+    }
+
     let diffs: Vec<_> = catalog()
         .iter()
         .zip(a.iter().zip(b.iter()))
@@ -174,8 +228,70 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{describe, vacuous};
+    use super::{both_not_run, coverage_gate, describe, vacuous};
     use rustynes_test_harness::accuracy_coin_catalog::{TestStatus, catalog, decode_results};
+
+    /// The refusal itself, not just its predicate. Reached directly because a
+    /// check that only exists inside `main` is a check no test can reach --
+    /// which is how the missing property got missed in the first place.
+    #[test]
+    fn a_partial_comparison_is_refused_and_a_full_one_is_not() {
+        let n = catalog().len();
+        let full = vec![TestStatus::Pass; n];
+        assert!(
+            coverage_gate(&full, &full).is_none(),
+            "a comparison covering the whole catalog must proceed"
+        );
+
+        let mut a = vec![TestStatus::Pass; n];
+        let mut b = vec![TestStatus::Pass; n];
+        a[0] = TestStatus::NotRun;
+        b[0] = TestStatus::NotRun;
+        assert!(
+            coverage_gate(&a, &b).is_some(),
+            "one entry neither side ran is enough to refuse: agreement over a \
+             subset is not the gate"
+        );
+    }
+
+    /// The PARTIAL-coverage guard, added in v2.6.4 after the tool reported
+    /// "IDENTICAL entry for entry across all 146 entries" over a comparison in
+    /// which 58 of those entries were `NotRun` on both sides.
+    #[test]
+    fn entries_not_run_on_both_sides_are_counted() {
+        let n = catalog().len();
+        let mut a = vec![TestStatus::Pass; n];
+        let mut b = vec![TestStatus::Pass; n];
+        assert_eq!(both_not_run(&a, &b), 0, "two full vectors hide nothing");
+
+        a[3] = TestStatus::NotRun;
+        b[3] = TestStatus::NotRun;
+        assert_eq!(both_not_run(&a, &b), 1, "one entry neither side ran");
+
+        // NotRun on ONE side is a real disagreement, not dead coverage -- it is
+        // the case the acceptance wording was written for and must not be
+        // absorbed into the partial count.
+        a[4] = TestStatus::NotRun;
+        assert_eq!(
+            both_not_run(&a, &b),
+            1,
+            "a one-sided NotRun is a difference, not missing coverage"
+        );
+    }
+
+    /// `Skipped` is a result the ROM wrote, so a pair of them is coverage, not
+    /// its absence -- the same distinction the vacuity guard draws.
+    #[test]
+    fn skipped_on_both_sides_is_not_missing_coverage() {
+        let n = catalog().len();
+        let a = vec![TestStatus::Skipped; n];
+        let b = vec![TestStatus::Skipped; n];
+        assert_eq!(
+            both_not_run(&a, &b),
+            0,
+            "Skipped means the ROM reached the entry and declined it"
+        );
+    }
 
     /// The guard this tool exists for. A vector of nothing but `NotRun`
     /// describes a run that executed no tests, and reporting two of those as
