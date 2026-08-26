@@ -86,8 +86,43 @@ fn vacuous(v: &[TestStatus]) -> bool {
 fn both_not_run(a: &[TestStatus], b: &[TestStatus]) -> usize {
     a.iter()
         .zip(b)
-        .filter(|(x, y)| matches!(x, TestStatus::NotRun) && matches!(y, TestStatus::NotRun))
+        .filter(|(x, y)| **x == TestStatus::NotRun && **y == TestStatus::NotRun)
         .count()
+}
+
+/// Entries that BOTH sides executed — neither is `NotRun`.
+///
+/// Not the complement of [`both_not_run`], and the difference is the whole
+/// point. `len - both_not_run` counts entries executed on **at least one** side,
+/// which is a different and much weaker statement: with the reference complete
+/// and the DUT stalled after five entries, `both_not_run` is zero and that
+/// subtraction claims all 146 ran on both sides. Caught in review of the change
+/// that introduced it, on a release whose subject is a count that described a
+/// set it did not measure.
+fn executed_on_both(a: &[TestStatus], b: &[TestStatus]) -> usize {
+    a.iter()
+        .zip(b)
+        .filter(|(x, y)| **x != TestStatus::NotRun && **y != TestStatus::NotRun)
+        .count()
+}
+
+/// The coverage sentence, built rather than printed, so a test can read it.
+///
+/// The v2.6.4 review found this line claiming `len - both_not_run` entries had
+/// "executed on both sides" — which is the count executed on **at least one**.
+/// Fixing the arithmetic was not enough: a mutation reverting the line came back
+/// NOT CAUGHT, because the tests asserted on the predicates and nothing reached
+/// the message. The defect was in the sentence, so the sentence is what a test
+/// has to be able to see.
+fn coverage_line(a: &[TestStatus], b: &[TestStatus]) -> String {
+    let dead = both_not_run(a, b);
+    let both = executed_on_both(a, b);
+    format!(
+        "coverage: {both} of {} entries executed on both sides \
+         ({dead} on neither, {} on one side only)",
+        a.len(),
+        a.len() - both - dead
+    )
 }
 
 /// Report how much of the catalog the two runs actually EXECUTED, and refuse a
@@ -102,12 +137,7 @@ fn coverage_gate(a: &[TestStatus], b: &[TestStatus]) -> Option<ExitCode> {
     // reader who sees only "identical" has no way to tell how much of the
     // catalog that sentence covers.
     let dead = both_not_run(a, b);
-    println!(
-        "\ncoverage: {} of {} entries executed on both sides ({} NotRun on both)",
-        a.len() - dead,
-        a.len(),
-        dead
-    );
+    println!("\n{}", coverage_line(a, b));
     if dead == 0 {
         return None;
     }
@@ -228,8 +258,66 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{both_not_run, coverage_gate, describe, vacuous};
+    use super::{both_not_run, coverage_gate, coverage_line, describe, executed_on_both, vacuous};
     use rustynes_test_harness::accuracy_coin_catalog::{TestStatus, catalog, decode_results};
+
+    /// The SENTENCE, not the predicates behind it. Reverting the line to the
+    /// subtraction the review flagged came back NOT CAUGHT while the tests only
+    /// reached `both_not_run` and `executed_on_both` — the defect was in the
+    /// message, so the message is what this asserts on.
+    #[test]
+    fn the_coverage_sentence_reports_what_it_claims() {
+        let n = catalog().len();
+        let reference = vec![TestStatus::Pass; n];
+        let mut dut = vec![TestStatus::NotRun; n];
+        for e in dut.iter_mut().take(5) {
+            *e = TestStatus::Pass;
+        }
+        let line = coverage_line(&reference, &dut);
+        assert!(
+            line.starts_with(&format!(
+                "coverage: 5 of {n} entries executed on both sides"
+            )),
+            "the sentence must say FIVE, not {n}: {line}"
+        );
+        assert!(
+            line.contains("(0 on neither,"),
+            "nothing is unrun on both sides here: {line}"
+        );
+        assert!(
+            line.contains(&format!("{} on one side only)", n - 5)),
+            "the rest ran on exactly one side: {line}"
+        );
+    }
+
+    /// `len - both_not_run` is NOT the number both sides executed, and the
+    /// v2.6.4 review caught the coverage line claiming it was. With the
+    /// reference complete and the DUT stalled, the two differ by the whole run.
+    #[test]
+    fn executed_on_both_is_not_the_complement_of_both_not_run() {
+        let n = catalog().len();
+        let reference = vec![TestStatus::Pass; n];
+        let mut dut = vec![TestStatus::NotRun; n];
+        for e in dut.iter_mut().take(5) {
+            *e = TestStatus::Pass;
+        }
+
+        assert_eq!(
+            both_not_run(&reference, &dut),
+            0,
+            "the reference ran everything, so nothing is unrun on BOTH sides"
+        );
+        assert_eq!(
+            executed_on_both(&reference, &dut),
+            5,
+            "only five entries ran on both sides"
+        );
+        assert_ne!(
+            n - both_not_run(&reference, &dut),
+            executed_on_both(&reference, &dut),
+            "the subtraction the review flagged would have reported all of them"
+        );
+    }
 
     /// The refusal itself, not just its predicate. Reached directly because a
     /// check that only exists inside `main` is a check no test can reach --
