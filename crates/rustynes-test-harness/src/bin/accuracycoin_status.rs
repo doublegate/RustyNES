@@ -31,7 +31,7 @@
 //! executed nothing is not a passing run, and it must not be possible to
 //! mistake one for the other.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use rustynes_test_harness::accuracy_coin_catalog::{
@@ -47,7 +47,7 @@ fn usage() -> ! {
     std::process::exit(2)
 }
 
-fn read_ram(p: &PathBuf) -> Vec<u8> {
+fn read_ram(p: &Path) -> Vec<u8> {
     std::fs::read(p).unwrap_or_else(|e| {
         eprintln!("read {}: {e}", p.display());
         std::process::exit(2)
@@ -77,7 +77,7 @@ fn main() -> ExitCode {
         usage();
     }
 
-    let decode = |p: &PathBuf| -> Vec<TestStatus> {
+    let decode = |p: &Path| -> Vec<TestStatus> {
         let ram = read_ram(p);
         decode_results(&ram).unwrap_or_else(|| {
             eprintln!(
