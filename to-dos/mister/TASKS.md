@@ -61,7 +61,7 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
 
 ## v2.6.3 – v2.6.4 — rung 5, NROM + AccuracyCoin
 
-- [~] v2.6.3 NROM cartridge; first end-to-end AccuracyCoin run
+- [x] v2.6.3 NROM cartridge; the master-clock divider; first end-to-end AccuracyCoin run
   - [x] `rtl/cart/cart_nrom.sv` — written from `nesdev_wiki/NROM.xhtml`
         (public source: <https://www.nesdev.org/wiki/NROM>),
         instantiated beneath the existing gates and cross-checked per access
@@ -160,13 +160,24 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
         second-to-last-cycle recognition, correctly gated, so a second delay
         would have cancelled an APU-side error. Looking for the cause after the
         fix worked is what separated them
-  - [ ] First end-to-end AccuracyCoin run — attempted, and it produced **two
-        false passes before a real one**. The first reported RAM 2048/2048 and
-        pixels 0/61440 identical: both true and worthless, because AccuracyCoin
-        idles on its title screen until START is pressed. `fb_diff.py` REFUSED
-        the framebuffer half ("2 distinct values, need 8"); the RAM half had no
-        such guard. With START pressed, 208 of 2048 bytes change. Producing a
-        status vector is v2.6.3; matching it is v2.6.4
+  - [x] First end-to-end AccuracyCoin run — **it completes**, the full
+        17,868,316 cycles, where it previously halted early. Reaching it cost
+        **two false passes before a real one**: the first reported RAM 2048/2048
+        and pixels 0/61440 identical, both true and worthless, because
+        AccuracyCoin idles on its title screen until START is pressed.
+        `fb_diff.py` REFUSED the framebuffer half ("2 distinct values, need 8");
+        the RAM half had no such guard. With START pressed, 208 of 2048 bytes
+        change, and the golden manifest now records `press_start` so the two
+        runs can never again be described identically
+  - [x] The status vector exists and is comparable. `accuracycoin_status`
+        (oracle side) decodes a work-RAM dump against the 146-entry catalog and
+        diffs two of them **entry for entry**, including `Skipped` and
+        `NotRun`, naming disagreements by test rather than by address. It
+        refuses an all-`NotRun` vector — the case that looks like success to a
+        naive comparison. **First measurement: 137 of 146 agree, 9 differ**, six
+        sharing one failure code (five `SH`-group stores and Open Bus), which
+        reads as one shared address-bus cause. Producing the vector is v2.6.3;
+        matching it is v2.6.4
 - [ ] v2.6.4 status vector identical **entry-for-entry**, including `Skipped` and
       `NotRun` — **rung 5 closes**. State a floor, not a target
 
