@@ -16,6 +16,49 @@ The runtime `.nes` ROM lives at [`../accuracycoin/AccuracyCoin.nes`](../accuracy
 harness loads the ROM from a workspace-root-relative path while the
 compile-time `include_str!` reaches for a different one.
 
+## Building another sub-test (v2.6.4)
+
+`sub-tests/nmi-overlap-brk.nes` was added in v2.6.4 and is the first one built
+after the original batch. The recipe, so the next one does not have to be
+rediscovered:
+
+```bash
+mkdir -p /tmp/accoin-src && cd /tmp/accoin-src
+for f in AccuracyCoin.asm nesasm.exe Tiles.pcx Sprites.pcx; do
+  curl -sLO "https://raw.githubusercontent.com/100thCoin/AccuracyCoin/main/$f"
+done
+python3 scripts/accuracycoin-build/build_sub_test_rom.py /tmp/accoin-src \
+    --suite 11 --test 1 --name "NMI Overlap BRK" \
+    --out tests/roms/AccuracyCoin/sub-tests/nmi-overlap-brk.nes
+```
+
+`--suite` is the 0-based index into `TableTable` and `--test` the 0-based row
+within that suite's `table "name", ...` lines; the builder's docstring carries
+the suite map. It assembles through **wine + the upstream `nesasm.exe`**, which
+is the upstream toolchain rather than a substitute.
+
+**`sub-tests/cpu-open-bus.nes` does not run `Open Bus`.** Measured in v2.6.4:
+its verdict lands at **`$0407`**, which the catalog assigns to *Dummy write
+cycles*, and `$0408` (`Open Bus`) is never written. It is off by one row of
+`Suite_CPUBehavior` — a valid stimulus under the wrong name. It is kept as-is
+rather than renamed, because a gate may already reference it; the correctly
+built one is **`sub-tests/open-bus.nes`** (`--suite 0 --test 7`), added in the
+same release and verified to report at `$0408`.
+
+Two of the three ROMs used for v2.6.4's rung-5 work therefore report at their
+catalog addresses and one does not, which is why the paragraph below says to
+read the address out of a RAM diff.
+
+**Why these matter for co-simulation.** The full battery is 17,868,316 CPU
+cycles and needs a START press at a specific frame. A sub-test reaches its
+verdict in **0.9M** (`iflag-latency`) to **4.5M** (`nmi-overlap-brk`) cycles from
+boot, with no input at all — so a DUT iteration that took minutes takes seconds,
+and the verdict byte names one assertion instead of one entry among 146. The
+result addresses are **not** always the catalog's: `iflag-latency` and
+`nmi-overlap-brk` report at their catalog addresses (`$0461`, `$0462`) and
+`cpu-open-bus` reports at **`$0407`**, one below its catalog `$0408`. Read the
+address out of a RAM diff rather than assuming.
+
 ## Catalog format
 
 ```text
