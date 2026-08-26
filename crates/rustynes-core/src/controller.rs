@@ -108,10 +108,25 @@ impl Controller {
         if new_strobe {
             self.shift = self.buttons.bits();
         }
-        // A strobe reloads the register, so an owed shift has nothing left to
-        // advance. Dropping it here keeps a strobe the clean reset it is on
-        // hardware rather than leaving a stale edge to fire on the next read.
-        self.pending_shift = false;
+        // Only an ACTUAL strobe drops an owed shift, and only because the
+        // reload leaves nothing for it to advance.
+        //
+        // This cleared unconditionally when `pending_shift` was introduced, so a
+        // write with bit 0 CLEAR -- not a strobe at all -- silently swallowed a
+        // shift the read run had already earned. That is wrong on the mechanism:
+        // `CLK` is low only while $4016/$4017 is being READ, so a write ENDS the
+        // run and produces exactly the rising edge the owed shift represents. A
+        // write cannot cancel it; if anything it is what causes it.
+        //
+        // Caught by the DUT, which models the edge directly and therefore could
+        // not reproduce this: at AccuracyCoin 25,196,442 a `$40` write lands
+        // between a consecutive read pair and the next read, and from there the
+        // two consoles' shift registers sat one bit apart. The co-simulation
+        // found a defect in the ORACLE, which is the direction that is supposed
+        // to be impossible and is the whole reason the DUT is worth building.
+        if new_strobe {
+            self.pending_shift = false;
+        }
         self.strobe = new_strobe;
     }
 
