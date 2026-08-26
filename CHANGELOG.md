@@ -24,6 +24,8 @@ the documentary lineage of how that core was built (not standalone user
 releases), and `v0.1.0`–`v0.8.6` are the original pre-1.0 engine that the
 cycle-accurate core later replaced.
 
+## [Unreleased]
+
 ## [2.6.3] - 2026-08-25 - "Mainspring" (the DUT runs on one master clock, and four enables that were never enabling — plus AccuracyCoin end to end, a status vector that names its disagreements by test, and a decay constant the documentation and the corpus disagree about by a factor of ~17. The emulation core is unchanged)
 
 ### Added
