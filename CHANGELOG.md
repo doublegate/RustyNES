@@ -26,16 +26,40 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [2.6.4] - 2026-08-26 - "Rubric" (the last four AccuracyCoin disagreements close, every rule stated by the test ROM and by neither nesdev page — and then the gate that certified them is found to have covered 88 of 146 entries. The emulation core is unchanged)
+## [2.6.4] - 2026-08-26 - "Rubric" (OAM DMA lands and all nine AccuracyCoin disagreements close, every rule that closed the last three stated by the test ROM and by neither nesdev page — and then the gate that certified them is found to have covered 88 of 146 entries. The emulation core is unchanged)
 
 A rubric is the authoritative statement of the rules, written in the margin by
 the person who set the test. That is literally where all three of this release's
 fixes came from.
 
+### OAM DMA, and the SH group — the two thirds of this release that came first
+
+`$4014` was a register the console decoded and then did nothing with: **the DUT
+had never spent the 513 cycles an OAM DMA costs.** It lands here as a real bus
+master — halt on a read cycle, an optional alignment cycle, then 256 read/write
+pairs — implemented from `nesdev_wiki/DMA.xhtml`, with the documented **DMC-get
+precedence over OAM-get** (a DMC fetch delays the OAM transfer, and costs it its
+alignment as well as its slot). A DMA write now drives the open-bus latch too,
+which until an OAM DMA existed there was no bus master here to do.
+
+Its halt and alignment were **fitted to the oracle first and then corrected from
+the wiki** — the correction is in the ledger rather than quietly squashed,
+because "measured rather than assumed" was written about a fit.
+
+The **`SH` group** closes in two steps, and the second was named by the residual
+of the first: the stored value's AND with the address high byte is
+**RDY-conditional**, and the dummy-read cycle is **addressing-mode dependent**
+(`SHA (d),Y` is six cycles, so its `tcyc==3` is a pointer-high fetch, not a dummy
+read). Four absolute forms closed on the first fix and `$93` alone did not, which
+is what pointed at the second.
+
+Together those took the vector from **9 differing to 3**. The three below are the
+tail.
+
 ### The three entries, and where their rules actually live
 
-v2.6.3 left nine entries differing; the SH group closed five, and this release
-closes the last three. **Every one is category 1 — the implementation followed
+v2.6.3 left nine entries differing. This release closes all nine; the three
+below are the last of them. **Every one is category 1 — the implementation followed
 documentation that is true and insufficient.**
 
 - **`Open Bus`.** A read of `$4015` does not drive the data bus, and its D5 is
