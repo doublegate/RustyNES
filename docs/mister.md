@@ -1091,6 +1091,47 @@ that was wrong (NROM's PRG-RAM window), and the sharpest category-1 entry yet:
 the PPU's open-bus decay deadline, where the documentation says 3-30 ms, this
 emulator uses 558.7 ms, and the DUT's corpus forces >= 523.4 ms.
 
+### AccuracyCoin runs end to end, and the gate is a status vector
+
+The full run now completes on the DUT — **17,868,316 cycles**, where it
+previously halted early — which is what "first end-to-end AccuracyCoin run"
+in the plan's v2.6.3 row asked for.
+
+The comparison is `accuracycoin_status`, on this side. It reads a work-RAM
+dump, decodes it against the 146-entry catalog in
+`accuracy_coin_catalog.rs`, and reports by test rather than by address. It
+filters in both modes rather than dumping all 146 rows: given one dump it
+prints the entries that are **not a clean `Pass`**, and given two it prints only
+the entries where they **disagree**. The vector is decoded in full either way --
+what is filtered is the output, not the comparison. First
+measurement: **137 of 146 entries agree, 9 differ**, six of those sharing one
+failure code — five `SH`-group stores and Open Bus — which reads as one shared
+address-bus cause rather than six independent defects.
+
+**Producing the vector is v2.6.3's deliverable. Making the two agree is
+v2.6.4**, and the plan says so in its own acceptance row.
+
+Two properties are worth recording, because both are about what the comparison
+*refuses* rather than what it reports:
+
+- **It is not a RAM byte-compare, deliberately.** Comparing 2 KiB of work RAM
+  answers a different question and answers it wrongly in both directions: it
+  reports scratch bytes — a stack slot, a loop counter, a result the ROM is
+  about to overwrite — as failures, and it reports two runs that never started
+  the battery as a *pass*, because two idle title screens have identical RAM.
+- **An all-`NotRun` vector is refused with a non-zero exit.** That case — two
+  vectors agreeing on 146 entries of nothing — is precisely the shape of the
+  vacuous status-address assertion v2.6.2 found in the NTSC blargg suite, which
+  reported 11/11 for five minor releases while asserting nothing. A comparison
+  that cannot distinguish *agreed* from *never ran* is not a gate.
+
+Reaching the run cost **two false passes before a real one**: AccuracyCoin idles
+on its title screen until START is pressed, and only the framebuffer half of the
+export had a guard that refused an idle capture. The manifest now records
+`press_start` — as `A:B`, or the literal `none` — because a controller press
+changes what the ROM *executes*, and a manifest omitting it describes an idle
+title screen and an 88-result battery identically.
+
 ## Rung 4 — the 2A03, and the audit it prompted
 
 Rung 4 opened at v2.5.9 with the two pulse channels and the frame counter, and

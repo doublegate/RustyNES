@@ -483,6 +483,69 @@ fn every_release_anchor_names_the_workspace_version() {
     );
 }
 
+/// The CHANGELOG must retain an `[Unreleased]` section after a release cut.
+///
+/// **Why this exists.** Cutting v2.6.3 renamed `## [Unreleased]` into
+/// `## [2.6.3] - ...` instead of inserting the new section *below* a retained
+/// `[Unreleased]`, so the file shipped with no `[Unreleased]` heading at all.
+/// Every prior tag has one — `v2.6.0`, `v2.6.1` and `v2.6.2` each carry an empty
+/// `## [Unreleased]` immediately above the newest release — and the Keep a
+/// Changelog convention the file declares requires it.
+///
+/// It was caught, but three crates away and by accident: `rustynes-frontend`'s
+/// in-app documentation panel parses this file, and three of its tests assert an
+/// `[Unreleased]` section exists and sorts last. So a CHANGELOG defect surfaced
+/// as a frontend unit-test failure on the full-workspace matrix leg, which is
+/// both a long way from the edit and a gate that does not run on every PR.
+///
+/// The release audit already parses this file for the header shape, so the
+/// assertion belongs here, next to the other claims the cut has to satisfy —
+/// where it names the CHANGELOG by name at the moment the version is bumped.
+///
+/// Deliberately checks only that the heading EXISTS, not that it is empty:
+/// carrying an entry destined for the next release is legitimate, and asserting
+/// emptiness would fail a tree that is merely ahead.
+#[test]
+fn the_changelog_keeps_an_unreleased_section() {
+    let changelog = read("CHANGELOG.md");
+    let count = changelog
+        .lines()
+        .filter(|l| l.trim_end() == "## [Unreleased]")
+        .count();
+
+    assert!(
+        count > 0,
+        "CHANGELOG.md has no `## [Unreleased]` heading.\n\n\
+         A release cut inserts the new version section BELOW a retained\n\
+         `## [Unreleased]`; it does not rename that heading into the new\n\
+         version. Every tag from v2.6.0 onward carries an empty one.\n\n\
+         Without it, `rustynes-frontend`'s documentation panel fails three\n\
+         tests -- but only on the full-workspace matrix leg, so this is the\n\
+         cheaper place to find out."
+    );
+
+    assert_eq!(
+        count, 1,
+        "CHANGELOG.md has {count} `## [Unreleased]` headings; exactly one is \
+         expected. More than one means a previous cut left its heading behind."
+    );
+
+    // `[Unreleased]` must come FIRST. A heading that has drifted below a
+    // released section still satisfies the existence check above while telling
+    // a reader the opposite of the truth about where new entries go.
+    let first_section = changelog
+        .lines()
+        .find(|l| l.starts_with("## ["))
+        .expect("CHANGELOG.md has no `## [` section heading at all");
+    assert_eq!(
+        first_section.trim_end(),
+        "## [Unreleased]",
+        "the first `## [` section in CHANGELOG.md is {first_section:?}, but \
+         `## [Unreleased]` must lead the file so new entries have an unambiguous \
+         home."
+    );
+}
+
 /// The CHANGELOG must carry a section for the version the workspace claims.
 #[test]
 fn the_changelog_has_a_section_for_the_workspace_version() {
