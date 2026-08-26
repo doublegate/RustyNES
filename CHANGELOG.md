@@ -24,7 +24,44 @@ the documentary lineage of how that core was built (not standalone user
 releases), and `v0.1.0`–`v0.8.6` are the original pre-1.0 engine that the
 cycle-accurate core later replaced.
 
-## [Unreleased]
+## [2.6.3] - 2026-08-25 - "Mainspring" (the DUT runs on one master clock, and four enables that were never enabling — plus AccuracyCoin end to end, a status vector that names its disagreements by test, and a decay constant the documentation and the corpus disagree about by a factor of ~17. The emulation core is unchanged)
+
+### Added
+
+- **AccuracyCoin's status vector, decoded and comparable entry for entry.**
+  Rung 5's stated acceptance is a status vector comparable **entry for
+  entry** — including `Skipped` and `NotRun` — between the oracle and the
+  co-simulation DUT. `accuracycoin_status` is the oracle half: it reads a
+  work-RAM dump, decodes it against the 146-entry catalog, prints one line
+  per entry, and given two dumps names every disagreement **by test rather
+  than by address**.
+
+  Producing one is this release's deliverable; making the two agree is
+  v2.6.4. The first end-to-end DUT run reports **137 of 146 entries
+  agreeing and 9 differing**, six of those sharing `Fail(code 7)` — five
+  SH-group stores and Open Bus — a pattern that suggests one shared
+  address-bus cause rather than six independent defects. A pass count of
+  137 would have hidden that pattern; naming the entries is what the
+  entry-for-entry form buys.
+
+  **Byte-comparing 2 KiB of work RAM answers a different question, and
+  answers it wrongly in both directions**: it reports scratch bytes as
+  failures, and it reports two runs that never started the battery as a
+  pass, because two idle title screens have identical RAM. So the tool
+  refuses an all-`NotRun` vector with a non-zero exit. That case — two
+  vectors agreeing on 146 entries of nothing — is exactly the shape of the
+  vacuous status-address assertion v2.6.2 found in the NTSC blargg suite,
+  which reported 11/11 for five minor releases while asserting nothing.
+
+- **The golden manifest records the controller press, and its absence.**
+  The frames-mode manifest gains `press_start`, written as `A:B` when a
+  window was given and the literal `none` when it was not. A controller
+  press changes what the ROM *executes* — an AccuracyCoin export without
+  one captures an idle title screen and with one captures 88 test results
+  — so a manifest omitting it describes two completely different runs
+  identically. Found by needing it: the shipped `AccuracyCoin` golden
+  plainly contains a pressed run, and its own manifest could not say which
+  window produced it.
 
 ### Changed
 
