@@ -47,6 +47,12 @@ Cargo.lock
 *.ram_init.bin
 *.fetch.bin
 *.irq.csv
+# A FIFTH, found the same way in v2.6.5. The sibling's `cpu-bus-gate` writes
+# `<rom>.dut.bin` -- the DUT's own capture, compared against `<rom>.obs.bin` --
+# and its output path is a variable, so a run pointed at this tree offers a file
+# this list did not name. A 134 M-cycle window is 2.0 GB. Verified to match
+# nothing tracked before being added.
+*.dut.bin
 # A FOURTH, found the same way and for the same reason: `apu.bin` arrived with
 # rung 4 (the 2A03's per-cycle channel levels) at v2.5.9 and was never added, so
 # every APU golden the sibling's gates consume has been offered for commit since.
