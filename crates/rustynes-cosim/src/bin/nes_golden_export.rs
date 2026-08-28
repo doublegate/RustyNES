@@ -41,6 +41,21 @@ use sha2::{Digest, Sha256};
 const INDEX_FB_LEN: usize = 256 * 240;
 const RAM_LEN: usize = 2048;
 
+/// The `--ppu-state-trace` window, as four named fields rather than a nest of
+/// tuples. Named because the tuple form was genuinely unreadable -- three of its
+/// four members are pairs and two of those are optional -- and because a struct
+/// with `None` defaults keeps the test builders below to one line each.
+///
+/// `scanlines` is `i16` rather than `u16` because the pre-render line is -1.
+#[cfg(feature = "ppu-state-trace")]
+#[derive(Clone, Copy)]
+struct PpuStateTraceArgs {
+    capacity: usize,
+    frames: (u32, u32),
+    scanlines: Option<(i16, i16)>,
+    dots: Option<(u16, u16)>,
+}
+
 struct Args {
     rom: PathBuf,
     out: PathBuf,
@@ -63,6 +78,13 @@ struct Args {
     /// Capacity for the per-dot PPU bus-address capture (rung 3's v2.5.4 gate).
     fetch_trace: Option<usize>,
     apu_trace: Option<usize>,
+    /// v2.6.5 — the per-dot PPU state fixture. A **DIAGNOSTIC**, never a gate:
+    /// `RustyNES_MiSTer/docs/rung3-ppu.md` fixes that partition, and these
+    /// fields are this emulator's decomposition of the chip rather than
+    /// pin-observable facts. Carried as (capacity, frames, scanlines, dots) so
+    /// the window can be narrowed to the handful of dots a question is about.
+    #[cfg(feature = "ppu-state-trace")]
+    ppu_state_trace: Option<PpuStateTraceArgs>,
     checkpoint_interval: u64,
     /// v2.5.1 — rung 2's interrupt sweep. Instruction-indexed, not
     /// cycle-indexed: this side cannot assert a pin mid-instruction, so a
@@ -80,7 +102,9 @@ fn usage() -> ! {
          \x20                       [--fetch-trace CAP] [--apu-trace CAP] [--checkpoint-interval N]\n\
          \x20                       [--inject-instructions N] [--inject-hold N]\n\
          \x20                       [--inject-nmi-at N] [--inject-irq-at N]\n\
-         \x20                       [--press-start A:B]"
+         \x20                       [--press-start A:B]\n\
+         \x20                       [--ppu-state-trace CAP --pst-frames A:B\n\
+         \x20                        [--pst-scanlines A:B] [--pst-dots A:B]]"
     );
     std::process::exit(2)
 }
@@ -127,6 +151,10 @@ fn parse_args() -> Args {
     let (mut boot_trace, mut irq_trace) = (None, None);
     let mut fetch_trace: Option<usize> = None;
     let mut apu_trace: Option<usize> = None;
+    #[cfg(feature = "ppu-state-trace")]
+    let (mut pst_cap, mut pst_frames) = (None::<usize>, None::<(u32, u32)>);
+    #[cfg(feature = "ppu-state-trace")]
+    let (mut pst_scanlines, mut pst_dots) = (None::<(i16, i16)>, None::<(u16, u16)>);
     let mut checkpoint_interval = rustynes_cosim::checkpoint::DEFAULT_INTERVAL;
     let (mut inject_instructions, mut inject_hold) = (0u64, 1u64);
     let (mut inject_nmi_at, mut inject_irq_at) = (None, None);
@@ -212,6 +240,39 @@ fn parse_args() -> Args {
                 apu_trace = Some(parse_apu_cap(need(i)));
                 i += 2;
             }
+            #[cfg(not(feature = "ppu-state-trace"))]
+            "--ppu-state-trace" | "--pst-frames" | "--pst-scanlines" | "--pst-dots" => {
+                // REFUSED, not ignored. A control build that accepted the flag
+                // and produced no `ppu_state.csv` would read as "the window held
+                // no dots" -- the same confusion the armed-but-empty warning
+                // exists to prevent, one level up.
+                eprintln!(
+                    "{} needs a build with --features ppu-state-trace \
+                     (it is off by default; see Cargo.toml)",
+                    argv[i]
+                );
+                usage()
+            }
+            #[cfg(feature = "ppu-state-trace")]
+            "--ppu-state-trace" => {
+                pst_cap = Some(need(i).parse().unwrap_or_else(|_| usage()));
+                i += 2;
+            }
+            #[cfg(feature = "ppu-state-trace")]
+            "--pst-frames" => {
+                pst_frames = Some(parse_pair_u32(need(i)).unwrap_or_else(|| usage()));
+                i += 2;
+            }
+            #[cfg(feature = "ppu-state-trace")]
+            "--pst-scanlines" => {
+                pst_scanlines = Some(parse_pair_i16(need(i)).unwrap_or_else(|| usage()));
+                i += 2;
+            }
+            #[cfg(feature = "ppu-state-trace")]
+            "--pst-dots" => {
+                pst_dots = Some(parse_pair_u16(need(i)).unwrap_or_else(|| usage()));
+                i += 2;
+            }
             "--checkpoint-interval" => {
                 checkpoint_interval = need(i).parse().unwrap_or_else(|_| usage());
                 if checkpoint_interval == 0 {
@@ -233,6 +294,25 @@ fn parse_args() -> Args {
         irq_trace,
         fetch_trace,
         apu_trace,
+        // REFUSED rather than defaulted: a frameless window would record every
+        // frame of the run, which at ~46 kB a frame is gigabytes for the
+        // 4500-frame goldens -- and the whole point of this trace is a handful
+        // of dots. An option that silently means "everything" is how a
+        // diagnostic becomes an out-of-disk.
+        #[cfg(feature = "ppu-state-trace")]
+        ppu_state_trace: match (pst_cap, pst_frames) {
+            (Some(capacity), Some(frames)) => Some(PpuStateTraceArgs {
+                capacity,
+                frames,
+                scanlines: pst_scanlines,
+                dots: pst_dots,
+            }),
+            (None, None) => None,
+            _ => {
+                eprintln!("--ppu-state-trace and --pst-frames must be given together");
+                usage()
+            }
+        },
         checkpoint_interval,
         inject_instructions,
         inject_nmi_at,
@@ -482,6 +562,83 @@ fn parse_apu_cap(raw: &str) -> usize {
     cap
 }
 
+/// Parse an inclusive `A:B` range. Returns `None` for anything malformed or
+/// inverted, so the caller can refuse rather than silently widen the window.
+///
+/// Three monomorphic wrappers rather than one generic: the three ranges have
+/// three different element types (`u32` frames, `i16` scanlines carrying the
+/// `-1` pre-render line, `u16` dots), and a generic over `FromStr + PartialOrd`
+/// buys nothing at three call sites.
+/// Arm the per-dot PPU state fixture if it was requested.
+///
+/// A free function with a no-op twin rather than a `cfg` block inside `main`:
+/// `main` is already at the pedantic line limit, and a `cfg`-gated block there
+/// makes its length depend on which features are enabled -- so the lint would
+/// fire in one configuration and not the other.
+#[cfg(feature = "ppu-state-trace")]
+fn arm_ppu_state_trace(o: &mut Oracle, args: &Args) {
+    if let Some(w) = args.ppu_state_trace {
+        let (f0, f1) = w.frames;
+        o.enable_ppu_state_trace(
+            w.capacity,
+            f0..=f1,
+            w.scanlines.map(|(a, b)| a..=b),
+            w.dots.map(|(a, b)| a..=b),
+        );
+    }
+}
+
+/// The control build's twin. Present so `main` reads identically either way;
+/// the argument parser still REFUSES the flags rather than ignoring them, so a
+/// control build cannot silently accept a request it cannot serve.
+#[cfg(not(feature = "ppu-state-trace"))]
+const fn arm_ppu_state_trace(_o: &mut Oracle, _args: &Args) {}
+
+/// Arm every trace the arguments asked for.
+///
+/// One place rather than five blocks in `main`: they are the same kind of step,
+/// `main` sits at the pedantic line limit, and keeping them together means
+/// adding a sixth trace does not push an unrelated function over it.
+fn arm_traces(o: &mut Oracle, args: &Args) {
+    if let Some((start, end)) = args.boot_trace {
+        // Capacity is the window, not the whole run: a bounded window is the
+        // design, because a full AccuracyCoin run would be ~1 GB of records.
+        let cap = usize::try_from(end.saturating_sub(start) + 1).unwrap_or(usize::MAX);
+        o.enable_cpu_boot_trace(cap, start, end);
+    }
+    if let Some(cap) = args.irq_trace {
+        o.enable_irq_trace(cap);
+    }
+    if let Some(cap) = args.fetch_trace {
+        o.enable_fetch_trace(cap);
+    }
+    if let Some(cap) = args.apu_trace {
+        o.enable_apu_trace(cap);
+    }
+    arm_ppu_state_trace(o, args);
+}
+
+#[cfg(feature = "ppu-state-trace")]
+fn parse_pair_u32(raw: &str) -> Option<(u32, u32)> {
+    let (a, b) = raw.split_once(':')?;
+    let (a, b) = (a.parse::<u32>().ok()?, b.parse::<u32>().ok()?);
+    (a <= b).then_some((a, b))
+}
+
+#[cfg(feature = "ppu-state-trace")]
+fn parse_pair_i16(raw: &str) -> Option<(i16, i16)> {
+    let (a, b) = raw.split_once(':')?;
+    let (a, b) = (a.parse::<i16>().ok()?, b.parse::<i16>().ok()?);
+    (a <= b).then_some((a, b))
+}
+
+#[cfg(feature = "ppu-state-trace")]
+fn parse_pair_u16(raw: &str) -> Option<(u16, u16)> {
+    let (a, b) = raw.split_once(':')?;
+    let (a, b) = (a.parse::<u16>().ok()?, b.parse::<u16>().ok()?);
+    (a <= b).then_some((a, b))
+}
+
 /// Write rung 4's per-CPU-cycle channel-level golden, when armed.
 ///
 /// Fails loudly on a dropped record for the same reason `write_fetch_trace`
@@ -521,6 +678,33 @@ fn write_apu_trace(o: &mut Oracle, base: &Path) {
         write(&suffixed(base, "apu.bin"), &bytes);
     }
 }
+
+/// Write the per-dot PPU state fixture if it was armed.
+///
+/// Written LAST and unconditionally reported: a diagnostic that silently
+/// produced nothing would be read as "the window held no dots" rather than "the
+/// trace was never armed", which is the exact confusion this project keeps
+/// paying for.
+///
+/// Extracted from `main` for the same reason as `arm_ppu_state_trace`, and with
+/// the same no-op twin, so `main`'s length does not depend on the feature set.
+#[cfg(feature = "ppu-state-trace")]
+fn write_ppu_state_trace(o: &mut Oracle, args: &Args, base: &Path) {
+    if args.ppu_state_trace.is_none() {
+        return;
+    }
+    match o.take_ppu_state_trace_csv() {
+        Some(csv) => {
+            let rows = csv.lines().count().saturating_sub(1);
+            write(&suffixed(base, "ppu_state.csv"), csv.as_bytes());
+            println!("  ppu_state.csv: {rows} dot records (DIAGNOSTIC, not a gate)");
+        }
+        None => eprintln!("  WARNING: PPU state trace was armed but returned nothing"),
+    }
+}
+
+#[cfg(not(feature = "ppu-state-trace"))]
+const fn write_ppu_state_trace(_o: &mut Oracle, _args: &Args, _base: &Path) {}
 
 /// Write the per-dot PPU bus-address golden, when the trace was armed.
 ///
@@ -656,21 +840,7 @@ fn main() {
     // compute them.
     let ram_init = o.nes().bus().ram_bytes().to_vec();
 
-    if let Some((start, end)) = args.boot_trace {
-        // Capacity is the window, not the whole run: a bounded window is the
-        // design, because a full AccuracyCoin run would be ~1 GB of records.
-        let cap = usize::try_from(end.saturating_sub(start) + 1).unwrap_or(usize::MAX);
-        o.enable_cpu_boot_trace(cap, start, end);
-    }
-    if let Some(cap) = args.irq_trace {
-        o.enable_irq_trace(cap);
-    }
-    if let Some(cap) = args.fetch_trace {
-        o.enable_fetch_trace(cap);
-    }
-    if let Some(cap) = args.apu_trace {
-        o.enable_apu_trace(cap);
-    }
+    arm_traces(&mut o, &args);
 
     // `advance_frames`, not a `run_frame()` loop: the first call after power-on
     // is swallowed by the frame_complete latch the reset sequence leaves set, so
@@ -718,6 +888,7 @@ fn main() {
     write(&suffixed(&base, "index_fb.bin"), &fb_bytes);
 
     write_fetch_trace(&mut o, &base);
+    write_ppu_state_trace(&mut o, &args, &base);
     write_apu_trace(&mut o, &base);
 
     // Checked BEFORE the write, and checked on `ram_init` specifically. The
@@ -825,6 +996,8 @@ mod tests {
         // default and giving it one would invent a "valid" argument set that
         // no invocation produces.
         let base = || Args {
+            #[cfg(feature = "ppu-state-trace")]
+            ppu_state_trace: None,
             rom: std::path::PathBuf::from("/dev/null"),
             out: std::path::PathBuf::from("/tmp"),
             seed: 0,

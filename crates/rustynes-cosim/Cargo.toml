@@ -37,6 +37,29 @@ pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 undocumented_unsafe_blocks = "warn"
 
+[features]
+# The ONE optional feature here, and it is OFF BY DEFAULT, which the crate's own
+# test suite decided rather than taste.
+#
+# It is a DIAGNOSTIC, and its `rustynes-core` counterpart compiles out the v2.2.3
+# fast dot path -- so enabling it by default changes what the DEFAULT build of
+# this crate runs. `tests/fast_path_does_not_bypass_the_fetch_trace.rs` exists to
+# prove the fast path records the same fetches as the general one, and it does
+# that by running the ROM with the fast path on and off. Made default, the
+# feature compiles the fast path away and that test fails: the property it
+# guards becomes unobservable in the configuration `cargo test` uses.
+#
+# So the default build is the CONTROL, and the diagnostic is opt-in:
+#     cargo run --features ppu-state-trace --bin nes_golden_export -- ... \
+#         --ppu-state-trace CAP --pst-frames A:B
+#
+# That ordering is also what makes the output-neutrality claim in the dependency
+# comment below testable rather than asserted -- exporting a golden with and
+# without the feature gives byte-identical `obs.bin`, `index_fb.bin`, `ram.bin`
+# and `ckpt.bin`, VERIFIED on `ppu-misc-2007-stress` at 60 frames.
+default = []
+ppu-state-trace = ["rustynes-core/ppu-state-trace"]
+
 [dependencies]
 # The trace features are NOT optional here. This crate exists to emit them, and a
 # build without them would produce an oracle that silently exports nothing —
@@ -70,6 +93,19 @@ rustynes-core = { path = "../rustynes-core", features = [
     # assumed: exporting a golden with and without it produces byte-identical
     # `obs.bin`, `index_fb.bin` and `ram.bin`.
     "debug-hooks",
+    # v2.6.5. The per-dot PPU state fixture, used STRICTLY as a DIAGNOSTIC and
+    # never as a gate -- `RustyNES_MiSTer/docs/rung3-ppu.md` fixes that
+    # partition, because these fields are RustyNES's decomposition of the chip
+    # and not pin-observable facts. It exists here to answer questions the
+    # pin-observable surfaces cannot, such as which internal value a `$2007`
+    # read composed its address from.
+    #
+    # UNLIKE the features above, this one is NOT obviously inert: it compiles
+    # out the v2.2.3 fast dot path so the hook can see every dot. That path is
+    # differential-tested bit-identical, so the OUTPUT should not move -- and
+    # "should" is not the bar this file sets. Verified the same way
+    # `debug-hooks` was: a golden exported with and without the feature is
+    # byte-identical in `obs.bin`, `index_fb.bin` and `ram.bin`.
 ] }
 
 sha2 = { version = "0.11", default-features = false }
