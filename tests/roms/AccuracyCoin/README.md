@@ -37,6 +37,32 @@ within that suite's `table "name", ...` lines; the builder's docstring carries
 the suite map. It assembles through **wine + the upstream `nesasm.exe`**, which
 is the upstream toolchain rather than a substitute.
 
+**Two more were added in v2.6.5**, for the `$2007` state-machine cluster:
+
+```bash
+python3 scripts/accuracycoin-build/build_sub_test_rom.py /tmp/accoin-src \
+    --suite 18 --test 7 --name "ALE + Read" \
+    --out tests/roms/AccuracyCoin/sub-tests/ppu-misc-ale-read.nes
+python3 scripts/accuracycoin-build/build_sub_test_rom.py /tmp/accoin-src \
+    --suite 18 --test 8 --name "Hybrid Addresses" \
+    --out tests/roms/AccuracyCoin/sub-tests/ppu-misc-hybrid-addresses.nes
+```
+
+Both report at their **catalog** addresses (`$0491`, `$0492`) — verified from a
+RAM diff, not assumed — and both reach a verdict in **8.93M cycles** against the
+full battery's 134M, which is the whole reason to build them.
+
+**`/usr/local/bin/wine` may not be wine.** On the development machine it is a
+symlink to **firejail**, which shadows the real binary at `/usr/bin/wine` on
+`PATH`; the builder then assembles nothing and the failure does not name wine.
+Run it as `PATH=/usr/bin:$PATH python3 scripts/...` if `wine --version` prints
+anything other than a wine version.
+
+Re-fetch `AccuracyCoin.asm` rather than reusing a local copy, and check it
+matches: the builder rewrites one routine in the source it is handed, so a
+source that already drifted produces a ROM that looks fine and tests something
+else.
+
 **`sub-tests/cpu-open-bus.nes` does not run `Open Bus`.** Measured in v2.6.4:
 its verdict lands at **`$0407`**, which the catalog assigns to *Dummy write
 cycles*, and `$0408` (`Open Bus`) is never written. It is off by one row of
