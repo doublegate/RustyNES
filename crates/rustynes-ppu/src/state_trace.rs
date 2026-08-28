@@ -77,7 +77,8 @@ use core::ops::RangeInclusive;
 /// * `1` (2026-05-20): initial Session-10 schema.
 /// * `2`: added `oam_bus_copybuffer`.
 /// * `3` (2026-08-28): added `data_buffer`, the `$2007` read buffer.
-pub const PPU_TRACE_SCHEMA_VERSION: u16 = 3;
+/// * `4` (2026-08-28): added `cpu_cycle`, so a record can be located.
+pub const PPU_TRACE_SCHEMA_VERSION: u16 = 4;
 
 /// Magic bytes prefixing every binary trace file. ASCII
 /// "`RUSTYNES_PPU`" — distinguishes our format from Mesen2 native
@@ -87,7 +88,7 @@ pub const BINARY_MAGIC: &[u8; 12] = b"RUSTYNES_PPU";
 /// Length of a single [`PpuStateRecord`] in the packed binary layout.
 ///
 /// Stable for the lifetime of [`PPU_TRACE_SCHEMA_VERSION`].
-pub const RECORD_SIZE: usize = 115;
+pub const RECORD_SIZE: usize = 123;
 
 /// Header length (magic + 2-byte schema version + 2-byte
 /// reserved-for-flags). Records start at this offset.
@@ -247,6 +248,25 @@ pub struct PpuStateRecord {
     /// cycles after the CPU access ends, so a once-per-access sample shows the
     /// PREVIOUS read's byte and says nothing about this one.
     pub data_buffer: u8,
+
+    // === Location ===
+    /// The CPU cycle this dot belongs to, as the bus counts them.
+    ///
+    /// Added at schema 4 because its ABSENCE produced three wrong conclusions
+    /// in a row while diagnosing one `AccuracyCoin` entry. Without it a record
+    /// can only be located by `frame`/`scanline`/`dot`, and none of those is
+    /// comparable across consoles on its own: frames had to be matched by what
+    /// they CONTAIN (a frame number is not a cycle count divided by a frame
+    /// length), dots by an internal relationship measured separately on each
+    /// side, and cycles not at all. Every other trace this project compares —
+    /// `obs.bin`, the IRQ trace, the checkpoint chain — is cycle-keyed, and
+    /// this one was the exception.
+    ///
+    /// Set once per CPU cycle, BEFORE that cycle's dots are ticked, so every
+    /// dot carries the number of the cycle it belongs to rather than the next
+    /// one's. It counts bus-side cycles, DMC DMA included, which is the same
+    /// clock `obs.bin` records — so the two can be joined directly.
+    pub cpu_cycle: u64,
 }
 
 /// Total record size as packed by [`PpuStateRecord::to_bytes`].
@@ -273,8 +293,8 @@ const fn compute_record_size() -> usize {
     // 32-byte secondary OAM
     let secondary = 32;
     // OAM FNV-1a (8 bytes) + NMI line (1) + OAM data bus (1)
-    //   + PPUDATA read buffer (1)
-    let tail = 8 + 1 + 1 + 1;
+    //   + PPUDATA read buffer (1) + CPU cycle (8)
+    let tail = 8 + 1 + 1 + 1 + 8;
     anchor + regs + scroll + eval + spr + bg + secondary + tail
 }
 
@@ -363,6 +383,7 @@ impl PpuStateRecord {
         copy_bool(&mut buf, &mut i, self.nmi_line);
         copy_u8(&mut buf, &mut i, self.oam_bus_copybuffer);
         copy_u8(&mut buf, &mut i, self.data_buffer);
+        copy_u64(&mut buf, &mut i, self.cpu_cycle);
 
         debug_assert_eq!(i, RECORD_SIZE, "PpuStateRecord packer underflow/overflow");
         buf
@@ -469,6 +490,7 @@ impl PpuStateRecord {
         let nmi_line = read_bool(buf, &mut i);
         let oam_bus_copybuffer = read_u8(buf, &mut i);
         let data_buffer = read_u8(buf, &mut i);
+        let cpu_cycle = read_u64(buf, &mut i);
         debug_assert_eq!(i, RECORD_SIZE);
 
         Some(Self {
@@ -510,6 +532,7 @@ impl PpuStateRecord {
             nmi_line,
             oam_bus_copybuffer,
             data_buffer,
+            cpu_cycle,
         })
     }
 }
@@ -771,7 +794,7 @@ impl PpuStateTrace {
              spr_shift_lo,spr_shift_hi,spr_attr,spr_x,\
              bg_shift_lo,bg_shift_hi,at_shift_lo,at_shift_hi,\
              nt_latch,at_latch,bg_lo_latch,bg_hi_latch,\
-             secondary_oam,oam_fnv1a64,nmi_line,oam_bus,data_buffer\n",
+             secondary_oam,oam_fnv1a64,nmi_line,oam_bus,data_buffer,cpu_cycle\n",
         );
         let write_arr = |out: &mut String, a: &[u8]| {
             let mut first = true;
@@ -831,11 +854,12 @@ impl PpuStateTrace {
             write_arr(&mut out, &r.secondary_oam);
             let _ = writeln!(
                 out,
-                ",{:016X},{},{:02X},{:02X}",
+                ",{:016X},{},{:02X},{:02X},{}",
                 r.oam_fnv1a64,
                 u8::from(r.nmi_line),
                 r.oam_bus_copybuffer,
-                r.data_buffer
+                r.data_buffer,
+                r.cpu_cycle
             );
         }
         out
@@ -887,6 +911,7 @@ mod tests {
             sprite_eval_read_latch: 0x77,
             oam_bus_copybuffer: 0x5A,
             data_buffer: 0xB7,
+            cpu_cycle: 0x0123_4567_89AB_CDEF,
             spr_count: 5,
             spr_zero_in_line: true,
             spr_shift_lo: [1, 2, 3, 4, 5, 6, 7, 8],
@@ -1062,36 +1087,39 @@ mod tests {
         // here, which is exactly how a serialization regression reaches a
         // golden.
         //
-        // BOTH trailing columns are pinned, not just the last one. Asserting
-        // only the final field is what made this test fail on the schema-3
-        // addition for the wrong reason: `oam_bus` had not regressed, it had
-        // been displaced by one, and a single-column check cannot tell those
-        // apart. `sample_record` sets them to 0x5A and 0xB7.
+        // Values are checked BY COLUMN NAME, not by position. Two schema
+        // additions in a row broke the previous form for the wrong reason:
+        // it pinned the trailing columns, so appending a field displaced them
+        // and the test reported a regression in a column that had not changed.
+        // A name lookup also asserts the stronger property — that the header
+        // and the row agree on where each field is — which is the drift worth
+        // guarding, since a column appended to one and not the other is
+        // exactly how a golden becomes unreadable.
         let row = csv.lines().nth(1).expect("one record was pushed");
-        let mut tail = row.rsplit(',');
-        let last = tail.next().expect("non-empty row");
-        let penultimate = tail.next().expect("row has at least two columns");
+        let cols: Vec<&str> = header.split(',').collect();
+        let vals: Vec<&str> = row.split(',').collect();
         assert_eq!(
-            last, "B7",
-            "final CSV column should be data_buffer as two hex digits; row: {row}"
+            cols.len(),
+            vals.len(),
+            "header has {} columns and the row {}; header: {header}\nrow: {row}",
+            cols.len(),
+            vals.len()
         );
-        assert_eq!(
-            penultimate, "5A",
-            "penultimate CSV column should be oam_bus_copybuffer; row: {row}"
-        );
-
-        // And the two must line up: whatever position the header gives
-        // `oam_bus`, the row must carry the value at that same index. A column
-        // appended to one and not the other is the drift this guards.
-        let idx = header
-            .split(',')
-            .position(|c| c == "oam_bus")
-            .expect("header names oam_bus");
-        assert_eq!(
-            row.split(',').nth(idx),
-            Some("5A"),
-            "oam_bus header index {idx} does not carry the record's value; row: {row}"
-        );
+        for (name, want) in [
+            ("oam_bus", "5A"),
+            ("data_buffer", "B7"),
+            ("cpu_cycle", "81985529216486895"),
+        ] {
+            let idx = cols
+                .iter()
+                .position(|c| *c == name)
+                .unwrap_or_else(|| panic!("header does not name `{name}`: {header}"));
+            assert_eq!(
+                vals[idx], want,
+                "column `{name}` (index {idx}) carries {}, expected {want}; row: {row}",
+                vals[idx]
+            );
+        }
     }
 
     /// Guard against silent layout drift: if the field set

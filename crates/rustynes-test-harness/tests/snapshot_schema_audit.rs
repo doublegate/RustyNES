@@ -147,6 +147,10 @@ const CHIPS: &[Chip] = &[
                 "diagnostic: `ppu-state-trace` ring buffer, output-only",
             ),
             (
+                "trace_cpu_cycle",
+                "diagnostic: the CPU cycle stamped into each `ppu-state-trace` record so                  a dot can be located against `obs.bin`, which is cycle-keyed. Excluded on                  a STRONGER ground than the other diagnostics here rather than a weaker                  one: the bus writes it unconditionally at the start of every CPU cycle,                  BEFORE any dot of that cycle is ticked, so a restore cannot observe a                  stale value -- the first cycle after a load overwrites it before the                  first record exists. Nothing in the PPU reads it; it is only copied into                  a record. Carrying it would also be actively wrong, since the cycle                  counter belongs to the run that produced the save and not to the one                  resuming it.",
+            ),
+            (
                 "fast_path_hits",
                 "diagnostic: `ppu-fetch-trace` counter of how many dots took the \
                  specialized fast dot path. It exists so a test can assert it EXERCISED \

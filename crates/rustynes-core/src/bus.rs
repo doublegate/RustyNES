@@ -3008,6 +3008,16 @@ impl LockstepBus {
     /// APU tick).
     #[allow(clippy::too_many_lines)] // Session-21 added per-cycle DMC + bus-access snapshots; splitting the trace push into a helper would force the bus to recompute `trace_*_pre_tick` values across function boundaries.
     pub(crate) fn tick_one_cpu_cycle(&mut self) {
+        // Stamp the PPU with the cycle these dots belong to, BEFORE ticking
+        // them, so a state record carries its own cycle rather than the next
+        // one's. `self.cycle` advances at the END of this function.
+        //
+        // Feature-gated: the default build has neither the field nor this
+        // store. `cpu_clock` carries the same store for the running path; see
+        // the note there for why both are needed.
+        #[cfg(feature = "ppu-state-trace")]
+        self.ppu.set_trace_cpu_cycle(self.cycle);
+
         // Tick PPU 3 dots in NTSC.  PAL would be 3.2 (5 dots per 16 PPU dots);
         // we approximate as 3 for now and gate region accuracy behind a
         // future Phase 2 follow-up.
@@ -4577,6 +4587,20 @@ impl Bus for LockstepBus {
     /// (the pivot's working `service_dmc_dma`); Phase 3 wires the
     /// `dma_mc_consumed` coherence accounting.
     fn cpu_clock(&mut self) {
+        // Stamp the PPU with the cycle whose dots this call is about to run.
+        // See the twin in `tick_one_cpu_cycle` and `Ppu::set_trace_cpu_cycle`.
+        //
+        // BOTH need it, and that is the whole point of having it twice: this is
+        // the path a running console takes, and `tick_one_cpu_cycle` is the one
+        // the harness drives directly. Wiring only the latter left every record
+        // stamped `0` while the field, the column and the plumbing all looked
+        // correct -- caught by
+        // `tests/state_trace_records_carry_their_cpu_cycle.rs`, which exists
+        // because a present-but-constant field reinstates the whole problem it
+        // was added to solve while appearing to fix it.
+        #[cfg(feature = "ppu-state-trace")]
+        self.ppu.set_trace_cpu_cycle(self.cycle);
+
         // Diagnostic: snapshot the APU IRQ line (frame-counter | DMC) BEFORE
         // `apu_advance_one` runs the frame counter, so `trace_end_cycle` can
         // expose the within-cycle frame-counter SET (low=0 -> high=1) vs the

@@ -1054,6 +1054,15 @@ pub struct Ppu {
     /// `docs/adr/0005-ppu-state-trace.md`.
     #[cfg(feature = "ppu-state-trace")]
     pub(crate) state_trace: Option<crate::state_trace::PpuStateTrace>,
+
+    /// The CPU cycle the dots being ticked belong to, stamped into every state
+    /// record. Written once per CPU cycle by the bus, before those dots run.
+    ///
+    /// Feature-gated, so the default build carries neither the field nor the
+    /// store: this is bookkeeping for a diagnostic, and the tick path is the
+    /// hottest loop in the emulator.
+    #[cfg(feature = "ppu-state-trace")]
+    pub(crate) trace_cpu_cycle: u64,
     /// Per-dot PPU bus address capture. See [`crate::fetch_trace`].
     #[cfg(feature = "ppu-fetch-trace")]
     pub(crate) fetch_trace: Option<crate::fetch_trace::FetchTrace>,
@@ -1390,6 +1399,8 @@ impl Ppu {
             fast_dotloop: true,
             #[cfg(feature = "ppu-state-trace")]
             state_trace: None,
+            #[cfg(feature = "ppu-state-trace")]
+            trace_cpu_cycle: 0,
             #[cfg(feature = "ppu-fetch-trace")]
             fetch_trace: None,
             #[cfg(feature = "hd-pack")]
@@ -1792,6 +1803,17 @@ impl Ppu {
         self.state_trace = Some(trace);
     }
 
+    /// Stamp the CPU cycle that the dots ticked next belong to.
+    ///
+    /// Called by the bus at the START of each CPU cycle, so a record carries
+    /// the number of the cycle it is part of rather than the following one —
+    /// the off-by-one a co-simulation probe made on exactly this question, and
+    /// which produced a finding that had to be retracted.
+    #[cfg(feature = "ppu-state-trace")]
+    pub const fn set_trace_cpu_cycle(&mut self, cycle: u64) {
+        self.trace_cpu_cycle = cycle;
+    }
+
     /// Install a per-dot PPU bus address capture.
     ///
     /// The address bus is pin-observable, which is what makes it usable as a
@@ -1876,6 +1898,7 @@ impl Ppu {
             nmi_line: self.nmi_line,
             oam_bus_copybuffer: self.oam_data_bus_observed(),
             data_buffer: self.data_buffer,
+            cpu_cycle: self.trace_cpu_cycle,
         }
     }
 
