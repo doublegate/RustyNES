@@ -1875,6 +1875,7 @@ impl Ppu {
             oam_fnv1a64: crate::state_trace::fnv1a64(&self.oam),
             nmi_line: self.nmi_line,
             oam_bus_copybuffer: self.oam_data_bus_observed(),
+            data_buffer: self.data_buffer,
         }
     }
 

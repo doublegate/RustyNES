@@ -75,7 +75,9 @@ use core::ops::RangeInclusive;
 /// Version history:
 ///
 /// * `1` (2026-05-20): initial Session-10 schema.
-pub const PPU_TRACE_SCHEMA_VERSION: u16 = 2;
+/// * `2`: added `oam_bus_copybuffer`.
+/// * `3` (2026-08-28): added `data_buffer`, the `$2007` read buffer.
+pub const PPU_TRACE_SCHEMA_VERSION: u16 = 3;
 
 /// Magic bytes prefixing every binary trace file. ASCII
 /// "`RUSTYNES_PPU`" — distinguishes our format from Mesen2 native
@@ -85,7 +87,7 @@ pub const BINARY_MAGIC: &[u8; 12] = b"RUSTYNES_PPU";
 /// Length of a single [`PpuStateRecord`] in the packed binary layout.
 ///
 /// Stable for the lifetime of [`PPU_TRACE_SCHEMA_VERSION`].
-pub const RECORD_SIZE: usize = 114;
+pub const RECORD_SIZE: usize = 115;
 
 /// Header length (magic + 2-byte schema version + 2-byte
 /// reserved-for-flags). Records start at this offset.
@@ -229,6 +231,22 @@ pub struct PpuStateRecord {
     /// does not expose what the gate reads sends you to the wrong place
     /// confidently.
     pub oam_bus_copybuffer: u8,
+
+    // === PPUDATA read buffer ===
+    /// The `$2007` read buffer — what the NEXT `$2007` read will return.
+    ///
+    /// Added at schema 3 for the rung-3 `$2007 Stress Test` residual, and the
+    /// reason is the same one that added `oam_bus_copybuffer` at schema 2: the
+    /// question was *when* and *from where* the buffer is filled, and this
+    /// fixture exposed every register the fill is composed from except the
+    /// result. Both consoles read `$2007` at identical cycles there, so the
+    /// difference is which byte landed — a quantity that was, until now,
+    /// observable only after the CPU had already read it back out.
+    ///
+    /// Per-dot capture is what makes it useful: the fill happens four PPU
+    /// cycles after the CPU access ends, so a once-per-access sample shows the
+    /// PREVIOUS read's byte and says nothing about this one.
+    pub data_buffer: u8,
 }
 
 /// Total record size as packed by [`PpuStateRecord::to_bytes`].
@@ -254,8 +272,9 @@ const fn compute_record_size() -> usize {
     let bg = 2 + 2 + 2 + 2 + 1 + 1 + 1 + 1;
     // 32-byte secondary OAM
     let secondary = 32;
-    // OAM FNV-1a (8 bytes) + NMI line (1 byte) + OAM data bus (1 byte)
-    let tail = 8 + 1 + 1;
+    // OAM FNV-1a (8 bytes) + NMI line (1) + OAM data bus (1)
+    //   + PPUDATA read buffer (1)
+    let tail = 8 + 1 + 1 + 1;
     anchor + regs + scroll + eval + spr + bg + secondary + tail
 }
 
@@ -343,6 +362,7 @@ impl PpuStateRecord {
         copy_u64(&mut buf, &mut i, self.oam_fnv1a64);
         copy_bool(&mut buf, &mut i, self.nmi_line);
         copy_u8(&mut buf, &mut i, self.oam_bus_copybuffer);
+        copy_u8(&mut buf, &mut i, self.data_buffer);
 
         debug_assert_eq!(i, RECORD_SIZE, "PpuStateRecord packer underflow/overflow");
         buf
@@ -448,6 +468,7 @@ impl PpuStateRecord {
         let oam_fnv1a64 = read_u64(buf, &mut i);
         let nmi_line = read_bool(buf, &mut i);
         let oam_bus_copybuffer = read_u8(buf, &mut i);
+        let data_buffer = read_u8(buf, &mut i);
         debug_assert_eq!(i, RECORD_SIZE);
 
         Some(Self {
@@ -488,6 +509,7 @@ impl PpuStateRecord {
             oam_fnv1a64,
             nmi_line,
             oam_bus_copybuffer,
+            data_buffer,
         })
     }
 }
@@ -749,7 +771,7 @@ impl PpuStateTrace {
              spr_shift_lo,spr_shift_hi,spr_attr,spr_x,\
              bg_shift_lo,bg_shift_hi,at_shift_lo,at_shift_hi,\
              nt_latch,at_latch,bg_lo_latch,bg_hi_latch,\
-             secondary_oam,oam_fnv1a64,nmi_line,oam_bus\n",
+             secondary_oam,oam_fnv1a64,nmi_line,oam_bus,data_buffer\n",
         );
         let write_arr = |out: &mut String, a: &[u8]| {
             let mut first = true;
@@ -809,10 +831,11 @@ impl PpuStateTrace {
             write_arr(&mut out, &r.secondary_oam);
             let _ = writeln!(
                 out,
-                ",{:016X},{},{:02X}",
+                ",{:016X},{},{:02X},{:02X}",
                 r.oam_fnv1a64,
                 u8::from(r.nmi_line),
-                r.oam_bus_copybuffer
+                r.oam_bus_copybuffer,
+                r.data_buffer
             );
         }
         out
@@ -863,6 +886,7 @@ mod tests {
             sprite_eval_done: false,
             sprite_eval_read_latch: 0x77,
             oam_bus_copybuffer: 0x5A,
+            data_buffer: 0xB7,
             spr_count: 5,
             spr_zero_in_line: true,
             spr_shift_lo: [1, 2, 3, 4, 5, 6, 7, 8],
@@ -1024,6 +1048,7 @@ mod tests {
             "oam_fnv1a64",
             "nmi_line",
             "oam_bus",
+            "data_buffer",
         ] {
             assert!(
                 header.contains(column),
@@ -1035,12 +1060,24 @@ mod tests {
         // wrong value, or be dropped from the row while the name survives --
         // and this test passed on both counts before `oam_bus` was asserted
         // here, which is exactly how a serialization regression reaches a
-        // golden. `sample_record` sets it to 0x5A and the row ends with it.
+        // golden.
+        //
+        // BOTH trailing columns are pinned, not just the last one. Asserting
+        // only the final field is what made this test fail on the schema-3
+        // addition for the wrong reason: `oam_bus` had not regressed, it had
+        // been displaced by one, and a single-column check cannot tell those
+        // apart. `sample_record` sets them to 0x5A and 0xB7.
         let row = csv.lines().nth(1).expect("one record was pushed");
-        let last = row.rsplit(',').next().expect("non-empty row");
+        let mut tail = row.rsplit(',');
+        let last = tail.next().expect("non-empty row");
+        let penultimate = tail.next().expect("row has at least two columns");
         assert_eq!(
-            last, "5A",
-            "final CSV column should be oam_bus_copybuffer as two hex digits; row: {row}"
+            last, "B7",
+            "final CSV column should be data_buffer as two hex digits; row: {row}"
+        );
+        assert_eq!(
+            penultimate, "5A",
+            "penultimate CSV column should be oam_bus_copybuffer; row: {row}"
         );
 
         // And the two must line up: whatever position the header gives
