@@ -34,9 +34,17 @@ fn every_record_carries_a_cpu_cycle_that_advances_with_the_run() {
     o.enable_ppu_state_trace(200_000, 2..=3, None, None);
     o.advance_frames(5);
 
-    let csv = o
+    let (csv, dropped) = o
         .take_ppu_state_trace_csv()
         .expect("the trace was armed, so it must produce a table");
+    // A truncated capture would make every assertion below a statement about a
+    // narrower window than the one asked for, so this is checked rather than
+    // assumed -- the capacity is deliberately far above what five frames of two
+    // scanlines can produce.
+    assert_eq!(
+        dropped, 0,
+        "the trace dropped {dropped} record(s): the window is narrower than it asks for"
+    );
     let mut lines = csv.lines();
     let header = lines.next().expect("header");
     let idx = header

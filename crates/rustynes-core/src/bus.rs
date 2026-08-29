@@ -5307,16 +5307,55 @@ mod four_score_tests {
         // A pre-v2.1.0 blob lacks the 2 trailing device-tag bytes (one None
         // tag per port); a pre-v1.1.0 blob also lacks the mirroring-override
         // tag. With nothing attached the encoder writes `[0, 0]` + `[0]`, so
-        // truncating those 3 trailing bytes reproduces an older save — which
+        // truncating those trailing bytes reproduces an older save — which
         // must still load with both ports unplugged and no override.
+        //
+        // THE COUNT IS 23, NOT 3, AND THAT IS THE POINT. v2.6.5 appended a
+        // 20-byte controller-run tail AFTER those three, so removing three
+        // bytes stopped reproducing an old blob the moment that landed: it
+        // produces a CURRENT blob with a half-eaten tail. That decoded
+        // "successfully" for as long as the tail test was `>= 20` — the
+        // remaining 17 bytes fell through to the legacy path and every port
+        // restored `pending_shift = false`, so the next controller read
+        // repeated a bit. The decoder now refuses a partial tail, which is
+        // what turned this test red and exposed the stale premise.
         let bus = test_bus();
         let blob = crate::bus_snapshot::encode_bus(&bus);
-        let old = &blob[..blob.len() - 3];
+        let old = &blob[..blob.len() - (3 + 4 + 2 * 8)];
         let mut restored = test_bus();
         crate::bus_snapshot::decode_bus(&mut restored, old).unwrap();
         assert!(restored.expansion_device(0).is_none());
         assert!(restored.expansion_device(1).is_none());
         assert_eq!(restored.mirroring_override(), None);
+    }
+
+    #[test]
+    fn a_half_truncated_controller_tail_is_refused_not_read_as_legacy() {
+        // The guard the test above exposed the need for. A blob cut anywhere
+        // INSIDE the 20-byte controller-run tail is damage, not an older
+        // layout, and reading it as legacy restores `pending_shift = false`
+        // for every port — silently, and with a consequence: the next
+        // controller read repeats a bit that was already delivered. Zero
+        // trailing bytes is the only absence that means "no tail".
+        //
+        // Every interior cut is checked rather than one representative, because
+        // an off-by-one in the bound is exactly the mistake this guards.
+        let bus = test_bus();
+        let blob = crate::bus_snapshot::encode_bus(&bus);
+        for cut in 1..(4 + 2 * 8) {
+            let damaged = &blob[..blob.len() - cut];
+            let mut restored = test_bus();
+            assert!(
+                crate::bus_snapshot::decode_bus(&mut restored, damaged).is_err(),
+                "a blob missing {cut} byte(s) of the controller tail decoded cleanly"
+            );
+        }
+        // ... and the whole tail absent still loads, which is the legacy path
+        // this must not break.
+        let legacy = &blob[..blob.len() - (4 + 2 * 8)];
+        let mut restored = test_bus();
+        crate::bus_snapshot::decode_bus(&mut restored, legacy)
+            .expect("a blob with no controller tail at all is a pre-v2.6.5 save");
     }
 
     #[test]

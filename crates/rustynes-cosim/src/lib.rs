@@ -413,13 +413,20 @@ impl Oracle {
     /// CSV rather than the binary form because this is read by a human at a
     /// named cycle, not compared by a tool. A gate would want the binary; there
     /// is deliberately no gate.
+    ///
+    /// Returns the CSV **and how many records did NOT fit**, for the same reason
+    /// `take_fetch_trace` does: a capture that silently stopped at capacity
+    /// produces a valid-looking file describing a window narrower than the one
+    /// asked for, and every conclusion drawn from it inherits that. The fetch
+    /// trace already reported this and the state trace did not -- the asymmetry
+    /// was the finding.
     #[cfg(feature = "ppu-state-trace")]
-    pub fn take_ppu_state_trace_csv(&mut self) -> Option<String> {
+    pub fn take_ppu_state_trace_csv(&mut self) -> Option<(String, u64)> {
         self.nes
             .bus_mut()
             .ppu_mut()
             .take_state_trace()
-            .map(|t| t.to_csv())
+            .map(|t| (t.to_csv(), t.overflow()))
     }
 
     /// The fetch trace in its binary interchange format, or `None` if unarmed.

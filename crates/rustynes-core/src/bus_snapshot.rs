@@ -11,6 +11,11 @@ use crate::input_device::{
     FamilyKeyboardState, InputDevice, SnesMouseState, VausState, ZapperState,
 };
 use crate::save_state::{BinReader, BinWriter, SnapshotError};
+
+/// Bytes in the v2.6.5 controller-run tail: four `bool` port flags plus two
+/// `u64` cycle stamps. Zero trailing bytes is a pre-v2.6.5 blob; anything
+/// between 1 and this is damage, not a legacy layout.
+const CONTROLLER_RUN_TAIL: usize = 4 + 2 * 8;
 use alloc::format;
 use alloc::vec::Vec;
 
@@ -439,7 +444,22 @@ pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotErro
     // blobs have no bytes left and decode as "no shift owed, no run open",
     // which is the post-strobe state and so reproduces how they behaved when
     // they were written).
-    if r.remaining() >= 4 + 2 * 8 {
+    //
+    // A PARTIAL TAIL IS REFUSED RATHER THAN READ AS LEGACY. The test used to be
+    // `>= 20`, so a v2.6.5 blob truncated to between 1 and 19 trailing bytes
+    // took the legacy path and restored `pending_shift = false` for every port
+    // -- silently, and with a consequence: the next controller read repeats a
+    // bit that was already delivered. Zero bytes is a pre-v2.6.5 blob and is
+    // the only absence that means "no tail"; anything shorter than the whole
+    // tail is damage, and a save state is untrusted input.
+    if r.remaining() != 0 && r.remaining() < CONTROLLER_RUN_TAIL {
+        return Err(SnapshotError::SectionTruncated {
+            tag: alloc::string::String::from("BUS "),
+            declared: CONTROLLER_RUN_TAIL,
+            got: r.remaining(),
+        });
+    }
+    if r.remaining() >= CONTROLLER_RUN_TAIL {
         let mut pending = [false; 4];
         for p in &mut pending {
             *p = r.bool()?;

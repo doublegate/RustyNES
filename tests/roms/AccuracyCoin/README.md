@@ -23,10 +23,16 @@ after the original batch. The recipe, so the next one does not have to be
 rediscovered:
 
 ```bash
+# Fetch the upstream source into a scratch dir...
 mkdir -p /tmp/accoin-src && cd /tmp/accoin-src
 for f in AccuracyCoin.asm nesasm.exe Tiles.pcx Sprites.pcx; do
   curl -sLO "https://raw.githubusercontent.com/100thCoin/AccuracyCoin/main/$f"
 done
+
+# ...then come BACK. Both the builder path and `--out` are repo-relative, and
+# the `cd` above leaves the shell in /tmp/accoin-src, where neither resolves.
+cd "$(git -C ~/Code/OSS_Public-Projects/RustyNES rev-parse --show-toplevel)"
+
 python3 scripts/accuracycoin-build/build_sub_test_rom.py /tmp/accoin-src \
     --suite 11 --test 1 --name "NMI Overlap BRK" \
     --out tests/roms/AccuracyCoin/sub-tests/nmi-overlap-brk.nes

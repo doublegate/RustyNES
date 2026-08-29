@@ -95,6 +95,30 @@ struct Args {
     inject_hold: u64,
 }
 
+/// The `--ppu-state-trace` capacity, refused outside a usable range.
+///
+/// `PPU_STATE_TRACE_MAX` is 40 million records — a whole 4500-frame `AccuracyCoin`
+/// run is ~134 M dots, so this is deliberately below "capture everything": the
+/// window flags exist because capturing everything is not the intended use, and
+/// a cap that permits it invites the allocation that killed the exporter.
+#[cfg(feature = "ppu-state-trace")]
+const PPU_STATE_TRACE_MAX: usize = 40_000_000;
+
+#[cfg(feature = "ppu-state-trace")]
+fn check_pst_cap(cap: usize) -> usize {
+    if cap == 0 {
+        eprintln!("--ppu-state-trace needs a non-zero capacity: 0 would write a header and no records, which reads as a successful capture");
+        std::process::exit(2);
+    }
+    if cap > PPU_STATE_TRACE_MAX {
+        eprintln!(
+            "--ppu-state-trace capacity {cap} exceeds {PPU_STATE_TRACE_MAX}; narrow the window with --pst-frames / --pst-scanlines / --pst-dots instead"
+        );
+        std::process::exit(2);
+    }
+    cap
+}
+
 fn usage() -> ! {
     eprintln!(
         "usage: nes_golden_export --rom <path> --out <dir> [--seed N] [--frames N]\n\
@@ -255,7 +279,13 @@ fn parse_args() -> Args {
             }
             #[cfg(feature = "ppu-state-trace")]
             "--ppu-state-trace" => {
-                pst_cap = Some(need(i).parse().unwrap_or_else(|_| usage()));
+                // BOUNDED AT BOTH ENDS. Zero produced a header-only CSV that
+                // looks like a successful capture, and an arbitrary `usize`
+                // reached `Vec::with_capacity` and aborted the exporter rather
+                // than reporting anything. A diagnostic that can only be empty
+                // or fatal is worse than one that refuses the argument.
+                let cap: usize = need(i).parse().unwrap_or_else(|_| usage());
+                pst_cap = Some(check_pst_cap(cap));
                 i += 2;
             }
             #[cfg(feature = "ppu-state-trace")]
@@ -694,10 +724,20 @@ fn write_ppu_state_trace(o: &mut Oracle, args: &Args, base: &Path) {
         return;
     }
     match o.take_ppu_state_trace_csv() {
-        Some(csv) => {
+        Some((csv, dropped)) => {
             let rows = csv.lines().count().saturating_sub(1);
             write(&suffixed(base, "ppu_state.csv"), csv.as_bytes());
             println!("  ppu_state.csv: {rows} dot records (DIAGNOSTIC, not a gate)");
+            if dropped != 0 {
+                // Loud, and on stderr: the file exists and parses, so nothing
+                // downstream can tell it is a narrower window than the flags
+                // asked for unless this says so here.
+                eprintln!(
+                    "  WARNING: the PPU state trace hit its capacity and DROPPED {dropped} record(s). \
+                     The window is narrower than --pst-frames/--pst-scanlines/--pst-dots requested; \
+                     raise --ppu-state-trace or narrow the window."
+                );
+            }
         }
         None => eprintln!("  WARNING: PPU state trace was armed but returned nothing"),
     }
