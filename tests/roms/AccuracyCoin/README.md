@@ -128,3 +128,28 @@ Both directories are referenced by code:
 Merging them would require renaming the source files in both crates and
 regenerating the per-suite pass-rate baselines. Cost > benefit. The
 two-directory layout is the canonical path going forward.
+
+### Sub-tests the harness cannot isolate
+
+Two sub-test ROMs build correctly and are **deliberately unregistered**, because
+the ORACLE does not pass them. `subtest_verdict.py` refuses a comparison whose
+oracle side is not a pass — correctly, since a ROM the reference implementation
+fails cannot adjudicate anything about the DUT.
+
+| ROM | suite/test | oracle verdict | why |
+|---|---|---|---|
+| `sprite-eval-arbitrary-sprite-zero.nes` | — | Fail | pre-existing; see the rung-5 notes |
+| `sprite-zero-hit-behavior.nes` | 17 / 1 | `$457 = $06`, Fail(test 1) | the streamlined boot omits state the full battery establishes |
+
+For `sprite-zero-hit-behavior` the failure is the FIRST assertion — "does a
+sprite zero hit occur in a situation in which it should" — so the test never
+gets as far as the behaviour it exists to check. `TEST_Sprite0Hit_Behavior`
+expects "a solid white square … placed at VRAM address $2001" and a sprite zero
+overlapping it; the builder replaces `AutomaticallyRunEveryTestInROM` with a
+runner that calls `LoadSuiteMenuNoRendering` and `RunTest` once, which does not
+reproduce everything the full battery has done to VRAM and the pattern tables by
+the time this entry runs.
+
+The ROM and its golden are kept rather than deleted: they are the evidence that
+the isolation was attempted and why it does not work, and the entry has to be
+debugged against the full 4500-frame battery instead.
