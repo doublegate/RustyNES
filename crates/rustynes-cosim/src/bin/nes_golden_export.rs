@@ -107,7 +107,9 @@ const PPU_STATE_TRACE_MAX: usize = 40_000_000;
 #[cfg(feature = "ppu-state-trace")]
 fn check_pst_cap(cap: usize) -> usize {
     if cap == 0 {
-        eprintln!("--ppu-state-trace needs a non-zero capacity: 0 would write a header and no records, which reads as a successful capture");
+        eprintln!(
+            "--ppu-state-trace needs a non-zero capacity: 0 would write a header and no records, which reads as a successful capture"
+        );
         std::process::exit(2);
     }
     if cap > PPU_STATE_TRACE_MAX {
