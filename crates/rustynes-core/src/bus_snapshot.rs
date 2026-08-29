@@ -15,7 +15,7 @@ use crate::save_state::{BinReader, BinWriter, SnapshotError};
 /// Bytes in the v2.6.5 controller-run tail: four `bool` port flags plus two
 /// `u64` cycle stamps. Zero trailing bytes is a pre-v2.6.5 blob; anything
 /// between 1 and this is damage, not a legacy layout.
-const CONTROLLER_RUN_TAIL: usize = 4 + 2 * 8;
+const CONTROLLER_RUN_TAIL: usize = 4 + 2 * 8 + 2;
 use alloc::format;
 use alloc::vec::Vec;
 
@@ -117,6 +117,12 @@ pub fn encode_bus(bus: &LockstepBus) -> Vec<u8> {
     }
     for port in 0..2 {
         w.u64(bus.port_read_cycle(port));
+    }
+    // The Four Score chain's own owed edge. It clocks with the pads, so it has
+    // to be restored with them: without it a snapshot taken mid-run resumes
+    // with the adapter and the pads on different positions of one shift chain.
+    for f in bus.four_score_pending() {
+        w.bool(f);
     }
     w.into_vec()
 }
@@ -472,6 +478,11 @@ pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotErro
         // bus a hundred lines earlier and mutating them here would decode
         // cleanly and restore nothing.
         bus.set_controller_run_state(pending, cycles);
+        let mut fs = [false; 2];
+        for f in &mut fs {
+            *f = r.bool()?;
+        }
+        bus.set_four_score_pending(fs);
     }
     bus.set_bus_misc_state(BusMiscState {
         dma_pending,
