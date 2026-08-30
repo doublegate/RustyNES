@@ -1,7 +1,7 @@
 # RustyNES Development Roadmap
 
 **Document Version:** 2.0.4
-**Last Updated:** 2026-08-24
+**Last Updated:** 2026-08-30
 **Project Status:** v2.6.6 "Chassis" released — the current head of the line, on **v2.6.5 "Muster"** and **v2.6.4 "Rubric"** and **v2.6.3 "Mainspring"** and **v2.6.2 "Witness"** and **v2.6.1 "Interleave"** and **v2.6.0 "Assay"** and **v2.5.9 "Overture"** and **v2.5.8 "Blanking"** and **v2.5.7 "Collimation"** and **v2.5.6 "Vestige"** and **v2.5.5 "Raster"** and **v2.5.4 "Escapement"** and **v2.5.3 "Hysteresis"** and **v2.5.2 "Dormant"** and **v2.5.1 "Retrace"** and **v2.5.0 "Rungwork"** and **v2.4.9 "Plumbline II"** and **v2.4.8 "Palimpsest"** and **v2.4.7 "Keystone"** and **v2.4.6 "Abacus"** and **v2.4.5 "Compass"** and **v2.4.4 "Ignition"** and v2.4.3 "Touchstone" and v2.4.2 "Cairn" and v2.4.1 "Fabric", on the v2.0.0 "Timebase" MAJOR cut. **This file is a historical snapshot of the v1.0.0 cut**; see [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md) for the authoritative forward roadmap and [`docs/STATUS.md`](docs/STATUS.md) for current state.
 
 ---
