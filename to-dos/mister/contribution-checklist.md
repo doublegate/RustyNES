@@ -4,7 +4,7 @@ Every line traces to
 `ref-docs/2026-08-23-mister-core-contribution-requirements.md`, which quotes the
 MiSTer-devel wiki fetched 2026-08-23. **Nothing here is from memory.**
 
-The whole list is checked at **v2.7.0**, which is the submission. Individual
+The whole list must be complete **by v2.7.0**, which is the submission; it is NOT complete now, and an item left unchecked below is carried deliberately rather than overlooked. Individual
 items are marked with the release that settled them -- **(now)** for ones true
 before this programme started, **(v2.6.6)** for the layout items the chassis
 release landed -- so the remaining unchecked boxes are the real work rather than
