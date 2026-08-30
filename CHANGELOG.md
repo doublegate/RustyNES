@@ -26,6 +26,142 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.6] - 2026-08-29 - "Chassis" (the console becomes a MiSTer core: the framework vendored byte-identical, a top level, a clock, a palette, video sync and an audio mixer, compiled by Quartus 17.0.2 to a Cyclone V bitstream with 0 errors and timing closed; nine findings the tool produced that no reading would have, and two hardware defects found by asking whether the outputs would actually work)
+
+A chassis is the frame everything else bolts to. It is not the engine, and this
+release does not touch the engine: `nes_top` computes exactly what it computed
+at v2.6.5. The co-simulation suite is therefore an **acceptance criterion**
+here rather than a formality -- integration work that quietly changed the core
+would otherwise show up as a green bitstream and nothing else.
+
+It earned that place immediately. The cartridge's memories had to be rewritten,
+and only the suite could adjudicate the rewrite.
+
+### The gate
+
+| # | criterion | result |
+|---|---|---|
+| 1 | `sys/` is verbatim | **57 files, 0 content differences, 0 files on one side only**, against `Template_MiSTer@3ea1134c` |
+| 2 | the project compiles | `quartus_sh --flow compile` exits 0 |
+| 3 | a bitstream exists | `output_files/RustyNES.rbf` |
+| 4 | **timing closes** | worst setup **+0.363 ns**, worst hold **+0.245 ns**, **TNS 0.000 on every clock**; the console's own clock has **+13.514 ns** and an Fmax of **30.26 MHz** against 21.477272 required |
+| 5 | subset holds, warnings named | **0 errors**, and warnings **111 -> 3**: `13050`/`13051` (the framework's HDMI I2C open-drain buffer) and one unnumbered message about `sys/pll_audio`'s PLL reset. Every suppressed class is listed in the `.qsf` with its cause, and `tb/quartus_clean.py` fails if any message cites `rtl/` or `tb/` |
+| 6 | **the co-simulation does not regress** | **87 passed, 0 failed** |
+
+The fitter **seed is pinned** (`SEED 2`). One path in the framework's HDMI
+domain sits within a tenth of a nanosecond of its requirement, and two compiles
+of the *same* RTL -- differing only in how three unrelated SD pins were driven
+-- landed it at **+0.363 ns** and **-0.086 ns**, the second reported as
+`Critical Warning (332148): Timing requirements not met`. A build that closes
+has to be reproducible, so the seed is recorded rather than left to luck.
+
+### The memory rewrite, and why clause 6 exists
+
+`cart_nrom.sv` read its arrays asynchronously, under a comment claiming that
+inferred block RAM "from the source style alone". **An M10K read is
+registered** -- there is no asynchronous-read block memory on this device -- so
+40 KiB of cartridge stayed in registers: 393,216 of roughly 166,000 available,
+and Quartus refused it outright.
+
+The project had already written the rule down. The README has said since v2.4.3
+that the core would use "synchronous read with a registered address, **no
+asynchronous read anywhere**". `cart_nrom.sv` was written two releases later
+doing the opposite. A rule in a README is not a control; and nothing before this
+rung had ever asked Quartus about the cartridge, because v2.4.3 fitted a 2 KiB
+probe module and 2 KiB fits either way.
+
+Registering the reads is a one-master-clock latency, and whether that is visible
+was **probed rather than argued**: `bus_addr` is stable for all twelve clocks of
+a CPU cycle and the access lands at the seventh. The console never sees it. The
+harness did, and its device cross-checks moved to where the CPU actually
+samples.
+
+Work RAM is measured separately and left asynchronous ON PURPOSE -- 2 KiB is
+16,384 registers, about a tenth of the device, which it can afford. So the rule
+as this release applies it is narrower than the sentence quoted above: it binds
+arrays too large to live in fabric, which is the cartridge, and work RAM is a
+deliberate, measured exception rather than an inconsistency. Registering it too
+was tried and reverted, because the harness samples `o_wram_dout` at the access
+itself and all 87 gates failed.
+
+### Two defects that only "will this work on hardware?" would have found
+
+**The audio would have been a DC rail.** `apu_mixer` produces what the 2A03's
+resistor ladder produces: unipolar, silence at zero. Handed to the framework as
+unsigned, silence maps to **-32768** -- a full-scale offset into the DAC and
+into HDMI audio, not a quiet channel. Real hardware AC-couples; `audio_dc_block`
+is that capacitor, a one-pole high-pass whose corner is the console's own
+documented ~90 Hz.
+
+**Two OSD options did nothing.** The menu offered "CRT 25%" and "CRT 50%" while
+`VGA_SL` was tied to zero, and two aspect-ratio entries served by a module this
+core does not instantiate. Both fixed by making the menu describe what exists.
+
+### The finding worth keeping
+
+`sys/sys_top.sdc` puts the core's clock in its own clock group by matching a
+**hierarchical name pattern** -- `*|pll|pll_inst|altera_pll_i|*`. Name the PLL
+anything else and the clock matches no group, every crossing to the framework's
+audio, HDMI and HPS domains is analysed as synchronous, and the report shows
+**-13.901 ns** of slack and **-422,601 ns** of TNS on a design whose Fmax was
+already 25.75 MHz for a 21.477 MHz requirement.
+
+Nothing warned. The compile succeeded and the Assembler reported 0 errors and 0
+warnings. **A convention enforced by a glob is a convention with no error
+message** -- and reading Fmax and slack together is what separates a missing
+constraint from a slow design.
+
+Full account, including the compiler crash on the 256-entry decode table and the
+three fixes for it that were measured and failed: `docs/rung6-integration.md`
+in the sibling repository.
+
+### Not in this release
+
+- **Hardware.** No DE10-Nano and no SuperStation One are attached to this
+  machine, so a booting core, a synced display, audible sound and a working pad
+  are **not** claimed. That is rung 6's close and it moves to v2.6.7.
+- **Band-limited audio.** The DUT has a lookup-table mixer and a DC blocker; the
+  emulator has BLEP. The core will alias where the emulator does not.
+- **The v-copy delay depth (rung-5 caveat C1) is deferred.** Discriminating
+  inside the passing window of 1-4 dots needs a stimulus sensitive to the exact
+  dot, which is its own ROM and its own sweep.
+- **The per-cycle AccuracyCoin gate (C2) is half-built, and the half that
+  exists already found something.** A full per-cycle capture over the 4500-frame
+  window is 2.0 GB per side, which is why the rung-5 gate compares verdicts and
+  is blind to compensating errors. The harness now emits rolling FNV-1a
+  checkpoints (`--ckpt-out`, `--ckpt-interval`, `--ckpt-from`) and
+  `tb/ckpt_diff.py` compares them -- the same per-cycle information at 1/8192th
+  the size.
+
+  On its first run it failed, and correctly: **four of the nine observable
+  fields had been written as constant `false` into every `.obs.bin` the DUT has
+  ever produced**, because `bus_diff.py` compares four of them and nothing else
+  looked. The note at the site explaining the omission had a precondition --
+  "the PPU cannot yet raise one" -- that stopped being true at v2.5.8 and was
+  never re-read. Three are now correct (`put_cycle` after a polarity fix,
+  `nmi_line` exactly, and the IRQ pair once sourced from the effective line
+  rather than the external injection pin, which is why it first diverged at
+  cycle 29,827 -- a frame-counter position).
+
+  The residual is **one CPU cycle on one signal**, twice in two hundred
+  thousand. It was first written up as "the oracle samples /IRQ twice per cycle
+  and the harness once"; that is the wrong mechanism and is corrected here.
+  `bus.rs` says what the pair is -- `_at_low` snapshotted at cycle-start before
+  the APU advances, `_at_high` read at end-of-cycle, so the two encode the
+  ORDERING of a change within the cycle. At the transition the oracle's frame
+  IRQ becomes visible DURING cycle 29,827 and this core's not until 29,828.
+
+  A rung-4 question of the same family as `PPU_LEAD`, and **which side is at
+  fault is not yet known**. blargg's 2005 APU battery passes **11/11** on this
+  DUT, `apuirq036` included, which bounds how wrong it can be without settling
+  it: those ROMs measure when the CPU *takes* the interrupt, and interrupt
+  latency can absorb a one-cycle difference in when the LINE asserts. So the two
+  live candidates are a trace observation point and a genuine one-cycle
+  assertion difference -- and that is exactly why it is not being rushed into an
+  integration release. The gate is NOT registered in `regress.sh` until it
+  closes, because a gate known to be red for a reason nobody is acting on decays
+  into noise.
+
 ## [2.6.5] - 2026-08-29 - "Muster" (rung 5 closes — the AccuracyCoin status vector is identical entry for entry across all 146 entries, with 146 of 146 executed on both sides and none NotRun. Five PPU defects close the last six differing entries, and one of the release's own diagnoses is retracted)
 
 A muster is a roll call where every name is called **and answered**. That is this
