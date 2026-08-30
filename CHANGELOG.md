@@ -143,9 +143,21 @@ in the sibling repository.
   rather than the external injection pin, which is why it first diverged at
   cycle 29,827 -- a frame-counter position).
 
-  The residual is **one sample in 200,000 cycles**, at IRQ edges: the oracle
-  samples /IRQ twice per CPU cycle and this harness samples once. The gate is
-  NOT registered in `regress.sh` until that closes, because a gate known to be
+  The residual is **one CPU cycle on one signal**, twice in two hundred
+  thousand. It was first written up as "the oracle samples /IRQ twice per cycle
+  and the harness once"; that is the wrong mechanism and is corrected here.
+  `bus.rs` says what the pair is -- `_at_low` snapshotted at cycle-start before
+  the APU advances, `_at_high` read at end-of-cycle, so the two encode the
+  ORDERING of a change within the cycle. At the transition the oracle's frame
+  IRQ becomes visible DURING cycle 29,827 and this core's not until 29,828.
+
+  That is a rung-4 observation-point question of the same family as `PPU_LEAD`,
+  and the evidence says the behaviour is right while the sampling point differs:
+  blargg's 2005 APU battery passes **11/11** on this DUT, `apuirq036` included,
+  and that is an independent oracle for frame-counter IRQ timing. It is
+  answerable the way `PPU_LEAD` was -- by sweeping against a gate -- and it
+  deserves that rather than a guess folded into an integration release. The gate
+  is NOT registered in `regress.sh` until it closes, because a gate known to be
   red for a reason nobody is acting on decays into noise.
 
 ## [2.6.5] - 2026-08-29 - "Muster" (rung 5 closes — the AccuracyCoin status vector is identical entry for entry across all 146 entries, with 146 of 146 executed on both sides and none NotRun. Five PPU defects close the last six differing entries, and one of the release's own diagnoses is retracted)
