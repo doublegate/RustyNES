@@ -289,6 +289,22 @@ jobs:
           --all-targets -- -D warnings
       - name: "test (excluded crate: rustynes-cosim)"
         run: cargo test --manifest-path crates/rustynes-cosim/Cargo.toml
+      # ... and again WITH `ppu-state-trace`, because that crate's
+      # `state_trace_records_carry_their_cpu_cycle` test is itself gated on the
+      # feature and so ran NOWHERE in CI. It exists to catch a field that is
+      # present but constant -- the exact defect that shipped when the bus
+      # stamped only one of its two call sites -- and a regression test the gate
+      # cannot reach is the shape this whole block of steps exists to prevent.
+      #
+      # `fast_path_does_not_bypass_the_fetch_trace` is `#![cfg(not(...))]` out
+      # under this feature, which compiles the fast dot path away entirely: with
+      # no fast path to compare against the general one, that test refuses
+      # rather than passing vacuously, and a red gate for a property the build
+      # does not have is noise rather than signal.
+      - name: "test (excluded crate: rustynes-cosim, ppu-state-trace)"
+        run: >
+          cargo test --manifest-path crates/rustynes-cosim/Cargo.toml
+          --features ppu-state-trace
       # The four TRACE features, linted explicitly. `--workspace --all-targets`
       # covers each crate's DEFAULT feature set only, and the step above lints
       # the `rustynes-cosim` package while compiling `rustynes-core` and

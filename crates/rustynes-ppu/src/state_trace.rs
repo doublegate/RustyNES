@@ -75,7 +75,10 @@ use core::ops::RangeInclusive;
 /// Version history:
 ///
 /// * `1` (2026-05-20): initial Session-10 schema.
-pub const PPU_TRACE_SCHEMA_VERSION: u16 = 2;
+/// * `2`: added `oam_bus_copybuffer`.
+/// * `3` (2026-08-28): added `data_buffer`, the `$2007` read buffer.
+/// * `4` (2026-08-28): added `cpu_cycle`, so a record can be located.
+pub const PPU_TRACE_SCHEMA_VERSION: u16 = 4;
 
 /// Magic bytes prefixing every binary trace file. ASCII
 /// "`RUSTYNES_PPU`" — distinguishes our format from Mesen2 native
@@ -85,7 +88,7 @@ pub const BINARY_MAGIC: &[u8; 12] = b"RUSTYNES_PPU";
 /// Length of a single [`PpuStateRecord`] in the packed binary layout.
 ///
 /// Stable for the lifetime of [`PPU_TRACE_SCHEMA_VERSION`].
-pub const RECORD_SIZE: usize = 114;
+pub const RECORD_SIZE: usize = 123;
 
 /// Header length (magic + 2-byte schema version + 2-byte
 /// reserved-for-flags). Records start at this offset.
@@ -229,6 +232,41 @@ pub struct PpuStateRecord {
     /// does not expose what the gate reads sends you to the wrong place
     /// confidently.
     pub oam_bus_copybuffer: u8,
+
+    // === PPUDATA read buffer ===
+    /// The `$2007` read buffer — what the NEXT `$2007` read will return.
+    ///
+    /// Added at schema 3 for the rung-3 `$2007 Stress Test` residual, and the
+    /// reason is the same one that added `oam_bus_copybuffer` at schema 2: the
+    /// question was *when* and *from where* the buffer is filled, and this
+    /// fixture exposed every register the fill is composed from except the
+    /// result. Both consoles read `$2007` at identical cycles there, so the
+    /// difference is which byte landed — a quantity that was, until now,
+    /// observable only after the CPU had already read it back out.
+    ///
+    /// Per-dot capture is what makes it useful: the fill happens four PPU
+    /// cycles after the CPU access ends, so a once-per-access sample shows the
+    /// PREVIOUS read's byte and says nothing about this one.
+    pub data_buffer: u8,
+
+    // === Location ===
+    /// The CPU cycle this dot belongs to, as the bus counts them.
+    ///
+    /// Added at schema 4 because its ABSENCE produced three wrong conclusions
+    /// in a row while diagnosing one `AccuracyCoin` entry. Without it a record
+    /// can only be located by `frame`/`scanline`/`dot`, and none of those is
+    /// comparable across consoles on its own: frames had to be matched by what
+    /// they CONTAIN (a frame number is not a cycle count divided by a frame
+    /// length), dots by an internal relationship measured separately on each
+    /// side, and cycles not at all. Every other trace this project compares —
+    /// `obs.bin`, the IRQ trace, the checkpoint chain — is cycle-keyed, and
+    /// this one was the exception.
+    ///
+    /// Set once per CPU cycle, BEFORE that cycle's dots are ticked, so every
+    /// dot carries the number of the cycle it belongs to rather than the next
+    /// one's. It counts bus-side cycles, DMC DMA included, which is the same
+    /// clock `obs.bin` records — so the two can be joined directly.
+    pub cpu_cycle: u64,
 }
 
 /// Total record size as packed by [`PpuStateRecord::to_bytes`].
@@ -254,8 +292,9 @@ const fn compute_record_size() -> usize {
     let bg = 2 + 2 + 2 + 2 + 1 + 1 + 1 + 1;
     // 32-byte secondary OAM
     let secondary = 32;
-    // OAM FNV-1a (8 bytes) + NMI line (1 byte) + OAM data bus (1 byte)
-    let tail = 8 + 1 + 1;
+    // OAM FNV-1a (8 bytes) + NMI line (1) + OAM data bus (1)
+    //   + PPUDATA read buffer (1) + CPU cycle (8)
+    let tail = 8 + 1 + 1 + 1 + 8;
     anchor + regs + scroll + eval + spr + bg + secondary + tail
 }
 
@@ -343,6 +382,8 @@ impl PpuStateRecord {
         copy_u64(&mut buf, &mut i, self.oam_fnv1a64);
         copy_bool(&mut buf, &mut i, self.nmi_line);
         copy_u8(&mut buf, &mut i, self.oam_bus_copybuffer);
+        copy_u8(&mut buf, &mut i, self.data_buffer);
+        copy_u64(&mut buf, &mut i, self.cpu_cycle);
 
         debug_assert_eq!(i, RECORD_SIZE, "PpuStateRecord packer underflow/overflow");
         buf
@@ -448,6 +489,8 @@ impl PpuStateRecord {
         let oam_fnv1a64 = read_u64(buf, &mut i);
         let nmi_line = read_bool(buf, &mut i);
         let oam_bus_copybuffer = read_u8(buf, &mut i);
+        let data_buffer = read_u8(buf, &mut i);
+        let cpu_cycle = read_u64(buf, &mut i);
         debug_assert_eq!(i, RECORD_SIZE);
 
         Some(Self {
@@ -488,6 +531,8 @@ impl PpuStateRecord {
             oam_fnv1a64,
             nmi_line,
             oam_bus_copybuffer,
+            data_buffer,
+            cpu_cycle,
         })
     }
 }
@@ -749,7 +794,7 @@ impl PpuStateTrace {
              spr_shift_lo,spr_shift_hi,spr_attr,spr_x,\
              bg_shift_lo,bg_shift_hi,at_shift_lo,at_shift_hi,\
              nt_latch,at_latch,bg_lo_latch,bg_hi_latch,\
-             secondary_oam,oam_fnv1a64,nmi_line,oam_bus\n",
+             secondary_oam,oam_fnv1a64,nmi_line,oam_bus,data_buffer,cpu_cycle\n",
         );
         let write_arr = |out: &mut String, a: &[u8]| {
             let mut first = true;
@@ -809,10 +854,12 @@ impl PpuStateTrace {
             write_arr(&mut out, &r.secondary_oam);
             let _ = writeln!(
                 out,
-                ",{:016X},{},{:02X}",
+                ",{:016X},{},{:02X},{:02X},{}",
                 r.oam_fnv1a64,
                 u8::from(r.nmi_line),
-                r.oam_bus_copybuffer
+                r.oam_bus_copybuffer,
+                r.data_buffer,
+                r.cpu_cycle
             );
         }
         out
@@ -863,6 +910,8 @@ mod tests {
             sprite_eval_done: false,
             sprite_eval_read_latch: 0x77,
             oam_bus_copybuffer: 0x5A,
+            data_buffer: 0xB7,
+            cpu_cycle: 0x0123_4567_89AB_CDEF,
             spr_count: 5,
             spr_zero_in_line: true,
             spr_shift_lo: [1, 2, 3, 4, 5, 6, 7, 8],
@@ -1024,6 +1073,7 @@ mod tests {
             "oam_fnv1a64",
             "nmi_line",
             "oam_bus",
+            "data_buffer",
         ] {
             assert!(
                 header.contains(column),
@@ -1035,26 +1085,41 @@ mod tests {
         // wrong value, or be dropped from the row while the name survives --
         // and this test passed on both counts before `oam_bus` was asserted
         // here, which is exactly how a serialization regression reaches a
-        // golden. `sample_record` sets it to 0x5A and the row ends with it.
+        // golden.
+        //
+        // Values are checked BY COLUMN NAME, not by position. Two schema
+        // additions in a row broke the previous form for the wrong reason:
+        // it pinned the trailing columns, so appending a field displaced them
+        // and the test reported a regression in a column that had not changed.
+        // A name lookup also asserts the stronger property — that the header
+        // and the row agree on where each field is — which is the drift worth
+        // guarding, since a column appended to one and not the other is
+        // exactly how a golden becomes unreadable.
         let row = csv.lines().nth(1).expect("one record was pushed");
-        let last = row.rsplit(',').next().expect("non-empty row");
+        let cols: Vec<&str> = header.split(',').collect();
+        let vals: Vec<&str> = row.split(',').collect();
         assert_eq!(
-            last, "5A",
-            "final CSV column should be oam_bus_copybuffer as two hex digits; row: {row}"
+            cols.len(),
+            vals.len(),
+            "header has {} columns and the row {}; header: {header}\nrow: {row}",
+            cols.len(),
+            vals.len()
         );
-
-        // And the two must line up: whatever position the header gives
-        // `oam_bus`, the row must carry the value at that same index. A column
-        // appended to one and not the other is the drift this guards.
-        let idx = header
-            .split(',')
-            .position(|c| c == "oam_bus")
-            .expect("header names oam_bus");
-        assert_eq!(
-            row.split(',').nth(idx),
-            Some("5A"),
-            "oam_bus header index {idx} does not carry the record's value; row: {row}"
-        );
+        for (name, want) in [
+            ("oam_bus", "5A"),
+            ("data_buffer", "B7"),
+            ("cpu_cycle", "81985529216486895"),
+        ] {
+            let idx = cols
+                .iter()
+                .position(|c| *c == name)
+                .unwrap_or_else(|| panic!("header does not name `{name}`: {header}"));
+            assert_eq!(
+                vals[idx], want,
+                "column `{name}` (index {idx}) carries {}, expected {want}; row: {row}",
+                vals[idx]
+            );
+        }
     }
 
     /// Guard against silent layout drift: if the field set

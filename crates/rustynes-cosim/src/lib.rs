@@ -67,6 +67,8 @@ use core::ffi::{c_char, c_int, c_uchar, c_uint, c_ulonglong, c_void};
 use rustynes_core::Nes;
 use rustynes_core::cpu_boot_trace::{CpuBootTrace, CpuBootTraceConfig};
 use rustynes_core::rustynes_ppu::fetch_trace::FetchTrace;
+#[cfg(feature = "ppu-state-trace")]
+use rustynes_core::rustynes_ppu::state_trace::{PpuStateTrace, PpuTraceConfig};
 
 /// Bytes per rung-4 channel-level record. See [`Oracle::take_apu_trace`].
 const APU_REC_LEN: usize = 16;
@@ -375,6 +377,56 @@ impl Oracle {
             .bus_mut()
             .ppu_mut()
             .enable_fetch_trace(FetchTrace::with_capacity(capacity));
+    }
+
+    /// Arm the per-dot PPU state fixture — a **DIAGNOSTIC**, never a gate.
+    ///
+    /// `RustyNES_MiSTer/docs/rung3-ppu.md` fixes that partition before any of
+    /// it was written: these fields are this emulator's decomposition of the
+    /// chip, not pin-observable facts, so a DUT can be *investigated* against
+    /// them and must never be FAILED on them.
+    ///
+    /// The window is narrow on purpose. Every dot of every frame is ~46 kB per
+    /// frame even filtered to the visible field, and the questions this answers
+    /// are always about a handful of dots around one cycle.
+    #[cfg(feature = "ppu-state-trace")]
+    pub fn enable_ppu_state_trace(
+        &mut self,
+        capacity: usize,
+        frames: core::ops::RangeInclusive<u32>,
+        scanlines: Option<core::ops::RangeInclusive<i16>>,
+        dots: Option<core::ops::RangeInclusive<u16>>,
+    ) {
+        let cfg = PpuTraceConfig {
+            frame_range: frames,
+            scanline_range: scanlines,
+            dot_range: dots,
+        };
+        self.nes
+            .bus_mut()
+            .ppu_mut()
+            .enable_state_trace(PpuStateTrace::with_capacity(capacity, cfg));
+    }
+
+    /// The PPU state trace as CSV, or `None` if unarmed.
+    ///
+    /// CSV rather than the binary form because this is read by a human at a
+    /// named cycle, not compared by a tool. A gate would want the binary; there
+    /// is deliberately no gate.
+    ///
+    /// Returns the CSV **and how many records did NOT fit**, for the same reason
+    /// `take_fetch_trace` does: a capture that silently stopped at capacity
+    /// produces a valid-looking file describing a window narrower than the one
+    /// asked for, and every conclusion drawn from it inherits that. The fetch
+    /// trace already reported this and the state trace did not -- the asymmetry
+    /// was the finding.
+    #[cfg(feature = "ppu-state-trace")]
+    pub fn take_ppu_state_trace_csv(&mut self) -> Option<(String, u64)> {
+        self.nes
+            .bus_mut()
+            .ppu_mut()
+            .take_state_trace()
+            .map(|t| (t.to_csv(), t.overflow()))
     }
 
     /// The fetch trace in its binary interchange format, or `None` if unarmed.

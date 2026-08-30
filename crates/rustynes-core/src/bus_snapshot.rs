@@ -11,6 +11,11 @@ use crate::input_device::{
     FamilyKeyboardState, InputDevice, SnesMouseState, VausState, ZapperState,
 };
 use crate::save_state::{BinReader, BinWriter, SnapshotError};
+
+/// Bytes in the v2.6.5 controller-run tail: four `bool` port flags plus two
+/// `u64` cycle stamps. Zero trailing bytes is a pre-v2.6.5 blob; anything
+/// between 1 and this is damage, not a legacy layout.
+const CONTROLLER_RUN_TAIL: usize = 4 + 2 * 8 + 2;
 use alloc::format;
 use alloc::vec::Vec;
 
@@ -92,6 +97,33 @@ pub fn encode_bus(bus: &LockstepBus) -> Vec<u8> {
     // v1.1.0 beta.1 (T-110-B4) — per-game nametable mirroring override (trailing
     // field; pre-v1.1.0 blobs lack it and decode as `None` = no override).
     w.u8(encode_mirroring_override(bus.mirroring_override()));
+    // v2.6.5 — the controller-port CLK run state, appended at the tail rather
+    // than folded into `encode_controller`, which sits in the middle of this
+    // section and cannot grow without breaking every earlier blob.
+    //
+    // Both halves outlive an instruction and so must be carried: a `$4016` read
+    // is the last cycle of `LDA $4016`, so a snapshot taken at that instruction
+    // boundary has a shift owed and a run open. Restoring without them makes
+    // the next read return a bit the timeline already delivered.
+    //
+    // Pre-v2.6.5 blobs lack these bytes and decode as "no shift owed, no run" —
+    // which is the state after any strobe, so a restored pre-v2.6.5 save
+    // behaves exactly as it did when it was written.
+    for c in bus.controllers_ref() {
+        w.bool(c.pending_shift);
+    }
+    for c in bus.controllers34_ref() {
+        w.bool(c.pending_shift);
+    }
+    for port in 0..2 {
+        w.u64(bus.port_read_cycle(port));
+    }
+    // The Four Score chain's own owed edge. It clocks with the pads, so it has
+    // to be restored with them: without it a snapshot taken mid-run resumes
+    // with the adapter and the pads on different positions of one shift chain.
+    for f in bus.four_score_pending() {
+        w.bool(f);
+    }
     w.into_vec()
 }
 
@@ -414,6 +446,44 @@ pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotErro
         None
     };
     bus.set_mirroring_override(mirroring_override);
+    // v2.6.5 — controller-port CLK run state (trailing-default: pre-v2.6.5
+    // blobs have no bytes left and decode as "no shift owed, no run open",
+    // which is the post-strobe state and so reproduces how they behaved when
+    // they were written).
+    //
+    // A PARTIAL TAIL IS REFUSED RATHER THAN READ AS LEGACY. The test used to be
+    // `>= 20`, so a v2.6.5 blob truncated to between 1 and 19 trailing bytes
+    // took the legacy path and restored `pending_shift = false` for every port
+    // -- silently, and with a consequence: the next controller read repeats a
+    // bit that was already delivered. Zero bytes is a pre-v2.6.5 blob and is
+    // the only absence that means "no tail"; anything shorter than the whole
+    // tail is damage, and a save state is untrusted input.
+    if r.remaining() != 0 && r.remaining() < CONTROLLER_RUN_TAIL {
+        return Err(SnapshotError::SectionTruncated {
+            tag: alloc::string::String::from("BUS "),
+            declared: CONTROLLER_RUN_TAIL,
+            got: r.remaining(),
+        });
+    }
+    if r.remaining() >= CONTROLLER_RUN_TAIL {
+        let mut pending = [false; 4];
+        for p in &mut pending {
+            *p = r.bool()?;
+        }
+        let mut cycles = [0u64; 2];
+        for c in &mut cycles {
+            *c = r.u64()?;
+        }
+        // Through a setter, not the locals above: those were installed into the
+        // bus a hundred lines earlier and mutating them here would decode
+        // cleanly and restore nothing.
+        bus.set_controller_run_state(pending, cycles);
+        let mut fs = [false; 2];
+        for f in &mut fs {
+            *f = r.bool()?;
+        }
+        bus.set_four_score_pending(fs);
+    }
     bus.set_bus_misc_state(BusMiscState {
         dma_pending,
         dma_cycles_owed,

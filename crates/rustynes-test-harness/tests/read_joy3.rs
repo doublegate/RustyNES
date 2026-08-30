@@ -28,10 +28,32 @@
 //! `rustynes_core::bus::Bus::dmc_dma_read` (the `$4016`/`$4017` conflict arms call
 //! `controllers[port].read()`, advancing the shift register during the DMC
 //! fetch). Verified empirically: `count_errors.nes` runs its 1000-iteration
-//! loop and renders **"Conflicts: 149/1000"** at frame 240 — i.e. our core
-//! produces 149 real DMC-vs-`$4016` conflicts, and the conflict-tolerant
+//! loop and renders **"Conflicts: 134/1000"** at frame 240 — i.e. our core
+//! produces 134 real DMC-vs-`$4016` conflicts, and the conflict-tolerant
 //! `read_joy` routine compensates for every one (the ROM never hits its
-//! `test_failed` halt; the loop runs to completion). This older test shell
+//! `test_failed` halt; the loop runs to completion).
+//!
+//! **v2.6.5 moved both counts, deliberately.** `Controller::write_strobe`
+//! dropped an owed shift unconditionally — the first defect this programme's
+//! co-simulation proved in the ORACLE rather than in the DUT — and fixing it
+//! changes exactly the shift-register-during-DMA behaviour these two ROMs
+//! exist to stress. Measured on both sides, `main` against the fix:
+//!
+//! | ROM | before | after |
+//! |---|---|---|
+//! | `count_errors.nes` | Conflicts: 149/1000 | **134/1000** |
+//! | `count_errors_fast.nes` | Errors: 75/1000 | **58/1000** |
+//!
+//! Both counts fall and neither reaches zero, which is the direction a
+//! dropped-shift fix should produce: fewer controller-read errors, with the
+//! conflict model still active. The failure mode this snapshot guards against
+//! — "dropping the count toward 0", i.e. the conflict model being DISABLED —
+//! is not what happened, and that was checked by decoding the screens rather
+//! than by observing that a hash changed. `AccuracyCoin`'s `Controller Clocking`
+//! moves from success code 2 (Famicom) to code 1 (NES / AV Famicom) in the same
+//! change, which is the console this project models.
+//!
+//! This older test shell
 //! reports ONLY on-screen (no `$6000` magic), so the framebuffer-FNV-1a
 //! snapshot below LOCKS that exact completed screen: a regression that
 //! DISABLED the conflict model (dropping the count toward 0) or that broke the

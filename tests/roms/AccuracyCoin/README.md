@@ -23,10 +23,16 @@ after the original batch. The recipe, so the next one does not have to be
 rediscovered:
 
 ```bash
+# Fetch the upstream source into a scratch dir...
 mkdir -p /tmp/accoin-src && cd /tmp/accoin-src
 for f in AccuracyCoin.asm nesasm.exe Tiles.pcx Sprites.pcx; do
   curl -sLO "https://raw.githubusercontent.com/100thCoin/AccuracyCoin/main/$f"
 done
+
+# ...then come BACK. Both the builder path and `--out` are repo-relative, and
+# the `cd` above leaves the shell in /tmp/accoin-src, where neither resolves.
+cd "$(git -C ~/Code/OSS_Public-Projects/RustyNES rev-parse --show-toplevel)"
+
 python3 scripts/accuracycoin-build/build_sub_test_rom.py /tmp/accoin-src \
     --suite 11 --test 1 --name "NMI Overlap BRK" \
     --out tests/roms/AccuracyCoin/sub-tests/nmi-overlap-brk.nes
@@ -36,6 +42,32 @@ python3 scripts/accuracycoin-build/build_sub_test_rom.py /tmp/accoin-src \
 within that suite's `table "name", ...` lines; the builder's docstring carries
 the suite map. It assembles through **wine + the upstream `nesasm.exe`**, which
 is the upstream toolchain rather than a substitute.
+
+**Two more were added in v2.6.5**, for the `$2007` state-machine cluster:
+
+```bash
+python3 scripts/accuracycoin-build/build_sub_test_rom.py /tmp/accoin-src \
+    --suite 18 --test 7 --name "ALE + Read" \
+    --out tests/roms/AccuracyCoin/sub-tests/ppu-misc-ale-read.nes
+python3 scripts/accuracycoin-build/build_sub_test_rom.py /tmp/accoin-src \
+    --suite 18 --test 8 --name "Hybrid Addresses" \
+    --out tests/roms/AccuracyCoin/sub-tests/ppu-misc-hybrid-addresses.nes
+```
+
+Both report at their **catalog** addresses (`$0491`, `$0492`) — verified from a
+RAM diff, not assumed — and both reach a verdict in **8.93M cycles** against the
+full battery's 134M, which is the whole reason to build them.
+
+**`/usr/local/bin/wine` may not be wine.** On the development machine it is a
+symlink to **firejail**, which shadows the real binary at `/usr/bin/wine` on
+`PATH`; the builder then assembles nothing and the failure does not name wine.
+Run it as `PATH=/usr/bin:$PATH python3 scripts/...` if `wine --version` prints
+anything other than a wine version.
+
+Re-fetch `AccuracyCoin.asm` rather than reusing a local copy, and check it
+matches: the builder rewrites one routine in the source it is handed, so a
+source that already drifted produces a ROM that looks fine and tests something
+else.
 
 **`sub-tests/cpu-open-bus.nes` does not run `Open Bus`.** Measured in v2.6.4:
 its verdict lands at **`$0407`**, which the catalog assigns to *Dummy write
@@ -102,3 +134,28 @@ Both directories are referenced by code:
 Merging them would require renaming the source files in both crates and
 regenerating the per-suite pass-rate baselines. Cost > benefit. The
 two-directory layout is the canonical path going forward.
+
+### Sub-tests the harness cannot isolate
+
+Two sub-test ROMs build correctly and are **deliberately unregistered**, because
+the ORACLE does not pass them. `subtest_verdict.py` refuses a comparison whose
+oracle side is not a pass — correctly, since a ROM the reference implementation
+fails cannot adjudicate anything about the DUT.
+
+| ROM | suite/test | oracle verdict | why |
+|---|---|---|---|
+| `sprite-eval-arbitrary-sprite-zero.nes` | — | Fail | pre-existing; see the rung-5 notes |
+| `sprite-zero-hit-behavior.nes` | 17 / 1 | `$457 = $06`, Fail(test 1) | the streamlined boot omits state the full battery establishes |
+
+For `sprite-zero-hit-behavior` the failure is the FIRST assertion — "does a
+sprite zero hit occur in a situation in which it should" — so the test never
+gets as far as the behaviour it exists to check. `TEST_Sprite0Hit_Behavior`
+expects "a solid white square … placed at VRAM address $2001" and a sprite zero
+overlapping it; the builder replaces `AutomaticallyRunEveryTestInROM` with a
+runner that calls `LoadSuiteMenuNoRendering` and `RunTest` once, which does not
+reproduce everything the full battery has done to VRAM and the pattern tables by
+the time this entry runs.
+
+The ROM and its golden are kept rather than deleted: they are the evidence that
+the isolation was attempted and why it does not work, and the entry has to be
+debugged against the full 4500-frame battery instead.

@@ -372,6 +372,30 @@ pub struct LockstepBus {
     /// Per-port Four Score read counter (0-7 = primary pad, 8-15 = secondary
     /// pad, 16-23 = signature, then 1s). Reset on each strobe.
     four_score_idx: [u8; 2],
+    /// Does the Four Score chain owe a clock edge on this port?
+    ///
+    /// The exact counterpart of `Controller::pending_shift`, and it exists for
+    /// the same reason. v2.6.5 made a contiguous read of a port return the same
+    /// bit — `CLK` stays low across the run, so the pads do not advance — but
+    /// the adapter's 24-read multiplexer went on advancing `four_score_idx` and
+    /// shifting `four_score_sig` on EVERY read. The chain then ran ahead of the
+    /// pads feeding it: a contiguous pair at index 7 moved to the pad-3 window
+    /// after only seven advances of pad 1, and a pair inside the signature
+    /// window consumed two signature bits where the hardware returns one twice.
+    ///
+    /// The Four Score is one shift chain, so it clocks on the same edge the
+    /// pads do. Cleared by a strobe, exactly as `pending_shift` is.
+    four_score_pending: [bool; 2],
+    /// CPU cycle of the most recent read of each controller port, or
+    /// `u64::MAX` for "never".
+    ///
+    /// `CLK` on the controller port is LOW only while `$4016`/`$4017` is being
+    /// read, and the shift register advances on its low-to-high transition —
+    /// when the read ENDS. Consecutive read cycles hold it low throughout and
+    /// so produce one edge between them, not two. This is what says whether a
+    /// read continues such a run. Every CPU cycle is a bus access in this core
+    /// (ADR 0029), so cycle adjacency IS address-bus continuity.
+    port_read_cycle: [u64; 2],
     /// Per-port Four Score signature shift register, reloaded on each strobe
     /// (port 0 = `0x08`, port 1 = `0x04`; shifted out LSB-first).
     four_score_sig: [u8; 2],
@@ -863,6 +887,8 @@ impl LockstepBus {
             power_up_palette: PaletteInit::Zeroed,
             controllers34: [Controller::new(); 2],
             four_score_idx: [0; 2],
+            four_score_pending: [false; 2],
+            port_read_cycle: [u64::MAX; 2],
             four_score_sig: [0; 2],
             #[cfg(feature = "debug-hooks")]
             controller_polled: false,
@@ -1098,6 +1124,7 @@ impl LockstepBus {
         // transient strobe/read state resets like the controllers above.
         self.controllers34 = [Controller::new(); 2];
         self.four_score_idx = [0; 2];
+        self.four_score_pending = [false; 2];
         self.four_score_sig = [0; 2];
         // Vs. System coin/service inputs are transient (DIP switches are
         // hardware config and persist across a power-cycle, like the panel).
@@ -2411,6 +2438,39 @@ impl LockstepBus {
         &self.controllers34
     }
 
+    /// The CPU cycle of `port`'s most recent read (`u64::MAX` = never), for
+    /// the save state.
+    #[must_use]
+    pub const fn port_read_cycle(&self, port: usize) -> u64 {
+        self.port_read_cycle[port]
+    }
+
+    /// Restore the controller-port CLK run state: four `pending_shift` flags
+    /// (ports 1-2 then the Four Score's 3-4) and the two per-port read cycles.
+    /// The Four Score chain's owed-edge flags, for the snapshot.
+    #[must_use]
+    pub const fn four_score_pending(&self) -> [bool; 2] {
+        self.four_score_pending
+    }
+
+    /// Restore the Four Score chain's owed-edge flags. See
+    /// [`Self::set_controller_run_state`]; kept beside it because the two are
+    /// one piece of state split across two devices.
+    pub const fn set_four_score_pending(&mut self, pending: [bool; 2]) {
+        self.four_score_pending = pending;
+    }
+
+    /// Restore the controller-port CLK run state: four `pending_shift` flags
+    /// (ports 1-2 then the Four Score's 3-4) and the two per-port read cycles.
+    pub const fn set_controller_run_state(&mut self, pending: [bool; 4], cycles: [u64; 2]) {
+        self.controllers[0].pending_shift = pending[0];
+        self.controllers[1].pending_shift = pending[1];
+        self.controllers34[0].pending_shift = pending[2];
+        self.controllers34[1].pending_shift = pending[3];
+        self.port_read_cycle[0] = cycles[0];
+        self.port_read_cycle[1] = cycles[1];
+    }
+
     /// Enable/disable the Four Score 4-player adapter. Off by default; while
     /// off, `$4016`/`$4017` behave exactly as the standard two controllers
     /// (byte-identical reads — determinism + save-states unaffected).
@@ -2519,6 +2579,9 @@ impl LockstepBus {
             // (port 0 = 0x08, port 1 = 0x04, shifted out LSB-first).
             self.four_score_idx = [0, 0];
             self.four_score_sig = [0x08, 0x04];
+            // The chain owes nothing immediately after a strobe, so the FIRST
+            // read serves index 0 rather than advancing past it.
+            self.four_score_pending = [false, false];
         }
     }
 
@@ -2526,6 +2589,16 @@ impl LockstepBus {
     /// advancing the shift register. Four Score off → just
     /// `controllers[port].read()`; on → the multiplexed 24-read sequence
     /// (primary pad → secondary pad → signature → 1s).
+    /// Does a read of `port` on this cycle continue an unbroken run of reads
+    /// of the same port? Records this cycle as the port's latest read either
+    /// way, so callers must invoke it exactly once per read.
+    const fn port_continues_run(&mut self, port: usize) -> bool {
+        let last = self.port_read_cycle[port];
+        let cont = last != u64::MAX && self.cycle == last.wrapping_add(1);
+        self.port_read_cycle[port] = self.cycle;
+        cont
+    }
+
     fn read_port(&mut self, port: usize) -> u8 {
         // v1.6.0 Workstream A3 (`TAStudio` lag log): any read of $4016/$4017
         // counts as the game polling input this frame. Output-only; gated.
@@ -2563,25 +2636,33 @@ impl LockstepBus {
         if let Some(d) = &mut self.expansion_device[port] {
             return d.read();
         }
+        let cont = self.port_continues_run(port);
         if !self.four_score || self.controllers[port].strobe {
-            return self.controllers[port].read();
+            return self.controllers[port].read(cont);
         }
-        let idx = self.four_score_idx[port];
-        let bit = if idx < 8 {
-            self.controllers[port].read()
-        } else if idx < 16 {
-            self.controllers34[port].read()
-        } else if idx < 24 {
-            let b = self.four_score_sig[port] & 1;
-            self.four_score_sig[port] = (self.four_score_sig[port] >> 1) | 0x80;
-            b
-        } else {
-            1
-        };
-        if idx < 24 {
+        // ADVANCE FIRST, THEN SERVE — the same shape as `Controller::read`,
+        // and for the same reason. The chain clocks on the rising edge that
+        // ENDS the previous run, so a contiguous read serves the position it
+        // already served instead of stepping past it. Advancing after the
+        // serve, unconditionally, is what let the adapter run ahead of the pads
+        // feeding it once contiguous reads stopped advancing them.
+        if self.four_score_pending[port] && !cont && self.four_score_idx[port] < 24 {
+            if self.four_score_idx[port] >= 16 {
+                self.four_score_sig[port] = (self.four_score_sig[port] >> 1) | 0x80;
+            }
             self.four_score_idx[port] += 1;
         }
-        bit
+        self.four_score_pending[port] = true;
+        let idx = self.four_score_idx[port];
+        if idx < 8 {
+            self.controllers[port].read(cont)
+        } else if idx < 16 {
+            self.controllers34[port].read(cont)
+        } else if idx < 24 {
+            self.four_score_sig[port] & 1
+        } else {
+            1
+        }
     }
 
     /// Side-effect-free companion to [`Self::read_port`] (debugger peek).
@@ -2968,6 +3049,16 @@ impl LockstepBus {
     /// APU tick).
     #[allow(clippy::too_many_lines)] // Session-21 added per-cycle DMC + bus-access snapshots; splitting the trace push into a helper would force the bus to recompute `trace_*_pre_tick` values across function boundaries.
     pub(crate) fn tick_one_cpu_cycle(&mut self) {
+        // Stamp the PPU with the cycle these dots belong to, BEFORE ticking
+        // them, so a state record carries its own cycle rather than the next
+        // one's. `self.cycle` advances at the END of this function.
+        //
+        // Feature-gated: the default build has neither the field nor this
+        // store. `cpu_clock` carries the same store for the running path; see
+        // the note there for why both are needed.
+        #[cfg(feature = "ppu-state-trace")]
+        self.ppu.set_trace_cpu_cycle(self.cycle);
+
         // Tick PPU 3 dots in NTSC.  PAL would be 3.2 (5 dots per 16 PPU dots);
         // we approximate as 3 for now and gate region accuracy behind a
         // future Phase 2 follow-up.
@@ -3480,10 +3571,12 @@ impl LockstepBus {
                 self.apu.clear_frame_irq_immediate_for_dma();
             }
             0x4016 => {
-                let _ = self.controllers[0].read();
+                let cont = self.port_continues_run(0);
+                let _ = self.controllers[0].read(cont);
             }
             0x4017 => {
-                let _ = self.controllers[1].read();
+                let cont = self.port_continues_run(1);
+                let _ = self.controllers[1].read(cont);
             }
             _ => {}
         }
@@ -3510,12 +3603,14 @@ impl LockstepBus {
                 // built-in microphone. Default-off (mic released) leaves `mic`
                 // = 0, so the returned byte is byte-identical to prior releases.
                 let mic = u8::from(self.famicom_mic) << 2;
-                let v = (sample & 0xE0) | self.controllers[0].read() | mic;
+                let cont = self.port_continues_run(0);
+                let v = (sample & 0xE0) | self.controllers[0].read(cont) | mic;
                 self.open_bus = v;
                 v
             }
             0x4017 => {
-                let v = (sample & 0xE0) | self.controllers[1].read();
+                let cont = self.port_continues_run(1);
+                let v = (sample & 0xE0) | self.controllers[1].read(cont);
                 self.open_bus = v;
                 v
             }
@@ -4533,6 +4628,20 @@ impl Bus for LockstepBus {
     /// (the pivot's working `service_dmc_dma`); Phase 3 wires the
     /// `dma_mc_consumed` coherence accounting.
     fn cpu_clock(&mut self) {
+        // Stamp the PPU with the cycle whose dots this call is about to run.
+        // See the twin in `tick_one_cpu_cycle` and `Ppu::set_trace_cpu_cycle`.
+        //
+        // BOTH need it, and that is the whole point of having it twice: this is
+        // the path a running console takes, and `tick_one_cpu_cycle` is the one
+        // the harness drives directly. Wiring only the latter left every record
+        // stamped `0` while the field, the column and the plumbing all looked
+        // correct -- caught by
+        // `tests/state_trace_records_carry_their_cpu_cycle.rs`, which exists
+        // because a present-but-constant field reinstates the whole problem it
+        // was added to solve while appearing to fix it.
+        #[cfg(feature = "ppu-state-trace")]
+        self.ppu.set_trace_cpu_cycle(self.cycle);
+
         // Diagnostic: snapshot the APU IRQ line (frame-counter | DMC) BEFORE
         // `apu_advance_one` runs the frame counter, so `trace_end_cycle` can
         // expose the within-cycle frame-counter SET (low=0 -> high=1) vs the
@@ -5129,13 +5238,21 @@ mod four_score_tests {
         // more (dmc_halt + 3 uni_oam flags + uni_oam_addr u16 + ppu_clock
         // u64 + dma_mc_consumed u64); the v2.1.0 tail appends 2 more (one
         // expansion-device tag byte per port, both `None`); the v1.1.0 beta.1
-        // tail appends 1 more (the nametable mirroring-override tag, `None`).
-        // Truncating all 36 simulates a pre-v1.7.0 save, which must still load
-        // with the adapter off (and no expansion device / override).
+        // tail appends 1 more (the nametable mirroring-override tag, `None`);
+        // the v2.6.5 tail appends 22 more: four `pending_shift` bools, two
+        // `port_read_cycle` u64s (the controller-port CLK run state), and two
+        // `four_score_pending` bools (the adapter's own owed edge -- the Four
+        // Score is one shift chain with the pads, so it clocks with them).
+        // Truncating all 58 simulates a pre-v1.7.0 save, which must still load
+        // with the adapter off (and no expansion device / override / run state).
+        //
+        // The constant is deliberately literal rather than computed: it is the
+        // tail's LAYOUT written down, and it is what made a v2.6.5 append fail
+        // loudly here instead of silently shifting every field behind it.
         let mut bus = test_bus();
         bus.set_four_score(true);
         let blob = crate::bus_snapshot::encode_bus(&bus);
-        let old = &blob[..blob.len() - 36];
+        let old = &blob[..blob.len() - 58];
         let mut restored = test_bus();
         restored.set_four_score(true); // prove decode actively turns it off
         crate::bus_snapshot::decode_bus(&mut restored, old).unwrap();
@@ -5233,16 +5350,118 @@ mod four_score_tests {
         // A pre-v2.1.0 blob lacks the 2 trailing device-tag bytes (one None
         // tag per port); a pre-v1.1.0 blob also lacks the mirroring-override
         // tag. With nothing attached the encoder writes `[0, 0]` + `[0]`, so
-        // truncating those 3 trailing bytes reproduces an older save — which
+        // truncating those trailing bytes reproduces an older save — which
         // must still load with both ports unplugged and no override.
+        //
+        // THE COUNT IS 23, NOT 3, AND THAT IS THE POINT. v2.6.5 appended a
+        // 20-byte controller-run tail AFTER those three, so removing three
+        // bytes stopped reproducing an old blob the moment that landed: it
+        // produces a CURRENT blob with a half-eaten tail. That decoded
+        // "successfully" for as long as the tail test was `>= 20` — the
+        // remaining 17 bytes fell through to the legacy path and every port
+        // restored `pending_shift = false`, so the next controller read
+        // repeated a bit. The decoder now refuses a partial tail, which is
+        // what turned this test red and exposed the stale premise.
         let bus = test_bus();
         let blob = crate::bus_snapshot::encode_bus(&bus);
-        let old = &blob[..blob.len() - 3];
+        let old = &blob[..blob.len() - (3 + 4 + 2 * 8 + 2)];
         let mut restored = test_bus();
         crate::bus_snapshot::decode_bus(&mut restored, old).unwrap();
         assert!(restored.expansion_device(0).is_none());
         assert!(restored.expansion_device(1).is_none());
         assert_eq!(restored.mirroring_override(), None);
+    }
+
+    #[test]
+    fn a_contiguous_four_score_read_does_not_advance_the_chain() {
+        // The adapter is one shift chain with the pads it multiplexes, so a
+        // contiguous read -- `CLK` staying low across consecutive-cycle reads
+        // of the same port -- must return the SAME bit from the SAME position,
+        // exactly as a bare controller does.
+        //
+        // Before this guard the chain advanced on every read while the pads
+        // advanced only on a rising edge, so it ran ahead of them: reaching the
+        // pad-3 window after seven advances of pad 1 rather than eight, and
+        // consuming two signature bits where the hardware returns one twice.
+        let mut bus = test_bus();
+        bus.set_four_score(true);
+        bus.write(0x4016, 1);
+        bus.write(0x4016, 0);
+
+        // Walk the whole 24-read sequence. At each position, a read on the very
+        // next CPU cycle must repeat it, and must leave the chain where it was.
+        for step in 0..24u8 {
+            let first = bus.read_port(0);
+            // Where the run's OWN rising edge left the chain. The contiguous
+            // read must not move it from here — comparing against the position
+            // before the first read would instead assert the first read does
+            // not advance, which is a different (and wrong) claim.
+            let idx_in_run = bus.four_score_idx[0];
+            bus.cycle = bus.cycle.wrapping_add(1);
+            let contiguous = bus.read_port(0);
+            assert_eq!(
+                first, contiguous,
+                "step {step}: a contiguous read returned a different bit"
+            );
+            assert_eq!(
+                bus.four_score_idx[0], idx_in_run,
+                "step {step}: the chain advanced during a contiguous read"
+            );
+            // Break the run so the next iteration starts a fresh one.
+            bus.cycle = bus.cycle.wrapping_add(4);
+        }
+    }
+
+    #[test]
+    fn the_four_score_owed_edge_survives_a_save_state() {
+        // `four_score_pending` is the adapter's half of the same state
+        // `pending_shift` is for the pads. Restoring one without the other puts
+        // the two halves of one shift chain on different positions.
+        let mut bus = test_bus();
+        bus.set_four_score(true);
+        bus.write(0x4016, 1);
+        bus.write(0x4016, 0);
+        bus.read_port(0);
+        assert_eq!(bus.four_score_pending(), [true, false]);
+
+        let blob = crate::bus_snapshot::encode_bus(&bus);
+        let mut restored = test_bus();
+        restored.set_four_score(true);
+        crate::bus_snapshot::decode_bus(&mut restored, &blob).unwrap();
+        assert_eq!(
+            restored.four_score_pending(),
+            [true, false],
+            "the adapter resumed without the edge it owed"
+        );
+    }
+
+    #[test]
+    fn a_half_truncated_controller_tail_is_refused_not_read_as_legacy() {
+        // The guard the test above exposed the need for. A blob cut anywhere
+        // INSIDE the 20-byte controller-run tail is damage, not an older
+        // layout, and reading it as legacy restores `pending_shift = false`
+        // for every port — silently, and with a consequence: the next
+        // controller read repeats a bit that was already delivered. Zero
+        // trailing bytes is the only absence that means "no tail".
+        //
+        // Every interior cut is checked rather than one representative, because
+        // an off-by-one in the bound is exactly the mistake this guards.
+        let bus = test_bus();
+        let blob = crate::bus_snapshot::encode_bus(&bus);
+        for cut in 1..(4 + 2 * 8 + 2) {
+            let damaged = &blob[..blob.len() - cut];
+            let mut restored = test_bus();
+            assert!(
+                crate::bus_snapshot::decode_bus(&mut restored, damaged).is_err(),
+                "a blob missing {cut} byte(s) of the controller tail decoded cleanly"
+            );
+        }
+        // ... and the whole tail absent still loads, which is the legacy path
+        // this must not break.
+        let legacy = &blob[..blob.len() - (4 + 2 * 8 + 2)];
+        let mut restored = test_bus();
+        crate::bus_snapshot::decode_bus(&mut restored, legacy)
+            .expect("a blob with no controller tail at all is a pre-v2.6.5 save");
     }
 
     #[test]

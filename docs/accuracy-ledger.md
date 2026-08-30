@@ -142,6 +142,61 @@ disposition under the v2.1.0 "Fathom" accuracy-remediation line
   **oracle** wrong rather than the DUT, which the v2.5.0 plan listed in advance
   as risk 6: *"the oracle can be wrong. 141/141 is not 'matches silicon'."*
 
+## AccuracyCoin's coded passes, triaged (v2.6.5)
+
+Over a **4500-frame** window, where all 146 catalog entries execute, the vector
+reads `total=146 pass=130 pass_with_code=16 fail=0 skipped=0 not_run=0`. The
+sixteen are triaged here because `pass_with_code` is easy to read as "did not
+pass cleanly", and for most of them that is simply wrong: AccuracyCoin uses the
+code to say **which of several accepted outcomes occurred**, and for several
+tests code 1 IS the canonical answer.
+
+| entry | code | what the code means | disposition |
+|---|---|---|---|
+| `Controller Clocking` | 2 → **1** | Famicom → NES / AV Famicom | **FIXED v2.6.5** |
+| `DMA + $4016 Read` | 2 → **1** | Famicom → NES / AV Famicom | **FIXED v2.6.5** |
+| `Sprites On Scanline 0` | 2 | "RGB PPU Detected" | **open — see below** |
+| `Implicit DMA Abort` | 2 | "pre-1990 CPU" | revision selection |
+| `APU Register Activation` | 2 | second accepted outcome | not investigated |
+| `PPU Read Buffer` | 16 | `$41` = ASCII **`G`** — revision-G PPU | the revision this core models |
+| `Address $2004 behavior` | 16 | `$41` = ASCII **`G`** | the revision this core models |
+| `$93`/`$9F`/`$9B` SHA/SHS | 1 | the test's FIRST success code | a clean pass |
+| `DMA + $2002 Read` | 1 | the test's FIRST success code | a clean pass |
+| `PPU Reset Flag`, `CPU RAM`, `CPU Registers`, `PPU RAM`, `Palette RAM` | 53 | — | **not tests** |
+
+**The five "code 53" entries are not tests.** Each routine opens with
+`JSR RTS_If_Running_All_Tests` and its own comment says so: *"This isn't actually
+testing anything anyway."* They print the recorded power-on bytes on screen and
+return early under `RunningAllTests`, so the byte left in the result slot is
+whatever `A` held. There is no clean pass to earn.
+
+**The two "code 16" entries are a revision selection, not a defect.** `$41` is
+ASCII `G`, and the ROM writes it as *"Success code 'G', referring to revision G
+PPU (or later) behavior"* — the revision this core models. Its counterpart is
+`$39` = `E` for pre-revision-G.
+
+**`Sprites On Scanline 0` is the one genuinely open item.** The ROM reports
+"RGB PPU Detected" because this core produces no sprite-zero hit at x=0 on
+scanline 0. A composite 2C02 does, and the ROM cites the mechanism
+(`forums.nesdev.org/viewtopic.php?t=26291`): the pre-render line is treated as
+scanline `261 & 255 = 5` for the in-range checks during the sprite-fetch phase,
+so stale secondary-OAM slots whose pixel lands on row 5 load into the shifters
+for scanline 0.
+
+Half of that is **already implemented**: `Ppu::tick`'s fetch phase computes
+`next_line = prerender_line() & 0xFF` and the shifter `load` gate filters on it,
+both tagged for this very test. What suppresses it is `in_use = slot <
+spr_count`: evaluation on the pre-render line runs with `next_line = -1`, finds
+nothing, and sets `spr_count = 0`, so no slot reaches the `load` gate.
+
+Relaxing `in_use` on the pre-render line alone was **measured and is not
+sufficient** — AccuracyCoin held 141/141 and the entry stayed at code 2, because
+the stale secondary-OAM content is not present either. The remaining question is
+what secondary OAM holds across the pre-render line, which is sprite-evaluation
+work and the item this programme's own plan names as its hardest. Deferred with
+the evidence rather than attempted on a partial understanding; the experiment was
+reverted, not left behind a flag.
+
 ## Ignored-test dispositions (all 20)
 
 Every `#[ignore]`'d test in the workspace, with its disposition. **None is an

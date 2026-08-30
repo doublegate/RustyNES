@@ -1,5 +1,20 @@
 //! The fast dot path must not change what the fetch trace records.
 //!
+//! NOT APPLICABLE UNDER `ppu-state-trace`, and gated out rather than left to
+//! fail. That feature compiles `Ppu::tick_visible_render_fast` out entirely so
+//! the per-dot hook sees every dot, so there is no fast path to compare against
+//! the general one -- and this test says so itself, refusing with "the fast
+//! path ran only 0 times ... proving nothing" rather than reporting a vacuous
+//! pass. That refusal is the guard working, but it also made
+//! `cargo test --features ppu-state-trace` red for a property that does not
+//! exist in that build, which is not a defect to report every run.
+//!
+//! Gating it here is what lets CI run the crate's tests WITH the feature, which
+//! is the only way `state_trace_records_carry_their_cpu_cycle` -- feature-gated
+//! itself -- ever executes. Before this it never ran in CI at all: a test
+//! written to catch a present-but-constant field, unreachable by the gate.
+#![cfg(not(feature = "ppu-state-trace"))]
+//!
 //! A review of #450 raised this as a blocking correctness finding: that
 //! `ppu-state-trace` disables `Ppu::tick_visible_render_fast` while
 //! `ppu-fetch-trace` does not, so a build with only the fetch trace would run

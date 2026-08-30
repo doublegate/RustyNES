@@ -372,7 +372,31 @@ Output format per divergence:
 
 ## Schema versioning
 
-Binary schema version is `1` (Session-10). Bump
+Binary schema version is **`4`** (v2.6.5), and the record is
+**123 bytes**. It was `1` at Session-10; this section had not
+been moved since, which is how a spec becomes a stale claim
+about the layout beneath it.
+
+| schema | added | why |
+|---|---|---|
+| 2 | `oam_bus_copybuffer` | v2.5.6 — the sprite-eval gate observed a model the diagnostic did not expose |
+| 3 | `data_buffer` | v2.6.5 — the `$2007` read buffer, for the PPU DATA state machine |
+| 4 | `cpu_cycle` | v2.6.5 — stamps each per-dot record with the CPU cycle it belongs to |
+
+**`cpu_cycle` is what makes two consoles comparable at dot
+resolution at all.** Without it a reader has to infer the
+cycle from the dot, and the two sides stamp their records at
+different points within the cycle — which produced, and then
+retracted, a "two-dot CPU/PPU alignment" diagnosis in v2.6.5
+(sibling ledger 3.39 / 3.42). It is written by
+`Bus::set_trace_cpu_cycle` at **two** call sites: `cpu_clock`,
+the path a running console takes, and `tick_one_cpu_cycle`,
+the one the harness drives. Wiring only the latter leaves every
+record `0` while the field, the column and the plumbing all
+look correct, which is what
+`state_trace_records_carry_their_cpu_cycle` exists to catch.
+
+Bump
 `PPU_TRACE_SCHEMA_VERSION` in
 `crates/rustynes-ppu/src/state_trace.rs` whenever the
 `PpuStateRecord` byte layout changes; the `to_binary` /

@@ -2,4 +2,4 @@
 source: crates/rustynes-test-harness/tests/read_joy3.rs
 expression: snap
 ---
-rom=nes-test-roms/read_joy3/count_errors_fast.nes frames=240 fb_bytes=245760 fnv1a64=00466783e115c91d
+rom=nes-test-roms/read_joy3/count_errors_fast.nes frames=240 fb_bytes=245760 fnv1a64=c554acceb808e035

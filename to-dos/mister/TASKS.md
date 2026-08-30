@@ -181,8 +181,8 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
         routine, so a code is an index WITHIN one routine and two entries
         sharing it share nothing. Producing the vector is v2.6.3; matching it is
         v2.6.4
-- [ ] v2.6.4 status vector identical **entry-for-entry**, including `Skipped` and
-      `NotRun` — **rung 5 closes**. State a floor, not a target
+- [x] status vector identical **entry-for-entry**, including `Skipped` and
+      `NotRun` — **rung 5 CLOSES at v2.6.5**. State a floor, not a target
   - [x] All four remaining disagreements closed (`Dummy write cycles`,
         `Open Bus`, `Interrupt flag latency`, `NMI Overlap BRK`). Every rule that
         closed the last three is stated by AccuracyCoin's own source and two of
@@ -194,18 +194,35 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
         or PPU-misc suites. Measured: **4500 frames executes all 146**
         (134,012,761 cycles). `accuracycoin_status` now prints coverage on every
         comparison and **refuses** when any entry is unrun on both sides
-  - [ ] The wide-window comparison itself. Its first run found a real RTL defect
+  - [x] The wide-window comparison itself. Its first run found a real RTL defect
         at cycle 20,636,325 (`ppu_sel` following the halted CPU on a cycle the
         DMA owned — ledger 3.12), fixed; the full-catalog agreement is the
         measurement that decides whether the rung closes
+  - [x] **v2.6.5 closes it.** `146 of 146 entries executed on both sides`, none
+        `NotRun`, vector **IDENTICAL entry for entry**. Five PPU defects closed
+        the last six entries (ledger 3.37-3.43): the reload and shift clock
+        needing SEPARATE gates, the sprite X counters not gated on rendering,
+        the octal latch holding across the read dot, the `$2006` second-write
+        `v <- t` copy being DELAYED as the wiki states, and the pre-render line
+        CLEARING secondary OAM. Suite 72 → **87 green, 0 failed**. A two-dot
+        CPU/PPU alignment diagnosis is **retracted** — at the committed
+        alignment the consoles run identical pc/addr/access for 1,695,131
+        cycles, and a two-dot shift takes the differing share 5.13% → 66.80%
 
-## v2.6.5 – v2.6.6 — rung 6, MiSTer integration and hardware
+## v2.6.6 – v2.6.7 — rung 6, MiSTer integration and hardware
 
-- [ ] v2.6.5 `sys/` verbatim; `emu` module; `hps_io`; `CE_PIXEL` video; `CONF_STR`
+> **Re-scoped, and recorded rather than done silently.** This block was
+> v2.6.5 – v2.6.6. Rung 5 did not close at v2.6.4, so under the ladder rule —
+> a rung may not start until the one below is green — v2.6.5 was spent closing
+> it and rung 6 moved down one slot. Rung 5 closed at v2.6.5; rung 6 opens at
+> v2.6.6.
+
+- [ ] v2.6.6 `sys/` verbatim; `emu` module; `hps_io`; `CE_PIXEL` video; `CONF_STR`
       OSD; `VIDEO_ARX/ARY` at **8:7, set deliberately**; `files.qip`, `.sdc`,
       `clean.bat`; **Quartus timing closure**; first `.rbf`
-- [ ] v2.6.6 hardware bring-up: DE10-Nano + SDRAM add-on, SuperStation One,
-      **one `.rbf` boots both**; on-device AccuracyCoin — **rung 6 closes**
+- [ ] v2.6.7 hardware bring-up: DE10-Nano + SDRAM add-on, SuperStation One,
+      **one `.rbf` boots both**; on-device AccuracyCoin — **rung 6 closes**.
+      Blocked on hardware this machine does not have
 
 ## v2.6.7 – v2.6.9 — rung 7, memory and mappers
 
