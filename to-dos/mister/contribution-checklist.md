@@ -8,23 +8,37 @@ Checked at **v2.7.0**, not before. Items marked **(now)** are already settled.
 
 ## Repository layout
 
-- [ ] `sys/` present and **verbatim** from `Template_MiSTer` — never modified
+Settled at **v2.6.6**, except the one item that needs a board.
+
+- [x] `sys/` present and **verbatim** from `Template_MiSTer` **(v2.6.6)** —
+      53 files at `3ea1134c`, licence re-tallied: 0 GPL-2.0-only
 - [x] `rtl/` present **(now)**
 - [x] `releases/` present **(now)**
-- [ ] `.qpf` at the root for the core (one exists for `kitchen_sink` only)
-- [ ] `.qsf`
-- [ ] `.srf`
-- [ ] `.sdc` — timing constraints
-- [ ] Top-level `.sv` implementing the **`emu`** module
-- [ ] `files.qip`
-- [ ] `clean.bat`
+- [x] `RustyNES.qpf` **(v2.6.6)**
+- [x] `RustyNES.qsf` **(v2.6.6)** — deliberately thin; the device and all 109
+      pin assignments come from `sys/sys.tcl`
+- [ ] `.srf` — **deliberately absent, decided rather than skipped.** The
+      warnings that cannot be fixed at source live in Quartus's own megafunction
+      library and in `sys/`, neither of which this core may edit. They are
+      suppressed with `MESSAGE_DISABLE` assignments in the `.qsf`, each with the
+      reason written beside it, which is legible in a diff where an `.srf`
+      entry is not. Revisit if a reviewer asks for the conventional file.
+- [x] `RustyNES.sdc` **(v2.6.6)** — short by construction: one clock domain,
+      because `nes_top` divides the master clock with enables rather than
+      deriving clocks
+- [x] `rtl/emu.sv` implementing the **`emu`** module **(v2.6.6)**
+- [x] `files.qip` **(v2.6.6)**
+- [x] `clean.bat` **(v2.6.6)**
 - [x] `.gitignore` **(now)**
+- [x] `rtl/pll.qip` **(v2.6.6)** — not in the wiki's list, and **required**:
+      `sys/pll_q17.qip` names that literal path, and its absence produced 42
+      warnings
 
 ## Release artifact
 
 - [ ] `releases/RustyNES_YYYYMMDD.rbf`, named exactly to the convention
 - [ ] Unique **Home folder** chosen (non-arcade requirement)
-- [ ] **No MRA files** — arcade-only, and including them would be wrong
+- [x] **No MRA files** **(now)** — arcade-only, and including them would be wrong
 
 ## Licence
 
