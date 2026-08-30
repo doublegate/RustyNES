@@ -26,6 +26,104 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.7] - 2026-08-30 - "Detent" (the bitstream becomes a published, reproducible release artifact -- byte-identical from a clean tree and an incremental build -- and a one-cycle disagreement is located to the cycle it happens on and attributed to a side; v2.6.6's slack figures are withdrawn because no corner of a clean rebuild reproduces them, the release gate is found to have been reading the corner that flatters the design rather than the binding one, and a fix hypothesis is tested and refuted by the ROM written to probe it)
+
+### Added
+
+- **The MiSTer bitstream is published, from this release onward.** Every release
+  now ships a `.rbf` -- committed to the sibling's `releases/` and attached as an
+  asset to the GitHub release on **both** repositories. This reverses v2.6.6,
+  which produced a bitstream and deliberately withheld it because no hardware had
+  run it. The MiSTer distribution mechanism reads
+  `releases/RustyNES_YYYYMMDD.rbf` out of the *repository*, so an empty
+  `releases/` does not describe a cautious core -- it describes an
+  undistributable one, withheld from precisely the people who own the boards this
+  project does not have. The caution is relocated rather than dropped: the
+  release body states that no hardware has run the bitstream, and states what the
+  co-simulation ladder cannot reach by construction -- the PPU gate compares the
+  *pre-palette* index and the APU gate *per-channel integer levels*, so the
+  palette, the video timing constants, the audio's absolute level and its
+  band-limiting all sit downstream of every gate.
+- **`scripts/release-rbf.sh`**, so publication is repeatable rather than
+  remembered. It verifies **against the reports rather than the exit code**,
+  because Quartus has been observed to abort after the resource summary and still
+  exit 0; it refuses a compile with errors, a missing Fitter footer, negative
+  slack at any corner, or a message citing this project's own RTL.
+- **The checkpoint gate is registered** (`make ckpt-gate`, ten entries in
+  `regress.sh`). It compares a rolling hash of all **nine** observable fields
+  where every other gate compares four, so `put_cycle`, `nmi_line` and the two
+  `irq_line_*` samples are checked by nothing else -- which is how all four came
+  to sit written as constant `false` in every trace the harness had produced.
+
+### Fixed
+
+- **The release gate was reading the wrong timing corner.** It inspected only
+  "Slow 1100mV 100C", the corner this project had been quoting -- and the binding
+  corner on this design is **Slow -40C** (+0.108 ns setup against +0.385 at
+  100C), with the worst hold at **Fast -40C** (+0.042 ns). A bitstream failing at
+  a corner the gate did not read would have passed while it reported three times
+  the real margin. Corners are now discovered from the report by pattern rather
+  than from a fixed list, and a report yielding fewer than two is itself a
+  failure.
+- **The co-simulation harness sampled `irq_line_at_high` two-thirds through the
+  cycle.** It built the `Observable` after eight of a CPU cycle's twelve master
+  clocks, while the oracle's `_at_high` is an end-of-cycle read taken "after the
+  access + DMC tick". `IRQ_PROBE_CYC` showed the frame-counter IRQ asserting on the
+  **final edge** of cycle 29,827 -- invisible to a read taken eight clocks in,
+  visible to one taken at the end. Both instruments were reporting exactly what
+  they sampled. Checkpoint comparisons passing went **3 to 11** and failures at
+  checkpoint 7 went **30 to 3**; the three that passed before were runs too short
+  to reach cycle 29,827, which is what made "3 of 33" look like a scatter rather
+  than one cause.
+
+### Changed
+
+- **v2.6.6's published slack figures are withdrawn.** It stated worst setup
+  +0.363 ns and worst hold +0.245 ns; two compiles of the byte-identical
+  committed configuration -- one from scratch, one incremental -- produce a
+  byte-identical bitstream and neither reproduces them. The corner hypothesis was
+  checked first and refuted: no corner produces either value. The correct figures
+  are **+0.108 ns setup and +0.042 ns hold** at the binding corner, with
+  `End Point TNS` 0.000 on all 56 rows. The build itself **is** reproducible, and
+  that is now measured rather than argued -- an identical `.rbf` from a clean tree
+  and from an incremental one, so the pinned `SEED 2` and
+  `NUM_PARALLEL_PROCESSORS 4` do their job. The CHANGELOG's v2.6.6 entry and its
+  release notes are deliberately **not** rewritten, and the withdrawn pair stays
+  visible inside the correction, because deleting it would erase the record that
+  it was claimed.
+- **Caveat C2's residual is attributed rather than fixed**, which is the honest
+  outcome and was not the expected one. The hypothesis was that the DUT's frame
+  counter should mature its `$4017` reset one cycle later, matching the oracle
+  and nesdev's "3 CPU cycles after the write". It was tested and **refuted**:
+  blargg's 2005 APU battery falls from 11/11 to 4 of 11, and among the seven that
+  break is `04.clock_jitter`, the ROM written to probe precisely this timing. The
+  residual is one CPU cycle on one signal and is confined to the exported /IRQ
+  line -- the same run's bus gate matches the oracle on **all 2,680,239**
+  overlapping cycles -- and neither instrument can adjudicate the absolute cycle,
+  since both consoles pass blargg 11/11 while disagreeing by it. Fitting the DUT
+  to the oracle would have traded a documented, ROM-verified timing for agreement
+  with an emulator that 141/141 does not make silicon.
+
+### Known issues
+
+- **The registered checkpoint gate cannot see `nmi_line`.** Pinning the flag to
+  `false` -- the original defect, restored -- comes back NOT CAUGHT, and counting
+  the flag across every allowlist golden shows why: **not one of the ten ever
+  raises an NMI**. The gate is structurally incapable of catching that defect, so
+  the mutation indicts the stimulus. Stated rather than implied, so a future NOT
+  CAUGHT there is expected rather than rediscovered.
+- **A fourth divergence cluster, found while trying to close that hole.** Only
+  five goldens in the corpus raise an NMI, and of the four carrying a checkpoint
+  stream all fail -- the three `ppuvbl` ROMs at the *same* checkpoint 13, one
+  cause rather than three. They had never been measured, because the manifests
+  record the path the *oracle* exported with, which for a harness-built ROM is
+  relative to the oracle's working directory and unreadable here; the ad-hoc scan
+  skipped them into a tally line reading "26 skipped (no manifest or ROM)".
+  `regress.sh` now falls back to this repository's own copy.
+- **Rung 6 does not close.** No DE10-Nano and no SuperStation One are attached to
+  this machine -- confirmed by checking, not assumed. Hardware bring-up moves to
+  the first release after a board exists.
+
 ## [2.6.6] - 2026-08-29 - "Chassis" (the console becomes a MiSTer core: the framework vendored byte-identical, a top level, a clock, a palette, video sync and an audio mixer, compiled by Quartus 17.0.2 to a Cyclone V bitstream with 0 errors and timing closed; nine findings the tool produced that no reading would have, and two hardware defects found by asking whether the outputs would actually work)
 
 A chassis is the frame everything else bolts to. It is not the engine, and this
