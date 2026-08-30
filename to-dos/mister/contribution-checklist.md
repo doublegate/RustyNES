@@ -42,8 +42,23 @@ Settled at **v2.6.6**, except the one item that needs a board.
 
 ## Release artifact
 
-- [ ] `releases/RustyNES_YYYYMMDD.rbf`, named exactly to the convention
-- [ ] Unique **Home folder** chosen (non-arcade requirement)
+- [x] `releases/RustyNES_YYYYMMDD.rbf`, named exactly to the convention
+      **(v2.6.7)** — committed to the sibling's `releases/` and attached to the
+      GitHub release on both repos. Produced by `scripts/release-rbf.sh`, which
+      refuses a compile with errors or negative per-clock slack. Labelled in the
+      release body as never having run on hardware; see
+      `RustyNES_MiSTer/docs/bitstream-release.md`.
+- [ ] Unique **Home folder** chosen (non-arcade requirement) — **UNRESOLVED, and
+      left at the default deliberately.** `CONF_STR` currently opens
+      `"RustyNES;;"`, the empty-second-field form. Two sources were checked and
+      neither states what that field does: the MkDocs `developer/conf_str` page
+      documents every entry type (`F`, `O`, `R`, `J`, `V`) and says nothing about
+      the first line, and the Main_MiSTer wiki page for it does not render. The
+      obvious empirical route — reading an existing console core's `CONF_STR` —
+      is not available for an NES core under ADR 0037's firewall. Guessing a
+      field on a bitstream users flash is worse than shipping the documented
+      default, so this stays open for v2.7.0 and closes against a source that
+      states the semantics.
 - [x] **No MRA files** **(now)** — arcade-only, and including them would be wrong
 
 ## Licence
