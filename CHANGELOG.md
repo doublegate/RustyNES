@@ -151,14 +151,16 @@ in the sibling repository.
   ORDERING of a change within the cycle. At the transition the oracle's frame
   IRQ becomes visible DURING cycle 29,827 and this core's not until 29,828.
 
-  That is a rung-4 observation-point question of the same family as `PPU_LEAD`,
-  and the evidence says the behaviour is right while the sampling point differs:
-  blargg's 2005 APU battery passes **11/11** on this DUT, `apuirq036` included,
-  and that is an independent oracle for frame-counter IRQ timing. It is
-  answerable the way `PPU_LEAD` was -- by sweeping against a gate -- and it
-  deserves that rather than a guess folded into an integration release. The gate
-  is NOT registered in `regress.sh` until it closes, because a gate known to be
-  red for a reason nobody is acting on decays into noise.
+  A rung-4 question of the same family as `PPU_LEAD`, and **which side is at
+  fault is not yet known**. blargg's 2005 APU battery passes **11/11** on this
+  DUT, `apuirq036` included, which bounds how wrong it can be without settling
+  it: those ROMs measure when the CPU *takes* the interrupt, and interrupt
+  latency can absorb a one-cycle difference in when the LINE asserts. So the two
+  live candidates are a trace observation point and a genuine one-cycle
+  assertion difference -- and that is exactly why it is not being rushed into an
+  integration release. The gate is NOT registered in `regress.sh` until it
+  closes, because a gate known to be red for a reason nobody is acting on decays
+  into noise.
 
 ## [2.6.5] - 2026-08-29 - "Muster" (rung 5 closes — the AccuracyCoin status vector is identical entry for entry across all 146 entries, with 146 of 146 executed on both sides and none NotRun. Five PPU defects close the last six differing entries, and one of the release's own diagnoses is retracted)
 
