@@ -4,14 +4,20 @@ Every line traces to
 `ref-docs/2026-08-23-mister-core-contribution-requirements.md`, which quotes the
 MiSTer-devel wiki fetched 2026-08-23. **Nothing here is from memory.**
 
-Checked at **v2.7.0**, not before. Items marked **(now)** are already settled.
+The whole list is checked at **v2.7.0**, which is the submission. Individual
+items are marked with the release that settled them -- **(now)** for ones true
+before this programme started, **(v2.6.6)** for the layout items the chassis
+release landed -- so the remaining unchecked boxes are the real work rather than
+a list nobody has looked at yet.
 
 ## Repository layout
 
 Settled at **v2.6.6**, except the one item that needs a board.
 
 - [x] `sys/` present and **verbatim** from `Template_MiSTer` **(v2.6.6)** —
-      53 files at `3ea1134c`, licence re-tallied: 0 GPL-2.0-only
+      **57 files, 0 content differences** at `3ea1134c`, verified by SHA-256
+      against a fresh clone; licence re-tallied over the 40 HDL files among them:
+      0 GPL-2.0-only
 - [x] `rtl/` present **(now)**
 - [x] `releases/` present **(now)**
 - [x] `RustyNES.qpf` **(v2.6.6)**

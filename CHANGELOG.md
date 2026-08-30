@@ -76,8 +76,13 @@ a CPU cycle and the access lands at the seventh. The console never sees it. The
 harness did, and its device cross-checks moved to where the CPU actually
 samples.
 
-Work RAM was measured separately and left asynchronous on purpose -- 2 KiB is
-16,384 registers, about a tenth of the device, which it can afford.
+Work RAM is measured separately and left asynchronous ON PURPOSE -- 2 KiB is
+16,384 registers, about a tenth of the device, which it can afford. So the rule
+as this release applies it is narrower than the sentence quoted above: it binds
+arrays too large to live in fabric, which is the cartridge, and work RAM is a
+deliberate, measured exception rather than an inconsistency. Registering it too
+was tried and reverted, because the harness samples `o_wram_dout` at the access
+itself and all 87 gates failed.
 
 ### Two defects that only "will this work on hardware?" would have found
 
@@ -117,8 +122,31 @@ in the sibling repository.
   are **not** claimed. That is rung 6's close and it moves to v2.6.7.
 - **Band-limited audio.** The DUT has a lookup-table mixer and a DC blocker; the
   emulator has BLEP. The core will alias where the emulator does not.
-- The two rung-5 caveats (the v-copy delay depth, and promoting the per-cycle
-  AccuracyCoin bus diff to a standing gate) are carried, not silently dropped.
+- **The v-copy delay depth (rung-5 caveat C1) is deferred.** Discriminating
+  inside the passing window of 1-4 dots needs a stimulus sensitive to the exact
+  dot, which is its own ROM and its own sweep.
+- **The per-cycle AccuracyCoin gate (C2) is half-built, and the half that
+  exists already found something.** A full per-cycle capture over the 4500-frame
+  window is 2.0 GB per side, which is why the rung-5 gate compares verdicts and
+  is blind to compensating errors. The harness now emits rolling FNV-1a
+  checkpoints (`--ckpt-out`, `--ckpt-interval`, `--ckpt-from`) and
+  `tb/ckpt_diff.py` compares them -- the same per-cycle information at 1/8192th
+  the size.
+
+  On its first run it failed, and correctly: **four of the nine observable
+  fields had been written as constant `false` into every `.obs.bin` the DUT has
+  ever produced**, because `bus_diff.py` compares four of them and nothing else
+  looked. The note at the site explaining the omission had a precondition --
+  "the PPU cannot yet raise one" -- that stopped being true at v2.5.8 and was
+  never re-read. Three are now correct (`put_cycle` after a polarity fix,
+  `nmi_line` exactly, and the IRQ pair once sourced from the effective line
+  rather than the external injection pin, which is why it first diverged at
+  cycle 29,827 -- a frame-counter position).
+
+  The residual is **one sample in 200,000 cycles**, at IRQ edges: the oracle
+  samples /IRQ twice per CPU cycle and this harness samples once. The gate is
+  NOT registered in `regress.sh` until that closes, because a gate known to be
+  red for a reason nobody is acting on decays into noise.
 
 ## [2.6.5] - 2026-08-29 - "Muster" (rung 5 closes — the AccuracyCoin status vector is identical entry for entry across all 146 entries, with 146 of 146 executed on both sides and none NotRun. Five PPU defects close the last six differing entries, and one of the release's own diagnoses is retracted)
 
