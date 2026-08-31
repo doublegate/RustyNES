@@ -35,7 +35,7 @@ cycle-accurate core later replaced.
   asset to the GitHub release on **both** repositories. This reverses v2.6.6,
   which produced a bitstream and deliberately withheld it because no hardware had
   run it. The MiSTer distribution mechanism reads
-  `releases/RustyNES_YYYYMMDD.rbf` out of the *repository*, so an empty
+  `releases/RustyNES_MiSTer-vX.Y.Z.rbf` out of the *repository*, so an empty
   `releases/` does not describe a cautious core -- it describes an
   undistributable one, withheld from precisely the people who own the boards this
   project does not have. The caution is relocated rather than dropped: the
@@ -54,7 +54,8 @@ cycle-accurate core later replaced.
   where every other gate compares four, so `put_cycle`, `nmi_line` and the two
   `irq_line_*` samples are checked by nothing else -- which is how all four came
   to sit written as constant `false` in every trace the harness had produced. The
-  co-simulation suite goes to **97 passed, 0 failed** (87 plus the ten new gates).
+  co-simulation suite goes to **122 passed, 0 failed** (from 87), carrying **51
+  checkpoint comparisons** where v2.6.6 had none.
 
 ### Fixed
 
@@ -85,38 +86,61 @@ cycle-accurate core later replaced.
   byte-identical bitstream and neither reproduces them. The corner hypothesis was
   checked first and refuted: no corner produces either value. The correct figures
   are **+0.108 ns setup and +0.042 ns hold** at the binding corner, with
-  `End Point TNS` 0.000 on all 56 rows. The build itself **is** reproducible, and
-  that is now measured rather than argued -- an identical `.rbf` from a clean tree
-  and from an incremental one, so the pinned `SEED 2` and
-  `NUM_PARALLEL_PROCESSORS 4` do their job. The CHANGELOG's v2.6.6 entry and its
+  `End Point TNS` 0.000 on all 56 rows -- those being **v2.6.6's configuration,
+  re-measured**, not this release's; v2.6.7 carries the Workstream B RTL fix and
+  publishes **+0.086 / +0.096 at seed 3**. The build itself **is** reproducible,
+  and that is now measured rather than argued -- an identical `.rbf` from a clean
+  tree and from an incremental one, for both configurations, so the pinned seed
+  and `NUM_PARALLEL_PROCESSORS 4` do their job. The CHANGELOG's v2.6.6 entry and its
   release notes are deliberately **not** rewritten, and the withdrawn pair stays
   visible inside the correction, because deleting it would erase the record that
   it was claimed.
-- **Caveat C2's residual is attributed rather than fixed**, which is the honest
-  outcome and was not the expected one. The hypothesis was that the DUT's frame
-  counter should mature its `$4017` reset one cycle later, matching the oracle
-  and nesdev's "3 CPU cycles after the write". It was tested and **refuted**:
-  blargg's 2005 APU battery falls from 11/11 to 4 of 11, and among the seven that
-  break is `04.clock_jitter`, the ROM written to probe precisely this timing. The
-  residual is one CPU cycle on one signal and is confined to the exported /IRQ
-  line -- the same run's bus gate matches the oracle on **all 2,680,239**
-  overlapping cycles -- and neither instrument can adjudicate the absolute cycle,
-  since both consoles pass blargg 11/11 while disagreeing by it. Fitting the DUT
-  to the oracle would have traded a documented, ROM-verified timing for agreement
-  with an emulator that 141/141 does not make silicon.
+- **Caveat C2 CLOSES: the `$4017` inhibit clears the interrupt at write+3**, the
+  documented cycle. A `$4017` write schedules four effects and this core landed
+  all four at the sequencer's maturation -- zeroing the frame counter, committing
+  the mode, applying the inhibit, and clearing the interrupt. Moving all four one
+  cycle later dropped blargg's 2005 APU battery from **11/11 to 4 of 11**,
+  including `04.clock_jitter`, the ROM written to probe that timing. Read as
+  evidence rather than as a dead end, that says the *sequencer's* maturation is
+  where the ROMs want it -- so separating **only** the interrupt clear, one cycle
+  later, lands it at write+3 (nesdev's figure for an APU-aligned write) while the
+  frame counter's zeroing stays put. Two effects of one write, on two different
+  cycles. Measured on `01-basics`: the CPU writes `$C0` at cycle 116,842 and the
+  line now deasserts on the final edge of **116,845**, which is what the oracle's
+  own record shows.
+- **Checkpoint streams go from 11 identical to 52**, of 58 -- all sixteen
+  `instr_test-v5` ROMs, all eleven blargg APU ROMs, and the three checkpoint-7
+  stragglers. Both controls held: blargg stays **11 of 11**, and the per-cycle bus
+  gate still matches on **all 2,680,239** overlapping cycles of `01-basics`, so
+  the CPU-visible behaviour is unchanged. This is not the v2.5.7 compensation
+  trap -- the interrupt *set* path was already correct (655 of 655 checkpoints
+  pass, and those windows contain many set events), so only one edge of one
+  signal moved.
+- **The fitter seed is raised 2 → 3, and named.** The fix adds one register to the
+  frame counter, which moved placement enough to land the framework's HDMI path
+  at **−0.007 ns** at Slow 100C -- seven thousandths of a nanosecond, inside
+  `sys/`, on logic the change does not touch. The `.qsf` has anticipated exactly
+  this since v2.6.6 and prescribes raising the seed and disclosing it rather than
+  re-running until it passes silently. At seed 3 every corner closes: worst setup
+  **+0.086 ns**, worst hold **+0.096 ns**.
 
 ### Known issues
 
 - **The registered checkpoint gate cannot see `nmi_line`.** Pinning the flag to
   `false` -- the original defect, restored -- comes back NOT CAUGHT, and counting
-  the flag across every allowlist golden shows why: **not one of the ten ever
-  raises an NMI**. The gate is structurally incapable of catching that defect, so
-  the mutation indicts the stimulus. Stated rather than implied, so a future NOT
-  CAUGHT there is expected rather than rediscovered.
-- **A fourth divergence cluster, found while trying to close that hole.** Only
-  five goldens in the corpus raise an NMI, and of the four carrying a checkpoint
-  stream all fail -- the three `ppuvbl` ROMs at the *same* checkpoint 13, one
-  cause rather than three. They had never been measured, because the manifests
+  the flag across the gated goldens shows why: **not one of them ever raises an
+  NMI**. The only five stimuli in the corpus that do are `irqlat048`,
+  `nmi-overlap-brk` and the three `ppuvbl` ROMs, and of the four with a
+  checkpoint stream all four still differ. The gate is structurally incapable of
+  catching that defect, so the mutation indicts the stimulus. Stated rather than
+  implied, so a future NOT CAUGHT there is expected rather than rediscovered.
+- **Six checkpoint streams still differ**, named in a deny list with their causes
+  in `docs/rung6-integration.md`. `apuconflict039` is a declared diagnostic (its
+  bus surface carries nine known divergences by design). The other five are open:
+  `irqlat048`, `ppuoamcorrupt052`, and the three `ppuvbl` ROMs at the *same*
+  checkpoint 13 -- one cause rather than three, and the only NMI-bearing stimuli
+  available, so closing that cluster would also close the gate's `nmi_line` blind
+  spot. They had never been measured, because the manifests
   record the path the *oracle* exported with, which for a harness-built ROM is
   relative to the oracle's working directory and unreadable here; the ad-hoc scan
   skipped them into a tally line reading "26 skipped (no manifest or ROM)".

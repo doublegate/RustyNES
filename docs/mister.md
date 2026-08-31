@@ -51,7 +51,7 @@ repositories. This reverses v2.6.6, which produced a bitstream and deliberately
 did not publish it.
 
 **Why the reversal is right.** The MiSTer distribution mechanism reads
-`releases/RustyNES_YYYYMMDD.rbf` out of the *repository*, so an empty
+`releases/RustyNES_MiSTer-vX.Y.Z.rbf` out of the *repository*, so an empty
 `releases/` does not describe a cautious core — it describes an undistributable
 one, withheld from exactly the people who own the boards this project does not.
 And a claim nobody made is not the same as a claim marked unverified: only the
