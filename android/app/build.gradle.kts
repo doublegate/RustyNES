@@ -330,7 +330,7 @@ dependencies {
     // `coil-compose` (the core + the AsyncImage composable). The libretro box-art
     // auto-match (BoxArt.kt) does its own one-shot HttpURLConnection download to a
     // file:// cache, so no Coil network fetcher (coil-network-*) is pulled in either.
-    implementation("io.coil-kt.coil3:coil-compose:3.5.0")
+    implementation("io.coil-kt.coil3:coil-compose:3.6.0")
     // v1.8.8 "Atlas" (Workstream H): the home-screen "Resume <last game>" widget is
     // authored with Glance (Compose-idiomatic, matching the rest of the app). 1.3.0-
     // alpha01 is the Glance line that explicitly bumped its Compose compileSdk to API
