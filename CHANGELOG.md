@@ -44,6 +44,19 @@ cycle-accurate core later replaced.
   *pre-palette* index and the APU gate *per-channel integer levels*, so the
   palette, the video timing constants, the audio's absolute level and its
   band-limiting all sit downstream of every gate.
+- **The core presents a real MiSTer front panel, not just a video signal.** The
+  `CONF_STR` gains a joystick map (`J1,A,B,Select,Start`) so the OSD's button
+  definition and every standard MiSTer controller work without per-user
+  remapping, and a version line built from `BUILD_DATE`. It also gains OSD **info
+  lines**, wired through `hps_io`'s `info_req`/`info` pair, which exist to answer
+  a question the core previously could not: this is an **NROM-only** core, and a
+  cartridge on any other board used to render garbage with nothing on screen
+  saying why. The loader now reads the iNES header as it streams -- mapper low
+  nibble from byte 6, high nibble from byte 7, **with the "DiskDude!" guard**
+  (bytes 12-15 must be zero, or byte 7's upper nibble is a corrupted signature
+  rather than a mapper number, and a legitimate NROM cartridge reads as "mapper
+  64") -- and holds the console in reset with an on-screen message when the board
+  is unsupported. Refusing explicitly beats running wrongly.
 - **`scripts/release-rbf.sh`**, so publication is repeatable rather than
   remembered. It verifies **against the reports rather than the exit code**,
   because Quartus has been observed to abort after the resource summary and still
@@ -59,6 +72,48 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **The work RAM was 28% of the device, and the comment saying it could be
+  afforded was measuring the wrong thing.** `rtl/wram.sv` held 2 KiB as
+  asynchronous-read registers, arguing "2 KiB is 16,384 registers, about a tenth
+  of a 5CSEBA6U23I7, which the device can afford". True of the *fit succeeding*;
+  utilisation is a budget the whole design spends, and measured on this release's
+  build the module was **8,503 ALMs of a 30,265-ALM design**. Converting it to an
+  M10K block takes the core to **21,865 ALMs (73% -> 52%)** and worst setup slack
+  from **-0.639 ns (failing) to +0.130 ns**, with the console's own Fmax going
+  30.26 -> **36.19 MHz**. The module also carried a recorded revert -- "registering
+  it was TRIED and reverted ... all 87 gates failed" -- whose diagnosis was about
+  the **instrument**: the harness's device cross-checks ran at the top of the CPU
+  cycle then, where an asynchronous read holds this cycle's byte and a registered
+  one still holds the previous cycle's. v2.6.6 moved them *for exactly this
+  reason, when the cartridge hit it*, and never carried the fix back. Of the
+  0.769 ns recovered, 0.595 came from the memory and 0.174 from the fitter seed
+  (2 -> 4); a re-seed on a design with no headroom is a lottery ticket, and three
+  seeds across two releases is what riding the edge looks like.
+- **The oracle polled an interrupt on a cycle nesdev says it must not, and it
+  had been baked into a committed golden.** `CPU_interrupts` states that
+  interrupts are polled before an instruction's second cycle "but **not** before
+  the third CPU cycle on a taken branch"; `Cpu::handle_interrupts` re-armed the
+  NMI edge detector there anyway. Suppressing it needs `skip_irq_sample`'s value
+  on the *previous* cycle as well as this one, so the CPU gains
+  `skip_irq_sample_q` -- which the snapshot audit immediately, and correctly,
+  refused to let through as an allowlist entry, so **`CPU_SNAPSHOT_VERSION` goes
+  3 -> 4** (one appended byte; strict-equality dispatch, so no migration path).
+  nestest now matches the DUT on all **5,062,680** cycles across all nine fields.
+  The old `nestest` golden encodes the defect visibly -- at cycle 265,640 it
+  pushes a return address mid-branch where the corrected oracle simply executes
+  on -- so it is regenerated. **Every golden was re-exported and compared, not
+  argued about**: exactly **one of 98** resolvable goldens moved, and it is the
+  ROM the defect was found on. AccuracyCoin **141/141 (RAM decoder)** and the
+  135-binary battery are re-run after the change, so they are verified rather
+  than asserted.
+- **A gate's own output asserted a precondition that had expired two releases
+  earlier.** `tb/bus_diff.py` printed, on every pass, that four of the nine
+  observable fields were skipped because "the PPU cannot raise NMI until v2.5.8".
+  v2.5.8 shipped. They were constant because the testbench never assigned them --
+  a testbench omission wearing the costume of a hardware limit, which is how it
+  survived. The message now states what is true: all four are populated, all four
+  are compared by `ckpt_diff.py`, and this gate stays on the bus deliberately so
+  that a failure in it has one meaning.
 - **The release gate was reading the wrong timing corner.** It inspected only
   "Slow 1100mV 100C", the corner this project had been quoting -- and the binding
   corner on this design is **Slow -40C** (+0.108 ns setup against +0.385 at
@@ -80,6 +135,18 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **Save states written before v2.6.7 no longer load** (`CPU_SNAPSHOT_VERSION`
+  3 -> 4). This is ADR 0028's stated policy applied, not a lapse: the CPU
+  section carries a strict-equality version check, so a stale blob is refused
+  with a clear error rather than silently misinterpreted as the current layout.
+  The cause is the taken-branch interrupt fix below, whose new field is genuine
+  emulation state read back on the next tick; a restore that dropped it would
+  resume with the NMI edge detector re-armed a cycle early on any snapshot
+  landing inside a taken branch. The same shape as v2.2.3's
+  `PPU_SNAPSHOT_VERSION` 8 -- a schema *gap* closed in a patch release, because
+  the alternative is a save state that reloads into a subtly different console.
+- **The fitter seed moves 3 -> 4**, and the reason is the work-RAM finding
+  rather than the seed. See *Fixed*.
 - **v2.6.6's published slack figures are withdrawn.** It stated worst setup
   +0.363 ns and worst hold +0.245 ns; two compiles of the byte-identical
   committed configuration -- one from scratch, one incremental -- produce a
