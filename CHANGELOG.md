@@ -145,6 +145,17 @@ cycle-accurate core later replaced.
   relative to the oracle's working directory and unreadable here; the ad-hoc scan
   skipped them into a tally line reading "26 skipped (no manifest or ROM)".
   `regress.sh` now falls back to this repository's own copy.
+- **nestest diverges from cycle 265,640, and the golden was hiding it.**
+  `docs/rung3-ppu.md` records nestest as closed at **5,002,992 cycles** at v2.5.8
+  and the gate's own default named that figure -- while the committed golden was
+  `--frames 2`, **59,562 cycles**, two orders of magnitude shallower. The gate
+  also *skipped on every run*, because its ROM path had no default while the
+  battery beside it does. Re-exported at 5,062,688 cycles the DUT diverges on
+  **19,224 of 5,002,984** compared cycles. **It is not this release's fix**: the
+  pre-fix RTL, run in a separate worktree against the same golden, gives the
+  identical 19,224. The gate now runs to **265,000** -- just short of the first
+  known divergence, named rather than hidden, and 4.4x the coverage it had.
+  Raising it past that is the work of closing this caveat.
 - **Rung 6 does not close.** No DE10-Nano and no SuperStation One are attached to
   this machine -- confirmed by checking, not assumed. Hardware bring-up moves to
   the first release after a board exists.
