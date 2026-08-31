@@ -85,7 +85,7 @@ platform for NES emulation.
 | --- | --- |
 | **Cycle-Accurate** | Master-clock-precise CPU / PPU / APU — AccuracyCoin 100% (141/141), nestest 0-diff |
 | **One-Clock Timebase** | A single canonical cycle counter, every CPU cycle a real bus access, with a split-around-the-access PPU catch-up |
-| **172 Mapper Families** | NROM through MMC5, the full VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company ASIC, reusable-ASIC multicarts (FK23C / COOLBOY / MINDKIDS / Sachen / Waixing / Kaiser), and Vs.-System boards — classified Core / Curated / BestEffort behind a CI accuracy-honesty gate — plus a UNIF (`.unf`) loader |
+| **174 Mapper Families** | NROM through MMC5, the full VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company ASIC, reusable-ASIC multicarts (FK23C / COOLBOY / MINDKIDS / Sachen / Waixing / Kaiser), and Vs.-System boards — classified Core / Curated / BestEffort behind a CI accuracy-honesty gate — plus a UNIF (`.unf`) loader |
 | **Famicom Disk System** | `.fds` games with real-BIOS boot, writable disks, side-swapping, a timed disk-head model, and 2C33 wavetable audio |
 | **Vs. / PlayChoice-10** | Arcade ROMs in true 2C03 / 2C04 / 2C05 RGB with per-game DIP presets; Vs. DualSystem two-screen presentation on desktop |
 | **RetroAchievements** | Native `rcheevos` integration: achievements, leaderboards, rich presence, hardcore mode |
@@ -674,216 +674,25 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.6.8 "Arrears"** — the gates the previous release fixed and never widened. **A deny list is an assertion about the THING UNDER TEST**, so v2.6.7 changing both the DUT (the `$4017` interrupt-clear split) and the harness (the `Observable` completed at end-of-cycle, `nmi_line` wired to the effective line) re-opened every exclusion -- and nothing re-measured one. **Four of the six denied checkpoint streams were passing**: `irqlat048`, `ppuvbl023`, `ppuvbl024` and `ppuvbl025`; the other two genuinely differ and are restated from current measurements. **Three of them were not run by the suite AT ALL** -- committed golden, ROM and manifest, named nowhere in `regress.sh` except the deny list, which only ever governed the auto-attach, so removing them from it was **INERT** until they were also iterated. **The nestest gate compared 265,000 cycles against a 5,062,688-cycle golden**, a cap that was correct while caveat C6 was open and left behind the moment it closed; **all 5,062,680 overlapping cycles now match**, with the window DERIVED from the manifest rather than written down, because a literal is how this gate went wrong twice. **Caveat C4 CLOSES by demonstration**: nestest raises `nmi_line` on **3,592** cycles and had no nine-field comparison at all, so wiring it makes a mutation reverting `o.nmi_line` to its pre-v2.6.7 constant **CAUGHT** at checkpoint 28 of 1,237 -- **while the bus gate passed the identical run**, being blind to it by construction. `ppuspr0` was the last uncovered golden, closing the set at 59 = 40 + 16 + nestest + 2 denied. Suite **128 passed, 0 failed, 0 skipped**, nine-field comparisons **51 -> 57**. The emulation core is unchanged, so **AccuracyCoin 141/141 and nestest 0-diff hold by construction**. **Rung 6 does not close** -- no board is attached, confirmed by checking. Built on **v2.6.7 "Detent"** (2026-08-30) — the bitstream becomes a published release artifact and a one-cycle disagreement is pinned to the cycle it happens on. Every release from here ships a `.rbf` -- committed to the sibling's `releases/` and attached to the GitHub release on BOTH repositories -- reversing v2.6.6, which produced one and withheld it because no hardware had run it: the MiSTer distribution mechanism reads that path out of the REPOSITORY, so an empty `releases/` describes an undistributable core rather than a cautious one, and the caution moves from an absence into a disclosure naming what the ladder cannot reach by construction (the PPU gate compares the pre-palette index and the APU gate per-channel integer levels, so the palette, the video timing constants, the audio absolute level and its band-limiting all sit downstream of every gate). The build is REPRODUCIBLE and that is now measured rather than argued -- a from-scratch compile and an incremental one produce a byte-identical bitstream -- which is also how v2.6.6's published slack figures came to be WITHDRAWN: no corner of a clean rebuild reproduces them, the innocent explanation (a different timing corner) was checked first and refuted, and the correct pair is +0.108 ns setup and +0.042 ns hold at the binding corner. THE RELEASE GATE WAS READING THE WRONG CORNER -- Slow 100C is not the binding one on this design, so a bitstream failing at Slow -40C would have passed while the gate reported three times the real margin -- and the checker that reads it was wrong twice before mutation found both: it first extracted ZERO rows from both summary tables and reported that as "no negative slack", then, once fixed, reported FOURTEEN clocks from a report emptied of its data, having run past the closing rule into the next tables. Caveat C2 splits in two. The first residual was a TRACE OBSERVATION POINT -- the harness built its record after eight of a CPU cycle's twelve master clocks while the oracle reads at end-of-cycle, and the frame-counter interrupt asserts on the final edge -- and closing it took checkpoint comparisons from 3 to 11 and failures at one checkpoint from 30 to 3. The second is REAL, and the FIRST fix for it was REFUTED in a way that found the right one: moving all four effects of the write one cycle later to match the oracle drops blargg from 11/11 to 4 of 11, one of the seven being the ROM written to probe exactly that timing. Read as a measurement that PROVES the sequencer's maturation is correctly placed, which leaves only the other effects the same write schedules -- so separating ONLY the interrupt clear lands it at write+3, the documented cycle, while the frame counter's zeroing stays put. Checkpoint streams go from 11 identical to 52 of 58 and the suite from 87 to 122, with blargg still 11/11 and the bus still matching on all 2,680,239 overlapping cycles. The checkpoint gate is registered over 51 comparisons and STATES ITS BLIND SPOT: not one gated golden ever raises an NMI, so it cannot catch an nmi_line defect, and the attempt to close that hole found a FOURTH divergence cluster that three goldens had been hiding inside a "26 skipped" tally line. The emulation core is unchanged, so AccuracyCoin 141/141 and nestest 0-diff hold by construction. Rung 6 does NOT close -- no DE10-Nano and no SuperStation One are attached to this machine, confirmed by checking rather than assumed. Built on **v2.6.6 "Chassis"** — the console becomes a MiSTer core -- `sys/` vendored byte-identical against `Template_MiSTer@3ea1134c` (57 files, 0 content differences), a top level, a clock, a palette, video sync and an audio mixer, compiled by Quartus 17.0.2 into a Cyclone V bitstream with 0 errors, timing CLOSED, and a warning count taken from 111 to THREE -- all three inside the vendored framework or Quartus's own megafunction, none of them citing this project's RTL (worst setup +0.086 ns and worst hold +0.096 ns at the binding corners, seed 3 -- v2.6.7 also withdraws the +0.363/+0.245 v2.6.6 published, which a clean rebuild of that configuration reproduces at no corner, TNS 0.000 on every clock; the console own clock +13.514 ns at an Fmax of 30.26 MHz against the 21.477272 MHz it needs). The emulation core is unchanged, so the co-simulation suite is an ACCEPTANCE CRITERION rather than a formality -- 87 passed, 0 failed -- and it earned that immediately, because the cartridge memories had to be rewritten: an M10K read is REGISTERED, so 40 KiB of asynchronously-read cartridge was 393,216 registers against roughly 166,000 available, under a comment claiming it inferred block RAM from the source style alone, and the README had stated the correct rule since v2.4.3. Two defects were found only by asking whether the outputs would work on real hardware: the audio would have been a full-scale DC rail, because the mixer output is unipolar with silence at zero and the framework maps unsigned silence to -32768, and two OSD scanline options did nothing because VGA_SL was tied to zero. And a convention enforced by a glob has no error message: sys_top.sdc groups the core clock by matching the hierarchical name pattern *|pll|pll_inst|altera_pll_i|*, so a differently-named PLL matched no group at all and every crossing to the framework audio, HDMI and HPS domains was analysed as synchronous -- -13.901 ns of slack and -422,601 ns of TNS on a design whose Fmax was already above requirement, with the compile succeeding and the Assembler reporting 0 errors and 0 warnings throughout. Built on **v2.6.5 "Muster"** — rung 5 closes — the AccuracyCoin status vector is identical entry for entry across all 146 entries, with 146 of 146 executed on both sides and none NotRun, where the same gate read 5 of 146 at the version's start. A muster is a roll call where every name is called AND answered, which is the two-clause acceptance exactly. Five PPU defects close the last six differing entries and four were invisible to every gate that existed when the version opened: the background shift registers' RELOAD and their shift clock need SEPARATE gates (with one shared gate the serial-in test was not merely failing but ARITHMETICALLY UNREACHABLE, since reload dots are absolute and the reload discards the low seven bits, so a serial-in one can never reach bit 7 on any alignment — and modelling both structures reproduces BOTH measured shifter values); the sprite X counters are NOT gated on rendering, which AccuracyCoin states outright and the ROM that states it passes either way, because it expects no hit at X=254 and a sprite shoved 18 dots right is also off the line; the PPUADDR second-write v-copy is DELAYED, as the wiki says inside the write sequence itself, swept 1 to 4 dots against a control at 8 and 12 that fails; and the pre-render line CLEARS secondary OAM, without which scanline 0 draws what scanline 239 left — no sprite can ever render on scanline 0, because OAM Y is one less than the display row, and a sprite-0 probe over the full 134 M-cycle battery found 24 hits with four of them there; and the octal latch holding across the read dot, which is verified by exactly ONE gate and was unverifiable until the v-copy delay landed, the two composing the hybrid address together and neither producing it alone. A DIAGNOSIS IS RETRACTED: the residual was read as a two-dot CPU/PPU alignment error from comparing dot spans across two instruments, and at the committed alignment the two consoles execute identical pc, bus_addr and bus_access for 1,695,131 cycles while a two-dot shift moves the first fork back to 593,228 and takes the differing share from 5.13% to 66.80%. The oracle changes on the default path, so AccuracyCoin 141/141 (RAM decoder) and nestest 0-diff are VERIFIED, not asserted. Built on **v2.6.4 "Rubric"** — OAM DMA lands and all nine AccuracyCoin disagreements close, every rule that closed the last three stated by the test ROM and by neither nesdev page — and then the gate that certified them is measured to cover 88 of 146 entries. The emulation core is unchanged. Built on **v2.6.3 "Mainspring"** — the DUT runs on one master clock, and four enables that were never enabling — plus AccuracyCoin end to end and a status vector that names its disagreements by test. The emulation core is unchanged. Built on **v2.6.2 "Witness"** — rung 4 closes: blargg APU battery 11/11 on the co-simulation DUT, six defects no self-written gate could see, and a suite that had been asserting nothing for five minor releases. The emulation core is unchanged. Built on **v2.6.1 "Interleave"** — the DMC and its DMA cycle steal in the MiSTer co-simulation DUT, cycle-exact on the bus. The emulation core is unchanged. Built on **v2.6.0 "Assay"** — the triangle, the noise channel and the sweep unit **in the MiSTer co-simulation DUT** — and an audit of how much of the APU was fitted to the oracle rather than derived from documentation. The emulation core is unchanged. Built on **v2.5.9 "Overture"** — rung 4 opens: the two pulse channels, the frame counter, and four ROM defects the stimulus measurement found first. Built on **v2.5.8 "Blanking"** — VBlank, NMI and the PPUSTATUS race close rung 3 — and both fixes were deletions. Built on **v2.5.7 "Collimation"** — sprite rendering closes exact — the phase was wrong by two dots, and every window was compensating. Built on **v2.5.6 "Vestige"** — Sprite evaluation closes: all 59,993 overlapping cycles match, nine of nine behavioural mutants caught and two proved inert (announced as seven of eight at the cut), and the fix is a byte index that outlives the walk that set it. Built on **v2.5.5 "Raster"** — the first full frame, and three blind spots in the stimulus that fed it. Built on **v2.5.4 "Escapement"** — the background fetch pipeline, and an access two dots early that five gates could not see. Built on **v2.5.3 "Hysteresis"** — toggling rendering takes effect three dots after the write, and four instruments to prove it. Built on **v2.5.2 "Dormant"** — the 2C02 register file, and a gate that passed while testing nothing. Built on **v2.5.1 "Retrace"** — the interrupt sweep closes rung 2, and a gate reported a pass it could not have earned. Built on **v2.5.0 "Rungwork"** — the 6502 rung, and the two gates it cannot reach. Built on **v2.4.9 "Plumbline II"** — the bus half of rung 2, and what it found the day it existed. Built on **v2.4.8 "Palimpsest"** — read-modify-write, and a gate that cannot see its own subject. Built on **v2.4.7 "Keystone"** — the stack closes, and a dead line proves itself dead. Built on **v2.4.6 "Abacus"** — the core learns arithmetic. Built on **v2.4.5 "Compass"** — the core reaches memory, and chooses. Built on **v2.4.4 "Ignition"** — the first real RTL. The 6502's eight-cycle reset and the seventeen single-byte implied opcodes, in SystemVerilog in the sibling repository (`RustyNES_MiSTer@7f092bd`), matching the oracle on all seven CPU fields -- 29 records, and the gate demonstrated to fail on four mutations. The DUT is the **third writer** of the oracle's `CpuBootTrace` format, so `cpu_boot_trace_diff` reads it with no modification and the rung needed no oracle-side change at all. **The oracle settled a question our own prose could not**: reset is EIGHT cycles, and `docs/cpu-6502.md` said both seven and eight -- corrected here. A mutation the test ROM was built to catch came back NOT CAUGHT because `TSX` leaves exactly the flags a wrongly-flagging `TXS` would compute, and a harness bug made every mutation report a catch including the baseline. The emulation core is untouched. It builds on **v2.4.3 "Touchstone"** — what the synthesiser accepts, and what the licence requires. A touchstone is a stone you rub gold against; the streak tells you what the metal actually is. This release settles the **two Fabric-plan risks that had to be answered before any RTL exists**, and both were answered by evidence that contradicted what the plan assumed. **Risk 4, the Quartus subset, is FITTED**: Quartus Prime Lite 17.0.2 Build 602 on a 5CSEBA6U23I7 produced a placed-and-routed netlist with **0 synthesis warnings**, and the 2 KiB array inferred as **2 M10K blocks with 29 total registers** — not 16,413 — from the source style alone, no `ramstyle` attribute. The `initial` block became a real MIF (so a boot ROM lands inside the block) and the `enum` was one-hot encoded. Nine constructs are promoted to *fitted*; plain `case`, `priority case` and `$bits` are deliberately left *documented* because the kitchen sink does not exercise them. **Risk 1, the `sys/` licence, inverts the plan's own hedge**: 57 files, **zero GPL-2.0-only**, and `hps_io.sv` — GPL-3.0-or-later and not optional, since it is how a core receives a ROM and reaches the OSD — forces the combined bitstream **up** to GPL-3.0-or-later, already RustyNES's licence. The emulation core is untouched.
+RustyNES's current release is **v2.6.8 "Arrears"** — a deny list is an assertion about the thing under test, and nobody re-measured it. Four of six denied checkpoint streams in the MiSTer co-simulation suite turned out to be passing; three of those were not run by the suite at all. The `nestest` gate widened 19x, from 265,000 to all **5,062,680** cycles, and gained the nine-field comparison that closes the gate's long-standing `nmi_line` blind spot — demonstrated by a mutation that was previously uncatchable.
 
-It builds on **v2.4.2 "Cairn"** — the **rung-0 compare surface**. A cairn is a marker set along a route so you can tell you are still on it, which is what a rolling per-cycle hash checkpoint is. The constraint nobody budgets for in co-simulation is trace *volume*, not simulation time, and it is now **measured**: 3 frames of AccuracyCoin is 89,343 CPU cycles, **5,372,427 bytes** of `irq.csv` against **352 bytes** of `ckpt.bin` — a factor of **15,263** — so both sides chain a hash and compare every 4096 cycles, and only the divergent window is re-run with full capture. **What is hashed is a decision about hardware, not about convenience**: `CycleRecord` carries 29 fields and most are RustyNES's *model*, so `Observable` is the subset a device can genuinely produce, the IRQ pair is OR'd before hashing because hardware has one wire-OR'd /IRQ pin, and `pc` is marked DUT-observable rather than pin-observable. The emulation core is untouched.
+The emulation core is unchanged in this release, so its accuracy numbers hold by construction.
 
-It builds on **v2.4.1 "Fabric"**, which opened the
-**v2.4.1 → v2.5.0 "Fabric"** line — now delivered, and continued by the
-**v2.5.1 → v2.7.0** line that builds the rest of the console. **Rung 3 (the
-2C02) closed at v2.5.8 and rung 4 (the 2A03) at v2.6.2**; rung 5 — the NROM
-cartridge and the console's own bus — is in progress, with the sibling at
-**72 gates green** and its `nes_top` now dividing one master clock rather than
-taking its clock enables from the testbench. AccuracyCoin's status vector agrees
-entry for entry, and the number to read beside that is **how many entries the
-run reaches**: the window used through v2.6.3 covered 88 of 146 and asked
-nothing about the PPU or APU suites, so the golden moved to a measured
-4500-frame window where all 146 execute. Fabric's subject was: a new NES core written in SystemVerilog from
-public hardware documentation, in a sibling repository, with this emulator as its
-**verification oracle**. RustyNES is not being ported to FPGA and cannot be — a
-MiSTer core is SystemVerilog compiled into a Cyclone V bitstream, and Rust does
-not become one. What is buildable is a *new* implementation verified against this
-one, and `crates/rustynes-cosim` is the boundary between them: a narrow C ABI a
-Verilator testbench links, plus a `nes_golden_export` CLI emitting the golden
-formats an external implementation is compared against — **ten as of v2.6.3**
-(`obs.bin`, `boot.bin`, `apu.bin`, `ckpt.bin`, `fetch.bin`, `index_fb.bin`,
-`irq.csv`, `ram.bin`, `ram_init.bin`, `manifest.txt`), enumerated in the crate's
-module docs rather than counted here, because the set grows with each rung. The provenance firewall
-extends to HDL accordingly — `NES_MiSTer` and `fpganes` `rtl/` are strict black
-boxes, instantiable as opaque modules to compare *outputs*, never readable as
-source.
+| | |
+|---|---|
+| AccuracyCoin | **141/141 (100.00%)**, RAM decoder |
+| nestest | 0-diff against the reference log |
+| Mapper families | **174** — 51 Core, 95 Curated, 28 BestEffort |
+| Co-simulation suite | **128 gates green, 0 failed, 0 skipped** |
+| MiSTer bitstream | published for Cyclone V, timing closed at every corner |
 
-**The crate is excluded from the workspace, and that is the load-bearing detail.**
-It enables `cpu-boot-trace` and `irq-timing-trace` on the core, and cargo unifies
-features across a workspace build — so as a member it made `cargo build
---workspace` compile the core once with the union. `irq-timing-trace` selects a
-*different* per-dot loop in `Bus::tick_one_cpu_cycle`, so CI's accuracy battery
-was validating a scheduler no user runs. The measured cost was **+1.2% to +1.9%**,
-*below* this project's own 3% bar — published precisely because it shows
-performance was never the argument. Two more findings came out of building it:
-**the first `run_frame()` after power-on advances zero cycles** (the reset
-sequence leaves `frame_complete` latched, so a bare loop emits an (n−1)-frame
-golden under a manifest claiming n), and **no CI invocation had ever linted the
-two trace-gated core modules**, which held six pre-existing findings. That gap is
-closed as of v2.5.4: there are now four trace features and CI lints each by name,
-which immediately surfaced six more findings in `ppu-state-trace`.
+**The MiSTer core has not run on hardware.** No DE10-Nano or SuperStation One has been attached; a booting core, a synced display, audible sound and a working pad are not claimed. The palette, the video timing constants and the audio's absolute level are unverified by construction, because every gate in the co-simulation ladder compares something upstream of them.
 
-This release also carries **v2.4.0 "Concordance"**, which merged to `main` and was
-never tagged: every path that persists user data now writes atomically and
-durably — including save states, where a truncated write is a user's game
-progress — plus a session-local timeline generation counter, and a standing
-audit pinning **15 release anchors across 10 documents** to the workspace version.
-`rustynes-core` changes in both halves, so the accuracy contract is **verified,
-not asserted**: AccuracyCoin **141/141 (100.00%)** on the authoritative RAM
-decoder, nestest 0-diff.
-
-Built on **v2.3.9 "Crucible"** — a crucible tests to destruction rather than
-inspects, and that is what that release did to the project's own gates: what they cover, what they only *appear* to cover, and where
-a regression could still reach `main` unchallenged. The v2.3.x line added five
-tools in four releases, and the recurring finding across all of them was never
-that the emulation was wrong. It was that **a check reported a pass it had not
-earned**, and this release went looking for the rest of them.
-
-**The docs-only CI skip had never worked.** `dorny/paths-filter`'s
-`predicate-quantifier` defaults to `some`, which includes a file if it matches
-*any* pattern — so the `code` filter's leading `'**'` matched everything and all
-seven `!` exclusions under it were dead from the day they were written. A
-markdown-only PR logged `Filter code = true`, a markdown file matching a filter
-whose entire purpose is excluding markdown. It stopped being merely wasteful the
-day two docs-only PRs were *blocked* by an ARM cross-compile failure on jobs that
-should never have been scheduled. The fix needed **two** filter steps, because
-the quantifier is step-level and the two filters need opposite settings: `code`
-needs `every`, while `accuracy` is a list of **alternatives** and would become
-unsatisfiable under it — the one-line version would have silently disabled the
-accuracy battery while repairing a different gate.
-
-**The accuracy battery now runs at review time.** `test-roms` was full-run only,
-so a regression landed on `main` rather than on the PR that caused it; it is now
-path-filtered over the chip crates, the core, `rustynes-gamedb`, the harness and
-`tests/`, measured first at 11 of the last 40 merged PRs so ~72% still pay
-nothing. **A freeze from one cartridge kept writing into the next** — an active
-per-frame write into the wrong game, closed by a ROM-transition sweep across
-every panel under one rule: derived output is discarded, user-authored input is
-kept, and only input that actively *writes* is neutralised. **The config file is
-now written atomically and durably** — seven properties, five of them from review
-rather than the first draft. Plus **257 lines of dead code removed**, the
-SAFETY-comment rule made a clippy gate, and two `cargo deny` advisory ignores
-retired on their own stated condition. `rustynes-apu` and `rustynes-core` both
-change, so **AccuracyCoin 141/141 and nestest 0-diff are verified, not asserted.**
-
-Built on **v2.3.8 "Parallax"** — which pixels differ, not just which frame.
-`Probe` could already say whether two configurations of the same ROM diverge and
-*at which frame*, and could say nothing about where or why: a trial reduces each
-frame to one `u64`, the right shape for detecting a difference and the wrong
-shape for explaining one. The **Divergence Lens** re-runs both configurations to
-the detected frame, keeps the full output instead of its hash, and reports the
-*shape* of the difference — population count, first pixel in raster order, and
-the inclusive bounding box — which separates kinds of bug from each other: one
-pixel is a sprite or a palette entry, 256 in a row is a scanline, tens of
-thousands is a scroll or a mode change. It localises on the **index**
-framebuffer, the PPU's own per-pixel output before the palette lookup, and hands
-the located pixel to Pixel Provenance so the answer is a cause rather than a
-coordinate. Its third verdict is the point: `Inconclusive` never arrives wearing
-the same shape as `Identical`.
-
-Built on **v2.3.7 "Overtone"** — point at a moment in the
-frame and read *why it sounds like that*. **Audio Provenance** is the APU
-counterpart of Pixel Provenance: a per-register write attribution answering
-*what wrote this, and from which instruction*, and a per-CPU-cycle mix trace
-answering *what were the channels actually doing*. The Audio Scope already
-plotted the waveform and the Audio Mixer already set the gains; nothing linked a
-sample back to the instruction that caused it.
-
-The release's real subject is the trap the feature inherited. Pixel Provenance
-shipped **non-functional for four releases** because run-ahead's rollback cleared
-its store before any UI could read it, so the carry landed in the **same change
-as the feature** here rather than after a bug report — and then the same defect
-turned up in **three more places**, every restore in `rustynes-probe`, which
-meant running the Latency Oracle or the RAM Atlas silently emptied both
-provenance panels. Two defects were caught by measurement rather than reading: a
-new APU throughput bench reshaped the plumbing three times on regressions
-invisible in the diff, and fuzzing the save-state parse boundary found **four**
-panics in VRC7's OPLL where hand-tracing found one. Also fixed: `$4014` and
-`$4016` were documented as attributed and were not, the browser demo applied no
-per-game header corrections, Rad Racer's roadside artifact, VRC7 save states
-dropping the live FM synthesizer, and unbounded CI jobs. `rustynes-apu` and
-`rustynes-core` both change, so **AccuracyCoin 141/141 and nestest 0-diff are
-verified, not asserted.**
-
-Before that, **v2.3.6 "Sounding"** — about measuring, and about what a measurement is
-allowed to claim. Before that, **v2.3.5 "Manifest"**,
-which was about what the emulator
-tells the outside world about itself. A user reported RetroArch still showing the
-pre-relicense MIT/Apache-2.0 terms; it does, because RetroArch reads a **separate
-copy** of the core metadata in `libretro/libretro-super` that the v2.2.9 GPL
-relicense never reached. Chasing that opened an audit of the whole libretro
-wrapper, which was misreporting five further things — **each with correct
-emulation behind it**: PAL and Dendy ran **20.2% too fast**, RetroArch's Reset
-**did nothing at all**, unloading leaked Game Genie indices, the advertised aspect
-assumed square pixels, and the **Zapper was unreachable** despite being fully
-emulated. Review then caught a use-after-free in the controller tables. The APU —
-**18.7% of frame time and never examined** — finally got a throughput bench and
-the optimization it justified (**−3.3% to −4.2%** on `nes_run_frame_nestest`).
-The emulation core's shipped **output** is byte-identical, though the APU
-implementation did change (the mix specialization is a strict specialization, not a
-no-op), so the accuracy contract was **verified rather than asserted**: AccuracyCoin
-holds at exactly 141/141, nestest 0-diff.
-
-Two things v2.3.5 deliberately did **not** claim have since landed upstream
-(2026-08-16): `libretro-super#2069` merged, so RetroArch now reads `GPLv3+`, and
-`RetroArch#19416` merged, so RustyNES is in the App Store core list. Being in that
-list is not the same as being installable — iOS / iPadOS / tvOS availability
-arrives with the next App Store RetroArch build, on libretro's cadence. One item
-is still open: `libretro/docs#1180`, the licence on the libretro documentation
-site.
-
-Built on **v2.3.3 "Cadence"** — the display-pacing release, which closed the one
-measured artefact whose signature matches the reported picture "shudder" without
-claiming the report itself is resolved: that is a subjective observation on a
-machine whose frame-budget margin has never been measured, and that campaign
-already declared victory once on counter evidence and was wrong.
-
-Frames were being shown for the wrong number of refreshes, and six proposed causes
-were falsified by measurement before the real one surfaced: the **run-ahead throttle
-was oscillating**, changing depth 6-7 times per 24 s, and every change displaces the
-displayed frame by the run-ahead depth — the picture jumping forward and back. The
-cause was a stale statistic, not a bad threshold. The throttle is gated to one depth
-change per median window, but the gate counted **120** frames where the ring that
-feeds it holds **600**; a p50 sits at index 300, so a fifth of a window cannot move
-it off the previous depth. Transitions arrived in pairs sharing a median to three
-decimals. Fixed by expressing the gate in terms of the ring it reads: **6-7
-transitions per 24 s → 1**, spurious releases **2 → 0**.
-
-The engage arm then stopped waiting for the ring and started computing: it steps
-while the *predicted* cost at the reduced depth is still over budget, so a
-`run_ahead = 3` host converges in **2.8 s instead of 12.1 s** (5/5 paired rounds,
-exact sign p = 0.0312). Releasing is deliberately unchanged and still demands a real
-measurement, because releasing on a stale median is what caused the oscillation.
-
-Underneath that sits the measurement apparatus the diagnosis needed: compositor
-refresh sourced from `wp_presentation` (winit reports no `wl_output` on this
-compositor), divisor-based display-sync, a per-frame trace, and a validity gate that
-**fails closed** when the compositor discards frames — because an occluded window
-silently rides the wall-clock fallback, and a diagnostic nobody surfaces is not a
-diagnostic. Dropped frames fell from **135-254 to 1-9** per capture and audio
-underruns to zero.
-
-Two results are recorded as **rejections with their numbers**: a slim run-ahead
-restore (0.25% of the increment — "bytes are not time"; the framebuffer is 94% of
-the snapshot's *size* and ~6% of its *cost*), and a ring-reset throttle gate that
-converged fine but produced an audio underrun in every capture.
-
-**No emulation-core changes.** Every change is frontend or output-only, so
-**AccuracyCoin holds at exactly 141/141** and nestest is 0-diff — verified, not
-asserted. Built on **v2.3.2 "Lucid"** (pixel provenance + replay attestation),
-**v2.3.1 "Plumb Line"** (ten hot-path candidates measured, all ten rejected), and
-**v2.3.0 "Datum II"** — the capstone that closes the v2.2.6 → v2.3.0
-NESdev-remediation line, with real OS-window tool detach, a frame-pacing fix, a
-byte-identical −5.13% PPU optimization, and AccuracyCoin pinned to an *exact* count.
-
-The **v2.2.6 → v2.3.0** line was a de-monetization + NESdev-remediation run on the v2.0.0
-"Timebase" one-clock scheduler: v2.2.6 "Almanac" made RustyNES permanently open-source and
-income-free (ADR 0035; the apps stay free FOSS — no ads, tracking, or paid unlock), and
-v2.2.7 "Timbre II" / v2.2.8 "Aperture II" / v2.2.9 "Studio II" / v2.3.0 "Datum II" address
-forum-reported audio, presentation, TAS/movie/windowing, and PPU-accuracy items — the core
-staying byte-identical except where a change is an intentional, oracle-gated accuracy fix.
-The same cycle-accurate core powers the desktop,
-browser, Android, iOS, and Libretro builds. Full per-version detail — every release back
-through v2.0.0 "Timebase" and the v1.x line — is in [`CHANGELOG.md`](CHANGELOG.md).
-
-- **Download:** the [GitHub Releases](https://github.com/doublegate/RustyNES/releases) page — desktop binaries for Linux, macOS (aarch64), and Windows.
-- **Full per-version history:** [`CHANGELOG.md`](CHANGELOG.md).
-- **Authoritative current state:** [`docs/STATUS.md`](docs/STATUS.md) — the per-suite pass-count and mapper matrix (its release-header version can lag a patch-release bump; [`CHANGELOG.md`](CHANGELOG.md) and the [Releases](https://github.com/doublegate/RustyNES/releases) page are authoritative for the latest tag).
+- **Download:** [GitHub Releases](https://github.com/doublegate/RustyNES/releases) — desktop binaries for Linux, macOS (aarch64) and Windows, plus the MiSTer `.rbf`.
+- **Try it in a browser:** <https://doublegate.github.io/RustyNES/>
+- **Per-release detail:** [`CHANGELOG.md`](CHANGELOG.md) — every release back through v2.0.0 "Timebase" and the v1.x line.
+- **Authoritative current state:** [`docs/STATUS.md`](docs/STATUS.md) — per-suite pass counts and the mapper matrix.
+- **Version policy and the forward table:** [`VERSION-PLAN.md`](VERSION-PLAN.md).
 
 ## Roadmap
 
@@ -901,13 +710,13 @@ testbench links, plus a `nes_golden_export` CLI emitting golden traces.
 Progress is a **rung ladder**, and a rung may not open until the one below is
 green: rung 0 the compare surface, rung 1 the 6502, rung 2 the bus and
 interrupts, rung 3 the 2C02, rung 4 the 2A03, rung 5 AccuracyCoin parity, rung 6
-hardware bring-up, rung 7 mappers. **Rungs 0-4 are closed; rung 5 is the current
-work** — the NROM cartridge, the work RAM, the CPU bus, the controller ports and
-DMC DMA are all landed and gated (**72 gates green**), the core's own top level
-assembles them, and it divides one master clock rather than taking its clock
-enables from the testbench. AccuracyCoin runs end to end and its status vector
-is compared entry for entry; what remains is coverage — the run window is now
-wide enough to execute all 146 entries rather than the CPU half. Every rung is labelled in
+hardware bring-up, rung 7 mappers. **Rungs 0-5 are closed** — the 6502, the
+bus and interrupts, the 2C02, the 2A03, and AccuracyCoin parity, with the status
+vector identical entry for entry across all 146 entries and **128 gates green,
+0 failed, 0 skipped**. The console compiles to a Cyclone V bitstream with timing
+closed at every corner, and that bitstream is published. **Rung 6 is open and
+blocked on hardware**: no DE10-Nano or SuperStation One is attached, so nothing
+about a booting core is claimed. Every rung is labelled in
 [`docs/mister.md`](docs/mister.md) by whether it has an **independent** oracle —
 because 141/141 on AccuracyCoin is not the same as "matches silicon", and a rung
 verified only against this emulator inherits whatever this emulator has wrong.
