@@ -330,7 +330,7 @@ dependencies {
     // `coil-compose` (the core + the AsyncImage composable). The libretro box-art
     // auto-match (BoxArt.kt) does its own one-shot HttpURLConnection download to a
     // file:// cache, so no Coil network fetcher (coil-network-*) is pulled in either.
-    implementation("io.coil-kt.coil3:coil-compose:3.5.0")
+    implementation("io.coil-kt.coil3:coil-compose:3.6.0")
     // v1.8.8 "Atlas" (Workstream H): the home-screen "Resume <last game>" widget is
     // authored with Glance (Compose-idiomatic, matching the rest of the app). 1.3.0-
     // alpha01 is the Glance line that explicitly bumped its Compose compileSdk to API
@@ -343,7 +343,7 @@ dependencies {
     // to Compose (the library grid entries/folders) become `ImmutableList`/`PersistentList`
     // so the compiler treats them as STABLE and the strong-skipping pass can skip the
     // list composables when the reference is unchanged — a `List<>` is inferred unstable.
-    implementation("org.jetbrains.kotlinx:kotlinx-collections-immutable:0.5.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-collections-immutable:0.5.1")
     // v1.8.8 "Atlas" (Workstream J): installs the bundled Baseline Profile at runtime
     // (the AOT-compile hint for the launch/scroll classes). Pinned to the androidx.benchmark
     // 1.4.1 line that the :baselineprofile generator + the baselineprofile plugin use.
@@ -359,7 +359,7 @@ dependencies {
     // Cast Application Framework sender (v1.8.7, #38). Linked but DORMANT: it does
     // nothing until CastContext is initialized, which only happens behind the
     // default-off BuildConfig.CHROMECAST_ENABLED flag (see ChromecastSender.kt).
-    "playImplementation"("com.google.android.gms:play-services-cast-framework:22.1.0")
+    "playImplementation"("com.google.android.gms:play-services-cast-framework:22.3.1")
     // v1.8.8 "Atlas" (Workstreams D+E): Play Games Services v2 — the cloud-save
     // Snapshots client (D), the PGS achievements + leaderboards clients (E), and the
     // PGS v2 auto-sign-in (GamesSignInClient). 21.0.0 is the current v2 SDK (the v1
