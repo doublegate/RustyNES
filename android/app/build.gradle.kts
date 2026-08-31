@@ -359,7 +359,7 @@ dependencies {
     // Cast Application Framework sender (v1.8.7, #38). Linked but DORMANT: it does
     // nothing until CastContext is initialized, which only happens behind the
     // default-off BuildConfig.CHROMECAST_ENABLED flag (see ChromecastSender.kt).
-    "playImplementation"("com.google.android.gms:play-services-cast-framework:22.1.0")
+    "playImplementation"("com.google.android.gms:play-services-cast-framework:22.3.1")
     // v1.8.8 "Atlas" (Workstreams D+E): Play Games Services v2 — the cloud-save
     // Snapshots client (D), the PGS achievements + leaderboards clients (E), and the
     // PGS v2 auto-sign-in (GamesSignInClient). 21.0.0 is the current v2 SDK (the v1
