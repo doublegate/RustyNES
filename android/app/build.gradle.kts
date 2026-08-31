@@ -343,7 +343,7 @@ dependencies {
     // to Compose (the library grid entries/folders) become `ImmutableList`/`PersistentList`
     // so the compiler treats them as STABLE and the strong-skipping pass can skip the
     // list composables when the reference is unchanged — a `List<>` is inferred unstable.
-    implementation("org.jetbrains.kotlinx:kotlinx-collections-immutable:0.5.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-collections-immutable:0.5.1")
     // v1.8.8 "Atlas" (Workstream J): installs the bundled Baseline Profile at runtime
     // (the AOT-compile hint for the launch/scroll classes). Pinned to the androidx.benchmark
     // 1.4.1 line that the :baselineprofile generator + the baselineprofile plugin use.
