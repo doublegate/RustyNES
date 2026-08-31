@@ -26,6 +26,67 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The nestest gate compared 265,000 cycles against a 5,062,688-cycle golden,
+  and the cap was arrears rather than caution.** It was correct when written:
+  v2.6.7 set it just short of caveat C6's first divergence at cycle 265,640, so
+  the stopping point was named rather than hidden. C6 was then **closed inside
+  the same release** and nothing re-opened the cap. Re-measured: **all 5,062,680
+  overlapping cycles match** on `pc`, `bus_addr`, `bus_data` and `bus_access`.
+  The window is now **derived from the golden's own size** rather than written
+  down -- a literal is exactly how this gate went wrong twice, once naming
+  5,002,992 against a 59,562-cycle golden and once capping at 265,000 against a
+  fixed one. Coverage 264,992 -> **5,062,680 cycles, a 19x increase**, with no
+  constant left to drift.
+- **Caveat C4 is CLOSED, and by demonstration rather than by argument.** C4 said
+  the checkpoint gate could not catch an `nmi_line` defect because no gated
+  golden ever raised an NMI. **The stimulus existed the whole time**: nestest's
+  golden sets `nmi_line` on **3,592** cycles and `irq_line_at_low` on **62,516**,
+  and its checkpoint golden was already committed at 1,237 checkpoints. It was
+  never wired in, because nestest uses `nestest-gate` rather than
+  `cpu-bus-gate`, so the auto-attach could not reach it, and it was absent from
+  the explicit loop's list. Wiring it took one optional variable and costs no
+  extra simulation time -- it rides the same DUT invocation. Reverting
+  `o.nmi_line` to the constant `false` it held before v2.6.7 is now **CAUGHT**,
+  at checkpoint 28 of 1,237. The shape of that result is the whole argument for
+  nine fields: **in the same run the bus gate still passed all 5,062,680
+  cycles**, because it compares four and is structurally blind to the defect.
+- **The widened gate caught the first thing it was pointed at, which was this
+  release's own change.** The nestest window was first derived from the size of
+  `obs.bin`, and that is wrong by exactly eight: the obs stream begins at cycle
+  8, so its record count is eight short of the window the golden was exported
+  with. `ckpt_diff.py` compares the final partial window BY CYCLE and said so --
+  "checkpoint 1236 covers a different cycle -- golden through 5062687, DUT
+  through 5062679" -- while **the bus gate passed the identical run**, because it
+  compares *overlapping* cycles and a short stream simply overlaps less. Two
+  gates, one wrong window, and only the length-sensitive one could see it. The
+  window now comes from the manifest's `cpu_cycles`, which is what `regress.sh`'s
+  own comment already said reproduces a golden.
+- **Four of the six checkpoint deny-list entries were passing and nobody had
+  looked.** A deny list is an assertion about the thing under test, and v2.6.7
+  changed the thing under test twice -- the DUT's `$4017` interrupt-clear split
+  and the harness's `Observable` completed at end-of-cycle with `nmi_line` wired
+  to the effective line. Re-measured: `irqlat048` (22 checkpoints identical),
+  `ppuvbl023` (175, through cycle 714,737), `ppuvbl024` (291, through 1,191,227)
+  and `ppuvbl025` (175) all pass. `apuconflict039` (a declared diagnostic) and
+  `ppuoamcorrupt052` (a genuine hash divergence) remain, each restated from a
+  current measurement rather than an old note.
+- **Three of those goldens were not run by the suite AT ALL** -- `ppuvbl023`,
+  `ppuvbl024` and `ppuvbl025` have a committed golden, ROM and manifest and
+  appeared nowhere in `regress.sh` except the deny list, which only ever
+  governed the auto-attach. **So removing them from that list was INERT until
+  they were also iterated**, which is the trap worth naming: retiring an
+  exclusion adds coverage only if something reaches the thing excluded. Caught
+  before the change shipped, by checking what iterated them rather than assuming
+  the deny list was the gate.
+- **`ppuspr0` was the last golden with a checkpoint stream and no nine-field
+  coverage.** Measured (44 checkpoints identical) and wired, which closes the
+  set: **59 goldens carrying a checkpoint stream = 40 in the explicit loop + 16
+  auto-attached + nestest + 2 denied**, and nothing unreached. The
+  co-simulation suite goes to **128 passed, 0 failed, 0 skipped** (from 123),
+  carrying **57 nine-field comparisons** (from 51).
+
 ## [2.6.7] - 2026-08-30 - "Detent" (the bitstream becomes a published, reproducible release artifact -- byte-identical from a clean tree and an incremental build -- and a one-cycle disagreement is located to the cycle it happens on and attributed to a side; v2.6.6's slack figures are withdrawn because no corner of a clean rebuild reproduces them, the release gate is found to have been reading the corner that flatters the design rather than the binding one, and a fix hypothesis is tested and refuted by the ROM written to probe it)
 
 ### Added
