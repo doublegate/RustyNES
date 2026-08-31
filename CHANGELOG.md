@@ -197,6 +197,17 @@ cycle-accurate core later replaced.
 
 ### Unchanged, and verified rather than asserted
 
+- **Co-simulation suite: 135 passed, 0 failed, 0 skipped** -- from v2.6.8's 128
+  (130 after the deny-list half, plus the five cartridge gates).
+- **AccuracyCoin 141/141 RE-MEASURED, not carried**: the authoritative RAM
+  decoder reports `pass rate = 100.00% over 141 assigned tests`. The framebuffer
+  decoder's 121 is the known-buggy one and is not the figure to quote.
+- **nestest** golden-log comparison passes. **Workspace tests: 131 binaries,
+  2,245 passed, 0 failed.**
+- No chip crate changed, so the two accuracy figures hold by construction --
+  they were re-run anyway, because "by construction" is the kind of claim this
+  release exists to distrust.
+
 - The emulation core is untouched -- no chip crate changes -- so **AccuracyCoin
   141/141 (100.00%, RAM decoder)** and nestest 0-diff hold by construction, and
   were re-run anyway.
