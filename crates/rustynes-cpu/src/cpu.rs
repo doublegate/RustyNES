@@ -159,6 +159,13 @@ pub struct Cpu {
     /// clears it at the top of every instruction.
     /// NMI sampling is unaffected — the quirk is IRQ-only.
     pub(crate) skip_irq_sample: bool,
+    /// `skip_irq_sample` as it stood on the PREVIOUS cycle. The NMI dispatch
+    /// gate freezes on this rather than on the live flag, because the two
+    /// latches have different shapes: `mc_run_irq` is RECOMPUTED from the live
+    /// line every cycle, so freezing it in place holds its end-of-C1 value,
+    /// while `mc_need_nmi` is STICKY and it is the *copy* that has to freeze --
+    /// one cycle later, or the copy that captures end-of-C1 never happens.
+    pub(crate) skip_irq_sample_q: bool,
 
     // === v2.0 master-clock R1 substrate (Phase 2; `mc-r1-substrate`) ===
     /// The CPU's authoritative master clock (Mesen `_masterClock` / `TetaNES`
@@ -240,6 +247,7 @@ impl Cpu {
             irq_sample_i_flag: true,
             cycles_emitted: 0,
             skip_irq_sample: false,
+            skip_irq_sample_q: false,
             master_clock: 0,
             mc_need_nmi: false,
             mc_prev_need_nmi: false,
@@ -661,7 +669,20 @@ impl Cpu {
     /// so CLI/SEI/PLP delay their I-change one instruction.
     #[allow(clippy::needless_pass_by_ref_mut)] // &mut B for signature parity
     fn handle_interrupts<B: Bus>(&mut self, bus: &mut B) {
-        self.mc_prev_need_nmi = self.mc_need_nmi;
+        // EXPERIMENT (v2.6.7): the taken-branch poll rule applies to NMI too.
+        //
+        // `CPU_interrupts.xhtml`: "Interrupts are always polled before the
+        // second CPU cycle (the operand fetch), but NOT before the third CPU
+        // cycle on a taken branch." It says *interrupts*, not *IRQs*.
+        //
+        // The edge LATCH (`mc_need_nmi`, below) keeps running every cycle --
+        // that is hardware's always-on edge detector and must not change. What
+        // freezes is the DISPATCH gate, exactly as `mc_run_irq` already does
+        // while `skip_irq_sample` is set.
+        if !(self.skip_irq_sample && self.skip_irq_sample_q) {
+            self.mc_prev_need_nmi = self.mc_need_nmi;
+        }
+        self.skip_irq_sample_q = self.skip_irq_sample;
         let nmi_level = bus.nmi_level();
         if !self.mc_prev_nmi_line && nmi_level {
             self.mc_need_nmi = true;
