@@ -4,7 +4,7 @@ Every line traces to
 `ref-docs/2026-08-23-mister-core-contribution-requirements.md`, which quotes the
 MiSTer-devel wiki fetched 2026-08-23. **Nothing here is from memory.**
 
-The whole list is checked at **v2.7.0**, which is the submission. Individual
+The whole list must be complete **by v2.7.0**, which is the submission; it is NOT complete now, and an item left unchecked below is carried deliberately rather than overlooked. Individual
 items are marked with the release that settled them -- **(now)** for ones true
 before this programme started, **(v2.6.6)** for the layout items the chassis
 release landed -- so the remaining unchecked boxes are the real work rather than
@@ -25,10 +25,20 @@ Settled at **v2.6.6**, except the one item that needs a board.
       pin assignments come from `sys/sys.tcl`
 - [ ] `.srf` — **deliberately absent, decided rather than skipped.** The
       warnings that cannot be fixed at source live in Quartus's own megafunction
-      library and in `sys/`, neither of which this core may edit. They are
+      library and in `sys/`, neither of which this core may edit. Most are
       suppressed with `MESSAGE_DISABLE` assignments in the `.qsf`, each with the
       reason written beside it, which is legible in a diff where an `.srf`
-      entry is not. Revisit if a reviewer asks for the conventional file.
+      entry is not.
+      **Three are NOT suppressed, and cannot be** (corrected v2.6.7 — this line
+      previously said they all were). `MESSAGE_DISABLE` was measured to have no
+      effect on `13050`/`13051`, and the PLL `RST` warning carries **no message
+      ID at all**, so there is nothing for an assignment to name. A hand-written
+      `.srf` is worse than nothing here: a malformed one made Quartus abort
+      after the resource summary with no footer and **exit status 0**, which
+      reads exactly like success. What holds instead is an attribution gate —
+      `tb/quartus_clean.py` fails if any Warning or Error cites `rtl/` or `tb/`,
+      and it passes over a non-zero scan. Revisit if a reviewer asks for the
+      conventional file.
 - [x] `RustyNES.sdc` **(v2.6.6)** — short by construction: one clock domain,
       because `nes_top` divides the master clock with enables rather than
       deriving clocks
@@ -42,8 +52,38 @@ Settled at **v2.6.6**, except the one item that needs a board.
 
 ## Release artifact
 
-- [ ] `releases/RustyNES_YYYYMMDD.rbf`, named exactly to the convention
-- [ ] Unique **Home folder** chosen (non-arcade requirement)
+- [ ] The release artifact is published, but **NOT under MiSTer's naming
+      convention** — this is an open item for v2.7.0, not a closed one.
+      The wiki requires `<CoreName>_YYYYMMDD.rbf` and this project ships
+      `releases/RustyNES_MiSTer-vX.Y.Z.rbf` (maintainer decision,
+      2026-08-30), named for the release rather than the build date.
+      `Distribution_MiSTer` selects the newest bitstream by the DATE in
+      the filename, so a version-named file gives it nothing to compare
+      and the two have to be reconciled before submission. Recorded as a
+      known divergence rather than ticked as compliant.
+      **(v2.6.7)** — committed to the sibling's `releases/` and attached to the
+      GitHub release on both repos. Produced by `scripts/release-rbf.sh`, which
+      refuses a compile with errors or negative per-clock slack. Labelled in the
+      release body as never having run on hardware; see
+      `RustyNES_MiSTer/docs/bitstream-release.md`.
+- [x] Unique **Home folder** chosen (non-arcade requirement) **(v2.6.7)** —
+      **RESOLVED against `Main_MiSTer`'s own source**, which is the only place
+      that actually states it. `user_io.cpp`'s `user_io_get_confstr(0)` returns
+      the text up to the **first** semicolon and `user_io_read_core_name()`
+      assigns that as the core name; the MkDocs *Core Paths* page then says the
+      standard path is `/media/fat/games/<CORE>`, "where `<CORE>` is the
+      internal core name". So `CONF_STR`'s opening `"RustyNES;;"` already gives
+      a Home folder of `/media/fat/games/RustyNES`, and it is unique — the
+      incumbent NES core's internal name is `NES`.
+
+      The empty field between the two semicolons is simply the **next entry**
+      being empty, not a directory field. That was the thing the earlier note
+      could not establish: the MkDocs `developer/conf_str` page documents every
+      entry type (`F`, `O`, `R`, `J`, `V`) and says nothing about the first
+      line, and the `Main_MiSTer` wiki page for it does not render. Reading an
+      existing console core's `CONF_STR` was unavailable under ADR 0037, so the
+      answer came from the framework's parser instead — which is a better
+      source than an example anyway.
 - [x] **No MRA files** **(now)** — arcade-only, and including them would be wrong
 
 ## Licence

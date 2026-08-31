@@ -43,6 +43,50 @@ uniform one-tick `$4003` write-parity sensitivity the first stimulus hid. Two
 fixes tried, both rejected by measurement. v2.6.0's first item. **Nine of ten
 mutations CAUGHT**, the two exceptions both indicting the stimulus.
 
+## The bitstream is published from v2.6.7 (maintainer decision, 2026-08-30)
+
+**Every release from v2.6.7 ships a `.rbf`** — committed to the sibling's
+`releases/` and attached as an asset to the GitHub release on **both**
+repositories. This reverses v2.6.6, which produced a bitstream and deliberately
+did not publish it.
+
+**Why the reversal is right.** The MiSTer distribution mechanism reads
+`releases/RustyNES_MiSTer-vX.Y.Z.rbf` out of the *repository*, so an empty
+`releases/` does not describe a cautious core — it describes an undistributable
+one, withheld from exactly the people who own the boards this project does not.
+And a claim nobody made is not the same as a claim marked unverified: only the
+second is usable. So the caution moves from an absence into a disclosure.
+
+**What every release body must therefore state**, because it is what the ladder
+does and does not reach:
+
+- **No hardware has run the bitstream** (true until rung 6 closes). A booting
+  core, a synced display, audible audio and a working controller are not claimed.
+- The co-simulation ladder establishes per-cycle agreement with a 141/141
+  emulator on the declared compare surfaces, and AccuracyCoin agreement entry for
+  entry across all 146 entries.
+- **Unverified by construction**: the PPU gate compares the *pre-palette* index
+  and the APU gate compares *per-channel integer levels*, so the palette, the
+  video timing constants, the audio's absolute level and its band-limiting are
+  downstream of every gate. That partition is deliberate — it is what stops a
+  palette difference masquerading as a rendering one — and its price is that
+  those four properties have no evidence behind them until a board runs the file.
+- The Quartus version, device, error and warning counts, worst setup and hold
+  slack, and the **pinned fitter seed**. The seed is load-bearing: two compiles of
+  identical RTL have landed a framework HDMI path at +0.386 ns and −0.086 ns, so
+  "timing closes" without a pinned seed is a statement about one placement.
+
+**Mechanism.** `scripts/release-rbf.sh <tag>` in the sibling builds, verifies and
+uploads. It checks errors and per-clock slack **against the reports rather than
+the exit code**, because Quartus has been observed to abort after the resource
+summary and still exit 0. Full procedure and rationale:
+`RustyNES_MiSTer/docs/bitstream-release.md`.
+
+**One artifact, two boards.** The SuperStation One is a Cyclone V console that
+forks `Distribution_MiSTer` and consumes MiSTer cores directly, so the same
+`.rbf` is what both take. Whether the *identical file* boots both is a hardware
+claim and stays deferred.
+
 ## Rung 3 CLOSES: VBlank, NMI, the `$2002` race (v2.5.8)
 
 The VBlank flag's full CPU-visible behaviour — the set, the clear, the

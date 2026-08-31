@@ -233,7 +233,7 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
 ## v2.7.0 — the contribution package
 
 - [ ] Requirements checklist green (`contribution-checklist.md`)
-- [ ] `releases/RustyNES_YYYYMMDD.rbf`
+- [ ] `releases/RustyNES_MiSTer-vX.Y.Z.rbf`
 - [ ] Unique Home folder chosen
 - [ ] Email `newcores@misterfpga.org`
 - [ ] **Decide deliberately** whether to transfer the repository to MiSTer-devel —

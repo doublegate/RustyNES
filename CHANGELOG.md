@@ -26,6 +26,207 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.7] - 2026-08-30 - "Detent" (the bitstream becomes a published, reproducible release artifact -- byte-identical from a clean tree and an incremental build -- and a one-cycle disagreement is located to the cycle it happens on and attributed to a side; v2.6.6's slack figures are withdrawn because no corner of a clean rebuild reproduces them, the release gate is found to have been reading the corner that flatters the design rather than the binding one, and a fix hypothesis is tested and refuted by the ROM written to probe it)
+
+### Added
+
+- **The MiSTer bitstream is published, from this release onward.** Every release
+  now ships a `.rbf` -- committed to the sibling's `releases/` and attached as an
+  asset to the GitHub release on **both** repositories. This reverses v2.6.6,
+  which produced a bitstream and deliberately withheld it because no hardware had
+  run it. The MiSTer distribution mechanism reads
+  `releases/RustyNES_MiSTer-vX.Y.Z.rbf` out of the *repository*, so an empty
+  `releases/` does not describe a cautious core -- it describes an
+  undistributable one, withheld from precisely the people who own the boards this
+  project does not have. The caution is relocated rather than dropped: the
+  release body states that no hardware has run the bitstream, and states what the
+  co-simulation ladder cannot reach by construction -- the PPU gate compares the
+  *pre-palette* index and the APU gate *per-channel integer levels*, so the
+  palette, the video timing constants, the audio's absolute level and its
+  band-limiting all sit downstream of every gate.
+- **The core presents a real MiSTer front panel, not just a video signal.** The
+  `CONF_STR` gains a joystick map (`J1,A,B,Select,Start`) so the OSD's button
+  definition and every standard MiSTer controller work without per-user
+  remapping, and a version line built from `BUILD_DATE`. It also gains OSD **info
+  lines**, wired through `hps_io`'s `info_req`/`info` pair, which exist to answer
+  a question the core previously could not: this is an **NROM-only** core, and a
+  cartridge on any other board used to render garbage with nothing on screen
+  saying why. The loader now reads the iNES header as it streams -- mapper low
+  nibble from byte 6, high nibble from byte 7, **with the "DiskDude!" guard**
+  (bytes 12-15 must be zero, or byte 7's upper nibble is a corrupted signature
+  rather than a mapper number, and a legitimate NROM cartridge reads as "mapper
+  64") -- and holds the console in reset with an on-screen message when the board
+  is unsupported. Refusing explicitly beats running wrongly.
+- **`scripts/release-rbf.sh`**, so publication is repeatable rather than
+  remembered. It verifies **against the reports rather than the exit code**,
+  because Quartus has been observed to abort after the resource summary and still
+  exit 0; it refuses a compile with errors, a missing Fitter footer, negative
+  slack at any corner, or a message citing this project's own RTL.
+- **The checkpoint gate is registered** (`make ckpt-gate`, ten entries in
+  `regress.sh`). It compares a rolling hash of all **nine** observable fields
+  where every other gate compares four, so `put_cycle`, `nmi_line` and the two
+  `irq_line_*` samples are checked by nothing else -- which is how all four came
+  to sit written as constant `false` in every trace the harness had produced. The
+  co-simulation suite goes to **123 passed, 0 failed with ZERO skips** (from 87),
+  carrying **51 checkpoint comparisons** where v2.6.6 had none.
+
+### Fixed
+
+- **The work RAM was 28% of the device, and the comment saying it could be
+  afforded was measuring the wrong thing.** `rtl/wram.sv` held 2 KiB as
+  asynchronous-read registers, arguing "2 KiB is 16,384 registers, about a tenth
+  of a 5CSEBA6U23I7, which the device can afford". True of the *fit succeeding*;
+  utilisation is a budget the whole design spends, and measured on this release's
+  build the module was **8,503 ALMs of a 30,265-ALM design**. Converting it to an
+  M10K block takes the core to **21,865 ALMs (73% -> 52%)** and worst setup slack
+  from **-0.639 ns (failing) to +0.130 ns**, with the console's own Fmax going
+  30.26 -> **36.19 MHz**. The module also carried a recorded revert -- "registering
+  it was TRIED and reverted ... all 87 gates failed" -- whose diagnosis was about
+  the **instrument**: the harness's device cross-checks ran at the top of the CPU
+  cycle then, where an asynchronous read holds this cycle's byte and a registered
+  one still holds the previous cycle's. v2.6.6 moved them *for exactly this
+  reason, when the cartridge hit it*, and never carried the fix back. Of the
+  0.769 ns recovered, 0.595 came from the memory and 0.174 from the fitter seed
+  (2 -> 4); a re-seed on a design with no headroom is a lottery ticket, and three
+  seeds across two releases is what riding the edge looks like.
+- **The oracle polled an interrupt on a cycle nesdev says it must not, and it
+  had been baked into a committed golden.** `CPU_interrupts` states that
+  interrupts are polled before an instruction's second cycle "but **not** before
+  the third CPU cycle on a taken branch"; `Cpu::handle_interrupts` re-armed the
+  NMI edge detector there anyway. Suppressing it needs `skip_irq_sample`'s value
+  on the *previous* cycle as well as this one, so the CPU gains
+  `skip_irq_sample_q` -- which the snapshot audit immediately, and correctly,
+  refused to let through as an allowlist entry, so **`CPU_SNAPSHOT_VERSION` goes
+  3 -> 4** (one appended byte; strict-equality dispatch, so no migration path).
+  nestest now matches the DUT on all **5,062,680** cycles across all nine fields.
+  The old `nestest` golden encodes the defect visibly -- at cycle 265,640 it
+  pushes a return address mid-branch where the corrected oracle simply executes
+  on -- so it is regenerated. **Every golden was re-exported and compared, not
+  argued about**: exactly **one of 98** resolvable goldens moved, and it is the
+  ROM the defect was found on. AccuracyCoin **141/141 (RAM decoder)** and the
+  135-binary battery are re-run after the change, so they are verified rather
+  than asserted.
+- **A gate's own output asserted a precondition that had expired two releases
+  earlier.** `tb/bus_diff.py` printed, on every pass, that four of the nine
+  observable fields were skipped because "the PPU cannot raise NMI until v2.5.8".
+  v2.5.8 shipped. They were constant because the testbench never assigned them --
+  a testbench omission wearing the costume of a hardware limit, which is how it
+  survived. The message now states what is true: all four are populated, all four
+  are compared by `ckpt_diff.py`, and this gate stays on the bus deliberately so
+  that a failure in it has one meaning.
+- **The release gate was reading the wrong timing corner.** It inspected only
+  "Slow 1100mV 100C", the corner this project had been quoting -- and the binding
+  corner on this design is **Slow -40C** (+0.108 ns setup against +0.385 at
+  100C), with the worst hold at **Fast -40C** (+0.042 ns). A bitstream failing at
+  a corner the gate did not read would have passed while it reported three times
+  the real margin. Corners are now discovered from the report by pattern rather
+  than from a fixed list, and a report yielding fewer than two is itself a
+  failure.
+- **The co-simulation harness sampled `irq_line_at_high` two-thirds through the
+  cycle.** It built the `Observable` after eight of a CPU cycle's twelve master
+  clocks, while the oracle's `_at_high` is an end-of-cycle read taken "after the
+  access + DMC tick". `IRQ_PROBE_CYC` showed the frame-counter IRQ asserting on the
+  **final edge** of cycle 29,827 -- invisible to a read taken eight clocks in,
+  visible to one taken at the end. Both instruments were reporting exactly what
+  they sampled. Checkpoint comparisons passing went **3 to 11** and failures at
+  checkpoint 7 went **30 to 3**; the three that passed before were runs too short
+  to reach cycle 29,827, which is what made "3 of 33" look like a scatter rather
+  than one cause.
+
+### Changed
+
+- **Save states written before v2.6.7 no longer load** (`CPU_SNAPSHOT_VERSION`
+  3 -> 4). This is ADR 0028's stated policy applied, not a lapse: the CPU
+  section carries a strict-equality version check, so a stale blob is refused
+  with a clear error rather than silently misinterpreted as the current layout.
+  The cause is the taken-branch interrupt fix below, whose new field is genuine
+  emulation state read back on the next tick; a restore that dropped it would
+  resume with the NMI edge detector re-armed a cycle early on any snapshot
+  landing inside a taken branch. The same shape as v2.2.3's
+  `PPU_SNAPSHOT_VERSION` 8 -- a schema *gap* closed in a patch release, because
+  the alternative is a save state that reloads into a subtly different console.
+- **The fitter seed moves 3 -> 4**, and the reason is the work-RAM finding
+  rather than the seed. See *Fixed*.
+- **v2.6.6's published slack figures are withdrawn.** It stated worst setup
+  +0.363 ns and worst hold +0.245 ns; two compiles of the byte-identical
+  committed configuration -- one from scratch, one incremental -- produce a
+  byte-identical bitstream and neither reproduces them. The corner hypothesis was
+  checked first and refuted: no corner produces either value. The correct figures
+  are **+0.108 ns setup and +0.042 ns hold** at the binding corner, with
+  `End Point TNS` 0.000 on all 56 rows -- those being **v2.6.6's configuration,
+  re-measured**, not this release's; v2.6.7 carries the Workstream B RTL fix and
+  publishes **+0.086 / +0.096 at seed 3**. The build itself **is** reproducible,
+  and that is now measured rather than argued -- an identical `.rbf` from a clean
+  tree and from an incremental one, for both configurations, so the pinned seed
+  and `NUM_PARALLEL_PROCESSORS 4` do their job. The CHANGELOG's v2.6.6 entry and its
+  release notes are deliberately **not** rewritten, and the withdrawn pair stays
+  visible inside the correction, because deleting it would erase the record that
+  it was claimed.
+- **Caveat C2 CLOSES: the `$4017` inhibit clears the interrupt at write+3**, the
+  documented cycle. A `$4017` write schedules four effects and this core landed
+  all four at the sequencer's maturation -- zeroing the frame counter, committing
+  the mode, applying the inhibit, and clearing the interrupt. Moving all four one
+  cycle later dropped blargg's 2005 APU battery from **11/11 to 4 of 11**,
+  including `04.clock_jitter`, the ROM written to probe that timing. Read as
+  evidence rather than as a dead end, that says the *sequencer's* maturation is
+  where the ROMs want it -- so separating **only** the interrupt clear, one cycle
+  later, lands it at write+3 (nesdev's figure for an APU-aligned write) while the
+  frame counter's zeroing stays put. Two effects of one write, on two different
+  cycles. Measured on `01-basics`: the CPU writes `$C0` at cycle 116,842 and the
+  line now deasserts on the final edge of **116,845**, which is what the oracle's
+  own record shows.
+- **Checkpoint streams go from 11 identical to 52**, of 58 -- all sixteen
+  `instr_test-v5` ROMs, all eleven blargg APU ROMs, and the three checkpoint-7
+  stragglers. Both controls held: blargg stays **11 of 11**, and the per-cycle bus
+  gate still matches on **all 2,680,239** overlapping cycles of `01-basics`, so
+  the CPU-visible behaviour is unchanged. This is not the v2.5.7 compensation
+  trap -- the interrupt *set* path was already correct (655 of 655 checkpoints
+  pass, and those windows contain many set events), so only one edge of one
+  signal moved.
+- **The fitter seed is raised 2 → 3, and named.** The fix adds one register to the
+  frame counter, which moved placement enough to land the framework's HDMI path
+  at **−0.007 ns** at Slow 100C -- seven thousandths of a nanosecond, inside
+  `sys/`, on logic the change does not touch. The `.qsf` has anticipated exactly
+  this since v2.6.6 and prescribes raising the seed and disclosing it rather than
+  re-running until it passes silently. At seed 3 every corner closes: worst setup
+  **+0.086 ns**, worst hold **+0.096 ns**.
+
+### Known issues
+
+- **The registered checkpoint gate cannot see `nmi_line`.** Pinning the flag to
+  `false` -- the original defect, restored -- comes back NOT CAUGHT, and counting
+  the flag across the gated goldens shows why: **not one of them ever raises an
+  NMI**. The only five stimuli in the corpus that do are `irqlat048`,
+  `nmi-overlap-brk` and the three `ppuvbl` ROMs, and of the four with a
+  checkpoint stream all four still differ. The gate is structurally incapable of
+  catching that defect, so the mutation indicts the stimulus. Stated rather than
+  implied, so a future NOT CAUGHT there is expected rather than rediscovered.
+- **Six checkpoint streams still differ**, named in a deny list with their causes
+  in `docs/rung6-integration.md`. `apuconflict039` is a declared diagnostic (its
+  bus surface carries nine known divergences by design). The other five are open:
+  `irqlat048`, `ppuoamcorrupt052`, and the three `ppuvbl` ROMs at the *same*
+  checkpoint 13 -- one cause rather than three, and the only NMI-bearing stimuli
+  available, so closing that cluster would also close the gate's `nmi_line` blind
+  spot. They had never been measured, because the manifests
+  record the path the *oracle* exported with, which for a harness-built ROM is
+  relative to the oracle's working directory and unreadable here; the ad-hoc scan
+  skipped them into a tally line reading "26 skipped (no manifest or ROM)".
+  `regress.sh` now falls back to this repository's own copy.
+- **nestest diverges from cycle 265,640, and the golden was hiding it.**
+  `docs/rung3-ppu.md` records nestest as closed at **5,002,992 cycles** at v2.5.8
+  and the gate's own default named that figure -- while the committed golden was
+  `--frames 2`, **59,562 cycles**, two orders of magnitude shallower. The gate
+  also *skipped on every run*, because its ROM path had no default while the
+  battery beside it does. Re-exported at 5,062,688 cycles the DUT diverges on
+  **19,224 of 5,002,984** compared cycles. **It is not this release's fix**: the
+  pre-fix RTL, run in a separate worktree against the same golden, gives the
+  identical 19,224. The gate now runs to **265,000** -- just short of the first
+  known divergence, named rather than hidden, and 4.4x the coverage it had.
+  Raising it past that is the work of closing this caveat.
+- **Rung 6 does not close.** No DE10-Nano and no SuperStation One are attached to
+  this machine -- confirmed by checking, not assumed. Hardware bring-up moves to
+  the first release after a board exists.
+
 ## [2.6.6] - 2026-08-29 - "Chassis" (the console becomes a MiSTer core: the framework vendored byte-identical, a top level, a clock, a palette, video sync and an audio mixer, compiled by Quartus 17.0.2 to a Cyclone V bitstream with 0 errors and timing closed; nine findings the tool produced that no reading would have, and two hardware defects found by asking whether the outputs would actually work)
 
 A chassis is the frame everything else bolts to. It is not the engine, and this

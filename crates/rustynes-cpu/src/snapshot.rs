@@ -41,7 +41,18 @@ use crate::status::Status;
 ///   `Nes::restore_inner` already enforced this via a strict per-section
 ///   equality check before this bump — the upconvert path removed here
 ///   was dead code, unreachable through the only real caller).
-pub const CPU_SNAPSHOT_VERSION: u8 = 3;
+/// - **v4 (v2.6.7 "Detent")**: appends `skip_irq_sample_q` (1 byte), the
+///   one-cycle delay of `skip_irq_sample` that `handle_interrupts` reads.
+///   nesdev's `CPU_interrupts` states that interrupts are polled before an
+///   instruction's second cycle but *not* before the third cycle of a TAKEN
+///   BRANCH, so suppressing the poll needs the flag's value on the previous
+///   cycle as well as this one. It is genuine emulation state read back on
+///   the next tick, not derivable from the rest of the blob — a restore that
+///   dropped it would resume with the NMI edge detector re-armed a cycle
+///   early on any snapshot landing inside a taken branch. Serialized rather
+///   than allowlisted, which `snapshot_schema_audit` says has been the right
+///   answer every time it has come up.
+pub const CPU_SNAPSHOT_VERSION: u8 = 4;
 
 /// Encoded byte length of the version-1 CPU snapshot.
 ///
@@ -54,7 +65,11 @@ const ENCODED_LEN_V1: usize = 1 + 1 + 1 + 1 + 2 + 1 + 1 + 8 + 1 + 1 + 1 + 1 + 1 
 
 /// Encoded byte length of the version-2 CPU snapshot
 /// (v1 + `master_clock` u64 + 5 R1 pipeline latches).
-const ENCODED_LEN: usize = ENCODED_LEN_V1 + 8 + 5;
+const ENCODED_LEN_V2: usize = ENCODED_LEN_V1 + 8 + 5;
+
+/// Encoded byte length of the current (v4) CPU snapshot
+/// (v2 + `skip_irq_sample_q`).
+const ENCODED_LEN: usize = ENCODED_LEN_V2 + 1;
 
 /// Errors returned by [`Cpu::restore`].
 #[derive(Debug, Error)]
@@ -110,6 +125,10 @@ impl Cpu {
             out.push(u8::from(self.mc_prev_run_irq));
             out.push(u8::from(self.mc_prev_nmi_line));
         }
+        // v4 (v2.6.7): the taken-branch interrupt-poll suppressor's previous
+        // value. Appended rather than inserted so the preceding layout, which
+        // three schema versions have now agreed on, is untouched.
+        out.push(u8::from(self.skip_irq_sample_q));
         out
     }
 
@@ -191,6 +210,7 @@ impl Cpu {
         self.mc_run_irq = data[p + 10] != 0;
         self.mc_prev_run_irq = data[p + 11] != 0;
         self.mc_prev_nmi_line = data[p + 12] != 0;
+        self.skip_irq_sample_q = data[p + 13] != 0;
         Ok(())
     }
 }
