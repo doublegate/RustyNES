@@ -97,11 +97,11 @@ cycle-accurate core later replaced.
 
   | board | mapper | bus | checkpoints |
   |---|---|---|---|
-  | UxROM | 2 | 89,336 cycles, **0 divergences** | 22 identical |
-  | CNROM | 3 | 89,334, **0** | 22 identical |
-  | AxROM | 7 | 89,334, **0** | 22 identical |
-  | MMC1  | 1 | 89,335, **0** | 22 identical |
-  | MMC3  | 4 | 89,334, **0** | 22 identical |
+  | UxROM | 2 | 178,677 cycles, **0 divergences** | 44 identical |
+  | CNROM | 3 | 178,676, **0** | 44 identical |
+  | AxROM | 7 | 178,676, **0** | 44 identical |
+  | MMC1  | 1 | 178,677, **0** | 44 identical |
+  | MMC3  | 4 | 178,677, **0** | 44 identical |
 
   **Every bank is filled with its own bank number**, and the program -- running
   from the window the board keeps fixed -- switches, reads the switchable window
