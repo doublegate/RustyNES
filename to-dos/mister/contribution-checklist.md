@@ -25,10 +25,20 @@ Settled at **v2.6.6**, except the one item that needs a board.
       pin assignments come from `sys/sys.tcl`
 - [ ] `.srf` — **deliberately absent, decided rather than skipped.** The
       warnings that cannot be fixed at source live in Quartus's own megafunction
-      library and in `sys/`, neither of which this core may edit. They are
+      library and in `sys/`, neither of which this core may edit. Most are
       suppressed with `MESSAGE_DISABLE` assignments in the `.qsf`, each with the
       reason written beside it, which is legible in a diff where an `.srf`
-      entry is not. Revisit if a reviewer asks for the conventional file.
+      entry is not.
+      **Three are NOT suppressed, and cannot be** (corrected v2.6.7 — this line
+      previously said they all were). `MESSAGE_DISABLE` was measured to have no
+      effect on `13050`/`13051`, and the PLL `RST` warning carries **no message
+      ID at all**, so there is nothing for an assignment to name. A hand-written
+      `.srf` is worse than nothing here: a malformed one made Quartus abort
+      after the resource summary with no footer and **exit status 0**, which
+      reads exactly like success. What holds instead is an attribution gate —
+      `tb/quartus_clean.py` fails if any Warning or Error cites `rtl/` or `tb/`,
+      and it passes over a non-zero scan. Revisit if a reviewer asks for the
+      conventional file.
 - [x] `RustyNES.sdc` **(v2.6.6)** — short by construction: one clock domain,
       because `nes_top` divides the master clock with enables rather than
       deriving clocks
