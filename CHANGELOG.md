@@ -26,7 +26,70 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [2.6.7] - 2026-08-30 - "Detent" (the bitstream becomes a published, reproducible release artifact -- byte-identical from a clean tree and an incremental build -- and a one-cycle disagreement is located to the cycle it happens on and attributed to a side; v2.6.6's slack figures are withdrawn because no corner of a clean rebuild reproduces them, the release gate is found to have been reading the corner that flatters the design rather than the binding one, and a fix hypothesis is tested and refuted by the ROM written to probe it)
+## [2.6.8] - 2026-08-31 - "Arrears" (a deny list is an assertion about the thing under test, and nobody re-measured it)
+
+### Fixed
+
+- **The nestest gate compared 265,000 cycles against a 5,062,688-cycle golden,
+  and the cap was arrears rather than caution.** It was correct when written:
+  v2.6.7 set it just short of caveat C6's first divergence at cycle 265,640, so
+  the stopping point was named rather than hidden. C6 was then **closed inside
+  the same release** and nothing re-opened the cap. Re-measured: **all 5,062,680
+  overlapping cycles match** on `pc`, `bus_addr`, `bus_data` and `bus_access`.
+  The window is now **derived from the golden's own size** rather than written
+  down -- a literal is exactly how this gate went wrong twice, once naming
+  5,002,992 against a 59,562-cycle golden and once capping at 265,000 against a
+  fixed one. Coverage 264,992 -> **5,062,680 cycles, a 19x increase**, with no
+  constant left to drift.
+- **Caveat C4 is CLOSED, and by demonstration rather than by argument.** C4 said
+  the checkpoint gate could not catch an `nmi_line` defect because no gated
+  golden ever raised an NMI. **The stimulus existed the whole time**: nestest's
+  golden sets `nmi_line` on **3,592** cycles and `irq_line_at_low` on **62,516**,
+  and its checkpoint golden was already committed at 1,237 checkpoints. It was
+  never wired in, because nestest uses `nestest-gate` rather than
+  `cpu-bus-gate`, so the auto-attach could not reach it, and it was absent from
+  the explicit loop's list. Wiring it took one optional variable and costs no
+  extra simulation time -- it rides the same DUT invocation. Reverting
+  `o.nmi_line` to the constant `false` it held before v2.6.7 is now **CAUGHT**,
+  at checkpoint 28 of 1,237. The shape of that result is the whole argument for
+  nine fields: **in the same run the bus gate still passed all 5,062,680
+  cycles**, because it compares four and is structurally blind to the defect.
+- **The widened gate caught the first thing it was pointed at, which was this
+  release's own change.** The nestest window was first derived from the size of
+  `obs.bin`, and that is wrong by exactly eight: the obs stream begins at cycle
+  8, so its record count is eight short of the window the golden was exported
+  with. `ckpt_diff.py` compares the final partial window BY CYCLE and said so --
+  "checkpoint 1236 covers a different cycle -- golden through 5062687, DUT
+  through 5062679" -- while **the bus gate passed the identical run**, because it
+  compares *overlapping* cycles and a short stream simply overlaps less. Two
+  gates, one wrong window, and only the length-sensitive one could see it. The
+  window now comes from the manifest's `cpu_cycles`, which is what `regress.sh`'s
+  own comment already said reproduces a golden.
+- **Four of the six checkpoint deny-list entries were passing and nobody had
+  looked.** A deny list is an assertion about the thing under test, and v2.6.7
+  changed the thing under test twice -- the DUT's `$4017` interrupt-clear split
+  and the harness's `Observable` completed at end-of-cycle with `nmi_line` wired
+  to the effective line. Re-measured: `irqlat048` (22 checkpoints identical),
+  `ppuvbl023` (175, through cycle 714,737), `ppuvbl024` (291, through 1,191,227)
+  and `ppuvbl025` (175) all pass. `apuconflict039` (a declared diagnostic) and
+  `ppuoamcorrupt052` (a genuine hash divergence) remain, each restated from a
+  current measurement rather than an old note.
+- **Three of those goldens were not run by the suite AT ALL** -- `ppuvbl023`,
+  `ppuvbl024` and `ppuvbl025` have a committed golden, ROM and manifest and
+  appeared nowhere in `regress.sh` except the deny list, which only ever
+  governed the auto-attach. **So removing them from that list was INERT until
+  they were also iterated**, which is the trap worth naming: retiring an
+  exclusion adds coverage only if something reaches the thing excluded. Caught
+  before the change shipped, by checking what iterated them rather than assuming
+  the deny list was the gate.
+- **`ppuspr0` was the last golden with a checkpoint stream and no nine-field
+  coverage.** Measured (44 checkpoints identical) and wired, which closes the
+  set: **59 goldens carrying a checkpoint stream = 40 in the explicit loop + 16
+  auto-attached + nestest + 2 denied**, and nothing unreached. The
+  co-simulation suite goes to **128 passed, 0 failed, 0 skipped** (from 123),
+  carrying **57 nine-field comparisons** (from 51).
+
+## [2.6.7] - 2026-08-30 - "Detent" (the bitstream becomes a published, reproducible artifact, and a published slack figure is withdrawn)
 
 ### Added
 
@@ -227,7 +290,7 @@ cycle-accurate core later replaced.
   this machine -- confirmed by checking, not assumed. Hardware bring-up moves to
   the first release after a board exists.
 
-## [2.6.6] - 2026-08-29 - "Chassis" (the console becomes a MiSTer core: the framework vendored byte-identical, a top level, a clock, a palette, video sync and an audio mixer, compiled by Quartus 17.0.2 to a Cyclone V bitstream with 0 errors and timing closed; nine findings the tool produced that no reading would have, and two hardware defects found by asking whether the outputs would actually work)
+## [2.6.6] - 2026-08-29 - "Chassis" (the console becomes a MiSTer core, with 0 errors, timing closed, and 111 warnings taken to three)
 
 A chassis is the frame everything else bolts to. It is not the engine, and this
 release does not touch the engine: `nes_top` computes exactly what it computed
@@ -363,7 +426,7 @@ in the sibling repository.
   closes, because a gate known to be red for a reason nobody is acting on decays
   into noise.
 
-## [2.6.5] - 2026-08-29 - "Muster" (rung 5 closes — the AccuracyCoin status vector is identical entry for entry across all 146 entries, with 146 of 146 executed on both sides and none NotRun. Five PPU defects close the last six differing entries, and one of the release's own diagnoses is retracted)
+## [2.6.5] - 2026-08-29 - "Muster" (rung 5 closes: the AccuracyCoin status vector is identical entry for entry, 146 of 146 executed)
 
 A muster is a roll call where every name is called **and answered**. That is this
 release's acceptance exactly, in two clauses: the vector agrees entry for entry,
@@ -442,7 +505,7 @@ out with its reason rather than left failing.
 fix), so **AccuracyCoin 141/141 (RAM decoder)** and nestest 0-diff are **verified,
 not asserted**.
 
-## [2.6.4] - 2026-08-26 - "Rubric" (OAM DMA lands and all nine AccuracyCoin disagreements close, every rule that closed the last three stated by the test ROM and by neither nesdev page — and then the gate that certified them is found to have covered 88 of 146 entries. The emulation core is unchanged)
+## [2.6.4] - 2026-08-26 - "Rubric" (the last nine AccuracyCoin disagreements close, and the gate that certified them covered 88 of 146)
 
 A rubric is the authoritative statement of the rules, written in the margin by
 the person who set the test. That is literally where all three of this release's
@@ -622,7 +685,7 @@ disagreements rather than as missing coverage, which is correct: they are
 `NotRun` on one side only, the exact distinction the acceptance wording exists
 for.
 
-## [2.6.3] - 2026-08-25 - "Mainspring" (the DUT runs on one master clock, and four enables that were never enabling — plus AccuracyCoin end to end, a status vector that names its disagreements by test, and a decay constant the documentation and the corpus disagree about by a factor of ~17. The emulation core is unchanged)
+## [2.6.3] - 2026-08-25 - "Mainspring" (the DUT runs on one master clock, and four enables that were never enabling)
 
 ### Added
 
@@ -868,7 +931,7 @@ for.
   belong in a dependency refresh, and 1.97 is where the libretro build image's
   injected `-C ar` stops being a warning and becomes a hard error.
 
-## [2.6.2] - 2026-08-24 - "Witness" (rung 4 closes — blargg's APU battery as the first independent oracle since rung 1, six defects no self-written gate could see, and a suite that had been asserting nothing for five minor releases. The emulation core is unchanged)
+## [2.6.2] - 2026-08-24 - "Witness" (rung 4 closes on blargg's APU battery, and a suite that had been asserting nothing for five releases)
 
 ### Fixed
 
@@ -994,7 +1057,7 @@ Both are recorded with the measurement that established them, in
   sequence precisely, so the risk did not exist. A note that an implementation
   was *calibrated* says nothing about whether documentation exists.
 
-## [2.6.0] - 2026-08-24 - "Assay" (the triangle, the noise channel and the sweep unit in the MiSTer co-simulation DUT — and an audit of how much of the APU was fitted to the oracle rather than derived from documentation. The emulation core is unchanged)
+## [2.6.0] - 2026-08-24 - "Assay" (the triangle, the noise channel and the sweep unit in the DUT, and an audit of what was fitted rather than derived)
 
 An assay tests a metal to find out what it is actually made of. This release does
 that to the APU rung: it asks, for every behaviour, whether it was written from
