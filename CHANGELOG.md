@@ -54,8 +54,8 @@ cycle-accurate core later replaced.
   where every other gate compares four, so `put_cycle`, `nmi_line` and the two
   `irq_line_*` samples are checked by nothing else -- which is how all four came
   to sit written as constant `false` in every trace the harness had produced. The
-  co-simulation suite goes to **122 passed, 0 failed** (from 87), carrying **51
-  checkpoint comparisons** where v2.6.6 had none.
+  co-simulation suite goes to **123 passed, 0 failed with ZERO skips** (from 87),
+  carrying **51 checkpoint comparisons** where v2.6.6 had none.
 
 ### Fixed
 
