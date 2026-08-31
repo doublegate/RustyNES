@@ -69,8 +69,9 @@ four releases because nothing had looked:
   to dot 0 -- the only dot of a rendering line that drives no fetch, and so the
   only one still reaching the same fallback.
 
-Filtered A12 clocks went 1,445 -> **965, every one at dot 261**, which is
-241 per frame exactly as the wiki states. Interrupts taken went 218-vs-158 to
+Filtered A12 clocks went 1,445 -> **965, every one at dot 261**. The wiki
+gives 241 clocks per frame, and `965 = 241 x 4 + 1` -- four frames plus one
+clock, the run not ending on a frame boundary. Interrupts taken went 218-vs-158 to
 **158 and 158**, with byte-identical work RAM, and the DUT/oracle divergence
 from 10,821 cycles to 950.
 
@@ -99,7 +100,9 @@ mechanism, and finds two things.
 
 **First, "by design" was a claim about the instrument.** `apuconflict039`'s bus
 surface had been excluded since v2.6.2 under a note saying it "carries nine
-divergences **by design**". The nine were a defect in the **harness**: on a cycle
+divergences **by design**". **Six of the nine had already closed** and nobody
+could see it, because a denied stream is denied in both directions. The **three
+that remained** were a defect in the **harness**: on a cycle
 where the CPU is held, `tb/cpu_main.cpp` built the trace record's `bus_data` from
 a stale local rather than from the RTL's own open-bus latch. The two differ on
 exactly one rule, and it is a rule the RTL already implements correctly — a read

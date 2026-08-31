@@ -28,9 +28,9 @@ per-rung doc records what the rung cannot verify.
 | M14 | v2.6.4 | AccuracyCoin parity | Entry-for-entry. **Rung 5 closes** | — |
 | M15 | v2.6.5 | `sys/`, `emu`, `hps_io`, video, OSD | **Timing closure**; first `.rbf` | — |
 | M16 | v2.6.6 | Hardware bring-up, both boards | **One `.rbf` boots both.** Rung 6 closes | — |
-| M17 | v2.6.7 | SDRAM controller | MMC3's 6 Mb addressable | — |
-| M18 | v2.6.8 | MMC1, UxROM, CNROM, AxROM | `holy_mapperel` per board | — |
-| M19 | v2.6.9 | MMC3 | `mmc3_test_2`, `mmc1_a12`. **Rung 7 closes** | — |
+| M17 | — | SDRAM controller | Read/write timing against the real part | Deferred; needs hardware |
+| M18 | v2.6.9 | MMC1, UxROM, CNROM, AxROM | Per-board bus + checkpoint gates | **Done** — shipped with M19 |
+| M19 | v2.6.9 | MMC3 | `mmc3_test_2` 4/6, level with the oracle | **Banking done**; rung 7 stays open on SDRAM |
 | M20 | v2.7.0 | Contribution package | Checklist green; submission sent | — |
 
 **Status is a claim about a recorded manual run, not about CI.** None of the DUT
