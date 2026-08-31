@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.8] - 2026-08-31 - "Arrears" (a deny list is an assertion about the thing under test, and nobody re-measured it)
+
 ### Fixed
 
 - **The nestest gate compared 265,000 cycles against a 5,062,688-cycle golden,
@@ -87,7 +89,7 @@ cycle-accurate core later replaced.
   co-simulation suite goes to **128 passed, 0 failed, 0 skipped** (from 123),
   carrying **57 nine-field comparisons** (from 51).
 
-## [2.6.7] - 2026-08-30 - "Detent" (the bitstream becomes a published, reproducible release artifact -- byte-identical from a clean tree and an incremental build -- and a one-cycle disagreement is located to the cycle it happens on and attributed to a side; v2.6.6's slack figures are withdrawn because no corner of a clean rebuild reproduces them, the release gate is found to have been reading the corner that flatters the design rather than the binding one, and a fix hypothesis is tested and refuted by the ROM written to probe it)
+## [2.6.7] - 2026-08-30 - "Detent" (the bitstream becomes a published, reproducible artifact, and a published slack figure is withdrawn)
 
 ### Added
 
@@ -288,7 +290,7 @@ cycle-accurate core later replaced.
   this machine -- confirmed by checking, not assumed. Hardware bring-up moves to
   the first release after a board exists.
 
-## [2.6.6] - 2026-08-29 - "Chassis" (the console becomes a MiSTer core: the framework vendored byte-identical, a top level, a clock, a palette, video sync and an audio mixer, compiled by Quartus 17.0.2 to a Cyclone V bitstream with 0 errors and timing closed; nine findings the tool produced that no reading would have, and two hardware defects found by asking whether the outputs would actually work)
+## [2.6.6] - 2026-08-29 - "Chassis" (the console becomes a MiSTer core, with 0 errors, timing closed, and 111 warnings taken to three)
 
 A chassis is the frame everything else bolts to. It is not the engine, and this
 release does not touch the engine: `nes_top` computes exactly what it computed
@@ -424,7 +426,7 @@ in the sibling repository.
   closes, because a gate known to be red for a reason nobody is acting on decays
   into noise.
 
-## [2.6.5] - 2026-08-29 - "Muster" (rung 5 closes — the AccuracyCoin status vector is identical entry for entry across all 146 entries, with 146 of 146 executed on both sides and none NotRun. Five PPU defects close the last six differing entries, and one of the release's own diagnoses is retracted)
+## [2.6.5] - 2026-08-29 - "Muster" (rung 5 closes: the AccuracyCoin status vector is identical entry for entry, 146 of 146 executed)
 
 A muster is a roll call where every name is called **and answered**. That is this
 release's acceptance exactly, in two clauses: the vector agrees entry for entry,
@@ -503,7 +505,7 @@ out with its reason rather than left failing.
 fix), so **AccuracyCoin 141/141 (RAM decoder)** and nestest 0-diff are **verified,
 not asserted**.
 
-## [2.6.4] - 2026-08-26 - "Rubric" (OAM DMA lands and all nine AccuracyCoin disagreements close, every rule that closed the last three stated by the test ROM and by neither nesdev page — and then the gate that certified them is found to have covered 88 of 146 entries. The emulation core is unchanged)
+## [2.6.4] - 2026-08-26 - "Rubric" (the last nine AccuracyCoin disagreements close, and the gate that certified them covered 88 of 146)
 
 A rubric is the authoritative statement of the rules, written in the margin by
 the person who set the test. That is literally where all three of this release's
@@ -683,7 +685,7 @@ disagreements rather than as missing coverage, which is correct: they are
 `NotRun` on one side only, the exact distinction the acceptance wording exists
 for.
 
-## [2.6.3] - 2026-08-25 - "Mainspring" (the DUT runs on one master clock, and four enables that were never enabling — plus AccuracyCoin end to end, a status vector that names its disagreements by test, and a decay constant the documentation and the corpus disagree about by a factor of ~17. The emulation core is unchanged)
+## [2.6.3] - 2026-08-25 - "Mainspring" (the DUT runs on one master clock, and four enables that were never enabling)
 
 ### Added
 
@@ -929,7 +931,7 @@ for.
   belong in a dependency refresh, and 1.97 is where the libretro build image's
   injected `-C ar` stops being a warning and becomes a hard error.
 
-## [2.6.2] - 2026-08-24 - "Witness" (rung 4 closes — blargg's APU battery as the first independent oracle since rung 1, six defects no self-written gate could see, and a suite that had been asserting nothing for five minor releases. The emulation core is unchanged)
+## [2.6.2] - 2026-08-24 - "Witness" (rung 4 closes on blargg's APU battery, and a suite that had been asserting nothing for five releases)
 
 ### Fixed
 
@@ -1055,7 +1057,7 @@ Both are recorded with the measurement that established them, in
   sequence precisely, so the risk did not exist. A note that an implementation
   was *calibrated* says nothing about whether documentation exists.
 
-## [2.6.0] - 2026-08-24 - "Assay" (the triangle, the noise channel and the sweep unit in the MiSTer co-simulation DUT — and an audit of how much of the APU was fitted to the oracle rather than derived from documentation. The emulation core is unchanged)
+## [2.6.0] - 2026-08-24 - "Assay" (the triangle, the noise channel and the sweep unit in the DUT, and an audit of what was fitted rather than derived)
 
 An assay tests a metal to find out what it is actually made of. This release does
 that to the APU rung: it asks, for every behaviour, whether it was written from
