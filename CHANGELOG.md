@@ -26,6 +26,186 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.9] - 2026-08-31 - "Abeyance" (an exclusion hides improvement as well as regression)
+
+### Fixed
+
+- **Two PPU defects, found on the first day anything consumed A12.** Neither is
+  a cartridge bug and both had been invisible for four releases, because no
+  consumer of the signal existed. The MMC3 gate opened at **10,821 of 178,676
+  cycles diverging**, and the chain narrowed it in five steps: the IRQ period
+  was 568 CPU cycles against the oracle's 909; there were **1,445 filtered A12
+  clocks where ~960 were expected**, so the filter and not the counter; a
+  low-gap histogram put 480 extras at gaps of 5-6 M2 ticks; a per-dot histogram
+  put **all 480 at dot 338, on EVEN scanlines only**; and the address there was
+  `$1002` where a nametable address belongs.
+  - **`dummy_fetch` named the RECORD dots, not the fetch.** It covered dots 337
+    and 339. A fetch is two dots -- 337-338 and 339-340 -- so on the even dots
+    the address fell through every window in `chr_addr_raw` onto the `v_addr`
+    fallback and the PPU presented `v` itself. `v` bit 12 is `fine_y[0]`, which
+    alternates every scanline, which is the exact even/odd pattern measured.
+    Split into `dummy_fetch` (the record) and `dummy_fetch_addr` (the address
+    window), because widening the one gate broke the fetch record.
+  - **The idle dot, same root cause and a second consumer.** With the first fix
+    in, the extras MOVED rather than vanished -- still 1,445, now split
+    965 + 320 + 160 -- and a per-dot histogram put them all at **dot 0**, the
+    only dot of a rendering line that drives no fetch and therefore the only
+    other one reaching the same fallback. This file had already recorded that
+    root cause for the octal latch, and fixing it there did not fix it here.
+
+  After both: filtered clocks **1,445 -> 965, every one at dot 261** (965 =
+  241 x 4 + 1, against the wiki's 241 per frame); IRQ assertions **180 -> 120**
+  against the oracle's 120; interrupts taken **218 -> 158** against 158; work
+  RAM byte-identical; diverging cycles **10,821 -> 950**. `3-A12_clocking`
+  passing is independent confirmation, since it exercises the filter directly.
+
+- **A "declared diagnostic" was a defect in the harness, not in the console --
+  carried for seven releases behind the phrase "by design".** `apuconflict039`'s
+  bus surface was excluded from comparison from v2.6.2 onward, under a note
+  saying it "carries nine divergences by design and is gated on channel levels
+  only". Two things were wrong with that. **Six of the nine had already closed
+  and nobody could see it** -- the stream was denied in both directions, so an
+  entry that improves is as invisible as one that regresses, which is this
+  release's whole thesis. And the **three that remained were neither by design
+  nor the DUT's**: on a cycle where the CPU is held, `tb/cpu_main.cpp` built the
+  `Observable`'s `bus_data` from a stale local (`last_bus_data`) rather than
+  from the RTL's own latch. Taking it from
+  the latch -- `o_dma_wdata` on an OAM write, `o_bus_din` on a DMA read,
+  `o_open_bus` otherwise -- makes the stream **identical on all 357,361
+  overlapping cycles and all 88 checkpoints**. The local is now dead and is
+  deleted. The stream is bus-gated, checkpoint-gated and channel-gated together,
+  and needs no allowance at all. **"By design" is the load-bearing phrase**: it
+  reads as a settled property of the thing under test, when it was a property of
+  the instrument reading it, and that is what stopped anyone re-checking it.
+- **The three `$4015` divergences the plan expected to be a DUT defect were the
+  same harness bug.** The evidence pointed at the DUT and the reasoning was
+  sound -- AccuracyCoin's own source states that reads of the APU status register
+  are internal to the 2A03 and do not drive the external data bus, which is
+  exactly what the oracle showed and the DUT did not. Recorded because the
+  *direction* is the finding: a measurement disagreeing with a correct rule can
+  indict the measurement.
+
+### Added
+
+- **The cartridge -- five boards, and the first thing in this core's history to
+  look at PPU A12.** `rtl/cart/cart.sv` implements **UxROM (2), CNROM (3), AxROM
+  (7), MMC1 (1) and MMC3 (4)** beside the existing NROM, with a runtime `mapper`
+  input, 8 KiB PRG and 1 KiB CHR slots, and PRG-RAM gating for both MMC1's bit 4
+  and MMC3's `$A001`. Each board has a generated stimulus ROM
+  (`tb/roms/mkmapper.py`), an oracle golden, and **two** comparisons -- the
+  per-cycle bus and the nine-field rolling checkpoint:
+
+  | board | mapper | bus | checkpoints |
+  |---|---|---|---|
+  | UxROM | 2 | 89,336 cycles, **0 divergences** | 22 identical |
+  | CNROM | 3 | 89,334, **0** | 22 identical |
+  | AxROM | 7 | 89,334, **0** | 22 identical |
+  | MMC1  | 1 | 89,335, **0** | 22 identical |
+  | MMC3  | 4 | 89,334, **0** | 22 identical |
+
+  **Every bank is filled with its own bank number**, and the program -- running
+  from the window the board keeps fixed -- switches, reads the switchable window
+  and stores what it read, so a bank switch is observable on the bus rather than
+  inferred. **Every bank-select write targets an address holding `$FF`**: UxROM,
+  CNROM and AxROM all have bus conflicts, which `cart.sv` does not model and on
+  which emulators differ, and `value & $FF == value` makes these ROMs about
+  banking and nothing else. Mutation: **9 of 9 CAUGHT**, plus one classified
+  inert by byte-comparison rather than by argument.
+
+- **`tb/obs_diff9.py` -- the instrument that was missing between the two that
+  existed.** `bus_diff.py` compares FOUR fields per cycle; `ckpt_diff.py` hashes
+  nine but only every 4096 cycles, and its own failure message ends "re-run that
+  window with `--bus-out` on both sides to find the cycle", which until now meant
+  doing it by hand. This names the first differing cycle, the field, both values,
+  and the SHAPE across the whole stream -- which field, how many cycles, and
+  whether it is one event or a persistent divergence. Both open divergences were
+  localised with one command each. It refuses a stream pair with no overlapping
+  cycles rather than reporting agreement, because an empty intersection is not
+  agreement.
+- **A scoped allowance replacing the binary deny -- and the PLANNED mechanism was
+  refuted by its own mutation pass.** The plan specified `ckpt_diff.py
+  --expect-diff`, a list of checkpoint indices known to differ. It was
+  implemented, run, and **cannot work**: `checkpoint.h` chains a rolling FNV-1a,
+  so one divergent cycle poisons every checkpoint after it. Allowing
+  `ppuoamcorrupt052`'s first differing window moved the failure straight to the
+  next one, and allowing the rest is the all-or-nothing deny it was meant to
+  replace. The refutation is recorded at the site rather than the design quietly
+  swapped. `obs_diff9.py --allow-cycle` puts the allowance on the **per-cycle**
+  comparison, where there is no such coupling: an attributed difference costs
+  **one cycle of coverage instead of seventy-one checkpoints**.
+- **`ppuoamcorrupt052` re-gated at 357,360 of 357,361 cycles**, against nothing
+  at all before. It differs on exactly one cycle -- 70,627, `bus_data` `$80` on
+  the oracle against `$00` on the DUT -- which is ledger 3.19's documented
+  OAM-corruption asymmetry, attributed there and unresolved because settling it
+  needs a source neither repository has. It is allowed and named, not resolved.
+- **The allowance fails BOTH ways, which is what makes it safe to adopt.** An
+  allowed cycle that stops differing is a FAILURE, so a DUT that improves cannot
+  leave a stale allowance quietly hiding coverage -- the exact shape of the
+  defect this release opened by finding. Six mutations, all behaving as intended:
+  no allowance fails and names the cycle; the real cycle passes; a matching cycle
+  in the allowance fails as stale, alone and alongside the real one; a cycle
+  outside the compared window is refused rather than allowed to match nothing;
+  and a non-numeric argument is refused.
+
+### Changed
+
+- **A one-scanline MMC3 IRQ residual is ATTRIBUTED, and a fix for it was
+  REFUTED by the ROM written to probe it.** On blargg's `mmc3_test_2` the DUT
+  scores **4 of 6, level with the oracle and failing the same two ROMs**, one of
+  them (`6-MMC3_alt`) correctly, since it is NEC rev B and this core models the
+  other revision. The residual is `4-scanline_timing` #2: both consoles write
+  the arming `$E001` on the SAME cycle, so the CPU halves are in lockstep, and
+  the divergence is entirely which A12 rise clocks the counter -- **exactly one
+  scanline**, the DUT firing from a pre-render-line clock and the oracle from
+  the next line. Two mechanisms could produce that and **both are now
+  eliminated, each by the sub-test written for it**:
+  - suppressing the IRQ on a `$C001` **flag-driven** reload (as against a
+    zero-driven one) is worth exactly one clock, and took `2-details` from
+    passing to `Fail($07)`. Sub-test 7 states the opposite in its own name --
+    *"IRQ should be set when non-zero and reloading to 0 after clear"*.
+    Reverted from a pre-edit snapshot.
+  - an extra pre-render clock is ruled out by sub-test 8 of the same ROM,
+    *"Counter should be clocked 241 times in PPU frame"*, in the same
+    `PPUCTRL = $08` configuration, which the DUT **passes** -- 241 being 240
+    visible lines plus the pre-render line.
+
+  So both rules the DUT implements are confirmed by ROMs written to measure
+  them, which puts the residual upstream of the cartridge. Settling it needs the
+  oracle's own filtered-A12 stream, which neither repository can export today.
+  Recorded with its cycle, dot and scanline rather than tuned until a gate goes
+  green. **`1-clocking` stayed green across the refuted change**, which is a
+  reminder that a green neighbour is not evidence a change is right.
+- **An unregistered gate's stated reason had expired, and is re-measured at the
+  release commit.** `mapper4mmc3irq065` is deliberately not registered, and the
+  comment saying so quoted 180 IRQ assertions against 158 and a first divergence
+  at cycle 60,104 -- **both figures killed the same day by the two PPU fixes
+  above**. Re-run: **120/120 assertions, 158/158 interrupts taken, 950 of
+  178,676 cycles diverging, first at 62,166**. The counter and filter now agree
+  and what remains is when the interrupt lands. An exclusion whose reason has
+  gone stale is the defect v2.6.8 spent a release on, one release later and in
+  this release's own new code.
+
+- **The checkpoint deny list is down to one entry, and that entry is denied from
+  the ROLLING-HASH gate specifically** rather than from comparison altogether --
+  a distinction the previous list could not express, and the reason it forfeited
+  whole streams.
+- Documentation corrected at the sites that carried the retracted claims:
+  `docs/rung6-integration.md`'s "nine divergences by design" paragraph and
+  `docs/apu-oracle-vs-documentation.md` item 6.3 and its two cross-references.
+  Each retraction quotes the wrong text before correcting it, so the record shows
+  the claim was made rather than tidily removing it.
+
+### Unchanged, and verified rather than asserted
+
+- The emulation core is untouched -- no chip crate changes -- so **AccuracyCoin
+  141/141 (100.00%, RAM decoder)** and nestest 0-diff hold by construction, and
+  were re-run anyway.
+- **Rung 6 does not close.** No DE10-Nano and no SuperStation One are attached to
+  this machine, confirmed by checking the USB bus, serial devices, removable
+  block devices and mounts rather than assumed. The four properties downstream of
+  every gate -- the palette, the video timing constants, the audio's absolute
+  level and its band-limiting -- remain without evidence until a board exists.
+
 ## [2.6.8] - 2026-08-31 - "Arrears" (a deny list is an assertion about the thing under test, and nobody re-measured it)
 
 ### Fixed

@@ -224,11 +224,29 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
       **one `.rbf` boots both**; on-device AccuracyCoin — **rung 6 closes**.
       Blocked on hardware this machine does not have
 
-## v2.6.7 – v2.6.9 — rung 7, memory and mappers
+## Rung 7 — memory and mappers
 
-- [ ] v2.6.7 SDRAM controller from spec (ADR first)
-- [ ] v2.6.8 MMC1, UxROM, CNROM, AxROM
-- [ ] v2.6.9 **MMC3** — A12 filtering, IRQ counter — **rung 7 closes**
+**The banking is DONE (v2.6.9). The earlier note in this section said rung 7 had
+slipped because rung 6 is blocked on absent hardware, and that was HALF WRONG —
+corrected here rather than quietly rewritten.**
+
+Rung 7 has two parts and only one of them ever depended on a board:
+
+| part | needs hardware? | why |
+|---|---|---|
+| the mapper logic | **no** | pure logic, verifiable against the oracle exactly as rungs 1-5 were |
+| the SDRAM controller | **yes** | its acceptance is read/write timing against a real part |
+
+Treating them as one item deferred five boards' worth of verifiable work behind
+a blocker that never applied to it. The lesson generalises: **before recording
+something as blocked, check the blocker applies to the WHOLE item.**
+
+- [x] **UxROM (2), CNROM (3), AxROM (7), MMC1 (1), MMC3 (4)** — one runtime-
+      selected `rtl/cart/cart.sv`, written from the vendored wiki; all five
+      match the oracle on every cycle and every checkpoint. See
+      `RustyNES_MiSTer/docs/rung7-mappers.md`
+- [ ] SDRAM controller from spec (ADR first) — **after** a board exists
+- [ ] The remaining ~169 mapper families, as needed
 
 ## v2.7.0 — the contribution package
 

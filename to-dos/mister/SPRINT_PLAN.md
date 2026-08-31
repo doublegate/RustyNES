@@ -1,5 +1,12 @@
 # RustyNES MiSTer core — sprint plan
 
+> **The version numbers in this section are STALE.** Rung 7 sits above rung 6 in a
+> ladder where a rung may not start until the one below is green, and rung 6 is
+> blocked on hardware this machine does not have. v2.6.7 – v2.6.9 went to the
+> bitstream and to widening the co-simulation gates instead. Treat the ordering
+> here as real and the version labels as not yet assigned; `to-dos/mister/TASKS.md`
+> carries the corrected form.
+
 One release per sprint. Each sprint is done when its gate is green **and** the
 per-rung doc records what the rung cannot verify.
 
