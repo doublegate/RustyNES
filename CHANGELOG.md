@@ -30,6 +30,38 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **The MMC3 scanline-IRQ residual closes, and it was ONE CYCLE rather than the
+  one SCANLINE two earlier readings recorded.** `/IRQ` is now a **registered
+  output**: the pending flag is a flip-flop and the CPU samples the pin, so what
+  the CPU sees trails the counter reaching zero by one CPU cycle. blargg's
+  `4-scanline_timing` goes from `$02` -- failing its FIRST assertion -- to
+  `$0C`, so **sub-tests 2 through 11 now pass**, with `1-clocking`,
+  `2-details` and `5-MMC3` still green and `6-MMC3_alt` still failing correctly
+  as the revision this core does not model.
+  - **Why one cycle, from blargg's own arithmetic rather than from tuning.** For
+    sub-test 2 the ROM's `cli` is fetched at cycle 1,250,755, so `end_` runs
+    cli(755-756) nop(757-758) nop(759-760) `inc irq_flag`(761-765). The filtered
+    A12 rise is at 1,250,759. Asserting combinationally raises `/IRQ` at
+    1,250,760 -- inside the second nop -- so the handler beats the `inc`. One
+    cycle later it lands after it, which is what the ROM asks for. A 0..8-cycle
+    sweep picked 1 **uniquely**, and the shape is the evidence: 0 fails at
+    sub-test 2, and 2-5 overshoot to sub-test 3.
+  - **It models a measured hardware effect.** lidnariq's oscilloscope
+    measurement of an MMC3B reports "approximately 69ns from the first time PPU
+    A12 rises to 2.4V until /IRQ falls to 1.0V", about a third of a pixel, and
+    the same thread names the consequence: the delay can push the IRQ into the
+    NEXT instruction for certain alignments. A sub-cycle analog delay becomes a
+    whole-cycle shift at the CPU's sampling instant, which is what a registered
+    output expresses at CPU-cycle resolution.
+  - **Two earlier diagnoses are retracted, both refuted by ROMs.** A
+    flag-vs-zero reload rule took `2-details` from passing to `Fail($07)`
+    against its own sub-test 7; suppressing the pre-render A12 clock fixed
+    sub-test 2 and broke sub-test 8, the 241-clock test. The "one scanline"
+    framing came from diffing the DUT against the ORACLE instead of against the
+    ROM's own boundary -- see the next entry for why that misleads.
+  - `mapper4mmc3irq065` improves from **950 to 570** diverging cycles of
+    178,676; the co-simulation suite holds at 0 failed.
+
 - **Two PPU defects, found on the first day anything consumed A12.** Neither is
   a cartridge bug and both had been invisible for four releases, because no
   consumer of the signal existed. The MMC3 gate opened at **10,821 of 178,676
@@ -86,6 +118,18 @@ cycle-accurate core later replaced.
   indict the measurement.
 
 ### Added
+
+- **blargg's MMC3 battery becomes a standing gate -- it had none, so the fix
+  above had nothing to protect it.** `blargg-mmc3-gate` runs all six ROMs and
+  compares each against **its own verdict byte**, deliberately NOT against the
+  oracle: this release establishes that the oracle is the mistaken side on MMC3
+  IRQ timing, so a DUT-vs-oracle comparison would enshrine that defect.
+  `tb/blargg_verdict.py` refuses rather than passes when no status line is
+  produced, when the `$DE $B0 $61` signature is absent, or when the ROM was
+  still running at the cycle budget -- an absent verdict must never read as a
+  pass. **Every expectation is asserted exactly, including the two failures**,
+  so a DUT that improves fails the gate and gets looked at instead of drifting.
+  Suite **135 -> 141 gates**.
 
 - **The cartridge -- five boards, and the first thing in this core's history to
   look at PPU A12.** `rtl/cart/cart.sv` implements **UxROM (2), CNROM (3), AxROM
@@ -197,8 +241,9 @@ cycle-accurate core later replaced.
 
 ### Unchanged, and verified rather than asserted
 
-- **Co-simulation suite: 135 passed, 0 failed, 0 skipped** -- from v2.6.8's 128
-  (130 after the deny-list half, plus the five cartridge gates).
+- **Co-simulation suite: 141 passed, 0 failed, 0 skipped** -- from v2.6.8's 128:
+  130 after the deny-list half, 135 with the five cartridge gates, and 141 with
+  the six blargg MMC3 verdict gates.
 - **AccuracyCoin 141/141 RE-MEASURED, not carried**: the authoritative RAM
   decoder reports `pass rate = 100.00% over 141 assigned tests`. The framebuffer
   decoder's 121 is the known-buggy one and is not the figure to quote.

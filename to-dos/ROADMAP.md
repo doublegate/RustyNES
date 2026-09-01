@@ -513,6 +513,145 @@ deferred to a v1.4.x follow-up (UI compiles + no-ops on wasm). See
   carry forward. It also depends on the Nesdev checklist staying current with
   upstream source pages and local `docs/STATUS.md` pass counts.
 
+## Deferred — oracle accuracy items the co-simulation found (opened v2.6.9)
+
+The MiSTer co-simulation is a two-way instrument. These are cases where the
+**DUT is measurably more accurate than RustyNES itself**, which ADR 0037
+anticipated in writing ("the oracle can be wrong") and which the ladder is
+supposed to surface rather than absorb.
+
+### T-ORACLE-001 — the pre-render line's A12 rise, and MMC3 IRQ timing
+
+**Owner-facing summary.** RustyNES fails `mmc3_test_2/4-scanline_timing` at
+sub-test **3**; the MiSTer co-simulation DUT now fails at sub-test **12**. On
+this ROM the DUT is the more accurate of the two. The mechanism is known, the
+fix is known, and it is a CORE change, so it needs its own version.
+
+#### The claim, and how each part was measured
+
+1. **RustyNES never clocks the MMC3 counter on the pre-render line.** Its own
+   PPU state trace for `4-scanline_timing` shows scanline 261 with `mask=24`
+   (rendering on), `ctrl=8` (sprites at `$1000`), `spr_count=0`, and no clock —
+   while scanline 0, with *identical* sprite state, clocks normally. The
+   omission is keyed to the pre-render line, not to the sprite count.
+2. **So its `/IRQ` is a scanline late**: cycle **1,250,873** against the DUT's
+   **1,250,760**, on CPU streams that are identical up to that point.
+3. **The clock is required.** The NESdev MMC3 page: filtered A12 "oscillates
+   exactly one time per scanline and **241 times per frame**", and sprite
+   patterns are fetched "even if no sprites are visible". 241 = 240 visible +
+   pre-render. Suppressing the clock in the DUT fixed `4-scanline_timing`
+   sub-test 2 and **broke** `2-details` sub-test 8, the 241-clock test — so any
+   fix must keep the clock.
+4. **The remaining error is one CPU cycle, not one scanline.** blargg's `cli`
+   for sub-test 2 is fetched at cycle 1,250,755, so `end_` runs cli(755-756)
+   nop(757-758) nop(759-760) `inc irq_flag`(761-765). The A12 rise is at
+   1,250,759. Asserting combinationally raises `/IRQ` at 1,250,760 — inside the
+   second nop — so the handler beats the `inc`. One cycle later it lands after
+   it, which is what the ROM asks for.
+
+#### Reproducing it before changing anything
+
+```bash
+O=~/Code/OSS_Public-Projects/RustyNES; C=$O/crates/rustynes-cosim
+OUT=~/.cache/rustynes-cosim/blargg-mmc3; mkdir -p "$OUT"   # NOT /tmp: it is tmpfs
+B=$O/tests/roms/blargg/mmc3_test_2
+
+# (a) the oracle's own IRQ assertion + the ROM's cli, from one export
+cargo run -q --manifest-path "$C/Cargo.toml" --bin nes_golden_export -- \
+  --rom "$B/4-scanline_timing.nes" --out "$OUT" --frames 60 --irq-trace 2000000
+#   then scan the .obs.bin: writes to $E001, rises of (flags>>2|flags>>3),
+#   and opcode fetches (bus_addr == pc) of $58 (CLI).
+
+# (b) the pre-render line's sprite state -- needs the feature, it is off by default
+cargo run -q --manifest-path "$C/Cargo.toml" --features ppu-state-trace \
+  --bin nes_golden_export -- --rom "$B/4-scanline_timing.nes" --out "$OUT" \
+  --frames 45 --ppu-state-trace 200000 --pst-frames 42:43 \
+  --pst-scanlines 255:261 --pst-dots 250:330
+```
+
+**Two instrument traps that cost time and will cost it again.**
+`--fetch-trace` **excludes sprite pattern fetches** — a full line records 154 of
+the 170 fetches, the missing 16 being exactly the 8 sprites x 2 pattern fetches
+— so it cannot see this A12 rise at all, and its sprite window shows only the
+garbage `$2xxx` nametable fetches. And `--ppu-state-trace` carries no CHR
+address column, so it answers *what the sprite state was*, never *what address
+was driven*. The question was settled by the `/IRQ` timing plus the wiki, not by
+either trace.
+
+#### The fix, ported from the DUT, in this order
+
+1. **Drive A12 from the pre-render line's sprite-pattern fetches.** Control:
+   `2-details` sub-test 8 must still pass — it is the 241-clock assertion and it
+   is what catches over- or under-counting.
+2. **Register the `/IRQ` output** so the assertion the CPU samples trails the
+   counter reaching zero by one CPU cycle. On the DUT this is
+   `rtl/cart/cart.sv`'s `mmc3_irq_out`; here it is whatever `Mapper::irq()`
+   feeds. A 0..8-cycle sweep on the DUT picked **1** uniquely — 0 fails at
+   sub-test 2, 2-5 overshoot to sub-test 3 — so sweep rather than assume, and
+   report the shape.
+
+#### Acceptance
+
+- `mmc3_test_2` reported **before and after**, per ROM, by status byte. Target:
+  `4-scanline_timing` past sub-test 3; `1`, `2`, `3`, `5` still `$00`;
+  `6-MMC3_alt` still failing (it is NEC rev B and this project models Sharp rev
+  A — if it starts passing, the default revision has silently flipped).
+- **AccuracyCoin re-measured at 141/141** via the RAM decoder — the authoritative
+  line is `AccuracyCoin (RAM): pass rate = 100.00% over 141 assigned tests`; the
+  framebuffer decoder's 121 is the known-buggy one and is not the figure to
+  quote. nestest re-run. Neither may be asserted "by construction": this changes
+  the core.
+- Then **regenerate `mapper4mmc3irq065`'s golden** in the sibling and re-measure.
+  It sits at **570 of 178,676** diverging cycles today (940 on nine fields),
+  first at cycle **60,329**, entirely MMC3 IRQ timing. If the theory is right it
+  goes to **0** and the gate can be registered — it is deliberately unregistered
+  now, with its reason and numbers in `tb/regress.sh`.
+- The sibling's `blargg-mmc3-gate` expectations must be revisited: they assert
+  the DUT's verdicts **exactly, including the failures**, so a change in either
+  console shows up as a gate failure rather than drifting.
+
+#### What would refute this, and the standing risk
+
+If driving the pre-render rise moves `4-scanline_timing` to sub-test 2 rather
+than past 3, the clock is not the missing piece and the diagnosis is wrong —
+that is precisely how the DUT's first two candidate fixes died (a flag-vs-zero
+reload rule, refuted by `2-details` sub-test 7; and suppressing the clock,
+refuted by sub-test 8). **Test against the ROM, not against the other console.**
+
+The standing risk is the reverse of the usual one: RustyNES is the *oracle* for
+every rung, so changing its MMC3/PPU behavior invalidates every golden that
+exercises them. Regenerate and re-run the full co-simulation suite, not just the
+MMC3 gates.
+
+#### Related escape hatches to re-check in the same pass
+
+Running `cargo test -p rustynes-test-harness --features test-roms --test mmc3`
+shows this is not one isolated hatch. The **older** `mmc3_test` (v1) suite
+carries the same ADR 0002 F5.0 closure on three more tests:
+
+- `mmc3_test_v1_4_scanline_timing_strict` — ignored, "unmoved on the
+  one-clock/every-cycle substrate"
+- `mmc3_test_v1_5_mmc3_strict` — ignored, closed with R1
+- `mmc3_test_v1_6_mmc6_strict` — ignored, closed with R1
+
+All three were closed for the same stated reason as sub-ROM 4 of `mmc3_test_2`,
+and all three are IRQ-timing tests on the same counter. If the pre-render A12
+rise is the mechanism, they are the natural place to look for it to pay off
+twice, so re-run the whole file before and after and report every `_strict` /
+`_currently_fails` pair rather than only the one that prompted the work. Each
+`_currently_fails` probe asserts the failure SHAPE by message, so a change that
+moves a residual without closing it will fail loudly rather than silently pass —
+that is the behaviour to preserve when updating them.
+
+#### Where the prior record lives, unaltered
+
+`crates/rustynes-test-harness/tests/mmc3.rs` records this residual as "CLOSED
+by-design-permanent (ADR 0002 F5.0, 2026-07-09)". That call was made without
+this mechanism in hand and is left in place, with a dated note beside it. When
+the fix lands, flip `mmc3_test_2_4_scanline_timing_strict` off `#[ignore]` only
+if it genuinely passes; otherwise update the `_currently_fails` probe's expected
+sub-test, which is asserted by name and will fail loudly if the shape changes.
+
 ## Open questions blocking planning
 
 None block Phase 1. Open questions in the docs (esp. `architecture.md`, `mappers.md`) will be revisited at the start of the phase that needs them resolved.

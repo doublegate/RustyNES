@@ -683,7 +683,7 @@ The emulation core is unchanged in this release, so its accuracy numbers hold by
 | AccuracyCoin | **141/141 (100.00%)**, RAM decoder |
 | nestest | 0-diff against the reference log |
 | Mapper families | **174** — 51 Core, 95 Curated, 28 BestEffort |
-| Co-simulation suite | **135 gates green, 0 failed, 0 skipped** |
+| Co-simulation suite | **141 gates green, 0 failed, 0 skipped** |
 | MiSTer bitstream | published for Cyclone V, timing closed at every corner |
 
 **The MiSTer core has not run on hardware.** No DE10-Nano or SuperStation One has been attached; a booting core, a synced display, audible sound and a working pad are not claimed. The palette, the video timing constants and the audio's absolute level are unverified by construction, because every gate in the co-simulation ladder compares something upstream of them.
