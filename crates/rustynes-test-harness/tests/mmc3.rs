@@ -14,6 +14,39 @@
 //!   only and confirm the emulator doesn't crash on the ROM.
 //!
 //! Per `docs/testing-strategy.md` §Layer 3.
+//!
+//! ## 2026-08-31 — sub-ROM 4 has a MECHANISM now, and it is ours (T-ORACLE-001)
+//!
+//! The `_currently_fails` probe below and its ADR 0002 F5.0 escape hatch stand
+//! unaltered; this note is added beside them rather than replacing them,
+//! because the closure was an honest call made without this evidence.
+//!
+//! The `MiSTer` co-simulation DUT now fails `4-scanline_timing` at sub-test
+//! **12**, where this emulator fails at **3**. On that ROM the DUT is the more
+//! accurate of the two, and the difference was measured, not inferred:
+//!
+//! - This emulator does not drive PPU A12 high during the **pre-render line's**
+//!   sprite-pattern fetch window, so the MMC3 counter is never clocked there.
+//!   Its own `ppu-state-trace` shows scanline 261 with rendering on, sprites at
+//!   `$1000`, `spr_count = 0`, and no clock — while scanline 0, with identical
+//!   sprite state, clocks normally.
+//! - Consequently `/IRQ` asserts a scanline late: cycle 1,250,873 against the
+//!   DUT's 1,250,760, on identical CPU streams. The failure message here —
+//!   "Scanline 0 IRQ should occur *sooner*" — is that lateness.
+//! - The `NESdev` MMC3 page requires the clock: filtered A12 "oscillates exactly
+//!   one time per scanline and **241 times per frame**", and sprite patterns are
+//!   fetched "even if no sprites are visible". Suppressing it in the DUT fixed
+//!   sub-test 2 and BROKE `2-details` sub-test 8, the 241-clock test.
+//!
+//! Two changes closed it on the DUT and are the candidate fix here: drive A12
+//! from the pre-render sprite fetches, and **register the `/IRQ` output** so the
+//! assertion the CPU samples trails the counter reaching zero by one CPU cycle.
+//! A 0..8-cycle sweep picked 1 uniquely — 0 fails at sub-test 2, 2-5 overshoot
+//! to sub-test 3.
+//!
+//! Landing it is a CORE change: re-measure `AccuracyCoin` 141/141 (RAM decoder),
+//! re-run nestest, and report this whole battery before and after. Full record:
+//! `to-dos/ROADMAP.md` T-ORACLE-001 and `RustyNES_MiSTer/docs/rung7-mappers.md`.
 
 #![cfg(feature = "test-roms")]
 

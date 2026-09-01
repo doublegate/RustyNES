@@ -43,6 +43,102 @@ uniform one-tick `$4003` write-parity sensitivity the first stimulus hid. Two
 fixes tried, both rejected by measurement. v2.6.0's first item. **Nine of ten
 mutations CAUGHT**, the two exceptions both indicting the stimulus.
 
+## Rung 7 opens: the cartridge, and two PPU defects A12 found (v2.6.9)
+
+**Five boards land** -- UxROM (2), CNROM (3), AxROM (7), MMC1 (1) and MMC3 (4)
+-- in one `rtl/cart/cart.sv` whose mapper number is a runtime INPUT, because on
+MiSTer the header arrives with the game and a parameter would need a different
+bitstream per cartridge. All five match the oracle on every cycle and every
+checkpoint, and nine of nine mutations are CAUGHT.
+
+**Half the earlier "rung 7 is blocked" claim was wrong, and this corrects it.**
+Rung 7 has two parts and only one ever needed hardware: the SDRAM controller,
+whose acceptance is read/write timing against a real part. The mapper logic is
+pure logic, verifiable exactly as rungs 1-5 were. Treating them as one item
+deferred five boards behind a blocker that never applied to them.
+
+**The MMC3 scanline counter is the first thing in this core's history to consume
+PPU A12, and it found two PPU defects on its first day** -- both invisible for
+four releases because nothing had looked:
+
+- `dummy_fetch` named the RECORD dots (337, 339), not the fetch. A fetch is two
+  dots, so on the even dots the address fell through to `v_addr` and the PPU put
+  `v` itself on the CHR bus; `v` bit 12 is `fine_y[0]`, which alternates every
+  scanline.
+- The **idle dot**. With the first fixed the extras moved rather than vanished,
+  to dot 0 -- the only dot of a rendering line that drives no fetch, and so the
+  only one still reaching the same fallback.
+
+Filtered A12 clocks went 1,445 -> **965, every one at dot 261**. The wiki
+gives 241 clocks per frame, and `965 = 241 x 4 + 1` -- four frames plus one
+clock, the run not ending on a frame boundary. Interrupts taken went 218-vs-158 to
+**158 and 158**, with byte-identical work RAM, and the DUT/oracle divergence
+from 10,821 cycles to 950.
+
+**The residual was two things wearing one appearance, and blargg separated
+them.** `mmc3_test_2` scores **4 of 6 on the DUT and 4 of 6 on the oracle,
+failing the same two ROMs** -- `6-MMC3_alt` correctly, since it is NEC rev B and
+both target Sharp rev A. Within `4-scanline_timing` the oracle fails sub-test #3
+(its documented, permanently-deferred 1-cycle bracket, ADR 0002 F5.0) and the
+DUT fails #2, *"Scanline 0 IRQ should occur later when `$2000=$08`"*.
+
+So part of the offset is the oracle's own residual, which must NOT be fitted to
+-- that is the failure the v2.6.0 audit named. The other part is a real DUT
+defect, **shown pre-existing by control**: with both PPU fixes reverted it still
+fails #2. It is left open with a 27-second reproducer and a validated pass/fail
+signal, rather than tuned away against a reference that is itself off on the
+same axis.
+
+## An exclusion hides improvement as well as regression (v2.6.9)
+
+The co-simulation suite gates most goldens on a rolling per-cycle **checkpoint**
+hash, and carried a **deny list** of streams excluded from it. v2.6.8 established
+that such a list is an *assertion about the thing under test* — one that v2.6.7
+had invalidated twice over by changing both the DUT and the harness — and
+re-measured six entries, retiring four. v2.6.9 goes one level down, to the
+mechanism, and finds two things.
+
+**First, "by design" was a claim about the instrument.** `apuconflict039`'s bus
+surface had been excluded since v2.6.2 under a note saying it "carries nine
+divergences **by design**". **Six of the nine had already closed** and nobody
+could see it, because a denied stream is denied in both directions. The **three
+that remained** were a defect in the **harness**: on a cycle
+where the CPU is held, `tb/cpu_main.cpp` built the trace record's `bus_data` from
+a stale local rather than from the RTL's own open-bus latch. The two differ on
+exactly one rule, and it is a rule the RTL already implements correctly — a read
+of the APU status register is *internal to the 2A03* and does not drive the
+external lines, so the latch holds across it while a local tracking what the CPU
+*received* does not. Reading the latch makes the stream **identical on all
+357,361 overlapping cycles and all 88 checkpoints**.
+
+The release plan predicted a **DUT defect** here and reasoned from the correct
+rule to get there. The reasoning was sound, the rule was right, and the defect
+was one layer further out — which is the standing lesson: a measurement
+disagreeing with a rule you are confident in can indict the measurement.
+
+**Second, a denied stream is denied ENTIRELY**, so a golden whose divergence is
+one cycle out of 357,361 forfeits the other 357,360 — and an entry that silently
+*improves* is exactly as invisible as one that silently regresses.
+
+The planned fix was an allowance by **checkpoint index**, and it was implemented,
+run, and **refuted**: `tb/checkpoint.h` chains its FNV-1a, so one divergent cycle
+poisons every checkpoint after it. Allowing the first differing window moved the
+failure to the next one; allowing the rest is the all-or-nothing deny it was
+meant to replace. The allowance moved to a new **per-cycle** nine-field
+comparator, `tb/obs_diff9.py --allow-cycle`, where an attributed difference costs
+**one cycle instead of seventy-one checkpoints**.
+
+It fails **both ways**, which is what makes it adoptable: an allowed cycle that
+stops differing is a FAILURE, so an improving DUT cannot leave a stale allowance
+quietly hiding coverage. Six mutations confirm it, including a cycle named
+outside the compared window being **refused** rather than allowed to match
+nothing.
+
+The one remaining entry, `ppuoamcorrupt052`, differs on exactly one cycle —
+70,627 — which is the documented OAM-corruption asymmetry where **the DUT
+implements more of the documented rule than the oracle does** and no available
+gate can adjudicate. It is allowed and named, not resolved.
+
 ## The bitstream is published from v2.6.7 (maintainer decision, 2026-08-30)
 
 **Every release from v2.6.7 ships a `.rbf`** — committed to the sibling's
