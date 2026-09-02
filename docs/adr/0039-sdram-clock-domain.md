@@ -92,9 +92,36 @@ the mappers in scope switch banks from CPU writes that land mid-fetch. That is
 exactly the class of state the SDRAM controller was kept simple to avoid. Kept as
 the documented fallback if the 4x clock fails timing on hardware.
 
+**One clock at 85.909088 MHz, with the master clock as a clock ENABLE.** This is
+the obvious question -- the ratio is an exact integer, the console is already
+built around enables (`ce` is one PPU dot, `cpu_ce` one CPU cycle), and it is the
+standard MiSTer idiom. It would eliminate the second domain outright rather than
+merely making the crossing safe, and it would also hand the arbiter the PPU's
+fetch phase directly, which is the cleanest solution to scheduling CPU accesses
+and refreshes around CHR fetches.
+
+**Rejected, and the reason is measured rather than argued: the console cannot run
+that fast.** Its Fmax is **36.19 MHz** (Slow -40C, `docs/rung6-integration.md`,
+current timing report). The master clock needs 21.477272 MHz, so there is 1.69x
+of headroom -- and 85.909088 MHz would require the console logic to be **2.37x
+faster than it is**.
+
+That is not a tuning gap. It is the difference between a design that closes with
++19.045 ns of setup slack on its own clock and one whose every path would have to
+shrink by more than half. The enable idiom works for cores whose logic is fast
+enough for the memory clock; this one's is not, and no amount of pipelining the
+memory path changes that, because the constraint is on the CPU and PPU logic
+rather than on anything the SDRAM touches.
+
+**So two domains is forced, and the integer ratio is what makes it safe rather
+than what makes it optional.** If the console's Fmax ever rises above the SDRAM
+clock this becomes the better design and this ADR should be revisited -- which is
+why the number is recorded here rather than left in a timing report.
+
 **A higher multiple (6x, 8x).** No benefit: 4x already fits the budget, and every
 additional multiple costs timing closure margin on a design that has twice needed
-a fitter re-seed.
+a fitter re-seed. 8x is also illegal -- 171.8 MHz exceeds the part's 143 MHz
+maximum -- so the usable range is 4x or 6x, and 4x is the one that fits.
 
 ## Consequences
 
