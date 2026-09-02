@@ -685,7 +685,7 @@ The emulation core is unchanged in this release, so its accuracy numbers hold by
 | Mapper families | **174** — 51 Core, 95 Curated, 28 BestEffort |
 | Co-simulation suite | **142 gates green, 0 failed, 0 skipped** |
 | MiSTer bitstream | published for Cyclone V, timing closed at every corner |
-| MiSTer commercial rendering | six titles, one per supported board (NROM from rung 5, plus rung 7's MMC1, UxROM, CNROM, MMC3 and AxROM), each **byte-identical** to this emulator over all 61,440 pixels — [the montage](https://github.com/doublegate/RustyNES_MiSTer#what-it-renders) |
+| MiSTer commercial rendering | six titles, one per supported board (NROM from rung 5, plus rung 7's MMC1, UxROM, CNROM, MMC3 and AxROM), each **byte-identical** to this emulator over all 61,440 pixels — [the montage](screenshots/mister-montage.png) |
 
 **The MiSTer core has not run on hardware.** No DE10-Nano or SuperStation One has been attached; a booting core, a synced display, audible sound and a working pad are not claimed. The palette, the video timing constants and the audio's absolute level are unverified by construction, because every gate in the co-simulation ladder compares something upstream of them.
 
@@ -754,6 +754,14 @@ for the full roadmap and [`docs/STATUS.md`](docs/STATUS.md) for the current stat
 
 <p align="center">
   <img src="screenshots/montage.png" alt="A montage of commercial NES titles running on RustyNES" width="800">
+</p>
+
+<p align="center">
+  <img src="screenshots/mister-montage.png" alt="The same six titles rendered by the RustyNES_MiSTer RTL under Verilator, each byte-identical to this emulator" width="800">
+  <br>
+  <sub><b>The same console, in SystemVerilog.</b> Six commercial cartridges, one per supported board, rendered by the
+  <a href="docs/mister.md">MiSTer core's RTL</a> under Verilator — each one <b>byte-identical to this emulator</b> over all
+  61,440 pixels. Pre-palette output, coloured by the renderer. <b>No hardware has run it.</b></sub>
 </p>
 
 ## Contributing
