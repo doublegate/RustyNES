@@ -139,8 +139,20 @@ def classify(line: str, marker: str, old: Release) -> str:
     if head.startswith("("):
         return "PAREN"
     if head.startswith((".", ";")):
-        # The statement ends at the codename: nothing describes the release, so
-        # there is nothing to demote -- swap both and stop.
+        # A period after the codename is ambiguous, and reading it as "the
+        # statement ends here" is how v2.6.12 nearly deleted v2.6.11 from
+        # SECURITY.md's lineage. Two real shapes share it:
+        #
+        #   OVERVIEW.md   ... **v2.6.11 "Exposure"**. The never-tagged v2.4.0 ...
+        #   SECURITY.md   ... **v2.6.11 "Exposure"**. Built on **v2.6.10 ...
+        #
+        # The first genuinely ends -- the next sentence is about something
+        # else, so there is nothing to demote INTO. The second continues into a
+        # lineage chain, and swapping the head there drops the outgoing release
+        # on the floor: not stale, ABSENT, which is the defect v2.6.11 itself
+        # found and fixed in the documents that were not this one.
+        if re.match(r'[.;]\s*Built on \*\*v', head):
+            return "PERIOD_CHAIN"
         return "PERIOD"
     return "UNKNOWN"
 
@@ -201,6 +213,17 @@ def demote(line: str, marker: str, old: Release, new: Release, lead: str) -> str
         # Nothing follows the codename but punctuation, so there is no
         # description to demote. Swap and stop.
         return (f'{head}{new.version} "{new.codename}"{m["bold"]}{date_new}{desc}')
+    if shape == "PERIOD_CHAIN":
+        # The period is a SEPARATOR, not a terminator: a `Built on ...` chain
+        # follows. Insert the outgoing release at the head of that chain, so
+        # the lineage stays complete and ordered.
+        m2 = re.match(r'([.;]\s*Built on )', desc.lstrip())
+        if not m2:
+            raise ValueError("PERIOD_CHAIN shape changed under us")
+        lead_in = desc[:len(desc) - len(desc.lstrip())] + m2.group(1)
+        rest = desc.lstrip()[m2.end():]
+        return (f'{head}{new.version} "{new.codename}"{m["bold"]}{date_new}{lead_in}'
+                f'**v{old.version} "{old.codename}"**{date_old} and {rest}')
     if shape == "DASH":
         sep = re.match(r'\s*(—|--|-)\s*', desc)
         body = desc[sep.end():]
@@ -223,6 +246,16 @@ def demote(line: str, marker: str, old: Release, new: Release, lead: str) -> str
 # this repository uses, including the two that must FAIL.
 
 def selftest() -> int:
+    """Pin the classifier and every demotion against the shapes this repo uses.
+
+    Every shape must appear here, including the two that must be REFUSED. The
+    script's own history is the argument: `PERIOD` and `DATED_CODE` were added
+    without selftests and review caught it, and `PERIOD_CHAIN` exists because
+    `PERIOD` silently DELETED a release from `SECURITY.md`'s lineage. A shape
+    with no test is a shape whose transform nobody has run.
+
+    Returns 0 when every check passes, 1 otherwise.
+    """
 
     for raw, want in [
         ("a dead line proves itself dead", "a dead line proves itself dead."),
@@ -300,6 +333,35 @@ def selftest() -> int:
     check("demote period", demote(line_period, "The current release is **v", old, new, LEAD),
           'The current release is **v2.4.5 "Compass"**.')
 
+    # PERIOD_CHAIN. A period can END a statement or SEPARATE it from a lineage
+    # chain, and reading the second as the first deletes the outgoing release
+    # instead of demoting it -- which is what v2.6.12 caught this script doing
+    # to SECURITY.md. Both halves are pinned: the terminal case must STILL be
+    # PERIOD (or the split silently swallowed it), and the chain case must
+    # name the outgoing release at the head of the chain it continues.
+    line_pchain = ('The current release is **v2.4.4 "Ignition"**. '
+                   'Built on **v2.4.3 "Touchstone"** and **v2.4.2 "Cairn"**.')
+    check("classify period_chain",
+          classify(line_pchain, "The current release is **v", old), "PERIOD_CHAIN")
+    check("demote period_chain",
+          demote(line_pchain, "The current release is **v", old, new, LEAD),
+          'The current release is **v2.4.5 "Compass"**. '
+          'Built on **v2.4.4 "Ignition"** and **v2.4.3 "Touchstone"** '
+          'and **v2.4.2 "Cairn"**.')
+    # The outgoing release must not vanish -- the defect itself, stated as a
+    # test rather than only as a shape.
+    got_pc = demote(line_pchain, "The current release is **v", old, new, LEAD)
+    if 'v2.4.4 "Ignition"' not in got_pc:
+        ok = False
+        print("  FAIL period_chain erased the outgoing release")
+    else:
+        print("  ok   period_chain demotes rather than erases")
+    if got_pc.count('v2.4.3 "Touchstone"') != 1:
+        ok = False
+        print("  FAIL period_chain duplicated the predecessor")
+    else:
+        print("  ok   period_chain names the predecessor once")
+
     line_dated = '> **Current release: v2.4.4** (2026-08-22) — **"Ignition"**, the first real RTL.'
     check("classify dated_code", classify(line_dated, "**Current release: v", old), "DATED_CODE")
     check("demote dated_code", demote(line_dated, "**Current release: v", old, new, LEAD),
@@ -326,6 +388,15 @@ def selftest() -> int:
 
 
 def main() -> int:
+    """Move every release anchor to the next version, demoting the outgoing one.
+
+    Derives the new version and codename from the CHANGELOG's topmost dated
+    entry, classifies each anchor by the prose around it, and rewrites it so
+    the outgoing release is demoted into that prose rather than overwritten.
+    Prints a unified diff and changes nothing unless `--apply` is given.
+
+    Returns 0 on success, 1 when an anchor cannot be classified.
+    """
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--selftest", action="store_true",
@@ -357,7 +428,7 @@ def main() -> int:
     demoted_files: set[Path] = set()
     unknown: list[str] = []
     counts = {"BARE": 0, "DASH": 0, "PAREN": 0, "CHAIN": 0,
-              "PERIOD": 0, "DATED_CODE": 0}
+              "PERIOD": 0, "PERIOD_CHAIN": 0, "DATED_CODE": 0}
 
     for path, marker in anchors(root):
         p = root / path
@@ -370,7 +441,8 @@ def main() -> int:
                 if shape == "BARE":
                     line = line.replace(marker + old.version, marker + new.version)
                     counts["BARE"] += 1
-                elif shape in ("DASH", "PAREN", "PERIOD", "DATED_CODE"):
+                elif shape in ("DASH", "PAREN", "PERIOD", "PERIOD_CHAIN",
+                               "DATED_CODE"):
                     line = demote(line, marker, old, new, args.lead)
                     counts[shape] += 1
                     if shape != "PERIOD":

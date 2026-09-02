@@ -26,6 +26,193 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.12] - 2026-09-02 - "Groundwork" (the bitstream was an NROM-only console)
+
+Rung 7 landed five mapper families and 142 co-simulation gates verify them. The
+layer that turns that RTL into a bitstream was never told.
+
+**The emulation core is unchanged.** No chip crate changes, so AccuracyCoin
+141/141 (RAM decoder) and nestest 0-diff hold by construction.
+
+### Fixed
+
+- **Three `nes_top` inputs were unconnected, and Quartus tied them to ground.**
+  `rtl/emu.sv` never connected `cart_mapper`, `cart_prg_16k_banks` or
+  `cart_chr_8k_banks`. The tool said so, three times, in a
+  `Port Connectivity Checks: "emu:emu|nes_top:u_nes"` table:
+
+  ```text
+  ; cart_mapper ; Input ; Warning ; Declared by entity but not connected by
+  ;             ;       ;         ; instance. ... the port will be connected to GND.
+  ```
+
+  In the shipped v2.6.11 bitstream that meant **mapper 0 for every cartridge**,
+  `prg_8k_count = 0` pinning `prg_bank_sel` to zero and collapsing PRG to an
+  **8 KiB window**, and CHR forced to RAM with 8 slots. The fitter's own RAM
+  summary agreed exactly:
+
+  | memory | declared | implemented before | after |
+  |---|---|---|---|
+  | `prg` | 256 KiB | **8 KiB** | **256 KiB** |
+  | `chr` | 128 KiB | **8 KiB** | **128 KiB** |
+  | `prg_ram` | 8 KiB | 8 KiB | 8 KiB |
+  | work RAM | 2 KiB | 2 KiB | 2 KiB |
+
+  The two arrays whose size depends on a tied-off input are the two that
+  collapsed; the two that do not were correct. That is the mechanism, not a
+  coincidence. Block memory **666,061 -> 3,680,717 bits**; RAM blocks
+  **100 -> 468 of 553**. Timing still closes at all four corners (+0.225 ns
+  setup, +0.105 ns hold -- a BETTER hold margin than v2.6.11's +0.078).
+
+  **`emu.sv` said it in its own OSD string**, honestly, when it was written at
+  v2.6.6: `"Unsupported mapper - this core is NROM only"`. v2.6.9 added MMC1,
+  UxROM, CNROM, MMC3 and AxROM to `cart.sv`; nothing updated the layer above.
+  **Two of the six titles in v2.6.11's montage are larger than the fitted
+  cartridge** -- *Bad Dudes* at 128 KiB CHR and *Battletoads & Double Dragon* at
+  256 KiB PRG -- so that release's claim is qualified here: true of the RTL under
+  Verilator, which builds the full array, and not of the bitstream.
+
+- **The loader could not reach past 128 KiB.** `cart_load_addr` was 17 bits
+  against a 19-bit port, so a 256 KiB PRG image could not be filled even once
+  the array existed. Widened, with `prg_bytes`' truncation in the CHR offset
+  fixed alongside it.
+
+- **Header byte 5 was never captured.** `emu.sv` parsed the mapper number only
+  to REFUSE anything but NROM; the CHR bank count it needed to size the
+  cartridge was not read at all.
+
+### Added
+
+- **`tb/check_pins.py`** -- fails when a module this repository declares has an
+  unconnected pin. Scoped by the module we own rather than a pin-name list,
+  because `sys/` modules legitimately leave dozens open (82 such warnings are
+  present and correctly ignored). **Mutation: the pre-fix `emu.sv` is CAUGHT**,
+  naming `nes_top` and all three pins.
+
+- **`tb/check_warnings.py` and `tb/quartus-warnings.txt`** -- pin the warning
+  SET, not the count. Three mutations, all caught: a new warning, a pinned one
+  that stops firing, and an empty report. Every pinned entry carries why it is
+  acceptable; all three originate in `sys/`, which may not be edited.
+
+- **`emu.sv` is linted at all.** It was the ONE file under `rtl/` no lint target
+  reached -- it needs `sys/` on the include path and a `BUILD_DATE` that only a
+  Quartus compile generates, which is a define, not a reason. Verilator's own
+  `PINMISSING` names the defect exactly.
+
+### Changed
+
+- **`hps_io`'s 25 unconnected inputs are tied off explicitly**, extending a
+  precedent the file already set for `ioctl_wait`: *"a floating input that
+  happens to read as zero is not the same as saying it is zero."* Every value is
+  the one Quartus was already defaulting to, and that is **verified rather than
+  asserted -- the bitstream is byte-identical across the change** (`f0ddb3fa...`).
+  Outputs are deliberately left alone: wiring 51 of them to dummies would trade
+  a warning that says "unused" for a suppressed one that says "assigned and
+  never read".
+
+- **Each tie-off says whether it is NOT APPLICABLE or NOT IMPLEMENTED**, because
+  a tie-off that reads as the first when it is the second is the same defect as
+  the OSD string. **Nine** `T-MISTER-*` tickets are minted for the second group
+  (seven headings, three of them sharing one) -- the largest being
+  **battery-backed save RAM, which is a data-loss bug**: `cart.sv` has 8 KiB of
+  PRG-RAM and nothing persists it, so every MMC1/MMC3 battery game loses its
+  saves at power-off.
+
+- **Annotating the nine with a blocker turned "none of these landed" from a
+  scoping choice into a measurement: not one is blocked on EFFORT.** Four are
+  deferred to v2.8+ by the approved plan, three cannot be verified by anything
+  in this repository, and two wait on unwritten subsystems -- so the list is the
+  **rung-6 agenda**, not a backlog. `T-MISTER-SAVE` was attempted, and the
+  attempt is what established it: its ticket claimed the implementation was
+  unblocked and only the verification was rung 6, and that split does not
+  survive `sys/hps_io.sv`. This `sys/` exposes **no OSD-close signal** to flush
+  on (the nearest available, `buttons`, is already the reset button in
+  `emu.sv`'s own reset expression); `hps_io.sv:152` states in its own port
+  comment that `ioctl_upload_req` "must be supported on HPS side for specific
+  core"; and `sd_*` and `ioctl_*` both terminate in `hps_io`, which the
+  testbench does not instantiate. A save path written now would ship with zero
+  evidence. The attempt is preserved as a patch rather than committed, and
+  `cart.sv` deliberately carries **no** save port -- dead infrastructure for a
+  feature that cannot land is worse than none, and `check_pins.py` would have
+  had to be lied to in order to accept it. The nine were also first filed under
+  a heading reading "cases where the DUT is measurably more accurate than
+  RustyNES itself"; none of them is, and that is corrected in place rather than
+  quietly moved, because a ticket is read by its heading.
+
+### Fixed -- the new gate had the defect it was written to close
+
+- **`tb/check_pins.py` reported a pass when the lint had not run.** Raised in
+  review and **reproduced on the first try**: an empty capture and a Verilator
+  run that died early both printed `PASS: no module under rtl/ has an
+  unconnected pin` after examining zero warnings. The script failed closed on an
+  empty MODULE set and not on empty INPUT -- an absent result reading as a clean
+  one, inside the gate written to close the previous instance of it. The
+  `|| true` in the recipe must stay (two `sys/` modules are Quartus
+  megafunctions with no source Verilator can see, so a clean lint ALWAYS exits
+  non-zero), so the discrimination moved into the script: non-empty input; every
+  coded `%Error` an expected `MODMISSING`, cross-checked against Verilator's own
+  error count; and **at least one `PINMISSING` warning seen**, since `sys/`
+  produces 57 on every healthy run, so zero means the lint never reached the
+  design. Four mutations, four different controls, all caught, real run still
+  passing. Control 2 needed a second pass, found by running the real lint
+  against the first version: `%Error: Exiting due to 2 error(s)` is itself a
+  `%Error` naming no module, so an allowlist over every `%Error` rejected a
+  HEALTHY run.
+
+- **The control's first CI run found something worse than the report: the gate
+  had been INERT on CI its entire life.** The successful run immediately before
+  the control was added reads `check_pins: 0 PINMISSING warning(s) examined` and
+  `PASS` -- so it was not merely capable of a false pass, it was delivering one
+  on every CI run. Both causes are version skew between CI's Verilator 5.020 and
+  the 5.050 here, in **opposite directions**: 5.050 writes `%Error-MODMISSING:`
+  where 5.020 writes a bare `%Error:` (so the allowlist refused a HEALTHY run),
+  and 5.050 writes "Instance has missing pin" where older releases write "Cell
+  has missing pin" (so the warning regex matched nothing). Both wordings are
+  accepted now and **CI reports 57 examined where it reported 0**. Second time
+  this project has assumed the newer Verilator is the louder one. The control
+  also diagnoses itself now, printing every distinct message code in the capture
+  when it fires.
+
+- **`check_pins.py` carries a `--self-test` and its verdict is not trusted
+  without one**, mirroring `check_timing.py`. Six fixtures -- both Verilator
+  message formats and all four failure modes -- with the judging logic
+  EXTRACTED so the self-test drives the real implementation rather than a copy
+  of it. Reintroducing either real defect fails it, each on the 5.020 fixture.
+
+- **`scripts/release-rbf.sh` now feeds `check_warnings.py` both reports.**
+  Recorded as what it is: today the two invocations give the **identical**
+  answer, because all three warnings appear in the map report and the Fitter
+  merely re-emits one. A latent gap closed, not a live defect fixed.
+
+### Fixed -- the release tooling deleted a release, and its own gate caught it
+
+- **`bump_release.py`'s `PERIOD` shape assumed a period ENDS the statement.**
+  Its rule reads "the statement ends at the codename: nothing describes the
+  release, so there is nothing to demote", which is true of one of this
+  repository's two `PERIOD` anchors and false of the other. `OVERVIEW.md`
+  genuinely ends its sentence; `SECURITY.md`'s period is a **separator before a
+  lineage chain** (`... **v2.6.11 "Exposure"**. Built on **v2.6.10 ...`), so
+  "swap and stop" replaced the head and left v2.6.11 **absent** rather than
+  stale -- the exact defect v2.6.11 found and fixed in the documents that were
+  not this one. Split into `PERIOD` and `PERIOD_CHAIN`, with four selftests,
+  because the script's own comment records that `PERIOD` and `DATED_CODE` "were
+  added without selftests and review caught it". Collapsing the classifier back
+  fails three of them, one naming the defect outright.
+
+- **Two further anchors needed hand correction and the v2.6.11 chain gates named
+  both** -- a chain in `ROADMAP.md` whose first link had become v2.6.10, and one
+  in `to-dos/ROADMAP.md` ending "v2.6.11, the current release".
+  `a_release_line_chain_does_not_skip_a_release` is one release old and has now
+  caught a real skip in each of its two releases.
+
+### Unchanged, and stated rather than assumed
+
+- **The co-simulation suite cannot verify this fix, and that is the finding.**
+  `emu.sv` is absent from the testbench's file list, so all 142 gates exercised
+  a correctly-configured cartridge -- the harness drives those ports itself.
+  `cart.sv` and `nes_top.sv` are byte-unchanged. The suite is a regression check
+  here, not a verification, and only synthesis could ask the question.
+
 ## [2.6.11] - 2026-09-02 - "Exposure" (a picture is a gate the ladder did not have)
 
 All 141 gates were green and two of six commercial games rendered wrong.
