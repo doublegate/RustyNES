@@ -246,6 +246,16 @@ def demote(line: str, marker: str, old: Release, new: Release, lead: str) -> str
 # this repository uses, including the two that must FAIL.
 
 def selftest() -> int:
+    """Pin the classifier and every demotion against the shapes this repo uses.
+
+    Every shape must appear here, including the two that must be REFUSED. The
+    script's own history is the argument: `PERIOD` and `DATED_CODE` were added
+    without selftests and review caught it, and `PERIOD_CHAIN` exists because
+    `PERIOD` silently DELETED a release from `SECURITY.md`'s lineage. A shape
+    with no test is a shape whose transform nobody has run.
+
+    Returns 0 when every check passes, 1 otherwise.
+    """
 
     for raw, want in [
         ("a dead line proves itself dead", "a dead line proves itself dead."),
@@ -378,6 +388,15 @@ def selftest() -> int:
 
 
 def main() -> int:
+    """Move every release anchor to the next version, demoting the outgoing one.
+
+    Derives the new version and codename from the CHANGELOG's topmost dated
+    entry, classifies each anchor by the prose around it, and rewrites it so
+    the outgoing release is demoted into that prose rather than overwritten.
+    Prints a unified diff and changes nothing unless `--apply` is given.
+
+    Returns 0 on success, 1 when an anchor cannot be classified.
+    """
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--selftest", action="store_true",
