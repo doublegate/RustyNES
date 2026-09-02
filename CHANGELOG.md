@@ -26,6 +26,164 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.11] - 2026-09-01 - "Exposure" (a picture is a gate the ladder did not have)
+
+All 141 gates were green and two of six commercial games rendered wrong.
+
+**The emulation core is unchanged.** No chip crate changes, so AccuracyCoin
+141/141 (RAM decoder) and nestest 0-diff hold by construction. The work is in
+the sibling's RTL, in the montage that found it, and in two release-documentation
+gates.
+
+### Fixed
+
+- **A CHR-RAM write was taking the shared-pin address built for fetches.**
+  `RustyNES_MiSTer/rtl/ppu2c02.sv` presents one address to the cartridge:
+
+  ```systemverilog
+  assign chr_addr = ((dot[0] == 1'b0) || (pd_stage == 3'd4))
+                      ? {chr_addr_raw[13:8], octal_latch}
+                      : chr_addr_raw;
+  ```
+
+  That composite is correct and load-bearing -- it models the 2C02's shared
+  address/data pins, and AccuracyCoin's `ALE + Read` and `Hybrid Addresses` both
+  depend on it. It is the wrong address for a **write**: a `$2007` write must
+  land at `v`, and the octal latch is not `v`. The fix separates the two paths
+  rather than changing either, exposing `chr_wr_addr = chr_addr_raw` for the
+  cartridge's write port and leaving the read and fetch paths untouched.
+
+  Measured, one commercial title per supported board, DUT framebuffer against
+  the oracle's over all 61,440 pixels:
+
+  | board | game | CHR | wrong pixels |
+  |---|---|---|---:|
+  | NROM | 1942 | 8 KiB ROM | 0 |
+  | MMC1 | Adventures of Lolo | 32 KiB ROM | 0 |
+  | CNROM | Arkanoid | 16 KiB ROM | 0 |
+  | MMC3 | Bad Dudes | 128 KiB ROM | 0 |
+  | UxROM | 1943: The Battle of Midway | **RAM** | **16,565 -> 0** |
+  | AxROM | Battletoads & Double Dragon | **RAM** | **1,702 -> 0** |
+
+  The split is exactly CHR-ROM against CHR-RAM, which named the mechanism before
+  any tracing. A **control** says it is not v2.6.10's regression: that release
+  folded `chr` to a single write port and touched the same signal, and the
+  pre-M10K-fix RTL differs from the oracle by the **identical 16,565 pixels**.
+  The defect dates from the cartridge landing in v2.6.9.
+
+  **Why 141 gates could not see it**, and not because the path is unreached --
+  the DUT asserts `chr_wr` **9,600 times** in the Battletoads run. Only **three**
+  gates compare a framebuffer, and all three ship CHR-ROM, so `chr_wr` never
+  fires in the only gates that would render the consequence. Every other gate is
+  CPU-side, and AccuracyCoin -- the widest gate in the suite -- is CHR-ROM too.
+  The rung-7 gates' own comment says what they are for: *"these gates are about
+  BANKING and nothing else."*
+
+  **The v2.6.10 bitstream carries this defect.** A published version is
+  immutable, so it cannot be back-fitted; `RustyNES_MiSTer-v2.6.11.rbf` is built
+  from the corrected RTL.
+
+- **Bus conflicts: the oracle modelled them for CNROM and the DUT did not.**
+  `rtl/cart/cart.sv` said so in its header, named it as a decision, and ended
+  with the right instruction -- *"If a golden ever disagrees on a write to a
+  mapped address, this is the first thing to suspect."* No golden ever
+  disagreed, and the reason is in the harness rather than the console:
+  `mkmapper.py`'s `_rom` writes **`$FF` at the select address** so that "a bus
+  conflict (modelled or not) is the identity on the written byte". Every mapper
+  gate is immune to the behaviour **by construction**.
+
+  **The rule is the wiki's**, stated outright on `Bus_conflict.xhtml`: the CPU
+  and the mask ROMs both "drive a 0 more strongly than a 1", which "implies that
+  an emulator should use the bitwise AND of the value from the CPU and the value
+  from the ROM". What is a measurement rather than a reading is WHICH BOARD --
+  the oracle's `m003_cnrom.rs` ANDs with the PRG byte, so the two consoles
+  disagreed on every mapper-3 write whose value differed from the ROM byte, and
+  nothing could see it.
+
+  `mapper3cnrombusconflict066` writes to addresses holding `$01` and `$00`
+  instead, with two `$FF` controls so a broken register stays distinguishable
+  from a missing conflict. It **failed on two of its four probes before the fix**
+  (`$03` where the oracle said `$01` and `$00`), and after it the entire 2 KiB of
+  work RAM is identical, with **146 nine-field checkpoints** matching.
+  `mapper3cnrom061` is unaffected in both directions -- its select address holds
+  `$FF`, so the AND is the identity there. Two mutations CAUGHT: dropping the
+  AND, and ANDing with a constant that satisfies one probe alone.
+
+  **UxROM, AxROM and NROM stay unmodelled**, and for the same reason rather than
+  a different one: the oracle does not model them either, so modelling them here
+  would **create** a divergence rather than close one. That leaves a shared
+  inaccuracy against hardware on mapper 2, named in `docs/rung7-mappers.md`
+  rather than fixed on one side. The old comment justified the omission with the
+  wiki's "the relevant games all work around this in software" -- which the wiki
+  says about **mapper 2**, and not about mapper 3, where it was being applied.
+
+- **Eight release leads described v2.6.10 as v2.6.9, and v2.6.9 vanished from the
+  lineage.** The v2.6.10 bump moved the version token and left the summary prose
+  after it, so every lead read `v2.6.10 "Inference" -- <v2.6.9's summary> ...
+  Built on **v2.6.8**`. `docs/STATUS.md` was worst: it named **v2.6.10 with the
+  codename "Abeyance"**. Every existing check passed, each correctly -- they pin
+  the version token, and the token was right.
+
+- **`crates/rustynes-cosim/Cargo.lock` still recorded 2.6.9.** The crate is
+  excluded from the workspace, so `cargo build --workspace` never refreshes it.
+
+### Added
+
+- **`RustyNES_MiSTer/screenshots/montage.png`** and a "What it renders" section
+  in the sibling README: six commercial titles rendered by the RTL under
+  Verilator, each byte-identical to the oracle. It states what the picture is
+  not -- not hardware, one frame each, and the palette applied *afterwards*,
+  because what the RTL emits and what the ladder gates is the pre-palette
+  `index_framebuffer`.
+
+- **`RustyNES_MiSTer/tb/make_montage.sh`**, which takes `--verify` and **refuses
+  to publish a tile that differs from the oracle**, and fails closed on a missing
+  capture rather than producing a five-tile montage that still looks finished.
+
+- **Two release-documentation gates**, both demonstrated to fail by mutation.
+  Prose cannot be audited; an ordering can.
+  - `a_release_line_chain_does_not_skip_a_release` -- the first release a chain
+    names after the current one must be the release immediately before it in the
+    CHANGELOG, derived rather than written down. It walks **every** chain in a
+    file: `ROADMAP.md` carries two and the drift reached both.
+  - `a_codename_near_the_current_version_is_the_changelog_codename` -- a codename
+    quoted within 40 characters of the current version, past a date or a dash.
+    A second check rather than a loosening of the first, so the deliberate
+    "states a version only" path is unchanged.
+
+  Three findings from building them, each recorded because each cost something:
+
+  - **The hand-written document list was wrong on its first use.** It named six
+    documents; the drift reached **eight**, and `SUPPORT.md` and `SECURITY.md`
+    were not on it. The list is now DERIVED from the `ANCHORS` table -- a hand
+    list silently omits exactly as a glob silently widens, and `ANCHORS` is
+    already this file's single answer to "where does a release claim live".
+  - **The codename gate found a false positive on its own first run**, before it
+    shipped: `README.md`'s version badge puts the version inside an HTML
+    attribute, where the nearest quote is a delimiter and the "codename" it
+    yields is a space followed by `alt=`. The narrower rule tried first -- reject a gap containing
+    `=<>/` -- did **not** catch it, because the offending gap is `-blue.svg`.
+    The rule that works is that a version-to-codename gap never contains a
+    **letter**.
+  - **The chain gate caught `bump_release.py` itself.** Run for this release,
+    the script left two documents un-demoted and two chains still headed at
+    v2.6.9, and the gate named all four on its first real use. Two of the four
+    turned out to be the gate's own marker being too narrow for the script's
+    second link spelling (`, on **vX.Y.Z` beside `Built on **vX.Y.Z`, 22
+    occurrences of the former in `AGENTS.md` alone) -- which is how that
+    widening came to be measured rather than guessed.
+
+### Unchanged, and verified rather than asserted
+
+- **The emulation core is unchanged** -- no chip crate changed.
+- **The co-simulation suite re-run twice**, because both changes reach past the
+  mappers: the PPU fix touches `ppu2c02.sv` and therefore every rung-3 gate and
+  AccuracyCoin's 146-entry vector, and the bus conflict changes `cart.sv`. Final
+  run **142 passed, 0 failed, 0 skipped** -- 141 before the bus-conflict gate
+  was added, so the suite grew by exactly the gate this release wrote.
+- **Rung 6 does not close.** No DE10-Nano and no SuperStation One are attached,
+  confirmed by checking rather than assumed.
+
 ## [2.6.10] - 2026-09-01 - "Inference" (the cartridge meets the synthesiser)
 
 ### Fixed

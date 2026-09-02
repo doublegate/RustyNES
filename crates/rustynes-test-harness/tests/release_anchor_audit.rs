@@ -923,20 +923,23 @@ fn changelog_released_versions() -> Vec<String> {
     out
 }
 
-/// Documents that carry a release-line CHAIN -- a lead paragraph naming the
-/// current release and then each prior one after `Built on **v`.
+/// Every document that carries a release claim, DERIVED from [`ANCHORS`].
 ///
-/// Listed rather than globbed, for the same reason the `, the current release`
-/// check lists them: a glob silently widens on its own, and a check whose scope
-/// moves cannot be reasoned about at a release cut.
-const CHAIN_DOCS: &[&str] = &[
-    "to-dos/ROADMAP.md",
-    "VERSION-PLAN.md",
-    "README.md",
-    "AGENTS.md",
-    "docs/STATUS.md",
-    "ROADMAP.md",
-];
+/// Not a second hand-written list. The first version of this check listed six
+/// documents by hand and was wrong on its first use: the v2.6.10 drift reached
+/// **eight**, and `SUPPORT.md` and `SECURITY.md` were not on it. A hand list
+/// silently OMITS exactly as a glob silently widens, and `ANCHORS` is already
+/// this file's single answer to "where does a release claim live" -- the bump
+/// script reads the same table for the same reason.
+fn chain_docs() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for a in ANCHORS {
+        if !out.contains(&a.path) {
+            out.push(a.path);
+        }
+    }
+    out
+}
 
 /// A release-line chain must not SKIP a release.
 ///
@@ -954,7 +957,13 @@ const CHAIN_DOCS: &[&str] = &[
 /// an ordering can.
 #[test]
 fn a_release_line_chain_does_not_skip_a_release() {
-    const MARKER: &str = "Built on **v";
+    // A chain link is written TWO ways in this corpus, and a marker that knows
+    // only one reports a false failure on the other. `bump_release.py` demotes
+    // a "bare"/"dash" anchor as `Built on **vX.Y.Z` and a "paren" one as
+    // `..., on **vX.Y.Z` -- 22 occurrences of the second form in `AGENTS.md`
+    // alone. Both are accepted; anything else spelling `on **v` is not.
+    const MARKER: &str = "on **v";
+    const LEAD_INS: [&str; 2] = ["Built ", ", "];
 
     let released = changelog_released_versions();
     let version = workspace_package_field("version");
@@ -979,8 +988,9 @@ fn a_release_line_chain_does_not_skip_a_release() {
 
     let mut wrong: Vec<String> = Vec::new();
     let mut checked = 0usize;
+    let mut docs_with_chains = 0usize;
 
-    for doc in CHAIN_DOCS {
+    for doc in chain_docs() {
         let text = read(doc);
         // Each chain in the document, not merely the first: `ROADMAP.md` carries
         // two, and the v2.6.10 drift reached BOTH. Checking one would have
@@ -988,13 +998,20 @@ fn a_release_line_chain_does_not_skip_a_release() {
         let mut from = 0usize;
         let mut chains = 0usize;
         while let Some(i) = text[from..].find(MARKER) {
-            let at = from + i + MARKER.len();
-            let found = parse_version_prefix(&text[at..]).unwrap_or_else(|| {
-                panic!(
-                    "{doc}: `{MARKER}` is not followed by a version: {:?}",
-                    text[at..].chars().take(24).collect::<String>()
-                )
-            });
+            let start = from + i;
+            let at = start + MARKER.len();
+            // Only a real chain link, not any prose that happens to read
+            // "... on **v2.5.0 was ...". Checked on the text BEFORE the marker
+            // so the two spellings share one parse.
+            if !LEAD_INS.iter().any(|lead| text[..start].ends_with(lead)) {
+                from = at;
+                continue;
+            }
+            let Some(found) = parse_version_prefix(&text[at..]) else {
+                // Not a version after all -- prose, not a chain link.
+                from = at;
+                continue;
+            };
             // Only the FIRST link of each chain is a claim about ordering. The
             // rest are history and are allowed to abbreviate.
             if found == *previous {
@@ -1004,7 +1021,7 @@ fn a_release_line_chain_does_not_skip_a_release() {
                 // is the defect. `found > previous` catches a second chain in
                 // the same file whose head is also too new.
                 wrong.push(format!(
-                    "  {doc} -- a chain's first `Built on` names v{found}, but \
+                    "  {doc} -- a chain's first link names v{found}, but \
                      v{previous} is the release before v{current}"
                 ));
             }
@@ -1018,17 +1035,16 @@ fn a_release_line_chain_does_not_skip_a_release() {
                 break;
             }
         }
-        assert!(
-            chains > 0,
-            "{doc} is listed in CHAIN_DOCS and contains no `{MARKER}` -- either \
-             its chain was reworded (update CHAIN_DOCS) or this check is inert \
-             for it, and an inert check reports a pass it has not earned"
-        );
+        // A document with no chain is legitimate -- several anchors state a
+        // version and nothing else. The corpus-level `checked > 0` below is
+        // what keeps this from going inert.
+        docs_with_chains += usize::from(chains > 0);
     }
 
     assert!(
-        checked > 0,
-        "no chain named v{previous} as the release before v{current}. Fail-closed: \
+        docs_with_chains > 0 && checked > 0,
+        "{docs_with_chains} anchored document(s) carry a `{MARKER}` chain and \
+         {checked} named v{previous} as the release before v{current}. Fail-closed: \
          a corpus where nothing matches would otherwise pass while checking nothing."
     );
     assert!(
@@ -1068,7 +1084,7 @@ fn a_codename_near_the_current_version_is_the_changelog_codename() {
     let mut wrong: Vec<String> = Vec::new();
     let mut checked = 0usize;
 
-    for doc in CHAIN_DOCS {
+    for doc in chain_docs() {
         let text = read(doc);
         for (idx, _) in text.match_indices(&token) {
             // Require a token boundary, so `v2.6.1` does not match inside
