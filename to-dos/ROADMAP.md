@@ -521,11 +521,23 @@ here with IDs so the tie-offs read as decisions rather than omissions.
 
 **The result of annotating them is itself the finding: every one is blocked,
 and not one of them is blocked on effort.** Four are deferred to v2.8+ by the
-approved plan; three cannot be verified by anything in this repository because
+approved plan; three cannot be *verified* by anything in this repository because
 every route to them runs through `hps_io`, which needs the HPS; and two wait on
-a subsystem that does not exist yet. So this list is **the rung-6 agenda, not a
-v2.6.12 to-do list** -- which is why none of it landed here, and why "close
-these tickets" resolves to "attach a board", not "write more RTL".
+a subsystem that does not exist yet.
+
+**Amended at v2.6.13, and the amendment is a retraction.** "Blocked" was too
+strong for two of them, and the research that showed it is
+`ref-docs/2026-09-02-mister-sdram-hardware-reference.md`:
+
+- **`T-MISTER-SAVE`'s blocker was wrong.** Its implementation is unblocked; only
+  its verification is rung 6, which is what the ticket said before v2.6.12
+  "corrected" it. Scheduled for v2.6.13.
+- **`T-MISTER-SDRAM-SZ` is scheduled too**, behind the SDRAM controller that
+  v2.6.13 builds -- and its semantics turn out to be a validity bit rather than
+  a size, which is a different and better-defined ticket than it looked.
+
+The rest stand. So the list is still largely the rung-6 agenda, but "close these
+tickets" no longer resolves *entirely* to "attach a board".
 
 A caution recorded with them: these were originally filed under the heading
 below, which says they are cases where the DUT is *more accurate than the
@@ -549,34 +561,58 @@ the `sd_*` block interface with `img_mounted` / `img_size`, or the simpler
 
 **Acceptance.** A battery game's SRAM survives a power cycle on hardware.
 
-**BLOCKED — rung 6, and more completely than first written.** The sentence above
-said the *implementation* was unblocked and only the *verification* was rung 6.
-v2.6.12 attempted the implementation and that split does not survive contact
-with `sys/hps_io.sv`:
+**RETRACTED at v2.6.13 — the blocker below was WRONG, and the ticket's original
+text was right.** v2.6.12 recorded this as blocked because "there is no
+OSD-close signal to flush on". The MiSTer developer documentation states the
+contract in one line and it needs no such signal:
 
-- **There is no OSD-close signal to flush on.** This `sys/` vintage exposes no
+> `ioctl_upload_req` -- set to 1 to ask the HPS to initiate an NVRAM save, for
+> autosave, **HPS only reads this when the OSD is open**
+
+The core raises the request and the HPS collects it while the OSD is open. The
+same page puts this project's case explicitly on that path -- *"Use ioctl upload
+for: smaller NVRAM/save files"* -- with the `sd_*` block interface reserved for
+virtual hard drives; the declaration is the `F` option's `S` modifier
+(`F[S][#],{Ext}...`, "core supports save files"). Both routes are present in our
+vendored `hps_io.sv`.
+
+**So the implementation is unblocked and only the verification is rung 6** --
+which is what this ticket said before v2.6.12 "corrected" it. The error is
+recorded rather than erased because it shipped in a release: reasoning from the
+absence of a signal in the framework SOURCE to "the mechanism cannot work"
+skipped reading the PROTOCOL that uses it, and one page of vendor documentation
+settled what a session of source-reading had concluded backwards. Scheduled for
+**v2.6.13**. Full account: `ref-docs/2026-09-02-mister-sdram-hardware-reference.md`.
+
+The superseded reasoning, kept so the retraction has a subject:
+
+- ~~**There is no OSD-close signal to flush on.** This `sys/` vintage exposes no
   `OSD_STATUS` output, and MiSTer's convention is to write the save when the
   user leaves the OSD. The nearest available signal, `buttons`, is already the
   reset button at `rtl/emu.sv`'s reset expression -- so the obvious trigger is
-  both wrong and, being a plausible-looking wrong, exactly the kind that ships.
-- **The NVRAM route is not self-contained.** `hps_io.sv:152` says so in its own
-  port comment: `ioctl_upload_req // request to save (must be supported on HPS
-  side for specific core)`. Whether it works is a property of the HPS
-  configuration, not of this RTL.
+  both wrong and, being a plausible-looking wrong, exactly the kind that
+  ships.~~ **Refuted: no core-side trigger is required at all.**
+- ~~**The NVRAM route is not self-contained.**~~ `hps_io.sv:152` does say
+  `ioctl_upload_req // request to save (must be supported on HPS side for
+  specific core)`, and that quote is accurate -- but the support it refers to
+  **is** the standard autosave mechanism above, reached by declaring the save
+  file with the `F` option's `S` modifier. Read as a blocker, it was read
+  wrongly.
 - **Neither route is reachable by any gate here.** `sd_*` and `ioctl_*` both
   terminate in `hps_io`, which the co-simulation testbench does not instantiate
-  and cannot drive. A save path written now would ship with zero evidence --
-  the "a gate that passes without testing its subject" defect this project has
-  spent whole releases on, in its purest form.
+  and cannot drive. **This one still stands**, and it is the whole of what
+  remains: the *verification* is rung 6.
 
-The attempt is preserved as a patch rather than committed, and `rtl/cart/cart.sv`
-deliberately carries **no** save port: dead infrastructure for a feature that
-cannot land is worse than none, and `tb/check_pins.py` would have to be lied to
-in order to accept it.
+What that leaves is an ordinary rung-6-pending feature rather than a blocked
+one, and this project ships those -- the entire bitstream is rung-6-pending. The
+half that CAN be gated here is the cartridge's own save port: request raised,
+`ioctl_din` presenting the byte at `ioctl_addr`, the save-index download
+restoring it, and PRG-RAM round-tripping byte-identically. The `hps_io` half is
+disclosed as unverified, the same way every other downstream-of-the-gates
+property in this programme is.
 
-**Unblocks on:** a DE10-Nano or SuperStation One (rung 6). It is the first thing
-to build when one is attached, being the only item in this group with a
-user-visible cost.
+**Scheduled for v2.6.13** (`to-dos/plans/v2.6.13-plan.md`, item E). Hardware
+acceptance -- a save surviving a power cycle -- still needs a board.
 
 ### T-MISTER-4PLAYER — Four Score / four controllers
 
