@@ -26,6 +26,127 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.12] - 2026-09-02 - "Groundwork" (the bitstream was an NROM-only console)
+
+Rung 7 landed five mapper families and 142 co-simulation gates verify them. The
+layer that turns that RTL into a bitstream was never told.
+
+**The emulation core is unchanged.** No chip crate changes, so AccuracyCoin
+141/141 (RAM decoder) and nestest 0-diff hold by construction.
+
+### Fixed
+
+- **Three `nes_top` inputs were unconnected, and Quartus tied them to ground.**
+  `rtl/emu.sv` never connected `cart_mapper`, `cart_prg_16k_banks` or
+  `cart_chr_8k_banks`. The tool said so, three times, in a
+  `Port Connectivity Checks: "emu:emu|nes_top:u_nes"` table:
+
+  ```text
+  ; cart_mapper ; Input ; Warning ; Declared by entity but not connected by
+  ;             ;       ;         ; instance. ... the port will be connected to GND.
+  ```
+
+  In the shipped v2.6.11 bitstream that meant **mapper 0 for every cartridge**,
+  `prg_8k_count = 0` pinning `prg_bank_sel` to zero and collapsing PRG to an
+  **8 KiB window**, and CHR forced to RAM with 8 slots. The fitter's own RAM
+  summary agreed exactly:
+
+  | memory | declared | implemented before | after |
+  |---|---|---|---|
+  | `prg` | 256 KiB | **8 KiB** | **256 KiB** |
+  | `chr` | 128 KiB | **8 KiB** | **128 KiB** |
+  | `prg_ram` | 8 KiB | 8 KiB | 8 KiB |
+  | work RAM | 2 KiB | 2 KiB | 2 KiB |
+
+  The two arrays whose size depends on a tied-off input are the two that
+  collapsed; the two that do not were correct. That is the mechanism, not a
+  coincidence. Block memory **666,061 -> 3,680,717 bits**; RAM blocks
+  **100 -> 468 of 553**. Timing still closes at all four corners (+0.225 ns
+  setup, +0.105 ns hold -- a BETTER hold margin than v2.6.11's +0.078).
+
+  **`emu.sv` said it in its own OSD string**, honestly, when it was written at
+  v2.6.6: `"Unsupported mapper - this core is NROM only"`. v2.6.9 added MMC1,
+  UxROM, CNROM, MMC3 and AxROM to `cart.sv`; nothing updated the layer above.
+  **Two of the six titles in v2.6.11's montage are larger than the fitted
+  cartridge** -- *Bad Dudes* at 128 KiB CHR and *Battletoads & Double Dragon* at
+  256 KiB PRG -- so that release's claim is qualified here: true of the RTL under
+  Verilator, which builds the full array, and not of the bitstream.
+
+- **The loader could not reach past 128 KiB.** `cart_load_addr` was 17 bits
+  against a 19-bit port, so a 256 KiB PRG image could not be filled even once
+  the array existed. Widened, with `prg_bytes`' truncation in the CHR offset
+  fixed alongside it.
+
+- **Header byte 5 was never captured.** `emu.sv` parsed the mapper number only
+  to REFUSE anything but NROM; the CHR bank count it needed to size the
+  cartridge was not read at all.
+
+### Added
+
+- **`tb/check_pins.py`** -- fails when a module this repository declares has an
+  unconnected pin. Scoped by the module we own rather than a pin-name list,
+  because `sys/` modules legitimately leave dozens open (82 such warnings are
+  present and correctly ignored). **Mutation: the pre-fix `emu.sv` is CAUGHT**,
+  naming `nes_top` and all three pins.
+
+- **`tb/check_warnings.py` and `tb/quartus-warnings.txt`** -- pin the warning
+  SET, not the count. Three mutations, all caught: a new warning, a pinned one
+  that stops firing, and an empty report. Every pinned entry carries why it is
+  acceptable; all three originate in `sys/`, which may not be edited.
+
+- **`emu.sv` is linted at all.** It was the ONE file under `rtl/` no lint target
+  reached -- it needs `sys/` on the include path and a `BUILD_DATE` that only a
+  Quartus compile generates, which is a define, not a reason. Verilator's own
+  `PINMISSING` names the defect exactly.
+
+### Changed
+
+- **`hps_io`'s 25 unconnected inputs are tied off explicitly**, extending a
+  precedent the file already set for `ioctl_wait`: *"a floating input that
+  happens to read as zero is not the same as saying it is zero."* Every value is
+  the one Quartus was already defaulting to, and that is **verified rather than
+  asserted -- the bitstream is byte-identical across the change** (`f0ddb3fa...`).
+  Outputs are deliberately left alone: wiring 51 of them to dummies would trade
+  a warning that says "unused" for a suppressed one that says "assigned and
+  never read".
+
+- **Each tie-off says whether it is NOT APPLICABLE or NOT IMPLEMENTED**, because
+  a tie-off that reads as the first when it is the second is the same defect as
+  the OSD string. **Nine** `T-MISTER-*` tickets are minted for the second group
+  (seven headings, three of them sharing one) -- the largest being
+  **battery-backed save RAM, which is a data-loss bug**: `cart.sv` has 8 KiB of
+  PRG-RAM and nothing persists it, so every MMC1/MMC3 battery game loses its
+  saves at power-off.
+
+- **Annotating the nine with a blocker turned "none of these landed" from a
+  scoping choice into a measurement: not one is blocked on EFFORT.** Four are
+  deferred to v2.8+ by the approved plan, three cannot be verified by anything
+  in this repository, and two wait on unwritten subsystems -- so the list is the
+  **rung-6 agenda**, not a backlog. `T-MISTER-SAVE` was attempted, and the
+  attempt is what established it: its ticket claimed the implementation was
+  unblocked and only the verification was rung 6, and that split does not
+  survive `sys/hps_io.sv`. This `sys/` exposes **no OSD-close signal** to flush
+  on (the nearest available, `buttons`, is already the reset button in
+  `emu.sv`'s own reset expression); `hps_io.sv:152` states in its own port
+  comment that `ioctl_upload_req` "must be supported on HPS side for specific
+  core"; and `sd_*` and `ioctl_*` both terminate in `hps_io`, which the
+  testbench does not instantiate. A save path written now would ship with zero
+  evidence. The attempt is preserved as a patch rather than committed, and
+  `cart.sv` deliberately carries **no** save port -- dead infrastructure for a
+  feature that cannot land is worse than none, and `check_pins.py` would have
+  had to be lied to in order to accept it. The nine were also first filed under
+  a heading reading "cases where the DUT is measurably more accurate than
+  RustyNES itself"; none of them is, and that is corrected in place rather than
+  quietly moved, because a ticket is read by its heading.
+
+### Unchanged, and stated rather than assumed
+
+- **The co-simulation suite cannot verify this fix, and that is the finding.**
+  `emu.sv` is absent from the testbench's file list, so all 142 gates exercised
+  a correctly-configured cartridge -- the harness drives those ports itself.
+  `cart.sv` and `nes_top.sv` are byte-unchanged. The suite is a regression check
+  here, not a verification, and only synthesis could ask the question.
+
 ## [2.6.11] - 2026-09-02 - "Exposure" (a picture is a gate the ladder did not have)
 
 All 141 gates were green and two of six commercial games rendered wrong.

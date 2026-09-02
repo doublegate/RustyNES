@@ -513,6 +513,144 @@ deferred to a v1.4.x follow-up (UI compiles + no-ops on wasm). See
   carry forward. It also depends on the Nesdev checklist staying current with
   upstream source pages and local `docs/STATUS.md` pass counts.
 
+## Deferred — MiSTer framework surface this core does not use (opened v2.6.12)
+
+The v2.6.12 audit of `rtl/emu.sv`'s `hps_io` tie-offs asked, of each one,
+whether it was a feature a NES core should offer. Nine were. They are filed
+here with IDs so the tie-offs read as decisions rather than omissions.
+
+**The result of annotating them is itself the finding: every one is blocked,
+and not one of them is blocked on effort.** Four are deferred to v2.8+ by the
+approved plan; three cannot be verified by anything in this repository because
+every route to them runs through `hps_io`, which needs the HPS; and two wait on
+a subsystem that does not exist yet. So this list is **the rung-6 agenda, not a
+v2.6.12 to-do list** -- which is why none of it landed here, and why "close
+these tickets" resolves to "attach a board", not "write more RTL".
+
+A caution recorded with them: these were originally filed under the heading
+below, which says they are cases where the DUT is *more accurate than the
+oracle*. None of them is. That was a filing error in the same session that
+minted them, and it is corrected rather than quietly moved, because a ticket
+under a wrong heading is read by its heading.
+
+### T-MISTER-SAVE — battery-backed save RAM is not persisted
+
+**Owner-facing summary.** `rtl/cart/cart.sv` has 8 KiB of PRG-RAM and the MiSTer
+core does nothing to persist it. Every MMC1 or MMC3 game with a battery —
+*Zelda*, *Final Fantasy*, *Kirby's Adventure*, *Crystalis* — writes saves there
+and **loses them at power-off**. This is the only item in the group with a
+user-visible cost, and it is the highest-value one.
+
+**Mechanism.** MiSTer offers two routes, both via `hps_io`
+([framework docs](https://mister-devel.github.io/MkDocs_MiSTer/developer/hps_io/)):
+the `sd_*` block interface with `img_mounted` / `img_size`, or the simpler
+`ioctl_upload_req` / `ioctl_din` NVRAM path. Both ports are tied off in
+`rtl/emu.sv` today, with a comment naming this ticket.
+
+**Acceptance.** A battery game's SRAM survives a power cycle on hardware.
+
+**BLOCKED — rung 6, and more completely than first written.** The sentence above
+said the *implementation* was unblocked and only the *verification* was rung 6.
+v2.6.12 attempted the implementation and that split does not survive contact
+with `sys/hps_io.sv`:
+
+- **There is no OSD-close signal to flush on.** This `sys/` vintage exposes no
+  `OSD_STATUS` output, and MiSTer's convention is to write the save when the
+  user leaves the OSD. The nearest available signal, `buttons`, is already the
+  reset button at `rtl/emu.sv`'s reset expression -- so the obvious trigger is
+  both wrong and, being a plausible-looking wrong, exactly the kind that ships.
+- **The NVRAM route is not self-contained.** `hps_io.sv:152` says so in its own
+  port comment: `ioctl_upload_req // request to save (must be supported on HPS
+  side for specific core)`. Whether it works is a property of the HPS
+  configuration, not of this RTL.
+- **Neither route is reachable by any gate here.** `sd_*` and `ioctl_*` both
+  terminate in `hps_io`, which the co-simulation testbench does not instantiate
+  and cannot drive. A save path written now would ship with zero evidence --
+  the "a gate that passes without testing its subject" defect this project has
+  spent whole releases on, in its purest form.
+
+The attempt is preserved as a patch rather than committed, and `rtl/cart/cart.sv`
+deliberately carries **no** save port: dead infrastructure for a feature that
+cannot land is worse than none, and `tb/check_pins.py` would have to be lied to
+in order to accept it.
+
+**Unblocks on:** a DE10-Nano or SuperStation One (rung 6). It is the first thing
+to build when one is attached, being the only item in this group with a
+user-visible cost.
+
+### T-MISTER-4PLAYER — Four Score / four controllers
+
+`joystick_2` and `joystick_3` are unconnected. A real NES accessory
+(*Bomberman II*, *Gauntlet II*, *Super Off Road*). Needs the Four Score's serial
+protocol in `controller.sv`, which currently models two ports.
+
+**BLOCKED — deferred by the approved plan**, which names "Four Score" in its
+*explicitly out of scope until v2.8+* list. The oracle models it
+(`bus_snapshot.rs` carries `four_score`, its per-port index and signature), so
+a gate is buildable -- but it also needs an exporter stimulus flag and a ROM
+that reads four ports, neither of which exists. **Unblocks at v2.8+.**
+
+### T-MISTER-PADDLE — the Arkanoid Vaus controller
+
+`paddle_0` / `spinner_0`. A real NES peripheral — and *Arkanoid* is one of the
+six titles in the v2.6.11 montage, so the core renders a game it cannot yet be
+played with properly.
+
+**BLOCKED — same class as T-MISTER-4PLAYER**: a peripheral input device, and
+the plan defers that class to v2.8+. **Unblocks at v2.8+.**
+
+### T-MISTER-ZAPPER — the light gun
+
+The ORACLE already implements it (`Nes::set_zapper`, with the beam-relative
+light model added at v2.2.3), so this is a wiring question on the DUT side
+rather than a modelling one.
+
+**BLOCKED — deferred by the approved plan**, which names "Zapper" in its
+*explicitly out of scope until v2.8+* list. Note that "the oracle already models
+it" makes this *cheaper*, not *unblocked* -- a gate still needs a stimulus the
+exporter cannot currently produce. **Unblocks at v2.8+.**
+
+### T-MISTER-SDRAM-SZ — report SDRAM presence and size
+
+`sdram_sz[1:0]` reports none / 32 / 64 / 128 MB. **Needed the moment the SDRAM
+controller lands**, which is the next major item: a core that assumes the
+DE10-Nano's add-on is present on a board without it should say so rather than
+misbehave.
+
+**BLOCKED — on the SDRAM controller**, which is unwritten. Reporting a size for
+a memory the core cannot address would be a declaration with nothing behind it.
+**Unblocks when `rtl/sdram.sv` exists.**
+
+### T-MISTER-DIRECTVIDEO — analog I/O board output
+
+`direct_video` is asserted when HDMI is wired as VGA. Users running MiSTer on a
+CRT through the analog board are a large fraction of the audience.
+
+**BLOCKED — rung 6.** The RTL is one assignment; the acceptance is a picture on
+a CRT through the analog I/O board, which no gate here can produce. Landing the
+assignment without it would repeat v2.6.6's `VGA_SL` defect, where two OSD
+options did nothing because the signal they fed was tied to zero and nothing
+looked. **Unblocks on hardware plus an analog I/O board.**
+
+### T-MISTER-KEYBOARD / T-MISTER-MENUMASK / T-MISTER-VMODE
+
+The Famicom Family BASIC keyboard (`ps2_key`, niche); conditional OSD entries
+(`status_menumask`, polish); and a runtime NTSC/PAL switch (`new_vmode`, which
+needs PAL timing to exist first).
+
+**All three BLOCKED, for three different reasons.** KEYBOARD is a peripheral
+input device, the class the plan defers to v2.8+. MENUMASK is OSD behaviour,
+verifiable only by looking at an OSD -- rung 6. VMODE needs PAL timing, which
+this core does not implement at all; a switch between one mode and a mode that
+does not exist is not a partial feature.
+
+**None of these landed in v2.6.12**, and after annotation that is a measurement
+rather than a scoping choice: 4 are deferred to v2.8+ by the approved plan, 3
+are unverifiable without a board, and 2 wait on unwritten subsystems. They are named
+with IDs so the tie-offs in `emu.sv` read as decisions rather than omissions.
+The full table, including what is genuinely *not applicable* to a NES, is in
+`RustyNES_MiSTer/docs/rung6-integration.md`.
+
 ## Deferred — oracle accuracy items the co-simulation found (opened v2.6.9)
 
 The MiSTer co-simulation is a two-way instrument. These are cases where the
