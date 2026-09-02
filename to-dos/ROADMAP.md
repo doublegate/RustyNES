@@ -646,6 +646,57 @@ rather than a modelling one.
 it" makes this *cheaper*, not *unblocked* -- a gate still needs a stimulus the
 exporter cannot currently produce. **Unblocks at v2.8+.**
 
+### T-MISTER-SAVESTATE — the framework has save states and this core has none
+
+**Opened v2.6.13 by the framework audit.** MiSTer defines a save-state contract:
+a core declares `SS{base addr}:{savestate size}` in its CONF_STR, the framework
+reserves four slots in **DDR3**, and each slot opens with a 64-bit control word
+whose low half is a change detector and whose high half is the size in 32-bit
+words. The documentation notes saves "are performed rather quickly after the
+write occurs, and **do not require opening of the OSD**".
+
+**This is the largest capability gap between the oracle and the DUT.** RustyNES
+the emulator has had save states since v1.0 -- `Nes::snapshot`, the `.rns`
+format, a versioned per-chip schema and a standing schema audit -- and the
+MiSTer core has nothing. The oracle even knows how to serialise every chip, so
+the *content* of a save state is a solved problem here; only the transport is not.
+
+**BLOCKED on DDR3, which this core declines.** All ten `DDRAM_*` ports are tied
+off and three sit in `unused_misc`. That is the dependency, and it is also the
+scheduling constraint: **v2.6.13 brings up SDRAM, and bringing up DDR3 in the
+same release would make any timing regression impossible to attribute.**
+
+**Unblocks after v2.6.13.** Wants its own release.
+
+### T-MISTER-CHEATS — no cheat menu
+
+**Opened v2.6.13.** The CONF_STR offers `C[,{Text}]`, "enables a cheat menu
+entry". RustyNES ships a full Game Genie implementation plus a header-robust
+code database; the DUT has neither.
+
+Worth noting for whoever takes it: because the oracle already decodes Game Genie
+codes, this is a good candidate for an **oracle-gated** rung -- apply a code on
+both sides and compare the bus, exactly as every other rung works -- rather than
+a feature verified by playing a game.
+
+**Unblocks:** any time. Not blocked on hardware.
+
+### T-MISTER-OSD — five status bits of a hundred and twenty-eight
+
+**Opened v2.6.13.** This core uses `status[0]`, `status[2:1]` and `status[4:3]`
+and nothing else, so **123 bits of user-facing options are unoffered**: region,
+overscan, palette selection, per-mapper toggles, audio mixing. Alongside that,
+`sys/video_freak.sv` is not instantiated (which is why only two of the four
+aspect-ratio entries exist -- our own CONF_STR comment says so), `video_freezer`
+is not either, and the OSD is flat because `P` sub-pages are unused.
+
+Filed as ONE ticket rather than five because they are one piece of work. An
+options surface added a bit at a time produces a menu nobody designed, and the
+`P` pages only matter once there is enough to page.
+
+**Unblocks:** any time. `AUDIO_MIX`, `LED_DISK` and `jn` are split out of it and
+land in v2.6.13, being one line each.
+
 ### T-MISTER-SDRAM-SZ — report SDRAM presence and size
 
 `sdram_sz[1:0]` reports none / 32 / 64 / 128 MB. **Needed the moment the SDRAM
@@ -674,15 +725,33 @@ The Famicom Family BASIC keyboard (`ps2_key`, niche); conditional OSD entries
 (`status_menumask`, polish); and a runtime NTSC/PAL switch (`new_vmode`, which
 needs PAL timing to exist first).
 
-**All three BLOCKED, for three different reasons.** KEYBOARD is a peripheral
-input device, the class the plan defers to v2.8+. MENUMASK is OSD behaviour,
-verifiable only by looking at an OSD -- rung 6. VMODE needs PAL timing, which
-this core does not implement at all; a switch between one mode and a mode that
-does not exist is not a partial feature.
+**Two blocked, one PROMOTED at v2.6.13.** KEYBOARD is a peripheral input device,
+the class the plan defers to v2.8+. VMODE needs PAL timing, which this core does
+not implement at all; a switch between one mode and a mode that does not exist
+is not a partial feature.
+
+**MENUMASK is no longer rung 6, and the reason it was filed there is worth
+keeping.** It was recorded as "OSD behaviour, verifiable only by looking at an
+OSD", which conflated two different things. `status_menumask` is a **value this
+core computes** -- `mapper_ok` already exists and is exactly the condition a mask
+would encode -- and a gate can assert the computed value with no display
+anywhere. Only whether the greyed-out entry LOOKS right needs eyes, and that is
+a much smaller claim than "the feature is unverifiable". **Scheduled for
+v2.6.13** (plan item F). The general lesson: "verified by looking at it" is
+often true of the *presentation* and false of the *computation*, and filing the
+whole ticket under the former is how something cheap gets deferred for releases.
 
 **None of these landed in v2.6.12**, and after annotation that is a measurement
 rather than a scoping choice: 4 are deferred to v2.8+ by the approved plan, 3
-are unverifiable without a board, and 2 wait on unwritten subsystems. They are named
+are unverifiable without a board, and 2 wait on unwritten subsystems.
+
+**Amended at v2.6.13.** The framework audit added three more tickets
+(`T-MISTER-SAVESTATE`, `T-MISTER-CHEATS`, `T-MISTER-OSD`) and moved three of the
+original nine off the blocked list: **SAVE** (blocker refuted), **SDRAM-SZ**
+(behind the controller v2.6.13 builds) and **MENUMASK** (promoted -- the mask is
+a computed value, not a picture). So of twelve tickets, **three are scheduled for
+v2.6.13, two are unblocked and unscheduled, and seven remain blocked** on the
+approved plan's v2.8+ line, on hardware, or on DDR3. They are named
 with IDs so the tie-offs in `emu.sv` read as decisions rather than omissions.
 The full table, including what is genuinely *not applicable* to a NES, is in
 `RustyNES_MiSTer/docs/rung6-integration.md`.
