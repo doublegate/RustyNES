@@ -54,10 +54,87 @@ item**, rather than a preference.
 | chip | **Alliance Memory AS4C32M16SB-7TCN** |
 | organisation | 32M x 16, internally **4 banks of 8M x 16** |
 | density | **512 Mbit = 64 MiB per chip** |
-| max clock | **143 MHz** |
-| access time | 5.4 ns |
+| max clock | **143 MHz** (-7); the -6 grade is 166 MHz |
+| access time | 5.4 ns (tAC at CL3) |
 | voltage | 3.3 V |
-| package | 54-TSOP II |
+| package | 54-TSOP II; a 54-ball FBGA variant (-7BIN) also exists |
+
+**Which part, verified.** The v3.0 XS-D board is fitted with **AS4C32M16SB-7TCN**,
+and the -7TCN, -7TIN and -6TIN grades are interchangeable on it -- the -6 is
+faster than any MiSTer core needs. Boards are commonly burn-in tested at 130 MHz,
+against 126 MHz for the most demanding published core.
+
+**The SuperStation One's exact part is NOT publicly documented.** It has "128 MB
+BGA SDRAM"; whether that is two AS4C32M16SB-7BIN or something else is not stated
+anywhere I could find, and the honest answer is that I do not know. It does not
+matter for correctness, and the reason is worth stating rather than waving at:
+MiSTer cores must run on it unmodified, so whatever it is presents the same
+interface at the same pins, and the timings below are the slowest of the
+interchangeable grades.
+
+### Which speed grade to build for -- and it is not a preference
+
+From Table 16 of the datasheet, every -7 minimum is greater than or equal to the
+matching -6 minimum:
+
+| parameter | -6 (166 MHz) | -7 (143 MHz) |
+|---|---|---|
+| tRC | 60 ns | **63 ns** |
+| tRFC | 60 ns | **63 ns** |
+| tRCD | 18 ns | **21 ns** |
+| tRP | 18 ns | **21 ns** |
+| tRRD | 12 ns | **14 ns** |
+| tMRD | 12 ns | **14 ns** |
+| tRAS (min) | 42 ns | 42 ns |
+| tWR | 12 ns | **14 ns** |
+
+**So a controller configured for -7 satisfies a -6 part as well, and one
+configured for -6 would VIOLATE a -7 part.** Since boards ship with either, -7
+is the only correct choice, not the cautious one.
+
+### The AC timing table, as read
+
+Table 16, Rev 1.4 (June 2024), -7 column, all minimums:
+
+| symbol | parameter | -7 |
+|---|---|---|
+| tRC | row cycle time (same bank) | 63 ns |
+| tRFC | refresh cycle time | 63 ns |
+| tRCD | RAS# to CAS# delay (same bank) | **21 ns** |
+| tRP | precharge to refresh / row activate (same bank) | **21 ns** |
+| tRRD | row activate to row activate (different banks) | 14 ns |
+| tMRD | mode register set cycle time | 14 ns |
+| tRAS | row activate to precharge (same bank) | 42 ns **min, 120 us MAX** |
+| tWR | write recovery time | 14 ns |
+| tCK | clock cycle time | 10 ns at CL2, **7 ns at CL3** |
+| tAC | access time from CLK | 6 ns at CL2, 5.4 ns at CL3 |
+| tREFI | average refresh interval | **7.8 us** |
+
+And the power-up sequence, Note 11:
+
+1. power applied with CKE low, DQM high, all inputs NOP;
+2. **stable clock for a minimum of 200 us**, then CKE high with DQM held high;
+3. all banks precharged;
+4. Mode Register Set;
+5. **a minimum of 2 auto-refresh cycles** -- and the note says explicitly that
+   these "can be issue before or after Mode Register Set command".
+
+**The datasheet corrected three things this project had guessed, and two were
+guessed in the UNSAFE direction.** Full account in the v2.6.13 release notes; the
+short version is that "conservative" is only meaningful once you know which way
+is safe for each parameter, and for a minimum-delay constraint that is *larger*.
+Two of the guesses were smaller than the real minimum.
+
+### One observation left open
+
+The datasheet's own header describes the AS4C32M16SB as a **"Dual Die Package
+(DDP)"**, while the body describes a single logical device of four banks and the
+pinout carries one CS#. Whether the community account of the 128 MB board -- two
+packages sharing a bus with one inverted select -- is a description of two
+packages or of one DDP with a second select on the pin the single-die version
+lists as NC, is not settled here. **It has no bearing on this project**, which
+needs under 1 MiB and uses the first 64 MiB through one select, and it is written
+down rather than resolved because resolving it would need a board in hand.
 
 **The "128 MB" board is two of those chips**, not one larger part: the largest
 readily-available SDR SDRAM die is 64 MB, so the 128 MB module carries a pair.
@@ -244,7 +321,14 @@ had concluded backwards.
 - [hps_io developer documentation](https://mister-devel.github.io/MkDocs_MiSTer/developer/hps_io/) — the `ioctl_upload_req` autosave contract and the ioctl-vs-block-device split
 - [Core Configuration String](https://mister-devel.github.io/MkDocs_MiSTer/developer/conf_str/) — the `F[S]` save-file declaration
 - [MiSTer FPGA Bible — SDRAM Board](https://boogermann.github.io/Bible_MiSTer/hardware/sdram-board/) — board revisions and per-core clock table
-- [AS4C32M16SB — Alliance Memory](https://alliancememory.com/datasheets/as4c32m16sb) — 512 Mbit, 32M x 16, 4 banks, 143 MHz, 3.3 V
+- **`ref-docs/Datasheets/AllianceMemory_512M_SDRAM_Bdie_AS4C32M16SB-7TXN-6TIN-7BIN__Rev1.4_June2024NK.pdf`**
+  -- the authoritative source for every timing above (Table 1, Table 16, Note 11).
+  Supplied by the maintainer after this file's first draft, which had said the
+  vendor PDF could not be retrieved. Revisions 1.2 (March 2020) and 1.3 (August
+  2022) are alongside it; 1.4 is current and its revision history shows the
+  intervening changes are all to standby/operating CURRENT specifications, so
+  **the AC timings are identical across all three** and nothing here depends on
+  which revision is read
 - [AS4C32M16SB-7TCN — Farnell](https://uk.farnell.com/alliance-memory/as4c32m16sb-7tcn/dram-143mhz-512mbit-tsop-ii-54/dp/4260952) and [Digi-Key](https://www.digikey.com/en/products/detail/alliance-memory-inc/AS4C32M16SB-7TCN/6589201) — packaging and speed grade
 - [SuperStation One — Retro Remake](https://retroremake.co/pages/superstation%E1%B5%92%E2%81%BF%E1%B5%89) and [CNX Software](https://www.cnx-software.com/2025/01/29/superstation-one-soc-fpga-based-retro-gaming-console-supports-mister-emulation-playstation-controllers-cd-drive/) — 128 MB integrated BGA SDRAM, Cyclone V, MiSTer core support
 - MiSTer FPGA Forum threads on the 128 MB module (two 64 MB chips, inverted single select, signal-integrity ceiling) and on v2.9 vs v3.0 being a layout-only change. **Note:** `misterfpga.org` returns HTTP 403 to automated fetching, so these were read through search result summaries rather than fetched directly, and are the least-firm citations here.
