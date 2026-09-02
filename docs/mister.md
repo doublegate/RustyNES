@@ -51,6 +51,11 @@ MiSTer the header arrives with the game and a parameter would need a different
 bitstream per cartridge. All five match the oracle on every cycle and every
 checkpoint, and nine of nine mutations are CAUGHT.
 
+**"Five" here is rung 7's boards, not the console's.** NROM landed at rung 5, so
+the core supports **six**: NROM, MMC1, UxROM, CNROM, MMC3 and AxROM. Both counts
+are correct and they are easy to reconcile wrongly -- a reviewer did, reading
+this line against the sibling's six commercial captures.
+
 **Half the earlier "rung 7 is blocked" claim was wrong, and this corrects it.**
 Rung 7 has two parts and only one ever needed hardware: the SDRAM controller,
 whose acceptance is read/write timing against a real part. The mapper logic is

@@ -26,7 +26,7 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [2.6.11] - 2026-09-01 - "Exposure" (a picture is a gate the ladder did not have)
+## [2.6.11] - 2026-09-02 - "Exposure" (a picture is a gate the ladder did not have)
 
 All 141 gates were green and two of six commercial games rendered wrong.
 
@@ -172,6 +172,26 @@ gates.
     second link spelling (`, on **vX.Y.Z` beside `Built on **vX.Y.Z`, 22
     occurrences of the former in `AGENTS.md` alone) -- which is how that
     widening came to be measured rather than guessed.
+
+- **The bitstream is rebuilt, every seed is swept, and "reproducible" is
+  corrected while it is re-established.** Two RTL changes land, so v2.6.10's
+  published `+0.531 / +0.099` describes RTL that no longer exists. The committed
+  configuration built at the previous seed and **closed** (+0.162 ns setup,
+  +0.064 ns hold, positive at all four corners) -- a pass, and thin, so all five
+  seeds were swept and the **whole table** is published rather than its winner:
+  `+0.440/+0.078`, `+0.411/+0.062`, `+0.162/+0.064`, `+0.550/+0.064`,
+  `+0.361/+0.071`. All five close. **The criterion is stated: maximise the
+  BINDING margin** -- hold is binding on every seed, so seed 4's larger setup
+  buys margin on the constraint this design is not close on. Seed 1 ships, with
+  22% more binding margin than the release opened with.
+
+  Two builds of the identical configuration then had **identical timing at every
+  corner, to the digit, and different bitstream bytes**. The framework does it
+  deliberately: `sys/build_id.tcl` regenerates a gitignored `build_id.v` on every
+  compile with a **date** stamp, so a build is reproducible *for a given day*.
+  The two straddled midnight; a third, same-day, reproduces it exactly. v2.6.7's
+  claim is **not withdrawn but qualified** -- it was true, and both of its
+  compiles were same-day, and no release before this one spanned midnight.
 
 ### Unchanged, and verified rather than asserted
 
