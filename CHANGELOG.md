@@ -159,6 +159,20 @@ layer that turns that RTL into a bitstream was never told.
   `%Error` naming no module, so an allowlist over every `%Error` rejected a
   HEALTHY run.
 
+- **The control's first CI run found something worse than the report: the gate
+  had been INERT on CI its entire life.** The successful run immediately before
+  the control was added reads `check_pins: 0 PINMISSING warning(s) examined` and
+  `PASS` -- so it was not merely capable of a false pass, it was delivering one
+  on every CI run. Both causes are version skew between CI's Verilator 5.020 and
+  the 5.050 here, in **opposite directions**: 5.050 writes `%Error-MODMISSING:`
+  where 5.020 writes a bare `%Error:` (so the allowlist refused a HEALTHY run),
+  and 5.050 writes "Instance has missing pin" where older releases write "Cell
+  has missing pin" (so the warning regex matched nothing). Both wordings are
+  accepted now and **CI reports 57 examined where it reported 0**. Second time
+  this project has assumed the newer Verilator is the louder one. The control
+  also diagnoses itself now, printing every distinct message code in the capture
+  when it fires.
+
 - **`scripts/release-rbf.sh` now feeds `check_warnings.py` both reports.**
   Recorded as what it is: today the two invocations give the **identical**
   answer, because all three warnings appear in the map report and the Fitter
