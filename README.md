@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.6.9-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.6.10-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(141%2F141)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -674,7 +674,7 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.6.9 "Abeyance"** — an exclusion hides improvement as well as regression. Both remaining denied co-simulation streams close. One had been carried for seven releases as a "declared diagnostic, nine divergences **by design**" and was a defect in the *harness*, not the console; it is now identical on all **357,361** cycles and all 88 checkpoints. The other differs on exactly one attributed cycle, carried by a new per-cycle nine-field comparator whose scoped allowance fails **both** ways — so a DUT that improves cannot leave a stale allowance quietly hiding coverage.
+RustyNES's current release is **v2.6.10 "Inference"** — an exclusion hides improvement as well as regression. Both remaining denied co-simulation streams close. One had been carried for seven releases as a "declared diagnostic, nine divergences **by design**" and was a defect in the *harness*, not the console; it is now identical on all **357,361** cycles and all 88 checkpoints. The other differs on exactly one attributed cycle, carried by a new per-cycle nine-field comparator whose scoped allowance fails **both** ways — so a DUT that improves cannot leave a stale allowance quietly hiding coverage.
 
 The emulation core is unchanged in this release, so its accuracy numbers hold by construction.
 

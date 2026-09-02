@@ -26,6 +26,76 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.10] - 2026-09-01 - "Inference" (the cartridge meets the synthesiser)
+
+### Fixed
+
+- **The rung-7 cartridge could not be synthesised, and nothing had asked.**
+  v2.6.9 landed five cartridge boards verified across 141 co-simulation gates,
+  and **not one of them had ever been through Quartus**. Building that release's
+  bitstream is what asked, and Analysis & Synthesis refused the design:
+
+  ```text
+  Error (276003): Cannot convert all sets of registers into RAM megafunctions
+  ```
+
+  `chr` was written from **two separate `always_ff` blocks** -- the ROM load
+  port and the CHR-RAM write path. An array with two writers in two different
+  always blocks cannot infer as a single M10K, so Quartus kept 128 KB of CHR in
+  flip-flops: **1,048,576 registers against roughly 166,000** on a
+  5CSEBA6U23I7. Folding both writers into one port through an `always_comb` mux
+  fixes it -- the loader takes priority, which is safe because the CPU is held
+  during ROM load, so `chr_wr` cannot be asserted at the same time.
+
+  | | before | after |
+  |---|---|---|
+  | Analysis & Synthesis | **unsuccessful**, 1 error (276003) | successful, 0 errors |
+  | `prg` / `chr` / `prg_ram` | not inferred | all three `altsyncram` |
+  | total block memory bits | -- | 666,054 |
+
+  **This is v2.6.6's finding one layer out.** That release established that an
+  M10K read is registered and rewrote 40 KiB of asynchronously-read cartridge;
+  this one establishes that a correctly *registered* memory still will not infer
+  if it has two writers. Both were invisible until something outside the
+  simulator was asked, and **simulation cannot ask this question** -- Verilator
+  accepts both forms without complaint.
+
+### Added
+
+- **The bitstream v2.6.9 could not produce.** `releases/RustyNES_MiSTer-v2.6.10.rbf`,
+  built from this RTL, verified against the Quartus reports rather than the exit
+  code, and attached to the GitHub release on both repositories. v2.6.9 shipped
+  without one and disclosed why; a published version is immutable here, so the
+  fix could not be back-fitted to it.
+
+### Changed
+
+- **The fitter was throttling itself, and the `.qsf` carried no optimisation
+  assignments at all.** The first v2.6.10 compile failed timing at **-0.265 ns**
+  on the framework's HDMI PLL path while the Fitter log said
+  `Info (171003): ... Auto Fit compilation, which may decrease Fitter effort`.
+  `FITTER_EFFORT "STANDARD FIT"` and `OPTIMIZATION_MODE "Aggressive Performance"`
+  fix it. `PLACEMENT_EFFORT_MULTIPLIER` is deliberately NOT set -- it cannot be
+  raised above 1.0 directly.
+  - **A seed sweep found the shape, which matters more than the winner.** Under
+    Auto Fit, seeds 4 and 5 measured -0.265 and -0.059, both failing. Under full
+    effort **all six seeds close**, +0.027 to +0.531 -- the effort settings move
+    the whole distribution across zero and the seed only picks where in it you
+    land. This project had been pinned to seed 4, **the worst of the six**.
+  - Pinned at **seed 3: worst setup +0.531 ns, worst hold +0.099 ns** at the
+    binding corners, roughly 20x the margin the first closing build had. Stated
+    honestly, that is "best of six placements", not headroom the design earned.
+  - The build is **byte-identical across two independent compiles** at this
+    seed (md5 `94b7d855...`), measured rather than argued.
+
+### Unchanged, and verified rather than asserted
+
+- **The emulation core is unchanged** -- no chip crate changed, so AccuracyCoin
+  141/141 (RAM decoder) and nestest 0-diff hold by construction.
+- **Co-simulation suite re-run against the new write port**, because muxing it
+  changes when a CHR-RAM write lands relative to a load, and only the suite can
+  say whether that is observable.
+
 ## [2.6.9] - 2026-08-31 - "Abeyance" (an exclusion hides improvement as well as regression)
 
 ### Fixed
