@@ -139,6 +139,27 @@ layer that turns that RTL into a bitstream was never told.
   RustyNES itself"; none of them is, and that is corrected in place rather than
   quietly moved, because a ticket is read by its heading.
 
+### Fixed -- the release tooling deleted a release, and its own gate caught it
+
+- **`bump_release.py`'s `PERIOD` shape assumed a period ENDS the statement.**
+  Its rule reads "the statement ends at the codename: nothing describes the
+  release, so there is nothing to demote", which is true of one of this
+  repository's two `PERIOD` anchors and false of the other. `OVERVIEW.md`
+  genuinely ends its sentence; `SECURITY.md`'s period is a **separator before a
+  lineage chain** (`... **v2.6.11 "Exposure"**. Built on **v2.6.10 ...`), so
+  "swap and stop" replaced the head and left v2.6.11 **absent** rather than
+  stale -- the exact defect v2.6.11 found and fixed in the documents that were
+  not this one. Split into `PERIOD` and `PERIOD_CHAIN`, with four selftests,
+  because the script's own comment records that `PERIOD` and `DATED_CODE` "were
+  added without selftests and review caught it". Collapsing the classifier back
+  fails three of them, one naming the defect outright.
+
+- **Two further anchors needed hand correction and the v2.6.11 chain gates named
+  both** -- a chain in `ROADMAP.md` whose first link had become v2.6.10, and one
+  in `to-dos/ROADMAP.md` ending "v2.6.11, the current release".
+  `a_release_line_chain_does_not_skip_a_release` is one release old and has now
+  caught a real skip in each of its two releases.
+
 ### Unchanged, and stated rather than assumed
 
 - **The co-simulation suite cannot verify this fix, and that is the finding.**
