@@ -139,6 +139,31 @@ layer that turns that RTL into a bitstream was never told.
   RustyNES itself"; none of them is, and that is corrected in place rather than
   quietly moved, because a ticket is read by its heading.
 
+### Fixed -- the new gate had the defect it was written to close
+
+- **`tb/check_pins.py` reported a pass when the lint had not run.** Raised in
+  review and **reproduced on the first try**: an empty capture and a Verilator
+  run that died early both printed `PASS: no module under rtl/ has an
+  unconnected pin` after examining zero warnings. The script failed closed on an
+  empty MODULE set and not on empty INPUT -- an absent result reading as a clean
+  one, inside the gate written to close the previous instance of it. The
+  `|| true` in the recipe must stay (two `sys/` modules are Quartus
+  megafunctions with no source Verilator can see, so a clean lint ALWAYS exits
+  non-zero), so the discrimination moved into the script: non-empty input; every
+  coded `%Error` an expected `MODMISSING`, cross-checked against Verilator's own
+  error count; and **at least one `PINMISSING` warning seen**, since `sys/`
+  produces 57 on every healthy run, so zero means the lint never reached the
+  design. Four mutations, four different controls, all caught, real run still
+  passing. Control 2 needed a second pass, found by running the real lint
+  against the first version: `%Error: Exiting due to 2 error(s)` is itself a
+  `%Error` naming no module, so an allowlist over every `%Error` rejected a
+  HEALTHY run.
+
+- **`scripts/release-rbf.sh` now feeds `check_warnings.py` both reports.**
+  Recorded as what it is: today the two invocations give the **identical**
+  answer, because all three warnings appear in the map report and the Fitter
+  merely re-emits one. A latent gap closed, not a live defect fixed.
+
 ### Fixed -- the release tooling deleted a release, and its own gate caught it
 
 - **`bump_release.py`'s `PERIOD` shape assumed a period ENDS the statement.**
