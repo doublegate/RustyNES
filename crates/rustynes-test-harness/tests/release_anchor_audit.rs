@@ -1115,11 +1115,30 @@ fn a_codename_near_the_current_version_is_the_changelog_codename() {
                 continue;
             }
             let rest = &win[open + 1..];
+            // An opening quote that never closes, or closes on nothing, is
+            // MALFORMED -- not "this site states a version only". Continuing
+            // here would let another site keep `checked > 0` while a broken
+            // current-release claim passed, which is the fail-OPEN this file's
+            // older codename check already panics on for exactly this shape.
+            // Reported rather than skipped. (CodeRabbit on #489.)
+            //
+            // The window is bounded, so an unterminated quote can also mean the
+            // closing one simply falls outside it. That is still a malformed
+            // release claim by this check's own definition of the shape, and
+            // the message says which it is rather than guessing.
             let Some(close) = rest.find('"') else {
+                wrong.push(format!(
+                    "  {doc} -- v{current} opens a codename that does not close                      within {WINDOW} characters: {rest:?}"
+                ));
+                checked += 1;
                 continue;
             };
             let name = &rest[..close];
             if name.is_empty() {
+                wrong.push(format!(
+                    "  {doc} -- v{current} is followed by an EMPTY codename \"\",                      CHANGELOG says \"{expected}\""
+                ));
+                checked += 1;
                 continue;
             }
             checked += 1;
