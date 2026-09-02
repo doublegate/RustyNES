@@ -893,3 +893,273 @@ fn a_chain_that_names_its_tail_the_current_release_names_the_current_one() {
         wrong.join("\n")
     );
 }
+
+/// Every released version, newest first, as the CHANGELOG orders them.
+///
+/// `[Unreleased]` is deliberately excluded: it is not a release, and including
+/// it would make the chain checks below expect a version no document can name.
+fn changelog_released_versions() -> Vec<String> {
+    let changelog = read("CHANGELOG.md");
+    let mut out = Vec::new();
+    for line in changelog.lines() {
+        let Some(rest) = line.strip_prefix("## [") else {
+            continue;
+        };
+        let Some(close) = rest.find(']') else {
+            continue;
+        };
+        let v = &rest[..close];
+        if parse_version_prefix(v).is_some_and(|p| p == v) {
+            out.push(v.to_owned());
+        }
+    }
+    assert!(
+        out.len() >= 2,
+        "CHANGELOG.md yielded {} released version header(s); the chain checks \
+         need at least two. Either the `## [X.Y.Z]` shape changed or this parse \
+         is now inert.",
+        out.len()
+    );
+    out
+}
+
+/// Every document that carries a release claim, DERIVED from [`ANCHORS`].
+///
+/// Not a second hand-written list. The first version of this check listed six
+/// documents by hand and was wrong on its first use: the v2.6.10 drift reached
+/// **eight**, and `SUPPORT.md` and `SECURITY.md` were not on it. A hand list
+/// silently OMITS exactly as a glob silently widens, and `ANCHORS` is already
+/// this file's single answer to "where does a release claim live" -- the bump
+/// script reads the same table for the same reason.
+fn chain_docs() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for a in ANCHORS {
+        if !out.contains(&a.path) {
+            out.push(a.path);
+        }
+    }
+    out
+}
+
+/// A release-line chain must not SKIP a release.
+///
+/// This is the drift the rest of this file cannot see, and it went out in
+/// **six documents at once** at the v2.6.10 cut. The bump rewrote the version
+/// token and left the summary prose that followed it, so every lead read
+/// `v2.6.10 "Inference" -- <v2.6.9's summary> ... Built on **v2.6.8`. Two wrong
+/// claims from one edit: v2.6.10 described as the previous release's work, and
+/// v2.6.9 gone from the lineage entirely.
+///
+/// Every anchor check above passed, correctly -- each one pins the version
+/// TOKEN, and the token was right. What is mechanically checkable is the
+/// SEQUENCE: the first release a chain names after the current one must be the
+/// release immediately before it in the CHANGELOG. Prose cannot be audited;
+/// an ordering can.
+#[test]
+fn a_release_line_chain_does_not_skip_a_release() {
+    // A chain link is written TWO ways in this corpus, and a marker that knows
+    // only one reports a false failure on the other. `bump_release.py` demotes
+    // a "bare"/"dash" anchor as `Built on **vX.Y.Z` and a "paren" one as
+    // `..., on **vX.Y.Z` -- 22 occurrences of the second form in `AGENTS.md`
+    // alone. Both are accepted; anything else spelling `on **v` is not.
+    const MARKER: &str = "on **v";
+    const LEAD_INS: [&str; 2] = ["Built ", ", "];
+
+    let released = changelog_released_versions();
+    let version = workspace_package_field("version");
+    let current = version_core(&version).to_owned();
+
+    // The chain's first `Built on` must name whichever release precedes the
+    // workspace version. Derived from the CHANGELOG rather than written down,
+    // because a literal is how two other gates in this project went stale.
+    let idx = released
+        .iter()
+        .position(|v| *v == current)
+        .unwrap_or_else(|| {
+            panic!(
+                "CHANGELOG.md has no `## [{current}]` section, so the previous \
+                 release cannot be derived. Newest headers found: {:?}",
+                released.iter().take(3).collect::<Vec<_>>()
+            )
+        });
+    let previous = released.get(idx + 1).unwrap_or_else(|| {
+        panic!("`{current}` is the oldest release in CHANGELOG.md; a chain cannot be checked")
+    });
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    let mut docs_with_chains = 0usize;
+
+    for doc in chain_docs() {
+        let text = read(doc);
+        // Each chain in the document, not merely the first: `ROADMAP.md` carries
+        // two, and the v2.6.10 drift reached BOTH. Checking one would have
+        // reported the file fixed while half of it still skipped v2.6.9.
+        let mut from = 0usize;
+        let mut chains = 0usize;
+        while let Some(i) = text[from..].find(MARKER) {
+            let start = from + i;
+            let at = start + MARKER.len();
+            // Only a real chain link, not any prose that happens to read
+            // "... on **v2.5.0 was ...". Checked on the text BEFORE the marker
+            // so the two spellings share one parse.
+            if !LEAD_INS.iter().any(|lead| text[..start].ends_with(lead)) {
+                from = at;
+                continue;
+            }
+            let Some(found) = parse_version_prefix(&text[at..]) else {
+                // Not a version after all -- prose, not a chain link.
+                from = at;
+                continue;
+            };
+            // Only the FIRST link of each chain is a claim about ordering. The
+            // rest are history and are allowed to abbreviate.
+            if found == *previous {
+                checked += 1;
+            } else if chains == 0 || found > *previous {
+                // A first link naming something OTHER than the previous release
+                // is the defect. `found > previous` catches a second chain in
+                // the same file whose head is also too new.
+                wrong.push(format!(
+                    "  {doc} -- a chain's first link names v{found}, but \
+                     v{previous} is the release before v{current}"
+                ));
+            }
+            chains += 1;
+            from = at + found.len();
+            // One verdict per chain: skip to the next lead rather than walking
+            // the whole tail, which is prior history and not this test's subject.
+            if let Some(next) = text[from..].find("Current release") {
+                from += next;
+            } else {
+                break;
+            }
+        }
+        // A document with no chain is legitimate -- several anchors state a
+        // version and nothing else. The corpus-level `checked > 0` below is
+        // what keeps this from going inert.
+        docs_with_chains += usize::from(chains > 0);
+    }
+
+    assert!(
+        docs_with_chains > 0 && checked > 0,
+        "{docs_with_chains} anchored document(s) carry a `{MARKER}` chain and \
+         {checked} named v{previous} as the release before v{current}. Fail-closed: \
+         a corpus where nothing matches would otherwise pass while checking nothing."
+    );
+    assert!(
+        wrong.is_empty(),
+        "{} release-line chain(s) SKIP a release (workspace = {version}, previous = \
+         {previous}):\n{}\n\n\
+         A version bump that rewrites the token and leaves the summary produces \
+         exactly this: the new release wears the old one's description, and the \
+         old one vanishes from the lineage. Insert `Built on **v{previous} \
+         \"<codename>\"** -- <its summary>.` ahead of the existing chain.",
+        wrong.len(),
+        wrong.join("\n")
+    );
+}
+
+/// A codename quoted NEAR the current version, past a date or a dash, must
+/// still be the CHANGELOG's codename.
+///
+/// [`skip_to_codename`] trims only spaces and asterisks, which is deliberate --
+/// it lets `**v2.3.9** (2026-08-20)` take the legitimate "states a version
+/// only" path. `docs/STATUS.md` then grew a codename on the far side of exactly
+/// that punctuation: `v2.6.10** (2026-08-31) — **"Abeyance"**`, v2.6.9's
+/// codename under v2.6.10's number, with every existing check passing. The
+/// document moved out from under the scan rather than the scan being wrong, so
+/// this is a second check rather than a loosening of the first.
+#[test]
+fn a_codename_near_the_current_version_is_the_changelog_codename() {
+    // Wide enough for ` (2026-09-01) — **"` and no wider. A larger window would
+    // reach the NEXT release's codename in a chain and report a false failure.
+    const WINDOW: usize = 40;
+
+    let version = workspace_package_field("version");
+    let current = version_core(&version).to_owned();
+    let expected = codename_of(&changelog_header(&version));
+    let token = format!("v{current}");
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+
+    for doc in chain_docs() {
+        let text = read(doc);
+        for (idx, _) in text.match_indices(&token) {
+            // Require a token boundary, so `v2.6.1` does not match inside
+            // `v2.6.10` -- the same trap `the_version_scan_requires_a_token_boundary`
+            // pins for the reverse scan.
+            let after = &text[idx + token.len()..];
+            if after.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
+                continue;
+            }
+            if text[..idx]
+                .chars()
+                .next_back()
+                .is_some_and(|p| p.is_alphanumeric() || p == '_')
+            {
+                continue;
+            }
+            let win: String = after.chars().take(WINDOW).collect();
+            let Some(open) = win.find('"') else { continue };
+            // The gap between a version and its codename is punctuation and a
+            // date -- ` "`, or `** (2026-09-01) -- **"`. It never contains a
+            // LETTER. `README.md`'s version badge does: the URL continues
+            // `-blue.svg" alt="Version"`, so the nearest quote is an attribute
+            // delimiter and the codename it yields is ` alt=`. Caught by this
+            // check's own first run, before it shipped -- and the narrower rule
+            // tried first, rejecting `=<>/`, did NOT catch it, because the
+            // offending gap holds none of them.
+            if win[..open].contains(|c: char| c.is_ascii_alphabetic()) {
+                continue;
+            }
+            let rest = &win[open + 1..];
+            // An opening quote that never closes, or closes on nothing, is
+            // MALFORMED -- not "this site states a version only". Continuing
+            // here would let another site keep `checked > 0` while a broken
+            // current-release claim passed, which is the fail-OPEN this file's
+            // older codename check already panics on for exactly this shape.
+            // Reported rather than skipped. (CodeRabbit on #489.)
+            //
+            // The window is bounded, so an unterminated quote can also mean the
+            // closing one simply falls outside it. That is still a malformed
+            // release claim by this check's own definition of the shape, and
+            // the message says which it is rather than guessing.
+            let Some(close) = rest.find('"') else {
+                wrong.push(format!(
+                    "  {doc} -- v{current} opens a codename that does not close                      within {WINDOW} characters: {rest:?}"
+                ));
+                checked += 1;
+                continue;
+            };
+            let name = &rest[..close];
+            if name.is_empty() {
+                wrong.push(format!(
+                    "  {doc} -- v{current} is followed by an EMPTY codename \"\",                      CHANGELOG says \"{expected}\""
+                ));
+                checked += 1;
+                continue;
+            }
+            checked += 1;
+            if name != expected {
+                wrong.push(format!(
+                    "  {doc} -- v{current} is followed by \"{name}\", CHANGELOG says \"{expected}\""
+                ));
+            }
+        }
+    }
+
+    assert!(
+        checked > 0,
+        "no document quotes a codename within {WINDOW} characters of v{current}. \
+         Fail-closed: teach this check the new shape rather than leaving it \
+         asserting nothing."
+    );
+    assert!(
+        wrong.is_empty(),
+        "{} site(s) name v{current} beside the wrong codename:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
+}
