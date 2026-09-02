@@ -173,6 +173,12 @@ layer that turns that RTL into a bitstream was never told.
   also diagnoses itself now, printing every distinct message code in the capture
   when it fires.
 
+- **`check_pins.py` carries a `--self-test` and its verdict is not trusted
+  without one**, mirroring `check_timing.py`. Six fixtures -- both Verilator
+  message formats and all four failure modes -- with the judging logic
+  EXTRACTED so the self-test drives the real implementation rather than a copy
+  of it. Reintroducing either real defect fails it, each on the 5.020 fixture.
+
 - **`scripts/release-rbf.sh` now feeds `check_warnings.py` both reports.**
   Recorded as what it is: today the two invocations give the **identical**
   answer, because all three warnings appear in the map report and the Fitter
