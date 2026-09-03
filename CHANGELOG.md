@@ -117,33 +117,42 @@ cycle-accurate core later replaced.
 
 ### Changed
 
-- **The CHR fetch budget was never 16 cycles, and that is the release's real
-  finding.** The whole SDRAM effort was measured against one dot of lead -- a
-  number read off the fetch structure, written down as conservative, flagged as
-  unverified, and then used as though it had been measured. `nes_top` now takes a
-  `CHR_LAT` parameter that pipelines the CHR byte, zero by default and the
-  identity there; raising it until the co-simulation gates fail asks the console
-  directly how late the byte may be. Both framebuffer gates give the same answer:
-  61,440 pixels match at 0 through 6 extra master clocks and break at 7. The byte
-  may arrive **seven master clocks after the address -- 28 SDRAM cycles**. The
-  ladder was the oracle for that question the whole time; asking it took one
-  parameter.
-- **Three combinational shortcuts are reverted, having been bought against that
-  wrong number.** The bridge's CHR request, its return bypass and the arbiter's
-  grant were all combinational to save cycles that were never scarce, and each
-  cost real timing: with the bridge merely BUILT and unused its address compare
-  reached the arbiter's grant and cost 0.176 ns of setup. All three are
-  registered, and the whole path now measures **17 cycles against a measured 24**.
-- **The cartridge ships off the die.** `emu.sv` serves it from SDRAM at 512 KiB
-  PRG and 256 KiB CHR: block memory **3,680,717 bits to 534,989**, RAM blocks
-  **468 to 84**, and timing closes with *better* margin than on-die (**+0.471 ns
-  setup / +0.119 ns hold** against +0.081 / +0.074), because 384 M10K blocks left
-  the design and the fitter got its room back.
-- **And the console cannot tell.** Built `USE_SDRAM=1`, the co-simulation harness
-  runs the same gates against a cartridge answering from a behavioural part
-  through the real controller and arbiter: three framebuffers byte-identical over
-  all 61,440 pixels each, and a 200,000-cycle nestest bus trace **byte-identical
-  to the on-die build's** -- not merely both correct, but indistinguishable.
+- **The CHR fetch budget is PER-CONSUMER, and that is the release's real
+  finding.** The whole SDRAM effort was measured against one dot of lead -- 16
+  cycles -- a number read off the fetch structure, written down as conservative,
+  flagged as unverified, and then used as though it had been measured. `nes_top`
+  now takes a `CHR_LAT` parameter that pipelines the CHR byte, zero by default and
+  the identity there; raising it until a co-simulation gate fails asks the console
+  directly. The answer is not one number:
+
+  | consumer | extra clocks | total lead | budget |
+  |---|---|---|---|
+  | background and sprite fetch | 6 | 7 clocks | 28 cycles |
+  | **the `$2007` data port** | **1** | **2 clocks** | **8 cycles** |
+
+  Both framebuffer gates agree to the pixel, matching at 0 through 6 and breaking
+  at 7. `ppu-misc-2007-stress` passes at 0 and 1 and returns **Fail(test 2)** at
+  2. The binding consumer is the one that tolerates least, so the budget is
+  **eight**, not 28 and not 16.
+- **Three combinational shortcuts are reverted**, having been bought against the
+  wrong number: the bridge's CHR request, its return bypass and the arbiter's
+  grant. Each cost real timing -- with the bridge merely BUILT and unused its
+  address compare reached the arbiter's grant and cost 0.176 ns of setup. All
+  three are registered, and the whole path measures 17 cycles.
+- **The cartridge is not served from SDRAM, and everything for it works.**
+  Configured off-die at 512 KiB PRG and 256 KiB CHR it compiles with 0 errors,
+  takes block memory **3,680,717 bits to 534,989** and RAM blocks **468 to 84**,
+  and closes timing with *better* margin than on-die (**+0.471 ns setup** against
+  +0.081) because 384 M10K blocks leave the design. The console is otherwise
+  indistinguishable: three framebuffers byte-identical over 61,440 pixels each and
+  a 200,000-cycle nestest bus trace **byte-identical to the on-die build's**.
+  **The full ladder is 141 of 142** -- the one failure is `ppu-misc-2007-stress`,
+  and the `CHR_LAT` sweep reproduces it exactly. Four of that port's eight cycles
+  go to the console-domain crossing and the fastest possible hit is six, so it
+  does not fit and no arrangement of this memory system makes it fit. Serving the
+  cartridge off the die needs the `$2007` machine given more lead, which is a
+  change to the pipeline rungs 3 and 5 verify. `tb/cart_sdram_main.cpp` asserts
+  the shortfall, so the day it closes the gate says so.
 - **The console-domain crossing is not optional.** Publishing the flat address
   combinationally carries the mapper banking -- including a runtime modulo -- into
   an 11.64 ns domain, and Quartus misses setup by **-24.769 ns**, TNS -6,615 ns,
