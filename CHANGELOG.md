@@ -67,6 +67,23 @@ cycle-accurate core later replaced.
   because any ergonomic remap is a claim about how a pad feels in the hand, and
   no hardware here has one attached.
 
+- **The cartridge can leave the die, and the measurement says what it costs.**
+  `cart.sv` takes a `USE_SDRAM` parameter -- the banking is identical either way,
+  so a mapper verified against M10K is the same mapper on SDRAM, and what changes
+  is only where the byte at a flat address is found. `rtl/cart_sdram.sv` bridges
+  the console domain to the SDRAM one, and `make -C tb cart-sdram-gate` drives the
+  whole path -- bridge, arbiter, controller, behavioural part -- at the console's
+  real fetch rate: **14 cycles against a dot of 16**, with hits and misses, and
+  the margin asserted. Configured off-die at 512 KiB PRG and 256 KiB CHR it
+  compiles and takes block memory from **3,680,717 bits to 534,989**, RAM blocks
+  from 468 to 84.
+- **The open row.** Accesses no longer auto-precharge; a row is opened and left
+  open, closed only when a request needs a different row of the same bank or
+  before a refresh. A hit costs **6 cycles against 10** for a miss, and the worst
+  fetch latency went from exactly the deadline to **14 against 16**. Rows are
+  closed EARLY, in idle cycles, because leaving them open makes the refresh itself
+  more expensive -- measured, at 19 cycles, before that was added.
+
 ### Fixed
 
 - **The CAS latency that shipped was not the one anything tested.**
@@ -100,6 +117,27 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **The console still runs the cartridge on the die, and that is the release's
+  real finding.** The off-die build works and does what it was for, and it misses
+  timing by a mile: **worst setup -24.769 ns on the SDRAM clock, TNS -6,615 ns**,
+  thousands of paths. The failing path names the cause -- `ppu2c02|scanline[6]` to
+  `sdram_inst|sdram_dq_out[11]` -- a console-domain register driving an
+  SDRAM-domain one through the whole mapper banking chain, which contains a
+  runtime modulo. Logic written for a 46.6 ns period, asked to settle in 11.64 ns.
+  A multicycle constraint is the obvious answer and is *not safe*: the arithmetic
+  is right but the controller samples its request every cycle, so it would be
+  permission to act on a half-settled address. Registering the published port in
+  the console domain is the correct fix and was worth **-24.769 to -0.176 ns** --
+  and it costs four SDRAM cycles of the sixteen a fetch has, leaving twelve
+  against a measured need of fourteen. **The crossing is affordable; the LEAD is
+  not.** Serving CHR from SDRAM needs the address more than one dot ahead, which
+  the PPU can supply -- its fetch schedule is deterministic eight dots out -- but
+  that changes the pipeline rungs 3 and 5 verify, and it is not done silently at
+  the end of a release.
+- **Dead logic is free only in the source.** The last 0.176 ns of that violation
+  was the bridge, instantiated and unused, whose deliberately combinational
+  address compare still reached the arbiter's grant. It is now behind the same
+  switch as the rest of the off-die path: not merely unread, not instantiated.
 - **`AUDIO_MIX` was planned, and is DECLINED on measurement.** The framework's
   `mix` blends the left and right channels into each other, and this core
   assigns `AUDIO_L` and `AUDIO_R` from the same wire -- it is mono by
