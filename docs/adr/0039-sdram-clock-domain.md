@@ -101,10 +101,16 @@ fetch phase directly, which is the cleanest solution to scheduling CPU accesses
 and refreshes around CHR fetches.
 
 **Rejected, and the reason is measured rather than argued: the console cannot run
-that fast.** Its Fmax is **36.19 MHz** (Slow -40C, `docs/rung6-integration.md`,
-current timing report). The master clock needs 21.477272 MHz, so there is 1.69x
-of headroom -- and 85.909088 MHz would require the console logic to be **2.37x
-faster than it is**.
+that fast.** Its Fmax at the **binding corner (Slow -40C) is 29.83 MHz**. The
+master clock needs 21.477272 MHz, so there is 1.39x of headroom -- and
+85.909088 MHz would require the console logic to be **2.88x faster than it is**.
+
+*(A first draft of this ADR cited 36.19 MHz, which is the **Slow 100C** figure
+`docs/rung6-integration.md` quotes as "the conventional panel". v2.6.7
+established that Slow 100C is NOT the binding corner on this design and that a
+gate reading it reported roughly three times the real margin. The same mistake,
+in a document written two releases later. The conclusion is unchanged -- 2.88x
+rather than 2.37x -- which is exactly why it was easy to make.)*
 
 That is not a tuning gap. It is the difference between a design that closes with
 +19.045 ns of setup slack on its own clock and one whose every path would have to
