@@ -26,6 +26,102 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **An SDR SDRAM controller, a behavioural part model, and a three-way
+  arbiter** in the sibling repository (`rtl/sdram.sv`, `rtl/sdram_arbiter.sv`,
+  `tb/sdram_model.sv`), written from the AS4C32M16SB-7 datasheet revision 1.4.
+  No third-party controller was read; ADR 0037 applies. The console does not use
+  them yet -- the cartridge still answers from M10K -- but `rtl/emu.sv`
+  instantiates both so they have a real driver and a real consumer. Two gates,
+  `make -C tb sdram-gate` (three clock periods) and `make -C tb sdram-arb-gate`.
+- **A request-contract check** in `tb/sdram_arb_tb.sv`: once the controller's
+  `req` is asserted it must stay asserted, with every field unchanged, until
+  `ack`. It replaces a latched column register that was measured redundant, and
+  both of its clauses are demonstrated to fire.
+- **A concurrent-requester phase** in the arbiter gate -- CHR, PRG and a loader
+  write in flight together -- deliberately kept out of the latency measurement,
+  because the loader runs before the console and folding writes into that
+  traffic would let a fetch queue behind two accesses.
+- **`sdram_sz` is consumed, validity bit first** (`rtl/sdram_presence.sv`,
+  T-MISTER-SDRAM-SZ). The word powers up as `0x0000`, and "the HPS has not
+  answered yet" is a different fact from "there is no board" -- a core that
+  reads only `[1:0]` announces an absent add-on on a machine that has one, every
+  time, until the HPS replies. So `absent` is deliberately **not** `!present`:
+  both are false while the answer is unknown, and the arbiter's `ready` is gated
+  on `usable`, so no access is ever granted against memory nothing has confirmed
+  exists. The gate is **exhaustive** -- all 65,536 values against an independent
+  model, since a sampled test of a pure function that small tests less for no
+  saving -- and six mutations are CAUGHT, including the ticket's own defect.
+- **`status_menumask` is computed rather than tied off** (`rtl/osd_menumask.sv`,
+  T-MISTER-MENUMASK). The Reset entry is greyed out whenever the console is
+  already held in reset -- no cartridge, or a mapper this core cannot decode --
+  because a menu entry that does nothing when selected reads as a working
+  feature. The ticket was filed as rung 6 on the grounds that "OSD behaviour is
+  verifiable only by looking at an OSD", and that conflated two things: **the
+  mask is a value this core computes**, and a gate asserts it with no display
+  attached. Only whether the greyed entry *looks* right still needs eyes. Four
+  mutations CAUGHT, including the `D`-prefix polarity, which was looked up
+  rather than guessed.
+- **A default gamepad mapping** (`jn,A,B,Select,Start`), name-identical --
+  because any ergonomic remap is a claim about how a pad feels in the hand, and
+  no hardware here has one attached.
+
+### Fixed
+
+- **The CAS latency that shipped was not the one anything tested.**
+  `rtl/sdram.sv` defaulted to 3 and `rtl/emu.sv` took that default, while the
+  protocol testbench pinned 3 and the arbiter testbench pinned 2 -- neither
+  pinned the shipped value, and the shipped value **misses the PPU's fetch
+  deadline**: 17 cycles against a budget of 16, where CL2 makes it at exactly 16.
+  Table 16 gives the -7 part tCK = 10 ns at CL2 and 7 ns at CL3, so at this
+  design's 11.64 ns both are legal and CL3 was simply the slower of two correct
+  choices, picked as "conservative" before anything measured what a cycle was
+  worth. CAS latency is now **derived from the clock period** and cannot be
+  shadowed; both overrides are deleted, and the protocol gate gains an 8000 ps
+  period -- below tCK(CL2) -- so CL3 stays covered without a testbench choosing
+  it.
+- **A request may not be a pulse.** The arbiter drove `req` for a single cycle to
+  save the cycle that registering the grant costs. The controller samples `req`
+  in `S_IDLE` and is not always there -- a refresh takes it away -- so a request
+  pulsed during one is lost, not deferred. The gate's first honest run failed on
+  the loader's very first write. The grant stays combinational, because that
+  cycle is the difference between 17 and 16; the request is now held until `ack`.
+- **The same value computed in two places, and the copy that wins is the one a
+  mutation does not touch.** The arbiter computed the granted access's address,
+  write-enable, data and mask combinationally for the grant cycle and again in
+  the `always_ff` that captured them. The controller consumes the *registered*
+  copy almost always, because on the grant cycle it is usually mid-refresh or in
+  recovery -- so a DQM mutation came back NOT CAUGHT with the unmutated mask
+  arriving at the part. Collapsed to one expression.
+- **`rtl/sdram_arbiter.sv` was missing from `files.qip`**, caught by the
+  `check_qip` gate added last release for exactly this -- the same defect, one
+  release later, in the same subsystem.
+
+### Changed
+
+- **`AUDIO_MIX` was planned, and is DECLINED on measurement.** The framework's
+  `mix` blends the left and right channels into each other, and this core
+  assigns `AUDIO_L` and `AUDIO_R` from the same wire -- it is mono by
+  construction, so every blend setting is an identity. Adding the option would
+  have put an OSD entry on screen that does nothing when selected, which is the
+  `VGA_SL` defect v2.6.6 found, added deliberately this time. Recorded at the
+  tie-off with the reason.
+- **`LED_DISK` is correct as it stands, and was nearly "fixed".** `led_disk[1]`
+  is an *override* bit: with it clear the framework drives the LED from the
+  HPS's own disk activity, so zero means "show the framework's activity" and
+  asserting the override would suppress it in exchange for showing nothing. It
+  becomes ours to drive when the core has disk activity of its own, which is the
+  battery-save path.
+- **An elaboration-time `$error` is forbidden in synthesisable RTL.** A
+  parameter range check written as a guarded `$error` at module scope is legal
+  SystemVerilog, is accepted by Verilator, linted clean and passed all three
+  protocol-gate periods -- and Quartus 17.0.2 fails to *parse* it, reporting the
+  guard rather than the construct, leaving the design unbuildable. The check
+  moved to the part model, where a `$fatal` is already the idiom, and
+  `tb/check_rtl_subset.py` now refuses the construct; the rule is demonstrated to
+  fire on it and demonstrated not to fire on the model's legitimate `$fatal`.
+
 ## [2.6.12] - 2026-09-02 - "Groundwork" (the bitstream was an NROM-only console)
 
 Rung 7 landed five mapper families and 142 co-simulation gates verify them. The
