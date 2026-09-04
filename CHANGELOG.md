@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.14] - 2026-09-03 - "Docket" (the submission checklist becomes auditable)
+
 ### Added
 
 - **Every box in the MiSTer contribution checklist now carries a verdict, and a
@@ -49,6 +51,26 @@ cycle-accurate core later replaced.
   load-bearing -- the verdict markers do not sit on an item's first line.
 
 ### Fixed
+
+- **The bitstream is byte-identical to v2.6.13's**, `2c2fa6eb0f751b2c9b60fcf903f2bf3f`,
+  which is the point rather than a coincidence: the only sibling change this
+  release makes is a **comment** in `RustyNES.sdc`, and an identical `.rbf`
+  demonstrates it. That is a stronger reproducibility statement than v2.6.7's,
+  which compared a clean and an incremental compile of the **same** sources;
+  here the sources differ and the output does not. Timing is unchanged at the
+  binding corner — worst setup **+0.317 ns**, worst hold **+0.068 ns**, both
+  Slow 1100mV -40C — with 0 errors and the warning set matching the manifest
+  exactly.
+
+  Two of those checks were briefly misread as findings, and the mistake is
+  worth the line it costs: `Quartus Prime Shell was successful` is emitted **per
+  sub-flow**, so it is not a completion test. Read as one, it made a
+  still-running compile look finished, which put a v2.6.13 artifact under a
+  v2.6.14 label — and `check_timing`'s staleness guard is what refused it, by
+  noticing the report predated thirteen sources. `check_warnings` reported a
+  pinned warning "no longer emitted" for the same reason: the Fitter had not yet
+  written it. Both gates were right; the reading was not. The completion test is
+  the footer or the wrapper's exit status.
 
 - **The task board had the same defect, and one row worse.**
   `to-dos/mister/TASKS.md` tracks the programme against itself, and **four
@@ -129,6 +151,28 @@ cycle-accurate core later replaced.
   has no effect until submission. The fix is one line, and it is not taken here:
   version-naming is a maintainer decision of 2026-08-30 with a stated rationale,
   and reversing it is not an audit's call.
+
+- **`bump_release.py` dropped the previous release from two chains again**, in
+  exactly the same two places as at v2.6.13 — `ROADMAP.md`'s "Built on" line and
+  `to-dos/ROADMAP.md`'s release-line chain. Twice in consecutive releases makes
+  it a script defect rather than an incident: the tool swaps the version token
+  and leaves the chain, so the new release wears the old one's description and
+  the old one vanishes from the lineage.
+
+  **It is not fixed here, and the reason is that the gate makes deferring it
+  safe**: `release_anchor_audit` catches both every time, by name and by file,
+  and did so again before either reached a commit. Shape one is mechanically
+  fixable — inserting `**vPREV "CODENAME"** and` after the "Built on" prefix needs only
+  what the script already knows. Shape two is not: appending a chain entry needs
+  a written summary, which is why it is manual, and the honest improvement there
+  is to **refuse** rather than silently swap. Recorded with the evidence so the
+  next version starts from a measurement.
+
+  A third repair was needed for a different reason, and it is the gate's own
+  documented trap: the audit finds the last version token before "the current
+  release", and the new chain entry mentioned the *previous* version twice near
+  its tail — so the label appeared to belong to v2.6.13. Reworded to name it
+  once, at the front.
 
 - **A claim v2.6.13 shipped, retracted.** Answering a review finding that "a
   five-mapper core" did not say which five, I wrote that the five were NROM,

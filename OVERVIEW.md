@@ -2,7 +2,7 @@
 
 **Document Version:** 2.1.0
 **Last Updated:** 2026-08-31
-**Applies to:** RustyNES v2.6.13
+**Applies to:** RustyNES v2.6.14
 
 ---
 
@@ -22,9 +22,9 @@
 
 RustyNES is the **definitive NES emulator for the modern era** — combining cycle-perfect accuracy with a complete contemporary feature set and the safety guarantees of Rust. It is more than an emulator: it is a platform for NES preservation, competitive online play, tool-assisted speedrunning, and homebrew development.
 
-As of **v1.0.0**, that vision was realized: RustyNES clears the Mesen2 / higan / ares accuracy bar, ships a polished desktop application and a browser build, and supports the full platform surface — netplay, achievements, TAS movies, a debugger, FDS, and arcade (Vs. / PlayChoice-10) hardware. Since then the additive v1.x line added three more platforms (native Android, iOS / iPadOS, and a Libretro / RetroArch core), **v2.0.0 "Timebase"** replaced the scheduler substrate with the one-clock / every-cycle-bus-access model (ADR 0029 — the one deliberate breaking release), and the v2.1.x → v2.3.x lines deepened accuracy, presentation, and analysis tooling. The current release is **v2.6.13 "Slack"**. The never-tagged v2.4.0 "Concordance" shipped inside **v2.4.1 "Fabric"** — this sentence had attached that fact to whichever release was current, carried forward by three mechanical version bumps, and said it of v2.4.2, v2.4.3 and v2.4.4 in turn.
+As of **v1.0.0**, that vision was realized: RustyNES clears the Mesen2 / higan / ares accuracy bar, ships a polished desktop application and a browser build, and supports the full platform surface — netplay, achievements, TAS movies, a debugger, FDS, and arcade (Vs. / PlayChoice-10) hardware. Since then the additive v1.x line added three more platforms (native Android, iOS / iPadOS, and a Libretro / RetroArch core), **v2.0.0 "Timebase"** replaced the scheduler substrate with the one-clock / every-cycle-bus-access model (ADR 0029 — the one deliberate breaking release), and the v2.1.x → v2.3.x lines deepened accuracy, presentation, and analysis tooling. The current release is **v2.6.14 "Docket"**. The never-tagged v2.4.0 "Concordance" shipped inside **v2.4.1 "Fabric"** — this sentence had attached that fact to whichever release was current, carried forward by three mechanical version bumps, and said it of v2.4.2, v2.4.3 and v2.4.4 in turn.
 
-> RustyNES's emulation core descends from an extensively-documented accuracy program. Where this and related docs reference deep "v1.x"/"v2.x" engine narrative, read it as upstream engine lineage (engineering history), not as RustyNES release versions. Two distinct "v2.0"s exist and must not be conflated: the engine-lineage v2.0 master-clock work shipped as RustyNES **v1.0.0**, while RustyNES's own **v2.0.0 "Timebase"** (2026-07-03) is the later release that *replaced* that same scheduler. The current release is **v2.6.13**.
+> RustyNES's emulation core descends from an extensively-documented accuracy program. Where this and related docs reference deep "v1.x"/"v2.x" engine narrative, read it as upstream engine lineage (engineering history), not as RustyNES release versions. Two distinct "v2.0"s exist and must not be conflated: the engine-lineage v2.0 master-clock work shipped as RustyNES **v1.0.0**, while RustyNES's own **v2.0.0 "Timebase"** (2026-07-03) is the later release that *replaced* that same scheduler. The current release is **v2.6.14**.
 
 ---
 
