@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.13] - 2026-09-03 - "Slack" (the cartridge outgrows the die, and three consumers want the same bus)
+
 ### Added
 
 - **An SDR SDRAM controller, a behavioural part model, and a three-way
@@ -111,6 +113,81 @@ cycle-accurate core later replaced.
   copy almost always, because on the grant cycle it is usually mid-refresh or in
   recovery -- so a DQM mutation came back NOT CAUGHT with the unmutated mask
   arriving at the part. Collapsed to one expression.
+- **The `$2007` port asked for the RAW address, so every banked-CHR board read
+  BANK ZERO.** The handshake carried `chr_addr` -- the fourteen bits the PPU
+  presents -- and the bridge added the CHR region base to it. For NROM that is
+  right by coincidence, because the mapper's translation is the identity there,
+  which is why `ppu-misc-2007-stress` passed off-die throughout and why the
+  defect shipped inside the same change that fixed the port's latency. The two
+  CNROM gates could see it and did: the oracle reads `$01`, `$01`, `$02` from
+  `$2007` at cycles 61, 85 and 89, and the DUT read `$00` every time.
+
+  **The fix removes the address rather than correcting it.** `cart.sv` already
+  publishes `chr_flat`, the mapper's translation, for the fetch path; the
+  `$2007` request now carries no address at all and the bridge takes that same
+  value, so there is one source of truth for where CHR lives instead of two that
+  agree only on NROM. It is captured six cycles after the request rather than on
+  its edge, because that translation is registered on the CONSOLE clock -- a
+  quarter the rate of the SDRAM one -- so on the edge it still holds the previous
+  dot's fetch address.
+
+- **A ONE-CYCLE margin, found by nearly deleting the thing that provided it.**
+  The `$2007` request is held twice: six cycles for the address, and then until
+  the cycle after the CPU's own PRG read is answered -- the widest gap a CPU
+  cycle has, affordable because this port's byte is not read for thousands of
+  cycles. The second wait was built for the PRG mismatch that accompanied the
+  wrong buffer byte, and once the address was fixed a control that issued at a
+  flat **+7** with no deferral passed both CNROM gates, which read as the
+  deferral buying nothing. It was removed. The deployed code then issued at
+  **+6**, and both gates FAILED again -- `cart PRG disagrees at $C015`.
+
+  **The control and the code differed by one cycle**, and that is the finding:
+  the CPU's deadline off the die is thin enough that a single cycle of another
+  requester's placement decides it. Choosing +7 because it happens to pass would
+  be fitting a constant to a gate; waiting for the CPU's own completion is a
+  reason, so the deferral stays and the measurement is recorded beside it. It is
+  also the concrete argument for scheduling the bus rather than arbitrating it.
+
+- **The bitstream is `releases/RustyNES_MiSTer-v2.6.13.rbf`**, md5
+  `2c2fa6eb0f751b2c9b60fcf903f2bf3f`, built by Quartus Prime Lite 17.0.2 on a
+  5CSEBA6U23I7 at fitter seed 3: **0 errors**, a warning set matching the pinned
+  manifest exactly, and timing closed at all four corners -- worst setup
+  **+0.317 ns** and worst hold **+0.068 ns**, both at Slow 1100mV -40C, which is
+  the binding corner and is discovered by pattern rather than assumed. It
+  supersedes v2.6.12's only by being newer; no defect is known in that one.
+
+- **The harness could run one configuration's binary under the other's name.**
+  `USE_SDRAM` reaches Verilator as a `-G` parameter rather than as a file, so
+  switching it changes what the binary IS while leaving every prerequisite older
+  than the target. Make then reports the target up to date and the next suite
+  runs the previous configuration's build. It happened: an off-die ladder
+  followed by an on-die one, with nothing edited between them, produced two logs
+  from **one binary** built at 14:36, and the second was labelled on-die while
+  being the off-die build. It reproduced the off-die failures exactly, which is
+  what made it convincing -- and what made it nearly pass as a real result.
+  Earlier pairs escaped only by accident, because an RTL edit between them made
+  the sources newer.
+
+  The build now takes a stamp file named for the value as a prerequisite, so
+  switching removes the existing stamp and creates a missing one, which is newer
+  than the target and forces the rebuild. Demonstrated by mutation: with the
+  prerequisite removed a switch schedules **zero** rebuilds, with it, one.
+
+- **Two inferred LATCHES, in a module that has none and cannot have any.**
+  `ppu2c02.sv`'s `$2007` handshake assigns `pd_rd_addr` and `pd_fill_pend` only
+  under `BUFFER_HANDSHAKE`, so in the shipped on-die build -- where that
+  parameter is false -- the only assignment either of them reached was the reset
+  branch. A variable that holds its previous value on every live path is a
+  latch, and Quartus said so twice (warning 10240, both naming the same
+  `always_ff`). **Verilator cannot see this**: it elaborates the same dead
+  branches and has no opinion about what they become in gates, so the lint gate
+  was green throughout. `pd_rd_req` escaped only because its clear is
+  unconditional, which is the shape the other two now have. The comment beside
+  them asserted the defect as a virtue -- "outside BUFFER_HANDSHAKE neither
+  signal ever moves" -- which is true, and is exactly the condition that infers
+  the latch. Both `tb/quartus_clean.py` and `tb/check_warnings.py` caught it
+  independently, the second by the warning SET rather than a count.
+
 - **`rtl/sdram_arbiter.sv` was missing from `files.qip`**, caught by the
   `check_qip` gate added last release for exactly this -- the same defect, one
   release later, in the same subsystem.
@@ -139,20 +216,51 @@ cycle-accurate core later replaced.
   grant. Each cost real timing -- with the bridge merely BUILT and unused its
   address compare reached the arbiter's grant and cost 0.176 ns of setup. All
   three are registered, and the whole path measures 17 cycles.
-- **The cartridge is not served from SDRAM, and everything for it works.**
+- **The cartridge passes the whole ladder off the die, and still ships on it.**
   Configured off-die at 512 KiB PRG and 256 KiB CHR it compiles with 0 errors,
   takes block memory **3,680,717 bits to 534,989** and RAM blocks **468 to 84**,
-  and closes timing with *better* margin than on-die (**+0.471 ns setup** against
-  +0.081) because 384 M10K blocks leave the design. The console is otherwise
-  indistinguishable: three framebuffers byte-identical over 61,440 pixels each and
-  a 200,000-cycle nestest bus trace **byte-identical to the on-die build's**.
-  **The full ladder is 141 of 142** -- the one failure is `ppu-misc-2007-stress`,
-  and the `CHR_LAT` sweep reproduces it exactly. Four of that port's eight cycles
-  go to the console-domain crossing and the fastest possible hit is six, so it
-  does not fit and no arrangement of this memory system makes it fit. Serving the
-  cartridge off the die needs the `$2007` machine given more lead, which is a
-  change to the pipeline rungs 3 and 5 verify. `tb/cart_sdram_main.cpp` asserts
-  the shortfall, so the day it closes the gate says so.
+  closes timing with *better* margin than the on-die build, and passes **142 of
+  142** co-simulation gates -- every gate the on-die console passes, against a
+  cartridge answering from a behavioural SDRAM part.
+
+  Three consumers want a cartridge byte and each was measured by pipelining it
+  until a gate failed: the background fetch has 28 cycles and uses 17; the
+  `$2007` port has 8, of which four are the console-domain crossing alone; the
+  CPU sampling at mc7 has 24 after that crossing, and a PRG read behind a CHR
+  fetch takes **28** under the arbiter gate's densest synthetic pattern. No gate
+  in the ladder reaches that pattern -- but the margin is one cycle wide, which
+  the deferral experiment measured directly, so the shortfall is a real property
+  of on-demand arbitration rather than an artefact of the stimulus. What removes
+  it is **scheduling rather than arbitration**: the console's access pattern is
+  deterministic, so each requester can have a guaranteed slot. That is a redesign
+  of the arbiter, not a tuning of it.
+
+  **The reason it is not the shipped configuration is none of the above.** An
+  off-die core cannot run at all without the SDRAM add-on, so shipping it would
+  make the core unusable on a bare DE10-Nano that the on-die build serves today,
+  in exchange for headroom nothing yet needs -- rung 7's five mapper families fit
+  on the die at 468 of 553 M10K blocks. The flip belongs to the release where a
+  board actually needs the space, and it will need a fallback for a missing one.
+- **The `$2007` data port gets its byte through a handshake, not over the bus**,
+  and that one is closed. It tolerates two master clocks where a fetch tolerates
+  seven, so half its budget is the crossing and it could never fit. `ppu2c02`
+  takes a `BUFFER_HANDSHAKE` parameter and asks through the arbiter's fourth
+  port, filling the read buffer when the byte arrives -- affordable because the
+  CPU does not read that buffer until its next `$2007` access. **The shared bus
+  is untouched**: `chr_addr` still carries the composed {v high, octal latch} at
+  t4, so the access still steals the bus from a fetch and corrupts it exactly as
+  the ALE and hybrid-address ROMs require. On the die the parameter is 0 and the
+  old path is byte-identical. `ppu-misc-2007-stress` passes off-die with all 512
+  stored results identical to the on-die run -- and that gate is the one that
+  could not see the defect below.
+- **Two clock-domain defects, and they are the same defect twice.** A signal
+  crossing the 4:1 boundary with the wrong shape, in each direction. `pd_rd_req`
+  is one DOT wide and the bridge took it as a level, re-strobing on all sixteen
+  SDRAM edges: **168 requests produced 43 fills**. `pd_valid` was one SDRAM clock
+  wide and the PPU samples on the console clock, invisible three times in four:
+  **five requests produced ONE fill**. Neither showed as a wrong number in a
+  trace -- both showed as the read buffer quietly keeping its previous value,
+  which is why counting found them and reading did not.
 - **The console-domain crossing is not optional.** Publishing the flat address
   combinationally carries the mapper banking -- including a runtime modulo -- into
   an 11.64 ns domain, and Quartus misses setup by **-24.769 ns**, TNS -6,615 ns,
