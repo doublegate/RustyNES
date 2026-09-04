@@ -46,8 +46,34 @@ Settled at **v2.6.6**, except the one item that needs a board.
       after the resource summary with no footer and **exit status 0**, which
       reads exactly like success. What holds instead is an attribution gate —
       `tb/quartus_clean.py` fails if any Warning or Error cites `rtl/` or `tb/`,
-      and it passes over a non-zero scan. Revisit if a reviewer asks for the
-      conventional file.
+      and it passes over a non-zero scan.
+
+      **REVISITED v2.6.15, before a reviewer asked, and it corrects one clause
+      of the reason above.** Two upstream sources disagree: the contributing
+      wiki lists `.srf` among the standard files *"required by the template"*,
+      while the Template's own Readme calls it *"optional file to disable some
+      warnings which are safe to disable"*. The template **does ship one** —
+      `Template.srf`, 29 rules, with `Template_Q13.srf` beside it.
+
+      Reading it refutes the sentence above about the PLL warning. That warning
+      is recorded as carrying **"no message ID at all, so there is nothing for
+      an assignment to name"**, which is true of `MESSAGE_DISABLE` and not of
+      the mechanism `.srf` uses: `Template.srf` suppresses it with a rule keyed
+      on ID `9999` and the literal text `RST`, plus four more matching the full
+      *"RST port on the PLL is not properly connected"* sentence. There **is**
+      something to name; it is simply not a `MESSAGE_DISABLE` ID.
+
+      **Still not adopted, and now for a cost rather than an impossibility.** An
+      `.srf` changes the compile's warning SET, which `tb/check_warnings.py`
+      pins against `tb/quartus-warnings.txt`, so adopting one means a full
+      Quartus run and a regenerated baseline — and the abort-with-exit-0 hazard
+      above is a reason to do that deliberately rather than alongside other
+      work. The instance paths need adapting too: `Template.srf`'s rules name
+      `emu:emu|pll:pll|pll_0002:pll_inst`, and this core instantiates its PLL
+      differently — the same naming difference that cost v2.6.6 −13.901 ns when
+      `sys_top.sdc`'s clock-group glob matched nothing. Scheduled for the next
+      release that rebuilds the bitstream, with the baseline regenerated in the
+      same change.
 - [x] `RustyNES.sdc` **(v2.6.6)** — short because the constraints are DERIVED,
       not because there is one clock. **The reason on this line expired and was
       corrected at v2.6.14**: it said "one clock domain, because `nes_top`
@@ -70,7 +96,7 @@ Settled at **v2.6.6**, except the one item that needs a board.
 
 ## Release artifact
 
-- [ ] The release artifact is published, but **NOT under MiSTer's naming
+- [x] The release artifact is published under MiSTer's naming **(v2.6.15)** — was **NOT**, and the old wording is preserved below. Previously: **NOT under MiSTer's naming
       convention**.
 
       The publishing half is done **(v2.6.7)** — committed to the sibling's
@@ -107,10 +133,26 @@ Settled at **v2.6.6**, except the one item that needs a board.
       submission, because nothing harvests `releases/` until the core is
       accepted.
 
-      The fix is one line in `scripts/release-rbf.sh`. It is not taken here
-      because the version-named artifact is a **maintainer decision of
-      2026-08-30** with a stated rationale, and reversing it is the maintainer's
-      call rather than an audit's. **Unblocks on that decision.**
+      **RESOLVED v2.6.15, and the decision was extended rather than reversed.**
+      `releases/` now carries `RustyNES_YYYYMMDD.rbf`, which is the path
+      `Distribution_MiSTer` reads out of the repository; the version-named copy
+      is uploaded alongside it to the GitHub releases, which no upstream tool
+      parses. Two names, because there are two audiences and only one of them is
+      a parser.
+
+      **And the cost was worse than this entry recorded.** It said the naming
+      "has no effect until submission". It has no effect until submission and
+      then it has a total one: `Distribution_MiSTer`'s builder strips a date by
+      taking the stem's last nine characters, requires `_` plus exactly eight
+      digits, and `continue`s — skips outright — any file that yields no date.
+      A version-named bitstream is invisible to it, so an accepted core would
+      appear in the Cores table and **ship nothing, with no error anywhere**.
+
+      The datecode comes from the tag's commit rather than `date`, so rebuilding
+      a tag reproduces its filename. `tb/check_rbf_name.py` carries both
+      parsers' rules with nine mutations, including the name this repository
+      shipped through v2.6.14, and CI runs it over every committed bitstream.
+      v2.6.14's artifact was renamed rather than rebuilt — same bytes.
 - [x] Unique **Home folder** chosen (non-arcade requirement) **(v2.6.7)** —
       **RESOLVED against `Main_MiSTer`'s own source**, which is the only place
       that actually states it. `user_io.cpp`'s `user_io_get_confstr(0)` returns
