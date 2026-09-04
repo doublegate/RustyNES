@@ -177,6 +177,90 @@ def terminate(lead: str) -> str:
     return s if s[-1] in '.!?,;:' else s + "."
 
 
+def extend_chain(line: str, marker: str, old: Release, new: Release) -> tuple[str, str]:
+    """Swap the head of a lineage chain and insert the outgoing release into it.
+
+    Returns `(line, error)`; `error` is "" when the insertion succeeded.
+
+    THIS LIVES HERE, NOT INLINE IN `main`, AND THAT IS THE POINT. Through
+    v2.6.14 the CHAIN rewrite was two statements inside `main`'s loop, and the
+    selftest named `chain names the predecessor once` re-implemented the same
+    substitution rather than calling it -- so the one code path that had
+    actually gone wrong, twice in consecutive releases, was the one nothing
+    executed. A test that reimplements its subject agrees with itself forever.
+
+    WHERE THE INSERTION GOES, AND WHY IT WENT WRONG TWICE. The old rule
+    inserted after `, on `, which is the right anchor for the shape it was
+    written for (`..., on **v2.4.3 "Touchstone"** ...`). Root `ROADMAP.md` is a
+    different shape: a `Built on ...` chain thirty entries long, ending
+    `..., on the v2.0.0 "Timebase" MAJOR cut.` -- so `, on ` matched the TAIL,
+    and the outgoing release was filed next to the MAJOR cut while the chain's
+    head silently lost it. Measured at v2.6.15 by running the tool in a
+    worktree: v2.6.15 "Warrant" ... Built on **v2.6.13 "Slack"** -- v2.6.14
+    absent from the head -- and `, on **v2.6.14 "Docket"** and the v2.0.0
+    "Timebase" MAJOR cut` at the far end. The CHANGELOG recorded this as the
+    release "vanishing"; it does not vanish, it is relocated, which is why
+    reading the diff rather than the report matters.
+
+    So `Built on ` is tried FIRST, because it names the head of the chain, and
+    `, on ` only when there is no `Built on ` to find.
+    """
+    line = line.replace(
+        f'{marker}{old.version} "{old.codename}"',
+        f'{marker}{new.version} "{new.codename}"', 1)
+    entry = f'**v{old.version} "{old.codename}"** and '
+    for pat in (r'(Built on\s+)', r'(,\s*on\s+)'):
+        line, n = re.subn(pat, rf'\1{entry}', line, count=1)
+        if n == 1:
+            return line, ""
+    return line, "CHAIN shape has no `Built on ` or `, on ` to extend"
+
+
+# The documents `release_anchor_audit`'s chain-tail gate reads, and the phrase
+# it keys on. Duplicated deliberately and narrowly: this script must be able to
+# say "these still need you" without importing a Rust test.
+CHAIN_TAIL_PHRASE = ", the current release"
+CHAIN_TAIL_DOCS = (
+    "to-dos/ROADMAP.md",
+    "VERSION-PLAN.md",
+    "README.md",
+    "AGENTS.md",
+    "docs/STATUS.md",
+    "ROADMAP.md",
+)
+
+
+def chains_needing_a_summary(texts: dict, root: Path, new: Release) -> list[str]:
+    """Chains whose `..., the current release` tail still names an old version.
+
+    Appending an entry to one of these needs a WRITTEN SUMMARY of the release,
+    which no script has. The honest behaviour is therefore to refuse -- to say
+    which chains are still owed prose -- rather than to swap a token and leave
+    a lineage that reads correctly and is wrong. That distinction is the whole
+    subject of this file's header.
+    """
+    out: list[str] = []
+    for rel in CHAIN_TAIL_DOCS:
+        p = root / rel
+        if not p.is_file():
+            continue
+        text = texts.get(p, p.read_text())
+        at = 0
+        while True:
+            idx = text.find(CHAIN_TAIL_PHRASE, at)
+            if idx < 0:
+                break
+            at = idx + 1
+            found = re.findall(r'v(\d+\.\d+\.\d+)', text[:idx])
+            if not found:
+                out.append(f"{rel}: \"{CHAIN_TAIL_PHRASE}\" preceded by no parseable version")
+            elif found[-1] != new.version:
+                out.append(
+                    f"{rel}: a chain ends \"v{found[-1]}{CHAIN_TAIL_PHRASE}\", "
+                    f"but the release is v{new.version}")
+    return out
+
+
 def demote(line: str, marker: str, old: Release, new: Release, lead: str) -> str:
     """Rewrite one anchor line: new release in front, old one demoted behind it."""
     if classify(line, marker, old) == "DATED_CODE":
@@ -368,12 +452,63 @@ def selftest() -> int:
           '> **Current release: v2.4.5** (2026-08-22) — **"Compass"**, the core reaches memory. '
           'Built on **v2.4.4 "Ignition"** (2026-08-22) — the first real RTL.')
 
-    # The CHAIN double-insertion that reached ROADMAP.md: the predecessor must
-    # appear exactly ONCE after a chain extension.
-    chain = 'The current release is **v2.4.4 "Ignition"**, on **v2.4.3 "Touchstone"**'
-    extended = re.sub(r'(,\s*on\s+)', r'\1**v2.4.4 "Ignition"** and ',
-                      chain.replace('**v2.4.4 "Ignition"**', '**v2.4.5 "Compass"**', 1), count=1)
-    check("chain names the predecessor once", extended.count('v2.4.4 "Ignition"'), 1)
+    # ---- CHAIN, through the code that ships -------------------------------
+    #
+    # These call `extend_chain`. The version of this block through v2.6.14
+    # re-implemented the substitution inline with its own `re.sub`, so it
+    # passed while the shipped path dropped a release from the head of
+    # ROADMAP.md's chain in two consecutive releases. A test that reimplements
+    # its subject agrees with itself forever.
+
+    # 1. The `, on ` shape this rule was originally written for, and the
+    #    double-insertion that reached ROADMAP.md: exactly ONCE.
+    chain_on = 'The current release is **v2.4.4 "Ignition"**, on **v2.4.3 "Touchstone"**'
+    got, err = extend_chain(chain_on, "The current release is **v", old, new)
+    check("chain: `, on ` shape extends", err, "")
+    check("chain: names the predecessor once", got.count('v2.4.4 "Ignition"'), 1)
+    check("chain: head becomes the new release",
+          got.startswith('The current release is **v2.4.5 "Compass"**'), True)
+
+    # 2. Root ROADMAP.md's real shape -- a `Built on ` chain that ALSO contains
+    #    a `, on ` near its tail. The insertion must land at the HEAD. This is
+    #    the case that went wrong twice; with the old rule the assertion below
+    #    reads `Built on **v2.4.3` and the predecessor sits beside v2.0.0.
+    chain_built = ('**Project Status:** v2.4.4 "Ignition" released — the head. '
+                   'Built on **v2.4.3 "Touchstone"** and v2.4.2 "Cairn", '
+                   'on the v2.0.0 "Timebase" MAJOR cut.')
+    got, err = extend_chain(chain_built, "**Project Status:** v", old, new)
+    check("chain: `Built on ` shape extends", err, "")
+    check("chain: inserts at the HEAD, not the tail",
+          'Built on **v2.4.4 "Ignition"** and **v2.4.3 "Touchstone"**' in got, True)
+    check("chain: the tail is left alone",
+          'on the v2.0.0 "Timebase" MAJOR cut' in got, True)
+    check("chain: predecessor still appears exactly once",
+          got.count('v2.4.4 "Ignition"'), 1)
+
+    # 3. Neither anchor present: reported, never silently bumped.
+    got, err = extend_chain('**Project Status:** v2.4.4 "Ignition" released — nothing follows.',
+                            "**Project Status:** v", old, new)
+    check("chain: no anchor is reported", bool(err), True)
+
+    # ---- the chains a script must REFUSE rather than swap ------------------
+    #
+    # `..., the current release` is a claim about which release is current, and
+    # extending the chain it ends needs a written summary. The script cannot
+    # write one, so it must say so.
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as _td:
+        _root = Path(_td)
+        (_root / "to-dos").mkdir()
+        stale = _root / "to-dos" / "ROADMAP.md"
+        stale.write_text('chain ... **v2.4.4 "Ignition"**, the current release\n')
+        check("chain tail: a stale `the current release` is refused",
+              len(chains_needing_a_summary({}, _root, new)), 1)
+        stale.write_text('chain ... **v2.4.5 "Compass"**, the current release\n')
+        check("chain tail: a current one is accepted",
+              chains_needing_a_summary({}, _root, new), [])
+        stale.write_text('nothing here at all\n')
+        check("chain tail: absence is not a finding",
+              chains_needing_a_summary({}, _root, new), [])
 
     # An unclassifiable line must raise, never be bumped mechanically.
     try:
@@ -448,26 +583,13 @@ def main() -> int:
                     if shape != "PERIOD":
                         demoted_files.add(p)
                 elif shape == "CHAIN":
-                    # `..., on **v2.4.3 ...` -- the previous release is already
-                    # named behind this one, so extend the chain rather than
-                    # replacing it.
-                    #
-                    # EXACTLY ONE insertion. An earlier version ran two
-                    # substitutions, one anchored on `, on ` and one on
-                    # ` released — ..., on `, and a line matching BOTH got the
-                    # predecessor inserted twice: `on v2.4.4 "Ignition" and
-                    # **v2.4.4 "Ignition"** and v2.4.3 ...`. Caught in review,
-                    # not by the tool, which is the point -- the tool's own
-                    # output needs checking too.
-                    line = line.replace(
-                        f'{marker}{old.version} "{old.codename}"',
-                        f'{marker}{new.version} "{new.codename}"', 1)
-                    line, n_sub = re.subn(
-                        r'(,\s*on\s+)', rf'\1**v{old.version} "{old.codename}"** and ',
-                        line, count=1)
-                    if n_sub != 1:
-                        unknown.append(
-                            f"{path}: CHAIN shape has no `, on ` to extend: {line[:100]}")
+                    # EXACTLY ONE insertion, at the HEAD of the chain. Both
+                    # rules and the reason they matter are in `extend_chain`,
+                    # which is a function precisely so the selftest can call
+                    # the code that ships rather than a copy of it.
+                    line, err = extend_chain(line, marker, old, new)
+                    if err:
+                        unknown.append(f"{path}: {err}: {line[:100]}")
                     counts["CHAIN"] += 1
                     demoted_files.add(p)
                 else:
@@ -521,6 +643,14 @@ def main() -> int:
             print(f"  {pr}", file=sys.stderr)
         return 1
 
+    # Computed HERE, before either exit path, because the dry run used to return
+    # 0 without ever reaching this check -- so `--apply`-less validation, which
+    # is how a release is rehearsed, reported success over a chain still owed a
+    # summary. Raised in review on the PR that introduced the check, which is
+    # the right place for it: the refusal was written for the apply path and
+    # tested there, and the mode that does nothing was the mode nobody ran it in.
+    owed = chains_needing_a_summary(edits, root, new)
+
     print("classified: " + ", ".join(f"{v} {k.lower()}" for k, v in counts.items() if v) + "\n")
     for p, text in sorted(edits.items()):
         before = p.read_text()
@@ -534,8 +664,21 @@ def main() -> int:
             d = list(difflib.unified_diff(before.split("\n"), text.split("\n"),
                                           f"a/{rel}", f"b/{rel}", lineterm="", n=0))
             print("\n".join(d[:14]))
+    def report_owed() -> None:
+        print("\nREFUSING to call this done -- these release-line chains are "
+              "still owed a written summary:\n", file=sys.stderr)
+        for o in owed:
+            print(f"  {o}", file=sys.stderr)
+        print("\nAppend an entry naming the release and what it did, then re-run "
+              "the audits. A token swap here produces a lineage that reads "
+              "correctly and is wrong, which is what this script exists to "
+              "prevent.", file=sys.stderr)
+
     if not args.apply:
         print("\n(dry run -- pass --apply to write)")
+        if owed:
+            report_owed()
+            return 1
         return 0
 
     try:
@@ -544,8 +687,23 @@ def main() -> int:
         print("  refreshed crates/rustynes-cosim/Cargo.lock")
     except Exception as e:                                    # noqa: BLE001
         print(f"  WARNING: could not refresh the cosim lockfile: {e}", file=sys.stderr)
+    # A chain whose tail says "the current release" cannot be extended by a
+    # token swap: the new link needs a WRITTEN SUMMARY of the release, which
+    # this script does not have and must not invent. Through v2.6.14 it said
+    # nothing at all about them, so the operator learned about it from a red
+    # audit after committing -- twice, in consecutive releases. Saying so here,
+    # and exiting non-zero, is the difference between refusing and forgetting.
     print("\nNow: add the VERSION-PLAN row, write "
           f".github/release-notes/v{new.version}.md, and run the audits.")
+    if owed:
+        # The writes above ALREADY HAPPENED, deliberately. A chain entry names
+        # the NEW release, so it cannot be written before the bump that creates
+        # it -- refusing to write until the chain is complete would make the
+        # chain unwritable. The exit code is the signal; the anchors are what
+        # was wanted. Review proposed moving this ahead of the writes, and that
+        # is right for the dry run (fixed above) and wrong here, for that reason.
+        report_owed()
+        return 1
     return 0
 
 

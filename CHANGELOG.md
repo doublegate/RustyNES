@@ -26,6 +26,262 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.15] - 2026-09-04 - "Warrant" (the claims v2.7.0 will make become checkable)
+
+### Fixed
+
+- **The `.rbf` name this core shipped would have distributed NOTHING.** Carried
+  since v2.6.7 as a style divergence awaiting a maintainer decision, and
+  recorded in `docs/bitstream-release.md` as a trade-off that "costs nothing
+  today". It is not a style item and the cost is total.
+  `Distribution_MiSTer/.github/download_distribution.py` strips a datecode by
+  taking the stem's **last nine characters** and requiring `_` followed by
+  exactly eight digits, and `uniq_files_with_stripped_date()` then `continue`s
+  -- skips outright -- any file that yields none. `RustyNES_MiSTer-v2.6.13.rbf`
+  yields none, so it would never be copied into the distribution and never reach
+  a user through `update_all`. **The failure mode is an accepted core that
+  appears in the wiki's Cores table and ships nothing, with no error raised
+  anywhere.**
+
+  A second and independent parser applies in the firmware:
+  `Main_MiSTer/file_io.cpp`'s `get_display_name()` takes the **first** literal
+  `_20`, requires six characters after it, truncates the display name there and
+  treats the rest as a datecode; `DirentComp()` then sorts on the truncated
+  name. Two parsers, different rules, and `_YYYYMMDD` is the only form
+  satisfying both -- which is why the fix is one name rather than a preference
+  between two.
+
+  So there are now **two names, because there are two audiences and only one of
+  them is a parser**. `releases/` carries `RustyNES_YYYYMMDD.rbf`, the path the
+  distribution reads out of the repository; the GitHub releases carry that plus
+  the version-named copy, which no upstream tool parses, because a bitstream
+  someone has in hand should trace to the exact release and gate results that
+  produced it. The 2026-08-30 decision is **extended rather than reversed**. The
+  datecode comes from the **tag's commit** rather than `date`, so rebuilding a
+  tag reproduces its filename. `tb/check_rbf_name.py` carries both parsers'
+  rules as one test with ten cases, nine of them mutations -- including the name
+  this repository actually shipped, and `RustyNES_v2.6.14_20260904.rbf`, which
+  parses and is still wrong because it multiplies into one core entry per
+  release. v2.6.14's committed bitstream was **renamed, not rebuilt**.
+
+- **Two of the four R1/R2 residuals were never IRQ-timing residuals.** ADR 0002
+  has closed this over four sub-tests since v2.0.0 beta.3 -- `mmc3_test_2/4` #3,
+  `mmc3_test_v1/4` #3, `mmc3_test_v1/5` #2 and `mmc3_test_v1/6` #2 -- through
+  21+ documented rollbacks, a two-session bounded-effort campaign and two
+  instrumentation studies. Two of those four do not depend on **when** the IRQ
+  asserts, so no lever on any axis that campaign searched could ever have moved
+  them.
+
+  The corpus says so twice. `mmc3_test` and `mmc3_test_2` are the same suite
+  twice over and the second is the revision: it ships an "MMC3 Operation" readme
+  section the older corpus lacks entirely, and **sub-test 2 of `5-MMC3` carries
+  the identical `set_test` string in both while differing by one instruction** --
+  the successor inserts a SECOND `clock_counter` before the first
+  `should_be_set`, so its verdict no longer lands on the `$C001`-pending reload.
+  The assertion was **withdrawn by its author**. `mmc3_test_v1/6-MMC6` rests on
+  the same withdrawn clock and is additionally the v1 corpus's
+  **alternate-revision** ROM: its header names Crystalis, which
+  `mmc3_test_2`'s readme identifies as revision A, and `mmc3_test_2/6-MMC3_alt`
+  carries that header verbatim.
+
+  Measured rather than argued. Adopting the withdrawn rule makes
+  `mmc3_test_v1/5` **pass** and moves `/6` from #2 to #3, and costs **both**
+  `scanline_timing` ROMs a regression from sub-test 3 to sub-test 2 -- sub-test
+  2 is "should occur **later**", so the IRQ starts arriving too early on the one
+  ROM pair that measures when it arrives. Reverted from a pre-edit snapshot; the
+  numbers are in ADR 0002's decision update, because a rejected change with its
+  measurement is a result. The R1/R2 residual is therefore
+  **`mmc3_test_2/4` #3 and `mmc3_test_v1/4` #3** -- one behaviour measured twice
+  -- and the closure over those two stands untouched.
+
+- **`bump_release.py` inserted the outgoing release at the wrong END of the
+  chain.** It dropped the previous release from `ROADMAP.md`'s lineage at
+  v2.6.13 and again at v2.6.14; both times `release_anchor_audit` caught it and
+  both times it was repaired by hand. Reproduced in a throwaway worktree, and
+  the previous description was wrong in a way that matters: **the release is not
+  dropped, it is relocated.** The handler inserted after the first `", on "`,
+  correct for the shape it was written for and wrong for root `ROADMAP.md`,
+  whose chain is thirty entries long and ends `, on the v2.0.0 "Timebase" MAJOR
+  cut.` -- so the token swap took the release off the head and the insertion
+  filed it beside the MAJOR cut. A lineage that skips a release **and names it
+  somewhere nonsensical** is worse than one that merely skips it, because a
+  reader checking for its absence finds it.
+
+  `"Built on "` is now tried first, because it names the head; `", on "` is the
+  fallback; neither present is reported. A chain ending `..., the current
+  release` cannot be extended by a token swap at all -- the new link needs a
+  written summary -- so the script now names every such chain and **exits 1**,
+  refusing rather than forgetting. The CHAIN rewrite is **extracted** into
+  `extend_chain()`, which is the load-bearing part: the selftest named "chain
+  names the predecessor once" re-implemented the substitution inline, so the one
+  path that had gone wrong twice was the one nothing executed.
+
+### Added
+
+- **`cpu_interrupts_v2` on the MiSTer DUT -- the first INDEPENDENT interrupt
+  oracle.** `docs/rung5-accuracycoin.md` states the hole in its own words:
+  *"Rung 4 had blargg as an independent check and it found six defects no
+  self-written gate could see; rung 5 has no equivalent, and that is the single
+  most important sentence in this document."* Every interrupt gate in the suite
+  compares the DUT against RustyNES, so a shared error between them is invisible
+  by construction. Five single-purpose ROMs, **mapper 0** (the combined ROM is
+  mapper 1; the singles are not, which removes MMC1 as a variable), reporting
+  through `$6000`. **All five pass**, `$00`, with the `$DE $B0 $61` signature
+  and the running state both valid.
+
+  `5-branch_delays_irq` is the sharpest: *"A taken non-page-crossing branch
+  ignores IRQ during its last clock, so that next instruction executes before
+  the IRQ."* That is the exact behaviour v2.6.7 changed in the **oracle**
+  (caveat C6, `skip_irq_sample_q`) from documentation reasoning alone, with no
+  ROM adjudicating it. This one adjudicates it, on both consoles.
+
+  Alignment is **recorded rather than assumed**, because blargg's readme says
+  `2-nmi_and_brk` *"Occasionally fails on NES due to PPU-CPU synchronization"* --
+  so its verdict is alignment-sensitive by design and a pass is a pass at the
+  shipped alignment, not an absolute one.
+
+- **An accuracy gate someone else can run** (`tb/fetch-goldens.sh`, the
+  `rung1-pinned` CI job). `tb/regress.sh` says in its own header that it is not
+  a CI gate and cannot be, which means this project's evidence -- 142 gates at
+  the version's open, **147 at its close**,
+  each with a mutation record -- was a set of **documents describing checks a
+  reader cannot run**. For a submission whose stated bar is *"a minimum
+  reasonable bar for readability and include some evidence of quality and
+  accuracy testing"*, that is the weakest available form of the strongest thing
+  here. `docs/golden-fetching.md` specified the fix and carried
+  `Status: NOT BUILT`; the nine opcode-group ROMs now export from a pinned
+  oracle commit and compare in CI.
+
+  It is a **subset and the job's name says so** -- no PPU, no APU, no
+  AccuracyCoin, no nestest, all of which need windows in the millions. Measured
+  before built, as the specification asks: the exporter builds in 7 s, the nine
+  windows total 4,624 cycles. **The pin is the point**: green means green
+  against one recorded oracle commit, never against the oracle's current
+  behaviour, because the determinism contract says nothing about trace-format
+  stability.
+
+- **`sys/` verbatim becomes a check** (`tb/check_sys.py`,
+  `tb/sys_manifest.sha256`). It is a submission requirement -- the Template's
+  Readme says *"Basically it's prohibited to change any files in this folder"* --
+  and it rested on **one measurement taken at v2.6.6** plus a manual procedure
+  nothing ran, eight releases ago. All 57 files pinned, catching a **changed**,
+  a **missing** and a **stray** file; the third mode is why the directory is
+  enumerated rather than only the manifest walked, and it is not hypothetical
+  (`sys/README.md` and `sys/.gitkeep` both lived there through v2.6.5). An empty
+  manifest is refused rather than passing vacuously. Demonstrated on the real
+  tree, each mode restored from a snapshot. Separately re-verified against
+  upstream: `Template_MiSTer`'s HEAD **is** the pinned `3ea1134c`, and `diff -rq`
+  reports 0 differences -- so `sys/` is both unmodified and current, measured
+  separately.
+
+- **`tb/check_qsf_seed.py`** -- the `.qsf` may publish exactly one seed sweep and
+  it must name the assigned seed. It carried **two**, disagreeing about the
+  pinned seed's margin by 0.155 ns, one of them quoting a number the current RTL
+  cannot reproduce. The checker's first version reported four tables in a file
+  with one, matching prose that mentions a seed and a slack figure; the test is
+  now structural and those three lines are fixtures.
+
+- **The build is reproducible, and the reproducibility is DAY-SCOPED.** v2.6.15
+  changes no RTL, and its bitstream came out **56,680 bytes larger** with the
+  timing at every corner moved. `sys/build_id.tcl` is a `PRE_FLOW_SCRIPT_FILE`
+  that rewrites `build_id.v` with the **calendar date** on every compile, and
+  `rtl/emu.sv` puts `BUILD_DATE` into `CONF_STR` -- so the date is a constant
+  *in the design*, and two builds on different days are different designs.
+  Measured rather than inferred: rebuilding with `build_id.v` pinned to `260903`
+  reproduces the published artifact **exactly** (md5 `2c2fa6eb...`, 4,040,572
+  bytes), while `260904` gives `7346a490...`, 4,097,252. Six characters, 56,680
+  bytes -- the `.rbf` is compressed, so its size tracks placement.
+
+  v2.6.7's result stands and its **scope was never recorded**. It also weakens
+  v2.6.14's claim that its bitstream was "byte-identical to v2.6.13's ... an
+  identical artifact demonstrates it": that was achieved by **renaming**, not
+  rebuilding, and a rebuild on a different day would not have been identical
+  through no fault of the RTL. `scripts/release-rbf.sh` now refuses to publish
+  unless `BUILD_DATE` equals the datecode in the filename, which makes the name
+  a reproduction key.
+
+- **The release build rewrote the project file, and nothing would have caught
+  it.** The Template's Readme warns in the second person -- "You also need to
+  watch this file before you make a commit. Quartus in some conditions may
+  'spit' all settings from different files into this file" -- and one compile
+  appended **218 lines to a 281-line `.qsf`**: 145 `set_location_assignment`, 62
+  `set_instance_assignment`, 3 `set_hps_location_assignment` and 8 globals,
+  every one already supplied by the vendored `sys/` Tcl. `git status` showed the
+  file modified, which is what it always shows after a release edit, so the
+  pollution was indistinguishable from the intended change until the diff was
+  read. `tb/check_qsf_seed.py` now refuses framework-owned assignments (three
+  more mutations, thirteen cases), and `release-rbf.sh` runs it immediately
+  after the compile, so the build that causes it reports it.
+
+- **`docs/bringup.md`** -- rung 6 written before a board exists, so that when one
+  arrives it costs a session. What a board buys is exactly four things, all
+  downstream of every gate by construction: the palette, the video timing
+  constants, the audio's absolute level, and band-limiting. A first-boot
+  checklist ordered so each failure is diagnostic, and an honest limit on what an
+  on-device AccuracyCoin run can establish.
+
+### Changed
+
+- **Eight expired claims corrected, and one that turned out not to be.**
+  `docs/rung7-mappers.md` opened "the SDRAM controller is not written"; it has
+  been since v2.6.13. `docs/sdram.md` said "no cartridge is served from SDRAM
+  yet". `RustyNES.qsf` said all 109 pin assignments come from one script; it is
+  145 from two. **The CHR budget was stated three times and two were wrong** --
+  `cart_sdram.sv` carried the pre-measurement figure the arbiter's own header
+  describes as one that "was never measured", and `emu.sv` gave the CPU's budget
+  as 28 rather than the 24 that remain after the crossing, disagreeing with
+  itself two lines later. One home now, and one disagreement (a fetch latency of
+  15 against 17) is **recorded rather than harmonised**, because picking one to
+  make the files agree would be inventing a measurement. Oracle side:
+  `docs/STATUS.md`'s lineage carried a present-tense claim inside a historical
+  entry, and `IMPLEMENTATION_PLAN.md`'s "Where the core actually is" table said
+  the APU, the cartridge, the SDRAM controller and `sys/` were all "Not started"
+  and the `.rbf` "Never produced".
+
+  **The one that was not stale**: the sibling's oracle-vs-documentation ledger
+  was flagged as "nine releases of entries with no changelog row", inferred from
+  the entry numbers. `git log` shows its last commit **is** rung 5's own closure
+  and entry 3.43 was present at v2.6.7. The changelog is correct; what it needed
+  was for its silence to be legible. Re-measure before correcting, including when
+  the thing being corrected is an absence.
+
+- **`T-ORACLE-001`'s opening claim is RETRACTED, in place.** It says RustyNES
+  never clocks the MMC3 counter on the pre-render line. It does:
+  `mmc3_test_2/2-details` sub-test 8 is, verbatim, *"Counter should be clocked
+  241 times in PPU frame"* -- 240 visible plus pre-render -- and RustyNES
+  **passes it**, as it has every release. The claim came from
+  `--ppu-state-trace`, which that ticket's own instrument-traps section says
+  carries no CHR address column and therefore cannot see an A12 rise at all. A
+  trace that cannot see the event was read as evidence the event did not happen.
+  Corrected in place, and in the sibling's `regress.sh`, which restated it.
+
+- **`T-MISTER-SAVE`'s blocker is measured rather than asserted.** v2.6.12 refuted
+  its own attempt on the grounds that "every save route terminates in `hps_io`,
+  which no gate here instantiates" -- a claim about whether it CAN be, untested.
+  It elaborates under Verilator with a `CONF_STR` value supplied, producing
+  eleven errors, nearly all `PROCASSWIRE` from one line. So the choice is a cost,
+  not an impossibility, and one enabler serves three tickets.
+
+- **The `.srf` decision is revisited before a reviewer asked**, and it corrects
+  its own recorded reason. That reason said the PLL warning "carries no message
+  ID at all, so there is nothing for an assignment to name" -- true of
+  `MESSAGE_DISABLE`, and not of the mechanism `.srf` uses: `Template.srf`
+  suppresses it with a rule keyed on ID `9999` and the literal text `RST`. It
+  stays absent, for a cost rather than an impossibility.
+
+- The sibling gains a `.coderabbit.yaml`. It reviewed under org defaults, which
+  meant the reviewer knew nothing about the provenance firewall, the RTL subset
+  policy, or the rule that a gate is not trusted until a mutation against it is
+  CAUGHT.
+
+### Verified, not asserted
+
+The emulation core is **unchanged** -- the `mmc3.rs` edits are `#[ignore]`
+reasons and the sibling's `.sv` edits are comments -- so **AccuracyCoin 141/141
+(RAM decoder)** and **nestest 0-diff** hold by construction. The mmc3 verdicts
+are byte-identical to the baseline captured before any edit, and the default
+gate is 18 passed / 5 ignored.
+
 ## [2.6.14] - 2026-09-03 - "Docket" (the submission checklist becomes auditable)
 
 ### Added

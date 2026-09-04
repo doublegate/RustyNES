@@ -10,15 +10,21 @@ what is next, and what each release owes.
 
 ## Where the core actually is
 
+<!-- This table is present tense, so it goes stale silently. It was eight
+     releases out of date when v2.6.15 swept it -- claiming the APU, the
+     cartridge, the SDRAM controller and `sys/` were all "Not started" and the
+     `.rbf` "Never produced", every one of which had shipped. Update it in the
+     same change as the thing it describes, or delete the row. -->
+
 | Component | State |
 |---|---|
 | 6502 | **Done.** `rtl/cpu6502.sv`, nine opcode-group ROMs, 2115 records on rung 1; the bus gate at 49,993 cycles on `ppuscroll`; **59,554 cycles of nestest** (was 27,388 — the old bound was a missing `$2002` answer, not a CPU wall, and it moved the moment the PPU register file existed); the interrupt sweep at 60 injection points |
-| PPU | **Four of seven steps.** `rtl/ppu2c02.sv`: the register file (v2.5.2, 12,840 records), the scroll address logic (v2.5.3, 19,813 records) the background fetch pipeline (v2.5.4, 6,247 fetches) and background rendering (v2.5.5, **all 61,440 pixels**, the first full frame). **No sprites, no VBlank/NMI timing.** v2.5.6, sprite evaluation, is in progress |
-| APU | **Not started** |
-| Cartridge / mappers | **Not started** |
-| SDRAM controller | **Not started** |
-| `sys/` + `emu` integration | **Not started** — `sys/` is an empty placeholder |
-| `.rbf` | **Never produced** |
+| PPU | **Rung 3 CLOSED (v2.5.8).** `rtl/ppu2c02.sv`: the register file (v2.5.2), the scroll address logic (v2.5.3), the background fetch pipeline (v2.5.4), background rendering (v2.5.5, all 61,440 pixels), sprite evaluation (v2.5.6, **59,993 of 59,993 cycles**, 9 of 9 behavioural mutants caught), sprite rendering and sprite-0 (v2.5.7, exact after the two-dot phase fix), and VBlank/NMI with the `$2002` race (v2.5.8) |
+| APU | **Rung 4 CLOSED (v2.6.2).** `rtl/apu2a03.sv`: both pulses, triangle, noise, sweep, the frame counter, the DMC and its DMA cycle steal. blargg's 2005 APU battery **11 of 11** on the DUT — an INDEPENDENT oracle, and it found six defects no self-written gate could see |
+| Cartridge / mappers | **Rung 7, banking half GREEN (v2.6.9-v2.6.12).** `rtl/cart/cart.sv` decodes the approved six: NROM (0), MMC1 (1), UxROM (2), CNROM (3), MMC3 (4), AxROM (7). Six commercial titles render byte-identically to the oracle over all 61,440 pixels |
+| SDRAM controller | **Written (v2.6.13), and not switched on.** `rtl/sdram.sv`, `sdram_arbiter.sv`, `cart_sdram.sv` plus a behavioural part model, all from the AS4C32M16SB-7 datasheet rev 1.4 with no third-party controller read. Configured off-die it compiles, closes timing at +0.199 ns and passes **140 of 142** gates; the two failures are one number, the CPU's PRG deadline at 28 cycles against the 24 that remain after the domain crossing. Closing it needs SCHEDULING rather than arbitration — see `USE_SDRAM_CART` in `rtl/emu.sv` |
+| `sys/` + `emu` integration | **Done (v2.6.6).** `sys/` vendored byte-identical to `Template_MiSTer@3ea1134c`, 57 files, and since v2.6.15 that is a CI gate (`tb/check_sys.py`) rather than a measurement taken once |
+| `.rbf` | **Shipped every release since v2.6.7**, with the timing report checked at all four corners and a pinned fitter seed. Named `RustyNES_YYYYMMDD.rbf` since v2.6.15 — the only form both MiSTer parsers accept |
 
 ## Scope, decided 2026-08-23
 

@@ -26,12 +26,12 @@ per-rung doc records what the rung cannot verify.
 | M12 | v2.6.2 | Frame-counter IRQ; blargg APU battery | **Rung 4 closes**; `cpu_interrupts_v2` | — |
 | M13 | v2.6.3 | NROM; full system in simulation | First AccuracyCoin run | — |
 | M14 | v2.6.4 | AccuracyCoin parity | Entry-for-entry. **Rung 5 closes** | — |
-| M15 | v2.6.5 | `sys/`, `emu`, `hps_io`, video, OSD | **Timing closure**; first `.rbf` | — |
-| M16 | v2.6.6 | Hardware bring-up, both boards | **One `.rbf` boots both.** Rung 6 closes | — |
-| M17 | — | SDRAM controller | Read/write timing against the real part | Deferred; needs hardware |
+| M15 | v2.6.6 | `sys/`, `emu`, `hps_io`, video, OSD | **Timing closure**; first `.rbf` | **Done** at v2.6.6 (`sys/` verbatim, 57 files); the `.rbf` shipped at v2.6.7 |
+| M16 | — | Hardware bring-up, both boards | **One `.rbf` boots both.** Rung 6 closes | **BLOCKED — no board**, checked each release rather than assumed. The version is struck: eight releases have passed the slot, so naming one is a prediction |
+| M17 | v2.6.13 | SDRAM controller | Read/write timing against the real part | **Done, and the blocker was REFUTED.** "Needs hardware" applied to ACCEPTANCE against the real part, not to building the thing: v2.6.13 wrote the controller, a four-way arbiter and a console bridge from the datasheet and accepted them against a behavioural part model. Enabling it is a separate question — see `USE_SDRAM_CART` |
 | M18 | v2.6.9 | MMC1, UxROM, CNROM, AxROM | Per-board bus + checkpoint gates | **Done** — shipped with M19 |
-| M19 | v2.6.9 | MMC3 | `mmc3_test_2` 4/6, level with the oracle | **Banking done**; rung 7 stays open on SDRAM |
-| M20 | v2.7.0 | Contribution package | Checklist green; submission sent | — |
+| M19 | v2.6.9 | MMC3 | `mmc3_test_2` 4/6, level with the oracle | **Banking done**; rung 7's remaining half is the off-die build, which is written and measured at 140/142, not the controller being absent |
+| M20 | v2.7.0 | Contribution package | Checklist green; submission sent | **BLOCKED on hardware** by maintainer decision (2026-09-04): v2.7.0 waits for a board rather than submitting a core nothing has run |
 
 **Status is a claim about a recorded manual run, not about CI.** None of the DUT
 gates run in the sibling repository's workflows — they need the oracle's goldens
