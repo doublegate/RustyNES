@@ -67,6 +67,37 @@ struct Item {
     closed: bool,
 }
 
+/// Does this line LOOK like a task-list checkbox, whatever state it is in?
+///
+/// Deliberately not `trim_start().starts_with("- [")`, which was the first
+/// attempt and is wrong in both directions:
+///
+/// * it flags an ordinary Markdown link bullet — `- [NESDev docs](https://…)` —
+///   as a malformed checkbox, so the gate would fail the first time anyone put a
+///   link in the list. There is no such line today, which is exactly why this
+///   was invisible: the check passed while being fragile to the next edit.
+/// * it misses `* [ ]` and `+ [ ]`, which Markdown accepts as task list items
+///   just as it accepts `-`, so an indented one under a different bullet
+///   character would still vanish.
+///
+/// A checkbox marker is a bullet, a space, then `[]`, `[ ]`, `[x]` or `[X]`. A
+/// link is a bullet, a space, then `[` and arbitrary text — never a closing
+/// bracket within two characters.
+fn is_checkbox_shaped(line: &str) -> bool {
+    let Some(rest) = line.trim_start().strip_prefix(['-', '*', '+']) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix(' ').and_then(|r| r.strip_prefix('[')) else {
+        return false;
+    };
+    let b = rest.as_bytes();
+    match b {
+        [b']', ..] => true,
+        [c, b']', ..] => matches!(c, b' ' | b'x' | b'X'),
+        _ => false,
+    }
+}
+
 /// Split the document into items, folding each item's continuation lines into
 /// it.
 ///
@@ -99,13 +130,11 @@ fn parse(md: &str) -> Result<Vec<Item>, String> {
     let mut items: Vec<Item> = Vec::new();
     for (idx, raw) in md.lines().enumerate() {
         // Reject anything checkbox-SHAPED that is not one of the two exact
-        // forms, and test it on the TRIMMED line. An indented `  - [ ]` slips
-        // past a column-zero test and is then folded into the previous item as
-        // continuation text -- the box vanishes, and with the item count
-        // unchanged (one added indented, none removed) the floor below cannot
-        // notice. Same hole as the missing-space case, one indent over.
-        let trimmed = raw.trim_start();
-        if trimmed.starts_with("- [") && !raw.starts_with("- [x] ") && !raw.starts_with("- [ ] ") {
+        // forms. An indented box slips past a column-zero test and is then
+        // folded into the previous item as continuation text -- the box
+        // vanishes, and with the item count unchanged (one added indented, none
+        // removed) the floor below cannot notice.
+        if is_checkbox_shaped(raw) && !raw.starts_with("- [x] ") && !raw.starts_with("- [ ] ") {
             return Err(format!(
                 "line {}: malformed checkbox -- expected exactly `- [x] ` or `- [ ] ` at \
                  column zero: {raw}",
@@ -417,4 +446,48 @@ fn a_top_level_line_ends_an_item_so_later_prose_is_not_folded_in() {
         1,
         "prose after a top-level line must not be folded into the box above it"
     );
+}
+
+#[test]
+fn a_markdown_link_bullet_is_not_a_checkbox() {
+    // The blocking finding of review round six. `trim_start().starts_with("- [")`
+    // flags this as a malformed checkbox, so the gate would fail the first time
+    // anyone put a link in the checklist -- and there is no such line today,
+    // which is exactly why it was invisible.
+    let md = format!("{GOOD}- [NESDev documentation](https://www.nesdev.org/wiki/)\n");
+    let items = parse(&md).expect("a link bullet is ordinary prose, not a malformed checkbox");
+    assert_eq!(items.len(), 2, "the link must not become an item");
+    assert!(violations(&items).is_empty());
+}
+
+#[test]
+fn checkboxes_under_other_bullet_markers_are_rejected_too() {
+    // Markdown accepts `*` and `+` as list markers, so an indented box under one
+    // of those would vanish the same way an indented `-` box did.
+    for marker in ['*', '+'] {
+        let md = format!("{GOOD}  {marker} [ ] a box under a different bullet\n");
+        let err = parse(&md).unwrap_err();
+        assert!(err.contains("malformed checkbox"), "{marker}: {err}");
+    }
+}
+
+#[test]
+fn the_checkbox_shape_test_separates_boxes_from_prose() {
+    for yes in [
+        "- [ ] a", "- [x] a", "  - [ ]a", "* [ ] a", "+ [X] a", "- [] a",
+    ] {
+        assert!(is_checkbox_shaped(yes), "should be checkbox-shaped: {yes}");
+    }
+    for no in [
+        "- [NESDev docs](https://example.invalid)",
+        "- [a citation] and prose",
+        "- plain bullet",
+        "not a bullet at all",
+        "-[ ] no space after the bullet",
+    ] {
+        assert!(
+            !is_checkbox_shaped(no),
+            "should NOT be checkbox-shaped: {no}"
+        );
+    }
 }

@@ -164,6 +164,18 @@ cycle-accurate core later replaced.
   **two** of them, reverting the whitespace test fails the tab-continuation
   control, and restoring the substring verdict match fails the whole-word case.
 
+  **And the review then found a blocking defect in the check itself.**
+  `trim_start().starts_with("- [")` treats an ordinary Markdown link bullet --
+  `- [NESDev documentation](https://…)` -- as a malformed checkbox, so the gate
+  would have failed the first time anyone put a link in the list. There is no
+  such line today, which is exactly why it was invisible: the check passed while
+  being fragile to the next edit. It also missed `* [ ]` and `+ [ ]`, which
+  Markdown accepts as task items just as it accepts `-`, so an indented box under
+  a different bullet character would still have vanished. `is_checkbox_shaped`
+  now requires a bullet, a space, and a closing bracket within two characters --
+  three more tests, and two mutations: recognising only `-`, and treating any
+  `[` as a checkbox, each fail two.
+
 - **A checklist box that could never have been ticked honestly.** It asked that
   `docs/provenance.md` state "that no NES core was ever opened" -- and that
   document's own § *Do not self-certify* says never to assert "no third-party
