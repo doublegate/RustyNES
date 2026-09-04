@@ -128,6 +128,15 @@ cycle-accurate core later replaced.
   the I/O board, so a core must also pick one of two 36-assignment variants.
   This one sources `sys_analog.tcl`. **145 in total, from two scripts.**
 
+- **The gate had the defect it exists to catch, found in review.** A line such
+  as `- [ ]missing-space` matches neither exact prefix, so the parser fell
+  through to the separator branch and **dropped the box silently** — and 29
+  surviving items still cleared the `>= 20` floor, so the audit would have
+  passed while one box went unchecked. A malformed box is now rejected by name,
+  and the floor is the current count (30) rather than a round number well below
+  it. Both demonstrated by mutation: a box with the space removed, and a box
+  deleted outright, are each CAUGHT.
+
 - **A checklist box that could never have been ticked honestly.** It asked that
   `docs/provenance.md` state "that no NES core was ever opened" -- and that
   document's own § *Do not self-certify* says never to assert "no third-party

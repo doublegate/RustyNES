@@ -65,9 +65,24 @@ struct Item {
 /// artifact's blocker is nine lines below its `- [ ]`, because the item states
 /// what *is* done before it states what is not. A checker reading only the
 /// first line of each box reports fourteen violations that are not there.
-fn parse(md: &str) -> Vec<Item> {
+///
+/// # A malformed box must be an error, not a separator
+///
+/// `- [ ]missing-space` matches neither prefix, so the first version of this
+/// parser fell through to the separator branch and **dropped the box silently**
+/// — and 29 surviving items still cleared a `>= 20` floor, so the audit passed
+/// while one box went unchecked. That is the failure this gate exists to
+/// prevent, reproduced inside the gate itself. Any top-level line beginning
+/// `- [` that is not one of the two exact forms is now rejected by name.
+fn parse(md: &str) -> Result<Vec<Item>, String> {
     let mut items: Vec<Item> = Vec::new();
     for (idx, raw) in md.lines().enumerate() {
+        if raw.starts_with("- [") && !raw.starts_with("- [x] ") && !raw.starts_with("- [ ] ") {
+            return Err(format!(
+                "line {}: malformed checkbox -- expected exactly `- [x] ` or `- [ ] `: {raw}",
+                idx + 1
+            ));
+        }
         if let Some(rest) = raw.strip_prefix("- [x] ") {
             items.push(Item {
                 ticked: true,
@@ -93,7 +108,7 @@ fn parse(md: &str) -> Vec<Item> {
             last.body.push_str(raw);
         }
     }
-    items
+    Ok(items)
 }
 
 /// `**(now)**` or `**(v2.6.14)**`.
@@ -133,15 +148,19 @@ fn checklist() -> String {
 
 #[test]
 fn every_checklist_box_carries_a_verdict() {
-    let md = checklist();
-    let items = parse(&md);
+    // Fail closed, and the floor is the CURRENT count rather than a round
+    // number well below it. At `>= 20` a document that lost ten boxes still
+    // passed, which is the same "a check that examines nothing reports a pass"
+    // shape the floor is meant to prevent.
+    const MIN_ITEMS: usize = 30;
 
-    // Fail closed. Zero items parsed means the list changed shape, not that it
-    // is compliant -- the same rule the sibling's SPDX sweep learned.
+    let md = checklist();
+    let items = parse(&md).unwrap_or_else(|e| panic!("{e}"));
     assert!(
-        items.len() >= 20,
-        "parsed only {} checklist items; the box syntax has changed and this \
-         gate is no longer reading its subject",
+        items.len() >= MIN_ITEMS,
+        "parsed {} checklist items, expected at least {MIN_ITEMS}; boxes have \
+         been removed or the syntax has changed and this gate is no longer \
+         reading its subject",
         items.len()
     );
 
@@ -181,7 +200,7 @@ fn the_checklist_still_has_unticked_boxes_and_says_so() {
     // vacuously. Submission is v2.7.0 and hardware is not attached, so a fully
     // ticked list would be a claim this project cannot support.
     let md = checklist();
-    let items = parse(&md);
+    let items = parse(&md).unwrap_or_else(|e| panic!("{e}"));
     let unticked = items.iter().filter(|i| !i.ticked).count();
     assert!(
         unticked > 0,
