@@ -15,6 +15,96 @@ plus four dated files in `ref-docs/` (contribution requirements, the MiSTer
 framework, the hardware **source map**, and alternative FPGA targets).
 **Device-under-test:** <https://github.com/doublegate/RustyNES_MiSTer> (private).
 
+## The ladder becomes something a reviewer can run (v2.6.15)
+
+Rung 6 is blocked on hardware and v2.7.0 now waits for it, so this release is
+about the other half of a submission: not what the core does, but what a
+reviewer can **check** about it.
+
+The contributing page states the bar for AI-assisted code in one sentence --
+*"Fully AI generated code should meet a minimum reasonable bar for readability
+and include some evidence of quality and accuracy testing."* This programme's
+evidence is 142 co-simulation gates with a mutation record apiece. And
+`tb/regress.sh` says in its own header that it *"is NOT a CI gate and cannot
+be"*, because it needs the oracle's goldens and a cargo build of a crate in
+another repository. So the strongest thing here was a set of **documents
+describing checks a reader cannot run**.
+
+`docs/golden-fetching.md` in the sibling specified the fix and carried
+`Status: NOT BUILT`. The smallest end-to-end slice is now built: the nine
+opcode-group ROMs export from a **pinned** oracle commit (`tb/ORACLE_COMMIT`)
+and compare in CI. It is a subset -- no PPU, no APU, no AccuracyCoin, no nestest
+-- and the job's name says so, because a job that looks like a gate and is not
+is the defect this programme keeps finding in itself.
+
+**Pinning is the point rather than a caveat.** The determinism contract covers
+the framebuffer and the audio and says nothing about trace-format stability, so
+an unpinned oracle could turn the sibling red for a reason unrelated to its RTL.
+Green there means green against one recorded commit, and moving the pin is a
+deliberate edit.
+
+### The first independent interrupt oracle
+
+`docs/rung5-accuracycoin.md` carries the sentence this closes: *"Rung 4 had
+blargg as an independent check and it found six defects no self-written gate
+could see; rung 5 has no equivalent, and that is the single most important
+sentence in this document."* Interrupts had the same hole -- every interrupt
+gate compares the DUT against RustyNES, so a shared error between them is
+invisible by construction.
+
+`cpu_interrupts_v2`'s five single-purpose ROMs are now verdict gates, on
+**mapper 0** (the combined ROM is mapper 1; the singles are not, which removes
+MMC1 as a variable). `5-branch_delays_irq` is the sharpest of them: *"A taken
+non-page-crossing branch ignores IRQ during its last clock, so that next
+instruction executes before the IRQ."* That is the exact behaviour v2.6.7
+changed in the **oracle** -- caveat C6, `skip_irq_sample_q` -- from documentation
+reasoning alone, with no ROM adjudicating it. This one adjudicates it, on both
+consoles.
+
+Alignment is **recorded rather than assumed**: blargg's readme says
+`2-nmi_and_brk` *"Occasionally fails on NES due to PPU-CPU synchronization"*, so
+its verdict is alignment-sensitive by design and a pass is a pass at the shipped
+alignment, not an absolute one.
+
+### `T-ORACLE-001`'s opening claim is retracted
+
+The ticket says RustyNES never clocks the MMC3 counter on the pre-render line.
+It does. `mmc3_test_2/2-details` sub-test 8 is, verbatim, *"Counter should be
+clocked 241 times in PPU frame"* -- 240 visible plus the pre-render line -- and
+RustyNES passes it, as it has every release.
+
+The claim came from `--ppu-state-trace`, and the ticket's own *instrument traps*
+section says why that instrument cannot answer the question: it carries no CHR
+address column, so it reports what the sprite state was and never what address
+was driven. **A trace that could not see the event was read as evidence the
+event did not happen.** This is the second time an instrument has been mistaken
+for its subject here -- v2.6.9's `apuconflict039` was the first, where nine
+divergences "by design" were a defect in the testbench.
+
+The verdicts are unchanged: the oracle still fails `4-scanline_timing` at
+sub-test 3 and the DUT at sub-test 12, so on that ROM the DUT is still the more
+accurate of the two and `mapper4mmc3irq065` stays unregistered. Only the
+explanation was wrong.
+
+### Three claims that became checks
+
+`sys/` verbatim rested on **one measurement taken at v2.6.6** plus a manual
+procedure nothing ran -- eight releases, several of them touching the build. It
+now pins all 57 files and catches a changed, a missing **and a stray** file; the
+third mode is why the directory is enumerated rather than the manifest merely
+walked, and it is not hypothetical, since `sys/README.md` and `sys/.gitkeep`
+both lived there through v2.6.5. Re-verified against upstream in the same pass:
+`Template_MiSTer`'s HEAD **is** the pinned commit and a clone reports 0
+differences -- two claims, measured separately, because a vendored tree can be
+faithful to a commit upstream has moved past.
+
+The `.qsf` published **two** seed sweeps disagreeing about the pinned seed's
+margin by 0.155 ns, one of them a number the current RTL cannot reproduce. And
+the bitstream **name** turned out not to be a style question at all: the
+distribution builder skips any file whose stem does not end in an underscore
+plus eight digits, so a version-named core would have appeared in the Cores
+table and shipped nothing.
+
 ## Rung 4 OPENS: the pulse channels and the frame counter (v2.5.9)
 
 Both pulses -- timer, 8-step duty sequencer, length counter, envelope, the
