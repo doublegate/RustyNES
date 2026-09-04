@@ -74,6 +74,17 @@ struct Item {
 /// while one box went unchecked. That is the failure this gate exists to
 /// prevent, reproduced inside the gate itself. Any top-level line beginning
 /// `- [` that is not one of the two exact forms is now rejected by name.
+///
+/// # Continuations must be indented, and that is a requirement not an accident
+///
+/// Any non-blank unindented line ends the current item, so Markdown's "lazy
+/// continuation" — wrapping an item's prose to column zero — is not supported.
+/// The checklist uses indented continuations throughout and must keep doing so.
+///
+/// The failure mode is safe rather than silent: an unindented continuation
+/// carrying a verdict is not folded into its item, so the box reads as
+/// verdict-less and the gate FAILS. It cannot cause a box to pass unchecked,
+/// which is the direction that would matter.
 fn parse(md: &str) -> Result<Vec<Item>, String> {
     let mut items: Vec<Item> = Vec::new();
     for (idx, raw) in md.lines().enumerate() {
@@ -112,6 +123,15 @@ fn parse(md: &str) -> Result<Vec<Item>, String> {
 }
 
 /// `**(now)**` or `**(v2.6.14)**`.
+///
+/// Exactly three all-digit dot-separated components, deliberately: `v2.7` and
+/// `v2.7.0-rc1` are rejected. Neither can occur here — this workspace **cannot
+/// carry a `SemVer` pre-release version** at all, because every intra-workspace
+/// dependency is a caret requirement and a caret does not match a pre-release,
+/// so `version = "2.7.0-rc.1"` fails to resolve before any test runs.
+/// `release_anchor_audit` guards that separately. Loosening this to accept
+/// forms the project cannot produce would trade a real check for a
+/// hypothetical one.
 fn has_release_tag(body: &str) -> bool {
     let mut rest = body;
     while let Some(at) = rest.find("**(") {
