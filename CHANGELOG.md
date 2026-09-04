@@ -176,6 +176,15 @@ cycle-accurate core later replaced.
   three more tests, and two mutations: recognising only `-`, and treating any
   `[` as a checkbox, each fail two.
 
+  **The next round found the same class a fourth time.** Matching bytes and
+  asking for ` `, `x` or `X` exactly meant `- [OK]` and `- [<emoji>]` matched
+  neither arm -- not an item, not an error, and silently closing the item above.
+  The rule is now "a closing bracket within three CHARACTERS", counted in chars
+  rather than bytes, so anything bracket-shaped is reported rather than ignored
+  while a link bullet still is not. Pinned from both sides: narrowing it to one
+  character fails four tests, widening it to any `]` anywhere fails the two link
+  tests.
+
 - **A checklist box that could never have been ticked honestly.** It asked that
   `docs/provenance.md` state "that no NES core was ever opened" -- and that
   document's own § *Do not self-certify* says never to assert "no third-party

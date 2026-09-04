@@ -90,12 +90,14 @@ fn is_checkbox_shaped(line: &str) -> bool {
     let Some(rest) = rest.strip_prefix(' ').and_then(|r| r.strip_prefix('[')) else {
         return false;
     };
-    let b = rest.as_bytes();
-    match b {
-        [b']', ..] => true,
-        [c, b']', ..] => matches!(c, b' ' | b'x' | b'X'),
-        _ => false,
-    }
+    // A CLOSING BRACKET WITHIN THREE CHARACTERS, counted in chars rather than
+    // bytes. The first version matched bytes and asked for ` `, `x` or `X`
+    // exactly, so `- [OK]` and `- [<emoji>]` matched neither arm: not an item,
+    // not an error, and silently closing the item above -- the vanishing-box
+    // class a fourth time. Anything bracket-shaped is now REPORTED rather than
+    // ignored, and a link bullet still is not, because `[NESDev docs](...)` has
+    // no `]` that close to the opening bracket.
+    rest.chars().take(3).any(|c| c == ']')
 }
 
 /// Split the document into items, folding each item's continuation lines into
@@ -476,6 +478,10 @@ fn the_checkbox_shape_test_separates_boxes_from_prose() {
     for yes in [
         "- [ ] a", "- [x] a", "  - [ ]a", "* [ ] a", "+ [X] a", "- [] a",
     ] {
+        assert!(is_checkbox_shaped(yes), "should be checkbox-shaped: {yes}");
+    }
+    // Bracket-shaped but not a valid marker: must be REPORTED, not ignored.
+    for yes in ["- [OK] a", "- [\u{2705}] a", "- [-] a"] {
         assert!(is_checkbox_shaped(yes), "should be checkbox-shaped: {yes}");
     }
     for no in [
