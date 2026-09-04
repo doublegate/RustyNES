@@ -204,7 +204,16 @@ Settled at **v2.6.6**, except the one item that needs a board.
 - [ ] **AI-generated-code bar:** readability, plus *"evidence of quality and
       accuracy testing"* — the co-simulation record is that evidence, and the
       submission should link it explicitly rather than assume a reviewer finds it
-      **BLOCKED — on the submission itself.** The evidence exists and is
+      **BLOCKED — on the submission itself.** **The evidence is now also
+      ARGUED rather than merely linkable (v2.6.15):**
+      `RustyNES_MiSTer/docs/submission-case.md` is the document the email will
+      point at — what is different about this core and how a reviewer verifies
+      it in one line of a table they already maintain, the ladder as the answer
+      to the AI-assistance question, the `StudioII_MiSTer` and `PCXT-EGA_MiSTer`
+      precedents, and what is NOT claimed stated first rather than buried.
+      Written before the submission deliberately, so its claims could be checked
+      against the repository while there was still time to find one that does
+      not hold. The evidence exists and is
       linkable today (`docs/rung1-6502.md` through `docs/rung7-mappers.md`, the
       142-gate suite, the mutation records). What is missing is the act of
       pointing a reviewer at it, which happens in the submission email.
