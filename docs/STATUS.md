@@ -74,11 +74,13 @@
 > `bus_addr` and `bus_access` for 1,695,131 cycles, and a two-dot shift takes
 > the differing share from 5.13% to 66.80%.
 >
-> `sys/` is still empty; there is no `.rbf`. That is **rung 6, at v2.6.6** —
-> deferred there rather than done at v2.6.5 under the ladder rule that a rung
-> may not start until the one below is green. Hardware bring-up remains blocked
-> on a DE10-Nano with the SDRAM add-on. Detail: `docs/mister.md` and the
-> sibling's `docs/rung3-ppu.md` and `docs/rung4-apu.md`.
+> `sys/` **was** still empty and there **was** no `.rbf` — true when this entry
+> was written, and false since v2.6.6 vendored the framework (57 files) and
+> v2.6.7 shipped the first bitstream. The tense is corrected rather than the
+> sentence deleted: it is a lineage entry, and what a release did not yet have
+> is part of what it was. Rung 6, hardware bring-up, remains blocked on a
+> DE10-Nano with the SDRAM add-on. Detail: `docs/mister.md` and the sibling's
+> `docs/rung3-ppu.md` and `docs/rung4-apu.md`.
 >
 > Built on **v2.4.3** (2026-08-22) — **"Touchstone"**, the two Fabric
 > risks settled before any RTL exists. **Risk 4, the Quartus subset, is FITTED**:
