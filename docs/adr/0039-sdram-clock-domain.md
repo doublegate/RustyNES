@@ -62,8 +62,17 @@ Three properties make this an amendment to the one-clock rule rather than an
 abandonment of it:
 
 1. **The ratio is an exact integer, from one PLL.** 4x is not "a faster clock
-   nearby"; every SDRAM edge coincides with a master edge every fourth cycle, so
-   the crossing is synchronous and has a fixed, known phase.
+   nearby": every edge of the CONTROLLER clock `clk_sdram` coincides with a master
+   edge every fourth cycle, so the crossing is synchronous and has a fixed, known
+   phase.
+
+   **The pin clock is a different signal and this is the distinction that
+   matters.** `SDRAM_CLK` is driven from `clk_sdram_ps`, a second PLL output at
+   the same frequency and a deliberate phase offset, because the part's setup and
+   hold are measured against the clock it SEES rather than the one the controller
+   runs on. Its edges do not coincide with master edges, and nothing in this ADR
+   claims they do -- what it needs is a fixed phase relationship to `clk_sdram`,
+   which comes from both being outputs of one PLL.
 2. **The console still sees one clock.** `nes_top` is unchanged. The new domain
    ends at the cartridge's read port, which already had a one-cycle latency
    contract — the contract is preserved, the implementation behind it is not.

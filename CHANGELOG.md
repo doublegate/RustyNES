@@ -30,7 +30,7 @@ cycle-accurate core later replaced.
 
 ### Added
 
-- **An SDR SDRAM controller, a behavioural part model, and a three-way
+- **An SDR SDRAM controller, a behavioural part model, and a four-way
   arbiter** in the sibling repository (`rtl/sdram.sv`, `rtl/sdram_arbiter.sv`,
   `tb/sdram_model.sv`), written from the AS4C32M16SB-7 datasheet revision 1.4.
   No third-party controller was read; ADR 0037 applies. The console does not use
@@ -188,9 +188,13 @@ cycle-accurate core later replaced.
   the latch. Both `tb/quartus_clean.py` and `tb/check_warnings.py` caught it
   independently, the second by the warning SET rather than a count.
 
-- **`rtl/sdram_arbiter.sv` was missing from `files.qip`**, caught by the
-  `check_qip` gate added last release for exactly this -- the same defect, one
-  release later, in the same subsystem.
+- **Two files were missing from `files.qip`**, caught by the `check_qip` gate
+  added last release for exactly this -- the same defect, one release later, in
+  the same subsystem. `rtl/sdram.sv` first: the controller was written, linted
+  and gated in simulation while the synthesis list had never heard of it.
+  `rtl/sdram_arbiter.sv` went the same way when it landed. Both directions of the
+  gate are mutated -- a file in `rtl/` and not in the list, and a line in the list
+  naming a file that does not exist.
 
 ### Changed
 
