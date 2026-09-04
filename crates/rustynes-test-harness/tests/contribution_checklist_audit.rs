@@ -55,6 +55,15 @@ struct Item {
     ticked: bool,
     line: usize,
     body: String,
+    /// Set when a top-level line ends the item, so later indented lines are not
+    /// folded into a box they do not belong to.
+    ///
+    /// This was a `\u{0}` sentinel appended to `body`, which worked and read as
+    /// a trick: the closing state was encoded in the data it was guarding, and
+    /// every reader had to know that. An explicit field says the same thing
+    /// without the decoding step, and keeps `body` free of bytes nobody put
+    /// there.
+    closed: bool,
 }
 
 /// Split the document into items, folding each item's continuation lines into
@@ -107,12 +116,14 @@ fn parse(md: &str) -> Result<Vec<Item>, String> {
                 ticked: true,
                 line: idx + 1,
                 body: rest.to_string(),
+                closed: false,
             });
         } else if let Some(rest) = raw.strip_prefix("- [ ] ") {
             items.push(Item {
                 ticked: false,
                 line: idx + 1,
                 body: rest.to_string(),
+                closed: false,
             });
         } else if raw.starts_with("- ")
             || (!raw.is_empty() && !raw.starts_with(char::is_whitespace))
@@ -125,13 +136,11 @@ fn parse(md: &str) -> Result<Vec<Item>, String> {
             // short, which fails safe -- the verdict is not folded in, so the
             // box reports as verdict-less -- but fails for a reason that has
             // nothing to do with the checklist.
-            if let Some(last) = items.last_mut()
-                && !last.body.ends_with('\u{0}')
-            {
-                last.body.push('\u{0}');
+            if let Some(last) = items.last_mut() {
+                last.closed = true;
             }
         } else if let Some(last) = items.last_mut()
-            && !last.body.ends_with('\u{0}')
+            && !last.closed
         {
             last.body.push('\n');
             last.body.push_str(raw);
