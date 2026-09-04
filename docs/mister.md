@@ -24,7 +24,8 @@ reviewer can **check** about it.
 The contributing page states the bar for AI-assisted code in one sentence --
 *"Fully AI generated code should meet a minimum reasonable bar for readability
 and include some evidence of quality and accuracy testing."* This programme's
-evidence is 142 co-simulation gates with a mutation record apiece. And
+evidence is 147 co-simulation gates with a mutation record apiece -- 142 when
+this version opened, plus the five below. And
 `tb/regress.sh` says in its own header that it *"is NOT a CI gate and cannot
 be"*, because it needs the oracle's goldens and a cargo build of a crate in
 another repository. So the strongest thing here was a set of **documents

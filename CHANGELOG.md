@@ -142,7 +142,8 @@ cycle-accurate core later replaced.
 
 - **An accuracy gate someone else can run** (`tb/fetch-goldens.sh`, the
   `rung1-pinned` CI job). `tb/regress.sh` says in its own header that it is not
-  a CI gate and cannot be, which means this project's evidence -- 142 gates,
+  a CI gate and cannot be, which means this project's evidence -- 142 gates at
+  the version's open, **147 at its close**,
   each with a mutation record -- was a set of **documents describing checks a
   reader cannot run**. For a submission whose stated bar is *"a minimum
   reasonable bar for readability and include some evidence of quality and
