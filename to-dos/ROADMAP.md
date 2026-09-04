@@ -561,6 +561,44 @@ the `sd_*` block interface with `img_mounted` / `img_size`, or the simpler
 
 **Acceptance.** A battery game's SRAM survives a power cycle on hardware.
 
+**MEASURED at v2.6.15 — can a gate reach `hps_io` at all?** v2.6.12 attempted
+this ticket and refuted its own attempt on the grounds that "every save route
+terminates in `hps_io`, which no gate here instantiates". That is a claim about
+whether it CAN be instantiated, and it had not been tested. It now has:
+
+```console
+$ verilator --lint-only -Isys --top-module hps_io -GCONF_STR=1 sys/hps_io.sv
+%Error-PROCASSWIRE: sys/hps_io.sv:299:14: Procedural assignment to wire ...
+   ... 11 errors, chiefly PROCASSWIRE at one line, plus 71 warnings
+```
+
+So it is **close, and not free**. Without a `CONF_STR` value it stops at one
+error — that parameter has no default — and with one supplied it reaches
+elaboration and produces eleven, nearly all `PROCASSWIRE` from a single line
+assigning four `wire`s procedurally. Verilator treats that as an error where
+Quartus does not.
+
+That makes the choice a real one rather than a guess, which is the point of
+measuring it:
+
+- **Instantiate the real `hps_io`** — needs `-Wno-PROCASSWIRE` and a handful of
+  siblings. Suppressing errors in vendored framework code to build a testbench
+  is a decision, not a flag: it weakens the lint gate for every file compiled in
+  that invocation, and `sys/` is the one tree this project may not fix at
+  source.
+- **Model the protocol instead** — a stimulus model of `sd_*` and
+  `ioctl_upload_req`/`ioctl_din` written from the framework's port
+  documentation. Narrower, no suppression, and it tests the CORE's side of the
+  contract, which is the side that can be wrong here. Against it: a model of an
+  interface can agree with the core about a protocol they both misread, which is
+  the "agreement about an unasked question" failure this project has hit before.
+
+**Recommended: the model, with the real module as a later cross-check** — the
+same shape as `tb/sdram_model.sv`, which is a behavioural part written from a
+datasheet and states in `docs/sdram.md` exactly what it cannot see. One enabler
+serves three tickets: this one, `T-MISTER-SAVESTATE`, and `T-MISTER-CHEATS`
+through `ioctl` index routing.
+
 **RETRACTED at v2.6.13 — the blocker below was WRONG, and the ticket's original
 text was right.** v2.6.12 recorded this as blocked because "there is no
 OSD-close signal to flush on". The MiSTer developer documentation states the
