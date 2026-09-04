@@ -1,0 +1,499 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Every box in the `MiSTer` contribution checklist must carry a verdict.
+//!
+//! # The defect this exists to prevent
+//!
+//! `to-dos/mister/contribution-checklist.md` is the list that decides whether
+//! the core is ready to submit at v2.7.0. Before v2.6.14 it had 30 boxes, 16 of
+//! them unticked, and **14 of those 16 said nothing at all about why**.
+//!
+//! An unticked box with no reason is indistinguishable from three different
+//! things: work that is genuinely outstanding, work that is blocked on
+//! something outside this repository, and work that was *already done* and
+//! never ticked. The v2.6.14 audit found the third case five times — the
+//! provenance CI job, the SPDX sweep, the firewall statement, the `AccuracyCoin`
+//! vector and the preservation-value case were all true and all unticked — so
+//! the list was reporting the project as further from submission than it was,
+//! by a fifth of its own length.
+//!
+//! It also found a box that could **never** be ticked honestly: it asked that
+//! `docs/provenance.md` state "that no NES core was ever opened", which is
+//! precisely the self-certification that same document forbids. That is not a
+//! missing tick; it is a wrong requirement, and only reading every item found
+//! it.
+//!
+//! # Why a structural gate rather than a review pass
+//!
+//! This is v2.6.11's rule applied to a different document: **prose cannot be
+//! audited, an ordering can.** "Someone should re-read the checklist" is not a
+//! check, and the evidence is that nobody did for four releases. What *is*
+//! checkable is a shape:
+//!
+//! * a **ticked** box names the release that settled it — `**(now)**` for
+//!   things true before the programme, or `**(vX.Y.Z)**`;
+//! * an **unticked** box carries a verdict — `**BLOCKED`, `**DEFERRED`,
+//!   `**DECIDED` or `**CONTINGENT` — so the reason survives in the file rather
+//!   than in whoever last looked.
+//!
+//! The gate deliberately does not judge whether a verdict is *correct*. It
+//! cannot, and pretending otherwise would be the "gate that passes without
+//! testing its subject" this project keeps finding. What it enforces is that a
+//! claim was made and can be argued with.
+
+use std::path::{Path, PathBuf};
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("repo root is two levels above this crate")
+        .to_path_buf()
+}
+
+/// One checklist box: its state, and every line that belongs to it.
+#[derive(Debug)]
+struct Item {
+    ticked: bool,
+    line: usize,
+    body: String,
+    /// Set when a top-level line ends the item, so later indented lines are not
+    /// folded into a box they do not belong to.
+    ///
+    /// This was a `\u{0}` sentinel appended to `body`, which worked and read as
+    /// a trick: the closing state was encoded in the data it was guarding, and
+    /// every reader had to know that. An explicit field says the same thing
+    /// without the decoding step, and keeps `body` free of bytes nobody put
+    /// there.
+    closed: bool,
+}
+
+/// Does this line LOOK like a task-list checkbox, whatever state it is in?
+///
+/// Deliberately not `trim_start().starts_with("- [")`, which was the first
+/// attempt and is wrong in both directions:
+///
+/// * it flags an ordinary Markdown link bullet — `- [NESDev docs](https://…)` —
+///   as a malformed checkbox, so the gate would fail the first time anyone put a
+///   link in the list. There is no such line today, which is exactly why this
+///   was invisible: the check passed while being fragile to the next edit.
+/// * it misses `* [ ]` and `+ [ ]`, which Markdown accepts as task list items
+///   just as it accepts `-`, so an indented one under a different bullet
+///   character would still vanish.
+///
+/// A checkbox marker is a bullet, a space, then `[]`, `[ ]`, `[x]` or `[X]`. A
+/// link is a bullet, a space, then `[` and arbitrary text — never a closing
+/// bracket within two characters.
+fn is_checkbox_shaped(line: &str) -> bool {
+    let Some(rest) = line.trim_start().strip_prefix(['-', '*', '+']) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix(' ').and_then(|r| r.strip_prefix('[')) else {
+        return false;
+    };
+    // A CLOSING BRACKET WITHIN THREE CHARACTERS, counted in chars rather than
+    // bytes. The first version matched bytes and asked for ` `, `x` or `X`
+    // exactly, so `- [OK]` and `- [<emoji>]` matched neither arm: not an item,
+    // not an error, and silently closing the item above -- the vanishing-box
+    // class a fourth time. Anything bracket-shaped is now REPORTED rather than
+    // ignored, and a link bullet still is not, because `[NESDev docs](...)` has
+    // no `]` that close to the opening bracket.
+    rest.chars().take(3).any(|c| c == ']')
+}
+
+/// Split the document into items, folding each item's continuation lines into
+/// it.
+///
+/// The continuation rule is load-bearing and was found by measurement: the
+/// verdict markers do **not** sit on the first line of an item. The release
+/// artifact's blocker is nine lines below its `- [ ]`, because the item states
+/// what *is* done before it states what is not. A checker reading only the
+/// first line of each box reports fourteen violations that are not there.
+///
+/// # A malformed box must be an error, not a separator
+///
+/// `- [ ]missing-space` matches neither prefix, so the first version of this
+/// parser fell through to the separator branch and **dropped the box silently**
+/// — and 29 surviving items still cleared a `>= 20` floor, so the audit passed
+/// while one box went unchecked. That is the failure this gate exists to
+/// prevent, reproduced inside the gate itself. Any top-level line beginning
+/// `- [` that is not one of the two exact forms is now rejected by name.
+///
+/// # Continuations must be indented, and that is a requirement not an accident
+///
+/// Any non-blank unindented line ends the current item, so Markdown's "lazy
+/// continuation" — wrapping an item's prose to column zero — is not supported.
+/// The checklist uses indented continuations throughout and must keep doing so.
+///
+/// The failure mode is safe rather than silent: an unindented continuation
+/// carrying a verdict is not folded into its item, so the box reads as
+/// verdict-less and the gate FAILS. It cannot cause a box to pass unchecked,
+/// which is the direction that would matter.
+fn parse(md: &str) -> Result<Vec<Item>, String> {
+    let mut items: Vec<Item> = Vec::new();
+    for (idx, raw) in md.lines().enumerate() {
+        // Reject anything checkbox-SHAPED that is not one of the two exact
+        // forms. An indented box slips past a column-zero test and is then
+        // folded into the previous item as continuation text -- the box
+        // vanishes, and with the item count unchanged (one added indented, none
+        // removed) the floor below cannot notice.
+        if is_checkbox_shaped(raw) && !raw.starts_with("- [x] ") && !raw.starts_with("- [ ] ") {
+            return Err(format!(
+                "line {}: malformed checkbox -- expected exactly `- [x] ` or `- [ ] ` at \
+                 column zero: {raw}",
+                idx + 1
+            ));
+        }
+        if let Some(rest) = raw.strip_prefix("- [x] ") {
+            items.push(Item {
+                ticked: true,
+                line: idx + 1,
+                body: rest.to_string(),
+                closed: false,
+            });
+        } else if let Some(rest) = raw.strip_prefix("- [ ] ") {
+            items.push(Item {
+                ticked: false,
+                line: idx + 1,
+                body: rest.to_string(),
+                closed: false,
+            });
+        } else if raw.starts_with("- ")
+            || (!raw.is_empty() && !raw.starts_with(char::is_whitespace))
+        {
+            // A new top-level block ends the current item. A blank line does
+            // not: an item may separate its paragraphs and still be one item.
+            //
+            // `char::is_whitespace` rather than `' '`: a TAB-indented
+            // continuation would otherwise read as unindented and cut its item
+            // short, which fails safe -- the verdict is not folded in, so the
+            // box reports as verdict-less -- but fails for a reason that has
+            // nothing to do with the checklist.
+            if let Some(last) = items.last_mut() {
+                last.closed = true;
+            }
+        } else if let Some(last) = items.last_mut()
+            && !last.closed
+        {
+            last.body.push('\n');
+            last.body.push_str(raw);
+        }
+    }
+    Ok(items)
+}
+
+/// `**(now)**` or `**(v2.6.14)**`.
+///
+/// Exactly three all-digit dot-separated components, deliberately: `v2.7` and
+/// `v2.7.0-rc1` are rejected. Neither can occur here — this workspace **cannot
+/// carry a `SemVer` pre-release version** at all, because every intra-workspace
+/// dependency is a caret requirement and a caret does not match a pre-release,
+/// so `version = "2.7.0-rc.1"` fails to resolve before any test runs.
+/// `release_anchor_audit` guards that separately. Loosening this to accept
+/// forms the project cannot produce would trade a real check for a
+/// hypothetical one.
+fn has_release_tag(body: &str) -> bool {
+    let mut rest = body;
+    while let Some(at) = rest.find("**(") {
+        let tail = &rest[at + 3..];
+        if let Some(end) = tail.find(")**") {
+            let tag = &tail[..end];
+            if tag == "now" {
+                return true;
+            }
+            let versionish = tag.starts_with('v')
+                && tag[1..].split('.').count() == 3
+                && tag[1..]
+                    .split('.')
+                    .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+            if versionish {
+                return true;
+            }
+        }
+        rest = &rest[at + 3..];
+    }
+    false
+}
+
+const VERDICTS: [&str; 4] = ["**BLOCKED", "**DEFERRED", "**DECIDED", "**CONTINGENT"];
+
+/// A verdict must be the whole word, not a prefix of one.
+///
+/// A raw substring match accepts `**BLOCKEDNESS`, which is not a verdict and
+/// would let a box pass on a typo. The marker must be followed by something
+/// that cannot continue the word.
+fn has_verdict(body: &str) -> bool {
+    VERDICTS.iter().any(|v| {
+        body.match_indices(v)
+            // `starts_with` on the empty remainder is false, so a marker at the
+            // very end of the body counts -- the same answer the longer
+            // `chars().next().is_none_or(..)` gave, without the MSRV question
+            // `is_none_or` invited.
+            .any(|(at, _)| !body[at + v.len()..].starts_with(char::is_alphanumeric))
+    })
+}
+
+/// Every box that fails the shape rule, as a reportable line each.
+///
+/// Extracted so the synthetic mutation tests below can reach the same decision
+/// the real gate makes. A test that reimplements its subject agrees with itself
+/// forever -- this project has been bitten by exactly that -- so there is one
+/// implementation and both callers use it.
+fn violations(items: &[Item]) -> Vec<String> {
+    let mut bad: Vec<String> = Vec::new();
+    for it in items {
+        let first = it.body.lines().next().unwrap_or_default();
+        if it.ticked && !has_release_tag(&it.body) {
+            bad.push(format!(
+                "line {}: TICKED with no release tag -- add **(now)** or **(vX.Y.Z)**: {first}",
+                it.line
+            ));
+        }
+        if !it.ticked && !has_verdict(&it.body) {
+            bad.push(format!(
+                "line {}: UNTICKED with no verdict -- add one of {}: {first}",
+                it.line,
+                VERDICTS.join(", ")
+            ));
+        }
+    }
+    bad
+}
+
+fn checklist() -> String {
+    let path = repo_root().join("to-dos/mister/contribution-checklist.md");
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{} unreadable: {e}", path.display()))
+}
+
+#[test]
+fn every_checklist_box_carries_a_verdict() {
+    // Fail closed, and the floor is the CURRENT count rather than a round
+    // number well below it. At `>= 20` a document that lost ten boxes still
+    // passed, which is the same "a check that examines nothing reports a pass"
+    // shape the floor is meant to prevent.
+    const MIN_ITEMS: usize = 30;
+
+    let md = checklist();
+    let items = parse(&md).unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        items.len() >= MIN_ITEMS,
+        "parsed {} checklist items, expected at least {MIN_ITEMS}; boxes have \
+         been removed or the syntax has changed and this gate is no longer \
+         reading its subject",
+        items.len()
+    );
+
+    let bad = violations(&items);
+
+    assert!(
+        bad.is_empty(),
+        "{} checklist box(es) carry no verdict:\n  {}\n\n\
+         An unticked box with no reason cannot be told apart from work that is \
+         outstanding, work that is blocked elsewhere, and work already done and \
+         never ticked. The v2.6.14 audit found the third case five times.",
+        bad.len(),
+        bad.join("\n  ")
+    );
+}
+
+#[test]
+fn the_checklist_still_has_unticked_boxes_and_says_so() {
+    // The counterpart to the gate above, and the reason it is a separate test:
+    // a checklist that ticked everything would satisfy the verdict rule
+    // vacuously. Submission is v2.7.0 and hardware is not attached, so a fully
+    // ticked list would be a claim this project cannot support.
+    let md = checklist();
+    let items = parse(&md).unwrap_or_else(|e| panic!("{e}"));
+    let unticked = items.iter().filter(|i| !i.ticked).count();
+    assert!(
+        unticked > 0,
+        "every checklist box is ticked, which would mean the core is ready to \
+         submit -- rung 6 needs hardware nobody here has, so this is a false \
+         claim rather than a milestone"
+    );
+    assert!(
+        md.contains("must be complete **by v2.7.0**"),
+        "the checklist no longer states when it must be complete"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The mutation record, made executable.
+//
+// These existed only as shell transcripts: edit the checklist, run the gate,
+// restore. The results were real and nothing in the repository carried them, so
+// the claim "demonstrated by mutation" rested on a transcript nobody could
+// re-run and no future change could trip over. Caught in review, which is the
+// same finding this whole release is about aimed at its own gate.
+//
+// Each case below is one of those hand-run mutations, frozen. They feed
+// synthetic documents through the SAME `parse` and `violations` the real gate
+// uses -- not a reimplementation of them, which would agree with itself forever.
+// ---------------------------------------------------------------------------
+
+/// A minimal well-formed document: one ticked box with a tag, one unticked with
+/// a verdict. Everything below mutates exactly one thing about it.
+const GOOD: &str = "\
+- [x] a settled item **(v2.6.14)**
+- [ ] an open item
+      **BLOCKED — on something outside this repository.**
+";
+
+#[test]
+fn the_baseline_document_is_clean() {
+    let items = parse(GOOD).expect("baseline parses");
+    assert_eq!(items.len(), 2, "baseline should hold exactly two boxes");
+    assert!(
+        violations(&items).is_empty(),
+        "baseline must be clean or every mutation below proves nothing"
+    );
+}
+
+#[test]
+fn a_removed_verdict_is_caught() {
+    let md = GOOD.replace(
+        "**BLOCKED — on something outside this repository.**",
+        "no reason given",
+    );
+    let items = parse(&md).expect("still parses");
+    assert_eq!(
+        violations(&items).len(),
+        1,
+        "an unticked box with no verdict must be reported"
+    );
+}
+
+#[test]
+fn a_removed_release_tag_is_caught() {
+    let md = GOOD.replace(" **(v2.6.14)**", "");
+    let items = parse(&md).expect("still parses");
+    assert_eq!(
+        violations(&items).len(),
+        1,
+        "a ticked box with no release tag must be reported"
+    );
+}
+
+#[test]
+fn a_checkbox_missing_its_space_is_rejected() {
+    let md = GOOD.replace("- [ ] an open item", "- [ ]an open item");
+    let err = parse(&md).expect_err("a malformed checkbox must be an error, not a dropped box");
+    assert!(
+        err.contains("malformed checkbox"),
+        "unhelpful message: {err}"
+    );
+}
+
+#[test]
+fn an_indented_checkbox_is_rejected() {
+    // The dangerous direction: this ADDS a box, so an item-count floor cannot
+    // notice, and folding it into the previous item hides it from the audit.
+    let md = format!("{GOOD}  - [ ] an indented box nobody would audit\n");
+    let err = parse(&md).expect_err("an indented checkbox must be an error");
+    assert!(err.contains("column zero"), "unhelpful message: {err}");
+}
+
+#[test]
+fn a_tab_indented_continuation_still_belongs_to_its_item() {
+    // The POSITIVE control. Testing indentation against a literal space cut the
+    // item short here, so the verdict was not folded in and the box reported as
+    // verdict-less -- a false failure rather than a false pass, but a failure
+    // with nothing to do with the checklist.
+    let md = "- [ ] an open item\n\t**BLOCKED — reason on a tab-indented line.**\n";
+    let items = parse(md).expect("parses");
+    assert_eq!(items.len(), 1);
+    assert!(
+        violations(&items).is_empty(),
+        "a tab-indented continuation must fold into its item"
+    );
+}
+
+#[test]
+fn a_verdict_must_be_a_whole_word() {
+    assert!(
+        has_verdict("**BLOCKED — no board.**"),
+        "the real marker must match"
+    );
+    assert!(
+        !has_verdict("**BLOCKEDNESS of a kind.**"),
+        "a substring match would accept this and it is not a verdict"
+    );
+}
+
+#[test]
+fn the_release_tag_form_is_strict_on_purpose() {
+    assert!(has_release_tag("settled **(now)**"));
+    assert!(has_release_tag("settled **(v2.6.14)**"));
+    // Rejected deliberately: this workspace cannot carry a pre-release version
+    // at all, so accepting one would be a check for something that cannot occur.
+    assert!(!has_release_tag("settled **(v2.7.0-rc1)**"));
+    assert!(!has_release_tag("settled **(v2.7)**"));
+    assert!(!has_release_tag("settled (v2.6.14)"));
+}
+
+#[test]
+fn a_top_level_line_ends_an_item_so_later_prose_is_not_folded_in() {
+    // Without this, a verdict belonging to a LATER heading's paragraph would be
+    // credited to the box above it, which is a false pass.
+    let md = "\
+- [ ] an open item with no verdict
+
+## A heading
+
+      **BLOCKED — this belongs to nothing above.**
+";
+    let items = parse(md).expect("parses");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        violations(&items).len(),
+        1,
+        "prose after a top-level line must not be folded into the box above it"
+    );
+}
+
+#[test]
+fn a_markdown_link_bullet_is_not_a_checkbox() {
+    // The blocking finding of review round six. `trim_start().starts_with("- [")`
+    // flags this as a malformed checkbox, so the gate would fail the first time
+    // anyone put a link in the checklist -- and there is no such line today,
+    // which is exactly why it was invisible.
+    let md = format!("{GOOD}- [NESDev documentation](https://www.nesdev.org/wiki/)\n");
+    let items = parse(&md).expect("a link bullet is ordinary prose, not a malformed checkbox");
+    assert_eq!(items.len(), 2, "the link must not become an item");
+    assert!(violations(&items).is_empty());
+}
+
+#[test]
+fn checkboxes_under_other_bullet_markers_are_rejected_too() {
+    // Markdown accepts `*` and `+` as list markers, so an indented box under one
+    // of those would vanish the same way an indented `-` box did.
+    for marker in ['*', '+'] {
+        let md = format!("{GOOD}  {marker} [ ] a box under a different bullet\n");
+        let err = parse(&md).unwrap_err();
+        assert!(err.contains("malformed checkbox"), "{marker}: {err}");
+    }
+}
+
+#[test]
+fn the_checkbox_shape_test_separates_boxes_from_prose() {
+    for yes in [
+        "- [ ] a", "- [x] a", "  - [ ]a", "* [ ] a", "+ [X] a", "- [] a",
+    ] {
+        assert!(is_checkbox_shaped(yes), "should be checkbox-shaped: {yes}");
+    }
+    // Bracket-shaped but not a valid marker: must be REPORTED, not ignored.
+    for yes in ["- [OK] a", "- [\u{2705}] a", "- [-] a"] {
+        assert!(is_checkbox_shaped(yes), "should be checkbox-shaped: {yes}");
+    }
+    for no in [
+        "- [NESDev docs](https://example.invalid)",
+        "- [a citation] and prose",
+        "- plain bullet",
+        "not a bullet at all",
+        "-[ ] no space after the bullet",
+    ] {
+        assert!(
+            !is_checkbox_shaped(no),
+            "should NOT be checkbox-shaped: {no}"
+        );
+    }
+}

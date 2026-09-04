@@ -26,6 +26,223 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.14] - 2026-09-03 - "Docket" (the submission checklist becomes auditable)
+
+### Added
+
+- **Every box in the MiSTer contribution checklist now carries a verdict, and a
+  gate keeps it that way** (`contribution_checklist_audit.rs`). The list that
+  decides whether the core is ready to submit at v2.7.0 had 30 boxes, 16
+  unticked, and **14 of those 16 said nothing about why**. An unticked box with
+  no reason cannot be told apart from three different things: work outstanding,
+  work blocked outside this repository, and **work already done and never
+  ticked**. The audit found the third case **five times**, so the list had been
+  reporting the project as further from submission than it was, by a fifth of
+  its own length.
+
+  The gate asserts a shape rather than a judgement: a ticked box names the
+  release that settled it, an unticked one carries `BLOCKED`, `DEFERRED`,
+  `DECIDED` or `CONTINGENT`. It deliberately does not rule on whether a verdict
+  is *correct* -- it cannot, and pretending otherwise would be the "gate that
+  passes without testing its subject" this project keeps finding. Five
+  mutations: a removed verdict, a removed release tag, every box ticked, and a
+  broken box syntax are all CAUGHT; removing the continuation-line folding
+  produces **nine false violations**, which is what proves that rule
+  load-bearing -- the verdict markers do not sit on an item's first line.
+
+### Fixed
+
+- **The bitstream is byte-identical to v2.6.13's**, `2c2fa6eb0f751b2c9b60fcf903f2bf3f`,
+  which is the point rather than a coincidence: the only sibling change this
+  release makes is a **comment** in `RustyNES.sdc`, and an identical `.rbf`
+  demonstrates it. That is a stronger reproducibility statement than v2.6.7's,
+  which compared a clean and an incremental compile of the **same** sources;
+  here the sources differ and the output does not. Timing is unchanged at the
+  binding corner — worst setup **+0.317 ns**, worst hold **+0.068 ns**, both
+  Slow 1100mV -40C — with 0 errors and the warning set matching the manifest
+  exactly.
+
+  Two of those checks were briefly misread as findings, and the mistake is
+  worth the line it costs: `Quartus Prime Shell was successful` is emitted **per
+  sub-flow**, so it is not a completion test. Read as one, it made a
+  still-running compile look finished, which put a v2.6.13 artifact under a
+  v2.6.14 label — and `check_timing`'s staleness guard is what refused it, by
+  noticing the report predated thirteen sources. `check_warnings` reported a
+  pinned warning "no longer emitted" for the same reason: the Fitter had not yet
+  written it. Both gates were right; the reading was not. The completion test is
+  the footer or the wrapper's exit status.
+
+- **The task board had the same defect, and one row worse.**
+  `to-dos/mister/TASKS.md` tracks the programme against itself, and **four
+  delivered items had never been ticked** — v2.6.6's whole rung-6 integration,
+  the SDRAM controller, the published `.rbf` and the Home folder — so the board
+  read as further behind than the releases it tracks. The hardware row still
+  named **v2.6.7**, seven releases after that slot shipped something else;
+  naming a slot for work blocked on absent hardware is a prediction rather than
+  a plan, and the number is struck.
+
+  The SDRAM row is the interesting one. It said the controller comes **"after a
+  board exists"**, and the table above it justifies that: the controller "needs
+  hardware" because "its acceptance is read/write timing against a real part".
+  v2.6.13 did not wait, and accepted it against a **behavioural model written
+  from the same datasheet** — tRCD, tRP, tRAS, tRC, tRFC, tRRD, tMRD and tWR
+  checked, a clock period the part cannot meet refused — then ran the whole
+  console against it at 142 of 142. **That is rung 7's own recorded lesson
+  repeating one row below where it is written**: *before recording something as
+  blocked, check the blocker applies to the whole item.* It applied to hardware
+  **acceptance**, not to building the controller or verifying it against a
+  documented part. Twelve open items become eight.
+
+- **The next version's headline is specified rather than named.**
+  `cpu_interrupts_v2` sat on the board as "the independent interrupt oracle, now
+  reachable", which is not enough to start from. Measured: it is **five
+  independent single-purpose ROMs**, they are **mapper 0** where the combined
+  ROM is mapper 1 — removing MMC1 as a variable — **the oracle passes all
+  five**, so a DUT gate can adjudicate, and they report through `$6000` so they
+  need `PRG_RAM=1` exactly as the blargg batteries do. Deliberately not started
+  here: it is a five-gate campaign with its own findings, and bolting it onto an
+  audit release would blur both.
+
+- **Two ticked boxes were ticked on evidence that had expired**, found by
+  re-measuring the settled half of the list rather than only the unsettled one —
+  which is v2.6.9's finding applied to a different document: a stated reason
+  stops being true and nobody re-reads it.
+
+  `RustyNES.sdc` said *"There is exactly one core clock ... so there is no second
+  clock domain to constrain and no false path to cut."* True of v2.6.3's
+  master-clock divider, **false since v2.6.13**, which added `clk_sdram` at 4x
+  and the phase-shifted `clk_sdram_ps`; the shipped timing report names all
+  three core-PLL outputs. The file's *behaviour* was never wrong —
+  `derive_pll_clocks` picks up all three — only its explanation. **And the
+  alarming reading of that was checked before it was written down**: it looks as
+  though `sys/sys_top.sdc`'s `set_clock_groups -exclusive` might be cutting the
+  `clk_sys` <-> `clk_sdram` crossing, leaving ADR 0039's safety argument
+  unfalsifiable. It is not: `-exclusive` cuts paths *between* groups, all three
+  outputs match one glob and land in one group, and v2.6.13's own -24.769 ns
+  measurement of that crossing is only observable because those paths are
+  analysed.
+
+  `RustyNES.qsf`'s entry said the device and **all 109** pin assignments come
+  from `sys/sys.tcl`. `sys.tcl` supplies 109 — including the 45 SDRAM pins,
+  which is why the SDRAM work needed no pin file of its own — and stops short of
+  the I/O board, so a core must also pick one of two 36-assignment variants.
+  This one sources `sys_analog.tcl`. **145 in total, from two scripts.**
+
+- **The gate had the defect it exists to catch, found in review.** A line such
+  as `- [ ]missing-space` matches neither exact prefix, so the parser fell
+  through to the separator branch and **dropped the box silently** — and 29
+  surviving items still cleared the `>= 20` floor, so the audit would have
+  passed while one box went unchecked. A malformed box is now rejected by name,
+  and the floor is the current count (30) rather than a round number well below
+  it. Both demonstrated by mutation: a box with the space removed, and a box
+  deleted outright, are each CAUGHT.
+
+  **The second reviewer then found the same hole one indent over.** An
+  *indented* checkbox slips past a column-zero test and is folded into the
+  previous item as continuation text — and because that ADDS a box rather than
+  removing one, the item count stays at 30 and the floor cannot notice either.
+  The check now runs on the trimmed line and rejects checkbox-shaped lines that
+  are not at column zero. Two more properties came with it: `char::is_whitespace`
+  instead of `' '`, so a tab-indented continuation is not read as unindented and
+  does not cut its item short; and a verdict marker must be a whole word, since
+  a raw substring match accepted `**BLOCKEDNESS`. Three mutations — an indented
+  box and a `BLOCKEDNESS` verdict are CAUGHT, and a tab-indented continuation is
+  ACCEPTED as the positive control.
+
+  **And then the mutation record itself was found to be a transcript.** Every
+  mutation above had been run at the shell -- edit the checklist, run the gate,
+  restore -- so the results were real and **nothing in the repository carried
+  them**: no future change could trip over them, and "demonstrated by mutation"
+  rested on something nobody else could re-run. Caught in review, in a CodeRabbit
+  finding posted **outside the diff range**, which is the surface a
+  resolve-every-thread sweep does not reach. The cases are now **tests** -- a
+  clean baseline plus eight mutations of it -- feeding synthetic documents
+  through the same `parse` and `violations` the real gate uses rather than a
+  reimplementation, and `violations` was extracted for exactly that reason, since
+  a test that reimplements its subject agrees with itself forever. Proven against
+  the production code in turn: dropping the malformed-checkbox rejection fails
+  **two** of them, reverting the whitespace test fails the tab-continuation
+  control, and restoring the substring verdict match fails the whole-word case.
+
+  **And the review then found a blocking defect in the check itself.**
+  `trim_start().starts_with("- [")` treats an ordinary Markdown link bullet --
+  `- [NESDev documentation](https://…)` -- as a malformed checkbox, so the gate
+  would have failed the first time anyone put a link in the list. There is no
+  such line today, which is exactly why it was invisible: the check passed while
+  being fragile to the next edit. It also missed `* [ ]` and `+ [ ]`, which
+  Markdown accepts as task items just as it accepts `-`, so an indented box under
+  a different bullet character would still have vanished. `is_checkbox_shaped`
+  now requires a bullet, a space, and a closing bracket within two characters --
+  three more tests, and two mutations: recognising only `-`, and treating any
+  `[` as a checkbox, each fail two.
+
+  **The next round found the same class a fourth time.** Matching bytes and
+  asking for ` `, `x` or `X` exactly meant `- [OK]` and `- [<emoji>]` matched
+  neither arm -- not an item, not an error, and silently closing the item above.
+  The rule is now "a closing bracket within three CHARACTERS", counted in chars
+  rather than bytes, so anything bracket-shaped is reported rather than ignored
+  while a link bullet still is not. Pinned from both sides: narrowing it to one
+  character fails four tests, widening it to any `]` anywhere fails the two link
+  tests.
+
+- **A checklist box that could never have been ticked honestly.** It asked that
+  `docs/provenance.md` state "that no NES core was ever opened" -- and that
+  document's own § *Do not self-certify* says never to assert "no third-party
+  code is incorporated" or "licence-clean" as a finished claim. The box could
+  only have been satisfied by writing the one sentence the project's provenance
+  rules exist to prevent. The firewall half is what was actually being asked
+  for; the self-certification half is **struck**, with the reason recorded in
+  place.
+
+- **`Distribution_MiSTer`'s selection rule, measured instead of paraphrased.**
+  The checklist said it "selects the newest bitstream by the DATE in the
+  filename", which is the wiki's wording. `Main_MiSTer/file_io.cpp` is sharper:
+  `get_display_name()` searches for the literal `"_20"` and, on finding it, does
+  `*p = 0` -- **truncating the display name there** -- taking the rest as
+  `datecode`; absent, `datecode` becomes `"------"` and the name stays whole.
+  `DirentComp()` groups by that truncated name and only compares datecodes
+  within a group. `RustyNES_MiSTer-v2.6.13.rbf` has no `_20`, so **every
+  released version is a separate core entry**, named
+  `RustyNES_MiSTer-v2.6.13` rather than `RustyNES`, ordered alphabetically --
+  which puts **v2.6.9 after v2.6.13**. It does not affect the Home folder, and
+  has no effect until submission. The fix is one line, and it is not taken here:
+  version-naming is a maintainer decision of 2026-08-30 with a stated rationale,
+  and reversing it is not an audit's call.
+
+- **`bump_release.py` dropped the previous release from two chains again**, in
+  exactly the same two places as at v2.6.13 — `ROADMAP.md`'s "Built on" line and
+  `to-dos/ROADMAP.md`'s release-line chain. Twice in consecutive releases makes
+  it a script defect rather than an incident: the tool swaps the version token
+  and leaves the chain, so the new release wears the old one's description and
+  the old one vanishes from the lineage.
+
+  **It is not fixed here, and the reason is that the gate makes deferring it
+  safe**: `release_anchor_audit` catches both every time, by name and by file,
+  and did so again before either reached a commit. Shape one is mechanically
+  fixable — inserting `**vPREV "CODENAME"** and` after the "Built on" prefix needs only
+  what the script already knows. Shape two is not: appending a chain entry needs
+  a written summary, which is why it is manual, and the honest improvement there
+  is to **refuse** rather than silently swap. Recorded with the evidence so the
+  next version starts from a measurement.
+
+  A third repair was needed for a different reason, and it is the gate's own
+  documented trap: the audit finds the last version token before "the current
+  release", and the new chain entry mentioned the *previous* version twice near
+  its tail — so the label appeared to belong to v2.6.13. Reworded to name it
+  once, at the front.
+
+- **A claim v2.6.13 shipped, retracted.** Answering a review finding that "a
+  five-mapper core" did not say which five, I wrote that the five were NROM,
+  UxROM, CNROM, AxROM and MMC3 and that **MMC1 was the sixth approved family and
+  not yet implemented**. Both halves are false: `rtl/cart/cart.sv` decodes mapper
+  1 at three sites and `mapper1mmc1063` has been a registered gate since rung 7
+  opened, and NROM landed at v2.6.3 rather than in rung 7's five. The approved
+  six-family scope is **complete**. Asserted from memory inside a reply
+  correcting somebody else's reading of the same line -- the project's rule is
+  to verify a reviewer's claim before writing the fix, and the failure mode is
+  verifying theirs and not your own. Retracted in the plan with the wrong text
+  preserved, and on the public review thread.
+
 ## [2.6.13] - 2026-09-03 - "Slack" (the cartridge outgrows the die, and three consumers want the same bus)
 
 ### Added
