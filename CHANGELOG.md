@@ -50,6 +50,37 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **The task board had the same defect, and one row worse.**
+  `to-dos/mister/TASKS.md` tracks the programme against itself, and **four
+  delivered items had never been ticked** — v2.6.6's whole rung-6 integration,
+  the SDRAM controller, the published `.rbf` and the Home folder — so the board
+  read as further behind than the releases it tracks. The hardware row still
+  named **v2.6.7**, seven releases after that slot shipped something else;
+  naming a slot for work blocked on absent hardware is a prediction rather than
+  a plan, and the number is struck.
+
+  The SDRAM row is the interesting one. It said the controller comes **"after a
+  board exists"**, and the table above it justifies that: the controller "needs
+  hardware" because "its acceptance is read/write timing against a real part".
+  v2.6.13 did not wait, and accepted it against a **behavioural model written
+  from the same datasheet** — tRCD, tRP, tRAS, tRC, tRFC, tRRD, tMRD and tWR
+  checked, a clock period the part cannot meet refused — then ran the whole
+  console against it at 142 of 142. **That is rung 7's own recorded lesson
+  repeating one row below where it is written**: *before recording something as
+  blocked, check the blocker applies to the whole item.* It applied to hardware
+  **acceptance**, not to building the controller or verifying it against a
+  documented part. Twelve open items become eight.
+
+- **The next version's headline is specified rather than named.**
+  `cpu_interrupts_v2` sat on the board as "the independent interrupt oracle, now
+  reachable", which is not enough to start from. Measured: it is **five
+  independent single-purpose ROMs**, they are **mapper 0** where the combined
+  ROM is mapper 1 — removing MMC1 as a variable — **the oracle passes all
+  five**, so a DUT gate can adjudicate, and they report through `$6000` so they
+  need `PRG_RAM=1` exactly as the blargg batteries do. Deliberately not started
+  here: it is a five-gate campaign with its own findings, and bolting it onto an
+  audit release would blur both.
+
 - **Two ticked boxes were ticked on evidence that had expired**, found by
   re-measuring the settled half of the list rather than only the unsettled one —
   which is v2.6.9's finding applied to a different document: a stated reason

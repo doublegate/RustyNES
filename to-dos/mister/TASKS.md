@@ -54,6 +54,26 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
       Two of the six rules are absent from the nesdev wiki and stated in
       blargg's own `readme.txt`: the length-halt delay and the reload drop.
 - [ ] Run `cpu_interrupts_v2` — the independent interrupt oracle, now reachable
+      **DEFERRED — specified at v2.6.14, not started.** The line above said only
+      "now reachable", which is not enough to start from. What the v2.6.14 audit
+      established, so the next attempt begins at measurement:
+
+      - The corpus is five **independent** single-purpose ROMs in
+        `tests/roms/nes-test-roms/cpu_interrupts_v2/rom_singles/` —
+        `1-cli_latency`, `2-nmi_and_brk`, `3-nmi_and_irq`, `4-irq_and_dma`,
+        `5-branch_delays_irq` — not one combined ROM.
+      - They are **mapper 0**, 32 KiB PRG + 8 KiB CHR. The combined
+        `cpu_interrupts.nes` is mapper 1; the singles are not, which removes
+        MMC1 as a variable and puts them on the DUT's most-verified cartridge.
+      - **The oracle passes all five** (`cpu_interrupts_v2.rs`, 5/5 in 8.1 s at
+        a 1500-frame budget), so a DUT gate can adjudicate — the
+        `subtest_verdict.py` precedent, where an oracle that fails its own
+        sub-test cannot.
+      - They report through `$6000`, so they need `PRG_RAM=1` exactly as the
+        blargg batteries in `regress.sh` do.
+
+      This is the sharpest open technical item in the programme: an independent
+      interrupt oracle, on NROM, with the oracle side already green.
 - [ ] **Carried from v2.6.2:** the power-up `$4017` rewrite (blargg's readme:
       the APU acts as if `$4017` were written with `$00` 9-12 clocks before the
       first instruction). The oracle models it, the DUT does not, and no ROM in
@@ -217,12 +237,20 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
 > it and rung 6 moved down one slot. Rung 5 closed at v2.6.5; rung 6 opens at
 > v2.6.6.
 
-- [ ] v2.6.6 `sys/` verbatim; `emu` module; `hps_io`; `CE_PIXEL` video; `CONF_STR`
+- [x] v2.6.6 `sys/` verbatim; `emu` module; `hps_io`; `CE_PIXEL` video; `CONF_STR`
       OSD; `VIDEO_ARX/ARY` at **8:7, set deliberately**; `files.qip`, `.sdc`,
-      `clean.bat`; **Quartus timing closure**; first `.rbf`
-- [ ] v2.6.7 hardware bring-up: DE10-Nano + SDRAM add-on, SuperStation One,
-      **one `.rbf` boots both**; on-device AccuracyCoin — **rung 6 closes**.
-      Blocked on hardware this machine does not have
+      `clean.bat`; **Quartus timing closure**; first `.rbf` — **all delivered at
+      v2.6.6**: `sys/` 57 files with 0 content differences at `3ea1134c`, 0
+      errors, timing closed, warnings 111 -> 3. **Ticked at v2.6.14**, having sat
+      unticked for eight releases while its own release notes described it as
+      done.
+- [ ] hardware bring-up: DE10-Nano + SDRAM add-on, SuperStation One, **one
+      `.rbf` boots both**; on-device AccuracyCoin — **rung 6 closes**.
+      **BLOCKED — no board**, confirmed each release by checking the USB bus,
+      serial devices, removable block devices and mounts rather than assumed.
+      **The version number is struck**: this said "v2.6.7", and v2.6.7 shipped
+      "Detent" instead. Seven releases have now passed the slot, so naming one
+      is a prediction rather than a plan. **Unblocks on hardware.**
 
 ## Rung 7 — memory and mappers
 
@@ -245,14 +273,52 @@ something as blocked, check the blocker applies to the WHOLE item.**
       selected `rtl/cart/cart.sv`, written from the vendored wiki; all five
       match the oracle on every cycle and every checkpoint. See
       `RustyNES_MiSTer/docs/rung7-mappers.md`
-- [ ] SDRAM controller from spec (ADR first) — **after** a board exists
+- [x] SDRAM controller from spec (ADR first) — **delivered at v2.6.13**
+      (ADR 0039 first, as required): controller, behavioural part model,
+      four-port arbiter and console bridge, written from the AS4C32M16SB-7
+      datasheet revision 1.4 with no third-party controller read.
+
+      **Its stated precondition was not followed, and that is the finding.**
+      This line said *"after a board exists"*, and the table above justifies it:
+      the SDRAM controller "needs hardware" because "its acceptance is read/write
+      timing against a real part". v2.6.13 accepted it against a **behavioural
+      model written from the same datasheet**, checking tRCD, tRP, tRAS, tRC,
+      tRFC, tRRD, tMRD and tWR and refusing a clock period the part cannot meet
+      — then ran the whole console against it, 142 of 142 gates. That is a
+      weaker claim than silicon and a real one, and the table did not anticipate
+      it.
+
+      **This is the lesson two paragraphs above, repeating one row below where
+      it is written**: before recording something as blocked, check the blocker
+      applies to the whole item. It applied to *hardware acceptance*, not to
+      building the controller or to verifying it against a documented part.
 - [ ] The remaining ~169 mapper families, as needed
+      **DEFERRED — out of the approved scope**, which is the top six families
+      and is now complete. Not a backlog item; a decision recorded in the
+      programme plan.
 
 ## v2.7.0 — the contribution package
 
 - [ ] Requirements checklist green (`contribution-checklist.md`)
-- [ ] `releases/RustyNES_MiSTer-vX.Y.Z.rbf`
-- [ ] Unique Home folder chosen
+      **BLOCKED — on four boxes, of which three need hardware or the submission
+      itself.** As of the v2.6.14 audit the checklist is **19 ticked, 11
+      unticked**, every unticked box carrying a named verdict and a gate
+      (`contribution_checklist_audit.rs`) keeping it that way.
+- [x] `releases/RustyNES_MiSTer-vX.Y.Z.rbf` — **since v2.6.7**, committed to the
+      sibling's `releases/` and attached to the GitHub release on both
+      repositories, produced by `scripts/release-rbf.sh`, which refuses a
+      compile with errors or negative slack at any corner. The **filename**
+      remains a known divergence from MiSTer's date convention — see the
+      checklist, where it is measured against `Main_MiSTer/file_io.cpp` rather
+      than the wiki's paraphrase.
+- [x] Unique Home folder chosen — **since v2.6.7**, resolved against
+      `Main_MiSTer`'s own parser rather than an example: `CONF_STR`'s opening
+      `"RustyNES;;"` gives `/media/fat/games/RustyNES`, and it is unique because
+      the incumbent core's internal name is `NES`.
 - [ ] Email `newcores@misterfpga.org`
+      **BLOCKED — the submission is v2.7.0 by definition**, and sending it
+      before the quality bar closes is what the checklist exists to prevent.
 - [ ] **Decide deliberately** whether to transfer the repository to MiSTer-devel —
       acceptance means the repo moves, and that is one-way
+      **BLOCKED — on being accepted**, and then a maintainer decision rather
+      than a task.
