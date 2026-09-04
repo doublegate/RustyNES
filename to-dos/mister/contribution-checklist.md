@@ -21,8 +21,14 @@ Settled at **v2.6.6**, except the one item that needs a board.
 - [x] `rtl/` present **(now)**
 - [x] `releases/` present **(now)**
 - [x] `RustyNES.qpf` **(v2.6.6)**
-- [x] `RustyNES.qsf` **(v2.6.6)** — deliberately thin; the device and all 109
-      pin assignments come from `sys/sys.tcl`
+- [x] `RustyNES.qsf` **(v2.6.6)** — deliberately thin: it carries no location
+      assignment of its own. **Re-measured at v2.6.14 and the count on this line
+      was incomplete.** `sys/sys.tcl` supplies 109 (including the 45 SDRAM
+      pins, which is why the SDRAM work needed no pin file of its own), and it
+      stops short of the I/O board -- a core must additionally pick one of two
+      36-assignment variants, and this one sources `sys/sys_analog.tcl`, the
+      standard board, rather than `sys_dual_sdram.tcl`. **145 in total**, from
+      two scripts, neither of them this file.
 - [ ] `.srf` — **DECIDED — deliberately absent, not skipped.** It stays
       unticked because the file genuinely is not there and the list must not
       claim otherwise; the item is settled because the decision was taken, not
@@ -42,9 +48,18 @@ Settled at **v2.6.6**, except the one item that needs a board.
       `tb/quartus_clean.py` fails if any Warning or Error cites `rtl/` or `tb/`,
       and it passes over a non-zero scan. Revisit if a reviewer asks for the
       conventional file.
-- [x] `RustyNES.sdc` **(v2.6.6)** — short by construction: one clock domain,
-      because `nes_top` divides the master clock with enables rather than
-      deriving clocks
+- [x] `RustyNES.sdc` **(v2.6.6)** — short because the constraints are DERIVED,
+      not because there is one clock. **The reason on this line expired and was
+      corrected at v2.6.14**: it said "one clock domain, because `nes_top`
+      divides the master clock with enables rather than deriving clocks", true
+      of v2.6.3 and false since v2.6.13, which added `clk_sdram` at 4x and the
+      phase-shifted `clk_sdram_ps`. The shipped timing report names all three
+      (`emu|pll|...|general[0..2]...|divclk`). `derive_pll_clocks` picks them
+      up, and no false path is cut between them **deliberately**:
+      `sys/sys_top.sdc` puts every clock matching its core-PLL glob in ONE
+      `-exclusive` group, and `-exclusive` cuts paths BETWEEN groups — so the
+      framework domains are cut and `clk_sys` <-> `clk_sdram` stays analysed,
+      which is what makes ADR 0039's safety argument falsifiable.
 - [x] `rtl/emu.sv` implementing the **`emu`** module **(v2.6.6)**
 - [x] `files.qip` **(v2.6.6)**
 - [x] `clean.bat` **(v2.6.6)**

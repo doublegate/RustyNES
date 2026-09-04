@@ -50,6 +50,31 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **Two ticked boxes were ticked on evidence that had expired**, found by
+  re-measuring the settled half of the list rather than only the unsettled one —
+  which is v2.6.9's finding applied to a different document: a stated reason
+  stops being true and nobody re-reads it.
+
+  `RustyNES.sdc` said *"There is exactly one core clock ... so there is no second
+  clock domain to constrain and no false path to cut."* True of v2.6.3's
+  master-clock divider, **false since v2.6.13**, which added `clk_sdram` at 4x
+  and the phase-shifted `clk_sdram_ps`; the shipped timing report names all
+  three core-PLL outputs. The file's *behaviour* was never wrong —
+  `derive_pll_clocks` picks up all three — only its explanation. **And the
+  alarming reading of that was checked before it was written down**: it looks as
+  though `sys/sys_top.sdc`'s `set_clock_groups -exclusive` might be cutting the
+  `clk_sys` <-> `clk_sdram` crossing, leaving ADR 0039's safety argument
+  unfalsifiable. It is not: `-exclusive` cuts paths *between* groups, all three
+  outputs match one glob and land in one group, and v2.6.13's own -24.769 ns
+  measurement of that crossing is only observable because those paths are
+  analysed.
+
+  `RustyNES.qsf`'s entry said the device and **all 109** pin assignments come
+  from `sys/sys.tcl`. `sys.tcl` supplies 109 — including the 45 SDRAM pins,
+  which is why the SDRAM work needed no pin file of its own — and stops short of
+  the I/O board, so a core must also pick one of two 36-assignment variants.
+  This one sources `sys_analog.tcl`. **145 in total, from two scripts.**
+
 - **A checklist box that could never have been ticked honestly.** It asked that
   `docs/provenance.md` state "that no NES core was ever opened" -- and that
   document's own § *Do not self-certify* says never to assert "no third-party
