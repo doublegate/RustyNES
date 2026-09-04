@@ -137,6 +137,18 @@ cycle-accurate core later replaced.
   it. Both demonstrated by mutation: a box with the space removed, and a box
   deleted outright, are each CAUGHT.
 
+  **The second reviewer then found the same hole one indent over.** An
+  *indented* checkbox slips past a column-zero test and is folded into the
+  previous item as continuation text — and because that ADDS a box rather than
+  removing one, the item count stays at 30 and the floor cannot notice either.
+  The check now runs on the trimmed line and rejects checkbox-shaped lines that
+  are not at column zero. Two more properties came with it: `char::is_whitespace`
+  instead of `' '`, so a tab-indented continuation is not read as unindented and
+  does not cut its item short; and a verdict marker must be a whole word, since
+  a raw substring match accepted `**BLOCKEDNESS`. Three mutations — an indented
+  box and a `BLOCKEDNESS` verdict are CAUGHT, and a tab-indented continuation is
+  ACCEPTED as the positive control.
+
 - **A checklist box that could never have been ticked honestly.** It asked that
   `docs/provenance.md` state "that no NES core was ever opened" -- and that
   document's own § *Do not self-certify* says never to assert "no third-party

@@ -88,9 +88,17 @@ struct Item {
 fn parse(md: &str) -> Result<Vec<Item>, String> {
     let mut items: Vec<Item> = Vec::new();
     for (idx, raw) in md.lines().enumerate() {
-        if raw.starts_with("- [") && !raw.starts_with("- [x] ") && !raw.starts_with("- [ ] ") {
+        // Reject anything checkbox-SHAPED that is not one of the two exact
+        // forms, and test it on the TRIMMED line. An indented `  - [ ]` slips
+        // past a column-zero test and is then folded into the previous item as
+        // continuation text -- the box vanishes, and with the item count
+        // unchanged (one added indented, none removed) the floor below cannot
+        // notice. Same hole as the missing-space case, one indent over.
+        let trimmed = raw.trim_start();
+        if trimmed.starts_with("- [") && !raw.starts_with("- [x] ") && !raw.starts_with("- [ ] ") {
             return Err(format!(
-                "line {}: malformed checkbox -- expected exactly `- [x] ` or `- [ ] `: {raw}",
+                "line {}: malformed checkbox -- expected exactly `- [x] ` or `- [ ] ` at \
+                 column zero: {raw}",
                 idx + 1
             ));
         }
@@ -106,10 +114,20 @@ fn parse(md: &str) -> Result<Vec<Item>, String> {
                 line: idx + 1,
                 body: rest.to_string(),
             });
-        } else if raw.starts_with("- ") || (!raw.is_empty() && !raw.starts_with(' ')) {
+        } else if raw.starts_with("- ")
+            || (!raw.is_empty() && !raw.starts_with(char::is_whitespace))
+        {
             // A new top-level block ends the current item. A blank line does
             // not: an item may separate its paragraphs and still be one item.
-            if let Some(last) = items.last_mut() {
+            //
+            // `char::is_whitespace` rather than `' '`: a TAB-indented
+            // continuation would otherwise read as unindented and cut its item
+            // short, which fails safe -- the verdict is not folded in, so the
+            // box reports as verdict-less -- but fails for a reason that has
+            // nothing to do with the checklist.
+            if let Some(last) = items.last_mut()
+                && !last.body.ends_with('\u{0}')
+            {
                 last.body.push('\u{0}');
             }
         } else if let Some(last) = items.last_mut()
@@ -157,8 +175,20 @@ fn has_release_tag(body: &str) -> bool {
 
 const VERDICTS: [&str; 4] = ["**BLOCKED", "**DEFERRED", "**DECIDED", "**CONTINGENT"];
 
+/// A verdict must be the whole word, not a prefix of one.
+///
+/// A raw substring match accepts `**BLOCKEDNESS`, which is not a verdict and
+/// would let a box pass on a typo. The marker must be followed by something
+/// that cannot continue the word.
 fn has_verdict(body: &str) -> bool {
-    VERDICTS.iter().any(|v| body.contains(v))
+    VERDICTS.iter().any(|v| {
+        body.match_indices(v).any(|(at, _)| {
+            body[at + v.len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| !c.is_alphanumeric())
+        })
+    })
 }
 
 fn checklist() -> String {
