@@ -51,6 +51,7 @@ fn repo_root() -> PathBuf {
 }
 
 /// One checklist box: its state, and every line that belongs to it.
+#[derive(Debug)]
 struct Item {
     ticked: bool,
     line: usize,
@@ -200,6 +201,33 @@ fn has_verdict(body: &str) -> bool {
     })
 }
 
+/// Every box that fails the shape rule, as a reportable line each.
+///
+/// Extracted so the synthetic mutation tests below can reach the same decision
+/// the real gate makes. A test that reimplements its subject agrees with itself
+/// forever -- this project has been bitten by exactly that -- so there is one
+/// implementation and both callers use it.
+fn violations(items: &[Item]) -> Vec<String> {
+    let mut bad: Vec<String> = Vec::new();
+    for it in items {
+        let first = it.body.lines().next().unwrap_or_default();
+        if it.ticked && !has_release_tag(&it.body) {
+            bad.push(format!(
+                "line {}: TICKED with no release tag -- add **(now)** or **(vX.Y.Z)**: {first}",
+                it.line
+            ));
+        }
+        if !it.ticked && !has_verdict(&it.body) {
+            bad.push(format!(
+                "line {}: UNTICKED with no verdict -- add one of {}: {first}",
+                it.line,
+                VERDICTS.join(", ")
+            ));
+        }
+    }
+    bad
+}
+
 fn checklist() -> String {
     let path = repo_root().join("to-dos/mister/contribution-checklist.md");
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{} unreadable: {e}", path.display()))
@@ -223,23 +251,7 @@ fn every_checklist_box_carries_a_verdict() {
         items.len()
     );
 
-    let mut bad: Vec<String> = Vec::new();
-    for it in &items {
-        let first = it.body.lines().next().unwrap_or_default();
-        if it.ticked && !has_release_tag(&it.body) {
-            bad.push(format!(
-                "line {}: TICKED with no release tag -- add **(now)** or **(vX.Y.Z)**: {first}",
-                it.line
-            ));
-        }
-        if !it.ticked && !has_verdict(&it.body) {
-            bad.push(format!(
-                "line {}: UNTICKED with no verdict -- add one of {}: {first}",
-                it.line,
-                VERDICTS.join(", ")
-            ));
-        }
-    }
+    let bad = violations(&items);
 
     assert!(
         bad.is_empty(),
@@ -270,5 +282,139 @@ fn the_checklist_still_has_unticked_boxes_and_says_so() {
     assert!(
         md.contains("must be complete **by v2.7.0**"),
         "the checklist no longer states when it must be complete"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The mutation record, made executable.
+//
+// These existed only as shell transcripts: edit the checklist, run the gate,
+// restore. The results were real and nothing in the repository carried them, so
+// the claim "demonstrated by mutation" rested on a transcript nobody could
+// re-run and no future change could trip over. Caught in review, which is the
+// same finding this whole release is about aimed at its own gate.
+//
+// Each case below is one of those hand-run mutations, frozen. They feed
+// synthetic documents through the SAME `parse` and `violations` the real gate
+// uses -- not a reimplementation of them, which would agree with itself forever.
+// ---------------------------------------------------------------------------
+
+/// A minimal well-formed document: one ticked box with a tag, one unticked with
+/// a verdict. Everything below mutates exactly one thing about it.
+const GOOD: &str = "\
+- [x] a settled item **(v2.6.14)**
+- [ ] an open item
+      **BLOCKED — on something outside this repository.**
+";
+
+#[test]
+fn the_baseline_document_is_clean() {
+    let items = parse(GOOD).expect("baseline parses");
+    assert_eq!(items.len(), 2, "baseline should hold exactly two boxes");
+    assert!(
+        violations(&items).is_empty(),
+        "baseline must be clean or every mutation below proves nothing"
+    );
+}
+
+#[test]
+fn a_removed_verdict_is_caught() {
+    let md = GOOD.replace(
+        "**BLOCKED — on something outside this repository.**",
+        "no reason given",
+    );
+    let items = parse(&md).expect("still parses");
+    assert_eq!(
+        violations(&items).len(),
+        1,
+        "an unticked box with no verdict must be reported"
+    );
+}
+
+#[test]
+fn a_removed_release_tag_is_caught() {
+    let md = GOOD.replace(" **(v2.6.14)**", "");
+    let items = parse(&md).expect("still parses");
+    assert_eq!(
+        violations(&items).len(),
+        1,
+        "a ticked box with no release tag must be reported"
+    );
+}
+
+#[test]
+fn a_checkbox_missing_its_space_is_rejected() {
+    let md = GOOD.replace("- [ ] an open item", "- [ ]an open item");
+    let err = parse(&md).expect_err("a malformed checkbox must be an error, not a dropped box");
+    assert!(
+        err.contains("malformed checkbox"),
+        "unhelpful message: {err}"
+    );
+}
+
+#[test]
+fn an_indented_checkbox_is_rejected() {
+    // The dangerous direction: this ADDS a box, so an item-count floor cannot
+    // notice, and folding it into the previous item hides it from the audit.
+    let md = format!("{GOOD}  - [ ] an indented box nobody would audit\n");
+    let err = parse(&md).expect_err("an indented checkbox must be an error");
+    assert!(err.contains("column zero"), "unhelpful message: {err}");
+}
+
+#[test]
+fn a_tab_indented_continuation_still_belongs_to_its_item() {
+    // The POSITIVE control. Testing indentation against a literal space cut the
+    // item short here, so the verdict was not folded in and the box reported as
+    // verdict-less -- a false failure rather than a false pass, but a failure
+    // with nothing to do with the checklist.
+    let md = "- [ ] an open item\n\t**BLOCKED — reason on a tab-indented line.**\n";
+    let items = parse(md).expect("parses");
+    assert_eq!(items.len(), 1);
+    assert!(
+        violations(&items).is_empty(),
+        "a tab-indented continuation must fold into its item"
+    );
+}
+
+#[test]
+fn a_verdict_must_be_a_whole_word() {
+    assert!(
+        has_verdict("**BLOCKED — no board.**"),
+        "the real marker must match"
+    );
+    assert!(
+        !has_verdict("**BLOCKEDNESS of a kind.**"),
+        "a substring match would accept this and it is not a verdict"
+    );
+}
+
+#[test]
+fn the_release_tag_form_is_strict_on_purpose() {
+    assert!(has_release_tag("settled **(now)**"));
+    assert!(has_release_tag("settled **(v2.6.14)**"));
+    // Rejected deliberately: this workspace cannot carry a pre-release version
+    // at all, so accepting one would be a check for something that cannot occur.
+    assert!(!has_release_tag("settled **(v2.7.0-rc1)**"));
+    assert!(!has_release_tag("settled **(v2.7)**"));
+    assert!(!has_release_tag("settled (v2.6.14)"));
+}
+
+#[test]
+fn a_top_level_line_ends_an_item_so_later_prose_is_not_folded_in() {
+    // Without this, a verdict belonging to a LATER heading's paragraph would be
+    // credited to the box above it, which is a false pass.
+    let md = "\
+- [ ] an open item with no verdict
+
+## A heading
+
+      **BLOCKED — this belongs to nothing above.**
+";
+    let items = parse(md).expect("parses");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        violations(&items).len(),
+        1,
+        "prose after a top-level line must not be folded into the box above it"
     );
 }

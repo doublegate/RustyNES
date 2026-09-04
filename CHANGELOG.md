@@ -149,6 +149,21 @@ cycle-accurate core later replaced.
   box and a `BLOCKEDNESS` verdict are CAUGHT, and a tab-indented continuation is
   ACCEPTED as the positive control.
 
+  **And then the mutation record itself was found to be a transcript.** Every
+  mutation above had been run at the shell -- edit the checklist, run the gate,
+  restore -- so the results were real and **nothing in the repository carried
+  them**: no future change could trip over them, and "demonstrated by mutation"
+  rested on something nobody else could re-run. Caught in review, in a CodeRabbit
+  finding posted **outside the diff range**, which is the surface a
+  resolve-every-thread sweep does not reach. The cases are now **tests** -- a
+  clean baseline plus eight mutations of it -- feeding synthetic documents
+  through the same `parse` and `violations` the real gate uses rather than a
+  reimplementation, and `violations` was extracted for exactly that reason, since
+  a test that reimplements its subject agrees with itself forever. Proven against
+  the production code in turn: dropping the malformed-checkbox rejection fails
+  **two** of them, reverting the whitespace test fails the tab-continuation
+  control, and restoring the substring verdict match fails the whole-word case.
+
 - **A checklist box that could never have been ticked honestly.** It asked that
   `docs/provenance.md` state "that no NES core was ever opened" -- and that
   document's own § *Do not self-certify* says never to assert "no third-party
