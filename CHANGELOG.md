@@ -180,6 +180,38 @@ cycle-accurate core later replaced.
   with one, matching prose that mentions a seed and a slack figure; the test is
   now structural and those three lines are fixtures.
 
+- **The build is reproducible, and the reproducibility is DAY-SCOPED.** v2.6.15
+  changes no RTL, and its bitstream came out **56,680 bytes larger** with the
+  timing at every corner moved. `sys/build_id.tcl` is a `PRE_FLOW_SCRIPT_FILE`
+  that rewrites `build_id.v` with the **calendar date** on every compile, and
+  `rtl/emu.sv` puts `BUILD_DATE` into `CONF_STR` -- so the date is a constant
+  *in the design*, and two builds on different days are different designs.
+  Measured rather than inferred: rebuilding with `build_id.v` pinned to `260903`
+  reproduces the published artifact **exactly** (md5 `2c2fa6eb...`, 4,040,572
+  bytes), while `260904` gives `7346a490...`, 4,097,252. Six characters, 56,680
+  bytes -- the `.rbf` is compressed, so its size tracks placement.
+
+  v2.6.7's result stands and its **scope was never recorded**. It also weakens
+  v2.6.14's claim that its bitstream was "byte-identical to v2.6.13's ... an
+  identical artifact demonstrates it": that was achieved by **renaming**, not
+  rebuilding, and a rebuild on a different day would not have been identical
+  through no fault of the RTL. `scripts/release-rbf.sh` now refuses to publish
+  unless `BUILD_DATE` equals the datecode in the filename, which makes the name
+  a reproduction key.
+
+- **The release build rewrote the project file, and nothing would have caught
+  it.** The Template's Readme warns in the second person -- "You also need to
+  watch this file before you make a commit. Quartus in some conditions may
+  'spit' all settings from different files into this file" -- and one compile
+  appended **218 lines to a 281-line `.qsf`**: 145 `set_location_assignment`, 62
+  `set_instance_assignment`, 3 `set_hps_location_assignment` and 8 globals,
+  every one already supplied by the vendored `sys/` Tcl. `git status` showed the
+  file modified, which is what it always shows after a release edit, so the
+  pollution was indistinguishable from the intended change until the diff was
+  read. `tb/check_qsf_seed.py` now refuses framework-owned assignments (three
+  more mutations, thirteen cases), and `release-rbf.sh` runs it immediately
+  after the compile, so the build that causes it reports it.
+
 - **`docs/bringup.md`** -- rung 6 written before a board exists, so that when one
   arrives it costs a session. What a board buys is exactly four things, all
   downstream of every gate by construction: the palette, the video timing
