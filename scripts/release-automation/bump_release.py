@@ -643,6 +643,14 @@ def main() -> int:
             print(f"  {pr}", file=sys.stderr)
         return 1
 
+    # Computed HERE, before either exit path, because the dry run used to return
+    # 0 without ever reaching this check -- so `--apply`-less validation, which
+    # is how a release is rehearsed, reported success over a chain still owed a
+    # summary. Raised in review on the PR that introduced the check, which is
+    # the right place for it: the refusal was written for the apply path and
+    # tested there, and the mode that does nothing was the mode nobody ran it in.
+    owed = chains_needing_a_summary(edits, root, new)
+
     print("classified: " + ", ".join(f"{v} {k.lower()}" for k, v in counts.items() if v) + "\n")
     for p, text in sorted(edits.items()):
         before = p.read_text()
@@ -656,8 +664,21 @@ def main() -> int:
             d = list(difflib.unified_diff(before.split("\n"), text.split("\n"),
                                           f"a/{rel}", f"b/{rel}", lineterm="", n=0))
             print("\n".join(d[:14]))
+    def report_owed() -> None:
+        print("\nREFUSING to call this done -- these release-line chains are "
+              "still owed a written summary:\n", file=sys.stderr)
+        for o in owed:
+            print(f"  {o}", file=sys.stderr)
+        print("\nAppend an entry naming the release and what it did, then re-run "
+              "the audits. A token swap here produces a lineage that reads "
+              "correctly and is wrong, which is what this script exists to "
+              "prevent.", file=sys.stderr)
+
     if not args.apply:
         print("\n(dry run -- pass --apply to write)")
+        if owed:
+            report_owed()
+            return 1
         return 0
 
     try:
@@ -672,18 +693,16 @@ def main() -> int:
     # nothing at all about them, so the operator learned about it from a red
     # audit after committing -- twice, in consecutive releases. Saying so here,
     # and exiting non-zero, is the difference between refusing and forgetting.
-    owed = chains_needing_a_summary(edits, root, new)
     print("\nNow: add the VERSION-PLAN row, write "
           f".github/release-notes/v{new.version}.md, and run the audits.")
     if owed:
-        print("\nREFUSING to call this done -- these release-line chains are "
-              "still owed a written summary:\n", file=sys.stderr)
-        for o in owed:
-            print(f"  {o}", file=sys.stderr)
-        print("\nAppend an entry naming the release and what it did, then re-run "
-              "the audits. A token swap here produces a lineage that reads "
-              "correctly and is wrong, which is what this script exists to "
-              "prevent.", file=sys.stderr)
+        # The writes above ALREADY HAPPENED, deliberately. A chain entry names
+        # the NEW release, so it cannot be written before the bump that creates
+        # it -- refusing to write until the chain is complete would make the
+        # chain unwritable. The exit code is the signal; the anchors are what
+        # was wanted. Review proposed moving this ahead of the writes, and that
+        # is right for the dry run (fixed above) and wrong here, for that reason.
+        report_owed()
         return 1
     return 0
 

@@ -1748,10 +1748,16 @@ pinned) and `docs/accuracy-ledger.md`'s refined MMC3 residual rows.
 
 This closure has always been stated over four `#[ignore]`'d sub-tests:
 `mmc3_test_2/4` #3, `mmc3_test_v1/4` #3, `mmc3_test_v1/5` #2 and
-`mmc3_test_v1/6` #2. **Two of them are not IRQ-timing residuals**, and were
-never reachable by any lever on any axis this ADR searched, because they do not
-depend on when the IRQ asserts. They were mis-filed at v2.0.0 beta.3 and
-inherited unexamined through every subsequent update, including F5.0's.
+`mmc3_test_v1/6` #2. **Two of them are not IRQ-timing residuals.** They do not
+depend on when the IRQ asserts, so **no lever on the timing axes this ADR
+searched could have moved them** — which is the precise claim, and it is
+narrower than "unreachable". They ARE reachable, by a lever this ADR never
+considered because it is not about timing at all: the *assertion semantics* of
+`clock_irq`'s `$C001`-reload path. That lever is exercised below, and it makes
+`mmc3_test_v1/5` #2 pass. It is rejected on its cost, not on its impossibility.
+
+They were mis-filed at v2.0.0 beta.3 and inherited unexamined through every
+subsequent update, including F5.0's.
 
 Nothing here weakens the closure over the two that remain. It narrows what the
 closure is about.

@@ -814,12 +814,30 @@ The MiSTer co-simulation is a two-way instrument. These are cases where the
 anticipated in writing ("the oracle can be wrong") and which the ladder is
 supposed to surface rather than absorb.
 
-### T-ORACLE-001 — the pre-render line's A12 rise, and MMC3 IRQ timing
+### T-ORACLE-001 — MMC3 IRQ timing (mechanism RETRACTED v2.6.15)
 
-**Owner-facing summary.** RustyNES fails `mmc3_test_2/4-scanline_timing` at
-sub-test **3**; the MiSTer co-simulation DUT now fails at sub-test **12**. On
-this ROM the DUT is the more accurate of the two. The mechanism is known, the
-fix is known, and it is a CORE change, so it needs its own version.
+**Owner-facing summary, rewritten v2.6.15.** RustyNES fails
+`mmc3_test_2/4-scanline_timing` at sub-test **3**; the MiSTer co-simulation DUT
+fails at sub-test **12**. On this ROM the DUT is the more accurate of the two,
+and that part stands.
+
+**The mechanism is NOT known, and the fix is NOT known.** This summary used to
+say both were. The pre-render A12 claim below is refuted — RustyNES clocks the
+counter 241 times per frame, which `mmc3_test_2/2-details` sub-test 8 asserts
+and it passes — so the diagnosis that named a missing clock is gone, and with it
+the fix built on it. What survives is a bounded measurement: sub-tests 2 and 3
+bracket the IRQ to **one PPU dot**, RustyNES passes "should occur later" and
+fails "should occur sooner", so its IRQ is late by **at least a dot** and the
+ROM says nothing about how much more.
+
+Note the direction, because it rules out the second half of the proposed fix
+too: **registering `/IRQ` makes the assertion LATER**, and this residual is
+already late. Whatever closes it must move the assertion earlier, which the
+recorded fix does not.
+
+It remains a CORE change if it is ever attempted, so it still needs its own
+version — but v2.6.15 did **not** attempt it, and nothing here should be read as
+a plan that is ready to execute.
 
 #### RETRACTED, v2.6.15: claim 1 is false, and claim 2 is not what it looks like
 
