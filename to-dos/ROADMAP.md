@@ -783,9 +783,47 @@ sub-test **3**; the MiSTer co-simulation DUT now fails at sub-test **12**. On
 this ROM the DUT is the more accurate of the two. The mechanism is known, the
 fix is known, and it is a CORE change, so it needs its own version.
 
+#### RETRACTED, v2.6.15: claim 1 is false, and claim 2 is not what it looks like
+
+**RustyNES clocks 241 times per PPU frame**, which is 240 visible lines plus the
+pre-render line. `mmc3_test_2/2-details` sub-test 8 is, in the ROM's own words,
+*"Counter should be clocked 241 times in PPU frame"* — it loads the counter with
+241, renders one frame, asserts the IRQ is still clear, clocks once by hand and
+asserts it is set, so 240 clocks fails it and 242 fails it. **RustyNES passes
+it**, and has for every release this suite has run.
+
+The claim came from `--ppu-state-trace`, and this ticket's own *instrument traps*
+section below says why that instrument cannot answer the question: it **carries
+no CHR address column**, so it reports what the sprite state was and never what
+address was driven. A trace that cannot see an A12 rise was read as evidence
+that no rise occurred. `ppu.rs`'s sprite-fetch dispatch has stated the opposite
+intent in a comment since v2.0 — the dummy fetch *"must run on both visible
+scanlines and the pre-render line"* and contributes *"the 241st A12 rising edge
+per frame"* — and the v2.2.3 fast dot path cannot bypass it, being gated on
+`cached_visible` and `dot <= 256`.
+
+Claim 2's measurement (1,250,873 against 1,250,760) stands as a measurement. Its
+*label* does not: 113 CPU cycles is about a scanline, but "about a scanline late"
+was inferred from the missing pre-render clock, and there is no missing clock.
+What the ROM pins is narrower — `4-scanline_timing` #2 and #3 bracket the IRQ to
+**one PPU dot** at 6976 dots after the VBL flag is set, and RustyNES passes #2
+("should occur later") while failing #3 ("should occur sooner"), so its IRQ is
+late by at least one dot and the ROM says nothing about how much more.
+
+**Two of the four residuals this ticket proposed to fix are not IRQ-timing
+residuals at all** — `mmc3_test_v1/5` #2 and `/6` #2 rest on an assertion the
+author withdrew in the successor ROM. Measured, reverted, and written up in
+ADR 0002's v2.6.15 decision update, which also narrows the R1/R2 residual set
+from four sub-tests to two.
+
+The text below is preserved as issued rather than edited, because it was cited
+in the v2.6.15 plan and in this file, and a retracted claim that leaves no trace
+is how the retraction gets re-derived.
+
 #### The claim, and how each part was measured
 
-1. **RustyNES never clocks the MMC3 counter on the pre-render line.** Its own
+1. **RETRACTED — see above. RustyNES never clocks the MMC3 counter on the
+   pre-render line.** Its own
    PPU state trace for `4-scanline_timing` shows scanline 261 with `mask=24`
    (rendering on), `ctrl=8` (sprites at `$1000`), `spr_count=0`, and no clock —
    while scanline 0, with *identical* sprite state, clocks normally. The

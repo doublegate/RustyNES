@@ -217,7 +217,7 @@ fn mmc3_test_v1_4_scanline_timing_currently_fails() {
 }
 
 #[test]
-#[ignore = "R2 escape-hatched (v2.0.0 beta.3, plan Risks #3): unmoved on the one-clock/every-cycle substrate; CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) with R1 (zero production-ROM impact). See ADR 0002."]
+#[ignore = "SUPERSEDED ASSERTION, reclassified v2.6.15 (was: R2 escape-hatched under ADR 0002 F5.0 as an IRQ-timing residual). It is not an IRQ-timing residual. Sub-test 2 of this ROM and of its successor carry the SAME set_test string -- \"Should reload and set IRQ every clock when reload is 0\" -- and differ by one instruction: v1 asserts after ONE clock_counter, so its verdict falls on the $C001-pending reload; mmc3_test_2/5-MMC3 inserts a SECOND clock_counter before the first should_be_set, deliberately declining to assert on that clock. The successor also ships a readme section on rev A vs rev B and the pathological $C001 behaviour that this corpus lacks entirely. blargg withdrew the assertion; adopting it is fitting to retracted evidence, and was measured to cost mmc3_test_2/4-scanline_timing a regression from sub-test 3 to sub-test 2. mmc3_test_2/5-MMC3 -- the successor, and the one that adjudicates this behaviour -- PASSES."]
 fn mmc3_test_v1_5_mmc3_strict() {
     let (s, m, _) = run("blargg/mmc3_test/5-MMC3.nes", 600);
     assert_eq!(s, 0, "mmc3_test v1 5-MMC3: {m}");
@@ -237,7 +237,7 @@ fn mmc3_test_v1_5_mmc3_currently_fails() {
 }
 
 #[test]
-#[ignore = "R2 escape-hatched (v2.0.0 beta.3, plan Risks #3): unmoved on the one-clock/every-cycle substrate; CLOSED by-design-permanent (ADR 0002 F5.0, 2026-07-09) with R1 (zero production-ROM impact). See ADR 0002."]
+#[ignore = "SUPERSEDED ASSERTION, reclassified v2.6.15 (was: R2 escape-hatched under ADR 0002 F5.0 as an IRQ-timing residual). Sub-test 2 rests on the same withdrawn clock as mmc3_test_v1/5-MMC3 #2 -- see that test's note. This ROM is ALSO the v1 corpus's ALTERNATE-revision ROM: its own header names Crystalis, the chip mmc3_test_2's readme identifies as revision A, and mmc3_test_2/6-MMC3_alt carries that header verbatim. This project models the NORMAL revision, so the alt-only assertions here fail BY DESIGN exactly as mmc3_test_2/6-MMC3_alt does. Two reasons, both structural; neither is an IRQ-timing residual."]
 fn mmc3_test_v1_6_mmc6_strict() {
     let (s, m, _) = run("blargg/mmc3_test/6-MMC6.nes", 600);
     assert_eq!(s, 0, "mmc3_test v1 6-MMC6: {m}");

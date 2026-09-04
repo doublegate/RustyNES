@@ -12,7 +12,9 @@ that shifts the mapper-IRQ observation path relative to the `$2002` path without
 a scheduler-substrate change — which would risk the sacred AccuracyCoin 141/141
 for a bracket with **zero production-ROM impact**. The residual
 (`mmc3_test_2/4` sub-test #3 + siblings) therefore stays `#[ignore]`'d
-**by design** (not as an open TODO). See §"Decision update
+**by design** (not as an open TODO). **Amended v2.6.15: the "siblings" set is
+smaller than this closure assumed — two of the four were never IRQ-timing
+residuals at all. See the decision update at the end of this file.** See §"Decision update
 (2026-07-09, v2.1.0 Fathom F5.0)" at the end for the closing argument, and
 §"Decision update (2026-07-11, v2.1.5 F5.0 instrumentation study)" for a
 **refinement**: fresh direct A12-phase instrumentation showed the "no
@@ -1739,3 +1741,106 @@ deferred to maintainer decision**, not added to the DO-NOT-RETRY list — it is 
 one hypothesis that genuinely distinguishes itself from everything on it. Full
 reproducible evidence: the `mmc3_r1r2_phase_probe` fixture (committed, golden-
 pinned) and `docs/accuracy-ledger.md`'s refined MMC3 residual rows.
+
+---
+
+## Decision update (2026-09-04, v2.6.15 "Warrant") — the residual set is TWO, not four
+
+This closure has always been stated over four `#[ignore]`'d sub-tests:
+`mmc3_test_2/4` #3, `mmc3_test_v1/4` #3, `mmc3_test_v1/5` #2 and
+`mmc3_test_v1/6` #2. **Two of them are not IRQ-timing residuals**, and were
+never reachable by any lever on any axis this ADR searched, because they do not
+depend on when the IRQ asserts. They were mis-filed at v2.0.0 beta.3 and
+inherited unexamined through every subsequent update, including F5.0's.
+
+Nothing here weakens the closure over the two that remain. It narrows what the
+closure is about.
+
+### What the corpus says
+
+`mmc3_test` (v1) and `mmc3_test_2` are the same suite twice, and the second is
+the revision. Two pieces of evidence, both inside the corpus:
+
+1. **`mmc3_test_2`'s readme carries an "MMC3 Operation" section that v1's does
+   not** — kevtris's document corrected in three places, the revision A / B
+   split (Crystalis against SMB3 and Mega Man 3), and the pathological `$C001`
+   sequence the author says he checked several games for and recommends nobody
+   implement. That section is the author's own record of what he learned
+   between the two suites.
+
+2. **Sub-test 2 of `5-MMC3` carries the SAME `set_test` string in both, and
+   differs by one instruction.** Verbatim:
+
+   ```asm
+   ; mmc3_test/source/5-MMC3.s          ; mmc3_test_2/source/5-MMC3.s
+   set_test 2,"Should reload and set   set_test 2,"Should reload and set
+     IRQ every clock when reload is 0"    IRQ every clock when reload is 0"
+   ldx #0                              ldx #0
+   jsr begin_counter_test              jsr begin_counter_test
+   jsr clock_counter       ; 0         jsr clock_counter       ; 0
+   jsr should_be_set                   jsr clock_counter       ; 0
+                                       jsr should_be_set
+   ```
+
+   The successor inserts a **second** `clock_counter` before the first
+   `should_be_set`, so its verdict no longer falls on the `$C001`-pending
+   reload. The assertion was **withdrawn by its author.**
+
+`mmc3_test_v1/6-MMC6` #2 rests on the same withdrawn clock. It is also the v1
+corpus's **alternate-revision** ROM: its header names Crystalis, which
+`mmc3_test_2`'s readme identifies as revision A, and `mmc3_test_2/6-MMC3_alt`
+carries that header verbatim. This project models the normal revision, so its
+alt-only assertions fail **by design**, exactly as `mmc3_test_2/6-MMC3_alt`'s
+do — which this suite has always recorded as by-design rather than as a
+residual.
+
+### Measured, not argued
+
+Making path 1 of `clock_irq` assert on any `$C001` reload landing on zero —
+the rule `mmc3_test_v1/5` #2 demands — was implemented and run:
+
+| test | before | after |
+|---|---|---|
+| `mmc3_test_v1/5-MMC3` | Failed #2 | **passes** |
+| `mmc3_test_v1/6-MMC6` | Failed #2 | Failed #3 |
+| `mmc3_test_2/4-scanline_timing` | Failed #3 | **Failed #2 — regressed** |
+| `mmc3_test_v1/4-scanline_timing` | Failed #3 | **Failed #2 — regressed** |
+| `mmc3_test_2/6-MMC3_alt` | Failed #2 | Failed #2 (by design) |
+
+So the withdrawn assertion is satisfiable, and the price is the IRQ arriving one
+clock too early on the ROM pair that actually measures when it arrives —
+`4-scanline_timing` #2 is "should occur **later**", and it starts failing. The
+change was **reverted**; it is recorded here because a rejected change with its
+numbers is a result, and because it is the evidence that the two ROMs are
+measuring different things.
+
+### Disposition
+
+- `mmc3_test_v1/5` #2 and `mmc3_test_v1/6` #2 are reclassified in
+  `crates/rustynes-test-harness/tests/mmc3.rs` from *R2 escape-hatched* to
+  **superseded assertion** (and, for `/6`, alternate revision). Their
+  `#[ignore]` reasons now name the mechanism.
+- The R1/R2 residual this ADR closes is **`mmc3_test_2/4` #3 and
+  `mmc3_test_v1/4` #3** — one behaviour, measured twice.
+- The closure over those two **stands**, and v2.6.15 did not attempt them.
+
+### A refutation this update also records
+
+`to-dos/ROADMAP.md`'s `T-ORACLE-001` opens by claiming *"RustyNES never clocks
+the MMC3 counter on the pre-render line."* **It does.**
+`mmc3_test_2/2-details` sub-test 8 is, in the ROM's own words, *"Counter should
+be clocked 241 times in PPU frame"* — 240 visible plus the pre-render line —
+and RustyNES **passes it**, as it has for every release this suite has run.
+
+The claim came from a PPU state trace, and the ticket's own instrument-traps
+section says why that instrument cannot answer the question: `--ppu-state-trace`
+carries no CHR address column, so it can show what the sprite state was and
+never what address was driven. A trace that cannot see an A12 rise was read as
+evidence that no A12 rise occurred.
+
+`ppu.rs`'s sprite-fetch dispatch has carried a comment since v2.0 stating the
+opposite intent in detail — that the dummy fetch *"must run on both visible
+scanlines and the pre-render line"* and contributes *"the 241st A12 rising edge
+per frame"* — and the fast dot path cannot bypass it, being gated on
+`cached_visible` and `dot <= 256`. The ticket is corrected in place rather than
+deleted, because it was cited in a release plan.
