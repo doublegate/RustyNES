@@ -23,7 +23,10 @@ Settled at **v2.6.6**, except the one item that needs a board.
 - [x] `RustyNES.qpf` **(v2.6.6)**
 - [x] `RustyNES.qsf` **(v2.6.6)** — deliberately thin; the device and all 109
       pin assignments come from `sys/sys.tcl`
-- [ ] `.srf` — **deliberately absent, decided rather than skipped.** The
+- [ ] `.srf` — **DECIDED — deliberately absent, not skipped.** It stays
+      unticked because the file genuinely is not there and the list must not
+      claim otherwise; the item is settled because the decision was taken, not
+      because the artifact exists. The
       warnings that cannot be fixed at source live in Quartus's own megafunction
       library and in `sys/`, neither of which this core may edit. Most are
       suppressed with `MESSAGE_DISABLE` assignments in the `.qsf`, each with the
@@ -53,19 +56,46 @@ Settled at **v2.6.6**, except the one item that needs a board.
 ## Release artifact
 
 - [ ] The release artifact is published, but **NOT under MiSTer's naming
-      convention** — this is an open item for v2.7.0, not a closed one.
-      The wiki requires `<CoreName>_YYYYMMDD.rbf` and this project ships
-      `releases/RustyNES_MiSTer-vX.Y.Z.rbf` (maintainer decision,
-      2026-08-30), named for the release rather than the build date.
-      `Distribution_MiSTer` selects the newest bitstream by the DATE in
-      the filename, so a version-named file gives it nothing to compare
-      and the two have to be reconciled before submission. Recorded as a
-      known divergence rather than ticked as compliant.
-      **(v2.6.7)** — committed to the sibling's `releases/` and attached to the
-      GitHub release on both repos. Produced by `scripts/release-rbf.sh`, which
-      refuses a compile with errors or negative per-clock slack. Labelled in the
-      release body as never having run on hardware; see
-      `RustyNES_MiSTer/docs/bitstream-release.md`.
+      convention**.
+
+      The publishing half is done **(v2.6.7)** — committed to the sibling's
+      `releases/` and attached to the GitHub release on both repos, produced by
+      `scripts/release-rbf.sh`, which refuses a compile with errors or negative
+      per-clock slack at any corner, and labelled in the release body as never
+      having run on hardware.
+
+      **BLOCKED — on a maintainer decision, and the cost is now measured rather
+      than paraphrased (v2.6.14).** The previous wording said
+      `Distribution_MiSTer` "selects the newest bitstream by the DATE in the
+      filename", which is the wiki's paraphrase. The mechanism is in
+      `Main_MiSTer/file_io.cpp`, and it is sharper than that:
+
+      - `get_display_name()` searches the filename for the literal `"_20"`,
+        requires at least six characters after it, and then does `*p = 0` —
+        **truncating the display name at that point** — taking up to fifteen
+        following characters as `datecode`. With no `"_20"`, `datecode` becomes
+        `"------"` and the name is left whole.
+      - `DirentComp()` compares the truncated names first and only falls through
+        to `strcasecmp(de1.datecode, de2.datecode)` when they are equal.
+
+      `RustyNES_MiSTer-v2.6.13.rbf` contains no `_20`. Three consequences
+      follow, none cosmetic: every released version is a **separate core entry**
+      rather than versions of one; the entry is named
+      `RustyNES_MiSTer-v2.6.13` rather than `RustyNES`; and ordering between
+      them is alphabetic on the version string, so **v2.6.9 sorts after
+      v2.6.13**. Under `RustyNES_20260903.rbf` all builds group under one
+      `RustyNES` entry ordered by datecode, which is what `rbf_hide_datecode`
+      then hides.
+
+      It does **not** affect the Home folder, which comes from `CONF_STR`'s
+      first field and is already `RustyNES` (v2.6.7). And it has no effect until
+      submission, because nothing harvests `releases/` until the core is
+      accepted.
+
+      The fix is one line in `scripts/release-rbf.sh`. It is not taken here
+      because the version-named artifact is a **maintainer decision of
+      2026-08-30** with a stated rationale, and reversing it is the maintainer's
+      call rather than an audit's. **Unblocks on that decision.**
 - [x] Unique **Home folder** chosen (non-arcade requirement) **(v2.6.7)** —
       **RESOLVED against `Main_MiSTer`'s own source**, which is the only place
       that actually states it. `user_io.cpp`'s `user_io_get_confstr(0)` returns
@@ -94,27 +124,84 @@ Settled at **v2.6.6**, except the one item that needs a board.
 
 ## Quality bar
 
-- [ ] Core is accurate enough to demonstrate **preservation value**
-- [ ] AccuracyCoin result stated as a **floor**, entry-for-entry, including
-      `Skipped`/`NotRun`
+- [x] Core is accurate enough to demonstrate **preservation value** **(v2.6.14)**
+      — measured rather than asserted, and by two independent surfaces. The
+      AccuracyCoin status vector is identical to the oracle's **entry for entry
+      across all 146 entries**, with 146 of 146 executed on both sides and none
+      `NotRun` (v2.6.5). Six commercial titles render **byte-identically over
+      all 61,440 pixels** (v2.6.11), published as a montage whose build script
+      refuses to publish a tile that differs from the oracle. blargg's 2005 APU
+      battery is 11/11 and `instr_test-v5` 16/16.
+- [x] AccuracyCoin result stated as a **floor**, entry-for-entry, including
+      `Skipped`/`NotRun` **(v2.6.5)** — stated in `RustyNES_MiSTer/README.md`,
+      which a reviewer reaches first: "the vector is now IDENTICAL entry for
+      entry across all 146, with 146 of 146 executed on both sides and none
+      `NotRun`". Stronger than a floor, and reported as a **vector** rather than
+      a pass count precisely so a regression cannot hide behind an unchanged
+      total.
 - [ ] Runs on **real hardware**, both boards, one `.rbf`
+      **BLOCKED — no board.** Neither a DE10-Nano nor a SuperStation One is
+      attached to this machine, confirmed by checking the USB bus, serial
+      devices, removable block devices and mounts rather than assumed. Nothing
+      in this repository can close it. **Unblocks on hardware.**
 - [ ] **AI-generated-code bar:** readability, plus *"evidence of quality and
       accuracy testing"* — the co-simulation record is that evidence, and the
       submission should link it explicitly rather than assume a reviewer finds it
+      **BLOCKED — on the submission itself.** The evidence exists and is
+      linkable today (`docs/rung1-6502.md` through `docs/rung7-mappers.md`, the
+      142-gate suite, the mutation records). What is missing is the act of
+      pointing a reviewer at it, which happens in the submission email.
+      **Unblocks at v2.7.0.**
 
 ## Provenance
 
-- [ ] `docs/provenance.md` states the firewall and that no NES core was ever opened
-- [ ] CI provenance job green — no black-boxed core in the tree
-- [ ] Every RTL file carries its SPDX header
+- [x] `docs/provenance.md` states the firewall **(v2.6.14)** — §"The firewall,
+      extended to HDL (ADR 0037)" names `NES_MiSTer`, `fpganes` "and any other
+      NES `rtl/`" as strict black boxes, and §"If you do derive" separates a
+      measurement from a licence event: *"Matches NES_MiSTer's output on this
+      test" is a measurement; "adapted from NES_MiSTer" is a licence event.*
+
+      **The second half of this item is STRUCK, not satisfied.** It used to read
+      "and that no NES core was ever opened", and that is a claim the same
+      document forbids: §"Do not self-certify" says *never assert "no
+      third-party code is incorporated" or "licence-clean" as a finished claim
+      ... surface provenance status for human and expert review, and state
+      uncertainty.* The box as written could only have been ticked by writing
+      the one sentence the project's provenance rules exist to prevent. Found by
+      the v2.6.14 audit; the firewall half is what was actually being asked for.
+- [x] CI provenance job green — no black-boxed core in the tree **(v2.6.14)** —
+      green on `main`, and the job is two checks rather than one: a `find` for a
+      `NES_MiSTer` or `fpganes` directory (`ok: no black-boxed NES core
+      directory in the tree`), and an SPDX sweep. It cannot stop someone reading
+      a reference core — nothing in CI can — only stop the result of having read
+      one landing unnoticed, and it says so in its own comment.
+- [x] Every RTL file carries its SPDX header **(v2.6.14)** — `ok: 31 RTL files,
+      all carrying the SPDX header` on `main`. **Fail-closed**: zero files
+      examined is an error, not a pass, and the `find` parentheses are
+      load-bearing for the same reason — without them `-print0` binds only to
+      the last `-o` branch, so `.sv` files match and are never printed.
 
 ## Submission
 
+Every item here is **BLOCKED — the submission IS v2.7.0**, by the programme's own
+definition, and three of the four are somebody else's action rather than this
+project's. They are listed so the sequence is visible, not because they are
+outstanding work.
+
 - [ ] Email `newcores@misterfpga.org` with the repository link
+      **BLOCKED — v2.7.0.** Sending it before the quality bar closes is the
+      whole thing the checklist exists to prevent.
 - [ ] Await review (the page says days)
+      **BLOCKED — not ours to do**, and it follows the email.
 - [ ] **Decide deliberately** on the MiSTer-devel invitation and repository
       transfer — acceptance moves the repo, it is one-way, and this project owns it
+      **BLOCKED — on being accepted**, and then it is a maintainer decision
+      rather than a task. Named here so acceptance does not arrive as a
+      surprise with a one-way consequence attached.
 - [ ] Add to the Cores list with the Home folder
+      **BLOCKED — on acceptance.** The Home folder itself is already settled:
+      `CONF_STR`'s first field gives `/media/fat/games/RustyNES`, and it is
+      unique — the incumbent core's internal name is `NES` (v2.6.7).
 
 ## If declined as a duplicate
 
@@ -122,6 +209,16 @@ Not a failure path — a planned one. See
 `ref-docs/2026-08-23-alternative-fpga-targets.md`.
 
 - [ ] Retro Remake / SuperStation One — already the hardware target
+      **CONTINGENT — on being declined**, and cheap if it happens: the
+      SuperStation One is already the second hardware target of rung 6, with
+      128 MB of integrated SDRAM against the DE10-Nano's add-on.
 - [ ] openFPGA / Analogue Pocket — demonstrated MiSTer-core porting path;
       `nes_top.sv` stays platform-agnostic precisely so this stays cheap
+      **CONTINGENT — on being declined.** The design decision that keeps it
+      cheap is already taken and holds today: `nes_top.sv` carries no MiSTer
+      framework dependency, and `emu.sv` is the only file that does.
 - [ ] The co-simulation evidence is publishable on its own terms regardless
+      **DECIDED — this is a statement, not a task**, and it is unconditional:
+      the ladder, its goldens and its mutation records stand whatever any
+      distribution decides, which is why it is written down rather than left as
+      a consolation.

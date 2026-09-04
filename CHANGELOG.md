@@ -26,6 +26,66 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **Every box in the MiSTer contribution checklist now carries a verdict, and a
+  gate keeps it that way** (`contribution_checklist_audit.rs`). The list that
+  decides whether the core is ready to submit at v2.7.0 had 30 boxes, 16
+  unticked, and **14 of those 16 said nothing about why**. An unticked box with
+  no reason cannot be told apart from three different things: work outstanding,
+  work blocked outside this repository, and **work already done and never
+  ticked**. The audit found the third case **five times**, so the list had been
+  reporting the project as further from submission than it was, by a fifth of
+  its own length.
+
+  The gate asserts a shape rather than a judgement: a ticked box names the
+  release that settled it, an unticked one carries `BLOCKED`, `DEFERRED`,
+  `DECIDED` or `CONTINGENT`. It deliberately does not rule on whether a verdict
+  is *correct* -- it cannot, and pretending otherwise would be the "gate that
+  passes without testing its subject" this project keeps finding. Five
+  mutations: a removed verdict, a removed release tag, every box ticked, and a
+  broken box syntax are all CAUGHT; removing the continuation-line folding
+  produces **nine false violations**, which is what proves that rule
+  load-bearing -- the verdict markers do not sit on an item's first line.
+
+### Fixed
+
+- **A checklist box that could never have been ticked honestly.** It asked that
+  `docs/provenance.md` state "that no NES core was ever opened" -- and that
+  document's own § *Do not self-certify* says never to assert "no third-party
+  code is incorporated" or "licence-clean" as a finished claim. The box could
+  only have been satisfied by writing the one sentence the project's provenance
+  rules exist to prevent. The firewall half is what was actually being asked
+  for; the self-certification half is **struck**, with the reason recorded in
+  place.
+
+- **`Distribution_MiSTer`'s selection rule, measured instead of paraphrased.**
+  The checklist said it "selects the newest bitstream by the DATE in the
+  filename", which is the wiki's wording. `Main_MiSTer/file_io.cpp` is sharper:
+  `get_display_name()` searches for the literal `"_20"` and, on finding it, does
+  `*p = 0` -- **truncating the display name there** -- taking the rest as
+  `datecode`; absent, `datecode` becomes `"------"` and the name stays whole.
+  `DirentComp()` groups by that truncated name and only compares datecodes
+  within a group. `RustyNES_MiSTer-v2.6.13.rbf` has no `_20`, so **every
+  released version is a separate core entry**, named
+  `RustyNES_MiSTer-v2.6.13` rather than `RustyNES`, ordered alphabetically --
+  which puts **v2.6.9 after v2.6.13**. It does not affect the Home folder, and
+  has no effect until submission. The fix is one line, and it is not taken here:
+  version-naming is a maintainer decision of 2026-08-30 with a stated rationale,
+  and reversing it is not an audit's call.
+
+- **A claim v2.6.13 shipped, retracted.** Answering a review finding that "a
+  five-mapper core" did not say which five, I wrote that the five were NROM,
+  UxROM, CNROM, AxROM and MMC3 and that **MMC1 was the sixth approved family and
+  not yet implemented**. Both halves are false: `rtl/cart/cart.sv` decodes mapper
+  1 at three sites and `mapper1mmc1063` has been a registered gate since rung 7
+  opened, and NROM landed at v2.6.3 rather than in rung 7's five. The approved
+  six-family scope is **complete**. Asserted from memory inside a reply
+  correcting somebody else's reading of the same line -- the project's rule is
+  to verify a reviewer's claim before writing the fix, and the failure mode is
+  verifying theirs and not your own. Retracted in the plan with the wrong text
+  preserved, and on the public review thread.
+
 ## [2.6.13] - 2026-09-03 - "Slack" (the cartridge outgrows the die, and three consumers want the same bus)
 
 ### Added
