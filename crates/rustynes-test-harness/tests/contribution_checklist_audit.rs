@@ -192,12 +192,12 @@ const VERDICTS: [&str; 4] = ["**BLOCKED", "**DEFERRED", "**DECIDED", "**CONTINGE
 /// that cannot continue the word.
 fn has_verdict(body: &str) -> bool {
     VERDICTS.iter().any(|v| {
-        body.match_indices(v).any(|(at, _)| {
-            body[at + v.len()..]
-                .chars()
-                .next()
-                .is_none_or(|c| !c.is_alphanumeric())
-        })
+        body.match_indices(v)
+            // `starts_with` on the empty remainder is false, so a marker at the
+            // very end of the body counts -- the same answer the longer
+            // `chars().next().is_none_or(..)` gave, without the MSRV question
+            // `is_none_or` invited.
+            .any(|(at, _)| !body[at + v.len()..].starts_with(char::is_alphanumeric))
     })
 }
 
