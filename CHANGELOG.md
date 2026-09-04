@@ -26,6 +26,83 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **The off-die memory system is measured on the console for the first time, and
+  the block-level figures quoted for three releases describe a machine that does
+  not exist.** `tb/sdram_arb_main.cpp` drives the arbiter with a stimulus in
+  which a CHR and a PRG request arrive on the SAME cycle, and reports the fetch
+  with seven cycles of margin and the CPU short of its deadline by four. Measured
+  at the arbiter's own ports on off-die builds of `ppurender`, `ppusprender` and
+  `mapper4mmc3064`, the console never produces that coincidence: **zero
+  coincidences and a minimum separation of two cycles over fifteen million SDRAM
+  cycles**, with the separations bimodal because both requesters are locked to
+  one master clock at a fixed alignment. Both published numbers are wrong about
+  the console, in opposite directions -- the CPU **meets** its deadline on every
+  one of 240,303 requests, at **zero** margin, and the fetch reaches **23 against
+  the arbiter's derived 22**. The worst values agree across all three workloads;
+  the exceedance RATE — 30 of 385,539 fetches, about eight in a hundred thousand
+  — is `ppurender`'s alone, because the counting was added after the other two
+  had run, and quoting it as an aggregate would claim a measurement not taken. `docs/sdram.md` had asserted this distinction since v2.6.13 and
+  nothing had ever put a number on either side of it.
+- **The fetch's exceedance is not a defect, and the sweep is what says so.**
+  `nes_top`'s `CHR_LAT` adds whole master clocks -- four SDRAM cycles each -- to
+  the CHR byte, so raising it off-die asks the console directly how much spare
+  the fetch has at its real worst case. `ppurender` matches the oracle on all
+  61,440 pixels at +0, +1 and +2 and fails at +3 (233 pixels) and +4 (32,187).
+  The failure is the control: four consecutive passes would look identical to a
+  knob that never reached the compiler. So the fetch has **at least eight and
+  fewer than twelve spare cycles** at a worst case of 23, and the derived budget
+  of 22 understates the real tolerance by at least nine. The derivation is not
+  wrong to be conservative; it is wrong to be quoted as though it were measured.
+- **The shortfall was decomposed before it was acted on.** Running the same PRG
+  cadence with CHR silent gives a worst PRG latency of **15 against the same
+  budget of 24**, so the access itself has nine cycles of margin and every cycle
+  of the synthetic shortfall is contention. That is what would make a
+  slot-scheduled arbiter the right lever -- and it is why one has not been built,
+  since the console's own phase already separates the two requesters.
+- **A prediction this release got wrong, kept with the measurement that refuted
+  it.** The arbiter gate drove both streams from one 64-byte window, where every
+  access is a row hit and no alternation can force a PRECHARGE -- a geometry the
+  shipped map cannot produce, since PRG and CHR sit four mebibytes apart. Moving
+  the stimulus onto the real bases was expected to make the worst case worse and
+  left both figures **byte-identical**, because the worst case is not an
+  alternation at all: refresh precharges every bank, so the access after one is
+  a miss whatever the addresses are. The geometry moves the average, not the
+  bound.
+
+- **The expired figure had a fourth home, one repository over.**
+  v2.6.16's first workstream corrected "140 of 142" in `rtl/emu.sv`,
+  `docs/sdram.md` and `docs/rung7-mappers.md`; the same number, with the same
+  "two failures are one number" gloss, was still in this repository's
+  `to-dos/mister/IMPLEMENTATION_PLAN.md`. Fixing the sites a report names and
+  missing the others is a shape this project has recorded before, and it does
+  not stop at a repository boundary.
+
+### Added
+
+- **`tb/sdram_latency_gate.py`** -- the memory system's deadlines asserted on a
+  real off-die console run rather than on a traffic model, wired into
+  `tb/regress.sh` and reported as **N/A** rather than SKIP on an on-die build,
+  because a gate on the SDRAM path cannot exist in a build with no SDRAM. It
+  **refuses a vacuous pass**: zero requests on either port fails rather than
+  reporting a maximum over an empty set. Demonstrated by four mutations, all
+  CAUGHT, including gating CHR at the derived 22 -- which fails, and is the
+  finding above stated as a test.
+- **`tb/check_cart_map.py`** and **`tb/cart_map.h`** -- the cartridge's SDRAM
+  bases had **four copies across three languages** (`cart_sdram.sv`'s parameter
+  defaults, `emu.sv`, `tb/cpu6502_cosim.sv`, and the new header), and a
+  divergence would point the `$2007` port at a different region of the part than
+  fetches use -- silently, and only on a banked board. That is v2.6.13's defect
+  shape exactly. Now gated in CI, with a self-test whose most important case is
+  a pattern that matches **nothing**: an absent match and an agreeing file are
+  otherwise indistinguishable, which is how a gate comes to assert nothing.
+- **`SDRAM_SEP_PROBE=1`** on the console co-simulation -- per-port request
+  separation, latency distributions and over-budget counts, gated on the console
+  actually running so the power-on request pair (both ports issue together
+  leaving reset, while the CPU is held) cannot report a minimum separation of
+  zero for every ROM.
+
 ## [2.6.15] - 2026-09-04 - "Warrant" (the claims v2.7.0 will make become checkable)
 
 ### Fixed
