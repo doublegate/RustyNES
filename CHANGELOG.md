@@ -83,6 +83,19 @@ cycle-accurate core later replaced.
   than reporting a maximum over zero requests, so its PASS is evidence about
   what *ran* where the stamp file and symbol count it replaces described what
   was *built* — the distinction v2.6.13 lost a whole result to.
+- **The bitstream is byte-identical to v2.6.15's, and this time it was rebuilt
+  rather than renamed.** A full Quartus compile produces `md5 7346a490…`, the
+  artifact v2.6.15 shipped, with timing identical at all four corners (worst
+  setup +0.473 ns, worst hold +0.078 ns). The premise was measured rather than
+  assumed: across `rtl/`, `sys/`, the `.qsf`, the `.sdc` and `files.qip` the
+  diff is **85 insertions and 10 deletions with zero non-comment lines**. That
+  also settles a **fitter seed sweep, considered and declined** — `SEED`
+  re-rolls placement for a given netlist, and an unchanged netlist re-measures
+  the same distribution v2.6.10 already measured. It is flagged for the next
+  release that changes the netlist, since the slot-scheduled arbiter would add
+  logic to a design whose hold margin is +0.078 ns — with v2.6.7's correction
+  attached, that of the 0.769 ns it recovered, 0.595 came from a memory change
+  and only 0.174 from the seed.
 - **The expired figure had a fourth home, one repository over.**
   v2.6.16's first workstream corrected "140 of 142" in `rtl/emu.sv`,
   `docs/sdram.md` and `docs/rung7-mappers.md`; the same number, with the same
