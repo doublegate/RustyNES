@@ -96,6 +96,20 @@ cycle-accurate core later replaced.
   logic to a design whose hold margin is +0.078 ns — with v2.6.7's correction
   attached, that of the 0.769 ns it recovered, 0.595 came from a memory change
   and only 0.174 from the seed.
+- **The new latency gate parsed a failed run's numbers and called it a PASS**,
+  found in review rather than by the mutation pass written for it. The gate ran
+  the console and parsed its report without ever checking the subprocess return
+  code, and `cpu_main.cpp` prints that report near the end and then still has
+  two ways to exit non-zero after it — a broken `eval_ovf_cnt` invariant, and
+  `return halted ? 1 : 0`. So a console that **jammed on an unknown opcode**
+  would print a well-formed report of the latencies it saw before jamming, and
+  the gate would find them inside budget and pass. Worse than a missing check
+  usually is, because the numbers would be **real**. Fixed and demonstrated by
+  mutation: without the check, a stub printing an in-budget report and exiting 1
+  yields `PASS: the off-die memory system meets both deadlines on the console`.
+  The eight mutations written for these gates covered the thresholds, the
+  vacuity guard and the parse guard, and **not one asked what happens when the
+  numbers are fine and the run is not**.
 - **The expired figure had a fourth home, one repository over.**
   v2.6.16's first workstream corrected "140 of 142" in `rtl/emu.sv`,
   `docs/sdram.md` and `docs/rung7-mappers.md`; the same number, with the same
