@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.16] - 2026-09-04 - "Interlock" (the arbiter's numbers describe a stimulus, not the console)
+
 ### Changed
 
 - **The off-die memory system is measured on the console for the first time, and
