@@ -71,6 +71,16 @@ cycle-accurate core later replaced.
   a miss whatever the addresses are. The geometry moves the average, not the
   bound.
 
+- **The co-simulation suite is 148 gates, and the two configurations no longer
+  report the same number.** On the die: **147 passed, 0 failed**. Off the die:
+  **148 passed, 0 failed**. The difference is exactly one gate — the new
+  SDRAM-latency gate, which reports **N/A** rather than SKIP on the die, because
+  a gate on the SDRAM path cannot exist in a build with no SDRAM and "skipped"
+  reads as something that could have run. It also makes the off-die
+  configuration self-verifying: it refuses a build with no SDRAM path rather
+  than reporting a maximum over zero requests, so its PASS is evidence about
+  what *ran* where the stamp file and symbol count it replaces described what
+  was *built* — the distinction v2.6.13 lost a whole result to.
 - **The expired figure had a fourth home, one repository over.**
   v2.6.16's first workstream corrected "140 of 142" in `rtl/emu.sv`,
   `docs/sdram.md` and `docs/rung7-mappers.md`; the same number, with the same
