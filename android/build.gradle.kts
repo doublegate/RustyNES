@@ -35,7 +35,7 @@
 //
 // The Compose compiler plugin below is the version this build does control.
 plugins {
-    id("com.android.application") version "9.3.2" apply false
+    id("com.android.application") version "9.4.0" apply false
     // v1.8.8 "Atlas" (Workstream J): the Macrobenchmark `:baselineprofile` module is
     // a `com.android.test` module — declare that plugin id here so it resolves for
     // the new module (it shares AGP's version coordinate).
