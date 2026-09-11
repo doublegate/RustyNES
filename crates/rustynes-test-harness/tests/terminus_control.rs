@@ -101,7 +101,22 @@ const EXPECTED: &[(&str, u64)] = &[
     ("tests/roms/nestest/nestest.nes", 0x42B9_B06F_0A51_772E),
 ];
 
+/// Apply the v2.6.18 write-commit offset from the environment, so the control
+/// can be run either side of the move without editing shipped code.
+#[cfg(feature = "phi2-write-sweep")]
+fn apply_offset() {
+    if let Ok(v) = std::env::var("TERMINUS_WRITE_OFFSET")
+        && let Ok(n) = v.parse::<u8>()
+    {
+        rustynes_core::rustynes_cpu::WRITE_PHI_OFFSET
+            .store(n, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+#[cfg(not(feature = "phi2-write-sweep"))]
+const fn apply_offset() {}
+
 fn run(rom: &str, frames: u32) -> (u64, Vec<u64>) {
+    apply_offset();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let data = std::fs::read(root.join(rom)).unwrap_or_else(|e| panic!("{rom}: {e}"));
     let mut nes = Nes::from_rom(&data).unwrap_or_else(|e| panic!("{rom}: {e:?}"));
@@ -135,21 +150,21 @@ fn first_difference_control() {
             println!("CAPTURE {rom} = 0x{got:016X}");
             continue;
         }
+        if let Ok(dir) = std::env::var("TERMINUS_DUMP") {
+            let stem = rom.rsplit('/').next().unwrap_or(rom);
+            let mut body = String::new();
+            for (i, h) in per_frame.iter().enumerate() {
+                let _ = writeln!(body, "{i}\t{h:016X}");
+            }
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(format!("{dir}/{stem}.frames.tsv"), body);
+        }
         if got != want {
             // Locating the FIRST differing frame is the whole point: a
             // difference earlier than the access being moved means the
             // experiment changed rather than the subject. Set
             // TERMINUS_DUMP=<dir> before and after a change and diff the two
             // dumps; the first differing line is the frame.
-            if let Ok(dir) = std::env::var("TERMINUS_DUMP") {
-                let stem = rom.rsplit('/').next().unwrap_or(rom);
-                let mut body = String::new();
-                for (i, h) in per_frame.iter().enumerate() {
-                    let _ = writeln!(body, "{i}\t{h:016X}");
-                }
-                let _ = std::fs::create_dir_all(&dir);
-                let _ = std::fs::write(format!("{dir}/{stem}.frames.tsv"), body);
-            }
             mismatches.push(format!(
                 "{rom}: rolling hash 0x{got:016X} != 0x{want:016X} \
                  ({} frames; set TERMINUS_DUMP=<dir> to localise the frame)",
