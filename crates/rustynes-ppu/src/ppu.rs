@@ -891,6 +891,10 @@ pub struct Ppu {
     /// immediate value, so flag-off is byte-identical. Updated at tick end.
     pub(crate) rendering_enabled_delayed: bool,
 
+    /// Two-dots-ago rendering value, for the v2.6.18 depth knob only.
+    #[cfg(feature = "phi2-write-sweep")]
+    pub(crate) render_gate_prev2: bool,
+
     /// v2.0 Phase 6 (`mc-ppu-subpos`): the analog `$2001` BG-shift-register
     /// RELOAD delay. The shifter reload gates on `bg_reload_render`, which tracks
     /// the live `self.mask` rendering-enable bit EXCEPT during the
@@ -1277,6 +1281,23 @@ pub struct ProvBgAddrs {
 /// swept against the `BG Serial In` / `Stale BG Shift` keys without rebuilding.
 /// Only consulted under `mc-ppu-subpos`.
 pub static MASK_WRITE_DELAY: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(4);
+
+/// v2.6.18 DERIVATION KNOB: depth, in PPU dots, of the rendering-enable
+/// pipeline (`rendering_enabled_delayed`).
+///
+/// 1 = shipped semantics exactly (a consumer sees the PREVIOUS dot's rendering
+/// value). 0 = no delay, consumers see the live mask. 2 = two dots.
+///
+/// This delay and the write-commit point are ONE quantity split across two
+/// places: the observable effect time is the commit offset PLUS this depth.
+/// v2.6.17 swept this 1..4 and found 1 optimal -- but only at the SHIPPED commit
+/// point. Under phi2 the commit is half a dot later, so the depth reproducing
+/// the same effect time is one LESS, exactly as `mask_for_skip_check` needed
+/// 2 -> 1. Sweeping at the shipped placement answers a different question.
+///
+/// Feature-gated; the shipped build has no atomic load on the per-dot path.
+#[cfg(feature = "phi2-write-sweep")]
+pub static RENDER_GATE_LAG: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(1);
 impl Ppu {
     /// New PPU in power-on state.
     #[must_use]
@@ -1404,6 +1425,8 @@ impl Ppu {
             oam2_fetch_frozen: false,
             prev_rendering_enabled: false,
             rendering_enabled_delayed: false,
+            #[cfg(feature = "phi2-write-sweep")]
+            render_gate_prev2: false,
             bg_reload_render: false,
             mask_write_delay: 0,
             cached_visible: false,
@@ -3342,6 +3365,16 @@ impl Ppu {
         let pre_render = self.cached_pre_render;
         let render_line = self.cached_render_line;
         let rendering = self.mask.rendering_enabled();
+        // v2.6.18 derivation: re-point the delayed gate to the swept depth
+        // BEFORE `rendering_gate` and every other consumer reads it this dot.
+        // Depth 1 leaves it exactly as the tick-end assignment left it, so the
+        // default path is untouched BY CONSTRUCTION rather than by claim.
+        #[cfg(feature = "phi2-write-sweep")]
+        match RENDER_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) {
+            0 => self.rendering_enabled_delayed = rendering,
+            1 => {}
+            _ => self.rendering_enabled_delayed = self.render_gate_prev2,
+        }
         // v2.0 (ae30785): the fetch/shift/sprite-eval pipeline gates on the
         // 1-PPU-dot-delayed rendering value under `ppu-sprite-shifter-counter`
         // (a mid-scanline `$2001` toggle takes effect one dot later — Stale
@@ -3394,6 +3427,10 @@ impl Ppu {
         // v2.0 (ae30785): update the 1-dot-delayed copy AFTER this dot's gate
         // read above, so the next dot sees the delayed value.
         {
+            #[cfg(feature = "phi2-write-sweep")]
+            {
+                self.render_gate_prev2 = self.rendering_enabled_delayed;
+            }
             self.rendering_enabled_delayed = rendering;
         }
 

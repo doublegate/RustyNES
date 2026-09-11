@@ -15,6 +15,9 @@ workspace = true
 
 [features]
 default = []
+# v2.6.18 derivation knob: sweepable depth for the rendering-enable pipeline.
+# Default off; the shipped build has no atomic load on the per-dot path.
+phi2-write-sweep = []
 # Per-PPU-dot state-tracing fixture (Session-10 observability tooling).
 # Off by default — when disabled, the recording code is entirely dead via
 # `#[cfg(feature = "ppu-state-trace")]` gates so the hot tick path has
