@@ -1033,6 +1033,50 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_round_trips_the_v9_oam2_counter_at_non_default_values() {
+        // v9 added three OAM2 fields. The pre-existing round-trip tests leave
+        // them at their power-on defaults (0 / false / false), so a reader and
+        // writer that disagree about ORDER still round-trip cleanly: every
+        // field reads back the value it already had. That is a test which
+        // passes because nothing was distinguishable, not because anything was
+        // verified -- the shape this project keeps paying for.
+        //
+        // `snapshot_schema_audit` cannot close it either: it checks that every
+        // field is WRITTEN, never that the reader agrees about where.
+        //
+        // So set all three to values distinguishable from the defaults AND from
+        // each other's types, then assert each one individually.
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.oam2_fetch_addr = 0x1B;
+        p.oam2_overflowed = true;
+        p.oam2_fetch_frozen = true;
+
+        let blob = p.snapshot();
+        assert_eq!(
+            blob[0], PPU_SNAPSHOT_VERSION,
+            "blob carries current version"
+        );
+
+        let mut q = Ppu::new(PpuRegion::Ntsc);
+        q.restore(&blob).unwrap();
+        assert_eq!(q.oam2_fetch_addr, 0x1B, "OAM2 fetch address survives");
+        assert!(q.oam2_overflowed, "the overflow flag survives");
+        assert!(q.oam2_fetch_frozen, "the latched freeze flag survives");
+
+        // The two flags are adjacent bools, so a reader that swapped them would
+        // pass every assertion above. Pin the asymmetric case too.
+        let mut r = Ppu::new(PpuRegion::Ntsc);
+        r.oam2_fetch_addr = 0x07;
+        r.oam2_overflowed = false;
+        r.oam2_fetch_frozen = true;
+        let mut t = Ppu::new(PpuRegion::Ntsc);
+        t.restore(&r.snapshot()).unwrap();
+        assert_eq!(t.oam2_fetch_addr, 0x07);
+        assert!(!t.oam2_overflowed, "overflow flag is NOT the freeze flag");
+        assert!(t.oam2_fetch_frozen, "freeze flag is NOT the overflow flag");
+    }
+
+    #[test]
     fn snapshot_round_trips_sprite_evaluation_state() {
         // v8: a snapshot taken with a sprite-evaluation pass in flight (dots
         // 65..=256) must restore the FSM's pointers and phase, not just the

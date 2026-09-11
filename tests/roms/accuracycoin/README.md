@@ -30,19 +30,22 @@ addresses out of CPU RAM directly.
 
 Current pass rate (measured via the RAM-direct decoder), after the
 2026-09 upstream re-sync grew the catalog to 149 rows / 144 assigned tests:
-**98.61%** (142 of 144 assigned tests). The two gaps are the new
-`Advanced Sprite Evaluation` tests "Frozen OAM2 Increment" and
-"Misaligned OAM2 Address", both secondary-OAM address behaviour this PPU
-does not model. Nothing that passed before stopped passing. Floor: 0.60.
+**99.31%** (143 of 144 assigned tests). The one gap is the new
+`Advanced Sprite Evaluation` test "Frozen OAM2 Increment", secondary-OAM
+address behaviour during a rendering toggle that this PPU does not model;
+its cause is named in `docs/accuracy-ledger.md` (the PPU register write
+lands at M2-low where a 6502 commits at phi2). "Misaligned OAM2 Address"
+was the second gap and closed in v2.6.17. Nothing that passed before
+stopped passing. Floor: 0.60.
 See `docs/STATUS.md` for the authoritative breakdown.
 
 ## Harness
 
 | Harness file | Purpose |
 |--------------|---------|
-| `crates/nes-test-harness/src/accuracy_coin.rs` | Drives ROM from power-on; reads pass-rate from RAM via the catalog decoder. |
-| `crates/nes-test-harness/src/accuracy_coin_catalog.rs` | `OnceLock`-lazy 149-entry catalog parsed from the TSV in `../AccuracyCoin/SOURCE_CATALOG.tsv`. |
-| `crates/nes-test-harness/tests/accuracycoin.rs` | The CI gate — prints per-suite breakdown + per-failing-test list. |
+| `crates/rustynes-test-harness/src/accuracy_coin.rs` | Drives ROM from power-on; reads pass-rate from RAM via the catalog decoder. |
+| `crates/rustynes-test-harness/src/accuracy_coin_catalog.rs` | `OnceLock`-lazy 149-entry catalog parsed from the TSV in `../AccuracyCoin/SOURCE_CATALOG.tsv`. |
+| `crates/rustynes-test-harness/tests/accuracycoin.rs` | The CI gate — prints per-suite breakdown + per-failing-test list. |
 
 ## Why two directories?
 

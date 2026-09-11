@@ -859,8 +859,13 @@ pub struct Ppu {
     /// load-bearing for it. Both `AccuracyCoin` `Misaligned OAM2 Address` and
     /// `Frozen OAM2 Increment` are explained by this one mechanism.
     ///
-    /// Not snapshotted, matching `oam2_addr` and the rest of the per-dot
-    /// sprite-eval FSM: it re-derives within a scanline.
+    /// **Snapshotted, in the `PPU_SNAPSHOT_VERSION` 9 tail** — unlike
+    /// `oam2_addr` and the rest of the per-dot sprite-eval FSM, which re-derive
+    /// within a scanline. This one cannot: the whole point of the live counter
+    /// is that it REMEMBERS increments it did not take while rendering was off,
+    /// so a restore that re-derived it would discard exactly the state the
+    /// counter exists to carry. A pre-v9 blob has no such field and restores to
+    /// `0` / `false` / `false`, which is the power-on state.
     pub(crate) oam2_fetch_addr: u8,
     pub(crate) oam2_overflowed: bool,
     /// The freeze flag LATCHED at the start of sprite fetch (dot 257).

@@ -63,10 +63,12 @@ const MIN_PASS_RATE: f64 = 0.60;
 ///
 /// 143 of 144 assigned. The catalog grew 141 -> 144 assigned tests and
 /// **nothing that passed before stopped passing**: upstream removed no
-/// test, so 144 assigned minus the two known-failing rows below is exactly
-/// the previous 141 plus the one new test that passes
-/// (`Misaligned OAM DMA`). The two that fail are new tests probing
-/// behaviour this core has never modelled — see `KNOWN_FAILING`.
+/// test, so 144 assigned minus the ONE known-failing row below is exactly
+/// the previous 141 plus the two new tests that pass (`Misaligned OAM DMA`
+/// and `Misaligned OAM2 Address`, the latter closed by the v9 OAM2 counter
+/// after it was found to have been passing via two cancelling errors). The
+/// single remaining failure is `Frozen OAM2 Increment` — see `KNOWN_FAILING`,
+/// which is the authority here; this count must agree with it.
 ///
 /// Asserted alongside the known-failing set so that a battery which
 /// *under-executes* (early bail, skipped suite, decoder that stops

@@ -56,7 +56,7 @@ A one-directional crate graph keeps each chip (`rustynes-cpu`, `rustynes-ppu`, `
 
 | Test | Result |
 |------|--------|
-| **AccuracyCoin** | **100.00% (141/141)** (RAM-direct decoder) — every assigned test passes; the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") were closed by the v2.0.3 2-cycle-ALE promotion |
+| **AccuracyCoin** | **99.31% (143/144)** (RAM-direct decoder) — the 2026-09 upstream re-sync grew the battery to 144 assigned tests and `Advanced Sprite Evaluation :: Frozen OAM2 Increment` is the single named failure, pinned in `KNOWN_FAILING` with its cause rowed in `docs/accuracy-ledger.md`; the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") were closed by the v2.0.3 2-cycle-ALE promotion |
 | **`nestest`** | **0-diff** against the Nintendulator golden log |
 | **blargg / kevtris / `mmc3_test_2`** | Green |
 | **Commercial-ROM oracle** | 60-ROM byte-identical regression gate + extended visual survey |
@@ -88,7 +88,7 @@ RustyNES uses **cycle-accurate** emulation rather than scanline-based shortcuts.
 
 | Area | What ships today |
 |------|----------------------|
-| **Accuracy** | One-clock scheduler (v2.0.0 "Timebase"), master-clock timebase, AccuracyCoin **141/141 (100.00%)**, `nestest` 0-diff |
+| **Accuracy** | One-clock scheduler (v2.0.0 "Timebase"), master-clock timebase, AccuracyCoin **143/144 (99.31%)** on a battery that grew to 144 assigned tests at the 2026-09 re-sync, `nestest` 0-diff |
 | **Cartridges** | **174** mapper families incl. expansion audio (VRC6/VRC7-OPLL/Sunsoft 5B/N163/MMC5) |
 | **Platforms** | iNES / NES 2.0, Famicom Disk System (real-BIOS boot, read/write, multi-side), Vs. System / PlayChoice-10 RGB |
 | **Online** | Rollback netplay, UDP (native) + WebRTC (browser), 2–4 players |

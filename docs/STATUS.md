@@ -2118,11 +2118,15 @@ flag no longer exists. The subsequent v2.0.0 "Timebase" one-clock rewrite and th
 v2.0.3 2-cycle-ALE PPU promotion further hardened it. On the current default build
 (`--features test-roms`):
 
-- **AccuracyCoin 141/141 (100.00%)** (RAM-direct decoder), 0 fail. The two PPU
-  tests the v2.0.1 upstream re-sync added ("ALE + Read" `$0491`, "Hybrid
-  Addresses" `$0492`) — briefly the only two open gaps at 139/141 — were **closed
-  in v2.0.3** by promoting the 2-cycle-ALE PPU fetch model to the unconditional
-  default. nestest is 0-diff.
+- **AccuracyCoin 143/144 (99.31%)** (RAM-direct decoder), 1 fail. The 2026-09
+  upstream re-sync (`69c8860`) grew the battery 141 -> 144 assigned tests across
+  two new pages, and `Advanced Sprite Evaluation :: Frozen OAM2 Increment` is
+  the single named failure — pinned in `KNOWN_FAILING`, with its cause (the PPU
+  register write landing at M2-low where a 6502 commits at phi2) rowed in
+  `docs/accuracy-ledger.md`. The two PPU tests the earlier v2.0.1 re-sync added
+  ("ALE + Read" `$0491`, "Hybrid Addresses" `$0492`) — briefly the only two open
+  gaps at 139/141 — were **closed in v2.0.3** by promoting the 2-cycle-ALE PPU
+  fetch model to the unconditional default. nestest is 0-diff.
 - **`cpu_interrupts_v2` 5/5 strict** — the `2-nmi_and_brk` / `3-nmi_and_irq` /
   `5-branch_delays_irq` sub-ROMs this section formerly listed as "deferred to
   v2.0" pass strictly on the default build. `ppu_sprites` 19/19.

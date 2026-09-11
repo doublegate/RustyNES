@@ -19,7 +19,7 @@
 **RustyNES is a cycle-accurate Nintendo Entertainment System emulator written in
 pure Rust.** It targets the Mesen2 / higan / ares accuracy bar — tight, lockstep
 scheduling at PPU-dot resolution on a master-clock-precise timebase — clearing
-**AccuracyCoin 100% (141/141)** and matching the Nintendulator golden log on
+**AccuracyCoin 99.31% (143/144)** and matching the Nintendulator golden log on
 `nestest` with **zero diff**. (As of v2.0.3 every assigned test passes, including the
 two newest upstream PPU tests, "ALE + Read" and "Hybrid Addresses", via the promoted
 2-cycle-ALE fetch model — ADR 0030.)
@@ -83,7 +83,7 @@ platform for NES emulation.
 
 | Feature | Description |
 | --- | --- |
-| **Cycle-Accurate** | Master-clock-precise CPU / PPU / APU — AccuracyCoin 100% (141/141), nestest 0-diff |
+| **Cycle-Accurate** | Master-clock-precise CPU / PPU / APU — AccuracyCoin 143/144 (99.31%), nestest 0-diff |
 | **One-Clock Timebase** | A single canonical cycle counter, every CPU cycle a real bus access, with a split-around-the-access PPU catch-up |
 | **174 Mapper Families** | NROM through MMC5, the full VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company ASIC, reusable-ASIC multicarts (FK23C / COOLBOY / MINDKIDS / Sachen / Waixing / Kaiser), and Vs.-System boards — classified Core / Curated / BestEffort behind a CI accuracy-honesty gate — plus a UNIF (`.unf`) loader |
 | **Famicom Disk System** | `.fds` games with real-BIOS boot, writable disks, side-swapping, a timed disk-head model, and 2C33 wavetable audio |
@@ -254,7 +254,7 @@ The browser build runs the same core with web-specific glue (native builds are b
 ### Android
 
 RustyNES runs as a complete native **Android app** on the byte-identical core (so
-AccuracyCoin holds 141/141 as on desktop), built on a shared **`rustynes-mobile`**
+AccuracyCoin holds 143/144 as on desktop), built on a shared **`rustynes-mobile`**
 UniFFI bridge, a **`rustynes-android`** JNI layer, and a Jetpack **Compose** shell:
 
 - **Rendering + audio** — wgpu on a `SurfaceView`, reusing the desktop WGSL CRT /
@@ -281,7 +281,7 @@ income-free (ADR 0035): no ads, no tracking, no paid unlock. Details in
 
 ### iOS / iPadOS
 
-RustyNES runs as a native **iOS / iPadOS app** on the byte-identical core (maintaining the same 141/141 AccuracyCoin bar as desktop), built on the shared **`rustynes-mobile`** UniFFI bridge and a native SwiftUI shell:
+RustyNES runs as a native **iOS / iPadOS app** on the byte-identical core (maintaining the same 143/144 AccuracyCoin bar as desktop), built on the shared **`rustynes-mobile`** UniFFI bridge and a native SwiftUI shell:
 
 - **Rendering + audio** — Metal via `wgpu` with the same full WGSL shader pipelines (CRT, NTSC, Bisqwit) and ProMotion pacing, plus a low-latency CoreAudio hot path.
 - **Input** — multi-touch on-screen pad (NES-001 style), responsive sizing, GameController framework for P1–P4 (hot-plug), and Core Haptics.
@@ -521,7 +521,7 @@ assigned tests is the authoritative source.
 
 | Suite                       | Result                                                                |
 | --------------------------- | --------------------------------------------------------------------- |
-| **AccuracyCoin**            | **100% (141/141)** — every assigned test passes, including the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses"), via the promoted 2-cycle-ALE fetch model (v2.0.3, ADR 0030) |
+| **AccuracyCoin**            | **99.31% (143/144)** — the 2026-09 upstream re-sync grew the battery to 144 assigned tests; `Advanced Sprite Evaluation :: Frozen OAM2 Increment` is the single named failure (cause rowed in `docs/accuracy-ledger.md`). Includes the older upstream PPU tests ("ALE + Read", "Hybrid Addresses"), via the promoted 2-cycle-ALE fetch model (v2.0.3, ADR 0030) |
 | nestest                     | 0-diff vs the Nintendulator golden log                                |
 | blargg `cpu_interrupts_v2`  | 5/5 strict · SH\* 6/6                                                  |
 | blargg `blargg_apu_2005`    | 11/11 NTSC — length counters + table, frame-IRQ flag and timing, clock jitter, length timing in both frame-counter modes, reset timing, length halt/reload ordering |
@@ -680,7 +680,7 @@ The emulation core is unchanged in this release, so its accuracy numbers hold by
 
 | | |
 |---|---|
-| AccuracyCoin | **141/141 (100.00%)**, RAM decoder |
+| AccuracyCoin | **143/144 (99.31%)**, RAM decoder — battery grew to 144 assigned tests at the 2026-09 re-sync |
 | nestest | 0-diff against the reference log |
 | Mapper families | **174** — 51 Core, 95 Curated, 28 BestEffort |
 | Co-simulation suite | **142 gates green, 0 failed, 0 skipped** |
@@ -719,7 +719,7 @@ closed at every corner, and that bitstream is published. **Rung 6 is open and
 blocked on hardware**: no DE10-Nano or SuperStation One is attached, so nothing
 about a booting core is claimed. Every rung is labelled in
 [`docs/mister.md`](docs/mister.md) by whether it has an **independent** oracle —
-because 141/141 on AccuracyCoin is not the same as "matches silicon", and a rung
+because 143/144 on AccuracyCoin is not the same as "matches silicon", and a rung
 verified only against this emulator inherits whatever this emulator has wrong.
 
 **Rung 5 has already shown why that caveat is not decorative.** A `cpu_bus`

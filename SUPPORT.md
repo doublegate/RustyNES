@@ -98,7 +98,7 @@ A: Yes. RustyNES is well past its first stable release — the current release i
 
 **Q: How accurate is RustyNES?**
 
-A: AccuracyCoin 100% (141/141) — every assigned test passes, including the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses"), which the v2.0.3 2-cycle-ALE PPU-fetch promotion closed — `nestest` 0-diff, and the blargg / kevtris suites green, validated by a byte-identical commercial-ROM regression oracle. See [docs/STATUS.md](docs/STATUS.md) for the authoritative pass-count matrix.
+A: AccuracyCoin 99.31% (143/144). The 2026-09 upstream re-sync grew the battery from 141 to 144 assigned tests; `Advanced Sprite Evaluation :: Frozen OAM2 Increment` is the single failure and its cause is named in `docs/accuracy-ledger.md`. That includes the two older upstream PPU tests ("ALE + Read", "Hybrid Addresses"), which the v2.0.3 2-cycle-ALE PPU-fetch promotion closed — `nestest` 0-diff, and the blargg / kevtris suites green, validated by a byte-identical commercial-ROM regression oracle. See [docs/STATUS.md](docs/STATUS.md) for the authoritative pass-count matrix.
 
 **Q: How can I contribute?**
 

@@ -105,12 +105,25 @@ const EXPECTED: &[(&str, u64)] = &[
 /// can be run either side of the move without editing shipped code.
 #[cfg(feature = "phi2-write-sweep")]
 fn apply_offset() {
-    if let Ok(v) = std::env::var("TERMINUS_WRITE_OFFSET")
-        && let Ok(n) = v.parse::<u8>()
-    {
-        rustynes_core::rustynes_cpu::WRITE_PHI_OFFSET
-            .store(n, core::sync::atomic::Ordering::Relaxed);
-    }
+    // PANIC rather than fall back on an unparseable value. A silently ignored
+    // knob makes a diagnostic run report SHIPPED-path hashes while the operator
+    // believes a mutation was under test -- which is v2.6.13's `USE_SDRAM`
+    // finding in a different harness, where one binary ran under both
+    // configurations' names and four consecutive passes looked identical to a
+    // knob that never reached the compiler. An absent variable is a legitimate
+    // "run the control"; a present-but-malformed one is an operator error and
+    // must be loud.
+    let Ok(v) = std::env::var("TERMINUS_WRITE_OFFSET") else {
+        return;
+    };
+    let n: u8 = v.parse().unwrap_or_else(|e| {
+        panic!(
+            "TERMINUS_WRITE_OFFSET is set to {v:?}, which is not a u8 ({e}). \
+             Refusing to run: the control would silently measure the shipped \
+             path under a name claiming otherwise. Unset it to run the control."
+        )
+    });
+    rustynes_core::rustynes_cpu::WRITE_PHI_OFFSET.store(n, core::sync::atomic::Ordering::Relaxed);
 }
 #[cfg(not(feature = "phi2-write-sweep"))]
 const fn apply_offset() {}

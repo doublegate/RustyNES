@@ -10,7 +10,7 @@ salvaged from `/tmp` so it survives reboot.
 
 - **`tricnes-harness-src/`** — the trimmed, **instrumented** harness actually used for the cross-diff:
   `Emulator.cs` (with the per-cycle window logger), `Program.cs`, `6502Documentation.cs`, `mappers/`
-  (all 10 `Mapper_*.cs`, required to build), `tricnes-harness.csproj`. Build: `dotnet build -c Release`
+  (all 11 `Mapper_*.cs`, required to build — the re-sync added `Mapper_GxROM.cs`), `tricnes-harness.csproj`. Build: `dotnet build -c Release`
   (.NET 10 SDK). The MIT license in `../tricnes-full-src/LICENSE` covers this trimmed copy too.
 - **`tricnes-full-src/`** — the complete upstream TriCNES source (`.cs`/`.csproj`/`.resx` + `LICENSE`,
   no build artifacts), for reference / re-trimming the harness.
