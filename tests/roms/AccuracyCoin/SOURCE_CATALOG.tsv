@@ -101,6 +101,11 @@ APU Tests	Delta Modulation Channel	0x046A
 APU Tests	APU Register Activation	0x045C
 APU Tests	Controller Strobing	0x045F
 APU Tests	Controller Clocking	0x047A
+CPU Behavior 2	Instruction Timing	0x0460
+CPU Behavior 2	Implied Dummy Reads	0x046D
+CPU Behavior 2	Branch Dummy Reads	0x048B
+CPU Behavior 2	JSR Edge Cases	0x047C
+CPU Behavior 2	Internal Data Bus	0x0490
 Power On State	PPU Reset Flag	0x03FF
 Power On State	CPU RAM	0x03FF
 Power On State	CPU Registers	0x03FF
@@ -111,8 +116,6 @@ PPU Behavior	PPU Register Mirroring	0x0404
 PPU Behavior	PPU Register Open Bus	0x044E
 PPU Behavior	PPU Read Buffer	0x0476
 PPU Behavior	Palette RAM Quirks	0x047E
-PPU Behavior	Rendering Flag Behavior	0x0486
-PPU Behavior	$2007 read w/ rendering	0x048A
 PPU VBlank Timing	VBlank beginning	0x0450
 PPU VBlank Timing	VBlank end	0x0451
 PPU VBlank Timing	NMI Control	0x0452
@@ -124,23 +127,23 @@ Sprite Evaluation	Sprite overflow behavior	0x0459
 Sprite Evaluation	Sprite 0 Hit behavior	0x0457
 Sprite Evaluation	$2002 flag timing	0x048D
 Sprite Evaluation	Suddenly Resize Sprite	0x0489
+Sprite Evaluation	Misaligned OAM DMA	0x0494
 Sprite Evaluation	Arbitrary Sprite zero	0x0458
 Sprite Evaluation	Misaligned OAM behavior	0x045A
-Sprite Evaluation	Address $2004 behavior	0x045B
 Sprite Evaluation	OAM Corruption	0x047B
-Sprite Evaluation	INC $4014	0x0480
-PPU Misc.	Attributes As Tiles	0x0481
 PPU Misc.	t Register Quirks	0x0482
-PPU Misc.	Stale BG Shift Registers	0x0483
-PPU Misc.	Stale Sprite Shift Regs	0x048F
-PPU Misc.	BG Serial In	0x0487
-PPU Misc.	Sprites On Scanline 0	0x0484
+PPU Misc.	Address $2004 behavior	0x045B
+PPU Misc.	INC $4014	0x0480
+PPU Misc.	Rendering Flag Behavior	0x0486
+PPU Misc.	$2007 read w/ rendering	0x048A
 PPU Misc.	$2004 Stress Test	0x048C
 PPU Misc.	$2007 Stress Test	0x048E
-PPU Misc.	ALE + Read	0x0491
-PPU Misc.	Hybrid Addresses	0x0492
-CPU Behavior 2	Instruction Timing	0x0460
-CPU Behavior 2	Implied Dummy Reads	0x046D
-CPU Behavior 2	Branch Dummy Reads	0x048B
-CPU Behavior 2	JSR Edge Cases	0x047C
-CPU Behavior 2	Internal Data Bus	0x0490
+Advanced Background Evaluation	Attributes As Tiles	0x0481
+Advanced Background Evaluation	Stale BG Shift Registers	0x0483
+Advanced Background Evaluation	BG Serial In	0x0487
+Advanced Background Evaluation	ALE + Read	0x0491
+Advanced Background Evaluation	Hybrid Addresses	0x0492
+Advanced Sprite Evaluation	Sprites On Scanline 0	0x0484
+Advanced Sprite Evaluation	Stale Sprite Shift Regs	0x048F
+Advanced Sprite Evaluation	Frozen OAM2 Increment	0x0493
+Advanced Sprite Evaluation	Misaligned OAM2 Address	0x0495

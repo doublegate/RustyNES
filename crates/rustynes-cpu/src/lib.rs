@@ -23,6 +23,10 @@ mod status;
 
 pub use bus::Bus;
 pub use cpu::Cpu;
+#[cfg(feature = "phi2-write-sweep")]
+pub use cpu::READ_PHI_OFFSET;
+#[cfg(feature = "phi2-write-sweep")]
+pub use cpu::WRITE_PHI_OFFSET;
 pub use disasm::{DisasmLine, disassemble_at};
 pub use scheduler::M2Phase;
 pub use snapshot::{CPU_SNAPSHOT_VERSION, CpuSnapshotError};

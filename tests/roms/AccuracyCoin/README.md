@@ -8,7 +8,7 @@ diagnostic decoder needs at compile time.
 
 | File | Purpose |
 |------|---------|
-| `SOURCE_CATALOG.tsv` | 146-row TSV mapping `(suite, name) -> result-byte address`, extracted from upstream `AccuracyCoin.asm`'s `Suite_*` blocks. `include_str!`'d by `rustynes_test_harness::accuracy_coin_catalog`. |
+| `SOURCE_CATALOG.tsv` | 149-row TSV mapping `(suite, name) -> result-byte address`, extracted from upstream `AccuracyCoin.asm`'s `Suite_*` blocks by `scripts/accuracycoin-build/extract_catalog.py`. `include_str!`'d by `rustynes_test_harness::accuracy_coin_catalog`. |
 | `sub-tests/*.nes` | Custom-built sub-test ROMs that boot directly into one target test (bypass menu + full-battery loop). Built by `scripts/accuracycoin-build/build_sub_test_rom.py`. Used to unblock the Session-22 Mesen2 wall-time oracle blocker. Inherits upstream MIT license. See `docs/audit/session-23-custom-accuracycoin-sub-test-roms-2026-05-22.md`. |
 
 The runtime `.nes` ROM lives at [`../accuracycoin/AccuracyCoin.nes`](../accuracycoin/AccuracyCoin.nes)
@@ -108,14 +108,38 @@ pass / fail breakdowns.
 ## Source
 
 `https://github.com/100thCoin/AccuracyCoin` (main branch; re-synced to
-upstream commit `71f57fb` in v2.0.1). Extraction recipe (inline — the
-authoritative source is `AccuracyCoin.asm` itself, not a prose doc): walk
-each `Suite_*` block, and for every `table "name", $FF, result_symbol,
-TEST_addr` macro entry emit a `(suite, test-name, ram-addr)` triple,
-resolving `result_symbol` to its `result_X = $ADDR` definition. The v2.0.1
-re-sync added the two newest PPU tests ("ALE + Read" `$0491`, "Hybrid
-Addresses" `$0492`), growing the catalog 144 -> 146 rows / 139 -> 141
-assigned tests.
+upstream commit `69c8860`, re-synced 2026-09-11; previously `71f57fb` in
+v2.0.1).
+
+**The extraction is a script, not a recipe.** It used to be the prose
+paragraph that stood here — walk each `Suite_*` block, emit a triple per
+`table` macro row, resolve `result_symbol` through its `result_X = $ADDR`
+definition. That is accurate and it could not be re-run or audited, so each
+re-sync re-derived it by hand. It is now
+`scripts/accuracycoin-build/extract_catalog.py`:
+
+```bash
+python3 scripts/accuracycoin-build/extract_catalog.py --self-test
+python3 scripts/accuracycoin-build/extract_catalog.py /path/to/AccuracyCoin.asm \
+    --out tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv
+```
+
+Two things the script settles that the prose did not. It orders rows by
+upstream's `TableTable`, which is the ROM's own display order, rather than
+by position in the file — the two can disagree. And running it against the
+asm at `71f57fb` reproduced the committed 146-row TSV **byte-for-byte except
+one row**: the hand extraction had filed "Attributes As Tiles" under
+`PPU Misc.` where upstream has it in `Suite_PPUBehavior`. Same result
+address, so no verdict was ever wrong — only the per-suite breakdown was.
+
+The **2026-09 re-sync** grew the catalog 146 -> 149 rows / 141 -> 144
+assigned tests across 20 -> 22 suites. Upstream removed nothing; it added
+three tests (`Frozen OAM2 Increment` `$0493`, `Misaligned OAM DMA` `$0494`,
+`Misaligned OAM2 Address` `$0495`) and added two pages, `Advanced Background
+Evaluation` and `Advanced Sprite Evaluation`, which re-home eleven existing
+PPU tests out of `PPU Misc.`, `PPU Behavior` and `Sprite Evaluation`. A
+re-sync is therefore not an append: a suite-keyed baseline must be
+regenerated, not extended.
 
 ## License
 

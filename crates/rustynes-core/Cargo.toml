@@ -14,6 +14,8 @@ categories = ["emulators"]
 workspace = true
 
 [features]
+# Forward to `rustynes-cpu/phi2-write-sweep` (v2.6.18 study; default off).
+phi2-write-sweep = ["rustynes-cpu/phi2-write-sweep"]
 default = ["std"]
 serde = ["dep:serde"]
 # `std` is the default for desktop / hosted builds. Disabling it

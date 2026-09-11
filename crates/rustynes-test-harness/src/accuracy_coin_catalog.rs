@@ -1,15 +1,15 @@
 //! AccuracyCoin test-name catalog + RAM-direct result decoder.
 //!
 //! Vendored from upstream `100thCoin/AccuracyCoin` (MIT licensed). The
-//! list mirrors `AccuracyCoin.asm`'s 20 `Suite_*` pages: each page
+//! list mirrors `AccuracyCoin.asm`'s 22 `Suite_*` pages: each page
 //! contributes a header string + a sequence of `table "name", $FF,
-//! result_addr, run_addr` macro entries. Total: 146 entries across 20
+//! result_addr, run_addr` macro entries. Total: 149 entries across 22
 //! suites.
 //!
 //! ## Source of truth
 //!
 //! The authoritative list lives next to the ROM at
-//! `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv` as a 146-line
+//! `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv` as a 149-line
 //! `(suite<TAB>name<TAB>result_addr)` file extracted from upstream
 //! `AccuracyCoin.asm` by the recipe documented inline in
 //! `tests/roms/AccuracyCoin/README.md` (walk each `Suite_*`/`table` block,
@@ -128,7 +128,7 @@ impl TestStatus {
     }
 }
 
-/// Return the catalog of all 146 AccuracyCoin tests, in `TableTable`
+/// Return the catalog of all 149 AccuracyCoin tests, in `TableTable`
 /// order.
 ///
 /// The result is built once (on first call) and cached for the
@@ -172,7 +172,7 @@ pub fn catalog() -> &'static [CatalogEntry] {
 
 /// Look up a catalog entry by zero-based `TableTable` index.
 ///
-/// Returns `None` if `index >= 146`.
+/// Returns `None` if `index >= 149`.
 #[must_use]
 pub fn entry(index: usize) -> Option<&'static CatalogEntry> {
     catalog().get(index)
@@ -194,7 +194,7 @@ pub fn suite_size(suite: &str) -> usize {
     catalog().iter().filter(|e| e.suite == suite).count()
 }
 
-/// Decode the 146-entry result vector by reading each catalog entry's
+/// Decode the 149-entry result vector by reading each catalog entry's
 /// [`CatalogEntry::result_addr`] from `ram` (which must be the NES's
 /// 2 KiB CPU RAM borrowed via `Nes::bus().ram_bytes()`).
 ///
@@ -217,7 +217,7 @@ pub fn decode_results(ram: &[u8]) -> Option<Vec<TestStatus>> {
 /// Aggregated counts derived from a decoded results vector.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RamResultSummary {
-    /// Total number of catalog entries (always 146 if the catalog is
+    /// Total number of catalog entries (always 149 if the catalog is
     /// fully loaded).
     pub total: u32,
     /// Tests that wrote `$01` (clean pass).
@@ -306,8 +306,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_exactly_146_entries() {
-        assert_eq!(catalog().len(), 146, "AccuracyCoin catalog size drifted");
+    fn catalog_has_exactly_149_entries() {
+        assert_eq!(catalog().len(), 149, "AccuracyCoin catalog size drifted");
     }
 
     #[test]
@@ -335,7 +335,13 @@ mod tests {
     }
 
     #[test]
-    fn catalog_has_20_suites() {
+    fn catalog_has_22_suites() {
+        // Listed in upstream `TableTable` order, which is the ROM's own
+        // display order and therefore the catalog's. The last two pages
+        // arrived in upstream `d924906c` (2026-09-02); they are not new
+        // topics so much as a re-home for the advanced PPU tests that had
+        // outgrown `PPU Misc.`, so eleven pre-existing tests changed suite
+        // in the same commit without changing address or meaning.
         let expected = [
             "CPU Behavior",
             "Addressing mode wraparound",
@@ -351,12 +357,14 @@ mod tests {
             "CPU Interrupts",
             "APU Registers and DMA tests",
             "APU Tests",
+            "CPU Behavior 2",
             "Power On State",
             "PPU Behavior",
             "PPU VBlank Timing",
             "Sprite Evaluation",
             "PPU Misc.",
-            "CPU Behavior 2",
+            "Advanced Background Evaluation",
+            "Advanced Sprite Evaluation",
         ];
         for suite in expected {
             assert!(
@@ -364,16 +372,36 @@ mod tests {
                 "AccuracyCoin suite missing entries: {suite:?}"
             );
         }
-        assert_eq!(suites().len(), 20);
+        assert_eq!(suites().len(), 22);
+    }
+
+    #[test]
+    fn catalog_contains_the_tests_upstream_added_in_the_2026_09_resync() {
+        // Named individually rather than covered by the size assertion
+        // because a count can be restored by an unrelated addition while
+        // these three are silently dropped. Addresses come from
+        // `AccuracyCoin.asm`'s `result_X = $ADDR` definitions.
+        let by_name: std::collections::HashMap<&str, u16> = catalog()
+            .iter()
+            .map(|e| (e.name.as_str(), e.result_addr))
+            .collect();
+        assert_eq!(by_name.get("Frozen OAM2 Increment"), Some(&0x0493));
+        assert_eq!(by_name.get("Misaligned OAM DMA"), Some(&0x0494));
+        assert_eq!(by_name.get("Misaligned OAM2 Address"), Some(&0x0495));
     }
 
     #[test]
     fn entry_by_index_is_zero_based() {
         let first = entry(0).expect("index 0 present");
         assert_eq!(first.name, "ROM is not writable");
-        let last = entry(145).expect("index 145 present");
-        assert_eq!(last.name, "Internal Data Bus");
-        assert!(entry(146).is_none());
+        // Derive the last index from the catalog rather than writing the
+        // number down. The literal 145 here was correct for the 146-row
+        // catalog and became a false failure the moment upstream appended
+        // a suite -- the index is a consequence of the catalog's length,
+        // not an independent fact about it.
+        let last = entry(catalog().len() - 1).expect("final index present");
+        assert_eq!(last.name, "Misaligned OAM2 Address");
+        assert!(entry(catalog().len()).is_none());
     }
 
     #[test]
@@ -401,7 +429,7 @@ mod tests {
         ram[e0.result_addr as usize] = 0x01;
         ram[e1.result_addr as usize] = (3 << 2) | 0x02; // fail code 3
         let statuses = decode_results(&ram).expect("decode");
-        assert_eq!(statuses.len(), 146);
+        assert_eq!(statuses.len(), 149);
         assert_eq!(statuses[0], TestStatus::Pass);
         assert_eq!(statuses[1], TestStatus::Fail(3));
         // The five Power On State tests share $03FF (left at 0x00).

@@ -2,7 +2,7 @@
 
 **Document Version:** 2.1.0
 **Last Updated:** 2026-08-31
-**Applies to:** RustyNES v2.6.16
+**Applies to:** RustyNES v2.6.17
 
 ---
 
@@ -22,9 +22,9 @@
 
 RustyNES is the **definitive NES emulator for the modern era** — combining cycle-perfect accuracy with a complete contemporary feature set and the safety guarantees of Rust. It is more than an emulator: it is a platform for NES preservation, competitive online play, tool-assisted speedrunning, and homebrew development.
 
-As of **v1.0.0**, that vision was realized: RustyNES clears the Mesen2 / higan / ares accuracy bar, ships a polished desktop application and a browser build, and supports the full platform surface — netplay, achievements, TAS movies, a debugger, FDS, and arcade (Vs. / PlayChoice-10) hardware. Since then the additive v1.x line added three more platforms (native Android, iOS / iPadOS, and a Libretro / RetroArch core), **v2.0.0 "Timebase"** replaced the scheduler substrate with the one-clock / every-cycle-bus-access model (ADR 0029 — the one deliberate breaking release), and the v2.1.x → v2.3.x lines deepened accuracy, presentation, and analysis tooling. The current release is **v2.6.16 "Interlock"**. The never-tagged v2.4.0 "Concordance" shipped inside **v2.4.1 "Fabric"** — this sentence had attached that fact to whichever release was current, carried forward by three mechanical version bumps, and said it of v2.4.2, v2.4.3 and v2.4.4 in turn.
+As of **v1.0.0**, that vision was realized: RustyNES clears the Mesen2 / higan / ares accuracy bar, ships a polished desktop application and a browser build, and supports the full platform surface — netplay, achievements, TAS movies, a debugger, FDS, and arcade (Vs. / PlayChoice-10) hardware. Since then the additive v1.x line added three more platforms (native Android, iOS / iPadOS, and a Libretro / RetroArch core), **v2.0.0 "Timebase"** replaced the scheduler substrate with the one-clock / every-cycle-bus-access model (ADR 0029 — the one deliberate breaking release), and the v2.1.x → v2.3.x lines deepened accuracy, presentation, and analysis tooling. The current release is **v2.6.17 "Terminus"**. The never-tagged v2.4.0 "Concordance" shipped inside **v2.4.1 "Fabric"** — this sentence had attached that fact to whichever release was current, carried forward by three mechanical version bumps, and said it of v2.4.2, v2.4.3 and v2.4.4 in turn.
 
-> RustyNES's emulation core descends from an extensively-documented accuracy program. Where this and related docs reference deep "v1.x"/"v2.x" engine narrative, read it as upstream engine lineage (engineering history), not as RustyNES release versions. Two distinct "v2.0"s exist and must not be conflated: the engine-lineage v2.0 master-clock work shipped as RustyNES **v1.0.0**, while RustyNES's own **v2.0.0 "Timebase"** (2026-07-03) is the later release that *replaced* that same scheduler. The current release is **v2.6.16**.
+> RustyNES's emulation core descends from an extensively-documented accuracy program. Where this and related docs reference deep "v1.x"/"v2.x" engine narrative, read it as upstream engine lineage (engineering history), not as RustyNES release versions. Two distinct "v2.0"s exist and must not be conflated: the engine-lineage v2.0 master-clock work shipped as RustyNES **v1.0.0**, while RustyNES's own **v2.0.0 "Timebase"** (2026-07-03) is the later release that *replaced* that same scheduler. The current release is **v2.6.17**.
 
 ---
 
@@ -56,7 +56,7 @@ A one-directional crate graph keeps each chip (`rustynes-cpu`, `rustynes-ppu`, `
 
 | Test | Result |
 |------|--------|
-| **AccuracyCoin** | **100.00% (141/141)** (RAM-direct decoder) — every assigned test passes; the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") were closed by the v2.0.3 2-cycle-ALE promotion |
+| **AccuracyCoin** | **99.31% (143/144)** (RAM-direct decoder) — the 2026-09 upstream re-sync grew the battery to 144 assigned tests and `Advanced Sprite Evaluation :: Frozen OAM2 Increment` is the single named failure, pinned in `KNOWN_FAILING` with its cause rowed in `docs/accuracy-ledger.md`; the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") were closed by the v2.0.3 2-cycle-ALE promotion |
 | **`nestest`** | **0-diff** against the Nintendulator golden log |
 | **blargg / kevtris / `mmc3_test_2`** | Green |
 | **Commercial-ROM oracle** | 60-ROM byte-identical regression gate + extended visual survey |
@@ -88,7 +88,7 @@ RustyNES uses **cycle-accurate** emulation rather than scanline-based shortcuts.
 
 | Area | What ships today |
 |------|----------------------|
-| **Accuracy** | One-clock scheduler (v2.0.0 "Timebase"), master-clock timebase, AccuracyCoin **141/141 (100.00%)**, `nestest` 0-diff |
+| **Accuracy** | One-clock scheduler (v2.0.0 "Timebase"), master-clock timebase, AccuracyCoin **143/144 (99.31%)** on a battery that grew to 144 assigned tests at the 2026-09 re-sync, `nestest` 0-diff |
 | **Cartridges** | **174** mapper families incl. expansion audio (VRC6/VRC7-OPLL/Sunsoft 5B/N163/MMC5) |
 | **Platforms** | iNES / NES 2.0, Famicom Disk System (real-BIOS boot, read/write, multi-side), Vs. System / PlayChoice-10 RGB |
 | **Online** | Rollback netplay, UDP (native) + WebRTC (browser), 2–4 players |

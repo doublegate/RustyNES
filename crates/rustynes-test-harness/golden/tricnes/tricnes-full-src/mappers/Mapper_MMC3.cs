@@ -22,73 +22,72 @@ namespace TriCNES.mappers
         public bool Mapper_4_NametableMirroring; // MMC3 has it's own way of controlling how the nametables are mirrored.
         public byte Mapper_4_PRGRAMProtect;
         public byte Mapper_4_M2Filter;
-        public override void FetchPRG(ushort Address, bool Observe)
+        public bool Mapper_4_PPUA12;
+        public override void FetchCPU()
         {
-            bool notFloating = false;
-            byte data = 0;
-            if (!Observe) { dataPinsAreNotFloating = false; } else { observedDataPinsAreNotFloating = false; }
-            // Observing can happen on a different thread, so we need to ensure that observing doesn't overwrite the data bus or floating pins status.
+            if ((Cart.Emu.ConnectorPinFloating[0] && Cart.Emu.ConnectorPinFloating[71]) || Cart.Emu.ConnectorPinFloating[35]) { return; } // If the cartridge is disconnected from power or ground, it cannot do anything.
+            Connector_ReadCPUAddressPins();
 
-            if (Address >= 0xE000) // This bank is fixed the the final PRG bank of the ROM
+            if (CPU_AddressIn >= 0xE000) // This bank is fixed the the final PRG bank of the ROM
             {
-                notFloating = true;
-                data = Cart.PRGROM[(Cart.PRG_SizeMinus1 << 14) | (Address & 0x3FFF)];
+                CPU_DataOut = Cart.PRGROM[(Cart.PRG_SizeMinus1 << 14) | (CPU_AddressIn & 0x3FFF)];
+                Connector_SetUpCPUDataPins(CPU_DataOut);
             }
-            else if (Address >= 0xC000)
+            else if (CPU_AddressIn >= 0xC000)
             {
-                notFloating = true;
                 if ((Mapper_4_8000 & 0x40) == 0x40)
                 {
                     //$C000 swappable
-                    data = Cart.PRGROM[(Mapper_4_Bank8C << 13) | (Address & 0x1FFF)];
+                    CPU_DataOut = Cart.PRGROM[(Mapper_4_Bank8C << 13) | (CPU_AddressIn & 0x1FFF)];
                 }
                 else
                 {
                     //$8000 swappable
-                    data = Cart.PRGROM[(Cart.PRG_SizeMinus1 << 14) | (Address & 0x1FFF)];
+                    CPU_DataOut = Cart.PRGROM[(Cart.PRG_SizeMinus1 << 14) | (CPU_AddressIn & 0x1FFF)];
                 }
+                Connector_SetUpCPUDataPins(CPU_DataOut);
             }
-            else if (Address >= 0xA000)
+            else if (CPU_AddressIn >= 0xA000)
             {
-                notFloating = true;
                 //$8000 swappable
-                data = Cart.PRGROM[(Mapper_4_BankA << 13) | (Address & 0x1FFF)];
+                CPU_DataOut = Cart.PRGROM[(Mapper_4_BankA << 13) | (CPU_AddressIn & 0x1FFF)];
+                Connector_SetUpCPUDataPins(CPU_DataOut);
             }
-            else if (Address >= 0x8000)
+            else if (CPU_AddressIn >= 0x8000)
             {
-                notFloating = true;
                 if ((Mapper_4_8000 & 0x40) == 0x40)
                 {
                     //$8000 swappable
-                    data = Cart.PRGROM[(Cart.PRG_SizeMinus1 << 14) | (Address & 0x1FFF)];
+                    CPU_DataOut = Cart.PRGROM[(Cart.PRG_SizeMinus1 << 14) | (CPU_AddressIn & 0x1FFF)];
                 }
                 else
                 {
                     //$C000 swappable
-                    data = Cart.PRGROM[(Mapper_4_Bank8C << 13) | (Address & 0x1FFF)];
+                    CPU_DataOut = Cart.PRGROM[(Mapper_4_Bank8C << 13) | (CPU_AddressIn & 0x1FFF)];
                 }
+                Connector_SetUpCPUDataPins(CPU_DataOut);
             }
-            else if (Address >= 0x6000)
+            else if (CPU_AddressIn >= 0x6000)
             {
                 if (Cart.SubMapper == 1) // MMC6
                 {
                     if ((Mapper_4_8000 & 0x20) != 0)
                     {
                         // MMC6 differs from MMC3 since there's only 1Kib of PRG RAM
-                        if (Address >= 0x7000 && Address <= 0x71FF)
+                        if (CPU_AddressIn >= 0x7000 && CPU_AddressIn <= 0x71FF)
                         {
                             if ((Mapper_4_PRGRAMProtect & 0x20) != 0)
                             {
-                                notFloating = true;
-                                data = Cart.PRGRAM[Address & 0x3FF];
+                                CPU_DataOut = Cart.PRGRAM[CPU_AddressIn & 0x3FF];
+                                Connector_SetUpCPUDataPins(CPU_DataOut);
                             }
                         }
-                        else if (Address >= 0x7200 && Address <= 0x73FF)
+                        else if (CPU_AddressIn >= 0x7200 && CPU_AddressIn <= 0x73FF)
                         {
                             if ((Mapper_4_PRGRAMProtect & 0x80) != 0)
                             {
-                                notFloating = true;
-                                data = Cart.PRGRAM[Address & 0x3FF];
+                                CPU_DataOut = Cart.PRGRAM[CPU_AddressIn & 0x3FF];
+                                Connector_SetUpCPUDataPins(CPU_DataOut);
                             }
                         }
                     }
@@ -97,20 +96,15 @@ namespace TriCNES.mappers
                 {
                     if ((Mapper_4_PRGRAMProtect & 0x80) != 0)
                     {
-                        notFloating = true;
-                        data = Cart.PRGRAM[Address & 0x1FFF];
+                        CPU_DataOut = Cart.PRGRAM[CPU_AddressIn & 0x1FFF];
+                        Connector_SetUpCPUDataPins(CPU_DataOut);
                     }
                 }
             }
-            //else, open bus
 
-            if (notFloating)
-            {
-                EndFetchPRG(Observe, data);
-            }
             return;
         }
-        public override void StorePRG(ushort Address, byte Input)
+        public override void StoreCPU(ushort Address, byte Input)
         {
             if (Address < 0x8000)
             {   //Battery backed RAM
@@ -137,7 +131,7 @@ namespace TriCNES.mappers
                         }
                     }
                 }
-                else if ((Mapper_4_PRGRAMProtect & 0xC0) != 0) // bit 7 enables PRG RAM, bit 6 enables writing there.
+                else if ((Mapper_4_PRGRAMProtect & 0xC0) == 0x80) // bit 7 enables PRG RAM, bit 6 disables writing there.
                 {
                     Cart.PRGRAM[Address & 0x1FFF] = Input;
                 }
@@ -196,7 +190,7 @@ namespace TriCNES.mappers
                         return;
                     case 0xE000:
                         Mapper_4_EnableIRQ = false;
-                        Cart.Emu.IRQ_LevelDetector = false;
+                        Connector_IRQPin(false); // Acknowledge the IRQ
                         return;
                     case 0xE001:
                         Mapper_4_EnableIRQ = true;
@@ -204,97 +198,163 @@ namespace TriCNES.mappers
                 }
             }
         }
-        public override byte FetchCHR(ushort Address, bool Observe)
+        public override byte SnoopCPU(ushort Address) // For debug purposes. It's a bit clunky.
+        {
+            if (Address >= 0xE000) // This bank is fixed the the final PRG bank of the ROM
+            {
+                return Cart.PRGROM[(Cart.PRG_SizeMinus1 << 14) | (Address & 0x3FFF)];
+            }
+            else if (Address >= 0xC000)
+            {
+                if ((Mapper_4_8000 & 0x40) == 0x40)
+                {
+                    //$C000 swappable
+                    return Cart.PRGROM[(Mapper_4_Bank8C << 13) | (Address & 0x1FFF)];
+                }
+                else
+                {
+                    //$8000 swappable
+                    return Cart.PRGROM[(Cart.PRG_SizeMinus1 << 14) | (Address & 0x1FFF)];
+                }
+            }
+            else if (Address >= 0xA000)
+            {
+                //$8000 swappable
+                return Cart.PRGROM[(Mapper_4_BankA << 13) | (Address & 0x1FFF)];
+            }
+            else if (Address >= 0x8000)
+            {
+                if ((Mapper_4_8000 & 0x40) == 0x40)
+                {
+                    //$8000 swappable
+                    return Cart.PRGROM[(Cart.PRG_SizeMinus1 << 14) | (Address & 0x1FFF)];
+                }
+                else
+                {
+                    //$C000 swappable
+                    return Cart.PRGROM[(Mapper_4_Bank8C << 13) | (Address & 0x1FFF)];
+                }
+            }
+            else if (Address >= 0x6000)
+            {
+                if (Cart.SubMapper == 1) // MMC6
+                {
+                    if ((Mapper_4_8000 & 0x20) != 0)
+                    {
+                        // MMC6 differs from MMC3 since there's only 1Kib of PRG RAM
+                        if (Address >= 0x7000 && Address <= 0x71FF)
+                        {
+                            if ((Mapper_4_PRGRAMProtect & 0x20) != 0)
+                            {
+                                return Cart.PRGRAM[Address & 0x3FF];
+                            }
+                        }
+                        else if (Address >= 0x7200 && Address <= 0x73FF)
+                        {
+                            if ((Mapper_4_PRGRAMProtect & 0x80) != 0)
+                            {
+                                return Cart.PRGRAM[Address & 0x3FF];
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    if ((Mapper_4_PRGRAMProtect & 0x80) != 0)
+                    {
+                        return Cart.PRGRAM[Address & 0x1FFF];
+                    }
+                }
+            }
+            return Cart.Emu.dataBus;            
+        }
+        public override int FetchPatternAddress(ushort Address)
         {
             //Writes to $8000 determine the mode, writes to $8001 determine the banks
             if ((Mapper_4_8000 & 0x80) == 0) // bit 7 of the previous write to $8000 determines which pattern table is 2 2kb banks, and which is 4 1kb banks.
             {
-                if (Address < 0x800) { return Cart.CHRROM[(Mapper_4_CHR_2K0 * 0x400 + Address) & (Cart.CHRROM.Length - 1)]; }
-                else if (Address < 0x1000) { Address &= 0x7FF; return Cart.CHRROM[(Mapper_4_CHR_2K8 * 0x400 + Address) & (Cart.CHRROM.Length - 1)]; }
-                else if (Address < 0x1400) { Address &= 0x3FF; return Cart.CHRROM[(Mapper_4_CHR_1K0 * 0x400 + Address) & (Cart.CHRROM.Length - 1)]; }
-                else if (Address < 0x1800) { Address &= 0x3FF; return Cart.CHRROM[(Mapper_4_CHR_1K4 * 0x400 + Address) & (Cart.CHRROM.Length - 1)]; }
-                else if (Address < 0x1C00) { Address &= 0x3FF; return Cart.CHRROM[(Mapper_4_CHR_1K8 * 0x400 + Address) & (Cart.CHRROM.Length - 1)]; }
-                else { Address &= 0x3FF; return Cart.CHRROM[(Mapper_4_CHR_1KC * 0x400 + Address) & (Cart.CHRROM.Length - 1)]; }
+                if (Address < 0x800)                         { return (Mapper_4_CHR_2K0 * 0x400 + Address) & (Cart.CHRROM.Length - 1); }
+                else if (Address < 0x1000) { Address &= 0x7FF; return (Mapper_4_CHR_2K8 * 0x400 + Address) & (Cart.CHRROM.Length - 1); }
+                else if (Address < 0x1400) { Address &= 0x3FF; return (Mapper_4_CHR_1K0 * 0x400 + Address) & (Cart.CHRROM.Length - 1); }
+                else if (Address < 0x1800) { Address &= 0x3FF; return (Mapper_4_CHR_1K4 * 0x400 + Address) & (Cart.CHRROM.Length - 1); }
+                else if (Address < 0x1C00) { Address &= 0x3FF; return (Mapper_4_CHR_1K8 * 0x400 + Address) & (Cart.CHRROM.Length - 1); }
+                else                       { Address &= 0x3FF; return (Mapper_4_CHR_1KC * 0x400 + Address) & (Cart.CHRROM.Length - 1); }
             }
             else
             {
-                if (Address < 0x400) { return Cart.CHRROM[(Mapper_4_CHR_1K0 * 0x400 + Address) & (Cart.CHRROM.Length - 1)]; }
-                else if (Address < 0x800) { Address &= 0x3FF; return Cart.CHRROM[(Mapper_4_CHR_1K4 * 0x400 + Address) & (Cart.CHRROM.Length - 1)]; }
-                else if (Address < 0xC00) { Address &= 0x3FF; return Cart.CHRROM[(Mapper_4_CHR_1K8 * 0x400 + Address) & (Cart.CHRROM.Length - 1)]; }
-                else if (Address < 0x1000) { Address &= 0x3FF; return Cart.CHRROM[(Mapper_4_CHR_1KC * 0x400 + Address) & (Cart.CHRROM.Length - 1)]; }
-                else if (Address < 0x1800) { Address &= 0x7FF; return Cart.CHRROM[(Mapper_4_CHR_2K0 * 0x400 + Address) & (Cart.CHRROM.Length - 1)]; }
-                else { Address &= 0x7FF; return Cart.CHRROM[(Mapper_4_CHR_2K8 * 0x400 + Address) & (Cart.CHRROM.Length - 1)]; }
+                if (Address < 0x400)                         { return (Mapper_4_CHR_1K0 * 0x400 + Address) & (Cart.CHRROM.Length - 1); }
+                else if (Address < 0x800)  { Address &= 0x3FF; return (Mapper_4_CHR_1K4 * 0x400 + Address) & (Cart.CHRROM.Length - 1); }
+                else if (Address < 0xC00)  { Address &= 0x3FF; return (Mapper_4_CHR_1K8 * 0x400 + Address) & (Cart.CHRROM.Length - 1); }
+                else if (Address < 0x1000) { Address &= 0x3FF; return (Mapper_4_CHR_1KC * 0x400 + Address) & (Cart.CHRROM.Length - 1); }
+                else if (Address < 0x1800) { Address &= 0x7FF; return (Mapper_4_CHR_2K0 * 0x400 + Address) & (Cart.CHRROM.Length - 1); }
+                else                       { Address &= 0x7FF; return (Mapper_4_CHR_2K8 * 0x400 + Address) & (Cart.CHRROM.Length - 1); }
             }
         }
-        public override byte FetchPPU()
+        public override void Connector_CheckCIRAM()
         {
-            // This will always use the upper 8 bits of the address bus | the octal latch. This replaces the lower 8 bits of the address bus.
-            ushort Address = (ushort)((Cart.Emu.PPU_AddressBus & 0x3F00) | Cart.Emu.PPU_OctalLatch);
-            bool CIRAM = Address >= 0x2000;
-            if (!CIRAM)
+            if (TiltingCart)
             {
-                if (Cart.UsingCHRRAM)
-                {
-                    Cart.Emu.PPU_AddressBus &= 0xFF00;
-                    Cart.Emu.PPU_AddressBus |= Cart.CHRRAM[Address];
-                }
-                else
-                {
-                    //Pattern Table
-                    Cart.Emu.PPU_AddressBus &= 0xFF00;
-                    Cart.Emu.PPU_AddressBus |= Cart.MapperChip.FetchCHR(Address, false);
-                }
-            }
-            else // if the VRAM address is >= $2000, we need to consider nametable mirroring.
-            {
-                Address = MirrorNametable(Address);
-
                 if (Cart.AlternativeNametableArrangement)
                 {
-
-                    if ((Address & 0x800) != 0)
-                    {
-                        // using the extra PRG VRAM.
-                        Address &= 0x7FF;
-                        Cart.Emu.PPU_AddressBus &= 0xFF00;
-                        Cart.Emu.PPU_AddressBus |= Cart.PRGVRAM[Address];
-                    }
-                    else
-                    {
-                        Address &= 0x7FF;
-                        Cart.Emu.PPU_AddressBus &= 0xFF00;
-                        Cart.Emu.PPU_AddressBus |= Cart.Emu.VRAM[Address];
-                    }
+                    if (!Cart.Emu.ConnectorPinFloating[56]) { Cart.Emu.SeventyTwoPinConnector[56] = Cart.Emu.SeventyTwoPinConnector[57] || Cart.Emu.SeventyTwoPinConnector[61]; }
                 }
                 else
                 {
-                    Address &= 0x7FF;
-                    Cart.Emu.PPU_AddressBus &= 0xFF00;
-                    Cart.Emu.PPU_AddressBus |= Cart.Emu.VRAM[Address];
+                    if (!Cart.Emu.ConnectorPinFloating[56]) { Cart.Emu.SeventyTwoPinConnector[56] = Cart.Emu.SeventyTwoPinConnector[57]; }
                 }
-            }
-            return (byte)Cart.Emu.PPU_AddressBus;
-        }
-        public override ushort MirrorNametable(ushort Address)
-        {
-            if (!Cart.AlternativeNametableArrangement)
-            {
+
                 if (Mapper_4_NametableMirroring) //horizontal
                 {
-                    return (ushort)((Address & 0x33FF) | ((Address & 0x0800) >> 1)); // mask away $0C00, bit 10 becomes the former bit 11
+                    if (!Cart.Emu.ConnectorPinFloating[21]) { Cart.Emu.SeventyTwoPinConnector[21] = Cart.Emu.SeventyTwoPinConnector[61]; }
                 }
                 else //vertical
                 {
-                    return (ushort)(Address & 0x37FF); // mask away $0800
+                    if (!Cart.Emu.ConnectorPinFloating[21]) { Cart.Emu.SeventyTwoPinConnector[21] = Cart.Emu.SeventyTwoPinConnector[62]; }
                 }
             }
-            return Address;
+            else
+            {
+                if (Cart.AlternativeNametableArrangement)
+                {
+                    Cart.Emu.SeventyTwoPinConnector[61] = (Cart.Emu.PPU_AddressBus & 0x0800) != 0;
+                    Cart.Emu.SeventyTwoPinConnector[56] = (Cart.Emu.PPU_AddressBus & 0x2000) == 0 || Cart.Emu.SeventyTwoPinConnector[61];
+                }
+                else
+                {
+                    Cart.Emu.SeventyTwoPinConnector[56] = (Cart.Emu.PPU_AddressBus & 0x2000) == 0;
+                }
+                Cart.Emu.SeventyTwoPinConnector[21] = Mapper_4_NametableMirroring ? ((Cart.Emu.PPU_AddressBus & 0x800) != 0) : ((Cart.Emu.PPU_AddressBus & 0x400) != 0);
+
+            }
         }
+        public override byte SnoopPPU(ushort Address) // For debug purposes. It's a bit clunky having to set this up for every mapper with a non-NROM CIRAM setup.
+        {
+            if (Address < 0x2000)
+            {
+                int CHR_Address = Cart.MapperChip.FetchPatternAddress(Address);
+                return Cart.CHRROM[CHR_Address];
+            }
+            else if (Cart.AlternativeNametableArrangement && Address >= 0x2800) // Unless we have an extra Nametable
+            {
+                Address &= 0x7FF; // I don't believe there are any carts that have an alternate nametable arrangement that aren't set up this way.
+                return Cart.PRGVRAM[Address];
+            }
+            else
+            {
+                ushort Addr = (ushort)(Address & 0x3FF);
+                Addr |= (ushort)((Mapper_4_NametableMirroring ? ((Address & 0x800) != 0) : ((Address & 0x400) != 0)) ? 0x400 : 0);
+                return Cart.Emu.VRAM[Addr];
+            }
+        }
+
         public override List<byte> SaveMapperRegisters()
         {
             List<byte> State = new List<byte>();
             foreach (Byte b in Cart.PRGRAM) { State.Add(b); }
-            foreach (Byte b in Cart.CHRRAM) { State.Add(b); }
+            if (Cart.UsingCHRRAM)
+            {
+                foreach (Byte b in Cart.CHRROM) { State.Add(b); }
+            }
             if (Cart.PRGVRAM != null)
             {
                 foreach (Byte b in Cart.PRGVRAM) { State.Add(b); }
@@ -315,13 +375,17 @@ namespace TriCNES.mappers
             State.Add((byte)(Mapper_4_NametableMirroring ? 1 : 0));
             State.Add(Mapper_4_PRGRAMProtect);
             State.Add(Mapper_4_M2Filter);
+            State.Add((byte)(Mapper_4_PPUA12 ? 1 : 0));
             return State;
         }
         public override void LoadMapperRegisters(List<byte> State, int startIndex, out int exitIndex)
         {
             int p = startIndex;
             for (int i = 0; i < Cart.PRGRAM.Length; i++) { Cart.PRGRAM[i] = State[p++]; }
-            for (int i = 0; i < Cart.CHRRAM.Length; i++) { Cart.CHRRAM[i] = State[p++]; }
+            if (Cart.UsingCHRRAM)
+            {
+                for (int i = 0; i < Cart.CHRROM.Length; i++) { Cart.CHRROM[i] = State[p++]; }
+            }
             if (Cart.PRGVRAM != null)
             {
                 for (int i = 0; i < Cart.PRGVRAM.Length; i++) { Cart.PRGVRAM[i] = State[p++]; }
@@ -342,13 +406,22 @@ namespace TriCNES.mappers
             Mapper_4_NametableMirroring = (State[p++] & 1) == 1;
             Mapper_4_PRGRAMProtect = State[p++];
             Mapper_4_M2Filter = State[p++];
+            Mapper_4_PPUA12 = (State[p++] & 1) == 1;
             exitIndex = p;
         }
 
         public override void PPUClock()
         {
+            if (!TiltingCart)
+            {
+                Cart.Emu.SeventyTwoPinConnector[63] = (Cart.Emu.PPU_AddressBus & 0x1000) != 0;
+            }
+            else
+            {
+                Connector_SetUpPPUAddressPins();
+            }
             // if bit 12 of the ppu address bus (A12) changes:
-            if (!Cart.Emu.PPU_A12_Prev && ((Cart.Emu.PPU_AddressBus & 0b0001000000000000) != 0) && Mapper_4_M2Filter == 3)
+            if (!Mapper_4_PPUA12 && Cart.Emu.SeventyTwoPinConnector[63] && Mapper_4_M2Filter == 3)
             {
                 if (Mapper_4_ReloadIRQCounter)
                 {
@@ -359,7 +432,7 @@ namespace TriCNES.mappers
                     {
                         if (Mapper_4_EnableIRQ) // if setting the value to zero, run an IRQ
                         {
-                            Cart.Emu.IRQ_LevelDetector = true;
+                            Connector_IRQPin(true); // Run an IRQ!
                         }
                     }
                 }
@@ -371,7 +444,7 @@ namespace TriCNES.mappers
                     {
                         if (Mapper_4_EnableIRQ) // and the MMC3 IRQ is enabled...
                         {
-                            Cart.Emu.IRQ_LevelDetector = true; // Run an IRQ!
+                            Connector_IRQPin(true); // Run an IRQ!
                         }
                     }
                     else if (Mapper_4_IRQCounter == 255) // if the counter underflows...
@@ -381,7 +454,7 @@ namespace TriCNES.mappers
                         {
                             if (Mapper_4_EnableIRQ)
                             {
-                                Cart.Emu.IRQ_LevelDetector = true;
+                                Connector_IRQPin(true); // Run an IRQ!
                             }
                         }
                     }
@@ -392,9 +465,11 @@ namespace TriCNES.mappers
             {
                 Mapper_4_M2Filter = 0;
             }
+            Mapper_4_PPUA12 = Cart.Emu.SeventyTwoPinConnector[63];
         }
         public override void CPUClockRise()
         {
+            if (Cart.Emu.ConnectorPinFloating[37]) { return; } // If the M2 pin is disconnected, this step doesn't work.
             if ((Cart.Emu.PPU_AddressBus & 0b0001000000000000) == 0)
             {
                 if (Mapper_4_M2Filter < 3)
@@ -402,6 +477,11 @@ namespace TriCNES.mappers
                     Mapper_4_M2Filter++;
                 }
             }
+        }
+
+        public override string AppendToDebugLog()
+        {
+            return "\tPPU_Coords (" + Cart.Emu.PPU_Scanline + ", " + Cart.Emu.PPU_Dot + ")\tIRQTimer:" + Mapper_4_IRQCounter + "\tIRQLatch: " + Mapper_4_IRQLatch + "\tIRQEnabled: " + Mapper_4_EnableIRQ + "\tDoIRQ: " + Cart.Emu.DoIRQ + "\tPPU_ADDR_Prev: " + (Mapper_4_PPUA12 ? "1" : "0");
         }
     }
 }

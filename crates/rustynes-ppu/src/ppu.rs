@@ -840,6 +840,42 @@ pub struct Ppu {
     /// dot-1 boundary and incremented once per even clear dot, masked to
     /// 0x1F, exactly as `TriCNES` drives `OAM2Address` during dots 1-64.
     pub(crate) oam2_addr: u8,
+    /// `OAM2Address` as a LIVE counter across sprite fetch (dots 257-320),
+    /// and the "OAM2 Overflowed" flag that freezes it.
+    ///
+    /// Both rules are stated outright by `AccuracyCoin`'s own source, which is
+    /// the specification here (MIT; stimulus, not a reference implementation):
+    ///
+    /// > When OAM2 is full, the PPU prevents further increments of the OAM2
+    /// > Address, so the OAM2 Address is frozen at index 0. This flag ... is
+    /// > cleared if rendering is enabled during dots 63, 255, and 339.
+    ///
+    /// The counter advances on EVEN dots (32 bytes across the 64-dot fetch).
+    /// That yields 33 candidate increments over dots 256..=320, and the flag
+    /// is what reconciles it: the 32nd wraps 0x1F -> 0 AND raises the flag,
+    /// which suppresses the 33rd, leaving the address resting at 0. So the
+    /// documented "`$2004` during dots 321-340 reads OAM2[0]" is not a special
+    /// case — it is the ordinary end state of the counter, and the flag is
+    /// load-bearing for it. Both `AccuracyCoin` `Misaligned OAM2 Address` and
+    /// `Frozen OAM2 Increment` are explained by this one mechanism.
+    ///
+    /// **Snapshotted, in the `PPU_SNAPSHOT_VERSION` 9 tail** — unlike
+    /// `oam2_addr` and the rest of the per-dot sprite-eval FSM, which re-derive
+    /// within a scanline. This one cannot: the whole point of the live counter
+    /// is that it REMEMBERS increments it did not take while rendering was off,
+    /// so a restore that re-derived it would discard exactly the state the
+    /// counter exists to carry. A pre-v9 blob has no such field and restores to
+    /// `0` / `false` / `false`, which is the power-on state.
+    pub(crate) oam2_fetch_addr: u8,
+    pub(crate) oam2_overflowed: bool,
+    /// The freeze flag LATCHED at the start of sprite fetch (dot 257).
+    ///
+    /// Read instead of `oam2_overflowed` by the sprite loader, because in the
+    /// ordinary case the counter wraps and raises the flag near the END of the
+    /// fetch window (dot 318) -- reading the live flag would then retroactively
+    /// force the last slot to OAM2[0] and corrupt every game's final sprite.
+    /// The hardware behaviour under test is about the flag's state going IN.
+    pub(crate) oam2_fetch_frozen: bool,
     /// Previous-tick rendering-enabled state — tracks the rising /
     /// falling edge of `mask.rendering_enabled()` so the 1->0 edge
     /// BG-shifter fix-up fires on the correct transition.
@@ -1363,6 +1399,9 @@ impl Ppu {
             oam_corruption_disabled: false,
             oam_corruption_disabled_instant: false,
             oam2_addr: 0,
+            oam2_fetch_addr: 0,
+            oam2_overflowed: false,
+            oam2_fetch_frozen: false,
             prev_rendering_enabled: false,
             rendering_enabled_delayed: false,
             bg_reload_render: false,
@@ -4817,6 +4856,49 @@ impl Ppu {
     /// the existing rendering FSM is unperturbed — `$2004` reads are the sole
     /// observable effect of this whole feature). Called each dot on visible
     /// scanlines (0-239) when rendering is enabled.
+    /// Maintain `OAM2Address` and the "OAM2 Overflowed" freeze flag.
+    ///
+    /// Called from `tick_oam_bus`, so it inherits that call site's gate:
+    /// visible scanline AND rendering enabled. That gate IS the ROM's
+    /// "cleared if rendering is enabled during dots 63, 255, and 339"
+    /// condition, which is why no explicit rendering test appears here --
+    /// and why a scanline with rendering off correctly PRESERVES both the
+    /// counter and the flag, which is the whole behaviour under test.
+    ///
+    /// Runs before `tick_oam_bus`'s clear- and eval-window early-returns,
+    /// because two of the three reset dots (63 and 255) fall inside them.
+    fn tick_oam2_address(&mut self, cycle: u16) {
+        if matches!(cycle, 63 | 255 | 339) {
+            self.oam2_fetch_addr = 0;
+            self.oam2_overflowed = false;
+        }
+        if cycle == 257 {
+            self.oam2_fetch_frozen = self.oam2_overflowed;
+        }
+        if (256..=320).contains(&cycle) && (cycle & 1) == 0 && !self.oam2_overflowed {
+            // 32 bytes across the fetch window = one step per two dots. The
+            // wrap raises the flag, which suppresses the 33rd increment and
+            // leaves the address resting at 0 -- see the field docs.
+            self.oam2_fetch_addr = (self.oam2_fetch_addr + 1) & 0x1F;
+            if self.oam2_fetch_addr == 0 {
+                self.oam2_overflowed = true;
+            }
+        }
+        if cycle == 321 {
+            // After fetch the `$2004` bus rests wherever OAM2Address actually
+            // STOPPED -- index 0 in the ordinary case, because a complete
+            // fetch wraps it there. This used to be a hard `[0]`, which is why
+            // it was right in general and wrong exactly when the counter had
+            // not completed its wrap.
+            // `& 0x1F` matches every other `oam_bus_secondary` index site and
+            // makes the bound structural: the counter is a 5-bit register and
+            // `tick_oam2_address` already keeps it in range, while a restore
+            // rejects anything wider. This is the third layer, not the first.
+            self.oam_bus_copybuffer =
+                self.oam_bus_secondary[(self.oam2_fetch_addr & 0x1F) as usize];
+        }
+    }
+
     fn tick_oam_bus(&mut self) {
         let cycle = self.dot;
         // v2.3.0 (perf) — take the dot-0 early-out BEFORE deriving the sprite
@@ -4826,6 +4908,7 @@ impl Ppu {
         if cycle == 0 {
             return;
         }
+        self.tick_oam2_address(cycle);
         // NOTE (v2.3.1 G3): pushing these two below the `cycle < 65` early-out
         // as well — they are dead across the dots 1..=64 clear window — was
         // measured and produced NO change on any workload across two runs. LLVM
@@ -4898,6 +4981,11 @@ impl Ppu {
                         if self.oam_bus_sprite_in_range {
                             self.oam_bus_addr_l += 1;
                             self.oam_bus_secondary_addr += 1;
+                            // OAM2 full: the address overflowed, which raises
+                            // the freeze flag. The dot-255 reset normally
+                            // clears it again before sprite fetch; it survives
+                            // only if rendering is disabled across that dot.
+                            self.oam2_overflowed |= self.oam_bus_secondary_addr == 0x20;
                             if self.oam_bus_addr_l >= 4 {
                                 self.oam_bus_addr_h = (self.oam_bus_addr_h + 1) & 0x3F;
                                 self.oam_bus_addr_l = 0;
@@ -4953,11 +5041,6 @@ impl Ppu {
                     }
                 }
             }
-            return;
-        }
-        if cycle == 321 {
-            // After sprite loading, the bus rests on secondary OAM index 0.
-            self.oam_bus_copybuffer = self.oam_bus_secondary[0];
         }
     }
 
@@ -5242,7 +5325,27 @@ impl Ppu {
                     self.status.insert(PpuStatus::SPRITE_OVERFLOW);
                     self.sprite_eval_done = true;
                 } else {
-                    // Not in range: advance to next sprite.
+                    // Not in range: advance to the next sprite, and REALIGN.
+                    //
+                    // AccuracyCoin's README gives the rule for the
+                    // secondary-OAM-NOT-full case: "the OAM address is
+                    // incremented by 4 and bitwise ANDed with $FC" -- so the
+                    // byte index CLEARS rather than being carried. This core
+                    // advanced `n` and left `m` at whatever misaligned value
+                    // evaluation started from.
+                    //
+                    // Invisible whenever OAMADDR is a multiple of four (`m` is
+                    // already 0 at every y-test), so only misaligned OAM can
+                    // observe it -- measured at 114 occurrences in a full
+                    // battery run, with no test's verdict depending on it.
+                    // Pinned directly by
+                    // `misaligned_oam_out_of_range_advance_follows_both_rules`.
+                    //
+                    // The FULL case is the other rule in the same entry --
+                    // "only increment the OAM address by 5" -- and is already
+                    // implemented as the buggy n+m increment in
+                    // `sprite_eval_overflow_search` above.
+                    self.sprite_eval_m = 0;
                     if self.sprite_eval_n == 63 {
                         self.sprite_eval_done = true;
                     } else {
@@ -5417,11 +5520,56 @@ impl Ppu {
         } else {
             8
         };
-        let base = slot * 4;
-        let y = self.secondary_oam[base] as i16;
-        let tile = self.secondary_oam[base + 1];
-        let attr = self.secondary_oam[base + 2];
-        let xpos = self.secondary_oam[base + 3];
+        // With the "OAM2 Overflowed" flag latched, the OAM2 Address cannot
+        // increment, so sprite fetch re-reads index 0 for EVERY object --
+        // eight copies of OAM2[0] instead of eight distinct sprites. This is
+        // the mechanism AccuracyCoin `Frozen OAM2 Increment` targets.
+        //
+        // The freeze path is verified end to end, by probe rather than by
+        // argument: across a battery run the flag is raised 809 times and
+        // reaches sprite fetch exactly once (the single construction test 2
+        // builds), on scanline 196, with `spr_count` = 8, `spr_zero_in_line`
+        // = true, `secondary_oam[0]` = $C1, and all eight slots loading
+        // Y/tile/attr/X = $C1/$C1/$C1/$C1.
+        //
+        // Test 2 nevertheless still fails, and NOT for any sprite reason. Its
+        // detector is a sprite-zero hit, which needs an opaque BACKGROUND
+        // pixel under the sprite, and on scanline 197 the background is opaque
+        // nowhere in x=190..205 (sprite pixels there: 51; background: 0).
+        // `v` is one vertical increment ahead: fine-Y reads 3 where the test
+        // needs 2, so the tile it placed for the hit sits a row off. The cause
+        // is upstream of everything here -- a `$2001` rendering-ENABLE landing
+        // on dot 256 takes effect one dot early, firing the dot-256 vertical
+        // increment that hardware does not. The ROM says so in as many words:
+        // "Rendering is enabled on dot 256, but the PPU's vertical scroll is
+        // NOT incremented."
+        //
+        // That is a `$2001` write-timing gap, not a sprite-evaluation one, and
+        // it is deliberately NOT patched at the dot-256 site: a compensating
+        // edit there is the shape v2.5.7 recorded, where a wrong phase had
+        // every window compensating for it. See docs/STATUS.md.
+        // Unreachable in ordinary rendering: the flag is cleared at dots 63,
+        // 255 and 339 whenever rendering is enabled, so reaching fetch with
+        // it set requires rendering to be off across dot 255.
+        // A frozen OAM2Address means every read during sprite fetch returns
+        // index 0 -- the SAME byte four times per sprite, not the first
+        // sprite's four bytes. AccuracyCoin states the end state explicitly:
+        // an OAM2 of `C1 24 00 FF C0 C0 ...` is "processed as if it was
+        // C1 C1 C1 C1 ..." for all 32 bytes. Reading `[0..3]` here would give
+        // Y/tile/attr/X = C1/24/00/FF, which is a different sprite entirely.
+        let (y_byte, tile, attr, xpos) = if self.oam2_fetch_frozen {
+            let frozen = self.secondary_oam[0];
+            (frozen, frozen, frozen, frozen)
+        } else {
+            let base = slot * 4;
+            (
+                self.secondary_oam[base],
+                self.secondary_oam[base + 1],
+                self.secondary_oam[base + 2],
+                self.secondary_oam[base + 3],
+            )
+        };
+        let y = y_byte as i16;
         let in_use = slot < self.spr_count as usize;
         let flip_v = (attr & 0x80) != 0;
         let flip_h = (attr & 0x40) != 0;
@@ -5646,6 +5794,75 @@ mod tests {
         for r in [PpuRegion::Ntsc, PpuRegion::Pal, PpuRegion::Dendy] {
             assert_eq!(r.last_visible_line(), 239);
         }
+    }
+
+    /// `AccuracyCoin`'s README states two rules for advancing `OAMADDR` when a
+    /// sprite's Y is out of range during evaluation, and they differ by
+    /// whether secondary OAM is already full:
+    ///
+    /// > "the OAM address is incremented by 4 and bitwise ANDed with `$FC`"
+    ///
+    /// > "If Secondary OAM is full ... you should instead only increment the
+    /// > OAM address by 5."
+    ///
+    /// Both are invisible while `OAMADDR` is a multiple of four, because the
+    /// byte index is already 0 at every y-test. They are only observable under
+    /// MISALIGNED OAM, and measurement showed the whole corpus reaches that
+    /// case just 114 times in a full `AccuracyCoin` run while no test's verdict
+    /// depends on it — so this pins it directly instead.
+    #[test]
+    fn misaligned_oam_out_of_range_advance_follows_both_rules() {
+        /// Drive one y-test from a misaligned `OAMADDR` against a Y that is
+        /// out of range, and report the resulting `(n, m)`.
+        fn out_of_range_advance(full: bool) -> (u8, u8) {
+            let mut ppu = Ppu::new(PpuRegion::Ntsc);
+            ppu.mask = PpuMask::SHOW_SPRITE;
+            ppu.scanline = 10;
+            // Misaligned start: OAMADDR $05 seeds n = 1, m = 1.
+            ppu.oam_addr = 0x05;
+            // The byte the y-test reads is OAM[n*4 + m] = OAM[5]. Make it far
+            // out of range for scanline 10.
+            ppu.oam[5] = 0xF0;
+
+            // Dot 0 resets the FSM and captures the eval base from OAMADDR.
+            ppu.dot = 0;
+            ppu.tick_sprite_eval_per_dot();
+            assert_eq!(
+                (ppu.sprite_eval_n, ppu.sprite_eval_m),
+                (1, 1),
+                "seeded misaligned"
+            );
+
+            if full {
+                // Secondary OAM full: evaluation is in overflow-search mode,
+                // which is the state the "+5" rule describes.
+                ppu.sprite_eval_found = 8;
+                ppu.sprite_eval_overflow_search = true;
+            }
+
+            // Odd dot reads the byte; the following even dot runs the y-test.
+            ppu.dot = 65;
+            ppu.tick_sprite_eval_per_dot();
+            ppu.dot = 66;
+            ppu.tick_sprite_eval_per_dot();
+            (ppu.sprite_eval_n, ppu.sprite_eval_m)
+        }
+
+        // NOT full: +4 then AND $FC -- n advances and the byte index CLEARS.
+        assert_eq!(
+            out_of_range_advance(false),
+            (2, 0),
+            "secondary OAM not full: OAMADDR += 4 & $FC, so the misaligned byte \
+             index must be cleared, not carried"
+        );
+
+        // FULL: +5 -- n AND m both advance (the classic overflow bug).
+        assert_eq!(
+            out_of_range_advance(true),
+            (2, 2),
+            "secondary OAM full: OAMADDR += 5, so both the sprite index and the \
+             byte index advance"
+        );
     }
 
     #[test]

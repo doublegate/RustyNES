@@ -26,6 +26,232 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.17] - 2026-09-11 - "Terminus" (a write lands where the cycle ENDS, and this core does not move to meet it)
+
+### Changed
+
+- **AccuracyCoin re-synced to upstream `69c8860` (2026-09-11), and the battery
+  grew 141 -> 144 assigned tests.** The ROM, `LICENSE` and
+  `SOURCE_CATALOG.tsv` are re-vendored from `100thCoin/AccuracyCoin` (MIT).
+  The catalog goes 146 -> 149 rows across 20 -> 22 suites: upstream added
+  three tests (`Frozen OAM2 Increment` `$0493`, `Misaligned OAM DMA` `$0494`,
+  `Misaligned OAM2 Address` `$0495`) and two pages, `Advanced Background
+  Evaluation` and `Advanced Sprite Evaluation`, which **re-home eleven
+  existing PPU tests** out of `PPU Misc.` / `PPU Behavior` / `Sprite
+  Evaluation`. A re-sync is therefore not an append — a suite-keyed baseline
+  has to be regenerated rather than extended.
+- **Measured 142 of 144 (98.61%) on the default build, with no regression.**
+  Upstream removed no test, so 144 assigned minus the two failures is exactly
+  the previous 141 plus the one new test that passes. The two gaps are
+  `Advanced Sprite Evaluation :: Frozen OAM2 Increment` (error 2) and
+  `:: Misaligned OAM2 Address` (error 3) — secondary-OAM address behaviour
+  during sprite evaluation, which this PPU does not model.
+- **The AccuracyCoin gate now pins the failing SET, not "zero failing".**
+  `accuracycoin.rs` gains `KNOWN_FAILING`, an allowance that fails in BOTH
+  directions: a new failure is caught because it is absent from the list, a
+  *fix* is caught because it is present and no longer failing, and a swap is
+  caught because the set differs while the count does not. A one-directional
+  allowance hides exactly the coverage it was written to tolerate — the v2.6.9
+  lesson. Both directions demonstrated by mutation.
+  `accuracycoin_runahead.rs` likewise compares the failing set across depths
+  rather than asserting a perfect baseline it no longer owns.
+- **TriCNES re-synced to upstream `f388af0` (2026-09-10)**, from `f54d8be`
+  (2026-05-05). It is the AccuracyCoin author's own emulator and the gold
+  oracle for these tests, vendored in-repo under its MIT license. That window
+  carries the OAM2-address and OAM-evaluation fixes matching AccuracyCoin's
+  new page, the 6502 internal-data-bus fix, and Mapper 66 (GxROM). The
+  instrumented cross-diff harness was carried across by a **3-way merge**
+  against the exact vendored base commit (+912/-576 upstream lines, 2
+  conflicts, both "inserted at the same point" and resolved by keeping both
+  sides); all eight instrumentation markers verified present at identical
+  counts, and the harness rebuilt clean under .NET 10.
+
+### Added
+
+- **`scripts/accuracycoin-build/extract_catalog.py`** — the catalog
+  extraction, which until now existed only as a prose recipe in
+  `tests/roms/AccuracyCoin/README.md`. Prose cannot be re-run or audited, so
+  every re-sync re-derived it by hand. The script carries a `--self-test`
+  (4 cases) and orders rows by upstream's `TableTable` (the ROM's own display
+  order) rather than by position in the file.
+
+### Fixed
+
+- **AccuracyCoin `Misaligned OAM2 Address` now passes — 142 -> 143 of 144
+  (99.31%).** `OAM2Address` is now a live counter maintained across sprite
+  fetch instead of an index derived positionally from the dot
+  (`((dot-257)/8)*4 + min(phase,3)`). A derived index cannot represent an
+  address that fell behind, so an interval of rendering-disabled time during
+  fetch was invisible to it; the counter now loses those increments exactly as
+  hardware does. Implemented from AccuracyCoin's own source comments (MIT;
+  stimulus, not a reference implementation), so the provenance ladder was
+  never escalated past rung 1.
+
+  The **"OAM2 Overflowed" flag turns out to be load-bearing for the counter,
+  not only for the test named after it**: advancing on even dots yields 33
+  candidate increments across dots 256-320, and it is the flag — raised when
+  the 32nd wraps `$1F -> 0` — that suppresses the 33rd and leaves the address
+  resting at 0. So the documented "`$2004` during dots 321-340 reads OAM2[0]"
+  is not a special case but the ordinary end state of the counter. One
+  mechanism explains both new tests.
+
+- **SAVE-STATE EPOCH: `PPU_SNAPSHOT_VERSION` 8 -> 9.** The OAM2Address
+  counter, its "OAM2 Overflowed" flag and the dot-257 freeze latch are
+  serialized. The `.rns` container compares each section's version for
+  EQUALITY, so **pre-v9 save states no longer load** — the same cost the v8
+  bump carried, and a maintainer decision to weigh before release.
+
+  They are serialized rather than allowlisted as derived, on the schema
+  audit's own advice ("the default assumption is that these need SERIALIZING
+  ... that has been the right answer three times out of three"). They look
+  derived — all three re-derive at dots 63/255/339 within a scanline — and
+  that reasoning is exactly inverted here: the behaviour being modelled IS
+  what happens when rendering is disabled across those reset dots, so a
+  snapshot taken inside such a window carries state recoverable from nothing
+  else in the blob, and run-ahead snapshots every frame. The v8 tail exists
+  because this same class of state cost the battery three tests under
+  run-ahead before it was carried.
+
+- **The misaligned-OAM out-of-range advance now realigns (`+4 & $FC`), pinned
+  by a targeted test because NO test's verdict depends on it.** AccuracyCoin's
+  README states two rules for advancing `OAMADDR` past an out-of-range sprite,
+  and they differ by whether secondary OAM is full: full is "only increment by
+  5" (implemented for releases, as the buggy `n+m` increment), not-full is
+  "incremented by 4 and bitwise ANDed with `$FC`" — which CLEARS the byte
+  index. This core advanced the sprite and carried the misaligned byte index
+  forward. Both rules are invisible while `OAMADDR` is a multiple of four,
+  since `m` is already 0 at every y-test, so only misaligned OAM can observe
+  the difference at all.
+
+  **Measured before adopting**: a full battery run reaches the not-full
+  out-of-range case exactly **114 times** out of 56,953,944 out-of-range
+  branches, and the battery is **143 of 144 before and after**, with the
+  failing set identical. So no gate in this project could adjudicate the rule,
+  which is why it was recorded rather than adopted when it was first checked.
+  What settles it is a stimulus that reaches those 114 cases and asserts on
+  them: `misaligned_oam_out_of_range_advance_follows_both_rules` drives one
+  y-test from `OAMADDR = $05` (`n = 1`, `m = 1`) past an out-of-range Y and
+  asserts the resulting `(n, m)` for BOTH rules — `(2, 0)` not full, `(2, 2)`
+  full. It fails without the change (`left: (2, 1)` — `n` advanced, `m` did
+  not), so the project's bar is met by a test rather than by a README.
+
+- **`Frozen OAM2 Increment` is NOT closed, and the blocker turned out not to
+  be a sprite gap at all.** An earlier reading of this — that it needed
+  `spr_count` / `spr_zero_in_line` from an evaluation the test prevents — is
+  **retracted**; both are correct (8 and true). The freeze is verified end to
+  end by probe: raised **809** times across a battery run, reaching sprite
+  fetch **exactly once** (the single construction that test builds), on
+  scanline 196, with `secondary_oam[0]` = $C1 and all eight slots loading Y,
+  tile, attr and X all equal to $C1. Every sprite-side precondition holds.
+
+  Its detector is a sprite-zero hit, which also needs an opaque BACKGROUND
+  pixel under the sprite — and on scanline 197 the background is opaque
+  nowhere in x=190..205 (sprite pixels there: 51; background: 0). `v` is one
+  vertical increment ahead: fine-Y reads 3 where the test needs 2, so the tile
+  it placed for the hit sits a row off. The cause is a $2001 rendering-ENABLE
+  landing on dot 256 taking effect one dot early, firing the dot-256 vertical
+  increment hardware does not — which the ROM states outright: *"Rendering is
+  enabled on dot 256, but the PPU's vertical scroll is NOT incremented."*
+
+  Deliberately **not** patched at the dot-256 site. That would be a
+  compensating edit of the shape v2.5.7 recorded, where a wrong phase had
+  every window compensating for it. Stays pinned in `KNOWN_FAILING`.
+
+### Measured and rejected
+
+- **The $2001 write-effect alignment was investigated and the obvious fix is
+  REFUTED.** Kept with its numbers, per this project's rule that a rejected
+  change with its measurement is a result.
+
+  The offset is real and systematic: this core applies the test's two $2001
+  writes on dots **240** and **254** where the ROM names **242** and **256** —
+  both exactly two dots early, on two independent writes. The mechanism is
+  that `Cpu::start_cycle` catches the PPU up BEFORE the bus access, so a PPU
+  register write lands at M2-low (the start of the CPU cycle) while a 6502
+  commits a write at phi2, two dots later. That is v2.5.4's finding one layer
+  out: that release found the co-simulation TESTBENCH presenting accesses on
+  the second of a cycle's three dots; this is the EMULATOR applying them on
+  the first.
+
+  The fix that suggests itself — delay the rendering-enable gate so the
+  dot-256 vertical increment is suppressed — does not work. A sweepable lag
+  on `rendering_enabled_delayed` (shipped value 1) swept 1..4 against the
+  battery, with the mask-timing-sensitive tests as controls:
+
+  | lag | passed | Frozen OAM2 | Stale Sprite Shift Regs | Misaligned OAM2 |
+  |---|---|---|---|---|
+  | **1 (shipped)** | **143/144** | FAIL | pass | pass |
+  | 2 | 141/144 | FAIL | FAIL | FAIL |
+  | 3 | 141/144 | FAIL | FAIL | FAIL |
+  | 4 | 140/144 | FAIL | FAIL | FAIL |
+
+  No value closes `Frozen OAM2 Increment`, and every value above the shipped 1
+  regresses two tests that pass today. The shipped lag is optimal; the knob
+  was reverted rather than kept as dead code.
+
+  So the pipeline GATE is not the subject — the WRITE PLACEMENT is, and moving
+  it is a scheduler-level change to the `start_cycle` / `end_cycle` ordering
+  (ADR 0029 territory) that shifts every PPU register write in every game. It
+  needs its own version, its own ADR and its own re-baselining.
+
+- **The write placement was then MOVED, measured against a control, and NOT
+  ADOPTED — a maintainer decision, and the outcome the plan authorised in
+  advance.** The diagnosis stands: a 6502 commits a write at phi2 and this
+  core applies PPU register writes at M2-low, two dots early. The *change*
+  does not land.
+
+  | combination | AccuracyCoin | independent oracle |
+  |---|---|---|
+  | **shipped** (M2-low + the 2-stage compensation) | **143/144** | clean |
+  | phi2, write alone | 141/144 | `ppu_vbl_nmi/10-even_odd_timing` FAILS `09` |
+  | phi2 + dot-321 + `skip(1)` | 142/144 | clean |
+
+  The first row is what ships. The distinction that decided it: the six
+  framebuffer goldens the move shifts are BASELINES and would legitimately be
+  re-blessed if phi2 were right, but `10-even_odd_timing` is a third-party ROM
+  with its own verdict, and it went pass -> `09`. Re-deriving that ROM under
+  phi2 from its own statement of what it measures CLOSED that regression —
+  `mask_for_skip_check` needs **one** delay stage under phi2 rather than two,
+  producing the identical `08 08 09 07` — which is also the proof that the
+  pipeline is a compensation for the placement, as its own comment already
+  said. Even so the best combination is **net −1** against what ships, and it
+  costs a save-state epoch plus six re-baselines.
+
+  **Two of the three dependent behaviours are still un-re-derived** (`Arbitrary
+  Sprite zero` test 3 and `Stale Sprite Shift Regs` test 5), and adopting a
+  mechanism while its dependants still compensate for the old one replaces a
+  *documented* compensation with an undocumented one. So the compensation
+  stays, `Frozen OAM2 Increment` stays in `KNOWN_FAILING`, and the apparatus
+  is kept: `phi2-write-sweep` (default-off, `const fn` when absent, so the
+  shipped build is byte-identical by construction) plus `phi2sweep.rs`, so the
+  next attempt re-measures in an afternoon. The divergence is rowed in
+  `docs/accuracy-ledger.md` and stated at the site in `cpu.rs`; the three
+  conditions for reopening it are in the plan's *CLOSED* section.
+
+- **`terminus_control.rs` — a first-difference control, kept as a standing
+  gate.** Built to answer "did the experiment change, or did the subject?", it
+  chains a rolling FNV-1a over the pre-palette framebuffer and work RAM per
+  frame across three workloads at 400 frames on the DEFAULT feature set. It
+  outlives the experiment that motivated it, because every future timing
+  change needs the same check: the first divergence must be the cycle you
+  aimed at, or something else moved.
+
+- **One row of `SOURCE_CATALOG.tsv` had been wrong since the v2.0.1 hand
+  extraction.** Running the new extractor against the asm at `71f57fb`
+  reproduces the committed 146-row TSV byte-for-byte *except* "Attributes As
+  Tiles", which the hand pass filed under `PPU Misc.` where upstream has it in
+  `Suite_PPUBehavior`. The result address was identical, so no verdict was
+  ever wrong — only the per-suite breakdown. Found by validating the tool
+  against the artifact it replaces, which is the only reason it surfaced.
+- **`tricnes-harness` defaulted to a ROM path that no longer exists**
+  (`Commercial_Private-Projects/RustyNES_v2/...`, the pre-reorg workspace
+  layout). It now resolves the ROM relative to the working directory and exits
+  with a named diagnostic rather than a bare file-not-found.
+- **Building the vendored TriCNES harness leaked ~1.6 MB of `bin/` + `obj/`
+  into the repo.** `.gitignore`'s `!/crates/rustynes-test-harness/golden/**`
+  re-inclusion un-ignored them, beside a tree whose own README promises "no
+  build artifacts". Scoped ignore rules added for the two output directories.
+
 ## [2.6.16] - 2026-09-04 - "Interlock" (the arbiter's numbers describe a stimulus, not the console)
 
 ### Changed

@@ -13,6 +13,9 @@ publish = false
 workspace = true
 
 [features]
+# Forward to `rustynes-core/phi2-write-sweep` so the `phi2sweep` study
+# fixture can move the write commit dot (v2.6.18; default off).
+phi2-write-sweep = ["rustynes-core/phi2-write-sweep"]
 default = []
 test-roms = []
 # Forward to `rustynes-core/irq-timing-trace`. Off by default; enabled only by

@@ -63,18 +63,80 @@ const fn ppu_sample_offset() -> u64 {
 /// region from `bus.cpu_divider()` so PAL (16) / Dendy (15) get the right
 /// CPU<->PPU phase; for the NTSC divisor 12 these are exactly (5, 7), so the
 /// NTSC path is byte-identical to the prior `const`s.
+#[cfg(not(feature = "phi2-write-sweep"))]
 #[inline]
 const fn read_split(div: u64) -> (u64, u64) {
     let pre = div / 2 - PPU_OFFSET;
     (pre, div - pre)
 }
+
+/// Sweepable `read_split` (feature `phi2-write-sweep`, v2.6.18 study only).
+///
+/// A 6502 SAMPLES a read at phi2 just as it commits a write there, so a phi2
+/// model has to move both. The first sweep moved writes alone, which changed
+/// the SPACING between a write and a following read rather than moving the
+/// access model as a unit -- see the plan's note on that measurement.
+#[cfg(feature = "phi2-write-sweep")]
+#[inline]
+fn read_split(div: u64) -> (u64, u64) {
+    let extra = u64::from(READ_PHI_OFFSET.load(core::sync::atomic::Ordering::Relaxed));
+    // `+ extra` BEFORE `- PPU_OFFSET`: identical for every reachable value
+    // (`div >= 12`, `PPU_OFFSET == 1`), but it removes the conceptual
+    // question of an unsigned subtraction preceding the addition.
+    let pre = (div / 2 + extra - PPU_OFFSET).min(div - 1);
+    (pre, div - pre)
+}
+
+/// Extra master clocks added to a READ's pre-access split (v2.6.18 study).
+/// 0 = shipped behaviour. NTSC: +4 puts the sample at dot 2.0 = phi2.
+#[cfg(feature = "phi2-write-sweep")]
+pub static READ_PHI_OFFSET: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 /// WRITE access split — swapped (writes commit `2 * PPU_OFFSET` mc later than
 /// reads). NTSC divisor 12 → (7, 5), byte-identical to the prior `const`s.
+///
+/// A 6502 commits a write at phi2, the LAST of a CPU cycle's three PPU dots.
+/// At the shipped `pre` of 7 (minus `PPU_OFFSET`) the PPU has advanced 6 of
+/// 12 master clocks — 1.5 dots — so the commit lands mid-cycle instead.
+///
+/// **That is a known divergence, measured and deliberately NOT corrected at
+/// v2.6.18.** Moving the commit to phi2 is the right diagnosis and was the
+/// wrong change as applied: the write alone reads 141/144 on `AccuracyCoin`
+/// and fails `ppu_vbl_nmi/10-even_odd_timing`; the best combination found
+/// (phi2 + the dot-321 OAM2 increment + a one-stage `mask_for_skip_check`)
+/// reads 142/144 against the 143/144 that ships. Several PPU behaviours
+/// compensate for the placement — `mask_for_skip_check` says so in its own
+/// comment — and replacing a documented compensation with an undocumented one
+/// is worse than keeping it. The `phi2-write-sweep` feature keeps the knob so
+/// the next attempt re-measures rather than rebuilding the apparatus; see the
+/// *CLOSED* section of `to-dos/plans/v2.6.18-terminus-plan.md` for every
+/// number and the three conditions for reopening it.
+#[cfg(not(feature = "phi2-write-sweep"))]
 #[inline]
 const fn write_split(div: u64) -> (u64, u64) {
     let pre = div / 2 + PPU_OFFSET;
     (pre, div - pre)
 }
+
+/// Sweepable `write_split` (feature `phi2-write-sweep`, v2.6.18 study only).
+///
+/// Default 0 reproduces the `const` path above exactly, so enabling the
+/// feature without setting the knob is byte-identical. Kept behind a feature
+/// rather than always-on because `write_split` runs on EVERY write, and the
+/// shipped build should not pay an atomic load per write for a study.
+#[cfg(feature = "phi2-write-sweep")]
+#[inline]
+fn write_split(div: u64) -> (u64, u64) {
+    let extra = u64::from(WRITE_PHI_OFFSET.load(core::sync::atomic::Ordering::Relaxed));
+    // Clamp so `pre` never reaches the cycle length: `post` must stay >= 1 or
+    // `end_cycle` would not advance the master clock at all.
+    let pre = (div / 2 + PPU_OFFSET + extra).min(div - 1);
+    (pre, div - pre)
+}
+
+/// Extra master clocks added to a WRITE's pre-access split (v2.6.18 study).
+/// 0 = shipped behaviour.
+#[cfg(feature = "phi2-write-sweep")]
+pub static WRITE_PHI_OFFSET: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
 /// NMI vector low byte address (`$FFFA/B`).
 const NMI_VECTOR: u16 = 0xFFFA;

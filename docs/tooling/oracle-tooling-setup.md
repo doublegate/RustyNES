@@ -19,7 +19,7 @@
 > path because they need no live emulator at all; the vendored MIT TriCNES source is the permissible
 > in-repo fallback. Neither requires the copyleft references to be in reach.
 
-The v2.0 accuracy push (toward 139/139) cross-diffs RustyNES's per-cycle bus stream against two
+The v2.0 accuracy push (toward a full pass) cross-diffs RustyNES's per-cycle bus stream against two
 reference emulators. `/tmp` is wiped on reboot (CachyOS) — this is the recipe to regenerate.
 
 ## 1. Mesen2 unified per-cycle oracle (artifact-free cell trace)
@@ -53,7 +53,7 @@ oracle is sound).
 
 ## 2. TriCNES — the gold oracle (AccuracyCoin author's own emulator)
 
-TriCNES (Chris "100th_Coin" Siebert) passes the full 139-test battery → higher authority than Mesen
+TriCNES (Chris "100th_Coin" Siebert) passes the full 144-test battery → higher authority than Mesen
 for these exact tests. Windows binary run **out-of-tree** (historically `ref-proj/TriCNES/.../TriCNES.exe`,
 now removed; obtain from `TriCNES_v1.0.1.zip`, upstream `github.com/100thCoin/TriCNES`) — run it
 outside the repo and capture its output only.
@@ -61,9 +61,14 @@ outside the repo and capture its output only.
 Runs under `wine` (`/usr/bin/wine`) as a live ground-truth oracle for observable behavior
 (screen/result bytes). For the *model* (the "why"), use the reverse-engineered docs:
 
+Cited by SYMBOL rather than line number on purpose: the 2026-09 re-sync moved `Emulator.cs` by
++912/-576 lines, which silently invalidated the `Emulator.cs:920` / `:4225-4322` citations that
+stood here. A grep target survives a re-vendor; a line number does not.
+
 - `docs/audit/v2.0-f2-tricnes-reference-model-2026-06-02.md` — the DMA core: per-cycle interleaved
   DMA (`_6502()` once per CPU cycle), ONE `APU_PutCycle` flip-flop toggled once per cycle
-  (`Emulator.cs:920`), the GET/PUT priority + halt-clear table (`Emulator.cs:4225-4322`), the port
+  (grep `APU_PutCycle = !APU_PutCycle`), the GET/PUT priority + halt-clear table (grep `DoDMCDMA` /
+  `CannotRunDMCDMARightNow`), the port
   checklist, answer keys (`$0477` DMC+OAM `04 03 04 03 04 03 02 01…`).
 - `ref-docs/tricnes-vs-rustynes-accuracy-roadmap-2026-06-02.md` — the roadmap.
 
