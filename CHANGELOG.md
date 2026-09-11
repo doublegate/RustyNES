@@ -130,10 +130,44 @@ cycle-accurate core later replaced.
 
   Deliberately **not** patched at the dot-256 site. That would be a
   compensating edit of the shape v2.5.7 recorded, where a wrong phase had
-  every window compensating for it. The real subject is the $2001
-  write-effect alignment, which is systemic, would touch tests that currently
-  pass (Rendering Flag Behavior, the Stale BG/Sprite Shift Registers pair),
-  and deserves its own measurement. Stays pinned in `KNOWN_FAILING`.
+  every window compensating for it. Stays pinned in `KNOWN_FAILING`.
+
+### Measured and rejected
+
+- **The $2001 write-effect alignment was investigated and the obvious fix is
+  REFUTED.** Kept with its numbers, per this project's rule that a rejected
+  change with its measurement is a result.
+
+  The offset is real and systematic: this core applies the test's two $2001
+  writes on dots **240** and **254** where the ROM names **242** and **256** —
+  both exactly two dots early, on two independent writes. The mechanism is
+  that `Cpu::start_cycle` catches the PPU up BEFORE the bus access, so a PPU
+  register write lands at M2-low (the start of the CPU cycle) while a 6502
+  commits a write at phi2, two dots later. That is v2.5.4's finding one layer
+  out: that release found the co-simulation TESTBENCH presenting accesses on
+  the second of a cycle's three dots; this is the EMULATOR applying them on
+  the first.
+
+  The fix that suggests itself — delay the rendering-enable gate so the
+  dot-256 vertical increment is suppressed — does not work. A sweepable lag
+  on `rendering_enabled_delayed` (shipped value 1) swept 1..4 against the
+  battery, with the mask-timing-sensitive tests as controls:
+
+  | lag | passed | Frozen OAM2 | Stale Sprite Shift Regs | Misaligned OAM2 |
+  |---|---|---|---|---|
+  | **1 (shipped)** | **143/144** | FAIL | pass | pass |
+  | 2 | 141/144 | FAIL | FAIL | FAIL |
+  | 3 | 141/144 | FAIL | FAIL | FAIL |
+  | 4 | 140/144 | FAIL | FAIL | FAIL |
+
+  No value closes `Frozen OAM2 Increment`, and every value above the shipped 1
+  regresses two tests that pass today. The shipped lag is optimal; the knob
+  was reverted rather than kept as dead code.
+
+  So the pipeline GATE is not the subject — the WRITE PLACEMENT is, and moving
+  it is a scheduler-level change to the `start_cycle` / `end_cycle` ordering
+  (ADR 0029 territory) that shifts every PPU register write in every game. It
+  needs its own version, its own ADR and its own re-baselining.
 
 - **One row of `SOURCE_CATALOG.tsv` had been wrong since the v2.0.1 hand
   extraction.** Running the new extractor against the asm at `71f57fb`
