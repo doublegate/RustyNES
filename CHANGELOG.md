@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.17] - 2026-09-11 - "Terminus" (a write lands where the cycle ENDS, and this core does not move to meet it)
+
 ### Changed
 
 - **AccuracyCoin re-synced to upstream `69c8860` (2026-09-11), and the battery
