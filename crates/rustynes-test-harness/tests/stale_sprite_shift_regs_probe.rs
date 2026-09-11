@@ -42,6 +42,21 @@ use std::path::{Path, PathBuf};
 use rustynes_core::Nes;
 use rustynes_core::rustynes_ppu::state_trace::{PpuStateTrace, PpuTraceConfig};
 
+/// Read a numeric env override, refusing a malformed value rather than silently
+/// falling back -- a probe that reports a different window than its operator
+/// believes is worse than no probe.
+fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T
+where
+    <T as std::str::FromStr>::Err: std::fmt::Display,
+{
+    match std::env::var(key) {
+        Ok(v) => v
+            .parse()
+            .unwrap_or_else(|e| panic!("{key}={v:?} is not valid ({e}); refusing to run")),
+        Err(_) => default,
+    }
+}
+
 /// Rendering bits of PPUMASK: show-background | show-sprites.
 const RENDER_BITS: u8 = 0x18;
 
@@ -96,17 +111,40 @@ fn stale_sprite_shift_regs_rendering_transition_dot() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(400);
+    // Window is configurable because test 5 has TWO writes and the first probe
+    // only looked at the first. The ROM names both: disable on scanline 3 near
+    // dot 334/335, ENABLE on scanline 4 near dot 161/162 -- and it is the
+    // enable that decides whether the sprite-zero hit lands.
+    let line: i16 = env_or("STALE_LINE", 3);
+    let lo: u16 = env_or("STALE_DOT_LO", 300);
+    let hi: u16 = env_or("STALE_DOT_HI", 340);
+    println!("window: scanline {line}, dots {lo}..={hi}");
     let cfg = PpuTraceConfig {
         frame_range: 0..=frames,
-        scanline_range: Some(3..=3),
-        dot_range: Some(300..=340),
+        scanline_range: Some(line..=line),
+        dot_range: Some(lo..=hi),
     };
     nes.bus_mut()
         .ppu_mut()
         .enable_state_trace(PpuStateTrace::with_capacity(1 << 20, cfg));
 
+    // The sub-test ROMs boot straight into one entry, but the FULL battery sits
+    // on a menu and needs START -- mirroring `accuracy_coin`'s driver. Without
+    // this the probe would report "no records" for a test it never reached,
+    // which reads exactly like "the write never happened".
+    let press_start = std::env::var("STALE_PRESS_START").is_ok();
     // Gate on the FRAME COUNTER, never the call count: the first `run_frame`
     // after power-on advances zero cycles.
+    if press_start {
+        for _ in 0..300 {
+            nes.run_frame();
+        }
+        nes.set_buttons(0, rustynes_core::Buttons::START);
+        for _ in 0..6 {
+            nes.run_frame();
+        }
+        nes.set_buttons(0, rustynes_core::Buttons::empty());
+    }
     while nes.frame() <= u64::from(frames) && !nes.is_jammed() {
         nes.run_frame();
     }
