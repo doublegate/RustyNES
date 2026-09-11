@@ -164,13 +164,27 @@ fn first_difference_control() {
             continue;
         }
         if let Ok(dir) = std::env::var("TERMINUS_DUMP") {
+            // Every failure here is LOUD. This dump is an instrument: the
+            // operator sets `TERMINUS_DUMP`, runs the control either side of a
+            // change, and diffs the two files to find the first differing
+            // frame. A swallowed `create_dir_all` or `write` leaves them
+            // diffing files that do not exist -- or, worse, STALE files from an
+            // earlier run -- while the test reports green.
+            //
+            // That is the same defect as a silently-ignored sweep offset one
+            // function above: an instrument that reports a success it has not
+            // earned is worse than one that is absent, because absence is
+            // visible.
             let stem = rom.rsplit('/').next().unwrap_or(rom);
             let mut body = String::new();
             for (i, h) in per_frame.iter().enumerate() {
-                let _ = writeln!(body, "{i}\t{h:016X}");
+                writeln!(body, "{i}\t{h:016X}").expect("writing to a String cannot fail");
             }
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::write(format!("{dir}/{stem}.frames.tsv"), body);
+            std::fs::create_dir_all(&dir)
+                .unwrap_or_else(|e| panic!("TERMINUS_DUMP directory {dir:?} is not usable: {e}"));
+            let path = format!("{dir}/{stem}.frames.tsv");
+            std::fs::write(&path, body)
+                .unwrap_or_else(|e| panic!("could not write the frame chain to {path:?}: {e}"));
         }
         if got != want {
             // Locating the FIRST differing frame is the whole point: a

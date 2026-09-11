@@ -187,6 +187,15 @@ pub enum PpuSnapshotError {
     /// Optional struct presence byte was something other than 0 or 1.
     #[error("PPU snapshot has invalid optional presence byte {0}")]
     InvalidPresence(u8),
+    /// v9 OAM2 fetch address was outside the 5-bit hardware counter's range.
+    ///
+    /// `oam2_fetch_addr` indexes the 32-byte secondary-OAM bus, and the
+    /// hardware counter it models is 5 bits wide, so anything `>= 32` is a
+    /// corrupt or hostile blob rather than a state this emulator can reach.
+    /// Rejected at the boundary instead of masked, so a malformed file is
+    /// reported rather than silently reinterpreted as a different state.
+    #[error("PPU snapshot has out-of-range OAM2 fetch address {0} (max 31)")]
+    InvalidOam2FetchAddr(u8),
 }
 
 const fn region_to_u8(r: PpuRegion) -> u8 {
@@ -798,7 +807,13 @@ impl Ppu {
         // reading it as the `.rns` compatibility path would suggest old saves
         // still load, which they deliberately do not.
         if version >= 9 {
-            self.oam2_fetch_addr = r.u8()?;
+            // Range-check at the EDGE: this byte is untrusted input and is used
+            // directly as an index into `oam_bus_secondary: [u8; 32]`.
+            let fetch_addr = r.u8()?;
+            if fetch_addr >= 32 {
+                return Err(PpuSnapshotError::InvalidOam2FetchAddr(fetch_addr));
+            }
+            self.oam2_fetch_addr = fetch_addr;
             self.oam2_overflowed = r.u8()? != 0;
             self.oam2_fetch_frozen = r.u8()? != 0;
         } else {
@@ -865,6 +880,31 @@ impl Ppu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Per-version tail sizes, in bytes. The synthesis tests below build an OLD
+    // blob by truncating a CURRENT one, so every schema bump has to be
+    // subtracted — and before these were named, that meant editing two
+    // hand-computed literals and hoping they agreed. Naming them makes a bump
+    // one edit here, and makes the composition checkable at a glance.
+    //
+    // Verified to sum: 23 + 2 + 6 + 14 + 256 + 50 + 3 = 354 = V3_TAIL..V9_TAIL.
+    /// v3: W3-Stage-4 — `u8*3` + `[u8;8]*2` + u16 PPUDATA FSM + `u8*2` BG freeze.
+    const V3_TAIL: usize = 23;
+    /// v4: `u16 extra_lines_remaining`.
+    const V4_TAIL: usize = 2;
+    /// v5: 2-cycle-ALE fetch state — octal latch, address bus, three flags.
+    const V5_TAIL: usize = 6;
+    /// v6: render state — `[u8;8] spr_halted` + 6 bytes of gating/corruption.
+    const V6_TAIL: usize = 14;
+    /// v7: OAM decay — `[u64;32]` relative-age counters.
+    const V7_TAIL: usize = 256;
+    /// v8: sprite-evaluation FSM + the OAM data-bus model + `oam2_addr`.
+    const V8_TAIL: usize = 50;
+    /// v9: the `OAM2Address` counter — `oam2_fetch_addr` + two latched flags.
+    const V9_TAIL: usize = 3;
+    /// Everything a v1 blob does not carry, from `ex_attr_latch` onward.
+    const V3_THROUGH_V9_TAILS: usize =
+        V3_TAIL + V4_TAIL + V5_TAIL + V6_TAIL + V7_TAIL + V8_TAIL + V9_TAIL;
 
     #[test]
     fn snapshot_round_trip() {
@@ -997,7 +1037,7 @@ mod tests {
         // `oam2_fetch_addr` + bool `oam2_overflowed` + bool
         // `oam2_fetch_frozen`) — 354 bytes total, none of which a v1 blob
         // carried.
-        v1.extend_from_slice(&v2[at + 4..v2.len() - 354]);
+        v1.extend_from_slice(&v2[at + 4..v2.len() - V3_THROUGH_V9_TAILS]);
         v1[0] = 1; // version byte -> v1
 
         let mut q = Ppu::new(PpuRegion::Ntsc);
@@ -1039,6 +1079,42 @@ mod tests {
     fn snapshot_is_deterministic() {
         let p = Ppu::new(PpuRegion::Ntsc);
         assert_eq!(p.snapshot(), p.snapshot());
+    }
+
+    #[test]
+    fn a_corrupt_v9_oam2_fetch_address_is_rejected_not_indexed() {
+        // `oam2_fetch_addr` is read from an untrusted blob and used as an index
+        // into `oam_bus_secondary: [u8; 32]`. A hostile or corrupt save state
+        // carrying >= 32 must be refused at the boundary -- not panic the
+        // emulator, and not be silently masked into a DIFFERENT valid state.
+        //
+        // Reported as a blocking finding on the release PR. The hardware
+        // counter is 5 bits, so no reachable run can produce such a value; only
+        // a malformed file can.
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.oam2_fetch_addr = 0x1F; // the largest LEGAL value
+        let good = p.snapshot();
+        assert!(
+            Ppu::new(PpuRegion::Ntsc).restore(&good).is_ok(),
+            "31 is in range and must still load"
+        );
+
+        // Corrupt exactly that byte, leaving the rest of the blob intact.
+        let idx = good
+            .iter()
+            .rposition(|&b| b == 0x1F)
+            .expect("the fetch-address byte is in the blob");
+        for bad_value in [32u8, 0x80, 0xFF] {
+            let mut bad = good.clone();
+            bad[idx] = bad_value;
+            match Ppu::new(PpuRegion::Ntsc).restore(&bad) {
+                Err(PpuSnapshotError::InvalidOam2FetchAddr(v)) => {
+                    assert_eq!(v, bad_value, "the error names the offending byte");
+                }
+                Err(e) => panic!("wrong error for {bad_value}: {e}"),
+                Ok(()) => panic!("restore ACCEPTED an out-of-range fetch address {bad_value}"),
+            }
+        }
     }
 
     #[test]
@@ -1323,7 +1399,7 @@ mod tests {
         // subtracted here too.
         let p = Ppu::new(PpuRegion::Ntsc);
         let cur = p.snapshot();
-        let mut v6 = cur[..cur.len() - (3 + 50 + 256)].to_vec();
+        let mut v6 = cur[..cur.len() - (V9_TAIL + V8_TAIL + V7_TAIL)].to_vec();
         v6[0] = 6;
 
         let mut q = Ppu::new(PpuRegion::Ntsc);

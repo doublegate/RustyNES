@@ -4890,7 +4890,12 @@ impl Ppu {
             // fetch wraps it there. This used to be a hard `[0]`, which is why
             // it was right in general and wrong exactly when the counter had
             // not completed its wrap.
-            self.oam_bus_copybuffer = self.oam_bus_secondary[self.oam2_fetch_addr as usize];
+            // `& 0x1F` matches every other `oam_bus_secondary` index site and
+            // makes the bound structural: the counter is a 5-bit register and
+            // `tick_oam2_address` already keeps it in range, while a restore
+            // rejects anything wider. This is the third layer, not the first.
+            self.oam_bus_copybuffer =
+                self.oam_bus_secondary[(self.oam2_fetch_addr & 0x1F) as usize];
         }
     }
 
