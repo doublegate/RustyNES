@@ -110,6 +110,29 @@ cycle-accurate core later replaced.
   because this same class of state cost the battery three tests under
   run-ahead before it was carried.
 
+- **The misaligned-OAM out-of-range advance now realigns (`+4 & $FC`), pinned
+  by a targeted test because NO test's verdict depends on it.** AccuracyCoin's
+  README states two rules for advancing `OAMADDR` past an out-of-range sprite,
+  and they differ by whether secondary OAM is full: full is "only increment by
+  5" (implemented for releases, as the buggy `n+m` increment), not-full is
+  "incremented by 4 and bitwise ANDed with `$FC`" — which CLEARS the byte
+  index. This core advanced the sprite and carried the misaligned byte index
+  forward. Both rules are invisible while `OAMADDR` is a multiple of four,
+  since `m` is already 0 at every y-test, so only misaligned OAM can observe
+  the difference at all.
+
+  **Measured before adopting**: a full battery run reaches the not-full
+  out-of-range case exactly **114 times** out of 56,953,944 out-of-range
+  branches, and the battery is **143 of 144 before and after**, with the
+  failing set identical. So no gate in this project could adjudicate the rule,
+  which is why it was recorded rather than adopted when it was first checked.
+  What settles it is a stimulus that reaches those 114 cases and asserts on
+  them: `misaligned_oam_out_of_range_advance_follows_both_rules` drives one
+  y-test from `OAMADDR = $05` (`n = 1`, `m = 1`) past an out-of-range Y and
+  asserts the resulting `(n, m)` for BOTH rules — `(2, 0)` not full, `(2, 2)`
+  full. It fails without the change (`left: (2, 1)` — `n` advanced, `m` did
+  not), so the project's bar is met by a test rather than by a README.
+
 - **`Frozen OAM2 Increment` is NOT closed, and the blocker turned out not to
   be a sprite gap at all.** An earlier reading of this — that it needed
   `spr_count` / `spr_zero_in_line` from an evaluation the test prevents — is

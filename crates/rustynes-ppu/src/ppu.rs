@@ -5315,7 +5315,27 @@ impl Ppu {
                     self.status.insert(PpuStatus::SPRITE_OVERFLOW);
                     self.sprite_eval_done = true;
                 } else {
-                    // Not in range: advance to next sprite.
+                    // Not in range: advance to the next sprite, and REALIGN.
+                    //
+                    // AccuracyCoin's README gives the rule for the
+                    // secondary-OAM-NOT-full case: "the OAM address is
+                    // incremented by 4 and bitwise ANDed with $FC" -- so the
+                    // byte index CLEARS rather than being carried. This core
+                    // advanced `n` and left `m` at whatever misaligned value
+                    // evaluation started from.
+                    //
+                    // Invisible whenever OAMADDR is a multiple of four (`m` is
+                    // already 0 at every y-test), so only misaligned OAM can
+                    // observe it -- measured at 114 occurrences in a full
+                    // battery run, with no test's verdict depending on it.
+                    // Pinned directly by
+                    // `misaligned_oam_out_of_range_advance_follows_both_rules`.
+                    //
+                    // The FULL case is the other rule in the same entry --
+                    // "only increment the OAM address by 5" -- and is already
+                    // implemented as the buggy n+m increment in
+                    // `sprite_eval_overflow_search` above.
+                    self.sprite_eval_m = 0;
                     if self.sprite_eval_n == 63 {
                         self.sprite_eval_done = true;
                     } else {
@@ -5764,6 +5784,75 @@ mod tests {
         for r in [PpuRegion::Ntsc, PpuRegion::Pal, PpuRegion::Dendy] {
             assert_eq!(r.last_visible_line(), 239);
         }
+    }
+
+    /// `AccuracyCoin`'s README states two rules for advancing `OAMADDR` when a
+    /// sprite's Y is out of range during evaluation, and they differ by
+    /// whether secondary OAM is already full:
+    ///
+    /// > "the OAM address is incremented by 4 and bitwise ANDed with `$FC`"
+    ///
+    /// > "If Secondary OAM is full ... you should instead only increment the
+    /// > OAM address by 5."
+    ///
+    /// Both are invisible while `OAMADDR` is a multiple of four, because the
+    /// byte index is already 0 at every y-test. They are only observable under
+    /// MISALIGNED OAM, and measurement showed the whole corpus reaches that
+    /// case just 114 times in a full `AccuracyCoin` run while no test's verdict
+    /// depends on it — so this pins it directly instead.
+    #[test]
+    fn misaligned_oam_out_of_range_advance_follows_both_rules() {
+        /// Drive one y-test from a misaligned `OAMADDR` against a Y that is
+        /// out of range, and report the resulting `(n, m)`.
+        fn out_of_range_advance(full: bool) -> (u8, u8) {
+            let mut ppu = Ppu::new(PpuRegion::Ntsc);
+            ppu.mask = PpuMask::SHOW_SPRITE;
+            ppu.scanline = 10;
+            // Misaligned start: OAMADDR $05 seeds n = 1, m = 1.
+            ppu.oam_addr = 0x05;
+            // The byte the y-test reads is OAM[n*4 + m] = OAM[5]. Make it far
+            // out of range for scanline 10.
+            ppu.oam[5] = 0xF0;
+
+            // Dot 0 resets the FSM and captures the eval base from OAMADDR.
+            ppu.dot = 0;
+            ppu.tick_sprite_eval_per_dot();
+            assert_eq!(
+                (ppu.sprite_eval_n, ppu.sprite_eval_m),
+                (1, 1),
+                "seeded misaligned"
+            );
+
+            if full {
+                // Secondary OAM full: evaluation is in overflow-search mode,
+                // which is the state the "+5" rule describes.
+                ppu.sprite_eval_found = 8;
+                ppu.sprite_eval_overflow_search = true;
+            }
+
+            // Odd dot reads the byte; the following even dot runs the y-test.
+            ppu.dot = 65;
+            ppu.tick_sprite_eval_per_dot();
+            ppu.dot = 66;
+            ppu.tick_sprite_eval_per_dot();
+            (ppu.sprite_eval_n, ppu.sprite_eval_m)
+        }
+
+        // NOT full: +4 then AND $FC -- n advances and the byte index CLEARS.
+        assert_eq!(
+            out_of_range_advance(false),
+            (2, 0),
+            "secondary OAM not full: OAMADDR += 4 & $FC, so the misaligned byte \
+             index must be cleared, not carried"
+        );
+
+        // FULL: +5 -- n AND m both advance (the classic overflow bug).
+        assert_eq!(
+            out_of_range_advance(true),
+            (2, 2),
+            "secondary OAM full: OAMADDR += 5, so both the sprite index and the \
+             byte index advance"
+        );
     }
 
     #[test]

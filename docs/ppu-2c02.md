@@ -199,9 +199,19 @@ Per `ref-docs/research-report.md` §Sprite evaluation:
 
 - **Cycles 1..=64** — clear secondary OAM to `$FF` (forced reads).
 - **Cycles 65..=256** — alternate odd (read primary OAM) / even (write secondary OAM).
-  - Read Y from `OAM[n][0]`. If in range for next scanline, copy bytes 1..=3.
-  - Increment `n`. When `n` overflows to 0, evaluation completes.
-  - When 8 sprites found, disable secondary OAM writes. **Then** the buggy overflow check: increments **both `n` and `m`** (without carry). This mis-reads tile/attr/X bytes as Y bytes, producing the documented hardware overflow misbehavior. **Reproduce exactly.**
+  - Read Y from `OAM[n][m]` — `m` is normally 0, but `OAMADDR` seeds `n` and
+    `m` at dot 0 (`n = (OAMADDR >> 2) & $3F`, `m = OAMADDR & 3`), so a
+    misaligned `OAMADDR` starts the walk on a tile / attribute / X byte and
+    the y-test reads *that* byte. If in range for the next scanline, copy
+    bytes 1..=3.
+  - Not in range, secondary OAM **not** full: `OAMADDR += 4`, **then AND with
+    `$FC`** — so `n` advances and `m` is *cleared*, realigning the walk after
+    the first out-of-range sprite. When `n` overflows to 0, evaluation
+    completes. (Invisible whenever `OAMADDR` is a multiple of four, since `m`
+    is already 0 at every y-test; measured at 114 occurrences across a full
+    `AccuracyCoin` battery, and pinned by
+    `misaligned_oam_out_of_range_advance_follows_both_rules`.)
+  - When 8 sprites found, disable secondary OAM writes. **Then** the buggy overflow check: `OAMADDR += 5`, i.e. increments **both `n` and `m`** (without carry) and does *not* realign. This mis-reads tile/attr/X bytes as Y bytes, producing the documented hardware overflow misbehavior. **Reproduce exactly.**
 
 #### Implementation state (T-23-002 / T-23-003 / B8 follow-up)
 
