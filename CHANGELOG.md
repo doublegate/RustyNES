@@ -110,17 +110,30 @@ cycle-accurate core later replaced.
   because this same class of state cost the battery three tests under
   run-ahead before it was carried.
 
-- **`Frozen OAM2 Increment` is NOT closed, and the reason is measured rather
-  than guessed.** The freeze itself is modelled and fires where it should: a
-  probe over a full battery run counted the flag raised **809** times and the
-  freeze reaching sprite fetch **exactly once**, which is the single
-  construction that test builds. It fails on a second, separate gap — the test
-  detects the freeze as a SPRITE-ZERO HIT, which additionally needs
-  `spr_count` and `spr_zero_in_line`, and both are committed at dot 256 from
-  EVALUATION, which the test deliberately prevents by holding rendering off
-  across dots 65-256. Modelling a sprite fetch with no preceding evaluation is
-  the remaining work; it stays pinned in `KNOWN_FAILING` and written up in
-  `docs/STATUS.md` rather than worked around.
+- **`Frozen OAM2 Increment` is NOT closed, and the blocker turned out not to
+  be a sprite gap at all.** An earlier reading of this — that it needed
+  `spr_count` / `spr_zero_in_line` from an evaluation the test prevents — is
+  **retracted**; both are correct (8 and true). The freeze is verified end to
+  end by probe: raised **809** times across a battery run, reaching sprite
+  fetch **exactly once** (the single construction that test builds), on
+  scanline 196, with `secondary_oam[0]` = $C1 and all eight slots loading Y,
+  tile, attr and X all equal to $C1. Every sprite-side precondition holds.
+
+  Its detector is a sprite-zero hit, which also needs an opaque BACKGROUND
+  pixel under the sprite — and on scanline 197 the background is opaque
+  nowhere in x=190..205 (sprite pixels there: 51; background: 0). `v` is one
+  vertical increment ahead: fine-Y reads 3 where the test needs 2, so the tile
+  it placed for the hit sits a row off. The cause is a $2001 rendering-ENABLE
+  landing on dot 256 taking effect one dot early, firing the dot-256 vertical
+  increment hardware does not — which the ROM states outright: *"Rendering is
+  enabled on dot 256, but the PPU's vertical scroll is NOT incremented."*
+
+  Deliberately **not** patched at the dot-256 site. That would be a
+  compensating edit of the shape v2.5.7 recorded, where a wrong phase had
+  every window compensating for it. The real subject is the $2001
+  write-effect alignment, which is systemic, would touch tests that currently
+  pass (Rendering Flag Behavior, the Stale BG/Sprite Shift Registers pair),
+  and deserves its own measurement. Stays pinned in `KNOWN_FAILING`.
 
 - **One row of `SOURCE_CATALOG.tsv` had been wrong since the v2.0.1 hand
   extraction.** Running the new extractor against the asm at `71f57fb`

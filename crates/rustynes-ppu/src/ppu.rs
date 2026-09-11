@@ -5495,24 +5495,51 @@ impl Ppu {
         // eight copies of OAM2[0] instead of eight distinct sprites. This is
         // the mechanism AccuracyCoin `Frozen OAM2 Increment` targets.
         //
-        // NOT SUFFICIENT for that test on its own, and measured to be so
-        // rather than assumed: a probe over a full battery run shows the flag
-        // raised 809 times and the freeze reaching sprite fetch exactly once
-        // -- the single construction test 2 builds -- so this fires where it
-        // should. Test 2 still fails because it detects the freeze as a
-        // SPRITE-ZERO HIT, which additionally needs `spr_count` and
-        // `spr_zero_in_line`; both are committed at dot 256 from EVALUATION,
-        // and that test deliberately keeps rendering off across dots 65-256 so
-        // no evaluation runs. Modelling a sprite fetch with no preceding
-        // evaluation is a separate gap; see docs/STATUS.md.
+        // The freeze path is verified end to end, by probe rather than by
+        // argument: across a battery run the flag is raised 809 times and
+        // reaches sprite fetch exactly once (the single construction test 2
+        // builds), on scanline 196, with `spr_count` = 8, `spr_zero_in_line`
+        // = true, `secondary_oam[0]` = $C1, and all eight slots loading
+        // Y/tile/attr/X = $C1/$C1/$C1/$C1.
+        //
+        // Test 2 nevertheless still fails, and NOT for any sprite reason. Its
+        // detector is a sprite-zero hit, which needs an opaque BACKGROUND
+        // pixel under the sprite, and on scanline 197 the background is opaque
+        // nowhere in x=190..205 (sprite pixels there: 51; background: 0).
+        // `v` is one vertical increment ahead: fine-Y reads 3 where the test
+        // needs 2, so the tile it placed for the hit sits a row off. The cause
+        // is upstream of everything here -- a `$2001` rendering-ENABLE landing
+        // on dot 256 takes effect one dot early, firing the dot-256 vertical
+        // increment that hardware does not. The ROM says so in as many words:
+        // "Rendering is enabled on dot 256, but the PPU's vertical scroll is
+        // NOT incremented."
+        //
+        // That is a `$2001` write-timing gap, not a sprite-evaluation one, and
+        // it is deliberately NOT patched at the dot-256 site: a compensating
+        // edit there is the shape v2.5.7 recorded, where a wrong phase had
+        // every window compensating for it. See docs/STATUS.md.
         // Unreachable in ordinary rendering: the flag is cleared at dots 63,
         // 255 and 339 whenever rendering is enabled, so reaching fetch with
         // it set requires rendering to be off across dot 255.
-        let base = if self.oam2_fetch_frozen { 0 } else { slot * 4 };
-        let y = self.secondary_oam[base] as i16;
-        let tile = self.secondary_oam[base + 1];
-        let attr = self.secondary_oam[base + 2];
-        let xpos = self.secondary_oam[base + 3];
+        // A frozen OAM2Address means every read during sprite fetch returns
+        // index 0 -- the SAME byte four times per sprite, not the first
+        // sprite's four bytes. AccuracyCoin states the end state explicitly:
+        // an OAM2 of `C1 24 00 FF C0 C0 ...` is "processed as if it was
+        // C1 C1 C1 C1 ..." for all 32 bytes. Reading `[0..3]` here would give
+        // Y/tile/attr/X = C1/24/00/FF, which is a different sprite entirely.
+        let (y_byte, tile, attr, xpos) = if self.oam2_fetch_frozen {
+            let frozen = self.secondary_oam[0];
+            (frozen, frozen, frozen, frozen)
+        } else {
+            let base = slot * 4;
+            (
+                self.secondary_oam[base],
+                self.secondary_oam[base + 1],
+                self.secondary_oam[base + 2],
+                self.secondary_oam[base + 3],
+            )
+        };
+        let y = y_byte as i16;
         let in_use = slot < self.spr_count as usize;
         let flip_v = (attr & 0x80) != 0;
         let flip_h = (attr & 0x40) != 0;

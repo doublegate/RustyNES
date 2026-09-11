@@ -94,12 +94,14 @@ const KNOWN_FAILING: &[&str] = &[
     // dot, so an interval of rendering-disabled time steals increments from it
     // exactly as hardware does.
     //
-    // `Frozen OAM2 Increment` remains. The freeze itself IS modelled and fires
-    // (measured: raised 809 times across a battery, reaching sprite fetch
-    // once -- the single construction the test builds). It fails on a second,
-    // separate gap: the test detects the freeze as a sprite-zero hit, which
-    // needs `spr_count` / `spr_zero_in_line`, and those are committed from an
-    // EVALUATION the test deliberately prevents from running.
+    // `Frozen OAM2 Increment` remains, and the blocker is NOT a sprite one.
+    // The freeze is verified end to end: raised 809 times across a battery,
+    // reaching sprite fetch exactly once, with spr_count 8, sprite zero in
+    // line, and all eight slots loading $C1/$C1/$C1/$C1. Its detector is a
+    // sprite-zero hit, which needs an opaque BACKGROUND pixel under the
+    // sprite, and `v` is one vertical increment ahead (fine-Y 3 where the
+    // test needs 2) because a `$2001` enable on dot 256 takes effect a dot
+    // early. A `$2001` write-timing gap, not a sprite-evaluation one.
     "Advanced Sprite Evaluation :: Frozen OAM2 Increment [error 2]",
 ];
 
