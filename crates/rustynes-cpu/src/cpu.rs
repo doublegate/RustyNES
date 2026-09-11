@@ -93,10 +93,20 @@ pub static READ_PHI_OFFSET: core::sync::atomic::AtomicU8 = core::sync::atomic::A
 ///
 /// A 6502 commits a write at phi2, the LAST of a CPU cycle's three PPU dots.
 /// At the shipped `pre` of 7 (minus `PPU_OFFSET`) the PPU has advanced 6 of
-/// 12 master clocks — 1.5 dots — so the commit lands mid-cycle instead. The
-/// `phi2-write-sweep` feature exposes that as a knob; see
-/// `to-dos/plans/v2.6.18-terminus-plan.md` for the measurement and why the
-/// move is not simply adopted.
+/// 12 master clocks — 1.5 dots — so the commit lands mid-cycle instead.
+///
+/// **That is a known divergence, measured and deliberately NOT corrected at
+/// v2.6.18.** Moving the commit to phi2 is the right diagnosis and was the
+/// wrong change as applied: the write alone reads 141/144 on `AccuracyCoin`
+/// and fails `ppu_vbl_nmi/10-even_odd_timing`; the best combination found
+/// (phi2 + the dot-321 OAM2 increment + a one-stage `mask_for_skip_check`)
+/// reads 142/144 against the 143/144 that ships. Several PPU behaviours
+/// compensate for the placement — `mask_for_skip_check` says so in its own
+/// comment — and replacing a documented compensation with an undocumented one
+/// is worse than keeping it. The `phi2-write-sweep` feature keeps the knob so
+/// the next attempt re-measures rather than rebuilding the apparatus; see the
+/// *CLOSED* section of `to-dos/plans/v2.6.18-terminus-plan.md` for every
+/// number and the three conditions for reopening it.
 #[cfg(not(feature = "phi2-write-sweep"))]
 #[inline]
 const fn write_split(div: u64) -> (u64, u64) {

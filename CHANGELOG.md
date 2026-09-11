@@ -192,6 +192,48 @@ cycle-accurate core later replaced.
   (ADR 0029 territory) that shifts every PPU register write in every game. It
   needs its own version, its own ADR and its own re-baselining.
 
+- **The write placement was then MOVED, measured against a control, and NOT
+  ADOPTED — a maintainer decision, and the outcome the plan authorised in
+  advance.** The diagnosis stands: a 6502 commits a write at phi2 and this
+  core applies PPU register writes at M2-low, two dots early. The *change*
+  does not land.
+
+  | combination | AccuracyCoin | independent oracle |
+  |---|---|---|
+  | **shipped** (M2-low + the 2-stage compensation) | **143/144** | clean |
+  | phi2, write alone | 141/144 | `ppu_vbl_nmi/10-even_odd_timing` FAILS `09` |
+  | phi2 + dot-321 + `skip(1)` | 142/144 | clean |
+
+  The first row is what ships. The distinction that decided it: the six
+  framebuffer goldens the move shifts are BASELINES and would legitimately be
+  re-blessed if phi2 were right, but `10-even_odd_timing` is a third-party ROM
+  with its own verdict, and it went pass -> `09`. Re-deriving that ROM under
+  phi2 from its own statement of what it measures CLOSED that regression —
+  `mask_for_skip_check` needs **one** delay stage under phi2 rather than two,
+  producing the identical `08 08 09 07` — which is also the proof that the
+  pipeline is a compensation for the placement, as its own comment already
+  said. Even so the best combination is **net −1** against what ships, and it
+  costs a save-state epoch plus six re-baselines.
+
+  **Two of the three dependent behaviours are still un-re-derived** (`Arbitrary
+  Sprite zero` test 3 and `Stale Sprite Shift Regs` test 5), and adopting a
+  mechanism while its dependants still compensate for the old one replaces a
+  *documented* compensation with an undocumented one. So the compensation
+  stays, `Frozen OAM2 Increment` stays in `KNOWN_FAILING`, and the apparatus
+  is kept: `phi2-write-sweep` (default-off, `const fn` when absent, so the
+  shipped build is byte-identical by construction) plus `phi2sweep.rs`, so the
+  next attempt re-measures in an afternoon. The divergence is rowed in
+  `docs/accuracy-ledger.md` and stated at the site in `cpu.rs`; the three
+  conditions for reopening it are in the plan's *CLOSED* section.
+
+- **`terminus_control.rs` — a first-difference control, kept as a standing
+  gate.** Built to answer "did the experiment change, or did the subject?", it
+  chains a rolling FNV-1a over the pre-palette framebuffer and work RAM per
+  frame across three workloads at 400 frames on the DEFAULT feature set. It
+  outlives the experiment that motivated it, because every future timing
+  change needs the same check: the first divergence must be the cycle you
+  aimed at, or something else moved.
+
 - **One row of `SOURCE_CATALOG.tsv` had been wrong since the v2.0.1 hand
   extraction.** Running the new extractor against the asm at `71f57fb`
   reproduces the committed 146-row TSV byte-for-byte *except* "Attributes As
