@@ -61,7 +61,7 @@ const MIN_PASS_RATE: f64 = 0.60;
 /// The exact number of `AccuracyCoin` tests the shipped headless build
 /// passes, re-blessed at the 2026-09 upstream re-sync (upstream `69c8860`).
 ///
-/// 142 of 144 assigned. The catalog grew 141 -> 144 assigned tests and
+/// 143 of 144 assigned. The catalog grew 141 -> 144 assigned tests and
 /// **nothing that passed before stopped passing**: upstream removed no
 /// test, so 144 assigned minus the two known-failing rows below is exactly
 /// the previous 141 plus the one new test that passes
@@ -74,7 +74,7 @@ const MIN_PASS_RATE: f64 = 0.60;
 /// failing list is not by itself evidence of success. Re-bless this
 /// together with `docs/STATUS.md` if an upstream ROM update changes the
 /// catalog.
-const EXPECTED_PASS_COUNT: u32 = 142;
+const EXPECTED_PASS_COUNT: u32 = 143;
 
 /// The `AccuracyCoin` tests this build is known to fail, pinned BY NAME.
 ///
@@ -89,8 +89,18 @@ const EXPECTED_PASS_COUNT: u32 = 142;
 /// allowance silently hides the improvement it was written to tolerate,
 /// which is how a stale exclusion survived seven releases in v2.6.9.
 const KNOWN_FAILING: &[&str] = &[
+    // `Misaligned OAM2 Address` was here and is now CLOSED: OAM2Address is a
+    // live counter through sprite fetch rather than an index derived from the
+    // dot, so an interval of rendering-disabled time steals increments from it
+    // exactly as hardware does.
+    //
+    // `Frozen OAM2 Increment` remains. The freeze itself IS modelled and fires
+    // (measured: raised 809 times across a battery, reaching sprite fetch
+    // once -- the single construction the test builds). It fails on a second,
+    // separate gap: the test detects the freeze as a sprite-zero hit, which
+    // needs `spr_count` / `spr_zero_in_line`, and those are committed from an
+    // EVALUATION the test deliberately prevents from running.
     "Advanced Sprite Evaluation :: Frozen OAM2 Increment [error 2]",
-    "Advanced Sprite Evaluation :: Misaligned OAM2 Address [error 3]",
 ];
 
 #[test]

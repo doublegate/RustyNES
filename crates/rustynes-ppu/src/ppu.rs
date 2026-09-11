@@ -840,6 +840,37 @@ pub struct Ppu {
     /// dot-1 boundary and incremented once per even clear dot, masked to
     /// 0x1F, exactly as `TriCNES` drives `OAM2Address` during dots 1-64.
     pub(crate) oam2_addr: u8,
+    /// `OAM2Address` as a LIVE counter across sprite fetch (dots 257-320),
+    /// and the "OAM2 Overflowed" flag that freezes it.
+    ///
+    /// Both rules are stated outright by `AccuracyCoin`'s own source, which is
+    /// the specification here (MIT; stimulus, not a reference implementation):
+    ///
+    /// > When OAM2 is full, the PPU prevents further increments of the OAM2
+    /// > Address, so the OAM2 Address is frozen at index 0. This flag ... is
+    /// > cleared if rendering is enabled during dots 63, 255, and 339.
+    ///
+    /// The counter advances on EVEN dots (32 bytes across the 64-dot fetch).
+    /// That yields 33 candidate increments over dots 256..=320, and the flag
+    /// is what reconciles it: the 32nd wraps 0x1F -> 0 AND raises the flag,
+    /// which suppresses the 33rd, leaving the address resting at 0. So the
+    /// documented "`$2004` during dots 321-340 reads OAM2[0]" is not a special
+    /// case — it is the ordinary end state of the counter, and the flag is
+    /// load-bearing for it. Both `AccuracyCoin` `Misaligned OAM2 Address` and
+    /// `Frozen OAM2 Increment` are explained by this one mechanism.
+    ///
+    /// Not snapshotted, matching `oam2_addr` and the rest of the per-dot
+    /// sprite-eval FSM: it re-derives within a scanline.
+    pub(crate) oam2_fetch_addr: u8,
+    pub(crate) oam2_overflowed: bool,
+    /// The freeze flag LATCHED at the start of sprite fetch (dot 257).
+    ///
+    /// Read instead of `oam2_overflowed` by the sprite loader, because in the
+    /// ordinary case the counter wraps and raises the flag near the END of the
+    /// fetch window (dot 318) -- reading the live flag would then retroactively
+    /// force the last slot to OAM2[0] and corrupt every game's final sprite.
+    /// The hardware behaviour under test is about the flag's state going IN.
+    pub(crate) oam2_fetch_frozen: bool,
     /// Previous-tick rendering-enabled state — tracks the rising /
     /// falling edge of `mask.rendering_enabled()` so the 1->0 edge
     /// BG-shifter fix-up fires on the correct transition.
@@ -1363,6 +1394,9 @@ impl Ppu {
             oam_corruption_disabled: false,
             oam_corruption_disabled_instant: false,
             oam2_addr: 0,
+            oam2_fetch_addr: 0,
+            oam2_overflowed: false,
+            oam2_fetch_frozen: false,
             prev_rendering_enabled: false,
             rendering_enabled_delayed: false,
             bg_reload_render: false,
@@ -4817,6 +4851,44 @@ impl Ppu {
     /// the existing rendering FSM is unperturbed — `$2004` reads are the sole
     /// observable effect of this whole feature). Called each dot on visible
     /// scanlines (0-239) when rendering is enabled.
+    /// Maintain `OAM2Address` and the "OAM2 Overflowed" freeze flag.
+    ///
+    /// Called from `tick_oam_bus`, so it inherits that call site's gate:
+    /// visible scanline AND rendering enabled. That gate IS the ROM's
+    /// "cleared if rendering is enabled during dots 63, 255, and 339"
+    /// condition, which is why no explicit rendering test appears here --
+    /// and why a scanline with rendering off correctly PRESERVES both the
+    /// counter and the flag, which is the whole behaviour under test.
+    ///
+    /// Runs before `tick_oam_bus`'s clear- and eval-window early-returns,
+    /// because two of the three reset dots (63 and 255) fall inside them.
+    fn tick_oam2_address(&mut self, cycle: u16) {
+        if matches!(cycle, 63 | 255 | 339) {
+            self.oam2_fetch_addr = 0;
+            self.oam2_overflowed = false;
+        }
+        if cycle == 257 {
+            self.oam2_fetch_frozen = self.oam2_overflowed;
+        }
+        if (256..=320).contains(&cycle) && (cycle & 1) == 0 && !self.oam2_overflowed {
+            // 32 bytes across the fetch window = one step per two dots. The
+            // wrap raises the flag, which suppresses the 33rd increment and
+            // leaves the address resting at 0 -- see the field docs.
+            self.oam2_fetch_addr = (self.oam2_fetch_addr + 1) & 0x1F;
+            if self.oam2_fetch_addr == 0 {
+                self.oam2_overflowed = true;
+            }
+        }
+        if cycle == 321 {
+            // After fetch the `$2004` bus rests wherever OAM2Address actually
+            // STOPPED -- index 0 in the ordinary case, because a complete
+            // fetch wraps it there. This used to be a hard `[0]`, which is why
+            // it was right in general and wrong exactly when the counter had
+            // not completed its wrap.
+            self.oam_bus_copybuffer = self.oam_bus_secondary[self.oam2_fetch_addr as usize];
+        }
+    }
+
     fn tick_oam_bus(&mut self) {
         let cycle = self.dot;
         // v2.3.0 (perf) — take the dot-0 early-out BEFORE deriving the sprite
@@ -4826,6 +4898,7 @@ impl Ppu {
         if cycle == 0 {
             return;
         }
+        self.tick_oam2_address(cycle);
         // NOTE (v2.3.1 G3): pushing these two below the `cycle < 65` early-out
         // as well — they are dead across the dots 1..=64 clear window — was
         // measured and produced NO change on any workload across two runs. LLVM
@@ -4898,6 +4971,11 @@ impl Ppu {
                         if self.oam_bus_sprite_in_range {
                             self.oam_bus_addr_l += 1;
                             self.oam_bus_secondary_addr += 1;
+                            // OAM2 full: the address overflowed, which raises
+                            // the freeze flag. The dot-255 reset normally
+                            // clears it again before sprite fetch; it survives
+                            // only if rendering is disabled across that dot.
+                            self.oam2_overflowed |= self.oam_bus_secondary_addr == 0x20;
                             if self.oam_bus_addr_l >= 4 {
                                 self.oam_bus_addr_h = (self.oam_bus_addr_h + 1) & 0x3F;
                                 self.oam_bus_addr_l = 0;
@@ -4953,11 +5031,6 @@ impl Ppu {
                     }
                 }
             }
-            return;
-        }
-        if cycle == 321 {
-            // After sprite loading, the bus rests on secondary OAM index 0.
-            self.oam_bus_copybuffer = self.oam_bus_secondary[0];
         }
     }
 
@@ -5417,7 +5490,25 @@ impl Ppu {
         } else {
             8
         };
-        let base = slot * 4;
+        // With the "OAM2 Overflowed" flag latched, the OAM2 Address cannot
+        // increment, so sprite fetch re-reads index 0 for EVERY object --
+        // eight copies of OAM2[0] instead of eight distinct sprites. This is
+        // the mechanism AccuracyCoin `Frozen OAM2 Increment` targets.
+        //
+        // NOT SUFFICIENT for that test on its own, and measured to be so
+        // rather than assumed: a probe over a full battery run shows the flag
+        // raised 809 times and the freeze reaching sprite fetch exactly once
+        // -- the single construction test 2 builds -- so this fires where it
+        // should. Test 2 still fails because it detects the freeze as a
+        // SPRITE-ZERO HIT, which additionally needs `spr_count` and
+        // `spr_zero_in_line`; both are committed at dot 256 from EVALUATION,
+        // and that test deliberately keeps rendering off across dots 65-256 so
+        // no evaluation runs. Modelling a sprite fetch with no preceding
+        // evaluation is a separate gap; see docs/STATUS.md.
+        // Unreachable in ordinary rendering: the flag is cleared at dots 63,
+        // 255 and 339 whenever rendering is enabled, so reaching fetch with
+        // it set requires rendering to be off across dot 255.
+        let base = if self.oam2_fetch_frozen { 0 } else { slot * 4 };
         let y = self.secondary_oam[base] as i16;
         let tile = self.secondary_oam[base + 1];
         let attr = self.secondary_oam[base + 2];

@@ -143,7 +143,7 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///   function of `scanline` + `region`, both of which are serialized, so
 ///   recomputing it is equivalent and cheaper than carrying derived bytes — the
 ///   same choice Mesen2 makes in its `if(!s.IsSaving())` post-load fixup block.
-pub const PPU_SNAPSHOT_VERSION: u8 = 8;
+pub const PPU_SNAPSHOT_VERSION: u8 = 9;
 
 /// v2.3.3 — high bit of the version byte, marking a **slim** snapshot: every
 /// field except the 245,760-byte framebuffer.
@@ -503,6 +503,21 @@ impl Ppu {
             w.u8(self.oam2_addr);
         }
 
+        // v9 tail — the OAM2Address counter carried across sprite fetch plus
+        // its "OAM2 Overflowed" freeze flag and the dot-257 latch.
+        //
+        // These are serialized rather than allowlisted as derived. They LOOK
+        // derived (all three re-derive at dots 63/255/339 within a scanline),
+        // and that reasoning is exactly wrong here: the whole behaviour they
+        // model is what happens when rendering is DISABLED across those reset
+        // dots, so a snapshot taken inside such a window carries state that
+        // cannot be recomputed from anything else in the blob. Run-ahead
+        // snapshots and restores every frame, so dropping them would silently
+        // reintroduce the bug this release fixed.
+        w.u8(self.oam2_fetch_addr);
+        w.u8(u8::from(self.oam2_overflowed));
+        w.u8(u8::from(self.oam2_fetch_frozen));
+
         w.buf
     }
 
@@ -773,6 +788,16 @@ impl Ppu {
             self.oam2_addr = 0;
         }
 
+        if version >= 9 {
+            self.oam2_fetch_addr = r.u8()?;
+            self.oam2_overflowed = r.u8()? != 0;
+            self.oam2_fetch_frozen = r.u8()? != 0;
+        } else {
+            self.oam2_fetch_addr = 0;
+            self.oam2_overflowed = false;
+            self.oam2_fetch_frozen = false;
+        }
+
         // Derived-cache fixup (every version): the scanline-classification cache
         // is a pure function of `scanline` + `region`, so it is recomputed rather
         // than carried. Resetting the key to the `Ppu::new` sentinel forces the
@@ -959,8 +984,11 @@ mod tests {
         // OAM-decay tail (256 bytes: [u64;32] relative-age `oam_decay_cycles`),
         // AND the v8 sprite-evaluation tail (50 bytes: u8*5 + bool*5 eval FSM,
         // then u8 + [u8;32] + u8*3 + bool*2 + u8 OAM-data-bus model, then u8
-        // `oam2_addr`) — 351 bytes total, none of which a v1 blob carried.
-        v1.extend_from_slice(&v2[at + 4..v2.len() - 351]);
+        // `oam2_addr`), AND the v9 OAM2Address tail (3 bytes: u8
+        // `oam2_fetch_addr` + bool `oam2_overflowed` + bool
+        // `oam2_fetch_frozen`) — 354 bytes total, none of which a v1 blob
+        // carried.
+        v1.extend_from_slice(&v2[at + 4..v2.len() - 354]);
         v1[0] = 1; // version byte -> v1
 
         let mut q = Ppu::new(PpuRegion::Ntsc);
@@ -1235,11 +1263,14 @@ mod tests {
         // stamping every row as freshly-touched at the live cycle (age 0), which is
         // the rest state (decay is off in any pre-v7 build, so the array is inert).
         // Synthesize a v6 blob by snapshotting the current version and truncating
-        // BOTH the v8 sprite-evaluation tail (50 bytes) and the v7 OAM-decay tail
-        // (256 bytes), then rewriting the version byte.
+        // the v9 OAM2Address tail (3 bytes), the v8 sprite-evaluation tail (50
+        // bytes) and the v7 OAM-decay tail (256 bytes), then rewriting the
+        // version byte. The totals are cumulative by construction: this builds
+        // an OLD blob out of a CURRENT one, so every schema bump has to be
+        // subtracted here too.
         let p = Ppu::new(PpuRegion::Ntsc);
         let cur = p.snapshot();
-        let mut v6 = cur[..cur.len() - (50 + 256)].to_vec();
+        let mut v6 = cur[..cur.len() - (3 + 50 + 256)].to_vec();
         v6[0] = 6;
 
         let mut q = Ppu::new(PpuRegion::Ntsc);

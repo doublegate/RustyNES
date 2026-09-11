@@ -75,6 +75,53 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **AccuracyCoin `Misaligned OAM2 Address` now passes — 142 -> 143 of 144
+  (99.31%).** `OAM2Address` is now a live counter maintained across sprite
+  fetch instead of an index derived positionally from the dot
+  (`((dot-257)/8)*4 + min(phase,3)`). A derived index cannot represent an
+  address that fell behind, so an interval of rendering-disabled time during
+  fetch was invisible to it; the counter now loses those increments exactly as
+  hardware does. Implemented from AccuracyCoin's own source comments (MIT;
+  stimulus, not a reference implementation), so the provenance ladder was
+  never escalated past rung 1.
+
+  The **"OAM2 Overflowed" flag turns out to be load-bearing for the counter,
+  not only for the test named after it**: advancing on even dots yields 33
+  candidate increments across dots 256-320, and it is the flag — raised when
+  the 32nd wraps `$1F -> 0` — that suppresses the 33rd and leaves the address
+  resting at 0. So the documented "`$2004` during dots 321-340 reads OAM2[0]"
+  is not a special case but the ordinary end state of the counter. One
+  mechanism explains both new tests.
+
+- **SAVE-STATE EPOCH: `PPU_SNAPSHOT_VERSION` 8 -> 9.** The OAM2Address
+  counter, its "OAM2 Overflowed" flag and the dot-257 freeze latch are
+  serialized. The `.rns` container compares each section's version for
+  EQUALITY, so **pre-v9 save states no longer load** — the same cost the v8
+  bump carried, and a maintainer decision to weigh before release.
+
+  They are serialized rather than allowlisted as derived, on the schema
+  audit's own advice ("the default assumption is that these need SERIALIZING
+  ... that has been the right answer three times out of three"). They look
+  derived — all three re-derive at dots 63/255/339 within a scanline — and
+  that reasoning is exactly inverted here: the behaviour being modelled IS
+  what happens when rendering is disabled across those reset dots, so a
+  snapshot taken inside such a window carries state recoverable from nothing
+  else in the blob, and run-ahead snapshots every frame. The v8 tail exists
+  because this same class of state cost the battery three tests under
+  run-ahead before it was carried.
+
+- **`Frozen OAM2 Increment` is NOT closed, and the reason is measured rather
+  than guessed.** The freeze itself is modelled and fires where it should: a
+  probe over a full battery run counted the flag raised **809** times and the
+  freeze reaching sprite fetch **exactly once**, which is the single
+  construction that test builds. It fails on a second, separate gap — the test
+  detects the freeze as a SPRITE-ZERO HIT, which additionally needs
+  `spr_count` and `spr_zero_in_line`, and both are committed at dot 256 from
+  EVALUATION, which the test deliberately prevents by holding rendering off
+  across dots 65-256. Modelling a sprite fetch with no preceding evaluation is
+  the remaining work; it stays pinned in `KNOWN_FAILING` and written up in
+  `docs/STATUS.md` rather than worked around.
+
 - **One row of `SOURCE_CATALOG.tsv` had been wrong since the v2.0.1 hand
   extraction.** Running the new extractor against the asm at `71f57fb`
   reproduces the committed 146-row TSV byte-for-byte *except* "Attributes As
