@@ -26,6 +26,50 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **RETRACTION: v2.6.17's "two dots early" is wrong; the gap is HALF A DOT.**
+  That release states the `$2001` writes land "two dots early ... 242 and 256,
+  where this core applies 240 and 254", and that figure is the premise its whole
+  investigation was scoped on. It is retracted, on three independent grounds.
+
+  **Arithmetic.** `write_split(12) = (7, 5)` advances the PPU to
+  `pre - PPU_OFFSET` = **6 master clocks** into the CPU cycle — 1.5 dots — where
+  phi2 is 8, or 2.0. The gap is **2 master clocks, half a dot**. That is the
+  constants the shipped build compiles, not an interpretation.
+
+  **The knob agrees.** `WRITE_PHI_OFFSET` is denominated in master clocks and the
+  value expressing phi2 is **2** — the same half dot.
+
+  **Sufficiency, which is decisive.** `Frozen OAM2 Increment` fails at the
+  shipped placement and passes at `WRITE_PHI_OFFSET = 2`. If the commit were two
+  dots (8 master clocks) early, a 2-master-clock change could not reach the
+  correct dot. A test that flips on half a dot cannot have been two dots out.
+
+  **Where 240 came from.** `ppu-state-trace`'s hook reads state *after* each
+  dot's effects, so its records are end-of-dot: PPUMASK still holds `$18` at
+  end-of-240 and `$00` at end-of-241, putting the write in dot **241** (and,
+  under phi2, in 242 — exactly the dot the ROM names). A probe reading the PPU's
+  dot counter at the *instant* of the CPU access reads one lower, because
+  `Cpu::start_cycle` catches the PPU up before the bus access. Comparing that
+  against the ROM's *effect* dot makes a one-dot gap look like two.
+
+  **What survives:** v2.6.17's decision not to adopt phi2 was correct, and the
+  mechanism is real — a 6502 commits at phi2 and this core commits half a dot
+  earlier. **What changes:** a two-dot error is a structural scheduler defect; a
+  half-dot error is a phase-and-rounding question, since which PPU dot a fixed
+  master-clock offset falls in depends on the instruction's CPU/PPU alignment.
+  That is why three writes measured across two tests cannot be satisfied by any
+  one dot-quantised offset, and it reframes the remaining work.
+
+  The retracted text is annotated **in place** in
+  `to-dos/plans/v2.6.18-terminus-plan.md` rather than deleted, and the released
+  v2.6.17 CHANGELOG entry is left untouched — a published version is immutable,
+  and erasing the claim would erase the record that it was made. Note also that
+  the plan had ALREADY recorded the half-dot insight in its
+  `Arbitrary Sprite zero` section; this retraction confirms and generalises it
+  rather than discovering it.
+
 ## [2.6.17] - 2026-09-11 - "Terminus" (a write lands where the cycle ENDS, and this core does not move to meet it)
 
 ### Changed
