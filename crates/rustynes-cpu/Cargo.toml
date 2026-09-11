@@ -14,6 +14,10 @@ categories = ["emulators"]
 workspace = true
 
 [features]
+# v2.6.18 "Terminus" study: make the WRITE commit dot sweepable
+# (`WRITE_PHI_OFFSET`). Off by default -- `write_split` runs on every write,
+# so the shipped build keeps the `const` path and pays no atomic load.
+phi2-write-sweep = []
 # v2.0 R1c-1 diagnostic: per-instruction (PC, cumulative cpu_cycle) trace hook.
 cpu-instr-cycle-trace = []
 default = []

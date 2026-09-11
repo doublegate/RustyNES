@@ -70,11 +70,40 @@ const fn read_split(div: u64) -> (u64, u64) {
 }
 /// WRITE access split — swapped (writes commit `2 * PPU_OFFSET` mc later than
 /// reads). NTSC divisor 12 → (7, 5), byte-identical to the prior `const`s.
+///
+/// A 6502 commits a write at phi2, the LAST of a CPU cycle's three PPU dots.
+/// At the shipped `pre` of 7 (minus `PPU_OFFSET`) the PPU has advanced 6 of
+/// 12 master clocks — 1.5 dots — so the commit lands mid-cycle instead. The
+/// `phi2-write-sweep` feature exposes that as a knob; see
+/// `to-dos/plans/v2.6.18-terminus-plan.md` for the measurement and why the
+/// move is not simply adopted.
+#[cfg(not(feature = "phi2-write-sweep"))]
 #[inline]
 const fn write_split(div: u64) -> (u64, u64) {
     let pre = div / 2 + PPU_OFFSET;
     (pre, div - pre)
 }
+
+/// Sweepable `write_split` (feature `phi2-write-sweep`, v2.6.18 study only).
+///
+/// Default 0 reproduces the `const` path above exactly, so enabling the
+/// feature without setting the knob is byte-identical. Kept behind a feature
+/// rather than always-on because `write_split` runs on EVERY write, and the
+/// shipped build should not pay an atomic load per write for a study.
+#[cfg(feature = "phi2-write-sweep")]
+#[inline]
+fn write_split(div: u64) -> (u64, u64) {
+    let extra = u64::from(WRITE_PHI_OFFSET.load(core::sync::atomic::Ordering::Relaxed));
+    // Clamp so `pre` never reaches the cycle length: `post` must stay >= 1 or
+    // `end_cycle` would not advance the master clock at all.
+    let pre = (div / 2 + PPU_OFFSET + extra).min(div - 1);
+    (pre, div - pre)
+}
+
+/// Extra master clocks added to a WRITE's pre-access split (v2.6.18 study).
+/// 0 = shipped behaviour.
+#[cfg(feature = "phi2-write-sweep")]
+pub static WRITE_PHI_OFFSET: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
 /// NMI vector low byte address (`$FFFA/B`).
 const NMI_VECTOR: u16 = 0xFFFA;
