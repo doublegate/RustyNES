@@ -58,16 +58,40 @@ use rustynes_test_harness::accuracy_coin_catalog;
 ///   measured `75.93%` via framebuffer measures `64.03%` via RAM.
 const MIN_PASS_RATE: f64 = 0.60;
 
-/// v2.3.0 "Datum II" — the exact number of `AccuracyCoin` tests the shipped
-/// headless build passes, held since v2.0.3 promoted the 2-cycle-ALE /
-/// delayed-`CopyV` PPU model (ADR 0030).
+/// The exact number of `AccuracyCoin` tests the shipped headless build
+/// passes, re-blessed at the 2026-09 upstream re-sync (upstream `69c8860`).
 ///
-/// Asserted alongside "zero failing" so that a battery which *under-executes*
-/// (early bail, skipped suite, decoder that stops assigning cells) fails as
-/// loudly as one that regresses — an empty failing list is not by itself
-/// evidence of success. Re-bless this together with `docs/STATUS.md` if an
-/// upstream ROM update changes the catalog.
-const EXPECTED_PASS_COUNT: u32 = 141;
+/// 142 of 144 assigned. The catalog grew 141 -> 144 assigned tests and
+/// **nothing that passed before stopped passing**: upstream removed no
+/// test, so 144 assigned minus the two known-failing rows below is exactly
+/// the previous 141 plus the one new test that passes
+/// (`Misaligned OAM DMA`). The two that fail are new tests probing
+/// behaviour this core has never modelled — see `KNOWN_FAILING`.
+///
+/// Asserted alongside the known-failing set so that a battery which
+/// *under-executes* (early bail, skipped suite, decoder that stops
+/// assigning cells) fails as loudly as one that regresses — an empty
+/// failing list is not by itself evidence of success. Re-bless this
+/// together with `docs/STATUS.md` if an upstream ROM update changes the
+/// catalog.
+const EXPECTED_PASS_COUNT: u32 = 142;
+
+/// The `AccuracyCoin` tests this build is known to fail, pinned BY NAME.
+///
+/// Both arrived in the 2026-09 upstream re-sync (`d924906c` added the
+/// `Advanced Sprite Evaluation` page, `5c744db5` the second test) and both
+/// probe secondary-OAM address behaviour during sprite evaluation, which
+/// this PPU does not model. They are gaps, not regressions.
+///
+/// This is an allowance, so it FAILS BOTH WAYS on purpose: a new failure is
+/// caught because it is absent from this list, and a *fixed* failure is
+/// caught because it is present and no longer failing. A one-directional
+/// allowance silently hides the improvement it was written to tolerate,
+/// which is how a stale exclusion survived seven releases in v2.6.9.
+const KNOWN_FAILING: &[&str] = &[
+    "Advanced Sprite Evaluation :: Frozen OAM2 Increment [error 2]",
+    "Advanced Sprite Evaluation :: Misaligned OAM2 Address [error 3]",
+];
 
 #[test]
 #[allow(clippy::too_many_lines)]
@@ -345,26 +369,42 @@ fn accuracycoin_pass_rate_meets_floor() {
         summary.assigned(),
     );
 
-    // v2.3.0 "Datum II" regression guard: beyond the coarse honesty floor above,
-    // the shipped headless build has held a FULL 141/141 (zero failing tests)
-    // since v2.0.3, when the promoted 2-cycle-ALE / delayed-`CopyV` PPU model
-    // closed the two hybrid-address tests ("ALE + Read" $0491, "Hybrid Addresses"
-    // $0492) under the `PPU Misc.` suite (ADR 0030). The 60% floor is far too
-    // coarse to catch a single-test regression — e.g. neutralizing `COPY_V_DELAY`
-    // drops exactly the Hybrid Addresses test to 140/141 (99.29%), which still
-    // clears 60% silently (verified during the v2.3.0 investigation). Pin the
-    // exact state instead: zero failing tests. The two hybrid-address tests are
-    // the usual canaries for a `COPY_V_DELAY` / octal-latch regression. This is
-    // the CI-runnable, in-repo (MIT AccuracyCoin ROM) guard for that behavior.
-    // If an intentional, reviewed accuracy change moves the count, update this
-    // assertion in the same change (docs-as-spec) and re-bless.
+    // Regression guard: beyond the coarse honesty floor above, pin the EXACT
+    // set of failing tests rather than a count or a bare "none failing".
+    //
+    // The 60% floor is far too coarse to catch a single-test regression — e.g.
+    // neutralizing `COPY_V_DELAY` drops exactly the Hybrid Addresses test,
+    // which still clears 60% silently (verified during the v2.3.0
+    // investigation). The two hybrid-address tests (now under `Advanced
+    // Background Evaluation` after the 2026-09 upstream re-page) remain the
+    // usual canaries for a `COPY_V_DELAY` / octal-latch regression (ADR 0030).
+    //
+    // Comparing the SET, not the count, is what makes this fail both ways: a
+    // regression adds a name, a fix removes one, and a swap — one test fixed
+    // while another breaks — leaves the count identical and is caught anyway.
+    let failing_set: std::collections::BTreeSet<&str> =
+        failing.iter().map(String::as_str).collect();
+    let known_set: std::collections::BTreeSet<&str> = KNOWN_FAILING.iter().copied().collect();
+
+    let unexpected: Vec<&&str> = failing_set.difference(&known_set).collect();
+    let fixed: Vec<&&str> = known_set.difference(&failing_set).collect();
+
     assert!(
-        failing.is_empty(),
-        "AccuracyCoin regressed from the shipped 141/141: {} failing test(s) (listed above). \
-         The two hybrid-address tests under `PPU Misc.` are the usual canaries for a \
-         COPY_V_DELAY / octal-latch regression — see ADR 0030. If this is an intentional, \
-         reviewed accuracy change, update this guard in the same commit.",
-        failing.len(),
+        unexpected.is_empty(),
+        "AccuracyCoin regressed: {len} test(s) failing that are not in KNOWN_FAILING: \
+         {unexpected:?}. The hybrid-address tests under `Advanced Background Evaluation` \
+         are the usual canaries for a COPY_V_DELAY / octal-latch regression — see ADR 0030. \
+         If this is an intentional, reviewed accuracy change, update this guard in the \
+         same commit.",
+        len = unexpected.len(),
+    );
+
+    assert!(
+        fixed.is_empty(),
+        "AccuracyCoin IMPROVED: {fixed:?} in KNOWN_FAILING no longer fail. This is good news \
+         and it is still a failure, because a stale allowance hides exactly the coverage it \
+         was written to tolerate. Remove them from KNOWN_FAILING, raise EXPECTED_PASS_COUNT, \
+         and update docs/STATUS.md in the same commit.",
     );
 
     // ...and pin the POSITIVE count too. `failing.is_empty()` alone only proves

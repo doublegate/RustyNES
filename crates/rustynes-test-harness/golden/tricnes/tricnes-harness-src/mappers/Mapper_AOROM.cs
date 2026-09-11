@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Net;
 
 namespace TriCNES.mappers
 {
@@ -8,52 +7,72 @@ namespace TriCNES.mappers
     {
         // ines Mapper 7
         public byte Mapper_7_BankSelect;
-        public override void FetchPRG(ushort Address, bool Observe)
+        public override void FetchCPU()
         {
-            bool notFloating = false;
-            byte data = 0;
-            if (!Observe) { dataPinsAreNotFloating = false; } else { observedDataPinsAreNotFloating = false; }
-            // Observing can happen on a different thread, so we need to ensure that observing doesn't overwrite the data bus or floating pins status.
+            if ((Cart.Emu.ConnectorPinFloating[0] && Cart.Emu.ConnectorPinFloating[71]) || Cart.Emu.ConnectorPinFloating[35]) { return; } // If the cartridge is disconnected from power or ground, it cannot do anything.
+            Connector_ReadCPUAddressPins();
 
-            if (Address >= 0x8000)
+            if (!Cart.Emu.SeventyTwoPinConnector[49]) // CPU /A15 + /M2
             {
-                dataPinsAreNotFloating = true;
-                ushort tempo = (ushort)(Address & 0x7FFF);
-                dataBus = Cart.PRGROM[(0x8000 * (Mapper_7_BankSelect & 0x07) + tempo) & (Cart.PRGROM.Length - 1)];
+                CPU_DataOut = Cart.PRGROM[(0x8000 * (Mapper_7_BankSelect & 0x07) + (CPU_AddressIn & 0x7FFF)) & (Cart.PRGROM.Length - 1)]; // Get the address from the ROM file. If the ROM only has $4000 bytes, this will make addresses > $BFFF mirrors of $8000 through $BFFF.
+                Connector_SetUpCPUDataPins(CPU_DataOut);
             }
-            // AOROM doesn't have any PRG RAM
 
-            if (notFloating)
-            {
-                EndFetchPRG(Observe, data);
-            }
             return;
         }
-        public override void StorePRG(ushort Address, byte Input)
+        public override void StoreCPU(ushort Address, byte Input)
         {
             if (Address >= 0x8000)
             {
                 Mapper_7_BankSelect = Input;
             }
         }
-        public override ushort MirrorNametable(ushort Address)
+        public override byte SnoopCPU(ushort Address) // For debug purposes. It's a bit clunky.
         {
-            if ((Mapper_7_BankSelect & 0x10) == 0) // show nametable 0
+            if (Address >= 0x8000)
             {
-                Address &= 0x33FF;
+                return Cart.PRGROM[(0x8000 * (Mapper_7_BankSelect & 0x07) + (Address & 0x7FFF)) & (Cart.PRGROM.Length - 1)]; // Get the address from the ROM file. If the ROM only has $4000 bytes, this will make addresses > $BFFF mirrors of $8000 through $BFFF.
             }
-            else // show nametable 1
+            return Cart.Emu.dataBus;
+        }
+        public override void Connector_CheckCIRAM()
+        {
+            if (TiltingCart)
             {
-                Address &= 0x33FF;
-                Address |= 0x400;
+                if (!Cart.Emu.ConnectorPinFloating[56]) { Cart.Emu.SeventyTwoPinConnector[56] = Cart.Emu.SeventyTwoPinConnector[57]; }
+                if (!Cart.Emu.ConnectorPinFloating[21])
+                {
+                    Cart.Emu.SeventyTwoPinConnector[21] = (Mapper_7_BankSelect & 0x10) != 0;
+                }
             }
-            return Address;
+            else
+            {
+                Cart.Emu.SeventyTwoPinConnector[56] = (Cart.Emu.PPU_AddressBus & 0x2000) == 0;
+                Cart.Emu.SeventyTwoPinConnector[21] = (Mapper_7_BankSelect & 0x10) != 0;
+            }
+        }
+        public override byte SnoopPPU(ushort Address) // For debug purposes. It's a bit clunky having to set this up for every mapper with a non-NROM CIRAM setup.
+        {
+            if (Address < 0x2000)
+            {
+                int CHR_Address = Cart.MapperChip.FetchPatternAddress(Address);
+                return Cart.CHRROM[CHR_Address];
+            }
+            else
+            {
+                ushort Addr = (ushort)(Address & 0x3FF);
+                Addr |= (ushort)(((Mapper_7_BankSelect & 0x10) == 0) ? 0 : 0x400);
+                return Cart.Emu.VRAM[Addr];
+            }
         }
         public override List<byte> SaveMapperRegisters()
         {
             List<byte> State = new List<byte>();
             foreach (Byte b in Cart.PRGRAM) { State.Add(b); }
-            foreach (Byte b in Cart.CHRRAM) { State.Add(b); }
+            if (Cart.UsingCHRRAM)
+            {
+                foreach (Byte b in Cart.CHRROM) { State.Add(b); }
+            }
             State.Add(Mapper_7_BankSelect);
             return State;
         }
@@ -61,7 +80,10 @@ namespace TriCNES.mappers
         {
             int p = startIndex;
             for (int i = 0; i < Cart.PRGRAM.Length; i++) { Cart.PRGRAM[i] = State[p++]; }
-            for (int i = 0; i < Cart.CHRRAM.Length; i++) { Cart.CHRRAM[i] = State[p++]; }
+            if (Cart.UsingCHRRAM)
+            {
+                for (int i = 0; i < Cart.CHRROM.Length; i++) { Cart.CHRROM[i] = State[p++]; }
+            }
             Mapper_7_BankSelect = State[p++];
             exitIndex = p;
         }

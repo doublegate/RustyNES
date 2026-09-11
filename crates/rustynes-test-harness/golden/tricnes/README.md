@@ -1,7 +1,10 @@
 # TriCNES — vendored reference oracle (MIT)
 
 TriCNES is the AccuracyCoin author's own emulator (Chris "100th_Coin" Siebert), which passes the full
-139-test battery — the gold oracle for these tests. Vendored here under its **MIT License** (see
+144-test battery — the gold oracle for these tests. Re-synced 2026-09-11 to upstream `f388af0`
+(previously `f54d8be`, 2026-05-05); that window carries the OAM2-address and OAM-evaluation fixes
+matching AccuracyCoin's new `Advanced Sprite Evaluation` page, the 6502 internal-data-bus fix, and
+Mapper 66 (GxROM). Vendored here under its **MIT License** (see
 `tricnes-full-src/LICENSE`) as the per-cycle cross-diff oracle for the DMA-tail / Program-M work,
 salvaged from `/tmp` so it survives reboot.
 

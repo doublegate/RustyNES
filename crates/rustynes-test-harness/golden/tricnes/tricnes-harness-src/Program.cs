@@ -2,9 +2,25 @@ using TriCNES;
 class Program {
     static void Main(string[] args) {
         var emu = new Emulator();
-        // ROM path: env TRICNES_ROM overrides; default = the canonical repo copy.
+        // ROM path: env TRICNES_ROM overrides; otherwise resolve the canonical
+        // repo copy RELATIVE to the working directory.
+        //
+        // This used to hard-code an absolute path into a workspace layout that
+        // no longer exists (`Commercial_Private-Projects/RustyNES_v2/...`,
+        // pre-reorg). An absolute default silently rots the moment the repo
+        // moves, and it fails as "file not found" rather than as "your default
+        // is stale", so say so explicitly instead.
         var romPath = System.Environment.GetEnvironmentVariable("TRICNES_ROM")
-            ?? "/home/parobek/Code/Commercial_Private-Projects/RustyNES_v2/tests/roms/accuracycoin/AccuracyCoin.nes";
+            ?? System.IO.Path.Combine(
+                System.IO.Directory.GetCurrentDirectory(),
+                "tests", "roms", "accuracycoin", "AccuracyCoin.nes");
+        if (!System.IO.File.Exists(romPath))
+        {
+            System.Console.Error.WriteLine(
+                $"tricnes-harness: ROM not found at {romPath}\n" +
+                "  Run from the repository root, or set TRICNES_ROM to the ROM path.");
+            System.Environment.Exit(2);
+        }
         var cart = new Cartridge(romPath);
         emu.Cart = cart;
         cart.Emu = emu;

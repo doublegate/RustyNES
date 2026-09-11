@@ -26,6 +26,71 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **AccuracyCoin re-synced to upstream `69c8860` (2026-09-11), and the battery
+  grew 141 -> 144 assigned tests.** The ROM, `LICENSE` and
+  `SOURCE_CATALOG.tsv` are re-vendored from `100thCoin/AccuracyCoin` (MIT).
+  The catalog goes 146 -> 149 rows across 20 -> 22 suites: upstream added
+  three tests (`Frozen OAM2 Increment` `$0493`, `Misaligned OAM DMA` `$0494`,
+  `Misaligned OAM2 Address` `$0495`) and two pages, `Advanced Background
+  Evaluation` and `Advanced Sprite Evaluation`, which **re-home eleven
+  existing PPU tests** out of `PPU Misc.` / `PPU Behavior` / `Sprite
+  Evaluation`. A re-sync is therefore not an append — a suite-keyed baseline
+  has to be regenerated rather than extended.
+- **Measured 142 of 144 (98.61%) on the default build, with no regression.**
+  Upstream removed no test, so 144 assigned minus the two failures is exactly
+  the previous 141 plus the one new test that passes. The two gaps are
+  `Advanced Sprite Evaluation :: Frozen OAM2 Increment` (error 2) and
+  `:: Misaligned OAM2 Address` (error 3) — secondary-OAM address behaviour
+  during sprite evaluation, which this PPU does not model.
+- **The AccuracyCoin gate now pins the failing SET, not "zero failing".**
+  `accuracycoin.rs` gains `KNOWN_FAILING`, an allowance that fails in BOTH
+  directions: a new failure is caught because it is absent from the list, a
+  *fix* is caught because it is present and no longer failing, and a swap is
+  caught because the set differs while the count does not. A one-directional
+  allowance hides exactly the coverage it was written to tolerate — the v2.6.9
+  lesson. Both directions demonstrated by mutation.
+  `accuracycoin_runahead.rs` likewise compares the failing set across depths
+  rather than asserting a perfect baseline it no longer owns.
+- **TriCNES re-synced to upstream `f388af0` (2026-09-10)**, from `f54d8be`
+  (2026-05-05). It is the AccuracyCoin author's own emulator and the gold
+  oracle for these tests, vendored in-repo under its MIT license. That window
+  carries the OAM2-address and OAM-evaluation fixes matching AccuracyCoin's
+  new page, the 6502 internal-data-bus fix, and Mapper 66 (GxROM). The
+  instrumented cross-diff harness was carried across by a **3-way merge**
+  against the exact vendored base commit (+912/-576 upstream lines, 2
+  conflicts, both "inserted at the same point" and resolved by keeping both
+  sides); all eight instrumentation markers verified present at identical
+  counts, and the harness rebuilt clean under .NET 10.
+
+### Added
+
+- **`scripts/accuracycoin-build/extract_catalog.py`** — the catalog
+  extraction, which until now existed only as a prose recipe in
+  `tests/roms/AccuracyCoin/README.md`. Prose cannot be re-run or audited, so
+  every re-sync re-derived it by hand. The script carries a `--self-test`
+  (4 cases) and orders rows by upstream's `TableTable` (the ROM's own display
+  order) rather than by position in the file.
+
+### Fixed
+
+- **One row of `SOURCE_CATALOG.tsv` had been wrong since the v2.0.1 hand
+  extraction.** Running the new extractor against the asm at `71f57fb`
+  reproduces the committed 146-row TSV byte-for-byte *except* "Attributes As
+  Tiles", which the hand pass filed under `PPU Misc.` where upstream has it in
+  `Suite_PPUBehavior`. The result address was identical, so no verdict was
+  ever wrong — only the per-suite breakdown. Found by validating the tool
+  against the artifact it replaces, which is the only reason it surfaced.
+- **`tricnes-harness` defaulted to a ROM path that no longer exists**
+  (`Commercial_Private-Projects/RustyNES_v2/...`, the pre-reorg workspace
+  layout). It now resolves the ROM relative to the working directory and exits
+  with a named diagnostic rather than a bare file-not-found.
+- **Building the vendored TriCNES harness leaked ~1.6 MB of `bin/` + `obj/`
+  into the repo.** `.gitignore`'s `!/crates/rustynes-test-harness/golden/**`
+  re-inclusion un-ignored them, beside a tree whose own README promises "no
+  build artifacts". Scoped ignore rules added for the two output directories.
+
 ## [2.6.16] - 2026-09-04 - "Interlock" (the arbiter's numbers describe a stimulus, not the console)
 
 ### Changed

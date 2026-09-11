@@ -105,12 +105,21 @@ fn battery_with_run_ahead(n: u32) -> Vec<cat::TestStatus> {
 /// see `accuracycoin.rs`), at depth 1 (the shipped default) and depth 2.
 #[test]
 fn accuracycoin_is_unaffected_by_run_ahead() {
-    let baseline = cat::summarise(&battery_with_run_ahead(0));
+    let baseline_statuses = battery_with_run_ahead(0);
+    let baseline = cat::summarise(&baseline_statuses);
+    let baseline_failing = cat::failing_tests(&baseline_statuses);
+
+    // The baseline used to be asserted at ZERO failures. That stopped being
+    // true at the 2026-09 upstream re-sync, which added two sprite-evaluation
+    // tests this PPU does not model (see `accuracycoin.rs::KNOWN_FAILING`).
+    // The zero-check was never this gate's subject anyway — `accuracycoin.rs`
+    // owns the absolute result. What THIS gate owns is the RELATIVE claim that
+    // run-ahead costs nothing, so the baseline only has to be a stable
+    // reference point, not a perfect one.
     assert_eq!(
-        baseline.fail + baseline.unknown,
-        0,
-        "plain-run baseline regressed before run-ahead is even in play: {:?}",
-        cat::failing_tests(&battery_with_run_ahead(0))
+        baseline.fail as usize + baseline.unknown as usize,
+        baseline_failing.len(),
+        "summary and failing-list disagree about the baseline — decoder bug"
     );
     let expected = baseline.pass + baseline.pass_with_code;
 
@@ -118,6 +127,16 @@ fn accuracycoin_is_unaffected_by_run_ahead() {
         let statuses = battery_with_run_ahead(depth);
         let s = cat::summarise(&statuses);
         let got = s.pass + s.pass_with_code;
+
+        // Compare the failing SET, not just the count: run-ahead trading one
+        // test for another leaves the count identical and is exactly the
+        // save-state-schema gap this gate exists to catch.
+        assert_eq!(
+            cat::failing_tests(&statuses),
+            baseline_failing,
+            "run-ahead depth {depth} changed WHICH tests fail (count may be unchanged) — \
+             live PPU/CPU state is missing from the save-state schema"
+        );
         assert_eq!(
             got,
             expected,

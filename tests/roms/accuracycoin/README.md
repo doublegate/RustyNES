@@ -15,31 +15,33 @@ a synced copy of the ROM.
 
 ## Source
 
-`https://github.com/100thCoin/AccuracyCoin` (main branch, fetched
-2026-05-10). Repository LICENSE is the MIT License,
+`https://github.com/100thCoin/AccuracyCoin` (main branch, commit `69c8860`,
+fetched 2026-09-11; previously `71f57fb`, fetched 2026-05-10). Repository LICENSE is the MIT License,
 "Copyright (c) 2025 Chris Siebert".
 
 ## What it is
 
 AccuracyCoin is a single-NROM-cartridge battery of **144 NES accuracy
-tests** spanning CPU, PPU, APU, bus, IRQ, NMI, dummy-read / dummy-write,
+tests** (plus 5 print-only `DRAW` tests) spanning CPU, PPU, APU, bus, IRQ, NMI, dummy-read / dummy-write,
 DMA, and mapper behaviour. It is interactive on real hardware (the user
 navigates with D-Pad / A / Start), but our harness uses a fixed
 button-press script that triggers "run all" and then reads the result
 addresses out of CPU RAM directly.
 
 Current pass rate (measured via the RAM-direct decoder), after the
-v2.0.1 upstream re-sync grew the catalog to 146 rows / 141 assigned tests:
-**98.58%** (139 of 141 assigned tests). The two new upstream PPU tests
-("ALE + Read", "Hybrid Addresses") are known gaps. Floor: 0.60. See
-`docs/STATUS.md` for the authoritative breakdown.
+2026-09 upstream re-sync grew the catalog to 149 rows / 144 assigned tests:
+**98.61%** (142 of 144 assigned tests). The two gaps are the new
+`Advanced Sprite Evaluation` tests "Frozen OAM2 Increment" and
+"Misaligned OAM2 Address", both secondary-OAM address behaviour this PPU
+does not model. Nothing that passed before stopped passing. Floor: 0.60.
+See `docs/STATUS.md` for the authoritative breakdown.
 
 ## Harness
 
 | Harness file | Purpose |
 |--------------|---------|
 | `crates/nes-test-harness/src/accuracy_coin.rs` | Drives ROM from power-on; reads pass-rate from RAM via the catalog decoder. |
-| `crates/nes-test-harness/src/accuracy_coin_catalog.rs` | `OnceLock`-lazy 144-entry catalog parsed from the TSV in `../AccuracyCoin/SOURCE_CATALOG.tsv`. |
+| `crates/nes-test-harness/src/accuracy_coin_catalog.rs` | `OnceLock`-lazy 149-entry catalog parsed from the TSV in `../AccuracyCoin/SOURCE_CATALOG.tsv`. |
 | `crates/nes-test-harness/tests/accuracycoin.rs` | The CI gate — prints per-suite breakdown + per-failing-test list. |
 
 ## Why two directories?

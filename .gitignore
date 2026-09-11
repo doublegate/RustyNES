@@ -73,6 +73,14 @@ Cargo.lock
 !/golden/**
 !/crates/rustynes-test-harness/golden/**
 
+# ...but the vendored TriCNES harness is BUILT in place (`dotnet build -c
+# Release`, per its README), and the re-inclusion above would otherwise sweep
+# its output into the repo -- ~1.6 MB of bin/ + obj/ beside a tree whose own
+# README promises "no build artifacts". The negation is what makes this
+# necessary: without it the generic rules below would have covered these.
+/crates/rustynes-test-harness/golden/tricnes/tricnes-harness-src/bin/
+/crates/rustynes-test-harness/golden/tricnes/tricnes-harness-src/obj/
+
 # --- Native build & FFI artifacts ---
 *.so
 *.dylib
