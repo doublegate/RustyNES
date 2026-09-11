@@ -788,6 +788,15 @@ impl Ppu {
             self.oam2_addr = 0;
         }
 
+        // NOTE ON REACH: this upconversion is NOT what protects a user's `.rns`
+        // file. `Bus::restore` compares the PPU section's version for EQUALITY
+        // (`bus.rs`, `SnapshotError::VersionMismatch`), so a pre-v9 container is
+        // rejected outright and never arrives here -- that rejection is the
+        // approved save-state epoch. This branch exists for the direct
+        // `Ppu::restore` API and for the synthesis tests that build older blobs,
+        // both of which bypass the container. Keeping the two straight matters:
+        // reading it as the `.rns` compatibility path would suggest old saves
+        // still load, which they deliberately do not.
         if version >= 9 {
             self.oam2_fetch_addr = r.u8()?;
             self.oam2_overflowed = r.u8()? != 0;

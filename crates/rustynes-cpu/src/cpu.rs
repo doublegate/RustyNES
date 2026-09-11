@@ -80,7 +80,10 @@ const fn read_split(div: u64) -> (u64, u64) {
 #[inline]
 fn read_split(div: u64) -> (u64, u64) {
     let extra = u64::from(READ_PHI_OFFSET.load(core::sync::atomic::Ordering::Relaxed));
-    let pre = (div / 2 - PPU_OFFSET + extra).min(div - 1);
+    // `+ extra` BEFORE `- PPU_OFFSET`: identical for every reachable value
+    // (`div >= 12`, `PPU_OFFSET == 1`), but it removes the conceptual
+    // question of an unsigned subtraction preceding the addition.
+    let pre = (div / 2 + extra - PPU_OFFSET).min(div - 1);
     (pre, div - pre)
 }
 
