@@ -57,6 +57,16 @@ The cycle-accurate engine was integrated as the core in a sequence of documentar
 
 > **Engine lineage note.** The deep technical history under `docs/` (the `v2.0` master-clock refactor, ADRs, audit logs, the long accuracy program) describes the **upstream engine lineage**. Those old "v1.x"/"v2.x" anchors are engineering history, **not** RustyNES release versions. RustyNES's own release line is v0.1.0 → v0.8.6 → (documentary v0.9.0–v0.9.7) → **v1.0.0** → the v1.1.0–v1.10.0 additive feature line → **v2.0.0 "Timebase"** (the designated MAJOR break) → the v2.0.x "Harbor" line → the v2.1.x "Fathom" accuracy line → the v2.2.x line → v2.3.0 "Datum II" → v2.3.1 "Plumb Line" → v2.3.2 "Lucid" → v2.3.3 "Cadence" → v2.3.4 "Ledger" → **v2.3.5 "Manifest"**.
 
+### Planned next (not yet released)
+
+Scoped but unreleased. The `(current)` row in the table below stays on the
+released version; these are plans, and `to-dos/plans/` holds the detail.
+
+| Version | Scope | Plan |
+|---------|-------|------|
+| **v2.6.17** | AccuracyCoin re-synced to upstream `69c8860` (141 -> 144 assigned tests, 146 -> 149 catalog rows, 20 -> 22 suites) and TriCNES to `f388af0`. `OAM2Address` becomes a live counter through sprite fetch, closing `Misaligned OAM2 Address`; battery **143/144**. Carries an approved **save-state epoch**: `PPU_SNAPSHOT_VERSION` 8 -> 9, so pre-v9 `.rns` states no longer load. | in-branch |
+| **v2.6.18 "Terminus"** | A CPU write commits at **phi2**, the last of a cycle's three PPU dots; this core applies PPU register writes at **M2-low**, the first — measured two dots early on two independent `$2001` writes against a ROM that names the dots. Moves the write placement, re-baselines what that shifts, and is authorised to be **refuted**: the obvious alternative (delaying the rendering-enable gate) was already swept 1..4 and rejected with numbers. | [`v2.6.18-terminus-plan.md`](to-dos/plans/v2.6.18-terminus-plan.md) |
+
 ### Post-1.0 release line (v1.1.0 → current)
 
 The 1.x line was **additive / off-by-default** — every release stayed byte-identical to v1.0.0 with new features off. It grew desktop tooling (Lua, HD-packs, a Mesen2-class debugger, TAStudio, A/V recording) and, in the v1.8.0–v1.10.0 minors, whole new platforms — a native Android app, an iOS / iPadOS TestFlight train, and a Libretro / RetroArch core — while the mapper catalog grew to 172 families. See `CHANGELOG.md` for the per-release detail.
