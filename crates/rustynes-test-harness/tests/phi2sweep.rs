@@ -15,6 +15,7 @@ fn run() -> Vec<cat::TestStatus> {
 #[test]
 fn sweep_write_commit_dot() {
     rustynes_core::rustynes_cpu::WRITE_PHI_OFFSET.store(0, Relaxed);
+    rustynes_core::rustynes_cpu::READ_PHI_OFFSET.store(0, Relaxed);
     let base = run();
     let bs = cat::summarise(&base);
     eprintln!(
@@ -23,8 +24,13 @@ fn sweep_write_commit_dot() {
         bs.assigned()
     );
 
-    for off in 1u8..=4 {
-        rustynes_core::rustynes_cpu::WRITE_PHI_OFFSET.store(off, Relaxed);
+    // (read, write) pairs. The first sweep moved writes ALONE, which changes
+    // the spacing between a write and a following read instead of moving the
+    // access model as a unit. NTSC: read +4 and write +2 both land on dot 2.0
+    // = phi2, which is the complete model.
+    for (roff, woff) in [(0u8, 2u8), (0, 4), (4, 2), (4, 4), (2, 2)] {
+        rustynes_core::rustynes_cpu::READ_PHI_OFFSET.store(roff, Relaxed);
+        rustynes_core::rustynes_cpu::WRITE_PHI_OFFSET.store(woff, Relaxed);
         let now = run();
         let s = cat::summarise(&now);
         let mut gained = Vec::new();
@@ -37,7 +43,7 @@ fn sweep_write_commit_dot() {
             }
         }
         eprintln!(
-            "OFFSET={off}  passed={}/{}  GAINED={:?}  LOST={:?}",
+            "READ={roff} WRITE={woff}  passed={}/{}  GAINED={:?}  LOST={:?}",
             s.pass + s.pass_with_code,
             s.assigned(),
             gained,
@@ -45,4 +51,5 @@ fn sweep_write_commit_dot() {
         );
     }
     rustynes_core::rustynes_cpu::WRITE_PHI_OFFSET.store(0, Relaxed);
+    rustynes_core::rustynes_cpu::READ_PHI_OFFSET.store(0, Relaxed);
 }

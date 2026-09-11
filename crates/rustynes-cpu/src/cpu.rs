@@ -63,11 +63,31 @@ const fn ppu_sample_offset() -> u64 {
 /// region from `bus.cpu_divider()` so PAL (16) / Dendy (15) get the right
 /// CPU<->PPU phase; for the NTSC divisor 12 these are exactly (5, 7), so the
 /// NTSC path is byte-identical to the prior `const`s.
+#[cfg(not(feature = "phi2-write-sweep"))]
 #[inline]
 const fn read_split(div: u64) -> (u64, u64) {
     let pre = div / 2 - PPU_OFFSET;
     (pre, div - pre)
 }
+
+/// Sweepable `read_split` (feature `phi2-write-sweep`, v2.6.18 study only).
+///
+/// A 6502 SAMPLES a read at phi2 just as it commits a write there, so a phi2
+/// model has to move both. The first sweep moved writes alone, which changed
+/// the SPACING between a write and a following read rather than moving the
+/// access model as a unit -- see the plan's note on that measurement.
+#[cfg(feature = "phi2-write-sweep")]
+#[inline]
+fn read_split(div: u64) -> (u64, u64) {
+    let extra = u64::from(READ_PHI_OFFSET.load(core::sync::atomic::Ordering::Relaxed));
+    let pre = (div / 2 - PPU_OFFSET + extra).min(div - 1);
+    (pre, div - pre)
+}
+
+/// Extra master clocks added to a READ's pre-access split (v2.6.18 study).
+/// 0 = shipped behaviour. NTSC: +4 puts the sample at dot 2.0 = phi2.
+#[cfg(feature = "phi2-write-sweep")]
+pub static READ_PHI_OFFSET: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 /// WRITE access split — swapped (writes commit `2 * PPU_OFFSET` mc later than
 /// reads). NTSC divisor 12 → (7, 5), byte-identical to the prior `const`s.
 ///
