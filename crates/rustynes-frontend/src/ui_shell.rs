@@ -1537,6 +1537,29 @@ impl UiShell {
                         out.action = Some(MenuAction::OpenPanel(ToolPanel::Netplay));
                         ui.close();
                     }
+                    // wasm32 had NO Netplay entry at all, which is why the
+                    // browser lobby used to force itself open on every ROM load
+                    // -- the menu could not reach it. Same group and same
+                    // `WIFI` glyph as the native item; the label names the
+                    // window it opens ("Netplay (browser)"), because a browser
+                    // cannot open a UDP socket and the two are different
+                    // transports rather than one feature built twice.
+                    //
+                    // Enabled only once a ROM is loaded: the WebRTC handshake
+                    // keys on the ROM hash, so the lobby has nothing to offer
+                    // before then. That is the honest form of the reason the
+                    // old force-open cited for opening it at ROM load.
+                    #[cfg(target_arch = "wasm32")]
+                    if ui
+                        .add_enabled(
+                            rom_interactive,
+                            egui::Button::new(ic(glyph::WIFI, "Netplay (browser)...")),
+                        )
+                        .clicked()
+                    {
+                        out.action = Some(MenuAction::OpenPanel(ToolPanel::Netplay));
+                        ui.close();
+                    }
                     #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]
                     if ui
                         .button(ic(glyph::TROPHY, "RetroAchievements..."))

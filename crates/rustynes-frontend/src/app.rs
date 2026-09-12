@@ -4805,6 +4805,21 @@ impl App {
                 if panel == crate::debugger::ToolPanel::TasStudio {
                     self.ensure_tas_editor();
                 }
+                // wasm32: `Netplay` means the BROWSER lobby, not the UDP panel.
+                // A browser cannot open a UDP socket, so `netplay_panel` renders
+                // only a "native-only" note there -- routing to it would offer
+                // the user a window that says it does not work. The lobby is an
+                // `App`-owned window rather than a `ToolPanel`, and it draws
+                // inside the overlay's egui frame, so the overlay has to be
+                // forced visible exactly as `open_chip_panel` does.
+                #[cfg(target_arch = "wasm32")]
+                if panel == crate::debugger::ToolPanel::Netplay {
+                    self.wasm_lobby.open = true;
+                    if let Some(d) = self.debugger.as_mut() {
+                        d.force_visible();
+                    }
+                    return;
+                }
                 if let Some(d) = self.debugger.as_mut() {
                     d.open_panel(panel);
                 }
@@ -9040,13 +9055,16 @@ impl ApplicationHandler<AppEvent> for App {
                 #[cfg(not(target_arch = "wasm32"))]
                 let sr = 44_100;
                 self.start_nes(sr, event_loop);
-                // v2.7.0 — surface the browser netplay lobby now that a ROM is
-                // loaded (the WebRTC handshake needs the ROM hash). The user can
-                // close it; the `~` debugger overlay must be visible to see it.
-                #[cfg(target_arch = "wasm32")]
-                {
-                    self.wasm_lobby.open = true;
-                }
+                // The browser netplay lobby is NOT opened here. It used to be:
+                // loading a ROM force-opened it on every wasm session, so the
+                // pane appeared unbidden the moment a game started. The stated
+                // reason was that the WebRTC handshake needs the ROM hash --
+                // true, and an argument for *enabling* the menu entry once a ROM
+                // is loaded, not for opening a window nobody asked for. It was
+                // also the only way to reach the lobby at all, because the
+                // Netplay menu item was `cfg(not(wasm32))`; that is fixed in
+                // `ui_shell.rs`, so the lobby is now opened the same way every
+                // other panel is.
             }
             AppEvent::MovieLoaded(bytes) => {
                 // v1.6.0 Sprint 4 — uploaded `.rnm` movie bytes (wasm32).
@@ -11137,6 +11155,86 @@ mod tests {
         assert!(
             squash(CANVAS_SRC).contains("apply_game_db_header_overrides(&mut bytes)"),
             "the `wasm-canvas` embed's ROM loader no longer corrects the header"
+        );
+    }
+
+    /// The browser Netplay lobby is reached from the MENU, and a ROM load
+    /// never opens it.
+    ///
+    /// A source-shape gate, for the same reason as the test above: both
+    /// properties live behind `#[cfg(target_arch = "wasm32")]`, so a native
+    /// `cargo test` cannot execute either one, and the wasm target has no test
+    /// harness here. The shape is what is available to assert, so it is
+    /// asserted precisely rather than approximately.
+    ///
+    /// The defect being pinned: loading a ROM force-opened the lobby on every
+    /// browser session, so the pane appeared unbidden the moment a game
+    /// started. It was also the ONLY route to the lobby, because the Netplay
+    /// menu item was `cfg(not(wasm32))` -- which is why removing the auto-open
+    /// alone would have made the feature unreachable instead of unobtrusive.
+    /// Both halves therefore have to hold together, and this test fails if
+    /// either one is undone.
+    #[test]
+    fn the_browser_netplay_lobby_is_menu_reachable_and_never_auto_opens() {
+        const APP_SRC: &str = include_str!("app.rs");
+        const SHELL_SRC: &str = include_str!("ui_shell.rs");
+
+        // Whitespace-collapsed before matching, so a rustfmt line-wrap cannot
+        // turn a still-present construct into a phantom regression.
+        let squash = |src: &str| src.split_whitespace().collect::<Vec<_>>().join(" ");
+        // A file that reads itself has to exclude the part doing the reading:
+        // every literal this test searches for also appears in this function.
+        // Without the cut, the assertions would be permanently true. (The
+        // test above records the review in which exactly that was found.)
+        let production = |src: &str| {
+            src.split_once("\n#[cfg(test)]")
+                .map_or(src, |(before, _)| before)
+                .to_owned()
+        };
+        let app = squash(&production(APP_SRC));
+        let shell = squash(&production(SHELL_SRC));
+        assert!(
+            !app.contains("fn the_browser_netplay_lobby_is_menu_reachable_and_never_auto_opens"),
+            "the test-module split failed, so these assertions are searching their own source"
+        );
+
+        // (1) EXACTLY ONE site opens the lobby. Two means something reopened
+        // the auto-open path; zero means the lobby became unreachable again.
+        // The count is what makes this fail in BOTH directions -- a mere
+        // `contains` would stay green if the ROM-load force-open came back
+        // alongside the menu route, which is the pre-fix state plus a menu.
+        assert_eq!(
+            app.matches("self.wasm_lobby.open = true").count(),
+            1,
+            "expected exactly one site opening the browser lobby (the menu route)"
+        );
+
+        // (2) ...and that site is the menu route, not a ROM-load side effect.
+        assert!(
+            app.contains(
+                "if panel == crate::debugger::ToolPanel::Netplay { self.wasm_lobby.open = true;"
+            ),
+            "the wasm `OpenPanel(Netplay)` route no longer opens the browser lobby"
+        );
+
+        // (3) The menu offers the entry at all, and gates it on a loaded ROM.
+        // Matched as a WINDOW around the label rather than as one long literal:
+        // the enable predicate, the label and the emitted action sit on
+        // separate lines that rustfmt is free to re-wrap, and pinning the exact
+        // joined spelling would fail on a reflow that changed nothing.
+        let label = "\"Netplay (browser)...\"";
+        let at = shell
+            .find(label)
+            .expect("the wasm Netplay menu entry is gone -- the browser lobby is unreachable");
+        let before: String = shell[..at].chars().rev().take(200).collect::<String>();
+        let after: String = shell[at..].chars().take(200).collect();
+        assert!(
+            before.contains(&"rom_interactive".chars().rev().collect::<String>()),
+            "the wasm Netplay entry is no longer gated on a loaded ROM"
+        );
+        assert!(
+            after.contains("MenuAction::OpenPanel(ToolPanel::Netplay)"),
+            "the wasm Netplay entry no longer emits the panel-open action"
         );
     }
 
