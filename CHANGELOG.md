@@ -77,6 +77,39 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **`docs/STATUS.md` advertised a cargo feature that does not exist, and
+  described shipped default behaviour as disabled.** Its feature table listed
+  `cpu-implied-dummy-reads` as an available, default-**off** flag. Both the flag
+  and the `cfg` on `Cpu::implied_dummy_read` had been deleted when the behaviour
+  was promoted: every build performs the cycle-2 dummy read. That is the worse
+  of the two directions a stale row can drift in — a row naming a knob that does
+  not exist merely fails; a row calling the shipped default "off" invites
+  someone to enable a fix that has been on for releases. The row is now marked
+  removed, in the style the two v2.0.0-era retired rows already use.
+
+  Three of the four `#[allow]`s on that helper were suppressing nothing —
+  `needless_pass_by_ref_mut`, `unused_self` and `missing_const_for_fn` existed
+  for the deleted OFF branch. Measured by stripping all four and re-linting:
+  `inline_always` is the only finding, so it is the only one kept. Same shape as
+  v2.3.9's sweep, which found 25 of 29 `allow`s suppressing nothing.
+
+- **New gate: `feature_flag_audit.rs`**, pinning declared cargo features against
+  the documented ones in both directions. It fails closed on the table heading,
+  refuses a parse that yields implausibly few rows, and carries the reverse
+  gap — 26 flags declared with no table row — as an explicit `UNTABLED` list
+  with a reason per entry rather than as silence, because an unexplained
+  omission cannot be told apart from an oversight. It **found the row above on
+  its first run**, and three mutations are CAUGHT: re-marking the retired row as
+  live, dropping an `UNTABLED` entry for a live flag, and renaming the table
+  heading (which fails all three assertions, as fail-closed requires).
+
+  It deliberately asserts nothing about whether a default is *right*: that is a
+  measurement against the >3% adoption bar, not a property of a table. The audit
+  behind it re-checked the off-by-default set and found no flag that should be
+  flipped — `ppu-idle-line-fast` is the closest call and its own row records why
+  (below the bar, and a slight regression on the rendering-heavy content that
+  dominates real play).
+
 - **AccuracyCoin `Misaligned OAM2 Address` now passes — 142 -> 143 of 144
   (99.31%).** `OAM2Address` is now a live counter maintained across sprite
   fetch instead of an index derived positionally from the dot

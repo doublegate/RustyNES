@@ -811,29 +811,24 @@ impl Cpu {
     ///
     /// Wired into 22 dispatch arms (ASL/LSR/ROL/ROR A; CLC/SEC/CLI/SEI/
     /// CLV/CLD/SED; TAX/TAY/TSX/TXA/TXS/TYA; INX/DEX/INY/DEY; NOP;
-    /// 6 unofficial 1-byte NOPs) under the `cpu-implied-dummy-reads`
-    /// cargo feature. Default-off pending the coordinated DMC scheduler
-    /// audit per `docs/audit/sprint-2.3-implied-dummy-dmc-recon-2026-05-25.md`
-    /// — Session-19 documented that this fix alone (Step 1+2 of the
-    /// recipe) cascades into `Implicit DMA Abort [error 2]`. Step 3
-    /// (DMC scheduler awareness of cycle-2 bus-active reads) is the
-    /// next-session attack.
+    /// 6 unofficial 1-byte NOPs), **unconditionally**.
     ///
-    /// When the feature flag is OFF, this helper compiles to a no-op
-    /// (the `bus` parameter is silenced via `_ = bus`), and the
-    /// existing `*cycles = 2` + caller's idle-tick burn loop preserves
-    /// pre-Sprint-2.3 behavior byte-identically.
-    // `&mut self` + `&mut bus` are required for the feature-ON branch;
-    // when the feature is off the helper is a no-op (cfg-gated). The
-    // lint suppressions cover the OFF branch's "unused argument /
-    // could be const fn / inline(always) is suspicious" complaints.
+    /// This was gated behind a `cpu-implied-dummy-reads` cargo feature,
+    /// default-off pending the DMC-scheduler audit in
+    /// `docs/audit/sprint-2.3-implied-dummy-dmc-recon-2026-05-25.md`. That
+    /// gate no longer exists: the flag is declared in no manifest and there
+    /// is no `cfg` on this helper, so every build performs the dummy read.
+    /// The text describing an OFF branch that "compiles to a no-op" survived
+    /// the promotion and is removed here — it described the shipped default
+    /// as disabled when it is unconditional, which is the most misleading
+    /// shape a stale comment can take.
+    // Only `inline_always` still binds: `needless_pass_by_ref_mut`,
+    // `unused_self` and `missing_const_for_fn` were for the deleted OFF
+    // branch, and stripping all four re-lints with `inline_always` as the
+    // sole finding. Measured rather than reasoned, per the v2.3.9 sweep that
+    // found 25 of 29 `allow`s suppressing nothing.
     #[inline(always)]
-    #[allow(
-        clippy::inline_always,
-        clippy::needless_pass_by_ref_mut,
-        clippy::unused_self,
-        clippy::missing_const_for_fn
-    )]
+    #[allow(clippy::inline_always)]
     fn implied_dummy_read<B: Bus>(&mut self, bus: &mut B) {
         {
             let _ = self.read1(bus, self.pc);
