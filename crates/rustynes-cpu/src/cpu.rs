@@ -86,9 +86,15 @@ fn read_split(div: u64) -> (u64, u64) {
     // question of an unsigned subtraction preceding the addition.
     // `- back` places the access EARLIER than shipped, which the offsets alone
     // cannot express; clamped to 1 so `pre` stays a real split.
-    let pre = (div / 2 + extra - PPU_OFFSET)
+    // Every step is structurally safe rather than safe-by-current-constants:
+    // the subtraction of `PPU_OFFSET` saturates (raised in review -- it cannot
+    // underflow at `div >= 12`, but nothing in the expression says so), and the
+    // upper clamp bound is floored at 1 because `clamp` PANICS when min > max,
+    // which a hypothetical `div < 2` would produce.
+    let pre = (div / 2 + extra)
+        .saturating_sub(PPU_OFFSET)
         .saturating_sub(back)
-        .clamp(1, div - 1);
+        .clamp(1, div.saturating_sub(1).max(1));
     (pre, div - pre)
 }
 
@@ -144,9 +150,11 @@ fn write_split(div: u64) -> (u64, u64) {
     // Clamp so `pre` never reaches the cycle length: `post` must stay >= 1 or
     // `end_cycle` would not advance the master clock at all. The lower clamp
     // matters for the same reason once `back` can pull the access earlier.
+    // See `read_split` for why each step saturates and why the upper clamp
+    // bound is floored at 1.
     let pre = (div / 2 + PPU_OFFSET + extra)
         .saturating_sub(back)
-        .clamp(1, div - 1);
+        .clamp(1, div.saturating_sub(1).max(1));
     (pre, div - pre)
 }
 

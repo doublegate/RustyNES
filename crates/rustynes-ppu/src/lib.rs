@@ -54,6 +54,8 @@ pub use ppu::ProvBgAddrs;
 #[cfg(feature = "phi2-write-sweep")]
 pub use ppu::RENDER_GATE_LAG;
 #[cfg(feature = "phi2-write-sweep")]
+pub use ppu::SCROLL_GATE_LAG;
+#[cfg(feature = "phi2-write-sweep")]
 pub use ppu::SKIP_GATE_LAG;
 #[cfg(feature = "phi2-write-sweep")]
 pub use ppu::SPRITE_REARM_LAG;

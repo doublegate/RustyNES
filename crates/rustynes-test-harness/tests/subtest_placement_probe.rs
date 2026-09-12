@@ -31,20 +31,7 @@ use rustynes_core::{Buttons, Nes};
 use rustynes_test_harness::accuracy_coin_catalog as cat;
 use std::path::PathBuf;
 
-/// NTSC: 4 master clocks per dot; the shipped effective advance is 4 mc for a
-/// read and 6 for a write, i.e. both land in the CPU cycle's dot 1.
-const MC_PER_DOT: i32 = 4;
-const READ_BASE_MC: i32 = 4;
-const WRITE_BASE_MC: i32 = 6;
-
-fn place(base_mc: i32, dot: i32) -> (u8, u8) {
-    let delta = dot * MC_PER_DOT - base_mc;
-    if delta >= 0 {
-        (u8::try_from(delta).expect("offset fits"), 0)
-    } else {
-        (0, u8::try_from(-delta).expect("backoff fits"))
-    }
-}
+use rustynes_test_harness::access_dot::{READ_BASE_MC, WRITE_BASE_MC, place};
 
 fn apply(read_dot: i32, write_dot: i32) {
     let (ro, rb) = place(READ_BASE_MC, read_dot);

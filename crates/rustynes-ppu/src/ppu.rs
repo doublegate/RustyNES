@@ -1337,8 +1337,14 @@ fn fast_dot_paths_valid() -> bool {
     // for the same reason a depth-2 render gate must. Learned the expensive
     // way on #506: a bypassed pipeline does not merely go stale, it makes the
     // swept cell measure something that is not the configuration named.
+    // `SCROLL_GATE_LAG` joins them for a THIRD instance of the same trap: the
+    // visible fast body performs its own dot-256 `inc_vert_v()`, so an armed
+    // scroll knob is bypassed entirely and every swept cell reads identical --
+    // which is exactly what the first run of that sweep reported, four depths
+    // all at 143/144 with nothing gained and nothing lost.
     RENDER_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) <= 1
         && OAM2_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) == 0
+        && SCROLL_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) == u8::MAX
 }
 
 /// Default build: the depth is the shipped 1, so the guards are sufficient and
@@ -1376,6 +1382,16 @@ pub static VBL_SET_DOT: core::sync::atomic::AtomicU8 = core::sync::atomic::Atomi
 /// question than sweeping them together.
 #[cfg(feature = "phi2-write-sweep")]
 pub static SKIP_GATE_LAG: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(2);
+
+/// v2.6.18: the depth of the dot-256 vertical increment's own `$2001` gate.
+///
+/// `u8::MAX` (the default) means "ride the shared `rendering_gate`", which is
+/// what ships. This is the consumer `Frozen OAM2 Increment` turns on: the ROM
+/// enables rendering ON dot 256 and states that the vertical scroll is NOT
+/// incremented, and our enable lands a dot early.
+#[cfg(feature = "phi2-write-sweep")]
+pub static SCROLL_GATE_LAG: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(u8::MAX);
 
 /// v2.6.18: the depth of the dot-339 sprite-counter re-arm's own `$2001` gate.
 ///
@@ -3648,6 +3664,29 @@ impl Ppu {
         }
 
         // === Background rendering pipeline (visible + pre-render lines) ===
+        // v2.6.18 condition-4: when `SCROLL_GATE_LAG` is armed, the dot-256
+        // vertical increment is evaluated HERE on its own `$2001` view.
+        //
+        // This is the consumer `Frozen OAM2 Increment` actually turns on. The
+        // ROM enables rendering ON dot 256 and states outright that "the PPU's
+        // vertical scroll is NOT incremented"; our enable lands a dot early, so
+        // `inc_vert_v` fires and `v` ends at fine-Y 3 where the test needs 2 --
+        // no opaque background pixel under the sprite, no sprite-zero hit, and
+        // the entry fails for a reason that has nothing to do with OAM2.
+        // `RENDER_GATE_LAG = 2` fixes it and breaks `Stale Sprite Shift Regs`,
+        // because that depth moves every other consumer too.
+        #[cfg(feature = "phi2-write-sweep")]
+        if render_line && self.dot == 256 && !Self::scroll_gate_follows_render_gate() {
+            let depth = SCROLL_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) as usize;
+            let m = if depth == 0 {
+                self.mask
+            } else {
+                self.sweep_mask_history[(depth - 1).min(self.sweep_mask_history.len() - 1)]
+            };
+            if m.rendering_enabled() {
+                self.inc_vert_v();
+            }
+        }
         // v2.6.18: when `SPRITE_REARM_LAG` is armed the dot-339 re-arm is
         // evaluated HERE, outside the shared `rendering_gate` block, so it can
         // see a rendering value the shared gate does not. Hoisted rather than
@@ -3871,7 +3910,7 @@ impl Ppu {
             // (Intentionally no dot-257 reload here.)
 
             // Cycle 256: vertical-V increment.
-            if self.dot == 256 {
+            if self.dot == 256 && Self::scroll_gate_follows_render_gate() {
                 self.inc_vert_v();
             }
             // Cycle 257: copy hori(t) -> hori(v).
@@ -5981,6 +6020,22 @@ impl Ppu {
         }
         self.mask_for_skip_check = self.mask_skip_pipe1;
         self.mask_skip_pipe1 = self.mask;
+    }
+
+    /// Whether the dot-256 vertical increment rides the shared `rendering_gate`,
+    /// which is the shipped behaviour.
+    ///
+    /// `u8::MAX` means "follow the shared gate"; any other value gives the
+    /// increment its own depth in the shared history.
+    #[cfg(feature = "phi2-write-sweep")]
+    fn scroll_gate_follows_render_gate() -> bool {
+        SCROLL_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) == u8::MAX
+    }
+
+    /// Shipped build: always the shared gate, folded away.
+    #[cfg(not(feature = "phi2-write-sweep"))]
+    const fn scroll_gate_follows_render_gate() -> bool {
+        true
     }
 
     /// Whether the dot-339 sprite-counter re-arm rides the shared

@@ -141,6 +141,28 @@ cycle-accurate core later replaced.
   compiles `const` paths and is unchanged, and `AccuracyCoin 143/144 (99.31%,
   RAM decoder)` plus nestest 0-diff are verified rather than asserted.
 
+- **A third hypothesis refuted, and the trap that nearly hid it.** Giving the
+  dot-256 vertical increment its own `$2001` depth (`SCROLL_GATE_LAG`) was the
+  predicted fix: the ROM enables rendering ON dot 256 and states the vertical
+  scroll is NOT incremented, and the tree's own note says our enable lands a dot
+  early so `inc_vert_v()` fires and `v` ends at fine-Y 3 where the test needs 2.
+  **It changes nothing** — 143/144 at depths 0, 1, 2 and 3, with nothing gained
+  and nothing lost.
+
+  The first run was inert for a different reason, and it is the **third** time
+  this project has paid for the same trap: `tick_visible_render_fast` performs
+  its own dot-256 `inc_vert_v()`, and `fast_dot_paths_valid()` did not exclude
+  the new knob, so the sweep measured a configuration it was not in. Fixed, and
+  the guard now names all three knobs. The null survived that fix, so it was
+  confirmed the only way it can be — by mutation: making the hoisted block never
+  increment costs **14 tests**, which proves the block runs and the knob is live.
+
+  That matters more than the null. If the enable really landed a dot early,
+  depth 2 would have skipped the increment and moved something. It did not, so
+  **the recorded diagnosis is itself now in question**, and measuring the actual
+  `$2001` transition dot for each of the ROM's four writes stops being an
+  optional refinement.
+
 - **Two hypotheses refuted, both recorded because they are cheap to re-form.**
   Reads do **not** split into a sample point and an effect point — the nesdev
   `NMI` page gives one instant for a `$2002` read and states the race as the

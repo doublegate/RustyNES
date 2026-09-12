@@ -64,27 +64,11 @@ const WATCHED: [&str; 4] = [
 /// one-line change here instead of a restructure at the loop.
 const MASK_DELAYS: &[u8] = &[4];
 
-/// NTSC: 12 master clocks per CPU cycle, 4 per dot.
-const MC_PER_DOT: i32 = 4;
-/// The shipped effective advance for a read, in master clocks:
-/// `div / 2 - PPU_OFFSET - PPU_OFFSET` = 6 - 1 - 1 = 4 = dot 1.0.
-const READ_BASE_MC: i32 = 4;
-/// The shipped effective advance for a write: 6 + 1 - 1 = 6 mc, still dot 1.
-const WRITE_BASE_MC: i32 = 6;
-
-/// `(offset, backoff)` reaching the requested dot for a given base, or `None`
-/// when the dot is not reachable with non-negative knobs.
-fn knobs(base_mc: i32, dot: i32) -> Option<(u8, u8)> {
-    // Land on the dot's FIRST master clock: any point inside the dot is
-    // equivalent, which is the whole finding this test is built on.
-    let delta = dot * MC_PER_DOT - base_mc;
-    let (off, back) = if delta >= 0 { (delta, 0) } else { (0, -delta) };
-    Some((u8::try_from(off).ok()?, u8::try_from(back).ok()?))
-}
+use rustynes_test_harness::access_dot::{MC_PER_DOT, READ_BASE_MC, WRITE_BASE_MC, place};
 
 fn apply(read_dot: i32, write_dot: i32) {
-    let (ro, rb) = knobs(READ_BASE_MC, read_dot).expect("read dot reachable");
-    let (wo, wb) = knobs(WRITE_BASE_MC, write_dot).expect("write dot reachable");
+    let (ro, rb) = place(READ_BASE_MC, read_dot);
+    let (wo, wb) = place(WRITE_BASE_MC, write_dot);
     rustynes_core::rustynes_cpu::READ_PHI_OFFSET.store(ro, Relaxed);
     rustynes_core::rustynes_cpu::READ_PHI_BACKOFF.store(rb, Relaxed);
     rustynes_core::rustynes_cpu::WRITE_PHI_OFFSET.store(wo, Relaxed);
@@ -176,9 +160,9 @@ fn knob_values_within_one_dot_are_the_same_placement() {
     assert_eq!((WRITE_BASE_MC + 1) / MC_PER_DOT, 1);
     assert_eq!((WRITE_BASE_MC + 2) / MC_PER_DOT, 2);
     // Dot 0 is reachable only through the backoff knobs.
-    assert_eq!(knobs(READ_BASE_MC, 0), Some((0, 4)));
-    assert_eq!(knobs(WRITE_BASE_MC, 0), Some((0, 6)));
-    assert_eq!(knobs(WRITE_BASE_MC, 2), Some((2, 0)));
+    assert_eq!(place(READ_BASE_MC, 0), (0, 4));
+    assert_eq!(place(WRITE_BASE_MC, 0), (0, 6));
+    assert_eq!(place(WRITE_BASE_MC, 2), (2, 0));
 }
 
 /// Is the six-entry NMI loss at `read = dot2` a PURE one-dot relative shift
@@ -279,10 +263,27 @@ fn coupled_placement_and_delay_sweep() {
     };
     use std::io::Write as _;
 
-    let csv_path =
-        std::env::var("ACCESS_SWEEP_CSV").unwrap_or_else(|_| "/tmp/access_sweep.csv".to_owned());
-    let mut csv =
-        std::fs::File::create(&csv_path).unwrap_or_else(|e| panic!("create {csv_path}: {e}"));
+    let csv_path = std::env::var("ACCESS_SWEEP_CSV").map_or_else(
+        |_| std::env::temp_dir().join("access_sweep.csv"),
+        std::path::PathBuf::from,
+    );
+    // The default lives in the platform temp dir, not a hardcoded `/tmp` that
+    // does not exist on every host this crate compiles for.
+    //
+    // On the review note calling this "unvalidated external input reaching a
+    // filesystem sink": the project's rule is about UNTRUSTED input at a
+    // boundary -- ROM bytes, save states, network frames -- and this is an
+    // `#[ignore]`d diagnostic whose path the operator gives to their own sweep.
+    // Treating a developer's own argument as untrusted would drain the rule
+    // where it matters. What the note is right about is the ERGONOMICS: a bare
+    // panic printed a backtrace instead of the reason.
+    let Ok(mut csv) = std::fs::File::create(&csv_path) else {
+        panic!(
+            "cannot write the sweep CSV to {} -- set ACCESS_SWEEP_CSV to a \
+             writable path",
+            csv_path.display()
+        )
+    };
     writeln!(
         csv,
         "read_dot,write_dot,oam2_lag,render_lag,skip_lag,mask_delay,passed,\
@@ -385,7 +386,7 @@ fn coupled_placement_and_delay_sweep() {
             }
         }
     }
-    eprintln!("best={best:?}  csv={csv_path}");
+    eprintln!("best={best:?}  csv={}", csv_path.display());
     eprintln!("cells at 143 or better ({}):", hits.len());
     for h in &hits {
         eprintln!("  {h}");
@@ -525,6 +526,68 @@ fn separate_the_sprite_rearm_depth_from_the_render_gate() {
                 );
             }
         }
+    }
+    shipped();
+}
+
+/// THE PREDICTION: give the dot-256 vertical increment its own depth.
+///
+/// `Frozen OAM2 Increment` fails because `v` ends at fine-Y 3 where the test
+/// needs 2 — the ROM enables rendering ON dot 256 and states the vertical
+/// scroll is NOT incremented, and our enable lands a dot early so
+/// `inc_vert_v()` fires. Every OAM2-side precondition already holds (the freeze
+/// is raised 809 times a run and reaches sprite fetch with all eight slots
+/// loading `$C1`); the detector is what fails.
+///
+/// `RENDER_GATE_LAG = 2` closes it and costs `Stale Sprite Shift Regs`, because
+/// that depth moves every consumer of the shared gate. `SCROLL_GATE_LAG` moves
+/// only this one.
+///
+/// Prediction: `SCROLL_GATE_LAG = 2` at the shipped everything-else →
+/// **144/144**.
+#[test]
+fn does_a_scroll_gate_depth_close_the_last_entry() {
+    use rustynes_core::rustynes_ppu::{OAM2_GATE_LAG, RENDER_GATE_LAG, SCROLL_GATE_LAG};
+
+    let shipped = || {
+        reset_knobs();
+        OAM2_GATE_LAG.store(0, Relaxed);
+        RENDER_GATE_LAG.store(1, Relaxed);
+        SCROLL_GATE_LAG.store(u8::MAX, Relaxed);
+    };
+    shipped();
+    let base = run();
+    let bs = cat::summarise(&base);
+    assert_eq!(
+        bs.pass + bs.pass_with_code,
+        143,
+        "control must reproduce the shipped 143/144 first"
+    );
+
+    for scroll in [0u8, 1, 2, 3] {
+        shipped();
+        SCROLL_GATE_LAG.store(scroll, Relaxed);
+        let now = run();
+        let s = cat::summarise(&now);
+        let passed = s.pass + s.pass_with_code;
+        let lost: Vec<&str> = cat::catalog()
+            .iter()
+            .zip(base.iter())
+            .zip(now.iter())
+            .filter(|((_, b), n)| b.is_pass() && !n.is_pass())
+            .map(|((e, _), _)| e.name.as_str())
+            .collect();
+        let gained: Vec<&str> = cat::catalog()
+            .iter()
+            .zip(base.iter())
+            .zip(now.iter())
+            .filter(|((_, b), n)| !b.is_pass() && n.is_pass())
+            .map(|((e, _), _)| e.name.as_str())
+            .collect();
+        eprintln!(
+            "SCROLL_GATE_LAG={scroll}  passed={passed}/{}  GAINED={gained:?}  LOST={lost:?}",
+            s.assigned()
+        );
     }
     shipped();
 }
