@@ -1,0 +1,27 @@
+# How each sub-test ROM in this directory was built.
+#
+# A sub-test ROM is the FULL AccuracyCoin ROM with its boot path patched to
+# enter one catalog entry directly, produced by
+# `scripts/accuracycoin-build/build_sub_test_rom.py <src> --suite S --test T`.
+# `suite` is the 0-based offset into `TableTable` in AccuracyCoin.asm and
+# `test` the 0-based row within that suite -- NOT the catalog's flat order.
+#
+# This file exists because that mapping was previously recorded nowhere. Without
+# it a rebuild has to guess the indices from the filename, and a slug-matching
+# pass over the 31 pre-existing ROMs mis-resolved several (`cpu-open-bus` and
+# `open-bus` both to suite 0 test 6) -- so guessing would silently ship ROMs
+# that enter the wrong test. Record the indices when you add a ROM.
+#
+# NOTE ON THE LEGACY `ppu-misc-` PREFIX: several ROMs carry it while living on
+# other pages (`ppu-misc-sprites-on-scanline-0` and
+# `ppu-misc-stale-sprite-shift-regs` are suite 21, Advanced Sprite Evaluation).
+# The prefix is historical; the suite column is authoritative.
+#
+# rom	suite	test	entry	upstream_commit
+advanced-sprite-eval-frozen-oam2-increment.nes	21	2	Frozen OAM2 Increment	9bc42d1e
+# The 31 ROMs below predate this manifest. They were built from an upstream
+# commit earlier than 69c88608 and their (suite, test) indices were not
+# recorded. They are NOT rebuilt here: the only upstream change since is a
+# single `INC <ErrorCode` inside `TEST_MisalignedOAM2Addr`, no existing sub-test
+# enters that routine, and rebuilding on guessed indices is strictly worse than
+# a stated gap. Fill a row in when you next rebuild one, with its indices.

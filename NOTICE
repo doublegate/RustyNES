@@ -112,7 +112,11 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
   DMA-dispatch models are ported into RustyNES (crates/rustynes-ppu,
   rustynes-cpu, rustynes-core), and its full source is vendored as a golden
   oracle at crates/rustynes-test-harness/golden/tricnes/tricnes-full-src/.
-  https://github.com/100thCoin/TriCNES  (commit 9199870)
+  https://github.com/100thCoin/TriCNES
+  Ported models were taken from commit 9199870; the VENDORED oracle is commit
+  f388af0b (re-synced 2026-09-11). The two are stated separately on purpose --
+  one records what was derived from, the other what is in the tree, and this
+  entry previously gave one id for both after the vendored copy moved on.
       Copyright (c) 2025 Chris Siebert -- MIT
   Note (v2.2.6 -> resolved v2.3.0): v2.2.6 disclosed that the octal-latch /
   hybrid-address *timing* had been calibrated to TriCNES's per-dot behavior

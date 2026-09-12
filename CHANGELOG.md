@@ -28,6 +28,59 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **AccuracyCoin re-synced to upstream `9bc42d1e`, and the vendored TriCNES
+  commit id corrected.** Upstream shipped a one-line fix on 2026-09-11 — a
+  missing `INC <ErrorCode` after test 2 of `Misaligned OAM2 Address`. It does
+  not change pass/fail, but it means **every failure code that entry reported
+  from test 3 onward was one too low**, so diagnostics recorded against it are
+  off by one. The catalog is untouched (zero `table "..."` lines in
+  `69c88608...9bc42d1e`), so the assigned count stays 144 and the battery still
+  reads **143/144** — verified, not assumed.
+
+  The vendored TriCNES source was **already** at upstream head `f388af0b`
+  (byte-identical, checked), while `NOTICE` and
+  `docs/originality-and-provenance.md` still cited `9199870`. Both now state
+  the two ids **separately**, because they mean different things: models were
+  ported from `9199870`, the vendored oracle is `f388af0b`. One id for both is
+  what let the record go stale when the vendored copy moved on.
+
+- **New sub-test ROM: `Frozen OAM2 Increment`** — the project's only remaining
+  AccuracyCoin failure had **no** standalone sub-test, so every verdict on it
+  was a one-bit read of a single battery status byte and a ±1-dot experiment
+  was uninterpretable. Built with upstream's own `nesasm.exe` under wine (the
+  author's toolchain, so the output is faithful rather than equivalent), and
+  validated: it reaches `$0493` at **frame 63** and reports `0x0A` = `Fail(2)`,
+  agreeing with the battery. That turns a 7000-frame question into a 63-frame
+  one.
+
+- **`sub-tests/BUILD-PROVENANCE.tsv`** records how a sub-test ROM is built.
+  The `(suite, test)` indices were previously recorded nowhere, so a rebuild had
+  to guess them from the filename — and a slug-matching pass over the 31
+  existing ROMs mis-resolved several (`cpu-open-bus` and `open-bus` both to
+  suite 0 test 6). Those 31 are therefore **deliberately not rebuilt**: guessing
+  indices would silently ship ROMs entering the wrong test, which is strictly
+  worse than a stated gap. The manifest records the new ROM exactly and marks
+  the rest as unrecorded.
+
+- **`build_sub_test_rom.py` resolves wine by absolute path.** It invoked a bare
+  `wine`, and on this machine `/usr/local/bin/wine` is a symlink to
+  `/usr/bin/firejail` that shadows the real binary — `wine --version` prints
+  `firejail version 0.9.80`. The script now probes candidates and accepts only
+  one that answers like wine, failing with the reason otherwise. Verified: it
+  finds `/usr/bin/wine` with no `PATH` help and rebuilds the new ROM
+  byte-identically.
+
+  Reviewers split on this and the disagreement is recorded rather than
+  averaged: one asked for the `PATH` result to be tried FIRST so a custom wine
+  keeps its precedence, the other for `PATH` to be dropped entirely as an
+  untrusted search path (CWE-426). `PATH`-first is exactly backwards for a
+  script whose reason to exist is a `PATH` entry shadowing the real binary — but
+  the need behind it is real, so it is served by `--wine` / `RUSTYNES_WINE`, an
+  override the operator sets deliberately rather than inherits. An explicit
+  override **fails hard** if it does not identify as wine, found by a negative
+  control here: `--wine /usr/bin/firejail` previously fell through and built
+  with something the operator had not asked for.
+
 - **Dependency refresh: 53 crates, one Gradle train, one action, and two
   coverage gaps.** Consolidates the seven open Dependabot PRs and everything
   else the project could move, rather than merging them one at a time -- which
