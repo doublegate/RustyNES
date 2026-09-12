@@ -267,10 +267,15 @@ fn fast_dotloop_is_byte_identical_when_an_enable_lands_beside_dot_256() {
                 let audio = nes.drain_audio();
                 per_frame.push(frame_hash(&nes, &audio));
             }
-            (per_frame, nes.bus().ram_bytes().to_vec())
+            (
+                per_frame,
+                nes.bus().ram_bytes().to_vec(),
+                nes.cycle(),
+                nes.snapshot(),
+            )
         };
-        let (exact, exact_ram) = run(false);
-        let (fast, fast_ram) = run(true);
+        let (exact, exact_ram, exact_cycles, exact_snap) = run(false);
+        let (fast, fast_ram, fast_cycles, fast_snap) = run(true);
         assert_eq!(
             exact.len(),
             fast.len(),
@@ -285,6 +290,19 @@ fn fast_dotloop_is_byte_identical_when_an_enable_lands_beside_dot_256() {
         assert_eq!(
             exact_ram, fast_ram,
             "seed {seed}: work RAM differs -- the ROM reached a different verdict"
+        );
+        // The rest of this suite defines byte identity as cumulative cycles AND
+        // the full snapshot, which carries CPU, PPU, APU, mapper and bus state.
+        // Frame hashes plus RAM would let a purely internal difference -- a
+        // stale gate stage, say, which is exactly this test's subject -- pass.
+        assert_eq!(
+            exact_cycles, fast_cycles,
+            "seed {seed}: cumulative CPU cycles differ"
+        );
+        assert_eq!(
+            exact_snap, fast_snap,
+            "seed {seed}: final snapshot differs -- internal state diverged \
+             without changing the visible output"
         );
     }
 }

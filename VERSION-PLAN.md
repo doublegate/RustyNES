@@ -149,7 +149,7 @@ The 1.x line was **additive / off-by-default** — every release stayed byte-ide
 
 ## Accuracy milestones (met)
 
-- `nestest` 0-diff, blargg / kevtris suites green, **AccuracyCoin 100.00% (141/141)** from **v2.0.3** onward (139/139 at the v1.0.0 cut; the v2.0.1 oracle re-sync grew the catalog to 141 assigned tests and briefly opened two PPU gaps, so v2.0.1–v2.0.2 shipped an honest 139/141 until the v2.0.3 2-cycle-ALE promotion closed them), and a byte-identical 60-ROM commercial regression oracle. As of v2.3.0 the AccuracyCoin gate is pinned to an **exact 141/141** (zero failing tests), so a single-test regression — e.g. in the hybrid-address model — fails CI. `docs/STATUS.md` is the authoritative pass-count source.
+- `nestest` 0-diff, blargg / kevtris suites green, **AccuracyCoin 100.00%** -- 141/141 from **v2.0.3** through v2.6.16, and **144/144** from v2.6.18 once the re-synced catalog's last entry closed (139/139 at the v1.0.0 cut; the v2.0.1 oracle re-sync grew the catalog to 141 assigned tests and briefly opened two PPU gaps, so v2.0.1–v2.0.2 shipped an honest 139/141 until the v2.0.3 2-cycle-ALE promotion closed them), and a byte-identical 60-ROM commercial regression oracle. As of v2.3.0 the AccuracyCoin gate is pinned to an **exact 141/141** (zero failing tests), so a single-test regression — e.g. in the hybrid-address model — fails CI. `docs/STATUS.md` is the authoritative pass-count source.
 
 ## Git tagging
 

@@ -261,11 +261,19 @@ than an index derived from the dot. Three rules, all stated by AccuracyCoin's
   freeze flag. The reset is gated on rendering, so an interval with rendering
   disabled across those dots steals it — which is the whole subject of the test.
 - **Increment on even dots of the fetch window**, wrapping the 5-bit counter.
-  The wrap raises the freeze flag, and the flag then suppresses further
+  The wrap raises `oam2_overflowed`, and that flag then suppresses further
   increments, so a completed fetch leaves the counter resting at 0. The ROM
   describes the overflow as happening "on dot 321", which is where a completed
   wrap is *observed* by the `$2004` copy-buffer load rather than a further step.
-- **While the flag is raised, every slot of sprite fetch reads OAM2[0]** — the
+- **`oam2_overflowed` and `oam2_fetch_frozen` are two states, not one.** The
+  wrap raises `oam2_overflowed` at any time; **dot 257 latches its value into
+  `oam2_fetch_frozen`**, and it is the *latched* copy that sprite fetch consumes.
+  So a wrap occurring after dot 257 changes nothing about the fetch already in
+  progress — it will be seen by the next scanline's latch instead. Both are
+  cleared by the dots 63/255/339 reset, and both are therefore observable only
+  when rendering is disabled across one of those dots.
+- **While the latched flag is raised, every slot of sprite fetch reads
+  OAM2[0]** — the
   freeze the entry is named for. With OAM2 full and rendering re-enabled on or
   after dot 256, all eight sprites therefore load byte 0 four times over.
 

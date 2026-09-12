@@ -1956,6 +1956,15 @@ impl Ppu {
         self.mask = PpuMask::empty();
         self.mask_for_skip_check = PpuMask::empty();
         self.mask_skip_pipe1 = PpuMask::empty();
+        self.prev_rendering_enabled = false;
+        self.rendering_enabled_delayed = false;
+        self.rendering_enabled_delayed2 = false;
+        // The rendering-gate pipeline is the same class of state as the two
+        // skip-check stages above and was simply missed. Reset preserves the
+        // current dot, so a reset at dot 254 otherwise reaches dot 256 with
+        // stale history and fires `inc_vert_v()` against an empty PPUMASK.
+        // Found in review on #515; the two-dot stage widened the window that
+        // made it observable, but `rendering_enabled_delayed` had the same hole.
         self.w = false;
         self.data_buffer = 0;
         self.post_reset_mask_remaining = self.region.post_reset_mask_cycles();
@@ -6322,6 +6331,7 @@ mod tests {
     /// disabled gate. The assertions below fail on the first `true`.
     #[cfg(feature = "phi2-write-sweep")]
     #[test]
+    #[test]
     fn render_gate_lag_shifts_a_two_dot_pipeline() {
         let mut ppu = Ppu::new(PpuRegion::Ntsc);
         // Power-on: both stages clear, rendering off.
@@ -6361,6 +6371,36 @@ mod tests {
         assert!(
             !dot(&mut ppu, false),
             "dot 7: the OFF edge has shifted through"
+        );
+    }
+
+    #[test]
+    fn reset_clears_the_rendering_gate_pipeline() {
+        // `reset` preserves dot/scanline, so gate history that survives it is
+        // history from before the reset being applied after it. Every stage
+        // must come back false, or a reset mid-scanline can fire the dot-256
+        // vertical increment with PPUMASK empty.
+        let mut ppu = Ppu::new(PpuRegion::Ntsc);
+        ppu.mask = PpuMask::SHOW_BG | PpuMask::SHOW_SPRITE;
+        ppu.prev_rendering_enabled = true;
+        ppu.rendering_enabled_delayed = true;
+        ppu.rendering_enabled_delayed2 = true;
+
+        ppu.reset();
+
+        assert!(ppu.mask.is_empty(), "reset clears PPUMASK");
+        assert!(
+            !ppu.prev_rendering_enabled,
+            "reset must clear prev_rendering_enabled"
+        );
+        assert!(
+            !ppu.rendering_enabled_delayed,
+            "reset must clear rendering-gate stage 1"
+        );
+        assert!(
+            !ppu.rendering_enabled_delayed2,
+            "reset must clear rendering-gate stage 2 -- otherwise a reset at dot \
+             254 reaches dot 256 with rendering history from before the reset"
         );
     }
 

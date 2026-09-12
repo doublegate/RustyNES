@@ -4,8 +4,13 @@
 //!
 //! # The question
 //!
-//! `Frozen OAM2 Increment` is the project's single remaining `AccuracyCoin`
-//! failure, and `KNOWN_FAILING` records a specific cause: the sprite-zero hit
+//! **Historical context, kept because this probe is what overturned it.** At
+//! the time this was written `Frozen OAM2 Increment` was the project's single
+//! remaining `AccuracyCoin` failure. It is **CLOSED** as of v2.6.18 and the
+//! battery reads 144/144, so `KNOWN_FAILING` is now empty — the probe remains a
+//! diagnostic for the dots a `$2001` write lands on, not a live investigation.
+//!
+//! `KNOWN_FAILING` then recorded a specific cause: the sprite-zero hit
 //! the entry detects with needs an opaque background pixel, `v` sits at fine-Y
 //! **3** where the test needs **2**, and that is "because a `$2001` enable on
 //! dot 256 takes effect a dot early", firing the dot-256 vertical increment the
@@ -157,21 +162,25 @@ fn dump_around(recs: &[PpuStateRecord], frame: u32, line: i16, centre: u16) {
 /// test 4 fails by producing a hit that must not happen, so the hit list is
 /// the only place its failure is visible at all.
 fn report_sprite_zero(recs: &[PpuStateRecord]) {
-    let mut prev_hit = false;
+    // `Option`, not `false`: the window starts mid-frame, so the first
+    // captured record can already have bit 6 set from a hit before
+    // scanline 185, and a `false` seed would report that dot as the hit.
+    // Same correctness argument as `report_transitions`' per-frame reset.
+    let mut prev_hit: Option<bool> = None;
     let mut prev_frame = None;
     for r in recs {
         if prev_frame != Some(r.frame) {
-            prev_hit = false;
+            prev_hit = None;
             prev_frame = Some(r.frame);
         }
         let hit = r.status & 0x40 != 0;
-        if hit && !prev_hit {
+        if hit && prev_hit == Some(false) {
             println!(
                 "  SPRITE-ZERO HIT  f{} line {} dot {}",
                 r.frame, r.scanline, r.dot
             );
         }
-        prev_hit = hit;
+        prev_hit = Some(hit);
     }
     println!("  -- sprite line-up latched at dot 321 --");
     for r in recs

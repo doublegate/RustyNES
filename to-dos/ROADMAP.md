@@ -28,7 +28,9 @@ that closed the "deepen the existing project" run, and the maintenance /
 distribution / provenance patches **v2.2.1 → v2.2.5**, the **v2.2.6 → v2.3.0**
 de-monetization + NESdev-remediation line, and the **v2.3.1 → v2.3.9** tooling /
 measurement / gates line — of which **`v2.3.9` "Crucible" (what the gates actually
-cover) is the current shipped tag**. The freed **`v2.3.0`** slot is repurposed as the accuracy/fidelity
+cover) closed that line** -- it was the shipped tag when this paragraph was
+written, on 2026-08-20; the current release is named in the Status section
+below. The freed **`v2.3.0`** slot is repurposed as the accuracy/fidelity
 capstone of the **v2.2.6 → v2.3.0** "de-monetization + NESdev-remediation" line (see
 below). **RustyNES is permanently open-source and income-free (ADR 0035): all planned
 monetization is removed and the native apps are kept as free FOSS apps.** A **free**
