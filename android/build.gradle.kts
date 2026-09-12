@@ -62,10 +62,16 @@ plugins {
     // is exactly the shape that was already building at 2.3.21 against the same
     // AGP 2.2.10 coordinate.
     //
-    // This machine has no Android toolchain, so that is an argument and not a
-    // measurement. The adjudicator is CI's `Gradle bundle foss+play release`
-    // job, and note it is `continue-on-error: true` -- it cannot fail the PR, so
-    // its LOG has to be read rather than its check mark.
+    // This machine has no Android toolchain, so the above is an argument. The
+    // MEASUREMENT is CI's `Gradle bundle foss+play release` job, and it came
+    // back **BUILD SUCCESSFUL in 17m 41s** on run 34694004147 with this plugin
+    // at 2.4.20 and AGP at 9.4.0 -- both `:app:bundleFossRelease` and
+    // `:app:bundlePlayRelease` produced their AAB, the Compose mapping tasks
+    // ran, and nothing reported a Kotlin/Compose incompatibility.
+    //
+    // Read that job's LOG, never its check mark: it is `continue-on-error: true`
+    // (the name says "best-effort packaging"), so a broken Android build leaves
+    // the PR green. That is the standing hazard here, not this version.
     id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" apply false
     // v1.8.8 "Atlas" (Workstream J): the Baseline Profile Gradle plugin. The plan
     // named 1.4.1, but that stable line predates AGP 9 and its module-type guard
