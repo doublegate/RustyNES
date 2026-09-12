@@ -71,6 +71,12 @@ fn derive_render_gate_lag_under_phi2() {
         (2, 1),     // phi2 alone (known 141/144)
         (2, 2),     // phi2, deeper -- the wrong direction, as a control
         (4, 0),     // a full dot later, one less delay
+        // The grid's last two cells. Added after the depth-2 pipeline defect
+        // was fixed: a claim that 144/144 is unreachable ACROSS this space has
+        // to have measured the space, and write=4 had only ever been probed at
+        // one depth.
+        (4, 1),
+        (4, 2),
     ] {
         rustynes_core::rustynes_cpu::WRITE_PHI_OFFSET.store(woff, Relaxed);
         rustynes_core::rustynes_ppu::RENDER_GATE_LAG.store(lag, Relaxed);

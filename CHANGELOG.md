@@ -28,6 +28,32 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **The depth-2 rendering-gate pipeline froze instead of shifting, so two cells
+  of the published derivation sweep measured the instrument.** Under
+  `phi2-write-sweep` (a default-off study feature; the shipped build is
+  unaffected, and asserted so at compile time), `tick` re-pointed
+  `rendering_enabled_delayed` to `render_gate_prev2` at the top of a dot and
+  then assigned `render_gate_prev2` back FROM that same field at the bottom --
+  `prev2 = prev2`, freezing the stage at its power-on `false` for the whole run.
+  Both `lag = 2` cells were published as **120/144** and actually read **141**
+  and **140**: they measured a permanently disabled rendering gate, and that
+  23-test collapse read as evidence that deeper pipelines are catastrophic when
+  it was evidence of nothing. A second defect sat beside it -- the specialized
+  dot paths bypass the pipeline, and their guards prove only a ONE-dot rendering
+  history, so at depth >= 2 they would run a rendering-enabled body the general
+  path gates off. The shift is now a named pair (`render_gate_begin_dot` /
+  `render_gate_end_dot`) passing the value between them rather than leaving it
+  in a field two hundred lines away, and `fast_dot_paths_valid()` excludes the
+  fast paths at depth >= 2. The grid is completed from seven cells to all nine,
+  because a claim of unreachability ACROSS a space has to have measured the
+  space. **The conclusion is unchanged** -- the intersection is still empty and
+  the shipped `(0, 1)` is still the unique 143/144 -- and it now rests on nine
+  correct cells instead of seven of which two were wrong. Found in review
+  against a sweep already run and written up; what kept it findable is that the
+  sweep asserts its control FIRST, so `(0,1)` reading 143/144 in both the broken
+  and the fixed run put the harness beyond suspicion and left the depth knob as
+  the only candidate.
+
 - **RETRACTION: v2.6.17's "two dots early" is wrong; the gap is HALF A DOT.**
   That release states the `$2001` writes land "two dots early ... 242 and 256,
   where this core applies 240 and 254", and that figure is the premise its whole
@@ -35,7 +61,7 @@ cycle-accurate core later replaced.
 
   **Arithmetic.** `write_split(12) = (7, 5)` advances the PPU to
   `pre - PPU_OFFSET` = **6 master clocks** into the CPU cycle — 1.5 dots — where
-  phi2 is 8, or 2.0. The gap is **2 master clocks, half a dot**. That is the
+  phi2 is 8, or 2.0. The gap is **2 master clocks, half a dot**. Those are the
   constants the shipped build compiles, not an interpretation.
 
   **The knob agrees.** `WRITE_PHI_OFFSET` is denominated in master clocks and the

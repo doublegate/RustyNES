@@ -342,6 +342,23 @@ jobs:
         run: >
           cargo clippy -p rustynes-test-harness --all-targets
           --features cpu-boot-trace,irq-timing-trace,ppu-state-trace -- -D warnings
+      # `phi2-write-sweep` (the v2.6.18 write-commit study) gates code in BOTH
+      # `rustynes-ppu` and the harness's two sweep tests, and no step above
+      # reaches any of it -- `--workspace --all-targets` is default features
+      # only. Added with the feature's consumers rather than after a red `main`,
+      # since "a cfg-gated module is presumed unlinted until a step names it" is
+      # a lesson this repository has already paid for twice. The second
+      # invocation pairs it with `ppu-state-trace`, which cfgs the fast-dot
+      # dispatch out and so orphans the sweep's guard helper: the combination is
+      # where that shows up, and neither feature alone reports it.
+      - name: clippy (phi2-write-sweep)
+        run: >
+          cargo clippy -p rustynes-test-harness --all-targets
+          --features test-roms,phi2-write-sweep -- -D warnings
+      - name: clippy (phi2-write-sweep + ppu-state-trace)
+        run: >
+          cargo clippy -p rustynes-ppu --all-targets
+          --features ppu-state-trace,phi2-write-sweep -- -D warnings
       - name: rustdoc (-D warnings)
         run: cargo doc --workspace --no-deps
       # Feature-gated clippy combos CLAUDE.md mandates. These previously ran

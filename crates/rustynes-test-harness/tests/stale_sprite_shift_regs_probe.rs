@@ -134,10 +134,7 @@ fn stale_sprite_shift_regs_rendering_transition_dot() {
         });
         rustynes_core::rustynes_cpu::WRITE_PHI_OFFSET
             .store(n, core::sync::atomic::Ordering::Relaxed);
-        let r: u8 = std::env::var("STALE_READ_OFFSET")
-            .ok()
-            .map(|v| v.parse().expect("STALE_READ_OFFSET is not a u8"))
-            .unwrap_or(0);
+        let r: u8 = env_or("STALE_READ_OFFSET", 0);
         rustynes_core::rustynes_cpu::READ_PHI_OFFSET
             .store(r, core::sync::atomic::Ordering::Relaxed);
         println!("WRITE_PHI_OFFSET = {n}, READ_PHI_OFFSET = {r}");
