@@ -198,6 +198,16 @@ cpal = "0.18"
 # Reproducing it in isolation costs two minutes and needs no migration, so do
 # that before touching this repository at the next attempt.
 #
+# RE-CONFIRMED INDEPENDENTLY 2026-09-12 at the v2.6.19 dependency refresh, by
+# exactly that scratch-crate route: `egui-winit = "0.36.2"` with this project's
+# feature set fails `cargo check --target wasm32-unknown-unknown` with the same
+# E0407, and the NATIVE control on the same crate compiles clean -- so the
+# failure is the wasm cfg gap and not a broken probe. 0.36.2 is still the latest
+# stable. The advice above is also worth heeding literally: cherry-picking the
+# preserved branch onto a current tree conflicts in `Cargo.toml`, `Cargo.lock`
+# and an unrelated workflow, and was abandoned in favour of the two-minute
+# check, which answered the question on its own.
+#
 # The complete migration, native-green, is preserved on
 # `chore/egui-0.36-wgpu-30-blocked`. Note it is based on a pre-v2.3.2 tree, so
 # it is a reference for the five API deltas rather than something to cherry-pick.

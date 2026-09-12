@@ -303,7 +303,7 @@ dependencies {
     // LocaleManager on API 33+, and a manual override on API 24..32). MainActivity must
     // extend AppCompatActivity and the launch theme must derive from an AppCompat theme
     // for the locale APIs to take effect under Compose.
-    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("androidx.appcompat:appcompat:1.8.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
     // collectAsStateWithLifecycle for the controller-connect StateFlow (v1.8.7, #41).
@@ -330,7 +330,7 @@ dependencies {
     // `coil-compose` (the core + the AsyncImage composable). The libretro box-art
     // auto-match (BoxArt.kt) does its own one-shot HttpURLConnection download to a
     // file:// cache, so no Coil network fetcher (coil-network-*) is pulled in either.
-    implementation("io.coil-kt.coil3:coil-compose:3.6.1")
+    implementation("io.coil-kt.coil3:coil-compose:3.6.2")
     // v1.8.8 "Atlas" (Workstream H): the home-screen "Resume <last game>" widget is
     // authored with Glance (Compose-idiomatic, matching the rest of the app). 1.3.0-
     // alpha01 is the Glance line that explicitly bumped its Compose compileSdk to API
@@ -343,7 +343,7 @@ dependencies {
     // to Compose (the library grid entries/folders) become `ImmutableList`/`PersistentList`
     // so the compiler treats them as STABLE and the strong-skipping pass can skip the
     // list composables when the reference is unchanged — a `List<>` is inferred unstable.
-    implementation("org.jetbrains.kotlinx:kotlinx-collections-immutable:0.5.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-collections-immutable:0.5.2")
     // v1.8.8 "Atlas" (Workstream J): installs the bundled Baseline Profile at runtime
     // (the AOT-compile hint for the launch/scroll classes). Pinned to the androidx.benchmark
     // 1.4.1 line that the :baselineprofile generator + the baselineprofile plugin use.
