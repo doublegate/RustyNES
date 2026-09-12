@@ -240,7 +240,7 @@ Genuinely incorporated, each GPL-compatible and attributed in `NOTICE`:
 | Component | License | Copyright | Where |
 | --- | --- | --- | --- |
 | emu2413 v1.5.9 | MIT | 2020 Mitsutaka Okazaki | `crates/rustynes-apu/src/opll.rs` (Rust port; VRC7 audio, ADR 0006) |
-| TriCNES (commit 9199870) | MIT | 2025 Chris Siebert | `crates/rustynes-{ppu,cpu,core}` (ported models) + vendored golden oracle |
+| TriCNES | MIT | 2025 Chris Siebert | `crates/rustynes-{ppu,cpu,core}` (models ported from commit `9199870`) + vendored golden oracle (commit `f388af0b`, re-synced 2026-09-11) |
 | rcheevos v12.3.0 | MIT | 2018 RetroAchievements.org | `crates/rustynes-cheevos/vendor/rcheevos/` (optional `retroachievements` feature) |
 | blip_buf | LGPL-2.1-or-later | Shay Green (Blargg) | `crates/rustynes-apu/src/blip.rs` (band-limited synthesis; GPLv3-compatible) |
 | Font Awesome Free / bundled fonts | their own licenses (OFL-1.1 etc.) | respective authors | `crates/rustynes-frontend/assets/fonts/` |

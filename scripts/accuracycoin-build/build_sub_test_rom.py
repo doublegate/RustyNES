@@ -50,6 +50,7 @@ inherit the upstream MIT license (see tests/roms/AccuracyCoin/LICENSES.md).
 
 import argparse
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -121,6 +122,34 @@ CustomSubTest_Halt:
 	JSR WaitForVBlank
 	JMP CustomSubTest_Halt
 """
+
+
+def _find_wine() -> str:
+    """An absolute path to a real wine, or exit with why.
+
+    `shutil.which("wine")` is not enough: a firejail (or any other) wrapper can
+    occupy that name and will happily run, so each candidate is asked for its
+    version and only accepted if it answers like wine.
+    """
+    candidates = ["/usr/bin/wine", "/usr/bin/wine64"]
+    found = shutil.which("wine")
+    if found:
+        candidates.append(found)
+    for cand in candidates:
+        if not Path(cand).exists():
+            continue
+        try:
+            probe = subprocess.run([cand, "--version"], capture_output=True,
+                                   text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if "wine" in (probe.stdout + probe.stderr).lower():
+            return cand
+    sys.exit(
+        "no working wine found (tried: " + ", ".join(candidates) + "). "
+        "Note that a `wine` on PATH may be a sandbox wrapper -- this script "
+        "requires the real binary because it runs upstream's nesasm.exe."
+    )
 
 
 def patch_source(src: str, suite_idx: int, test_idx: int) -> str:
@@ -230,10 +259,19 @@ def main() -> int:
             else:
                 shutil.copy2(f, dest)
 
-    # Assemble via wine + nesasm.exe (the upstream toolchain).
+    # Assemble via wine + nesasm.exe (the upstream toolchain, so the output is
+    # the author's own assembler rather than merely an equivalent one).
+    #
+    # Resolve wine to an ABSOLUTE path rather than trusting `PATH`. On this
+    # machine `/usr/local/bin/wine` is a symlink to `/usr/bin/firejail`, which
+    # shadows the real binary: a bare `wine --version` prints
+    # `firejail version 0.9.80` and the assemble silently runs the wrong
+    # program. Prefer the first entry that actually reports a wine version.
     print(f"[build] suite={args.suite} test={args.test} name={args.name}",
           file=sys.stderr)
-    cmd = ["wine", str(args.build_dir / "nesasm.exe"), "AccuracyCoin.asm"]
+    wine = _find_wine()
+    print(f"[build] wine={wine}", file=sys.stderr)
+    cmd = [wine, str(args.build_dir / "nesasm.exe"), "AccuracyCoin.asm"]
     r = subprocess.run(cmd, cwd=args.build_dir, capture_output=True,
                        text=True, timeout=120)
     if r.returncode != 0:
