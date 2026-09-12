@@ -89,6 +89,32 @@ updates:
       time: "06:00"
       timezone: "America/New_York"
     open-pull-requests-limit: 5
+    # GROUP THE COUPLED ARTIFACTS. Dependabot raises one PR per artifact, and
+    # three sets here move in lockstep or not at all -- which is not a tidiness
+    # point, it is how a half-applied bump reaches `main`:
+    #
+    #   * AGP: `com.android.application` and `com.android.test` share a version
+    #     coordinate, and only the first ever got a PR.
+    #   * Baseline profiles: the `androidx.baselineprofile` plugin tracks
+    #     `androidx.benchmark:benchmark-macro-junit4`.
+    #   * Glance: `glance-appwidget` and `glance-material3` are one Jetpack
+    #     library split across two artifacts.
+    #
+    # The Glance pair is the reason this block exists rather than a comment:
+    # the v2.6.18 refresh, whose whole subject was un-desyncing coupled pins,
+    # bumped `glance-material3` and left `glance-appwidget` behind. Caught in
+    # review. A rule the tooling enforces beats a rule someone has to remember.
+    groups:
+      android-gradle-plugin:
+        patterns:
+          - "com.android.*"
+      androidx-benchmark:
+        patterns:
+          - "androidx.benchmark:*"
+          - "androidx.baselineprofile*"
+      androidx-glance:
+        patterns:
+          - "androidx.glance:*"
     labels:
       - "dependencies"
       - "android"

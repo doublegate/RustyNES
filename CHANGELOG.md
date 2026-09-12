@@ -43,8 +43,16 @@ cycle-accurate core later replaced.
   while **wasm clippy still passes** -- so nothing but this pin would have
   caught it. Bumped in the same change.
 
-  **Android.** The five Gradle bumps, plus the two pins Dependabot could not
-  know to move with them: `com.android.test` shares AGP's version coordinate
+  **Android.** The five Gradle bumps, plus the THREE pins Dependabot could not
+  know to move with them. The third was found in review, and it is this
+  change's own defect: the refresh bumped `androidx.glance:glance-material3`
+  to 1.3.0-alpha02 and left `androidx.glance:glance-appwidget` at alpha01 --
+  one Jetpack library split across two artifacts, desynced by exactly the
+  mechanism this entry is about. Corrected, and the correction is now enforced
+  rather than remembered: `.github/dependabot.yml` groups the AGP artifacts,
+  the benchmark/baselineprofile pair and the Glance pair, so Dependabot raises
+  each set as one PR instead of leaving the halves to be matched by hand.
+  The other two: `com.android.test` shares AGP's version coordinate
   (its own comment says so), and `androidx.baselineprofile` tracks
   `benchmark-macro-junit4`. Dependabot raises each artifact separately, so
   merging its `com.android.application` 9.4.0 PR alone would have left
