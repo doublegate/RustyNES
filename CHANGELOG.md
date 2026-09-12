@@ -26,6 +26,29 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The browser build stopped opening the Netplay pane at you.** On the wasm
+  demo, loading a ROM force-opened "Netplay (browser)" every time. The comment
+  at the site gave a real reason — the WebRTC handshake keys on the ROM hash, so
+  the lobby has nothing to offer before a ROM exists — but that is an argument
+  for *enabling* the menu entry at ROM load, not for opening a window nobody
+  asked for.
+
+  The reason it was written that way is the actual defect: the Netplay menu item
+  was `cfg(not(target_arch = "wasm32"))`, so **the browser had no menu entry at
+  all** and force-opening was the only way to reach the lobby. There is now a
+  wasm entry in the same menu group, with the same `WIFI` glyph, labelled
+  "Netplay (browser)..." after the window it opens — a browser cannot open a UDP
+  socket, so the two are different transports rather than one feature built
+  twice. It is enabled once a ROM is loaded, which is the honest form of the
+  reason the force-open cited.
+
+  `ToolPanel::Netplay` routes to the lobby on wasm rather than to the UDP panel,
+  which renders only a "native-only" note there, and forces the overlay visible
+  the way `open_chip_panel` already does, because the lobby draws inside that
+  egui frame. Native behaviour is unchanged.
+
 ## [2.6.18] - 2026-09-12 - "Errata" (the recorded cause was wrong in three ways, and the last AccuracyCoin entry closes)
 
 ### Changed

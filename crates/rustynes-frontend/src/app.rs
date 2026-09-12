@@ -4805,6 +4805,21 @@ impl App {
                 if panel == crate::debugger::ToolPanel::TasStudio {
                     self.ensure_tas_editor();
                 }
+                // wasm32: `Netplay` means the BROWSER lobby, not the UDP panel.
+                // A browser cannot open a UDP socket, so `netplay_panel` renders
+                // only a "native-only" note there -- routing to it would offer
+                // the user a window that says it does not work. The lobby is an
+                // `App`-owned window rather than a `ToolPanel`, and it draws
+                // inside the overlay's egui frame, so the overlay has to be
+                // forced visible exactly as `open_chip_panel` does.
+                #[cfg(target_arch = "wasm32")]
+                if panel == crate::debugger::ToolPanel::Netplay {
+                    self.wasm_lobby.open = true;
+                    if let Some(d) = self.debugger.as_mut() {
+                        d.force_visible();
+                    }
+                    return;
+                }
                 if let Some(d) = self.debugger.as_mut() {
                     d.open_panel(panel);
                 }
@@ -9040,13 +9055,16 @@ impl ApplicationHandler<AppEvent> for App {
                 #[cfg(not(target_arch = "wasm32"))]
                 let sr = 44_100;
                 self.start_nes(sr, event_loop);
-                // v2.7.0 — surface the browser netplay lobby now that a ROM is
-                // loaded (the WebRTC handshake needs the ROM hash). The user can
-                // close it; the `~` debugger overlay must be visible to see it.
-                #[cfg(target_arch = "wasm32")]
-                {
-                    self.wasm_lobby.open = true;
-                }
+                // The browser netplay lobby is NOT opened here. It used to be:
+                // loading a ROM force-opened it on every wasm session, so the
+                // pane appeared unbidden the moment a game started. The stated
+                // reason was that the WebRTC handshake needs the ROM hash --
+                // true, and an argument for *enabling* the menu entry once a ROM
+                // is loaded, not for opening a window nobody asked for. It was
+                // also the only way to reach the lobby at all, because the
+                // Netplay menu item was `cfg(not(wasm32))`; that is fixed in
+                // `ui_shell.rs`, so the lobby is now opened the same way every
+                // other panel is.
             }
             AppEvent::MovieLoaded(bytes) => {
                 // v1.6.0 Sprint 4 — uploaded `.rnm` movie bytes (wasm32).
