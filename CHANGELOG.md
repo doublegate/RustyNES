@@ -26,6 +26,69 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependency refresh: 53 crates, one Gradle train, one action, and two
+  coverage gaps.** Consolidates the seven open Dependabot PRs and everything
+  else the project could move, rather than merging them one at a time -- which
+  is not a stylistic preference here, because three of the pins are COUPLED and
+  a per-artifact merge desyncs them.
+
+  **Cargo (53 crates).** `cargo update` to the latest 1.96-compatible versions,
+  which covers all three crates of the grouped production PR (`toml` 1.1.4 ->
+  1.1.6, one further than proposed; `ureq` 3.4.0 -> 3.4.1; `cc` 1.4.4 ->
+  1.4.5). The coupled one is `wasm-bindgen` 0.2.127 -> 0.2.128: the CLI version
+  in `crates/rustynes-frontend/web/Trunk.toml` must equal the library in
+  `Cargo.lock` exactly, and a mismatch fails `trunk build` and the Pages deploy
+  while **wasm clippy still passes** -- so nothing but this pin would have
+  caught it. Bumped in the same change.
+
+  **Android.** The five Gradle bumps, plus the THREE pins Dependabot could not
+  know to move with them. The third was found in review, and it is this
+  change's own defect: the refresh bumped `androidx.glance:glance-material3`
+  to 1.3.0-alpha02 and left `androidx.glance:glance-appwidget` at alpha01 --
+  one Jetpack library split across two artifacts, desynced by exactly the
+  mechanism this entry is about. Corrected, and the correction is now enforced
+  rather than remembered: `.github/dependabot.yml` groups the AGP artifacts,
+  the benchmark/baselineprofile pair and the Glance pair, so Dependabot raises
+  each set as one PR instead of leaving the halves to be matched by hand.
+  The other two: `com.android.test` shares AGP's version coordinate
+  (its own comment says so), and `androidx.baselineprofile` tracks
+  `benchmark-macro-junit4`. Dependabot raises each artifact separately, so
+  merging its `com.android.application` 9.4.0 PR alone would have left
+  `com.android.test` at 9.3.2. AGP's recorded BUILD SUCCESSFUL measurement is
+  deliberately left stated at 9.3.2 rather than reworded to 9.4.0: no Android
+  toolchain exists on the machine that made the bump, and a measurement nobody
+  re-ran must not be re-attributed to a version nobody tested it on. CI's
+  Gradle bundle job is what re-establishes it.
+
+  **GitHub Actions.** `taiki-e/install-action` 2.87.0 -> 2.87.11 (Dependabot
+  proposed 2.87.5). Every other action was already at its latest major, and
+  **both SHA pins already resolve to the current tag** -- `actions/checkout`
+  to v7.0.1 and `dtolnay/rust-toolchain` to v1 -- checked against the API
+  rather than assumed. The three `pre-commit` hook pins are likewise already
+  latest.
+
+- **Dependabot was blind to `crates/rustynes-cosim`, and had been all along.**
+  That crate is excluded from the workspace on purpose, so it carries its OWN
+  `Cargo.lock` which the `/` cargo entry cannot reach -- four crates had
+  drifted with nothing watching them. Added a `/crates/rustynes-cosim`
+  directory entry and updated the lock. The exclusion is deliberate and stays;
+  the blind spot it created does not. Same shape as every "the gate does not
+  reach the code" finding in this project, one layer out into the tooling.
+
+- **The egui 0.36 / wgpu 30 hold is RE-MEASURED, not re-asserted.** The note
+  said "0.36.1 is the newest on crates.io as of 2026-08". 0.36.2 shipped
+  2026-09-08 and **still carries the blocker**: a three-line scratch crate
+  depending on `egui-winit = "0.36.2"` with this project's exact feature set
+  fails `cargo check --target wasm32-unknown-unknown` with the
+  same `E0407` -- method "bytes" is not a member of trait
+  `egui::DroppedFile` -- and 0.36.2's `NativeFile` still implements `bytes()`
+  with no cfg gate. Recorded with the reproduction, because re-checking an
+  exclusion at the version that ships rather than the one that wrote it is a
+  lesson this project has already paid for -- and the isolated repro costs two
+  minutes against a full migration.
+
 ### Fixed
 
 - **The depth-2 rendering-gate pipeline froze instead of shifting, so two cells
