@@ -6331,7 +6331,6 @@ mod tests {
     /// disabled gate. The assertions below fail on the first `true`.
     #[cfg(feature = "phi2-write-sweep")]
     #[test]
-    #[test]
     fn render_gate_lag_shifts_a_two_dot_pipeline() {
         let mut ppu = Ppu::new(PpuRegion::Ntsc);
         // Power-on: both stages clear, rendering off.
