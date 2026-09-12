@@ -228,6 +228,67 @@ fn fast_dotloop_is_byte_identical_across_corpus() {
 /// corruption is armed and let the exact path arm/commit it. This re-runs the
 /// OAM-exercising corpus with the corruption-modelling revision enabled to
 /// PROVE fast == exact even through #280's corruption paths.
+/// v2.6.18 — the fast path against a `$2001` enable landing NEXT TO dot 256.
+///
+/// The dot-256 vertical increment reads a TWO-dot rendering history
+/// (`rendering_enabled_delayed2`), while the fast-path dispatch guard's other
+/// rendering terms only prove ONE dot: `rendering_enabled_delayed` and
+/// `prev_rendering_enabled` are both "rendering as of the previous dot". So a
+/// mask that turned on at dot 255 satisfies every one of them at dot 256 while
+/// the two-dot view is still `false` — and the fast body would increment where
+/// the general path does not.
+///
+/// **The existing corpus cannot see this**, which is why it is a separate test
+/// rather than another corpus row: dropping the guard term left
+/// `fast_dotloop_is_byte_identical_across_corpus` green, because reaching the
+/// divergence needs a `$2001` enable whose effect lands on one specific dot
+/// relative to 256 and none of those ROMs writes there. `Frozen OAM2 Increment`
+/// is built to write exactly there.
+///
+/// Writes land on CPU-cycle boundaries, so the reachable dots are spaced three
+/// apart and which one a given run hits depends on the power-on CPU/PPU phase.
+/// Sweeping the seed sweeps that phase, which is what makes the case reachable
+/// at all rather than a matter of luck.
+#[test]
+fn fast_dotloop_is_byte_identical_when_an_enable_lands_beside_dot_256() {
+    let path = rom_path("AccuracyCoin/sub-tests/advanced-sprite-eval-frozen-oam2-increment.nes");
+    let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
+
+    for seed in 0..12_u64 {
+        let run = |fast: bool| {
+            let mut nes = Nes::from_rom_with_power_on_seed(&bytes, seed)
+                .unwrap_or_else(|e| panic!("parse frozen-oam2 sub-test: {e:?}"));
+            nes.set_fast_dotloop(fast);
+            assert_eq!(nes.fast_dotloop(), fast, "fast_dotloop knob did not stick");
+            let mut per_frame = Vec::with_capacity(140);
+            // Past frame 122, where the sub-test's last `$2001` pair lands.
+            while nes.frame() < 140 && !nes.is_jammed() {
+                nes.run_frame();
+                let audio = nes.drain_audio();
+                per_frame.push(frame_hash(&nes, &audio));
+            }
+            (per_frame, nes.bus().ram_bytes().to_vec())
+        };
+        let (exact, exact_ram) = run(false);
+        let (fast, fast_ram) = run(true);
+        assert_eq!(
+            exact.len(),
+            fast.len(),
+            "seed {seed}: frame count differs between fast and exact"
+        );
+        for (i, (a, b)) in exact.iter().zip(fast.iter()).enumerate() {
+            assert_eq!(a, b, "seed {seed}: fast dot path diverges at frame {i}");
+        }
+        // The ROM's own verdict byte, not only the rendered output: a wrong
+        // dot-256 increment changes `v`, and `v` is what its sprite-zero
+        // detector depends on.
+        assert_eq!(
+            exact_ram, fast_ram,
+            "seed {seed}: work RAM differs -- the ROM reached a different verdict"
+        );
+    }
+}
+
 #[test]
 fn fast_dotloop_is_byte_identical_under_oamaddr_corruption_revision() {
     // The OAM / sprite-heavy members of the corpus — the ones most likely to

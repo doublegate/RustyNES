@@ -150,9 +150,7 @@ fn accuracycoin_visible_window_emits_binary_trace() {
     // RustyNES per-frame comparison runs where the Mesen2 Lua script
     // injects the Start press itself.
     let raw_boot = env::var("RUSTYNES_PPU_TRACE_RAW_BOOT")
-        .ok()
-        .filter(|s| s == "1" || s.eq_ignore_ascii_case("true"))
-        .is_some();
+        .is_ok_and(|s| s == "1" || s.eq_ignore_ascii_case("true"));
     if raw_boot {
         println!("[ppu_state_trace_fixture] raw-boot mode: skipping splash + start-press");
     } else {

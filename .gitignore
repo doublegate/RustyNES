@@ -365,3 +365,13 @@ scripts/gg/__pycache__/
 # can READ it with its file tools instead of the review being truncated to the argv
 # ceiling. Created and removed within a single run; never committed.
 /.agy-review-work/
+
+# AccuracyCoin sub-test ROM builds. `scripts/accuracycoin-build/build_sub_test_rom.py`
+# defaults its scratch to /tmp, but `--build-dir` can point in-tree, and the nesasm
+# toolchain drops listing/symbol sidecars beside whatever it assembles. The ROMs it
+# produces under tests/roms/AccuracyCoin/sub-tests/ ARE committed (with their
+# BUILD-PROVENANCE.tsv); the intermediates never are.
+/accuracycoin-build/
+tests/roms/**/*.lst
+tests/roms/**/*.fns
+tests/roms/**/*.nl

@@ -895,6 +895,23 @@ pub struct Ppu {
     #[cfg(feature = "phi2-write-sweep")]
     pub(crate) render_gate_prev2: bool,
 
+    /// Rendering as it stood TWO dots ago -- the gate the dot-256 vertical
+    /// increment reads, and the only consumer that needs a second stage.
+    ///
+    /// v2.6.18. `AccuracyCoin`'s `Frozen OAM2 Increment` test 2 states the rule
+    /// this models: *"Rendering is enabled on dot 256, but the PPU's vertical
+    /// scroll is NOT incremented."* That sentence only parses if the enable IS
+    /// on dot 256 -- so an enable in force from the start of dot 256 must not
+    /// fire dot 256's increment, and the increment therefore sees the mask one
+    /// dot deeper than [`Ppu::rendering_enabled_delayed`] does.
+    ///
+    /// Measured rather than fitted: a `$2001` write whose effect lands during
+    /// dot N is in force from the start of N+1, and the ROM over-determines the
+    /// depth (the dot-256 increment must not fire, the dot-257 latch must), so
+    /// `d = 257 - 255 = 2`. Both neighbouring depths fail -- one dot shallower
+    /// is byte-identical to the unfixed build, one dot deeper breaks test 2.
+    pub(crate) rendering_enabled_delayed2: bool,
+
     /// v2.6.18 (`phi2-write-sweep` only): a shared four-stage `$2001` history,
     /// newest first, that each swept consumer gate reads at its OWN depth.
     ///
@@ -1343,7 +1360,7 @@ fn fast_dot_paths_valid() -> bool {
     // which is exactly what the first run of that sweep reported, four depths
     // all at 143/144 with nothing gained and nothing lost.
     RENDER_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) <= 1
-        && OAM2_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) == 0
+        && OAM2_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) == 2
         && SCROLL_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) == u8::MAX
 }
 
@@ -1417,7 +1434,7 @@ pub static SPRITE_REARM_LAG: core::sync::atomic::AtomicU8 =
 /// `Frozen OAM2 Increment`; the borrowed two-stage pipeline it first used could
 /// not reach that, which is why the field below is dedicated.
 #[cfg(feature = "phi2-write-sweep")]
-pub static OAM2_GATE_LAG: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+pub static OAM2_GATE_LAG: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(2);
 
 impl Ppu {
     /// New PPU in power-on state.
@@ -1548,6 +1565,7 @@ impl Ppu {
             rendering_enabled_delayed: false,
             #[cfg(feature = "phi2-write-sweep")]
             render_gate_prev2: false,
+            rendering_enabled_delayed2: false,
             #[cfg(feature = "phi2-write-sweep")]
             sweep_mask_history: [PpuMask::empty(); 4],
             bg_reload_render: false,
@@ -3374,6 +3392,30 @@ impl Ppu {
             // and the shift gate all collapse to `true` with no edge to model.
             && self.mask.rendering_enabled()
             && self.rendering_enabled_delayed
+            // v2.6.18: the fast body performs its own dot-256 `inc_vert_v`,
+            // which reads a TWO-dot rendering history, while every other
+            // rendering term here proves only ONE -- `rendering_enabled_delayed`
+            // and `prev_rendering_enabled` are both "rendering as of the
+            // previous dot", assigned together. A mask that turned on at dot
+            // 255 satisfies all of them at dot 256 with the two-dot view still
+            // `false`, and the fast body would then increment where the general
+            // path does not.
+            //
+            // HONESTY NOTE, so the next mutation pass does not re-investigate:
+            // deleting this term is **NOT CAUGHT** by anything in this tree --
+            // not `fast_dotloop_is_byte_identical_across_corpus`, not the
+            // AccuracyCoin battery, and not
+            // `fast_dotloop_is_byte_identical_when_an_enable_lands_beside_dot_256`,
+            // which was written for exactly this and sweeps twelve power-on
+            // alignments of the one ROM that writes `$2001` next to dot 256.
+            // Writes land on CPU-cycle boundaries, so the reachable effect dots
+            // are three apart, and no stimulus here lands one at 254->255.
+            //
+            // It is kept anyway, and that is not stubbornness: the term can only
+            // make the fast path be taken LESS often, and the general path is
+            // the reference, so its presence cannot cause a divergence while its
+            // absence is a latent one waiting for a ROM that writes there.
+            && self.rendering_enabled_delayed2
             && self.prev_rendering_enabled
             // Scanline classification cache warm (dot 0 of the line, taken on
             // the general path, warms it) AND this is a visible scanline.
@@ -3548,6 +3590,12 @@ impl Ppu {
         // (a mid-scanline `$2001` toggle takes effect one dot later — Stale
         // BG/Sprite). Default build = the immediate value (byte-identical).
         let rendering_gate = self.rendering_enabled_delayed;
+        // Stage 2, captured HERE for the same reason stage 1 is: the pipeline
+        // update below runs BEFORE the dot-event section, so a consumer that
+        // reads the field after it sees this dot's value rather than the
+        // delayed one. Reading `self.rendering_enabled_delayed2` at the dot-256
+        // site gave rendering ONE dot ago and the increment kept firing.
+        let rendering_gate2 = self.rendering_enabled_delayed2;
 
         // OAM corruption (TriCNES eval-pointer model). The disable edge
         // itself is armed by the `$2001` write (see the PPUMASK handler);
@@ -3602,6 +3650,13 @@ impl Ppu {
                 self.sweep_mask_history.rotate_right(1);
                 self.sweep_mask_history[0] = self.mask;
             }
+            // Stage 2 takes stage 1 as it stood when this dot BEGAN, which is
+            // exactly the `rendering_gate` local. Ordering is load-bearing in
+            // the same way `render_gate_end_dot` is: reading the field back
+            // here instead would assign stage 1 to stage 2 after stage 1 had
+            // already been overwritten, freezing the pipeline -- the #506
+            // defect in a second place.
+            self.rendering_enabled_delayed2 = rendering_gate;
             self.rendering_enabled_delayed = rendering;
         }
 
@@ -3675,6 +3730,20 @@ impl Ppu {
         // the entry fails for a reason that has nothing to do with OAM2.
         // `RENDER_GATE_LAG = 2` fixes it and breaks `Stale Sprite Shift Regs`,
         // because that depth moves every other consumer too.
+        // v2.6.18: the dot-256 vertical increment reads rendering as of TWO
+        // dots ago, not the shared one-dot gate -- see
+        // `rendering_enabled_delayed2`. Hoisted out of the `render_line &&
+        // rendering_gate` block so the shared gate cannot decide the question
+        // before the deeper one is consulted; conjoining the two would put the
+        // DISABLE edge back on the shallower gate, which is the edge
+        // `Frozen OAM2 Increment` test 4 measures.
+        if render_line
+            && self.dot == 256
+            && Self::scroll_gate_follows_render_gate()
+            && rendering_gate2
+        {
+            self.inc_vert_v();
+        }
         #[cfg(feature = "phi2-write-sweep")]
         if render_line && self.dot == 256 && !Self::scroll_gate_follows_render_gate() {
             let depth = SCROLL_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) as usize;
@@ -3740,7 +3809,15 @@ impl Ppu {
             //
             // `OAM2_GATE_LAG` makes this test's depth swept rather than assumed;
             // 0 is the shipped live-mask read of THIS term, not of the gate.
-            if visible && self.oam2_gate_mask().rendering_enabled() {
+            // v2.6.18: this used to conjoin the LIVE mask, which put the OAM2
+            // counter's DISABLE edge a dot ahead of every other consumer --
+            // `min(r, d)` for a conjunction of two delayed views. The dot-339
+            // reset then got skipped by a write whose effect lands DURING 339,
+            // leaving the "OAM2 Overflowed" flag raised and producing the
+            // sprite-zero hit `Frozen OAM2 Increment` test 4 exists to forbid.
+            // The counter rides the shared one-dot gate like everything else,
+            // which the enclosing block has already applied.
+            if visible && self.oam2_gate_rendering() {
                 self.tick_oam_bus();
             }
             // Sprite tile fetch + A12 emission.  Real hardware spreads the
@@ -3909,10 +3986,10 @@ impl Ppu {
             // similarly persist past dot 256 into dot 321's reload.
             // (Intentionally no dot-257 reload here.)
 
-            // Cycle 256: vertical-V increment.
-            if self.dot == 256 && Self::scroll_gate_follows_render_gate() {
-                self.inc_vert_v();
-            }
+            // Cycle 256: vertical-V increment -- HOISTED to the top of the
+            // dot-event section (search `rendering_enabled_delayed2`), because
+            // it reads a rendering gate one dot deeper than the shared one and
+            // must therefore not sit inside the shared gate's block.
             // Cycle 257: copy hori(t) -> hori(v).
             if self.dot == 257 {
                 // W2 ($2007 Stress): the FIRST garbage NT read of sprite slot
@@ -4110,6 +4187,9 @@ impl Ppu {
         let rendering = self.mask.rendering_enabled();
         self.bg_reload_render = rendering;
         self.prev_rendering_enabled = rendering;
+        // Stage 2 before stage 1, for the same ordering reason as the general
+        // path: stage 1's PREVIOUS value is what stage 2 takes.
+        self.rendering_enabled_delayed2 = self.rendering_enabled_delayed;
         self.rendering_enabled_delayed = rendering;
     }
 
@@ -4141,6 +4221,7 @@ impl Ppu {
         // boundary.
         self.prev_rendering_enabled = true;
         self.rendering_enabled_delayed = true;
+        self.rendering_enabled_delayed2 = true;
 
         // Sprite-evaluation FSM (visible scanline) + isolated OAM data-bus model.
         self.tick_sprite_eval_per_dot();
@@ -6059,19 +6140,34 @@ impl Ppu {
     /// is the live mask -- the shipped read -- so the default build is
     /// unchanged by construction.
     #[cfg(feature = "phi2-write-sweep")]
-    fn oam2_gate_mask(&self) -> PpuMask {
+    fn oam2_gate_rendering(&self) -> bool {
         let depth = OAM2_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) as usize;
         if depth == 0 {
-            self.mask
+            self.mask.rendering_enabled()
         } else {
             self.sweep_mask_history[(depth - 1).min(self.sweep_mask_history.len() - 1)]
+                .rendering_enabled()
         }
     }
 
-    /// Shipped build: the live mask, folded to the same load.
+    /// Shipped build: the OAM2 counter carries NO gate of its own.
+    ///
+    /// v2.6.18. The call site sits inside the shared `render_line &&
+    /// rendering_gate` block, so the one-dot-delayed gate is already applied
+    /// and an additional conjunct could only make the counter's edges differ
+    /// from every other consumer's. It used to conjoin the LIVE mask, which
+    /// did exactly that on the DISABLE edge -- see the call site. Depth 2 of
+    /// the swept history is this same value, which is why
+    /// [`OAM2_GATE_LAG`]'s default is 2 rather than 0.
+    // `&self` is unused BY DESIGN and cannot be dropped: the signature has to
+    // match the `phi2-write-sweep` variant above, which reads the swept mask
+    // history, so the call site stays identical across both builds. Making this
+    // an associated function would fork the call site, which is how the two
+    // builds start disagreeing about something other than the knob.
+    #[allow(clippy::unused_self)]
     #[cfg(not(feature = "phi2-write-sweep"))]
-    const fn oam2_gate_mask(&self) -> PpuMask {
-        self.mask
+    const fn oam2_gate_rendering(&self) -> bool {
+        true
     }
 
     /// The mask the odd-frame-skip gate consults, at the swept pipeline depth.

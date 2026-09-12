@@ -249,6 +249,42 @@ the parallel-implementation firewall gating the B8 swap from
 single-shot to per-dot FSM; after B8c removed the single-shot impl
 the corpus is the regression net pinning the FSM output.
 
+### The OAM2 fetch-address counter (`OAM2Address`)
+
+Distinct from `oam2_addr`, the dots-1..=64 clear-window write pointer above.
+`oam2_fetch_addr` is the 5-bit counter the **sprite-fetch** stage reads
+secondary OAM through, and it is a live counter carried across scanlines rather
+than an index derived from the dot. Three rules, all stated by AccuracyCoin's
+`Frozen OAM2 Increment` and by neither nesdev page:
+
+- **Reset at dots 63, 255 and 339**, which also clears the "OAM2 Overflowed"
+  freeze flag. The reset is gated on rendering, so an interval with rendering
+  disabled across those dots steals it — which is the whole subject of the test.
+- **Increment on even dots of the fetch window**, wrapping the 5-bit counter.
+  The wrap raises the freeze flag, and the flag then suppresses further
+  increments, so a completed fetch leaves the counter resting at 0. The ROM
+  describes the overflow as happening "on dot 321", which is where a completed
+  wrap is *observed* by the `$2004` copy-buffer load rather than a further step.
+- **While the flag is raised, every slot of sprite fetch reads OAM2[0]** — the
+  freeze the entry is named for. With OAM2 full and rendering re-enabled on or
+  after dot 256, all eight sprites therefore load byte 0 four times over.
+
+**The counter carries NO gate of its own** (v2.6.18). Its call site already sits
+inside the shared `render_line && rendering_gate` block, so the one-dot-delayed
+gate is applied once. It previously conjoined the **live** mask as well, and an
+`AND` of two delayed views takes its DISABLE edge from the shallower of the two
+— so a `$2001` write whose effect landed during dot 339 skipped that dot's
+reset, left the freeze flag raised, and produced a sprite-zero hit in the very
+sub-test written to prove no hit occurs.
+
+**Save-state coverage (`PPU_SNAPSHOT_VERSION` v9/v10).** `oam2_fetch_addr`,
+`oam2_overflowed` and `oam2_fetch_frozen` are serialized (v9), and so is
+`rendering_enabled_delayed2` (v10). All four look derivable and are not: the
+first three re-derive at dots 63/255/339 *only when rendering is enabled there*,
+which is exactly the case the behaviour is about, and the fourth differs from
+`rendering_enabled_delayed` for precisely the one dot after a `$2001` rendering
+edge that decides the dot-256 increment.
+
 **Save-state coverage (`PPU_SNAPSHOT_VERSION` v8).** The FSM's working
 registers are part of the save-state, not derived: `sprite_eval_read_latch`,
 `sprite_eval_n` / `_m` / `_found` / `_sec_idx`, and the
@@ -431,7 +467,7 @@ Per `ref-docs/research-report.md` §Internal scroll registers:
 - **PPUADDR write 1** → `t` bits 13-8 = value & 0x3F; `t` bit 14 = 0; clear `w`.
 - **PPUADDR write 2** → `t` bits 7-0 = value; copy `t` to `v`; set `w`.
 - **PPUSTATUS read** → clear `w`.
-- **During rendering** at dot 256 of every visible scanline, `v` Y increments (with the 29→0 wrap-and-flip-nametable-Y quirk). At dot 257, horizontal bits of `v` reload from `t`. At dots 280..=304 of pre-render, vertical bits reload.
+- **During rendering** at dot 256 of every visible scanline, `v` Y increments (with the 29→0 wrap-and-flip-nametable-Y quirk). **"During rendering" here means rendering as of TWO dots ago, not the one-dot-delayed gate the rest of the pipeline uses** (v2.6.18, `rendering_enabled_delayed2`): AccuracyCoin's `Frozen OAM2 Increment` test 2 states the rule outright — *"Rendering is enabled on dot 256, but the PPU's vertical scroll is NOT incremented"* — and that sentence only parses if the enable IS on dot 256. A `$2001` write whose effect lands during dot 255 is in force from the start of 256, so a one-dot gate fires the increment and hardware does not. The check is deliberately **not** conjoined with the shared gate: an `AND` of two delayed views takes its DISABLE edge from the shallower one, and that edge is what test 4 measures. At dot 257, horizontal bits of `v` reload from `t`. At dots 280..=304 of pre-render, vertical bits reload.
 - **Coarse X increment** at every 8th dot of fetch windows (dots 8, 16, ..., 256, 328, 336).
 
 ### Register quirks (must reproduce)
