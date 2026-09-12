@@ -96,6 +96,29 @@ updates:
       prefix: "chore(deps)"
       include: "scope"
 
+  # `crates/rustynes-cosim` is EXCLUDED from the workspace on purpose (cargo
+  # unifies features across a workspace build, and this crate mandatorily
+  # enables two trace features that select a different per-dot loop -- see
+  # `cosim_manifest_audit.rs`). An excluded package is not reachable from the
+  # root manifest, so it carries its OWN `Cargo.lock` and the "/" entry above
+  # has never updated it. Found at the v2.6.18 refresh with four crates drifted
+  # and nothing watching them. The exclusion is deliberate and stays; the
+  # blind spot it created does not.
+  - package-ecosystem: "cargo"
+    directory: "/crates/rustynes-cosim"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "rust"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
   # Maintain GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"

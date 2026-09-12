@@ -33,13 +33,21 @@
 // pre-existing pairing of AGP 9.2.1 with a 2.3.x plugin had been building for
 // releases before that.
 //
+// AGP moved 9.3.2 -> 9.4.0 at the v2.6.18 dependency refresh, together with
+// `com.android.test`, which shares its coordinate. That BUILD SUCCESSFUL was
+// measured at 9.3.2 and is deliberately left stated at 9.3.2 rather than
+// reworded to the new number: no Android toolchain exists on the machine that
+// made the bump, the Gradle bundle job in CI is what re-establishes it, and a
+// measurement nobody re-ran must not be re-attributed to a version nobody
+// tested it on.
+//
 // The Compose compiler plugin below is the version this build does control.
 plugins {
-    id("com.android.application") version "9.3.2" apply false
+    id("com.android.application") version "9.4.0" apply false
     // v1.8.8 "Atlas" (Workstream J): the Macrobenchmark `:baselineprofile` module is
     // a `com.android.test` module — declare that plugin id here so it resolves for
     // the new module (it shares AGP's version coordinate).
-    id("com.android.test") version "9.3.2" apply false
+    id("com.android.test") version "9.4.0" apply false
     // The Compose compiler plugin tracks the Kotlin line AGP builds against, and
     // it is the only Kotlin version coordinate this build sets (see the header).
     // Moved 2.3.10 -> 2.3.21 within the same line at the v2.6.3 refresh.
@@ -49,9 +57,11 @@ plugins {
     // rejects an AGP-9.x `com.android.application` module ("not a supported android
     // module"); the 1.5.0 line is the first to widen the supported-AGP window to
     // 9.x (ART-metric repackage handling + the bumped maxAgpVersion). The pin has
-    // moved alpha06 -> rc01 within that same line, which is the same window with
-    // fewer unknowns rather than a new dependency decision (see the matching
-    // benchmark-macro-junit4 in :baselineprofile). It is applied on BOTH :app
+    // moved alpha06 -> rc01 -> rc02 within that same line, which is the same window
+    // with fewer unknowns rather than a new dependency decision. It MUST move in
+    // lockstep with benchmark-macro-junit4 in :baselineprofile: Dependabot raises
+    // those two as separate per-artifact PRs, so merging one alone desyncs the
+    // pair. It is applied on BOTH :app
     // (consume + bundle the generated profile) and :baselineprofile (generate it).
-    id("androidx.baselineprofile") version "1.5.0-rc01" apply false
+    id("androidx.baselineprofile") version "1.5.0-rc02" apply false
 }
