@@ -3684,16 +3684,23 @@ impl Ppu {
             // scanlines when rendering, so a CPU $2004 read mid-frame observes
             // the sprite-eval / load data bus (AccuracyCoin `$2004 Stress`).
             // Side-effect-free w.r.t. the rendering FSM above.
-            // v2.6.18: the OAM2 counter's gate is the LIVE mask, with no
-            // `$2001` delay at all, while every other rendering consumer in
-            // this PPU reads a delayed value (1 dot for the render gate, 2
-            // stages for the odd-frame skip, `MASK_WRITE_DELAY` for the BG
-            // reload freeze). It is also the ONE gate `Frozen OAM2 Increment`
-            // and `Misaligned OAM2 Address` share, and those two entries impose
-            // contradictory requirements on the read/write dot SPACING -- which
-            // is what a zero-delay gate on a delayed signal looks like from the
-            // outside. `OAM2_GATE_LAG` makes the depth swept rather than
-            // assumed; 0 is the shipped live-mask read.
+            // v2.6.18: the OAM2 machinery's effective gate is a CONJUNCTION --
+            // this test AND the enclosing `render_line && rendering_gate`. That
+            // matters and is easy to state wrongly: for an AND of two delayed
+            // views of one signal, the DISABLE edge fires at the shallower depth
+            // and the RE-ENABLE edge at the deeper one. So today
+            // `OAM2_GATE_LAG = 0` owns the disable edge and the 1-dot
+            // `rendering_enabled_delayed` owns the re-enable edge -- the two
+            // knobs each own ONE edge, which is why neither alone can place the
+            // window and why `Frozen OAM2 Increment` moves only when
+            // `RENDER_GATE_LAG` does.
+            //
+            // TriCNES has no such nesting: `PPU_Render_SpriteEvaluation()` is
+            // called unconditionally and each block tests exactly one mask view
+            // (`Emulator.cs:2073`, `:2076-2082`).
+            //
+            // `OAM2_GATE_LAG` makes this test's depth swept rather than assumed;
+            // 0 is the shipped live-mask read of THIS term, not of the gate.
             if visible && self.oam2_gate_mask().rendering_enabled() {
                 self.tick_oam_bus();
             }

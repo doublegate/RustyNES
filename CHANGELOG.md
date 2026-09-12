@@ -114,13 +114,15 @@ cycle-accurate core later replaced.
   passes at exactly the two where the spacing is `+1`. The last two are
   contradictory as rules — and both are OAM2 entries.
 
-  **The contradiction had a cause, and it was not the CPU.** The OAM2 counter
-  is gated on the **live** `$2001` mask with no delay at all, while every other
-  rendering consumer in this PPU reads a delayed value. It is also the one gate
-  those two entries share, and a zero-delay gate on a signal the ROMs expect to
-  be delayed looks from outside exactly like a requirement on access spacing.
-  Give it a delay and the contradiction dissolves: both OAM2 entries pass
-  together for the first time.
+  **The contradiction had a cause, and it was not the CPU.** The OAM2
+  machinery's effective gate is a **conjunction** — its own mask test AND the
+  enclosing 1-dot render gate. For an AND of two delayed views of one signal the
+  DISABLE edge fires at the shallower depth and the RE-ENABLE edge at the deeper
+  one, so the two knobs each own **one edge** and neither alone can place the
+  window. The two OAM2 entries were never contradictory as rules — they were
+  entangled by the nesting, and the placement grid was reading that entanglement
+  through the only knob it had. Give the OAM2 term a delay and the apparent
+  contradiction dissolves: both entries pass together for the first time.
 
   **With a dedicated four-stage history it closes.** At the shipped placement,
   `RENDER_GATE_LAG = 2` with `OAM2_GATE_LAG = 3` passes `Frozen OAM2
