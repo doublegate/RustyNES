@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.18] - 2026-09-12 - "Errata" (the recorded cause was wrong in three ways, and the last AccuracyCoin entry closes)
+
 ### Changed
 
 - **AccuracyCoin re-synced to upstream `9bc42d1e`, and the vendored TriCNES
@@ -227,6 +229,59 @@ cycle-accurate core later replaced.
   non-default values.
 
 ### Fixed
+
+- **`Frozen OAM2 Increment` closes: AccuracyCoin reads 144/144 (100.00%, RAM
+  decoder).** The last failing entry in the battery, open since the
+  `Advanced Sprite Evaluation` page arrived, is closed by two dots of `$2001`
+  deferral on two specific consumers — and every part of the diagnosis this
+  repository had recorded for it was wrong.
+
+  **The core was never "a dot early".** The tree's `KNOWN_FAILING` note said the
+  entry failed "because a `$2001` enable on dot 256 takes effect a dot early".
+  Measured per dot against the ROM's four stated writes — 242, 256, 325 and 340
+  — the transition lands during dot N-1 in **all four**, on three independent
+  instances of the 256 write, which means the new mask is in force from the
+  **start of dot N**: exactly where the ROM says. The offset is constant, so it
+  is compensable by one depth and carries no alignment dependence.
+
+  **The failing sub-test was 4, not 2 or 3.** `TEST_FrozenOAM2Inc` has **no
+  `INC <ErrorCode` between tests 3 and 4**, so both report `$0E` — the same
+  missing-`INC` defect upstream had just fixed one entry over, in
+  `Misaligned OAM2 Address`. Test 3 passes. The failure was test 4, the
+  false-positive guard, which requires that **no** sprite-zero hit occur.
+
+  **The OAM2 freeze machinery was never broken.** Instrumented per dot, it is
+  byte-identical to the passing case throughout the fetch window
+  (`addr=0, ovf=1, frozen=1`). The 809-raise end-to-end verification recorded
+  earlier was accurate and was measuring the wrong thing.
+
+  What is actually wrong is one rule at two dots — **a mask change during dot N
+  must not act on dot N**:
+
+  - **Dot 256, vertical increment.** The ROM states it directly: *"Rendering is
+    enabled on dot 256, but the PPU's vertical scroll is NOT incremented."* That
+    sentence only parses if the enable IS on 256. The increment now reads a new
+    `rendering_enabled_delayed2` — rendering as of two dots ago — and is hoisted
+    out of the shared `render_line && rendering_gate` block, because conjoining
+    the two would put the DISABLE edge back on the shallower gate.
+  - **Dot 339, OAM2 address reset.** The counter's gate used to conjoin the
+    **live** mask, putting its disable edge a dot ahead of every other
+    consumer's (`min(r, d)` for a conjunction of two delayed views). A disable
+    whose effect lands during dot 339 therefore skipped the reset, left the
+    "OAM2 Overflowed" flag raised, and produced precisely the sprite-zero hit
+    test 4 forbids. The counter now rides the shared one-dot gate like
+    everything else.
+
+  The depth is **derived, not fitted**: the ROM over-determines it (the dot-256
+  increment must not fire, the dot-257 latch must), giving `d = 257 - 255 = 2`,
+  and both neighbours fail — one dot shallower is byte-identical to the unfixed
+  build, one dot deeper breaks test 2.
+
+  `Stale Sprite Shift Regs`, `Misaligned OAM2 Address` and the rest are
+  unchanged; `KNOWN_FAILING` is now **empty** and `EXPECTED_PASS_COUNT` is 144.
+  Save states gain a `PPU_SNAPSHOT_VERSION` **10** tail carrying the second gate
+  stage — it looks derivable from stage 1 and is not, differing for exactly the
+  one dot after a `$2001` rendering edge that is the whole subject.
 
 - **The depth-2 rendering-gate pipeline froze instead of shifting, so two cells
   of the published derivation sweep measured the instrument.** Under

@@ -76,36 +76,37 @@ const MIN_PASS_RATE: f64 = 0.60;
 /// failing list is not by itself evidence of success. Re-bless this
 /// together with `docs/STATUS.md` if an upstream ROM update changes the
 /// catalog.
-const EXPECTED_PASS_COUNT: u32 = 143;
+const EXPECTED_PASS_COUNT: u32 = 144;
 
 /// The `AccuracyCoin` tests this build is known to fail, pinned BY NAME.
 ///
-/// Both arrived in the 2026-09 upstream re-sync (`d924906c` added the
-/// `Advanced Sprite Evaluation` page, `5c744db5` the second test) and both
-/// probe secondary-OAM address behaviour during sprite evaluation, which
-/// this PPU does not model. They are gaps, not regressions.
+/// **Empty as of v2.6.18** — the battery reads 144/144. The list stays, and
+/// stays documented, because it is the mechanism that makes a future gap
+/// explicit rather than absorbed into a lowered count.
 ///
 /// This is an allowance, so it FAILS BOTH WAYS on purpose: a new failure is
 /// caught because it is absent from this list, and a *fixed* failure is
 /// caught because it is present and no longer failing. A one-directional
 /// allowance silently hides the improvement it was written to tolerate,
-/// which is how a stale exclusion survived seven releases in v2.6.9.
-const KNOWN_FAILING: &[&str] = &[
-    // `Misaligned OAM2 Address` was here and is now CLOSED: OAM2Address is a
-    // live counter through sprite fetch rather than an index derived from the
-    // dot, so an interval of rendering-disabled time steals increments from it
-    // exactly as hardware does.
-    //
-    // `Frozen OAM2 Increment` remains, and the blocker is NOT a sprite one.
-    // The freeze is verified end to end: raised 809 times across a battery,
-    // reaching sprite fetch exactly once, with spr_count 8, sprite zero in
-    // line, and all eight slots loading $C1/$C1/$C1/$C1. Its detector is a
-    // sprite-zero hit, which needs an opaque BACKGROUND pixel under the
-    // sprite, and `v` is one vertical increment ahead (fine-Y 3 where the
-    // test needs 2) because a `$2001` enable on dot 256 takes effect a dot
-    // early. A `$2001` write-timing gap, not a sprite-evaluation one.
-    "Advanced Sprite Evaluation :: Frozen OAM2 Increment [error 2]",
-];
+/// which is how a stale exclusion survived seven releases in v2.6.9 — and it
+/// is what caught `Frozen OAM2 Increment` closing here.
+///
+/// `Frozen OAM2 Increment` was the last entry, and the diagnosis recorded
+/// here while it was open was WRONG in three ways worth keeping, because each
+/// one cost a refuted fix:
+///
+/// 1. It said "a `$2001` enable on dot 256 takes effect a dot early". Measured
+///    per dot, the four writes the ROM names (242, 256, 325, 340) all take
+///    effect during dot N-1 and are therefore in force from the start of dot
+///    N — exactly where the ROM says. The core was never early.
+/// 2. It blamed the enable. The failing sub-test was **4**, the false-positive
+///    guard, whose write is a DISABLE on dot 340: dot 339's OAM2 reset must
+///    still fire and did not. The two are the same edge in opposite
+///    directions — a conjunction's disable edge fires at `min(r, d)`.
+/// 3. The reported code could not distinguish them. `TEST_FrozenOAM2Inc` has
+///    no `INC <ErrorCode` between tests 3 and 4, so both report `$0E`. Test 3
+///    passes. Reading `[error 3]` as "test 3" sends you to the wrong write.
+const KNOWN_FAILING: &[&str] = &[];
 
 #[test]
 #[allow(clippy::too_many_lines)]

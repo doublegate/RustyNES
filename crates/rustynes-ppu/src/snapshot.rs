@@ -143,7 +143,7 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///   function of `scanline` + `region`, both of which are serialized, so
 ///   recomputing it is equivalent and cheaper than carrying derived bytes — the
 ///   same choice Mesen2 makes in its `if(!s.IsSaving())` post-load fixup block.
-pub const PPU_SNAPSHOT_VERSION: u8 = 9;
+pub const PPU_SNAPSHOT_VERSION: u8 = 10;
 
 /// v2.3.3 — high bit of the version byte, marking a **slim** snapshot: every
 /// field except the 245,760-byte framebuffer.
@@ -527,6 +527,15 @@ impl Ppu {
         w.u8(u8::from(self.oam2_overflowed));
         w.u8(u8::from(self.oam2_fetch_frozen));
 
+        // v10 tail — stage 2 of the rendering gate, which the dot-256 vertical
+        // increment reads. Serialized for the same reason as the v9 fields
+        // above: it LOOKS derivable from `rendering_enabled_delayed`, and is
+        // not. The two differ for exactly one dot after any `$2001` rendering
+        // edge, and that dot is the whole subject -- a run-ahead snapshot taken
+        // there and restored from stage 1 would fire, or skip, the increment
+        // the restored timeline must not.
+        w.u8(u8::from(self.rendering_enabled_delayed2));
+
         w.buf
     }
 
@@ -822,6 +831,17 @@ impl Ppu {
             self.oam2_fetch_frozen = false;
         }
 
+        // v10: stage 2 of the rendering gate. A pre-v10 blob carries no such
+        // dot, so the closest honest reconstruction is stage 1 -- correct
+        // everywhere except within one dot of a `$2001` rendering edge, which
+        // is the best an older blob can support and is not silently claimed to
+        // be more.
+        if version >= 10 {
+            self.rendering_enabled_delayed2 = r.u8()? != 0;
+        } else {
+            self.rendering_enabled_delayed2 = self.rendering_enabled_delayed;
+        }
+
         // Derived-cache fixup (every version): the scanline-classification cache
         // is a pure function of `scanline` + `region`, so it is recomputed rather
         // than carried. Resetting the key to the `Ppu::new` sentinel forces the
@@ -887,7 +907,7 @@ mod tests {
     // hand-computed literals and hoping they agreed. Naming them makes a bump
     // one edit here, and makes the composition checkable at a glance.
     //
-    // Verified to sum: 23 + 2 + 6 + 14 + 256 + 50 + 3 = 354 = V3_TAIL..V9_TAIL.
+    // Verified to sum: 23 + 2 + 6 + 14 + 256 + 50 + 3 + 1 = 355 = V3_TAIL..V10_TAIL.
     /// v3: W3-Stage-4 — `u8*3` + `[u8;8]*2` + u16 PPUDATA FSM + `u8*2` BG freeze.
     const V3_TAIL: usize = 23;
     /// v4: `u16 extra_lines_remaining`.
@@ -902,9 +922,11 @@ mod tests {
     const V8_TAIL: usize = 50;
     /// v9: the `OAM2Address` counter — `oam2_fetch_addr` + two latched flags.
     const V9_TAIL: usize = 3;
+    /// v10: stage 2 of the rendering gate (`rendering_enabled_delayed2`).
+    const V10_TAIL: usize = 1;
     /// Everything a v1 blob does not carry, from `ex_attr_latch` onward.
-    const V3_THROUGH_V9_TAILS: usize =
-        V3_TAIL + V4_TAIL + V5_TAIL + V6_TAIL + V7_TAIL + V8_TAIL + V9_TAIL;
+    const V3_THROUGH_V10_TAILS: usize =
+        V3_TAIL + V4_TAIL + V5_TAIL + V6_TAIL + V7_TAIL + V8_TAIL + V9_TAIL + V10_TAIL;
 
     #[test]
     fn snapshot_round_trip() {
@@ -1035,9 +1057,9 @@ mod tests {
         // then u8 + [u8;32] + u8*3 + bool*2 + u8 OAM-data-bus model, then u8
         // `oam2_addr`), AND the v9 OAM2Address tail (3 bytes: u8
         // `oam2_fetch_addr` + bool `oam2_overflowed` + bool
-        // `oam2_fetch_frozen`) — 354 bytes total, none of which a v1 blob
-        // carried.
-        v1.extend_from_slice(&v2[at + 4..v2.len() - V3_THROUGH_V9_TAILS]);
+        // `oam2_fetch_frozen`), AND the v10 rendering-gate stage-2 tail
+        // (1 byte) — 355 bytes total, none of which a v1 blob carried.
+        v1.extend_from_slice(&v2[at + 4..v2.len() - V3_THROUGH_V10_TAILS]);
         v1[0] = 1; // version byte -> v1
 
         let mut q = Ppu::new(PpuRegion::Ntsc);
@@ -1399,7 +1421,7 @@ mod tests {
         // subtracted here too.
         let p = Ppu::new(PpuRegion::Ntsc);
         let cur = p.snapshot();
-        let mut v6 = cur[..cur.len() - (V9_TAIL + V8_TAIL + V7_TAIL)].to_vec();
+        let mut v6 = cur[..cur.len() - (V10_TAIL + V9_TAIL + V8_TAIL + V7_TAIL)].to_vec();
         v6[0] = 6;
 
         let mut q = Ppu::new(PpuRegion::Ntsc);
