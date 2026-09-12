@@ -49,16 +49,58 @@ fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T
 where
     <T as std::str::FromStr>::Err: std::fmt::Display,
 {
-    match std::env::var(key) {
-        Ok(v) => v
-            .parse()
-            .unwrap_or_else(|e| panic!("{key}={v:?} is not valid ({e}); refusing to run")),
-        Err(_) => default,
-    }
+    std::env::var(key).map_or(default, |v| {
+        v.parse()
+            .unwrap_or_else(|e| panic!("{key}={v:?} is not valid ({e}); refusing to run"))
+    })
 }
 
 /// Rendering bits of PPUMASK: show-background | show-sprites.
 const RENDER_BITS: u8 = 0x18;
+
+/// Report every transition of PPUMASK's rendering bits, returning the count.
+///
+/// Extracted from the test body for the 100-line limit, and it reads better here
+/// anyway: the per-frame reset below is the whole correctness argument.
+fn report_transitions(recs: &[rustynes_core::rustynes_ppu::state_trace::PpuStateRecord]) -> usize {
+    // `prev` MUST reset per frame. The window starts mid-scanline, so carrying it
+    // across frames makes every window's first record compare against the
+    // previous frame's last record and report a transition that never happened --
+    // an artifact of the instrument, not the console.
+    let mut prev: Option<u8> = None;
+    let mut prev_frame: Option<u32> = None;
+    let mut transitions = 0usize;
+    for r in recs {
+        if prev_frame != Some(r.frame) {
+            prev = None;
+            prev_frame = Some(r.frame);
+        }
+        let now = r.mask & RENDER_BITS;
+        if let Some(p) = prev
+            && p != now
+        {
+            transitions += 1;
+            let effective = r.dot + 1;
+            println!(
+                "  f{:<4} line{} dot{:>3}  mask {:02X} -> {:02X}  ({})  effective gate dot {} -> {} dot 339",
+                r.frame,
+                r.scanline,
+                r.dot,
+                p,
+                now,
+                if now == 0 { "DISABLE" } else { "ENABLE" },
+                effective,
+                if effective <= 339 {
+                    "at or BEFORE"
+                } else {
+                    "AFTER"
+                }
+            );
+        }
+        prev = Some(now);
+    }
+    transitions
+}
 
 #[test]
 #[ignore = "diagnostic, run explicitly"]
@@ -166,42 +208,7 @@ fn stale_sprite_shift_regs_rendering_transition_dot() {
     );
 
     // Report every transition of the rendering bits within the window.
-    // `prev` MUST reset per frame. The window starts at dot 300, so carrying it
-    // across frames makes every window's first record compare against the
-    // previous frame's last record and report a transition at dot 300 that
-    // never happened -- an artifact of the instrument, not the console.
-    let mut prev: Option<u8> = None;
-    let mut prev_frame: Option<u32> = None;
-    let mut transitions = 0usize;
-    for r in recs {
-        if prev_frame != Some(r.frame) {
-            prev = None;
-            prev_frame = Some(r.frame);
-        }
-        let now = r.mask & RENDER_BITS;
-        if let Some(p) = prev
-            && p != now
-        {
-            transitions += 1;
-            let effective = r.dot + 1;
-            println!(
-                "  f{:<4} line{} dot{:>3}  mask {:02X} -> {:02X}  ({})  effective gate dot {} -> {} dot 339",
-                r.frame,
-                r.scanline,
-                r.dot,
-                p,
-                now,
-                if now == 0 { "DISABLE" } else { "ENABLE" },
-                effective,
-                if effective <= 339 {
-                    "at or BEFORE"
-                } else {
-                    "AFTER"
-                }
-            );
-        }
-        prev = Some(now);
-    }
+    let transitions = report_transitions(recs);
     println!("rendering-bit transitions in window: {transitions}");
     assert!(
         transitions > 0,
