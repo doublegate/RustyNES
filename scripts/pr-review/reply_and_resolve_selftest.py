@@ -174,6 +174,25 @@ def main() -> None:
                   "must be true/false"),
           "bool(\"false\") is True, which would resolve a thread meant to stay open")
 
+    # Untrusted-input paths: every one of these CRASHED before, and a traceback
+    # where a refusal belongs loses the diagnostic exactly when it is needed.
+    check("a non-object stdin payload is refused, not crashed",
+          refuses_threads([], "must be a JSON object"))
+    check("a STRING GraphQL error entry is reported, not crashed",
+          refuses_threads({"errors": ["boom"]}, "boom"),
+          "reporting the API's error must not itself crash")
+    check("a non-list `errors` value is still reported",
+          refuses_threads({"errors": {"message": "solo"}}, "solo"))
+
+    import io
+    def loads(text):
+        try:
+            rar._load(io.StringIO(text), "the thing")
+        except SystemExit as exc:
+            return "not valid JSON" in str(exc)
+        return False
+    check("malformed JSON is refused with a message", loads("{not json"))
+
     print(f"\n{'FAILED: ' + ', '.join(FAILURES) if FAILURES else 'all checks passed'}")
     sys.exit(1 if FAILURES else 0)
 

@@ -70,8 +70,20 @@ def resolve_ok(res: dict) -> bool:
 
 def threads_from(doc: dict) -> dict:
     """Map thread id -> thread node, surfacing GraphQL errors rather than indexing past them."""
+    if not isinstance(doc, dict):
+        raise SystemExit(
+            f"the payload on stdin must be a JSON object, got {type(doc).__name__}"
+        )
     if doc.get("errors"):
-        msgs = "; ".join(str(e.get("message", e)) for e in doc["errors"])
+        # An `errors` entry is not guaranteed to be an object -- a proxy or a
+        # non-conforming server can return strings. Reporting the API's error
+        # must not itself crash, or the diagnostic is lost exactly when needed.
+        errs = doc["errors"]
+        if not isinstance(errs, list):
+            errs = [errs]
+        msgs = "; ".join(
+            str(e.get("message", e)) if isinstance(e, dict) else str(e) for e in errs
+        )
         raise SystemExit(f"GraphQL error(s): {msgs}")
     pr = ((doc.get("data") or {}).get("repository") or {}).get("pullRequest")
     if pr is None:
@@ -138,7 +150,15 @@ def _graphql(query: str, **params) -> dict:
     args = ["gh", "api", "graphql", "-f", f"query={query}"]
     for key, value in params.items():
         args += ["-f", f"{key}={value}"]
-    done = subprocess.run(args, capture_output=True, text=True, check=False)
+    try:
+        # `encoding` explicitly: `text=True` alone decodes with the locale's
+        # charset, and a reply body carrying an em-dash or emoji then fails on a
+        # non-UTF-8 system.
+        done = subprocess.run(
+            args, capture_output=True, text=True, encoding="utf-8", check=False
+        )
+    except FileNotFoundError:
+        return {"errors": [{"message": "the `gh` CLI is not installed or not on PATH"}]}
     if done.returncode != 0:
         return {"errors": [{"message": (done.stderr or done.stdout).strip()[:400]}]}
     try:
@@ -178,15 +198,24 @@ def apply(actions: list, call) -> tuple:
     return replied, resolved, failed
 
 
+def _load(fh, what: str):
+    """Parse JSON, reporting a malformed input rather than tracing out of it."""
+    try:
+        return json.load(fh)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{what} is not valid JSON: {exc}") from exc
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0:1] and
+                             (__doc__ or "").splitlines()[0] or "reply and resolve")
     ap.add_argument("--plan", required=True, help="JSON file: thread id -> {reply, resolve}")
     ap.add_argument("--execute", action="store_true", help="perform the mutations")
     args = ap.parse_args()
 
-    threads = threads_from(json.load(sys.stdin))
+    threads = threads_from(_load(sys.stdin, "the payload on stdin"))
     with open(args.plan, encoding="utf-8") as fh:
-        plan = json.load(fh)
+        plan = _load(fh, f"the plan file {args.plan!r}")
     actions = validate(plan, threads)
 
     if not args.execute:
