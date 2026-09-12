@@ -107,12 +107,25 @@ def main() -> None:
 
     # The execution loop's ordering rules, driven through an injected caller.
     class Fake:
-        def __init__(self, fail_on=None):
-            self.calls, self.fail_on = [], fail_on
+        """Returns payloads shaped like the real API.
+
+        The first version returned `{"data": {}}` for success -- which is exactly
+        the shape review found slipping through, so the test was encoding the weak
+        contract it was supposed to police. A fake must be at least as strict as
+        the thing it stands in for.
+        """
+        def __init__(self, fail_on=None, hollow=False):
+            self.calls, self.fail_on, self.hollow = [], fail_on, hollow
         def __call__(self, query, **params):
             kind = "resolve" if "resolveReviewThread" in query else "reply"
             self.calls.append((kind, params.get("t")))
-            return {"errors": [{"message": "nope"}]} if kind == self.fail_on else {"data": {}}
+            if kind == self.fail_on:
+                return {"errors": [{"message": "nope"}]}
+            if self.hollow:
+                return {}          # no errors, and no evidence of anything
+            return ({"data": {"resolveReviewThread": {"thread": {"isResolved": True}}}}
+                    if kind == "resolve"
+                    else {"data": {"addPullRequestReviewThreadReply": {"comment": {"id": "C1"}}}})
 
     ok = Fake()
     check("a successful reply+resolve issues both calls, reply first",
@@ -134,6 +147,32 @@ def main() -> None:
     bad_resolve = Fake(fail_on="resolve")
     check("a failed resolve is counted as a failure, not a success",
           rar.apply([("T1", "body", True)], bad_resolve) == (1, 0, 1))
+
+    # Regression: a response with no `errors` and no evidence is NOT a success.
+    hollow = Fake(hollow=True)
+    check("an EMPTY reply payload is not a success, and issues no resolve",
+          rar.apply([("T1", "body", True)], hollow) == (0, 0, 1)
+          and [k for k, _ in hollow.calls] == ["reply"],
+          "{} carries no errors and proves nothing -- it must not resolve a thread")
+
+    check("reply_ok demands the created comment id",
+          rar.reply_ok({"data": {"addPullRequestReviewThreadReply": {"comment": {"id": "C1"}}}})
+          and not rar.reply_ok({"data": {}}) and not rar.reply_ok({})
+          and not rar.reply_ok({"errors": [{"message": "x"}]}))
+    check("resolve_ok demands isResolved true",
+          rar.resolve_ok({"data": {"resolveReviewThread": {"thread": {"isResolved": True}}}})
+          and not rar.resolve_ok({"data": {"resolveReviewThread": {"thread": {"isResolved": False}}}})
+          and not rar.resolve_ok({}))
+
+    # Plan schema.
+    check("a top-level array is refused",
+          refuses([], open_threads, "top level must be an object"))
+    check("a non-string reply is refused",
+          refuses({"T1": {"reply": 1, "resolve": False}}, open_threads, "must be a string"))
+    check("resolve given as the STRING \"false\" is refused, not coerced true",
+          refuses({"T1": {"reply": "x", "resolve": "false"}}, open_threads,
+                  "must be true/false"),
+          "bool(\"false\") is True, which would resolve a thread meant to stay open")
 
     print(f"\n{'FAILED: ' + ', '.join(FAILURES) if FAILURES else 'all checks passed'}")
     sys.exit(1 if FAILURES else 0)

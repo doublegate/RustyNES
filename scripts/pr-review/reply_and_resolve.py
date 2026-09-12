@@ -38,11 +38,34 @@ import json
 import subprocess
 import sys
 
+# Both mutations ask for a field that PROVES the effect, not just an absence of
+# errors: a reply returns the created comment's id, a resolve returns the
+# thread's new state. `{"data": {}}` and `{}` both carry no `errors` and are not
+# evidence of anything -- and before this, either counted as a success and let a
+# thread be resolved on an unconfirmed reply.
 _REPLY = (
     "mutation($t:ID!,$b:String!){addPullRequestReviewThreadReply"
-    "(input:{pullRequestReviewThreadId:$t,body:$b}){clientMutationId}}"
+    "(input:{pullRequestReviewThreadId:$t,body:$b}){comment{id}}}"
 )
 _RESOLVE = "mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{isResolved}}}"
+
+
+def reply_ok(res: dict) -> bool:
+    """A reply counted only when the API returns the created comment's id."""
+    if res.get("errors"):
+        return False
+    comment = (((res.get("data") or {}).get("addPullRequestReviewThreadReply") or {})
+               .get("comment") or {})
+    return bool(comment.get("id"))
+
+
+def resolve_ok(res: dict) -> bool:
+    """A resolve counted only when the API reports the thread actually resolved."""
+    if res.get("errors"):
+        return False
+    thread = (((res.get("data") or {}).get("resolveReviewThread") or {})
+              .get("thread") or {})
+    return thread.get("isResolved") is True
 
 
 def threads_from(doc: dict) -> dict:
@@ -67,13 +90,26 @@ def validate(plan: dict, threads: dict) -> list:
     only exists inside the network path cannot be tested, which this project has
     paid for three times in one release.
     """
+    if not isinstance(plan, dict):
+        raise SystemExit(
+            f"plan refused: the top level must be an object keyed by thread id, "
+            f"got {type(plan).__name__}"
+        )
     problems, actions = [], []
     for tid, spec in plan.items():
         if not isinstance(spec, dict):
             problems.append(f"{tid}: plan entry is not an object")
             continue
         reply = spec.get("reply")
-        resolve = bool(spec.get("resolve"))
+        resolve = spec.get("resolve", False)
+        # `bool("false")` is True, so a JSON string would RESOLVE a thread the
+        # plan meant to leave open. Demand the real type rather than coercing.
+        if not isinstance(resolve, bool):
+            problems.append(f"{tid}: `resolve` must be true/false, not {resolve!r}")
+            continue
+        if reply is not None and not isinstance(reply, str):
+            problems.append(f"{tid}: `reply` must be a string, not {reply!r}")
+            continue
         if tid not in threads:
             problems.append(
                 f"{tid}: no such thread in the payload -- the plan was built "
@@ -122,9 +158,9 @@ def apply(actions: list, call) -> tuple:
     replied = resolved = failed = 0
     for tid, reply, resolve in actions:
         res = call(_REPLY, t=tid, b=reply)
-        if res.get("errors"):
+        if not reply_ok(res):
             failed += 1
-            print(f"FAILED reply {tid}: {res['errors']}", file=sys.stderr)
+            print(f"FAILED reply {tid}: {res}", file=sys.stderr)
             # Deliberately no resolve: a resolved thread whose reply never posted
             # hides the finding behind a green checkmark.
             continue
@@ -133,9 +169,9 @@ def apply(actions: list, call) -> tuple:
             print(f"replied {tid} (left OPEN)")
             continue
         res = call(_RESOLVE, t=tid)
-        if res.get("errors"):
+        if not resolve_ok(res):
             failed += 1
-            print(f"replied {tid} but RESOLVE FAILED: {res['errors']}", file=sys.stderr)
+            print(f"replied {tid} but RESOLVE FAILED: {res}", file=sys.stderr)
             continue
         resolved += 1
         print(f"replied + resolved {tid}")

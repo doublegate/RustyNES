@@ -45,8 +45,11 @@ cat > /tmp/plan.json <<'JSON'
 JSON
 
 gh api graphql -f query='...' -F owner=doublegate -F repo=RustyNES -F pr=503 \
-  | python3 scripts/pr-review/reply_and_resolve.py --plan /tmp/plan.json          # dry run
-  # ... review the plan, then:
+  | python3 scripts/pr-review/reply_and_resolve.py --plan /tmp/plan.json
+
+# Review the printed plan, then repeat the WHOLE pipeline with --execute -- a
+# line starting with `|` is not a command a shell will accept:
+gh api graphql -f query='...' -F owner=doublegate -F repo=RustyNES -F pr=503 \
   | python3 scripts/pr-review/reply_and_resolve.py --plan /tmp/plan.json --execute
 ```
 
