@@ -51,7 +51,7 @@ plugins {
     // The Compose compiler plugin tracks the Kotlin line AGP builds against, and
     // it is the only Kotlin version coordinate this build sets (see the header).
     // Moved 2.3.10 -> 2.3.21 within the same line at the v2.6.3 refresh.
-    id("org.jetbrains.kotlin.plugin.compose") version "2.3.21" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" apply false
     // v1.8.8 "Atlas" (Workstream J): the Baseline Profile Gradle plugin. The plan
     // named 1.4.1, but that stable line predates AGP 9 and its module-type guard
     // rejects an AGP-9.x `com.android.application` module ("not a supported android
