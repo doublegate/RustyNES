@@ -51,7 +51,22 @@ plugins {
     // The Compose compiler plugin tracks the Kotlin line AGP builds against, and
     // it is the only Kotlin version coordinate this build sets (see the header).
     // Moved 2.3.10 -> 2.3.21 within the same line at the v2.6.3 refresh.
-    id("org.jetbrains.kotlin.plugin.compose") version "2.3.21" apply false
+    // v2.6.19: 2.3.21 -> 2.4.20 (Dependabot). The constraint people reach for
+    // here -- "the Compose compiler plugin must equal the Kotlin compiler
+    // version" -- is about Kotlin and is NOT read off AGP's POM coordinate; see
+    // the header. What the POMs do say, checked directly: each
+    // `compose-compiler-gradle-plugin` release declares `kotlin-gradle-plugin`
+    // at its OWN version (2.3.21 -> 2.3.21, 2.4.20 -> 2.4.20), while AGP 9.4.0
+    // declares 2.2.10 as its runtime dep. Gradle resolves the plugin classpath
+    // to the highest, so the Compose plugin's Kotlin is the one in force -- which
+    // is exactly the shape that was already building at 2.3.21 against the same
+    // AGP 2.2.10 coordinate.
+    //
+    // This machine has no Android toolchain, so that is an argument and not a
+    // measurement. The adjudicator is CI's `Gradle bundle foss+play release`
+    // job, and note it is `continue-on-error: true` -- it cannot fail the PR, so
+    // its LOG has to be read rather than its check mark.
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" apply false
     // v1.8.8 "Atlas" (Workstream J): the Baseline Profile Gradle plugin. The plan
     // named 1.4.1, but that stable line predates AGP 9 and its module-type guard
     // rejects an AGP-9.x `com.android.application` module ("not a supported android
