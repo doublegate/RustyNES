@@ -303,7 +303,7 @@ dependencies {
     // LocaleManager on API 33+, and a manual override on API 24..32). MainActivity must
     // extend AppCompatActivity and the launch theme must derive from an AppCompat theme
     // for the locale APIs to take effect under Compose.
-    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("androidx.appcompat:appcompat:1.8.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
     // collectAsStateWithLifecycle for the controller-connect StateFlow (v1.8.7, #41).
