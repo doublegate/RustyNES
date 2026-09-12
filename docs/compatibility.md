@@ -139,7 +139,7 @@ Bros.) boot and render with their correct 2C04 palette.
 **PlayChoice-10's second-screen instruction menu and its Z80 coprocessor are out
 of scope** — only the NES-game half runs (with the 2C03 palette). All of the above
 is gated on `ConsoleType::VsSystem`/`Playchoice10`; a stock `Nes` cart is byte-for-
-byte unchanged (AccuracyCoin 141/141 (100.00%) + both ROM oracles byte-identical).
+byte unchanged (AccuracyCoin 100.00% -- 141/141 at the time, 144/144 from v2.6.18 -- plus both ROM oracles byte-identical).
 Region timing (PAL/Dendy)
 is validated by automated gates (`ppu_region_constants_match_hardware` in
 `rustynes-ppu`; `region_timing.rs` in `rustynes-test-harness`). The R1
