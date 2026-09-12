@@ -891,6 +891,10 @@ pub struct Ppu {
     /// immediate value, so flag-off is byte-identical. Updated at tick end.
     pub(crate) rendering_enabled_delayed: bool,
 
+    /// Two-dots-ago rendering value, for the v2.6.18 depth knob only.
+    #[cfg(feature = "phi2-write-sweep")]
+    pub(crate) render_gate_prev2: bool,
+
     /// v2.0 Phase 6 (`mc-ppu-subpos`): the analog `$2001` BG-shift-register
     /// RELOAD delay. The shifter reload gates on `bg_reload_render`, which tracks
     /// the live `self.mask` rendering-enable bit EXCEPT during the
@@ -1277,6 +1281,61 @@ pub struct ProvBgAddrs {
 /// swept against the `BG Serial In` / `Stale BG Shift` keys without rebuilding.
 /// Only consulted under `mc-ppu-subpos`.
 pub static MASK_WRITE_DELAY: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(4);
+
+/// v2.6.18 DERIVATION KNOB: depth, in PPU dots, of the rendering-enable
+/// pipeline (`rendering_enabled_delayed`).
+///
+/// 1 = shipped semantics exactly (a consumer sees the PREVIOUS dot's rendering
+/// value). 0 = no delay, consumers see the live mask. 2 = two dots.
+///
+/// This delay and the write-commit point are ONE quantity split across two
+/// places: the observable effect time is the commit offset PLUS this depth.
+/// v2.6.17 swept this 1..4 and found 1 optimal -- but only at the SHIPPED commit
+/// point. Under phi2 the commit is half a dot later, so the depth reproducing
+/// the same effect time is one LESS, exactly as `mask_for_skip_check` needed
+/// 2 -> 1. Sweeping at the shipped placement answers a different question.
+///
+/// Feature-gated; the shipped build has no atomic load on the per-dot path.
+#[cfg(feature = "phi2-write-sweep")]
+pub static RENDER_GATE_LAG: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(1);
+
+/// Whether the specialized dot paths may be taken this dot.
+///
+/// Their guards prove a ONE-dot rendering history (`rendering_enabled_delayed`
+/// and `prev_rendering_enabled`), which is exactly what depths 0 and 1 read. At
+/// depth >= 2 the gate reads [`Ppu::render_gate_prev2`] — rendering from two
+/// dots ago — and the guard says nothing about it, so a dot with rendering
+/// enabled for the last two dots but disabled before them would run the
+/// rendering-enabled fast body while the general path gates it off. Excluding
+/// the fast paths at depth >= 2 keeps one code path answering the sweep's
+/// question instead of two that disagree.
+// Dead under `ppu-state-trace` for the same reason `tick_visible_render_fast`
+// is: that feature `cfg`s the fast-path dispatch out entirely, so the guard
+// term this function supplies has no caller. Live in every other build --
+// the one shape that earns an `allow` rather than a deletion, and scoped to
+// that feature so it cannot suppress a real finding elsewhere.
+#[cfg(feature = "phi2-write-sweep")]
+#[cfg_attr(feature = "ppu-state-trace", allow(dead_code))]
+#[inline]
+fn fast_dot_paths_valid() -> bool {
+    RENDER_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) <= 1
+}
+
+/// Default build: the depth is the shipped 1, so the guards are sufficient and
+/// this folds away at compile time — the fast paths are reached exactly as
+/// before.
+#[cfg(not(feature = "phi2-write-sweep"))]
+#[inline]
+const fn fast_dot_paths_valid() -> bool {
+    true
+}
+
+/// The default build's guard term must be a compile-time `true`, or adding it
+/// would have changed which dots take the specialized paths — and those paths
+/// exist to be byte-identical. Asserted at compile time rather than in a test,
+/// because "it folds away" is a property of the constant, not of a run.
+#[cfg(not(feature = "phi2-write-sweep"))]
+const _: () = assert!(fast_dot_paths_valid());
 impl Ppu {
     /// New PPU in power-on state.
     #[must_use]
@@ -1404,6 +1463,8 @@ impl Ppu {
             oam2_fetch_frozen: false,
             prev_rendering_enabled: false,
             rendering_enabled_delayed: false,
+            #[cfg(feature = "phi2-write-sweep")]
+            render_gate_prev2: false,
             bg_reload_render: false,
             mask_write_delay: 0,
             cached_visible: false,
@@ -3137,6 +3198,41 @@ impl Ppu {
         }
     }
 
+    /// Re-point the rendering gate to the swept depth, and hand back the
+    /// 1-dot-delayed value as it stood when the dot began.
+    ///
+    /// Called at the TOP of [`Self::tick`], before `rendering_gate` and every
+    /// other consumer reads `rendering_enabled_delayed` this dot. Depth 1 is
+    /// the shipped behaviour and leaves the field exactly as the tick-end
+    /// assignment left it, so the default path is untouched by construction
+    /// rather than by claim.
+    ///
+    /// The return value is the pipeline's stage N-1 and MUST be the value
+    /// handed to [`Self::render_gate_end_dot`]: at depth >= 2 this function
+    /// overwrites the field with stage N-2, so reading the field back at
+    /// tick-end assigns `render_gate_prev2` to itself and the pipeline freezes
+    /// at its power-on value instead of shifting. That is the defect found in
+    /// review on #506 and the reason the shift is a named pair rather than two
+    /// bare assignments a hundred lines apart.
+    #[cfg(feature = "phi2-write-sweep")]
+    const fn render_gate_begin_dot(&mut self, depth: u8) -> bool {
+        let prev1 = self.rendering_enabled_delayed;
+        match depth {
+            0 => self.rendering_enabled_delayed = self.mask.rendering_enabled(),
+            1 => {}
+            _ => self.rendering_enabled_delayed = self.render_gate_prev2,
+        }
+        prev1
+    }
+
+    /// Shift stage N-1 into stage N-2. Called at the END of [`Self::tick`],
+    /// beside the `rendering_enabled_delayed = rendering` that fills stage N-1,
+    /// with the value [`Self::render_gate_begin_dot`] returned for this dot.
+    #[cfg(feature = "phi2-write-sweep")]
+    const fn render_gate_end_dot(&mut self, prev1: bool) {
+        self.render_gate_prev2 = prev1;
+    }
+
     /// Tick exactly one dot.
     #[allow(clippy::too_many_lines)] // the per-dot FSM + the ppu-oam-data-bus tick hook
     #[allow(clippy::cognitive_complexity)] // + the ppu-sprite-shifter-counter render-toggle branches
@@ -3205,6 +3301,8 @@ impl Ppu {
             && !self.oam_corruption_pending
             && !self.oam_corruption_disabled
             && !self.oam_corruption_disabled_instant
+            // Depth-2 sweep only; a no-op constant in the shipped build.
+            && fast_dot_paths_valid()
         {
             #[cfg(feature = "ppu-fetch-trace")]
             {
@@ -3275,6 +3373,8 @@ impl Ppu {
             && self.copy_v_delay == 0
             && self.mask_write_delay == 0
             && self.ppudata_sm_countdown == 0
+            // Depth-2 sweep only; a no-op constant in the shipped build.
+            && fast_dot_paths_valid()
         {
             self.tick_idle_line_fast();
             return;
@@ -3342,6 +3442,22 @@ impl Ppu {
         let pre_render = self.cached_pre_render;
         let render_line = self.cached_render_line;
         let rendering = self.mask.rendering_enabled();
+        // v2.6.18 derivation: re-point the delayed gate to the swept depth
+        // BEFORE `rendering_gate` and every other consumer reads it this dot.
+        // Depth 1 leaves it exactly as the tick-end assignment left it, so the
+        // default path is untouched BY CONSTRUCTION rather than by claim.
+        // The 1-dot-delayed value AS THIS DOT STARTED, captured before the
+        // re-point below overwrites the field. The tick-end shift needs stage
+        // N-1 to feed stage N-2, and reading the field back there after a
+        // depth-2 re-point assigns `render_gate_prev2` to ITSELF — freezing the
+        // pipeline at its power-on `false` for the whole run instead of
+        // shifting. Found in review on #506, after the depth sweep had already
+        // been run: every `lag >= 2` cell measured a permanently-disabled gate
+        // rather than a two-dot delay. `render_gate_lag_shifts_a_two_dot_pipeline`
+        // fails without this line.
+        #[cfg(feature = "phi2-write-sweep")]
+        let render_gate_prev1 =
+            self.render_gate_begin_dot(RENDER_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed));
         // v2.0 (ae30785): the fetch/shift/sprite-eval pipeline gates on the
         // 1-PPU-dot-delayed rendering value under `ppu-sprite-shifter-counter`
         // (a mid-scanline `$2001` toggle takes effect one dot later — Stale
@@ -3394,6 +3510,10 @@ impl Ppu {
         // v2.0 (ae30785): update the 1-dot-delayed copy AFTER this dot's gate
         // read above, so the next dot sees the delayed value.
         {
+            #[cfg(feature = "phi2-write-sweep")]
+            {
+                self.render_gate_end_dot(render_gate_prev1);
+            }
             self.rendering_enabled_delayed = rendering;
         }
 
@@ -5862,6 +5982,62 @@ mod tests {
             (2, 2),
             "secondary OAM full: OAMADDR += 5, so both the sprite index and the \
              byte index advance"
+        );
+    }
+
+    /// v2.6.18 — the depth-2 rendering-gate pipeline must SHIFT, not freeze.
+    ///
+    /// Drives the named pair directly rather than `tick`, so it needs no bus
+    /// and — the point — never stores `RENDER_GATE_LAG`, which 13 other tests
+    /// in this binary would observe concurrently.
+    ///
+    /// Against the pre-fix code (`render_gate_prev2 = self.
+    /// rendering_enabled_delayed` at tick-end, read back AFTER the depth-2
+    /// re-point had already overwritten it) the field is assigned to itself and
+    /// the gate reads `false` for every dot of the run. That made every
+    /// `lag >= 2` cell of the derivation sweep a measurement of a permanently
+    /// disabled gate. The assertions below fail on the first `true`.
+    #[cfg(feature = "phi2-write-sweep")]
+    #[test]
+    fn render_gate_lag_shifts_a_two_dot_pipeline() {
+        let mut ppu = Ppu::new(PpuRegion::Ntsc);
+        // Power-on: both stages clear, rendering off.
+        assert!(!ppu.rendering_enabled_delayed);
+        assert!(!ppu.render_gate_prev2);
+
+        // One dot of the pipeline at depth 2, returning the value this dot's
+        // gate reads. Mirrors `tick`'s order exactly: re-point, then fill
+        // stage N-1 from the live mask, then shift N-1 into N-2.
+        let dot = |ppu: &mut Ppu, rendering: bool| -> bool {
+            ppu.mask = if rendering {
+                PpuMask::SHOW_BG
+            } else {
+                PpuMask::empty()
+            };
+            let prev1 = ppu.render_gate_begin_dot(2);
+            let gate = ppu.rendering_enabled_delayed;
+            // `tick` shifts BEFORE it refills stage N-1; keep that order, or
+            // the mutation below stops reproducing the shipped defect.
+            ppu.render_gate_end_dot(prev1);
+            ppu.rendering_enabled_delayed = ppu.mask.rendering_enabled();
+            gate
+        };
+
+        // Rendering goes ON and stays on: the gate must follow two dots later.
+        assert!(!dot(&mut ppu, true), "dot 1: gate still sees 2 dots ago");
+        assert!(!dot(&mut ppu, true), "dot 2: gate still sees 2 dots ago");
+        assert!(
+            dot(&mut ppu, true),
+            "dot 3: the ON edge has shifted through"
+        );
+        assert!(dot(&mut ppu, true), "dot 4: stays on");
+
+        // Rendering goes OFF: the same two-dot delay, in the other direction.
+        assert!(dot(&mut ppu, false), "dot 5: gate still sees rendering on");
+        assert!(dot(&mut ppu, false), "dot 6: gate still sees rendering on");
+        assert!(
+            !dot(&mut ppu, false),
+            "dot 7: the OFF edge has shifted through"
         );
     }
 

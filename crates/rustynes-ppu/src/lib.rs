@@ -49,6 +49,8 @@ pub use palette_gen::{NtscPaletteParams, generate_base_palette};
 pub use ppu::MASK_WRITE_DELAY;
 #[cfg(feature = "debug-hooks")]
 pub use ppu::ProvBgAddrs;
+#[cfg(feature = "phi2-write-sweep")]
+pub use ppu::RENDER_GATE_LAG;
 pub use ppu::octal_trace;
 pub use ppu::read2007_diag;
 pub use ppu::{
