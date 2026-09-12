@@ -1279,7 +1279,10 @@ pub struct ProvBgAddrs {
 /// sits one dot later than that plus the existing 1-dot render gate, so the
 /// effective default is 4. Runtime-tunable (an atomic) so the exact phase can be
 /// swept against the `BG Serial In` / `Stale BG Shift` keys without rebuilding.
-/// Only consulted under `mc-ppu-subpos`.
+/// The `mc-ppu-subpos` name in the lines above is the v2.0 Phase 6 WORKSTREAM,
+/// not a cargo feature: no manifest declares one, and the read at the BG-reload
+/// freeze below is unconditional. Kept as the historical label rather than
+/// rewritten, but do not go looking for a flag to turn on.
 pub static MASK_WRITE_DELAY: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(4);
 
 /// v2.6.18 DERIVATION KNOB: depth, in PPU dots, of the rendering-enable
@@ -1336,6 +1339,37 @@ const fn fast_dot_paths_valid() -> bool {
 /// because "it folds away" is a property of the constant, not of a run.
 #[cfg(not(feature = "phi2-write-sweep"))]
 const _: () = assert!(fast_dot_paths_valid());
+/// v2.6.18 condition-2 DIAGNOSTIC: the dot on scanline 241 that sets the VBL
+/// flag. Default 1, which is what nesdev specifies and what ships.
+///
+/// Exists to separate two explanations for the six NMI entries failing when the
+/// CPU access moves to the cycle's last dot: a pure one-dot relative shift
+/// between the `$2002` read and VBL-set, versus a defect in the read placement
+/// itself. Moving this is NOT a fix and must never be shipped non-default.
+#[cfg(feature = "phi2-write-sweep")]
+pub static VBL_SET_DOT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(1);
+
+/// v2.6.18 condition-2 DIAGNOSTIC: the depth of the odd-frame-skip gate's
+/// `$2001` pipeline, in stages. Default 2, which is what ships.
+///
+/// The skip gate is the most explicitly-documented compensation in this PPU --
+/// its own comment says lockstep applies the write at the START of a CPU cycle
+/// while hardware latches at phi2 -- so its depth is coupled to where the write
+/// access lands, and sweeping the two independently answers a different
+/// question than sweeping them together.
+#[cfg(feature = "phi2-write-sweep")]
+pub static SKIP_GATE_LAG: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(2);
+
+/// v2.6.18: the depth of the OAM2 counter's `$2001` gate, in dots. Default 0 =
+/// the live mask, which is what ships.
+///
+/// Every other rendering consumer here is delayed and this one is not, so the
+/// two OAM2 catalog entries -- which share it -- can only be satisfied at
+/// different CPU access placements. Sweeping the depth asks whether that is the
+/// reason, which no placement sweep can.
+#[cfg(feature = "phi2-write-sweep")]
+pub static OAM2_GATE_LAG: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
 impl Ppu {
     /// New PPU in power-on state.
     #[must_use]
@@ -3525,8 +3559,19 @@ impl Ppu {
         // sample ~6-7 PPU clocks after VBL set, given how our bus
         // interleaves CPU bus accesses before the 3-PPU-tick `on_cpu_cycle`
         // hook (vs. real hardware's mid-cycle phi1 access).
+        #[cfg(not(feature = "phi2-write-sweep"))]
+        let vbl_set_dot = 1u16;
+        // v2.6.18 condition-2 diagnostic. NOT a proposed fix: nesdev states the
+        // flag sets at scanline 241 dot 1, and this knob exists only to ask
+        // whether the six NMI entries' failure at a later ACCESS dot is a pure
+        // one-dot RELATIVE shift between the `$2002` read and VBL-set, or
+        // something else. If shifting VBL by the same dot restores all six, the
+        // disagreement is about CPU/PPU alignment rather than about the read.
+        #[cfg(feature = "phi2-write-sweep")]
+        let vbl_set_dot =
+            u16::from(VBL_SET_DOT.load(core::sync::atomic::Ordering::Relaxed));
         if self.scanline == self.region.vblank_start_line()
-            && self.dot == 1
+            && self.dot == vbl_set_dot
             && !self.suppress_vbl_this_frame
         {
             self.status.insert(PpuStatus::VBLANK);
@@ -3583,7 +3628,17 @@ impl Ppu {
             // scanlines when rendering, so a CPU $2004 read mid-frame observes
             // the sprite-eval / load data bus (AccuracyCoin `$2004 Stress`).
             // Side-effect-free w.r.t. the rendering FSM above.
-            if visible && self.mask.rendering_enabled() {
+            // v2.6.18: the OAM2 counter's gate is the LIVE mask, with no
+            // `$2001` delay at all, while every other rendering consumer in
+            // this PPU reads a delayed value (1 dot for the render gate, 2
+            // stages for the odd-frame skip, `MASK_WRITE_DELAY` for the BG
+            // reload freeze). It is also the ONE gate `Frozen OAM2 Increment`
+            // and `Misaligned OAM2 Address` share, and those two entries impose
+            // contradictory requirements on the read/write dot SPACING -- which
+            // is what a zero-delay gate on a delayed signal looks like from the
+            // outside. `OAM2_GATE_LAG` makes the depth swept rather than
+            // assumed; 0 is the shipped live-mask read.
+            if visible && self.oam2_gate_mask().rendering_enabled() {
                 self.tick_oam_bus();
             }
             // Sprite tile fetch + A12 emission.  Real hardware spreads the
@@ -5815,7 +5870,7 @@ impl Ppu {
         if self.scanline == self.region.prerender_line()
             && self.dot == 339
             && (self.frame & 1) == 1
-            && self.mask_for_skip_check.rendering_enabled()
+            && self.skip_gate_mask().rendering_enabled()
             && self.region == PpuRegion::Ntsc
         {
             self.dot = 0;
@@ -5863,6 +5918,42 @@ impl Ppu {
         }
         self.mask_for_skip_check = self.mask_skip_pipe1;
         self.mask_skip_pipe1 = self.mask;
+    }
+
+    /// The mask the OAM2 counter's gate consults, at the swept depth. Depth 0
+    /// is the live mask -- the shipped read -- so the default build is
+    /// unchanged by construction.
+    #[cfg(feature = "phi2-write-sweep")]
+    fn oam2_gate_mask(&self) -> PpuMask {
+        match OAM2_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) {
+            0 => self.mask,
+            1 => self.mask_skip_pipe1,
+            _ => self.mask_for_skip_check,
+        }
+    }
+
+    /// Shipped build: the live mask, folded to the same load.
+    #[cfg(not(feature = "phi2-write-sweep"))]
+    const fn oam2_gate_mask(&self) -> PpuMask {
+        self.mask
+    }
+
+    /// The mask the odd-frame-skip gate consults, at the swept pipeline depth.
+    /// Depth 2 returns `mask_for_skip_check` -- the shipped value -- so the
+    /// default build is unchanged by construction rather than by claim.
+    #[cfg(feature = "phi2-write-sweep")]
+    fn skip_gate_mask(&self) -> PpuMask {
+        match SKIP_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) {
+            0 => self.mask,
+            1 => self.mask_skip_pipe1,
+            _ => self.mask_for_skip_check,
+        }
+    }
+
+    /// Shipped build: the two-stage value, inlined to the same load.
+    #[cfg(not(feature = "phi2-write-sweep"))]
+    const fn skip_gate_mask(&self) -> PpuMask {
+        self.mask_for_skip_check
     }
 
     const fn is_render_scanline(&self) -> bool {

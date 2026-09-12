@@ -25,6 +25,9 @@ phi2-write-sweep = []
 # change. See `docs/adr/0005-ppu-state-trace.md` for design and
 # `docs/ppu-trace-tooling.md` for usage. Enable with
 # `cargo test --features ppu-state-trace ...`.
+# v2.6.18 study: sweepable CPU access placement + the VBL-set-dot diagnostic.
+# Default off; the shipped build compiles the `const` paths.
+phi2-write-sweep = []
 ppu-state-trace = []
 # v2.5.4 (rung 3) — per-dot capture of the addresses the PPU drives on its own
 # bus, for the MiSTer co-simulation's background-fetch gate. The address bus is

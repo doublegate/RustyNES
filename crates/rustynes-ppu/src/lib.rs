@@ -47,6 +47,12 @@ pub use palette::{
 };
 pub use palette_gen::{NtscPaletteParams, generate_base_palette};
 pub use ppu::MASK_WRITE_DELAY;
+#[cfg(feature = "phi2-write-sweep")]
+pub use ppu::OAM2_GATE_LAG;
+#[cfg(feature = "phi2-write-sweep")]
+pub use ppu::SKIP_GATE_LAG;
+#[cfg(feature = "phi2-write-sweep")]
+pub use ppu::VBL_SET_DOT;
 #[cfg(feature = "debug-hooks")]
 pub use ppu::ProvBgAddrs;
 #[cfg(feature = "phi2-write-sweep")]
