@@ -49,8 +49,8 @@ inherit the upstream MIT license (see tests/roms/AccuracyCoin/LICENSES.md).
 """
 
 import argparse
+import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -124,31 +124,77 @@ CustomSubTest_Halt:
 """
 
 
-def _find_wine() -> str:
+def _probe_wine(cand: str) -> "str | None":
+    """`None` if `cand` is a usable wine, else a short reason why not.
+
+    Requires the version line to START with "wine" rather than merely contain
+    it: a wrapper announcing "firejail wrapper for wine" would pass a substring
+    test, and the firejail shim that motivated all of this prints
+    "firejail version 0.9.80".
+    """
+    path = Path(cand)
+    if not path.is_absolute():
+        return "not an absolute path"
+    if not path.exists():
+        return "does not exist"
+    try:
+        probe = subprocess.run([cand, "--version"], capture_output=True,
+                               text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"could not be run ({exc})"
+    for stream in (probe.stdout, probe.stderr):
+        if re.match(r"^\s*wine[- ]", stream, re.IGNORECASE):
+            return None
+    got = (probe.stdout + probe.stderr).strip().splitlines()
+    return f"did not identify as wine (said {got[0]!r})" if got else "printed no version"
+
+
+def _find_wine(override: "Path | None" = None) -> str:
     """An absolute path to a real wine, or exit with why.
 
-    `shutil.which("wine")` is not enough: a firejail (or any other) wrapper can
-    occupy that name and will happily run, so each candidate is asked for its
-    version and only accepted if it answers like wine.
+    NO IMPLICIT `PATH` SEARCH. `shutil.which("wine")` is exactly the hazard this
+    function exists to avoid -- on this machine `/usr/local/bin/wine` is a
+    symlink to `/usr/bin/firejail`, and a `PATH` entry can be relative or a
+    wrapper that we would then EXECUTE while probing (CWE-426, untrusted search
+    path). So the candidate set is a fixed allowlist of absolute paths plus one
+    explicitly-trusted override, which is the project's stated preference for
+    allowlists over denylists at a boundary.
+
+    Reviewers disagreed here and the disagreement is recorded because both were
+    reasonable: one asked for the `PATH` result to be tried FIRST so a developer
+    with a custom wine keeps their override, the other asked for `PATH` to be
+    dropped entirely as an untrusted search path. Trying `PATH` first is
+    precisely backwards for this script, whose whole reason to exist is a `PATH`
+    entry shadowing the real binary -- but the need behind it is real, so it is
+    served by `--wine` / `RUSTYNES_WINE`, an override the operator sets
+    deliberately rather than one inherited from the environment.
     """
-    candidates = ["/usr/bin/wine", "/usr/bin/wine64"]
-    found = shutil.which("wine")
-    if found:
-        candidates.append(found)
-    for cand in candidates:
-        if not Path(cand).exists():
-            continue
-        try:
-            probe = subprocess.run([cand, "--version"], capture_output=True,
-                                   text=True, timeout=30)
-        except (OSError, subprocess.SubprocessError):
-            continue
-        if "wine" in (probe.stdout + probe.stderr).lower():
+    # An EXPLICIT override is checked alone and fails hard. Falling through to a
+    # default when the operator named a binary would silently build with
+    # something other than what they asked for -- found by a negative control
+    # here, where `--wine /usr/bin/firejail` quietly used `/usr/bin/wine`.
+    explicit = str(override) if override is not None else os.environ.get("RUSTYNES_WINE")
+    if explicit:
+        why = _probe_wine(explicit)
+        if why is None:
+            return explicit
+        sys.exit(f"--wine/RUSTYNES_WINE={explicit!r} is not usable: {why}")
+
+    candidates = ["/usr/bin/wine", "/usr/bin/wine64", "/opt/wine-stable/bin/wine"]
+
+    # Deduplicate, preserving order, so the failure message cannot list a path
+    # twice when the override happens to equal a default.
+    seen: set[str] = set()
+    ordered = [c for c in candidates if not (c in seen or seen.add(c))]
+
+    for cand in ordered:
+        if _probe_wine(cand) is None:
             return cand
     sys.exit(
-        "no working wine found (tried: " + ", ".join(candidates) + "). "
-        "Note that a `wine` on PATH may be a sandbox wrapper -- this script "
-        "requires the real binary because it runs upstream's nesasm.exe."
+        "no working wine found (tried: " + ", ".join(ordered) + "). "
+        "PATH is deliberately NOT searched -- a `wine` there may be a sandbox "
+        "wrapper shadowing the real binary. Pass --wine /abs/path or set "
+        "RUSTYNES_WINE to an absolute path for an installation outside those."
     )
 
 
@@ -235,6 +281,11 @@ def main() -> int:
         "--build-dir", type=Path, default=Path("/tmp/accuracycoin-build"),
         help="Scratch directory for patched source + intermediate ROM"
     )
+    p.add_argument(
+        "--wine", type=Path, default=None,
+        help="Absolute path to a real wine binary. PATH is deliberately not "
+             "searched; see _find_wine(). RUSTYNES_WINE does the same."
+    )
     args = p.parse_args()
 
     src_asm = args.src_dir / "AccuracyCoin.asm"
@@ -269,7 +320,7 @@ def main() -> int:
     # program. Prefer the first entry that actually reports a wine version.
     print(f"[build] suite={args.suite} test={args.test} name={args.name}",
           file=sys.stderr)
-    wine = _find_wine()
+    wine = _find_wine(args.wine)
     print(f"[build] wine={wine}", file=sys.stderr)
     cmd = [wine, str(args.build_dir / "nesasm.exe"), "AccuracyCoin.asm"]
     r = subprocess.run(cmd, cwd=args.build_dir, capture_output=True,

@@ -70,6 +70,17 @@ cycle-accurate core later replaced.
   finds `/usr/bin/wine` with no `PATH` help and rebuilds the new ROM
   byte-identically.
 
+  Reviewers split on this and the disagreement is recorded rather than
+  averaged: one asked for the `PATH` result to be tried FIRST so a custom wine
+  keeps its precedence, the other for `PATH` to be dropped entirely as an
+  untrusted search path (CWE-426). `PATH`-first is exactly backwards for a
+  script whose reason to exist is a `PATH` entry shadowing the real binary — but
+  the need behind it is real, so it is served by `--wine` / `RUSTYNES_WINE`, an
+  override the operator sets deliberately rather than inherits. An explicit
+  override **fails hard** if it does not identify as wine, found by a negative
+  control here: `--wine /usr/bin/firejail` previously fell through and built
+  with something the operator had not asked for.
+
 - **Dependency refresh: 53 crates, one Gradle train, one action, and two
   coverage gaps.** Consolidates the seven open Dependabot PRs and everything
   else the project could move, rather than merging them one at a time -- which
