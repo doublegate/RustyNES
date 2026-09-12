@@ -895,6 +895,17 @@ pub struct Ppu {
     #[cfg(feature = "phi2-write-sweep")]
     pub(crate) render_gate_prev2: bool,
 
+    /// v2.6.18 (`phi2-write-sweep` only): a shared four-stage `$2001` history,
+    /// newest first, that each swept consumer gate reads at its OWN depth.
+    ///
+    /// The first version of `OAM2_GATE_LAG` borrowed the odd-frame-skip
+    /// pipeline, which capped the reachable depth at two AND coupled two
+    /// unrelated consumers. The measurement that mattered lives past that cap:
+    /// at the shipped placement `Frozen OAM2 Increment` closes only with the
+    /// OAM2 gate deeper than the skip pipeline can express.
+    #[cfg(feature = "phi2-write-sweep")]
+    pub(crate) sweep_mask_history: [PpuMask; 4],
+
     /// v2.0 Phase 6 (`mc-ppu-subpos`): the analog `$2001` BG-shift-register
     /// RELOAD delay. The shifter reload gates on `bg_reload_render`, which tracks
     /// the live `self.mask` rendering-enable bit EXCEPT during the
@@ -1321,7 +1332,13 @@ pub static RENDER_GATE_LAG: core::sync::atomic::AtomicU8 = core::sync::atomic::A
 #[cfg_attr(feature = "ppu-state-trace", allow(dead_code))]
 #[inline]
 fn fast_dot_paths_valid() -> bool {
+    // The OAM2 pipeline is shifted only on the general path, and the fast
+    // bodies read the gate, so an armed OAM2 knob must take the general path
+    // for the same reason a depth-2 render gate must. Learned the expensive
+    // way on #506: a bypassed pipeline does not merely go stale, it makes the
+    // swept cell measure something that is not the configuration named.
     RENDER_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) <= 1
+        && OAM2_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) == 0
 }
 
 /// Default build: the depth is the shipped 1, so the guards are sufficient and
@@ -1360,13 +1377,29 @@ pub static VBL_SET_DOT: core::sync::atomic::AtomicU8 = core::sync::atomic::Atomi
 #[cfg(feature = "phi2-write-sweep")]
 pub static SKIP_GATE_LAG: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(2);
 
+/// v2.6.18: the depth of the dot-339 sprite-counter re-arm's own `$2001` gate.
+///
+/// `u8::MAX` (the default) means "ride the shared `rendering_gate`", which is
+/// what ships. Any other value gives the re-arm its own depth in the shared
+/// history, which is the question `Stale Sprite Shift Regs` and
+/// `Frozen OAM2 Increment` forced: at the shipped placement the frozen-flag
+/// machinery closes only at `RENDER_GATE_LAG = 2`, and that same depth is what
+/// breaks the re-arm, which wants 1. Two consumers, one gate, opposite
+/// requirements -- the shape v2.6.5 resolved by separating the background
+/// shifters' reload from their shift clock.
+#[cfg(feature = "phi2-write-sweep")]
+pub static SPRITE_REARM_LAG: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(u8::MAX);
+
 /// v2.6.18: the depth of the OAM2 counter's `$2001` gate, in dots. Default 0 =
 /// the live mask, which is what ships.
 ///
 /// Every other rendering consumer here is delayed and this one is not, so the
 /// two OAM2 catalog entries -- which share it -- can only be satisfied at
 /// different CPU access placements. Sweeping the depth asks whether that is the
-/// reason, which no placement sweep can.
+/// reason, which no placement sweep can. Depth 3 is what closes
+/// `Frozen OAM2 Increment`; the borrowed two-stage pipeline it first used could
+/// not reach that, which is why the field below is dedicated.
 #[cfg(feature = "phi2-write-sweep")]
 pub static OAM2_GATE_LAG: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
@@ -1499,6 +1532,8 @@ impl Ppu {
             rendering_enabled_delayed: false,
             #[cfg(feature = "phi2-write-sweep")]
             render_gate_prev2: false,
+            #[cfg(feature = "phi2-write-sweep")]
+            sweep_mask_history: [PpuMask::empty(); 4],
             bg_reload_render: false,
             mask_write_delay: 0,
             cached_visible: false,
@@ -3547,6 +3582,9 @@ impl Ppu {
             #[cfg(feature = "phi2-write-sweep")]
             {
                 self.render_gate_end_dot(render_gate_prev1);
+                // Newest first: stage 0 is "one dot ago" on the next dot.
+                self.sweep_mask_history.rotate_right(1);
+                self.sweep_mask_history[0] = self.mask;
             }
             self.rendering_enabled_delayed = rendering;
         }
@@ -3568,8 +3606,7 @@ impl Ppu {
         // something else. If shifting VBL by the same dot restores all six, the
         // disagreement is about CPU/PPU alignment rather than about the read.
         #[cfg(feature = "phi2-write-sweep")]
-        let vbl_set_dot =
-            u16::from(VBL_SET_DOT.load(core::sync::atomic::Ordering::Relaxed));
+        let vbl_set_dot = u16::from(VBL_SET_DOT.load(core::sync::atomic::Ordering::Relaxed));
         if self.scanline == self.region.vblank_start_line()
             && self.dot == vbl_set_dot
             && !self.suppress_vbl_this_frame
@@ -3611,6 +3648,25 @@ impl Ppu {
         }
 
         // === Background rendering pipeline (visible + pre-render lines) ===
+        // v2.6.18: when `SPRITE_REARM_LAG` is armed the dot-339 re-arm is
+        // evaluated HERE, outside the shared `rendering_gate` block, so it can
+        // see a rendering value the shared gate does not. Hoisted rather than
+        // gated in place because the enclosing block would otherwise decide the
+        // question before the knob is consulted.
+        #[cfg(feature = "phi2-write-sweep")]
+        if render_line && self.dot == 339 && !Self::sprite_rearm_follows_render_gate() {
+            let depth = SPRITE_REARM_LAG.load(core::sync::atomic::Ordering::Relaxed) as usize;
+            let m = if depth == 0 {
+                self.mask
+            } else {
+                self.sweep_mask_history[(depth - 1).min(self.sweep_mask_history.len() - 1)]
+            };
+            if m.rendering_enabled() {
+                for i in 0..self.spr_count as usize {
+                    self.spr_halted[i] = false;
+                }
+            }
+        }
         if render_line && rendering_gate {
             // Sprite evaluation: per-PPU-dot FSM matching real-hardware
             // behavior (cycles 1-64 secondary-OAM clear, 65-256 alternating
@@ -3689,7 +3745,7 @@ impl Ppu {
             // loaded slots halted — a reloaded-but-halted counter draws
             // immediately on re-enable (Stale Sprite Shift Regs t5/6). Slots
             // beyond `spr_count` retain their halted latch.
-            if self.dot == 339 {
+            if self.dot == 339 && Self::sprite_rearm_follows_render_gate() {
                 for i in 0..self.spr_count as usize {
                     self.spr_halted[i] = false;
                 }
@@ -5920,15 +5976,33 @@ impl Ppu {
         self.mask_skip_pipe1 = self.mask;
     }
 
+    /// Whether the dot-339 sprite-counter re-arm rides the shared
+    /// `rendering_gate`, which is the shipped behaviour.
+    ///
+    /// `SPRITE_REARM_LAG` uses `u8::MAX` for "follow the shared gate" rather
+    /// than a depth, because the shipped wiring is not any depth of the history
+    /// -- it is whatever `RENDER_GATE_LAG` resolved to this dot.
+    #[cfg(feature = "phi2-write-sweep")]
+    fn sprite_rearm_follows_render_gate() -> bool {
+        SPRITE_REARM_LAG.load(core::sync::atomic::Ordering::Relaxed) == u8::MAX
+    }
+
+    /// Shipped build: always the shared gate, folded away.
+    #[cfg(not(feature = "phi2-write-sweep"))]
+    const fn sprite_rearm_follows_render_gate() -> bool {
+        true
+    }
+
     /// The mask the OAM2 counter's gate consults, at the swept depth. Depth 0
     /// is the live mask -- the shipped read -- so the default build is
     /// unchanged by construction.
     #[cfg(feature = "phi2-write-sweep")]
     fn oam2_gate_mask(&self) -> PpuMask {
-        match OAM2_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) {
-            0 => self.mask,
-            1 => self.mask_skip_pipe1,
-            _ => self.mask_for_skip_check,
+        let depth = OAM2_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) as usize;
+        if depth == 0 {
+            self.mask
+        } else {
+            self.sweep_mask_history[(depth - 1).min(self.sweep_mask_history.len() - 1)]
         }
     }
 

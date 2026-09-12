@@ -24,8 +24,8 @@
 //!
 //! The nesdev `NMI` page gives one instant for a `$2002` read: "Return old
 //! status of `vblank_flag` in bit 7, **then** set `vblank_flag` to false", and
-//! the race is "if [VBlank set] and [read] happen simultaneously". Observation
-//! and side effect are the same event, so a read cannot be modelled as a
+//! the race is stated as VBlank-set and the read happening simultaneously.
+//! Observation and side effect are the same event, so a read cannot be a
 //! sample point plus a separate effect point — which was the leading
 //! hypothesis before this measurement, and is refuted by the documentation
 //! rather than by a sweep.
@@ -56,6 +56,14 @@ const WATCHED: [&str; 4] = [
     "Misaligned OAM2 Address",
 ];
 
+/// `MASK_WRITE_DELAY` values the coupled sweep visits.
+///
+/// One entry on purpose: that knob gates the BG-reload freeze and neither
+/// outstanding entry is a background test, so this pass holds it at the shipped
+/// 4. A named slice rather than an inline literal so widening it is a
+/// one-line change here instead of a restructure at the loop.
+const MASK_DELAYS: &[u8] = &[4];
+
 /// NTSC: 12 master clocks per CPU cycle, 4 per dot.
 const MC_PER_DOT: i32 = 4;
 /// The shipped effective advance for a read, in master clocks:
@@ -70,11 +78,7 @@ fn knobs(base_mc: i32, dot: i32) -> Option<(u8, u8)> {
     // Land on the dot's FIRST master clock: any point inside the dot is
     // equivalent, which is the whole finding this test is built on.
     let delta = dot * MC_PER_DOT - base_mc;
-    let (off, back) = if delta >= 0 {
-        (delta, 0)
-    } else {
-        (0, -delta)
-    };
+    let (off, back) = if delta >= 0 { (delta, 0) } else { (0, -delta) };
     Some((u8::try_from(off).ok()?, u8::try_from(back).ok()?))
 }
 
@@ -133,9 +137,7 @@ fn derive_the_access_dot_grid() {
                 .iter()
                 .zip(now.iter())
                 .filter(|(e, _)| WATCHED.contains(&e.name.as_str()))
-                .map(|(e, st)| {
-                    format!("{}={}", e.name, if st.is_pass() { "pass" } else { "FAIL" })
-                })
+                .map(|(e, st)| format!("{}={}", e.name, if st.is_pass() { "pass" } else { "FAIL" }))
                 .collect();
             eprintln!(
                 "read=dot{read_dot} write=dot{write_dot}  passed={passed}/{}  [{}]  \
@@ -246,38 +248,56 @@ fn is_the_nmi_loss_a_pure_alignment_shift() {
     reset_knobs();
 }
 
-/// The COUPLED sweep: access placement together with the two `$2001` delay
-/// depths that are known to compensate for it.
+/// The COUPLED sweep: access placement together with every `$2001` delay depth
+/// that is known to compensate for it.
 ///
-/// Sweeping one parameter at a time cannot find a compensating pair, and this
-/// PPU has several delays that were each fitted against the SHIPPED placement.
-/// The odd-frame-skip gate says so in its own comment -- "lockstep applies the
-/// PPUMASK write at the *start* of a CPU cycle, while real hardware latches at
-/// phi2" -- so its depth and the write dot are one quantity split across two
-/// places, and the same is true of the BG-reload freeze's `MASK_WRITE_DELAY`.
+/// Sweeping one parameter at a time cannot find a compensating combination, and
+/// this PPU has FOUR rendering-delay depths that were each fitted against the
+/// SHIPPED placement:
+///
+/// | consumer | knob | ships |
+/// |---|---|---|
+/// | render gate (`rendering_enabled_delayed`) | `RENDER_GATE_LAG` | 1 dot |
+/// | odd-frame skip (`mask_for_skip_check`) | `SKIP_GATE_LAG` | 2 stages |
+/// | OAM2 counter | `OAM2_GATE_LAG` | **0 -- the live mask** |
+/// | BG-reload freeze | `MASK_WRITE_DELAY` | 4 dots |
+///
+/// The skip gate says the coupling out loud in its own comment -- "lockstep
+/// applies the PPUMASK write at the *start* of a CPU cycle, while real hardware
+/// latches at phi2" -- so its depth and the write dot are one quantity split
+/// across two places. The OAM2 row is the one that matters: it is the only
+/// consumer with NO delay, and it is the gate the two mutually-contradictory
+/// OAM2 entries share.
 ///
 /// Writes a CSV so the coupling can be analysed rather than eyeballed. Set
 /// `ACCESS_SWEEP_CSV` to choose the path.
 #[test]
 #[ignore = "coupled sweep: ~135 battery runs, tens of minutes"]
 fn coupled_placement_and_delay_sweep() {
-    use rustynes_core::rustynes_ppu::{MASK_WRITE_DELAY, SKIP_GATE_LAG};
+    use rustynes_core::rustynes_ppu::{
+        MASK_WRITE_DELAY, OAM2_GATE_LAG, RENDER_GATE_LAG, SKIP_GATE_LAG,
+    };
     use std::io::Write as _;
 
-    let csv_path = std::env::var("ACCESS_SWEEP_CSV")
-        .unwrap_or_else(|_| "/tmp/access_sweep.csv".to_owned());
-    let mut csv = std::fs::File::create(&csv_path)
-        .unwrap_or_else(|e| panic!("create {csv_path}: {e}"));
+    let csv_path =
+        std::env::var("ACCESS_SWEEP_CSV").unwrap_or_else(|_| "/tmp/access_sweep.csv".to_owned());
+    let mut csv =
+        std::fs::File::create(&csv_path).unwrap_or_else(|e| panic!("create {csv_path}: {e}"));
     writeln!(
         csv,
-        "read_dot,write_dot,skip_lag,mask_delay,passed,frozen_oam2,stale,arbitrary,misaligned_oam2,lost"
+        "read_dot,write_dot,oam2_lag,render_lag,skip_lag,mask_delay,passed,\
+         frozen_oam2,stale,arbitrary,misaligned_oam2,lost"
     )
     .expect("csv header");
 
-    // Control first, at the shipped settings.
-    reset_knobs();
-    SKIP_GATE_LAG.store(2, Relaxed);
-    MASK_WRITE_DELAY.store(4, Relaxed);
+    let shipped = |()| {
+        reset_knobs();
+        OAM2_GATE_LAG.store(0, Relaxed);
+        RENDER_GATE_LAG.store(1, Relaxed);
+        SKIP_GATE_LAG.store(2, Relaxed);
+        MASK_WRITE_DELAY.store(4, Relaxed);
+    };
+    shipped(());
     let base = run();
     let bs = cat::summarise(&base);
     assert_eq!(
@@ -286,78 +306,114 @@ fn coupled_placement_and_delay_sweep() {
         "the control does not reproduce the shipped 143/144"
     );
 
-    let mut best = (143u32, (1i32, 1i32, 2u8, 4u8));
-    for read_dot in 0..3 {
-        for write_dot in 0..3 {
-            for skip_lag in 0u8..3 {
-                for mask_delay in [2u8, 3, 4, 5, 6] {
-                    apply(read_dot, write_dot);
-                    SKIP_GATE_LAG.store(skip_lag, Relaxed);
-                    MASK_WRITE_DELAY.store(mask_delay, Relaxed);
-                    let now = run();
-                    let s = cat::summarise(&now);
-                    let passed = s.pass + s.pass_with_code;
-                    let st = |name: &str| {
-                        cat::catalog()
-                            .iter()
-                            .zip(now.iter())
-                            .find(|(e, _)| e.name == name)
-                            .is_some_and(|(_, x)| x.is_pass())
-                    };
-                    let lost: Vec<&str> = cat::catalog()
-                        .iter()
-                        .zip(base.iter())
-                        .zip(now.iter())
-                        .filter(|((_, b), n)| b.is_pass() && !n.is_pass())
-                        .map(|((e, _), _)| e.name.as_str())
-                        .collect();
-                    writeln!(
-                        csv,
-                        "{read_dot},{write_dot},{skip_lag},{mask_delay},{passed},{},{},{},{},{}",
-                        st("Frozen OAM2 Increment"),
-                        st("Stale Sprite Shift Regs"),
-                        st("Arbitrary Sprite zero"),
-                        st("Misaligned OAM2 Address"),
-                        lost.join(" ")
-                    )
-                    .expect("csv row");
-                    if passed > best.0 {
-                        best = (passed, (read_dot, write_dot, skip_lag, mask_delay));
-                        eprintln!(
-                            "NEW BEST {passed}/144 at read=dot{read_dot} write=dot{write_dot} \
-                             skip_lag={skip_lag} mask_delay={mask_delay}"
-                        );
+    // Reads are pinned to dots 0 and 1: dot 2 loses all six NMI entries and the
+    // `VBL_SET_DOT` diagnostic showed that is not an alignment artifact, so
+    // spending a third of the grid there would measure a settled question.
+    let mut best = (143u32, String::from("shipped"));
+    let mut hits: Vec<String> = Vec::new();
+    // The ranges are narrowed by what the nine-cell placement grid and the
+    // targeted OAM2 experiment already settled, so the sweep spends its cells
+    // where a 143 could actually be:
+    //   * reads only at dot 0 / dot 1 -- dot 2 loses all six NMI entries and
+    //     `VBL_SET_DOT` showed that is not an alignment artifact;
+    //   * writes only at dot 1 / dot 2 -- `Frozen OAM2 Increment` passes at no
+    //     other write dot for those reads;
+    //   * `OAM2_GATE_LAG` at 1 / 2 -- depth 0 is the live-mask read whose
+    //     absence of delay is the thing under suspicion;
+    //   * `MASK_WRITE_DELAY` held at the shipped 4 for this pass, since it
+    //     gates the BG-reload freeze and neither outstanding entry is a
+    //     background test. Widen it if this pass finds nothing.
+    for read_dot in 0..2 {
+        for write_dot in 1..3 {
+            for oam2_lag in 1u8..3 {
+                for render_lag in 0u8..3 {
+                    for skip_lag in 0u8..3 {
+                        // A one-element list on purpose: `MASK_WRITE_DELAY`
+                        // gates the BG-reload freeze and neither outstanding
+                        // entry is a background test, so this pass holds it at
+                        // the shipped 4. Widen the slice if a pass finds
+                        // nothing -- keeping it a slice is what makes that a
+                        // one-character change rather than a restructure.
+                        for &mask_delay in MASK_DELAYS {
+                            apply(read_dot, write_dot);
+                            OAM2_GATE_LAG.store(oam2_lag, Relaxed);
+                            RENDER_GATE_LAG.store(render_lag, Relaxed);
+                            SKIP_GATE_LAG.store(skip_lag, Relaxed);
+                            MASK_WRITE_DELAY.store(mask_delay, Relaxed);
+                            let now = run();
+                            let s = cat::summarise(&now);
+                            let passed = s.pass + s.pass_with_code;
+                            let st = |name: &str| {
+                                cat::catalog()
+                                    .iter()
+                                    .zip(now.iter())
+                                    .find(|(e, _)| e.name == name)
+                                    .is_some_and(|(_, x)| x.is_pass())
+                            };
+                            let lost: Vec<&str> = cat::catalog()
+                                .iter()
+                                .zip(base.iter())
+                                .zip(now.iter())
+                                .filter(|((_, b), n)| b.is_pass() && !n.is_pass())
+                                .map(|((e, _), _)| e.name.as_str())
+                                .collect();
+                            let cell = format!(
+                                "read=dot{read_dot} write=dot{write_dot} oam2={oam2_lag} \
+                                 render={render_lag} skip={skip_lag} mask={mask_delay}"
+                            );
+                            writeln!(
+                                csv,
+                                "{read_dot},{write_dot},{oam2_lag},{render_lag},{skip_lag},\
+                                 {mask_delay},{passed},{},{},{},{},{}",
+                                st("Frozen OAM2 Increment"),
+                                st("Stale Sprite Shift Regs"),
+                                st("Arbitrary Sprite zero"),
+                                st("Misaligned OAM2 Address"),
+                                lost.join(" ")
+                            )
+                            .expect("csv row");
+                            if passed >= 143 {
+                                hits.push(format!("{passed}/144  {cell}  LOST={lost:?}"));
+                            }
+                            if passed > best.0 {
+                                best = (passed, cell.clone());
+                                eprintln!("NEW BEST {passed}/144 at {cell}");
+                            }
+                        }
                     }
                 }
             }
         }
     }
     eprintln!("best={best:?}  csv={csv_path}");
-    reset_knobs();
-    SKIP_GATE_LAG.store(2, Relaxed);
-    MASK_WRITE_DELAY.store(4, Relaxed);
+    eprintln!("cells at 143 or better ({}):", hits.len());
+    for h in &hits {
+        eprintln!("  {h}");
+    }
+    shipped(());
 }
 
-/// THE TARGETED EXPERIMENT: does the OAM2 counter's missing `$2001` delay
-/// explain the two OAM2 entries' contradictory placement requirements?
+/// Depth beyond what the borrowed pipeline could reach.
 ///
-/// `Frozen OAM2 Increment` passes only where `write == read + 1`;
-/// `Misaligned OAM2 Address` fails wherever `|write - read| == 1`. They share
-/// exactly one gate, and that gate reads the LIVE mask while every other
-/// rendering consumer in this PPU reads a delayed one. A zero-delay gate on a
-/// signal the ROMs expect to be delayed looks, from the outside, exactly like
-/// a requirement on the access spacing -- because moving the write dot is then
-/// the only way to move the window.
+/// The coupled sweep's frontier is at the SHIPPED placement:
+/// `read=dot1 write=dot1 oam2=2 render=2` closes `Frozen OAM2 Increment` and
+/// costs `Stale Sprite Shift Regs` + `Misaligned OAM2 Address` — and it needs
+/// `render=2`, a depth that breaks two entries which want the shipped 1. That
+/// shape says the extra dot the frozen-flag machinery wants belongs to the OAM2
+/// gate, not to the render gate shared with everything else; the first version
+/// of `OAM2_GATE_LAG` simply could not express it, because it borrowed the
+/// two-stage odd-frame-skip pipeline.
 ///
-/// Swept at the SHIPPED placement first, which is the cell that matters: if a
-/// depth closes `Frozen OAM2 Increment` there without losing anything, the last
-/// entry closes with no placement change at all.
+/// With a dedicated four-stage history, this asks the question directly: at the
+/// shipped placement and the shipped render depth, is there an OAM2 depth that
+/// closes the last entry and costs nothing?
 #[test]
-fn does_an_oam2_gate_delay_close_the_last_entry() {
-    use rustynes_core::rustynes_ppu::OAM2_GATE_LAG;
+fn sweep_the_oam2_gate_depth_at_the_shipped_placement() {
+    use rustynes_core::rustynes_ppu::{OAM2_GATE_LAG, RENDER_GATE_LAG};
 
     reset_knobs();
     OAM2_GATE_LAG.store(0, Relaxed);
+    RENDER_GATE_LAG.store(1, Relaxed);
     let base = run();
     let bs = cat::summarise(&base);
     assert_eq!(
@@ -366,10 +422,11 @@ fn does_an_oam2_gate_delay_close_the_last_entry() {
         "control must reproduce the shipped 143/144 first"
     );
 
-    for (read_dot, write_dot) in [(1, 1), (1, 2), (2, 2), (0, 1)] {
-        for lag in 0u8..3 {
-            apply(read_dot, write_dot);
-            OAM2_GATE_LAG.store(lag, Relaxed);
+    for render_lag in [1u8, 2] {
+        for depth in 0u8..5 {
+            reset_knobs();
+            RENDER_GATE_LAG.store(render_lag, Relaxed);
+            OAM2_GATE_LAG.store(depth, Relaxed);
             let now = run();
             let s = cat::summarise(&now);
             let st = |name: &str| {
@@ -387,17 +444,87 @@ fn does_an_oam2_gate_delay_close_the_last_entry() {
                 .map(|((e, _), _)| e.name.as_str())
                 .collect();
             eprintln!(
-                "read=dot{read_dot} write=dot{write_dot} oam2_lag={lag}  passed={}/{}  \
-                 frozen={} misaligned={} stale={} arbitrary={}  LOST={lost:?}",
+                "SHIPPED placement, render={render_lag} oam2_depth={depth}  passed={}/{}  \
+                 frozen={} stale={} arbitrary={} misaligned={}  LOST={lost:?}",
                 s.pass + s.pass_with_code,
                 s.assigned(),
                 st("Frozen OAM2 Increment"),
-                st("Misaligned OAM2 Address"),
                 st("Stale Sprite Shift Regs"),
                 st("Arbitrary Sprite zero"),
+                st("Misaligned OAM2 Address"),
             );
         }
     }
-    OAM2_GATE_LAG.store(0, Relaxed);
     reset_knobs();
+    OAM2_GATE_LAG.store(0, Relaxed);
+    RENDER_GATE_LAG.store(1, Relaxed);
+}
+
+/// THE DECISIVE CELL: separate depths for the two consumers of one gate.
+///
+/// At the shipped placement, `render=2 oam2=3` closes `Frozen OAM2 Increment`
+/// -- the last outstanding entry -- and costs exactly one: `Stale Sprite Shift
+/// Regs`, whose dot-339 sprite-counter re-arm wants the shipped depth 1. The
+/// two consumers share `rendering_enabled_delayed` and want different things
+/// from it, which is v2.6.5's finding in a different pair of consumers.
+///
+/// `SPRITE_REARM_LAG` gives the re-arm its own depth. If some combination
+/// passes all four watched entries with nothing lost, the battery reaches
+/// 144/144.
+#[test]
+fn separate_the_sprite_rearm_depth_from_the_render_gate() {
+    use rustynes_core::rustynes_ppu::{OAM2_GATE_LAG, RENDER_GATE_LAG, SPRITE_REARM_LAG};
+
+    let shipped = || {
+        reset_knobs();
+        OAM2_GATE_LAG.store(0, Relaxed);
+        RENDER_GATE_LAG.store(1, Relaxed);
+        SPRITE_REARM_LAG.store(u8::MAX, Relaxed);
+    };
+    shipped();
+    let base = run();
+    let bs = cat::summarise(&base);
+    assert_eq!(
+        bs.pass + bs.pass_with_code,
+        143,
+        "control must reproduce the shipped 143/144 first"
+    );
+
+    for render_lag in [1u8, 2] {
+        for oam2 in [2u8, 3] {
+            for rearm in [0u8, 1, 2, 3, u8::MAX] {
+                shipped();
+                RENDER_GATE_LAG.store(render_lag, Relaxed);
+                OAM2_GATE_LAG.store(oam2, Relaxed);
+                SPRITE_REARM_LAG.store(rearm, Relaxed);
+                let now = run();
+                let s = cat::summarise(&now);
+                let passed = s.pass + s.pass_with_code;
+                let lost: Vec<&str> = cat::catalog()
+                    .iter()
+                    .zip(base.iter())
+                    .zip(now.iter())
+                    .filter(|((_, b), n)| b.is_pass() && !n.is_pass())
+                    .map(|((e, _), _)| e.name.as_str())
+                    .collect();
+                let still: Vec<&str> = cat::catalog()
+                    .iter()
+                    .zip(now.iter())
+                    .filter(|(_, n)| !n.is_pass())
+                    .map(|(e, _)| e.name.as_str())
+                    .collect();
+                let tag = if rearm == u8::MAX {
+                    "follow".to_owned()
+                } else {
+                    rearm.to_string()
+                };
+                eprintln!(
+                    "render={render_lag} oam2={oam2} rearm={tag}  passed={passed}/{}  \
+                     LOST={lost:?}  STILL-FAILING={still:?}",
+                    s.assigned()
+                );
+            }
+        }
+    }
+    shipped();
 }

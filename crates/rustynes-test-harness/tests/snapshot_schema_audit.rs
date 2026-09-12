@@ -147,6 +147,17 @@ const CHIPS: &[Chip] = &[
                 "diagnostic: exists ONLY under the default-off `phi2-write-sweep` feature, as                  the two-dots-ago history for the v2.6.18 `RENDER_GATE_LAG` derivation knob.                  The shipped build does not compile this field, so there is nothing for a                  shipped save state to carry; and within a sweep it is recomputed from the                  next dot's rendering value, so it is derived rather than authoritative. If                  the knob is ever promoted to a shipped behaviour this entry MUST be revisited                  -- it is excluded because the field is absent from real builds, not because                  the state is unimportant",
             ),
             (
+                "sweep_mask_history",
+                "diagnostic: exists ONLY under the default-off `phi2-write-sweep` feature, as \
+                 the dedicated four-stage `$2001` history for the v2.6.18 `OAM2_GATE_LAG` \
+                 derivation knob. Same ground as `render_gate_prev2` above: the shipped build \
+                 does not compile the field, so no shipped save state can carry it, and within \
+                 a sweep it is refilled from the live mask on the next dot. If the knob is ever \
+                 promoted to shipped behaviour this entry MUST be revisited -- it is excluded \
+                 because the field is absent from real builds, not because the state is \
+                 unimportant",
+            ),
+            (
                 "state_trace",
                 "diagnostic: `ppu-state-trace` ring buffer, output-only",
             ),

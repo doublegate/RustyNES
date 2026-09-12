@@ -89,6 +89,66 @@ cycle-accurate core later replaced.
   lesson this project has already paid for -- and the isolated repro costs two
   minutes against a full migration.
 
+### Added
+
+- **`Frozen OAM2 Increment` — the single remaining AccuracyCoin failure — is
+  now CLOSABLE, and what it costs is measured.** Not adopted: closing it trades
+  one failing entry for another, so the battery still reads 143/144 and the
+  shipped configuration is unchanged. What changed is that the question is no
+  longer open-ended.
+
+  **The access placement is dot-quantised.** `Bus::run_ppu_to` advances the PPU
+  in whole dots, so a sub-dot change to an access split cannot be observed by
+  anything — and the existing sweep had been saying so for two releases, with
+  `READ=0`/`READ=2` and `WRITE=2`/`WRITE=4` producing identical counts AND
+  identical gained/lost sets. The shipped read and the shipped write are in the
+  **same dot**; the "half a dot" between them is invisible by construction.
+  That reduces the placement question to nine cells, of which three had ever
+  been measured, and all nine now are.
+
+  **Each entry constrains a different thing.** The six NMI entries fail only at
+  `read = dot2`; `Stale Sprite Shift Regs` passes at exactly the three diagonal
+  cells (`read == write`); `Arbitrary Sprite zero` fails only at
+  `write = dot2` with `read != dot2`; `Misaligned OAM2 Address` fails at
+  exactly the four cells where the spacing is `±1`; and `Frozen OAM2 Increment`
+  passes at exactly the two where the spacing is `+1`. The last two are
+  contradictory as rules — and both are OAM2 entries.
+
+  **The contradiction had a cause, and it was not the CPU.** The OAM2 counter
+  is gated on the **live** `$2001` mask with no delay at all, while every other
+  rendering consumer in this PPU reads a delayed value. It is also the one gate
+  those two entries share, and a zero-delay gate on a signal the ROMs expect to
+  be delayed looks from outside exactly like a requirement on access spacing.
+  Give it a delay and the contradiction dissolves: both OAM2 entries pass
+  together for the first time.
+
+  **With a dedicated four-stage history it closes.** At the shipped placement,
+  `RENDER_GATE_LAG = 2` with `OAM2_GATE_LAG = 3` passes `Frozen OAM2
+  Increment`, `Misaligned OAM2 Address` and `Arbitrary Sprite zero`, losing
+  only `Stale Sprite Shift Regs` — 143/144 with a different single failure, and
+  no access moved at all.
+
+  **The remaining gap is one edge of one signal.** `Stale` fails at
+  `Fail(5)` — the dot-339 assertion — and giving the dot-339 sprite-counter
+  re-arm its own depth does NOT recover it (`SPRITE_REARM_LAG` changes outcomes
+  at `render = 1`, so it reaches the path, and is inert at `render = 2`). The
+  re-arm is the DISABLE edge; what is left is the re-ENABLE edge, which the
+  ROM's own comments place at "around dot 161 or 162" of scanline 4.
+
+  Every knob added here defaults to the shipped value; the default build
+  compiles `const` paths and is unchanged, and `AccuracyCoin 143/144 (99.31%,
+  RAM decoder)` plus nestest 0-diff are verified rather than asserted.
+
+- **Two hypotheses refuted, both recorded because they are cheap to re-form.**
+  Reads do **not** split into a sample point and an effect point — the nesdev
+  `NMI` page gives one instant for a `$2002` read and states the race as the
+  two happening simultaneously, so there is no second knob; refuted by
+  documentation rather than by a sweep. And the six NMI entries are **not** a
+  one-dot alignment artifact — at the physically-unified `(dot2, dot2)`
+  placement, where all three sprite entries pass, moving the VBL-set dot
+  restores 0 of 6, 0 of 6 and 1 of 6, while breaking four more entries at both
+  non-default values.
+
 ### Fixed
 
 - **The depth-2 rendering-gate pipeline froze instead of shifting, so two cells

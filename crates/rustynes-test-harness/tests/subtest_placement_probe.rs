@@ -149,3 +149,46 @@ fn does_arbitrary_sprite_zero_stand_alone() {
         );
     }
 }
+
+/// Which `Stale Sprite Shift Regs` assertion fails at the configuration that
+/// closes `Frozen OAM2 Increment`?
+///
+/// At the shipped placement, `RENDER_GATE_LAG = 2` with `OAM2_GATE_LAG = 3`
+/// closes the last outstanding catalog entry and costs exactly one:
+/// `Stale Sprite Shift Regs`. Giving the dot-339 sprite-counter re-arm its own
+/// depth does NOT recover it -- `SPRITE_REARM_LAG` is inert at that render
+/// depth -- so the loss is something else `render = 2` changes.
+///
+/// The battery reports one byte per entry, so it cannot say WHICH of the six
+/// assertions moved. The standalone sub-test can, and it agrees with the
+/// battery at the shipped settings (its golden reads `$048F = $01`, a clean
+/// pass), which is what makes it usable as an instrument here.
+///
+/// Assertions 5 and 6 are the two that name dot 339; anything else points
+/// somewhere entirely different.
+#[test]
+fn which_stale_assertion_fails_at_the_frozen_oam2_configuration() {
+    use rustynes_core::rustynes_ppu::{OAM2_GATE_LAG, RENDER_GATE_LAG};
+
+    for (render, oam2) in [(1u8, 0u8), (2, 3), (2, 0), (1, 3)] {
+        apply(1, 1);
+        RENDER_GATE_LAG.store(render, Relaxed);
+        OAM2_GATE_LAG.store(oam2, Relaxed);
+        let found = run_subtest("ppu-misc-stale-sprite-shift-regs.nes", 900, false);
+        let rendered: Vec<String> = found
+            .iter()
+            .map(|(a, b, st)| format!("${a:04X}=${b:02X} {st:?}"))
+            .collect();
+        eprintln!(
+            "  render={render} oam2={oam2}  {}",
+            if rendered.is_empty() {
+                "(result page empty)".to_owned()
+            } else {
+                rendered.join("  ")
+            }
+        );
+    }
+    apply(1, 1);
+    RENDER_GATE_LAG.store(1, Relaxed);
+    OAM2_GATE_LAG.store(0, Relaxed);
+}
