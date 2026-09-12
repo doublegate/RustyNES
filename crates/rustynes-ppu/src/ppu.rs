@@ -895,6 +895,17 @@ pub struct Ppu {
     #[cfg(feature = "phi2-write-sweep")]
     pub(crate) render_gate_prev2: bool,
 
+    /// v2.6.18 (`phi2-write-sweep` only): a shared four-stage `$2001` history,
+    /// newest first, that each swept consumer gate reads at its OWN depth.
+    ///
+    /// The first version of `OAM2_GATE_LAG` borrowed the odd-frame-skip
+    /// pipeline, which capped the reachable depth at two AND coupled two
+    /// unrelated consumers. The measurement that mattered lives past that cap:
+    /// at the shipped placement `Frozen OAM2 Increment` closes only with the
+    /// OAM2 gate deeper than the skip pipeline can express.
+    #[cfg(feature = "phi2-write-sweep")]
+    pub(crate) sweep_mask_history: [PpuMask; 4],
+
     /// v2.0 Phase 6 (`mc-ppu-subpos`): the analog `$2001` BG-shift-register
     /// RELOAD delay. The shifter reload gates on `bg_reload_render`, which tracks
     /// the live `self.mask` rendering-enable bit EXCEPT during the
@@ -1279,7 +1290,10 @@ pub struct ProvBgAddrs {
 /// sits one dot later than that plus the existing 1-dot render gate, so the
 /// effective default is 4. Runtime-tunable (an atomic) so the exact phase can be
 /// swept against the `BG Serial In` / `Stale BG Shift` keys without rebuilding.
-/// Only consulted under `mc-ppu-subpos`.
+/// The `mc-ppu-subpos` name in the lines above is the v2.0 Phase 6 WORKSTREAM,
+/// not a cargo feature: no manifest declares one, and the read at the BG-reload
+/// freeze below is unconditional. Kept as the historical label rather than
+/// rewritten, but do not go looking for a flag to turn on.
 pub static MASK_WRITE_DELAY: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(4);
 
 /// v2.6.18 DERIVATION KNOB: depth, in PPU dots, of the rendering-enable
@@ -1318,7 +1332,19 @@ pub static RENDER_GATE_LAG: core::sync::atomic::AtomicU8 = core::sync::atomic::A
 #[cfg_attr(feature = "ppu-state-trace", allow(dead_code))]
 #[inline]
 fn fast_dot_paths_valid() -> bool {
+    // The OAM2 pipeline is shifted only on the general path, and the fast
+    // bodies read the gate, so an armed OAM2 knob must take the general path
+    // for the same reason a depth-2 render gate must. Learned the expensive
+    // way on #506: a bypassed pipeline does not merely go stale, it makes the
+    // swept cell measure something that is not the configuration named.
+    // `SCROLL_GATE_LAG` joins them for a THIRD instance of the same trap: the
+    // visible fast body performs its own dot-256 `inc_vert_v()`, so an armed
+    // scroll knob is bypassed entirely and every swept cell reads identical --
+    // which is exactly what the first run of that sweep reported, four depths
+    // all at 143/144 with nothing gained and nothing lost.
     RENDER_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) <= 1
+        && OAM2_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) == 0
+        && SCROLL_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) == u8::MAX
 }
 
 /// Default build: the depth is the shipped 1, so the guards are sufficient and
@@ -1336,6 +1362,63 @@ const fn fast_dot_paths_valid() -> bool {
 /// because "it folds away" is a property of the constant, not of a run.
 #[cfg(not(feature = "phi2-write-sweep"))]
 const _: () = assert!(fast_dot_paths_valid());
+/// v2.6.18 condition-2 DIAGNOSTIC: the dot on scanline 241 that sets the VBL
+/// flag. Default 1, which is what nesdev specifies and what ships.
+///
+/// Exists to separate two explanations for the six NMI entries failing when the
+/// CPU access moves to the cycle's last dot: a pure one-dot relative shift
+/// between the `$2002` read and VBL-set, versus a defect in the read placement
+/// itself. Moving this is NOT a fix and must never be shipped non-default.
+#[cfg(feature = "phi2-write-sweep")]
+pub static VBL_SET_DOT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(1);
+
+/// v2.6.18 condition-2 DIAGNOSTIC: the depth of the odd-frame-skip gate's
+/// `$2001` pipeline, in stages. Default 2, which is what ships.
+///
+/// The skip gate is the most explicitly-documented compensation in this PPU --
+/// its own comment says lockstep applies the write at the START of a CPU cycle
+/// while hardware latches at phi2 -- so its depth is coupled to where the write
+/// access lands, and sweeping the two independently answers a different
+/// question than sweeping them together.
+#[cfg(feature = "phi2-write-sweep")]
+pub static SKIP_GATE_LAG: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(2);
+
+/// v2.6.18: the depth of the dot-256 vertical increment's own `$2001` gate.
+///
+/// `u8::MAX` (the default) means "ride the shared `rendering_gate`", which is
+/// what ships. This is the consumer `Frozen OAM2 Increment` turns on: the ROM
+/// enables rendering ON dot 256 and states that the vertical scroll is NOT
+/// incremented, and our enable lands a dot early.
+#[cfg(feature = "phi2-write-sweep")]
+pub static SCROLL_GATE_LAG: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(u8::MAX);
+
+/// v2.6.18: the depth of the dot-339 sprite-counter re-arm's own `$2001` gate.
+///
+/// `u8::MAX` (the default) means "ride the shared `rendering_gate`", which is
+/// what ships. Any other value gives the re-arm its own depth in the shared
+/// history, which is the question `Stale Sprite Shift Regs` and
+/// `Frozen OAM2 Increment` forced: at the shipped placement the frozen-flag
+/// machinery closes only at `RENDER_GATE_LAG = 2`, and that same depth is what
+/// breaks the re-arm, which wants 1. Two consumers, one gate, opposite
+/// requirements -- the shape v2.6.5 resolved by separating the background
+/// shifters' reload from their shift clock.
+#[cfg(feature = "phi2-write-sweep")]
+pub static SPRITE_REARM_LAG: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(u8::MAX);
+
+/// v2.6.18: the depth of the OAM2 counter's `$2001` gate, in dots. Default 0 =
+/// the live mask, which is what ships.
+///
+/// Every other rendering consumer here is delayed and this one is not, so the
+/// two OAM2 catalog entries -- which share it -- can only be satisfied at
+/// different CPU access placements. Sweeping the depth asks whether that is the
+/// reason, which no placement sweep can. Depth 3 is what closes
+/// `Frozen OAM2 Increment`; the borrowed two-stage pipeline it first used could
+/// not reach that, which is why the field below is dedicated.
+#[cfg(feature = "phi2-write-sweep")]
+pub static OAM2_GATE_LAG: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
 impl Ppu {
     /// New PPU in power-on state.
     #[must_use]
@@ -1465,6 +1548,8 @@ impl Ppu {
             rendering_enabled_delayed: false,
             #[cfg(feature = "phi2-write-sweep")]
             render_gate_prev2: false,
+            #[cfg(feature = "phi2-write-sweep")]
+            sweep_mask_history: [PpuMask::empty(); 4],
             bg_reload_render: false,
             mask_write_delay: 0,
             cached_visible: false,
@@ -3513,6 +3598,9 @@ impl Ppu {
             #[cfg(feature = "phi2-write-sweep")]
             {
                 self.render_gate_end_dot(render_gate_prev1);
+                // Newest first: stage 0 is "one dot ago" on the next dot.
+                self.sweep_mask_history.rotate_right(1);
+                self.sweep_mask_history[0] = self.mask;
             }
             self.rendering_enabled_delayed = rendering;
         }
@@ -3525,8 +3613,18 @@ impl Ppu {
         // sample ~6-7 PPU clocks after VBL set, given how our bus
         // interleaves CPU bus accesses before the 3-PPU-tick `on_cpu_cycle`
         // hook (vs. real hardware's mid-cycle phi1 access).
+        #[cfg(not(feature = "phi2-write-sweep"))]
+        let vbl_set_dot = 1u16;
+        // v2.6.18 condition-2 diagnostic. NOT a proposed fix: nesdev states the
+        // flag sets at scanline 241 dot 1, and this knob exists only to ask
+        // whether the six NMI entries' failure at a later ACCESS dot is a pure
+        // one-dot RELATIVE shift between the `$2002` read and VBL-set, or
+        // something else. If shifting VBL by the same dot restores all six, the
+        // disagreement is about CPU/PPU alignment rather than about the read.
+        #[cfg(feature = "phi2-write-sweep")]
+        let vbl_set_dot = u16::from(VBL_SET_DOT.load(core::sync::atomic::Ordering::Relaxed));
         if self.scanline == self.region.vblank_start_line()
-            && self.dot == 1
+            && self.dot == vbl_set_dot
             && !self.suppress_vbl_this_frame
         {
             self.status.insert(PpuStatus::VBLANK);
@@ -3566,6 +3664,48 @@ impl Ppu {
         }
 
         // === Background rendering pipeline (visible + pre-render lines) ===
+        // v2.6.18 condition-4: when `SCROLL_GATE_LAG` is armed, the dot-256
+        // vertical increment is evaluated HERE on its own `$2001` view.
+        //
+        // This is the consumer `Frozen OAM2 Increment` actually turns on. The
+        // ROM enables rendering ON dot 256 and states outright that "the PPU's
+        // vertical scroll is NOT incremented"; our enable lands a dot early, so
+        // `inc_vert_v` fires and `v` ends at fine-Y 3 where the test needs 2 --
+        // no opaque background pixel under the sprite, no sprite-zero hit, and
+        // the entry fails for a reason that has nothing to do with OAM2.
+        // `RENDER_GATE_LAG = 2` fixes it and breaks `Stale Sprite Shift Regs`,
+        // because that depth moves every other consumer too.
+        #[cfg(feature = "phi2-write-sweep")]
+        if render_line && self.dot == 256 && !Self::scroll_gate_follows_render_gate() {
+            let depth = SCROLL_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) as usize;
+            let m = if depth == 0 {
+                self.mask
+            } else {
+                self.sweep_mask_history[(depth - 1).min(self.sweep_mask_history.len() - 1)]
+            };
+            if m.rendering_enabled() {
+                self.inc_vert_v();
+            }
+        }
+        // v2.6.18: when `SPRITE_REARM_LAG` is armed the dot-339 re-arm is
+        // evaluated HERE, outside the shared `rendering_gate` block, so it can
+        // see a rendering value the shared gate does not. Hoisted rather than
+        // gated in place because the enclosing block would otherwise decide the
+        // question before the knob is consulted.
+        #[cfg(feature = "phi2-write-sweep")]
+        if render_line && self.dot == 339 && !Self::sprite_rearm_follows_render_gate() {
+            let depth = SPRITE_REARM_LAG.load(core::sync::atomic::Ordering::Relaxed) as usize;
+            let m = if depth == 0 {
+                self.mask
+            } else {
+                self.sweep_mask_history[(depth - 1).min(self.sweep_mask_history.len() - 1)]
+            };
+            if m.rendering_enabled() {
+                for i in 0..self.spr_count as usize {
+                    self.spr_halted[i] = false;
+                }
+            }
+        }
         if render_line && rendering_gate {
             // Sprite evaluation: per-PPU-dot FSM matching real-hardware
             // behavior (cycles 1-64 secondary-OAM clear, 65-256 alternating
@@ -3583,7 +3723,24 @@ impl Ppu {
             // scanlines when rendering, so a CPU $2004 read mid-frame observes
             // the sprite-eval / load data bus (AccuracyCoin `$2004 Stress`).
             // Side-effect-free w.r.t. the rendering FSM above.
-            if visible && self.mask.rendering_enabled() {
+            // v2.6.18: the OAM2 machinery's effective gate is a CONJUNCTION --
+            // this test AND the enclosing `render_line && rendering_gate`. That
+            // matters and is easy to state wrongly: for an AND of two delayed
+            // views of one signal, the DISABLE edge fires at the shallower depth
+            // and the RE-ENABLE edge at the deeper one. So today
+            // `OAM2_GATE_LAG = 0` owns the disable edge and the 1-dot
+            // `rendering_enabled_delayed` owns the re-enable edge -- the two
+            // knobs each own ONE edge, which is why neither alone can place the
+            // window and why `Frozen OAM2 Increment` moves only when
+            // `RENDER_GATE_LAG` does.
+            //
+            // TriCNES has no such nesting: `PPU_Render_SpriteEvaluation()` is
+            // called unconditionally and each block tests exactly one mask view
+            // (`Emulator.cs:2073`, `:2076-2082`).
+            //
+            // `OAM2_GATE_LAG` makes this test's depth swept rather than assumed;
+            // 0 is the shipped live-mask read of THIS term, not of the gate.
+            if visible && self.oam2_gate_mask().rendering_enabled() {
                 self.tick_oam_bus();
             }
             // Sprite tile fetch + A12 emission.  Real hardware spreads the
@@ -3634,7 +3791,7 @@ impl Ppu {
             // loaded slots halted — a reloaded-but-halted counter draws
             // immediately on re-enable (Stale Sprite Shift Regs t5/6). Slots
             // beyond `spr_count` retain their halted latch.
-            if self.dot == 339 {
+            if self.dot == 339 && Self::sprite_rearm_follows_render_gate() {
                 for i in 0..self.spr_count as usize {
                     self.spr_halted[i] = false;
                 }
@@ -3753,7 +3910,7 @@ impl Ppu {
             // (Intentionally no dot-257 reload here.)
 
             // Cycle 256: vertical-V increment.
-            if self.dot == 256 {
+            if self.dot == 256 && Self::scroll_gate_follows_render_gate() {
                 self.inc_vert_v();
             }
             // Cycle 257: copy hori(t) -> hori(v).
@@ -5815,7 +5972,7 @@ impl Ppu {
         if self.scanline == self.region.prerender_line()
             && self.dot == 339
             && (self.frame & 1) == 1
-            && self.mask_for_skip_check.rendering_enabled()
+            && self.skip_gate_mask().rendering_enabled()
             && self.region == PpuRegion::Ntsc
         {
             self.dot = 0;
@@ -5863,6 +6020,76 @@ impl Ppu {
         }
         self.mask_for_skip_check = self.mask_skip_pipe1;
         self.mask_skip_pipe1 = self.mask;
+    }
+
+    /// Whether the dot-256 vertical increment rides the shared `rendering_gate`,
+    /// which is the shipped behaviour.
+    ///
+    /// `u8::MAX` means "follow the shared gate"; any other value gives the
+    /// increment its own depth in the shared history.
+    #[cfg(feature = "phi2-write-sweep")]
+    fn scroll_gate_follows_render_gate() -> bool {
+        SCROLL_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) == u8::MAX
+    }
+
+    /// Shipped build: always the shared gate, folded away.
+    #[cfg(not(feature = "phi2-write-sweep"))]
+    const fn scroll_gate_follows_render_gate() -> bool {
+        true
+    }
+
+    /// Whether the dot-339 sprite-counter re-arm rides the shared
+    /// `rendering_gate`, which is the shipped behaviour.
+    ///
+    /// `SPRITE_REARM_LAG` uses `u8::MAX` for "follow the shared gate" rather
+    /// than a depth, because the shipped wiring is not any depth of the history
+    /// -- it is whatever `RENDER_GATE_LAG` resolved to this dot.
+    #[cfg(feature = "phi2-write-sweep")]
+    fn sprite_rearm_follows_render_gate() -> bool {
+        SPRITE_REARM_LAG.load(core::sync::atomic::Ordering::Relaxed) == u8::MAX
+    }
+
+    /// Shipped build: always the shared gate, folded away.
+    #[cfg(not(feature = "phi2-write-sweep"))]
+    const fn sprite_rearm_follows_render_gate() -> bool {
+        true
+    }
+
+    /// The mask the OAM2 counter's gate consults, at the swept depth. Depth 0
+    /// is the live mask -- the shipped read -- so the default build is
+    /// unchanged by construction.
+    #[cfg(feature = "phi2-write-sweep")]
+    fn oam2_gate_mask(&self) -> PpuMask {
+        let depth = OAM2_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) as usize;
+        if depth == 0 {
+            self.mask
+        } else {
+            self.sweep_mask_history[(depth - 1).min(self.sweep_mask_history.len() - 1)]
+        }
+    }
+
+    /// Shipped build: the live mask, folded to the same load.
+    #[cfg(not(feature = "phi2-write-sweep"))]
+    const fn oam2_gate_mask(&self) -> PpuMask {
+        self.mask
+    }
+
+    /// The mask the odd-frame-skip gate consults, at the swept pipeline depth.
+    /// Depth 2 returns `mask_for_skip_check` -- the shipped value -- so the
+    /// default build is unchanged by construction rather than by claim.
+    #[cfg(feature = "phi2-write-sweep")]
+    fn skip_gate_mask(&self) -> PpuMask {
+        match SKIP_GATE_LAG.load(core::sync::atomic::Ordering::Relaxed) {
+            0 => self.mask,
+            1 => self.mask_skip_pipe1,
+            _ => self.mask_for_skip_check,
+        }
+    }
+
+    /// Shipped build: the two-stage value, inlined to the same load.
+    #[cfg(not(feature = "phi2-write-sweep"))]
+    const fn skip_gate_mask(&self) -> PpuMask {
+        self.mask_for_skip_check
     }
 
     const fn is_render_scanline(&self) -> bool {

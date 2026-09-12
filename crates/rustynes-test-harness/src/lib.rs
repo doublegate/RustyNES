@@ -9,6 +9,7 @@
 
 #![warn(missing_docs)]
 
+pub mod access_dot;
 pub mod accuracy_coin;
 pub mod accuracy_coin_catalog;
 mod blargg;

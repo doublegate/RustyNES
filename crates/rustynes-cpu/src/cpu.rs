@@ -80,10 +80,21 @@ const fn read_split(div: u64) -> (u64, u64) {
 #[inline]
 fn read_split(div: u64) -> (u64, u64) {
     let extra = u64::from(READ_PHI_OFFSET.load(core::sync::atomic::Ordering::Relaxed));
+    let back = u64::from(READ_PHI_BACKOFF.load(core::sync::atomic::Ordering::Relaxed));
     // `+ extra` BEFORE `- PPU_OFFSET`: identical for every reachable value
     // (`div >= 12`, `PPU_OFFSET == 1`), but it removes the conceptual
     // question of an unsigned subtraction preceding the addition.
-    let pre = (div / 2 + extra - PPU_OFFSET).min(div - 1);
+    // `- back` places the access EARLIER than shipped, which the offsets alone
+    // cannot express; clamped to 1 so `pre` stays a real split.
+    // Every step is structurally safe rather than safe-by-current-constants:
+    // the subtraction of `PPU_OFFSET` saturates (raised in review -- it cannot
+    // underflow at `div >= 12`, but nothing in the expression says so), and the
+    // upper clamp bound is floored at 1 because `clamp` PANICS when min > max,
+    // which a hypothetical `div < 2` would produce.
+    let pre = (div / 2 + extra)
+        .saturating_sub(PPU_OFFSET)
+        .saturating_sub(back)
+        .clamp(1, div.saturating_sub(1).max(1));
     (pre, div - pre)
 }
 
@@ -91,6 +102,14 @@ fn read_split(div: u64) -> (u64, u64) {
 /// 0 = shipped behaviour. NTSC: +4 puts the sample at dot 2.0 = phi2.
 #[cfg(feature = "phi2-write-sweep")]
 pub static READ_PHI_OFFSET: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+/// Master clocks SUBTRACTED from a READ's pre-access split (v2.6.18 study).
+///
+/// The offsets alone can only place an access later. Reaching the CPU cycle's
+/// FIRST dot needs it earlier, and that cell had never been measured -- see
+/// `access_dot_derivation.rs`, which sweeps the grid this pair makes reachable.
+#[cfg(feature = "phi2-write-sweep")]
+pub static READ_PHI_BACKOFF: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 /// WRITE access split — swapped (writes commit `2 * PPU_OFFSET` mc later than
 /// reads). NTSC divisor 12 → (7, 5), byte-identical to the prior `const`s.
 ///
@@ -127,9 +146,15 @@ const fn write_split(div: u64) -> (u64, u64) {
 #[inline]
 fn write_split(div: u64) -> (u64, u64) {
     let extra = u64::from(WRITE_PHI_OFFSET.load(core::sync::atomic::Ordering::Relaxed));
+    let back = u64::from(WRITE_PHI_BACKOFF.load(core::sync::atomic::Ordering::Relaxed));
     // Clamp so `pre` never reaches the cycle length: `post` must stay >= 1 or
-    // `end_cycle` would not advance the master clock at all.
-    let pre = (div / 2 + PPU_OFFSET + extra).min(div - 1);
+    // `end_cycle` would not advance the master clock at all. The lower clamp
+    // matters for the same reason once `back` can pull the access earlier.
+    // See `read_split` for why each step saturates and why the upper clamp
+    // bound is floored at 1.
+    let pre = (div / 2 + PPU_OFFSET + extra)
+        .saturating_sub(back)
+        .clamp(1, div.saturating_sub(1).max(1));
     (pre, div - pre)
 }
 
@@ -137,6 +162,12 @@ fn write_split(div: u64) -> (u64, u64) {
 /// 0 = shipped behaviour.
 #[cfg(feature = "phi2-write-sweep")]
 pub static WRITE_PHI_OFFSET: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+/// Master clocks SUBTRACTED from a WRITE's pre-access split (v2.6.18 study).
+/// The counterpart of [`READ_PHI_BACKOFF`]; see it for why subtraction is
+/// needed at all.
+#[cfg(feature = "phi2-write-sweep")]
+pub static WRITE_PHI_BACKOFF: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
 /// NMI vector low byte address (`$FFFA/B`).
 const NMI_VECTOR: u16 = 0xFFFA;

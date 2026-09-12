@@ -15,8 +15,9 @@ workspace = true
 
 [features]
 default = []
-# v2.6.18 derivation knob: sweepable depth for the rendering-enable pipeline.
-# Default off; the shipped build has no atomic load on the per-dot path.
+# v2.6.18 derivation knobs: the rendering-enable pipeline depth, the OAM2 and
+# odd-frame-skip gate depths, and the VBL-set-dot diagnostic. Default off; the
+# shipped build compiles the `const` paths and takes no atomic load per dot.
 phi2-write-sweep = []
 # Per-PPU-dot state-tracing fixture (Session-10 observability tooling).
 # Off by default — when disabled, the recording code is entirely dead via

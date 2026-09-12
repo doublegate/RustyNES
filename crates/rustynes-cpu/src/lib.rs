@@ -24,7 +24,11 @@ mod status;
 pub use bus::Bus;
 pub use cpu::Cpu;
 #[cfg(feature = "phi2-write-sweep")]
+pub use cpu::READ_PHI_BACKOFF;
+#[cfg(feature = "phi2-write-sweep")]
 pub use cpu::READ_PHI_OFFSET;
+#[cfg(feature = "phi2-write-sweep")]
+pub use cpu::WRITE_PHI_BACKOFF;
 #[cfg(feature = "phi2-write-sweep")]
 pub use cpu::WRITE_PHI_OFFSET;
 pub use disasm::{DisasmLine, disassemble_at};

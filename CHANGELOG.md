@@ -89,6 +89,90 @@ cycle-accurate core later replaced.
   lesson this project has already paid for -- and the isolated repro costs two
   minutes against a full migration.
 
+### Added
+
+- **`Frozen OAM2 Increment` — the single remaining AccuracyCoin failure — is
+  now CLOSABLE, and what it costs is measured.** Not adopted: closing it trades
+  one failing entry for another, so the battery still reads 143/144 and the
+  shipped configuration is unchanged. What changed is that the question is no
+  longer open-ended.
+
+  **The access placement is dot-quantised.** `Bus::run_ppu_to` advances the PPU
+  in whole dots, so a sub-dot change to an access split cannot be observed by
+  anything — and the existing sweep had been saying so for two releases, with
+  `READ=0`/`READ=2` and `WRITE=2`/`WRITE=4` producing identical counts AND
+  identical gained/lost sets. The shipped read and the shipped write are in the
+  **same dot**; the "half a dot" between them is invisible by construction.
+  That reduces the placement question to nine cells, of which three had ever
+  been measured, and all nine now are.
+
+  **Each entry constrains a different thing.** The six NMI entries fail only at
+  `read = dot2`; `Stale Sprite Shift Regs` passes at exactly the three diagonal
+  cells (`read == write`); `Arbitrary Sprite zero` fails only at
+  `write = dot2` with `read != dot2`; `Misaligned OAM2 Address` fails at
+  exactly the four cells where the spacing is `±1`; and `Frozen OAM2 Increment`
+  passes at exactly the two where the spacing is `+1`. The last two are
+  contradictory as rules — and both are OAM2 entries.
+
+  **The contradiction had a cause, and it was not the CPU.** The OAM2
+  machinery's effective gate is a **conjunction** — its own mask test AND the
+  enclosing 1-dot render gate. For an AND of two delayed views of one signal the
+  DISABLE edge fires at the shallower depth and the RE-ENABLE edge at the deeper
+  one, so the two knobs each own **one edge** and neither alone can place the
+  window. The two OAM2 entries were never contradictory as rules — they were
+  entangled by the nesting, and the placement grid was reading that entanglement
+  through the only knob it had. Give the OAM2 term a delay and the apparent
+  contradiction dissolves: both entries pass together for the first time.
+
+  **With a dedicated four-stage history it closes.** At the shipped placement,
+  `RENDER_GATE_LAG = 2` with `OAM2_GATE_LAG = 3` passes `Frozen OAM2
+  Increment`, `Misaligned OAM2 Address` and `Arbitrary Sprite zero`, losing
+  only `Stale Sprite Shift Regs` — 143/144 with a different single failure, and
+  no access moved at all.
+
+  **The remaining gap is one edge of one signal.** `Stale` fails at
+  `Fail(5)` — the dot-339 assertion — and giving the dot-339 sprite-counter
+  re-arm its own depth does NOT recover it (`SPRITE_REARM_LAG` changes outcomes
+  at `render = 1`, so it reaches the path, and is inert at `render = 2`). The
+  re-arm is the DISABLE edge; what is left is the re-ENABLE edge, which the
+  ROM's own comments place at "around dot 161 or 162" of scanline 4.
+
+  Every knob added here defaults to the shipped value; the default build
+  compiles `const` paths and is unchanged, and `AccuracyCoin 143/144 (99.31%,
+  RAM decoder)` plus nestest 0-diff are verified rather than asserted.
+
+- **A third hypothesis refuted, and the trap that nearly hid it.** Giving the
+  dot-256 vertical increment its own `$2001` depth (`SCROLL_GATE_LAG`) was the
+  predicted fix: the ROM enables rendering ON dot 256 and states the vertical
+  scroll is NOT incremented, and the tree's own note says our enable lands a dot
+  early so `inc_vert_v()` fires and `v` ends at fine-Y 3 where the test needs 2.
+  **It changes nothing** — 143/144 at depths 0, 1, 2 and 3, with nothing gained
+  and nothing lost.
+
+  The first run was inert for a different reason, and it is the **third** time
+  this project has paid for the same trap: `tick_visible_render_fast` performs
+  its own dot-256 `inc_vert_v()`, and `fast_dot_paths_valid()` did not exclude
+  the new knob, so the sweep measured a configuration it was not in. Fixed, and
+  the guard now names all three knobs. The null survived that fix, so it was
+  confirmed the only way it can be — by mutation: making the hoisted block never
+  increment costs **14 tests**, which proves the block runs and the knob is live.
+
+  That matters more than the null. If the enable really landed a dot early,
+  depth 2 would have skipped the increment and moved something. It did not, so
+  **the recorded diagnosis is itself now in question**, and measuring the actual
+  `$2001` transition dot for each of the ROM's four writes stops being an
+  optional refinement.
+
+- **Two hypotheses refuted, both recorded because they are cheap to re-form.**
+  Reads do **not** split into a sample point and an effect point — the nesdev
+  `NMI` page gives one instant for a `$2002` read and states the race as the
+  two happening simultaneously, so there is no second knob; refuted by
+  documentation rather than by a sweep. And the six NMI entries are **not** a
+  one-dot alignment artifact — at the physically-unified `(dot2, dot2)`
+  placement, where all three sprite entries pass, moving the VBL-set dot
+  restores 0 of 6, 0 of 6 and 1 of 6, while breaking four more entries at both
+  non-default values.
+
 ### Fixed
 
 - **The depth-2 rendering-gate pipeline froze instead of shifting, so two cells
