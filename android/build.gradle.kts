@@ -84,5 +84,5 @@ plugins {
     // those two as separate per-artifact PRs, so merging one alone desyncs the
     // pair. It is applied on BOTH :app
     // (consume + bundle the generated profile) and :baselineprofile (generate it).
-    id("androidx.baselineprofile") version "1.5.0-rc02" apply false
+    id("androidx.baselineprofile") version "1.5.0" apply false
 }
