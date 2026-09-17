@@ -53,10 +53,32 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
       CPU cycles — which forced every constant to be calibrated per step.
       Two of the six rules are absent from the nesdev wiki and stated in
       blargg's own `readme.txt`: the length-halt delay and the reload drop.
-- [ ] Run `cpu_interrupts_v2` — the independent interrupt oracle, now reachable
-      **DEFERRED — specified at v2.6.14, not started.** The line above said only
-      "now reachable", which is not enough to start from. What the v2.6.14 audit
-      established, so the next attempt begins at measurement:
+- [x] Run `cpu_interrupts_v2` — the independent interrupt oracle **(v2.6.15;
+      ticked v2.6.19)**. All five are verdict gates in `tb/regress.sh` and all
+      five pass, `blargg verdict $00` on each:
+
+      ```
+      PASS  cpuint:1-cli_latency        PASS: blargg verdict $00 (pass)
+      PASS  cpuint:2-nmi_and_brk        PASS: blargg verdict $00 (pass)
+      PASS  cpuint:3-nmi_and_irq        PASS: blargg verdict $00 (pass)
+      PASS  cpuint:4-irq_and_dma        PASS: blargg verdict $00 (pass)
+      PASS  cpuint:5-branch_delays_irq  PASS: blargg verdict $00 (pass)
+      ```
+
+      **THE TICK IS THREE RELEASES LATE, AND THAT IS THE FINDING.** This item
+      read `[ ] DEFERRED — specified at v2.6.14, not started` while
+      `docs/mister.md` had said since v2.6.15 that the five "are now verdict
+      gates", so the two documents disagreed and each read as authoritative on
+      its own. It was settled the way v2.6.19 settles this class: by RUNNING
+      the ladder rather than by reading either document. That is v2.6.14's own
+      lesson recurring — an unticked box cannot be told apart from work
+      outstanding, work blocked elsewhere, and **work already done and never
+      ticked**, and the third case is what this was, for the sixth recorded
+      time in this programme.
+
+      The specification below is kept rather than deleted, because it is the
+      record of what the v2.6.14 audit established and every clause of it held:
+
 
       - The corpus is five **independent** single-purpose ROMs in
         `tests/roms/nes-test-roms/cpu_interrupts_v2/rom_singles/` —
