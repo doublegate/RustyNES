@@ -94,8 +94,10 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
       - They report through `$6000`, so they need `PRG_RAM=1` exactly as the
         blargg batteries in `regress.sh` do.
 
-      This is the sharpest open technical item in the programme: an independent
-      interrupt oracle, on NROM, with the oracle side already green.
+      It WAS "the sharpest open technical item in the programme"; that sentence
+      is retired with the tick above. The sharpest open item is now the one
+      below it -- the power-up `$4017` rewrite, which the oracle models, the
+      DUT does not, and no ROM in the battery isolates.
 - [ ] **Carried from v2.6.2:** the power-up `$4017` rewrite (blargg's readme:
       the APU acts as if `$4017` were written with `$00` 9-12 clocks before the
       first instruction). The oracle models it, the DUT does not, and no ROM in
