@@ -96,28 +96,38 @@ cycle-accurate core later replaced.
 
 ### Changed
 
-- **The fitter seed moves 3 → 1 — and the sweep that chose it had to be thrown
-  away first.** `RustyNES.qsf` requires that every published seed table describe
-  one RTL, so v2.6.19's added registers supersede v2.6.13's. The first re-sweep
-  recompiled **in place**, so each seed was measured against the *residue of its
-  predecessor's* placement database rather than against a clean one. It reported
-  that seed 1 fails setup by twelve picoseconds and does not close, and that
-  conclusion — "the one-table-per-RTL rule has caught something for the first
-  time" — **is retracted**: swept from a clean database per seed, **all five
-  close**, and seed 1 closes by +0.254 ns.
+- **The fitter seed is re-derived on v2.6.19's RTL and does not move — after
+  two sweeps had to be thrown away.** `RustyNES.qsf` requires that every
+  published seed table describe one RTL, so v2.6.19's added registers supersede
+  v2.6.13's. Two attempts were discarded before a usable table existed:
 
-  Every row moved, and the two tables disagree about which seed to pick. What
-  makes the stale database the variable rather than noise is that the build is
-  **deterministic**: at seed 4 a clean-database compile, the steady state, and a
-  control with `RustyNES.srf` removed all produce the byte-identical `.rbf` at
-  +0.283/+0.046, while the one compile that inherited seed 5's database produced
-  a different `.rbf` at +0.270/+0.110. One number in that pair is reproducible
-  and the other is not. `scripts/seed-sweep.sh` now cleans per seed.
+  1. The first recompiled **in place**, so each seed was measured against the
+     *residue of its predecessor's* placement database. It reported that seed 1
+     fails setup by twelve picoseconds and does not close, and the conclusion
+     drawn — "the one-table-per-RTL rule has caught something for the first
+     time" — **is retracted**. Seed 1 closes.
+  2. The second cleaned the database per seed and **crossed midnight**.
+     `sys/build_id.tcl` is a pre-flow script that rewrites `build_id.v` at the
+     *start* of every compile and `emu.sv` puts `BUILD_DATE` into `CONF_STR`, so
+     the date is a **constant in the design**, not metadata — two compiles on
+     different days are different designs, which v2.6.15 had already measured
+     (pinning the date reproduced a published `.rbf` byte for byte). The seed-1
+     run started at 23:54 and every other seed ran after midnight, which is why
+     seed 1's sweep row and its own shipping build disagreed.
 
-  The reusable half is not about Quartus: **a measurement that confirms a rule
-  you are about to publish deserves the same scepticism as one that refutes it.**
-  "The rule caught something for the first time" was a satisfying result, and
-  satisfying is exactly when nobody re-runs it.
+  Swept clean and at one build date, **all five close**, seeds 3 and 4 tie on
+  the binding margin at +0.103 ns, and seed 3 takes it on setup. **The pin stays
+  at 3.** A sweep whose answer is "no change" still earns its compiles — that is
+  what makes it a check rather than a ritual. The sweep now cleans per seed and
+  pins the build date for its duration.
+
+  What made both stale inputs findable rather than dismissable as noise is that
+  the build is **deterministic**: the shipping configuration produces a
+  byte-identical `.rbf` across three independent clean compiles. And the half
+  that generalises is not about Quartus — **a measurement that confirms a rule
+  you are about to publish deserves the same scepticism as one that refutes
+  it.** Both errors were invisible in any single run and obvious the moment two
+  runs were compared.
 
 - **`cpu_interrupts_v2` is ticked, three releases late.** `to-dos/mister/TASKS.md`
   read "DEFERRED — not started" while `docs/mister.md` had said since v2.6.15
