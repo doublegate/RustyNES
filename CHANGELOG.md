@@ -96,18 +96,28 @@ cycle-accurate core later replaced.
 
 ### Changed
 
-- **The fitter seed moves 3 → 4, and seed 1 no longer closes.** `RustyNES.qsf`
-  requires that every published seed table describe one RTL, so v2.6.19's added
-  registers supersede v2.6.13's table. Re-swept across all four corners, **four
-  of five close**: seed 1 fails setup by twelve picoseconds, where v2.6.13 had
-  recorded that every seed closes. That sentence was read thereafter as a
-  property of the effort settings; it is a property of a *distribution*, and a
-  design change can move part of it back across zero. Had the pin still been the
-  seed 1 that v2.6.11 shipped, this release would have produced a failing
-  bitstream from a compile reporting 0 errors — the first time the rule has had
-  anything to catch. A trap is recorded beside the new table: **seed 1 has the
-  second-largest hold and does not close at all**, so ranking on the binding
-  metric without first discarding failing seeds would have selected it.
+- **The fitter seed moves 3 → 1 — and the sweep that chose it had to be thrown
+  away first.** `RustyNES.qsf` requires that every published seed table describe
+  one RTL, so v2.6.19's added registers supersede v2.6.13's. The first re-sweep
+  recompiled **in place**, so each seed was measured against the *residue of its
+  predecessor's* placement database rather than against a clean one. It reported
+  that seed 1 fails setup by twelve picoseconds and does not close, and that
+  conclusion — "the one-table-per-RTL rule has caught something for the first
+  time" — **is retracted**: swept from a clean database per seed, **all five
+  close**, and seed 1 closes by +0.254 ns.
+
+  Every row moved, and the two tables disagree about which seed to pick. What
+  makes the stale database the variable rather than noise is that the build is
+  **deterministic**: at seed 4 a clean-database compile, the steady state, and a
+  control with `RustyNES.srf` removed all produce the byte-identical `.rbf` at
+  +0.283/+0.046, while the one compile that inherited seed 5's database produced
+  a different `.rbf` at +0.270/+0.110. One number in that pair is reproducible
+  and the other is not. `scripts/seed-sweep.sh` now cleans per seed.
+
+  The reusable half is not about Quartus: **a measurement that confirms a rule
+  you are about to publish deserves the same scepticism as one that refutes it.**
+  "The rule caught something for the first time" was a satisfying result, and
+  satisfying is exactly when nobody re-runs it.
 
 - **`cpu_interrupts_v2` is ticked, three releases late.** `to-dos/mister/TASKS.md`
   read "DEFERRED — not started" while `docs/mister.md` had said since v2.6.15
