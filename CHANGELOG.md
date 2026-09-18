@@ -26,6 +26,120 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.20] - 2026-09-18 - "Telltale" (the counter had no reader, and two knobs turned out to be one decision)
+
+### Fixed
+
+- **`Misaligned OAM2 Address` closes: the DUT reaches 149 of 149.** The FPGA
+  core's `oam2_fetch_addr` was **write-only** — a real counter, reset at dots
+  63/255/339, incremented across the sprite-fetch window, whose wrap raised
+  `oam2_overflowed`, and which **nothing ever read**. `$2004`'s post-fetch rest
+  value was a hardcoded `sec_oam[0]`.
+
+  AccuracyCoin states the rule in two sentences the ROM itself carries: the OAM2
+  address "overflows … on dot 321", and when OAM2 is full the PPU "prevents
+  further increments … frozen at index 0". Read together, the documented
+  "reads OAM2[0] during 321-340" is **not a constant** — index 0 is where a
+  COMPLETE window leaves the counter. An interrupted window stops elsewhere, and
+  that is exactly what this entry reads.
+
+  The fix is a one-shot at documented dot 321 assigning `sec_oam[oam2_addr_next]`,
+  a combinational next-value view. The view is necessary rather than tidy:
+  `oam_bus` uses the documented-minus-one convention while the counter block uses
+  documented dots, so reading the register at that edge yields its pre-320 value
+  (31 ordinarily) and would put sprite 7's X byte on `$2004` for dots 321-340 of
+  every line of every game. In the ordinary case `31 + 1 = 0`, so every fully
+  rendered scanline is byte-identical.
+
+- **THE INCREMENT WINDOW GOES BACK TO 256, AND v2.6.19 HAD IT WRONG.** That
+  release narrowed it to 258 on a review argument — "from 256 there are
+  THIRTY-THREE increments and the wrap lands on dot 318" — whose arithmetic is
+  right and whose conclusion is not: the 33rd candidate is suppressed by
+  `!oam2_overflowed`, so both windows perform 32 increments and differ only in
+  **phase**. Its own comment predicted the blind spot that hid it — "mostly
+  invisible … nothing downstream can tell 318 from 320" — and it was invisible
+  because **nothing read the counter**.
+
+  The fix alone left the DUT reading `$A3`. The oracle's v2.6.18 study had
+  already tabulated that byte as OAM2 index `$17`, **exactly one increment
+  short** of `$18`, so the second change was named by a measurement rather than
+  searched for.
+
+- **AND THE TWO KNOBS ARE ONE DECISION.** Restoring 256 broke sprite rendering:
+  **6 of 61,440 pixels** in `sprite-render` and the same 6 in `sprite-mask`,
+  identical bounding box. `oam2_overflowed` is consumed by the four sprite-fetch
+  read sites, so moving the wrap from dot 320 to dot 318 puts it INSIDE the
+  fetch, where the live flag forces index 0 for the last sprite.
+
+  v2.6.19 had also deleted the dot-257 freeze latch, on a reviewer's argument
+  that rested explicitly on the 258 window ("with the wrap corrected to dot 320,
+  reading the live flag cannot disturb a fetch that has already concluded"). So
+  window-258-without-latch and window-256-with-latch are two self-consistent
+  packages, and only the second is the hardware's: the oracle pairs 256 with the
+  latch and passes both entries. The latch is restored, sprite fetch consumes
+  it, and `$2004` reads the live counter — three consumers, two states, each
+  named at the site.
+
+  Result: `$0495` **both Pass**, and the byte at zero page `$50` is `0x06` on
+  both sides — the gate passes on the right value rather than by coincidence.
+
+### Added
+
+- **A sub-test ROM for `Misaligned OAM2 Address`, built by a ONE-BYTE patch.**
+  The entry is the last catalog row, so the full battery is 134 M cycles
+  (~35 min) per attempt, and no sub-test existed (the corpus fixture named
+  `sprite-eval-misaligned-oam.nes` is a **different** test, $045A).
+  `build_sub_test_rom.py` injects the suite and test indices as plain
+  immediates and they survive into the binary: in
+  `advanced-sprite-eval-frozen-oam2-increment.nes` they sit at file offsets
+  `0x10AB` (`LDY #21`) and `0x10B5` (`LDX #2`). Two independent sources agree
+  that Misaligned is index 3 — `BUILD-PROVENANCE.tsv` and the catalog's own row
+  order — so `0x02` → `0x03`, validated at `Pass` on frame 82 before use.
+  **35 minutes became 30 seconds**, which is what made two experiments
+  affordable instead of one.
+
+- **`advanced-sprite-eval-frozen-oam2-increment` is registered as a gate.** Its
+  golden already existed and it was named nowhere in `regress.sh`. It is the
+  flag half of the same mechanism and the control for every step above.
+
+- **A CHR-RAM write gate — the coverage the retrospective audit named and did
+  not close.** `chr_wr` fires constantly in the gated corpus (four of six
+  rung-7 mapper ROMs are CHR-RAM), and **no CHR-RAM ROM's consequence was ever
+  rendered and compared**: all three framebuffer gates ship CHR-ROM by
+  construction, and the mapper ROMs never enable rendering. That is how
+  v2.6.11's CHR-write defect passed 141 green gates and surfaced only in a
+  hand-run montage — UxROM 16,565 wrong pixels, AxROM 1,702, every CHR-ROM
+  board 0.
+
+  `mkrom.py` program 53 writes 4 KiB of patterns through `$2007` and then
+  renders them, so every pixel it draws is a byte the CPU wrote. Reverting the
+  exact v2.6.11 defect now fails it with **28,191 of 61,440 pixels**. The gate
+  asserts `chr_wr assertions:` is **non-zero**, because a stimulus that never
+  reaches the path reports a pass about nothing.
+
+### Changed
+
+- **The submission checklist is re-audited**, three releases after it was last
+  touched. `.srf` is ticked — v2.6.19 adopted it, and the box's own plan said
+  "the next release that rebuilds the bitstream". **Two count-bearing boxes were
+  re-measured and are CORRECT**, recorded so a third audit does not repeat the
+  work: `31 RTL files` is `rtl` + `tb` (22 + 9) and `40 HDL files` in `sys/` is
+  `.sv` + `.v` + `.vhd`. Both looked expired under a narrower `find` than the
+  one that wrote them — which is what that box's own last sentence warns about.
+
+- **An expired claim in the accuracy gate.**
+  `crates/rustynes-test-harness/tests/accuracycoin.rs` said "the single
+  remaining failure is `Frozen OAM2 Increment`" while `KNOWN_FAILING` beside it
+  has been `&[]` since v2.6.18. The list was emptied and the sentence above it
+  was not.
+
+- **Reported upstream:** `TEST_FrozenOAM2Inc` omits an `INC <ErrorCode` between
+  tests 3 and 4, so both report `$0E` and `Fail(3)` cannot be told from
+  `Fail(4)`. Verified against upstream `main` before filing — two `INC` sites
+  against three failure exits — and it is the identical defect upstream already
+  fixed for the neighbouring routine (100thCoin/AccuracyCoin#64).
+  Filed as 100thCoin/AccuracyCoin#66.
+
 ## [2.6.19] - 2026-09-16 - "Accession" (the DUT absorbs two releases of oracle behaviour, and the seed rule catches something for the first time)
 
 ### Added
