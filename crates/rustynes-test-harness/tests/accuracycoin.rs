@@ -72,8 +72,8 @@ const MIN_PASS_RATE: f64 = 0.60;
 /// closed `Frozen OAM2 Increment` and emptied `KNOWN_FAILING` — leaving this
 /// paragraph naming a failure that no longer exists for two releases. The
 /// count is now **144 of 144** with `KNOWN_FAILING` empty. `KNOWN_FAILING` is
-/// the authority; this prose must agree with it, and the way it drifted is the
-/// ordinary one — the list was emptied and the sentence above it was not.
+/// the authority and this prose must agree with it; the drift mechanism was
+/// that the list was emptied and the sentence above it was not.
 ///
 /// Asserted alongside the known-failing set so that a battery which
 /// *under-executes* (early bail, skipped suite, decoder that stops
