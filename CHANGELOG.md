@@ -140,6 +140,35 @@ cycle-accurate core later replaced.
   fixed for the neighbouring routine (100thCoin/AccuracyCoin#64).
   Filed as 100thCoin/AccuracyCoin#66.
 
+### Build
+
+- **The bitstream is rebuilt and the fitter pin moves 3 -> 1.** The RTL changed,
+  so the seed table is re-derived rather than carried: ten seeds, each from a
+  **clean database**, all at one pinned build date (`BUILD_DATE` is a constant
+  in the design, so a sweep that crosses midnight compares two designs). All ten
+  close at full effort; hold binds on every one of them (0.042-0.113 ns against
+  setup's 0.070-0.645), and **seed 1 takes it outright at +0.113 ns** with no tie
+  to break.
+
+  **Seed 3 — the pin this release inherited — is now the worst of the ten**, at
+  +0.042 ns. Carrying it forward would have shipped a factor of **2.7** less
+  binding margin for free. v2.6.19 re-swept and the pin did not move, which
+  reads as ceremony until the release where it does; this is that release, and
+  it is the one-table-per-RTL rule paying for its compiles.
+
+  One claim in that block is **weakened by measurement and said so rather than
+  quietly kept**: seed 8 did not close on v2.6.19's RTL (-0.008 ns) and was the
+  specific counterexample behind "the distribution is mostly positive, not
+  entirely". On this RTL it closes at +0.405 and all ten pass, so the claim
+  stands in principle and its evidence is gone.
+
+- **`releases/RustyNES_20260918.rbf` ships on both repositories**, per the rule
+  v2.6.7 set: the MiSTer distribution mechanism reads that path out of the
+  repository, so an empty `releases/` describes an undistributable core rather
+  than a cautious one. **No hardware has run it** — rung 6 still waits on a
+  DE10-Nano with the SDRAM add-on and a SuperStation One, confirmed by checking
+  rather than assumed.
+
 ## [2.6.19] - 2026-09-16 - "Accession" (the DUT absorbs two releases of oracle behaviour, and the seed rule catches something for the first time)
 
 ### Added
