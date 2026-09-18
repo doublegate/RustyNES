@@ -26,28 +26,142 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.19] - 2026-09-16 - "Accession" (the DUT absorbs two releases of oracle behaviour, and the seed rule catches something for the first time)
+
+### Added
+
+- **The FPGA core implements the OAM2 address counter, which did not exist.**
+  `sec_addr`/`sec_fetch` were combinational from `dot` and served only as the
+  OAM-corruption seed: no 63/255/339 reset, no overflow flag, no dot-257 latch.
+  All three land, written from AccuracyCoin's own prose — a test ROM is
+  stimulus, not a reference implementation, and no third-party core was read
+  (ADR 0037 applies). `oam2_overflowed` and `oam2_fetch_frozen` are **two**
+  states with the dot-257 latch between them, because a wrap after 257 must not
+  disturb the fetch already in progress.
+
+- **`RustyNES.srf`**, the message-suppression file the MiSTer template ships and
+  the contributing wiki lists among a core's standard files. Four rules, one per
+  warning this design emits, **each attributed** — and deliberately **none of
+  the template's three `"*"` wildcards**. One of them blanket-suppresses ID
+  `276020`, "Inferred RAM node…", which is the message class that exposed both
+  v2.6.10's 128 KB of CHR in flip-flops and v2.6.6's M10K finding. Importing it
+  would blind the project to exactly the messages that have caught its two worst
+  synthesis defects.
+
 ### Fixed
 
-- **The browser build stopped opening the Netplay pane at you.** On the wasm
-  demo, loading a ROM force-opened "Netplay (browser)" every time. The comment
-  at the site gave a real reason — the WebRTC handshake keys on the ROM hash, so
-  the lobby has nothing to offer before a ROM exists — but that is an argument
-  for *enabling* the menu entry at ROM load, not for opening a window nobody
-  asked for.
+- **The DUT's dot-256 vertical increment acted on a mask change landing during
+  dot 256.** v2.6.18 established the rule in the oracle — a `$2001` change taking
+  effect *during* dot N must not act on dot N — and the FPGA core had never seen
+  it. The increment was gated on the one-dot `rendering` view; the two-dot view
+  already existed as `reload_render` and was consumed only by the shift reload,
+  so the fix is one signal. AccuracyCoin on the DUT goes to **148 of 149**, the
+  remainder being `Misaligned OAM2 Address`.
 
-  The reason it was written that way is the actual defect: the Netplay menu item
-  was `cfg(not(target_arch = "wasm32"))`, so **the browser had no menu entry at
-  all** and force-opening was the only way to reach the lobby. There is now a
-  wasm entry in the same menu group, with the same `WIFI` glyph, labelled
-  "Netplay (browser)..." after the window it opens — a browser cannot open a UDP
-  socket, so the two are different transports rather than one feature built
-  twice. It is enabled once a ROM is loaded, which is the honest form of the
-  reason the force-open cited.
+- **An overflow is an EVENT, and writing it as a STATE regressed two entries.**
+  The second raise path — evaluation filling secondary OAM — was first written
+  as the level `sec_idx >= 32`. `sec_idx` is cleared once a line, at the end of
+  the dot-1..64 clear, so once OAM2 fills the level stays true through dots 255,
+  256, 257 and 339: the dot-255 reset cleared the flag and dot 256 put it
+  straight back, so dot 257 latched `frozen` on **every line carrying eight
+  sprites** and every sprite fetch read OAM2[0]. `INC $4014` and `Sprites On
+  Scanline 0` broke; the battery went from 2 differing entries to 3. Raised on
+  the increment that reaches 32 instead, both entries recover on the same run.
+  The one-minute sub-test said "both Pass" throughout — it was the instrument
+  incapable of seeing it, which is why the 134 M-cycle battery is the gate.
 
-  `ToolPanel::Netplay` routes to the lobby on wasm rather than to the UDP panel,
-  which renders only a "native-only" note there, and forces the overlay visible
-  the way `open_chip_panel` already does, because the lobby draws inside that
-  egui frame. Native behaviour is unchanged.
+- **A killed seed sweep reported a design failure, and could eat the `.qsf`.**
+  The snapshot lived in `/tmp`, which is tmpfs — so the event most likely to kill
+  the sweep can take the backup with it, and did: the trap never ran and the
+  working tree was left on a machine-written `SEED`. It now sits on real disk and
+  **self-heals**. Separately, a compile killed from outside was classified
+  `COMPILE FAILED`, a claim about the *design*; three outcomes sharing one exit
+  code are now separated by reading the log's own vocabulary. And `SEEDS=""`
+  silently ran all five, because `${SEEDS:-…}` treats empty as unset.
+
+- **`tb/quartus_clean.py` failed every compile once the `.srf` existed.** Its
+  anti-vacuity guard read "no warnings at all" as "wrong file", which was right
+  in a world with no `.srf` and wrong in this one. The property it protects was
+  never "a warning exists" but "this log is a compile that ran", so it asks that
+  directly now — the four stages a `--flow compile` must report — and still fails
+  on a truncated log, an abort, and any message citing `rtl/` or `tb/`.
+
+- **The browser build stopped opening the Netplay pane at you.** Loading a ROM
+  force-opened "Netplay (browser)" on every wasm session. The force-open was
+  also the only route to the lobby, because the Netplay menu item was
+  `cfg(not(target_arch = "wasm32"))` — so removing it alone would have made the
+  feature unreachable rather than unobtrusive. There is now a wasm menu entry in
+  the same group with the same `WIFI` glyph, enabled once a ROM is loaded, and a
+  source-shape gate pins both halves against each other.
+
+### Changed
+
+- **The fitter seed is re-derived on v2.6.19's RTL and does not move — after
+  three sweeps were superseded.** `RustyNES.qsf` requires that every published
+  seed table describe one RTL, so v2.6.19's added registers supersede
+  v2.6.13's. Three tables preceded the one that stands:
+
+  1. The first recompiled **in place**, so each seed was measured against the
+     *residue of its predecessor's* placement database. It reported that seed 1
+     fails setup by twelve picoseconds and does not close, and the conclusion
+     drawn — "the one-table-per-RTL rule has caught something for the first
+     time" — **is retracted**. Seed 1 closes.
+  2. The second cleaned the database per seed and **crossed midnight**.
+     `sys/build_id.tcl` is a pre-flow script that rewrites `build_id.v` at the
+     *start* of every compile and `emu.sv` puts `BUILD_DATE` into `CONF_STR`, so
+     the date is a **constant in the design**, not metadata — two compiles on
+     different days are different designs, which v2.6.15 had already measured
+     (pinning the date reproduced a published `.rbf` byte for byte). The seed-1
+     run started at 23:54 and every other seed ran after midnight, which is why
+     seed 1's sweep row and its own shipping build disagreed.
+
+  3. The third cleaned per seed and pinned the build date, and produced a
+     usable five-seed table — **which three later commits in this same release
+     then superseded.** Removing the dot-257 freeze latch and moving the DC
+     blocker's `FRAC` are RTL changes, and by this block's own rule an RTL
+     change replaces the design, so a table measured before them describes
+     something that no longer exists. Nothing flagged it; it was caught by
+     re-reading the rule against the commit log.
+
+  Re-swept on the final RTL — **ten seeds**, each from a clean database, all at
+  the same pinned build date `260917`:
+
+  | seed | 1 | 2 | **3** | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | setup | +0.453 | +0.439 | +0.317 | +0.267 | +0.523 | +0.269 | +0.243 | **-0.008** | +0.256 | +0.311 |
+  | hold | +0.067 | +0.098 | **+0.108** | +0.105 | +0.078 | +0.086 | +0.062 | +0.098 | +0.085 | +0.078 |
+
+  **The pin stays at 3**, now holding the largest binding margin outright
+  (+0.108 ns) rather than a tie broken on setup. Two things the wider window
+  bought that five seeds could not:
+
+  - **Seed 8 does not close** — setup -0.008 ns. This block has asserted since
+    v2.6.10 that full fitter effort "moves the whole distribution across zero
+    and the seed only picks where in it you land". That is **false on this
+    RTL**, and only the narrow 1-5 window made it look true. The distribution
+    is mostly positive, not entirely positive, and the pinned seed is therefore
+    load-bearing rather than merely preferred.
+  - **The third and fourth sweeps are a controlled comparison** — same script,
+    same clean-per-seed discipline, the same pinned build date, differing only
+    in the three RTL commits. Every row moved; seed 3 alone went +0.611/+0.103
+    to +0.317/+0.108. That is the one-table-per-RTL rule *demonstrated* rather
+    than asserted — which is what this release's codename claims, and what its
+    first, contaminated attempt failed to earn.
+
+  What made every stale input findable rather than dismissable as noise is that
+  the build is **deterministic**: the shipping configuration produces a
+  byte-identical `.rbf` across independent clean compiles. And the half that
+  generalises is not about Quartus — **a measurement that confirms a rule you
+  are about to publish deserves the same scepticism as one that refutes it**,
+  and a measurement stays current only until the thing it measured changes.
+  Every error here was invisible in any single run and obvious the moment two
+  runs were compared.
+
+- **`cpu_interrupts_v2` is ticked, three releases late.** `to-dos/mister/TASKS.md`
+  read "DEFERRED — not started" while `docs/mister.md` had said since v2.6.15
+  that the five ROMs are verdict gates. Settled by running the ladder rather than
+  by reading either: all five pass, `blargg verdict $00`. Work already done and
+  never ticked, for the sixth recorded time in this programme.
 
 ## [2.6.18] - 2026-09-12 - "Errata" (the recorded cause was wrong in three ways, and the last AccuracyCoin entry closes)
 
