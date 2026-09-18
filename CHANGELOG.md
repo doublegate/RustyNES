@@ -97,9 +97,9 @@ cycle-accurate core later replaced.
 ### Changed
 
 - **The fitter seed is re-derived on v2.6.19's RTL and does not move — after
-  two sweeps had to be thrown away.** `RustyNES.qsf` requires that every
-  published seed table describe one RTL, so v2.6.19's added registers supersede
-  v2.6.13's. Two attempts were discarded before a usable table existed:
+  three sweeps were superseded.** `RustyNES.qsf` requires that every published
+  seed table describe one RTL, so v2.6.19's added registers supersede
+  v2.6.13's. Three tables preceded the one that stands:
 
   1. The first recompiled **in place**, so each seed was measured against the
      *residue of its predecessor's* placement database. It reported that seed 1
@@ -115,18 +115,46 @@ cycle-accurate core later replaced.
      run started at 23:54 and every other seed ran after midnight, which is why
      seed 1's sweep row and its own shipping build disagreed.
 
-  Swept clean and at one build date, **all five close**, seeds 3 and 4 tie on
-  the binding margin at +0.103 ns, and seed 3 takes it on setup. **The pin stays
-  at 3.** A sweep whose answer is "no change" still earns its compiles — that is
-  what makes it a check rather than a ritual. The sweep now cleans per seed and
-  pins the build date for its duration.
+  3. The third cleaned per seed and pinned the build date, and produced a
+     usable five-seed table — **which three later commits in this same release
+     then superseded.** Removing the dot-257 freeze latch and moving the DC
+     blocker's `FRAC` are RTL changes, and by this block's own rule an RTL
+     change replaces the design, so a table measured before them describes
+     something that no longer exists. Nothing flagged it; it was caught by
+     re-reading the rule against the commit log.
 
-  What made both stale inputs findable rather than dismissable as noise is that
+  Re-swept on the final RTL — **ten seeds**, each from a clean database, all at
+  the same pinned build date `260917`:
+
+  | seed | 1 | 2 | **3** | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | setup | +0.453 | +0.439 | +0.317 | +0.267 | +0.523 | +0.269 | +0.243 | **-0.008** | +0.256 | +0.311 |
+  | hold | +0.067 | +0.098 | **+0.108** | +0.105 | +0.078 | +0.086 | +0.062 | +0.098 | +0.085 | +0.078 |
+
+  **The pin stays at 3**, now holding the largest binding margin outright
+  (+0.108 ns) rather than a tie broken on setup. Two things the wider window
+  bought that five seeds could not:
+
+  - **Seed 8 does not close** — setup -0.008 ns. This block has asserted since
+    v2.6.10 that full fitter effort "moves the whole distribution across zero
+    and the seed only picks where in it you land". That is **false on this
+    RTL**, and only the narrow 1-5 window made it look true. The distribution
+    is mostly positive, not entirely positive, and the pinned seed is therefore
+    load-bearing rather than merely preferred.
+  - **The third and fourth sweeps are a controlled comparison** — same script,
+    same clean-per-seed discipline, the same pinned build date, differing only
+    in the three RTL commits. Every row moved; seed 3 alone went +0.611/+0.103
+    to +0.317/+0.108. That is the one-table-per-RTL rule *demonstrated* rather
+    than asserted — which is what this release's codename claims, and what its
+    first, contaminated attempt failed to earn.
+
+  What made every stale input findable rather than dismissable as noise is that
   the build is **deterministic**: the shipping configuration produces a
-  byte-identical `.rbf` across three independent clean compiles. And the half
-  that generalises is not about Quartus — **a measurement that confirms a rule
-  you are about to publish deserves the same scepticism as one that refutes
-  it.** Both errors were invisible in any single run and obvious the moment two
+  byte-identical `.rbf` across independent clean compiles. And the half that
+  generalises is not about Quartus — **a measurement that confirms a rule you
+  are about to publish deserves the same scepticism as one that refutes it**,
+  and a measurement stays current only until the thing it measured changes.
+  Every error here was invisible in any single run and obvious the moment two
   runs were compared.
 
 - **`cpu_interrupts_v2` is ticked, three releases late.** `to-dos/mister/TASKS.md`
