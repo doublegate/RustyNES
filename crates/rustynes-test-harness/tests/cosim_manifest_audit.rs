@@ -98,6 +98,70 @@ fn the_excluded_crate_still_matches_the_workspace_package_fields() {
     }
 }
 
+/// The lockfile must also AGREE with the workspace, not merely exist.
+///
+/// `the_excluded_crates_lockfile_is_tracked` below asserts the file is
+/// committed, because an excluded package re-resolves in CI without one. That
+/// is necessary and it is not sufficient: the tracked file can be STALE, and
+/// it was. The workspace bump is applied to `crates/rustynes-cosim/Cargo.toml`
+/// by hand (the crate is excluded, so nothing inherits it) and that hand step
+/// does not touch the lockfile beside it, which only moves when somebody runs
+/// cargo in that directory.
+///
+/// Measured across releases when this test was written: in sync at v2.6.15,
+/// v2.6.16 and v2.6.17, then `2.6.17` against a `2.6.18` workspace, and still
+/// `2.6.17` against `2.6.19` -- two releases shipped with a lockfile naming
+/// neither of them. The symptom that exposed it is the mechanism: cargo
+/// rewrites the file on the next build in that crate, so a pinned worktree
+/// checked out at a release commit came up dirty the moment anything was built
+/// there. A lockfile cargo silently rewrites is not pinning anything, which is
+/// exactly what the tracked-ness test exists to prevent one layer down.
+#[test]
+fn the_excluded_crates_lockfile_names_the_workspace_version() {
+    let root = read("Cargo.toml");
+    let want = field_in_table(&root, "[workspace.package]", "version")
+        .expect("workspace.package has no `version` -- did the table move?");
+    let lock = read("crates/rustynes-cosim/Cargo.lock");
+
+    // Walk `[[package]]` blocks and check every first-party entry. Scanning the
+    // blocks rather than grepping `version = ` is what keeps a third-party
+    // dependency that happens to be at the same number from standing in for a
+    // rustynes crate that is not.
+    let mut checked = 0usize;
+    let mut name: Option<&str> = None;
+    for line in lock.lines() {
+        let line = line.trim();
+        if line == "[[package]]" {
+            name = None;
+        } else if let Some(v) = line.strip_prefix("name = ") {
+            let v = v.trim().trim_matches('"');
+            name = v.starts_with("rustynes-").then_some(v);
+        } else if let Some(v) = line.strip_prefix("version = ")
+            && let Some(pkg) = name.take()
+        {
+            let got = v.trim().trim_matches('"');
+            assert_eq!(
+                got, want,
+                "crates/rustynes-cosim/Cargo.lock pins {pkg} at {got:?} while the \
+                 workspace is {want:?}. Refresh it -- `cargo metadata \
+                 --manifest-path crates/rustynes-cosim/Cargo.toml` is enough, and \
+                 commit the result; the crate is excluded, so no workspace \
+                 command reaches it."
+            );
+            checked += 1;
+        }
+    }
+
+    // Fail closed. A parse that finds nothing must not read as agreement -- the
+    // same shape as a gate reporting a pass over zero rows.
+    assert!(
+        checked >= 5,
+        "only {checked} first-party packages found in the cosim lockfile; the \
+         file is empty, renamed, or no longer in `[[package]]` form, so this \
+         test verified almost nothing"
+    );
+}
+
 /// The crate must not quietly hold itself to weaker lints than the project.
 #[test]
 fn the_excluded_crate_carries_the_same_lints() {
