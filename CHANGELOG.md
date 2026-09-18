@@ -35,9 +35,24 @@ cycle-accurate core later replaced.
   OAM-corruption seed: no 63/255/339 reset, no overflow flag, no dot-257 latch.
   All three land, written from AccuracyCoin's own prose — a test ROM is
   stimulus, not a reference implementation, and no third-party core was read
-  (ADR 0037 applies). `oam2_overflowed` and `oam2_fetch_frozen` are **two**
-  states with the dot-257 latch between them, because a wrap after 257 must not
-  disturb the fetch already in progress.
+  (ADR 0037 applies). **There is ONE live flag, `oam2_overflowed`, and sprite
+  fetch reads it directly at all four read sites.** An earlier draft of this
+  release latched it at dot 257 into a second `oam2_fetch_frozen`, on the
+  reasoning that a wrap after 257 must not disturb a fetch already in progress
+  — and this entry described that design until after it had been published,
+  which is corrected here rather than quietly replaced. The latch is wrong
+  about the rule it implements: AccuracyCoin says rendering re-enabled ON OR
+  AFTER dot 256 leaves the fetch reading index 0, and a single sample at 257
+  misses every re-enable later than 257 — one at dot 260 found the flag clear
+  and fetched normally. It is also unnecessary once the increment window is the
+  32 even dots 258..320 rather than 33 from 256, because the counter can then no
+  longer wrap before the fetch window ENDS. Two defects, and the latch was
+  masking the other one.
+
+  The counter is live and carried across scanlines and **is not yet the read
+  pointer** — the fetch still indexes by dot except when the flag forces index
+  0. That gap is this release's one declared divergence, and making the fetch
+  read `oam2_fetch_addr` directly is the remaining work.
 
 - **`RustyNES.srf`**, the message-suppression file the MiSTer template ships and
   the contributing wiki lists among a core's standard files. Four rules, one per
@@ -156,6 +171,23 @@ cycle-accurate core later replaced.
   and a measurement stays current only until the thing it measured changes.
   Every error here was invisible in any single run and obvious the moment two
   runs were compared.
+
+- **What this release was verified against.** The co-simulation ladder is
+  **147 of 147, 0 failed**, with no skipped rows. AccuracyCoin on the DUT is
+  **148 of 149** — `fail=0`, coverage 149 of 149 entries executed on both sides
+  — and the single differing entry is `Misaligned OAM2 Address`, the one that
+  tests the read-pointer half above. Both were re-run on the FINAL RTL rather
+  than inherited from earlier in the release. The emulation core is unchanged,
+  so **AccuracyCoin 144/144 and nestest 0-diff hold by construction**. The
+  bitstream ships as `RustyNES_20260917.rbf` (seed 3, 4,018,912 bytes),
+  attached to the GitHub release on **both** repositories, and it is the one
+  built from the final RTL — an earlier staged copy predated three later
+  commits and was rebuilt before merging.
+
+  **No hardware has run it.** The PPU gate compares the pre-palette index and
+  the APU gate per-channel integer levels, so the palette, the video timing
+  constants, the absolute audio level and its band-limiting sit downstream of
+  every gate, unverified by construction.
 
 - **`cpu_interrupts_v2` is ticked, three releases late.** `to-dos/mister/TASKS.md`
   read "DEFERRED — not started" while `docs/mister.md` had said since v2.6.15
