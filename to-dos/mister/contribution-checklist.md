@@ -17,7 +17,11 @@ Settled at **v2.6.6**, except the one item that needs a board.
 - [x] `sys/` present and **verbatim** from `Template_MiSTer` **(v2.6.6)** —
       **57 files, 0 content differences** at `3ea1134c`, verified by SHA-256
       against a fresh clone; licence re-tallied over the 40 HDL files among them:
-      0 GPL-2.0-only
+      0 GPL-2.0-only. **Re-measured v2.6.20: still 57 files and zero drift, and
+      the 40 is right** — it is `.sv` + `.v` + `.vhd`, and the two VHDL files are
+      easy to omit (`.sv` + `.v` alone is 38). Second box in this audit whose
+      correct count looked expired under a narrower glob than the one that
+      produced it.
 - [x] `rtl/` present **(now)**
 - [x] `releases/` present **(now)**
 - [x] `RustyNES.qpf` **(v2.6.6)**
@@ -29,10 +33,15 @@ Settled at **v2.6.6**, except the one item that needs a board.
       36-assignment variants, and this one sources `sys/sys_analog.tcl`, the
       standard board, rather than `sys_dual_sdram.tcl`. **145 in total**, from
       two scripts, neither of them this file.
-- [ ] `.srf` — **DECIDED — deliberately absent, not skipped.** It stays
-      unticked because the file genuinely is not there and the list must not
-      claim otherwise; the item is settled because the decision was taken, not
-      because the artifact exists. The
+- [x] `.srf` **(v2.6.19)** — **ADOPTED.** `RustyNES.srf` is in the repository
+      root, four rules, each carrying its attribution, and
+      `tb/quartus-warnings.txt` was regenerated in the same change exactly as
+      the plan below required. The decision trail is kept rather than deleted,
+      because it ran through three releases and two reversals and the reasoning
+      is worth more than the verdict.
+
+      **v2.6.7 — DECIDED, deliberately absent.** It stayed unticked because the
+      file genuinely was not there and the list must not claim otherwise. The
       warnings that cannot be fixed at source live in Quartus's own megafunction
       library and in `sys/`, neither of which this core may edit. Most are
       suppressed with `MESSAGE_DISABLE` assignments in the `.qsf`, each with the
@@ -74,6 +83,16 @@ Settled at **v2.6.6**, except the one item that needs a board.
       `sys_top.sdc`'s clock-group glob matched nothing. Scheduled for the next
       release that rebuilds the bitstream, with the baseline regenerated in the
       same change.
+
+      **v2.6.19 — that release arrived, and it did both.** It rebuilt the
+      bitstream (the OAM2 work and the DC-blocker change are RTL), so the
+      regenerated baseline cost nothing extra. The instance-path concern was
+      real and is why the adopted file is **four rules rather than
+      `Template.srf`'s 29**: rules keyed on another core's hierarchy would match
+      nothing here, and a rule that matches nothing is the silent-no-op this
+      list has been bitten by twice. The abort-with-exit-0 hazard is guarded by
+      `tb/quartus_clean.py`, which requires four named stages before it will
+      call a zero-message compile clean.
 - [x] `RustyNES.sdc` **(v2.6.6)** — short because the constraints are DERIVED,
       not because there is one clock. **The reason on this line expired and was
       corrected at v2.6.14**: it said "one clock domain, because `nes_top`
@@ -246,6 +265,15 @@ Settled at **v2.6.6**, except the one item that needs a board.
       examined is an error, not a pass, and the `find` parentheses are
       load-bearing for the same reason — without them `-print0` binds only to
       the last `-o` branch, so `.sv` files match and are never printed.
+
+      **Re-measured v2.6.20, and the number is right while the LABEL is not.**
+      31 is `rtl/` **plus** `tb/` — 22 and 9 — and all 31 carry the header.
+      "RTL files" reads as `rtl/` alone, which is 22 and was also 22 at v2.6.14,
+      so a reader who checks the obvious thing finds a mismatch that is not
+      there. Recorded because it nearly produced a false expiry in this very
+      audit: the first count omitted `tb/`, and the box was almost reported as
+      stale on the strength of a narrower `find` than the one that wrote it —
+      the exact failure its own last sentence warns about.
 
 ## Submission
 

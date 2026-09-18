@@ -66,9 +66,14 @@ const MIN_PASS_RATE: f64 = 0.60;
 /// test, so 144 assigned minus the ONE known-failing row below is exactly
 /// the previous 141 plus the two new tests that pass (`Misaligned OAM DMA`
 /// and `Misaligned OAM2 Address`, the latter closed by the v9 OAM2 counter
-/// after it was found to have been passing via two cancelling errors). The
-/// single remaining failure is `Frozen OAM2 Increment` — see `KNOWN_FAILING`,
-/// which is the authority here; this count must agree with it.
+/// after it was found to have been passing via two cancelling errors).
+///
+/// **That was true at v2.6.17 and stopped being true at v2.6.18**, which
+/// closed `Frozen OAM2 Increment` and emptied `KNOWN_FAILING` — leaving this
+/// paragraph naming a failure that no longer exists for two releases. The
+/// count is now **144 of 144** with `KNOWN_FAILING` empty. `KNOWN_FAILING` is
+/// the authority and this prose must agree with it; the drift mechanism was
+/// that the list was emptied and the sentence above it was not.
 ///
 /// Asserted alongside the known-failing set so that a battery which
 /// *under-executes* (early bail, skipped suite, decoder that stops
