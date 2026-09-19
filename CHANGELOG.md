@@ -239,6 +239,52 @@ cycle-accurate core later replaced.
   Measured alongside: `wine nesasm.exe` reproduces upstream's committed `.nes`
   **byte-identically**, which is the control any future rebuild needs.
 
+### Build
+
+- **The ladder is 152 passed, 0 failed, 1 expected failure.** The expected one
+  is `chrram-live`, registered with the new `run_xfail` rather than as a plain
+  gate: a permanently red gate makes the suite report "N passed, 1 failed" every
+  release, and the next genuinely NEW failure prints the identical line.
+  `run_xfail` runs the gate in full and **fails the suite if it starts
+  passing**, so a divergence that closes cannot hide behind a stale allowance.
+
+- **The fitter pin moves 1 -> 5, and the seed that had been pinned for seven
+  releases no longer closes at all.** The RTL changed -- `save_ctl.sv`, and a
+  second port taking `prg_ram` from single-port to `BIDIR_DUAL_PORT` -- so the
+  table is re-derived rather than carried. Ten seeds, each from a clean
+  database, all at one pinned build date, worst across all four corners:
+
+  | seed | worst setup | worst hold | result |
+  |---|---|---|---|
+  | 1 | +0.307 | +0.068 | closes |
+  | 2 | +0.233 | +0.078 | closes |
+  | 3 | **-0.180** | +0.073 | **does not close** |
+  | 4 | +0.443 | +0.079 | closes |
+  | 5 | +0.259 | **+0.102** | closes — published |
+  | 6 | +0.218 | +0.076 | closes |
+  | 7 | +0.135 | +0.045 | closes |
+  | 8 | +0.456 | +0.071 | closes |
+  | 9 | +0.245 | +0.093 | closes |
+  | 10 | +0.159 | +0.080 | closes |
+
+  Hold binds on every closing seed and seed 5 takes it outright. **Seed 3 was
+  the pin from v2.6.13 through v2.6.19** and the worst of v2.6.20's ten; it now
+  fails outright, so a pin carried forward on an older RTL's table would have
+  shipped a bitstream that does not meet timing.
+
+  It also restores a counterexample v2.6.20 recorded as spent. That release
+  noted seed 8 failing on v2.6.19's RTL and closing on v2.6.20's, and said the
+  *specific* counterexample was gone while the principle stood -- that whether
+  every seed closes is a property of the RTL, re-measured each time. A different
+  seed fails one release later. The principle would have been unfalsifiable had
+  the previous entry dropped it when its evidence expired.
+
+- **`releases/RustyNES_20260919.rbf`** — 4,010,492 bytes, md5
+  `d20c6dd3f58c58a13ca84c3b823de2a7`, 0 errors and 0 warnings, all four corners
+  closing at **+0.259 ns setup / +0.102 ns hold**. The independent from-scratch
+  compile at the pinned seed reproduces the sweep's seed-5 row exactly, which is
+  the property v2.6.7 had to withdraw a published number over.
+
 ### Not established here
 
 No hardware has run any bitstream. A SuperStation One is in hand and rung 6
