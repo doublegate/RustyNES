@@ -28,6 +28,60 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **Both upstream oracles are re-synced to their newest committed version, and
+  one of the two commits is a defect this project reported.** AccuracyCoin moves
+  `69c8860` -> **`46199ae4`** and TriCNES `f388af0` -> **`94f1b117`**, each now
+  byte-identical to upstream HEAD. The AccuracyCoin window is two commits and
+  **165 differing ROM bytes**, and both are the same one-line defect in two
+  places — a missing `INC <ErrorCode` between sub-tests, which made two
+  sub-tests of one routine report the *same* failure code and so made `Fail(N)`
+  ambiguous. `9bc42d1e` fixed it in `TEST_MisalignedOAM2Addr`; **`46199ae4`
+  fixed it in `TEST_FrozenOAM2Inc2`, the instance raised upstream from here.**
+  It changes no verdict, and that is measured rather than assumed:
+  re-extracting `SOURCE_CATALOG.tsv` from the new `AccuracyCoin.asm` reproduces
+  the committed 149-row TSV **byte-identically**, because the insertion moves
+  code and not the result-address map. The battery re-runs at **144/144,
+  100.00%, fail=0**, and nestest is 0-diff. TriCNES's one line is
+  `CPU_SYNC = true;` in `Reset()`; `tricnes-full-src/` is byte-identical to
+  upstream and the same line was applied by hand to the instrumented
+  `tricnes-harness-src/`, whose delta against the full source stays at its
+  established **88** instrumentation lines.
+- **A sub-test manifest note is retracted, by measurement.** It said the
+  misaligned-OAM2 ROM was built from a base that "PREDATES that upstream `INC`",
+  and `9bc42d1e` is the commit that **added** that `INC` — the column was right
+  and the prose was backwards. Settled by rebuilding rather than by reading: the
+  committed ROM reproduces byte-identically from `9bc42d1e`, which also stands
+  as a demonstration that these builds are reproducible. Both recorded sub-tests
+  are rebuilt on `46199ae4` and validated (`$0493` Pass on frame 128, `$0495` on
+  frame 82 — the same frame the previous one-byte-patched ROM reported, which is
+  the cross-check that the real build and the patch select the same test). The
+  one-byte relationship the manifest describes (offset `0x10B5`, `0x02` ->
+  `0x03`) is now **measured** between two builder outputs rather than asserted.
+  The 31 legacy sub-tests keep their stated gap: their indices were never
+  recorded, and rebuilding on guessed indices is worse than a stated gap.
+- **Two stale claims in the AccuracyCoin README, both checked rather than
+  assumed.** It said the uppercase directory holds "a synced copy of the ROM"
+  (it holds none — zero `.nes` files), and it quoted the pass rate as
+  **99.31% (143 of 144)**, which stopped being true at v2.6.18. Both corrected.
+- **`VERSION-PLAN.md`'s release-history table is ordered again.** It ran
+  ascending v2.0.0 -> v2.5.8, then a scrambled block
+  (v2.6.2, v2.6.1, v2.6.0, v2.5.9, v2.6.5), then *descending* v2.6.21 -> v2.6.3.
+  **23 of its 61 rows moved**; the fix is a pure permutation (asserted as one)
+  and a sort that is a **no-op on the already-correct head**, which is what
+  makes it a reordering rather than a rewrite. The `(current)` marker is
+  preserved and all 15 release-anchor audits pass.
+- **The two open Dependabot PRs are consolidated, and the pair they touch is
+  kept in lockstep.** `androidx.baselineprofile` and `benchmark-macro-junit4`
+  **1.5.0-rc02 -> 1.5.0** (that line's first stable release) and
+  `compose-bom` **2026.08.00 -> 2026.09.00**. The two benchmark artifacts MUST
+  move together — the root build says so in a comment — and the comment beside
+  the second pin had *already* drifted, naming `1.5.0-rc01` while the code read
+  `rc02`; it now names the invariant instead of duplicating the version, so it
+  cannot drift again. Both PRs' Android builds were verified from the **job
+  log** (`BUILD SUCCESSFUL`, both `:app:bundle*Release` tasks), not from the
+  check mark, because that job is `continue-on-error: true` and a broken
+  Android build leaves the PR green.
+
 - **The README is a landing page again, and `AGENTS.md` is half its former
   size.** Both carried the complete release lineage inline — a single
   **17,882-character** paragraph in `README.md` and **two** blobs totalling

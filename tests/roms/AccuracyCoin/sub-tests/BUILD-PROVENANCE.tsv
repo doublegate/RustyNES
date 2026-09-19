@@ -18,34 +18,35 @@
 # The prefix is historical; the suite column is authoritative.
 #
 # rom	suite	test	entry	upstream_commit
-advanced-sprite-eval-frozen-oam2-increment.nes	21	2	Frozen OAM2 Increment	9bc42d1e
-# The row below was NOT produced by build_sub_test_rom.py. It is the ROM
-# above with ONE BYTE changed: the builder injects the suite and test
-# indices as plain immediates (`LDY #suite` / `LDX #test`) and they survive
-# into the binary, at file offsets 0x10AB (A0 15) and 0x10B5 (A2 02). The
-# test index 0x02 -> 0x03 selects the next row of suite 21. Same edit the
-# builder performs, applied to the assembled binary, so the upstream base
-# and the MIT licensing are unchanged. Index confirmed from TWO sources
-# before patching -- this file's row above, and SOURCE_CATALOG.tsv's row
-# ORDER within suite 21 -- then validated with validate_sub_test_rom,
-# which reported $0495 settling at Pass on frame 82.
-advanced-sprite-eval-misaligned-oam2-address.nes	21	3	Misaligned OAM2 Address	9bc42d1e
+advanced-sprite-eval-frozen-oam2-increment.nes	21	2	Frozen OAM2 Increment	46199ae4
+# The row below WAS produced by build_sub_test_rom.py as of the 46199ae4
+# re-sync; it previously was not, being the ROM above with ONE BYTE changed.
+# The one-byte relationship still holds and is now MEASURED rather than
+# asserted: the two builder outputs differ at exactly one offset, 0x10B5,
+# 0x02 -> 0x03 (the `LDX #test` immediate; `LDY #suite` sits at 0x10AB).
+# Both were validated with validate_sub_test_rom after the rebuild --
+# $0493 settling at Pass on frame 128, $0495 on frame 82, the latter the
+# same frame the one-byte ROM reported, which is the cross-check that the
+# real build and the patch select the same test.
+advanced-sprite-eval-misaligned-oam2-address.nes	21	3	Misaligned OAM2 Address	46199ae4
 # The 31 ROMs below predate this manifest. They were built from an upstream
 # commit earlier than 69c88608 and their (suite, test) indices were not
-# recorded. They are NOT rebuilt here: the only upstream change since is a
-# single `INC <ErrorCode` inside `TEST_MisalignedOAM2Addr`, and rebuilding on
-# guessed indices is strictly worse than a stated gap. Fill a row in when you
-# next rebuild one, with its indices.
+# recorded. They are NOT rebuilt here: rebuilding on guessed indices is
+# strictly worse than a stated gap. Fill a row in when you next rebuild one,
+# with its indices. The upstream changes they do not carry are the two
+# `INC <ErrorCode` insertions (`TEST_MisalignedOAM2Addr` in `9bc42d1e`,
+# `TEST_FrozenOAM2Inc2` in `46199ae4`); neither routine is entered by any of
+# the 31, so their failure codes are unaffected.
 #
-# v2.6.20 UPDATE, correcting this note: it used to add "no existing sub-test
-# enters that routine", and one now does -- the misaligned-oam2-address row
-# above. It is built from the same `9bc42d1e` base, which PREDATES that upstream
-# `INC`, so within `TEST_MisalignedOAM2Addr` its failure codes are the
-# pre-fix ones. That does not affect the gate, because both sides PASS and the
-# codes only distinguish failures -- but a future failure decoded against
-# upstream's current source would be off by one, so decode it against
-# `9bc42d1e` or rebuild the ROM.
+# RETRACTION (46199ae4 re-sync). The v2.6.20 note here said the
+# misaligned-oam2-address ROM was "built from the same `9bc42d1e` base, which
+# PREDATES that upstream `INC`", and that is backwards: `9bc42d1e` is the
+# commit that ADDED the `INC` to `TEST_MisalignedOAM2Addr`, so a ROM built at
+# it INCLUDES the fix. The column was right and the prose was wrong. Settled
+# by measurement rather than by reading, per this project's own rule: the
+# committed ROM rebuilt byte-identically from `9bc42d1e`
+# (md5 3e14c3d9a64070a3652a72503c4d34fb), which is also a standing
+# demonstration that these builds are reproducible.
 #
-# Worth stating because this file exists to stop the next person guessing: the
-# sentence was true when written and stopped being true in the release that
-# added the row directly above it.
+# Worth stating because this file exists to stop the next person guessing: a
+# note that reads as settled and detailed is the one nobody re-derives.

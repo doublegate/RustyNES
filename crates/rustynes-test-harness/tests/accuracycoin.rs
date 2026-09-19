@@ -59,7 +59,9 @@ use rustynes_test_harness::accuracy_coin_catalog;
 const MIN_PASS_RATE: f64 = 0.60;
 
 /// The exact number of `AccuracyCoin` tests the shipped headless build
-/// passes, re-blessed at the 2026-09 upstream re-sync (upstream `69c8860`).
+/// passes, re-blessed at the 2026-09 upstream re-sync (upstream `69c8860`;
+/// the ROM has since moved to `46199ae4`, which changes no verdict — see
+/// `tests/roms/accuracycoin/README.md`).
 ///
 /// 143 of 144 assigned. The catalog grew 141 -> 144 assigned tests and
 /// **nothing that passed before stopped passing**: upstream removed no

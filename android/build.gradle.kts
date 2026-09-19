@@ -78,11 +78,12 @@ plugins {
     // rejects an AGP-9.x `com.android.application` module ("not a supported android
     // module"); the 1.5.0 line is the first to widen the supported-AGP window to
     // 9.x (ART-metric repackage handling + the bumped maxAgpVersion). The pin has
-    // moved alpha06 -> rc01 -> rc02 within that same line, which is the same window
-    // with fewer unknowns rather than a new dependency decision. It MUST move in
-    // lockstep with benchmark-macro-junit4 in :baselineprofile: Dependabot raises
-    // those two as separate per-artifact PRs, so merging one alone desyncs the
-    // pair. It is applied on BOTH :app
+    // moved alpha06 -> rc01 -> rc02 -> 1.5.0 within that same line, which is the
+    // same window with fewer unknowns rather than a new dependency decision; 1.5.0
+    // is that line's first STABLE release. It MUST move in lockstep with
+    // benchmark-macro-junit4 in :baselineprofile: Dependabot raises those two as
+    // separate per-artifact PRs when it cannot group them, so merging one alone
+    // desyncs the pair. It is applied on BOTH :app
     // (consume + bundle the generated profile) and :baselineprofile (generate it).
-    id("androidx.baselineprofile") version "1.5.0-rc02" apply false
+    id("androidx.baselineprofile") version "1.5.0" apply false
 }

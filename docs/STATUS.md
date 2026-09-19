@@ -2118,9 +2118,10 @@ flag no longer exists. The subsequent v2.0.0 "Timebase" one-clock rewrite and th
 v2.0.3 2-cycle-ALE PPU promotion further hardened it. On the current default build
 (`--features test-roms`):
 
-- **AccuracyCoin 144/144 (100.00%)** (RAM-direct decoder), 0 fail. The 2026-09
-  upstream re-sync (`69c8860`) grew the battery 141 -> 144 assigned tests across
-  two new pages; the last of them,
+- **AccuracyCoin 144/144 (100.00%)** (RAM-direct decoder), 0 fail. The ROM is
+  pinned at upstream `46199ae4` (2026-09-19); the earlier `69c8860` re-sync is
+  the one that grew the battery 141 -> 144 assigned tests across
+  two new pages, and `46199ae4` changes the catalog not at all; the last of them,
   `Advanced Sprite Evaluation :: Frozen OAM2 Increment`, closed in **v2.6.18**,
   so `KNOWN_FAILING` is now empty. Its recorded cause — the PPU register write
   landing at M2-low where a 6502 commits at phi2 — was **not** the cause and is
