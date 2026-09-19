@@ -2270,7 +2270,7 @@ v1.3.0 "Bedrock" → v1.4.0 "Fidelity" (+ the v1.4.1 patch) → v1.5.0 "Lens" �
 v1.6.0 "Studio" → v1.7.0 "Forge" → v1.7.1 (patch)** on top, then the **v1.8.x
 "Android"** platform line (v1.8.0 → … → v1.8.7 "Android" (Connectivity completion) →
 **v1.8.8 "Atlas" (Google Play launch readiness)** → **v1.8.9 "Backlog"** (the
-carryover beta train that closed the Android line). **v1.8.9** added the creator-tooling /
+carryover beta train that closed the Android line)). **v1.8.9** added the creator-tooling /
 debugger-depth / full-Mesen2-HD-pack-parity / mapper-breadth (168 → 172) work — see
 the blockquote at the top + `CHANGELOG.md` `[1.8.9]` — plus the 13-PR Dependabot
 consolidation (jni 0.21 → 0.22, zip 2 → 8.6, naga 25 → 29, sha1 / md-5 0.10 → 0.11,

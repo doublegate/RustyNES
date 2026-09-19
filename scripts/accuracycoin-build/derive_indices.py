@@ -93,6 +93,32 @@ def parse(asm: str):
     return suites, results
 
 
+# The sub-test corpus's own record of how each ROM was built. Two columns of it
+# are a (suite, test) -> name mapping somebody established independently of this
+# parser, which is exactly what a derivation needs to be checked against.
+PROVENANCE_TSV = (
+    Path(__file__).resolve().parents[2]
+    / "tests" / "roms" / "AccuracyCoin" / "sub-tests" / "BUILD-PROVENANCE.tsv"
+)
+
+
+def _recorded_validations() -> list[str]:
+    """Recorded (suite, test, name) rows as `--validate` specs, or []."""
+    if not PROVENANCE_TSV.is_file():
+        return []
+    out = []
+    for line in PROVENANCE_TSV.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        cols = line.split("\t")
+        if len(cols) < 4:
+            continue
+        _rom, suite, test, name = cols[0], cols[1], cols[2], cols[3]
+        if suite.strip().isdigit() and test.strip().isdigit():
+            out.append(f"{suite.strip()}:{test.strip()}:{name.strip()}")
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("src", type=Path, help="upstream AccuracyCoin source directory")
@@ -103,7 +129,44 @@ def main() -> int:
         metavar="SUITE:TEST:NAME",
         help="assert a known (suite, test) -> name mapping before trusting the rest",
     )
+    ap.add_argument(
+        "--no-recorded-validate",
+        action="store_true",
+        help="skip the recorded mappings from BUILD-PROVENANCE.tsv (states a reason on stderr)",
+    )
     args = ap.parse_args()
+
+    # THE RECORDED MAPPINGS ARE VALIDATED BY DEFAULT, not on request.
+    #
+    # `--validate` used to default to an empty list, so a bare
+    # `derive_indices.py <src>` emitted all 149 rows having checked nothing --
+    # while this file's own docstring said the derivation "is VALIDATED against
+    # the two rows that were recorded by hand before it is used for the thirty
+    # that were not". That was true of one invocation and false of the default
+    # one, which is the same shape as a gate that reports a pass it has not
+    # earned. Raised in review.
+    #
+    # They are READ FROM `BUILD-PROVENANCE.tsv` rather than written here,
+    # because a transcribed pair is the artifact this whole script exists to
+    # replace -- and reading the record means the guard grows by itself as rows
+    # are added, instead of staying at two forever.
+    recorded = _recorded_validations()
+    if args.no_recorded_validate:
+        print(
+            "derive_indices: NOT validating against BUILD-PROVENANCE.tsv "
+            "(--no-recorded-validate). Nothing has checked this parse against a "
+            "hand-recorded answer, so treat the output as unverified.",
+            file=sys.stderr,
+        )
+    elif recorded:
+        args.validate = recorded + args.validate
+    else:
+        sys.exit(
+            "derive_indices: no recorded mappings found to validate against.\n"
+            "  Expected rows in tests/roms/AccuracyCoin/sub-tests/BUILD-PROVENANCE.tsv.\n"
+            "  Pass --no-recorded-validate to proceed anyway, which says on stderr\n"
+            "  that the output is unverified."
+        )
 
     asm_path = args.src / "AccuracyCoin.asm"
     if not asm_path.is_file():

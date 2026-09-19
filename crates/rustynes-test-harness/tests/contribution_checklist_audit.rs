@@ -314,19 +314,52 @@ fn the_checklist_still_has_unticked_boxes_and_says_so() {
     // which is marked DECIDED and can never fail. A list that ticks THOSE has
     // stopped describing this project's work. Everything else is now allowed to
     // reach green, because reaching green is the point of v2.7.0.
+    // THE PROTECTED ITEMS ARE PROVED TO EXIST BEFORE THEY ARE PROVED UNTICKED.
+    //
+    // The first version filtered to ticked items and then looked for these
+    // three phrases, so deleting or renaming a protected box left the filter
+    // empty and the test GREEN -- a guard that stops guarding the moment its
+    // subject disappears, which is the same vacuous-pass shape as the guard it
+    // replaced. Raised in review. Existence is now asserted first, against ALL
+    // parsed entries, and only then the tick state.
+    // Declared before the statements, because `clippy::items_after_statements`
+    // is denied here -- an item is in scope from the top of the block whatever
+    // line it is written on, so putting it mid-function misleads the reader.
+    const PROTECTED: [&str; 3] = [
+        "await review",
+        "add to the cores list",
+        "publishable on its own terms",
+    ];
+
     let md = checklist();
     let items = parse(&md).unwrap_or_else(|e| panic!("{e}"));
-    let not_ours: Vec<&str> = items
-        .iter()
-        .filter(|i| i.ticked)
-        .map(|i| i.body.as_str())
-        .filter(|s| {
-            let l = s.to_ascii_lowercase();
-            l.contains("await review")
-                || l.contains("add to the cores list")
-                || l.contains("publishable on its own terms")
-        })
-        .collect();
+
+    let mut missing: Vec<&str> = Vec::new();
+    let mut not_ours: Vec<&str> = Vec::new();
+    for needle in PROTECTED {
+        let matches: Vec<&Item> = items
+            .iter()
+            .filter(|i| i.body.to_ascii_lowercase().contains(needle))
+            .collect();
+        if matches.is_empty() {
+            missing.push(needle);
+            continue;
+        }
+        for m in matches {
+            if m.ticked {
+                not_ours.push(m.body.as_str());
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "{} protected checklist item(s) no longer appear in the list at all, so \
+         this test would have gone on passing while guarding nothing. Either \
+         the item was renamed -- update PROTECTED -- or it was removed, which \
+         is a decision that belongs in the release record:\n  {}",
+        missing.len(),
+        missing.join("\n  ")
+    );
     assert!(
         not_ours.is_empty(),
         "{} box(es) are ticked that cannot be evidence about this core -- they \

@@ -1163,3 +1163,246 @@ fn a_codename_near_the_current_version_is_the_changelog_codename() {
         wrong.join("\n")
     );
 }
+
+/// Blank out fenced code blocks and inline code spans, preserving byte offsets.
+///
+/// Offsets are preserved so a diagnostic can still quote the source at the
+/// position it reports. Backtick runs of any length are handled -- `` ` `` and
+/// `` `ifdef X `` both appear in this corpus, and a single-backtick-only
+/// matcher mis-pairs on them, which is what produced two phantom "unmatched
+/// open paren" findings in `AGENTS.md`.
+fn mask_code(text: &str) -> String {
+    let b: Vec<char> = text.chars().collect();
+    let mut out: Vec<char> = b.clone();
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] != '`' {
+            i += 1;
+            continue;
+        }
+        let mut run = 0usize;
+        while i + run < b.len() && b[i + run] == '`' {
+            run += 1;
+        }
+        // Find the next run of EXACTLY this length.
+        let mut j = i + run;
+        let close = loop {
+            if j >= b.len() {
+                break None;
+            }
+            if b[j] == '`' {
+                let mut r2 = 0usize;
+                while j + r2 < b.len() && b[j + r2] == '`' {
+                    r2 += 1;
+                }
+                if r2 == run {
+                    break Some(j);
+                }
+                j += r2;
+            } else {
+                j += 1;
+            }
+        };
+        match close {
+            Some(c) => {
+                for slot in out.iter_mut().take(c + run).skip(i) {
+                    if *slot != '\n' {
+                        *slot = ' ';
+                    }
+                }
+                i = c + run;
+            }
+            // An unterminated run is not code; leave it and move past it.
+            None => i += run,
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// A parenthetical in a release lineage must not swallow the lineage.
+///
+/// PROSE CANNOT BE AUDITED; A DELIMITER CAN. That is v2.6.11's reasoning, and
+/// this is the same idea applied to structure rather than ordering.
+///
+/// Found at v2.6.21, by review pointing at one instance and a scan finding a
+/// second and larger one. A single unclosed `(` in a lineage paragraph is not a
+/// typo with cosmetic consequences: every release entry after it reads as
+/// parenthetical to the entry that opened it, so a reader is told that sixteen
+/// releases are an aside to v2.6.17.
+///
+/// | document | span | what it swallowed |
+/// |---|---|---|
+/// | `SUPPORT.md` | 26,396 chars | v2.6.16 back to v2.4.0 |
+/// | `AGENTS.md`  | 120,221 chars | essentially the whole lineage |
+///
+/// NOTE WHAT A BALANCE CHECK ALONE WOULD HAVE SAID. Review's wording was
+/// "balance the delimiters", and the parentheses in `SUPPORT.md` BALANCED --
+/// 13 open, 13 close. Counting would have reported the file clean. What is
+/// wrong is the SPAN: the `(` closes 26 KB later, at the end of the lineage,
+/// so the pair is matched and the structure is still nonsense. Both properties
+/// are therefore asserted, because either alone passes a real defect.
+///
+/// AND THE FIRST MEASUREMENT OF `AGENTS.md` WAS AN ARTIFACT, RETRACTED HERE.
+/// The scan that found `SUPPORT.md` also reported a 120,221-character swallow
+/// in `AGENTS.md`. There is no such span: it paired a prose `(` with a `)`
+/// living inside the code span `` `syntax error near unexpected token )` ``,
+/// and the "fix" deleted that `)` out of the code span -- caught by
+/// markdownlint MD038, not by this test. With code excluded, `AGENTS.md` had
+/// TWO unmatched opening parens and a longest legitimate span of 10,811, and
+/// `docs/STATUS.md` had one. Those were the real defects there; the 120 KB
+/// figure was the instrument. Hence `mask_code`.
+///
+/// THE THRESHOLD WAS ALSO WRONG ON THE FIRST TRY, AND THE MUTATION SAID SO.
+/// It was set to 32 KB with a comment asserting that was "far above" the
+/// longest legitimate parenthetical "and far below the two defects" -- and
+/// 26,396 is BELOW 32,768, so re-introducing the exact `SUPPORT.md` defect this
+/// test was written for came back **NOT CAUGHT**. A threshold written without
+/// being checked against the measurement already in hand, inside a test whose
+/// subject is claims that were never checked.
+///
+/// It is 16 KB, which sits between the longest legitimate parenthetical in this
+/// corpus (~10.8 KB, a nested lineage in `AGENTS.md`, the document's established
+/// style for a line within a line) and the smaller of the two defects (26 KB).
+/// Both mutations are now CAUGHT.
+#[test]
+fn a_lineage_parenthetical_does_not_swallow_the_lineage() {
+    /// Between the longest legitimate nested lineage (~10.8 KB) and the SMALLER
+    /// of the two defects (26,396). The first value chosen, 32 KB, was above
+    /// the smaller defect and therefore could not catch it.
+    const MAX_SPAN: usize = 16_384;
+
+    let mut findings: Vec<String> = Vec::new();
+
+    for doc in chain_docs() {
+        let text = read(doc);
+        // CODE IS NOT PROSE, and counting it is how this test produced a false
+        // finding before it was written down. A naive scan over `AGENTS.md`
+        // paired a prose `(` with the `)` inside the code span
+        // `` `syntax error near unexpected token )` `` and reported a
+        // 120,221-character swallow that does not exist -- and the "fix" for it
+        // DELETED that `)` out of the code span, which markdownlint caught as
+        // MD038. With fenced blocks and backtick runs excluded the same document
+        // has two unmatched opening parens and a longest span of 10,811.
+        let masked = mask_code(&text);
+        let mut stack: Vec<usize> = Vec::new();
+        let mut worst: Option<(usize, usize)> = None;
+
+        for (i, ch) in masked.char_indices() {
+            match ch {
+                '(' => stack.push(i),
+                ')' => {
+                    if let Some(open) = stack.pop() {
+                        let span = i - open;
+                        if span > worst.map_or(0, |(o, c)| c - o) {
+                            worst = Some((open, i));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !stack.is_empty() {
+            // Excerpt by CHARACTERS, never by byte slice: these documents are
+            // full of em-dashes and arrows, and slicing mid-character would
+            // panic while formatting the diagnostic -- replacing the message
+            // that explains the defect with one about the reporting code.
+            let at = stack[0];
+            let excerpt: String = text[at..].chars().take(70).collect();
+            findings.push(format!(
+                "{doc}: an unclosed `(` at byte {at} -- every release entry \
+                 after it reads as parenthetical to the one that opened it.\n    {excerpt}"
+            ));
+        }
+
+        if let Some((open, close)) = worst {
+            let span = close - open;
+            if span > MAX_SPAN {
+                let excerpt: String = text[open..].chars().take(70).collect();
+                findings.push(format!(
+                    "{doc}: a parenthetical spans {span} bytes (limit {MAX_SPAN}), \
+                     so it swallows the entries after it. The parentheses BALANCE; \
+                     the span is what is wrong.\n    {excerpt}"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        findings.is_empty(),
+        "{} lineage delimiter problem(s):\n  {}",
+        findings.len(),
+        findings.join("\n  ")
+    );
+}
+
+/// `mask_code` is asserted directly, because the integration mutation is inert.
+///
+/// Disabling the masking in the test above and re-running comes back **NOT
+/// CAUGHT** -- correctly, and only because the corpus was already repaired: a
+/// naive scan over the FIXED documents finds nothing either. The masking was
+/// load-bearing against the corpus as it stood at HEAD, where it is the whole
+/// difference between "AGENTS.md hides a 120,221-character swallow" (false, and
+/// acted on once) and "AGENTS.md has two unmatched opening parens" (true).
+///
+/// So the property is pinned here instead of relying on a mutation whose
+/// verdict depends on the documents happening to be broken.
+#[test]
+fn mask_code_hides_parentheses_that_live_inside_code() {
+    // The exact shape that produced the false finding: a prose `(` whose only
+    // candidate `)` is inside a code span.
+    let s = "an entry (opens here and dies with `token )` and never closes";
+    let m = mask_code(s);
+    assert!(
+        !m.contains(')'),
+        "the `)` inside the code span must be masked, got: {m}"
+    );
+    assert!(
+        m.contains('('),
+        "the prose `(` must survive masking, got: {m}"
+    );
+
+    // Backtick RUNS of any length. `` `ifdef X `` and `` ` `` both appear in
+    // this corpus and a single-backtick matcher mis-pairs on them.
+    //
+    // WHAT THIS CASE DOES AND DOES NOT PIN, stated because three attempts were
+    // made to strengthen it and all three were inert. Mutating `r2 == run` to
+    // `r2 >= 1` -- closing a run of two on the next single backtick -- is CAUGHT
+    // by the lineage test against the real documents and NOT by any unit string
+    // tried here. The reason is structural rather than a weak example: after a
+    // mis-pair the scanner resumes at the wrong close and the REMAINING
+    // backticks pair up again, re-masking the region that the mis-pair skipped.
+    // A short string therefore ends up masked either way; it takes a document's
+    // worth of interleaving for the leak to surface.
+    //
+    // So the run-length behaviour is pinned by the integration test, and this
+    // case pins that multi-backtick spans are recognised at all.
+    let s2 = "guards `` `ifdef X `` and a literal `` ` `` then (real) prose";
+    let m2 = mask_code(s2);
+    assert_eq!(
+        m2.matches('(').count(),
+        1,
+        "only the prose `(` survives; the code spans are blanked: {m2}"
+    );
+
+    // Offsets are preserved, so a diagnostic can quote the source position.
+    assert_eq!(m.len(), s.len(), "masking must not change byte length");
+    assert_eq!(m2.len(), s2.len(), "masking must not change byte length");
+
+    // A fenced block is masked whole.
+    let s3 = "before\n```\nlet x = (1);\n```\nafter (kept)";
+    let m3 = mask_code(s3);
+    assert_eq!(
+        m3.matches('(').count(),
+        1,
+        "the fenced block's paren is masked, the prose one is not: {m3}"
+    );
+
+    // An UNTERMINATED run is not code and must not swallow the rest.
+    let s4 = "a stray ` backtick then (real) prose";
+    assert_eq!(
+        mask_code(s4).matches('(').count(),
+        1,
+        "an unterminated backtick run must not mask everything after it"
+    );
+}
