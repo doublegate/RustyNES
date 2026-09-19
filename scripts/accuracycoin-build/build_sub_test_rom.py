@@ -45,18 +45,15 @@ worst failure available here because it looks like a result.
       16: Suite_PPUTiming           17: Suite_SpriteZeroHits
       18: Suite_PPUMisc             19: Suite_CPUBehavior2
 
-Current, derived from 46199ae4 (22 suites, 149 catalog entries):
-   0: CPUBehavior              1: CPUInstructions
-   2: UnofficialOps_SLO        3: UnofficialOps_RLA
-   4: UnofficialOps_SRE        5: UnofficialOps_RRA
-   6: UnofficialOps__AX        7: UnofficialOps_DCP
-   8: UnofficialOps_ISC        9: UnofficialOps_SH_
-  10: UnofficialOps_Immediates 11: CPUInterrupts
-  12: DMATests                13: APUTiming
-  14: CPUBehavior2            15: PowerOnState
-  16: PPUBehavior             17: PPUTiming
-  18: SpriteZeroHits          19: PPUMisc
-  20: AdvancedBGEval          21: AdvancedSpriteEval
+The CURRENT map is deliberately NOT transcribed here. A copy of it in this
+docstring is the same artifact as the struck one above -- it would be correct
+on the day it was written and silently wrong after the next upstream reorder,
+and there would again be nothing to say so. Run:
+
+    python3 derive_indices.py <upstream-source-dir>
+
+and this script now CHECKS `--suite`/`--test`/`--name` against the assembly
+before building, so a wrong index is refused rather than turned into a ROM.
 
 Targets, RE-DERIVED at v2.6.21. Three of the four recorded here were correct
 and one was not:
@@ -295,6 +292,35 @@ def patch_source(src: str, suite_idx: int, test_idx: int) -> str:
     return src
 
 
+def _norm(s: str) -> str:
+    """Collapse whitespace and fold case, for comparing a transcribed label."""
+    return " ".join(s.split()).casefold()
+
+
+def _derive_name(asm: str, suite: int, test: int):
+    """The test name the assembly gives for (suite, test), or None.
+
+    Shares `derive_indices.parse` rather than re-parsing, so the builder and
+    the derivation cannot drift apart -- two parsers for one file is how the
+    stale map got there in the first place.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_derive_indices", Path(__file__).with_name("derive_indices.py")
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    suites, _results = mod.parse(asm)
+    for sidx, _slabel, tests in suites:
+        if sidx != suite:
+            continue
+        for tidx, name, _rlabel in tests:
+            if tidx == test:
+                return name
+    return None
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("src_dir", type=Path,
@@ -326,6 +352,40 @@ def main() -> int:
         sys.exit(f"missing {nesasm_exe}")
 
     src_text = src_asm.read_text(encoding="utf-8", errors="replace")
+
+    # THE INDICES ARE CHECKED AGAINST THE ASSEMBLY BEFORE ANYTHING IS BUILT.
+    #
+    # `--suite`, `--test` and `--name` are three independently hand-typed
+    # values that can disagree with each other and with the source, and the
+    # failure they produce is the worst one available here: the ROM builds, it
+    # runs, it writes a plausible byte, and it is testing something nobody
+    # asked for. That is not hypothetical -- the suite map that used to live in
+    # this docstring was wrong from index 14 onward and was acted on.
+    #
+    # So the triple is now resolved out of `AccuracyCoin.asm` itself, by the
+    # same derivation `derive_indices.py` exposes, and a mismatch REFUSES to
+    # build. Names are compared with whitespace collapsed and case ignored,
+    # because a label transcribed from a table is allowed to differ in those
+    # and in nothing else.
+    derived = _derive_name(src_text, args.suite, args.test)
+    if derived is None:
+        sys.exit(
+            f"build_sub_test_rom: suite {args.suite} test {args.test} does not "
+            f"exist in {src_asm}.\n"
+            f"  Run derive_indices.py {args.src_dir} to list what does."
+        )
+    if _norm(derived) != _norm(args.name):
+        sys.exit(
+            f"build_sub_test_rom: suite {args.suite} test {args.test} is\n"
+            f"    {derived!r}\n"
+            f"  but --name says\n"
+            f"    {args.name!r}\n"
+            f"  Refusing to build. One of the three is wrong, and a ROM built\n"
+            f"  from a wrong index still runs and still writes a byte."
+        )
+    print(f"[build] verified against the assembly: suite={args.suite} "
+          f"test={args.test} is {derived!r}", file=sys.stderr)
+
     patched = patch_source(src_text, args.suite, args.test)
 
     args.build_dir.mkdir(parents=True, exist_ok=True)
