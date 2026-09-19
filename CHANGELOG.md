@@ -429,13 +429,16 @@ construction**, and were re-run anyway.
 
 - **The incumbent risk got worse while nobody looked.** `README.md` said
   `NES_MiSTer` scores 121/125 against hardware's ~121/125. On **2026-09-15/16**
-  the incumbent took AccuracyCoin-driven commits — "PPU: correct `$2004` and
-  `$2007` behaviour during rendering", "PPU: fix sprite fetch and evaluation
-  across rendering toggles", "Fix DMC DMA bus conflicts and the CPU internal
-  data bus" — the same entries v2.6.18–v2.6.20 closed, plus a netlist-accurate
-  composite encoder this core lacks. There may be **no accuracy headroom at
-  all**, and the number will be re-measured against the current incumbent on the
-  same corpus before any submission.
+  the incumbent published a burst of accuracy work. There may be **no accuracy
+  headroom at all**, and the number will be re-measured against the current
+  incumbent on the same corpus before any submission.
+  *(Redacted at v2.6.22: this entry originally quoted three commit subjects and
+  named a capability of the incumbent's core.
+  [ADR 0040](docs/adr/0040-public-release-metadata-is-outside-the-reference-firewall.md)
+  rules that public release metadata — that a black-boxed core changed, and when
+  — is outside the reference firewall, while enumerating what it changed is not.
+  The redaction is noted rather than made silently, because this is a shipped
+  release's record.)*
 
 - **A guard that would have fired on success.** `contribution_checklist_audit.rs`
   asserted `unticked > 0` because "rung 6 needs hardware nobody here has". A
