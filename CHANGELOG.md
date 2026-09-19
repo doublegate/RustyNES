@@ -26,6 +26,70 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.22] - 2026-09-19 - "Rigging" (the instruments for the board, built before the board)
+
+**v2.7.0 "Shakedown" is the session with the board, and this is not it.** A
+SuperStation One is in hand and **no hardware has run any bitstream** — that
+sentence is still true and every anchor asserting it is untouched. v2.6.22 is
+the non-hardware half of the Shakedown plan, cut separately on a maintainer
+decision so that v2.7.0 keeps meaning what its name says.
+
+The emulation core is unchanged, so **AccuracyCoin and nestest hold by
+construction**, and were re-run anyway.
+
+### Added
+
+- **AccuracyCoin reads back from hardware as BYTES, not as a photograph.**
+  `RustyNES_MiSTer/docs/bringup.md` had stated the limit precisely — *"a
+  photograph is not 149 status bytes, and reading one is a human transcribing a
+  picture"* — because the result vector lives in CPU RAM at `$0300-$04FF`, which
+  is not in the `$6000-$7FFF` window the save path persists.
+  `scripts/accuracycoin-build/build_mirror_rom.py` patches upstream's ROM to
+  copy that window to `$6000-$61FF` once the battery finishes, and sets the iNES
+  battery bit — the one bit that both creates the PRG-RAM window
+  (`rtl/emu.sv:609`) and arms the save controller (`rtl/emu.sv:353`), read out of
+  the RTL rather than assumed.
+
+  **The patch moves nothing, and the builder asserts it.** AccuracyCoin is full
+  of cycle-exact tests sensitive to page crossings in their own code, so an
+  insertion displacing later routines could flip a verdict for reasons unrelated
+  to the console — and the flipped verdict would look exactly like a result. The
+  diff is exactly 1 header byte, 5 at the call site (`LDA #0` / `STA $4015` ->
+  `JSR` + two `NOP`s) and 29 in bank 2's end-of-bank padding; **0 bytes
+  anywhere else**, and the builder refuses to emit a ROM whose budget differs.
+
+  **The control is separate, because a budget proves nothing about answers.**
+  `accuracycoin_mirror.rs` runs both ROMs through the same driver the shipped
+  gate uses and requires the window byte-identical, the decoded vector identical
+  entry for entry, and the mirror to reproduce the live window without being
+  vacuous — then runs the real comparator over a real save file, because the
+  conjunction of two verified halves is a third claim. Three mutations, all
+  CAUGHT.
+
+- **`accuracycoin_status` reads a hardware `.sav`.** A `sav:` operand lifts an
+  8 KiB battery save onto the work-RAM frame the catalog addresses. The prefix
+  is mandatory and a bare `.sav` is refused rather than inferred: decoding a save
+  as work RAM does not fail, it reads catalog addresses out of the wrong offsets
+  and returns a plausible vector.
+
+- **`RustyNES_MiSTer/tb/check_golden_provenance.py`, run as rung 0.** Every
+  golden manifest records the `rom_sha256` it was exported from, and **nothing
+  had ever compared that field to anything.**
+
+- **`RustyNES_MiSTer/docs/bringup-log.md`** — the evidence sheet the v2.7.0 gate
+  demands: one row per bring-up step, the four properties, Tiers 1–4 and the two
+  board-gated tickets, each with a named-artefact column and a verdict. Every
+  cell reads NOT RUN, which is the accurate current state.
+
+- **`to-dos/plans/v2.7.0-shakedown-plan.md`** — the forward plan for the board.
+  It supersedes the rung-6 and rung-7 rows of `v2.7.0-mister-core-plan.md`,
+  whose ladder is otherwise delivered. Two corrections went into writing it: the
+  save path **cannot** carry AccuracyCoin's vector off the board (it persists
+  `$6000-$7FFF`; AccuracyCoin writes `$0300-$04FF` in CPU RAM — blargg's `$6000`
+  status bytes do read back, which is the narrower true claim), and **three of
+  six line-number citations in the first draft were wrong** because they were
+  carried from an earlier planning round rather than read from the tree.
+
 ### Changed
 
 - **Both upstream oracles are re-synced to their newest committed version, and
@@ -111,6 +175,68 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **The AccuracyCoin catalog has 149 rows and 144 results, and the difference
+  was being counted.** Upstream defines `result_DrawTest = $03FF` with its reason
+  attached — *"page 3 omits the test from the all-test-result-table"* — and all
+  five `Power On State` rows share that sentinel. The sharing was already
+  documented on `CatalogEntry::result_addr` and acted on nowhere, so every
+  consumer counted the five as results, which made the headline **a function of
+  when the run was sampled**: one ROM reads `pass_with_code=16, not_run=0` at
+  4500 frames and `pass_with_code=11, not_run=5` at 6600, because `$03FF` is
+  scratch the results-page renderer writes and later abandons. `RESULT_DRAW_TEST`,
+  `is_scored`, `scored_len` and `scored` exclude it in one place.
+  **`EXPECTED_PASS_COUNT` is untouched and the gate still reports 144/144,
+  100.00%, fail=0** — the count did not change, it stopped depending on the
+  sampling instant, and five rows left every "entry for entry" claim that were
+  never entries.
+
+- **The `46199ae4` re-sync was half-done for a day, and nothing could see it.**
+  Oracle PR #528 moved the vendored ROM and rebuilt two sub-test ROMs without
+  re-exporting the sibling's goldens, so three of them recorded a `rom_sha256`
+  for a ROM no longer in the tree — one naming a build-cache path since deleted.
+  **Every gate stayed green, correctly:** the re-sync's prediction that it
+  "changes no verdict" holds, now measured rather than quoted — the vector is
+  identical entry for entry and the RAM difference is **three bytes per golden,
+  all outside the catalog**, zero-page scratch and stack, `+2` each, consistent
+  with upstream's two-byte insertion. In one of them the changed byte is `$0010`,
+  which the assembly calls `ErrorCode`, going `$03 -> $04`: the fix itself. The
+  goldens were not wrong, they were **unattributable** — a later difference could
+  not have been told apart from a corpus change. All three re-exported, gates
+  re-run.
+
+  **Widening the checker's path resolution turned a skip into a finding.** Four
+  of five UNRESOLVED goldens resolved once `../`-relative and scratch-path
+  manifests were handled, and the fifth of the original set turned out to be
+  STALE all along, hidden behind an unfindable path. A skip count is a place
+  findings hide.
+
+- **`run_battery.sh` would have reported the AccuracyCoin mirror ROM as
+  `pass`.** It read `sav[0]` as a blargg verdict for any ROM; a real mirror save
+  begins `00 00 00 00`, so byte 0 of `$00` would have scored the entire battery
+  as a pass. The verdict is now licensed by blargg's `$DE $B0 $61` signature at
+  `$6001-$6003`, and a save without it reports `vector-not-verdict` rather than
+  a judgement. Measured on a real mirror save, not reasoned about.
+
+- **The stale 121/125 incumbent figure in `docs/submission-case.md`** is
+  withdrawn rather than updated. It is pre-2026-09-15, and `NES_MiSTer` took a
+  burst of AccuracyCoin-driven commits on 2026-09-15/16 covering the entries this
+  line closed in v2.6.18–v2.6.20. The document now makes **no comparative
+  accuracy claim at all** until row F1 of the bring-up log carries a
+  measurement. The README's copy was already corrected at v2.6.21; this one was
+  not.
+
+- **The feature delta is stated by us rather than found by a reviewer.**
+  `submission-case.md` now carries the table: the incumbent has save states,
+  cheats, palettes, Four Score, Zapper, PAL, FDS and expansion audio; this core
+  has six mapper families and battery saves. On features the incumbent wins
+  outright, and it is not close.
+
+- **Two carried-forward items in the v2.7.0 plan were already closed** when the
+  plan listed them — the AccuracyCoin corpus re-sync and `VERSION-PLAN.md`'s row
+  order, both done in #528. They came from `CLAUDE.local.md`'s "Open" section,
+  which had not been updated after that merge: a note copied forward became a
+  fact.
+
 - **`*.sweep-snapshot` is gitignored in the sibling.** `scripts/seed-sweep.sh`
   rewrites `RustyNES.qsf` and `build_id.v` while running and restores both from
   snapshots on exit, including on interrupt — but a trap cannot fire if the
@@ -119,17 +245,6 @@ cycle-accurate core later replaced.
   seed-table rationale sitting beside the live one, which a `git add -A` would
   commit: two tables disagreeing about the pinned seed, which is precisely what
   `tb/check_qsf_seed.py` exists to prevent.
-
-### Added
-
-- **`to-dos/plans/v2.7.0-shakedown-plan.md`** — the forward plan for the board.
-  It supersedes the rung-6 and rung-7 rows of `v2.7.0-mister-core-plan.md`,
-  whose ladder is otherwise delivered. Two corrections went into writing it: the
-  save path **cannot** carry AccuracyCoin's vector off the board (it persists
-  `$6000-$7FFF`; AccuracyCoin writes `$0300-$04FF` in CPU RAM — blargg's `$6000`
-  status bytes do read back, which is the narrower true claim), and **three of
-  six line-number citations in the first draft were wrong** because they were
-  carried from an earlier planning round rather than read from the tree.
 
 ## [2.6.21] - 2026-09-19 - "Steward" (the board arrives, and the core is not ready for it)
 

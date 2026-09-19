@@ -333,10 +333,43 @@ something as blocked, check the blocker applies to the WHOLE item.**
       and is now complete. Not a backlog item; a decision recorded in the
       programme plan.
 
-## v2.6.21 — the AccuracyCoin corpus re-sync, SCOPED OUT with its reason
+## v2.6.21 — the AccuracyCoin corpus re-sync, DONE (and it was half-done for a day)
 
-- [ ] Re-sync the vendored AccuracyCoin corpus from `9bc42d1e` to upstream
-      `46199ae4` (2026-09-18).
+- [x] Re-sync the vendored AccuracyCoin corpus from `9bc42d1e` to upstream
+      `46199ae4` (2026-09-18). **LANDED in oracle PR #528**, one release after
+      this entry deferred it.
+
+      **And the re-sync WAS half-done, in exactly the way this entry warned
+      about — found at v2.6.22 by a gate that did not exist when it landed.**
+      #528 moved the vendored ROM and rebuilt the two recorded sub-test ROMs,
+      and it did **not** re-export the sibling's goldens. Three of them —
+      `AccuracyCoin`, `advanced-sprite-eval-misaligned-oam2-address`,
+      `advanced-sprite-eval-frozen-oam2-increment` — went on recording a
+      `rom_sha256` for a ROM no longer in the tree, and for the first the source
+      path they named (`~/.cache/rustynes-cosim/oracle-v2.6.18/...`) had been
+      deleted outright.
+
+      **Every gate stayed green throughout, correctly.** The prediction below
+      that it "changes no verdict" holds, and v2.6.22 measured it rather than
+      quoting it: at 4500 frames the new ROM's vector is identical entry for
+      entry to the old golden's, and the RAM difference is **three bytes per
+      golden, all outside the catalog** — zero-page scratch and stack, `+2`
+      each, consistent with upstream's two-byte `INC <ErrorCode` insertion. In
+      `frozen-oam2-increment` one of the three is `$0010`, which the assembly
+      calls `ErrorCode`, going `$03 -> $04`: the fix itself.
+
+      So the goldens were not wrong. They were **unattributable** — a later
+      difference could not have been told apart from the corpus change. That is
+      the quieter failure, and nothing in the repository could see it, because
+      `rom_sha256` was written into every manifest and compared to nothing.
+      `tb/check_golden_provenance.py` (rung 0 of `regress.sh`) now compares it
+      and fails closed. All three goldens are re-exported and their gates re-run.
+
+      **The lesson is the one this entry already contained and could not
+      enforce.** "All or nothing" was the right call; what was missing was an
+      instrument that could tell which of the two had happened.
+
+      Original reasoning, kept because every clause of it held:
       **DEFERRED — it is a release, not an item, and a HALF-done re-sync is
       worse than none.** The upstream commit is the `INC <ErrorCode` fix this
       project reported as issue #66, accepted and closed six seconds after the
