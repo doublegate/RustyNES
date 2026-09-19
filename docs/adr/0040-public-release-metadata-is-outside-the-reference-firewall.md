@@ -89,12 +89,21 @@ it does so from our own capability list, which
 `RustyNES_MiSTer/docs/submission-case.md` already carries as a table of what
 **we** lack.
 
-**4. The reasoning lives here, not in the documents.** `README.md` and
-`docs/submission-case.md` carry the resulting text and a reference to this ADR.
-They do not carry the argument, the review exchange, or a maintainer flag. This
-is the project's existing convention — rationale belongs in a numbered ADR, and
+**4. The reasoning lives here, not in the documents.**
+`RustyNES_MiSTer/README.md` and `RustyNES_MiSTer/docs/submission-case.md` carry
+the resulting text and a reference to this ADR. They do not carry the argument,
+the review exchange, or a maintainer flag. This is the project's existing
+convention — rationale belongs in a numbered ADR, and
 `master-core/modules/40-docs-and-adrs.md` says so: *"Capture rationale and cost
 in ADRs, not changelog-style history."*
+
+**Both files are in the sibling repository, and this clause now spells that
+out.** It previously named them bare, which reads in this repository as a
+reference to files that do not exist here — `docs/submission-case.md` has no
+counterpart in `doublegate/RustyNES` at all. Two review rounds raised "those
+files are not modified in this PR" on exactly that reading. The edits they call
+for land in
+[RustyNES_MiSTer#21](https://github.com/doublegate/RustyNES_MiSTer/pull/21).
 
 ## Consequences
 
