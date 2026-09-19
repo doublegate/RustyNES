@@ -26,6 +26,57 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **The README is a landing page again, and `AGENTS.md` is half its former
+  size.** Both carried the complete release lineage inline — a single
+  **17,882-character** paragraph in `README.md` and **two** blobs totalling
+  ~103,000 characters in `AGENTS.md`, one of them repeating the other. That is
+  changelog material, and it was duplicated against three places that are
+  actually maintained: this file (135 release sections), the 77 per-release
+  notes under `.github/release-notes/`, and the published GitHub releases.
+  Verified those cover every release named in the blobs before deleting
+  anything. `README.md` **74,770 → 56,676 bytes**; `AGENTS.md`
+  **268,033 → 139,614**. All five release anchors the audit pins are preserved
+  and `release_anchor_audit` passes.
+
+- **Four stale accuracy figures on the landing page.** The README badge read
+  `AccuracyCoin 100% (141/141)` — the current figure is **144/144**, and the
+  badge is not something `release_anchor_audit` can see, since it pins only
+  `badge/version-v`. The same stale number appeared in the authoritative-source
+  sentence, the MiSTer-line paragraph and the BibTeX citation. The one
+  remaining `141/141` is v2.0.3's own historical achievement and is correct in
+  context.
+
+- **Two Roadmap claims that stopped being true.** It said the ladder was
+  "128 gates green … 148 gates as of v2.6.16" (it is **152 green, 0 failed, 1
+  expected failure**), and that rung 6 was "blocked on hardware: no DE10-Nano or
+  SuperStation One is attached" — **a SuperStation One is now in hand.** The
+  half of that sentence which is still true, that no hardware has run any
+  bitstream, is kept and sharpened rather than dropped.
+
+### Fixed
+
+- **`*.sweep-snapshot` is gitignored in the sibling.** `scripts/seed-sweep.sh`
+  rewrites `RustyNES.qsf` and `build_id.v` while running and restores both from
+  snapshots on exit, including on interrupt — but a trap cannot fire if the
+  process is killed outright, and that script's own comment records an OOM kill
+  doing exactly that. What survives is a copy of the `.qsf` carrying the entire
+  seed-table rationale sitting beside the live one, which a `git add -A` would
+  commit: two tables disagreeing about the pinned seed, which is precisely what
+  `tb/check_qsf_seed.py` exists to prevent.
+
+### Added
+
+- **`to-dos/plans/v2.7.0-shakedown-plan.md`** — the forward plan for the board.
+  It supersedes the rung-6 and rung-7 rows of `v2.7.0-mister-core-plan.md`,
+  whose ladder is otherwise delivered. Two corrections went into writing it: the
+  save path **cannot** carry AccuracyCoin's vector off the board (it persists
+  `$6000-$7FFF`; AccuracyCoin writes `$0300-$04FF` in CPU RAM — blargg's `$6000`
+  status bytes do read back, which is the narrower true claim), and **three of
+  six line-number citations in the first draft were wrong** because they were
+  carried from an earlier planning round rather than read from the tree.
+
 ## [2.6.21] - 2026-09-19 - "Steward" (the board arrives, and the core is not ready for it)
 
 ### Fixed
