@@ -134,6 +134,16 @@ name = "accuracycoin_status"
 path = "src/bin/accuracycoin_status.rs"
 required-features = ["test-roms"]
 
+# Identify a sub-test ROM by MEASUREMENT (2026-09-19). Gated because it reads the
+# vendored catalog; `required-features` rather than a crate-level `#![cfg]`,
+# which is this crate's convention and also the only form that keeps the bin
+# out of a default `--workspace --all-targets` clippy run without leaving an
+# undocumented empty crate behind.
+[[bin]]
+name = "subtest_identify"
+path = "src/bin/subtest_identify.rs"
+required-features = ["test-roms"]
+
 # v2.3.6 — Zapper light-timing probe. Answers, from the game's own `$4017`
 # traffic, whether a light-gun title ever sees light: per frame it pairs each
 # read's returned byte (bit 3 = light NOT detected) with whether the aim point

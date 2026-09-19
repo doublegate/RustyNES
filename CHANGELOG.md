@@ -26,6 +26,42 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The 31 legacy AccuracyCoin sub-test ROMs now say which test they run, and
+  it is a measurement.** Their `(suite, test)` indices had been unrecorded for
+  four releases, under a correct note that rebuilding on guessed indices is
+  worse than a stated gap. Both ways of un-guessing them are wrong, and
+  confidently: a sub-test ROM embeds its own copy of the assembly, so its
+  encoded index names a row of *that* build's table, and upstream has since
+  reordered suites **and** inserted tests inside them. Resolving
+  `ppu-misc-stale-bg-shift-regs` (encoded 18/2) against the current assembly
+  gives `$2002 flag timing`; against the stale suite map it gives `INC $4014`.
+  It is neither — the ROM writes `$0483`, *Stale BG Shift Registers*.
+  `subtest_identify` boots each ROM and reads which byte in `$0400-$04FF` it
+  writes, which is the catalog's own key and needs no map at all. The control:
+  `RustyNES_MiSTer/tb/regress.sh` independently registers 18 of these ROMs by
+  an address read out of golden RAM in v2.6.4/v2.6.5, and **all 18 come back
+  identical**. `BUILD-PROVENANCE.tsv` now has all 33 rows, and
+  `accuracycoin_subtest_provenance.rs` re-measures every one of them — seven
+  mutations of the manifest and one of the corpus path, all caught.
+
+- **`ppu-misc-2004-stress.nes` does not run `$2004 Stress Test`.** Found by that
+  sweep. It writes `$048E`, which is `$2007 Stress Test` — the same entry as
+  `ppu-misc-2007-stress.nes`. The corpus holds two ROMs for one entry and
+  **none** for `$2004 Stress Test` (`$048C`) while appearing to hold one.
+  Neither is a registered gate, so nothing relied on the name; the collision is
+  now allow-listed by name with its effect stated, so a *new* one fails instead
+  of joining a category that already has members.
+
+- **`tests/roms/AccuracyCoin/README.md` said the result addresses are "not
+  always the catalog's". That is the wrong way round.** Every one of the 33 ROMs
+  writes the catalog address of some entry, exactly. What varies is whether that
+  entry is the one the *filename* names. The recorded `--suite N --test M`
+  recipes on that page are also relative to the upstream source of their day and
+  several are now stale, which the page now says rather than reading as
+  commands to re-run.
+
 ## [2.6.22] - 2026-09-19 - "Rigging" (the instruments for the board, built before the board)
 
 **v2.7.0 "Shakedown" is the session with the board, and this is not it.** A

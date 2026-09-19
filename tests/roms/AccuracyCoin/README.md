@@ -39,9 +39,21 @@ python3 scripts/accuracycoin-build/build_sub_test_rom.py /tmp/accoin-src \
 ```
 
 `--suite` is the 0-based index into `TableTable` and `--test` the 0-based row
-within that suite's `table "name", ...` lines; the builder's docstring carries
-the suite map. It assembles through **wine + the upstream `nesasm.exe`**, which
-is the upstream toolchain rather than a substitute.
+within that suite's `table "name", ...` lines. It assembles through **wine + the
+upstream `nesasm.exe`**, which is the upstream toolchain rather than a
+substitute.
+
+> **The indices in the recipes on this page are relative to the upstream source
+> of their day, and several are stale.** Upstream has reordered its suites and
+> inserted tests within them since; the builder's docstring keeps the old map
+> struck through for exactly that reason. `--suite 18 --test 7` built
+> `ALE + Read` in v2.6.5 and does not today — at `46199ae4` that slot is
+> `OAM Corruption`, and `ALE + Read` is suite 20, test 3. **Derive the indices,
+> never transcribe them**: `python3 scripts/accuracycoin-build/derive_indices.py
+> <src>` reads them out of the assembly, and the builder cross-checks
+> `--suite`/`--test`/`--name` against it before writing a ROM. The recipes are
+> kept as a record of how each existing ROM was produced, not as commands to
+> re-run.
 
 **Two more were added in v2.6.5**, for the `$2007` state-machine cluster:
 
@@ -69,27 +81,50 @@ matches: the builder rewrites one routine in the source it is handed, so a
 source that already drifted produces a ROM that looks fine and tests something
 else.
 
-**`sub-tests/cpu-open-bus.nes` does not run `Open Bus`.** Measured in v2.6.4:
-its verdict lands at **`$0407`**, which the catalog assigns to *Dummy write
-cycles*, and `$0408` (`Open Bus`) is never written. It is off by one row of
-`Suite_CPUBehavior` — a valid stimulus under the wrong name. It is kept as-is
-rather than renamed, because a gate may already reference it; the correctly
-built one is **`sub-tests/open-bus.nes`** (`--suite 0 --test 7`), added in the
-same release and verified to report at `$0408`.
+### Which entry each sub-test ROM runs is MEASURED, and recorded
 
-Two of the three ROMs used for v2.6.4's rung-5 work therefore report at their
-catalog addresses and one does not, which is why the paragraph below says to
-read the address out of a RAM diff.
+`sub-tests/BUILD-PROVENANCE.tsv` carries a row per ROM: the encoded
+`(suite, test)` immediates, the **result address it writes**, the catalog entry
+that address belongs to, and the oracle's verdict. The address column is the
+identity — it is the catalog's own key and is stable across upstream
+reorderings, which is what the encoded index is not.
+
+It is produced by running the ROMs, not by reading their names:
+
+```bash
+cargo run -p rustynes-test-harness --release --features test-roms \
+    --bin subtest_identify -- --tsv tests/roms/AccuracyCoin/sub-tests/*.nes
+```
+
+and `crates/rustynes-test-harness/tests/accuracycoin_subtest_provenance.rs`
+re-measures every row, so a swapped, rebuilt or renamed ROM fails rather than
+being trusted. The whole 33-ROM sweep is ~16 s.
+
+**`sub-tests/cpu-open-bus.nes` does not run `Open Bus`.** Measured in v2.6.4 and
+re-measured on 2026-09-19: its verdict lands at **`$0407`**, which the catalog
+assigns to *Dummy write cycles*. It is a valid stimulus under the wrong name,
+kept as-is rather than renamed because a gate may already reference it; the
+correctly built one is **`sub-tests/open-bus.nes`**, verified to report at
+`$0408`.
+
+**`sub-tests/ppu-misc-2004-stress.nes` does not run `$2004 Stress Test`** — found
+by that sweep. It writes `$048E`, which is *`$2007 Stress Test`*, the same entry
+as `ppu-misc-2007-stress.nes`. So the corpus holds two ROMs for one entry and
+**none** for `$2004 Stress Test` (`$048C`) while appearing to hold one. Neither
+is registered in rung 5, so nothing relied on the name.
 
 **Why these matter for co-simulation.** The full battery is 17,868,316 CPU
 cycles and needs a START press at a specific frame. A sub-test reaches its
 verdict in **0.9M** (`iflag-latency`) to **4.5M** (`nmi-overlap-brk`) cycles from
 boot, with no input at all — so a DUT iteration that took minutes takes seconds,
-and the verdict byte names one assertion instead of one entry among 146. The
-result addresses are **not** always the catalog's: `iflag-latency` and
-`nmi-overlap-brk` report at their catalog addresses (`$0461`, `$0462`) and
-`cpu-open-bus` reports at **`$0407`**, one below its catalog `$0408`. Read the
-address out of a RAM diff rather than assuming.
+and the verdict byte names one assertion instead of one entry among 146. Which
+address a ROM writes is in `BUILD-PROVENANCE.tsv`, measured — do not infer it
+from the filename.
+
+This file used to describe those addresses as "not always the catalog's". That
+is the wrong way round, and the provenance sweep settles it: **every one of the 33
+ROMs writes the catalog address of some entry, exactly.** What varies is whether
+that entry is the one the *filename* names.
 
 ## Catalog format
 
