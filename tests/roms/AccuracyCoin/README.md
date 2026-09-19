@@ -96,9 +96,18 @@ cargo run -p rustynes-test-harness --release --features test-roms \
     --bin subtest_identify -- --tsv tests/roms/AccuracyCoin/sub-tests/*.nes
 ```
 
-and `crates/rustynes-test-harness/tests/accuracycoin_subtest_provenance.rs`
+`--tsv` emits **exactly** the manifest's eight columns, schema line included, so
+that output *is* the file's data section — verified by regenerating and
+byte-comparing. The one column a measurement cannot supply is
+`upstream_commit`: pass `--upstream-commit <sha>` for a ROM whose build commit
+is known, or set it afterwards for the rows that have one. A ROM the tool cannot
+identify — one that writes nothing, or writes an address in no scored catalog
+entry — gets **no row at all** and a reason on stderr.
+
+`crates/rustynes-test-harness/tests/accuracycoin_subtest_provenance.rs`
 re-measures every row, so a swapped, rebuilt or renamed ROM fails rather than
-being trusted. The whole 33-ROM sweep is ~16 s.
+being trusted, and it asserts the committed file carries the generator's schema
+line so the two cannot drift. The whole 33-ROM sweep is ~16 s.
 
 **`sub-tests/cpu-open-bus.nes` does not run `Open Bus`.** Measured in v2.6.4 and
 re-measured on 2026-09-19: its verdict lands at **`$0407`**, which the catalog

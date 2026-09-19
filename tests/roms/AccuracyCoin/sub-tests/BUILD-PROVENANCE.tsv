@@ -97,6 +97,18 @@
 # offset, 0x10B5, 0x02 -> 0x03 (the `LDX #test` immediate; `LDY #suite` sits at
 # 0x10AB).
 #
+# REGENERATE WITH THE GENERATOR, AND THE SCHEMA LINE BELOW COMES FROM IT:
+#
+#   cargo run -p rustynes-test-harness --release --features test-roms \
+#     --bin subtest_identify -- --tsv tests/roms/AccuracyCoin/sub-tests/*.nes
+#
+# Its output IS this file's data section, schema line included -- verified by
+# regenerating and byte-comparing. The one column a measurement cannot supply is
+# `upstream_commit`; pass `--upstream-commit <sha>` for a ROM whose build commit
+# is known, or set it afterwards for the rows that have one (today, the two
+# v2.6.21 rows). Anything the tool cannot identify it REFUSES to emit a row for,
+# and says why on stderr.
+#
 # rom	enc_suite	enc_test	result_addr	entry	oracle_verdict	settles_frame	upstream_commit
 advanced-sprite-eval-frozen-oam2-increment	21	2	0x0493	Frozen OAM2 Increment	Pass	128	46199ae4
 advanced-sprite-eval-misaligned-oam2-address	21	3	0x0495	Misaligned OAM2 Address	Pass	82	46199ae4

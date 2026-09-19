@@ -28,6 +28,27 @@ use rustynes_core::Nes;
 
 use crate::accuracy_coin_catalog as cat;
 
+/// The manifest's column schema, as one string.
+///
+/// `subtest_identify --tsv` prints it (behind a `# `, so the file's parser
+/// skips it) and `accuracycoin_subtest_provenance.rs` asserts the committed
+/// file carries it. Single-sourced because the two drifted once: the generator
+/// emitted nine fields in a different order while the parser required these
+/// eight, so the command this repository documents for regenerating
+/// `BUILD-PROVENANCE.tsv` produced something the gate rejects. A documented
+/// command that does not work is worse than no documented command, because it
+/// reads as reproducibility.
+pub const MANIFEST_COLUMNS: [&str; 8] = [
+    "rom",
+    "enc_suite",
+    "enc_test",
+    "result_addr",
+    "entry",
+    "oracle_verdict",
+    "settles_frame",
+    "upstream_commit",
+];
+
 /// The result window.
 ///
 /// Every scored catalog entry writes inside it. The `$03FF` omit-sentinel

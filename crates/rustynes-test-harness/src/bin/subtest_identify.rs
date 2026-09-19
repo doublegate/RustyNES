@@ -29,10 +29,16 @@ use rustynes_test_harness::accuracy_coin_subtest as sub;
 struct Args {
     frames: u64,
     tsv: bool,
+    /// What to write in the manifest's `upstream_commit` column. The tool
+    /// cannot observe which `AccuracyCoin` commit a ROM was built from -- that
+    /// is the one fact a measurement cannot supply -- so it is passed
+    /// in, defaulting to the value the 31 legacy ROMs carry.
+    upstream: String,
     roms: Vec<String>,
 }
 
-const USAGE: &str = "usage: subtest_identify [--frames N] [--tsv] <rom.nes>...";
+const USAGE: &str =
+    "usage: subtest_identify [--frames N] [--tsv] [--upstream-commit S] <rom.nes>...";
 
 /// Parse the command line, or print why it could not be parsed.
 ///
@@ -44,6 +50,7 @@ const USAGE: &str = "usage: subtest_identify [--frames N] [--tsv] <rom.nes>...";
 fn parse_args<I: Iterator<Item = String>>(mut it: I) -> Result<Args, ExitCode> {
     let mut frames: u64 = 900;
     let mut tsv = false;
+    let mut upstream = "legacy-unrecorded".to_string();
     let mut roms: Vec<String> = Vec::new();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -65,6 +72,17 @@ fn parse_args<I: Iterator<Item = String>>(mut it: I) -> Result<Args, ExitCode> {
                 }
             }
             "--tsv" => tsv = true,
+            "--upstream-commit" => {
+                let Some(v) = it.next() else {
+                    eprintln!("subtest_identify: --upstream-commit needs a value");
+                    return Err(ExitCode::from(2));
+                };
+                if v.is_empty() || v.contains('\t') {
+                    eprintln!("subtest_identify: --upstream-commit must be non-empty and tab-free");
+                    return Err(ExitCode::from(2));
+                }
+                upstream = v;
+            }
             // An unrecognised flag is REFUSED rather than taken as a path. A
             // mistyped `--frame 10` would otherwise be read as two ROMs, and
             // the run would report two unidentifiable files instead of naming
@@ -81,11 +99,21 @@ fn parse_args<I: Iterator<Item = String>>(mut it: I) -> Result<Args, ExitCode> {
         eprintln!("{USAGE}");
         return Err(ExitCode::from(2));
     }
-    Ok(Args { frames, tsv, roms })
+    Ok(Args {
+        frames,
+        tsv,
+        upstream,
+        roms,
+    })
 }
 
 fn main() -> ExitCode {
-    let Args { frames, tsv, roms } = match parse_args(env::args().skip(1)) {
+    let Args {
+        frames,
+        tsv,
+        upstream,
+        roms,
+    } = match parse_args(env::args().skip(1)) {
         Ok(a) => a,
         Err(code) => return code,
     };
@@ -99,9 +127,20 @@ fn main() -> ExitCode {
     };
 
     if tsv {
-        println!(
-            "rom\tenc_suite\tenc_test\tresult_addr\tfinal_byte\tstatus\tfirst_frame\tentry\textra"
-        );
+        // The MANIFEST schema, exactly: eight fields in the order
+        // `accuracycoin_subtest_provenance.rs`'s `parse_manifest` reads them.
+        // It used to be nine, in a different order, with `final_byte` and
+        // `extra` added and `upstream_commit` missing -- so the command this
+        // repository documents for regenerating BUILD-PROVENANCE.tsv produced
+        // something the gate rejects. A documented command that does not work
+        // is worse than no documented command, because it reads as
+        // reproducibility. Raised by CodeRabbit.
+        //
+        // `final_byte` is not lost: `verdict` is its decode, which is the form
+        // the manifest records. `extra` moves to stderr as a warning, because a
+        // ROM writing more than one result address is worth SAYING rather than
+        // filing in a column nobody parses.
+        println!("# {}", sub::MANIFEST_COLUMNS.join("\t"));
     }
     let mut bad = 0u32;
     for path in &roms {
@@ -129,10 +168,20 @@ fn main() -> ExitCode {
             bad += 1;
             continue;
         };
-        let name = by_addr
-            .get(&first.addr)
-            .copied()
-            .unwrap_or("<address in no catalog entry>");
+        // AN ADDRESS IN NO CATALOG ENTRY IS A REFUSAL, NOT A ROW. Writing a
+        // sentinel name here and accepting the same sentinel in the gate would
+        // let a wrong ROM produce provenance that is self-consistent and
+        // identifies nothing -- the two halves agreeing because they share a
+        // placeholder, not because anything was checked. Raised by CodeRabbit.
+        let Some(name) = by_addr.get(&first.addr).copied() else {
+            eprintln!(
+                "{stem}: writes ${:04X}, which belongs to NO scored catalog \
+                 entry -- refusing to emit a row for it",
+                first.addr
+            );
+            bad += 1;
+            continue;
+        };
         let status = cat::TestStatus::from_byte(first.final_byte);
         let extra: Vec<String> = id
             .hits
@@ -140,17 +189,16 @@ fn main() -> ExitCode {
             .skip(1)
             .map(|h| format!("${:04X}", h.addr))
             .collect();
+        if !extra.is_empty() {
+            eprintln!(
+                "{stem}: also wrote {} -- the ROM did not stop at its target entry",
+                extra.join(",")
+            );
+        }
         if tsv {
             println!(
-                "{stem}\t{es}\t{et}\t0x{:04X}\t0x{:02X}\t{status:?}\t{}\t{name}\t{}",
-                first.addr,
-                first.final_byte,
-                first.first_frame,
-                if extra.is_empty() {
-                    "-".to_string()
-                } else {
-                    extra.join(",")
-                }
+                "{stem}\t{es}\t{et}\t0x{:04X}\t{name}\t{status:?}\t{}\t{upstream}",
+                first.addr, first.first_frame
             );
         } else {
             println!(

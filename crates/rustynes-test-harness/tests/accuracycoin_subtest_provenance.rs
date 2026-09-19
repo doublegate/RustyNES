@@ -64,8 +64,9 @@ fn parse_manifest(text: &str) -> BTreeMap<String, Row> {
         }
         let f: Vec<&str> = line.split('\t').collect();
         assert!(
-            f.len() == 8,
-            "malformed manifest row (expected 8 tab-separated fields, got {}): {line:?}",
+            f.len() == sub::MANIFEST_COLUMNS.len(),
+            "malformed manifest row (expected {} tab-separated fields, got {}): {line:?}",
+            sub::MANIFEST_COLUMNS.len(),
             f.len()
         );
         let addr = u16::from_str_radix(f[3].trim_start_matches("0x"), 16)
@@ -85,6 +86,24 @@ fn parse_manifest(text: &str) -> BTreeMap<String, Row> {
         assert!(prev.is_none(), "duplicate manifest row for {:?}", f[0]);
     }
     out
+}
+
+/// The committed file must carry the generator's schema line.
+///
+/// Without this the two can drift silently: `subtest_identify --tsv` would keep
+/// emitting one order while `parse_manifest` read another, and the only symptom
+/// would be that the command this repository documents for regenerating the
+/// file produces something the gate rejects. That is exactly what happened once
+/// — nine fields out, eight expected, `upstream_commit` missing — and nothing
+/// caught it, because the manifest had been assembled by hand.
+#[test]
+fn the_manifest_carries_the_generators_schema() {
+    let text = std::fs::read_to_string(dir().join("BUILD-PROVENANCE.tsv")).expect("read manifest");
+    let want = format!("# {}", sub::MANIFEST_COLUMNS.join("\t"));
+    assert!(
+        text.lines().any(|l| l == want),
+        "BUILD-PROVENANCE.tsv does not carry the schema line {want:?}.\n           Regenerate it with `subtest_identify --tsv`, which prints it."
+    );
 }
 
 #[test]
@@ -169,16 +188,25 @@ fn every_rom_still_runs_the_entry_its_row_records() {
                 by_addr
                     .get(&first.addr)
                     .copied()
-                    .unwrap_or("<uncatalogued>"),
+                    .unwrap_or("no scored catalog entry"),
                 row.result_addr,
                 row.entry
             ));
             continue;
         }
-        let name = by_addr
-            .get(&first.addr)
-            .copied()
-            .unwrap_or("<uncatalogued>");
+        // An address in NO scored catalog entry is a problem in its own right,
+        // not a row to compare against a placeholder. Accepting a sentinel on
+        // both sides would let a wrong ROM and a wrong row agree because they
+        // share the placeholder rather than because anything was checked --
+        // which is why the generator now refuses to emit such a row at all.
+        // Raised by CodeRabbit.
+        let Some(name) = by_addr.get(&first.addr).copied() else {
+            problems.push(format!(
+                "{stem}: writes ${:04X}, which belongs to no scored catalog entry",
+                first.addr
+            ));
+            continue;
+        };
         if name != row.entry {
             problems.push(format!(
                 "{stem}: ${:04X} is {name:?} in the catalog, manifest says {:?} \
