@@ -26,6 +26,137 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.21] - 2026-09-19 - "Steward" (the board arrives, and the core is not ready for it)
+
+### Fixed
+
+- **Battery-backed save RAM exists.** `T-MISTER-SAVE` has been open since
+  v2.6.12 and `docs/rung6-integration.md:501` still said "Scheduled for
+  v2.6.13". It never landed, so `rtl/emu.sv` tied `sd_lba`, `sd_rd`, `sd_wr`,
+  `sd_buff_din`, `ioctl_upload_req` and `ioctl_din` to constants and **every
+  MMC1 or MMC3 game with a battery lost its save at power-off** — Zelda, Final
+  Fantasy, Kirby's Adventure, Crystalis — with no sign of it in the OSD. It is
+  the one board item with a user-visible data-loss cost, and a reviewer hits it
+  in five minutes.
+
+  **The protocol contradicted the plan, and the framework settled it.** The plan
+  said to use `ioctl_upload_req`/`ioctl_din` and explicitly not `sd_*`.
+  `Main_MiSTer/user_io.cpp:948-955` says otherwise: a `CONF_STR` file entry with
+  an **`S`** after the `F` sets `opensave`, which calls `FileGenerateSavePath()`
+  then `user_io_file_mount(path, 0, 1)` — so the save arrives as **vdisk 0 over
+  `sd_*`**, and that one letter is what buys `<rom>.sav` naming and
+  load-on-ROM-load. `F1,NES;` becomes `FS1,NES;`.
+
+  The mechanism is `rtl/save_ctl.sv`, its own module because `rtl/emu.sv` is in
+  no testbench — which is how v2.6.12 shipped a cartridge hard-wired to mapper 0
+  with 142 gates green. The policy (when to save: the rising edge of
+  `OSD_STATUS`) stays in `emu.sv`, which is the only file that can see it.
+  `make -C tb save-gate` round-trips 8 KiB byte-for-byte and asserts five
+  **refusals** — clean cartridge, zero-length file, read-only mount, no battery,
+  no vdisk — which matter more than the round trip: without them a controller
+  that saves unconditionally passes and rewrites `<rom>.sav` on every OSD visit.
+  **Ten mutations, nine CAUGHT, one measured inert and documented at the site.**
+  The gate failed three times first, all three the host model rather than the
+  DUT.
+
+### Added
+
+- **The CHR-during-rendering gate, and it is RED.** `docs/STATUS.md` claimed
+  v2.6.20's CHR-RAM gate "closes the coverage the retrospective audit named". It
+  did not: the audit named writes **while rendering is enabled**, and PROGRAM53
+  writes with `PPUMASK = 0` and renders afterwards. PROGRAM54 writes mid-frame,
+  and the answer is **32,861 of 61,440 pixels differ** from the oracle with
+  `chr_wr` asserted 4,389 times.
+
+  The diagnosis is recorded at `rtl/ppu2c02.sv`: `chr_wr_addr` takes
+  `chr_addr_raw`, which is the **bus** address — `fetching ? bg_fetch_addr : …
+  v_addr`. Outside rendering the mux falls through to `v`, so a write and a
+  fetch name the same signal, which is why v2.6.11 fixed the rendering-OFF case
+  and left this one. **The obvious fix is not sufficient, and that is the useful
+  part**: pointing it at `v_addr` recovers only **715** of those 32,861 pixels,
+  so there is at least one more mechanism. Not landed, because an unverified RTL
+  change would also force a full seed re-sweep. The increment was checked first
+  and is already correct — the documented simultaneous coarse-X + Y increment
+  during rendering is implemented.
+
+  Registered red on the precedent `ppu-misc-ale-read` set: a gate that is red
+  for a documented reason is worth more than a question that is expensive to
+  ask.
+
+- **Two gates existed that nothing ran.** `menumask-gate` has been committed
+  since v2.6.13 and appeared **nowhere** in `regress.sh` — v2.6.8's finding
+  ("three of them were not run by the suite AT ALL") in a different corner. It
+  and `save-gate` are both registered now.
+
+- **The deploy loop the runbook prescribed and the repository never had** — a
+  root `Makefile`, `tools/gen_mgl.sh`, `tools/run_battery.sh`. Tiers 1-4 of
+  `docs/HARDWARE_TESTING.md` all depend on pushing a build and launching a ROM
+  without touching the OSD, so the absence is why nothing in §5 had ever run.
+  **Building to the spec found two defects in the spec**: the MGL example and
+  default said `index="0"` while `emu.sv:503` gates on `1`, so every ROM would
+  have gone to a slot nothing decodes — a black screen, no error, an entire
+  battery reporting nothing; and the corpus path said `games/NES`, the stock
+  core's directory, the one tree the differential test must not contaminate.
+  Both scripts fail closed and are self-tested.
+
+- **`scripts/accuracycoin-build/derive_indices.py`**, because the hand-written
+  suite map in `build_sub_test_rom.py` was **wrong from index 14 onward**: it
+  listed twenty suites with `PowerOnState` at 14, and upstream has twenty-two
+  with `CPUBehavior2` at 14 and `PPUMisc` at 19. A rebuild driven by it enters
+  the wrong suite and writes a plausible byte for a test nobody asked for. Of
+  its four recorded targets three were right and `Implied Dummy Reads: suite=19`
+  was not — it is suite **14**. The tool derives from the assembly and validates
+  itself against two independently recorded answers before reporting any others.
+
+### Changed
+
+- **`rtl/*.sv` indented with tabs**, all 22 files. MiSTer's coding guidelines —
+  the page the contribution wiki links — say "Indent with tabs, not spaces", and
+  30 of the 32 vendored `sys/` files already do.
+
+- **Three documents a reviewer reads had stale numbers** that `fe71a63` fixed
+  only in `HARDWARE_TESTING.md`: `README.md` 146 → **149** and 141/141 →
+  **144/144**, `docs/submission-case.md` 141/141 → **144/144** — the document
+  the submission email links.
+
+- **The incumbent risk got worse while nobody looked.** `README.md` said
+  `NES_MiSTer` scores 121/125 against hardware's ~121/125. On **2026-09-15/16**
+  the incumbent took AccuracyCoin-driven commits — "PPU: correct `$2004` and
+  `$2007` behaviour during rendering", "PPU: fix sprite fetch and evaluation
+  across rendering toggles", "Fix DMC DMA bus conflicts and the CPU internal
+  data bus" — the same entries v2.6.18–v2.6.20 closed, plus a netlist-accurate
+  composite encoder this core lacks. There may be **no accuracy headroom at
+  all**, and the number will be re-measured against the current incumbent on the
+  same corpus before any submission.
+
+- **A guard that would have fired on success.** `contribution_checklist_audit.rs`
+  asserted `unticked > 0` because "rung 6 needs hardware nobody here has". A
+  SuperStation One is now attached, so that reason is false and the assertion
+  would have turned v2.7.0's milestone into a red test. Replaced with a narrower
+  one that survives the submission.
+
+- **Expired prose, five sites.** Three task-board boxes done and never ticked
+  (the `$4017` rewrite closed at **v2.6.2**; the nestest 5 M window at v2.6.7/8;
+  a checklist tally stale by two), a harness comment calling two passing gates
+  failing, and `mkrom.py`'s claim that PROGRAM32 "is deliberately NOT a gate".
+  One audit claim was **refuted** rather than applied: `TASKS.md`'s "142 of 142"
+  is a dated statement about v2.6.13, correct in context.
+
+- **The AccuracyCoin corpus re-sync is DEFERRED with its reason.** Upstream
+  `46199ae4` is this project's own issue #66 fix, accepted and closed six seconds
+  after the push. It changes **165 bytes**, so all 33 sub-tests rebuild, every
+  sibling golden re-exports and both sides re-verify — and it changes no verdict.
+  A corpus half at `9bc42d1e` and half at `46199ae4` is the mixed-provenance
+  state this project treats as evidence-destroying, so it is all or nothing.
+  Measured alongside: `wine nesasm.exe` reproduces upstream's committed `.nes`
+  **byte-identically**, which is the control any future rebuild needs.
+
+### Not established here
+
+No hardware has run any bitstream. A SuperStation One is in hand and rung 6
+opens at v2.7.0; this release is the pre-flight that makes bring-up start from a
+base whose records are true.
+
 ## [2.6.20] - 2026-09-18 - "Telltale" (the counter had no reader, and two knobs turned out to be one decision)
 
 ### Fixed
