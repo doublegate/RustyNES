@@ -50,6 +50,8 @@ use rustynes_test_harness::accuracy_coin_catalog::{
 const MIRROR_LEN: usize = 0x0200;
 const MIRROR_VECTOR_BASE: usize = 0x0300;
 const WORK_RAM_LEN: usize = 0x0800;
+/// The cartridge PRG-RAM window `$6000-$7FFF`, which is what the core saves.
+const PRG_RAM_LEN: usize = 0x2000;
 
 fn usage() -> ! {
     eprintln!(
@@ -87,6 +89,32 @@ fn lift_sav(sav: &[u8]) -> Result<Vec<u8>, String> {
             sav.len()
         ));
     }
+    // THE EXPECTED SAVE IS EXACTLY THE 8 KiB PRG-RAM WINDOW, and anything else
+    // is announced rather than accepted silently.
+    //
+    // The reviewer asked for `!= PRG_RAM_LEN` to be fatal, and the reasoning is
+    // sound -- a truncated transfer should not be mistaken for a short battery.
+    // It is a WARNING instead, for one reason: no hardware has yet written one
+    // of these files, so "the core always writes 8192 bytes" is an unverified
+    // assumption about the save controller. Making it fatal would let that
+    // assumption block the very first hardware reading, which is the one
+    // measurement this whole channel exists to take.
+    //
+    // The vector itself is safe either way: it lives in the first 512 bytes, so
+    // a file longer than that carries it complete, and a file shorter is already
+    // refused above. Once a real save has been read and its length recorded in
+    // `docs/bringup-log.md`, this should become the exact check the reviewer
+    // asked for.
+    if sav.len() != PRG_RAM_LEN {
+        eprintln!(
+            "warning: the save is {} bytes, not the {PRG_RAM_LEN}-byte \
+             $6000-$7FFF PRG-RAM window. The vector is in the first \
+             {MIRROR_LEN} bytes and is read regardless, but a length this \
+             unexpected suggests a truncated or partial transfer -- check it \
+             before trusting the result.",
+            sav.len()
+        );
+    }
     let mut ram = vec![0u8; WORK_RAM_LEN];
     ram[MIRROR_VECTOR_BASE..MIRROR_VECTOR_BASE + MIRROR_LEN].copy_from_slice(&sav[..MIRROR_LEN]);
     Ok(ram)
@@ -105,6 +133,17 @@ fn lift_sav(sav: &[u8]) -> Result<Vec<u8>, String> {
 /// guard no test can reach — this project's own finding, three times over.
 fn parse_operand(arg: &str) -> Result<(PathBuf, bool), String> {
     if let Some(rest) = arg.strip_prefix("sav:") {
+        // A dangling prefix -- `sav:` alone, or `sav: file.sav` where the shell
+        // split on the space -- would otherwise become an empty path and fail
+        // several steps later as "No such file or directory: ", naming nothing.
+        // Raised by the Antigravity reviewer on PR #530.
+        if rest.trim().is_empty() {
+            return Err(
+                "the `sav:` prefix was given with no path after it. Write it as \
+                 one argument with no space, e.g. `sav:AccuracyCoin-mirror.sav`."
+                    .to_string(),
+            );
+        }
         return Ok((PathBuf::from(rest), true));
     }
     let p = PathBuf::from(arg);
@@ -445,6 +484,21 @@ mod tests {
     /// inferred. Decoding a save as work RAM does not fail — it returns a
     /// plausible vector from the wrong offsets — so this refusal is the only
     /// thing standing between an operator and a confident wrong answer.
+    /// A dangling `sav:` names no file, and says so rather than failing later
+    /// as "No such file or directory: " with an empty path.
+    #[test]
+    fn a_dangling_sav_prefix_is_refused_by_name() {
+        for arg in ["sav:", "sav:   "] {
+            let err = parse_operand(arg).expect_err("a dangling prefix must be refused");
+            assert!(
+                err.contains("no path after it"),
+                "the reason must name the problem: {err}"
+            );
+        }
+        // And a real path after the prefix is still accepted.
+        assert!(parse_operand("sav:x.sav").is_ok());
+    }
+
     #[test]
     fn a_bare_sav_path_is_refused_and_the_prefixed_form_is_accepted() {
         let err = parse_operand("battery/AccuracyCoin.sav").expect_err("bare .sav must be refused");
