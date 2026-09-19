@@ -270,6 +270,42 @@ pub fn run_battery_with_budget(max_frames: u64) -> BatteryResult {
 /// Panics if the ROM doesn't parse or load.
 #[must_use]
 pub fn run_battery_capturing_ram(max_frames: u64) -> (BatteryResult, Vec<u8>) {
+    let run = run_battery_rom(&rom_path(), max_frames);
+    (run.result, run.ram)
+}
+
+/// One battery run: the framebuffer counts, the post-run 2 KiB work RAM, and
+/// the cartridge's PRG-RAM window.
+#[derive(Debug, Clone)]
+pub struct BatteryRun {
+    /// Framebuffer-decoded summary counts (legacy measurement).
+    pub result: BatteryResult,
+    /// Post-run 2 KiB CPU work RAM — where the result vector lives.
+    pub ram: Vec<u8>,
+    /// Post-run cartridge PRG-RAM (`$6000-$7FFF`). Empty for a cartridge with
+    /// no such window; all zeroes for one that has the window and never wrote
+    /// to it. Those two are different states and the distinction matters: a
+    /// mirror that never ran and a console that failed everything both read as
+    /// zeroes in `.sav`, and only the length tells them apart.
+    pub sram: Vec<u8>,
+}
+
+/// Run the `AccuracyCoin` battery on an ARBITRARY ROM, capturing work RAM and
+/// cartridge PRG-RAM.
+///
+/// Extracted from [`run_battery_capturing_ram`], which now delegates here, so
+/// that the mirror-ROM control in `tests/accuracycoin_mirror.rs` drives the
+/// battery through **the same code path** as the shipped gate rather than
+/// through a second copy of the boot-and-press-Start sequence. Two drivers for
+/// one battery is how a control ends up testing itself: the patched ROM could
+/// diverge precisely because the duplicate driver pressed Start on a different
+/// frame, and the comparison would report that as a ROM difference.
+///
+/// # Panics
+///
+/// Panics if the ROM cannot be read or does not parse.
+#[must_use]
+pub fn run_battery_rom(rom: &std::path::Path, max_frames: u64) -> BatteryRun {
     // v2.0 Phase 6 (mc-ppu-subpos): allow sweeping the analog `$2001` write
     // delay + the `$2007` fetch-buffer per-phase offsets at runtime (no
     // rebuild). `RUSTYNES_MASK_DELAY` sets the PPUMASK write delay (dots);
@@ -280,8 +316,8 @@ pub fn run_battery_capturing_ram(max_frames: u64) -> (BatteryResult, Vec<u8>) {
         rustynes_core::rustynes_ppu::MASK_WRITE_DELAY
             .store(d, std::sync::atomic::Ordering::Relaxed);
     }
-    let bytes = fs::read(rom_path())
-        .unwrap_or_else(|e| panic!("read AccuracyCoin.nes: {e} (path={})", rom_path().display()));
+    let bytes = fs::read(rom)
+        .unwrap_or_else(|e| panic!("read AccuracyCoin.nes: {e} (path={})", rom.display()));
     let mut nes = Nes::from_rom(&bytes).expect("parse AccuracyCoin.nes (NROM)");
 
     // 1) Wait for the title splash + menu to render.
@@ -341,8 +377,11 @@ pub fn run_battery_capturing_ram(max_frames: u64) -> (BatteryResult, Vec<u8>) {
             frames,
         };
     }
-    let ram = nes.bus().ram_bytes().to_vec();
-    (last_result, ram)
+    BatteryRun {
+        result: last_result,
+        ram: nes.bus().ram_bytes().to_vec(),
+        sram: nes.sram().to_vec(),
+    }
 }
 
 /// Diagnostic-only `Sprite 0 Hit` test-entry probe.

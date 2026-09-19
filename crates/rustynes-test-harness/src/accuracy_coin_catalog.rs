@@ -62,6 +62,81 @@ pub struct CatalogEntry {
     pub result_addr: u16,
 }
 
+/// The address upstream uses to mean **"omit this test from the result table"**.
+///
+/// Not a guess and not an inference from the data: `AccuracyCoin.asm` defines it
+/// with the reason attached —
+///
+/// ```text
+/// result_DrawTest = $03FF   ; page 3 omits the test from the all-test-result-table.
+/// ```
+///
+/// — and `AutomaticallyRunEveryTestInROM` acts on it, testing the result
+/// pointer's high byte against `3` and branching past the test when it matches.
+/// Five catalog rows (the whole `Power On State` suite: `PPU Reset Flag`,
+/// `CPU RAM`, `CPU Registers`, `PPU RAM`, `Palette RAM`) point here, so the
+/// catalog's 149 rows carry **144 scored results and one shared scratch byte**.
+///
+/// ## Why this constant had to exist
+///
+/// The sharing was documented on [`CatalogEntry::result_addr`] and acted on
+/// nowhere, so every consumer counted the five as results. That made the
+/// headline **depend on when the run was sampled**, which was measured at
+/// v2.6.22: the same ROM reports `pass_with_code=16` at 4500 frames and
+/// `not_run=5` at 6600, because `$03FF` is live scratch that the results-page
+/// renderer writes and later abandons. One of those windows makes the vector
+/// read as 149 of 149 and the other as 144 of 144 — from one ROM, with nothing
+/// wrong in between.
+///
+/// Excluding the sentinel makes the count **144 in both windows**. It changes no
+/// verdict about any real test, and it removes five rows from every "entry for
+/// entry" claim that were never entries.
+pub const RESULT_DRAW_TEST: u16 = 0x03FF;
+
+impl CatalogEntry {
+    /// Whether this row carries a real per-test result.
+    ///
+    /// `false` for the rows that share [`RESULT_DRAW_TEST`]. A comparison that
+    /// includes them is reporting agreement about a scratch byte, which is the
+    /// same family of vacuity this module's decoder already refuses elsewhere.
+    #[must_use]
+    pub const fn is_scored(&self) -> bool {
+        self.result_addr != RESULT_DRAW_TEST
+    }
+}
+
+/// Number of catalog rows that carry a real result: 149 rows, 144 scored.
+///
+/// # Panics
+///
+/// Never; the catalog is parsed at first use and its length is fixed.
+#[must_use]
+pub fn scored_len() -> usize {
+    catalog().iter().filter(|e| e.is_scored()).count()
+}
+
+/// Pair each decoded status with its catalog entry, dropping the unscored rows.
+///
+/// The single place that knows how to drop them, so a consumer cannot get the
+/// zip right and the filter wrong.
+///
+/// # Panics
+///
+/// Panics if `statuses` is not one entry per catalog row — the decoder
+/// guarantees that, and a mismatch means the caller built the vector some other
+/// way and the positional pairing below would be silently wrong.
+pub fn scored(statuses: &[TestStatus]) -> impl Iterator<Item = (&CatalogEntry, &TestStatus)> {
+    assert_eq!(
+        statuses.len(),
+        catalog().len(),
+        "status vector must be one entry per catalog row"
+    );
+    catalog()
+        .iter()
+        .zip(statuses)
+        .filter(|(e, _)| e.is_scored())
+}
+
 /// Authoritative TSV embedded at compile time.
 const RAW_TSV: &str = include_str!("../../../tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv");
 
@@ -263,12 +338,17 @@ impl RamResultSummary {
 
 /// Roll a decoded results vector into bucket counts.
 #[must_use]
+/// Summarise a decoded vector, counting **scored rows only**.
+///
+/// The five rows sharing [`RESULT_DRAW_TEST`] are excluded, so `total` is 144
+/// rather than the catalog's 149. Including them made every count a function of
+/// when the run was sampled — see the constant's rustdoc for the measurement.
 pub fn summarise(statuses: &[TestStatus]) -> RamResultSummary {
     let mut s = RamResultSummary {
-        total: u32::try_from(statuses.len()).unwrap_or(u32::MAX),
+        total: u32::try_from(scored_len()).unwrap_or(u32::MAX),
         ..RamResultSummary::default()
     };
-    for status in statuses {
+    for (_, status) in scored(statuses) {
         match status {
             TestStatus::Pass => s.pass += 1,
             TestStatus::PassWithCode(_) => s.pass_with_code += 1,
