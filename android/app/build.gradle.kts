@@ -290,12 +290,16 @@ val uniffiBindgen = tasks.register<Exec>("uniffiBindgen") {
 tasks.named("preBuild") { dependsOn(uniffiBindgen) }
 
 dependencies {
-    // v1.8.8 "Atlas": Compose BOM 2025.09.01 (material3 1.4.0 — the stable M3 set
-    // for the launch; M3 Expressive's spring-physics/wavy components live in the
-    // 1.5.0-alpha line and are deliberately not pulled in here). Bumped from
-    // 2024.12.01 so the adaptive APIs (Window Size Classes, ListDetailPaneScaffold)
-    // and a current Compose runtime are available.
-    val composeBom = platform("androidx.compose:compose-bom:2026.08.00")
+    // v1.8.8 "Atlas": the Compose BOM is tracked on its stable line, for the
+    // adaptive APIs (Window Size Classes, ListDetailPaneScaffold) and a current
+    // Compose runtime. M3 Expressive's spring-physics / wavy components live on
+    // material3's alpha line and are deliberately NOT pulled in.
+    //
+    // Deliberately no version named in this comment. It used to open "Compose BOM
+    // 2025.09.01" and close "Bumped from 2024.12.01" while the line below read
+    // 2026.08.00 — three versions in a comment whose only job is to explain the
+    // one on the next line. A comment that duplicates a pin drifts from it.
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     implementation("androidx.core:core-ktx:1.19.0")
     // v1.8.8 "Atlas" (Workstream B): per-app language. AppCompat 1.6.0+ supplies the
@@ -345,8 +349,15 @@ dependencies {
     // list composables when the reference is unchanged — a `List<>` is inferred unstable.
     implementation("org.jetbrains.kotlinx:kotlinx-collections-immutable:0.5.2")
     // v1.8.8 "Atlas" (Workstream J): installs the bundled Baseline Profile at runtime
-    // (the AOT-compile hint for the launch/scroll classes). Pinned to the androidx.benchmark
-    // 1.4.1 line that the :baselineprofile generator + the baselineprofile plugin use.
+    // (the AOT-compile hint for the launch/scroll classes).
+    //
+    // This is androidx.PROFILEINSTALLER, a separate artifact on its own version line —
+    // NOT part of the androidx.benchmark group, and deliberately not pinned to match it.
+    // The comment here used to say it was "pinned to the androidx.benchmark 1.4.1 line
+    // that the :baselineprofile generator + the baselineprofile plugin use", which became
+    // false the moment those two moved to 1.5.0 and was the third comment in this module
+    // to drift by naming another artifact's version. It consumes the generated profile at
+    // runtime and is independent of the generator's version; Dependabot tracks it.
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     // UniFFI's generated Kotlin loads the cdylib through JNA; the `@aar`
     // classifier pulls the Android-native JNA dispatcher.

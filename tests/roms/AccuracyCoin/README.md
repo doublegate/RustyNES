@@ -108,8 +108,12 @@ pass / fail breakdowns.
 ## Source
 
 `https://github.com/100thCoin/AccuracyCoin` (main branch; re-synced to
-upstream commit `69c8860`, re-synced 2026-09-11; previously `71f57fb` in
-v2.0.1).
+upstream commit `46199ae4` on 2026-09-19; previously `69c8860`, 2026-09-11,
+and `71f57fb` in v2.0.1). The `46199ae4` re-sync left this catalog
+**byte-identical** — re-running `extract_catalog.py` against the new
+`AccuracyCoin.asm` reproduces the committed TSV exactly, because the two
+upstream commits insert `INC <ErrorCode` instructions, which move code
+without moving any result address.
 
 **The extraction is a script, not a recipe.** It used to be the prose
 paragraph that stood here — walk each `Suite_*` block, emit a triple per
