@@ -111,11 +111,17 @@ fn accuracycoin_is_unaffected_by_run_ahead() {
 
     // The baseline used to be asserted at ZERO failures. That stopped being
     // true at the 2026-09 upstream re-sync, which added two sprite-evaluation
-    // tests this PPU does not model (see `accuracycoin.rs::KNOWN_FAILING`).
-    // The zero-check was never this gate's subject anyway — `accuracycoin.rs`
-    // owns the absolute result. What THIS gate owns is the RELATIVE claim that
-    // run-ahead costs nothing, so the baseline only has to be a stable
-    // reference point, not a perfect one.
+    // tests this PPU did not then model — and it became true AGAIN at v2.6.18,
+    // when the last of them closed. `accuracycoin.rs::KNOWN_FAILING` has been
+    // `&[]` since, so the sentence above pointed at an empty list for three
+    // releases; corrected at v2.6.21.
+    //
+    // The zero-check is still not reinstated, and the reason is unchanged and
+    // is not about the current count: it was never this gate's subject.
+    // `accuracycoin.rs` owns the ABSOLUTE result. What THIS gate owns is the
+    // RELATIVE claim that run-ahead costs nothing, so the baseline only has to
+    // be a stable reference point. Pinning it to zero here would duplicate the
+    // other gate's job and make this one fail for a reason it cannot diagnose.
     assert_eq!(
         baseline.fail as usize + baseline.unknown as usize,
         baseline_failing.len(),

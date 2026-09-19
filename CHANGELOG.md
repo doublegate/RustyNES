@@ -26,6 +26,271 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.21] - 2026-09-19 - "Steward" (the board arrives, and the core is not ready for it)
+
+### Fixed
+
+- **Battery-backed save RAM exists.** `T-MISTER-SAVE` has been open since
+  v2.6.12 and `docs/rung6-integration.md:501` still said "Scheduled for
+  v2.6.13". It never landed, so `rtl/emu.sv` tied `sd_lba`, `sd_rd`, `sd_wr`,
+  `sd_buff_din`, `ioctl_upload_req` and `ioctl_din` to constants and **every
+  MMC1 or MMC3 game with a battery lost its save at power-off** — Zelda, Final
+  Fantasy, Kirby's Adventure, Crystalis — with no sign of it in the OSD. It is
+  the one board item with a user-visible data-loss cost, and a reviewer hits it
+  in five minutes.
+
+  **The protocol contradicted the plan, and the framework settled it.** The plan
+  said to use `ioctl_upload_req`/`ioctl_din` and explicitly not `sd_*`.
+  `Main_MiSTer/user_io.cpp:948-955` says otherwise: a `CONF_STR` file entry with
+  an **`S`** after the `F` sets `opensave`, which calls `FileGenerateSavePath()`
+  then `user_io_file_mount(path, 0, 1)` — so the save arrives as **vdisk 0 over
+  `sd_*`**, and that one letter is what buys `<rom>.sav` naming and
+  load-on-ROM-load. `F1,NES;` becomes `FS1,NES;`.
+
+  The mechanism is `rtl/save_ctl.sv`, its own module because `rtl/emu.sv` is in
+  no testbench — which is how v2.6.12 shipped a cartridge hard-wired to mapper 0
+  with 142 gates green. The policy (when to save: the rising edge of
+  `OSD_STATUS`) stays in `emu.sv`, which is the only file that can see it.
+  `make -C tb save-gate` round-trips 8 KiB byte-for-byte and asserts five
+  **refusals** — clean cartridge, zero-length file, read-only mount, no battery,
+  no vdisk — which matter more than the round trip: without them a controller
+  that saves unconditionally passes and rewrites `<rom>.sav` on every OSD visit.
+  **Ten mutations, nine CAUGHT, one measured inert and documented at the site.**
+  The gate failed three times first, all three the host model rather than the
+  DUT.
+
+  **Two more defects came out of review, and both were reachable.** There was no
+  exit from `S_SAVE` but completion, and `rst_n` is `pll_locked`, which does not
+  drop on a ROM load — so a host that stopped answering left the controller
+  asserting `busy` forever *with the dirty flag already cleared*, since the clear
+  is at the start by design so a CPU write landing mid-save leaves it raised. And
+  the `S_LOAD`/`S_SAVE` arm did not look at `img_mounted` **at all**, so a
+  cartridge inserted during a transfer had its mount dropped and its save never
+  read for the rest of the session. A per-block watchdog ends an abandoned
+  transfer, `save_failed` holds `save_pending` high for a retry, and a mount is
+  captured in every state and **outranks** a pending save — writing the previous
+  cartridge's RAM into the new one's file is the only outcome worse than not
+  saving. Four further mutations, all CAUGHT.
+
+- **`prg_ram` was 8 KiB of flip-flops, and the block count was never the
+  variable.** Adding the second port made Quartus refuse the design outright —
+  `Error (170011): Design contains 151605 blocks of type combinational node.
+  However, the device contains only 83820 blocks` — and the obvious fix made it
+  **worse**: merging both ports into one `always_ff` gave 159,216 blocks and
+  **217 %** ALM utilisation. Each version carried a confident comment, and the
+  two comments contradicted each other about whether a dual-port memory is one
+  block or two. Neither was the variable.
+
+  The fitter named the real shape in a table nobody reads: 8192 multiplexers, 8
+  bits wide, **3:1** — hold, port-A data, port-B data, which is a two-write-port
+  register file described exactly — while `prg_ram` was simply **absent** from
+  the Analysis & Synthesis RAM Summary that listed `wram`, `prg` and `chr`.
+  **What decides it is the read-during-write style**: each port's read must sit
+  in the `else` branch of that port's own write, so the port reads back what it
+  just wrote, because that is what an M10K port physically does. A port that
+  returns the OLD value on a write cycle is not a mode the hardware has, so
+  Quartus cannot map it and builds logic instead. `wram.sv` reads
+  unconditionally and infers fine *because it has one port*. With Intel's
+  template: `OPERATION_MODE set to BIDIR_DUAL_PORT`, 8192 × 8, zero 3:1
+  multiplexers, **0 errors and 0 warnings**, 55 % ALMs, and timing closing at
+  all four corners.
+
+  **Nothing but the fitter could have found it.** Verilator accepts all three
+  forms and the save gate passed on both broken ones — correct behaviour,
+  unfittable hardware — and `check_rtl_subset.py` passed on all three, because
+  it checks policy rather than inference. `docs/rtl-subset-policy.md` gains the
+  two-port rule beside the single-port one, with the three ways to tell before
+  a fit fails and the note that `quartus_map` answers all three in ~5 minutes
+  against ~25 for a full compile.
+
+- **Eighteen gate targets were not `.PHONY`, sixteen of them invoked by
+  `regress.sh`.** Review named two. A target absent from `.PHONY` is satisfied
+  by a **file** of that name: make prints "up to date", runs nothing, exits 0 —
+  and `regress.sh` reads exit 0 as **PASS**. Demonstrated in a throwaway
+  Makefile whose `save-gate` recipe exits 1: exit 2 with no such file, exit 0
+  after `touch save-gate`. So a stray file turns a failing gate into a passing
+  one with no output saying so. All declared, and `tb/check_phony.py` +
+  `make -C tb phony-audit` keep it that way in CI, with a five-case self-test
+  and a mutation that fails it by name.
+
+- **The runbook's corpus placement contradicted its own MGL generator.** §2.5
+  named only `games/NES/tests`, the **stock** core's directory, while §4.3's
+  generated launchers read `games/RustyNES/tests` — so a reader following the
+  runbook in order got MGLs pointing at a directory that did not exist. Both
+  paths are right for their own consumer, so both are now stated, with the
+  reason not to resolve it the other way: §5.3's differential test cannot
+  tolerate the development corpus inside the reference core's tree.
+
+- **The battery script named the wrong bitstream and ignored its own
+  failures.** Its provenance row took the newest file in `releases/`, which
+  `make deploy` never writes — it pushes `output_files/RustyNES.rbf` — so a
+  hardware result could be attributed to a bitstream the console has never run.
+  It now records `rbf_md5` read **off the board** and exits rather than guess.
+  Both OSD commands carried `|| true`, contradicting the fail-closed contract in
+  the file's own header: with no OSD edge the core writes nothing and the script
+  would read an earlier run's `.sav` and report it as this one's verdict. They
+  now exit, and a freshness marker means a stale save reports `needs-capture` —
+  "I could not look" must not wear the shape of "it passed".
+
+### Added
+
+- **The CHR-during-rendering gate, and it is RED.** `docs/STATUS.md` claimed
+  v2.6.20's CHR-RAM gate "closes the coverage the retrospective audit named". It
+  did not: the audit named writes **while rendering is enabled**, and PROGRAM53
+  writes with `PPUMASK = 0` and renders afterwards. PROGRAM54 writes mid-frame,
+  and the answer is **32,861 of 61,440 pixels differ** from the oracle with
+  `chr_wr` asserted 4,389 times.
+
+  The diagnosis is recorded at `rtl/ppu2c02.sv`: `chr_wr_addr` takes
+  `chr_addr_raw`, which is the **bus** address — `fetching ? bg_fetch_addr : …
+  v_addr`. Outside rendering the mux falls through to `v`, so a write and a
+  fetch name the same signal, which is why v2.6.11 fixed the rendering-OFF case
+  and left this one. **The obvious fix is not sufficient, and that is the useful
+  part**: pointing it at `v_addr` recovers only **715** of those 32,861 pixels,
+  so there is at least one more mechanism. Not landed, because an unverified RTL
+  change would also force a full seed re-sweep. The increment was checked first
+  and is already correct — the documented simultaneous coarse-X + Y increment
+  during rendering is implemented.
+
+  Registered red on the precedent `ppu-misc-ale-read` set: a gate that is red
+  for a documented reason is worth more than a question that is expensive to
+  ask.
+
+- **Two gates existed that nothing ran.** `menumask-gate` has been committed
+  since v2.6.13 and appeared **nowhere** in `regress.sh` — v2.6.8's finding
+  ("three of them were not run by the suite AT ALL") in a different corner. It
+  and `save-gate` are both registered now.
+
+- **The deploy loop the runbook prescribed and the repository never had** — a
+  root `Makefile`, `tools/gen_mgl.sh`, `tools/run_battery.sh`. Tiers 1-4 of
+  `docs/HARDWARE_TESTING.md` all depend on pushing a build and launching a ROM
+  without touching the OSD, so the absence is why nothing in §5 had ever run.
+  **Building to the spec found two defects in the spec**: the MGL example and
+  default said `index="0"` while `emu.sv:503` gates on `1`, so every ROM would
+  have gone to a slot nothing decodes — a black screen, no error, an entire
+  battery reporting nothing; and the corpus path said `games/NES`, the stock
+  core's directory, the one tree the differential test must not contaminate.
+  Both scripts fail closed and are self-tested.
+
+- **`scripts/accuracycoin-build/derive_indices.py`**, because the hand-written
+  suite map in `build_sub_test_rom.py` was **wrong from index 14 onward**: it
+  listed twenty suites with `PowerOnState` at 14, and upstream has twenty-two
+  with `CPUBehavior2` at 14 and `PPUMisc` at 19. A rebuild driven by it enters
+  the wrong suite and writes a plausible byte for a test nobody asked for. Of
+  its four recorded targets three were right and `Implied Dummy Reads: suite=19`
+  was not — it is suite **14**. The tool derives from the assembly and validates
+  itself against two independently recorded answers before reporting any others.
+
+  **Its first version emitted 145 rows for a 149-entry catalog and said nothing**
+  — the shortfall raised in review as a hypothetical ("if multiple tests happen
+  to share the same result address"), and measured to be already happening. All
+  five `Suite_PowerOnState` tests name `result_DrawTest`, and keying a map by
+  that address kept only the last: `CPU RAM`, `CPU Registers`, `PPU RAM` and
+  `Palette RAM` were dropped. Upstream's own comment says what the value is —
+  `result_DrawTest = $03FF ; page 3 omits the test from the
+  all-test-result-table` — so **$3FF is a sentinel meaning "this test has no
+  result byte", not a location**, and a caller that read a verdict there would
+  get whatever the last test wrote. The rows are now a flat list carrying a
+  `has_result` column, and the tool **exits** rather than emit a short catalog:
+  dropping one entry gives `149 catalog entries but 148 rows -- 1 lost`. That a
+  tool built to replace a silently-wrong hand-written map shipped its own silent
+  shortfall is the finding worth keeping, not the four rows.
+
+### Changed
+
+- **`rtl/*.sv` indented with tabs**, all 22 files. MiSTer's coding guidelines —
+  the page the contribution wiki links — say "Indent with tabs, not spaces", and
+  30 of the 32 vendored `sys/` files already do.
+
+- **Three documents a reviewer reads had stale numbers** that `fe71a63` fixed
+  only in `HARDWARE_TESTING.md`: `README.md` 146 → **149** and 141/141 →
+  **144/144**, `docs/submission-case.md` 141/141 → **144/144** — the document
+  the submission email links.
+
+- **The incumbent risk got worse while nobody looked.** `README.md` said
+  `NES_MiSTer` scores 121/125 against hardware's ~121/125. On **2026-09-15/16**
+  the incumbent took AccuracyCoin-driven commits — "PPU: correct `$2004` and
+  `$2007` behaviour during rendering", "PPU: fix sprite fetch and evaluation
+  across rendering toggles", "Fix DMC DMA bus conflicts and the CPU internal
+  data bus" — the same entries v2.6.18–v2.6.20 closed, plus a netlist-accurate
+  composite encoder this core lacks. There may be **no accuracy headroom at
+  all**, and the number will be re-measured against the current incumbent on the
+  same corpus before any submission.
+
+- **A guard that would have fired on success.** `contribution_checklist_audit.rs`
+  asserted `unticked > 0` because "rung 6 needs hardware nobody here has". A
+  SuperStation One is now attached, so that reason is false and the assertion
+  would have turned v2.7.0's milestone into a red test. Replaced with a narrower
+  one that survives the submission.
+
+- **Expired prose, five sites.** Three task-board boxes done and never ticked
+  (the `$4017` rewrite closed at **v2.6.2**; the nestest 5 M window at v2.6.7/8;
+  a checklist tally stale by two), a harness comment calling two passing gates
+  failing, and `mkrom.py`'s claim that PROGRAM32 "is deliberately NOT a gate".
+  One audit claim was **refuted** rather than applied: `TASKS.md`'s "142 of 142"
+  is a dated statement about v2.6.13, correct in context.
+
+- **The AccuracyCoin corpus re-sync is DEFERRED with its reason.** Upstream
+  `46199ae4` is this project's own issue #66 fix, accepted and closed six seconds
+  after the push. It changes **165 bytes**, so all 33 sub-tests rebuild, every
+  sibling golden re-exports and both sides re-verify — and it changes no verdict.
+  A corpus half at `9bc42d1e` and half at `46199ae4` is the mixed-provenance
+  state this project treats as evidence-destroying, so it is all or nothing.
+  Measured alongside: `wine nesasm.exe` reproduces upstream's committed `.nes`
+  **byte-identically**, which is the control any future rebuild needs.
+
+### Build
+
+- **The ladder is 152 passed, 0 failed, 1 expected failure.** The expected one
+  is `chrram-live`, registered with the new `run_xfail` rather than as a plain
+  gate: a permanently red gate makes the suite report "N passed, 1 failed" every
+  release, and the next genuinely NEW failure prints the identical line.
+  `run_xfail` runs the gate in full and **fails the suite if it starts
+  passing**, so a divergence that closes cannot hide behind a stale allowance.
+
+- **The fitter pin moves 1 -> 5, and the seed that had been pinned for seven
+  releases no longer closes at all.** The RTL changed -- `save_ctl.sv`, and a
+  second port taking `prg_ram` from single-port to `BIDIR_DUAL_PORT` -- so the
+  table is re-derived rather than carried. Ten seeds, each from a clean
+  database, all at one pinned build date, worst across all four corners:
+
+  | seed | worst setup | worst hold | result |
+  |---|---|---|---|
+  | 1 | +0.307 | +0.068 | closes |
+  | 2 | +0.233 | +0.078 | closes |
+  | 3 | **-0.180** | +0.073 | **does not close** |
+  | 4 | +0.443 | +0.079 | closes |
+  | 5 | +0.259 | **+0.102** | closes — published |
+  | 6 | +0.218 | +0.076 | closes |
+  | 7 | +0.135 | +0.045 | closes |
+  | 8 | +0.456 | +0.071 | closes |
+  | 9 | +0.245 | +0.093 | closes |
+  | 10 | +0.159 | +0.080 | closes |
+
+  Hold binds on every closing seed and seed 5 takes it outright. **Seed 3 was
+  the pin from v2.6.13 through v2.6.19** and the worst of v2.6.20's ten; it now
+  fails outright, so a pin carried forward on an older RTL's table would have
+  shipped a bitstream that does not meet timing.
+
+  It also restores a counterexample v2.6.20 recorded as spent. That release
+  noted seed 8 failing on v2.6.19's RTL and closing on v2.6.20's, and said the
+  *specific* counterexample was gone while the principle stood -- that whether
+  every seed closes is a property of the RTL, re-measured each time. A different
+  seed fails one release later. The principle would have been unfalsifiable had
+  the previous entry dropped it when its evidence expired.
+
+- **`releases/RustyNES_20260919.rbf`** — 4,010,492 bytes, md5
+  `d20c6dd3f58c58a13ca84c3b823de2a7`, 0 errors and 0 warnings, all four corners
+  closing at **+0.259 ns setup / +0.102 ns hold**. The independent from-scratch
+  compile at the pinned seed reproduces the sweep's seed-5 row exactly, which is
+  the property v2.6.7 had to withdraw a published number over.
+
+### Not established here
+
+No hardware has run any bitstream. A SuperStation One is in hand and rung 6
+opens at v2.7.0; this release is the pre-flight that makes bring-up start from a
+base whose records are true.
+
 ## [2.6.20] - 2026-09-18 - "Telltale" (the counter had no reader, and two knobs turned out to be one decision)
 
 ### Fixed

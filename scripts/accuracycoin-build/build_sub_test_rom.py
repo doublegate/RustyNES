@@ -19,23 +19,50 @@ The "suite index" is the 0-based offset into TableTable
 (`AccuracyCoin.asm` line 497-518). The "test index" is the 0-based
 offset of the target within the suite's `table "name", ...` lines.
 
-Suite map (from upstream `AccuracyCoin.asm` lines 497-517):
-   0: Suite_CPUBehavior          1: Suite_CPUInstructions
-   2: Suite_UnofficialOps_SLO    3: Suite_UnofficialOps_RLA
-   4: Suite_UnofficialOps_SRE    5: Suite_UnofficialOps_RRA
-   6: Suite_UnofficialOps__AX    7: Suite_UnofficialOps_DCP
-   8: Suite_UnofficialOps_ISC    9: Suite_UnofficialOps_SH_
-  10: Suite_UnofficialOps_Immediates  11: Suite_CPUInterrupts
-  12: Suite_DMATests            13: Suite_APUTiming
-  14: Suite_PowerOnState        15: Suite_PPUBehavior
-  16: Suite_PPUTiming           17: Suite_SpriteZeroHits
-  18: Suite_PPUMisc             19: Suite_CPUBehavior2
+DO NOT USE A HAND-WRITTEN SUITE MAP. Use `derive_indices.py`, which reads
+`TableTable` and each suite's own `table` lines out of the assembly and
+VALIDATES itself against two independently recorded answers before reporting
+any others.
 
-Targets (per docs/audit/session-23-accuracycoin-source-audit-2026-05-22.md):
-- Controller Strobing:   suite=13, test=7 (TEST_ControllerStrobing $045F)
-- Implied Dummy Reads:   suite=19, test=1 (TEST_ImpliedDummyRead   $046D)
-- Frame Counter IRQ:     suite=13, test=2 (TEST_FrameCounterIRQ    $0467)
-- APU Register Activation: suite=13, test=6 (TEST_APURegActivation $045C)
+The map that used to sit here was WRONG from index 14 onward, and it is kept
+below struck through because it was acted on. It listed twenty suites and
+stopped at 19, with `PowerOnState` at 14 and `CPUBehavior2` at 19. Upstream's
+`TableTable` at 46199ae4 has TWENTY-TWO suites, `CPUBehavior2` at **14** and
+`PPUMisc` at **19** -- the suites were reordered upstream at some point after
+the map was written. A rebuild driven by the stale map enters the WRONG SUITE
+and the ROM writes a plausible byte for a test nobody asked for, which is the
+worst failure available here because it looks like a result.
+
+    STALE, DO NOT USE:
+       0: Suite_CPUBehavior          1: Suite_CPUInstructions
+       2: Suite_UnofficialOps_SLO    3: Suite_UnofficialOps_RLA
+       4: Suite_UnofficialOps_SRE    5: Suite_UnofficialOps_RRA
+       6: Suite_UnofficialOps__AX    7: Suite_UnofficialOps_DCP
+       8: Suite_UnofficialOps_ISC    9: Suite_UnofficialOps_SH_
+      10: Suite_UnofficialOps_Immediates  11: Suite_CPUInterrupts
+      12: Suite_DMATests            13: Suite_APUTiming
+      14: Suite_PowerOnState        15: Suite_PPUBehavior
+      16: Suite_PPUTiming           17: Suite_SpriteZeroHits
+      18: Suite_PPUMisc             19: Suite_CPUBehavior2
+
+The CURRENT map is deliberately NOT transcribed here. A copy of it in this
+docstring is the same artifact as the struck one above -- it would be correct
+on the day it was written and silently wrong after the next upstream reorder,
+and there would again be nothing to say so. Run:
+
+    python3 derive_indices.py <upstream-source-dir>
+
+and this script now CHECKS `--suite`/`--test`/`--name` against the assembly
+before building, so a wrong index is refused rather than turned into a ROM.
+
+Targets, RE-DERIVED at v2.6.21. Three of the four recorded here were correct
+and one was not:
+- Controller Strobing:     suite=13, test=7 ($045F)  -- was right
+- Frame Counter IRQ:       suite=13, test=2 ($0467)  -- was right
+- APU Register Activation: suite=13, test=6 ($045C)  -- was right
+- Implied Dummy Reads:     suite=**14**, test=1 ($046D) -- the recorded
+  `suite=19` is WRONG; 19/1 is `Address $2004 behavior` ($045B). They survived
+  in suite 13 because the reordering began at 14.
 
 Implementation: replaces the body of `AutomaticallyRunEveryTestInROM`
 with a streamlined version that initialises Y to the suite index,
@@ -265,6 +292,35 @@ def patch_source(src: str, suite_idx: int, test_idx: int) -> str:
     return src
 
 
+def _norm(s: str) -> str:
+    """Collapse whitespace and fold case, for comparing a transcribed label."""
+    return " ".join(s.split()).casefold()
+
+
+def _derive_name(asm: str, suite: int, test: int):
+    """The test name the assembly gives for (suite, test), or None.
+
+    Shares `derive_indices.parse` rather than re-parsing, so the builder and
+    the derivation cannot drift apart -- two parsers for one file is how the
+    stale map got there in the first place.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_derive_indices", Path(__file__).with_name("derive_indices.py")
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    suites, _results = mod.parse(asm)
+    for sidx, _slabel, tests in suites:
+        if sidx != suite:
+            continue
+        for tidx, name, _rlabel in tests:
+            if tidx == test:
+                return name
+    return None
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("src_dir", type=Path,
@@ -296,6 +352,40 @@ def main() -> int:
         sys.exit(f"missing {nesasm_exe}")
 
     src_text = src_asm.read_text(encoding="utf-8", errors="replace")
+
+    # THE INDICES ARE CHECKED AGAINST THE ASSEMBLY BEFORE ANYTHING IS BUILT.
+    #
+    # `--suite`, `--test` and `--name` are three independently hand-typed
+    # values that can disagree with each other and with the source, and the
+    # failure they produce is the worst one available here: the ROM builds, it
+    # runs, it writes a plausible byte, and it is testing something nobody
+    # asked for. That is not hypothetical -- the suite map that used to live in
+    # this docstring was wrong from index 14 onward and was acted on.
+    #
+    # So the triple is now resolved out of `AccuracyCoin.asm` itself, by the
+    # same derivation `derive_indices.py` exposes, and a mismatch REFUSES to
+    # build. Names are compared with whitespace collapsed and case ignored,
+    # because a label transcribed from a table is allowed to differ in those
+    # and in nothing else.
+    derived = _derive_name(src_text, args.suite, args.test)
+    if derived is None:
+        sys.exit(
+            f"build_sub_test_rom: suite {args.suite} test {args.test} does not "
+            f"exist in {src_asm}.\n"
+            f"  Run derive_indices.py {args.src_dir} to list what does."
+        )
+    if _norm(derived) != _norm(args.name):
+        sys.exit(
+            f"build_sub_test_rom: suite {args.suite} test {args.test} is\n"
+            f"    {derived!r}\n"
+            f"  but --name says\n"
+            f"    {args.name!r}\n"
+            f"  Refusing to build. One of the three is wrong, and a ROM built\n"
+            f"  from a wrong index still runs and still writes a byte."
+        )
+    print(f"[build] verified against the assembly: suite={args.suite} "
+          f"test={args.test} is {derived!r}", file=sys.stderr)
+
     patched = patch_source(src_text, args.suite, args.test)
 
     args.build_dir.mkdir(parents=True, exist_ok=True)

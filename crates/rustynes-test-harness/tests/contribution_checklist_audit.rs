@@ -299,16 +299,75 @@ fn every_checklist_box_carries_a_verdict() {
 fn the_checklist_still_has_unticked_boxes_and_says_so() {
     // The counterpart to the gate above, and the reason it is a separate test:
     // a checklist that ticked everything would satisfy the verdict rule
-    // vacuously. Submission is v2.7.0 and hardware is not attached, so a fully
-    // ticked list would be a claim this project cannot support.
+    // vacuously.
+    //
+    // THIS ASSERTION'S REASON EXPIRED AT v2.6.21, and the assertion would have
+    // fired by construction the moment v2.7.0 completed the list. It used to
+    // say "rung 6 needs hardware nobody here has" -- a SuperStation One is now
+    // attached, so that sentence is false and the guard it justified would have
+    // turned a milestone into a red test.
+    //
+    // What replaces it is narrower and survives the submission: three of the
+    // thirty boxes can never be evidence about the core, because they are other
+    // people's actions or are statements rather than tasks -- "Await review",
+    // "Add to the Cores list", and the "publishable on its own terms" box,
+    // which is marked DECIDED and can never fail. A list that ticks THOSE has
+    // stopped describing this project's work. Everything else is now allowed to
+    // reach green, because reaching green is the point of v2.7.0.
+    // THE PROTECTED ITEMS ARE PROVED TO EXIST BEFORE THEY ARE PROVED UNTICKED.
+    //
+    // The first version filtered to ticked items and then looked for these
+    // three phrases, so deleting or renaming a protected box left the filter
+    // empty and the test GREEN -- a guard that stops guarding the moment its
+    // subject disappears, which is the same vacuous-pass shape as the guard it
+    // replaced. Raised in review. Existence is now asserted first, against ALL
+    // parsed entries, and only then the tick state.
+    // Declared before the statements, because `clippy::items_after_statements`
+    // is denied here -- an item is in scope from the top of the block whatever
+    // line it is written on, so putting it mid-function misleads the reader.
+    const PROTECTED: [&str; 3] = [
+        "await review",
+        "add to the cores list",
+        "publishable on its own terms",
+    ];
+
     let md = checklist();
     let items = parse(&md).unwrap_or_else(|e| panic!("{e}"));
-    let unticked = items.iter().filter(|i| !i.ticked).count();
+
+    let mut missing: Vec<&str> = Vec::new();
+    let mut not_ours: Vec<&str> = Vec::new();
+    for needle in PROTECTED {
+        let matches: Vec<&Item> = items
+            .iter()
+            .filter(|i| i.body.to_ascii_lowercase().contains(needle))
+            .collect();
+        if matches.is_empty() {
+            missing.push(needle);
+            continue;
+        }
+        for m in matches {
+            if m.ticked {
+                not_ours.push(m.body.as_str());
+            }
+        }
+    }
     assert!(
-        unticked > 0,
-        "every checklist box is ticked, which would mean the core is ready to \
-         submit -- rung 6 needs hardware nobody here has, so this is a false \
-         claim rather than a milestone"
+        missing.is_empty(),
+        "{} protected checklist item(s) no longer appear in the list at all, so \
+         this test would have gone on passing while guarding nothing. Either \
+         the item was renamed -- update PROTECTED -- or it was removed, which \
+         is a decision that belongs in the release record:\n  {}",
+        missing.len(),
+        missing.join("\n  ")
+    );
+    assert!(
+        not_ours.is_empty(),
+        "{} box(es) are ticked that cannot be evidence about this core -- they \
+         are somebody else's action or a statement rather than a task, so a \
+         tick on one is a claim about a thing this repository does not \
+         control:\n  {}",
+        not_ours.len(),
+        not_ours.join("\n  ")
     );
     assert!(
         md.contains("must be complete **by v2.7.0**"),
