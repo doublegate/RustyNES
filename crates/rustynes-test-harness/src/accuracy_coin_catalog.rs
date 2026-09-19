@@ -62,6 +62,81 @@ pub struct CatalogEntry {
     pub result_addr: u16,
 }
 
+/// The address upstream uses to mean **"omit this test from the result table"**.
+///
+/// Not a guess and not an inference from the data: `AccuracyCoin.asm` defines it
+/// with the reason attached —
+///
+/// ```text
+/// result_DrawTest = $03FF   ; page 3 omits the test from the all-test-result-table.
+/// ```
+///
+/// — and `AutomaticallyRunEveryTestInROM` acts on it, testing the result
+/// pointer's high byte against `3` and branching past the test when it matches.
+/// Five catalog rows (the whole `Power On State` suite: `PPU Reset Flag`,
+/// `CPU RAM`, `CPU Registers`, `PPU RAM`, `Palette RAM`) point here, so the
+/// catalog's 149 rows carry **144 scored results and one shared scratch byte**.
+///
+/// ## Why this constant had to exist
+///
+/// The sharing was documented on [`CatalogEntry::result_addr`] and acted on
+/// nowhere, so every consumer counted the five as results. That made the
+/// headline **depend on when the run was sampled**, which was measured at
+/// v2.6.22: the same ROM reports `pass_with_code=16` at 4500 frames and
+/// `not_run=5` at 6600, because `$03FF` is live scratch that the results-page
+/// renderer writes and later abandons. One of those windows makes the vector
+/// read as 149 of 149 and the other as 144 of 144 — from one ROM, with nothing
+/// wrong in between.
+///
+/// Excluding the sentinel makes the count **144 in both windows**. It changes no
+/// verdict about any real test, and it removes five rows from every "entry for
+/// entry" claim that were never entries.
+pub const RESULT_DRAW_TEST: u16 = 0x03FF;
+
+impl CatalogEntry {
+    /// Whether this row carries a real per-test result.
+    ///
+    /// `false` for the rows that share [`RESULT_DRAW_TEST`]. A comparison that
+    /// includes them is reporting agreement about a scratch byte, which is the
+    /// same family of vacuity this module's decoder already refuses elsewhere.
+    #[must_use]
+    pub const fn is_scored(&self) -> bool {
+        self.result_addr != RESULT_DRAW_TEST
+    }
+}
+
+/// Number of catalog rows that carry a real result: 149 rows, 144 scored.
+///
+/// # Panics
+///
+/// Never; the catalog is parsed at first use and its length is fixed.
+#[must_use]
+pub fn scored_len() -> usize {
+    catalog().iter().filter(|e| e.is_scored()).count()
+}
+
+/// Pair each decoded status with its catalog entry, dropping the unscored rows.
+///
+/// The single place that knows how to drop them, so a consumer cannot get the
+/// zip right and the filter wrong.
+///
+/// # Panics
+///
+/// Panics if `statuses` is not one entry per catalog row — the decoder
+/// guarantees that, and a mismatch means the caller built the vector some other
+/// way and the positional pairing below would be silently wrong.
+pub fn scored(statuses: &[TestStatus]) -> impl Iterator<Item = (&CatalogEntry, &TestStatus)> {
+    assert_eq!(
+        statuses.len(),
+        catalog().len(),
+        "status vector must be one entry per catalog row"
+    );
+    catalog()
+        .iter()
+        .zip(statuses)
+        .filter(|(e, _)| e.is_scored())
+}
+
 /// Authoritative TSV embedded at compile time.
 const RAW_TSV: &str = include_str!("../../../tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv");
 
@@ -215,6 +290,11 @@ pub fn decode_results(ram: &[u8]) -> Option<Vec<TestStatus>> {
 }
 
 /// Aggregated counts derived from a decoded results vector.
+///
+/// **Every field counts SCORED rows only**, so `total` is 144 rather than the
+/// catalog's 149 and `not_run` excludes the five `Power On State` rows that
+/// share [`RESULT_DRAW_TEST`]. [`failing_tests`] uses the same set, so the
+/// counts here and the named list there cannot disagree.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RamResultSummary {
     /// Total number of catalog entries (always 149 if the catalog is
@@ -263,12 +343,17 @@ impl RamResultSummary {
 
 /// Roll a decoded results vector into bucket counts.
 #[must_use]
+/// Summarise a decoded vector, counting **scored rows only**.
+///
+/// The five rows sharing [`RESULT_DRAW_TEST`] are excluded, so `total` is 144
+/// rather than the catalog's 149. Including them made every count a function of
+/// when the run was sampled — see the constant's rustdoc for the measurement.
 pub fn summarise(statuses: &[TestStatus]) -> RamResultSummary {
     let mut s = RamResultSummary {
-        total: u32::try_from(statuses.len()).unwrap_or(u32::MAX),
+        total: u32::try_from(scored_len()).unwrap_or(u32::MAX),
         ..RamResultSummary::default()
     };
-    for status in statuses {
+    for (_, status) in scored(statuses) {
         match status {
             TestStatus::Pass => s.pass += 1,
             TestStatus::PassWithCode(_) => s.pass_with_code += 1,
@@ -283,11 +368,16 @@ pub fn summarise(statuses: &[TestStatus]) -> RamResultSummary {
 
 /// Pretty-print the list of failing tests (and unknown-encoding tests)
 /// for diagnostic output. Each line: `<suite> :: <name> [error N]`.
+///
+/// **Scored rows only**, so this list and [`summarise`] describe the same set.
+/// Scanning the whole catalog let a `Fail` or `Unknown` byte at the shared
+/// `$03FF` sentinel contribute up to five `Power On State` rows that
+/// `summarise` had already excluded -- so the counts and the named list could
+/// disagree, which is the precise defect this module was changed to remove.
+/// Raised by CodeRabbit on PR #530, as an out-of-diff finding.
 #[must_use]
 pub fn failing_tests(statuses: &[TestStatus]) -> Vec<String> {
-    catalog()
-        .iter()
-        .zip(statuses.iter())
+    scored(statuses)
         .filter_map(|(entry, status)| match *status {
             TestStatus::Fail(code) => {
                 Some(format!("{} :: {} [error {code}]", entry.suite, entry.name))
@@ -303,6 +393,49 @@ pub fn failing_tests(statuses: &[TestStatus]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// `failing_tests` and `summarise` must describe the SAME set of rows.
+    ///
+    /// The bug this pins: a `Fail` byte at the shared `$03FF` sentinel is one
+    /// value seen by five catalog rows, so a `failing_tests` that scanned the
+    /// whole catalog reported up to five failures that `summarise` had already
+    /// excluded -- the counts and the named list disagreeing about one run.
+    /// Found by CodeRabbit as an out-of-diff finding on PR #530.
+    #[test]
+    fn failing_tests_and_summarise_agree_about_which_rows_count() {
+        // A Fail byte at the sentinel address, and nowhere else.
+        let mut ram = vec![0u8; 0x0800];
+        ram[RESULT_DRAW_TEST as usize] = (7 << 2) | 0x02; // Fail(7)
+        let statuses = decode_results(&ram).expect("decodes");
+
+        // The fixture must actually reach the sentinel, or this proves nothing.
+        let sentinel_rows = catalog()
+            .iter()
+            .filter(|e| e.result_addr == RESULT_DRAW_TEST)
+            .count();
+        assert_eq!(
+            sentinel_rows, 5,
+            "fixture assumes five rows share the sentinel"
+        );
+
+        let summary = summarise(&statuses);
+        let named = failing_tests(&statuses);
+        assert_eq!(
+            summary.fail as usize,
+            named.len(),
+            "summarise counted {} failures but failing_tests named {}: {named:?}",
+            summary.fail,
+            named.len()
+        );
+        assert_eq!(
+            summary.fail, 0,
+            "a sentinel-only Fail is not a scored failure"
+        );
+        assert!(
+            named.is_empty(),
+            "unscored rows must not be named: {named:?}"
+        );
+    }
     use super::*;
 
     #[test]
@@ -442,7 +575,13 @@ mod tests {
 
     #[test]
     fn summarise_excludes_not_run_and_skipped() {
-        let statuses = [
+        // Catalog-length, because `summarise` pairs positionally against the
+        // catalog in order to drop the unscored rows. It used to take a bare
+        // seven-element array; that stopped being meaningful the moment some
+        // rows were excluded by POSITION, since a short vector has no way to
+        // say which rows it is describing.
+        let mut statuses = vec![TestStatus::NotRun; catalog().len()];
+        let sample = [
             TestStatus::Pass,
             TestStatus::Pass,
             TestStatus::PassWithCode(2),
@@ -451,10 +590,44 @@ mod tests {
             TestStatus::Skipped,
             TestStatus::Unknown(0x10),
         ];
+        // Placed at the first seven SCORED positions rather than at indices
+        // 0..7, so the fixture stays correct if the sentinel rows ever move.
+        let scored_idx: Vec<usize> = catalog()
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.is_scored())
+            .map(|(i, _)| i)
+            .take(sample.len())
+            .collect();
+        assert_eq!(scored_idx.len(), sample.len(), "catalog is too small");
+        for (slot, value) in scored_idx.into_iter().zip(sample) {
+            statuses[slot] = value;
+        }
+
         let s = summarise(&statuses);
-        // 2 pass + 1 pwc + 1 fail + 1 unknown = 5 assigned
+        // 2 pass + 1 pwc + 1 fail + 1 unknown = 5 assigned. Every other row is
+        // NotRun, which `assigned()` excludes, so the ratio is unchanged from
+        // when this fixture was seven elements long.
         assert_eq!(s.assigned(), 5);
         // (2 + 1) / 5 = 0.60
         assert!((s.pass_rate() - 0.60).abs() < 1e-9);
+        // And the denominator is the SCORED count, not the catalog's row count.
+        assert_eq!(s.total, u32::try_from(scored_len()).unwrap());
+        assert!(
+            scored_len() < catalog().len(),
+            "some rows must be unscored or this assertion proves nothing"
+        );
+    }
+
+    /// `summarise` and `scored` pair POSITIONALLY, so a vector of the wrong
+    /// length would describe the wrong rows. It refuses instead.
+    ///
+    /// Worth its own test because the refusal is what broke the fixture above:
+    /// the old seven-element array decoded to nothing in particular and was
+    /// silently accepted, which is exactly the mis-association this guards.
+    #[test]
+    #[should_panic(expected = "one entry per catalog row")]
+    fn summarise_refuses_a_vector_that_is_not_catalog_length() {
+        let _ = summarise(&[TestStatus::Pass; 7]);
     }
 }

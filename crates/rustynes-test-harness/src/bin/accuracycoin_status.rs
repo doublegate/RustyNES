@@ -35,23 +35,128 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use rustynes_test_harness::accuracy_coin_catalog::{
-    TestStatus, catalog, decode_results, summarise,
+    TestStatus, catalog, decode_results, scored, scored_len, summarise,
 };
+
+/// Where the mirror ROM copies the result vector, and how much of it.
+///
+/// `scripts/accuracycoin-build/build_mirror_rom.py` copies `$0300-$04FF` to
+/// `$6000-$61FF`, and the `MiSTer` core persists the whole `$6000-$7FFF` PRG-RAM
+/// window, so a hardware `.sav` is 8 KiB whose first 512 bytes are the vector.
+///
+/// Every one of the catalog's 149 result addresses falls inside `$0300-$04FF`
+/// (`$03FF`-`$0495`, checked against `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv`),
+/// which is what makes the lift below lossless rather than a subset.
+const MIRROR_LEN: usize = 0x0200;
+const MIRROR_VECTOR_BASE: usize = 0x0300;
+const WORK_RAM_LEN: usize = 0x0800;
+/// The cartridge PRG-RAM window `$6000-$7FFF`, which is what the core saves.
+const PRG_RAM_LEN: usize = 0x2000;
 
 fn usage() -> ! {
     eprintln!(
-        "usage: accuracycoin_status <ram.bin> [<other-ram.bin>]\n\
-         \x20 one file  -- decode and summarise that run's status vector\n\
-         \x20 two files -- compare them ENTRY FOR ENTRY (first = reference)"
+        "usage: accuracycoin_status <operand> [<operand>]\n\
+         \x20 operand   -- <ram.bin>, a 2 KiB work-RAM dump (simulation), or\n\
+         \x20              sav:<file>, a hardware battery save from the mirror ROM\n\
+         \x20 one operand  -- decode and summarise that run's status vector\n\
+         \x20 two operands -- compare them ENTRY FOR ENTRY (first = reference)\n\
+         \n\
+         \x20 the sav: prefix is REQUIRED for a save file and is not a\n\
+         \x20 convenience: an 8 KiB .sav decoded as work RAM reads catalog\n\
+         \x20 addresses out of the wrong bytes and returns a plausible vector."
     );
     std::process::exit(2)
 }
 
-fn read_ram(p: &Path) -> Vec<u8> {
+fn read_file(p: &Path) -> Vec<u8> {
     std::fs::read(p).unwrap_or_else(|e| {
         eprintln!("read {}: {e}", p.display());
         std::process::exit(2)
     })
+}
+
+/// Lift a hardware `.sav` into the work-RAM frame the decoder expects.
+///
+/// The decoder addresses the catalog by absolute CPU address, so the mirrored
+/// bytes have to sit where the ROM wrote them FROM, not where it wrote them TO.
+/// Everything outside the mirrored window stays zero and therefore decodes as
+/// `NotRun` — which is correct, because a save carries no information about it.
+fn lift_sav(sav: &[u8]) -> Result<Vec<u8>, String> {
+    if sav.len() < MIRROR_LEN {
+        return Err(format!(
+            "the save is {} bytes -- too short to hold the {MIRROR_LEN}-byte \
+             mirror. A save this size did not come from the mirror ROM.",
+            sav.len()
+        ));
+    }
+    // THE EXPECTED SAVE IS EXACTLY THE 8 KiB PRG-RAM WINDOW, and anything else
+    // is announced rather than accepted silently.
+    //
+    // The reviewer asked for `!= PRG_RAM_LEN` to be fatal, and the reasoning is
+    // sound -- a truncated transfer should not be mistaken for a short battery.
+    // It is a WARNING instead, for one reason: no hardware has yet written one
+    // of these files, so "the core always writes 8192 bytes" is an unverified
+    // assumption about the save controller. Making it fatal would let that
+    // assumption block the very first hardware reading, which is the one
+    // measurement this whole channel exists to take.
+    //
+    // The vector itself is safe either way: it lives in the first 512 bytes, so
+    // a file longer than that carries it complete, and a file shorter is already
+    // refused above. Once a real save has been read and its length recorded in
+    // `docs/bringup-log.md`, this should become the exact check the reviewer
+    // asked for.
+    if sav.len() != PRG_RAM_LEN {
+        eprintln!(
+            "warning: the save is {} bytes, not the {PRG_RAM_LEN}-byte \
+             $6000-$7FFF PRG-RAM window. The vector is in the first \
+             {MIRROR_LEN} bytes and is read regardless, but a length this \
+             unexpected suggests a truncated or partial transfer -- check it \
+             before trusting the result.",
+            sav.len()
+        );
+    }
+    let mut ram = vec![0u8; WORK_RAM_LEN];
+    ram[MIRROR_VECTOR_BASE..MIRROR_VECTOR_BASE + MIRROR_LEN].copy_from_slice(&sav[..MIRROR_LEN]);
+    Ok(ram)
+}
+
+/// Split an operand into its path and whether it is a save file.
+///
+/// A bare path ending in `.sav` is REFUSED rather than guessed at. Auto-detecting
+/// it would be friendlier and is exactly wrong here: the two framings differ by a
+/// `$0300` offset, and decoding a save as work RAM does not fail — it returns a
+/// full-length vector built from the wrong bytes, which is this tool's own stated
+/// failure mode ("reports success for two runs that ran nothing") in a new place.
+/// Making the operator say which one they mean costs four characters.
+/// Returns `Err` with the operator-facing reason rather than exiting, so the
+/// refusal is reachable from a test. A guard that only exists inside `main` is a
+/// guard no test can reach — this project's own finding, three times over.
+fn parse_operand(arg: &str) -> Result<(PathBuf, bool), String> {
+    if let Some(rest) = arg.strip_prefix("sav:") {
+        // A dangling prefix -- `sav:` alone, or `sav: file.sav` where the shell
+        // split on the space -- would otherwise become an empty path and fail
+        // several steps later as "No such file or directory: ", naming nothing.
+        // Raised by the Antigravity reviewer on PR #530.
+        if rest.trim().is_empty() {
+            return Err(
+                "the `sav:` prefix was given with no path after it. Write it as \
+                 one argument with no space, e.g. `sav:AccuracyCoin-mirror.sav`."
+                    .to_string(),
+            );
+        }
+        return Ok((PathBuf::from(rest), true));
+    }
+    let p = PathBuf::from(arg);
+    if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("sav")) {
+        return Err(format!(
+            "{} looks like a battery save but was passed as a work-RAM dump.\n\
+             \x20 Write it as `sav:{arg}` instead. This is refused rather than\n\
+             \x20 inferred because decoding a save as work RAM succeeds and\n\
+             \x20 returns a vector read out of the wrong offsets.",
+            p.display()
+        ));
+    }
+    Ok((p, false))
 }
 
 fn describe(s: TestStatus) -> String {
@@ -68,7 +173,7 @@ fn describe(s: TestStatus) -> String {
 /// A vector with no test result at all describes a run that executed nothing.
 /// Reporting that as agreement is the failure this tool exists to prevent.
 fn vacuous(v: &[TestStatus]) -> bool {
-    v.iter().all(|s| *s == TestStatus::NotRun)
+    scored(v).all(|(_, s)| *s == TestStatus::NotRun)
 }
 
 /// Entries that are `NotRun` on **both** sides.
@@ -84,9 +189,9 @@ fn vacuous(v: &[TestStatus]) -> bool {
 /// A comparison is only the rung-5 gate when the whole catalog EXECUTED, so this
 /// is reported on every two-file run and refused when non-zero.
 fn both_not_run(a: &[TestStatus], b: &[TestStatus]) -> usize {
-    a.iter()
-        .zip(b)
-        .filter(|(x, y)| **x == TestStatus::NotRun && **y == TestStatus::NotRun)
+    scored(a)
+        .zip(scored(b))
+        .filter(|((_, x), (_, y))| **x == TestStatus::NotRun && **y == TestStatus::NotRun)
         .count()
 }
 
@@ -100,9 +205,9 @@ fn both_not_run(a: &[TestStatus], b: &[TestStatus]) -> usize {
 /// that introduced it, on a release whose subject is a count that described a
 /// set it did not measure.
 fn executed_on_both(a: &[TestStatus], b: &[TestStatus]) -> usize {
-    a.iter()
-        .zip(b)
-        .filter(|(x, y)| **x != TestStatus::NotRun && **y != TestStatus::NotRun)
+    scored(a)
+        .zip(scored(b))
+        .filter(|((_, x), (_, y))| **x != TestStatus::NotRun && **y != TestStatus::NotRun)
         .count()
 }
 
@@ -133,11 +238,15 @@ fn coverage_line(a: &[TestStatus], b: &[TestStatus]) -> String {
     );
     let dead = both_not_run(a, b);
     let both = executed_on_both(a, b);
+    // SCORED rows, not catalog rows. The five that share `RESULT_DRAW_TEST` are
+    // one scratch byte wearing five names, and counting them made this sentence
+    // say 149 or 144 depending purely on when the run was sampled.
+    let n = scored_len();
     format!(
-        "coverage: {both} of {} entries executed on both sides \
-         ({dead} on neither, {} on one side only)",
-        a.len(),
-        a.len() - both - dead
+        "coverage: {both} of {n} scored entries executed on both sides \
+         ({dead} on neither, {} on one side only; {} unscored rows excluded)",
+        n - both - dead,
+        catalog().len() - n,
     )
 }
 
@@ -158,35 +267,86 @@ fn coverage_gate(a: &[TestStatus], b: &[TestStatus]) -> Option<ExitCode> {
         return None;
     }
     eprintln!(
-        "\nPARTIAL: {dead} entries are NotRun on BOTH sides, so this comparison \
-         says nothing about them. AccuracyCoin needs a long enough window to \
-         reach the whole catalog -- 4500 frames executes all 146, where 600 \
-         reaches only the CPU suites. Re-export the golden with more --frames; \
-         agreement over a subset is not the rung-5 gate."
+        "\nPARTIAL: {dead} scored entries are NotRun on BOTH sides, so this \
+         comparison says nothing about them. AccuracyCoin needs a long enough \
+         window to reach the whole catalog -- 4500 frames executes all of it, \
+         where 600 reaches only the CPU suites. Re-export the golden with more \
+         --frames; agreement over a subset is not the rung-5 gate."
     );
     Some(ExitCode::from(4))
 }
 
-fn main() -> ExitCode {
-    let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
-    if args.is_empty() || args.len() > 2 {
-        usage();
-    }
-
-    let decode = |p: &Path| -> Vec<TestStatus> {
-        let ram = read_ram(p);
-        decode_results(&ram).unwrap_or_else(|| {
-            eprintln!(
-                "{} is {} bytes -- too short to hold the result vector; \
-                 pass the full 2 KiB work RAM",
-                p.display(),
-                ram.len()
-            );
+/// Read one operand and decode it into a status vector.
+///
+/// Lifts a `sav:` operand into the work-RAM frame first, announcing that it did
+/// so — a reader of the output should never have to guess which framing was
+/// used, because the two differ by `$0300` and both decode without error.
+fn decode_operand(p: &Path, is_sav: bool) -> Vec<TestStatus> {
+    let bytes = read_file(p);
+    let ram = if is_sav {
+        println!(
+            "{}: battery save, {} bytes -- lifting ${MIRROR_VECTOR_BASE:04X}-\
+             ${:04X} from the mirror at $6000",
+            p.display(),
+            bytes.len(),
+            MIRROR_VECTOR_BASE + MIRROR_LEN - 1
+        );
+        lift_sav(&bytes).unwrap_or_else(|why| {
+            eprintln!("{}: {why}", p.display());
             std::process::exit(2)
         })
+    } else {
+        bytes
     };
+    decode_results(&ram).unwrap_or_else(|| {
+        eprintln!(
+            "{} is {} bytes -- too short to hold the result vector; \
+             pass the full 2 KiB work RAM",
+            p.display(),
+            ram.len()
+        );
+        std::process::exit(2)
+    })
+}
 
-    let a = decode(&args[0]);
+/// Single-operand mode: list anything that is not a clean pass, so the
+/// interesting entries are visible without diffing against anything.
+///
+/// Unscored rows are omitted, because "not a clean Pass" would otherwise list
+/// the five that share upstream's omit-sentinel as though they were failing tests.
+fn report_single(a: &[TestStatus]) {
+    let names: Vec<_> = scored(a)
+        .filter(|(_, s)| !matches!(s, TestStatus::Pass))
+        .map(|(e, s)| format!("  {:<44} {}", e.name, describe(*s)))
+        .collect();
+    if names.is_empty() {
+        println!("every scored catalog entry is a clean Pass.");
+    } else {
+        println!("\nentries that are not a clean Pass ({}):", names.len());
+        for l in names {
+            println!("{l}");
+        }
+    }
+}
+
+fn main() -> ExitCode {
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+
+    if raw.is_empty() || raw.len() > 2 {
+        usage();
+    }
+    let operands: Vec<(PathBuf, bool)> = raw
+        .iter()
+        .map(|a| {
+            parse_operand(a).unwrap_or_else(|why| {
+                eprintln!("{why}");
+                std::process::exit(2)
+            })
+        })
+        .collect();
+    let args: Vec<PathBuf> = operands.iter().map(|(p, _)| p.clone()).collect();
+
+    let a = decode_operand(&args[0], operands[0].1);
     let sum = summarise(&a);
     println!(
         "{}: total={} pass={} pass_with_code={} fail={} skipped={} not_run={} unknown={}",
@@ -202,35 +362,21 @@ fn main() -> ExitCode {
 
     if vacuous(&a) {
         eprintln!(
-            "\nVACUOUS: every one of the {} entries is NotRun. This run executed no \
-             tests -- AccuracyCoin sits on its title screen until START is pressed. \
-             Re-export with --press-start; a comparison against this proves nothing.",
-            a.len()
+            "\nVACUOUS: every one of the {} SCORED entries is NotRun. This run \
+             executed no tests -- AccuracyCoin sits on its title screen until START \
+             is pressed. Re-export with --press-start; a comparison against this \
+             proves nothing.",
+            scored_len()
         );
         return ExitCode::from(3);
     }
 
     let Some(second) = args.get(1) else {
-        // Single-file mode: list anything that is not a clean pass, so the
-        // interesting entries are visible without diffing against anything.
-        let names: Vec<_> = catalog()
-            .iter()
-            .zip(&a)
-            .filter(|(_, s)| !matches!(s, TestStatus::Pass))
-            .map(|(e, s)| format!("  {:<44} {}", e.name, describe(*s)))
-            .collect();
-        if names.is_empty() {
-            println!("every catalog entry is a clean Pass.");
-        } else {
-            println!("\nentries that are not a clean Pass ({}):", names.len());
-            for l in names {
-                println!("{l}");
-            }
-        }
+        report_single(&a);
         return ExitCode::SUCCESS;
     };
 
-    let b = decode(second);
+    let b = decode_operand(second, operands[1].1);
     if vacuous(&b) {
         eprintln!(
             "\nVACUOUS: {} has every entry NotRun -- see above.",
@@ -243,11 +389,10 @@ fn main() -> ExitCode {
         return code;
     }
 
-    let diffs: Vec<_> = catalog()
-        .iter()
-        .zip(a.iter().zip(b.iter()))
-        .filter(|(_, (x, y))| x != y)
-        .map(|(e, (x, y))| {
+    let diffs: Vec<_> = scored(&a)
+        .zip(scored(&b))
+        .filter(|((_, x), (_, y))| x != y)
+        .map(|((e, x), (_, y))| {
             format!(
                 "  {:<44} ref={:<16} actual={}",
                 e.name,
@@ -259,12 +404,16 @@ fn main() -> ExitCode {
 
     if diffs.is_empty() {
         println!(
-            "\nstatus vectors are IDENTICAL entry for entry across all {} entries.",
-            a.len()
+            "\nstatus vectors are IDENTICAL entry for entry across all {} scored entries.",
+            scored_len()
         );
         ExitCode::SUCCESS
     } else {
-        println!("\n{} of {} entries differ:", diffs.len(), a.len());
+        println!(
+            "\n{} of {} scored entries differ:",
+            diffs.len(),
+            scored_len()
+        );
         for d in &diffs {
             println!("{d}");
         }
@@ -274,8 +423,100 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{both_not_run, coverage_gate, coverage_line, describe, executed_on_both, vacuous};
-    use rustynes_test_harness::accuracy_coin_catalog::{TestStatus, catalog, decode_results};
+    use super::{
+        MIRROR_LEN, MIRROR_VECTOR_BASE, WORK_RAM_LEN, both_not_run, coverage_gate, coverage_line,
+        describe, executed_on_both, lift_sav, parse_operand, vacuous,
+    };
+    use rustynes_test_harness::accuracy_coin_catalog::{
+        TestStatus, catalog, decode_results, scored_len,
+    };
+
+    /// A hardware save decodes to exactly what the simulated work RAM decodes
+    /// to. This is the property the whole readback channel rests on: if it does
+    /// not hold, the `.sav` is not the vector.
+    #[test]
+    fn a_lifted_save_decodes_to_the_same_vector_as_work_ram() {
+        // A work RAM with a distinguishable byte at every catalog address, so
+        // the comparison cannot pass by both sides being uniform.
+        let mut ram = vec![0u8; WORK_RAM_LEN];
+        for (i, e) in catalog().iter().enumerate() {
+            // Cycle Pass / Fail(n) / Skipped so every arm of the decoder is used.
+            ram[e.result_addr as usize] = match i % 3 {
+                0 => 0x01,
+                1 => ((u8::try_from(i % 60).unwrap_or(1)) << 2) | 0x02,
+                _ => 0xFF,
+            };
+        }
+        let from_ram = decode_results(&ram).expect("work RAM decodes");
+
+        // The save the mirror ROM would produce: the $0300-$04FF window landing
+        // at $6000, inside an 8 KiB PRG-RAM image.
+        let mut sav = vec![0u8; 0x2000];
+        sav[..MIRROR_LEN]
+            .copy_from_slice(&ram[MIRROR_VECTOR_BASE..MIRROR_VECTOR_BASE + MIRROR_LEN]);
+        let lifted = lift_sav(&sav).expect("an 8 KiB save lifts");
+        let from_sav = decode_results(&lifted).expect("lifted save decodes");
+
+        assert_eq!(
+            from_ram, from_sav,
+            "a lifted save must decode identically to the work RAM it mirrors"
+        );
+        // And not vacuously: a pair of all-NotRun vectors would also be equal.
+        assert!(
+            !vacuous(&from_sav),
+            "the fixture decoded to all-NotRun, so the equality above proves nothing"
+        );
+    }
+
+    /// The lift is refused rather than zero-padded. A short save that silently
+    /// became a full vector would report the missing entries as `NotRun`, which
+    /// reads as "those tests did not run" instead of "this file is not a mirror".
+    #[test]
+    fn a_short_save_is_refused() {
+        let err = lift_sav(&vec![0u8; MIRROR_LEN - 1]).expect_err("short save must be refused");
+        assert!(err.contains("too short"), "unhelpful reason: {err}");
+        assert!(
+            lift_sav(&vec![0u8; MIRROR_LEN]).is_ok(),
+            "exactly 512 is enough"
+        );
+    }
+
+    /// The `sav:` prefix is mandatory, and the bare form is refused rather than
+    /// inferred. Decoding a save as work RAM does not fail — it returns a
+    /// plausible vector from the wrong offsets — so this refusal is the only
+    /// thing standing between an operator and a confident wrong answer.
+    /// A dangling `sav:` names no file, and says so rather than failing later
+    /// as "No such file or directory: " with an empty path.
+    #[test]
+    fn a_dangling_sav_prefix_is_refused_by_name() {
+        for arg in ["sav:", "sav:   "] {
+            let err = parse_operand(arg).expect_err("a dangling prefix must be refused");
+            assert!(
+                err.contains("no path after it"),
+                "the reason must name the problem: {err}"
+            );
+        }
+        // And a real path after the prefix is still accepted.
+        assert!(parse_operand("sav:x.sav").is_ok());
+    }
+
+    #[test]
+    fn a_bare_sav_path_is_refused_and_the_prefixed_form_is_accepted() {
+        let err = parse_operand("battery/AccuracyCoin.sav").expect_err("bare .sav must be refused");
+        assert!(err.contains("sav:"), "the reason must name the fix: {err}");
+
+        let (p, is_sav) = parse_operand("sav:battery/AccuracyCoin.sav").expect("prefixed form");
+        assert!(is_sav);
+        assert_eq!(p.to_str(), Some("battery/AccuracyCoin.sav"));
+
+        // Case-insensitively, because MiSTer's filesystem is not case-sensitive.
+        assert!(parse_operand("battery/AccuracyCoin.SAV").is_err());
+
+        // And a work-RAM dump still parses as one.
+        let (p, is_sav) = parse_operand("golden/AccuracyCoin.ram.bin").expect("plain path");
+        assert!(!is_sav);
+        assert_eq!(p.to_str(), Some("golden/AccuracyCoin.ram.bin"));
+    }
 
     /// The guard the v2.6.4 review asked for, demonstrated to fire. It cannot
     /// be reached through `main` — both vectors come from `decode_results` —
@@ -300,21 +541,61 @@ mod tests {
         for e in dut.iter_mut().take(5) {
             *e = TestStatus::Pass;
         }
+        // The denominator is SCORED rows, not catalog rows -- the five that
+        // share `RESULT_DRAW_TEST` are excluded, and they sit at catalog indices
+        // well past the five this fixture marks as Pass, so the count below is
+        // unaffected by the exclusion and the sentence's subject is not.
+        let scored_n = scored_len();
+        assert!(
+            scored_n < n,
+            "the fixture assumes some rows are unscored; got {scored_n} of {n}"
+        );
         let line = coverage_line(&reference, &dut);
         assert!(
             line.starts_with(&format!(
-                "coverage: 5 of {n} entries executed on both sides"
+                "coverage: 5 of {scored_n} scored entries executed on both sides"
             )),
-            "the sentence must say FIVE, not {n}: {line}"
+            "the sentence must say FIVE, not {scored_n}: {line}"
         );
         assert!(
             line.contains("(0 on neither,"),
             "nothing is unrun on both sides here: {line}"
         );
         assert!(
-            line.contains(&format!("{} on one side only)", n - 5)),
+            line.contains(&format!("{} on one side only;", scored_n - 5)),
             "the rest ran on exactly one side: {line}"
         );
+        assert!(
+            line.contains(&format!("{} unscored rows excluded", n - scored_n)),
+            "the sentence must disclose what it excluded: {line}"
+        );
+    }
+
+    /// The sentinel rows are excluded, and the count is the one upstream implies.
+    ///
+    /// Asserted as a NUMBER rather than a predicate because the whole finding was
+    /// that a documented fact (`CatalogEntry::result_addr`'s own rustdoc says the
+    /// five share `$03FF`) sat inert while every consumer counted them.
+    #[test]
+    fn the_five_power_on_state_rows_are_unscored() {
+        use rustynes_test_harness::accuracy_coin_catalog::RESULT_DRAW_TEST;
+        let sentinel: Vec<&str> = catalog()
+            .iter()
+            .filter(|e| e.result_addr == RESULT_DRAW_TEST)
+            .map(|e| e.name.as_str())
+            .collect();
+        assert_eq!(
+            sentinel,
+            vec![
+                "PPU Reset Flag",
+                "CPU RAM",
+                "CPU Registers",
+                "PPU RAM",
+                "Palette RAM"
+            ],
+            "the rows sharing upstream's omit-sentinel are not the ones expected"
+        );
+        assert_eq!(catalog().len() - scored_len(), 5);
     }
 
     /// `len - both_not_run` is NOT the number both sides executed, and the
