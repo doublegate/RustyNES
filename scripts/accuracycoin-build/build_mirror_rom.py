@@ -52,10 +52,11 @@ silenced exactly where upstream silences it. `X` is saved and restored, `Y` is
 untouched, and `A` returns as `$00` just as `LDA #$00` left it.
 
 The expected result is therefore an exact, auditable byte budget -- and this
-script ASSERTS it rather than hoping for it. `--verify-budget` rebuilds the
-unpatched source with the same toolchain and refuses to emit a ROM unless the
-difference is precisely: one header byte, five bytes at the call site, and a
-run inside bank 2's fill region. Any other diff means something moved.
+script ASSERTS it rather than hoping for it, unconditionally and with no flag to
+turn it off. Every run rebuilds the UNPATCHED source with the same toolchain and
+refuses to emit a ROM unless the difference is precisely one header byte, five
+at the call site, and a run inside bank 2's fill region. Any other diff means
+something moved, and the script exits non-zero saying which offsets.
 
 THE CONTROL IS NOT IN THIS SCRIPT
 ---------------------------------
@@ -306,7 +307,14 @@ def main():
 
     wine = _find_wine(args.wine)
     print(f"[mirror] wine={wine}", file=sys.stderr)
-    src_text = src_asm.read_text(encoding="utf-8", errors="replace")
+    # STRICT decoding, deliberately. `errors="replace"` would turn a
+    # non-UTF-8 byte into U+FFFD and carry on, which corrupts the source
+    # text and then assembles a ROM from it -- and the ROM would still
+    # build, still run, and still write result bytes. Upstream is valid
+    # UTF-8 today (692,263 bytes, zero replacement characters), so strict
+    # costs nothing now and fails loudly if that ever stops being true.
+    # Raised by the Antigravity reviewer on PR #530.
+    src_text = src_asm.read_text(encoding="utf-8")
 
     # THE UNPATCHED BUILD IS THE CONTROL FOR THE TOOLCHAIN.
     #
