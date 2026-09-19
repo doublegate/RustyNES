@@ -290,11 +290,15 @@ val uniffiBindgen = tasks.register<Exec>("uniffiBindgen") {
 tasks.named("preBuild") { dependsOn(uniffiBindgen) }
 
 dependencies {
-    // v1.8.8 "Atlas": Compose BOM 2025.09.01 (material3 1.4.0 — the stable M3 set
-    // for the launch; M3 Expressive's spring-physics/wavy components live in the
-    // 1.5.0-alpha line and are deliberately not pulled in here). Bumped from
-    // 2024.12.01 so the adaptive APIs (Window Size Classes, ListDetailPaneScaffold)
-    // and a current Compose runtime are available.
+    // v1.8.8 "Atlas": the Compose BOM is tracked on its stable line, for the
+    // adaptive APIs (Window Size Classes, ListDetailPaneScaffold) and a current
+    // Compose runtime. M3 Expressive's spring-physics / wavy components live on
+    // material3's alpha line and are deliberately NOT pulled in.
+    //
+    // Deliberately no version named in this comment. It used to open "Compose BOM
+    // 2025.09.01" and close "Bumped from 2024.12.01" while the line below read
+    // 2026.08.00 — three versions in a comment whose only job is to explain the
+    // one on the next line. A comment that duplicates a pin drifts from it.
     val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     implementation("androidx.core:core-ktx:1.19.0")
