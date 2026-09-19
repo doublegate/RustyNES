@@ -108,6 +108,21 @@ cycle-accurate core later replaced.
   was not — it is suite **14**. The tool derives from the assembly and validates
   itself against two independently recorded answers before reporting any others.
 
+  **Its first version emitted 145 rows for a 149-entry catalog and said nothing**
+  — the shortfall raised in review as a hypothetical ("if multiple tests happen
+  to share the same result address"), and measured to be already happening. All
+  five `Suite_PowerOnState` tests name `result_DrawTest`, and keying a map by
+  that address kept only the last: `CPU RAM`, `CPU Registers`, `PPU RAM` and
+  `Palette RAM` were dropped. Upstream's own comment says what the value is —
+  `result_DrawTest = $03FF ; page 3 omits the test from the
+  all-test-result-table` — so **$3FF is a sentinel meaning "this test has no
+  result byte", not a location**, and a caller that read a verdict there would
+  get whatever the last test wrote. The rows are now a flat list carrying a
+  `has_result` column, and the tool **exits** rather than emit a short catalog:
+  dropping one entry gives `149 catalog entries but 148 rows -- 1 lost`. That a
+  tool built to replace a silently-wrong hand-written map shipped its own silent
+  shortfall is the finding worth keeping, not the four rows.
+
 ### Changed
 
 - **`rtl/*.sv` indented with tabs**, all 22 files. MiSTer's coding guidelines —

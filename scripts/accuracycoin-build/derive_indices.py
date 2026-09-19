@@ -30,6 +30,11 @@ import sys
 from pathlib import Path
 
 
+# Upstream's "this test is not in the all-test-result-table" marker. Five
+# entries share it, so it is not an address and must never be used as a key.
+DRAW_TEST_LABEL = "result_DrawTest"
+
+
 def parse(asm: str):
     """Return (suites, results) from the upstream assembly.
 
@@ -103,9 +108,24 @@ def main() -> int:
     asm_path = args.src / "AccuracyCoin.asm"
     if not asm_path.is_file():
         sys.exit(f"derive_indices: missing {asm_path}")
-    suites, results = parse(asm_path.read_text(errors="replace"))
+    suites, results = parse(asm_path.read_text(encoding="utf-8", errors="replace"))
 
-    by_addr: dict[int, tuple[int, int, str, str]] = {}
+    # A FLAT LIST, NOT A MAP KEYED BY ADDRESS. Keying by address silently drops
+    # every entry after the first at a shared one, and this corpus has such a
+    # set: all five `Suite_PowerOnState` tests name `result_DrawTest`, whose
+    # definition carries upstream's own explanation --
+    #
+    #     result_DrawTest = $03FF  ; page 3 omits the test from the
+    #                                all-test-result-table.
+    #
+    # So $3FF is a SENTINEL meaning "this test has no result byte", not a
+    # location. The map form emitted 145 rows for a 149-entry catalog and said
+    # nothing; the four missing ones were `CPU RAM`, `CPU Registers`,
+    # `PPU RAM` and `Palette RAM`, which is precisely the kind of silent
+    # shortfall this script exists to replace. Raised in review as a
+    # hypothetical ("if multiple tests happen to share..."); measured here, it
+    # was already happening.
+    rows: list[tuple[int, int, int, str, str, bool]] = []
     total = 0
     for sidx, slabel, tests in suites:
         for tidx, name, rlabel in tests:
@@ -114,15 +134,31 @@ def main() -> int:
             if addr is None:
                 print(f"  warning: {rlabel} has no address definition", file=sys.stderr)
                 continue
-            by_addr[addr] = (sidx, tidx, slabel, name)
+            rows.append((addr, sidx, tidx, slabel, name, rlabel == DRAW_TEST_LABEL))
+
+    # The whole point of the list is that nothing is dropped, so say so rather
+    # than trusting it. A future sentinel, or a parse that loses a table, fails
+    # here instead of quietly emitting a short catalog.
+    if len(rows) != total:
+        sys.exit(
+            f"derive_indices: {total} catalog entries but {len(rows)} rows -- "
+            f"{total - len(rows)} lost. A short catalog must not be emitted."
+        )
 
     # Validation BEFORE use. A derivation that cannot reproduce a
     # hand-recorded answer is not permitted to supply the ones nobody recorded.
     for spec in args.validate:
-        want_s, want_t, want_name = spec.split(":", 2)
+        try:
+            want_s, want_t, want_name = spec.split(":", 2)
+            int(want_s), int(want_t)
+        except ValueError:
+            sys.exit(
+                f"derive_indices: --validate {spec!r} is not SUITE:TEST:NAME "
+                f"(e.g. --validate 21:3:'Misaligned OAM2 Address')"
+            )
         hit = [
             (s, t, sl, n)
-            for (s, t, sl, n) in by_addr.values()
+            for (_a, s, t, sl, n, _d) in rows
             if s == int(want_s) and t == int(want_t)
         ]
         if not hit:
@@ -136,11 +172,21 @@ def main() -> int:
             )
         print(f"validated: suite {want_s} test {want_t} = {got}", file=sys.stderr)
 
-    print(f"# {len(suites)} suites, {total} catalog entries", file=sys.stderr)
-    print("addr\tsuite\ttest\tsuite_label\ttest_name")
-    for addr in sorted(by_addr):
-        s, t, sl, n = by_addr[addr]
-        print(f"0x{addr:03X}\t{s}\t{t}\t{sl}\t{n}")
+    drawtest = sum(1 for r in rows if r[5])
+    print(
+        f"# {len(suites)} suites, {total} catalog entries, {len(rows)} rows "
+        f"({drawtest} with no result byte)",
+        file=sys.stderr,
+    )
+    # Sorted by address, then by (suite, test) so the sentinel group has a
+    # stable order rather than whatever the dict happened to hold last.
+    print("addr\tsuite\ttest\thas_result\tsuite_label\ttest_name")
+    for addr, s, t, sl, n, is_draw in sorted(rows, key=lambda r: (r[0], r[1], r[2])):
+        # `has_result` is the column a consumer must read before treating
+        # `addr` as somewhere to look for a verdict. For the sentinel group
+        # there is no byte at $3FF to read, and a caller that assumed there was
+        # would find whatever the last test wrote there.
+        print(f"0x{addr:03X}\t{s}\t{t}\t{'yes' if not is_draw else 'no'}\t{sl}\t{n}")
     return 0
 
 
