@@ -522,7 +522,13 @@ mod tests {
 
     #[test]
     fn summarise_excludes_not_run_and_skipped() {
-        let statuses = [
+        // Catalog-length, because `summarise` pairs positionally against the
+        // catalog in order to drop the unscored rows. It used to take a bare
+        // seven-element array; that stopped being meaningful the moment some
+        // rows were excluded by POSITION, since a short vector has no way to
+        // say which rows it is describing.
+        let mut statuses = vec![TestStatus::NotRun; catalog().len()];
+        let sample = [
             TestStatus::Pass,
             TestStatus::Pass,
             TestStatus::PassWithCode(2),
@@ -531,10 +537,44 @@ mod tests {
             TestStatus::Skipped,
             TestStatus::Unknown(0x10),
         ];
+        // Placed at the first seven SCORED positions rather than at indices
+        // 0..7, so the fixture stays correct if the sentinel rows ever move.
+        let scored_idx: Vec<usize> = catalog()
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.is_scored())
+            .map(|(i, _)| i)
+            .take(sample.len())
+            .collect();
+        assert_eq!(scored_idx.len(), sample.len(), "catalog is too small");
+        for (slot, value) in scored_idx.into_iter().zip(sample) {
+            statuses[slot] = value;
+        }
+
         let s = summarise(&statuses);
-        // 2 pass + 1 pwc + 1 fail + 1 unknown = 5 assigned
+        // 2 pass + 1 pwc + 1 fail + 1 unknown = 5 assigned. Every other row is
+        // NotRun, which `assigned()` excludes, so the ratio is unchanged from
+        // when this fixture was seven elements long.
         assert_eq!(s.assigned(), 5);
         // (2 + 1) / 5 = 0.60
         assert!((s.pass_rate() - 0.60).abs() < 1e-9);
+        // And the denominator is the SCORED count, not the catalog's row count.
+        assert_eq!(s.total, u32::try_from(scored_len()).unwrap());
+        assert!(
+            scored_len() < catalog().len(),
+            "some rows must be unscored or this assertion proves nothing"
+        );
+    }
+
+    /// `summarise` and `scored` pair POSITIONALLY, so a vector of the wrong
+    /// length would describe the wrong rows. It refuses instead.
+    ///
+    /// Worth its own test because the refusal is what broke the fixture above:
+    /// the old seven-element array decoded to nothing in particular and was
+    /// silently accepted, which is exactly the mis-association this guards.
+    #[test]
+    #[should_panic(expected = "one entry per catalog row")]
+    fn summarise_refuses_a_vector_that_is_not_catalog_length() {
+        let _ = summarise(&[TestStatus::Pass; 7]);
     }
 }
