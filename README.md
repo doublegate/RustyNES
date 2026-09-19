@@ -680,7 +680,7 @@ hardware runbook prescribes exists, and a guard that would have failed on the *n
 release's success was replaced. The emulation core is unchanged, so the accuracy
 numbers below hold by construction and were re-run anyway.
 
-| | |
+| Measure | Value |
 |---|---|
 | AccuracyCoin | **144/144 (100.00%)**, RAM decoder — battery grew to 144 assigned tests at the 2026-09 re-sync, all closed as of v2.6.18 |
 | nestest | 0-diff against the reference log |
