@@ -349,8 +349,15 @@ dependencies {
     // list composables when the reference is unchanged — a `List<>` is inferred unstable.
     implementation("org.jetbrains.kotlinx:kotlinx-collections-immutable:0.5.2")
     // v1.8.8 "Atlas" (Workstream J): installs the bundled Baseline Profile at runtime
-    // (the AOT-compile hint for the launch/scroll classes). Pinned to the androidx.benchmark
-    // 1.4.1 line that the :baselineprofile generator + the baselineprofile plugin use.
+    // (the AOT-compile hint for the launch/scroll classes).
+    //
+    // This is androidx.PROFILEINSTALLER, a separate artifact on its own version line —
+    // NOT part of the androidx.benchmark group, and deliberately not pinned to match it.
+    // The comment here used to say it was "pinned to the androidx.benchmark 1.4.1 line
+    // that the :baselineprofile generator + the baselineprofile plugin use", which became
+    // false the moment those two moved to 1.5.0 and was the third comment in this module
+    // to drift by naming another artifact's version. It consumes the generated profile at
+    // runtime and is independent of the generator's version; Dependabot tracks it.
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     // UniFFI's generated Kotlin loads the cdylib through JNA; the `@aar`
     // classifier pulls the Android-native JNA dispatcher.
