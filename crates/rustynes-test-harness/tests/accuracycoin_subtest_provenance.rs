@@ -112,9 +112,9 @@ fn manifest_covers_exactly_the_roms_on_disk() {
         d.display()
     );
 
-    let listed: Vec<String> = rows.keys().cloned().collect();
+    let on_disk_set: std::collections::HashSet<&String> = on_disk.iter().collect();
     let missing: Vec<&String> = on_disk.iter().filter(|r| !rows.contains_key(*r)).collect();
-    let orphan: Vec<&String> = listed.iter().filter(|r| !on_disk.contains(r)).collect();
+    let orphan: Vec<&String> = rows.keys().filter(|r| !on_disk_set.contains(r)).collect();
     assert!(
         missing.is_empty() && orphan.is_empty(),
         "BUILD-PROVENANCE.tsv is out of step with the corpus.\n  \

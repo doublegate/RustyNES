@@ -25,27 +25,70 @@ use std::process::ExitCode;
 use rustynes_test_harness::accuracy_coin_catalog as cat;
 use rustynes_test_harness::accuracy_coin_subtest as sub;
 
-fn main() -> ExitCode {
+/// What the command line asked for.
+struct Args {
+    frames: u64,
+    tsv: bool,
+    roms: Vec<String>,
+}
+
+const USAGE: &str = "usage: subtest_identify [--frames N] [--tsv] <rom.nes>...";
+
+/// Parse the command line, or print why it could not be parsed.
+///
+/// Extracted from `main` so the failure paths are one small function rather
+/// than a third of the binary, and so a bad operand ends the run with a message
+/// instead of a panic and a backtrace. The operator is not an untrusted-input
+/// boundary, but a tool that aborts unreadably on a typo is one nobody trusts
+/// the output of either. Raised by the Antigravity reviewer.
+fn parse_args<I: Iterator<Item = String>>(mut it: I) -> Result<Args, ExitCode> {
     let mut frames: u64 = 900;
     let mut tsv = false;
     let mut roms: Vec<String> = Vec::new();
-    let mut args = env::args().skip(1);
-    while let Some(a) = args.next() {
+    while let Some(a) = it.next() {
         match a.as_str() {
             "--frames" => {
-                frames = args
-                    .next()
-                    .and_then(|v| v.parse().ok())
-                    .expect("--frames needs a number");
+                let Some(v) = it.next() else {
+                    eprintln!("subtest_identify: --frames needs a number");
+                    return Err(ExitCode::from(2));
+                };
+                match v.parse::<u64>() {
+                    Ok(n) if n > 0 => frames = n,
+                    Ok(_) => {
+                        eprintln!("subtest_identify: --frames must be at least 1");
+                        return Err(ExitCode::from(2));
+                    }
+                    Err(e) => {
+                        eprintln!("subtest_identify: --frames {v:?} is not a number: {e}");
+                        return Err(ExitCode::from(2));
+                    }
+                }
             }
             "--tsv" => tsv = true,
+            // An unrecognised flag is REFUSED rather than taken as a path. A
+            // mistyped `--frame 10` would otherwise be read as two ROMs, and
+            // the run would report two unidentifiable files instead of naming
+            // the actual mistake.
+            other if other.starts_with('-') => {
+                eprintln!("subtest_identify: unknown option {other:?}");
+                eprintln!("{USAGE}");
+                return Err(ExitCode::from(2));
+            }
             other => roms.push(other.to_string()),
         }
     }
     if roms.is_empty() {
-        eprintln!("usage: subtest_identify [--frames N] [--tsv] <rom.nes>...");
-        return ExitCode::from(2);
+        eprintln!("{USAGE}");
+        return Err(ExitCode::from(2));
     }
+    Ok(Args { frames, tsv, roms })
+}
+
+fn main() -> ExitCode {
+    let Args { frames, tsv, roms } = match parse_args(env::args().skip(1)) {
+        Ok(a) => a,
+        Err(code) => return code,
+    };
 
     let by_addr = match sub::scored_by_addr() {
         Ok(m) => m,
