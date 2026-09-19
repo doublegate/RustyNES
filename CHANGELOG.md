@@ -59,6 +59,79 @@ cycle-accurate core later replaced.
   The gate failed three times first, all three the host model rather than the
   DUT.
 
+  **Two more defects came out of review, and both were reachable.** There was no
+  exit from `S_SAVE` but completion, and `rst_n` is `pll_locked`, which does not
+  drop on a ROM load — so a host that stopped answering left the controller
+  asserting `busy` forever *with the dirty flag already cleared*, since the clear
+  is at the start by design so a CPU write landing mid-save leaves it raised. And
+  the `S_LOAD`/`S_SAVE` arm did not look at `img_mounted` **at all**, so a
+  cartridge inserted during a transfer had its mount dropped and its save never
+  read for the rest of the session. A per-block watchdog ends an abandoned
+  transfer, `save_failed` holds `save_pending` high for a retry, and a mount is
+  captured in every state and **outranks** a pending save — writing the previous
+  cartridge's RAM into the new one's file is the only outcome worse than not
+  saving. Four further mutations, all CAUGHT.
+
+- **`prg_ram` was 8 KiB of flip-flops, and the block count was never the
+  variable.** Adding the second port made Quartus refuse the design outright —
+  `Error (170011): Design contains 151605 blocks of type combinational node.
+  However, the device contains only 83820 blocks` — and the obvious fix made it
+  **worse**: merging both ports into one `always_ff` gave 159,216 blocks and
+  **217 %** ALM utilisation. Each version carried a confident comment, and the
+  two comments contradicted each other about whether a dual-port memory is one
+  block or two. Neither was the variable.
+
+  The fitter named the real shape in a table nobody reads: 8192 multiplexers, 8
+  bits wide, **3:1** — hold, port-A data, port-B data, which is a two-write-port
+  register file described exactly — while `prg_ram` was simply **absent** from
+  the Analysis & Synthesis RAM Summary that listed `wram`, `prg` and `chr`.
+  **What decides it is the read-during-write style**: each port's read must sit
+  in the `else` branch of that port's own write, so the port reads back what it
+  just wrote, because that is what an M10K port physically does. A port that
+  returns the OLD value on a write cycle is not a mode the hardware has, so
+  Quartus cannot map it and builds logic instead. `wram.sv` reads
+  unconditionally and infers fine *because it has one port*. With Intel's
+  template: `OPERATION_MODE set to BIDIR_DUAL_PORT`, 8192 × 8, zero 3:1
+  multiplexers, **0 errors and 0 warnings**, 55 % ALMs, and timing closing at
+  all four corners.
+
+  **Nothing but the fitter could have found it.** Verilator accepts all three
+  forms and the save gate passed on both broken ones — correct behaviour,
+  unfittable hardware — and `check_rtl_subset.py` passed on all three, because
+  it checks policy rather than inference. `docs/rtl-subset-policy.md` gains the
+  two-port rule beside the single-port one, with the three ways to tell before
+  a fit fails and the note that `quartus_map` answers all three in ~5 minutes
+  against ~25 for a full compile.
+
+- **Eighteen gate targets were not `.PHONY`, sixteen of them invoked by
+  `regress.sh`.** Review named two. A target absent from `.PHONY` is satisfied
+  by a **file** of that name: make prints "up to date", runs nothing, exits 0 —
+  and `regress.sh` reads exit 0 as **PASS**. Demonstrated in a throwaway
+  Makefile whose `save-gate` recipe exits 1: exit 2 with no such file, exit 0
+  after `touch save-gate`. So a stray file turns a failing gate into a passing
+  one with no output saying so. All declared, and `tb/check_phony.py` +
+  `make -C tb phony-audit` keep it that way in CI, with a five-case self-test
+  and a mutation that fails it by name.
+
+- **The runbook's corpus placement contradicted its own MGL generator.** §2.5
+  named only `games/NES/tests`, the **stock** core's directory, while §4.3's
+  generated launchers read `games/RustyNES/tests` — so a reader following the
+  runbook in order got MGLs pointing at a directory that did not exist. Both
+  paths are right for their own consumer, so both are now stated, with the
+  reason not to resolve it the other way: §5.3's differential test cannot
+  tolerate the development corpus inside the reference core's tree.
+
+- **The battery script named the wrong bitstream and ignored its own
+  failures.** Its provenance row took the newest file in `releases/`, which
+  `make deploy` never writes — it pushes `output_files/RustyNES.rbf` — so a
+  hardware result could be attributed to a bitstream the console has never run.
+  It now records `rbf_md5` read **off the board** and exits rather than guess.
+  Both OSD commands carried `|| true`, contradicting the fail-closed contract in
+  the file's own header: with no OSD edge the core writes nothing and the script
+  would read an earlier run's `.sav` and report it as this one's verdict. They
+  now exit, and a freshness marker means a stale save reports `needs-capture` —
+  "I could not look" must not wear the shape of "it passed".
+
 ### Added
 
 - **The CHR-during-rendering gate, and it is RED.** `docs/STATUS.md` claimed
