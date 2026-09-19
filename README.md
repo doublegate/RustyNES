@@ -674,11 +674,11 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.6.22 "Rigging"** (2026-09-19) — the pre-flight
-before the board. Battery-backed saves work for the first time, the deploy loop the
-hardware runbook prescribes exists, and a guard that would have failed on the *next*
-release's success was replaced. The emulation core is unchanged, so the accuracy
-numbers below hold by construction and were re-run anyway.
+RustyNES's current release is **v2.6.22 "Rigging"** (2026-09-19) — the instruments for the board, built before the board. **No hardware has run any bitstream** -- v2.7.0 "Shakedown" is the session with the board and this is its non-hardware half. AccuracyCoin now reads back from hardware as BYTES rather than as a photograph, via a mirror ROM whose patch is proven to move nothing and to change no answer. The catalog turned out to carry **149 rows and 144 results** -- five share upstream's omit-sentinel -- so the headline stopped depending on when the run was sampled, at the same 144/144. And a `rom_sha256` written into every golden manifest since the ladder existed, and compared to nothing, is now rung 0.
+
+The emulation core is unchanged, so the accuracy numbers below hold by
+construction and were re-run anyway. Built on **v2.6.21 "Steward"**, the
+pre-flight before the board.
 
 | Measure | Value |
 |---|---|

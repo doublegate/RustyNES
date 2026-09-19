@@ -18,14 +18,14 @@ diffed entry-for-entry instead of transcribed from a photograph.
 | | |
 |---|---|
 | Upstream | <https://github.com/100thCoin/AccuracyCoin>, commit `46199ae4` |
-| Upstream licence | MIT (Copyright (c) 2025 Chris Siebert) — see `../LICENSES.md` |
+| Upstream licence | MIT (Copyright (c) 2025 Chris Siebert) — the text is at `../../accuracycoin/LICENSE`, and the corpus-wide index is `../../LICENSES.md` |
 | Base ROM md5 | `2f9d83104969a5984caf21a77d6746bd` (identical to `tests/roms/accuracycoin/AccuracyCoin.nes`) |
 | This ROM md5 | `8162ca0ae099220401e76719e88762fc` |
 | Built by | `scripts/accuracycoin-build/build_mirror_rom.py` |
 | Assembler | upstream's own `nesasm.exe` under `wine`, so the output is the author's toolchain rather than an equivalent one |
 
 This ROM is a derivative work of `100thCoin/AccuracyCoin` and inherits the
-upstream MIT licence. The build script is GPL-3.0-or-later with the rest of
+upstream MIT licence (`tests/roms/accuracycoin/LICENSE`). The build script is GPL-3.0-or-later with the rest of
 RustyNES.
 
 ## Rebuild

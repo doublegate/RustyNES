@@ -290,6 +290,11 @@ pub fn decode_results(ram: &[u8]) -> Option<Vec<TestStatus>> {
 }
 
 /// Aggregated counts derived from a decoded results vector.
+///
+/// **Every field counts SCORED rows only**, so `total` is 144 rather than the
+/// catalog's 149 and `not_run` excludes the five `Power On State` rows that
+/// share [`RESULT_DRAW_TEST`]. [`failing_tests`] uses the same set, so the
+/// counts here and the named list there cannot disagree.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RamResultSummary {
     /// Total number of catalog entries (always 149 if the catalog is
@@ -363,11 +368,16 @@ pub fn summarise(statuses: &[TestStatus]) -> RamResultSummary {
 
 /// Pretty-print the list of failing tests (and unknown-encoding tests)
 /// for diagnostic output. Each line: `<suite> :: <name> [error N]`.
+///
+/// **Scored rows only**, so this list and [`summarise`] describe the same set.
+/// Scanning the whole catalog let a `Fail` or `Unknown` byte at the shared
+/// `$03FF` sentinel contribute up to five `Power On State` rows that
+/// `summarise` had already excluded -- so the counts and the named list could
+/// disagree, which is the precise defect this module was changed to remove.
+/// Raised by CodeRabbit on PR #530, as an out-of-diff finding.
 #[must_use]
 pub fn failing_tests(statuses: &[TestStatus]) -> Vec<String> {
-    catalog()
-        .iter()
-        .zip(statuses.iter())
+    scored(statuses)
         .filter_map(|(entry, status)| match *status {
             TestStatus::Fail(code) => {
                 Some(format!("{} :: {} [error {code}]", entry.suite, entry.name))
@@ -383,6 +393,49 @@ pub fn failing_tests(statuses: &[TestStatus]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// `failing_tests` and `summarise` must describe the SAME set of rows.
+    ///
+    /// The bug this pins: a `Fail` byte at the shared `$03FF` sentinel is one
+    /// value seen by five catalog rows, so a `failing_tests` that scanned the
+    /// whole catalog reported up to five failures that `summarise` had already
+    /// excluded -- the counts and the named list disagreeing about one run.
+    /// Found by CodeRabbit as an out-of-diff finding on PR #530.
+    #[test]
+    fn failing_tests_and_summarise_agree_about_which_rows_count() {
+        // A Fail byte at the sentinel address, and nowhere else.
+        let mut ram = vec![0u8; 0x0800];
+        ram[RESULT_DRAW_TEST as usize] = (7 << 2) | 0x02; // Fail(7)
+        let statuses = decode_results(&ram).expect("decodes");
+
+        // The fixture must actually reach the sentinel, or this proves nothing.
+        let sentinel_rows = catalog()
+            .iter()
+            .filter(|e| e.result_addr == RESULT_DRAW_TEST)
+            .count();
+        assert_eq!(
+            sentinel_rows, 5,
+            "fixture assumes five rows share the sentinel"
+        );
+
+        let summary = summarise(&statuses);
+        let named = failing_tests(&statuses);
+        assert_eq!(
+            summary.fail as usize,
+            named.len(),
+            "summarise counted {} failures but failing_tests named {}: {named:?}",
+            summary.fail,
+            named.len()
+        );
+        assert_eq!(
+            summary.fail, 0,
+            "a sentinel-only Fail is not a scored failure"
+        );
+        assert!(
+            named.is_empty(),
+            "unscored rows must not be named: {named:?}"
+        );
+    }
     use super::*;
 
     #[test]

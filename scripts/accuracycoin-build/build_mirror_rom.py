@@ -86,7 +86,8 @@ will trust a patched build from it.
 
 LICENSE: this build script is GPL-3.0-or-later with the rest of RustyNES. The
 generated ROM is a derivative work of 100thCoin/AccuracyCoin and inherits the
-upstream MIT license (see tests/roms/AccuracyCoin/LICENSES.md).
+upstream MIT license (tests/roms/accuracycoin/LICENSE; the corpus-wide index
+is tests/roms/LICENSES.md).
 """
 
 import argparse

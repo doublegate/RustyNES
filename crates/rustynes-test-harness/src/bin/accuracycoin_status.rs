@@ -362,10 +362,11 @@ fn main() -> ExitCode {
 
     if vacuous(&a) {
         eprintln!(
-            "\nVACUOUS: every one of the {} entries is NotRun. This run executed no \
-             tests -- AccuracyCoin sits on its title screen until START is pressed. \
-             Re-export with --press-start; a comparison against this proves nothing.",
-            a.len()
+            "\nVACUOUS: every one of the {} SCORED entries is NotRun. This run \
+             executed no tests -- AccuracyCoin sits on its title screen until START \
+             is pressed. Re-export with --press-start; a comparison against this \
+             proves nothing.",
+            scored_len()
         );
         return ExitCode::from(3);
     }
