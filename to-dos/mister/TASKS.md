@@ -33,7 +33,12 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
       the sibling's `docs/rung3-ppu.md`, not `docs/mister-ppu-rung.md` as planned
       here (it belongs beside the RTL it constrains). v2.5.3 is the proof it
       works: `ppu-state-trace` located the bug and never became a gate
-- [~] On rung 3 close: re-run nestest **unbounded** and the 5 M-cycle window,
+- [x] On rung 3 close: re-run nestest **unbounded** and the 5 M-cycle window,
+      **— the 5 M half LANDED at v2.6.7/v2.6.8** and this box stayed `[~]` for
+      thirteen releases. The gate now compares **5,062,680** cycles with the
+      window DERIVED from the manifest rather than written down
+      (`RustyNES_MiSTer/docs/rung3-ppu.md:2414`,
+      `docs/rung6-integration.md:1351`). Original note follows:
       which v2.5.0 could not reach. **Partly done at v2.5.4**: the window was
       never a CPU wall, only a missing `$2002` answer, so it moved 27,388 →
       59,554 cycles the moment the register file existed. It is now bounded by
@@ -98,10 +103,17 @@ Legend: `[ ]` open · `[~]` in progress · `[x]` done
       is retired with the tick above. The sharpest open item is now the one
       below it -- the power-up `$4017` rewrite, which the oracle models, the
       DUT does not, and no ROM in the battery isolates.
-- [ ] **Carried from v2.6.2:** the power-up `$4017` rewrite (blargg's readme:
+- [x] **Carried from v2.6.2:** the power-up `$4017` rewrite (blargg's readme:
       the APU acts as if `$4017` were written with `$00` 9-12 clocks before the
-      first instruction). The oracle models it, the DUT does not, and no ROM in
-      the battery isolates it — see ledger 8.10
+      first instruction). **CLOSED at v2.6.2 and never ticked here** — ledger
+      8.10 in `RustyNES_MiSTer/docs/rung4-apu.md:514` records it, and so does
+      `docs/apu-oracle-vs-documentation.md:110`: `apupower041` is the only ROM
+      in the set that never writes `$4017`, which is why it had been invisible
+      *by construction rather than by measurement*, and `fc_count` now starts
+      at 1. Found by a v2.6.21 audit, three months and eighteen releases after
+      the fact. An unticked box with no reason cannot be told apart from work
+      outstanding, work blocked elsewhere, and work already done — this was the
+      third case, which is v2.6.14's finding in a different document.
 
 ## v2.6.3 – v2.6.4 — rung 5, NROM + AccuracyCoin
 
@@ -321,13 +333,52 @@ something as blocked, check the blocker applies to the WHOLE item.**
       and is now complete. Not a backlog item; a decision recorded in the
       programme plan.
 
+## v2.6.21 — the AccuracyCoin corpus re-sync, SCOPED OUT with its reason
+
+- [ ] Re-sync the vendored AccuracyCoin corpus from `9bc42d1e` to upstream
+      `46199ae4` (2026-09-18).
+      **DEFERRED — it is a release, not an item, and a HALF-done re-sync is
+      worse than none.** The upstream commit is the `INC <ErrorCode` fix this
+      project reported as issue #66, accepted and closed six seconds after the
+      push. It changes **165 bytes** of the ROM, so every one of the 33 sub-test
+      ROMs rebuilds, every sibling AccuracyCoin golden re-exports, and both
+      sides re-verify. A corpus with some ROMs at `9bc42d1e` and some at
+      `46199ae4` is precisely the mixed-provenance state this project treats as
+      evidence-destroying, so it is all or nothing.
+      **It changes no verdict**: the fix affects only the failure-code decoding
+      of `TEST_FrozenOAM2Inc`, a routine both consoles pass, so the value is
+      hygiene and a current corpus to cite at submission — not accuracy.
+
+      **What v2.6.21 DID land, because it is the part that was dangerous:**
+      `scripts/accuracycoin-build/derive_indices.py`, which reads `TableTable`
+      and each suite's own `table` lines out of the assembly and validates
+      itself against two independently recorded answers before reporting any
+      others. It exists because `build_sub_test_rom.py`'s hand-written suite map
+      was **wrong from index 14 onward** — it listed twenty suites with
+      `PowerOnState` at 14, and upstream has twenty-two with `CPUBehavior2` at
+      14 and `PPUMisc` at 19. A rebuild driven by that map enters the wrong
+      suite and writes a plausible byte for a test nobody asked for, which looks
+      exactly like a result. Of its four recorded targets three were right and
+      `Implied Dummy Reads: suite=19` was not (it is suite **14**; 19/1 is
+      `Address $2004 behavior`). Also measured: the upstream toolchain
+      reproduces upstream's committed `.nes` **byte-identically** under
+      `wine nesasm.exe`, which is the control that makes any future rebuild
+      trustworthy, and 18 of the 33 sub-tests now resolve to a validated
+      (suite, test) pair from the sibling's own registration list. The other 15
+      are unregistered in `regress.sh` and therefore have no recorded address to
+      resolve through — named here rather than guessed.
+
 ## v2.7.0 — the contribution package
 
 - [ ] Requirements checklist green (`contribution-checklist.md`)
-      **BLOCKED — on four boxes, of which three need hardware or the submission
-      itself.** As of the v2.6.14 audit the checklist is **19 ticked, 11
-      unticked**, every unticked box carrying a named verdict and a gate
-      (`contribution_checklist_audit.rs`) keeping it that way.
+      **BLOCKED — on the submission itself; the HARDWARE blocker has cleared.**
+      A SuperStation One is in hand as of v2.6.21, so box 19 is actionable for
+      the first time. **The tally quoted here was stale by two**: it said 19
+      ticked / 11 unticked from the v2.6.14 audit, and the live list is
+      **21 ticked / 9 unticked** — `.srf` ticked at v2.6.19 and the release
+      artifact at v2.6.15. Re-measure it rather than quoting this line; every
+      unticked box carries a named verdict and a gate
+      (`contribution_checklist_audit.rs`) keeps it that way.
 - [x] `releases/RustyNES_MiSTer-vX.Y.Z.rbf` — **since v2.6.7**, committed to the
       sibling's `releases/` and attached to the GitHub release on both
       repositories, produced by `scripts/release-rbf.sh`, which refuses a

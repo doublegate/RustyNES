@@ -19,23 +19,53 @@ The "suite index" is the 0-based offset into TableTable
 (`AccuracyCoin.asm` line 497-518). The "test index" is the 0-based
 offset of the target within the suite's `table "name", ...` lines.
 
-Suite map (from upstream `AccuracyCoin.asm` lines 497-517):
-   0: Suite_CPUBehavior          1: Suite_CPUInstructions
-   2: Suite_UnofficialOps_SLO    3: Suite_UnofficialOps_RLA
-   4: Suite_UnofficialOps_SRE    5: Suite_UnofficialOps_RRA
-   6: Suite_UnofficialOps__AX    7: Suite_UnofficialOps_DCP
-   8: Suite_UnofficialOps_ISC    9: Suite_UnofficialOps_SH_
-  10: Suite_UnofficialOps_Immediates  11: Suite_CPUInterrupts
-  12: Suite_DMATests            13: Suite_APUTiming
-  14: Suite_PowerOnState        15: Suite_PPUBehavior
-  16: Suite_PPUTiming           17: Suite_SpriteZeroHits
-  18: Suite_PPUMisc             19: Suite_CPUBehavior2
+DO NOT USE A HAND-WRITTEN SUITE MAP. Use `derive_indices.py`, which reads
+`TableTable` and each suite's own `table` lines out of the assembly and
+VALIDATES itself against two independently recorded answers before reporting
+any others.
 
-Targets (per docs/audit/session-23-accuracycoin-source-audit-2026-05-22.md):
-- Controller Strobing:   suite=13, test=7 (TEST_ControllerStrobing $045F)
-- Implied Dummy Reads:   suite=19, test=1 (TEST_ImpliedDummyRead   $046D)
-- Frame Counter IRQ:     suite=13, test=2 (TEST_FrameCounterIRQ    $0467)
-- APU Register Activation: suite=13, test=6 (TEST_APURegActivation $045C)
+The map that used to sit here was WRONG from index 14 onward, and it is kept
+below struck through because it was acted on. It listed twenty suites and
+stopped at 19, with `PowerOnState` at 14 and `CPUBehavior2` at 19. Upstream's
+`TableTable` at 46199ae4 has TWENTY-TWO suites, `CPUBehavior2` at **14** and
+`PPUMisc` at **19** -- the suites were reordered upstream at some point after
+the map was written. A rebuild driven by the stale map enters the WRONG SUITE
+and the ROM writes a plausible byte for a test nobody asked for, which is the
+worst failure available here because it looks like a result.
+
+    STALE, DO NOT USE:
+       0: Suite_CPUBehavior          1: Suite_CPUInstructions
+       2: Suite_UnofficialOps_SLO    3: Suite_UnofficialOps_RLA
+       4: Suite_UnofficialOps_SRE    5: Suite_UnofficialOps_RRA
+       6: Suite_UnofficialOps__AX    7: Suite_UnofficialOps_DCP
+       8: Suite_UnofficialOps_ISC    9: Suite_UnofficialOps_SH_
+      10: Suite_UnofficialOps_Immediates  11: Suite_CPUInterrupts
+      12: Suite_DMATests            13: Suite_APUTiming
+      14: Suite_PowerOnState        15: Suite_PPUBehavior
+      16: Suite_PPUTiming           17: Suite_SpriteZeroHits
+      18: Suite_PPUMisc             19: Suite_CPUBehavior2
+
+Current, derived from 46199ae4 (22 suites, 149 catalog entries):
+   0: CPUBehavior              1: CPUInstructions
+   2: UnofficialOps_SLO        3: UnofficialOps_RLA
+   4: UnofficialOps_SRE        5: UnofficialOps_RRA
+   6: UnofficialOps__AX        7: UnofficialOps_DCP
+   8: UnofficialOps_ISC        9: UnofficialOps_SH_
+  10: UnofficialOps_Immediates 11: CPUInterrupts
+  12: DMATests                13: APUTiming
+  14: CPUBehavior2            15: PowerOnState
+  16: PPUBehavior             17: PPUTiming
+  18: SpriteZeroHits          19: PPUMisc
+  20: AdvancedBGEval          21: AdvancedSpriteEval
+
+Targets, RE-DERIVED at v2.6.21. Three of the four recorded here were correct
+and one was not:
+- Controller Strobing:     suite=13, test=7 ($045F)  -- was right
+- Frame Counter IRQ:       suite=13, test=2 ($0467)  -- was right
+- APU Register Activation: suite=13, test=6 ($045C)  -- was right
+- Implied Dummy Reads:     suite=**14**, test=1 ($046D) -- the recorded
+  `suite=19` is WRONG; 19/1 is `Address $2004 behavior` ($045B). They survived
+  in suite 13 because the reordering began at 14.
 
 Implementation: replaces the body of `AutomaticallyRunEveryTestInROM`
 with a streamlined version that initialises Y to the suite index,

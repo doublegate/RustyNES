@@ -299,16 +299,42 @@ fn every_checklist_box_carries_a_verdict() {
 fn the_checklist_still_has_unticked_boxes_and_says_so() {
     // The counterpart to the gate above, and the reason it is a separate test:
     // a checklist that ticked everything would satisfy the verdict rule
-    // vacuously. Submission is v2.7.0 and hardware is not attached, so a fully
-    // ticked list would be a claim this project cannot support.
+    // vacuously.
+    //
+    // THIS ASSERTION'S REASON EXPIRED AT v2.6.21, and the assertion would have
+    // fired by construction the moment v2.7.0 completed the list. It used to
+    // say "rung 6 needs hardware nobody here has" -- a SuperStation One is now
+    // attached, so that sentence is false and the guard it justified would have
+    // turned a milestone into a red test.
+    //
+    // What replaces it is narrower and survives the submission: three of the
+    // thirty boxes can never be evidence about the core, because they are other
+    // people's actions or are statements rather than tasks -- "Await review",
+    // "Add to the Cores list", and the "publishable on its own terms" box,
+    // which is marked DECIDED and can never fail. A list that ticks THOSE has
+    // stopped describing this project's work. Everything else is now allowed to
+    // reach green, because reaching green is the point of v2.7.0.
     let md = checklist();
     let items = parse(&md).unwrap_or_else(|e| panic!("{e}"));
-    let unticked = items.iter().filter(|i| !i.ticked).count();
+    let not_ours: Vec<&str> = items
+        .iter()
+        .filter(|i| i.ticked)
+        .map(|i| i.body.as_str())
+        .filter(|s| {
+            let l = s.to_ascii_lowercase();
+            l.contains("await review")
+                || l.contains("add to the cores list")
+                || l.contains("publishable on its own terms")
+        })
+        .collect();
     assert!(
-        unticked > 0,
-        "every checklist box is ticked, which would mean the core is ready to \
-         submit -- rung 6 needs hardware nobody here has, so this is a false \
-         claim rather than a milestone"
+        not_ours.is_empty(),
+        "{} box(es) are ticked that cannot be evidence about this core -- they \
+         are somebody else's action or a statement rather than a task, so a \
+         tick on one is a claim about a thing this repository does not \
+         control:\n  {}",
+        not_ours.len(),
+        not_ours.join("\n  ")
     );
     assert!(
         md.contains("must be complete **by v2.7.0**"),
