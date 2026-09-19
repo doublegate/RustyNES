@@ -37,8 +37,8 @@ struct Args {
     roms: Vec<String>,
 }
 
-const USAGE: &str =
-    "usage: subtest_identify [--frames N] [--tsv] [--upstream-commit S] <rom.nes>...";
+const USAGE: &str = "usage: subtest_identify [--frames N] [--tsv] \
+     [--upstream-commit S] [--] <rom.nes>...";
 
 /// Parse the command line, or print why it could not be parsed.
 ///
@@ -82,6 +82,14 @@ fn parse_args<I: Iterator<Item = String>>(mut it: I) -> Result<Args, ExitCode> {
                     return Err(ExitCode::from(2));
                 }
                 upstream = v;
+            }
+            // Everything after `--` is a path, whatever it looks like. Without
+            // this there is no way to name a file whose own name begins with
+            // `-`, because the arm below refuses those. Raised by the
+            // Antigravity reviewer.
+            "--" => {
+                roms.extend(it.by_ref());
+                break;
             }
             // An unrecognised flag is REFUSED rather than taken as a path. A
             // mistyped `--frame 10` would otherwise be read as two ROMs, and
@@ -158,7 +166,7 @@ fn main() -> ExitCode {
             .map_or_else(|| path.clone(), |s| s.to_string_lossy().into_owned());
         let (es, et) = id
             .encoded
-            .map_or((-1i32, -1i32), |(s, t)| (i32::from(s), i32::from(t)));
+            .map_or((-1, -1), |(s, t)| (i32::from(s), i32::from(t)));
 
         let Some(first) = id.primary() else {
             eprintln!(
