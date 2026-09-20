@@ -1,0 +1,19 @@
+# Performance measurement, and panel state that outlives its `Nes`
+
+> **Split out of `AGENTS.md` (2026-09-20).** These notes were inline in that
+> file's "Operating notes for Claude Code" section, which had grown to
+> **115,606 bytes across 110 bullets** — loaded into every session whether or
+> not the task touched any of it. The content is **verbatim**; only its
+> location changed. `AGENTS.md` carries the index.
+>
+> **Read this file when the task touches performance measurement, and panel state that outlives its `nes`.**
+> Every bullet is a measured finding with its evidence attached; they are
+> written to be re-checkable, not to be taken on trust.
+
+- **`ab_check.sh` benchmarks the reference immediately after building it, and on this workspace that is a ~45-second fat-LTO compile across all cores.** So the reference measures on a hot, frequency-throttled machine while the candidate runs once thermals have settled. v2.3.6 D1's run 1 read **-3.81% at p = 0.00** on a shipped default workload and was entirely artifact: the order-bias control, benching the reference against ITSELF, drifted **-3.73%** on that same workload with no code change. **Read the order-bias control before the candidate column.** A cached reference build plus `AB_MEASUREMENT_TIME=25` took the drift from ~4% to ~1%.
+
+- **"Inert on almost every cycle" predicts an optimization win only if the work is actually EXECUTED.** Under `lto = "fat"` with `codegen-units = 1` the guarded code is already inlined into its caller, its repeated loads already merged by common-subexpression elimination, and always-not-taken branches are perfectly predicted — so swapping predictable not-taken branches for an equivalent count of loads plus a predicate is arithmetically a wash. This is why APU Workstream D produced three nulls (D1, D3, D6) and why D2 and D4 are left unmeasured: their prior is a null, not an unknown. Full numbers and the three conditions that would justify reopening: `docs/performance.md`.
+
+- **Panel state that outlives the `Nes` it describes is a recurring seam here.** Three instances now: the Pixel Provenance panel edge-detected its arm against a mirror of core state that a fresh `Nes` had reset, so it never re-armed after a ROM load; the Latency Oracle kept a stale report AND its live Apply button across a ROM change (a depth measured on game A, one click from being applied to game B); and the RAM Atlas would have kept 2,048 labels that look like a map. There is now ONE hook — `DebuggerOverlay::clear_rom_bound_analysis`, called from all three ROM-transition sites in `app.rs` beside `clear_tas_editor`. Add new ROM-bound panels to it rather than adding a fourth per-panel clear.
+
+- **Summing two percentiles is as invalid as differencing them.** `docs/performance.md` records the subtraction case (a published table whose `work p95` sat below its `work p50`). The addition case bit the v2.3.9 Latency Oracle design: an end-to-end figure needs `render_work + render_lock` (+ `render_wait`), and `PerfView` exposes those as three **separate** series, so the design was not implementable from existing data — found by trying to write it. The one valid case is adding a **constant**: internal lag is `frames * frame_ms`, so `lag + render_work.p95` genuinely is a p95. That rescues exactly one series, which is why `PerfPanelState::render_work` deliberately exposes only that one. A true wall-clock figure needs a new single per-redraw series on `RenderPerf`.
