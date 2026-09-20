@@ -1,4 +1,5 @@
-# How each sub-test ROM in this directory was built.
+# How each sub-test ROM in this directory was built, and -- since 2026-09-19 --
+# WHICH CATALOG ENTRY EACH ONE ACTUALLY RUNS, measured rather than inferred.
 #
 # A sub-test ROM is the FULL AccuracyCoin ROM with its boot path patched to
 # enter one catalog entry directly, produced by
@@ -6,39 +7,79 @@
 # `suite` is the 0-based offset into `TableTable` in AccuracyCoin.asm and
 # `test` the 0-based row within that suite -- NOT the catalog's flat order.
 #
-# This file exists because that mapping was previously recorded nowhere. Without
-# it a rebuild has to guess the indices from the filename, and a slug-matching
-# pass over the 31 pre-existing ROMs mis-resolved several (`cpu-open-bus` and
-# `open-bus` both to suite 0 test 6) -- so guessing would silently ship ROMs
-# that enter the wrong test. Record the indices when you add a ROM.
+# THE INDICES ADDRESS THE BUILD EMBEDDED IN THE ROM, NOT UPSTREAM TODAY. That
+# is the whole difficulty, and it is why the 31 legacy rows sat empty for four
+# releases. Each ROM carries its own copy of the assembly, so `--suite 18
+# --test 2` means whatever `TableTable[18][2]` was in the source it was built
+# from. Upstream has since reordered its suites AND inserted tests inside them,
+# so both obvious ways to recover a legacy ROM's identity give a wrong answer,
+# confidently:
+#
+#   * against the CURRENT assembly (46199ae4), `ppu-misc-stale-bg-shift-regs`
+#     (enc 18/2) resolves to `$2002 flag timing`;
+#   * against the STALE suite map kept struck through in the builder's
+#     docstring, the same ROM resolves to `INC $4014`.
+#
+# It is neither. The ROM writes `$0483`, which is `Stale BG Shift Registers` --
+# the test its filename names. Both routes are inference; the ROM was asked
+# instead.
+#
+# THE `result_addr` COLUMN IS THE IDENTITY, AND IT IS A MEASUREMENT.
+# `subtest_identify` (crates/rustynes-test-harness/src/bin) boots each ROM,
+# runs it, and reports which byte in `$0400-$04FF` it writes. A result address
+# is the catalog's own key and is stable across upstream reorderings, so it
+# needs no suite map at all. The CONTROL is that
+# `RustyNES_MiSTer/tb/regress.sh` independently registers eighteen of these
+# ROMs by an address it read out of golden RAM during v2.6.4/v2.6.5: all
+# eighteen come back identical. `enc_suite`/`enc_test` are recorded beside it
+# as a fingerprint of the file -- they pin the bytes, not the meaning.
+#
+# `tests/accuracycoin_subtest_provenance.rs` re-measures every row and fails on
+# any disagreement, so a swapped, rebuilt or renamed ROM is caught rather than
+# trusted. Regenerate the data rows with:
+#
+#   cargo run -p rustynes-test-harness --release --features test-roms \
+#     --bin subtest_identify -- --tsv tests/roms/AccuracyCoin/sub-tests/*.nes
+#
+# THREE THINGS THE MEASUREMENT FOUND, none of which reading the filenames could
+# have:
+#
+#   * `ppu-misc-2004-stress.nes` does NOT run `$2004 Stress Test`. It writes
+#     `$048E`, which is `$2007 Stress Test` -- the same entry as
+#     `ppu-misc-2007-stress.nes`. So the corpus has two ROMs for one entry and
+#     NO ROM for `$2004 Stress Test` ($048C), while appearing to have one.
+#     It is unregistered in rung 5, so nothing was relying on the name.
+#   * `cpu-open-bus.nes` runs `Dummy write cycles` ($0407), not `Open Bus`
+#     ($0408, which `open-bus.nes` runs). Already known -- `regress.sh` says so
+#     in a comment and deliberately omits the ROM -- and now measured here too.
+#   * `implied-dummy-reads.nes` and `implied-dummy-reads-v2.nes` are the same
+#     test by every observable: same encoded index, same address, same verdict,
+#     same settling frame. The `-v2` suffix records a rebuild, not a variant.
+#
+# TWO ROMS DO NOT PASS ON THE ORACLE and therefore cannot adjudicate the DUT --
+# `subtest_verdict.py` refuses them by design. `sprite-eval-arbitrary-sprite-zero`
+# (Fail(1) at $0458) was already recorded as deliberately unregistered;
+# `sprite-zero-hit-behavior` (Fail(1) at $0457) is the same shape and is
+# likewise absent from rung 5. Recorded rather than dropped: either the ROM
+# does not stand alone or the entry needs the battery's preceding state, and
+# both are open questions rather than DUT defects.
 #
 # NOTE ON THE LEGACY `ppu-misc-` PREFIX: several ROMs carry it while living on
 # other pages (`ppu-misc-sprites-on-scanline-0` and
-# `ppu-misc-stale-sprite-shift-regs` are suite 21, Advanced Sprite Evaluation).
-# The prefix is historical; the suite column is authoritative.
+# `ppu-misc-stale-sprite-shift-regs` are Advanced Sprite Evaluation; `ale-read`
+# and `hybrid-addresses` are Advanced BG Evaluation). The prefix is historical;
+# the `entry` column is authoritative.
 #
-# rom	suite	test	entry	upstream_commit
-advanced-sprite-eval-frozen-oam2-increment.nes	21	2	Frozen OAM2 Increment	46199ae4
-# The row below WAS produced by build_sub_test_rom.py as of the 46199ae4
-# re-sync; it previously was not, being the ROM above with ONE BYTE changed.
-# The one-byte relationship still holds and is now MEASURED rather than
-# asserted: the two builder outputs differ at exactly one offset, 0x10B5,
-# 0x02 -> 0x03 (the `LDX #test` immediate; `LDY #suite` sits at 0x10AB).
-# Both were validated with validate_sub_test_rom after the rebuild --
-# $0493 settling at Pass on frame 128, $0495 on frame 82, the latter the
-# same frame the one-byte ROM reported, which is the cross-check that the
-# real build and the patch select the same test.
-advanced-sprite-eval-misaligned-oam2-address.nes	21	3	Misaligned OAM2 Address	46199ae4
-# The 31 ROMs below predate this manifest. They were built from an upstream
-# commit earlier than 69c88608 and their (suite, test) indices were not
-# recorded. They are NOT rebuilt here: rebuilding on guessed indices is
-# strictly worse than a stated gap. Fill a row in when you next rebuild one,
-# with its indices. The upstream changes they do not carry are the two
-# `INC <ErrorCode` insertions (`TEST_MisalignedOAM2Addr` in `9bc42d1e`,
-# `TEST_FrozenOAM2Inc2` in `46199ae4`); neither routine is entered by any of
-# the 31, so their failure codes are unaffected.
+# `upstream_commit` is the AccuracyCoin commit the ROM was BUILT from. It is
+# `legacy-unrecorded` for the 31 that predate this manifest -- and that is now
+# a footnote rather than a gap, because the `result_addr` column pins what each
+# ROM runs without it. What it still costs: a legacy ROM does not carry
+# upstream's later fixes, and the two known ones are the `INC <ErrorCode`
+# insertions (`TEST_MisalignedOAM2Addr` in `9bc42d1e`, `TEST_FrozenOAM2Inc2` in
+# `46199ae4`). Neither routine is entered by any of the 31, so no failure code
+# in this table is affected.
 #
-# RETRACTION (46199ae4 re-sync). The v2.6.20 note here said the
+# RETRACTION, retained (46199ae4 re-sync). The v2.6.20 note here said the
 # misaligned-oam2-address ROM was "built from the same `9bc42d1e` base, which
 # PREDATES that upstream `INC`", and that is backwards: `9bc42d1e` is the
 # commit that ADDED the `INC` to `TEST_MisalignedOAM2Addr`, so a ROM built at
@@ -50,3 +91,55 @@ advanced-sprite-eval-misaligned-oam2-address.nes	21	3	Misaligned OAM2 Address	46
 #
 # Worth stating because this file exists to stop the next person guessing: a
 # note that reads as settled and detailed is the one nobody re-derives.
+#
+# The one-byte relationship between the two v2.6.21 rows still holds and is
+# MEASURED rather than asserted: the two builder outputs differ at exactly one
+# offset, 0x10B5, 0x02 -> 0x03 (the `LDX #test` immediate; `LDY #suite` sits at
+# 0x10AB).
+#
+# REGENERATE WITH THE GENERATOR, AND THE SCHEMA LINE BELOW COMES FROM IT:
+#
+#   cargo run -p rustynes-test-harness --release --features test-roms \
+#     --bin subtest_identify -- --tsv tests/roms/AccuracyCoin/sub-tests/*.nes
+#
+# Its output IS this file's data section, schema line included -- verified by
+# regenerating and byte-comparing. The one column a measurement cannot supply is
+# `upstream_commit`; pass `--upstream-commit <sha>` for a ROM whose build commit
+# is known, or set it afterwards for the rows that have one (today, the two
+# v2.6.21 rows). Anything the tool cannot identify it REFUSES to emit a row for,
+# and says why on stderr.
+#
+# rom	enc_suite	enc_test	result_addr	entry	oracle_verdict	settles_frame	upstream_commit
+advanced-sprite-eval-frozen-oam2-increment	21	2	0x0493	Frozen OAM2 Increment	Pass	128	46199ae4
+advanced-sprite-eval-misaligned-oam2-address	21	3	0x0495	Misaligned OAM2 Address	Pass	82	46199ae4
+apu-reg-activation	13	6	0x045C	APU Register Activation	PassWithCode(2)	33	legacy-unrecorded
+controller-strobing	13	7	0x045F	Controller Strobing	Pass	29	legacy-unrecorded
+cpu-open-bus	0	6	0x0407	Dummy write cycles	Pass	31	legacy-unrecorded
+dma-open-bus	12	0	0x046C	DMA + Open Bus	Pass	26	legacy-unrecorded
+dmc-bus-conflicts	12	6	0x046B	DMC DMA Bus Conflicts	Pass	29	legacy-unrecorded
+fc-4step	13	3	0x0468	Frame Counter 4-step	Pass	33	legacy-unrecorded
+frame-counter-irq	13	2	0x0467	Frame Counter IRQ	Pass	66	legacy-unrecorded
+iflag-latency	11	0	0x0461	Interrupt flag latency	Pass	29	legacy-unrecorded
+implied-dummy-reads-v2	19	1	0x046D	Implied Dummy Reads	Pass	63	legacy-unrecorded
+implied-dummy-reads	19	1	0x046D	Implied Dummy Reads	Pass	63	legacy-unrecorded
+internal-data-bus	19	4	0x0490	Internal Data Bus	Pass	27	legacy-unrecorded
+nmi-overlap-brk	11	1	0x0462	NMI Overlap BRK	Pass	72	legacy-unrecorded
+open-bus	0	7	0x0408	Open Bus	Pass	27	legacy-unrecorded
+ppu-misc-2004-stress	18	6	0x048E	$2007 Stress Test	Pass	390	legacy-unrecorded
+ppu-misc-2007-stress	18	7	0x048E	$2007 Stress Test	Pass	395	legacy-unrecorded
+ppu-misc-ale-read	18	7	0x0491	ALE + Read	Pass	57	legacy-unrecorded
+ppu-misc-bg-serial-in	18	4	0x0487	BG Serial In	Pass	51	legacy-unrecorded
+ppu-misc-hybrid-addresses	18	8	0x0492	Hybrid Addresses	Pass	57	legacy-unrecorded
+ppu-misc-sprites-on-scanline-0	18	5	0x0484	Sprites On Scanline 0	PassWithCode(2)	36	legacy-unrecorded
+ppu-misc-stale-bg-shift-regs	18	2	0x0483	Stale BG Shift Registers	Pass	87	legacy-unrecorded
+ppu-misc-stale-sprite-shift-regs	18	3	0x048F	Stale Sprite Shift Regs	Pass	147	legacy-unrecorded
+sh-sha-93	9	0	0x0446	$93   SHA indirect,Y	PassWithCode(1)	27	legacy-unrecorded
+sh-sha-9F	9	1	0x0447	$9F   SHA absolute,Y	PassWithCode(1)	27	legacy-unrecorded
+sh-shs-9B	9	2	0x0448	$9B   SHS absolute,Y	PassWithCode(1)	27	legacy-unrecorded
+sh-shx-9E	9	4	0x044A	$9E   SHX absolute,Y	Pass	27	legacy-unrecorded
+sh-shy-9C	9	3	0x0449	$9C   SHY absolute,X	Pass	27	legacy-unrecorded
+sprite-eval-2002-flag-timing	17	2	0x048D	$2002 flag timing	Pass	73	legacy-unrecorded
+sprite-eval-arbitrary-sprite-zero	17	4	0x0458	Arbitrary Sprite zero	Fail(1)	29	legacy-unrecorded
+sprite-eval-misaligned-oam	17	5	0x045A	Misaligned OAM behavior	Pass	212	legacy-unrecorded
+sprite-eval-oam-corruption	17	7	0x047B	OAM Corruption	Pass	111	legacy-unrecorded
+sprite-zero-hit-behavior	17	1	0x0457	Sprite 0 Hit behavior	Fail(1)	29	legacy-unrecorded

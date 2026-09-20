@@ -55,6 +55,18 @@ and there would again be nothing to say so. Run:
 and this script now CHECKS `--suite`/`--test`/`--name` against the assembly
 before building, so a wrong index is refused rather than turned into a ROM.
 
+AND FOR A ROM THAT ALREADY EXISTS, DO NOT RESOLVE ITS INDEX AT ALL. A sub-test
+ROM embeds its own copy of the assembly, so its `(suite, test)` names a row of
+THAT build's table -- which is why the map above went stale without anything
+noticing. `tests/roms/AccuracyCoin/sub-tests/BUILD-PROVENANCE.tsv` records, per
+ROM, the result ADDRESS it writes; that is the catalog's own key and is stable
+across upstream reordering. It is produced by running the ROMs:
+
+    cargo run -p rustynes-test-harness --release --features test-roms \
+        --bin subtest_identify -- --tsv tests/roms/AccuracyCoin/sub-tests/*.nes
+
+and re-measured by `crates/rustynes-test-harness/tests/accuracycoin_subtest_provenance.rs`.
+
 Targets, RE-DERIVED at v2.6.21. Three of the four recorded here were correct
 and one was not:
 - Controller Strobing:     suite=13, test=7 ($045F)  -- was right

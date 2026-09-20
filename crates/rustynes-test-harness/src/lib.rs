@@ -12,6 +12,7 @@
 pub mod access_dot;
 pub mod accuracy_coin;
 pub mod accuracy_coin_catalog;
+pub mod accuracy_coin_subtest;
 mod blargg;
 mod nes_runner;
 mod nestest;
