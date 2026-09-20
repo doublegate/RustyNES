@@ -3,8 +3,15 @@
 > **Split out of `AGENTS.md` (2026-09-20).** These notes were inline in that
 > file's "Operating notes for Claude Code" section, which had grown to
 > **115,606 bytes across 110 bullets** — loaded into every session whether or
-> not the task touched any of it. The content is **verbatim**; only its
+> not the task touched any of it. The content moved **verbatim**; only its
 > location changed. `AGENTS.md` carries the index.
+>
+> **One exception, in this file only:** the first bullet was subsequently
+> rewritten (2026-09-20) to record that the libretro upstream half had been
+> done since July — the migrated text described it as pending. That bullet is
+> a dated correction, not preserved history; every other bullet here is the
+> unchanged migrated note. Flagged in review on #534 by three separate
+> reviewers, which is what a banner contradicting its own file earns.
 >
 > **Read this file when the task touches the libretro core.**
 > Every bullet is a measured finding with its evidence attached; they are
