@@ -40,6 +40,18 @@ struct Args {
 const USAGE: &str = "usage: subtest_identify [--frames N] [--tsv] \
      [--upstream-commit S] [--] <rom.nes>...";
 
+/// Characters that would silently restructure the manifest this tool generates.
+///
+/// A tab ends a field and a newline ends a row, so either one in a value splices
+/// columns or rows into a file whose only consumers parse it positionally. Both
+/// reachable values can carry them: `upstream_commit` is an argument, and `stem`
+/// comes from a FILENAME, in a directory whose whole purpose is that people drop
+/// ROMs into it. The gate would notice — `parse_manifest` asserts the field
+/// count — but it would report a malformed manifest rather than the malformed
+/// name that caused it, and the generator should not emit the row at all.
+/// Raised by the Antigravity reviewer.
+const FIELD_BREAKING: [char; 3] = ['\t', '\n', '\r'];
+
 /// Parse the command line, or print why it could not be parsed.
 ///
 /// Extracted from `main` so the failure paths are one small function rather
@@ -77,8 +89,11 @@ fn parse_args<I: Iterator<Item = String>>(mut it: I) -> Result<Args, ExitCode> {
                     eprintln!("subtest_identify: --upstream-commit needs a value");
                     return Err(ExitCode::from(2));
                 };
-                if v.is_empty() || v.contains('\t') {
-                    eprintln!("subtest_identify: --upstream-commit must be non-empty and tab-free");
+                if v.is_empty() || v.contains(FIELD_BREAKING) {
+                    eprintln!(
+                        "subtest_identify: --upstream-commit must be non-empty \
+                         and free of tabs and newlines"
+                    );
                     return Err(ExitCode::from(2));
                 }
                 upstream = v;
@@ -164,6 +179,15 @@ fn main() -> ExitCode {
         let stem = p
             .file_stem()
             .map_or_else(|| path.clone(), |s| s.to_string_lossy().into_owned());
+        if stem.contains(FIELD_BREAKING) {
+            eprintln!(
+                "{}: the file stem contains a tab or newline, which would splice \
+                 a column or row into the manifest -- refusing to emit a row for it",
+                p.display()
+            );
+            bad += 1;
+            continue;
+        }
         let (es, et) = id
             .encoded
             .map_or((-1, -1), |(s, t)| (i32::from(s), i32::from(t)));
