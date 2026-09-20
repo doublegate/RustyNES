@@ -176,7 +176,12 @@ pub fn identify(rom: &[u8], max_frames: u64) -> Result<Identified, String> {
 /// Returns `Err` when the file cannot be read or is not a loadable ROM.
 pub fn identify_path(path: &Path, max_frames: u64) -> Result<Identified, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    identify(&bytes, max_frames)
+    // The path goes on BOTH errors. `identify` cannot know it, so a parse
+    // failure used to print a contextless "cannot parse ROM: ..." while the
+    // read failure beside it named the file — and the caller loops over a whole
+    // corpus, so the one message that matters is which file. Raised by the
+    // Antigravity reviewer.
+    identify(&bytes, max_frames).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Catalog `result_addr` -> entry name, for the scored entries.

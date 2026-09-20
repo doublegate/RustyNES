@@ -122,6 +122,13 @@ fn parse_args<I: Iterator<Item = String>>(mut it: I) -> Result<Args, ExitCode> {
         eprintln!("{USAGE}");
         return Err(ExitCode::from(2));
     }
+    // SORT, so the manifest's row order is the tool's and not the shell's.
+    // `--tsv`'s output is documented as being the manifest's data section
+    // byte-identically, and that claim was silently conditional on the caller's
+    // glob expanding in sorted order. zsh and bash both do; a shell that did
+    // not would reorder every row and make the regeneration look like a real
+    // diff. Raised by the Antigravity reviewer.
+    roms.sort();
     Ok(Args {
         frames,
         tsv,

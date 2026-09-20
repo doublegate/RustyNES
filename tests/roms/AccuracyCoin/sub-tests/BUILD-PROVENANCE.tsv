@@ -120,8 +120,8 @@ dmc-bus-conflicts	12	6	0x046B	DMC DMA Bus Conflicts	Pass	29	legacy-unrecorded
 fc-4step	13	3	0x0468	Frame Counter 4-step	Pass	33	legacy-unrecorded
 frame-counter-irq	13	2	0x0467	Frame Counter IRQ	Pass	66	legacy-unrecorded
 iflag-latency	11	0	0x0461	Interrupt flag latency	Pass	29	legacy-unrecorded
-implied-dummy-reads	19	1	0x046D	Implied Dummy Reads	Pass	63	legacy-unrecorded
 implied-dummy-reads-v2	19	1	0x046D	Implied Dummy Reads	Pass	63	legacy-unrecorded
+implied-dummy-reads	19	1	0x046D	Implied Dummy Reads	Pass	63	legacy-unrecorded
 internal-data-bus	19	4	0x0490	Internal Data Bus	Pass	27	legacy-unrecorded
 nmi-overlap-brk	11	1	0x0462	NMI Overlap BRK	Pass	72	legacy-unrecorded
 open-bus	0	7	0x0408	Open Bus	Pass	27	legacy-unrecorded
