@@ -112,16 +112,30 @@ fn manifest_covers_exactly_the_roms_on_disk() {
     let text = std::fs::read_to_string(d.join("BUILD-PROVENANCE.tsv")).expect("read manifest");
     let rows = parse_manifest(&text);
 
-    let mut on_disk: Vec<String> = std::fs::read_dir(&d)
-        .expect("read sub-tests dir")
-        .filter_map(Result::ok)
-        .filter(|e| e.path().extension().is_some_and(|x| x == "nes"))
-        .filter_map(|e| {
-            e.path()
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-        })
-        .collect();
+    // AN UNREADABLE DIRECTORY ENTRY IS A FAILURE, NOT A SKIP. This used to be
+    // `.filter_map(Result::ok)`, which drops an entry whose metadata cannot be
+    // read — so a ROM made unreadable would vanish from `on_disk`, the manifest
+    // would appear to cover exactly the corpus, and the test would report a
+    // clean result over a corpus one file short. That is this repository's own
+    // "absence of a signal is not a signal", in the one test whose entire job is
+    // to notice that a ROM is missing. Raised by the Antigravity reviewer.
+    //
+    // NOT MUTATION-TESTABLE HERE, stated rather than glossed: on Linux
+    // `read_dir`'s iterator yields `Err` only when `readdir(3)` itself fails,
+    // which `chmod` on a file does not produce, so the branch cannot be reached
+    // from this harness. Reverting to `filter_map(Result::ok)` therefore still
+    // passes. The change is made on the argument, not on a measurement, and the
+    // argument is that a skip must not be able to look like a clean result.
+    let mut on_disk: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(&d).expect("read sub-tests dir") {
+        let entry = entry.unwrap_or_else(|e| panic!("unreadable entry in {}: {e}", d.display()));
+        let path = entry.path();
+        if path.extension().is_some_and(|x| x == "nes")
+            && let Some(stem) = path.file_stem()
+        {
+            on_disk.push(stem.to_string_lossy().into_owned());
+        }
+    }
     on_disk.sort();
 
     assert!(
