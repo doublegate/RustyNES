@@ -135,3 +135,41 @@ handling) and both `bs4` scripts gained input validation, in response to the
 PR #349 review. The files in the tree are therefore **not** byte-identical to the
 recovered artifacts, and nothing here claims they are. See
 `scripts/release-automation/README-doc-tools.md` for usage.
+
+## 2026-09-19 — tmp-salvage (copy, curated after verification)
+
+Post-v2.6.22 sweep. `salvage.py --coverage` reached **58,370 files** and proposed
+**2,090 candidates**; **37 were claimed**. The gap is not a miss — most of the
+proposal was verified regenerable, and the verification is the record below.
+Originals were **copied**, not moved, and every copy was `cmp`-verified
+byte-identical to its source at the moment of copy.
+
+Destination is `salvaged/`, which is **gitignored** (`.gitignore:345`). These
+files survive the reboot; they do not enter git history, `docs/`, or `scripts/`,
+so nothing here is walked by `release_anchor_audit.rs` or markdownlint.
+
+### Claimed (37)
+
+| Source | Destination | Notes |
+|---|---|---|
+| 13 files from session `f63c2db0` scratch | `salvaged/scripts/s-f63c2db0/` | The v2.6.22 mutation harness: `builder_m{1_half,2_inert,2_nocall,3_nobattery}.py` (the mirror-ROM mutants), `mut{,2,3,4}.py`, and the `shqtest{,2,3,4}.sh` / `bsdtest.sh` shell-quoting probes that produced the `shq()` sentinel finding. None exists at any path on HEAD. |
+| 20 files from session `0b2858a5` scratch | `salvaged/scripts/s-0b2858a5/` | v2.6.20/21 one-offs: `prog53.py`, `program54.py`, `resync.py`, `to_tabs.py`, `mutate.py`, `mut.py`, `mut2.py`, `frozen.asm`, `mis.asm`, the `t_{brack,plain,who}.sh` `pgrep -f` self-match probes, `trp{,2}.sh`, `b.sh`, `p.sh`, `ci-steps.sh`, `datecheck.sh`, `batch{1,2}.sh`. (An earlier revision of this row enumerated only 16 of the 20 — `b.sh`, `p.sh`, `mut.py` and `mut2.py` were omitted from the prose while the count and the copy were correct. Caught in review on #534.) |
+| `identify.txt`, `prov.txt`, `prov2.txt`, `prov3.txt` | `salvaged/docs/s-f63c2db0/` | Measurement captures. `prov.txt` (3 STALE) and `prov2.txt` (2 STALE) record `check_golden_provenance` states that **no longer exist** — the goldens were re-exported, so those two runs are not reproducible. `prov3.txt` (0 STALE) and `identify.txt` are reproducible but are the evidence behind a shipped claim. |
+
+### Found and deliberately NOT claimed — each checked, not assumed
+
+| Group | Count / size | Why not |
+|---|---|---|
+| `AccuracyCoin.asm` copies | 15 files, ~10 MB | Upstream MIT source the repo deliberately does not vendor, plus `build_*.py`-generated patched variants. Committing it contradicts the project's own rule. |
+| `rtlsnap/rtl/*.sv` | 24 files, ~400 KB | **All 24 blobs are in the sibling's git object store.** The 3 that differ from HEAD trace to `61ce761` (the #22 CHR commit). Recoverable from git. |
+| `objsave/`, `objsave2/` | 24 files | Verilator-generated `V*_tb.{cpp,h,mk}`. Build output. |
+| `rustynes-atomic-1865690-*` | 61 files, 0–30 B | `atomic_write` test turds. |
+| `user_io.cpp` | 101 KB | Third-party MiSTer framework source, not ours. |
+| `build_sub_test_rom.py` | 18.4 KB | The scratch copy is the **older** one — the tracked copy has 12 lines it lacks. |
+| `derive_indices.py` | 10.7 KB | Already tracked at `scripts/accuracycoin-build/derive_indices.py` on HEAD. |
+| ~165 `pr*.md` / `msg*.txt` / `reply*.md` / `rel-*.md` / tag bodies | ~380 KB | Already-published text: each is the `-F` input to a commit, PR, review reply, release or tag that landed. |
+| `chlog.md`, `sibnotes.md`, `sibling-notes.md`, `v2.6.21-draft.md`, `audit1.txt` | ~46 KB | Verified published by probing the tree and `gh release view`, not inferred from the filename. `sibnotes.md`/`v2.6.21-draft.md` are two drafts of one release body. |
+| `header.txt` | 5.9 KB | A **superseded** draft of the `BUILD-PROVENANCE.tsv` header: it reads "since v2.6.23", a version that does not exist; the committed text corrected it to "since 2026-09-19". |
+| 4 flagged git dirs | 2.3 MB, 12 MB, 2.3 MB, 1.4 MB | `ac-src`, `ac`, `tri` are clean upstream clones at exactly the vendored commits (`46199ae4`, `94f1b117`) with **0 uncommitted entries** each; `/tmp/dummy_repo` is not this project's. Nothing to hand-salvage. |
+| Foreign agent scratch | 11,994 matches, 213 groups | Other projects (MARM-Stack 5,856; TarsGPT 3,524; Grok-Bot 1,913; Sawdust 402). The one tree that could plausibly hold misfiled RustyNES work — the workspace-root slug `-home-parobek-Code` — was opened by name: 9 files, all homelab config. |
+| Weak matches | 1,249 files, ~511 MB `data` + 864 logs | Type+recency only; presumed-regenerable bulk. |
