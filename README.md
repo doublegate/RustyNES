@@ -674,7 +674,7 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.6.23 "Pulse"** (2026-09-20) — the `$2007` access pulses the rendering pipeline's load instead of computing its own, which closes the CHR-during-rendering divergence in the MiSTer sibling
+RustyNES's current release is **v2.6.23 "Pulse"** (2026-09-20) — the `$2007` access pulses the rendering pipeline's load instead of computing its own, which closes the CHR-during-rendering divergence in the MiSTer sibling.
 
 The emulation core is unchanged, so the accuracy numbers below hold by
 construction and were re-run anyway. Built on **v2.6.22 "Rigging"**, the
