@@ -26,7 +26,49 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.6.23] - 2026-09-20 - "Pulse" (the access does not increment, it pulses the load already there)
+
 ### Fixed
+
+- **The CHR-during-rendering divergence closes, and the cause was `v` itself.**
+  `RustyNES_MiSTer`'s `chrram-live` gate had been RED for eight releases at
+  **32,861 of 61,440 differing pixels** and now reports *"All 61440 pixels
+  match"*; its read-side sibling `chrram-fetch` went **21,941 → 18** diverging
+  fetches. `chr_wr` is 4,389 before and after, so it is the same stimulus that
+  used to fail. The emulator is unchanged — this is a DUT fix — but the finding
+  is the oracle's to record, because the oracle's own trace is what produced it.
+- **Eleven prior variants were measured correctly and the conclusion drawn from
+  them was wrong.** They swept *what* the `$2007` arm computes — composition,
+  collision policy, write phase, write address, condition — and concluded "the
+  `v` divergence is not in this logic", which closed the search. None swept
+  *what it computes it from*. On silicon the access does not perform an
+  increment of its own: it **pulses the rendering pipeline's existing load**
+  (NESdev's Visual 2C02 material). Three changes, each exposing the next —
+  increment the value *this dot's* load produced (21,941 → 2,646), **resolve**
+  against that same value (→ 18, which stopped 33 nametable cells being written
+  one coarse-X cell early), and address the CHR write from it (→ 0 pixels).
+- **A nametable fetch address *is* `{2'b10, v[11:0]}`**, so the gate's own
+  records already contained `v` and `--ppu-state-trace` gives the oracle's per
+  dot. Two traces, one comparison, answer in the first diverging record. No new
+  instrumentation was needed, and none was written.
+
+### Added
+
+- **`docs/agents/measurement-discipline.md` 11 → 14 findings** (#536). A
+  component measured *through* a defect upstream of it reads as negligible and
+  the number is honest — the CHR write address was quantified at 715 of 32,861
+  pixels (2.2%) and parked on that basis; with `v` corrected the same one-line
+  change was worth the entire remainder. A complete sweep over the wrong space
+  terminates with a confident negative. And a per-dot trace from two models is
+  not comparable until a reference event with no modelling freedom calibrates
+  it.
+
+### Notes
+
+- **No hardware has run any bitstream.** `RustyNES_MiSTer` v2.6.23 ships
+  `RustyNES_20260920.rbf`, cut at fitter seed 4 with timing closed at +0.421 ns
+  setup / +0.112 ns hold, and that remains a claim about synthesis and
+  simulation only. It is the bitstream intended for v2.7.0's bring-up.
 
 - **The 31 legacy AccuracyCoin sub-test ROMs now say which test they run, and
   it is a measurement.** Their `(suite, test)` indices had been unrecorded for

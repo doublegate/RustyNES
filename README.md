@@ -674,7 +674,7 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.6.22 "Rigging"** (2026-09-19) — the instruments for the board, built before the board. **No hardware has run any bitstream** -- v2.7.0 "Shakedown" is the session with the board and this is its non-hardware half. AccuracyCoin now reads back from hardware as BYTES rather than as a photograph, via a mirror ROM whose patch is proven to move nothing and to change no answer. The catalog turned out to carry **149 rows and 144 results** -- five share upstream's omit-sentinel -- so the headline stopped depending on when the run was sampled, at the same 144/144. And a `rom_sha256` written into every golden manifest since the ladder existed, and compared to nothing, is now rung 0.
+RustyNES's current release is **v2.6.23 "Pulse"** (2026-09-20) — the `$2007` access pulses the rendering pipeline's load instead of computing its own, which closes the CHR-during-rendering divergence in the MiSTer sibling
 
 The emulation core is unchanged, so the accuracy numbers below hold by
 construction and were re-run anyway. Built on **v2.6.21 "Steward"**, the
