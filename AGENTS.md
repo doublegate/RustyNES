@@ -206,7 +206,7 @@ what a session needs before it knows what it is doing.
 | the libretro core, the buildbot, the upstream `.info`, RetroArch | [`docs/agents/libretro.md`](docs/agents/libretro.md) | 10 |
 | the MiSTer sibling — the RTL, Quartus, the rungs, the bitstream | [`docs/agents/mister-cosim.md`](docs/agents/mister-cosim.md) | 24 |
 | accuracy work — AccuracyCoin, blargg, sub-tests, goldens, the PPU | [`docs/agents/accuracy-oracle.md`](docs/agents/accuracy-oracle.md) | 23 |
-| reading a result — what it does and does not prove | [`docs/agents/measurement-discipline.md`](docs/agents/measurement-discipline.md) | 11 |
+| reading a result — what it does and does not prove | [`docs/agents/measurement-discipline.md`](docs/agents/measurement-discipline.md) | 14 |
 | the shell, `pre-commit`, `gh`, `/tmp`, long-running jobs | [`docs/agents/tooling-traps.md`](docs/agents/tooling-traps.md) | 9 |
 | a dependency bump, or why one is blocked | [`docs/agents/dependencies.md`](docs/agents/dependencies.md) | 2 |
 | a performance claim, or a debugger panel that outlives its `Nes` | [`docs/agents/perf-and-panels.md`](docs/agents/perf-and-panels.md) | 4 |
