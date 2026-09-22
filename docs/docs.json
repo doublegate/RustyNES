@@ -1,5 +1,6 @@
 {
   "name": "RustyNES Docs7",
+  "theme": "mint",
   "colors": {
     "primary": "#16A34A"
   },

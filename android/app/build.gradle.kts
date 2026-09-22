@@ -334,7 +334,7 @@ dependencies {
     // `coil-compose` (the core + the AsyncImage composable). The libretro box-art
     // auto-match (BoxArt.kt) does its own one-shot HttpURLConnection download to a
     // file:// cache, so no Coil network fetcher (coil-network-*) is pulled in either.
-    implementation("io.coil-kt.coil3:coil-compose:3.6.2")
+    implementation("io.coil-kt.coil3:coil-compose:3.6.3")
     // v1.8.8 "Atlas" (Workstream H): the home-screen "Resume <last game>" widget is
     // authored with Glance (Compose-idiomatic, matching the rest of the app). 1.3.0-
     // alpha01 is the Glance line that explicitly bumped its Compose compileSdk to API
@@ -373,13 +373,13 @@ dependencies {
     "playImplementation"("com.google.android.gms:play-services-cast-framework:22.3.1")
     // v1.8.8 "Atlas" (Workstreams D+E): Play Games Services v2 — the cloud-save
     // Snapshots client (D), the PGS achievements + leaderboards clients (E), and the
-    // PGS v2 auto-sign-in (GamesSignInClient). 21.0.0 is the current v2 SDK (the v1
+    // PGS v2 auto-sign-in (GamesSignInClient). The v2 SDK is current (the v1
     // SDK is end-of-life). Linked but DORMANT: nothing initializes PlayGames until
     // behind the default-off BuildConfig.PGS_ENABLED flag (see CloudSave.kt /
     // PlayGames.kt). DISTINCT from RetroAchievements (rustynes-ra). The PGS sign-in
     // also reads the manifest <meta-data app_id>, which is a maintainer-supplied
     // placeholder (@string/game_services_project_id) until the Play Games project lands.
-    "playImplementation"("com.google.android.gms:play-services-games-v2:22.0.0")
+    "playImplementation"("com.google.android.gms:play-services-games-v2:22.1.0")
     // v1.8.8 "Atlas" (Workstream L): Play Integrity API — the anti-tamper layer. 1.6.0
     // (SafetyNet Attestation was turned down Jan 2025; this is the modern replacement).
     // Linked but DORMANT: no token is requested until behind the default-off
