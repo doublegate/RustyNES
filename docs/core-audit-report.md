@@ -175,7 +175,8 @@ Under IEEE-754 arithmetic:
 - The `while` loop condition never terminates.
 - On each iteration, `self.samples.push(filtered)` executes, appending an element to the heap vector.
 - The thread enters an infinite loop, consuming 100% CPU on that core and exhausting memory until the process terminates via an Out-Of-Memory (OOM) abort.
-- Similarly, if `cpu_rate <= 0.0` or `sample_rate == 0`, `self.step` becomes `Infinity` or `NaN`, resulting in CPU thread hangs or corrupted output buffers.
+- If `cpu_rate == 0.0` with a positive `sample_rate`, `self.step` becomes `Infinity` and triggers the same infinite-loop/OOM condition.
+- If `cpu_rate < 0.0` or `sample_rate == 0`, `self.step` becomes `NaN` or a non-positive step, which prevents the emission loop and produces no samples under finite conditions.
 
 #### Remediation
 
@@ -221,13 +222,13 @@ A search across the core crates confirmed:
 - `todo!()`: **0 occurrences**
 - `unimplemented!()`: **0 occurrences**
 - `panic!()`: **0 occurrences** in production code (confined exclusively to test suites)
-- `unreachable!()`: **6 occurrences** in production code:
+- `unreachable!()`: **5 occurrences** in production code:
   - `header.rs:133`: Match on `h[12] & 0x03` (2-bit mask covering arms 0..=3).
   - `header.rs:147`: Match on `h[7] & 0x03` (2-bit mask covering arms 0..=3).
   - `ppu.rs:2903, 3141`: Match on `reg & 0x07` covering arms 0..=7.
   - `fds.rs:915`: Match on `entry & 0x07` covering arms 0..=7.
 
-All 6 `unreachable!()` invocations occur on bitmasked variables where all possible mathematical permutations are explicitly matched. They are mathematically dead branches.
+All 5 `unreachable!()` invocations occur on bitmasked variables where all possible mathematical permutations are explicitly matched. They are mathematically dead branches.
 
 ---
 
@@ -382,14 +383,14 @@ A search across the repository confirms that `ApuBus` is never implemented by `L
 
 ### 4.4 Interface Bloat in `rustynes_cpu::Bus`
 
-In `crates/rustynes-cpu/src/bus.rs:16-443`, 34 methods are defined on `pub trait Bus`. An audit against `crates/rustynes-cpu/src/cpu.rs` revealed that **18 methods are obsolete dead code** never called by `Cpu`:
+In `crates/rustynes-cpu/src/bus.rs:16-443`, 34 methods are defined on `pub trait Bus`. An audit against `crates/rustynes-cpu/src/cpu.rs` revealed that **22 methods are obsolete dead code** never called by `Cpu`:
 
 - Legacy interrupt polling: `poll_nmi`, `poll_irq`, `poll_irq_at_phase` (replaced by `nmi_level` and `irq_level`).
 - Legacy cycle hooks: `on_cpu_cycle`, `cpu_cycle_phi1`, `cpu_cycle_phi2` (replaced by `start_cycle`/`end_cycle`).
 - Legacy memory accessors: `cpu_read`, `cpu_write` (replaced by `read`, `write`).
 - Legacy DMA hooks: `dmc_dma_pending`, `dmc_dma_defer_load_entry`, `dmc_dma_step`, `dmc_dma_step_idle`, `oam_dma_pending`, `oam_dma_step`, `oam_dma_in_flight`, `oam_dma_overlap_ready`, `dmc_dma_last_was_get`, `oam_dma_overlap_cycle`, `dmc_overlap_begin`, `dmc_overlap_noop_cycle`, `dmc_overlap_get_cycle`, `dmc_overlap_realign_cycle` (replaced by `unified_dma_*`).
 
-**Recommendation**: Mark all 18 obsolete methods with `#[deprecated]`.
+**Recommendation**: Mark all 22 obsolete methods with `#[deprecated]`.
 
 ### 4.5 Open-Bus Decay Asymmetry and Mapper Latch Corruption
 
@@ -490,15 +491,14 @@ The audit revealed three non-derived mapper files that cite reference emulator s
    - Line 947 notes `Mesen2 calls`.
    - *Action*: Sanitize comments to cite the Yamaha YM2413 / Konami 053982 application manual.
 2. **`crates/rustynes-mappers/src/m099_vs_system.rs:135, 160-161, 399`**:
-   - Cites `Mesen2 VsSystem.h: chrOuter = IsVsMainConsole() ? 0 : 2` and `prgOuter = IsVsMainConsole() ? 0 : 4`.
-   - *Action*: Sanitize comments to cite public Nintendo Vs. DualSystem hardware documentation.
+   - *Action*: Remove verbatim source expressions while preserving the documented chrOuter and prgOuter behavior. Cite public Nintendo Vs. DualSystem hardware documentation instead.
 3. **`crates/rustynes-mappers/src/m244_cne_decathlon.rs:115`**:
    - Quotes `(Mesen2 Mapper244 / puNES mapper_244 carry the identical tables.)`.
    - *Action*: Sanitize comment to cite public test vectors.
 
 ### 6.3 Verification of Derived Component Attributions
 
-All genuine ports in the codebase properly carry required `// Provenance:` headers and compatible licensing:
+All genuine ports in the codebase properly carry required `// Provenance:` headers:
 
 - **PPU**: `crates/rustynes-ppu/src/ppu.rs:3` and `src/palette_gen.rs:3` disclose Mesen2, TriCNES, and ares derivations.
 - **APU**: `crates/rustynes-apu/src/blip.rs:3` discloses Shay Green's `blip_buf` (LGPL-2.1-or-later). `crates/rustynes-apu/src/opll.rs:3` discloses Mitsutaka Okazaki's `emu2413` (MIT license).
@@ -758,9 +758,10 @@ impl BlipBuf {
     }
 
     #[must_use]
-    pub fn drain_all(&mut self) -> Vec<f32> {
-        let capacity = self.samples.capacity().max(2048);
-        core::mem::replace(&mut self.samples, Vec::with_capacity(capacity))
+    pub fn drain_all(&mut self, mut reuse_buffer: Vec<f32>) -> Vec<f32> {
+        reuse_buffer.clear();
+        core::mem::swap(&mut self.samples, &mut reuse_buffer);
+        reuse_buffer
     }
 }
 ```

@@ -47,7 +47,7 @@ The RustyNES Libretro Core was audited against the stringent clean-room standard
 1. **Absolute Reference Emulator Firewall**: No reference emulator source code (including Mesen2, puNES, FCEUX, Nestopia, higan, ares, GeraNES, TriCNES, or tetanes) was opened, read, quoted, or transcribed in the creation of `crates/rustynes-libretro` or this audit report. All external reference validation was conducted strictly through black-box oracle outputs (framebuffers, audio traces, and public documentation).
 2. **Zero Derivation Markers**: A comprehensive repository scan confirms that `crates/rustynes-libretro` contains **zero** derivation sites. A targeted regex search yields 0 hits for `// Provenance:` headers.
 3. **Commit History Verification**: Git archeology confirms commit `f614f00e` authored by DoubleGate implemented the crate as an original, clean-room facade over `rustynes-core` using public C-ABI definitions.
-4. **License Consistency**: The core is governed by the GNU General Public License v3.0 or later (`GPL-3.0-or-later`), adhering fully to workspace licensing rules and ADR 0036.
+4. **License Consistency**: The core metadata observed claims GNU General Public License v3.0 or later (`GPL-3.0-or-later`). (Final license compliance is subject to the repository's established legal and maintainer review process).
 
 ---
 
@@ -1088,7 +1088,7 @@ Multiple files in `docs/libretro/` have drifted from the post-v2.0.0 codebase:
 ### Fix 9: Panic Containment Across extern "C" ABI Boundaries in `on_run`
 
 - **Target File**: `crates/rustynes-libretro/src/lib.rs` (Lines 989–998)
-- **Rationale**: Encloses frame execution in `std::panic::catch_unwind` with `std::panic::AssertUnwindSafe` to prevent unwinding panics from crossing the foreign function interface boundary (which results in immediate `SIGABRT` process abort). On panic interception, it resets `self.nes = None` and `self.dual = None` to isolate and poison the failed emulation instance, preventing corrupted state cascading while allowing the host frontend to continue running gracefully.
+- **Rationale**: Encloses on_run frame execution in `std::panic::catch_unwind` to prevent runtime panics during stepping from crossing the foreign function interface boundary. Note that this specific containment applies only to the `on_run` frame execution path; other exported C-ABI trampolines (such as `retro_serialize`) remain unshielded.
 
 ```diff
 --- a/crates/rustynes-libretro/src/lib.rs
@@ -1184,6 +1184,7 @@ Multiple files in `docs/libretro/` have drifted from the post-v2.0.0 codebase:
              // struct due to a forward-declaration artifact in libretro.h:2879. While presence is
              // validated via game.is_some(), payload extraction on standard frontends without
              // GET_GAME_INFO_EXT requires upstream struct definition parity.
+             // Note: Unsupported fallback. We do not extract payload data here.
              return Err("Frontend does not support GET_GAME_INFO_EXT; standard retro_game_info payload extraction requires extended interface or updated struct bindings".into());
          } else {
              return Err("No game content provided by frontend (neither GET_GAME_INFO_EXT nor standard retro_game_info)".into());

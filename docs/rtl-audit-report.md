@@ -36,10 +36,10 @@ The RustyNES_MiSTer implementation models the NES hardware at the single-cycle b
 
 | Category | Status | Critical | Major | Minor / Opt | Summary of Primary Findings |
 |---|---|---|---|---|---|
-| **Correctness & Synthesis (R1)** | Caution | 3 | 4 | 2 | DC blocker arithmetic overflow causing audio rail clamping; SDRAM CKE power-up protocol violation; DQM read masking High-Z bus floating; Arbiter byte-lane address corruption; MMC1 consecutive write filter bypass; MMC3 IRQ acknowledge race. |
+| **Correctness & Synthesis (R1)** | Caution | 4 | 4 | 2 | DC blocker arithmetic overflow causing audio rail clamping; SDRAM CKE power-up protocol violation; DQM read masking High-Z bus floating; Arbiter byte-lane address corruption; MMC1 consecutive write filter bypass; MMC3 IRQ acknowledge race. |
 | **Timing & Optimization (R2)** | Actionable | 1 | 3 | 2 | Binding setup slack of +0.421 ns in HDMI PLL; 3 runtime combinational modulo dividers in `cart.sv` consuming ~480 ALMs and 12 ns delay; 256:1 mux in CPU fetch path consuming 978 LEs; unconstrained SDRAM I/O pins in SDC. |
 | **Architectural Consistency (R3)**| Deficient | 2 | 2 | 2 | Completely unsynchronized asynchronous reset deassertion across 16,633 flip-flops; multi-bit address sampling CDC race in `cart_sdram.sv`; PPU register access gating breakdown under PAL parameters; deceptive tab indentation. |
-| **Actionable Fixes Catalog** | Ready | 12 | 0 | 0 | 12 fully formulated, syntactically valid SystemVerilog and SDC replacement patches addressing all critical and major defects identified across the six subsystem domains. |
+| **Actionable Fixes Catalog** | Ready | 6 | 3 | 3 | 12 fully formulated, syntactically valid SystemVerilog and SDC replacement patches addressing the majority of critical and major defects identified across the six subsystem domains. |
 | **Provenance & Firewall** | Passed | 0 | 0 | 0 | 100% compliant with ADR 0037. Zero third-party HDL or emulator source consultation. All verification grounded in hardware datasheets and black-box co-simulation diffs. |
 
 ---
@@ -874,6 +874,14 @@ assign ppu_access = ppu_ce && (cpu_acc == ACCESS_MC[$clog2(CPU_DIV)-1:0]);
             rst_sdram_sync <= {rst_sdram_sync[0], 1'b1};
     end
     wire rst_sdram_n = rst_sdram_sync[1];
+
+    // NOTE: Update consumer instantiations to use the synchronized resets:
+    // nes_top nes (
+    //     ...
+    //     .reset(~rst_sys_n),
+    //     ...
+    // );
+    // And ensure any sdram interfaces use ~rst_sdram_n for their respective reset.
 >>>>
 ```
 
@@ -941,7 +949,7 @@ set_false_path -to [get_registers {emu|rst_sdram_sync[0]}]
     end
 ==== REPLACEMENT
     // Compute next-power-of-two bank masks using bit-smearing.
-    // Eliminates 3 LPM dividers (~296 ALMs, ~12 ns path delay) while correctly
+    // Eliminates 3 LPM dividers (~480 ALMs, ~12 ns path delay) while correctly
     // supporting both power-of-two and non-power-of-two ROM images.
     function automatic logic [8:0] pow2_mask_prg(input logic [8:0] count);
         logic [8:0] m;
@@ -971,9 +979,11 @@ set_false_path -to [get_registers {emu|rst_sdram_sync[0]}]
 
     logic [8:0] prg_bank_sel;
     logic [9:0] chr_bank_sel;
+    logic [9:0] chr_wr_bank_sel;
     always_comb begin
         prg_bank_sel = prg_slot[cpu_addr[14:13]] & prg_bank_mask;
         chr_bank_sel = chr_slot[chr_addr[12:10]] & chr_bank_mask;
+        chr_wr_bank_sel = chr_wr_slot[chr_addr[12:10]] & chr_bank_mask;
     end
 >>>>
 ```
@@ -1041,7 +1051,7 @@ To maintain continuous cycle accuracy without regression, RustyNES_MiSTer employ
 1. **Static Lint Verification**: All modules must compile with zero errors and zero warnings under `verilator --lint-only -Wall`.
 2. **Per-Module Unit Co-Simulation**: Each core module (`cpu6502`, `ppu2c02`, `apu2a03`, `sdram_arbiter`) is verified against its corresponding Rust crate oracle using synthesized stimulus vectors.
 3. **Full System Co-Simulation**: The entire `nes_top` core runs across the 155 testbench regression suite, comparing framebuffers, audio buffers, and CPU bus traces against the Rust software oracle.
-4. **Static Timing Analysis (STA)**: Timing closure is verified under TimeQuest across all operating corners (Slow -40°C, Slow 100°C, Fast -40°C, Fast 0°C) with zero unconstrained paths.
+4. **Static Timing Analysis (STA)**: Timing closure remains pending until SDRAM external I/O constraints are applied and TimeQuest confirms zero unconstrained paths across all operating corners (Slow -40°C, Slow 100°C, Fast -40°C, Fast 0°C).
 
 ### 7.2 Regression Co-Simulation Ladder (155 Gates)
 
@@ -1059,21 +1069,21 @@ Command sequences for local verification:
 
 ```bash
 # 1. Static Verilator Lint
-make -C /home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/tb lint
+make -C ../RustyNES_MiSTer/tb lint
 
 # 2. CPU Instruction Smoke Suite
-make -C /home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/tb cpu-smoke
+make -C ../RustyNES_MiSTer/tb cpu-smoke
 
 # 3. PPU Timing & Scrolling Gates
-make -C /home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/tb ppu-vbl-gate
-make -C /home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/tb ppu-scroll-gate
+make -C ../RustyNES_MiSTer/tb ppu-vbl-gate
+make -C ../RustyNES_MiSTer/tb ppu-scroll-gate
 
 # 4. SDRAM Priority Arbiter Stress Suite
-make -C /home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/tb sdram-arb-gate
+make -C ../RustyNES_MiSTer/tb sdram-arb-gate
 
 # 5. Timing Closure Check
-python3 /home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/scripts/check_timing.py \
-    /home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/output_files/RustyNES.sta.rpt
+python3 ../RustyNES_MiSTer/scripts/check_timing.py \
+    ../RustyNES_MiSTer/output_files/RustyNES.sta.rpt
 ```
 
 ### 7.4 Physical Hardware Deployment Checklist (Terasic DE10-Nano)
@@ -1106,8 +1116,8 @@ In accordance with the 2026-08-26 provenance audit, 21 files within the RustyNES
 - `crates/rustynes-ppu/src/ppu.rs`: Sprite evaluation FSM and OAM bus model (derived from Mesen2/TriCNES). The SystemVerilog FSM in `ppu2c02.sv` was implemented independently from NESdev hardware descriptions and pinned to public test ROM vectors.
 - `crates/rustynes-apu/src/blip.rs`: Band-limited step synthesis. The RTL audio subsystem in `apu_mixer.sv` omits BLEP entirely, synthesizing direct non-linear resistor ladder ROM lookup tables.
 
-### 8.3 Attestation & Licensing Verification (GPL-3.0-or-later)
+### 8.3 Provenance & Attribution Facts
 
-- **License Compatibility**: The entire `RustyNES_MiSTer` hardware RTL implementation is licensed under **GPL-3.0-or-later**, maintaining full licensing compatibility with the core RustyNES software repository.
-- **Notice Compliance**: All source files carry compliant SPDX license headers (`SPDX-License-Identifier: GPL-3.0-or-later`) and appropriate copyright attributions.
-- **Attestation Statement**: No third-party HDL code has been incorporated, transcribed, or laundered into the `RustyNES_MiSTer` repository. All findings and proposed fixes in this report represent clean-room engineering implementations.
+- **Licensing Metadata**: The `RustyNES_MiSTer` hardware RTL implementation metadata records the license as **GPL-3.0-or-later**.
+- **Notice Compliance**: All source files carry SPDX license headers (`SPDX-License-Identifier: GPL-3.0-or-later`) and copyright attributions.
+- **Provenance Fact**: All findings and proposed fixes in this report were developed observing the clean-room constraints. Final determination of license compatibility and code provenance is subject to the project's established maintainer and legal review processes.

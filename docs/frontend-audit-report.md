@@ -6,7 +6,7 @@
 
 This audit evaluates the complete host application, presentation, audio synchronization, and foreign function interface (FFI) perimeter of RustyNES. The audit spans eight primary crates, two native mobile application packages, and the WebAssembly deployment target:
 
-- `crates/rustynes-frontend`: Desktop Winit 0.30 event loop, Wgpu graphics pipeline, Egui 0.34 debugger and configuration shell, CPAL audio output driver, TAS movie playback/recording, and multi-window manager.
+- `crates/rustynes-frontend`: Desktop Winit 0.30 event loop, Wgpu graphics pipeline, Egui 0.35 debugger and configuration shell, CPAL audio output driver, TAS movie playback/recording, and multi-window manager.
 - `crates/rustynes-frontend/web/`: WebAssembly target harnesses (`wasm-winit` full UI and `wasm-canvas` minimalist embed), Web Audio AudioWorklet / ScriptProcessor pipelines, and HTML5 canvas blitter.
 - `crates/rustynes-mobile`: UniFFI 0.32 bridge providing cross-platform Rust bindings for Android and iOS hosts, encapsulating `NesController`, movie recording, Lua scripting, netplay, and RetroAchievements.
 - `crates/rustynes-android` & `android/app/`: Android host platform, comprising the native JNI/NDK Wgpu surface renderer (`AndroidGfx`), Jetpack Compose UI shell, Kotlin audio streaming, and Android lifecycle controllers.
@@ -21,7 +21,7 @@ The audit was conducted in rigorous compliance with the `GEMINI.md` Provenance &
 
 - **Zero Reference Source Inspection**: No third-party reference emulator source code (including Mesen2, puNES, FCEUX, Nestopia, higan, ares, or TriCNES) was opened, read, quoted, or transcribed.
 - **Strict Black-Box Evaluation**: Emulation behavior and timing contracts were validated strictly against public hardware documentation (the NESdev wiki, official chip datasheets, and public test ROM suites).
-- **Static Code Analysis & Toolchain Verification**: All Rust, Kotlin, and Swift components were audited for thread safety, data race hazards, memory safety invariants, resource leak pathways, and exception handling. Proposed Rust remediations were validated against `cargo check -p rustynes-frontend`.
+- **Static Code Analysis & Toolchain Verification**: All Rust, Kotlin, and Swift components were audited for thread safety, data race hazards, memory safety invariants, resource leak pathways, and exception handling. Proposed Rust remediations were validated against the `rustynes-frontend` crate.
 - **Markdown & Quality Verification**: The report structure complies with project standards, verified with `markdownlint` to ensure 0 lint errors.
 
 ### 1.3 Frontend Architecture Overview
@@ -43,7 +43,7 @@ RustyNES frontend components decouple cycle-accurate emulation from variable hos
 | **Mobile UniFFI Bridge (`MOB`)** | Deficient | 4 | 5 | 0 | Monolithic mutex locking starving UI input; unbounded uncompressed ROM ingestion; missing `catch_unwind` on C-ABI/JNI; synchronous worker thread joins on network teardown; battery SRAM persistence omission; UniFFI GC churn (9 findings). |
 | **Security & Sandboxing (`SEC`)** | Caution | 2 | 4 | 0 | HD-pack PNG decompression bomb; unbounded Lua memory exhaustion; Lua `pcall` budget evasion; SSRF in host script HTTP IPC; synchronous AV recorder stop blocking UI; bare `std::fs::write` on user saves (6 findings). |
 | **Consistency & Aux Subsystems (`CON`)** | Compliant | 0 | 0 | 4 | Mutually exclusive WebAssembly feature conflict; degenerate sample rate ratio in linear audio resampling; corrupted config overwrite; dead `host` config field (former CON-02 retracted as false positive; 4 findings). |
-| **Strict Provenance (`GEMINI.md`)** | Passed | 0 | 0 | 0 | 100% clean-room audit; zero reference emulator source code inspected or cited; full compliance with GPL-3.0-or-later licensing constraints (0 findings). |
+| **Strict Provenance (`GEMINI.md`)** | Passed | 0 | 0 | 0 | 100% clean-room audit; zero reference emulator source code inspected or cited; provenance controls and documented evidence observed (0 findings). |
 | **Total Master Findings** | — | **22** | **19** | **7** | Total 48 verified genuine findings (22 High, 19 Medium, 7 Low) cataloged across Section 8 master table. |
 
 ---
@@ -249,7 +249,7 @@ If the user dismisses the netplay dialog or changes screens while the remote ser
 
 #### Remediation
 
-Do not perform synchronous blocking joins in `Drop` on network worker threads. Signal an atomic shutdown flag, close the underlying socket/channel, and either detach the thread or join with a short non-blocking timeout (e.g. 50 ms).
+Do not perform synchronous blocking joins in `Drop` on network worker threads. Signal an atomic shutdown flag, close the underlying socket/channel, and use an explicit acknowledgement protocol that enforces a deadline without relying on timed-join APIs.
 
 ### 2.6 Lua Sandboxing: Memory Exhaustion & `pcall` Budget Evasion
 
@@ -349,7 +349,7 @@ Clamp HTTP response reading using `take(10 * 1024 * 1024)` (10 MiB limit) and re
 
 ```rust
 // crates/rustynes-frontend/src/app.rs:10052-10058
-let overlay = move |device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, size: (u32, u32)| {
+let overlay = |device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, size: (u32, u32)| {
     debugger.paint_shell(device, queue, encoder, view, size, prepared);
 };
 let render_result = gfx.render_with_overlay(..., overlay);
@@ -1117,7 +1117,7 @@ impl DebuggerOverlay {
 debugger.update_textures(gfx.device(), gfx.queue(), &prepared.textures_delta.set);
 let textures_to_free = std::mem::take(&mut prepared.textures_delta.free);
 
-let overlay = move |device: &wgpu::Device,
+let overlay = |device: &wgpu::Device,
                     queue: &wgpu::Queue,
                     encoder: &mut wgpu::CommandEncoder,
                     view: &wgpu::TextureView,
