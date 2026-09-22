@@ -375,3 +375,4 @@ scripts/gg/__pycache__/
 tests/roms/**/*.lst
 tests/roms/**/*.fns
 tests/roms/**/*.nl
+docs7/
