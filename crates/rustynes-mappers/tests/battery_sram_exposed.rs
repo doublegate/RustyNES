@@ -224,3 +224,70 @@ fn bandai_fcg_eeprom_is_the_battery_save() {
         );
     }
 }
+
+/// NES 2.0 image with an explicit PRG-NVRAM size (`64 << shift` bytes) and no
+/// volatile RAM, for boards whose save size is the thing under test.
+fn image_nvram(mapper: u16, prg_16k: u8, chr_rom: bool, nvram_shift: u8) -> Vec<u8> {
+    let mut v = image(mapper, chr_rom);
+    v[4] = prg_16k;
+    v[10] = nvram_shift << 4;
+    let chr_units = if chr_rom { CHR_8K_UNITS } else { 0 };
+    let prg = usize::from(prg_16k) * 0x4000;
+    let chr = usize::from(chr_units) * 0x2000;
+    v.truncate(16);
+    v.extend((0..prg).map(|i| (i as u8) | 0x80));
+    v.extend((0..chr).map(|i| i as u8));
+    v
+}
+
+/// MMC5 EWROM (32 KiB battery RAM): writes reach it only through the
+/// `$5102`/`$5103` protect pair, and `$5113` banks it -- two things the blind
+/// sweep above cannot do. The whole 32 KiB is the save, in bank order.
+#[test]
+fn mmc5_banked_prg_ram_is_the_battery_save() {
+    let (_c, mut m) = parse(&image_nvram(5, 16, true, 9)).unwrap(); // 64 << 9 = 32 KiB
+    m.cpu_write(0x5102, 0x02);
+    m.cpu_write(0x5103, 0x01);
+    for bank in 0..4u8 {
+        m.cpu_write(0x5113, bank);
+        m.cpu_write(0x6000, 0xD0 | bank);
+    }
+    assert_eq!(m.sram().len(), 0x8000);
+    for bank in 0..4usize {
+        assert_eq!(m.sram()[bank * 0x2000], 0xD0 | bank as u8, "bank {bank}");
+    }
+    m.sram_mut()[3 * 0x2000 + 1] = 0x7A;
+    m.cpu_write(0x5113, 3);
+    assert_eq!(m.cpu_read(0x6001), 0x7A, "a restored save reaches the game");
+}
+
+/// MMC5 ETROM (16 KiB = two 8 KiB chips): "Games with 16K PRG-RAM only
+/// battery-save the first 8K", so the save is chip 0 alone.
+#[test]
+fn mmc5_16k_saves_only_the_battery_backed_chip() {
+    let (_c, m) = parse(&image_nvram(5, 16, true, 8)).unwrap(); // 16 KiB
+    assert_eq!(m.sram().len(), 0x2000);
+}
+
+/// MMC1 SXROM (512 KiB PRG, 32 KiB battery RAM): the CHR register's bits 3-2
+/// bank the RAM, which the sweep never sets. The whole 32 KiB is the save.
+#[test]
+fn mmc1_sxrom_banked_prg_ram_is_the_battery_save() {
+    let (_c, mut m) = parse(&image_nvram(1, 32, false, 9)).unwrap();
+    let write5 = |m: &mut Box<dyn rustynes_mappers::Mapper>, addr: u16, value: u8| {
+        for i in 0..5 {
+            for _ in 0..3 {
+                m.notify_cpu_cycle();
+            }
+            m.cpu_write(addr, (value >> i) & 1);
+        }
+    };
+    for bank in 0..4u8 {
+        write5(&mut m, 0xA000, bank << 2);
+        m.cpu_write(0x6000, 0xE0 | bank);
+    }
+    assert_eq!(m.sram().len(), 0x8000);
+    for bank in 0..4usize {
+        assert_eq!(m.sram()[bank * 0x2000], 0xE0 | bank as u8, "bank {bank}");
+    }
+}
