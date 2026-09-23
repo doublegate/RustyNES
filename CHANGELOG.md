@@ -30,24 +30,38 @@ cycle-accurate core later replaced.
 
 ### Fixed — save data
 
-- **Six cartridge boards lost their battery save on every exit.** The frontend
-  persists `mapper.sram()`, whose default is an empty slice, and these boards
-  kept their save memory elsewhere without overriding it: Bandai FCG's serial
+- **Six cartridge boards handed RetroArch an empty battery save.** The
+  libretro core gives RetroArch `Nes::sram()` as the game's save RAM (its
+  `.srm` file), and the mapper default is an empty slice. These boards kept
+  their save memory elsewhere without overriding it: Bandai FCG's serial
   EEPROM (mappers 16 and 159), Taito X1-005's 128-byte RAM (80), TxSROM (118)
   and TQROM (119), which did not forward to their MMC3, Multicart 15, and
   BMC-FK23C's 32 KiB WRAM (176, and mapper 30 with CHR-ROM). The game ran and
-  the save appeared to succeed; the `.sav` file was empty. Five were in the core
+  the save appeared to succeed; the `.srm` was empty. Five were in the core
   audit (IMP-08/09/10, §5.1e); FK23C was found by the new test, which builds
-  every mapper number rather than trusting a list.
-- **User files are no longer written by truncate-then-write.** FDS disk saves,
+  every NES 2.0 mapper number rather than trusting a list.
+- **User files are no longer truncated in place.** FDS disk saves,
   RetroAchievements progress, movies, screenshots, subtitle and history-clip
-  exports, fm2/bk2 export, TAStudio projects, the memory-compare export and
-  HD-pack builder output now go through the atomic writer, so a crash or a full
-  disk mid-write leaves the previous file rather than a truncated one (frontend
-  audit SEC-06). A test fails on any new bare `fs::write` in the frontend.
-- **An unreadable `config.toml` is kept before defaults replace it.** It is
+  exports, fm2/bk2 export, TAStudio projects, the memory-compare export,
+  HD-pack builder output and the PPU viewer's CHR PNG export now go through the
+  atomic writer, and A/V, GIF and WAV recordings are encoded to a staging file
+  that replaces the target only when ffmpeg succeeds. A crash, a full disk or a
+  failed encode leaves the previous file rather than a truncated one (frontend
+  audit SEC-06). A test fails on any new `fs::write`, `File::create` or
+  `OpenOptions` writer in the frontend outside an argued allow-list.
+- **An unusable `config.toml` is kept before defaults replace it.** It is
   copied to `config.toml.corrupt.bak` first, instead of being overwritten by
-  the next save (frontend audit CON-04).
+  the next save, whether it fails to parse or is not valid UTF-8 (frontend
+  audit CON-04).
+
+### Known gap — desktop and mobile battery saves
+
+- **The desktop and mobile frontends do not persist cartridge battery RAM.**
+  Found while checking the entry above: nothing in `rustynes-frontend` or
+  `rustynes-mobile` reads `sram()`, and the desktop app writes only the FDS
+  disk sidecar. A game's in-cartridge save on those hosts survives only inside
+  a save state. The core audit assumed the opposite; for mobile the frontend
+  audit already records it (AND-09, MOB-05). Not fixed in this release.
 
 ### Changed — provenance
 

@@ -674,15 +674,17 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.7.1 "Keepsake"** (2026-09-23) — six cartridge boards no longer lose their battery save on exit, every user file the frontend writes is written atomically, and three mapper files are now recorded as derived from Mesen2 and puNES. Built on **v2.7.0 "Palisade"** (2026-09-23) — a corrupt or hand-edited save state now fails at restore with a typed error instead of crashing the emulator one tick later, pulse 1 no longer mutes on the `$4001 = $08` sweep idiom, and the save-state fuzz target can finally reach what it exists to find.
+RustyNES's current release is **v2.7.1 "Keepsake"** (2026-09-23) — six cartridge boards now hand RetroArch their battery save instead of an empty one, every user file the frontend writes is written atomically, and three mapper files are now recorded as derived from Mesen2 and puNES. Built on **v2.7.0 "Palisade"** (2026-09-23) — a corrupt or hand-edited save state now fails at restore with a typed error instead of crashing the emulator one tick later, pulse 1 no longer mutes on the `$4001 = $08` sweep idiom, and the save-state fuzz target can finally reach what it exists to find.
 
-v2.7.0 changes the emulation core -- the pulse-1 sweep clamp, and the
-save-state decoders -- so the accuracy numbers below were re-measured on the
-release tree rather than inherited: AccuracyCoin 144/144 and nestest pass, and
-the full `--features test-roms` suite passes 2,622 tests. Built on **v2.6.23
-"Pulse"**, which closed the CHR-during-rendering divergence in the MiSTer
-sibling, and **v2.6.22 "Rigging"**, the instruments for the board, built before
-the board.
+v2.7.1 changes no emulation path, and the accuracy numbers below were
+re-measured on its release tree anyway: AccuracyCoin 144/144 and nestest pass,
+and the full `--features test-roms` suite passes 2,630 tests. It also
+found that the desktop and mobile frontends never persist a cartridge's
+battery RAM, so on those hosts an in-game save survives only inside a save
+state; that is recorded, not yet fixed. Built on **v2.7.0 "Palisade"**, which
+changed the core (the pulse-1 sweep clamp and the save-state decoders), and
+**v2.6.23 "Pulse"**, which closed the CHR-during-rendering divergence in the
+MiSTer sibling.
 
 | Measure | Value |
 |---|---|

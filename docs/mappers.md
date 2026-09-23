@@ -73,18 +73,30 @@ The `Cartridge` owns immutable PRG-ROM and CHR-ROM banks plus mutable PRG-RAM an
 The mapper does *not* directly own the ROM bytes — it receives a reference to the cart-owned arrays via constructor. This avoids duplication and keeps the `dyn Mapper` boxed type small.
 
 **Battery saves go through `sram()` / `sram_mut()`, and the default is empty.**
-The frontend writes `mapper.sram()` to the `.sav` file and restores it through
-`sram_mut()`. A board that holds save memory anywhere else — its own `wram`
-field, an on-chip RAM, a serial EEPROM, a wrapped inner mapper — must override
-the pair, or the player's save is silently written as an empty file. v2.7.1
-found six boards that did not (Bandai FCG's EEPROM, Taito X1-005's 128 bytes,
-TxSROM and TQROM not forwarding to their MMC3, Multicart 15, and BMC-FK23C).
-`crates/rustynes-mappers/tests/battery_sram_exposed.rs` builds every mapper number
-the parser accepts, with a battery and 8 KiB of PRG-NVRAM, both with CHR-ROM and
-with CHR-RAM, and fails any board whose `$6000-$7FFF` holds CPU writes while
+`Nes::sram()` is the one place a host can read battery memory from, and the
+**libretro core** is what persists it today: it registers `sram_mut()` as
+`RETRO_MEMORY_SAVE_RAM`, which RetroArch writes to the game's `.srm` file
+(`crates/rustynes-libretro/src/lib.rs`). A board that holds save memory anywhere
+else — its own `wram` field, an on-chip RAM, a serial EEPROM, a wrapped inner
+mapper — must override the pair, or RetroArch saves an empty file. v2.7.1 found
+six boards that did not (Bandai FCG's EEPROM, Taito X1-005's 128 bytes, TxSROM
+and TQROM not forwarding to their MMC3, Multicart 15, and BMC-FK23C).
+
+**The desktop and mobile frontends do not persist cartridge battery RAM at all**
+(v2.7.1 finding; for mobile it is also frontend audit AND-09 / MOB-05). Nothing
+in `rustynes-frontend` or `rustynes-mobile` calls `sram()`; the desktop app
+writes only the FDS disk sidecar (`.fds.sav`). A game's in-cartridge save on
+those hosts survives only inside a save state.
+
+`crates/rustynes-mappers/tests/battery_sram_exposed.rs` builds every NES 2.0
+mapper number (0-4095) with a battery and 8 KiB of PRG-NVRAM, both with CHR-ROM
+and with CHR-RAM, and fails any board whose `$6000-$7FFF` holds CPU writes while
 `sram()` stays empty or unchanged — so a new mapper that forgets the override
 fails by default. Boards whose save memory has no CPU window (the FCG EEPROM) or
-needs an unlock sequence (X1-005) have their own tests in the same file.
+needs an unlock sequence (X1-005) have their own tests in the same file. The
+loop can only check boards whose RAM a blind write sweep reaches — 43 of 296
+images at v2.7.1 — and prints the rest; RAM gated behind a board-specific enable
+is not checked by it.
 
 ## Behavior
 

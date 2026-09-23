@@ -4,7 +4,7 @@ Report: [`core-audit-report.md`](core-audit-report.md). Verdict vocabulary and
 the closing procedure: [`README.md`](README.md). Target release per
 [ADR 0041](../adr/0041-hardware-release-is-v3.0.0.md).
 
-**Stale facts in the report:** AccuracyCoin is 144/144, not "141/141" (§1.3).
+**Stale facts in the report:** AccuracyCoin is 144/144, not "141/141" (§1.3). §5.1's premise that "the host frontend persists battery-backed save data to `.sav` files" is **false for the desktop and mobile frontends**, which never read `sram()` (frontend ledger FE-01); the fixes below matter for the libretro core, which hands `sram()` to RetroArch as its `.srm`.
 `GEMINI.md` is a symlink to `AGENTS.md`, so the report's citations of it are
 citations of `AGENTS.md`.
 

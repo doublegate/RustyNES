@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Every battery-backed board must expose its save memory through `sram()`.
 //!
-//! The frontend persists a cartridge's battery save by writing
-//! `mapper.sram()` to a `.sav` file and restores it through `sram_mut()`.
-//! The trait's default returns an EMPTY slice, so a mapper that holds save RAM
-//! but does not override the pair loses the player's save on every exit, with
-//! no error anywhere: the game works, the save "succeeds", and the file is
-//! empty. The core audit found five such boards (IMP-08/09/10, section 5.1e).
+//! A host reads a cartridge's battery save through `Nes::sram()` and restores
+//! it through `sram_mut()`; today the host that does is the libretro core,
+//! which hands the slice to `RetroArch` as `RETRO_MEMORY_SAVE_RAM` (the `.srm`
+//! file). The trait's default returns an EMPTY slice, so a mapper that holds
+//! save RAM but does not override the pair loses the player's save on every
+//! exit, with no error anywhere: the game works, the save "succeeds", and the
+//! file is empty. The core audit found five such boards (IMP-08/09/10, section
+//! 5.1e); this test found a sixth.
 //!
-//! This test does not trust a list of boards. It builds every mapper number
-//! the parser accepts from an NES 2.0 image with the battery bit set and 8 KiB
+//! This test does not trust a list of boards. It builds every NES 2.0 mapper
+//! number (0-4095) from an NES 2.0 image with the battery bit set and 8 KiB
 //! of PRG-NVRAM declared, writes a marker through the CPU bus across
 //! `$6000-$7FFF`, and requires that marker to appear in `sram()`. A board that
 //! genuinely has no CPU-visible save RAM there -- its save memory is behind a
@@ -60,11 +62,32 @@ fn image(mapper: u16, chr_rom: bool) -> Vec<u8> {
 /// test below.
 const NO_CPU_WINDOW: &[(u16, &str)] = &[];
 
+/// How many images must reach writable RAM for the loop to count as having
+/// checked anything. Measured when the range became 0..4096 (v2.7.1): 296
+/// images built, 43 reaching RAM.
+///
+/// The other 146 mapper numbers build but show this loop no writable RAM:
+/// many have none, and the rest gate it behind a board-specific enable (MMC5's
+/// protect registers, FME-7's RAM-enable bit) that a blind write sweep never
+/// unlocks. For those the loop checks NOTHING, and the eprintln in the test
+/// names them. They were cross-checked statically instead when this was
+/// written: every mapper source holding RAM overrides `sram()` except Kaiser
+/// (FDS conversions, no battery), mapper 42 (ROM at `$6000`), mapper 30 (saves
+/// by self-flashing) and the Vs. `DualSystem` shared RAM. Board-specific tests for
+/// the gated boards belong with v2.7.2's mapper-RAM work. Lower this floor only
+/// with a reason.
+const CHECKED_FLOOR: usize = 43;
+
 #[test]
 fn every_battery_board_exposes_its_save_memory() {
     let mut constructed = 0usize;
+    let mut checked = 0usize;
+    let mut unreached = Vec::new();
     let mut failures = Vec::new();
-    for (mapper, chr_rom) in (0u16..512).flat_map(|n| [(n, true), (n, false)]) {
+    // NES 2.0 mapper numbers are 12-bit, so this is the whole space: 0..4096.
+    // It stopped at 512 until review on #548 pointed at mapper 513, which the
+    // parser dispatches and the loop therefore never built.
+    for (mapper, chr_rom) in (0u16..4096).flat_map(|n| [(n, true), (n, false)]) {
         let Ok((cart, mut m)) = parse(&image(mapper, chr_rom)) else {
             continue;
         };
@@ -91,8 +114,13 @@ fn every_battery_board_exposes_its_save_memory() {
             .filter(|&a| m.cpu_read(a) == marker(a))
             .count();
         if surviving < 64 {
-            continue; // no writable RAM reachable without board-specific setup
+            // No writable RAM reachable without board-specific setup. Recorded,
+            // not failed: it is a hole in what this loop can see, printed below
+            // so it is visible, and bounded by the `checked` floor.
+            unreached.push(mapper);
+            continue;
         }
+        checked += 1;
         let after = m.sram();
         if after.is_empty() || after == before.as_slice() {
             failures.push(format!(
@@ -101,9 +129,20 @@ fn every_battery_board_exposes_its_save_memory() {
             ));
         }
     }
+    unreached.dedup();
+    eprintln!(
+        "battery_sram_exposed: {constructed} images built, {checked} with reachable RAM checked; \
+         {} mapper numbers built but with no RAM this loop can reach: {unreached:?}",
+        unreached.len()
+    );
     assert!(
         constructed > 200,
         "only {constructed} images constructed; the image is wrong"
+    );
+    assert!(
+        checked >= CHECKED_FLOOR,
+        "only {checked} images reached writable RAM (floor {CHECKED_FLOOR}); a change to the \
+         image or the reachability test has made this loop check less than it did"
     );
     assert!(
         failures.is_empty(),

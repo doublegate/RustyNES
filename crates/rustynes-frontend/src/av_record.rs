@@ -626,7 +626,17 @@ impl AvRecorder {
             audio.flush().map_err(AvError::Sidecar)?;
         }
 
-        let args = ffmpeg_args(&self.params, &self.video_path, &self.audio_path);
+        // ffmpeg writes to a STAGING sibling, never to the chosen path: with
+        // `-y` it truncates its output first, so an encode that fails or is
+        // killed part-way would otherwise destroy a recording the user already
+        // had under that name. The staged file is renamed over the target only
+        // once ffmpeg exits 0 (see `publish_output`), the same
+        // write-then-rename rule `atomic_write` applies to every other user
+        // file.
+        let staged = staging_path(&self.params.out_path);
+        let mut staged_params = self.params.clone();
+        staged_params.out_path.clone_from(&staged);
+        let args = ffmpeg_args(&staged_params, &self.video_path, &self.audio_path);
         let result = Command::new("ffmpeg")
             .args(&args)
             .stdin(Stdio::null())
@@ -640,13 +650,55 @@ impl AvRecorder {
         let _ = std::fs::remove_file(&self.video_path);
         let _ = std::fs::remove_file(&self.audio_path);
 
-        match result {
-            Ok(status) if status.success() => Ok(self.params.out_path.clone()),
+        let outcome = match result {
+            Ok(status) if status.success() => Ok(()),
             Ok(status) => Err(AvError::Encode(format!(
                 "ffmpeg exited with {status} ({} frames, {} samples)",
                 self.frames, self.samples
             ))),
             Err(e) => Err(AvError::Encode(format!("ffmpeg spawn failed: {e}"))),
+        };
+        publish_output(&staged, &self.params.out_path, outcome)?;
+        Ok(self.params.out_path.clone())
+    }
+}
+
+/// The sibling path ffmpeg encodes into: `<stem>.rustynes-partial.<ext>`, in
+/// the output's own directory. The extension is KEPT because ffmpeg picks the
+/// muxer from it; the same directory is required because `rename` is atomic
+/// only within one filesystem.
+#[must_use]
+fn staging_path(out_path: &Path) -> PathBuf {
+    let stem = out_path
+        .file_stem()
+        .map_or_else(|| "recording".into(), std::ffi::OsStr::to_os_string);
+    let mut name = stem;
+    name.push(".rustynes-partial");
+    if let Some(ext) = out_path.extension() {
+        name.push(".");
+        name.push(ext);
+    }
+    out_path.with_file_name(name)
+}
+
+/// Publish a staged encode: on success rename it over `out_path`; on failure
+/// delete it and leave `out_path` -- possibly a previous recording -- exactly
+/// as it was.
+fn publish_output(
+    staged: &Path,
+    out_path: &Path,
+    outcome: Result<(), AvError>,
+) -> Result<(), AvError> {
+    match outcome {
+        Ok(()) => std::fs::rename(staged, out_path).map_err(|e| {
+            let _ = std::fs::remove_file(staged);
+            AvError::Encode(format!(
+                "could not move the finished encode into place: {e}"
+            ))
+        }),
+        Err(e) => {
+            let _ = std::fs::remove_file(staged);
+            Err(e)
         }
     }
 }
@@ -854,5 +906,49 @@ mod tests {
         assert_eq!(v, PathBuf::from("/x/y/rec.mp4.video.rustynes-avtmp"));
         assert_eq!(a, PathBuf::from("/x/y/rec.mp4.audio.rustynes-avtmp"));
         assert_ne!(v, a);
+    }
+
+    #[test]
+    fn the_staged_encode_keeps_its_directory_and_its_extension() {
+        // Same directory: rename is atomic only within one filesystem.
+        // Same extension: ffmpeg chooses the muxer from it, and the GIF / WAV
+        // argument vectors are selected from it too.
+        let s = staging_path(Path::new("/x/y/rec.gif"));
+        assert_eq!(s, PathBuf::from("/x/y/rec.rustynes-partial.gif"));
+        assert_eq!(Container::from_path(&s), Container::Gif);
+        let mut p = params();
+        p.out_path = s;
+        let args = ffmpeg_args(&p, Path::new("/v"), Path::new("/a"));
+        assert_eq!(args.last().unwrap(), "/x/y/rec.rustynes-partial.gif");
+    }
+
+    #[test]
+    fn a_failed_encode_leaves_the_previous_recording_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("rec.mp4");
+        let staged = staging_path(&out);
+        std::fs::write(&out, b"the recording the user already had").unwrap();
+        std::fs::write(&staged, b"half an enc").unwrap();
+
+        let r = publish_output(&staged, &out, Err(AvError::Encode("killed".into())));
+        assert!(r.is_err());
+        assert_eq!(
+            std::fs::read(&out).unwrap(),
+            b"the recording the user already had"
+        );
+        assert!(!staged.exists(), "the partial encode is cleaned up");
+    }
+
+    #[test]
+    fn a_successful_encode_replaces_the_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("rec.mp4");
+        let staged = staging_path(&out);
+        std::fs::write(&out, b"old").unwrap();
+        std::fs::write(&staged, b"new encode").unwrap();
+
+        publish_output(&staged, &out, Ok(())).unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), b"new encode");
+        assert!(!staged.exists());
     }
 }

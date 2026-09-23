@@ -45,7 +45,10 @@ const ROW_WITHOUT_HEADER: &[(&str, &str)] = &[(
 )];
 
 fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = fs::read_dir(dir) else { return };
+    // An unreadable directory fails the test rather than being skipped: a
+    // skipped directory is a set of files whose headers were never checked,
+    // and the test would still report a pass (review finding on #548).
+    let rd = fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
     for e in rd {
         let p = e.expect("dir entry").path();
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");

@@ -4474,8 +4474,15 @@ impl App {
             if blob.is_empty() {
                 return;
             }
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+            // A failed create_dir_all makes the write below fail too, but with
+            // a bare "not found"; say which directory could not be made.
+            if let Some(parent) = path.parent()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                eprintln!(
+                    "rustynes: cannot create RA progress dir {}: {e}",
+                    parent.display()
+                );
             }
             if let Err(e) = crate::atomic_write::write_atomic(&path, &blob) {
                 eprintln!("rustynes: failed to save RA progress: {e}");

@@ -1953,15 +1953,28 @@ impl Config {
     /// behaviour -- including what happens to an unparseable file -- is
     /// testable without touching the user's real config directory.
     fn load_or_default_at(path: &Path) -> Self {
-        let path = path.to_path_buf();
-        let bytes = match fs::read_to_string(&path) {
+        // Read BYTES, not a string: `read_to_string` fails on invalid UTF-8,
+        // and treating that as "unreadable" handed back defaults without
+        // keeping the file -- so one bad byte still cost the user every
+        // setting at the next save, which is exactly what CON-04 is about.
+        let raw = match fs::read(path) {
             Ok(b) => b,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => return Self::default(),
             Err(e) => {
+                // Genuinely unreadable (permissions, I/O): there is nothing to
+                // copy, and the next save meets the same error.
                 eprintln!(
                     "rustynes: config {} unreadable, using defaults: {e}",
                     path.display()
                 );
+                return Self::default();
+            }
+        };
+        let bytes = match String::from_utf8(raw) {
+            Ok(s) => s,
+            Err(e) => {
+                let reason = format!("not valid UTF-8: {}", e.utf8_error());
+                Self::preserve_corrupt(path, e.as_bytes(), &reason);
                 return Self::default();
             }
         };
@@ -1971,35 +1984,39 @@ impl Config {
         // have its unknown sections ignored) carries its recognizable
         // settings forward instead of being silently discarded.
         if let Some((migrated, notes)) = Self::migrate_legacy(&bytes) {
-            migrated.apply_migration(&path, &bytes, &notes);
+            migrated.apply_migration(path, &bytes, &notes);
             return migrated;
         }
 
         match toml::from_str::<Self>(&bytes) {
             Ok(cfg) => cfg,
             Err(e) => {
-                // Preserve the unparseable original BEFORE handing back
-                // defaults (frontend audit CON-04): the next settings save
-                // overwrites `config.toml`, so without this copy one corrupt
-                // byte costs the user every setting they had. Written
-                // atomically, beside the original, and never fatal.
-                let mut backup_os = path.as_os_str().to_os_string();
-                backup_os.push(".corrupt.bak");
-                let backup = PathBuf::from(backup_os);
-                match crate::atomic_write::write_atomic(&backup, bytes.as_bytes()) {
-                    Ok(()) => eprintln!(
-                        "rustynes: config {} unreadable, using defaults (original kept as {}): {e}",
-                        path.display(),
-                        backup.display()
-                    ),
-                    Err(be) => eprintln!(
-                        "rustynes: config {} unreadable, using defaults; could NOT keep a copy at {} ({be}): {e}",
-                        path.display(),
-                        backup.display()
-                    ),
-                }
+                Self::preserve_corrupt(path, bytes.as_bytes(), &e.to_string());
                 Self::default()
             }
+        }
+    }
+
+    /// Keep a config that cannot be used as `<path>.corrupt.bak` BEFORE
+    /// defaults replace it (frontend audit CON-04): the next settings save
+    /// overwrites `config.toml`, so without this copy one corrupt byte costs
+    /// the user every setting they had. Written atomically, beside the
+    /// original, and never fatal -- the outcome is logged either way.
+    fn preserve_corrupt(path: &Path, bytes: &[u8], reason: &str) {
+        let mut backup_os = path.as_os_str().to_os_string();
+        backup_os.push(".corrupt.bak");
+        let backup = PathBuf::from(backup_os);
+        match crate::atomic_write::write_atomic(&backup, bytes) {
+            Ok(()) => eprintln!(
+                "rustynes: config {} unusable, using defaults (original kept as {}): {reason}",
+                path.display(),
+                backup.display()
+            ),
+            Err(be) => eprintln!(
+                "rustynes: config {} unusable, using defaults; could NOT keep a copy at {} ({be}): {reason}",
+                path.display(),
+                backup.display()
+            ),
         }
     }
 
@@ -2096,7 +2113,16 @@ impl Config {
         backup_os.push(".bak");
         let backup = PathBuf::from(backup_os);
 
-        let backup_ok = crate::atomic_write::write_atomic(&backup, original.as_bytes()).is_ok();
+        let backup_ok = match crate::atomic_write::write_atomic(&backup, original.as_bytes()) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!(
+                    "rustynes:   could NOT back up the original to {}: {e}",
+                    backup.display()
+                );
+                false
+            }
+        };
         let write_ok = self.save_to(path).is_ok();
 
         eprintln!(
@@ -3321,6 +3347,29 @@ start = "Start"
             std::fs::read_to_string(&backup).ok().as_deref(),
             Some(garbage),
             "the unparseable original is kept byte-for-byte beside it"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_config_that_is_not_utf8_is_preserved_too() {
+        // Review finding on #548: `read_to_string` rejects invalid UTF-8
+        // before the parser ever runs, and that path returned defaults with
+        // no backup -- the same data loss CON-04 fixed, one branch earlier.
+        let dir = std::env::temp_dir().join(format!("rustynes-con04u-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("config.toml");
+        let bytes: &[u8] = b"[graphics]\nscale = 3\n# \xFF\xFE not UTF-8\n";
+        std::fs::write(&path, bytes).expect("seed non-UTF-8 config");
+
+        let _ = Config::load_or_default_at(&path);
+        assert_eq!(
+            std::fs::read(dir.join("config.toml.corrupt.bak"))
+                .ok()
+                .as_deref(),
+            Some(bytes),
+            "the raw bytes are kept, not a lossy decoding of them"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
