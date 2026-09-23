@@ -756,7 +756,22 @@ impl Ppu {
         // v4 (v1.7.0 F3): the in-flight extra-scanlines overclock countdown.
         // v1/v2/v3 blobs lack it; upconvert to `0` (no insertion in flight),
         // which is exactly the state a pre-v4 restore left it in.
-        self.extra_lines_remaining = if version >= 4 { r.u16()? } else { 0 };
+        let extra_lines_remaining = if version >= 4 { r.u16()? } else { 0 };
+        // Clamped, not rejected. The configured `extra_scanlines` is a frontend
+        // knob that is NOT serialized, so a real save made under a larger knob
+        // legitimately carries a larger countdown; refusing it would reject a
+        // good file. But a corrupt countdown under a live knob idles up to
+        // 65,535 scanlines (~4 s) before the frame resumes (review finding on
+        // #546), and the countdown never legitimately exceeds the knob it was
+        // loaded from, so it is clamped to the knob this PPU now runs with. At
+        // the default knob of 0 the insertion branch is unreachable and the
+        // value is inert, so it is kept as-is -- `set_extra_scanlines` zeroes
+        // it if the knob is later turned on.
+        self.extra_lines_remaining = if self.extra_scanlines == 0 {
+            extra_lines_remaining
+        } else {
+            extra_lines_remaining.min(self.extra_scanlines)
+        };
 
         // v5 (v2.0.3, ADR 0030): the 2-cycle-ALE in-flight fetch state. v1..=4
         // blobs lack it; upconvert to the inactive rest defaults (`0`/`false`) —
@@ -1472,6 +1487,28 @@ mod tests {
         let mut q = Ppu::new(PpuRegion::Ntsc);
         q.restore(&blob).unwrap();
         assert_eq!(q.extra_lines_remaining, 5);
+    }
+
+    #[test]
+    fn a_restored_extra_lines_countdown_is_clamped_to_the_live_knob() {
+        // Review finding on #546: a corrupt countdown under a live
+        // extra-scanlines knob idled the PPU for up to 65,535 lines.
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.set_extra_scanlines(8);
+        p.extra_lines_remaining = u16::MAX;
+        let blob = p.snapshot();
+
+        let mut q = Ppu::new(PpuRegion::Ntsc);
+        q.set_extra_scanlines(8);
+        q.restore(&blob).unwrap();
+        assert_eq!(q.extra_lines_remaining, 8, "clamped to the knob in force");
+
+        // A countdown already inside the knob is untouched.
+        p.extra_lines_remaining = 5;
+        let mut r = Ppu::new(PpuRegion::Ntsc);
+        r.set_extra_scanlines(8);
+        r.restore(&p.snapshot()).unwrap();
+        assert_eq!(r.extra_lines_remaining, 5);
     }
 
     #[test]

@@ -676,9 +676,13 @@ and the Material-for-MkDocs documentation handbook at
 
 RustyNES's current release is **v2.7.0 "Palisade"** (2026-09-23) — a corrupt or hand-edited save state now fails at restore with a typed error instead of crashing the emulator one tick later, pulse 1 no longer mutes on the `$4001 = $08` sweep idiom, and the save-state fuzz target can finally reach what it exists to find. Built on **v2.6.23 "Pulse"** (2026-09-20) — the `$2007` access pulses the rendering pipeline's load instead of computing its own, which closes the CHR-during-rendering divergence in the MiSTer sibling.
 
-The emulation core is unchanged, so the accuracy numbers below hold by
-construction and were re-run anyway. Built on **v2.6.22 "Rigging"**, the
-instruments for the board, built before the board.
+v2.7.0 changes the emulation core -- the pulse-1 sweep clamp, and the
+save-state decoders -- so the accuracy numbers below were re-measured on the
+release tree rather than inherited: AccuracyCoin 144/144 and nestest pass, and
+the full `--features test-roms` suite passes 2,622 tests. Built on **v2.6.23
+"Pulse"**, which closed the CHR-during-rendering divergence in the MiSTer
+sibling, and **v2.6.22 "Rigging"**, the instruments for the board, built before
+the board.
 
 | Measure | Value |
 |---|---|

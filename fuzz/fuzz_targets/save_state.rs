@@ -35,8 +35,9 @@
 //!    `corpus/` tree is gitignored) essentially never gets there. So the first
 //!    input byte now selects a mode: odd = the old raw-container mode; even =
 //!    **patch mode**, where the rest of the input is a list of
-//!    `(offset: u16 LE, value: u8)` patches applied to a REAL snapshot of the
-//!    base machine. Structure survives and every field is one patch away.
+//!    `(offset: u24 LE, value: u8)` patches applied to a REAL snapshot of the
+//!    base machine, with offsets mapped around the framebuffer (see `base`).
+//!    Structure survives and every field is one patch away.
 //!
 //! A hang (a resampler ratio that loops forever) surfaces as a libFuzzer
 //! timeout rather than a crash; run with `-timeout=` to catch it.
@@ -119,10 +120,26 @@ fn synth_nrom() -> Vec<u8> {
 /// `run_frame` per case measured ~15 executions per second.
 const STEPS_AFTER_RESTORE: usize = 120;
 
-/// A real `.rns` snapshot of the base machine, built once, taken on scanline 0
-/// so that the steps after a restore land on the sprite-heavy lines 1-3.
-fn base_snapshot() -> &'static [u8] {
-    static BASE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+/// The base snapshot, and where its framebuffer sits inside it.
+struct Base {
+    /// A real `.rns` snapshot of the base machine, taken on scanline 0 so that
+    /// the steps after a restore land on the sprite-heavy lines 1-3.
+    blob: Vec<u8>,
+    /// Byte range of the PPU framebuffer copy inside `blob`.
+    fb: core::ops::Range<usize>,
+}
+
+/// Build the base once.
+///
+/// The PPU section carries the whole 245,760-byte RGBA framebuffer, ~95% of
+/// the blob. Patch offsets therefore skip it: an offset taken modulo the
+/// FULL length almost never lands behind the framebuffer, and a `u16` one
+/// could not reach it at all -- the APU
+/// section among it -- which is exactly how the first version of this patch
+/// mode left every IMP-02 field unreachable (caught in review on #546).
+/// Pixels are output, not state, and corrupting them exercises nothing.
+fn base() -> &'static Base {
+    static BASE: std::sync::OnceLock<Base> = std::sync::OnceLock::new();
     BASE.get_or_init(|| {
         let mut nes = Nes::from_rom(&synth_nrom()).expect("synthetic NROM loads");
         for _ in 0..3 {
@@ -136,7 +153,21 @@ fn base_snapshot() -> &'static [u8] {
         while line(&nes) != 0 {
             nes.step_instruction();
         }
-        nes.snapshot()
+        let blob = nes.snapshot();
+        let fb_bytes = nes.framebuffer();
+        let start = blob
+            .windows(fb_bytes.len())
+            .position(|w| w == fb_bytes)
+            .expect("the framebuffer is stored verbatim in the snapshot");
+        let fb = start..start + fb_bytes.len();
+        // The non-framebuffer state is itself larger than 64 KiB (measured:
+        // a u16 offset tripped this assert on the first execution), which is
+        // why a patch carries a 24-bit offset.
+        assert!(
+            blob.len() - fb.len() <= 1 << 24,
+            "every non-framebuffer byte must stay reachable by a 24-bit offset"
+        );
+        Base { blob, fb }
     })
 }
 
@@ -146,11 +177,18 @@ fuzz_target!(|data: &[u8]| {
     };
     let patched;
     let state: &[u8] = if mode & 1 == 0 {
-        // Patch mode: `(offset u16 LE, value)` triples over a real snapshot.
-        let mut s = base_snapshot().to_vec();
-        for p in rest.chunks_exact(3) {
-            let at = usize::from(u16::from_le_bytes([p[0], p[1]])) % s.len();
-            s[at] = p[2];
+        // Patch mode: `(offset u24 LE, value)` quads over a real snapshot.
+        let base = base();
+        let mut s = base.blob.clone();
+        let state_len = s.len() - base.fb.len();
+        for p in rest.chunks_exact(4) {
+            // A 24-bit offset into the blob with the framebuffer cut out.
+            let raw = u32::from_le_bytes([p[0], p[1], p[2], 0]);
+            let mut at = usize::try_from(raw).expect("24 bits fit") % state_len;
+            if at >= base.fb.start {
+                at += base.fb.len();
+            }
+            s[at] = p[3];
         }
         patched = s;
         &patched

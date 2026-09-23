@@ -2220,6 +2220,10 @@ impl Nes {
         if !saw_cpu {
             return Err(SnapshotError::MissingSection("CPU ".into()));
         }
+        // v2.7.0 -- the one cross-section invariant: the CPU's master clock and
+        // the bus's PPU clock must be close enough that the next catch-up
+        // terminates (see `LockstepBus::check_restored_clocks`).
+        self.bus.check_restored_clocks(self.cpu.master_clock())?;
         // Loading invalidates the rewind ring (the new state is unrelated
         // to what was buffered before).
         if clear_rewind && let Some(r) = &mut self.rewind {
@@ -2974,6 +2978,48 @@ mod tests {
         rom[7] = 0x09; // bits 2-3 = 10 (NES 2.0), bits 0-1 = 01 (Vs. System)
         rom[13] = vs_ppu_low_nibble & 0x0F;
         rom
+    }
+
+    #[test]
+    fn a_restored_cpu_ppu_clock_skew_is_rejected() {
+        // v2.7.0: the fuzz target's first timeout. A `ppu_clock` restored far
+        // from the CPU's `master_clock` made the next catch-up tick billions of
+        // dots (behind) or never tick at all (ahead) -- a hang either way.
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).unwrap();
+        nes.run_frame();
+        let master = nes.cpu.master_clock();
+        let live = nes.bus().ppu_clock_for_test();
+        let live_skew = master.abs_diff(live);
+        assert!(
+            live_skew <= LockstepBus::RESTORED_CLOCK_SKEW_MAX,
+            "the running machine's own skew ({live_skew}) must be inside the bound"
+        );
+        assert!(
+            Nes::from_rom(&rom)
+                .unwrap()
+                .restore_quiet(&nes.snapshot())
+                .is_ok()
+        );
+
+        // Measured: a frame of this ROM leaves the pair a handful of master
+        // clocks apart (4 at the time of writing), and `master_clock` itself
+        // small, so the "behind" direction is exercised by moving the PPU
+        // clock only as far as zero allows and the "ahead" direction carries
+        // the bound.
+        let max = LockstepBus::RESTORED_CLOCK_SKEW_MAX;
+        for (label, ppu_clock, ok) in [
+            ("behind, as far as zero", master.saturating_sub(max), true),
+            ("at the bound, ahead", master + max, true),
+            ("past the bound, ahead", master + max + 1, false),
+            ("far ahead", master + (1 << 40), false),
+            ("u64::MAX", u64::MAX, false),
+        ] {
+            nes.bus_mut().set_ppu_clock_for_test(ppu_clock);
+            let blob = nes.snapshot();
+            let got = Nes::from_rom(&rom).unwrap().restore_quiet(&blob);
+            assert_eq!(got.is_ok(), ok, "{label}: {got:?}");
+        }
     }
 
     #[test]

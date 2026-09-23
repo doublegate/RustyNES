@@ -79,8 +79,9 @@ cycle-accurate core later replaced.
   and muted the channel. NESdev "APU Sweep": a negative target clamps to zero and
   negate never mutes. Red on v2.6.23 by `pulse1_negate_shift0_clamps_to_zero_and_does_not_mute`;
   a companion test shows the clamp changes nothing for shifts 1-7 over periods
-  8-`$7FF`. The full `--features test-roms` suite (2,612 passed, 0 failed) moved
-  no golden. The MiSTer sibling already followed the wiki, so the co-simulation
+  8-`$7FF`. The full `--features test-roms` suite run with this fix alone
+  (2,612 passed, 0 failed) moved no golden; on the final release tree it is
+  2,622 passed, 0 failed. The MiSTer sibling already followed the wiki, so the co-simulation
   ladder could not see this; v2.8.2 adds the gate.
 - **A hand-edited or corrupt save state can no longer crash or hang the emulator**
   (core audit IMP-01, IMP-02, IMP-03). Every one of these restored cleanly and
@@ -102,8 +103,15 @@ cycle-accurate core later replaced.
     advance never wraps it); a restored fine X above 7 (a shift overflow),
     after which every counter and index the PPU restore loads was swept by
     reading rather than left to the fuzzer, bounding ten more; a restored
-    OAM-DMA byte index at or above 256 (an overflow); and a restored
-    `dma_mc_consumed` that tripped a dev-profile invariant assertion.
+    OAM-DMA byte index at or above 256 (an overflow); a restored
+    `dma_mc_consumed` that tripped a dev-profile invariant assertion; and a
+    CPU master clock and PPU clock restored far apart, which made the next
+    PPU catch-up run for billions of dots or never, a hang either way
+    (rejected beyond 1,024 master clocks of skew).
+  - From review: a restored extra-scanline countdown under a live overclock
+    knob could idle the PPU for 65,535 lines. It is clamped to the knob in
+    force, not rejected, because the knob is not saved and a larger one may
+    have written a genuine file.
 
   States the emulator writes stay inside every bound, so no real save is
   rejected; the round-trip tests are the guard.
@@ -118,8 +126,13 @@ cycle-accurate core later replaced.
   invisible to it and almost no input got past the header. It now patches a real
   snapshot of a rendering machine and runs about three scanlines after an
   accepted restore. Against the unfixed tree, with each found defect fixed in
-  turn so the next could surface, it found five crashes (at 6,848, 29,326,
-  287,867, 76,381 and 92,496 runs); four of them were not in the audit.
+  turn so the next could surface, it found seven defects; five were not in
+  the audit. Its first patch mode had a reach defect of its own, caught in
+  review: offsets were taken over the whole blob, whose 245,760-byte
+  framebuffer sits in front of the APU section, so no APU field was ever
+  patched. Offsets now skip the framebuffer and are 24-bit (the rest of the
+  state is itself over 64 KiB), and the unfixed APU crashed in 1,193 runs.
+  After the fixes: 2,400,000 executions over 8 jobs, 0 crashes, 0 timeouts.
 
 ### Notes
 
