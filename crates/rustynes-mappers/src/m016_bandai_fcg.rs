@@ -537,6 +537,20 @@ impl BandaiFcg {
 }
 
 impl Mapper for BandaiFcg {
+    // Battery save: the serial EEPROM's contents -- 128 bytes (24C01) or 256
+    // (24C02) -- when this variant carries one, and nothing otherwise (core
+    // audit IMP-08). The EEPROM is reached through an I2C protocol, not a CPU
+    // window, so this accessor is the ONLY way the frontend can persist it.
+    fn sram(&self) -> &[u8] {
+        self.eeprom.as_ref().map_or(&[], |e| &e.mem)
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        match self.eeprom.as_mut() {
+            Some(e) => &mut e.mem,
+            None => &mut [],
+        }
+    }
+
     // v2.8.0 Phase 4 — CPU-cycle hook + IRQ source; no on-cart audio.
     fn caps(&self) -> MapperCaps {
         MapperCaps::CYCLE_IRQ

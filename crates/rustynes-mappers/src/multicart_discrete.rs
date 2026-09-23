@@ -188,6 +188,14 @@ impl Multicart15 {
 }
 
 impl Mapper for Multicart15 {
+    // Battery save: the 8 KiB PRG-RAM at `$6000-$7FFF` (core audit 5.1e).
+    fn sram(&self) -> &[u8] {
+        &self.prg_ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.prg_ram
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }

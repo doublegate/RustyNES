@@ -602,7 +602,7 @@ fn save_wch(watches: &[WatchEntry]) -> String {
         let sz = w.size.bytes();
         let _ = writeln!(out, "{:04X} {} {}", w.addr, sz, w.label);
     }
-    match std::fs::write(&path, out) {
+    match crate::atomic_write::write_atomic(&path, out.as_bytes()) {
         Ok(()) => format!("saved {} watches", watches.len()),
         Err(e) => format!("save failed: {e}"),
     }

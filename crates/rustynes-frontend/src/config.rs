@@ -1946,6 +1946,14 @@ impl Config {
         let Some(path) = Self::default_path() else {
             return Self::default();
         };
+        Self::load_or_default_at(&path)
+    }
+
+    /// [`Self::load_or_default`] against an explicit path, so the fallback
+    /// behaviour -- including what happens to an unparseable file -- is
+    /// testable without touching the user's real config directory.
+    fn load_or_default_at(path: &Path) -> Self {
+        let path = path.to_path_buf();
         let bytes = match fs::read_to_string(&path) {
             Ok(b) => b,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => return Self::default(),
@@ -1970,10 +1978,26 @@ impl Config {
         match toml::from_str::<Self>(&bytes) {
             Ok(cfg) => cfg,
             Err(e) => {
-                eprintln!(
-                    "rustynes: config {} unreadable, using defaults: {e}",
-                    path.display()
-                );
+                // Preserve the unparseable original BEFORE handing back
+                // defaults (frontend audit CON-04): the next settings save
+                // overwrites `config.toml`, so without this copy one corrupt
+                // byte costs the user every setting they had. Written
+                // atomically, beside the original, and never fatal.
+                let mut backup_os = path.as_os_str().to_os_string();
+                backup_os.push(".corrupt.bak");
+                let backup = PathBuf::from(backup_os);
+                match crate::atomic_write::write_atomic(&backup, bytes.as_bytes()) {
+                    Ok(()) => eprintln!(
+                        "rustynes: config {} unreadable, using defaults (original kept as {}): {e}",
+                        path.display(),
+                        backup.display()
+                    ),
+                    Err(be) => eprintln!(
+                        "rustynes: config {} unreadable, using defaults; could NOT keep a copy at {} ({be}): {e}",
+                        path.display(),
+                        backup.display()
+                    ),
+                }
                 Self::default()
             }
         }
@@ -2072,7 +2096,7 @@ impl Config {
         backup_os.push(".bak");
         let backup = PathBuf::from(backup_os);
 
-        let backup_ok = fs::write(&backup, original).is_ok();
+        let backup_ok = crate::atomic_write::write_atomic(&backup, original.as_bytes()).is_ok();
         let write_ok = self.save_to(path).is_ok();
 
         eprintln!(
@@ -3271,5 +3295,33 @@ start = "Start"
         }
         // `AppTheme::all()` covers every variant exactly once.
         assert_eq!(AppTheme::all().len(), 5);
+    }
+
+    #[test]
+    fn an_unparseable_config_is_preserved_before_defaults_replace_it() {
+        // Frontend audit CON-04. A config that fails to parse falls back to
+        // defaults, and the next settings save overwrites the file -- so
+        // unless the original is copied aside FIRST, a single corrupt byte
+        // costs the user every setting they had, with only a stderr line.
+        let dir = std::env::temp_dir().join(format!("rustynes-con04-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("config.toml");
+        let garbage = "[graphics\nscale = = 3\n";
+        std::fs::write(&path, garbage).expect("seed corrupt config");
+
+        let cfg = Config::load_or_default_at(&path);
+        assert_eq!(
+            toml::to_string_pretty(&cfg).unwrap(),
+            toml::to_string_pretty(&Config::default()).unwrap(),
+            "an unparseable file still yields defaults"
+        );
+        let backup = dir.join("config.toml.corrupt.bak");
+        assert_eq!(
+            std::fs::read_to_string(&backup).ok().as_deref(),
+            Some(garbage),
+            "the unparseable original is kept byte-for-byte beside it"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

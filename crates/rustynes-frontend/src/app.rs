@@ -2362,7 +2362,7 @@ impl App {
             .map_or(0, |d| d.as_secs());
         let path = shots.join(format!("{stem}-{secs}.png"));
         match encode_png_rgba(&frame, NES_W, NES_H) {
-            Ok(png) => match std::fs::write(&path, png) {
+            Ok(png) => match crate::atomic_write::write_atomic(&path, &png) {
                 Ok(()) => {
                     eprintln!("rustynes: screenshot -> {}", path.display());
                     self.ui.set_status(StatusMessage::success(format!(
@@ -2768,7 +2768,7 @@ impl App {
             return;
         };
         let bytes = movie.serialize();
-        match std::fs::write(&path, &bytes) {
+        match crate::atomic_write::write_atomic(&path, &bytes) {
             Ok(()) => eprintln!(
                 "rustynes: movie saved ({} frames, {} bytes) -> {}",
                 movie.len(),
@@ -3042,7 +3042,7 @@ impl App {
             eprintln!("rustynes: subtitle export cancelled");
             return;
         };
-        match std::fs::write(&path, srt) {
+        match crate::atomic_write::write_atomic(&path, srt.as_bytes()) {
             Ok(()) => {
                 self.ui.set_status(StatusMessage::success(format!(
                     "Subtitles -> {}",
@@ -3115,7 +3115,7 @@ impl App {
             eprintln!("rustynes: history clip export cancelled");
             return;
         };
-        match std::fs::write(&path, movie.serialize()) {
+        match crate::atomic_write::write_atomic(&path, &movie.serialize()) {
             Ok(()) => eprintln!(
                 "rustynes: exported {:.0}s history clip ({} frames) -> {}",
                 seconds,
@@ -3158,7 +3158,7 @@ impl App {
             };
             let text = rustynes_core::movie_interop::export_fm2(movie, &opts)
                 .map_err(|e| e.to_string())?;
-            std::fs::write(path, text).map_err(|e| e.to_string())
+            crate::atomic_write::write_atomic(path, text.as_bytes()).map_err(|e| e.to_string())
         } else {
             // `.bk2` (the default): pack the two text members into a ZIP.
             let opts = rustynes_core::bk2_interop::Bk2ExportOpts {
@@ -3170,7 +3170,7 @@ impl App {
             let parts =
                 rustynes_core::bk2_interop::export_bk2(movie, &opts).map_err(|e| e.to_string())?;
             let bytes = Self::pack_bk2_zip(&parts)?;
-            std::fs::write(path, bytes).map_err(|e| e.to_string())
+            crate::atomic_write::write_atomic(path, &bytes).map_err(|e| e.to_string())
         }
     }
 
@@ -3362,7 +3362,7 @@ impl App {
         else {
             return;
         };
-        if let Err(e) = std::fs::write(&path, &bytes) {
+        if let Err(e) = crate::atomic_write::write_atomic(&path, &bytes) {
             eprintln!(
                 "rustynes: TAStudio project save failed {}: {e}",
                 path.display()
@@ -4477,7 +4477,7 @@ impl App {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            if let Err(e) = std::fs::write(&path, &blob) {
+            if let Err(e) = crate::atomic_write::write_atomic(&path, &blob) {
                 eprintln!("rustynes: failed to save RA progress: {e}");
             }
         }
