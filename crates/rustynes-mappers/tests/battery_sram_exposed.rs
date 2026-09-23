@@ -137,6 +137,23 @@ fn every_battery_board_exposes_its_save_memory() {
                 "mapper {mapper} (chr_rom={chr_rom}): {surviving} bytes of $6000-$7FFF hold writes, but sram() is {}",
                 if after.is_empty() { "EMPTY" } else { "unchanged by them" }
             ));
+            continue;
+        }
+        // The restore direction: a loaded save goes in through `sram_mut()`,
+        // and the game must then read it. The slice-to-address mapping is
+        // board-specific (banking), so fill ALL of it with one value and
+        // require the window to show that value at least as often as the
+        // write sweep survived -- a `sram_mut()` that returns a detached copy
+        // fails this even though `sram()` passed above.
+        m.sram_mut().fill(0xC3);
+        let restored = (0x6000u16..=0x7FFF)
+            .filter(|&a| m.cpu_read(a) == 0xC3)
+            .count();
+        if restored < 64 {
+            failures.push(format!(
+                "mapper {mapper} (chr_rom={chr_rom}): sram() reflects CPU writes, but a value \
+                 restored through sram_mut() reaches only {restored} addresses of $6000-$7FFF"
+            ));
         }
     }
     unreached.dedup();

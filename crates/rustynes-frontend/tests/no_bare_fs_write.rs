@@ -29,23 +29,29 @@ use std::path::{Path, PathBuf};
 /// Calls that create or truncate a file in place.
 const WRITERS: &[&str] = &["fs::write(", "File::create(", "OpenOptions::new("];
 
-/// `(path relative to src/, call, reason)` for production writers that stay.
-const ALLOWED: &[(&str, &str, &str)] = &[
+/// `(path relative to src/, call, count, reason)` for production writers that
+/// stay. `count` is exact: an entry excuses that many calls and no more, so a
+/// second writer added beside an argued one fails here instead of riding in on
+/// the first one's exception (review finding on #548).
+const ALLOWED: &[(&str, &str, usize, &str)] = &[
     (
         "atomic_write.rs",
         "OpenOptions::new(",
+        1,
         "this IS the atomic writer: it opens its temp file with create_new before \
          the rename that publishes it",
     ),
     (
         "debugger/trace_panel.rs",
         "fs::write(",
+        1,
         "the CPU trace dump goes to the OS temp dir under a fixed name; it is \
          regenerated on demand and holds nothing the user authored",
     ),
     (
         "av_record.rs",
         "File::create(",
+        2,
         "the raw video/audio capture temps (`*.rustynes-avtmp`), created fresh per \
          recording and deleted after the mux; the user's output goes through a \
          staged encode that is renamed into place only on success",
@@ -53,12 +59,14 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     (
         "perf_log.rs",
         "File::create(",
+        2,
         "the perf-overlay trace CSVs are diagnostic output streamed during a run, \
          under a per-run timestamped name, not user data",
     ),
     (
         "debugger/header_editor.rs",
         "OpenOptions::new(",
+        1,
         "opens the ROM for writing WITHOUT truncate and overwrites only the 16-byte \
          header in place; the body is never touched and nothing is truncated",
     ),
@@ -108,7 +116,7 @@ fn production_code_writes_user_data_atomically() {
                 if !line.contains(w) {
                     continue;
                 }
-                if ALLOWED.iter().any(|(p, c, _)| *p == rel && c == w) {
+                if ALLOWED.iter().any(|(p, c, _, _)| *p == rel && c == w) {
                     allowed_seen.push((rel.clone(), *w));
                 } else {
                     offenders.push(format!("{rel}:{}: {}", n + 1, t));
@@ -124,10 +132,18 @@ fn production_code_writes_user_data_atomically() {
     );
     // An allow-list entry that no longer matches anything is a stale exception
     // that would silently cover a future write in that file.
-    for (p, c, _) in ALLOWED {
-        assert!(
-            allowed_seen.iter().any(|(s, w)| s == p && w == c),
-            "ALLOWED entry ({p}, {c}) matches nothing; remove it"
+    // An entry must match exactly its count: fewer is a stale exception that
+    // would silently cover a future write in that file, more is a new writer
+    // hiding behind an old argument.
+    for (p, c, n, _) in ALLOWED {
+        let seen = allowed_seen
+            .iter()
+            .filter(|(s, w)| s == p && w == c)
+            .count();
+        assert_eq!(
+            seen, *n,
+            "ALLOWED entry ({p}, {c}) excuses {n} call(s) but the file has {seen}; \
+             argue the new one or update the entry"
         );
     }
 }

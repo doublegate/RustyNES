@@ -681,19 +681,24 @@ fn staging_path(out_path: &Path) -> PathBuf {
     out_path.with_file_name(name)
 }
 
-/// Publish a staged encode: on success rename it over `out_path`; on failure
-/// delete it and leave `out_path` -- possibly a previous recording -- exactly
-/// as it was.
+/// Publish a staged encode: on success rename it over `out_path`; on a failed
+/// encode delete it and leave `out_path` -- possibly a previous recording --
+/// exactly as it was. A successful encode whose rename fails is kept.
 fn publish_output(
     staged: &Path,
     out_path: &Path,
     outcome: Result<(), AvError>,
 ) -> Result<(), AvError> {
     match outcome {
+        // The encode itself succeeded, so on a failed rename (a locked or
+        // read-only destination) the finished file is KEPT and named in the
+        // error: deleting it would throw away a complete recording over a
+        // problem with the target path, not with the recording.
         Ok(()) => std::fs::rename(staged, out_path).map_err(|e| {
-            discard_staged(staged);
             AvError::Encode(format!(
-                "could not move the finished encode into place: {e}"
+                "the encode finished but could not replace {}: {e}; it is kept at {}",
+                out_path.display(),
+                staged.display()
             ))
         }),
         Err(e) => {
@@ -951,6 +956,20 @@ mod tests {
             b"the recording the user already had"
         );
         assert!(!staged.exists(), "the partial encode is cleaned up");
+    }
+
+    #[test]
+    fn a_finished_encode_is_kept_when_it_cannot_be_moved_into_place() {
+        // The target's directory is gone, so the rename fails; the finished
+        // encode must survive and be named in the error.
+        let dir = tempfile::tempdir().unwrap();
+        let staged = dir.path().join("rec.rustynes-partial.mp4");
+        std::fs::write(&staged, b"a complete recording").unwrap();
+        let out = dir.path().join("missing-dir").join("rec.mp4");
+
+        let err = publish_output(&staged, &out, Ok(())).unwrap_err();
+        assert_eq!(std::fs::read(&staged).unwrap(), b"a complete recording");
+        assert!(format!("{err:?}").contains("rustynes-partial"), "{err:?}");
     }
 
     #[test]
