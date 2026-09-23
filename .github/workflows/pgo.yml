@@ -91,7 +91,7 @@ env:
 jobs:
   pgo:
     name: PGO build + gate (linux x86_64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Instrument build + training sweep + optimized rebuild + the test-roms
     # oracle is the heaviest job in the repo; give it generous headroom over the
     # ~30 min release builds.
@@ -251,7 +251,7 @@ jobs:
       needs.pgo.outputs.promotable == 'true' &&
       github.event_name == 'workflow_dispatch' &&
       inputs.run_bolt == true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     permissions:
       contents: read

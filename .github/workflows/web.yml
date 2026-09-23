@@ -36,6 +36,9 @@ on:
       - "mkdocs.yml"
   pull_request:
     branches: [main]
+    # `ready_for_review` runs the build on a PR opened as a draft; see the
+    # draft gate on `build`.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "crates/**"
       - "Cargo.toml"
@@ -48,17 +51,25 @@ on:
       - "mkdocs.yml"
   workflow_dispatch:
 
-# Pages deploy needs these; everything else is read-only.
+# Read-only by default. `pages: write` and `id-token: write` are granted per
+# job below, to the two jobs that use them -- they used to sit here at
+# workflow level, which handed a Pages-publishing OIDC token to every PR build
+# that compiles and runs unreviewed code.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# Only one Pages deploy at a time; let an in-flight one finish rather
-# than cancelling (a half-applied Pages deploy is worse than a slow one).
+# Two groups, not one. `main` / dispatch share `pages` and never cancel: only
+# one Pages deploy at a time, and a half-applied deploy is worse than a slow
+# one. A PR gets its own per-ref group and cancels its superseded run.
+#
+# Until this split every event, PRs included, sat in the single global `pages`
+# group with `cancel-in-progress: false`. PR builds from DIFFERENT PRs queued
+# behind each other and behind `main`'s deploys, and because GitHub keeps only
+# one PENDING run per group, a third arrival silently cancelled the second --
+# a PR could lose its Pages build to an unrelated PR's push.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('pages-pr-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -73,22 +84,38 @@ env:
 jobs:
   build:
     name: build demo + docs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
+    # Draft gate, as in ci.yml's `setup`: a draft PR skips this build until it
+    # is marked ready. Not a required check, so the skip blocks nothing.
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    # Read-only. This job compiles and runs PR code, so it holds no Pages
+    # permission at all: `configure-pages` (which needs `pages: write`) runs in
+    # `deploy`, which never runs on a pull request (review finding on #547 --
+    # skipping the step on a PR did not remove the permission from the job).
+    permissions:
+      contents: read
+    # A PR build is a CHECK, not a publication: it proves the wasm demo builds
+    # (the wasm-bindgen CLI pin in Trunk.toml must match Cargo.lock, which only
+    # a real `trunk build` exercises), holds the size budget, and that the
+    # MkDocs handbook builds. Everything that only feeds the deploy -- rustdoc
+    # (already gated with `-D warnings` by ci.yml's lint job), the site
+    # assembly, configure-pages and the artifact upload -- is skipped on a PR.
+    env:
+      IS_PR: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      # Shared toolchain + cargo cache. `apt: true` because the rustdoc build
-      # compiles the whole workspace (incl. rustynes-frontend) for the host,
-      # which needs the native winit/wgpu/cpal system libraries. The wasm build
-      # itself routes through web-sys and would not need them, but the doc build
-      # in the same job does.
+      # Shared toolchain + cargo cache. The native winit/wgpu/cpal system
+      # libraries are needed only by the rustdoc build, which compiles the
+      # whole workspace for the host; the wasm build routes through web-sys.
+      # So a PR, which skips rustdoc, skips the apt provisioning too.
       - uses: ./.github/actions/rust-setup
         with:
           targets: wasm32-unknown-unknown
-          apt: "true"
+          apt: ${{ github.event_name == 'pull_request' && 'false' || 'true' }}
           cache-key: web-pages
 
       - name: Install trunk (prebuilt release binary)
@@ -106,6 +133,7 @@ jobs:
         run: ./scripts/wasm_size_budget.sh crates/rustynes-frontend/web/dist 5242880
 
       - name: Build the workspace API docs (rustdoc)
+        if: env.IS_PR != 'true'
         # --no-deps keeps it to our own crates. No -D warnings here: the lint
         # job in ci.yml already gates rustdoc, so the Pages build only needs the
         # HTML and must not fail the deploy on a doc nit.
@@ -133,18 +161,32 @@ jobs:
             libffi-dev libjpeg-dev libpng-dev
 
       - name: Install Material for MkDocs (with imaging extra)
-        run: pip install "mkdocs-material[imaging]==9.*"
+        # >=9.7.5 is load-bearing: that release caps MkDocs at `<2`. MkDocs 2.0
+        # removes the plugin system this site uses (social, privacy, the link
+        # hook) and has no migration path, per the Material team's 2026-02-18
+        # notice, so an uncapped install would break the handbook on the day it
+        # resolved. Moving off MkDocs 1.x (Zensical is the drop-in they name) is
+        # a decision for its own PR.
+        run: pip install "mkdocs-material[imaging]>=9.7.5,<10"
 
       - name: Build the MkDocs documentation handbook
-        # NOT --strict: several source specs (STATUS.md, android.md, frontend.md)
-        # carry legitimate relative cross-links into sibling repo trees
-        # (../to-dos/**, ../crates/**) that are outside docs_dir and therefore
-        # unresolvable as in-site links. Those are pre-existing links we do not
-        # rewrite (the docs are the source-of-truth spec), so --strict would
-        # abort the deploy on links that render fine. The build itself is clean.
-        run: mkdocs build --site-dir mkdocs-site
+        # --strict (2026-09-23): any WARNING fails the build. It could not be
+        # strict before because the source specs carry relative links into
+        # sibling trees (../to-dos/**, ../crates/**) that GitHub resolves and the
+        # handbook cannot -- 13 warnings on every build, each a dead link on the
+        # published site. `scripts/mkdocs_repo_links.py` (a `hooks:` entry in
+        # mkdocs.yml) now rewrites exactly those links to GitHub URLs at build
+        # time, leaving the sources untouched, so the build is clean and a NEW
+        # broken link is an error rather than line 14 of a warning list.
+        # The MkDocs 2.0 notice Material prints on every build is answered by
+        # the >=9.7.5 pin above (which caps MkDocs <2); NO_MKDOCS_2_WARNING is
+        # the switch that notice itself documents for acknowledging it.
+        env:
+          NO_MKDOCS_2_WARNING: "1"
+        run: mkdocs build --strict --site-dir mkdocs-site
 
       - name: Assemble the Pages site (demo at /, rustdoc at /api/, handbook at /docs/)
+        if: env.IS_PR != 'true'
         run: |
           set -euo pipefail
           rm -rf _site
@@ -162,14 +204,8 @@ jobs:
           <a href="rustynes_core/index.html">RustyNES API documentation</a>
           HTML
 
-      - name: Configure Pages
-        # build_type is set to "workflow" (GitHub Actions source); enablement
-        # self-heals if Pages is ever disabled.
-        uses: actions/configure-pages@v6
-        with:
-          enablement: true
-
       - name: Upload Pages artifact (demo + docs)
+        if: env.IS_PR != 'true'
         uses: actions/upload-pages-artifact@v5
         with:
           path: _site
@@ -181,11 +217,29 @@ jobs:
     # but never deploy.
     if: github.event_name != 'pull_request'
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # build_type is set to "workflow" (GitHub Actions source); enablement
+      # self-heals if Pages is ever disabled. Here rather than in `build` so
+      # that job needs no Pages permission.
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+        with:
+          enablement: true
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v5
+        # deploy-pages v5.0.1 (the latest release, 2026-09-01) bundles a
+        # dependency that imports Node's built-in `punycode`, which Node 24
+        # reports as DeprecationWarning DEP0040 on every deploy. It is in the
+        # action's own code, so the only thing this repo can do is decline to
+        # print THAT one code; any other deprecation still shows. Remove when a
+        # deploy-pages release no longer triggers it.
+        env:
+          NODE_OPTIONS: --disable-warning=DEP0040

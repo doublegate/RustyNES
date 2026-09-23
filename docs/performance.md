@@ -11,8 +11,10 @@ Set quantitative performance targets, identify expected hot paths, and lay out t
 > **These are DESIGN-PHASE targets, written before the cycle-accurate core
 > existed — they are aspirations, not gates.** The frame-cost row in particular
 > was never met and is knowingly accepted: the implemented core measures
-> **~3.9 ms** (`nes_run_frame_nestest_fast`) / **~2.5 ms** (`flowing_palette`)
-> on a 2020 desktop (see "Measured" below and the v2.0.1 table). The gate that
+> **~3.95 ms** (`nes_run_frame_nestest_fast`) / **~2.65 ms**
+> (`nes_run_frame_flowing_palette_fast`) on the shipped fast dot path, and
+> ~4.46 / ~2.67 ms on the exact path, on a 2020 desktop (i9-10850K; see
+> "Current figures" below, measured 2026-09-23). The gate that
 > actually runs in CI is the **relative, same-runner regression check** (§CI
 > gate), not this table. Do not treat ≤ 2 ms as a goal to optimize toward by
 > trading away accuracy — the dominant costs are work the accuracy model
@@ -21,7 +23,7 @@ Set quantitative performance targets, identify expected hot paths, and lay out t
 
 | Metric | Target (aspirational) | Stretch |
 |--------|--------|---------|
-| Frame cost (NTSC, headless core) | ≤ 2 ms on 2018-era x86_64 (Skylake) — **not met; ~3.9 ms accepted** | ≤ 1 ms |
+| Frame cost (NTSC, headless core) | ≤ 2 ms on 2018-era x86_64 (Skylake) — **not met; ~3.95 ms accepted** | ≤ 1 ms |
 | Frame cost (full frontend) | ≤ 5 ms | ≤ 3 ms |
 | Cold-start to first frame | ≤ 100 ms | ≤ 50 ms |
 | Save state size (uncompressed) | ≤ 64 KB typical | — |
@@ -59,6 +61,42 @@ treating any delta as a regression, and trust the *deltas* (same host,
 back-to-back Criterion baselines) over the absolute ms figures (~±3% host noise
 on a shared desktop). The benches live under `crates/*/benches/` and are wired
 via `[[bench]] harness = false`.
+
+### Current figures, and a correction to every stock-bench row since v2.2.3 (2026-09-23)
+
+**Current, v2.7.0 core, i9-10850K, Criterion 3 s warm-up / 10 s measurement,
+each dot path selected explicitly:**
+
+| Workload | Exact dot path (`nes_run_frame_*`) | Fast dot path, **shipped** (`*_fast`) | Δ |
+|---|---|---|---|
+| `nestest` (rendering enabled) | 4.458 ms (3.73× realtime) | **3.950 ms** (4.21× realtime) | −11.4% |
+| `flowing_palette` (rendering disabled) | 2.672 ms (6.23× realtime) | **2.654 ms** (6.27× realtime) | −0.7% (neutral) |
+
+The −11.4% reproduces the −11.3% recorded when the fast path landed (v2.1.8
+A1 below), and `flowing_palette` staying neutral is that section's
+guard-bail control behaving as designed.
+
+**The correction.** v2.2.3 P1 made the fast dot path the PPU's default
+(`fast_dotloop: true` in the constructor, commit `2db927c7`, 2026-07-23). The
+stock `full_frame` benches never selected a path, so from that commit until
+2026-09-23 **they measured the fast path too**: each stock/`*_fast` pair
+measured the same routine (3.936 vs 3.937 ms for nestest on one run), and every
+figure recorded below for `nes_run_frame_nestest` or
+`nes_run_frame_flowing_palette` after P1 -- including rows labelled "exact
+path" -- is a fast-path figure. That covers v2.2.3 P3 (measured after P1, as its
+own text says) and every section from v2.3.1 on: the v2.3.1 gate
+calibration, v2.3.1 G1, v2.3.5 C1, and v2.3.6 D1/D6 and D3. The ordering of
+v2.2.3 P2 relative to P1 is not established. Those rows are left as recorded,
+because they are the record; this paragraph is how to read them. None of their
+conclusions depended on the exact-path figure: each decision rested on the
+`*_fast` rows, which were always the shipped configuration.
+
+The benches now call `set_fast_dotloop` explicitly for both pairs, so a future
+default change cannot repeat this. The CI relative gate
+(`scripts/bench_relative_check.sh`) watches the `*_fast` pair -- the shipped
+configuration, and the one that measures the same routine on both sides of
+this change -- and the absolute ceiling (`scripts/bench_regression_check.sh`)
+covers all four.
 
 ### Headline — `full_frame` (end-to-end `Nes::run_frame`, the whole scheduler)
 

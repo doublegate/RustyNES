@@ -156,7 +156,7 @@ with the default layout.
 top-level `four_score` key in the `[input]` table (default `false`) enables the
 Four Score 4-player adapter. All are `#[serde(default)]`, so a config without
 them loads unchanged. Defaults + the in-app toggle are described under
-[Controls → Players 3 & 4](./controls.md#players-3--4-four-score).
+[Controls → Players 3 and 4](./controls.md#players-3-and-4-four-score).
 
 ### `[input] run_ahead`
 

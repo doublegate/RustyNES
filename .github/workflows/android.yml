@@ -8,28 +8,55 @@ name: Android
 on:
   push:
     branches: [main]
-    paths:
-      - 'crates/rustynes-mobile/**'
+    # Every workspace crate `rustynes-android` compiles, as `cargo tree -p
+    # rustynes-android -e normal,build --target all --prefix none` reports it.
+    # `--target all` matters: `rustynes-gfx-shaders` is an Android-target-only
+    # dependency that the host-target default does not list (caught in review
+    # on #547). `.cargo/**` because the cross-build reads `.cargo/config.toml`.
+    # Until
+    # 2026-09-23 this listed only mobile, android and core, so a change to
+    # netplay, script, cheevos, ra, hdpack or any chip crate that broke the
+    # Android build never ran this workflow. Re-derive when a dependency is
+    # added. The list is written once and aliased by `pull_request` below
+    # (YAML anchors, supported in workflow files since 2025-09-18).
+    paths: &android-paths
       - 'crates/rustynes-android/**'
+      - 'crates/rustynes-mobile/**'
       - 'crates/rustynes-core/**'
+      - 'crates/rustynes-cpu/**'
+      - 'crates/rustynes-ppu/**'
+      - 'crates/rustynes-apu/**'
+      - 'crates/rustynes-mappers/**'
+      - 'crates/rustynes-netplay/**'
+      - 'crates/rustynes-script/**'
+      - 'crates/rustynes-cheevos/**'
+      - 'crates/rustynes-ra/**'
+      - 'crates/rustynes-hdpack/**'
+      - 'crates/rustynes-gfx-shaders/**'
       - 'android/**'
       - '.github/workflows/android.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
   pull_request:
     branches: [main]
-    paths:
-      - 'crates/rustynes-mobile/**'
-      - 'crates/rustynes-android/**'
-      - 'crates/rustynes-core/**'
-      - 'android/**'
-      - '.github/workflows/android.yml'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
+    # `ready_for_review` starts the build on a PR opened as a draft; see the
+    # draft gate on `cross-build`.
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: *android-paths
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# Superseded PR pushes are cancelled; every `main` run finishes. This workflow
+# had no group at all, so each push to a PR left the previous run -- up to
+# ~27 minutes of NDK build plus Gradle packaging -- running to completion for
+# a commit nobody would look at again.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -37,30 +64,67 @@ env:
 jobs:
   cross-build:
     name: NDK cross-build + UniFFI bindings
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
+    # `pull-requests: read` is for the paths filter below, which asks the API
+    # which files a PR touches.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      app: ${{ steps.app.outputs.app }}
+    # Draft gate: a PR opened as a draft skips the Android build until it is
+    # marked ready, the same rule ci.yml's `setup` applies to its heavy jobs.
+    # This workflow is not a required check, so a skip blocks nothing.
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      # The project toolchain (rust-toolchain.toml = 1.96) plus the two shipped
-      # Android targets (arm64 ships; x86_64 is the emulator/CI ABI).
-      - name: Install Android Rust targets
-        run: rustup target add aarch64-linux-android x86_64-linux-android
-
-      - uses: Swatinem/rust-cache@v2
+      # Did this PR touch the Android APP (Kotlin, Compose, Gradle), as opposed
+      # to only the Rust it links? Only then is the Gradle packaging job worth
+      # its ~15 minutes on a PR; see `gradle-bundle`.
+      - uses: dorny/paths-filter@v4
+        id: app
+        if: github.event_name == 'pull_request'
         with:
-          key: android-ndk
+          filters: |
+            app:
+              - 'android/**'
 
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk --version "^3" --locked
+      # The project toolchain (rust-toolchain.toml = 1.96) plus the two shipped
+      # Android targets (arm64 ships; x86_64 is the emulator/CI ABI), through
+      # the shared composite. A bare `rustup target add` made rustup
+      # AUTO-INSTALL the pinned toolchain first, which rustup now deprecates
+      # with a five-line warning on every run (rust-lang/rustup#4836). The
+      # composite installs it explicitly, and its cargo cache saves from `main`
+      # only.
+      - uses: ./.github/actions/rust-setup
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+          apt: "false"
+          cache-key: android-ndk
 
-      # ubuntu-latest ships the Android SDK + an NDK; resolve its path so
+      # Cached compiled binary instead of `cargo install` on every run (it
+      # compiled cargo-ndk from source, in both jobs, every time). `--locked` is
+      # the action's default. cargo-ndk publishes no prebuilt binary that
+      # `taiki-e/install-action` knows, which is why this is the caching form.
+      - uses: taiki-e/cache-cargo-install-action@v3
+        with:
+          tool: cargo-ndk@3
+
+      # ubuntu-26.04 ships the Android SDK + an NDK; resolve its path so
       # cargo-ndk finds the toolchain. (We pin a recent NDK; r27+ aligns .so to
       # 16 KB by default — a Play requirement for Android 15+.)
+      # Both variables, to the same NDK. The runner image sets ANDROID_NDK_ROOT
+      # to its default NDK (27.x) while this job selects the latest (29.x) via
+      # ANDROID_NDK_HOME, and cargo-ndk warned on every build that the two
+      # disagree -- a real ambiguity about which toolchain linked the library.
       - name: Resolve NDK
-        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
 
       - name: Cross-compile mobile + android (arm64 + x86_64)
         run: |
@@ -72,7 +136,7 @@ jobs:
           cargo run -q -p rustynes-mobile --bin uniffi-bindgen -- \
             generate \
             --library target/aarch64-linux-android/release/librustynes_mobile.so \
-            --language kotlin --out-dir target/uniffi-kotlin
+            --language kotlin --out-dir target/uniffi-kotlin --no-format
           test -f target/uniffi-kotlin/uniffi/rustynes_mobile/rustynes_mobile.kt
 
       # 16 KB page-alignment check on the shipped arm64 library. Every PT_LOAD
@@ -100,30 +164,50 @@ jobs:
 
   gradle-bundle:
     name: Gradle bundle foss+play release (best-effort packaging)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     # Packaging is informational: the cross-build job above is the real link
     # gate. R8/Compose packaging pulls the full Android SDK, so a transient
     # tooling hiccup here must not fail the merge.
     continue-on-error: true
     needs: cross-build
+    # The slowest job in the repository (median 15.5 min over the 16 PR runs
+    # measured on 2026-09-23), and one that could never fail a PR anyway
+    # (`continue-on-error`). It runs on every `main` push and on dispatch, and
+    # on a PR only when the PR changes the Android app itself -- a PR that
+    # touches only shared Rust is covered by the cross-build's link gate, and
+    # the packaging is re-proven the moment it merges.
+    if: >-
+      ${{ github.event_name != 'pull_request'
+      || needs.cross-build.outputs.app == 'true' }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Install Android Rust targets
-        run: rustup target add aarch64-linux-android x86_64-linux-android
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-setup
         with:
-          key: android-ndk
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk --version "^3" --locked
+          targets: aarch64-linux-android,x86_64-linux-android
+          apt: "false"
+          cache-key: android-ndk
+      # Cached compiled binary instead of `cargo install` on every run (it
+      # compiled cargo-ndk from source, in both jobs, every time). `--locked` is
+      # the action's default. cargo-ndk publishes no prebuilt binary that
+      # `taiki-e/install-action` knows, which is why this is the caching form.
+      - uses: taiki-e/cache-cargo-install-action@v3
+        with:
+          tool: cargo-ndk@3
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
+      # Both variables, to the same NDK. The runner image sets ANDROID_NDK_ROOT
+      # to its default NDK (27.x) while this job selects the latest (29.x) via
+      # ANDROID_NDK_HOME, and cargo-ndk warned on every build that the two
+      # disagree -- a real ambiguity about which toolchain linked the library.
       - name: Resolve NDK
-        run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v6.3.0
         with:
           # v6 extracted the default ("enhanced") Gradle User Home cache into the

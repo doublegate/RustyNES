@@ -51,8 +51,14 @@ check() {
 }
 
 rc=0
+# All four: the stock pair runs the EXACT dot path and the `*_fast` pair the
+# shipped fast path. Until 2026-09-23 the stock benches silently ran the fast
+# path too (it became the PPU default in v2.2.3), so the shipped configuration
+# was ceiling-checked only by accident; it is named here now.
 check "nes_run_frame_nestest" "${NESTEST_CEILING_NS}" || rc=1
 check "nes_run_frame_flowing_palette" "${FLOWING_CEILING_NS}" || rc=1
+check "nes_run_frame_nestest_fast" "${NESTEST_CEILING_NS}" || rc=1
+check "nes_run_frame_flowing_palette_fast" "${FLOWING_CEILING_NS}" || rc=1
 
 if (( rc != 0 )); then
     echo "==> Frame-time regression gate FAILED — see docs/performance.md."

@@ -32,21 +32,56 @@ fn rom_path(rel: &str) -> PathBuf {
         .join(rel)
 }
 
+/// Frames run before the first measured one, to get past reset and the blank
+/// period so every bench measures steady-state work, not initialisation.
+const WARM_FRAMES: usize = 60;
+
+/// A save state of `rom` after [`WARM_FRAMES`] frames, taken ONCE per bench.
+///
+/// Until 2026-09-23 each measured iteration built a fresh `Nes` and ran the 60
+/// warm-up frames in `iter_batched`'s setup: ~175-240 ms of setup for a ~4 ms
+/// measured frame. Criterion budgets its sampling on wall time including that
+/// setup, so 100 samples could never fit the gate's 3 s target and every bench
+/// printed "Unable to complete 100 samples", taking 15-24 s instead. Restoring
+/// this snapshot yields the same warmed state -- save-state round-trips are
+/// this project's determinism contract -- so the measured routine, one
+/// `run_frame` from that state, is unchanged, while setup drops to a restore.
+fn warmed_snapshot(rom: &[u8], fast_dotloop: bool) -> Vec<u8> {
+    let mut nes = Nes::from_rom(rom).expect("bench ROM parses");
+    nes.set_fast_dotloop(fast_dotloop);
+    for _ in 0..WARM_FRAMES {
+        nes.run_frame();
+    }
+    nes.snapshot()
+}
+
+/// A fresh machine in the warmed state. `fast_dotloop` is a runtime setting,
+/// re-applied rather than trusted to the snapshot.
+///
+/// The path is ALWAYS set explicitly, both ways. The fast dot path became the
+/// PPU's default in v2.2.3, and from then until 2026-09-23 the stock benches,
+/// which never called `set_fast_dotloop`, silently measured the fast path too:
+/// each stock/`*_fast` pair measured the same routine (3.936 vs 3.937 ms for
+/// nestest), and every "exact path" row recorded in `docs/performance.md`
+/// since v2.2.3 was the fast path. Naming the path in the bench is what keeps a
+/// future default change from doing that again.
+fn warmed(rom: &[u8], snapshot: &[u8], fast_dotloop: bool) -> Nes {
+    let mut nes = Nes::from_rom(rom).expect("bench ROM parses");
+    nes.restore_quiet(snapshot)
+        .expect("a snapshot this bench just took restores");
+    // After the restore, so a restore can never override it (review, #547).
+    nes.set_fast_dotloop(fast_dotloop);
+    nes
+}
+
 fn bench_full_frame(c: &mut Criterion) {
     let bytes = std::fs::read(rom_path("nestest/nestest.nes"))
         .expect("nestest/nestest.nes vendored in tests/roms/");
+    let snapshot = warmed_snapshot(&bytes, false);
 
     c.bench_function("nes_run_frame_nestest", |b| {
         b.iter_batched(
-            || {
-                let mut nes = Nes::from_rom(&bytes).expect("nestest parses");
-                // Burn 60 frames to skip past the reset / blank period so the
-                // bench measures steady-state work, not init.
-                for _ in 0..60 {
-                    nes.run_frame();
-                }
-                nes
-            },
+            || warmed(&bytes, &snapshot, false),
             |mut nes| {
                 let fb = nes.run_frame();
                 black_box(fb.len());
@@ -67,16 +102,11 @@ fn bench_full_frame(c: &mut Criterion) {
 fn bench_full_frame_rendering(c: &mut Criterion) {
     let bytes = std::fs::read(rom_path("assorted/flowing_palette.nes"))
         .expect("assorted/flowing_palette.nes vendored in tests/roms/");
+    let snapshot = warmed_snapshot(&bytes, false);
 
     c.bench_function("nes_run_frame_flowing_palette", |b| {
         b.iter_batched(
-            || {
-                let mut nes = Nes::from_rom(&bytes).expect("flowing_palette parses");
-                for _ in 0..60 {
-                    nes.run_frame();
-                }
-                nes
-            },
+            || warmed(&bytes, &snapshot, false),
             |mut nes| {
                 let fb = nes.run_frame();
                 black_box(fb.len());
@@ -87,7 +117,8 @@ fn bench_full_frame_rendering(c: &mut Criterion) {
 }
 
 /// v2.1.8 A1 — the fast-dot-path A/B companions. Identical to the two benches
-/// above except `set_fast_dotloop(true)` is applied after boot, so a
+/// above except the fast dot path is selected (the stock pair selects the exact
+/// path, explicitly, since 2026-09-23 -- see [`warmed`]), so a
 /// back-to-back Criterion run of `*_fast` vs the stock bench isolates the
 /// speedup the specialized visible-scanline handler buys (the emulated output
 /// is byte-identical — proven by `fast_dotloop_diff`). The headline figure is
@@ -99,17 +130,11 @@ fn bench_full_frame_rendering(c: &mut Criterion) {
 fn bench_full_frame_fast(c: &mut Criterion) {
     let bytes = std::fs::read(rom_path("nestest/nestest.nes"))
         .expect("nestest/nestest.nes vendored in tests/roms/");
+    let snapshot = warmed_snapshot(&bytes, true);
 
     c.bench_function("nes_run_frame_nestest_fast", |b| {
         b.iter_batched(
-            || {
-                let mut nes = Nes::from_rom(&bytes).expect("nestest parses");
-                nes.set_fast_dotloop(true);
-                for _ in 0..60 {
-                    nes.run_frame();
-                }
-                nes
-            },
+            || warmed(&bytes, &snapshot, true),
             |mut nes| {
                 let fb = nes.run_frame();
                 black_box(fb.len());
@@ -122,17 +147,11 @@ fn bench_full_frame_fast(c: &mut Criterion) {
 fn bench_full_frame_rendering_fast(c: &mut Criterion) {
     let bytes = std::fs::read(rom_path("assorted/flowing_palette.nes"))
         .expect("assorted/flowing_palette.nes vendored in tests/roms/");
+    let snapshot = warmed_snapshot(&bytes, true);
 
     c.bench_function("nes_run_frame_flowing_palette_fast", |b| {
         b.iter_batched(
-            || {
-                let mut nes = Nes::from_rom(&bytes).expect("flowing_palette parses");
-                nes.set_fast_dotloop(true);
-                for _ in 0..60 {
-                    nes.run_frame();
-                }
-                nes
-            },
+            || warmed(&bytes, &snapshot, true),
             |mut nes| {
                 let fb = nes.run_frame();
                 black_box(fb.len());

@@ -24,6 +24,13 @@ edit_uri: edit/main/docs/
 
 docs_dir: docs
 
+# Build-time rewrite of links that leave docs/ (to ../to-dos/**, ../crates/**)
+# into GitHub URLs: the sources keep the relative links GitHub resolves, and the
+# handbook gets working links instead of 13 dead ones and 13 build WARNINGs.
+# See the module docstring.
+hooks:
+  - scripts/mkdocs_repo_links.py
+
 # GitHub project Pages serve this repo under /RustyNES/, and this handbook is
 # mounted at /RustyNES/docs/. The site_url above carries that subpath, so
 # Material emits correctly-prefixed canonical and sitemap URLs.
@@ -151,6 +158,7 @@ nav:
       - Android: android.md
       - iOS / iPadOS: ios.md
       - Libretro Core: libretro/architecture.md
+      - MiSTer FPGA Core: mister.md
   - User Guide:
       - Overview: user-guide/README.md
       - Getting Started: user-guide/getting-started.md
@@ -168,9 +176,14 @@ nav:
 
 # Engineering-only material excluded from the built site entirely: audit logs,
 # ADRs, release-note archives, internal readiness records, salvage manifests,
-# and the frozen dev/testing/tooling trees.
+# the frozen dev/testing/tooling trees, the agents' working notes (`agents/`)
+# and the AI-written audit reports with their disposition ledgers (`audits/`).
+# Links INTO any of these from a published page are rewritten to GitHub URLs
+# by `scripts/mkdocs_repo_links.py`, so they resolve instead of dying.
 exclude_docs: |
   adr/
+  agents/
+  audits/
   archive/
   audit/
   dev/

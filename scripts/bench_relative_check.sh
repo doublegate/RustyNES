@@ -120,7 +120,15 @@ require_number() {
 require_number BENCH_MAX_NOISE_CV_PCT "${MAX_NOISE_CV_PCT}"
 require_number BENCH_MAX_REGRESSION_PCT "${MAX_REGRESSION_PCT}"
 MEASUREMENT_TIME="${BENCH_MEASUREMENT_TIME:-3}"
-BENCH_IDS=(nes_run_frame_nestest nes_run_frame_flowing_palette)
+# The SHIPPED configuration: the `*_fast` pair runs the fast dot path, which is
+# the PPU default and what every user runs. Until 2026-09-23 this named the stock
+# pair, which silently measured the same fast path (the default changed in
+# v2.2.3 and the stock benches never selected a path). They now select the
+# exact path explicitly, so gating on them would compare a base that measured
+# the fast path against a head that measures the exact one -- a +12.7% "regression"
+# on nestest that is a change of subject, not of code. The `*_fast` benches
+# measure the same routine on both sides of that change.
+BENCH_IDS=(nes_run_frame_nestest_fast nes_run_frame_flowing_palette_fast)
 
 # ---- Resolve the base commit, or skip -------------------------------------
 if ! base_sha="$(git rev-parse --verify --quiet "${BASE_REF}^{commit}")"; then
