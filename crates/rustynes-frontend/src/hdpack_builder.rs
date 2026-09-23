@@ -280,8 +280,8 @@ impl HdPackBuilder {
         std::fs::create_dir_all(dir)?;
         let (w, h, rgba) = self.render_sheet();
         let png_bytes = encode_png(w, h, &rgba)?;
-        std::fs::write(dir.join("tiles.png"), png_bytes)?;
-        std::fs::write(dir.join("hires.txt"), self.manifest_text())?;
+        crate::atomic_write::write_atomic(&dir.join("tiles.png"), &png_bytes)?;
+        crate::atomic_write::write_atomic(&dir.join("hires.txt"), self.manifest_text().as_bytes())?;
         Ok(self.tiles.len())
     }
 }

@@ -278,14 +278,29 @@ fn export_chr_png(nes: &mut Nes) {
     else {
         return;
     };
-    let Ok(file) = std::fs::File::create(&path) else {
+    // Encode into memory, then publish with `write_atomic`: encoding straight
+    // into `File::create` truncated an existing export first, so a failed
+    // encode left the user an empty PNG where their previous one had been.
+    let mut png_bytes = Vec::new();
+    let encoded = (|| -> Result<(), png::EncodingError> {
+        let mut encoder = png::Encoder::new(&mut png_bytes, w as u32, h as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header()?;
+        writer.write_image_data(&combined)?;
+        writer.finish()
+    })();
+    if let Err(e) = encoded {
+        // Nothing was written, so the previous export (if any) is intact;
+        // say why this one did not happen rather than returning silently.
+        eprintln!(
+            "rustynes: CHR PNG encode for {} failed: {e}",
+            path.display()
+        );
         return;
-    };
-    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    if let Ok(mut writer) = encoder.write_header() {
-        let _ = writer.write_image_data(&combined);
+    }
+    if let Err(e) = crate::atomic_write::write_atomic(&path, &png_bytes) {
+        eprintln!("rustynes: CHR PNG export to {} failed: {e}", path.display());
     }
 }
 

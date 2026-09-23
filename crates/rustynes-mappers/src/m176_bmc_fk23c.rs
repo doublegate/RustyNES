@@ -474,6 +474,19 @@ impl Fk23c {
 }
 
 impl Mapper for Fk23c {
+    // Battery save: the whole 32 KiB WRAM (four 8 KiB `$6000` banks, the FS005
+    // register window included -- it lives in this array on the board). Until
+    // v2.7.1 the trait default returned an empty slice here, so FK23C and
+    // FS005 carts, including every mapper-30 header that declares CHR-ROM
+    // (routed to this board as 176/2), wrote an empty `.sav`. Found by
+    // `tests/battery_sram_exposed.rs`; not in the core audit.
+    fn sram(&self) -> &[u8] {
+        &self.wram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.wram
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps {
             cpu_cycle_hook: false,

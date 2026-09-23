@@ -151,6 +151,16 @@ impl TaitoX1005 {
 }
 
 impl Mapper for TaitoX1005 {
+    // Battery save: the 128-byte on-chip RAM at `$7F00-$7FFF` (core audit
+    // IMP-09). Exposed whatever the `$7EF8/$7EF9 = $A3` enable says -- the
+    // enable gates CPU access, not the battery-backed contents.
+    fn sram(&self) -> &[u8] {
+        &self.ram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.ram
+    }
+
     // v2.8.0 Phase 4 — no per-cycle hooks (no IRQ, no audio): the bus
     // skips all four per-CPU-cycle dispatches for this board.
     fn caps(&self) -> MapperCaps {

@@ -1668,7 +1668,7 @@ impl EmuCore {
             eprintln!("rustynes: could not create fds-saves dir: {e}");
             return;
         }
-        match std::fs::write(&path, &bytes) {
+        match crate::atomic_write::write_atomic(&path, &bytes) {
             Ok(()) => {
                 if let Some(nes) = self.nes.as_mut() {
                     nes.clear_disk_dirty();

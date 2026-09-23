@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the Vs. DualSystem sub-console banking (the second CHR half via an outer bank of 2, the second PRG half via an outer 8 KiB page of 4) is derived from Mesen2 (GPL-3.0-or-later) `VsSystem.h` (`chrOuter` / `prgOuter`), whose expressions the in-file comments quote. Classified as derived in v2.7.1 (core audit section 6.2). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
+
 //! Nintendo Vs. System (iNES mapper 99) implementation.
 //!
 //! The Vs. `UniSystem` cartridge board is electrically a fixed-PRG board (8 KiB,

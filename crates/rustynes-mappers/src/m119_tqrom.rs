@@ -103,6 +103,14 @@ impl Tqrom {
 }
 
 impl Mapper for Tqrom {
+    // Battery save lives in the wrapped MMC3's PRG-RAM (core audit IMP-10).
+    fn sram(&self) -> &[u8] {
+        self.inner.sram()
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        self.inner.sram_mut()
+    }
+
     // v2.8.0 Phase 4 — CPU-cycle hook + IRQ source; no on-cart audio.
     fn caps(&self) -> MapperCaps {
         MapperCaps::CYCLE_IRQ

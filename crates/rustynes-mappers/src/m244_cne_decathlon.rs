@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the two data-byte scramble tables (`LUT_PRG`, `LUT_CHR`) match Mesen2 (GPL-3.0-or-later) `Mapper244` and puNES (GPL-2.0-or-later) `mapper_244`, per the in-file comment, and are treated as derived from them. Classified as derived in v2.7.1 (core audit section 6.2). See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
+
 //! C&E Decathlon (mapper 244).
 //!
 //! A value-decoded sibling of the C&E multicart in `m240_cne_multicart.rs`:

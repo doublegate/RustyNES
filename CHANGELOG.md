@@ -26,6 +26,54 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-09-23 - "Keepsake" (a save that appears to succeed now does)
+
+### Fixed — save data
+
+- **Six cartridge boards handed RetroArch an empty battery save.** The
+  libretro core gives RetroArch `Nes::sram()` as the game's save RAM (its
+  `.srm` file), and the mapper default is an empty slice. These boards kept
+  their save memory elsewhere without overriding it: Bandai FCG's serial
+  EEPROM (mappers 16 and 159), Taito X1-005's 128-byte RAM (80), TxSROM (118)
+  and TQROM (119), which did not forward to their MMC3, Multicart 15, and
+  BMC-FK23C's 32 KiB WRAM (176, and mapper 30 with CHR-ROM). The game ran and
+  the save appeared to succeed; the `.srm` was empty. Five were in the core
+  audit (IMP-08/09/10, §5.1e); FK23C was found by the new test, which builds
+  every NES 2.0 mapper number rather than trusting a list.
+- **User files are no longer truncated in place.** FDS disk saves,
+  RetroAchievements progress, movies, screenshots, subtitle and history-clip
+  exports, fm2/bk2 export, TAStudio projects, the memory-compare export,
+  HD-pack builder output and the PPU viewer's CHR PNG export now go through the
+  atomic writer, and A/V, GIF and WAV recordings are encoded to a staging file
+  that replaces the target only when ffmpeg succeeds. A crash, a full disk or a
+  failed encode leaves the previous file rather than a truncated one (frontend
+  audit SEC-06). A test fails on any new `fs::write`, `File::create` or
+  `OpenOptions` writer in the frontend outside an argued allow-list.
+- **An unusable `config.toml` is kept before defaults replace it.** It is
+  copied to `config.toml.corrupt.bak` first, instead of being overwritten by
+  the next save, whether it fails to parse or is not valid UTF-8 (frontend
+  audit CON-04).
+
+### Known gap — desktop and mobile battery saves
+
+- **The desktop and mobile frontends do not persist cartridge battery RAM.**
+  Found while checking the entry above: nothing in `rustynes-frontend` or
+  `rustynes-mobile` reads `sram()`, and the desktop app writes only the FDS
+  disk sidecar. A game's in-cartridge save on those hosts survives only inside
+  a save state. The core audit assumed the opposite; for mobile the frontend
+  audit already records it (AND-09, MOB-05). Not fixed in this release.
+
+### Changed — provenance
+
+- **Three mapper files are now recorded as derived from Mesen2 / puNES.**
+  `m085_vrc7.rs` (the VRC7 audio register-write path), `m099_vs_system.rs` (the
+  DualSystem sub-console banking) and `m244_cne_decathlon.rs` (the PRG and CHR
+  scramble tables) quote Mesen2 source expressions in their comments. The core
+  audit proposed deleting those citations; that would have been laundering, so
+  each file instead carries a `// Provenance:` header, a row in
+  `docs/originality-and-provenance.md` §1 and a `NOTICE` entry. A new test fails
+  if a header and its §1 row disagree in either direction.
+
 ### Changed — CI
 
 - **PR checks run what a change can affect, and the heaviest wait for the
