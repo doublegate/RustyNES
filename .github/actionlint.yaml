@@ -19,6 +19,16 @@ self-hosted-runner:
     # session, which is why that workflow cannot run on a hosted runner. See
     # `Local_Only-Projects/antigravity-pr-review/README.md` in the workspace.
     - agy
+    # NOT self-hosted: GitHub-hosted Ubuntu 26.04 images, generally available
+    # since 2026-09-17 (actions/runner-images#14747), which every workflow pins
+    # instead of `ubuntu-latest`. actionlint v1.7.12 -- the latest release as
+    # of 2026-09-23, published 2026-03-30 -- predates them and reports both as
+    # unknown. Declaring them here is the only override actionlint offers.
+    # DELETE these two lines once an actionlint release lists them natively;
+    # until then a typo such as `ubuntu-26.4` is still caught, because only
+    # these exact spellings are declared.
+    - ubuntu-26.04
+    - ubuntu-26.04-arm
 
 # v2.3.9 — one suppression, scoped to one file and one message.
 #

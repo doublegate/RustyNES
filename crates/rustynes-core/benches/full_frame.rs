@@ -32,21 +32,57 @@ fn rom_path(rel: &str) -> PathBuf {
         .join(rel)
 }
 
+/// Frames run before the first measured one, to get past reset and the blank
+/// period so every bench measures steady-state work, not initialisation.
+const WARM_FRAMES: usize = 60;
+
+/// A save state of `rom` after [`WARM_FRAMES`] frames, taken ONCE per bench.
+///
+/// Until 2026-09-23 each measured iteration built a fresh `Nes` and ran the 60
+/// warm-up frames in `iter_batched`'s setup: ~175-240 ms of setup for a ~4 ms
+/// measured frame. Criterion budgets its sampling on wall time including that
+/// setup, so 100 samples could never fit the gate's 3 s target and every bench
+/// printed "Unable to complete 100 samples", taking 15-24 s instead. Restoring
+/// this snapshot yields the same warmed state -- save-state round-trips are
+/// this project's determinism contract -- so the measured routine, one
+/// `run_frame` from that state, is unchanged, while setup drops to a restore.
+fn warmed_snapshot(rom: &[u8], fast_dotloop: bool) -> Vec<u8> {
+    let mut nes = Nes::from_rom(rom).expect("bench ROM parses");
+    if fast_dotloop {
+        nes.set_fast_dotloop(true);
+    }
+    for _ in 0..WARM_FRAMES {
+        nes.run_frame();
+    }
+    nes.snapshot()
+}
+
+/// A fresh machine in the warmed state. `fast_dotloop` is a runtime setting,
+/// re-applied rather than trusted to the snapshot.
+///
+/// `true` calls `set_fast_dotloop(true)` exactly as the `*_fast` benches always
+/// did; `false` leaves the setting ALONE, exactly as the stock benches did. It
+/// must not call `set_fast_dotloop(false)`: the fast path is the DEFAULT, so
+/// forcing it off measured a different routine -- +12.7% on nestest in the
+/// first A/B of this change, which is how that was caught.
+fn warmed(rom: &[u8], snapshot: &[u8], fast_dotloop: bool) -> Nes {
+    let mut nes = Nes::from_rom(rom).expect("bench ROM parses");
+    if fast_dotloop {
+        nes.set_fast_dotloop(true);
+    }
+    nes.restore_quiet(snapshot)
+        .expect("a snapshot this bench just took restores");
+    nes
+}
+
 fn bench_full_frame(c: &mut Criterion) {
     let bytes = std::fs::read(rom_path("nestest/nestest.nes"))
         .expect("nestest/nestest.nes vendored in tests/roms/");
+    let snapshot = warmed_snapshot(&bytes, false);
 
     c.bench_function("nes_run_frame_nestest", |b| {
         b.iter_batched(
-            || {
-                let mut nes = Nes::from_rom(&bytes).expect("nestest parses");
-                // Burn 60 frames to skip past the reset / blank period so the
-                // bench measures steady-state work, not init.
-                for _ in 0..60 {
-                    nes.run_frame();
-                }
-                nes
-            },
+            || warmed(&bytes, &snapshot, false),
             |mut nes| {
                 let fb = nes.run_frame();
                 black_box(fb.len());
@@ -67,16 +103,11 @@ fn bench_full_frame(c: &mut Criterion) {
 fn bench_full_frame_rendering(c: &mut Criterion) {
     let bytes = std::fs::read(rom_path("assorted/flowing_palette.nes"))
         .expect("assorted/flowing_palette.nes vendored in tests/roms/");
+    let snapshot = warmed_snapshot(&bytes, false);
 
     c.bench_function("nes_run_frame_flowing_palette", |b| {
         b.iter_batched(
-            || {
-                let mut nes = Nes::from_rom(&bytes).expect("flowing_palette parses");
-                for _ in 0..60 {
-                    nes.run_frame();
-                }
-                nes
-            },
+            || warmed(&bytes, &snapshot, false),
             |mut nes| {
                 let fb = nes.run_frame();
                 black_box(fb.len());
@@ -96,20 +127,22 @@ fn bench_full_frame_rendering(c: &mut Criterion) {
 /// backdrop-override demo — the fast path never engages there, so its `*_fast`
 /// variant is expected to be NEUTRAL and serves only as the guard-bail control
 /// (see `docs/performance.md` §"v2.1.8 A1").
+///
+/// **Known, not changed here (found 2026-09-23):** the fast dot path is now the
+/// DEFAULT (`fast_dotloop: true` in the PPU's constructor), and the stock
+/// benches never call `set_fast_dotloop`, so each stock/`*_fast` pair measures
+/// the same routine -- 3.936 vs 3.937 ms for nestest on one run. The pairs no
+/// longer isolate the speedup. Restoring the A/B means the stock benches
+/// calling `set_fast_dotloop(false)`, which changes the headline ms/frame
+/// figure in `docs/performance.md`, so it is a decision for its own change.
 fn bench_full_frame_fast(c: &mut Criterion) {
     let bytes = std::fs::read(rom_path("nestest/nestest.nes"))
         .expect("nestest/nestest.nes vendored in tests/roms/");
+    let snapshot = warmed_snapshot(&bytes, true);
 
     c.bench_function("nes_run_frame_nestest_fast", |b| {
         b.iter_batched(
-            || {
-                let mut nes = Nes::from_rom(&bytes).expect("nestest parses");
-                nes.set_fast_dotloop(true);
-                for _ in 0..60 {
-                    nes.run_frame();
-                }
-                nes
-            },
+            || warmed(&bytes, &snapshot, true),
             |mut nes| {
                 let fb = nes.run_frame();
                 black_box(fb.len());
@@ -122,17 +155,11 @@ fn bench_full_frame_fast(c: &mut Criterion) {
 fn bench_full_frame_rendering_fast(c: &mut Criterion) {
     let bytes = std::fs::read(rom_path("assorted/flowing_palette.nes"))
         .expect("assorted/flowing_palette.nes vendored in tests/roms/");
+    let snapshot = warmed_snapshot(&bytes, true);
 
     c.bench_function("nes_run_frame_flowing_palette_fast", |b| {
         b.iter_batched(
-            || {
-                let mut nes = Nes::from_rom(&bytes).expect("flowing_palette parses");
-                nes.set_fast_dotloop(true);
-                for _ in 0..60 {
-                    nes.run_frame();
-                }
-                nes
-            },
+            || warmed(&bytes, &snapshot, true),
             |mut nes| {
                 let fb = nes.run_frame();
                 black_box(fb.len());

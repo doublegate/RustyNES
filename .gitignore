@@ -389,3 +389,7 @@ tests/roms/**/*.nl
 /threads.json
 /unresolved_threads.txt
 /pr_*.txt
+
+# MkDocs Material's social-card and privacy plugins write their download/render
+# cache here on every local `mkdocs build` (web.yml builds the handbook in CI).
+/.cache/

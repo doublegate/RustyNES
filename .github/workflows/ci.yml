@@ -100,7 +100,7 @@ jobs:
   # run the full suite.
   changes:
     name: detect code changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Typical: ~10 s. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.
     timeout-minutes: 20
@@ -200,8 +200,10 @@ jobs:
 
       # Per-target filters (2026-09-23): a cross-build job runs on a PR only
       # when something it COMPILES changed. Each crate list is exactly what
-      # `cargo tree -p <pkg> -e normal,build --prefix none` reports as a path
-      # dependency, and must be re-derived when a crate gains a dependency on
+      # `cargo tree -p <pkg> -e normal,build --target all --prefix none` reports
+      # as a path
+      # dependency (`--target all`, or a target-specific dependency is
+      # invisible), and must be re-derived when a crate gains a dependency on
       # another workspace crate -- a crate missing from a list means a PR that
       # breaks that build skips the gate, and a skipped job passes `CI success`.
       # The shared entries (manifests, lockfile, toolchain, CI plumbing) are in
@@ -265,11 +267,17 @@ jobs:
   # leg still runs on every PR (aarch64 alignment/SIMD/atomics/fp coverage), and
   # the post-merge push + release PR + weekly cron still give full cross-platform
   # + accuracy coverage before anything ships.
+  # RUNNER LABELS ARE PINNED (2026-09-23): `ubuntu-26.04` / `ubuntu-26.04-arm`,
+  # never `ubuntu-latest`, in every workflow. GitHub moves `latest` to a new
+  # image on a date of its choosing, and announced the 26.04 move with a notice
+  # on EVERY job (241 of them in the last 150 runs). A pinned label makes the
+  # next OS upgrade a reviewed diff instead of a surprise, and keeps the notice
+  # out of the logs.
   setup:
     name: select matrix
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Typical: ~5 s. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.
     timeout-minutes: 20
@@ -310,17 +318,17 @@ jobs:
           # LIGHT only for a regular PR (head branch not release/*); FULL otherwise.
           if [ "$EVENT_NAME" = "pull_request" ] && [[ "$HEAD_REF" != release/* ]]; then
             echo 'full=false' >> "$GITHUB_OUTPUT"
-            echo 'os=["ubuntu-latest", "ubuntu-24.04-arm"]' >> "$GITHUB_OUTPUT"
+            echo 'os=["ubuntu-26.04", "ubuntu-26.04-arm"]' >> "$GITHUB_OUTPUT"
           else
             echo 'full=true' >> "$GITHUB_OUTPUT"
-            echo 'os=["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest", "windows-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'os=["ubuntu-26.04", "ubuntu-26.04-arm", "macos-latest", "windows-latest"]' >> "$GITHUB_OUTPUT"
           fi
 
   lint:
     name: fmt + clippy + rustdoc
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Typical: ~4 min. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.
     timeout-minutes: 30
@@ -563,7 +571,7 @@ jobs:
       && needs.setup.outputs.heavy == 'true'
       && (needs.setup.outputs.full == 'true'
       || needs.changes.outputs.accuracy == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Typical: ~29 min. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.
     timeout-minutes: 60
@@ -607,7 +615,7 @@ jobs:
     if: >-
       ${{ needs.changes.outputs.code == 'true'
       && (needs.setup.outputs.full == 'true' || needs.changes.outputs.nostd == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Typical: ~35 s. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.
     timeout-minutes: 20
@@ -630,7 +638,7 @@ jobs:
     name: wasm32 build + clippy
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Typical: ~1.5 min. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.
     timeout-minutes: 25
@@ -666,7 +674,7 @@ jobs:
     if: >-
       ${{ needs.changes.outputs.code == 'true'
       && (needs.setup.outputs.full == 'true' || needs.changes.outputs.libretro == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Typical: ~1 min per target. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.
     timeout-minutes: 25
@@ -716,7 +724,7 @@ jobs:
         #     The Arch-host blind spot noted above applies here too, so a clean
         #     local `cargo check` proves nothing about this triple — only this
         #     runner does.
-        #   * Android — ubuntu-latest ships an NDK, whose sysroot is wired up
+        #   * Android — ubuntu-26.04 ships an NDK, whose sysroot is wired up
         #     below exactly as `cargo ndk` does it on the buildbot.
         #   * Apple (macOS/iOS) — DELIBERATELY EXCLUDED. There is no Apple SDK
         #     on a Linux runner, so clang falls back to host glibc headers and
@@ -827,7 +835,7 @@ jobs:
     # ceiling that only needs to hold at merge / release, not on every iteration.
     needs: [changes, setup]
     if: ${{ needs.changes.outputs.code == 'true' && needs.setup.outputs.full == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Typical: ~7 min. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.
     timeout-minutes: 40
@@ -884,7 +892,7 @@ jobs:
     name: CI success
     if: ${{ always() }}
     needs: [changes, setup, lint, test, test-roms, no_std, wasm, libretro-cross, bench]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Typical: instant. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.
     timeout-minutes: 10

@@ -10,7 +10,7 @@ directly as windows from the menu bar. Settings live in a TOML file under your O
 config directory (and most of them are also reachable from View → Settings…).
 
 If you're a developer or contributor looking for implementation specs (CPU,
-PPU, APU, scheduler, testing strategy, etc.), see the rest of [`../`](../)
+PPU, APU, scheduler, testing strategy, etc.), see the rest of [`../`](../index.md)
 instead. This subdirectory only covers running the emulator.
 
 ## Table of contents

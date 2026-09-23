@@ -59,7 +59,7 @@ jobs:
     if: >
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Bounded like every other job (v2.3.7). `build` below cannot carry one —
     # `timeout-minutes` is not valid on a job that uses `uses:` — so its budget
     # lives on the jobs inside `release.yml`, which already carry their own.

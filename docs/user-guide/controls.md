@@ -35,7 +35,7 @@ Player 2 input is fully wired — these keys drive the second controller
 (`$4017`). A second USB gamepad can also drive Player 2 (see
 [Gamepads](#gamepads)).
 
-### Players 3 & 4 (Four Score)
+### Players 3 and 4 (Four Score)
 
 The Four Score 4-player adapter is **off by default**. Toggle it with the
 **"Four Score (4-player)"** checkbox in the in-app input modal (open the
@@ -165,7 +165,7 @@ and the binding is silently dropped — the rest of the file still loads.
   meant for use while emulation is paused.
 - **Quit (Esc)** fires on key-down.
 
-## TAS movies (record / playback)
+## TAS movies: record and playback
 
 RustyNES can record a *movie* — the per-frame controller input applied on
 top of a reproducible start point — and replay it bit-for-bit. Because the

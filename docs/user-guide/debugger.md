@@ -186,7 +186,7 @@ set of debugging and authoring tools, reachable from the **Tools** and
   write back into PPU memory.
 - **Memory compare** — diff two snapshots to track what changed.
 - **TAStudio** — the piano-roll TAS editor (see [Controls → TAS
-  movies](./controls.md#tas-movies-record--playback)).
+  movies](./controls.md#tas-movies-record-and-playback)).
 
 These are aimed at homebrew developers and TAS authors; you never need
 them to play a game.

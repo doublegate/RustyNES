@@ -96,8 +96,15 @@ jobs:
 
       # XcodeGen authors the .pbxproj from ios/project.yml (a hand-written project
       # is too error-prone to maintain).
+      #
+      # The macOS image ships `aws/tap`, and Homebrew 5's tap-trust check warns
+      # on every `brew install` that it is ignoring that untrusted tap. Nothing
+      # here uses it, so it is untapped first; `|| true` because a future image
+      # may not carry it.
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: |
+          brew untap aws/tap 2>/dev/null || true
+          brew install xcodegen
 
       # Builds the per-arch staticlibs, generates the Swift bindings, assembles
       # RustyNESFFI.xcframework, and runs `xcodegen generate`.

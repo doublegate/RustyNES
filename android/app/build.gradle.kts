@@ -280,11 +280,30 @@ val uniffiBindgen = tasks.register<Exec>("uniffiBindgen") {
     dependsOn(cargoNdkBuild)
     workingDir = workspaceRoot
     val lib = workspaceRoot.resolve("target/aarch64-linux-android/release/librustynes_mobile.so")
+    // `--no-format`: UniFFI otherwise shells out to ktlint, which neither CI nor a
+    // plain Android Studio setup has, and prints a warning on every build.
     commandLine(
         "cargo", "run", "-q", "-p", "rustynes-mobile", "--bin", "uniffi-bindgen", "--",
         "generate", "--library", lib.absolutePath,
         "--language", "kotlin", "--out-dir", uniffiGenDir.absolutePath,
+        "--no-format",
     )
+    // UniFFI 0.32's Kotlin template emits two expressions the Kotlin compiler
+    // reports as UNUSED_EXPRESSION, in code this project does not own and must not
+    // edit by hand. Extend the file-level @Suppress UniFFI already writes (the
+    // annotation is not repeatable, so a second @file:Suppress would not compile).
+    // If a future UniFFI changes that header this leaves the file untouched and
+    // says so, so the warning comes back visibly rather than being lost.
+    doLast {
+        val kt = uniffiGenDir.resolve("uniffi/rustynes_mobile/rustynes_mobile.kt")
+        val anchor = "@file:Suppress(\"NAME_SHADOWING\")"
+        val text = kt.readText()
+        if (text.contains(anchor)) {
+            kt.writeText(text.replace(anchor, "@file:Suppress(\"NAME_SHADOWING\", \"UNUSED_EXPRESSION\")"))
+        } else {
+            logger.warn("uniffiBindgen: @file:Suppress header not found in ${kt.name}; UNUSED_EXPRESSION not suppressed")
+        }
+    }
 }
 
 tasks.named("preBuild") { dependsOn(uniffiBindgen) }

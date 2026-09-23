@@ -36,18 +36,27 @@ cycle-accurate core later replaced.
   - **Draft gate.** A PR opened as a draft runs the fast gates only; `test`,
     `test-roms`, the Android build and the Pages build run once it is marked
     ready (`ready_for_review`). A merge queue would be the native form and is
-    unavailable to a user-owned repository.
+    unavailable to a user-owned repository. Measured on #547: the draft run is
+    ~6 minutes of wall clock against 18-32 before. Copilot's automatic review
+    does not run on a draft; requesting it (`gh pr edit --add-reviewer
+    @copilot`) does.
   - **Gradle packaging** runs on `main`, on dispatch, and on a PR only when the
     Android app (`android/**`) changed. `cargo-ndk` is cached instead of
     compiled from source twice per run, and the Android cargo cache is saved
     from `main` only.
   - **`test-roms`** compiles and runs the two packages that have the feature
     instead of the whole workspace in release, and no longer waits for `lint`.
-  - **Path filters derived from `cargo tree`**: the libretro cross-compiles and
-    the `no_std` build run on a PR only when a crate they compile changed;
-    `security.yml`'s audit and deny only when a manifest, the lockfile or
-    `deny.toml` changed (the weekly cron still re-checks advisories), and its
-    clippy job lints only `gpu-timing`, the one feature nothing else reaches.
+  - **Path filters derived from `cargo tree --target all`**: the libretro
+    cross-compiles and the `no_std` build run on a PR only when a crate they
+    compile changed, and `security.yml` runs only when a manifest, the
+    lockfile, `deny.toml` or `.cargo/` changed (the weekly cron still re-checks
+    advisories against an unchanged lockfile).
+  - **`Clippy Security Lints` removed.** It re-ran a full workspace clippy with
+    `retroachievements` and `gpu-timing`, both of which `ci.yml`'s lint job
+    already covers (`gpu-timing` is a default feature).
+  - **Runners pinned to Ubuntu 26.04** (`ubuntu-26.04`, `ubuntu-26.04-arm`,
+    GA 2026-09-17) instead of `ubuntu-latest`, which carried a migration notice
+    on every job; the next OS move is now a reviewed change.
   - **Pages on a PR** builds the wasm demo, the size budget and the handbook,
     and skips rustdoc (already gated by `lint`) and the deploy-only steps.
 - **Fixed:** `android.yml` triggered on three of the eleven workspace crates
@@ -56,8 +65,30 @@ cycle-accurate core later replaced.
 - **Fixed:** `web.yml` put every event in one global `pages` concurrency group
   with no cancellation, so PR builds from different PRs cancelled each other;
   PRs now get their own group. `android.yml` had no group at all and now
-  cancels a superseded PR run. `pages: write` and `id-token: write` moved from
-  the workflow to the two jobs that use them.
+  cancels a superseded PR run. The Pages build job, which runs PR code, now
+  holds no Pages permission: `configure-pages` moved into the deploy job with
+  `pages: write` and `id-token: write`.
+- **Zero warnings in the workflow logs.** A sweep of the last 150 runs' logs
+  and annotations, fixed at the source where the source is ours:
+  - Android: rustup's toolchain auto-install deprecation (the toolchain is now
+    installed explicitly), cargo-ndk's `ANDROID_NDK_HOME`/`ANDROID_NDK_ROOT`
+    mismatch (both now name the same NDK), UniFFI's missing-ktlint warning
+    (`--no-format`), and two Kotlin `UNUSED_EXPRESSION` warnings in UniFFI's
+    generated bindings (suppressed on the generated file's own `@Suppress`).
+  - Pages: 13 MkDocs link warnings, each a dead link on the published
+    handbook. A build hook (`scripts/mkdocs_repo_links.py`) rewrites links
+    that leave `docs/`, or point at an excluded page such as an ADR, to their
+    GitHub URLs; two anchors GitHub and MkDocs slug differently and one bare
+    `../` link are fixed; `docs/agents/` and `docs/audits/` join
+    `exclude_docs` and the MiSTer page joins the nav. The handbook now builds
+    with `--strict`, so a new broken link fails the build. Material is pinned
+    `>=9.7.5`, the release that caps MkDocs below the plugin-less 2.0.
+  - `actions/deploy-pages`' own `punycode` deprecation (DEP0040) is silenced
+    for that step only; Homebrew's untrusted-tap warning on iOS is removed by
+    untapping the image's unused `aws/tap`.
+- **Fixed:** the Android workflow's path filter also missed
+  `rustynes-gfx-shaders`, an Android-target-only dependency that a host-target
+  `cargo tree` does not list, and `.cargo/`.
 
 ## [2.7.0] - 2026-09-23 - "Palisade" (untrusted input stops at the boundary)
 
