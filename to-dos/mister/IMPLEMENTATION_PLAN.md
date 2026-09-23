@@ -10,7 +10,7 @@
 what is next, and what each release owes.
 
 **Goal:** a functioning, feature-complete RustyNES core for MiSTer FPGA at
-**v2.7.0**, suitable for contributing per
+**v3.0.0** (v2.7.0 until ADR 0041), suitable for contributing per
 `ref-docs/2026-08-23-mister-core-contribution-requirements.md`.
 
 ## Where the core actually is

@@ -78,8 +78,11 @@ hardware core.
   families, the DE10-Nano second board) are relabelled **post-v3.0.0**, so that
   each version number means one thing.
 - The engine-lineage release notes `docs/release-notes/v2.7.0.md`, `v2.7.1.md` and
-  `v2.8.0.md` are renamed `engine-lineage-*.md`, so the RustyNES releases of those
-  numbers do not collide with them.
+  `v2.8.0.md` keep their names. That folder is engine-lineage history throughout,
+  disclaimed as such in its README, and its `v2.0.0`-`v2.6.0` files have always
+  shared numbers with shipped RustyNES releases, whose own notes live in
+  `.github/release-notes/`. Renaming only the three that the new line reaches
+  would break that folder's convention rather than resolve a collision.
 - The "no hardware has run any bitstream" anchors stay true for three more minor
   lines. They are flipped in the v3.0.0 PR and nowhere earlier.
 - `to-dos/mister/contribution-checklist.md` changes its deadline from v2.7.0 to

@@ -19,7 +19,7 @@ v1.0.0 is the **production cut that integrates the cycle-accurate emulation engi
 MAJOR.MINOR.PATCH[-PRERELEASE]
 ```
 
-- **MAJOR** — incompatible public-API or save-state-format breaks (now at `2`, since **v2.0.0 "Timebase"** broke the `.rns` save-state / `.rnm` movie epochs per ADR 0028).
+- **MAJOR** — incompatible public-API or save-state-format breaks (now at `2`, since **v2.0.0 "Timebase"** broke the `.rns` save-state / `.rnm` movie epochs per ADR 0028), or the first release of a new deliverable class ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md): the hardware-verified FPGA core, v3.0.0).
 - **MINOR** — backwards-compatible features (new mappers, new frontend features, new platforms).
 - **PATCH** — backwards-compatible bug fixes and accuracy refinements.
 - **PRERELEASE** — `-alpha.N` / `-beta.N` / `-rc.N` when stabilizing a future minor/major.

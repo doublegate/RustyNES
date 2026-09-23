@@ -87,7 +87,8 @@ reproduces the live window without being vacuous. It then runs the real
 comparator over a real save file, because the conjunction of two separately
 verified halves is a third claim.
 
-Per the v2.7.0 plan: if that control ever comes out dirty, **drop the patch and
+Per the v2.7.0 "Shakedown" plan (superseded by ADR 0041; the v2.9.x plan keeps
+the rule): if that control ever comes out dirty, **drop the patch and
 keep the photograph** — a readback channel that alters the thing it reads is
 worse than no channel.
 

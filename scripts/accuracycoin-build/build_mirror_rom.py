@@ -64,7 +64,8 @@ A byte budget proves nothing MOVED. It does not prove the patched ROM produces
 the SAME ANSWERS. That control is
 `crates/rustynes-test-harness/tests/accuracycoin_mirror.rs`, which runs both
 ROMs through the oracle and refuses unless the decoded status vectors are
-byte-identical and the mirror reproduces the live window. Per the v2.7.0 plan:
+byte-identical and the mirror reproduces the live window. Per the v2.7.0 "Shakedown" plan
+(superseded by ADR 0041; the v2.9.x plan keeps this rule):
 *"the patched ROM must produce a byte-identical vector to the unpatched one in
 simulation before a single hardware reading is taken from it."* If that control
 does not come out clean, drop the patch and keep the photograph -- a readback

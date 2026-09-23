@@ -14,7 +14,9 @@
 //! five bytes at the call site, and a run inside bank 2's end-of-bank fill. That
 //! is a claim about *layout*. It is not a claim about *answers*.
 //!
-//! The v2.7.0 plan sets the bar this file enforces: **"the patched ROM must
+//! The v2.7.0 "Shakedown" plan (superseded by ADR 0041; its strands carry into
+//! `to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md`) set the bar this
+//! file enforces: **"the patched ROM must
 //! produce a byte-identical vector to the unpatched one in simulation before a
 //! single hardware reading is taken from it"**, and the consequence if it does
 //! not — *"drop the patch and keep the photograph; a readback channel that
@@ -209,7 +211,8 @@ fn end_to_end_through_the_comparator(oracle_ram: &[u8], hardware_shaped_sav: &[u
     println!("[mirror-control] end-to-end via accuracycoin_status: agreement on a real .sav");
 }
 
-/// The control the v2.7.0 plan requires: same ROM, same answers.
+/// The control the Shakedown plan required, and the v2.9.x plan keeps: same ROM,
+/// same answers.
 #[test]
 fn mirror_rom_reproduces_the_unpatched_vector_and_mirrors_it() {
     let base: BatteryRun = accuracy_coin::run_battery_rom(&accuracy_coin::rom_path(), MAX_FRAMES);
@@ -242,7 +245,7 @@ fn mirror_rom_reproduces_the_unpatched_vector_and_mirrors_it() {
         panic!(
             "the patched ROM's result window differs from upstream's in {} of \
              {VECTOR_LEN} bytes. The patch was supposed to be inert with respect \
-             to every answer. Per the v2.7.0 plan, the response to this is to \
+             to every answer. Per the Shakedown plan (kept by the v2.9.x plan), the response is to \
              DROP the patch and keep the photograph, not to explain it away: a \
              readback channel that alters the thing it reads is worse than no \
              channel.\n  First 20: {:#?}",
