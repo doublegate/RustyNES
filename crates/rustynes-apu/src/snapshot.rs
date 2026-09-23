@@ -557,6 +557,14 @@ fn write_onepole(w: &mut W, o: &OnePole) {
 }
 fn read_onepole(r: &mut R<'_>) -> Result<OnePole, ApuSnapshotError> {
     let coeff = finite_f32(r.f32()?, "filter.coeff")?;
+    // Both constructors keep the coefficient in [0, 1]: `exp(-2*pi*fc/fs)` for
+    // the high-pass, `1 - exp(-2*pi*fc/fs)` for the low-pass. A finite value
+    // above 1 in the high-pass feeds `prev_out` back with gain > 1, which
+    // diverges to infinity and then NaN in the host audio (review finding on
+    // #546, CodeRabbit), so finiteness alone is not enough.
+    if !(0.0..=1.0).contains(&coeff) {
+        return Err(ApuSnapshotError::InvalidResampler("filter.coeff"));
+    }
     let prev_in = finite_f32(r.f32()?, "filter.prev_in")?;
     let prev_out = finite_f32(r.f32()?, "filter.prev_out")?;
     let is_hpf = r.bool()?;
@@ -948,6 +956,10 @@ mod tests {
         let co = |a: &mut Apu, v: f32| a.blip.filter.lp.coeff = v;
         let cp = || field_span(|a| co(a, 0.5), |a| co(a, f32::from_bits(!0.5f32.to_bits())));
         assert_float_rejected("filter.coeff", cp(), &f32::INFINITY.to_le_bytes());
+        // Finite but out of range: a high-pass gain above 1 diverges.
+        for bad in [1.5f32, -0.25] {
+            assert_float_rejected("filter.coeff", cp(), &bad.to_le_bytes());
+        }
     }
 
     #[test]

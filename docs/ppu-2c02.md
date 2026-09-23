@@ -59,6 +59,29 @@ The PPU owns its 2 KB internal VRAM but routes all `$0000-$3FFF` accesses throug
 - **NMI line + edge tracker** — observed by the CPU.
 - **OAMADDR**, **read buffer** for PPUDATA.
 
+## Save-state restore validation
+
+A save state is untrusted input (v2.7.0, core audit IMP-01 and the fuzz
+findings recorded in `docs/audits/core-disposition.md`). `Ppu::restore`
+rejects a blob whose fields hold values the running PPU never produces, with a
+typed `PpuSnapshotError`, because each of them restored cleanly before and then
+panicked or never finished a frame on a later dot:
+
+| Field | Legal range | Error |
+| --- | --- | --- |
+| `spr_count` | 0..=8 | `InvalidSprCount` |
+| `dot`, `scanline` | 0..=340; -1..=pre-render line (-1 is the power-on position) | `InvalidRasterPosition` |
+| `x` (fine X) | 0..=7 | `FieldOutOfRange` |
+| `sprite_eval_n` / `_m` / `_found` / `_sec_idx` | 63 / 3 / 8 / 32 | `FieldOutOfRange` |
+| `oam_bus_addr_h` / `_addr_l` / `_secondary_addr` / `_overflow_counter` | 63 / 3 / 32 / 3 | `FieldOutOfRange` |
+| `oam2_addr`, `oam2_fetch_addr` | 31 | `FieldOutOfRange`, `InvalidOam2FetchAddr` |
+| `oam_corruption_index` | 0..=32 (32 wraps to row 0) | `FieldOutOfRange` |
+
+`extra_lines_remaining` is **clamped**, not rejected, to the `extra_scanlines`
+knob in force: the knob is a frontend setting that is not serialized, so a save
+written under a larger knob is genuine. Each bound is the range the PPU keeps
+the field in, so a state the emulator wrote always restores.
+
 ## Behavior
 
 ### Frame structure

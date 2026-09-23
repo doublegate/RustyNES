@@ -75,6 +75,33 @@ The APU is clocked by the master scheduler at CPU cadence (every other PPU dot t
 - **Mixer state**: high-pass filter state (two stages), low-pass filter state (one stage), output accumulator.
 - **Sample emitter**: blip_buf-style ring of pending step responses + windowed-sinc kernel cache.
 
+## Save-state restore validation
+
+A save state is untrusted input (v2.7.0, core audit IMP-02). `Apu::restore`
+rejects values the hardware registers cannot hold, and resampler values that
+would hang or poison the audio, with a typed `ApuSnapshotError`:
+
+| Field | Legal range | Error |
+| --- | --- | --- |
+| pulse `duty` / `step` | 0..=3 / 0..=7 | `FieldOutOfRange` |
+| pulse `sweep_period` / `sweep_shift` / `sweep_divider` | 0..=7 each | `FieldOutOfRange` |
+| envelope `volume_or_period` / `divider` / `decay` | 0..=15 each | `FieldOutOfRange` |
+| triangle `step` | 0..=31 | `FieldOutOfRange` |
+| DMC `rate_index` / `bits_remaining` / `dac` | 0..=15 / 0..=8 / 0..=127 | `FieldOutOfRange` |
+| resampler `sample_rate` | non-zero | `InvalidResampler` |
+| resampler `cpu_rate` | finite, positive | `InvalidResampler` |
+| `sample_rate / cpu_rate` | at most one host sample per CPU cycle | `InvalidResampler` |
+| resampler `phase` | `[0, 1)` | `InvalidResampler` |
+| filter `coeff` | finite, `[0, 1]` | `InvalidResampler` |
+| filter `prev_in` / `prev_out`, `held_value` | finite | `InvalidResampler` |
+
+The register-width rows prevent out-of-bounds indexing on the next tick (the
+duty and triangle tables, and the mixer's 31- and 203-entry lookup tables that
+`decay`, a constant `volume_or_period` and the DAC feed). The resampler rows
+never panicked: a zero, non-finite or merely huge rate ratio hung
+`BlipBuf::add_sample`'s `while phase >= 1.0` loop, and a high-pass coefficient
+above 1 diverges to NaN.
+
 ## Behavior
 
 ### Register map
