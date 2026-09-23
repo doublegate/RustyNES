@@ -7,6 +7,7 @@ Date: 2026-08-20
 Accepted. Opens the **v2.4.1 - v2.5.0 "Fabric"** line and the v2.6-v2.9 programme
 that follows it. Extends the reference firewall of
 `docs/ai-emulator-provenance-guardrails.md` from emulator source to **HDL source**.
+*(Amended 2026-09-22 by [ADR 0041](0041-hardware-release-is-v3.0.0.md): the programme now ends at **v3.0.0**, the hardware-verified core, after the v2.7.x–v2.9.x audit lines.)*
 Does not supersede any ADR.
 
 ## Context

@@ -87,7 +87,8 @@ reproduces the live window without being vacuous. It then runs the real
 comparator over a real save file, because the conjunction of two separately
 verified halves is a third claim.
 
-Per the v2.7.0 plan: if that control ever comes out dirty, **drop the patch and
+Per the v2.7.0 "Shakedown" plan (superseded by ADR 0041; the v2.9.x plan keeps
+the rule): if that control ever comes out dirty, **drop the patch and
 keep the photograph** — a readback channel that alters the thing it reads is
 worse than no channel.
 
@@ -113,4 +114,5 @@ bytes are `00 00 00 00`.
 
 Nothing here has run on hardware. This is a ROM and a simulation control on it.
 Whether the core's save path actually writes the window to the card is a
-hardware measurement, and it belongs to v2.7.0.
+hardware measurement, and it belongs to v2.9.2, the board session ahead of
+v3.0.0 (ADR 0041).

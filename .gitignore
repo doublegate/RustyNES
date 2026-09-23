@@ -376,3 +376,16 @@ tests/roms/**/*.lst
 tests/roms/**/*.fns
 tests/roms/**/*.nl
 .agents/
+
+# Agent review scratch in the repo root: PR-thread dumps and one-shot patch scripts
+# an agent writes while working a review round (`cr_*`, `fix_*.py`, `*_comments.json`,
+# `threads.json`, `pr_*.txt`). Thirteen of them sat untracked after #544, one
+# `git add -A` from landing in history. Root-anchored so nothing under `scripts/` or
+# `crates/` can match.
+/cr_*.json
+/cr_*.txt
+/fix_*.py
+/*_comments.json
+/threads.json
+/unresolved_threads.txt
+/pr_*.txt

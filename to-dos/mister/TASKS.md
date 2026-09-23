@@ -401,7 +401,9 @@ something as blocked, check the blocker applies to the WHOLE item.**
       are unregistered in `regress.sh` and therefore have no recorded address to
       resolve through — named here rather than guessed.
 
-## v2.7.0 — the contribution package
+## v3.0.0 — the contribution package
+
+*Was v2.7.0; re-targeted by [ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md) on 2026-09-22.*
 
 - [ ] Requirements checklist green (`contribution-checklist.md`)
       **BLOCKED — on the submission itself; the HARDWARE blocker has cleared.**
@@ -424,7 +426,7 @@ something as blocked, check the blocker applies to the WHOLE item.**
       `"RustyNES;;"` gives `/media/fat/games/RustyNES`, and it is unique because
       the incumbent core's internal name is `NES`.
 - [ ] Email `newcores@misterfpga.org`
-      **BLOCKED — the submission is v2.7.0 by definition**, and sending it
+      **BLOCKED — the submission is v3.0.0 by definition**, and sending it
       before the quality bar closes is what the checklist exists to prevent.
 - [ ] **Decide deliberately** whether to transfer the repository to MiSTer-devel —
       acceptance means the repo moves, and that is one-way

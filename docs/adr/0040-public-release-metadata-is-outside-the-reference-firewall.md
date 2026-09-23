@@ -9,6 +9,9 @@ Accepted. Scopes — does not widen — the reference firewall stated in
 [ADR 0037](0037-mister-fpga-core-independent-hdl-implementation.md). Supersedes
 no ADR. Decided by the maintainer after the question was escalated rather than
 self-certified, per `RustyNES_MiSTer/docs/provenance.md` §"Do not self-certify".
+*(Note 2026-09-22: the v2.7.0 "Shakedown" plan cited below is superseded by
+[ADR 0041](0041-hardware-release-is-v3.0.0.md); its Strand F, and this ADR's
+scope over it, carry unchanged into `to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md`.)*
 
 ## Context
 

@@ -4,7 +4,7 @@ Every line traces to
 `ref-docs/2026-08-23-mister-core-contribution-requirements.md`, which quotes the
 MiSTer-devel wiki fetched 2026-08-23. **Nothing here is from memory.**
 
-The whole list must be complete **by v2.7.0**, which is the submission; it is NOT complete now, and an item left unchecked below is carried deliberately rather than overlooked. Individual
+The whole list must be complete **by v3.0.0**, which is the submission ([ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md) moved it from v2.7.0 on 2026-09-22); it is NOT complete now, and an item left unchecked below is carried deliberately rather than overlooked. Individual
 items are marked with the release that settled them -- **(now)** for ones true
 before this programme started, **(v2.6.6)** for the layout items the chassis
 release landed -- so the remaining unchecked boxes are the real work rather than
@@ -236,7 +236,7 @@ Settled at **v2.6.6**, except the one item that needs a board.
       linkable today (`docs/rung1-6502.md` through `docs/rung7-mappers.md`, the
       142-gate suite, the mutation records). What is missing is the act of
       pointing a reviewer at it, which happens in the submission email.
-      **Unblocks at v2.7.0.**
+      **Unblocks at v3.0.0.**
 
 ## Provenance
 
@@ -277,13 +277,13 @@ Settled at **v2.6.6**, except the one item that needs a board.
 
 ## Submission
 
-Every item here is **BLOCKED — the submission IS v2.7.0**, by the programme's own
+Every item here is **BLOCKED — the submission IS v3.0.0**, by the programme's own
 definition, and three of the four are somebody else's action rather than this
 project's. They are listed so the sequence is visible, not because they are
 outstanding work.
 
 - [ ] Email `newcores@misterfpga.org` with the repository link
-      **BLOCKED — v2.7.0.** Sending it before the quality bar closes is the
+      **BLOCKED — v3.0.0.** Sending it before the quality bar closes is the
       whole thing the checklist exists to prevent.
 - [ ] Await review (the page says days)
       **BLOCKED — not ours to do**, and it follows the email.

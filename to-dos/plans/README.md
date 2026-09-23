@@ -15,6 +15,22 @@ gate — the same treatment `ref-docs/` and the archive trees get.
 > and [`../ROADMAP.md`](../ROADMAP.md) (the forward roadmap). These plans are the
 > *intent* captured before each release; some scope shifted during execution.
 
+## The line to v3.0.0 (current)
+
+The SuperStation One FPGA core ships as **v3.0.0**
+([ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md)); the three minor
+lines before it act on the four audits in
+[`docs/audits/`](../../docs/audits/README.md).
+
+| Plan | Release | Status |
+|---|---|---|
+| [`v2.7.x-core-frontend-audit-plan.md`](v2.7.x-core-frontend-audit-plan.md) | v2.7.x — the core and frontend audits | **Next** |
+| [`v2.8.x-libretro-rtl-audit-plan.md`](v2.8.x-libretro-rtl-audit-plan.md) | v2.8.x — the libretro and RTL audits, and the off-die build | Planned |
+| [`v2.9.x-final-audit-and-hardware-plan.md`](v2.9.x-final-audit-and-hardware-plan.md) | v2.9.x — re-audit, optimise, and the bring-up on the board | Planned |
+| [`v3.0.0-superstation-core-plan.md`](v3.0.0-superstation-core-plan.md) | v3.0.0 — the hardware-verified FPGA core | Planned |
+| [`v2.7.0-shakedown-plan.md`](v2.7.0-shakedown-plan.md) | v2.7.0 "Shakedown" — the board session as first planned | **Superseded** by ADR 0041; strands A–F carried into the v2.9.x plan |
+| [`v2.7.0-mister-core-plan.md`](v2.7.0-mister-core-plan.md) | v2.5.1 → v2.7.0 — the MiSTer core ladder | **Superseded** by ADR 0041 |
+
 ## Public-release plans
 
 | Plan | Release | Status |

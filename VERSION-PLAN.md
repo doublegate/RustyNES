@@ -19,7 +19,7 @@ v1.0.0 is the **production cut that integrates the cycle-accurate emulation engi
 MAJOR.MINOR.PATCH[-PRERELEASE]
 ```
 
-- **MAJOR** — incompatible public-API or save-state-format breaks (now at `2`, since **v2.0.0 "Timebase"** broke the `.rns` save-state / `.rnm` movie epochs per ADR 0028).
+- **MAJOR** — incompatible public-API or save-state-format breaks (now at `2`, since **v2.0.0 "Timebase"** broke the `.rns` save-state / `.rnm` movie epochs per ADR 0028), or the first release of a new deliverable class ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md): the hardware-verified FPGA core, v3.0.0).
 - **MINOR** — backwards-compatible features (new mappers, new frontend features, new platforms).
 - **PATCH** — backwards-compatible bug fixes and accuracy refinements.
 - **PRERELEASE** — `-alpha.N` / `-beta.N` / `-rc.N` when stabilizing a future minor/major.
@@ -64,6 +64,10 @@ released version; these are plans, and `to-dos/plans/` holds the detail.
 
 | Version | Scope | Plan |
 |---------|-------|------|
+| v2.7.x | The **core and frontend audits** ([`docs/audits/`](docs/audits/README.md)): untrusted-input hardening and a snapshot fuzz target, battery-save integrity, the mapper gaps, desktop/web/mobile host fixes, then performance only where it measures | [`v2.7.x-core-frontend-audit-plan.md`](to-dos/plans/v2.7.x-core-frontend-audit-plan.md) |
+| v2.8.x | The **libretro and RTL audits**: FFI safety and build fixes in the libretro core; RTL correctness and robustness; the off-die SDRAM build; one seed sweep per build at the line's close | [`v2.8.x-libretro-rtl-audit-plan.md`](to-dos/plans/v2.8.x-libretro-rtl-audit-plan.md) |
+| v2.9.x | **Re-audit, optimise, and the board**: the audits re-run against the fixed tree, final seed sweeps, the release-candidate `.rbf` pair, and the bring-up on the SuperStation One | [`v2.9.x-final-audit-and-hardware-plan.md`](to-dos/plans/v2.9.x-final-audit-and-hardware-plan.md) |
+| v3.0.0 | **The SuperStation One core**: the first hardware-verified FPGA bitstream. On-die `.rbf` as the headline, off-die as a labelled secondary; a MAJOR bump under [ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md) | [`v3.0.0-superstation-core-plan.md`](to-dos/plans/v3.0.0-superstation-core-plan.md) |
 
 ### Post-1.0 release line (v1.1.0 → current)
 
@@ -145,11 +149,11 @@ The 1.x line was **additive / off-by-default** — every release stayed byte-ide
 
 - **Bump MINOR** (the middle digit — e.g. `vMAJOR.MINOR.0`) for: new mapper families, new frontend features, new platforms (e.g. mobile), new input devices — anything backwards-compatible that adds capability.
 - **Bump PATCH** (the last digit — e.g. `vMAJOR.MINOR.PATCH`) for: bug fixes, accuracy refinements, dependency bumps, and documentation that does not change behavior.
-- **Bump MAJOR** (`vMAJOR.0.0`) only for: an incompatible public-API break or a save-state-format break that cannot migrate — exactly what **v2.0.0 "Timebase"** did (ADR 0028 bumped the `.rns`/`.rnm` epochs).
+- **Bump MAJOR** (`vMAJOR.0.0`) for either of two things. (1) An incompatible public-API break or a save-state-format break that cannot migrate — exactly what **v2.0.0 "Timebase"** did (ADR 0028 bumped the `.rns`/`.rnm` epochs). (2) The first release of a **new deliverable class**, verified to the standard that class requires — the first hardware-verified FPGA core is v3.0.0 ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)). A new *host* for the same emulator (mobile, libretro) stays MINOR.
 
 ### Breaking-change policy
 
-- Public-API and save-state-format breaks are MAJOR bumps and must be documented in `CHANGELOG.md` with a migration note.
+- Public-API and save-state-format breaks are MAJOR bumps and must be documented in `CHANGELOG.md` with a migration note. A MAJOR bump for a new deliverable class carries no break by itself; any break it also carries still needs its migration note.
 - Save-state cross-version compatibility is best-effort (tagged per-chip sections with a version byte); the on-disk `.rnm` movie format and the public `rustynes-core` API are the stable surfaces.
 
 ## Accuracy milestones (met)

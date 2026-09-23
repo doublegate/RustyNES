@@ -634,11 +634,11 @@ The reproducible record (methodology, all benches, and the historical A/B) is in
 | [Scheduler](docs/scheduler.md)          | The master-clock lockstep model                                   |
 | [CHANGELOG.md](CHANGELOG.md)            | Version history and release notes                                 |
 | [Documentation handbook](https://doublegate.github.io/RustyNES/docs/) | The Material-for-MkDocs site rendering the subsystem specs + user guide (also on GitHub Pages) |
-| [Roadmap](to-dos/ROADMAP.md)            | The forward roadmap — currently the **v2.5.1 → v2.7.0 MiSTer core** line (the v2.2.6 → v2.3.0 de-monetization + NESdev-remediation line is complete) |
-| [Release plans](to-dos/plans/README.md) | Per-release design plans (v1.0.0 → the v2.0.0 "Timebase" set, the v2.1.x "Fathom" line, and the current [v2.7.0 MiSTer core plan](to-dos/plans/v2.7.0-mister-core-plan.md)) + the reference-emulator research dives that fed them |
+| [Roadmap](to-dos/ROADMAP.md)            | The forward roadmap — currently the audit line to the **v3.0.0 SuperStation One core** (v2.7.x core + frontend, v2.8.x libretro + RTL, v2.9.x re-audit + the board) |
+| [Release plans](to-dos/plans/README.md) | Per-release design plans (v1.0.0 → the v2.0.0 "Timebase" set, the v2.1.x "Fathom" line, and the current [v2.7.x](to-dos/plans/v2.7.x-core-frontend-audit-plan.md) → [v3.0.0](to-dos/plans/v3.0.0-superstation-core-plan.md) plans) + the reference-emulator research dives that fed them |
 | [iOS / iPadOS App](docs/ios.md)         | Native SwiftUI shell over Metal (wgpu) — v1.9.x TestFlight        |
 | [Libretro Core](docs/libretro/WALKTHROUGH.md) | Libretro core architecture, snapshot determinism, and RetroArch setup |
-| [MiSTer co-simulation](docs/mister.md) | The **v2.5.1 → v2.7.0** programme: a NEW NES core in SystemVerilog, written from public documentation in a sibling repository, with this emulator as its verification oracle. The rung ladder, the compare surfaces, and what each rung cannot verify |
+| [MiSTer co-simulation](docs/mister.md) | The MiSTer programme, which ships at **v3.0.0**: a NEW NES core in SystemVerilog, written from public documentation in a sibling repository, with this emulator as its verification oracle. The rung ladder, the compare surfaces, and what each rung cannot verify |
 | [Accuracy ledger](docs/accuracy-ledger.md) | Known residuals in this emulator, including the ones the co-simulation ladder found **in the oracle rather than the DUT** — the first being NROM's PRG-RAM window, which this emulator provides and the board does not |
 
 ### Hardware and subsystem specs
@@ -689,7 +689,7 @@ instruments for the board, built before the board.
 | MiSTer bitstream | published for Cyclone V, timing closed at every corner |
 | MiSTer commercial rendering | six titles, one per supported board (NROM from rung 5, plus rung 7's MMC1, UxROM, CNROM, MMC3 and AxROM), each **byte-identical** to this emulator over all 61,440 pixels — [the montage](screenshots/mister-montage.png) |
 
-**The MiSTer core has not run on hardware.** No DE10-Nano or SuperStation One has been attached; a booting core, a synced display, audible sound and a working pad are not claimed. The palette, the video timing constants and the audio's absolute level are unverified by construction, because every gate in the co-simulation ladder compares something upstream of them.
+**The MiSTer core has not run on hardware.** No DE10-Nano or SuperStation One has been attached — the bring-up is scheduled for v2.9.2, ahead of the hardware-verified core at v3.0.0 ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)); a booting core, a synced display, audible sound and a working pad are not claimed. The palette, the video timing constants and the audio's absolute level are unverified by construction, because every gate in the co-simulation ladder compares something upstream of them.
 
 - **Download:** [GitHub Releases](https://github.com/doublegate/RustyNES/releases) — desktop binaries for Linux, macOS (aarch64) and Windows, plus the MiSTer `.rbf`.
 - **Try it in a browser:** <https://doublegate.github.io/RustyNES/>
@@ -699,7 +699,12 @@ instruments for the board, built before the board.
 
 ## Roadmap
 
-The active line is **v2.5.1 → v2.7.0 — the MiSTer core**. It builds a **new** NES
+The active line runs to **v3.0.0 — the SuperStation One core**
+([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)). Three minor lines come
+first, each acting on audits in [`docs/audits/`](docs/audits/README.md): **v2.7.x**
+the core and frontend audits, **v2.8.x** the libretro and RTL audits and the
+off-die SDRAM build, **v2.9.x** a re-audit, the final seed sweeps and the bring-up
+on the board. The MiSTer core itself is a **new** NES
 core in SystemVerilog, written from public hardware documentation in the sibling
 `RustyNES_MiSTer` repository, with this emulator as its **verification oracle**.
 
@@ -720,9 +725,10 @@ closed on, at v2.6.5). The catalog is **149 rows** and the ladder **152 gates
 green, 0 failed, 1 expected failure** as of v2.6.21 — the expected one being a
 documented CHR-during-rendering divergence, registered so that it fails the
 suite if it ever starts passing. The console compiles to a Cyclone V bitstream with timing
-closed at every corner, and that bitstream is published. **Rung 6 is open and is
-the subject of v2.7.0**: a SuperStation One is now in hand, which unblocks it for
-the first time in nine releases — but **no hardware has run any bitstream yet**,
+closed at every corner, and that bitstream is published. **Rung 6 is open and closes
+at v2.9.2**: a SuperStation One is in hand, and the bring-up waits until the audit
+lines have landed their last RTL change, so that it measures the bitstream v3.0.0
+will ship — but **no hardware has run any bitstream yet**,
 so nothing about a booting core, a synced display, audible audio or a working pad
 is claimed. Every rung is labelled in
 [`docs/mister.md`](docs/mister.md) by whether it has an **independent** oracle —
@@ -738,16 +744,16 @@ two**, and the finding is recorded in
 [`docs/accuracy-ledger.md`](docs/accuracy-ledger.md) rather than fixed inside a
 co-simulation step — it changes shipped behaviour on every iNES NROM cartridge.
 
-**The emulation core is unchanged by this line.** Releases in it touch the
-co-simulation apparatus and the DUT, not the shipped emulator, so AccuracyCoin
-144/144 and nestest 0-diff hold throughout — verified rather than assumed on any
-release that does touch a chip crate.
+**The emulation core does change on this line**: v2.7.x fixes what the core audit located (save-state input validation, battery-save
+plumbing, mapper gaps). Each fix lands behind a test that fails first, and
+AccuracyCoin 144/144 and nestest 0-diff are re-run on every such release rather
+than assumed.
 
 Two risks are accepted in writing rather than discovered later: `NES_MiSTer`
 scored 121/125 on AccuracyCoin when that was last measured here, and real Famicom
 AV hardware scores about the same, so there is no published accuracy headroom and
 **the core may be declined as a duplicate** — a risk that grew when the incumbent
-took AccuracyCoin-driven commits in September 2026, so v2.7.0 re-measures it on
+took AccuracyCoin-driven commits in September 2026, so v2.9.2 re-measures it on
 the same corpus before deciding anything (Retro Remake / openFPGA are planned routes, not
 contingencies); and **the oracle can be wrong**.
 

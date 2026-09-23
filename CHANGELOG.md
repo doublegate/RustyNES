@@ -26,6 +26,51 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **The SuperStation One core moves to v3.0.0, and v2.7.x-v2.9.x become an audit
+  line** ([ADR 0041](docs/adr/0041-hardware-release-is-v3.0.0.md)). The first
+  hardware-verified FPGA core is a new deliverable class, and the MAJOR-bump rule in
+  `VERSION-PLAN.md` gains that as a second trigger alongside API and save-state
+  breaks. The board session moves from v2.7.0 "Shakedown" to v2.9.2, so that it
+  measures the bitstream the audit lines produce rather than one they are about to
+  replace. v2.7.x acts on the core and frontend audits, v2.8.x on the libretro and
+  RTL audits (including the off-die SDRAM build), and v2.9.x re-audits, runs the
+  final seed sweeps and takes the release-candidate `.rbf` pair to the board. The
+  Shakedown plan's strands A-F carry into the v2.9.x plan with stale facts
+  corrected; both v2.7.0 plans are kept and marked superseded. Features the older
+  plans deferred "to v2.8+" are now deferred past v3.0.0.
+
+### Added
+
+- **[`docs/audits/`](docs/audits/README.md)**: the four AI-written audit reports from #544 (core, frontend,
+  libretro, RTL), moved unchanged, with a disposition ledger per report. The ledgers
+  start from a calibration pass that read 26 of the reports' claims against the code:
+  the core, libretro and frontend reports are largely accurate at the cited lines;
+  the RTL report's DC-blocker overflow and pulse-1 sweep-mute defects, the DQM half
+  of its SDRAM finding, and its resource table are refuted. Every finding now goes
+  triage, failing test, fix, gate.
+- **Four plans:** `to-dos/plans/v2.7.x-core-frontend-audit-plan.md`,
+  `v2.8.x-libretro-rtl-audit-plan.md`, `v2.9.x-final-audit-and-hardware-plan.md` and
+  `v3.0.0-superstation-core-plan.md`, indexed in `to-dos/plans/README.md`.
+- **`.gitignore`** covers the agent review scratch (`cr_*`, `fix_*.py`,
+  `*_comments.json`, `threads.json`, `pr_*.txt`) that had accumulated untracked in
+  the repository root.
+
+### Notes
+
+- **Found during the calibration, not yet confirmed:** the oracle's pulse-1 sweep
+  appears to mute on the common `$4001=$08` idiom (negate, shift 0), where the
+  vendored nesdev wiki says a negative target clamps and negate never mutes. The
+  sibling's RTL follows the wiki, so the co-simulation ladder does not cover the
+  difference. It is pinned by a test in v2.7.0 before anything is changed (core
+  ledger T-01).
+- **The three mapper files the core audit wanted "sanitized"** (`m085_vrc7.rs`,
+  `m099_vs_system.rs`, `m244_cne_decathlon.rs`) quote Mesen2 source expressions, so
+  they are derivation statements. They get `// Provenance:` headers and `NOTICE`
+  entries in v2.7.1; nothing is removed.
+- The re-plan itself changes no emulation behaviour and bumps no version.
+
 ## [2.6.23] - 2026-09-20 - "Pulse" (the access does not increment, it pulses the load already there)
 
 ### Fixed
