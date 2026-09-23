@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-09-23 - "Keepsake" (a save that appears to succeed now does)
+
 ### Fixed — save data
 
 - **Six cartridge boards lost their battery save on every exit.** The frontend
