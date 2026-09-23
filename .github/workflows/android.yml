@@ -8,28 +8,49 @@ name: Android
 on:
   push:
     branches: [main]
-    paths:
-      - 'crates/rustynes-mobile/**'
+    # Every workspace crate `rustynes-android` compiles, as `cargo tree -p
+    # rustynes-android -e normal,build --prefix none` reports it. Until
+    # 2026-09-23 this listed only mobile, android and core, so a change to
+    # netplay, script, cheevos, ra, hdpack or any chip crate that broke the
+    # Android build never ran this workflow. Re-derive when a dependency is
+    # added. The list is written once and aliased by `pull_request` below
+    # (YAML anchors, supported in workflow files since 2025-09-18).
+    paths: &android-paths
       - 'crates/rustynes-android/**'
+      - 'crates/rustynes-mobile/**'
       - 'crates/rustynes-core/**'
+      - 'crates/rustynes-cpu/**'
+      - 'crates/rustynes-ppu/**'
+      - 'crates/rustynes-apu/**'
+      - 'crates/rustynes-mappers/**'
+      - 'crates/rustynes-netplay/**'
+      - 'crates/rustynes-script/**'
+      - 'crates/rustynes-cheevos/**'
+      - 'crates/rustynes-ra/**'
+      - 'crates/rustynes-hdpack/**'
       - 'android/**'
       - '.github/workflows/android.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'rust-toolchain.toml'
   pull_request:
     branches: [main]
-    paths:
-      - 'crates/rustynes-mobile/**'
-      - 'crates/rustynes-android/**'
-      - 'crates/rustynes-core/**'
-      - 'android/**'
-      - '.github/workflows/android.yml'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
+    # `ready_for_review` starts the build on a PR opened as a draft; see the
+    # draft gate on `cross-build`.
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: *android-paths
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# Superseded PR pushes are cancelled; every `main` run finishes. This workflow
+# had no group at all, so each push to a PR left the previous run -- up to
+# ~27 minutes of NDK build plus Gradle packaging -- running to completion for
+# a commit nobody would look at again.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,10 +60,32 @@ jobs:
     name: NDK cross-build + UniFFI bindings
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # `pull-requests: read` is for the paths filter below, which asks the API
+    # which files a PR touches.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      app: ${{ steps.app.outputs.app }}
+    # Draft gate: a PR opened as a draft skips the Android build until it is
+    # marked ready, the same rule ci.yml's `setup` applies to its heavy jobs.
+    # This workflow is not a required check, so a skip blocks nothing.
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      # Did this PR touch the Android APP (Kotlin, Compose, Gradle), as opposed
+      # to only the Rust it links? Only then is the Gradle packaging job worth
+      # its ~15 minutes on a PR; see `gradle-bundle`.
+      - uses: dorny/paths-filter@v4
+        id: app
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            app:
+              - 'android/**'
 
       # The project toolchain (rust-toolchain.toml = 1.96) plus the two shipped
       # Android targets (arm64 ships; x86_64 is the emulator/CI ABI).
@@ -52,9 +95,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: android-ndk
+          # Save only from `main`, as `.github/actions/rust-setup` does: a PR
+          # restores `main`'s cache but writing its own evicts useful entries
+          # from the repository's 10 GB budget for a branch that is about to
+          # disappear.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk --version "^3" --locked
+      # Cached compiled binary instead of `cargo install` on every run (it
+      # compiled cargo-ndk from source, in both jobs, every time). `--locked` is
+      # the action's default. cargo-ndk publishes no prebuilt binary that
+      # `taiki-e/install-action` knows, which is why this is the caching form.
+      - uses: taiki-e/cache-cargo-install-action@v3
+        with:
+          tool: cargo-ndk@3
 
       # ubuntu-latest ships the Android SDK + an NDK; resolve its path so
       # cargo-ndk finds the toolchain. (We pin a recent NDK; r27+ aligns .so to
@@ -107,6 +160,15 @@ jobs:
     # tooling hiccup here must not fail the merge.
     continue-on-error: true
     needs: cross-build
+    # The slowest job in the repository (median 15.5 min over the 16 PR runs
+    # measured on 2026-09-23), and one that could never fail a PR anyway
+    # (`continue-on-error`). It runs on every `main` push and on dispatch, and
+    # on a PR only when the PR changes the Android app itself -- a PR that
+    # touches only shared Rust is covered by the cross-build's link gate, and
+    # the packaging is re-proven the moment it merges.
+    if: >-
+      ${{ github.event_name != 'pull_request'
+      || needs.cross-build.outputs.app == 'true' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -116,8 +178,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: android-ndk
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk --version "^3" --locked
+          # Save only from `main`, as `.github/actions/rust-setup` does: a PR
+          # restores `main`'s cache but writing its own evicts useful entries
+          # from the repository's 10 GB budget for a branch that is about to
+          # disappear.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Cached compiled binary instead of `cargo install` on every run (it
+      # compiled cargo-ndk from source, in both jobs, every time). `--locked` is
+      # the action's default. cargo-ndk publishes no prebuilt binary that
+      # `taiki-e/install-action` knows, which is why this is the caching form.
+      - uses: taiki-e/cache-cargo-install-action@v3
+        with:
+          tool: cargo-ndk@3
       - uses: actions/setup-java@v6
         with:
           distribution: temurin

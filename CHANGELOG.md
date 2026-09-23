@@ -26,6 +26,39 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed — CI
+
+- **PR checks run what a change can affect, and the heaviest wait for the
+  review to finish.** Measured over the last 109 PR runs (21.6 runner-hours),
+  the four largest jobs were Android's Gradle packaging (15.5 min median, and
+  `continue-on-error`, so it could never fail a PR), the NDK build (11.2), the
+  debug `test` (12.3) and the Pages build (6.3).
+  - **Draft gate.** A PR opened as a draft runs the fast gates only; `test`,
+    `test-roms`, the Android build and the Pages build run once it is marked
+    ready (`ready_for_review`). A merge queue would be the native form and is
+    unavailable to a user-owned repository.
+  - **Gradle packaging** runs on `main`, on dispatch, and on a PR only when the
+    Android app (`android/**`) changed. `cargo-ndk` is cached instead of
+    compiled from source twice per run, and the Android cargo cache is saved
+    from `main` only.
+  - **`test-roms`** compiles and runs the two packages that have the feature
+    instead of the whole workspace in release, and no longer waits for `lint`.
+  - **Path filters derived from `cargo tree`**: the libretro cross-compiles and
+    the `no_std` build run on a PR only when a crate they compile changed;
+    `security.yml`'s audit and deny only when a manifest, the lockfile or
+    `deny.toml` changed (the weekly cron still re-checks advisories), and its
+    clippy job lints only `gpu-timing`, the one feature nothing else reaches.
+  - **Pages on a PR** builds the wasm demo, the size budget and the handbook,
+    and skips rustdoc (already gated by `lint`) and the deploy-only steps.
+- **Fixed:** `android.yml` triggered on three of the eleven workspace crates
+  the Android build compiles, so a change to `netplay`, `script`, `cheevos`,
+  `ra`, `hdpack` or a chip crate that broke it never ran the workflow.
+- **Fixed:** `web.yml` put every event in one global `pages` concurrency group
+  with no cancellation, so PR builds from different PRs cancelled each other;
+  PRs now get their own group. `android.yml` had no group at all and now
+  cancels a superseded PR run. `pages: write` and `id-token: write` moved from
+  the workflow to the two jobs that use them.
+
 ## [2.7.0] - 2026-09-23 - "Palisade" (untrusted input stops at the boundary)
 
 ### Changed

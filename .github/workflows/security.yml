@@ -58,8 +58,51 @@ permissions:
 # under a minute, clippy in 2-3), because the purpose is to bound a hang, not to
 # police normal variance on a cold cache.
 jobs:
+  # What each job reads, so a PR runs only the jobs its diff can affect
+  # (2026-09-23). `cargo audit` and `cargo deny` read the dependency graph --
+  # the manifests, the lockfile, `deny.toml` -- and nothing else, so a PR that
+  # does not change one of those cannot change their verdict; the Monday cron
+  # is what catches an advisory published against an UNCHANGED lockfile, and
+  # it keeps doing so. The clippy job reads Rust source. `main` pushes, the
+  # cron and dispatch run everything: the filter applies to PRs only. This
+  # workflow is not a required check, so a skipped job blocks nothing.
+  changes:
+    name: detect relevant changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      deps: ${{ steps.filter.outputs.deps }}
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            deps:
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - 'deny.toml'
+              - '.github/workflows/security.yml'
+            rust:
+              - 'crates/**'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.cargo/**'
+              - '.github/actions/**'
+              - '.github/workflows/security.yml'
+
   audit:
     name: Dependency Audit
+    needs: changes
+    # `always()` so a push / cron run, where `changes` is skipped, still runs;
+    # and a `changes` job that did not succeed runs everything rather than
+    # nothing -- the filter may only ever skip work, never lose a gate.
+    if: ${{ always() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.deps == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -82,6 +125,8 @@ jobs:
 
   deny:
     name: Cargo Deny Check
+    needs: changes
+    if: ${{ always() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.deps == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -98,6 +143,8 @@ jobs:
 
   clippy-security:
     name: Clippy Security Lints
+    needs: changes
+    if: ${{ always() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.rust == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -108,21 +155,24 @@ jobs:
         with:
           components: clippy
           cache-key: security-clippy
-      # The main CI `lint` job already runs `clippy -D warnings` on the DEFAULT
-      # feature set. This job extends that exact gate to the two non-default,
-      # security- / FFI-relevant frontend features the default build never
-      # compiles (and which therefore rot silently):
-      #   * retroachievements - the RA HTTP client + the vendored rcheevos C FFI
-      #   * gpu-timing         - the wgpu TIMESTAMP_QUERY readback path
-      # so a clippy regression in either feature-gated path fails here.
+      # The one frontend feature no other clippy invocation reaches is
+      # `gpu-timing` (the wgpu TIMESTAMP_QUERY readback path), so that is all
+      # this job lints, and only on the crate that owns it.
+      #
+      # It used to run `clippy --workspace --all-targets` with
+      # `retroachievements,gpu-timing`: a SECOND full workspace compile
+      # (~2 min) whose `retroachievements` half ci.yml's lint job already
+      # covers twice, once on its own and once inside `--features full`.
+      # `full` does not include `gpu-timing` (see rustynes-frontend's
+      # Cargo.toml), which is why this job still exists at all.
       #
       # NOTE: the previous `-W clippy::unwrap_used -W clippy::expect_used`
       # restriction lints were removed. Under `-D warnings` they promote EVERY
       # legitimate `.unwrap()`/`.expect()` (hot paths, tests, build scripts) to
       # a hard error, which is what kept this job permanently red. `-D warnings`
       # alone is the meaningful, reliable security / quality gate.
-      - name: Run clippy (-D warnings) incl. RA + GPU-timing features
+      - name: Run clippy (-D warnings) on the gpu-timing feature
         run: |
-          cargo clippy --workspace --all-targets \
-            --features rustynes-frontend/retroachievements,rustynes-frontend/gpu-timing \
+          cargo clippy -p rustynes-frontend --all-targets \
+            --features gpu-timing \
             -- -D warnings

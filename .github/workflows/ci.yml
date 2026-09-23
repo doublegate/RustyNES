@@ -17,6 +17,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # The three defaults plus `ready_for_review`, which is what starts the
+    # heavy jobs on a PR that was opened as a draft -- see `setup` below.
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
   # GitHub merge queue. When the queue is enabled in repo settings + the
   # `CI success` check is required by branch protection, a PR entering the queue
@@ -107,6 +110,8 @@ jobs:
     outputs:
       code: ${{ steps.filter-code.outputs.code }}
       accuracy: ${{ steps.filter-accuracy.outputs.accuracy }}
+      libretro: ${{ steps.filter-targets.outputs.libretro }}
+      nostd: ${{ steps.filter-targets.outputs.nostd }}
     steps:
       # Full history: on `push`, dorny/paths-filter diffs against the before-SHA
       # using local git, so the default shallow clone (fetch-depth: 1) can miss
@@ -193,6 +198,44 @@ jobs:
               - 'crates/rustynes-test-harness/**'
               - 'tests/**'
 
+      # Per-target filters (2026-09-23): a cross-build job runs on a PR only
+      # when something it COMPILES changed. Each crate list is exactly what
+      # `cargo tree -p <pkg> -e normal,build --prefix none` reports as a path
+      # dependency, and must be re-derived when a crate gains a dependency on
+      # another workspace crate -- a crate missing from a list means a PR that
+      # breaks that build skips the gate, and a skipped job passes `CI success`.
+      # The shared entries (manifests, lockfile, toolchain, CI plumbing) are in
+      # every list because they change every build. Full runs ignore these.
+      - uses: dorny/paths-filter@v4
+        id: filter-targets
+        with:
+          filters: |
+            shared: &shared
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.cargo/**'
+              - '.github/workflows/ci.yml'
+              - '.github/actions/**'
+              - '.github/scripts/**'
+            # rustynes-libretro -> core, cpu, ppu, apu, mappers
+            libretro:
+              - *shared
+              - 'crates/rustynes-libretro/**'
+              - 'crates/rustynes-core/**'
+              - 'crates/rustynes-cpu/**'
+              - 'crates/rustynes-ppu/**'
+              - 'crates/rustynes-apu/**'
+              - 'crates/rustynes-mappers/**'
+            # rustynes-core, --no-default-features, thumbv7em -> cpu, ppu, apu, mappers
+            nostd:
+              - *shared
+              - 'crates/rustynes-core/**'
+              - 'crates/rustynes-cpu/**'
+              - 'crates/rustynes-ppu/**'
+              - 'crates/rustynes-apu/**'
+              - 'crates/rustynes-mappers/**'
+
   # fmt + clippy + rustdoc share one runner + one compile of the workspace's
   # dependency graph (clippy and rustdoc differ only in the final pass), so
   # merging them removes two redundant dependency compiles and two runner
@@ -233,6 +276,7 @@ jobs:
     outputs:
       os: ${{ steps.pick.outputs.os }}
       full: ${{ steps.pick.outputs.full }}
+      heavy: ${{ steps.pick.outputs.heavy }}
     steps:
       - id: pick
         shell: bash
@@ -242,7 +286,27 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REF: ${{ github.head_ref }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
         run: |
+          # DRAFT GATE (2026-09-23). A PR is opened as a DRAFT while the review
+          # bots work it: every push in that phase re-runs CI, and the review
+          # ceremony on this repository routinely takes several pushes. On a
+          # draft only the fast gates run (fmt/clippy/rustdoc, no_std, wasm32,
+          # the libretro cross-compiles); `test` and `test-roms` -- about 12 and
+          # 26 minutes, the two largest jobs in the workflow -- wait until
+          # `gh pr ready`, whose `ready_for_review` event runs everything once,
+          # on the code that is actually going to merge.
+          #
+          # `CI success` still passes on a draft, and that is safe: GitHub
+          # refuses to merge a draft, and marking it ready starts a new run
+          # whose `CI success` is pending until the heavy jobs finish. A merge
+          # queue would be the native form of this, and is unavailable here --
+          # GitHub offers it only to organisation-owned repositories.
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$IS_DRAFT" = "true" ]; then
+            echo 'heavy=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'heavy=true' >> "$GITHUB_OUTPUT"
+          fi
           # LIGHT only for a regular PR (head branch not release/*); FULL otherwise.
           if [ "$EVENT_NAME" = "pull_request" ] && [[ "$HEAD_REF" != release/* ]]; then
             echo 'full=false' >> "$GITHUB_OUTPUT"
@@ -425,7 +489,7 @@ jobs:
     # OS list from `setup` (ubuntu-only on PRs; full matrix on push / merge
     # queue / dispatch). `changes` keeps the whole chain off a docs-only run.
     needs: [changes, lint, setup]
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.code == 'true' && needs.setup.outputs.heavy == 'true' }}
     runs-on: ${{ matrix.os }}
     # Typical: ~8 min ubuntu / ~16 min windows. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.
@@ -487,11 +551,16 @@ jobs:
     # traded away: measured over the last 40 merged PRs, 11 touch accuracy paths
     # and 29 do not, so roughly 72% of PRs still skip this entirely.
     #
-    # Also gated on the fast lint job — don't pay the release compile when
-    # fmt/clippy already failed.
-    needs: [changes, lint, setup]
+    # NOT gated on the lint job, deliberately (changed 2026-09-23). This is
+    # the critical path of every PR it runs on: lint (~5.6 min) followed by
+    # this job (~26 min) made ~32 minutes of wall clock, and running them side
+    # by side removes the lint time from it. The cost is a wasted release
+    # compile on a PR whose lint fails, which on a PR that has already been
+    # through the draft phase (see `setup`) is rare.
+    needs: [changes, setup]
     if: >-
       ${{ needs.changes.outputs.code == 'true'
+      && needs.setup.outputs.heavy == 'true'
       && (needs.setup.outputs.full == 'true'
       || needs.changes.outputs.accuracy == 'true') }}
     runs-on: ubuntu-latest
@@ -517,12 +586,27 @@ jobs:
       # the 60-ROM oracle) assert the same values either way. Debug-assertion
       # coverage of the core is NOT lost: the OS-matrix `test` job runs the
       # workspace tests in debug.
-      - run: cargo test --workspace --release --features test-roms
+      #
+      # Scoped to the two packages that HAVE a `test-roms` feature (2026-09-23).
+      # `--workspace` compiled every crate in release -- the wgpu / winit /
+      # egui / cpal frontend, libretro, the mobile bridge, netplay -- and re-ran
+      # all of their tests in release mode, although none of that code is
+      # behind the feature and the OS-matrix `test` job already runs it. The
+      # battery itself lives in `rustynes-test-harness` (58 gated sites) and
+      # one mappers corpus test; `rustynes-test-harness` does not depend on the
+      # frontend. Locally the same scoping is
+      # `cargo test --release -p rustynes-test-harness -p rustynes-mappers --features rustynes-test-harness/test-roms,rustynes-mappers/test-roms`.
+      - run: >-
+          cargo test --release
+          -p rustynes-test-harness -p rustynes-mappers
+          --features rustynes-test-harness/test-roms,rustynes-mappers/test-roms
 
   no_std:
     name: no_std build (thumbv7em-none-eabihf)
-    needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    needs: [changes, setup]
+    if: >-
+      ${{ needs.changes.outputs.code == 'true'
+      && (needs.setup.outputs.full == 'true' || needs.changes.outputs.nostd == 'true') }}
     runs-on: ubuntu-latest
     # Typical: ~35 s. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.
@@ -578,8 +662,10 @@ jobs:
 
   libretro-cross:
     name: libretro cross-compile (buildbot targets)
-    needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    needs: [changes, setup]
+    if: >-
+      ${{ needs.changes.outputs.code == 'true'
+      && (needs.setup.outputs.full == 'true' || needs.changes.outputs.libretro == 'true') }}
     runs-on: ubuntu-latest
     # Typical: ~1 min per target. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.
@@ -803,6 +889,10 @@ jobs:
     # concurrency group -- see the block comment above `concurrency`.
     timeout-minutes: 10
     steps:
+      - name: Note a draft run
+        if: ${{ needs.setup.outputs.heavy == 'false' }}
+        run: |
+          echo "::notice::Draft PR: test and test-roms are deferred until the PR is marked ready for review (gh pr ready)."
       - name: Fail if any required job failed or was cancelled
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: |
