@@ -294,8 +294,15 @@ val uniffiBindgen = tasks.register<Exec>("uniffiBindgen") {
     // annotation is not repeatable, so a second @file:Suppress would not compile).
     // If a future UniFFI changes that header this leaves the file untouched and
     // says so, so the warning comes back visibly rather than being lost.
+    //
+    // The generated file is resolved HERE, at configuration time, into a task
+    // local: the action below must not reference `uniffiGenDir` (a build-script
+    // property), because Gradle's configuration cache cannot serialize a script
+    // object reference and fails the whole build after it has finished -- which
+    // is exactly what the first version of this block did on #547.
+    val generatedKt = uniffiGenDir.resolve("uniffi/rustynes_mobile/rustynes_mobile.kt")
     doLast {
-        val kt = uniffiGenDir.resolve("uniffi/rustynes_mobile/rustynes_mobile.kt")
+        val kt = generatedKt
         val anchor = "@file:Suppress(\"NAME_SHADOWING\")"
         val text = kt.readText()
         if (text.contains(anchor)) {
