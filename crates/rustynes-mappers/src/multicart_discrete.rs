@@ -2495,7 +2495,10 @@ impl Mapper for Multicart225 {
     }
 
     // The scratch RAM answers reads in $5800-$5FFF (mapped). The rest of
-    // $4020-$57FF stays open bus (the trait default); $6000-$FFFF PRG is mapped.
+    // $4020-$57FF stays open bus. PRG-ROM is mapped at $8000-$FFFF only
+    // (nesdev_wiki/INES_Mapper_225): `cpu_read` has no $6000-$7FFF arm and
+    // nothing drives it, so it floats. (Until v2.7.2 this comment said
+    // "$6000-$FFFF PRG is mapped", which the code never implemented.)
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
         // v2.7.2 (core audit §5.5): with no save RAM, `$6000-$7FFF` floats.
         (0x4020..=0x57FF).contains(&addr)

@@ -704,9 +704,11 @@ impl Mapper for NsfMapper {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
-        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
-        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+        // `$6000-$7FFF` is the runtime's 8 KiB WRAM and always mapped, although
+        // `sram()` is empty (nothing here is battery-backed). So this board does
+        // NOT take v2.7.2's "no save RAM -> the window floats" default; it did in
+        // the first cut, and a tune's RAM read the bus latch (PR #550).
+        {
             // The driver image and the bank registers ARE mapped in $4020-$5FFF, so
             // the bus must use our real bytes there (not open bus). Everything else
             // in that window is unmapped (open bus).
@@ -891,6 +893,31 @@ mod tests {
         assert_eq!(nsf.init_addr, 0x8000);
         assert_eq!(nsf.play_addr, 0x8003);
         assert!(!nsf.bankswitched);
+    }
+
+    /// The NSF runtime gives every tune 8 KiB of WRAM at `$6000-$7FFF`, and
+    /// `sram()` stays empty because nothing there is battery-backed. v2.7.2's
+    /// first cut floated the window whenever `sram()` was empty, so a tune's
+    /// RAM reads returned the bus latch (PR #550, Copilot). The iNES sweep in
+    /// `tests/prg_ram_window_open_bus.rs` never builds an NSF, which is why it
+    /// did not see this.
+    #[test]
+    fn wram_window_is_mapped_and_holds_data() {
+        let nsf = parse_nsf(&synth_nsf()).expect("valid nsf");
+        let mut m = NsfMapper::new(&nsf);
+        assert!(m.sram().is_empty(), "NSF WRAM is not save RAM");
+        // Both address bytes fold into the pattern, so a stuck page reads wrong.
+        let pattern = |a: u16| {
+            let [lo, hi] = a.to_le_bytes();
+            lo ^ hi ^ 0x5A
+        };
+        for a in 0x6000u16..=0x7FFF {
+            m.cpu_write(a, pattern(a));
+        }
+        for a in 0x6000u16..=0x7FFF {
+            assert!(!m.cpu_read_unmapped(a), "${a:04X} must stay mapped");
+            assert_eq!(m.cpu_read(a), pattern(a), "${a:04X}");
+        }
     }
 
     #[test]

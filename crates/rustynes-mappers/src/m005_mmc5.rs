@@ -1014,9 +1014,10 @@ impl Mapper for Mmc5 {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
-        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
-        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+        // v2.7.2's "no save RAM -> `$6000-$7FFF` floats" default does not apply:
+        // the header RAM is at least 8 KiB (`prg_ram_size`), so `sram()` is never
+        // empty, and a chip-less page floats through `RamTarget::NotRam` below.
+        {
             // MMC5 maps almost the entire `$5000-$5FFF` window: audio at
             // `$5000-$5015`, ExGfx config at `$5100-$5107`, PRG bank regs
             // at `$5113-$5117`, CHR bank regs at `$5120-$512B`, upper-CHR

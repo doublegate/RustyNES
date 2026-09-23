@@ -2230,9 +2230,9 @@ impl Mapper for Fds {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
-        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
-        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+        // v2.7.2's "no save RAM -> `$6000-$7FFF` floats" default does not apply:
+        // `sram()` is the 32 KiB PRG-RAM, never empty, so the window stays mapped.
+        {
             // The FDS registers occupy $4020-$409F (the $4040-$4092 sound block is
             // Stage 2 but still part of the device). Reporting these as MAPPED routes
             // the reads to `cpu_read` instead of the open-bus latch. PRG-RAM and BIOS
