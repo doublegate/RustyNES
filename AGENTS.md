@@ -201,7 +201,7 @@ what a session needs before it knows what it is doing.
 
 | read when the task touches | file | bullets |
 |---|---|---|
-| GitHub Actions, workflows, the release ceremony, lint coverage | [`docs/agents/ci-and-release.md`](docs/agents/ci-and-release.md) | 19 |
+| GitHub Actions, workflows, the release ceremony, lint coverage | [`docs/agents/ci-and-release.md`](docs/agents/ci-and-release.md) | 20 |
 | a PR review — the ceremony, where findings hide, which claims recur | [`docs/agents/review-bots.md`](docs/agents/review-bots.md) | 11 |
 | the libretro core, the buildbot, the upstream `.info`, RetroArch | [`docs/agents/libretro.md`](docs/agents/libretro.md) | 10 |
 | the MiSTer sibling — the RTL, Quartus, the rungs, the bitstream | [`docs/agents/mister-cosim.md`](docs/agents/mister-cosim.md) | 27 |
