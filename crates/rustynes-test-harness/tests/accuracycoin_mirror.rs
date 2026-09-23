@@ -62,7 +62,8 @@
 //! not a measurement of the readback path: it says the patched ROM answers the
 //! same questions the unpatched one does and puts those answers where the save
 //! controller will find them. Whether the `MiSTer` core's save path actually
-//! writes them to the card is a hardware measurement, and it is v2.7.0's.
+//! writes them to the card is a hardware measurement, and it is v2.9.2's
+//! (the board session ahead of v3.0.0, ADR 0041).
 
 #![cfg(feature = "test-roms")]
 

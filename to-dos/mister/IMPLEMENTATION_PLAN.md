@@ -1,5 +1,10 @@
 # RustyNES MiSTer core — implementation plan, v2.5.1 → v2.7.0
 
+> **Re-targeted 2026-09-22 by [ADR 0041](../../docs/adr/0041-hardware-release-is-v3.0.0.md).**
+> The hardware-verified core and the contribution package are **v3.0.0**, after the
+> v2.7.x–v2.9.x audit lines; read "v2.7.0" below as the milestone that became v3.0.0.
+> The execution view from here is `to-dos/plans/v2.8.x-*`, `v2.9.x-*` and `v3.0.0-*`.
+
 **Companion to** `to-dos/plans/v2.7.0-mister-core-plan.md` (the narrative plan) and
 `docs/mister.md` (the living spec). This file is the execution view: what is done,
 what is next, and what each release owes.

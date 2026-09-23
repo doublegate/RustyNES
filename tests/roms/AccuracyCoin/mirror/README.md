@@ -113,4 +113,5 @@ bytes are `00 00 00 00`.
 
 Nothing here has run on hardware. This is a ROM and a simulation control on it.
 Whether the core's save path actually writes the window to the card is a
-hardware measurement, and it belongs to v2.7.0.
+hardware measurement, and it belongs to v2.9.2, the board session ahead of
+v3.0.0 (ADR 0041).

@@ -4,7 +4,8 @@
 //! # The defect this exists to prevent
 //!
 //! `to-dos/mister/contribution-checklist.md` is the list that decides whether
-//! the core is ready to submit at v2.7.0. Before v2.6.14 it had 30 boxes, 16 of
+//! the core is ready to submit at v3.0.0 (ADR 0041; v2.7.0 until 2026-09-22).
+//! Before v2.6.14 it had 30 boxes, 16 of
 //! them unticked, and **14 of those 16 said nothing at all about why**.
 //!
 //! An unticked box with no reason is indistinguishable from three different
@@ -302,7 +303,8 @@ fn the_checklist_still_has_unticked_boxes_and_says_so() {
     // vacuously.
     //
     // THIS ASSERTION'S REASON EXPIRED AT v2.6.21, and the assertion would have
-    // fired by construction the moment v2.7.0 completed the list. It used to
+    // fired by construction the moment the submission release completed the
+    // list (v2.7.0 then, v3.0.0 since ADR 0041). It used to
     // say "rung 6 needs hardware nobody here has" -- a SuperStation One is now
     // attached, so that sentence is false and the guard it justified would have
     // turned a milestone into a red test.
@@ -313,7 +315,7 @@ fn the_checklist_still_has_unticked_boxes_and_says_so() {
     // "Add to the Cores list", and the "publishable on its own terms" box,
     // which is marked DECIDED and can never fail. A list that ticks THOSE has
     // stopped describing this project's work. Everything else is now allowed to
-    // reach green, because reaching green is the point of v2.7.0.
+    // reach green, because reaching green is the point of v3.0.0.
     // THE PROTECTED ITEMS ARE PROVED TO EXIST BEFORE THEY ARE PROVED UNTICKED.
     //
     // The first version filtered to ticked items and then looked for these
@@ -370,7 +372,7 @@ fn the_checklist_still_has_unticked_boxes_and_says_so() {
         not_ours.join("\n  ")
     );
     assert!(
-        md.contains("must be complete **by v2.7.0**"),
+        md.contains("must be complete **by v3.0.0**"),
         "the checklist no longer states when it must be complete"
     );
 }
