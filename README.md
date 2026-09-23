@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.6.23-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.7.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(144%2F144)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -674,11 +674,15 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.6.23 "Pulse"** (2026-09-20) — the `$2007` access pulses the rendering pipeline's load instead of computing its own, which closes the CHR-during-rendering divergence in the MiSTer sibling.
+RustyNES's current release is **v2.7.0 "Palisade"** (2026-09-23) — a corrupt or hand-edited save state now fails at restore with a typed error instead of crashing the emulator one tick later, pulse 1 no longer mutes on the `$4001 = $08` sweep idiom, and the save-state fuzz target can finally reach what it exists to find. Built on **v2.6.23 "Pulse"** (2026-09-20) — the `$2007` access pulses the rendering pipeline's load instead of computing its own, which closes the CHR-during-rendering divergence in the MiSTer sibling.
 
-The emulation core is unchanged, so the accuracy numbers below hold by
-construction and were re-run anyway. Built on **v2.6.22 "Rigging"**, the
-instruments for the board, built before the board.
+v2.7.0 changes the emulation core -- the pulse-1 sweep clamp, and the
+save-state decoders -- so the accuracy numbers below were re-measured on the
+release tree rather than inherited: AccuracyCoin 144/144 and nestest pass, and
+the full `--features test-roms` suite passes 2,622 tests. Built on **v2.6.23
+"Pulse"**, which closed the CHR-during-rendering divergence in the MiSTer
+sibling, and **v2.6.22 "Rigging"**, the instruments for the board, built before
+the board.
 
 | Measure | Value |
 |---|---|
@@ -704,7 +708,8 @@ The active line runs to **v3.0.0 — the SuperStation One core**
 first, each acting on audits in [`docs/audits/`](docs/audits/README.md): **v2.7.x**
 the core and frontend audits, **v2.8.x** the libretro and RTL audits and the
 off-die SDRAM build, **v2.9.x** a re-audit, the final seed sweeps and the bring-up
-on the board. The MiSTer core itself is a **new** NES
+on the board. Each line works from its audit reports as well as its plan: the
+reports hold the detail the plans compress. The MiSTer core itself is a **new** NES
 core in SystemVerilog, written from public hardware documentation in the sibling
 `RustyNES_MiSTer` repository, with this emulator as its **verification oracle**.
 

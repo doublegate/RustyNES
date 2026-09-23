@@ -806,6 +806,49 @@ pub struct LockstepBus {
 }
 
 impl LockstepBus {
+    /// v2.7.0 -- reject a restored CPU/PPU clock pair too far apart to be real.
+    ///
+    /// `run_ppu_to` ticks the PPU until `ppu_clock` catches up to the CPU's
+    /// `master_clock`. The two live in different save-state sections (BUS and
+    /// CPU) and the running machine keeps them within a CPU cycle of each
+    /// other, but a restore took both raw. A `ppu_clock` far BEHIND made the
+    /// next catch-up tick billions of dots; one far AHEAD meant the PPU never
+    /// ticked again, so no frame ever completed. Either is a hang, found by the
+    /// v2.7.0 `save_state` fuzz target as a libFuzzer timeout once its patch
+    /// offsets could reach the sections behind the framebuffer.
+    ///
+    /// The allowance, [`Self::RESTORED_CLOCK_SKEW_MAX`] master clocks, is ~85
+    /// CPU cycles: generous against anything the machine produces, and it
+    /// bounds the first catch-up at a few hundred dots.
+    pub(crate) fn check_restored_clocks(&self, master_clock: u64) -> Result<(), SnapshotError> {
+        let skew = master_clock.abs_diff(self.ppu_clock);
+        if skew > Self::RESTORED_CLOCK_SKEW_MAX {
+            return Err(SnapshotError::SectionInvalid {
+                tag: "BUS ".into(),
+                reason: format!(
+                    "PPU clock {} is {skew} master clocks from the CPU's {master_clock}",
+                    self.ppu_clock
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// Largest CPU/PPU master-clock skew [`Self::check_restored_clocks`] accepts.
+    pub(crate) const RESTORED_CLOCK_SKEW_MAX: u64 = 1024;
+
+    /// Test seam: move the PPU clock so a snapshot carries a chosen skew.
+    #[cfg(test)]
+    pub(crate) const fn set_ppu_clock_for_test(&mut self, v: u64) {
+        self.ppu_clock = v;
+    }
+
+    /// Test seam: the PPU clock, for the skew tests.
+    #[cfg(test)]
+    pub(crate) const fn ppu_clock_for_test(&self) -> u64 {
+        self.ppu_clock
+    }
+
     /// Construct from a parsed ROM with a default 44.1 kHz audio sample rate.
     ///
     /// # Errors
@@ -5257,6 +5300,58 @@ mod four_score_tests {
         restored.set_four_score(true); // prove decode actively turns it off
         crate::bus_snapshot::decode_bus(&mut restored, old).unwrap();
         assert!(!restored.four_score());
+    }
+
+    #[test]
+    fn a_restored_dma_mc_consumed_is_discarded_not_loaded() {
+        use rustynes_mappers::Mirroring;
+        // Found by the v2.7.0 `save_state` fuzz target: a non-zero
+        // `dma_mc_consumed` in a file restored cleanly, then tripped
+        // `Cpu::end_cycle`'s structural-zero `debug_assert_eq!` on the first
+        // CPU cycle. Release drains and discards the value, so zero on restore
+        // is byte-identical there; the bytes stay in the layout.
+        let mut bus = test_bus();
+        bus.dma_mc_consumed = 0xDEAD_BEEF;
+        // A field encoded AFTER it, so a reader that skipped the eight bytes
+        // instead of consuming them would misread this one.
+        bus.set_mirroring_override(Some(Mirroring::Vertical));
+        let blob = crate::bus_snapshot::encode_bus(&bus);
+        let mut restored = test_bus();
+        crate::bus_snapshot::decode_bus(&mut restored, &blob).unwrap();
+        assert_eq!(restored.dma_mc_consumed, 0);
+        assert_eq!(
+            restored.mirroring_override(),
+            Some(Mirroring::Vertical),
+            "the bytes are still consumed, so nothing behind them shifts"
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_oam_dma_index_is_rejected() {
+        // Found by the v2.7.0 `save_state` fuzz target: an active OAM DMA
+        // restored at index >= 256 never completes and overflows the `u16`.
+        // Legal: 0..=255 while active, and 256 once the transfer has ended.
+        let decode = |active: bool, addr: u16| {
+            let mut bus = test_bus();
+            bus.uni_oam_active = active;
+            bus.uni_oam_addr = addr;
+            let blob = crate::bus_snapshot::encode_bus(&bus);
+            crate::bus_snapshot::decode_bus(&mut test_bus(), &blob)
+        };
+        assert!(decode(true, 255).is_ok(), "the last in-flight index loads");
+        assert!(
+            decode(false, 256).is_ok(),
+            "the completed-transfer index loads"
+        );
+        for (active, addr) in [(true, 256), (true, 257), (false, 257), (false, u16::MAX)] {
+            assert!(
+                matches!(
+                    decode(active, addr),
+                    Err(SnapshotError::SectionInvalid { .. })
+                ),
+                "active={active} addr={addr} must be rejected"
+            );
+        }
     }
 
     #[test]

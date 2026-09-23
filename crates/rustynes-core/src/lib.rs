@@ -9,6 +9,10 @@
 //! See `docs/architecture.md` and `docs/scheduler.md` for the design.
 
 #![no_std]
+// The chip stack carries no `unsafe`; `forbid` makes that a compile-time
+// guarantee rather than an observation (core audit section 2.1). The FFI
+// and platform `unsafe` lives in the frontend, cheevos and mobile crates.
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 extern crate alloc;

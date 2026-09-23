@@ -196,6 +196,58 @@ pub enum PpuSnapshotError {
     /// reported rather than silently reinterpreted as a different state.
     #[error("PPU snapshot has out-of-range OAM2 fetch address {0} (max 31)")]
     InvalidOam2FetchAddr(u8),
+    /// The in-range sprite count exceeded the eight sprites secondary OAM holds.
+    ///
+    /// `spr_count` bounds loops over the eight-slot sprite arrays
+    /// (`spr_x`, `spr_halted`, the shift registers), so a value above 8 would
+    /// restore without complaint and then index out of bounds on the next PPU
+    /// dot -- a deferred panic, and on a `panic = "abort"` release build a
+    /// process kill from a hand-edited save. Core audit IMP-01.
+    #[error("PPU snapshot has out-of-range sprite count {0} (max 8)")]
+    InvalidSprCount(u8),
+    /// A counter or index held a value the PPU never produces.
+    ///
+    /// Each of these is incremented without a mask or used as an index, so a
+    /// value past its range overflows or indexes out of bounds on a later dot.
+    /// The limits are the ranges the running PPU keeps them in (fine X is the
+    /// 3-bit `x` register; the sprite-evaluation and OAM-bus counters are
+    /// reset at their wrap points). Found field by field by the v2.7.0
+    /// `save_state` fuzz target (fine X: `ppu.rs:4788`, shift overflow, in
+    /// 92,496 runs) and then swept for the rest rather than left to the
+    /// fuzzer one run at a time.
+    #[error("PPU snapshot field `{field}` is {value}, above its maximum {max}")]
+    FieldOutOfRange {
+        /// Which field.
+        field: &'static str,
+        /// The value found in the blob.
+        value: u8,
+        /// The largest value the PPU keeps it at.
+        max: u8,
+    },
+    /// The raster position is outside the region's frame.
+    ///
+    /// `dot` runs 0..=340 and `scanline` -1..=the region's pre-render line
+    /// (-1 is the power-on position). The per-dot advance only wraps at
+    /// exactly those limits, so a position past either counts on until the
+    /// integer overflows (a panic in dev profiles) and never produces a
+    /// frame. Found by the v2.7.0 `save_state` fuzz target in 76,381 runs
+    /// (`ppu.rs:6078`, `dot += 1`).
+    #[error("PPU snapshot has out-of-range raster position dot {dot}, scanline {scanline}")]
+    InvalidRasterPosition {
+        /// The restored dot.
+        dot: u16,
+        /// The restored scanline.
+        scanline: i16,
+    },
+}
+
+/// Reject a restored `u8` above `max` (see [`PpuSnapshotError::FieldOutOfRange`]).
+const fn bounded(field: &'static str, value: u8, max: u8) -> Result<u8, PpuSnapshotError> {
+    if value > max {
+        Err(PpuSnapshotError::FieldOutOfRange { field, value, max })
+    } else {
+        Ok(value)
+    }
 }
 
 const fn region_to_u8(r: PpuRegion) -> u8 {
@@ -599,7 +651,7 @@ impl Ppu {
         self.data_buffer = r.u8()?;
         self.v = r.u16()?;
         self.t = r.u16()?;
-        self.x = r.u8()?;
+        self.x = bounded("x", r.u8()?, 7)?;
         self.w = r.u8()? != 0;
 
         r.bytes_into(&mut self.ciram)?;
@@ -616,8 +668,15 @@ impl Ppu {
         self.suppress_vbl_this_frame = r.u8()? != 0;
         self.last_a12_level = r.u8()? != 0;
 
-        self.dot = r.u16()?;
-        self.scanline = r.i16()?;
+        let dot = r.u16()?;
+        let scanline = r.i16()?;
+        // -1 is legal: power-on parks the PPU at (-1, 340), and a snapshot taken
+        // before the first tick carries it; the advance wraps it to 0.
+        if dot > 340 || !(-1..=self.region.prerender_line()).contains(&scanline) {
+            return Err(PpuSnapshotError::InvalidRasterPosition { dot, scanline });
+        }
+        self.dot = dot;
+        self.scanline = scanline;
         self.frame = r.u64()?;
         self.frame_complete = r.u8()? != 0;
 
@@ -673,7 +732,11 @@ impl Ppu {
         r.bytes_into(&mut self.spr_shift_hi)?;
         r.bytes_into(&mut self.spr_attr)?;
         r.bytes_into(&mut self.spr_x)?;
-        self.spr_count = r.u8()?;
+        let spr_count = r.u8()?;
+        if spr_count > 8 {
+            return Err(PpuSnapshotError::InvalidSprCount(spr_count));
+        }
+        self.spr_count = spr_count;
         self.spr_zero_in_line = r.u8()? != 0;
 
         // Slim blobs carry no framebuffer; the existing one is left in place
@@ -693,7 +756,22 @@ impl Ppu {
         // v4 (v1.7.0 F3): the in-flight extra-scanlines overclock countdown.
         // v1/v2/v3 blobs lack it; upconvert to `0` (no insertion in flight),
         // which is exactly the state a pre-v4 restore left it in.
-        self.extra_lines_remaining = if version >= 4 { r.u16()? } else { 0 };
+        let extra_lines_remaining = if version >= 4 { r.u16()? } else { 0 };
+        // Clamped, not rejected. The configured `extra_scanlines` is a frontend
+        // knob that is NOT serialized, so a real save made under a larger knob
+        // legitimately carries a larger countdown; refusing it would reject a
+        // good file. But a corrupt countdown under a live knob idles up to
+        // 65,535 scanlines (~4 s) before the frame resumes (review finding on
+        // #546), and the countdown never legitimately exceeds the knob it was
+        // loaded from, so it is clamped to the knob this PPU now runs with. At
+        // the default knob of 0 the insertion branch is unreachable and the
+        // value is inert, so it is kept as-is -- `set_extra_scanlines` zeroes
+        // it if the knob is later turned on.
+        self.extra_lines_remaining = if self.extra_scanlines == 0 {
+            extra_lines_remaining
+        } else {
+            extra_lines_remaining.min(self.extra_scanlines)
+        };
 
         // v5 (v2.0.3, ADR 0030): the 2-cycle-ALE in-flight fetch state. v1..=4
         // blobs lack it; upconvert to the inactive rest defaults (`0`/`false`) —
@@ -724,7 +802,7 @@ impl Ppu {
             self.prev_rendering_enabled = r.u8()? != 0;
             self.rendering_enabled_delayed = r.u8()? != 0;
             self.oam_corruption_pending = r.u8()? != 0;
-            self.oam_corruption_index = r.u8()?;
+            self.oam_corruption_index = bounded("oam_corruption_index", r.u8()?, 0x20)?;
             self.oam_corruption_disabled = r.u8()? != 0;
             self.oam_corruption_disabled_instant = r.u8()? != 0;
         } else {
@@ -762,10 +840,10 @@ impl Ppu {
         // already held — for a fresh `Ppu`, these values).
         if version >= 8 {
             self.sprite_eval_read_latch = r.u8()?;
-            self.sprite_eval_n = r.u8()?;
-            self.sprite_eval_m = r.u8()?;
-            self.sprite_eval_found = r.u8()?;
-            self.sprite_eval_sec_idx = r.u8()?;
+            self.sprite_eval_n = bounded("sprite_eval_n", r.u8()?, 63)?;
+            self.sprite_eval_m = bounded("sprite_eval_m", r.u8()?, 3)?;
+            self.sprite_eval_found = bounded("sprite_eval_found", r.u8()?, 8)?;
+            self.sprite_eval_sec_idx = bounded("sprite_eval_sec_idx", r.u8()?, 0x20)?;
             self.sprite_eval_copying = r.u8()? != 0;
             self.sprite_eval_done = r.u8()? != 0;
             self.sprite_eval_overflow_search = r.u8()? != 0;
@@ -774,14 +852,14 @@ impl Ppu {
 
             self.oam_bus_copybuffer = r.u8()?;
             r.bytes_into(&mut self.oam_bus_secondary)?;
-            self.oam_bus_addr_h = r.u8()?;
-            self.oam_bus_addr_l = r.u8()?;
-            self.oam_bus_secondary_addr = r.u8()?;
+            self.oam_bus_addr_h = bounded("oam_bus_addr_h", r.u8()?, 63)?;
+            self.oam_bus_addr_l = bounded("oam_bus_addr_l", r.u8()?, 3)?;
+            self.oam_bus_secondary_addr = bounded("oam_bus_secondary_addr", r.u8()?, 0x20)?;
             self.oam_bus_copy_done = r.u8()? != 0;
             self.oam_bus_sprite_in_range = r.u8()? != 0;
-            self.oam_bus_overflow_counter = r.u8()?;
+            self.oam_bus_overflow_counter = bounded("oam_bus_overflow_counter", r.u8()?, 3)?;
 
-            self.oam2_addr = r.u8()?;
+            self.oam2_addr = bounded("oam2_addr", r.u8()?, 0x1F)?;
         } else {
             self.sprite_eval_read_latch = 0xFF;
             self.sprite_eval_n = 0;
@@ -1140,6 +1218,132 @@ mod tests {
     }
 
     #[test]
+    fn a_corrupt_sprite_count_is_rejected_not_indexed() {
+        // Core audit IMP-01. `spr_count` bounds loops over the eight-slot
+        // sprite arrays, so a restored value above 8 panics on the next dot.
+        // Locate the byte by DIFFERENCE rather than by searching for a value:
+        // two snapshots that differ only in `spr_count` differ in exactly one
+        // byte, and that is the field's offset.
+        let mut a = Ppu::new(PpuRegion::Ntsc);
+        a.spr_count = 3;
+        let mut b = Ppu::new(PpuRegion::Ntsc);
+        b.spr_count = 8; // the largest LEGAL value
+        let (sa, sb) = (a.snapshot(), b.snapshot());
+        let diffs: Vec<usize> = (0..sa.len()).filter(|&i| sa[i] != sb[i]).collect();
+        assert_eq!(diffs.len(), 1, "spr_count is exactly one byte of the blob");
+        let idx = diffs[0];
+        assert!(
+            Ppu::new(PpuRegion::Ntsc).restore(&sb).is_ok(),
+            "8 is in range and must still load"
+        );
+
+        for bad_value in [9u8, 0x80, 0xFF] {
+            let mut bad = sb.clone();
+            bad[idx] = bad_value;
+            match Ppu::new(PpuRegion::Ntsc).restore(&bad) {
+                Err(PpuSnapshotError::InvalidSprCount(v)) => {
+                    assert_eq!(v, bad_value, "the error names the offending byte");
+                }
+                Err(e) => panic!("wrong error for {bad_value}: {e}"),
+                Ok(()) => panic!("restore ACCEPTED an out-of-range sprite count {bad_value}"),
+            }
+        }
+    }
+
+    #[test]
+    fn an_out_of_range_raster_position_is_rejected() {
+        // Found by the v2.7.0 fuzz target. Each legal extreme loads; one past
+        // it, on either axis and for both frame heights, is refused.
+        let decode = |region: PpuRegion, dot: u16, scanline: i16| {
+            let mut p = Ppu::new(region);
+            p.dot = dot;
+            p.scanline = scanline;
+            let blob = p.snapshot();
+            Ppu::new(region).restore(&blob)
+        };
+        for region in [PpuRegion::Ntsc, PpuRegion::Pal] {
+            let last = region.prerender_line();
+            assert!(
+                decode(region, 340, last).is_ok(),
+                "{region:?}: the last dot loads"
+            );
+            assert!(
+                decode(region, 340, -1).is_ok(),
+                "{region:?}: the power-on position loads"
+            );
+            for (dot, scanline) in [
+                (341, 0),
+                (u16::MAX, 0),
+                (0, last + 1),
+                (0, -2),
+                (0, i16::MIN),
+            ] {
+                assert!(
+                    matches!(
+                        decode(region, dot, scanline),
+                        Err(PpuSnapshotError::InvalidRasterPosition { .. })
+                    ),
+                    "{region:?}: dot {dot}, scanline {scanline} must be rejected"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_ppu_counter_and_index_is_bounded_on_restore() {
+        // v2.7.0. Each field is located by DIFFERENCE (two snapshots that
+        // differ only in it), its largest kept value must load, and one past
+        // it, 0x80 and 0xFF must each be refused with an error naming it.
+        fn check(name: &'static str, max: u8, set: impl Fn(&mut Ppu, u8)) {
+            let mut a = Ppu::new(PpuRegion::Ntsc);
+            let mut b = Ppu::new(PpuRegion::Ntsc);
+            set(&mut a, max.saturating_sub(1));
+            set(&mut b, max);
+            let (sa, sb) = (a.snapshot(), b.snapshot());
+            let diffs: Vec<usize> = (0..sa.len()).filter(|&i| sa[i] != sb[i]).collect();
+            assert_eq!(diffs.len(), 1, "{name} is one byte");
+            let at = diffs[0];
+            Ppu::new(PpuRegion::Ntsc)
+                .restore(&sb)
+                .unwrap_or_else(|e| panic!("{name} = {max} must load: {e}"));
+            for bad in [max + 1, 0x80u8.max(max + 1), 0xFF] {
+                let mut blob = sb.clone();
+                blob[at] = bad;
+                match Ppu::new(PpuRegion::Ntsc).restore(&blob) {
+                    Err(PpuSnapshotError::FieldOutOfRange {
+                        field,
+                        value,
+                        max: m,
+                    }) => {
+                        assert_eq!((field, value, m), (name, bad, max));
+                    }
+                    Err(e) => panic!("{name} = {bad}: wrong error {e}"),
+                    Ok(()) => panic!("{name} = {bad}: restore ACCEPTED it"),
+                }
+            }
+        }
+        check("x", 7, |p, v| p.x = v);
+        check("oam_corruption_index", 0x20, |p, v| {
+            p.oam_corruption_index = v;
+        });
+        check("sprite_eval_n", 63, |p, v| p.sprite_eval_n = v);
+        check("sprite_eval_m", 3, |p, v| p.sprite_eval_m = v);
+        check("sprite_eval_found", 8, |p, v| p.sprite_eval_found = v);
+        check("sprite_eval_sec_idx", 0x20, |p, v| {
+            p.sprite_eval_sec_idx = v;
+        });
+        check("oam_bus_addr_h", 63, |p, v| p.oam_bus_addr_h = v);
+        check("oam_bus_addr_l", 3, |p, v| p.oam_bus_addr_l = v);
+        check("oam_bus_secondary_addr", 0x20, |p, v| {
+            p.oam_bus_secondary_addr = v;
+        });
+        check("oam_bus_overflow_counter", 3, |p, v| {
+            p.oam_bus_overflow_counter = v;
+        });
+        check("oam2_addr", 0x1F, |p, v| p.oam2_addr = v);
+    }
+
+    #[test]
     fn snapshot_round_trips_the_v9_oam2_counter_at_non_default_values() {
         // v9 added three OAM2 fields. The pre-existing round-trip tests leave
         // them at their power-on defaults (0 / false / false), so a reader and
@@ -1209,7 +1413,10 @@ mod tests {
         p.oam_bus_secondary_addr = 18;
         p.oam_bus_copy_done = true;
         p.oam_bus_sprite_in_range = true;
-        p.oam_bus_overflow_counter = 5;
+        // 2, not the 5 this test used before v2.7.0: the running PPU loads the
+        // counter with 3 and counts down, and restore now rejects anything
+        // above 3. 2 is still distinct from every neighbouring field.
+        p.oam_bus_overflow_counter = 2;
         p.oam2_addr = 12;
 
         let blob = p.snapshot();
@@ -1238,7 +1445,7 @@ mod tests {
         assert_eq!(q.oam_bus_secondary_addr, 18);
         assert!(q.oam_bus_copy_done);
         assert!(q.oam_bus_sprite_in_range);
-        assert_eq!(q.oam_bus_overflow_counter, 5);
+        assert_eq!(q.oam_bus_overflow_counter, 2);
         assert_eq!(q.oam2_addr, 12);
     }
 
@@ -1280,6 +1487,28 @@ mod tests {
         let mut q = Ppu::new(PpuRegion::Ntsc);
         q.restore(&blob).unwrap();
         assert_eq!(q.extra_lines_remaining, 5);
+    }
+
+    #[test]
+    fn a_restored_extra_lines_countdown_is_clamped_to_the_live_knob() {
+        // Review finding on #546: a corrupt countdown under a live
+        // extra-scanlines knob idled the PPU for up to 65,535 lines.
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.set_extra_scanlines(8);
+        p.extra_lines_remaining = u16::MAX;
+        let blob = p.snapshot();
+
+        let mut q = Ppu::new(PpuRegion::Ntsc);
+        q.set_extra_scanlines(8);
+        q.restore(&blob).unwrap();
+        assert_eq!(q.extra_lines_remaining, 8, "clamped to the knob in force");
+
+        // A countdown already inside the knob is untouched.
+        p.extra_lines_remaining = 5;
+        let mut r = Ppu::new(PpuRegion::Ntsc);
+        r.set_extra_scanlines(8);
+        r.restore(&p.snapshot()).unwrap();
+        assert_eq!(r.extra_lines_remaining, 5);
     }
 
     #[test]

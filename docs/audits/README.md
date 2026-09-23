@@ -42,6 +42,16 @@ their claims were read against the code:
 **Working rule:** trust a located Rust defect once a test fails on it; re-derive
 every RTL claim and every number before acting.
 
+## How the reports are used
+
+**They are the working reference for every release from v2.7.0 to v3.0.0**, read alongside the plans in `to-dos/plans/` (maintainer instruction, 2026-09-23). A plan compresses each finding to a table cell; the report keeps the mechanism, the file and line locations, the failure scenario and a remediation sketch. Before triaging or fixing a finding, read its section in the report.
+
+| Line | Reports |
+| --- | --- |
+| v2.7.x | [core](core-audit-report.md), [frontend](frontend-audit-report.md) |
+| v2.8.x | [libretro](libretro-audit-report.md), [RTL](rtl-audit-report.md) |
+| v2.9.x | all four: the v2.9.0 re-audit is diffed against them and their ledgers |
+
 ## How a finding is closed
 
 Every finding goes **triage → pin red → fix → gate**:

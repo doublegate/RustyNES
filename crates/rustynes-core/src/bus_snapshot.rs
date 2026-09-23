@@ -431,8 +431,31 @@ pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotErro
         false
     };
     let uni_oam_addr = if r.remaining() >= 2 { r.u16()? } else { 0 };
+    // The OAM-DMA byte index runs 0..=255 while a transfer is active and is
+    // left at 256 when the 256th write completes it (it is re-zeroed only when
+    // the next transfer starts). Any other value is a corrupt file: an active
+    // transfer at 256 or above never reaches the `== 256` completion test and
+    // counts on until the `u16` overflows -- a panic in dev profiles, found by
+    // the v2.7.0 `save_state` fuzz target in 287,867 runs.
+    if uni_oam_addr > 256 || (uni_oam_active && uni_oam_addr > 255) {
+        return Err(SnapshotError::SectionInvalid {
+            tag: "BUS ".into(),
+            reason: format!(
+                "OAM-DMA byte index {uni_oam_addr} out of range (active: {uni_oam_active})"
+            ),
+        });
+    }
     let ppu_clock = if r.remaining() >= 8 { r.u64()? } else { 0 };
-    let dma_mc_consumed = if r.remaining() >= 8 { r.u64()? } else { 0 };
+    // The bytes are read to keep the layout, and the value is DISCARDED.
+    // `dma_mc_consumed` is structurally zero at any instruction boundary on
+    // the live unified-DMA path, and `Cpu::end_cycle` drains and discards it
+    // in release while `debug_assert_eq!`-ing it to zero in dev profiles. A
+    // non-zero value can therefore come only from a corrupt file, and loading
+    // it did nothing in release but panic every dev/test/fuzz build on the
+    // first CPU cycle. Found by the v2.7.0 `save_state` fuzz target in 6,848
+    // runs. Restoring zero is byte-identical to what release already did.
+    let _dma_mc_consumed_on_disk = if r.remaining() >= 8 { r.u64()? } else { 0 };
+    let dma_mc_consumed = 0;
     // v2.1.0 non-standard input devices (trailing-default `None`).
     let device0 = decode_expansion_device(&mut r)?;
     let device1 = decode_expansion_device(&mut r)?;

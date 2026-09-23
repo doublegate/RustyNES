@@ -75,6 +75,33 @@ The APU is clocked by the master scheduler at CPU cadence (every other PPU dot t
 - **Mixer state**: high-pass filter state (two stages), low-pass filter state (one stage), output accumulator.
 - **Sample emitter**: blip_buf-style ring of pending step responses + windowed-sinc kernel cache.
 
+## Save-state restore validation
+
+A save state is untrusted input (v2.7.0, core audit IMP-02). `Apu::restore`
+rejects values the hardware registers cannot hold, and resampler values that
+would hang or poison the audio, with a typed `ApuSnapshotError`:
+
+| Field | Legal range | Error |
+| --- | --- | --- |
+| pulse `duty` / `step` | 0..=3 / 0..=7 | `FieldOutOfRange` |
+| pulse `sweep_period` / `sweep_shift` / `sweep_divider` | 0..=7 each | `FieldOutOfRange` |
+| envelope `volume_or_period` / `divider` / `decay` | 0..=15 each | `FieldOutOfRange` |
+| triangle `step` | 0..=31 | `FieldOutOfRange` |
+| DMC `rate_index` / `bits_remaining` / `dac` | 0..=15 / 0..=8 / 0..=127 | `FieldOutOfRange` |
+| resampler `sample_rate` | non-zero | `InvalidResampler` |
+| resampler `cpu_rate` | finite, positive | `InvalidResampler` |
+| `sample_rate / cpu_rate` | at most one host sample per CPU cycle | `InvalidResampler` |
+| resampler `phase` | `[0, 1)` | `InvalidResampler` |
+| filter `coeff` | finite, `[0, 1]` | `InvalidResampler` |
+| filter `prev_in` / `prev_out`, `held_value` | finite | `InvalidResampler` |
+
+The register-width rows prevent out-of-bounds indexing on the next tick (the
+duty and triangle tables, and the mixer's 31- and 203-entry lookup tables that
+`decay`, a constant `volume_or_period` and the DAC feed). The resampler rows
+never panicked: a zero, non-finite or merely huge rate ratio hung
+`BlipBuf::add_sample`'s `while phase >= 1.0` loop, and a high-pass coefficient
+above 1 diverges to NaN.
+
 ## Behavior
 
 ### Register map
@@ -305,7 +332,7 @@ external open-bus latch used by cartridge or PPU register accesses.
    - **Ultrasonic silence (timer period < 2).** When the triangle timer period is below 2 (frequency above ~55.9 kHz), real hardware cannot follow the sequencer and the channel effectively halts. We freeze the sequencer in `Triangle::clock_timer` (the step does not advance and the output holds its current value) rather than emitting the aliasing tone, matching the common-emulator convention; Mega Man 2's "Crash Man" stage relies on this to silence the triangle. The threshold is strictly `< 2` (period 2 still clocks). See `crates/rustynes-apu/src/triangle.rs`.
 5. **Pulse duty-sequencer phase reset on `$4003`/`$4007`.** Writing the length/timer-high register resets the pulse duty sequencer to step 0 (and sets the envelope-restart flag) but does **not** reset the timer divider. Implemented in `Pulse::write_timer_hi` (`crates/rustynes-apu/src/pulse.rs`).
 6. **DMC playback stops mid-scanline?** Yes; `$4015` write to clear bit 4 silences the channel after the current sample byte completes.
-7. **Sweep mute.** When the target period of a pulse channel is > $7FF or the negated-target underflows below 8, the channel is muted regardless of length.
+7. **Sweep mute.** A pulse channel is muted when its CURRENT period is below 8, or when the sweep's target period is above `$7FF`. Both conditions are evaluated continuously, whether or not the sweep is enabled. A negated target can never exceed `$7FF`, so negate mode never mutes through the target: a target that would go negative **clamps to zero** (NESdev "APU Sweep"). Until v2.7.0 the oracle computed pulse 1's `c - (c >> 0) - 1` in wrapping `u16` arithmetic, got `$FFFF`, and muted pulse 1 on the `$4001 = $08` idiom, the documented way to disable the sweep (negate on, shift 0). Pinned by `pulse1_negate_shift0_clamps_to_zero_and_does_not_mute` in `crates/rustynes-apu/src/pulse.rs`; the companion test sweeps every shift 1-7 and every period 8-`$7FF` and shows the clamp changes nothing else.
 8. **Pulse 1 sweep negation off-by-one.** Pulse 1 negates by `~target` (one's complement); Pulse 2 negates by `-target`. This produces audible difference at certain frequencies.
 9. **Controller conflict is APU-owned timing.** The standard controller code
    lives in the input subsystem, but DMC DMA is the root of the classic joypad

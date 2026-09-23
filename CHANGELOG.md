@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-09-23 - "Palisade" (untrusted input stops at the boundary)
+
 ### Changed
 
 - **The SuperStation One core moves to v3.0.0, and v2.7.x-v2.9.x become an audit
@@ -53,18 +55,87 @@ cycle-accurate core later replaced.
 - **Four plans:** `to-dos/plans/v2.7.x-core-frontend-audit-plan.md`,
   `v2.8.x-libretro-rtl-audit-plan.md`, `v2.9.x-final-audit-and-hardware-plan.md` and
   `v3.0.0-superstation-core-plan.md`, indexed in `to-dos/plans/README.md`.
-- **`.gitignore`** covers the agent review scratch (`cr_*`, `fix_*.py`,
-  `*_comments.json`, `threads.json`, `pr_*.txt`) that had accumulated untracked in
-  the repository root.
+- **`.gitignore`** covers the agent review scratch (`cr_*.json`, `cr_*.txt`,
+  `fix_*.py`, `*_comments.json`, `threads.json`, `pr_*.txt`) that had accumulated
+  untracked in the repository root; root-anchored, and matching no tracked file.
+- **The audit reports are the working reference for every release to v3.0.0**,
+  read beside the plans: the v2.7.x, v2.8.x and v2.9.x plans and
+  `docs/audits/README.md` now say which reports each line works from. A plan
+  compresses a finding to a table cell; the report keeps the mechanism, the
+  locations and a remediation sketch.
+- **Three agent notes** from the review of the re-plan (`docs/agents/`): the
+  Antigravity reviewer re-files findings already refuted, so the bot ceremony
+  needs a stopping rule; Copilot reviews once per PR here and Docs7 reports the
+  private sibling repository's links as dead; and per-suite test counts read off
+  a combined `cargo test` run are mislabelled, because the result lines are not
+  in `--test` order. Plus one tooling trap: `ssh-add -l` failing does not mean
+  commit signing is down.
+
+### Fixed
+
+- **Pulse 1 no longer mutes on the `$4001 = $08` idiom** (core ledger T-01). With
+  negate on and shift 0 -- the documented way to disable the sweep -- the oracle
+  computed pulse 1's target as `c - c - 1` in wrapping arithmetic, got `$FFFF`,
+  and muted the channel. NESdev "APU Sweep": a negative target clamps to zero and
+  negate never mutes. Red on v2.6.23 by `pulse1_negate_shift0_clamps_to_zero_and_does_not_mute`;
+  a companion test shows the clamp changes nothing for shifts 1-7 over periods
+  8-`$7FF`. The full `--features test-roms` suite run with this fix alone
+  (2,612 passed, 0 failed) moved no golden; on the final release tree it is
+  2,622 passed, 0 failed. The MiSTer sibling already followed the wiki, so the co-simulation
+  ladder could not see this; v2.8.2 adds the gate.
+- **A hand-edited or corrupt save state can no longer crash or hang the emulator**
+  (core audit IMP-01, IMP-02, IMP-03). Every one of these restored cleanly and
+  failed on the next tick, which on a release build (`panic = "abort"`) kills the
+  process:
+  - PPU: a sprite count above 8 (typed `InvalidSprCount`).
+  - APU: twelve register-width fields -- duty, sequencer steps, the three sweep
+    fields, envelope volume/divider/decay, DMC rate, bit count and DAC -- are
+    bounded to their register widths (`FieldOutOfRange`, naming the field).
+  - Resampler: a zero sample rate, a non-finite or non-positive CPU rate, a rate
+    ratio above one host sample per CPU cycle, a phase outside `[0, 1)`, or a
+    non-finite filter or held value (`InvalidResampler`). These did not panic;
+    they hung the emulation thread or filled the audio with NaN.
+  - Container: `SectionIter` uses `checked_add` for a section's end (a real
+    overflow on 32-bit `wasm32`), and stops after its first error instead of
+    returning it forever.
+  - More the audit did not report, found by the new fuzz target: a restored
+    PPU raster position past dot 340 or the pre-render line (the per-dot
+    advance never wraps it); a restored fine X above 7 (a shift overflow),
+    after which every counter and index the PPU restore loads was swept by
+    reading rather than left to the fuzzer, bounding ten more; a restored
+    OAM-DMA byte index at or above 256 (an overflow); a restored
+    `dma_mc_consumed` that tripped a dev-profile invariant assertion; and a
+    CPU master clock and PPU clock restored far apart, which made the next
+    PPU catch-up run for billions of dots or never, a hang either way
+    (rejected beyond 1,024 master clocks of skew).
+  - From review: a restored extra-scanline countdown under a live overclock
+    knob could idle the PPU for 65,535 lines. It is clamped to the knob in
+    force, not rejected, because the knob is not saved and a larger one may
+    have written a genuine file.
+
+  States the emulator writes stay inside every bound, so no real save is
+  rejected; the round-trip tests are the guard.
+
+### Security
+
+- **`#![forbid(unsafe_code)]` on the five chip crates** (`rustynes-cpu`, `-ppu`,
+  `-apu`, `-mappers`, `-core`). None contained `unsafe`; this makes that a
+  compile-time guarantee (core audit section 2.1).
+- **The `save_state` fuzz target can now find what it exists to find.** It
+  restored and stopped, and fed only raw bytes, so every deferred panic above was
+  invisible to it and almost no input got past the header. It now patches a real
+  snapshot of a rendering machine and runs about three scanlines after an
+  accepted restore. Against the unfixed tree, with each found defect fixed in
+  turn so the next could surface, it found seven defects; five were not in
+  the audit. Its first patch mode had a reach defect of its own, caught in
+  review: offsets were taken over the whole blob, whose 245,760-byte
+  framebuffer sits in front of the APU section, so no APU field was ever
+  patched. Offsets now skip the framebuffer and are 24-bit (the rest of the
+  state is itself over 64 KiB), and the unfixed APU crashed in 1,193 runs.
+  After the fixes: 2,400,000 executions over 8 jobs, 0 crashes, 0 timeouts.
 
 ### Notes
 
-- **Found during the calibration, not yet confirmed:** the oracle's pulse-1 sweep
-  appears to mute on the common `$4001=$08` idiom (negate, shift 0), where the
-  vendored nesdev wiki says a negative target clamps and negate never mutes. The
-  sibling's RTL follows the wiki, so the co-simulation ladder does not cover the
-  difference. It is pinned by a test in v2.7.0 before anything is changed (core
-  ledger T-01).
 - **The three mapper files the core audit wanted "sanitized"** (`m085_vrc7.rs`,
   `m099_vs_system.rs`, `m244_cne_decathlon.rs`) quote Mesen2 source expressions, so
   they are derivation statements. They get `// Provenance:` headers and `NOTICE`
