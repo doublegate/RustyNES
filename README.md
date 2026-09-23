@@ -679,7 +679,7 @@ RustyNES's current release is **v2.7.2 "Bankroll"** (2026-09-23) — cartridge m
 v2.7.2 changes what the CPU reads at `$6000-$7FFF` on every board with
 nothing there, so the accuracy numbers below were re-measured on its release
 tree: AccuracyCoin 144/144 and nestest pass, and the full
-`--features test-roms` suite passes 2,665 tests. v2.7.1 found that the
+`--features test-roms` suite passes 2,666 tests. v2.7.1 found that the
 desktop and mobile frontends never persist a cartridge's battery RAM, so on
 those hosts an in-game save survives only inside a save state. That is still
 recorded and not yet fixed; the desktop half is v2.7.3's. Built on
