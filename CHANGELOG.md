@@ -53,9 +53,21 @@ cycle-accurate core later replaced.
 - **Four plans:** `to-dos/plans/v2.7.x-core-frontend-audit-plan.md`,
   `v2.8.x-libretro-rtl-audit-plan.md`, `v2.9.x-final-audit-and-hardware-plan.md` and
   `v3.0.0-superstation-core-plan.md`, indexed in `to-dos/plans/README.md`.
-- **`.gitignore`** covers the agent review scratch (`cr_*`, `fix_*.py`,
-  `*_comments.json`, `threads.json`, `pr_*.txt`) that had accumulated untracked in
-  the repository root.
+- **`.gitignore`** covers the agent review scratch (`cr_*.json`, `cr_*.txt`,
+  `fix_*.py`, `*_comments.json`, `threads.json`, `pr_*.txt`) that had accumulated
+  untracked in the repository root; root-anchored, and matching no tracked file.
+- **The audit reports are the working reference for every release to v3.0.0**,
+  read beside the plans: the v2.7.x, v2.8.x and v2.9.x plans and
+  `docs/audits/README.md` now say which reports each line works from. A plan
+  compresses a finding to a table cell; the report keeps the mechanism, the
+  locations and a remediation sketch.
+- **Three agent notes** from the review of the re-plan (`docs/agents/`): the
+  Antigravity reviewer re-files findings already refuted, so the bot ceremony
+  needs a stopping rule; Copilot reviews once per PR here and Docs7 reports the
+  private sibling repository's links as dead; and per-suite test counts read off
+  a combined `cargo test` run are mislabelled, because the result lines are not
+  in `--test` order. Plus one tooling trap: `ssh-add -l` failing does not mean
+  commit signing is down.
 
 ### Notes
 

@@ -704,7 +704,8 @@ The active line runs to **v3.0.0 — the SuperStation One core**
 first, each acting on audits in [`docs/audits/`](docs/audits/README.md): **v2.7.x**
 the core and frontend audits, **v2.8.x** the libretro and RTL audits and the
 off-die SDRAM build, **v2.9.x** a re-audit, the final seed sweeps and the bring-up
-on the board. The MiSTer core itself is a **new** NES
+on the board. Each line works from its audit reports as well as its plan: the
+reports hold the detail the plans compress. The MiSTer core itself is a **new** NES
 core in SystemVerilog, written from public hardware documentation in the sibling
 `RustyNES_MiSTer` repository, with this emulator as its **verification oracle**.
 
