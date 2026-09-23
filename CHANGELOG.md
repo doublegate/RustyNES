@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-09-23 - "Palisade" (untrusted input stops at the boundary)
+
 ### Changed
 
 - **The SuperStation One core moves to v3.0.0, and v2.7.x-v2.9.x become an audit
@@ -95,8 +97,12 @@ cycle-accurate core later replaced.
   - Container: `SectionIter` uses `checked_add` for a section's end (a real
     overflow on 32-bit `wasm32`), and stops after its first error instead of
     returning it forever.
-  - Two more the audit did not report, found by the new fuzz target: a restored
-    OAM-DMA byte index at or above 256 (an overflow), and a restored
+  - More the audit did not report, found by the new fuzz target: a restored
+    PPU raster position past dot 340 or the pre-render line (the per-dot
+    advance never wraps it); a restored fine X above 7 (a shift overflow),
+    after which every counter and index the PPU restore loads was swept by
+    reading rather than left to the fuzzer, bounding ten more; a restored
+    OAM-DMA byte index at or above 256 (an overflow); and a restored
     `dma_mc_consumed` that tripped a dev-profile invariant assertion.
 
   States the emulator writes stay inside every bound, so no real save is
@@ -111,8 +117,9 @@ cycle-accurate core later replaced.
   restored and stopped, and fed only raw bytes, so every deferred panic above was
   invisible to it and almost no input got past the header. It now patches a real
   snapshot of a rendering machine and runs about three scanlines after an
-  accepted restore. Against the unfixed tree it found three crashes in turn
-  (6,848, 29,326 and 287,867 runs).
+  accepted restore. Against the unfixed tree, with each found defect fixed in
+  turn so the next could surface, it found five crashes (at 6,848, 29,326,
+  287,867, 76,381 and 92,496 runs); four of them were not in the audit.
 
 ### Notes
 
