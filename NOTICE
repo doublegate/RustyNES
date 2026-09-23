@@ -34,14 +34,17 @@ file-by-file table (source file, function, and line references).
   Derived: CPU unstable-store opcodes (NesCpu.h); the PPU sprite-evaluation FSM
   and OAM-data-bus model (NesPpu.cpp ProcessSpriteEvaluation / ReadSpriteRam);
   ~15 mapper board implementations (Bandai EEPROM, JY Company, Waixing, Sachen,
-  Txc, NTDEC, Kaiser, MMC3 variants, FK23C, CoolBoy); the Bisqwit NTSC filter as
+  Txc, NTDEC, Kaiser, MMC3 variants, FK23C, CoolBoy, the Vs. DualSystem
+  sub-console banking, the VRC7 audio register path, the mapper 244 scramble
+  tables); the Bisqwit NTSC filter as
   Mesen2 implements it; the UNIF board tables; the debug-symbol importer
   (DbgImporter); and the PGO training harness (PGOHelper).
 
 * puNES -- Copyright FHorse -- GPL-2.0-or-later
   https://github.com/FHorse/puNES
   Derived: the JV001 security chip / mapper 147 (ported bit-for-bit from JV001.c
-  / mapper_147.c) and the per-CRC FDS drive-timing table (fds.c).
+  / mapper_147.c), the per-CRC FDS drive-timing table (fds.c), and the mapper 244
+  scramble tables (mapper_244, shared with Mesen2).
 
 * FCEUX -- Copyright the FCEUX team -- GPL-2.0-or-later
   https://github.com/TASEmulators/fceux

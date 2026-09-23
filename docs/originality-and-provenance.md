@@ -67,7 +67,10 @@ distributing the combined work under GPL-3.0-or-later.
 | `crates/rustynes-mappers/src/m016_bandai_fcg.rs` | Mesen2 | `Eeprom24C01` / `Eeprom24C02`, `Core/NES/Mappers/Bandai/` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m035_jy_asic.rs` | Mesen2 | `JyCompany` register decode, `InvertPrgBits` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m069_sunsoft_fme7.rs` | Mesen2 / Nestopia | Sunsoft 5B audio + FME-7 | GPL-3.0-or-later / GPL-2.0-or-later |
+| `crates/rustynes-mappers/src/m085_vrc7.rs` | Mesen2 | `Vrc7Audio.h`: the `$9010`/`$9030` register-write path and the `$E000` silence flag (classified v2.7.1, core audit §6.2) | GPL-3.0-or-later |
+| `crates/rustynes-mappers/src/m099_vs_system.rs` | Mesen2 | `VsSystem.h`: DualSystem sub-console `chrOuter` / `prgOuter` banking (classified v2.7.1, core audit §6.2) | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/m176_bmc_fk23c.rs` | Mesen2 | `Waixing/Fk23C.h`, `Mmc3Variants/MMC3_Coolboy.h` | GPL-3.0-or-later |
+| `crates/rustynes-mappers/src/m244_cne_decathlon.rs` | Mesen2; puNES | `Mapper244` / `mapper_244`: the PRG and CHR data-byte scramble tables (classified v2.7.1, core audit §6.2) | GPL-3.0-or-later / GPL-2.0-or-later |
 | `crates/rustynes-mappers/src/m268_bmc_coolboy.rs` | Mesen2 / FCEUX | `Mmc3Variants/MMC3_Coolboy.h` banking | GPL-3.0-or-later / GPL-2.0-or-later |
 | `crates/rustynes-mappers/src/m513_sachen_9602.rs` | Mesen2 | `Sachen/Sachen9602.h`, `Txc/TxcChip.h` | GPL-3.0-or-later |
 | `crates/rustynes-mappers/src/mmc3_clones.rs` | Mesen2 | `Waixing/Mapper253.h`, `Sachen/Sachen8259.h`, `InvertPrgBits`, MMC3 variants | GPL-3.0-or-later |

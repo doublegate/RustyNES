@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Provenance: the VRC7 audio register-write path (the `$9010` address latch / `$9030` data write pair forwarded to the OPLL) and the `$E000` bit-7 silence ("muted") flag were written with Mesen2 (GPL-3.0-or-later) `Vrc7Audio.h` consulted, as the in-file comments state. Classified as derived in v2.7.1 (core audit section 6.2) because the comments cite that source's expressions; the banking and IRQ halves are not covered by this line. See docs/originality-and-provenance.md (Section 1)
+// and NOTICE for the complete, audited derivation record.
+
 //! Konami VRC7 (mapper 85) -- banking, the VRC IRQ counter, and the on-cart
 //! YM2413-derivative OPLL FM synthesizer.
 //!
