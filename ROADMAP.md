@@ -2,13 +2,13 @@
 
 **Document Version:** 2.0.4
 **Last Updated:** 2026-09-17
-**Project Status:** v2.7.1 "Keepsake" released — a save that appears to succeed now does, the second release of the ADR 0041 audit line. **No hardware has run any bitstream**; the SuperStation One core is v3.0.0.
+**Project Status:** v2.7.2 "Bankroll" released — every bank the cartridge has, and nothing it has not, the third release of the ADR 0041 audit line. **No hardware has run any bitstream**; the SuperStation One core is v3.0.0.
 
 ---
 
 ## Where we are
 
-RustyNES is well past v1.0.0. The current release is **v2.7.1 "Keepsake"** — six cartridge boards now hand RetroArch their battery save instead of an empty one, every user file the frontend writes is written atomically, and three mapper files are now recorded as derived from Mesen2 and puNES. Built on **v2.7.0 "Palisade"** — a corrupt or hand-edited save state now fails at restore with a typed error instead of crashing the emulator one tick later, pulse 1 no longer mutes on the `$4001 = $08` sweep idiom, and the save-state fuzz target can finally reach what it exists to find. **No hardware has run any bitstream.**
+RustyNES is well past v1.0.0. The current release is **v2.7.2 "Bankroll"** — cartridge memory, every bank a cartridge has and nothing it has not: MMC1 reaches SUROM / SXROM, MMC5 banks its PRG-RAM, Namco 163 selects nametables, and `$6000-$7FFF` reads open bus where a board has nothing there. Built on **v2.7.1 "Keepsake"** — six cartridge boards now hand RetroArch their battery save instead of an empty one, every user file the frontend writes is written atomically, and three mapper files are now recorded as derived from Mesen2 and puNES. **No hardware has run any bitstream.**
 
 **This root ROADMAP is a historical snapshot of the v1.0.0 cut.** For the authoritative, current forward roadmap see **[`to-dos/ROADMAP.md`](to-dos/ROADMAP.md)**; for the authoritative current-state pass counts and platform matrix see **[`docs/STATUS.md`](docs/STATUS.md)**; for the full per-release history see **[`CHANGELOG.md`](CHANGELOG.md)**. Many of the "post-1.0 directions" listed further down (mobile, Lua scripting, TAS editor, Vs. DualSystem, HD packs, hosted netplay) have since shipped — the tables below record what was **done at v1.0.0**, not the current feature set.
 

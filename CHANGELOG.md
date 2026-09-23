@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.7.2] - 2026-09-23 - "Bankroll" (every bank the cartridge has, and nothing it has not)
+
 ### Fixed — mapper memory
 
 - **MMC1 reaches SUROM / SXROM's upper 256 KiB and banks SOROM / SXROM
