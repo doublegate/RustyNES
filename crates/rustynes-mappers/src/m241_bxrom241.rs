@@ -23,7 +23,9 @@ const CHR_BANK_8K: usize = 0x2000;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-const SAVE_STATE_VERSION: u8 = 1;
+/// v2 (v2.7.2) appends the 8 KiB WRAM; a v1 blob loads with it zeroed.
+const SAVE_STATE_VERSION: u8 = 2;
+const WRAM_SIZE: usize = 0x2000;
 
 const fn nametable_offset(addr: u16, mirroring: Mirroring) -> usize {
     let table = (((addr - 0x2000) / NAMETABLE_SIZE_U16) & 0x03) as u8;
@@ -40,6 +42,11 @@ pub struct Bxrom241 {
     chr_is_ram: bool,
     prg_bank: u8,
     mirroring: Mirroring,
+    /// "8 KiB of WRAM at CPU $6000-$7FFF that can be battery-backed"
+    /// (`nesdev_wiki/INES_Mapper_241.xhtml`). Absent before v2.7.2.
+    wram: Box<[u8]>,
+    /// Whether the header marks it battery-backed (then it is the save).
+    battery: bool,
 }
 
 impl Bxrom241 {
@@ -78,7 +85,16 @@ impl Bxrom241 {
             chr_is_ram,
             prg_bank: 0,
             mirroring,
+            wram: vec![0u8; WRAM_SIZE].into_boxed_slice(),
+            battery: false,
         })
+    }
+
+    /// Mark the WRAM battery-backed (from the header), making it the save.
+    #[must_use]
+    pub const fn with_battery(mut self, battery: bool) -> Self {
+        self.battery = battery;
+        self
     }
 }
 
@@ -87,7 +103,27 @@ impl Mapper for Bxrom241 {
         MapperCaps::NONE
     }
 
+    fn sram(&self) -> &[u8] {
+        if self.battery { &self.wram } else { &[] }
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        if self.battery {
+            &mut self.wram
+        } else {
+            &mut []
+        }
+    }
+
+    /// The WRAM is always present, so `$6000-$7FFF` stays mapped whether or
+    /// not it is battery-backed.
+    fn cpu_read_unmapped(&self, addr: u16) -> bool {
+        (0x4020..=0x5FFF).contains(&addr)
+    }
+
     fn cpu_read(&mut self, addr: u16) -> u8 {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            return self.wram[usize::from(addr - 0x6000)];
+        }
         if (0x8000..=0xFFFF).contains(&addr) {
             let count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
             let bank = (self.prg_bank as usize) % count;
@@ -98,6 +134,10 @@ impl Mapper for Bxrom241 {
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            self.wram[usize::from(addr - 0x6000)] = value;
+            return;
+        }
         if (0x8000..=0xFFFF).contains(&addr) {
             self.prg_bank = value;
         }
@@ -141,20 +181,27 @@ impl Mapper for Bxrom241 {
         if self.chr_is_ram {
             out.extend_from_slice(&self.chr);
         }
+        out.extend_from_slice(&self.wram);
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let chr_extra = if self.chr_is_ram { self.chr.len() } else { 0 };
-        let expected = 2 + self.vram.len() + chr_extra;
+        let version = *data.first().ok_or(MapperError::Truncated {
+            expected: 1,
+            got: 0,
+        })?;
+        let wram_len = match version {
+            1 => 0,
+            SAVE_STATE_VERSION => self.wram.len(),
+            v => return Err(MapperError::UnsupportedVersion(v)),
+        };
+        let expected = 2 + self.vram.len() + chr_extra + wram_len;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
                 got: data.len(),
             });
-        }
-        if data[0] != SAVE_STATE_VERSION {
-            return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.prg_bank = data[1];
         let mut cursor = 2;
@@ -164,6 +211,12 @@ impl Mapper for Bxrom241 {
         if self.chr_is_ram {
             self.chr
                 .copy_from_slice(&data[cursor..cursor + self.chr.len()]);
+            cursor += self.chr.len();
+        }
+        if wram_len == 0 {
+            self.wram.fill(0);
+        } else {
+            self.wram.copy_from_slice(&data[cursor..cursor + wram_len]);
         }
         Ok(())
     }

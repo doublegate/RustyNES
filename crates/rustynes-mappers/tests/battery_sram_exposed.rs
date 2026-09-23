@@ -76,8 +76,9 @@ const NO_CPU_WINDOW: &[(u16, &str)] = &[(
 )];
 
 /// How many images must reach writable RAM for the loop to count as having
-/// checked anything. Measured when the range became 0..4096 (v2.7.1): 296
-/// images built, 43 reaching RAM.
+/// checked anything. Measured when the range became 0..4096: 296 images
+/// built, 43 reaching RAM; 51 after v2.7.2 gave five boards the WRAM their
+/// wiki pages document (`tests/documented_wram.rs`).
 ///
 /// The other 146 mapper numbers build but show this loop no writable RAM:
 /// many have none, and the rest gate it behind a board-specific enable (MMC5's
@@ -89,7 +90,7 @@ const NO_CPU_WINDOW: &[(u16, &str)] = &[(
 /// by self-flashing) and the Vs. `DualSystem` shared RAM. Board-specific tests for
 /// the gated boards belong with v2.7.2's mapper-RAM work. Lower this floor only
 /// with a reason.
-const CHECKED_FLOOR: usize = 43;
+const CHECKED_FLOOR: usize = 51;
 
 #[test]
 fn every_battery_board_exposes_its_save_memory() {

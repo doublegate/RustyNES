@@ -106,7 +106,10 @@ exactly when `sram()` is empty. Before v2.7.2 the default treated all of
 board with ROM or readable registers in that window but no save RAM must
 override the hook for it: mappers 40, 42, 50, 212, 238, 305 and 306 do.
 `crates/rustynes-mappers/tests/prg_ram_window_open_bus.rs` checks both
-directions for every mapper number. A read that drives only some data bits,
+directions for every mapper number. Comparing the commercial-ROM suite before and after this
+rule found five boards whose documented RAM the model lacked (156, 177, 227's
+FW-01 variant, 241, 245); v2.7.2 gave them their 8 KiB
+(`tests/documented_wram.rs`). A read that drives only some data bits,
 like Sachen's 3-bit registers, reports the rest through `cpu_read_driven_mask`,
 and the bus keeps its floating value on them.
 
@@ -184,7 +187,7 @@ Sorted by number of commercial titles using each mapper.
 | 2 | 0-2 | UxROM | 2 | — | — | landed (Phase 2) | UNROM, UOROM, etc. CHR-RAM only. |
 | 3 | 0-2 | CNROM | 2 | — | — | landed (Phase 2) | Bus conflict required. |
 | 4 | 0-3 | MMC3 (and MMC6, sub 1) | 4 | — | A12 | landed (Phase 4 / S1) | Sharp vs NEC IRQ revision; default Sharp. mmc3_test_2/5-MMC3 passes; sub-tests 1-4 partial. |
-| 5 | — | MMC5 | 4 | yes (landed) | scanline | v0+v1 landed (Phase 4 / S4) | Banking + scanline IRQ + ExRAM modes 10/11 + multiplier (v0). Fill mode (`$5106`/`$5107`), dual sprite/BG CHR registers used for sprite tile fetches, ExGrafix per-tile attribute + CHR override (mode 01) (v1). Vertical split-screen (`$5200-$5202`) via `bg_split_state` (Castlevania III J status bar) and the MMC5 audio extension (two pulse + 7-bit PCM, `$5000-$5015`, behind the default-on `mapper-audio` feature) landed. PRG-RAM banking (v2.7.2, `nesdev_wiki/MMC5.xhtml` §"PRG-RAM configurations"): `$5113` and RAM-mode `$5114-$5116` select a chip (bit 2) and page (bits 0-1) by board size (8 / 16 = 2x8 / 32 / 64 = 2x32 KiB), with open bus where no chip answers; a 16 KiB window takes A13 from the CPU. `sram()` is the battery-backed part: all of it, except ETROM's 16 KiB, where only the first chip is saved. iNES 1.0 dumps keep the header's 8 KiB default rather than the wiki's 64 KiB superset, so existing save files keep their size. |
+| 5 | — | MMC5 | 4 | yes (landed) | scanline | v0+v1 landed (Phase 4 / S4) | Banking + scanline IRQ + ExRAM modes 10/11 + multiplier (v0). Fill mode (`$5106`/`$5107`), dual sprite/BG CHR registers used for sprite tile fetches, ExGrafix per-tile attribute + CHR override (mode 01) (v1). Vertical split-screen (`$5200-$5202`) via `bg_split_state` (Castlevania III J status bar) and the MMC5 audio extension (two pulse + 7-bit PCM, `$5000-$5015`, behind the default-on `mapper-audio` feature) landed. PRG-RAM banking (v2.7.2, `nesdev_wiki/MMC5.xhtml` §"PRG-RAM configurations"): `$5113` and RAM-mode `$5114-$5116` page the RAM by the bank value's low three bits over the wiki's 64 KiB "compatible superset for all games", because PRG-RAM sizes in headers are unreliable (*L'Empereur*'s NES 2.0 dump under-declares its ETROM board); a 16 KiB window takes A13 from the CPU. `sram()` is the battery-backed part of the header's declared RAM: all of it, except ETROM's 16 KiB, where only the first chip is saved. |
 | 7 | 0-2 | AxROM | 2 | — | — | landed (Phase 2) | Single-screen mirroring control. |
 | 9 | — | MMC2 | 4 | — | — | landed (Phase 4 / S2) | Punch-Out; latched CHR per fetch ($FD/$FE). |
 | 10 | — | MMC4 | 4 | — | — | landed (Phase 4 / S2) | Like MMC2 with full PRG banking. |

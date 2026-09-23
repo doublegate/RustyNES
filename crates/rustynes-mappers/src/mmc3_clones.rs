@@ -49,7 +49,9 @@ const CHR_BANK_1K: usize = 0x0400;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-const SAVE_STATE_VERSION: u8 = 1;
+/// v2 (v2.7.2) appends the board's WRAM (mapper 245 only today); a v1 blob
+/// loads with it zeroed.
+const SAVE_STATE_VERSION: u8 = 2;
 
 // ---------------------------------------------------------------------------
 // Shared nametable helper (mirrors the one in the other simple-mapper modules).
@@ -313,6 +315,12 @@ pub struct Mmc3CloneMapper {
     outer: u8,
     /// A second board register where needed (115 CHR-hi / protection read).
     outer2: u8,
+    /// Battery-backed WRAM at `$6000-$7FFF`, on boards that have it. Only
+    /// mapper 245 today: "an MMC3 clone with 8 KiB of battery-backed WRAM"
+    /// (`nesdev_wiki/INES_Mapper_245.xhtml`); empty for the others. The other
+    /// clones that document WRAM (mapper 52's 7-in-1) put board registers in
+    /// the same window, which needs its own per-board decode (core ledger).
+    wram: Box<[u8]>,
 }
 
 impl Mmc3CloneMapper {
@@ -352,6 +360,11 @@ impl Mmc3CloneMapper {
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             outer: 0,
             outer2: 0,
+            wram: if matches!(board, CloneBoard::M245) {
+                vec![0u8; 0x2000].into_boxed_slice()
+            } else {
+                Box::new([])
+            },
         })
     }
 
@@ -465,6 +478,14 @@ impl Mmc3CloneMapper {
 }
 
 impl Mapper for Mmc3CloneMapper {
+    // Mapper 245's WRAM is battery-backed; empty on the other clones.
+    fn sram(&self) -> &[u8] {
+        &self.wram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.wram
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps {
             cpu_cycle_hook: false,
@@ -496,6 +517,7 @@ impl Mapper for Mmc3CloneMapper {
             0x5000..=0x5FFF if matches!(self.board, CloneBoard::M115) => self.outer2,
             // 238 security read-back at $4020-$7FFF.
             0x4020..=0x7FFF if matches!(self.board, CloneBoard::M238) => self.outer2,
+            0x6000..=0x7FFF if !self.wram.is_empty() => self.wram[usize::from(addr - 0x6000)],
             _ => 0,
         }
     }
@@ -587,7 +609,9 @@ impl Mapper for Mmc3CloneMapper {
                 }
             }
             CloneBoard::M245 => {
-                if (0x8000..=0xFFFF).contains(&addr) {
+                if (0x6000..=0x7FFF).contains(&addr) {
+                    self.wram[usize::from(addr - 0x6000)] = value;
+                } else if (0x8000..=0xFFFF).contains(&addr) {
                     self.core.write_register(addr, value);
                 }
             }
@@ -663,20 +687,27 @@ impl Mapper for Mmc3CloneMapper {
         if self.chr_is_ram {
             out.extend_from_slice(&self.chr);
         }
+        out.extend_from_slice(&self.wram);
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let chr_ram = if self.chr_is_ram { self.chr.len() } else { 0 };
-        let expected = 3 + Mmc3Clone::SAVE_LEN + self.vram.len() + chr_ram;
+        let version = *data.first().ok_or(MapperError::Truncated {
+            expected: 1,
+            got: 0,
+        })?;
+        let wram_len = match version {
+            1 => 0,
+            SAVE_STATE_VERSION => self.wram.len(),
+            v => return Err(MapperError::UnsupportedVersion(v)),
+        };
+        let expected = 3 + Mmc3Clone::SAVE_LEN + self.vram.len() + chr_ram + wram_len;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
                 got: data.len(),
             });
-        }
-        if data[0] != SAVE_STATE_VERSION {
-            return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.outer = data[1];
         self.outer2 = data[2];
@@ -689,6 +720,12 @@ impl Mapper for Mmc3CloneMapper {
         if self.chr_is_ram {
             self.chr
                 .copy_from_slice(&data[cursor..cursor + self.chr.len()]);
+            cursor += self.chr.len();
+        }
+        if wram_len == 0 {
+            self.wram.fill(0);
+        } else {
+            self.wram.copy_from_slice(&data[cursor..cursor + wram_len]);
         }
         Ok(())
     }

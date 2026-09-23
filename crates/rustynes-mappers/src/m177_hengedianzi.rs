@@ -37,7 +37,9 @@ const CHR_BANK_8K: usize = 0x2000;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-const SAVE_STATE_VERSION: u8 = 1;
+/// v2 (v2.7.2) appends the 8 KiB WRAM; a v1 blob loads with it zeroed.
+const SAVE_STATE_VERSION: u8 = 2;
+const WRAM_SIZE: usize = 0x2000;
 
 // ---------------------------------------------------------------------------
 // Shared nametable helper (mirrors the one in the other simple-mapper modules).
@@ -57,6 +59,11 @@ pub struct Hengedianzi177 {
     vram: Box<[u8]>,
     prg_bank: u8,
     horizontal_mirroring: bool,
+    /// "8 KiB of battery-backed WRAM at CPU $6000-$7FFF"
+    /// (`nesdev_wiki/INES_Mapper_177.xhtml`). Absent before v2.7.2: writes
+    /// vanished and reads returned a made-up `$00`, which the open-bus fix
+    /// turned into a floating bus -- equally wrong for a board that has RAM.
+    wram: Box<[u8]>,
 }
 
 impl Hengedianzi177 {
@@ -79,6 +86,7 @@ impl Hengedianzi177 {
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             prg_bank: 0,
             horizontal_mirroring: false,
+            wram: vec![0u8; WRAM_SIZE].into_boxed_slice(),
         })
     }
 }
@@ -88,7 +96,18 @@ impl Mapper for Hengedianzi177 {
         MapperCaps::NONE
     }
 
+    // The WRAM is battery-backed on every board of this type.
+    fn sram(&self) -> &[u8] {
+        &self.wram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.wram
+    }
+
     fn cpu_read(&mut self, addr: u16) -> u8 {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            return self.wram[usize::from(addr - 0x6000)];
+        }
         if (0x8000..=0xFFFF).contains(&addr) {
             let count = (self.prg_rom.len() / PRG_BANK_32K).max(1);
             let bank = (self.prg_bank as usize) % count;
@@ -99,6 +118,10 @@ impl Mapper for Hengedianzi177 {
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
+        if (0x6000..=0x7FFF).contains(&addr) {
+            self.wram[usize::from(addr - 0x6000)] = value;
+            return;
+        }
         if (0x8000..=0xFFFF).contains(&addr) {
             // $8000-$FFFF: `..MP PPPP` — PRG bank is bits 0-4 (5 bits), mirroring
             // is bit 5. The old code latched all 8 bits as the bank, so a write
@@ -145,19 +168,26 @@ impl Mapper for Hengedianzi177 {
         out.push(u8::from(self.horizontal_mirroring));
         out.extend_from_slice(&self.vram);
         out.extend_from_slice(&self.chr_ram);
+        out.extend_from_slice(&self.wram);
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 3 + self.vram.len() + self.chr_ram.len();
+        let version = *data.first().ok_or(MapperError::Truncated {
+            expected: 1,
+            got: 0,
+        })?;
+        let wram_len = match version {
+            1 => 0,
+            SAVE_STATE_VERSION => self.wram.len(),
+            v => return Err(MapperError::UnsupportedVersion(v)),
+        };
+        let expected = 3 + self.vram.len() + self.chr_ram.len() + wram_len;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
                 got: data.len(),
             });
-        }
-        if data[0] != SAVE_STATE_VERSION {
-            return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.prg_bank = data[1];
         self.horizontal_mirroring = data[2] != 0;
@@ -167,6 +197,12 @@ impl Mapper for Hengedianzi177 {
         cursor += self.vram.len();
         self.chr_ram
             .copy_from_slice(&data[cursor..cursor + self.chr_ram.len()]);
+        cursor += self.chr_ram.len();
+        if wram_len == 0 {
+            self.wram.fill(0);
+        } else {
+            self.wram.copy_from_slice(&data[cursor..cursor + wram_len]);
+        }
         Ok(())
     }
 }
