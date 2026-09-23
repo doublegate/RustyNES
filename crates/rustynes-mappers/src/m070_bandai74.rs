@@ -98,6 +98,15 @@ impl Bandai74 {
 }
 
 impl Mapper for Bandai74 {
+    /// Fixed mirroring (v2.7.2, core audit §5.6): `nesdev_wiki/INES_Mapper_070`
+    /// gives mapper 70 no mirroring control, the 1-screen variant being mapper
+    /// 152. Except for a FOUR-SCREEN header: that is how the 152 variant was
+    /// marked before 152 existed ("alternative nametables" bit), so such a
+    /// dump is not known to be fixed and keeps the safe `false`.
+    fn has_hardwired_mirroring(&self) -> bool {
+        !matches!(self.mirroring, Mirroring::FourScreen)
+    }
+
     // v2.8.0 Phase 4 — no per-cycle hooks (no IRQ, no audio): the bus
     // skips all four per-CPU-cycle dispatches for this board.
     fn caps(&self) -> MapperCaps {

@@ -85,6 +85,12 @@ impl Bitcorp38 {
 }
 
 impl Mapper for Bitcorp38 {
+    /// Fixed mirroring (v2.7.2, core audit §5.6): `nesdev_wiki/INES_Mapper_038: "V (hardwired)"`, so a
+    /// per-game database correction of a wrong header bit is safe here.
+    fn has_hardwired_mirroring(&self) -> bool {
+        true
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }

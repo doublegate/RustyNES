@@ -66,6 +66,12 @@ impl Cprom {
 }
 
 impl Mapper for Cprom {
+    /// Fixed mirroring (v2.7.2, core audit §5.6): `nesdev_wiki/CPROM: "Nametable mirroring: Vertical"`, so a
+    /// per-game database correction of a wrong header bit is safe here.
+    fn has_hardwired_mirroring(&self) -> bool {
+        true
+    }
+
     // v2.8.0 Phase 4 — no per-cycle hooks (no IRQ, no audio): the bus
     // skips all four per-CPU-cycle dispatches for this board.
     fn caps(&self) -> MapperCaps {
