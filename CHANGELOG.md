@@ -43,7 +43,7 @@ cycle-accurate core later replaced.
 
 ### Added
 
-- **`docs/audits/`**: the four AI-written audit reports from #544 (core, frontend,
+- **[`docs/audits/`](docs/audits/README.md)**: the four AI-written audit reports from #544 (core, frontend,
   libretro, RTL), moved unchanged, with a disposition ledger per report. The ledgers
   start from a calibration pass that read 26 of the reports' claims against the code:
   the core, libretro and frontend reports are largely accurate at the cited lines;
@@ -69,7 +69,7 @@ cycle-accurate core later replaced.
   `m099_vs_system.rs`, `m244_cne_decathlon.rs`) quote Mesen2 source expressions, so
   they are derivation statements. They get `// Provenance:` headers and `NOTICE`
   entries in v2.7.1; nothing is removed.
-- The workspace version stays 2.6.23. No emulation behaviour changes here.
+- The re-plan itself changes no emulation behaviour and bumps no version.
 
 ## [2.6.23] - 2026-09-20 - "Pulse" (the access does not increment, it pulses the load already there)
 

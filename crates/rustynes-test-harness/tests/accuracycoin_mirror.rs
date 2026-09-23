@@ -245,10 +245,10 @@ fn mirror_rom_reproduces_the_unpatched_vector_and_mirrors_it() {
         panic!(
             "the patched ROM's result window differs from upstream's in {} of \
              {VECTOR_LEN} bytes. The patch was supposed to be inert with respect \
-             to every answer. Per the Shakedown plan (kept by the v2.9.x plan), the response is to \
-             DROP the patch and keep the photograph, not to explain it away: a \
-             readback channel that alters the thing it reads is worse than no \
-             channel.\n  First 20: {:#?}",
+             to every answer. Per the Shakedown plan (kept by the v2.9.x plan), \
+             the response is to DROP the patch and keep the photograph, not to \
+             explain it away: a readback channel that alters the thing it reads \
+             is worse than no channel.\n  First 20: {:#?}",
             diffs.len(),
             &diffs[..diffs.len().min(20)],
         );
