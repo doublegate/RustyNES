@@ -24,6 +24,10 @@
 //! Konami VS / VRC1-on-Vs. (151).
 
 #![no_std]
+// The chip stack carries no `unsafe`; `forbid` makes that a compile-time
+// guarantee rather than an observation (core audit section 2.1). The FFI
+// and platform `unsafe` lives in the frontend, cheevos and mobile crates.
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 // The expansion-audio synth cores (VRC6/VRC7/FDS/MMC5/N163/5B) live in their
 // owning mapper modules but are reused by the NSF expansion-audio router

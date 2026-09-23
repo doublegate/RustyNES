@@ -10,6 +10,10 @@
 //! bus-side DMC DMA scheduling lives in `rustynes-core::LockstepBus`.
 
 #![no_std]
+// The chip stack carries no `unsafe`; `forbid` makes that a compile-time
+// guarantee rather than an observation (core audit section 2.1). The FFI
+// and platform `unsafe` lives in the frontend, cheevos and mobile crates.
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 // The APU is full of orthogonal hardware-latch booleans that map directly to
 // real chip state; collapsing into enums obscures the model.

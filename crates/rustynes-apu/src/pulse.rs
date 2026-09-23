@@ -155,13 +155,23 @@ impl Pulse {
     }
 
     /// Compute the sweep target period (one's vs two's complement per channel).
+    ///
+    /// A negated sum below zero CLAMPS to zero (NESdev "APU Sweep": "the
+    /// target period is the sum of the current period and the change amount,
+    /// clamped to zero if this sum is negative"). The only way to get there on
+    /// an unmuted channel is pulse 1 with shift 0, where the ones'-complement
+    /// change amount is `-period - 1` and the sum is `-1`. That is the `$08`
+    /// write games use to fully disable the sweep; wrapping it to `$FFFF`
+    /// instead made the `> $7FF` rule mute pulse 1 for as long as the write
+    /// stood. Saturating arithmetic is the clamp, and for every non-negative
+    /// sum it yields the same value the wrapping form did.
     fn sweep_target(&self) -> u16 {
         let shifted = self.timer_period >> self.sweep_shift;
         if self.sweep_negate {
             if self.is_pulse1 {
-                self.timer_period.wrapping_sub(shifted).wrapping_sub(1)
+                self.timer_period.saturating_sub(shifted).saturating_sub(1)
             } else {
-                self.timer_period.wrapping_sub(shifted)
+                self.timer_period.saturating_sub(shifted)
             }
         } else {
             self.timer_period.wrapping_add(shifted)
@@ -234,6 +244,51 @@ mod tests {
         p.sweep_shift = 1;
         // 0x100 - 0x80 = 0x80.
         assert_eq!(p.sweep_target(), 0x80);
+    }
+
+    /// The `$4001 = $08` idiom (negate on, shift 0) must NOT mute pulse 1.
+    ///
+    /// NESdev "APU Sweep": the target period is the current period plus the
+    /// change amount, "clamped to zero if this sum is negative", and writing
+    /// `$08` is the documented way to *fully disable* the sweep unit precisely
+    /// because it keeps the target from exceeding `$7FF`. With shift 0 the
+    /// ones'-complement change amount is `-period - 1`, so the sum is `-1`,
+    /// which clamps to 0. Unclamped 16-bit arithmetic instead wraps it to
+    /// `$FFFF`, which is `> $7FF` and mutes the channel. Core audit ledger T-01.
+    #[test]
+    fn pulse1_negate_shift0_clamps_to_zero_and_does_not_mute() {
+        let mut p = Pulse::new(true);
+        p.write_sweep(0x08); // negate on, shift 0, sweep disabled
+        p.timer_period = 0x100;
+        assert_eq!(p.sweep_target(), 0, "negative target clamps to zero");
+        assert!(!p.muted(), "$4001=$08 must leave pulse 1 audible");
+    }
+
+    /// Pulse 2 (two's complement) reaches exactly 0 on the same idiom; it was
+    /// never affected, and must stay that way.
+    #[test]
+    fn pulse2_negate_shift0_targets_zero_and_does_not_mute() {
+        let mut p = Pulse::new(false);
+        p.write_sweep(0x08);
+        p.timer_period = 0x100;
+        assert_eq!(p.sweep_target(), 0);
+        assert!(!p.muted());
+    }
+
+    /// The clamp changes nothing when the sum is non-negative, which for
+    /// pulse 1 is every shift >= 1 at every period >= 8 (the only periods that
+    /// are not already muted by the `period < 8` rule).
+    #[test]
+    fn pulse1_negate_clamp_is_inert_for_nonzero_shift() {
+        let mut p = Pulse::new(true);
+        for shift in 1..=7u8 {
+            for period in 8..=0x7FFu16 {
+                p.write_sweep(0x08 | shift);
+                p.timer_period = period;
+                let expect = period - (period >> shift) - 1;
+                assert_eq!(p.sweep_target(), expect, "shift {shift} period {period:#x}");
+            }
+        }
     }
 
     #[test]

@@ -100,6 +100,55 @@ pub enum ApuSnapshotError {
     /// Optional sample-buffer presence byte was not 0/1.
     #[error("APU snapshot has invalid optional presence byte {0}")]
     InvalidPresence(u8),
+    /// A register-width field held a value its hardware register cannot.
+    ///
+    /// Several of these index fixed tables on the next tick (`duty` and `step`
+    /// into the duty table, the triangle `step` into its 32-step sequence) or
+    /// flow into one (`decay`, a constant-volume `volume_or_period` and the DMC
+    /// `dac` sum into the mixer's 31- and 203-entry lookup tables), so an
+    /// unchecked value restores cleanly and then panics one CPU cycle later.
+    /// The rest (sweep, DMC rate / bit count) cannot panic today but are
+    /// bounded to the same register width so that no field of the restored
+    /// state is one the emulator itself could never have written. Core audit
+    /// IMP-02.
+    #[error("APU snapshot field `{field}` is {value}, above its maximum {max}")]
+    FieldOutOfRange {
+        /// Which field, as `channel.field`.
+        field: &'static str,
+        /// The value found in the blob.
+        value: u8,
+        /// The largest value the hardware register can hold.
+        max: u8,
+    },
+    /// A floating-point resampler or filter field was not usable.
+    ///
+    /// The band-limited resampler advances `phase` by `sample_rate / cpu_rate`
+    /// per CPU cycle and emits one host sample per whole unit crossed, so a
+    /// zero, negative, non-finite or merely huge ratio does not panic: it hangs
+    /// the emulation thread in that loop, or fills the host audio with NaN.
+    /// Core audit IMP-02.
+    #[error("APU snapshot resampler field `{0}` is out of range or not finite")]
+    InvalidResampler(&'static str),
+}
+
+/// Read one `u8` field and reject it if it exceeds `max` (IMP-02).
+fn bounded(r: &mut R<'_>, field: &'static str, max: u8) -> Result<u8, ApuSnapshotError> {
+    let value = r.u8()?;
+    if value > max {
+        return Err(ApuSnapshotError::FieldOutOfRange { field, value, max });
+    }
+    Ok(value)
+}
+
+/// Reject a non-finite float (IMP-02). A NaN in any filter or resampler field
+/// propagates into every later host sample; an infinity does the same after
+/// one subtraction.
+fn finite_f32(v: f32, field: &'static str) -> Result<f32, ApuSnapshotError> {
+    if v.is_finite() {
+        Ok(v)
+    } else {
+        Err(ApuSnapshotError::InvalidResampler(field))
+    }
 }
 
 fn region_to_u8(r: Region) -> u8 {
@@ -230,9 +279,11 @@ fn read_envelope(r: &mut R<'_>) -> Result<Envelope, ApuSnapshotError> {
         start: r.bool()?,
         loop_flag: r.bool()?,
         constant: r.bool()?,
-        volume_or_period: r.u8()?,
-        divider: r.u8()?,
-        decay: r.u8()?,
+        // All three are 4-bit: `$4000`/`$400C` bits 0-3, a divider reloaded
+        // from that period, and a counter that runs 15 -> 0.
+        volume_or_period: bounded(r, "envelope.volume_or_period", 15)?,
+        divider: bounded(r, "envelope.divider", 15)?,
+        decay: bounded(r, "envelope.decay", 15)?,
     })
 }
 
@@ -279,18 +330,21 @@ fn write_pulse(w: &mut W, p: &Pulse) {
     w.bool(p.is_pulse1);
 }
 fn read_pulse(r: &mut R<'_>) -> Result<Pulse, ApuSnapshotError> {
-    let duty = r.u8()?;
-    let step = r.u8()?;
+    // `duty` and `step` index `DUTY_TABLE: [[u8; 8]; 4]`; the three sweep
+    // fields are the 3-bit fields of `$4001`/`$4005` (a shift of 16 or more
+    // would also overflow the `u16` shift in `sweep_target`).
+    let duty = bounded(r, "pulse.duty", 3)?;
+    let step = bounded(r, "pulse.step", 7)?;
     let timer_period = r.u16()?;
     let timer = r.u16()?;
     let envelope = read_envelope(r)?;
     let length = read_length(r)?;
     let sweep_enabled = r.bool()?;
-    let sweep_period = r.u8()?;
+    let sweep_period = bounded(r, "pulse.sweep_period", 7)?;
     let sweep_negate = r.bool()?;
-    let sweep_shift = r.u8()?;
+    let sweep_shift = bounded(r, "pulse.sweep_shift", 7)?;
     let sweep_reload = r.bool()?;
-    let sweep_divider = r.u8()?;
+    let sweep_divider = bounded(r, "pulse.sweep_divider", 7)?;
     let is_pulse1 = r.bool()?;
     let mut p = Pulse::new(is_pulse1);
     p.duty = duty;
@@ -322,7 +376,8 @@ fn read_triangle(r: &mut R<'_>) -> Result<Triangle, ApuSnapshotError> {
     let mut t = Triangle::new();
     t.timer_period = r.u16()?;
     t.timer = r.u16()?;
-    t.step = r.u8()?;
+    // Indexes the 32-step `TRIANGLE_TABLE`.
+    t.step = bounded(r, "triangle.step", 31)?;
     t.length = read_length(r)?;
     t.linear_reload_value = r.u8()?;
     t.linear_counter = r.u8()?;
@@ -384,7 +439,8 @@ fn write_dmc(w: &mut W, d: &Dmc) {
 fn read_dmc(r: &mut R<'_>, region: Region) -> Result<Dmc, ApuSnapshotError> {
     let irq_enable = r.bool()?;
     let loop_flag = r.bool()?;
-    let rate_index = r.u8()?;
+    // `$4010` bits 0-3.
+    let rate_index = bounded(r, "dmc.rate_index", 15)?;
     let sample_addr = r.u16()?;
     let sample_length = r.u16()?;
     let current_addr = r.u16()?;
@@ -397,8 +453,10 @@ fn read_dmc(r: &mut R<'_>, region: Region) -> Result<Dmc, ApuSnapshotError> {
         other => return Err(ApuSnapshotError::InvalidPresence(other)),
     };
     let shift_register = r.u8()?;
-    let bits_remaining = r.u8()?;
-    let dac = r.u8()?;
+    // The output unit counts 8 -> 0; the DAC is 7-bit and its value feeds the
+    // mixer's 203-entry `tnd_table`, which a DAC above 127 overruns.
+    let bits_remaining = bounded(r, "dmc.bits_remaining", 8)?;
+    let dac = bounded(r, "dmc.dac", 127)?;
     let silence = r.bool()?;
     let timer_period = r.u16()?;
     let timer = r.u16()?;
@@ -498,9 +556,9 @@ fn write_onepole(w: &mut W, o: &OnePole) {
     w.bool(o.is_hpf);
 }
 fn read_onepole(r: &mut R<'_>) -> Result<OnePole, ApuSnapshotError> {
-    let coeff = r.f32()?;
-    let prev_in = r.f32()?;
-    let prev_out = r.f32()?;
+    let coeff = finite_f32(r.f32()?, "filter.coeff")?;
+    let prev_in = finite_f32(r.f32()?, "filter.prev_in")?;
+    let prev_out = finite_f32(r.f32()?, "filter.prev_out")?;
     let is_hpf = r.bool()?;
     // Reconstruct by overriding fields of a default-shape filter; we use
     // either high_pass or low_pass to get the right shape, then patch the
@@ -543,7 +601,28 @@ fn read_blip(r: &mut R<'_>) -> Result<BlipBuf, ApuSnapshotError> {
     let cpu_rate = r.f64()?;
     let phase = r.f64()?;
     let filter = read_filter(r)?;
-    let held_value = r.f32()?;
+    let held_value = finite_f32(r.f32()?, "blip.held_value")?;
+    if sample_rate == 0 {
+        return Err(ApuSnapshotError::InvalidResampler("blip.sample_rate"));
+    }
+    // `is_finite` rejects NaN and both infinities first, so the plain
+    // comparison that follows is total.
+    if !cpu_rate.is_finite() || cpu_rate <= 0.0 {
+        return Err(ApuSnapshotError::InvalidResampler("blip.cpu_rate"));
+    }
+    // The resampler emits one host sample per unit of phase crossed, and
+    // `add_sample` runs once per CPU cycle. A ratio above one output per
+    // CPU cycle is not a configuration the emulator produces (host rates are
+    // tens of kHz against a ~1.7 MHz CPU), and it is the knob that turns a
+    // finite corrupt value into an arbitrarily long `while phase >= 1.0` loop.
+    if f64::from(sample_rate) / cpu_rate > 1.0 {
+        return Err(ApuSnapshotError::InvalidResampler(
+            "blip.sample_rate/cpu_rate",
+        ));
+    }
+    if !(0.0..1.0).contains(&phase) {
+        return Err(ApuSnapshotError::InvalidResampler("blip.phase"));
+    }
     let mut b = BlipBuf::new(sample_rate, cpu_rate);
     b.phase = phase;
     b.filter = filter;
@@ -745,6 +824,131 @@ impl Apu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blip::CPU_HZ_NTSC;
+
+    /// Locate a field's bytes in the blob by DIFFERENCE: snapshot two APUs that
+    /// differ only in that field, and the differing bytes are the field. This
+    /// keeps the IMP-02 tests independent of the schema's byte offsets, which
+    /// a hard-coded index would silently go stale against.
+    fn field_span(set_a: impl Fn(&mut Apu), set_b: impl Fn(&mut Apu)) -> (Vec<u8>, usize, usize) {
+        let mut a = Apu::new(Region::Ntsc, 44_100);
+        let mut b = Apu::new(Region::Ntsc, 44_100);
+        set_a(&mut a);
+        set_b(&mut b);
+        let (sa, sb) = (a.snapshot(), b.snapshot());
+        assert_eq!(sa.len(), sb.len());
+        let first = (0..sa.len())
+            .find(|&i| sa[i] != sb[i])
+            .expect("fields differ");
+        let last = (0..sa.len()).rfind(|&i| sa[i] != sb[i]).unwrap();
+        (sb, first, last + 1)
+    }
+
+    /// Corrupt one register-width `u8` field and assert a typed rejection
+    /// naming it, while its largest legal value still restores.
+    fn assert_u8_bounded(name: &'static str, max: u8, set: impl Fn(&mut Apu, u8)) {
+        let lo = max.saturating_sub(1);
+        let (blob, at, end) = field_span(|a| set(a, lo), |a| set(a, max));
+        assert_eq!(end - at, 1, "{name} is one byte");
+        Apu::new(Region::Ntsc, 44_100)
+            .restore(&blob)
+            .unwrap_or_else(|e| panic!("{name} = {max} is legal and must load: {e}"));
+        for bad in [max + 1, 0x80u8.max(max + 1), 0xFF] {
+            let mut b = blob.clone();
+            b[at] = bad;
+            match Apu::new(Region::Ntsc, 44_100).restore(&b) {
+                Err(ApuSnapshotError::FieldOutOfRange {
+                    field,
+                    value,
+                    max: m,
+                }) => {
+                    assert_eq!((field, value, m), (name, bad, max));
+                }
+                Err(e) => panic!("{name} = {bad}: wrong error {e}"),
+                Ok(()) => panic!("{name} = {bad}: restore ACCEPTED an out-of-range value"),
+            }
+        }
+    }
+
+    #[test]
+    fn every_register_width_field_is_bounded_on_restore() {
+        // Core audit IMP-02. One call per bound; each names the field its
+        // error must carry, so a check that is removed or attached to the
+        // wrong field fails here.
+        assert_u8_bounded("pulse.duty", 3, |a, v| a.pulse1.duty = v);
+        assert_u8_bounded("pulse.step", 7, |a, v| a.pulse1.step = v);
+        assert_u8_bounded("pulse.sweep_period", 7, |a, v| a.pulse2.sweep_period = v);
+        assert_u8_bounded("pulse.sweep_shift", 7, |a, v| a.pulse1.sweep_shift = v);
+        assert_u8_bounded("pulse.sweep_divider", 7, |a, v| a.pulse2.sweep_divider = v);
+        assert_u8_bounded("envelope.volume_or_period", 15, |a, v| {
+            a.pulse1.envelope.volume_or_period = v;
+        });
+        assert_u8_bounded("envelope.divider", 15, |a, v| a.noise.envelope.divider = v);
+        assert_u8_bounded("envelope.decay", 15, |a, v| a.pulse2.envelope.decay = v);
+        assert_u8_bounded("triangle.step", 31, |a, v| a.triangle.step = v);
+        assert_u8_bounded("dmc.rate_index", 15, |a, v| a.dmc.rate_index = v);
+        assert_u8_bounded("dmc.bits_remaining", 8, |a, v| a.dmc.bits_remaining = v);
+        assert_u8_bounded("dmc.dac", 127, |a, v| a.dmc.dac = v);
+    }
+
+    /// Overwrite a multi-byte field located by difference and expect a typed
+    /// resampler rejection naming `name`.
+    fn assert_float_rejected(name: &'static str, span: (Vec<u8>, usize, usize), bad: &[u8]) {
+        let (mut b, at, end) = span;
+        assert_eq!(
+            end - at,
+            bad.len(),
+            "{name}: located span is the value's width"
+        );
+        b[at..end].copy_from_slice(bad);
+        match Apu::new(Region::Ntsc, 44_100).restore(&b) {
+            Err(ApuSnapshotError::InvalidResampler(f)) => assert_eq!(f, name),
+            Err(e) => panic!("{name}: wrong error {e}"),
+            Ok(()) => panic!("{name}: restore ACCEPTED {bad:02x?}"),
+        }
+    }
+
+    #[test]
+    fn resampler_fields_that_would_hang_or_poison_audio_are_rejected() {
+        // Core audit IMP-02: a zero/NaN/huge rate ratio or an out-of-range
+        // phase cannot panic -- it hangs `add_sample`'s `while phase >= 1.0`
+        // loop, or fills the output with NaN. Each field is located by
+        // difference (its partner value is the bitwise complement, so every
+        // byte differs and the located span is the full width), then replaced
+        // with a hostile value.
+        let rate = |a: &mut Apu, v: u32| a.blip.sample_rate = v;
+        let sr = || field_span(|a| rate(a, 44_100), |a| rate(a, !44_100));
+        assert_float_rejected("blip.sample_rate", sr(), &0u32.to_le_bytes());
+        // A finite but enormous host rate: 4 billion outputs per ~1.8 M CPU
+        // cycles is > 1 per cycle, the hang the ratio bound exists for.
+        assert_float_rejected("blip.sample_rate/cpu_rate", sr(), &u32::MAX.to_le_bytes());
+
+        let cpu = |a: &mut Apu, v: f64| a.blip.cpu_rate = v;
+        let cr = || {
+            field_span(
+                |a| cpu(a, CPU_HZ_NTSC),
+                |a| cpu(a, f64::from_bits(!CPU_HZ_NTSC.to_bits())),
+            )
+        };
+        for bad in [f64::NAN, f64::INFINITY, 0.0, -1.0] {
+            assert_float_rejected("blip.cpu_rate", cr(), &bad.to_le_bytes());
+        }
+        assert_float_rejected("blip.sample_rate/cpu_rate", cr(), &1.0e-9f64.to_le_bytes());
+
+        let ph = |a: &mut Apu, v: f64| a.blip.phase = v;
+        let pp = || field_span(|a| ph(a, 0.0), |a| ph(a, f64::from_bits(!0)));
+        for bad in [1.0, 1.0e300, -0.25, f64::NAN] {
+            assert_float_rejected("blip.phase", pp(), &bad.to_le_bytes());
+        }
+
+        let hv = |a: &mut Apu, v: f32| a.blip.held_value = v;
+        let hp = || field_span(|a| hv(a, 0.0), |a| hv(a, f32::from_bits(!0)));
+        assert_float_rejected("blip.held_value", hp(), &f32::NAN.to_le_bytes());
+
+        let co = |a: &mut Apu, v: f32| a.blip.filter.lp.coeff = v;
+        let cp = || field_span(|a| co(a, 0.5), |a| co(a, f32::from_bits(!0.5f32.to_bits())));
+        assert_float_rejected("filter.coeff", cp(), &f32::INFINITY.to_le_bytes());
+    }
 
     #[test]
     fn snapshot_round_trip_on_fresh_apu() {

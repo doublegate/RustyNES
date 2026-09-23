@@ -24,7 +24,8 @@ lines before it act on the four audits in
 
 | Plan | Release | Status |
 |---|---|---|
-| [`v2.7.x-core-frontend-audit-plan.md`](v2.7.x-core-frontend-audit-plan.md) | v2.7.x — the core and frontend audits | **Next** |
+| [`v2.7.x-core-frontend-audit-plan.md`](v2.7.x-core-frontend-audit-plan.md) | v2.7.x — the core and frontend audits | **In progress** |
+| [`v2.7.0-palisade-plan.md`](v2.7.0-palisade-plan.md) | v2.7.0 "Palisade" — untrusted save-state input stops at the boundary; the pulse-1 sweep clamp | **In progress** |
 | [`v2.8.x-libretro-rtl-audit-plan.md`](v2.8.x-libretro-rtl-audit-plan.md) | v2.8.x — the libretro and RTL audits, and the off-die build | Planned |
 | [`v2.9.x-final-audit-and-hardware-plan.md`](v2.9.x-final-audit-and-hardware-plan.md) | v2.9.x — re-audit, optimise, and the bring-up on the board | Planned |
 | [`v3.0.0-superstation-core-plan.md`](v3.0.0-superstation-core-plan.md) | v3.0.0 — the hardware-verified FPGA core | Planned |

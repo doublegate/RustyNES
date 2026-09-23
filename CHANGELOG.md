@@ -69,14 +69,53 @@ cycle-accurate core later replaced.
   in `--test` order. Plus one tooling trap: `ssh-add -l` failing does not mean
   commit signing is down.
 
+### Fixed
+
+- **Pulse 1 no longer mutes on the `$4001 = $08` idiom** (core ledger T-01). With
+  negate on and shift 0 -- the documented way to disable the sweep -- the oracle
+  computed pulse 1's target as `c - c - 1` in wrapping arithmetic, got `$FFFF`,
+  and muted the channel. NESdev "APU Sweep": a negative target clamps to zero and
+  negate never mutes. Red on v2.6.23 by `pulse1_negate_shift0_clamps_to_zero_and_does_not_mute`;
+  a companion test shows the clamp changes nothing for shifts 1-7 over periods
+  8-`$7FF`. The full `--features test-roms` suite (2,612 passed, 0 failed) moved
+  no golden. The MiSTer sibling already followed the wiki, so the co-simulation
+  ladder could not see this; v2.8.2 adds the gate.
+- **A hand-edited or corrupt save state can no longer crash or hang the emulator**
+  (core audit IMP-01, IMP-02, IMP-03). Every one of these restored cleanly and
+  failed on the next tick, which on a release build (`panic = "abort"`) kills the
+  process:
+  - PPU: a sprite count above 8 (typed `InvalidSprCount`).
+  - APU: twelve register-width fields -- duty, sequencer steps, the three sweep
+    fields, envelope volume/divider/decay, DMC rate, bit count and DAC -- are
+    bounded to their register widths (`FieldOutOfRange`, naming the field).
+  - Resampler: a zero sample rate, a non-finite or non-positive CPU rate, a rate
+    ratio above one host sample per CPU cycle, a phase outside `[0, 1)`, or a
+    non-finite filter or held value (`InvalidResampler`). These did not panic;
+    they hung the emulation thread or filled the audio with NaN.
+  - Container: `SectionIter` uses `checked_add` for a section's end (a real
+    overflow on 32-bit `wasm32`), and stops after its first error instead of
+    returning it forever.
+  - Two more the audit did not report, found by the new fuzz target: a restored
+    OAM-DMA byte index at or above 256 (an overflow), and a restored
+    `dma_mc_consumed` that tripped a dev-profile invariant assertion.
+
+  States the emulator writes stay inside every bound, so no real save is
+  rejected; the round-trip tests are the guard.
+
+### Security
+
+- **`#![forbid(unsafe_code)]` on the five chip crates** (`rustynes-cpu`, `-ppu`,
+  `-apu`, `-mappers`, `-core`). None contained `unsafe`; this makes that a
+  compile-time guarantee (core audit section 2.1).
+- **The `save_state` fuzz target can now find what it exists to find.** It
+  restored and stopped, and fed only raw bytes, so every deferred panic above was
+  invisible to it and almost no input got past the header. It now patches a real
+  snapshot of a rendering machine and runs about three scanlines after an
+  accepted restore. Against the unfixed tree it found three crashes in turn
+  (6,848, 29,326 and 287,867 runs).
+
 ### Notes
 
-- **Found during the calibration, not yet confirmed:** the oracle's pulse-1 sweep
-  appears to mute on the common `$4001=$08` idiom (negate, shift 0), where the
-  vendored nesdev wiki says a negative target clamps and negate never mutes. The
-  sibling's RTL follows the wiki, so the co-simulation ladder does not cover the
-  difference. It is pinned by a test in v2.7.0 before anything is changed (core
-  ledger T-01).
 - **The three mapper files the core audit wanted "sanitized"** (`m085_vrc7.rs`,
   `m099_vs_system.rs`, `m244_cne_decathlon.rs`) quote Mesen2 source expressions, so
   they are derivation statements. They get `// Provenance:` headers and `NOTICE`

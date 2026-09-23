@@ -493,7 +493,9 @@ impl<'a> Iterator for SectionIter<'a> {
         }
         // tag(4) + version(1) + len(4) = 9-byte section header.
         if self.src.len() - self.pos < 9 {
-            return Some(Err(SnapshotError::Eof(self.pos)));
+            let at = self.pos;
+            self.pos = self.src.len(); // fuse, as for a bad length below
+            return Some(Err(SnapshotError::Eof(at)));
         }
         let mut tag = [0u8; 4];
         tag.copy_from_slice(&self.src[self.pos..self.pos + 4]);
@@ -502,14 +504,28 @@ impl<'a> Iterator for SectionIter<'a> {
         len_bytes.copy_from_slice(&self.src[self.pos + 5..self.pos + 9]);
         let len = u32::from_le_bytes(len_bytes) as usize;
         let body_start = self.pos + 9;
-        let body_end = body_start + len;
-        if body_end > self.src.len() {
-            return Some(Err(SnapshotError::SectionTruncated {
-                tag: tag_string(tag),
-                declared: len,
-                got: self.src.len() - body_start,
-            }));
-        }
+        // `checked_add`, not `+` (core audit IMP-03). `len` is an untrusted
+        // `u32` from the file; where `usize` is 32 bits (`wasm32`, the
+        // `thumbv7em` no_std target) `body_start + len` can wrap to a small
+        // value that passes the bounds test below and slices the wrong bytes,
+        // or panics in a debug build. On 64-bit hosts it cannot overflow, which
+        // is why no native test ever saw it.
+        let body_end = match body_start.checked_add(len) {
+            Some(end) if end <= self.src.len() => end,
+            _ => {
+                // Fuse: a malformed length leaves `pos` unable to advance, so
+                // without this every later `next()` would return the same
+                // error forever -- an infinite iterator for any caller that
+                // skips errors rather than stopping on the first.
+                let got = self.src.len() - body_start;
+                self.pos = self.src.len();
+                return Some(Err(SnapshotError::SectionTruncated {
+                    tag: tag_string(tag),
+                    declared: len,
+                    got,
+                }));
+            }
+        };
         let body = &self.src[body_start..body_end];
         self.pos = body_end;
         Some(Ok(Section { tag, version, body }))
@@ -576,6 +592,34 @@ mod tests {
         assert_eq!(s2.version, 7);
         assert_eq!(s2.body, &[4, 5, 6, 7, 8]);
         assert!(it.next().is_none());
+    }
+
+    #[test]
+    fn section_iter_stops_after_a_malformed_section() {
+        // Core audit IMP-03 follow-on. A malformed section cannot advance
+        // `pos`, so an unfused iterator returns the same error on every call
+        // and a caller that skips errors (`.filter_map(Result::ok)`, `.flatten()`)
+        // never terminates. Each case must yield exactly one error, then end.
+        let mut good = Vec::new();
+        write_section(&mut good, *b"AAAA", 1, &[1, 2, 3]);
+
+        // A header declaring a body of u32::MAX bytes -- the IMP-03 shape.
+        let mut huge = good.clone();
+        huge.extend_from_slice(b"BBBB");
+        huge.push(1);
+        huge.extend_from_slice(&u32::MAX.to_le_bytes());
+        // A header cut short, under the 9-byte minimum.
+        let mut short = good.clone();
+        short.extend_from_slice(b"CCCC");
+
+        for (name, blob) in [("huge length", &huge), ("short header", &short)] {
+            let mut it = SectionIter::new(blob);
+            assert!(it.next().unwrap().is_ok(), "{name}: the good section reads");
+            assert!(it.next().unwrap().is_err(), "{name}: the bad one errors");
+            assert!(it.next().is_none(), "{name}: and the iterator then ENDS");
+            // The skip-errors caller terminates and sees only the good section.
+            assert_eq!(SectionIter::new(blob).flatten().count(), 1, "{name}");
+        }
     }
 
     #[test]

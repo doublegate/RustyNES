@@ -5260,6 +5260,58 @@ mod four_score_tests {
     }
 
     #[test]
+    fn a_restored_dma_mc_consumed_is_discarded_not_loaded() {
+        use rustynes_mappers::Mirroring;
+        // Found by the v2.7.0 `save_state` fuzz target: a non-zero
+        // `dma_mc_consumed` in a file restored cleanly, then tripped
+        // `Cpu::end_cycle`'s structural-zero `debug_assert_eq!` on the first
+        // CPU cycle. Release drains and discards the value, so zero on restore
+        // is byte-identical there; the bytes stay in the layout.
+        let mut bus = test_bus();
+        bus.dma_mc_consumed = 0xDEAD_BEEF;
+        // A field encoded AFTER it, so a reader that skipped the eight bytes
+        // instead of consuming them would misread this one.
+        bus.set_mirroring_override(Some(Mirroring::Vertical));
+        let blob = crate::bus_snapshot::encode_bus(&bus);
+        let mut restored = test_bus();
+        crate::bus_snapshot::decode_bus(&mut restored, &blob).unwrap();
+        assert_eq!(restored.dma_mc_consumed, 0);
+        assert_eq!(
+            restored.mirroring_override(),
+            Some(Mirroring::Vertical),
+            "the bytes are still consumed, so nothing behind them shifts"
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_oam_dma_index_is_rejected() {
+        // Found by the v2.7.0 `save_state` fuzz target: an active OAM DMA
+        // restored at index >= 256 never completes and overflows the `u16`.
+        // Legal: 0..=255 while active, and 256 once the transfer has ended.
+        let decode = |active: bool, addr: u16| {
+            let mut bus = test_bus();
+            bus.uni_oam_active = active;
+            bus.uni_oam_addr = addr;
+            let blob = crate::bus_snapshot::encode_bus(&bus);
+            crate::bus_snapshot::decode_bus(&mut test_bus(), &blob)
+        };
+        assert!(decode(true, 255).is_ok(), "the last in-flight index loads");
+        assert!(
+            decode(false, 256).is_ok(),
+            "the completed-transfer index loads"
+        );
+        for (active, addr) in [(true, 256), (true, 257), (false, 257), (false, u16::MAX)] {
+            assert!(
+                matches!(
+                    decode(active, addr),
+                    Err(SnapshotError::SectionInvalid { .. })
+                ),
+                "active={active} addr={addr} must be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn expansion_device_state_round_trips_through_save_state() {
         use crate::input_device::{InputDevice, VausState, ZapperState};
         let mut bus = test_bus();

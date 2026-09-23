@@ -196,6 +196,15 @@ pub enum PpuSnapshotError {
     /// reported rather than silently reinterpreted as a different state.
     #[error("PPU snapshot has out-of-range OAM2 fetch address {0} (max 31)")]
     InvalidOam2FetchAddr(u8),
+    /// The in-range sprite count exceeded the eight sprites secondary OAM holds.
+    ///
+    /// `spr_count` bounds loops over the eight-slot sprite arrays
+    /// (`spr_x`, `spr_halted`, the shift registers), so a value above 8 would
+    /// restore without complaint and then index out of bounds on the next PPU
+    /// dot -- a deferred panic, and on a `panic = "abort"` release build a
+    /// process kill from a hand-edited save. Core audit IMP-01.
+    #[error("PPU snapshot has out-of-range sprite count {0} (max 8)")]
+    InvalidSprCount(u8),
 }
 
 const fn region_to_u8(r: PpuRegion) -> u8 {
@@ -673,7 +682,11 @@ impl Ppu {
         r.bytes_into(&mut self.spr_shift_hi)?;
         r.bytes_into(&mut self.spr_attr)?;
         r.bytes_into(&mut self.spr_x)?;
-        self.spr_count = r.u8()?;
+        let spr_count = r.u8()?;
+        if spr_count > 8 {
+            return Err(PpuSnapshotError::InvalidSprCount(spr_count));
+        }
+        self.spr_count = spr_count;
         self.spr_zero_in_line = r.u8()? != 0;
 
         // Slim blobs carry no framebuffer; the existing one is left in place
@@ -1135,6 +1148,39 @@ mod tests {
                 }
                 Err(e) => panic!("wrong error for {bad_value}: {e}"),
                 Ok(()) => panic!("restore ACCEPTED an out-of-range fetch address {bad_value}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_corrupt_sprite_count_is_rejected_not_indexed() {
+        // Core audit IMP-01. `spr_count` bounds loops over the eight-slot
+        // sprite arrays, so a restored value above 8 panics on the next dot.
+        // Locate the byte by DIFFERENCE rather than by searching for a value:
+        // two snapshots that differ only in `spr_count` differ in exactly one
+        // byte, and that is the field's offset.
+        let mut a = Ppu::new(PpuRegion::Ntsc);
+        a.spr_count = 3;
+        let mut b = Ppu::new(PpuRegion::Ntsc);
+        b.spr_count = 8; // the largest LEGAL value
+        let (sa, sb) = (a.snapshot(), b.snapshot());
+        let diffs: Vec<usize> = (0..sa.len()).filter(|&i| sa[i] != sb[i]).collect();
+        assert_eq!(diffs.len(), 1, "spr_count is exactly one byte of the blob");
+        let idx = diffs[0];
+        assert!(
+            Ppu::new(PpuRegion::Ntsc).restore(&sb).is_ok(),
+            "8 is in range and must still load"
+        );
+
+        for bad_value in [9u8, 0x80, 0xFF] {
+            let mut bad = sb.clone();
+            bad[idx] = bad_value;
+            match Ppu::new(PpuRegion::Ntsc).restore(&bad) {
+                Err(PpuSnapshotError::InvalidSprCount(v)) => {
+                    assert_eq!(v, bad_value, "the error names the offending byte");
+                }
+                Err(e) => panic!("wrong error for {bad_value}: {e}"),
+                Ok(()) => panic!("restore ACCEPTED an out-of-range sprite count {bad_value}"),
             }
         }
     }
