@@ -243,9 +243,11 @@ impl Mapper for VsSystem {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
-        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
-        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+        // v2.7.2 (core audit §5.5): `$6000-$7FFF` is "2 KiB RAM, swappable
+        // between CPUs (open bus when not available)"
+        // (`nesdev_wiki/INES_Mapper_099.xhtml`). The DualSystem's shared RAM is
+        // not a battery save, so this keys on its presence, not on `sram()`.
+        (matches!(addr, 0x6000..=0x7FFF) && self.dual_wram.is_none()) || {
             // PRG is mapped from `$8000`; the `$4020-$5FFF` window remains open
             // bus (same as the NROM-class default).
             (0x4020..=0x5FFF).contains(&addr)

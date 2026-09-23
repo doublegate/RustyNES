@@ -753,7 +753,7 @@ impl Mapper for Namco163 {
     /// The layout the nametable registers currently produce, when it is a
     /// standard one; otherwise mapper-controlled (a CHR-ROM page, or a mix
     /// no fixed layout describes). Nametable fetches go through
-    /// [`Self::nt_target`] either way; this is what the debugger reports.
+    /// `nt_target` either way; this is what the debugger reports.
     fn current_mirroring(&self) -> Mirroring {
         match self.nta {
             [0xE0, 0xE1, 0xE0, 0xE1] => Mirroring::Vertical,

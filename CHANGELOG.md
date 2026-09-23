@@ -34,7 +34,11 @@ cycle-accurate core later replaced.
   8 KiB PRG-RAM bank. The old code read four PRG bits and no RAM bank, and
   treated SUROM's PRG line as SNROM's RAM disable. Two new holy_mapperel ROMs
   (512 KiB SUROM and SXROM, built from the v0.02 tag) went from `S*ROM`,
-  `PRG RAM MISSING`, `0300` to `PASS 0000` (core audit §5.4).
+  `PRG RAM MISSING`, `0300` to `PASS 0000` (core audit §5.4). In 4 KiB CHR
+  mode the register driving these lines is the one PPU A12 last selected, as
+  the wiki warns; Bregalad's "WRAM disable scanline counter" ROM
+  (`tests/roms/mmc1_a12`, previously catalogued as an inert smoke test) now
+  draws its raster bar, and its snapshot was re-blessed.
 - **MMC5 banks its PRG-RAM.** `$5113` and the RAM-mode `$5114-$5116` values
   now page the RAM over the wiki's 64 KiB "compatible superset", so a game gets
   the RAM it expects even when its header under-declares it (*L'Empereur* does);
