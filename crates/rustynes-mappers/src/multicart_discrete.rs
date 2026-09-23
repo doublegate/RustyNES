@@ -2956,6 +2956,12 @@ impl Mapper for Multicart227 {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
+        // This board's blob shares the file-wide `SAVE_STATE_VERSION`, so a
+        // pre-v2.7.2 blob (no WRAM) is told apart by length alone: exactly
+        // `without_wram` bytes is the old layout and loads with WRAM zeroed.
+        // Any other length must be the full current layout. A board built
+        // without WRAM (no battery header) has `wram.len() == 0`, and the
+        // two lengths coincide.
         let without_wram = 6 + self.vram.len() + self.chr_ram.len();
         let expected = if data.len() == without_wram {
             without_wram
