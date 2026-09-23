@@ -67,11 +67,12 @@ fn warmed_snapshot(rom: &[u8], fast_dotloop: bool) -> Vec<u8> {
 /// first A/B of this change, which is how that was caught.
 fn warmed(rom: &[u8], snapshot: &[u8], fast_dotloop: bool) -> Nes {
     let mut nes = Nes::from_rom(rom).expect("bench ROM parses");
+    nes.restore_quiet(snapshot)
+        .expect("a snapshot this bench just took restores");
+    // After the restore, so a restore can never override it (review, #547).
     if fast_dotloop {
         nes.set_fast_dotloop(true);
     }
-    nes.restore_quiet(snapshot)
-        .expect("a snapshot this bench just took restores");
     nes
 }
 
