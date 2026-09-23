@@ -382,7 +382,8 @@ tests/roms/**/*.nl
 # `threads.json`, `pr_*.txt`). Thirteen of them sat untracked after #544, one
 # `git add -A` from landing in history. Root-anchored so nothing under `scripts/` or
 # `crates/` can match.
-/cr_*
+/cr_*.json
+/cr_*.txt
 /fix_*.py
 /*_comments.json
 /threads.json
