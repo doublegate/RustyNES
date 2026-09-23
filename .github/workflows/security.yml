@@ -99,10 +99,11 @@ jobs:
   audit:
     name: Dependency Audit
     needs: changes
-    # `always()` so a push / cron run, where `changes` is skipped, still runs;
-    # and a `changes` job that did not succeed runs everything rather than
-    # nothing -- the filter may only ever skip work, never lose a gate.
-    if: ${{ always() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.deps == 'true') }}
+    # `!cancelled()`, not `always()`: a push / cron run, where `changes` is
+    # skipped, still runs, and a `changes` job that did not succeed runs
+    # everything rather than nothing -- the filter may only ever skip work,
+    # never lose a gate -- but a run the user cancelled starts nothing new.
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.deps == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -126,7 +127,7 @@ jobs:
   deny:
     name: Cargo Deny Check
     needs: changes
-    if: ${{ always() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.deps == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.deps == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -144,7 +145,7 @@ jobs:
   clippy-security:
     name: Clippy Security Lints
     needs: changes
-    if: ${{ always() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.rust == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.rust == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
