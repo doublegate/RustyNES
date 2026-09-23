@@ -67,7 +67,13 @@ fn set_mapper(h: &mut [u8], mapper: u16) {
 /// X1-005's `$A3`-gated RAM -- are unreachable because their writes never land,
 /// which the loop already treats as "nothing to check", and each has its own
 /// test below.
-const NO_CPU_WINDOW: &[(u16, &str)] = &[];
+const NO_CPU_WINDOW: &[(u16, &str)] = &[(
+    56,
+    "Kaiser KS202: its $6000 RAM is work RAM, \"not battery backed!\" \
+     (nesdev_wiki/INES_Mapper_056), so sram() is empty by design even when a \
+     header sets the battery bit. The RAM became writable in v2.7.2, which is \
+     what made this sweep see it",
+)];
 
 /// How many images must reach writable RAM for the loop to count as having
 /// checked anything. Measured when the range became 0..4096 (v2.7.1): 296

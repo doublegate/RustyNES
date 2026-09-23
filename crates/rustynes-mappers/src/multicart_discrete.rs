@@ -2497,7 +2497,9 @@ impl Mapper for Multicart225 {
     // The scratch RAM answers reads in $5800-$5FFF (mapped). The rest of
     // $4020-$57FF stays open bus (the trait default); $6000-$FFFF PRG is mapped.
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
+        // v2.7.2 (core audit §5.5): with no save RAM, `$6000-$7FFF` floats.
         (0x4020..=0x57FF).contains(&addr)
+            || (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty())
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {

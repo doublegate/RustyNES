@@ -150,9 +150,13 @@ impl Mapper for Sachen8259M137 {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // $4100/$4101 are write-only registers; the rest of $4020-$5FFF is open
-        // bus. $8000-$FFFF is mapped PRG.
-        (0x4020..=0x5FFF).contains(&addr)
+        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
+        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
+        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+            // $4100/$4101 are write-only registers; the rest of $4020-$5FFF is open
+            // bus. $8000-$FFFF is mapped PRG.
+            (0x4020..=0x5FFF).contains(&addr)
+        }
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {

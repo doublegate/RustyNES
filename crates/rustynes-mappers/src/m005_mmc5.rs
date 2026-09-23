@@ -1003,16 +1003,21 @@ impl Mapper for Mmc5 {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // MMC5 maps almost the entire `$5000-$5FFF` window: audio at
-        // `$5000-$5015`, ExGfx config at `$5100-$5107`, PRG bank regs
-        // at `$5113-$5117`, CHR bank regs at `$5120-$512B`, upper-CHR
-        // bits at `$5130`, multiplier at `$5205-$5206`, scanline IRQ
-        // at `$5203-$5204`, split-screen at `$5200-$5207`, and ExRAM
-        // at `$5C00-$5FFF`. The `$4020-$4FFF` range is not mapped
-        // (per the default impl convention).
-        // v2.7.2: a PRG-RAM access that selects no chip floats too (the
-        // wiki's "open bus" cells), at `$6000-$7FFF` and in RAM-mode windows.
-        (0x4020..=0x4FFF).contains(&addr) || matches!(self.prg_ram_target(addr), RamTarget::Open)
+        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
+        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
+        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+            // MMC5 maps almost the entire `$5000-$5FFF` window: audio at
+            // `$5000-$5015`, ExGfx config at `$5100-$5107`, PRG bank regs
+            // at `$5113-$5117`, CHR bank regs at `$5120-$512B`, upper-CHR
+            // bits at `$5130`, multiplier at `$5205-$5206`, scanline IRQ
+            // at `$5203-$5204`, split-screen at `$5200-$5207`, and ExRAM
+            // at `$5C00-$5FFF`. The `$4020-$4FFF` range is not mapped
+            // (per the default impl convention).
+            // v2.7.2: a PRG-RAM access that selects no chip floats too (the
+            // wiki's "open bus" cells), at `$6000-$7FFF` and in RAM-mode windows.
+            (0x4020..=0x4FFF).contains(&addr)
+                || matches!(self.prg_ram_target(addr), RamTarget::Open)
+        }
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {

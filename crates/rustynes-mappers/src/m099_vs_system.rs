@@ -243,9 +243,13 @@ impl Mapper for VsSystem {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // PRG is mapped from `$8000`; the `$4020-$5FFF` window remains open
-        // bus (same as the NROM-class default).
-        (0x4020..=0x5FFF).contains(&addr)
+        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
+        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
+        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+            // PRG is mapped from `$8000`; the `$4020-$5FFF` window remains open
+            // bus (same as the NROM-class default).
+            (0x4020..=0x5FFF).contains(&addr)
+        }
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {

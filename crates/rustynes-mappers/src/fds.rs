@@ -2230,15 +2230,19 @@ impl Mapper for Fds {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // The FDS registers occupy $4020-$409F (the $4040-$4092 sound block is
-        // Stage 2 but still part of the device). Reporting these as MAPPED routes
-        // the reads to `cpu_read` instead of the open-bus latch. PRG-RAM and BIOS
-        // ($6000-$FFFF) are always mapped. Anything else in $40A0-$5FFF is
-        // genuinely unmapped (open bus).
-        if (0x4020..=0x409F).contains(&addr) {
-            return false;
+        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
+        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
+        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+            // The FDS registers occupy $4020-$409F (the $4040-$4092 sound block is
+            // Stage 2 but still part of the device). Reporting these as MAPPED routes
+            // the reads to `cpu_read` instead of the open-bus latch. PRG-RAM and BIOS
+            // ($6000-$FFFF) are always mapped. Anything else in $40A0-$5FFF is
+            // genuinely unmapped (open bus).
+            if (0x4020..=0x409F).contains(&addr) {
+                return false;
+            }
+            (0x40A0..=0x5FFF).contains(&addr)
         }
-        (0x40A0..=0x5FFF).contains(&addr)
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {

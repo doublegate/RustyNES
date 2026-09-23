@@ -502,9 +502,18 @@ impl Mapper for Mmc3CloneMapper {
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
         match self.board {
-            CloneBoard::M115 => (0x4020..=0x4FFF).contains(&addr),
+            // v2.7.2 (core audit §5.5): with no save RAM, `$6000-$7FFF`
+            // floats; see `Mapper::cpu_read_unmapped`. Not for M238, whose
+            // security register answers across the whole window.
+            CloneBoard::M115 => {
+                (0x4020..=0x4FFF).contains(&addr)
+                    || (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty())
+            }
             CloneBoard::M238 => false, // $4020-$7FFF is all mapped (security reg).
-            _ => (0x4020..=0x5FFF).contains(&addr),
+            _ => {
+                (0x4020..=0x5FFF).contains(&addr)
+                    || (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty())
+            }
         }
     }
 

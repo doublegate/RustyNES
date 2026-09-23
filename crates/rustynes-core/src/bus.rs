@@ -4006,6 +4006,15 @@ impl LockstepBus {
                 // cartridge bus, so the (possibly substituted) value is what
                 // the CPU sees AND what latches onto `open_bus` below.
                 let raw = self.mapper.cpu_read(addr);
+                // Register-window reads may drive only some data bits; the
+                // rest keep the floating latch (v2.7.2, core audit §4.5).
+                // Limited to `$4020-$5FFF`, so PRG fetches pay nothing.
+                let raw = if addr < 0x6000 {
+                    let driven = self.mapper.cpu_read_driven_mask(addr);
+                    (self.open_bus & !driven) | (raw & driven)
+                } else {
+                    raw
+                };
                 self.apply_genie(addr, raw)
             }
         };
@@ -5616,5 +5625,34 @@ mod four_score_tests {
             }
             other => panic!("expected a Family BASIC keyboard on port 1, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod partial_drive_tests {
+    use super::*;
+
+    /// Sachen SA-020A (mapper 150): the `$4101` data register drives D2-D0
+    /// only (`nesdev_wiki/INES_Mapper_150.xhtml`), so D7-D3 keep whatever
+    /// was floating on the bus. Core audit section 4.5 found them read as 0,
+    /// which the bus then latched.
+    #[test]
+    fn a_sachen_register_read_keeps_the_floating_high_bits() {
+        let mut rom = Vec::with_capacity(16 + 0x8000 + 0x2000);
+        rom.extend_from_slice(b"NES\x1A");
+        rom.push(2); // 32 KiB PRG
+        rom.push(1); // 8 KiB CHR
+        rom.push(0x60); // mapper 150: low nibble 6
+        rom.push(0x90); // high nibble 9
+        rom.extend_from_slice(&[0u8; 8]);
+        rom.resize(16 + 0x8000 + 0x2000, 0);
+        let mut bus = LockstepBus::new(&rom).expect("mapper 150 parses");
+        bus.mapper.cpu_write(0x4100, 0x05); // select register 5
+        bus.mapper.cpu_write(0x4101, 0x03); // R5 = 3
+        bus.open_bus = 0xA8; // the last value driven on the bus
+        let v = bus.raw_cpu_read(0x4101);
+        assert_eq!(v & 0x07, 0x03, "the driven bits are the register");
+        assert_eq!(v & 0xF8, 0xA8, "the undriven bits are the floating latch");
+        assert_eq!(bus.open_bus, v, "and the latch keeps them");
     }
 }

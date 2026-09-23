@@ -221,17 +221,49 @@ pub trait Mapper: Send {
     ///
     /// Default impl covers stock NROM-class boards: the entire
     /// `$4020-$5FFF` window is unmapped (no PRG-RAM, no mapper
-    /// registers); `$6000-$FFFF` is always considered mapped (PRG-RAM
-    /// or PRG-ROM). Mappers that DO map any subset of `$4020-$5FFF`
-    /// (MMC5 audio + `ExRAM`, FME-7 IRQ control, VRC family register
-    /// banks, etc.) must override this to return `false` for their
-    /// mapped sub-ranges so the bus uses the real value.
+    /// registers), and `$6000-$7FFF` is unmapped exactly when the board has
+    /// no save RAM to put there ([`Self::sram`] is empty). `$8000-$FFFF` is
+    /// PRG-ROM and always mapped. Mappers that DO map any subset of
+    /// `$4020-$5FFF` (MMC5 audio + `ExRAM`, FME-7 IRQ control, VRC family
+    /// register banks, etc.) must override this to return `false` for their
+    /// mapped sub-ranges so the bus uses the real value; a board with ROM or
+    /// readable registers at `$6000-$7FFF` but no save RAM must override it
+    /// for that window.
+    ///
+    /// The `$6000-$7FFF` rule is v2.7.2 (core audit §5.5). Before it, every
+    /// board without RAM there read a made-up `$00` instead of open bus; a
+    /// sweep over every mapper number found 205 board variants doing so
+    /// (`tests/prg_ram_window_open_bus.rs`). It leans on v2.7.1's contract that
+    /// every board holding save RAM exposes it through `sram()`
+    /// (`tests/battery_sram_exposed.rs`), and the same test fails any board
+    /// the rule would float while it actually drives data there.
     ///
     /// This is the canonical hardware oracle for `AccuracyCoin`'s
     /// `CPU Behavior :: Open Bus` Test 1 (`LDA $5000` should read
     /// `$50`, not `$00`).
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        (0x4020..=0x5FFF).contains(&addr)
+        match addr {
+            0x4020..=0x5FFF => true,
+            0x6000..=0x7FFF => self.sram().is_empty(),
+            _ => false,
+        }
+    }
+
+    /// Which data bits a mapped read in the register window (`$4020-$5FFF`)
+    /// actually drives; the rest float and keep the bus's open-bus value.
+    ///
+    /// A register that drives only part of the byte is common on cheap ASICs:
+    /// the Sachen SA-020A (mappers 150 / 243) returns its 3-bit registers on
+    /// D2-D0 and leaves D7-D3 floating (`nesdev_wiki/INES_Mapper_150.xhtml`).
+    /// Returning the undriven bits as 0 from [`Self::cpu_read`] would let the
+    /// bus latch those zeros; this mask lets it keep what was floating there
+    /// instead (core audit §4.5).
+    ///
+    /// Consulted only for `$4020-$5FFF`, so it costs nothing on the
+    /// `$6000-$FFFF` fetches that dominate CPU time. Default: all 8 bits.
+    fn cpu_read_driven_mask(&self, addr: u16) -> u8 {
+        let _ = addr;
+        0xFF
     }
 
     /// Read a byte from the PPU address space `$0000-$3FFF` (pattern table

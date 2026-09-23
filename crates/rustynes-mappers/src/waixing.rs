@@ -334,10 +334,14 @@ impl Mapper for WaixingFs304M162 {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // $5000-$5FFF carries the write-only register block; the rest of
-        // $4020-$5FFF is open bus. $6000-$7FFF is PRG-RAM and $8000-$FFFF is
-        // mapped PRG.
-        (0x4020..=0x5FFF).contains(&addr)
+        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
+        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
+        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+            // $5000-$5FFF carries the write-only register block; the rest of
+            // $4020-$5FFF is open bus. $6000-$7FFF is PRG-RAM and $8000-$FFFF is
+            // mapped PRG.
+            (0x4020..=0x5FFF).contains(&addr)
+        }
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
@@ -529,9 +533,13 @@ impl Mapper for Waixing178 {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // $4800-$4803 are write-only registers; $6000-$FFFF is mapped
-        // (work-RAM + PRG).  The remaining $4020-$5FFF window is open bus.
-        (0x4020..=0x5FFF).contains(&addr)
+        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
+        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
+        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+            // $4800-$4803 are write-only registers; $6000-$FFFF is mapped
+            // (work-RAM + PRG).  The remaining $4020-$5FFF window is open bus.
+            (0x4020..=0x5FFF).contains(&addr)
+        }
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {

@@ -704,22 +704,28 @@ impl Mapper for NsfMapper {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // The driver image and the bank registers ARE mapped in $4020-$5FFF, so
-        // the bus must use our real bytes there (not open bus). Everything else
-        // in that window is unmapped (open bus).
-        if !(0x4020..=0x5FFF).contains(&addr) {
-            return false;
+        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
+        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
+        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+            // The driver image and the bank registers ARE mapped in $4020-$5FFF, so
+            // the bus must use our real bytes there (not open bus). Everything else
+            // in that window is unmapped (open bus).
+            if !(0x4020..=0x5FFF).contains(&addr) {
+                return false;
+            }
+            // Driver image and bank registers are always mapped.
+            if (DRIVER_BASE..DRIVER_BASE + 0x50).contains(&addr)
+                || (0x5FF8..=0x5FFF).contains(&addr)
+            {
+                return false;
+            }
+            // Expansion-audio read ports (N163 `$4800-$4FFF`, MMC5 `$5015`) are
+            // mapped when those chips are present (real bytes, not open bus).
+            if self.exp_audio.is_some() && ((0x4800..=0x4FFF).contains(&addr) || addr == 0x5015) {
+                return false;
+            }
+            true
         }
-        // Driver image and bank registers are always mapped.
-        if (DRIVER_BASE..DRIVER_BASE + 0x50).contains(&addr) || (0x5FF8..=0x5FFF).contains(&addr) {
-            return false;
-        }
-        // Expansion-audio read ports (N163 `$4800-$4FFF`, MMC5 `$5015`) are
-        // mapped when those chips are present (real bytes, not open bus).
-        if self.exp_audio.is_some() && ((0x4800..=0x4FFF).contains(&addr) || addr == 0x5015) {
-            return false;
-        }
-        true
     }
 
     fn notify_cpu_cycle(&mut self) {

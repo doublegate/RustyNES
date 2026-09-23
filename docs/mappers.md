@@ -98,6 +98,18 @@ loop can only check boards whose RAM a blind write sweep reaches — 43 of 296
 images at v2.7.1 — and prints the rest; RAM gated behind a board-specific enable
 is not checked by it.
 
+**A board with nothing at `$6000-$7FFF` floats there (v2.7.2).** The CPU bus
+keeps an open-bus latch, and a mapper reports an undriven address through
+`cpu_read_unmapped`. The trait default now treats `$6000-$7FFF` as unmapped
+exactly when `sram()` is empty. Before v2.7.2 the default treated all of
+`$6000-$FFFF` as mapped, and 205 board variants read a made-up `$00` there. A
+board with ROM or readable registers in that window but no save RAM must
+override the hook for it: mappers 40, 42, 50, 212, 238, 305 and 306 do.
+`crates/rustynes-mappers/tests/prg_ram_window_open_bus.rs` checks both
+directions for every mapper number. A read that drives only some data bits,
+like Sachen's 3-bit registers, reports the rest through `cpu_read_driven_mask`,
+and the bus keeps its floating value on them.
+
 ## Behavior
 
 ### Banking pattern
