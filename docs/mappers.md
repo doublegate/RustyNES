@@ -168,7 +168,7 @@ Sorted by number of commercial titles using each mapper.
 | iNES | Submapper | Name | Phase | Audio | IRQ | Status | Notes |
 |------|-----------|------|-------|-------|-----|--------|-------|
 | 0 | — | NROM | 1 | — | — | landed (Phase 1) | 247 titles. Trivial; no banking. |
-| 1 | 1-5 | MMC1 (SUROM, SXROM, etc.) | 2 | — | — | landed (Phase 2) | Serial 5-write protocol; consecutive-write bug. |
+| 1 | 1-5 | MMC1 (SUROM, SXROM, etc.) | 2 | — | — | landed (Phase 2) | Serial 5-write protocol; consecutive-write bug. On boards with at most 8 KiB of CHR (v2.7.2, from `nesdev_wiki/MMC1.xhtml`), the CHR bank register's bit 4 selects the 256 KiB PRG half for the whole window, fixed bank included (SUROM / SXROM), and bits 3-2 select the 8 KiB PRG-RAM bank (SOROM: bit 3; SXROM: bit 3 = A14, bit 2 = A13). In 4 KiB CHR mode the driving register is the one the last CHR fetch selected. SNROM's bit-4 RAM enable applies only to <= 256 KiB PRG with <= 8 KiB RAM. holy_mapperel `M1_P512K_CR8K_S8K` / `_S32K` pass `0000`. SZROM is not modelled. |
 | 2 | 0-2 | UxROM | 2 | — | — | landed (Phase 2) | UNROM, UOROM, etc. CHR-RAM only. |
 | 3 | 0-2 | CNROM | 2 | — | — | landed (Phase 2) | Bus conflict required. |
 | 4 | 0-3 | MMC3 (and MMC6, sub 1) | 4 | — | A12 | landed (Phase 4 / S1) | Sharp vs NEC IRQ revision; default Sharp. mmc3_test_2/5-MMC3 passes; sub-tests 1-4 partial. |
@@ -680,7 +680,7 @@ chunked `NSFE` containers; the FDS-style `$5FF6/$5FF7` RAM banking remains defer
 
 ## Test plan
 
-- **`holy_diver_battery_test`** / **`holy_mapperel`** (tepples): detects mappers and verifies bank reachability for each PRG/CHR bank. Wired into CI as the **mapper bank-reachability + IRQ regression net** (`crates/rustynes-test-harness/tests/holy_mapperel.rs`, gated on `--features test-roms`): the 17 committed zlib-licensed ROMs (`tests/roms/holy_mapperel/`) are each driven to their settled result screen and pinned by an `insta` framebuffer-hash snapshot, so a silent mapper-detection / bank-layout / RAM-sizing / IRQ regression flips exactly that ROM's hash and fails loudly. The net promotes nothing; it pins the honest current result, including the documented MMC1/FME-7 WRAM-disable residual (see `docs/accuracy-ledger.md`).
+- **`holy_diver_battery_test`** / **`holy_mapperel`** (tepples): detects mappers and verifies bank reachability for each PRG/CHR bank. Wired into CI as the **mapper bank-reachability + IRQ regression net** (`crates/rustynes-test-harness/tests/holy_mapperel.rs`, gated on `--features test-roms`): the 19 committed zlib-licensed ROMs (`tests/roms/holy_mapperel/`) are each driven to their settled result screen and pinned by an `insta` framebuffer-hash snapshot, so a silent mapper-detection / bank-layout / RAM-sizing / IRQ regression flips exactly that ROM's hash and fails loudly. The net promotes nothing; it pins the honest current result, including the documented MMC1/FME-7 WRAM-disable residual (see `docs/accuracy-ledger.md`).
 - **`mmc3_test_2`** (5 sub-ROMs): MMC3 IRQ behavior including the Sharp/NEC distinction and edge cases.
 - **`mmc3_irq_tests`** (blargg): MMC3 IRQ timing.
 - **`vrc24test`** (AWJ): all VRC2/4 variants.

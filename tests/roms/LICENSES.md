@@ -104,11 +104,19 @@ collection under public-domain terms.
 | `holy_mapperel/M66_P64K_C16K_V.nes` | as above | GxROM (66) | Damian Yerrick | zlib |
 | `holy_mapperel/M69_P128K_C64K_W8K.nes` | as above | FME-7 (69) | Damian Yerrick | zlib |
 | `holy_mapperel/M69_P128K_C64K_S8K.nes` | as above | FME-7 (69) | Damian Yerrick | zlib |
+| `holy_mapperel/M1_P512K_CR8K_S8K.nes` | built from the v0.02 tag (`c022622`), see below | MMC1 SUROM (1) | Damian Yerrick | zlib |
+| `holy_mapperel/M1_P512K_CR8K_S32K.nes` | built from the v0.02 tag (`c022622`), see below | MMC1 SXROM (1) | Damian Yerrick | zlib |
 | `holy_mapperel/README.md` | as above | n/a | Damian Yerrick | zlib |
 | `holy_mapperel/CHANGES.txt` | as above | n/a | Damian Yerrick | zlib |
 
 Source URL: <https://github.com/pinobatch/holy-mapperel> (release v0.02,
-2018-09-29). README's "Legal" section states "Copyright 2013-2017
+2018-09-29). The two 512 KiB MMC1 images (v2.7.2) are not in
+the binary release; they were built from the `v0.02` tag with its own
+`make_roms.py` (cc65 2.19, Python 3.14; one line patched in the build tool:
+`from collections import Sequence` -> `collections.abc`, required since Python
+3.10, which changes no ROM byte). That build reproduces all 17 release ROMs
+above **byte-for-byte**, which is the evidence the two new images come from
+the same program. README's "Legal" section states "Copyright 2013-2017
 Damian Yerrick / Available under zlib License." The zlib license is
 permissive: redistribution requires only that the origin not be
 misrepresented and that altered source versions be clearly marked.
