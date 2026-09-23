@@ -436,7 +436,17 @@ pub struct Namco163 {
     chr_rom: Box<[u8]>,
     chr_is_ram: bool,
     prg_ram: Box<[u8]>,
+    /// The console's 2 KiB CIRAM, as this board sees it. N163 can map CIRAM
+    /// as CHR-RAM, which the PPU-owned copy cannot serve (a pattern fetch goes
+    /// to the mapper), so while `ciram_owned` is set this copy is the one both
+    /// nametable and pattern fetches read. The PPU's copy is still written in
+    /// parallel for nametable writes, so debugger views of it stay close.
     vram: Box<[u8]>,
+    /// `vram` is authoritative. True from power-on, where both copies are
+    /// zero. False after restoring a pre-v2.7.2 save state: those never kept
+    /// `vram` in step with the PPU's CIRAM, so nametable fetches then stay
+    /// with the PPU copy (the old behaviour) and CIRAM-as-CHR reads `vram`.
+    ciram_owned: bool,
     prg: [u8; 4], // 8 KiB banks: $8000, $A000, $C000, fixed $E000
     chr: [u8; 8], // 1 KiB CHR banks
     nta: [u8; 4], // 1 KiB NTA banks (CIRAM/CHR ROM swappable)
@@ -495,6 +505,7 @@ impl Namco163 {
             chr_is_ram,
             prg_ram: vec![0u8; 8 * 1024].into_boxed_slice(),
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
+            ciram_owned: true,
             prg: [0, 0, 0, 0],
             chr: [0; 8],
             // The nametable registers power on as the header's layout
@@ -680,6 +691,41 @@ impl Mapper for Namco163 {
         }
     }
 
+    // The PPU fetches nametables through these three hooks, never through
+    // `ppu_read`/`ppu_write` (`Bus`, `PpuBusAdapter`). Without them the
+    // `$C000-$DFFF` CHR-ROM pages and CIRAM-as-CHR worked only when a test
+    // called `ppu_read($2000)` directly (PR #550 review).
+    fn nametable_fetch(&mut self, addr: u16) -> Option<u8> {
+        match self.nt_target(addr) {
+            Ok(off) => Some(self.chr_rom[off % self.chr_rom.len()]),
+            Err(ciram) => self.ciram_owned.then(|| self.vram[ciram]),
+        }
+    }
+
+    fn nametable_write(&mut self, addr: u16, value: u8) -> bool {
+        match self.nt_target(addr) {
+            // A CHR-ROM page is read-only: absorb the write.
+            Ok(_) => true,
+            // CIRAM: keep this board's copy, and let the PPU write its own at
+            // `nametable_address` so the two stay equal.
+            Err(ciram) => {
+                self.vram[ciram] = value;
+                false
+            }
+        }
+    }
+
+    #[allow(clippy::cast_possible_truncation)]
+    fn nametable_address(&self, addr: u16) -> u16 {
+        // The CIRAM offset the nametable registers select; `ciram < 0x800`, so
+        // the cast is exact. A CHR-ROM quadrant never reaches CIRAM, and its
+        // offset only matters to debugger views.
+        match self.nt_target(addr) {
+            Err(ciram) => ciram as u16,
+            Ok(_) => (addr.wrapping_sub(0x2000) >> 10 & 1) * 0x400 + (addr & 0x3FF),
+        }
+    }
+
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
@@ -812,8 +858,9 @@ impl Mapper for Namco163 {
         // v2 audio tail.
         out.push(u8::from(self.sound_disabled));
         self.audio.write_tail(&mut out);
-        // v3 tail.
+        // v3 tail (v2.7.2).
         out.push(self.chr_ram_disable);
+        out.push(u8::from(self.ciram_owned));
         out
     }
 
@@ -829,6 +876,16 @@ impl Mapper for Namco163 {
         let version = data[0];
         if !(1..=3).contains(&version) {
             return Err(MapperError::UnsupportedVersion(version));
+        }
+        // v3 was written whole by v2.7.2 and later, so a short one is
+        // corruption rather than an older layout: refuse it before touching
+        // any state. Only v1/v2 keep the permissive tail handling below.
+        let v3_expected = core_expected + 1 + Namco163Audio::TAIL_LEN + 2;
+        if version == 3 && data.len() < v3_expected {
+            return Err(MapperError::Truncated {
+                expected: v3_expected,
+                got: data.len(),
+            });
         }
         self.prg.copy_from_slice(&data[1..5]);
         self.chr.copy_from_slice(&data[5..13]);
@@ -876,11 +933,19 @@ impl Mapper for Namco163 {
         // v3 tail (v2.7.2). An older blob predates CIRAM-as-CHR, which then
         // was never modelled: restore "both halves CHR-ROM" so it replays the
         // way it was recorded.
-        self.chr_ram_disable = if version >= 3 {
-            data.get(cur).map_or(0xC0, |b| b & 0xC0)
+        // Present whenever version == 3: checked against `v3_expected` above.
+        self.chr_ram_disable = if version >= 3 { data[cur] & 0xC0 } else { 0xC0 };
+        if version >= 3 {
+            self.ciram_owned = data[cur + 1] != 0;
         } else {
-            0xC0
-        };
+            // Before v2.7.2 `$C000-$DFFF` writes were ignored, so `nta` was
+            // saved zeroed, which now means "CHR-ROM page 0" in every
+            // quadrant. Rebuild it from the header layout the old model used,
+            // and leave CIRAM with the PPU: this blob's `vram` was never kept
+            // in step with it.
+            self.nta = Self::nta_for(self.mirroring);
+            self.ciram_owned = false;
+        }
         Ok(())
     }
 }
@@ -1396,9 +1461,9 @@ mod tests {
     fn a_pre_v2_7_2_save_state_loads_with_chr_ram_disabled() {
         let m = n163(0x100);
         let mut blob = m.save_state();
-        // Strip the v3 tail byte and restamp as v2 to fake an old blob.
+        // Strip the two v3 tail bytes and restamp as v2 to fake an old blob.
         blob[0] = 2;
-        blob.pop();
+        blob.truncate(blob.len() - 2);
         let mut n = n163(0x100);
         n.cpu_write(0xE800, 0x00);
         n.load_state(&blob).expect("v2 loads");
@@ -1408,5 +1473,45 @@ mod tests {
             0xE0,
             "old blobs keep the old CHR-ROM behaviour"
         );
+    }
+
+    /// Before v2.7.2 `$C000-$DFFF` writes were ignored, so every old blob
+    /// holds `nta = [0; 4]`, which now means "CHR-ROM page 0" in every
+    /// quadrant. The restore must rebuild the header layout instead, and leave
+    /// CIRAM with the PPU, because an old blob's `vram` was never kept in step
+    /// with it (PR #550 review).
+    #[test]
+    fn a_truncated_v3_blob_is_refused_before_any_state_changes() {
+        let mut m = n163(0x100);
+        m.cpu_write(0xC000, 0x05);
+        let blob = m.save_state();
+        let mut n = n163(0x100);
+        assert!(matches!(
+            n.load_state(&blob[..blob.len() - 1]),
+            Err(MapperError::Truncated { .. })
+        ));
+        assert_eq!(n.nta, Namco163::nta_for(Mirroring::Vertical), "untouched");
+        n.load_state(&blob).expect("the whole blob loads");
+        assert_eq!(n.nta[0], 0x05);
+    }
+
+    #[test]
+    fn a_pre_v2_7_2_save_state_keeps_its_header_layout() {
+        let m = Namco163::new(synth(8), synth_chr(0x100), Mirroring::Horizontal).unwrap();
+        let mut blob = m.save_state();
+        blob[0] = 2;
+        blob.truncate(blob.len() - 2);
+        blob[13..17].fill(0); // what every pre-v2.7.2 blob carries
+        let mut n = Namco163::new(synth(8), synth_chr(0x100), Mirroring::Horizontal).unwrap();
+        n.load_state(&blob).expect("v2 loads");
+        assert_eq!(n.current_mirroring(), Mirroring::Horizontal);
+        assert_eq!(n.nametable_address(0x2000), n.nametable_address(0x2400));
+        assert_ne!(n.nametable_address(0x2000), n.nametable_address(0x2800));
+        assert_eq!(n.nametable_fetch(0x2000), None, "CIRAM stays the PPU's");
+
+        // A current blob keeps ownership as saved.
+        let mut o = Namco163::new(synth(8), synth_chr(0x100), Mirroring::Horizontal).unwrap();
+        o.load_state(&m.save_state()).expect("v3 loads");
+        assert_eq!(o.nametable_fetch(0x2000), Some(0), "CIRAM is the board's");
     }
 }

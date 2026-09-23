@@ -50,7 +50,8 @@ cycle-accurate core later replaced.
   CHR-RAM.** Nametable quadrants can be CIRAM pages or read-only CHR-ROM pages,
   and CHR values `$E0-$FF` map console RAM unless `$E800` disables it. The
   registers power on as the header's layout, so existing games render as before
-  (core audit IMP-11).
+  (core audit IMP-11). The PPU reaches all of this through the nametable hooks,
+  and *Mappy Kids*, whose title and town screens were garbled, now renders.
 - **A board with nothing at `$6000-$7FFF` now reads open bus there, not `$00`.**
   A sweep of every mapper number found 205 board variants inventing a zero; the
   default now floats the window exactly when the board has no save RAM, and a
@@ -73,8 +74,10 @@ cycle-accurate core later replaced.
 
 - MMC1 and Namco 163 mapper blobs gain one trailing byte each (the CHR-A12 latch;
   the `$E800` CHR-RAM disables); MMC5 gains its superset RAM pages; mappers 156,
-  177, 227, 241 and 245 gain their RAM. Older blobs still load, with the
-  pre-v2.7.2 behaviour.
+  177, 227, 241 and 245 gain their RAM. Older blobs still load. MMC1 and MMC5
+  resume under the corrected banking, and new RAM starts zeroed. Namco 163
+  rebuilds its nametable layout from the header, because old blobs hold the
+  registers zeroed, and leaves CIRAM with the PPU for that session.
 
 ## [2.7.1] - 2026-09-23 - "Keepsake" (a save that appears to succeed now does)
 

@@ -261,8 +261,7 @@ pub trait Mapper: Send {
     ///
     /// Consulted only for `$4020-$5FFF`, so it costs nothing on the
     /// `$6000-$FFFF` fetches that dominate CPU time. Default: all 8 bits.
-    fn cpu_read_driven_mask(&self, addr: u16) -> u8 {
-        let _ = addr;
+    fn cpu_read_driven_mask(&self, _addr: u16) -> u8 {
         0xFF
     }
 

@@ -768,9 +768,9 @@ impl Mmc5 {
             let off = (base + region_off) % self.prg_rom.len();
             self.prg_rom[off]
         } else {
-            // PRG-RAM at this slot, banked per the wiki's table; no chip
-            // selected reads as 0 here and is reported unmapped, so the bus
-            // keeps its open-bus value.
+            // PRG-RAM at this slot, paged over the 64 KiB superset, where
+            // every page answers. (The exact per-board table, whose chip-less
+            // cells were open bus, was replaced during v2.7.2.)
             self.ram_read(self.prg_ram_target(addr))
         }
     }
@@ -1016,7 +1016,8 @@ impl Mapper for Mmc5 {
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
         // v2.7.2's "no save RAM -> `$6000-$7FFF` floats" default does not apply:
         // the header RAM is at least 8 KiB (`prg_ram_size`), so `sram()` is never
-        // empty, and a chip-less page floats through `RamTarget::NotRam` below.
+        // empty. Nor does any PRG-RAM access float: over the 64 KiB superset
+        // every page answers (`prg_ram_target` returns `At` for all of them).
         {
             // MMC5 maps almost the entire `$5000-$5FFF` window: audio at
             // `$5000-$5015`, ExGfx config at `$5100-$5107`, PRG bank regs
@@ -1025,8 +1026,6 @@ impl Mapper for Mmc5 {
             // at `$5203-$5204`, split-screen at `$5200-$5207`, and ExRAM
             // at `$5C00-$5FFF`. The `$4020-$4FFF` range is not mapped
             // (per the default impl convention).
-            // v2.7.2: a PRG-RAM access that selects no chip floats too (the
-            // wiki's "open bus" cells), at `$6000-$7FFF` and in RAM-mode windows.
             (0x4020..=0x4FFF).contains(&addr)
         }
     }

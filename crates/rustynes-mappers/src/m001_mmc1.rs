@@ -70,9 +70,12 @@ pub struct Mmc1 {
     last_write_cycle: u64,
     cpu_cycle: u64,
 
-    /// PPU A12 of the most recent CHR fetch. In 4 KiB CHR mode it selects
-    /// which CHR register drives the outer PRG / PRG-RAM lines on SUROM /
-    /// SOROM / SXROM (see [`Self::outer_reg`]).
+    /// The PPU A12 level, as the PPU last reported it through `notify_a12`.
+    /// In 4 KiB CHR mode it selects which CHR register drives the outer PRG /
+    /// PRG-RAM lines on SUROM / SOROM / SXROM (see [`Self::outer_reg`]).
+    /// Latched from the A12 notification, not from `ppu_read`: a debugger
+    /// peek of CHR (`Bus::debug_peek_ppu`) goes through `ppu_read` and must
+    /// not change CPU-side banking (PR #550 review).
     chr_a12_high: bool,
 }
 
@@ -221,8 +224,13 @@ impl Mmc1 {
         // 256 KiB half for the WHOLE window, fixed bank included (core audit
         // §5.4; this used to claim all five PRG bits and read only four).
         let outer = self.prg_outer_base();
-        let bank_count =
-            (self.prg_bank_count() - outer / PRG_BANK_16K).min(PRG_OUTER_256K / PRG_BANK_16K);
+        // Never zero: `outer` is non-zero only on a ROM larger than 256 KiB, and
+        // the floor keeps mode 3's `bank_count - 1` and the modulo below safe
+        // even if that invariant is ever broken.
+        let bank_count = self
+            .prg_bank_count()
+            .saturating_sub(outer / PRG_BANK_16K)
+            .clamp(1, PRG_OUTER_256K / PRG_BANK_16K);
         let prg_bank = self.prg & 0x0F;
 
         let (bank_low, bank_high): (usize, usize) = match prg_mode {
@@ -240,7 +248,6 @@ impl Mmc1 {
                 (prg_bank as usize, bank_count - 1)
             }
         };
-        let bank_count = bank_count.max(1);
         let bank_low = bank_low % bank_count;
         let bank_high = bank_high % bank_count;
 
@@ -420,11 +427,17 @@ impl Mapper for Mmc1 {
         }
     }
 
+    // The only writer of `chr_a12_high`. The PPU reports every A12 transition
+    // here (not gated on capabilities), including the ones its `$2007`
+    // accesses make, which is the line the MMC1 actually watches.
+    fn notify_a12(&mut self, level: bool) {
+        self.chr_a12_high = level;
+    }
+
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
-                self.chr_a12_high = addr & 0x1000 != 0;
                 let off = self.map_chr(addr);
                 self.chr[off]
             }
@@ -440,7 +453,6 @@ impl Mapper for Mmc1 {
         let addr = addr & 0x3FFF;
         match addr {
             0x0000..=0x1FFF => {
-                self.chr_a12_high = addr & 0x1000 != 0;
                 if self.chr_is_ram {
                     let off = self.map_chr(addr);
                     self.chr[off] = value;
@@ -897,10 +909,25 @@ mod tests {
         write5(&mut m, 0x8000, 0b1_1110); // CHR 4 KiB mode, PRG mode 3
         write5(&mut m, 0xA000, 0x00);
         write5(&mut m, 0xC000, 0x10);
-        let _ = m.ppu_read(0x1000); // PPU A12 high -> CHR bank 1 drives
+        m.notify_a12(true); // PPU A12 high -> CHR bank 1 drives
         assert_eq!(m.cpu_read(0xC000), 31);
-        let _ = m.ppu_read(0x0000); // A12 low -> CHR bank 0
+        m.notify_a12(false); // A12 low -> CHR bank 0
         assert_eq!(m.cpu_read(0xC000), 15);
+    }
+
+    #[test]
+    fn a_chr_peek_does_not_change_cpu_banking() {
+        // `Bus::debug_peek_ppu` documents a side-effect-free sample and routes
+        // CHR through `ppu_read`/`ppu_write`. Only the PPU's A12 notification
+        // may move the live register (PR #550 review).
+        let mut m = Mmc1::new(synth_prg(32), Box::new([]), Mirroring::Vertical, 0).unwrap();
+        write5(&mut m, 0x8000, 0b1_1110);
+        write5(&mut m, 0xA000, 0x00);
+        write5(&mut m, 0xC000, 0x10);
+        let _ = m.ppu_read(0x1000);
+        m.ppu_write(0x1000, 0);
+        assert_eq!(m.cpu_read(0xC000), 15, "still CHR bank 0's half");
+        assert!(!m.chr_a12_high);
     }
 
     #[test]
@@ -928,7 +955,7 @@ mod tests {
         // v1 blobs lack the trailing CHR-A12 latch byte; they must load, with
         // the latch cleared, so old `.rns` slots keep working.
         let mut m = Mmc1::new(synth_prg(32), Box::new([]), Mirroring::Vertical, 0).unwrap();
-        let _ = m.ppu_read(0x1000);
+        m.notify_a12(true);
         let mut blob = m.save_state();
         assert_eq!(blob[0], 2);
         assert_eq!(*blob.last().unwrap(), 1, "the latch is saved");
