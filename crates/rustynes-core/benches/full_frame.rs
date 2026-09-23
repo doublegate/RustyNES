@@ -48,9 +48,7 @@ const WARM_FRAMES: usize = 60;
 /// `run_frame` from that state, is unchanged, while setup drops to a restore.
 fn warmed_snapshot(rom: &[u8], fast_dotloop: bool) -> Vec<u8> {
     let mut nes = Nes::from_rom(rom).expect("bench ROM parses");
-    if fast_dotloop {
-        nes.set_fast_dotloop(true);
-    }
+    nes.set_fast_dotloop(fast_dotloop);
     for _ in 0..WARM_FRAMES {
         nes.run_frame();
     }
@@ -60,19 +58,19 @@ fn warmed_snapshot(rom: &[u8], fast_dotloop: bool) -> Vec<u8> {
 /// A fresh machine in the warmed state. `fast_dotloop` is a runtime setting,
 /// re-applied rather than trusted to the snapshot.
 ///
-/// `true` calls `set_fast_dotloop(true)` exactly as the `*_fast` benches always
-/// did; `false` leaves the setting ALONE, exactly as the stock benches did. It
-/// must not call `set_fast_dotloop(false)`: the fast path is the DEFAULT, so
-/// forcing it off measured a different routine -- +12.7% on nestest in the
-/// first A/B of this change, which is how that was caught.
+/// The path is ALWAYS set explicitly, both ways. The fast dot path became the
+/// PPU's default in v2.2.3, and from then until 2026-09-23 the stock benches,
+/// which never called `set_fast_dotloop`, silently measured the fast path too:
+/// each stock/`*_fast` pair measured the same routine (3.936 vs 3.937 ms for
+/// nestest), and every "exact path" row recorded in `docs/performance.md`
+/// since v2.2.3 was the fast path. Naming the path in the bench is what keeps a
+/// future default change from doing that again.
 fn warmed(rom: &[u8], snapshot: &[u8], fast_dotloop: bool) -> Nes {
     let mut nes = Nes::from_rom(rom).expect("bench ROM parses");
     nes.restore_quiet(snapshot)
         .expect("a snapshot this bench just took restores");
     // After the restore, so a restore can never override it (review, #547).
-    if fast_dotloop {
-        nes.set_fast_dotloop(true);
-    }
+    nes.set_fast_dotloop(fast_dotloop);
     nes
 }
 
@@ -119,7 +117,8 @@ fn bench_full_frame_rendering(c: &mut Criterion) {
 }
 
 /// v2.1.8 A1 — the fast-dot-path A/B companions. Identical to the two benches
-/// above except `set_fast_dotloop(true)` is applied after boot, so a
+/// above except the fast dot path is selected (the stock pair selects the exact
+/// path, explicitly, since 2026-09-23 -- see [`warmed`]), so a
 /// back-to-back Criterion run of `*_fast` vs the stock bench isolates the
 /// speedup the specialized visible-scanline handler buys (the emulated output
 /// is byte-identical — proven by `fast_dotloop_diff`). The headline figure is
@@ -128,14 +127,6 @@ fn bench_full_frame_rendering(c: &mut Criterion) {
 /// backdrop-override demo — the fast path never engages there, so its `*_fast`
 /// variant is expected to be NEUTRAL and serves only as the guard-bail control
 /// (see `docs/performance.md` §"v2.1.8 A1").
-///
-/// **Known, not changed here (found 2026-09-23):** the fast dot path is now the
-/// DEFAULT (`fast_dotloop: true` in the PPU's constructor), and the stock
-/// benches never call `set_fast_dotloop`, so each stock/`*_fast` pair measures
-/// the same routine -- 3.936 vs 3.937 ms for nestest on one run. The pairs no
-/// longer isolate the speedup. Restoring the A/B means the stock benches
-/// calling `set_fast_dotloop(false)`, which changes the headline ms/frame
-/// figure in `docs/performance.md`, so it is a decision for its own change.
 fn bench_full_frame_fast(c: &mut Criterion) {
     let bytes = std::fs::read(rom_path("nestest/nestest.nes"))
         .expect("nestest/nestest.nes vendored in tests/roms/");

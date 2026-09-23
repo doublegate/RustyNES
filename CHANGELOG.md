@@ -86,6 +86,15 @@ cycle-accurate core later replaced.
   - `actions/deploy-pages`' own `punycode` deprecation (DEP0040) is silenced
     for that step only; Homebrew's untrusted-tap warning on iOS is removed by
     untapping the image's unused `aws/tap`.
+- **Fixed:** the stock `full_frame` benches measured the fast dot path from
+  v2.2.3 to now. That release made the fast path the PPU default, and the stock
+  benches never selected a path, so each stock/`_fast` pair measured the same
+  routine and every "exact path" figure recorded since was a fast-path figure.
+  The benches now select the path explicitly; `docs/performance.md` carries the
+  current numbers (nestest 4.458 ms exact / 3.950 ms shipped, −11.4%;
+  flowing_palette 2.672 / 2.654 ms, neutral) and a dated note on how to read the
+  affected rows. The CI relative gate now watches the shipped `_fast` pair, and
+  the absolute ceiling checks all four.
 - **Fixed:** the Android workflow's path filter also missed
   `rustynes-gfx-shaders`, an Android-target-only dependency that a host-target
   `cargo tree` does not list, and `.cargo/`.
