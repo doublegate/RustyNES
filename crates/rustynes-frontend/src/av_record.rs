@@ -691,15 +691,29 @@ fn publish_output(
 ) -> Result<(), AvError> {
     match outcome {
         Ok(()) => std::fs::rename(staged, out_path).map_err(|e| {
-            let _ = std::fs::remove_file(staged);
+            discard_staged(staged);
             AvError::Encode(format!(
                 "could not move the finished encode into place: {e}"
             ))
         }),
         Err(e) => {
-            let _ = std::fs::remove_file(staged);
+            discard_staged(staged);
             Err(e)
         }
+    }
+}
+
+/// Delete a staged encode that will not be published. `NotFound` is expected
+/// (ffmpeg may fail before creating it); anything else leaves an orphaned
+/// `*.rustynes-partial.*` beside the user's files, so it is logged by path.
+fn discard_staged(staged: &Path) {
+    if let Err(e) = std::fs::remove_file(staged)
+        && e.kind() != io::ErrorKind::NotFound
+    {
+        eprintln!(
+            "rustynes: could not remove the partial encode {}: {e}",
+            staged.display()
+        );
     }
 }
 

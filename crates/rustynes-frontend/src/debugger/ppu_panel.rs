@@ -282,16 +282,22 @@ fn export_chr_png(nes: &mut Nes) {
     // into `File::create` truncated an existing export first, so a failed
     // encode left the user an empty PNG where their previous one had been.
     let mut png_bytes = Vec::new();
-    {
+    let encoded = (|| -> Result<(), png::EncodingError> {
         let mut encoder = png::Encoder::new(&mut png_bytes, w as u32, h as u32);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
-        let Ok(mut writer) = encoder.write_header() else {
-            return;
-        };
-        if writer.write_image_data(&combined).is_err() || writer.finish().is_err() {
-            return;
-        }
+        let mut writer = encoder.write_header()?;
+        writer.write_image_data(&combined)?;
+        writer.finish()
+    })();
+    if let Err(e) = encoded {
+        // Nothing was written, so the previous export (if any) is intact;
+        // say why this one did not happen rather than returning silently.
+        eprintln!(
+            "rustynes: CHR PNG encode for {} failed: {e}",
+            path.display()
+        );
+        return;
     }
     if let Err(e) = crate::atomic_write::write_atomic(&path, &png_bytes) {
         eprintln!("rustynes: CHR PNG export to {} failed: {e}", path.display());

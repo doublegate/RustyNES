@@ -40,9 +40,7 @@ fn image(mapper: u16, chr_rom: bool) -> Vec<u8> {
     h[5] = chr_units;
     // Byte 6: mapper low nibble, battery (bit 1). Byte 7: mapper mid nibble,
     // NES 2.0 identifier (bits 2-3 = 0b10). Byte 8: mapper high nibble.
-    h[6] = (((mapper & 0x0F) as u8) << 4) | 0b0000_0010;
-    h[7] = ((mapper & 0xF0) as u8) | 0b0000_1000;
-    h[8] = ((mapper >> 8) & 0x0F) as u8;
+    set_mapper(&mut h, mapper);
     // Byte 10: PRG-RAM (low nibble) and PRG-NVRAM (high nibble) as 64 << n.
     // 64 << 7 = 8 KiB of battery-backed RAM.
     h[10] = 7 << 4;
@@ -53,6 +51,15 @@ fn image(mapper: u16, chr_rom: bool) -> Vec<u8> {
     v.extend((0..prg).map(|i| (i as u8) | 0x80));
     v.extend((0..chr).map(|i| i as u8));
     v
+}
+
+/// Write a 12-bit mapper number into an NES 2.0 header (bytes 6-8), keeping the
+/// battery and NES 2.0 identifier bits. The sweep patches one template image
+/// per CHR variant with this instead of rebuilding 384 KiB for every number.
+fn set_mapper(h: &mut [u8], mapper: u16) {
+    h[6] = (((mapper & 0x0F) as u8) << 4) | 0b0000_0010;
+    h[7] = ((mapper & 0xF0) as u8) | 0b0000_1000;
+    h[8] = ((mapper >> 8) & 0x0F) as u8;
 }
 
 /// Boards to skip in the generic loop, each with the reason. Empty today: the
@@ -87,8 +94,11 @@ fn every_battery_board_exposes_its_save_memory() {
     // NES 2.0 mapper numbers are 12-bit, so this is the whole space: 0..4096.
     // It stopped at 512 until review on #548 pointed at mapper 513, which the
     // parser dispatches and the loop therefore never built.
+    let mut templates = [image(0, true), image(0, false)];
     for (mapper, chr_rom) in (0u16..4096).flat_map(|n| [(n, true), (n, false)]) {
-        let Ok((cart, mut m)) = parse(&image(mapper, chr_rom)) else {
+        let img = &mut templates[usize::from(!chr_rom)];
+        set_mapper(img, mapper);
+        let Ok((cart, mut m)) = parse(img) else {
             continue;
         };
         constructed += 1;
