@@ -94,7 +94,7 @@ A: RustyNES is a cycle-accurate NES emulator written in pure Rust, clearing the 
 
 **Q: Can I use RustyNES now?**
 
-A: Yes. RustyNES is well past its first stable release — the current release is **v2.6.23 "Pulse"** — the access does not increment, it pulses the load already there. **No hardware has run any bitstream.**
+A: Yes. RustyNES is well past its first stable release — the current release is **v2.7.0 "Palisade"** — a corrupt or hand-edited save state now fails at restore with a typed error instead of crashing the emulator one tick later, pulse 1 no longer mutes on the `$4001 = $08` sweep idiom, and the save-state fuzz target can finally reach what it exists to find. Built on **v2.6.23 "Pulse"** — the access does not increment, it pulses the load already there. **No hardware has run any bitstream.**
 
 **Q: How accurate is RustyNES?**
 
