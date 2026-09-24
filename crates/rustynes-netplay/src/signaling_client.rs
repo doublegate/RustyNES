@@ -118,9 +118,36 @@ impl Drop for SignalingClient {
         // Dropping the send channel signals the worker to close + exit.
         self.out_tx = None;
         if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+            join_or_detach(worker, DROP_GRACE);
         }
     }
+}
+
+/// How long `Drop` waits for the worker before detaching it (v2.7.4, audit
+/// MOB-04). An idle or already-closed worker notices the closed channel within
+/// one `READ_TIMEOUT` (20 ms), so this covers the normal case; only a worker
+/// blocked on the network outlives it.
+const DROP_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Join `worker` if it finishes within `grace`; otherwise let it go.
+///
+/// Before v2.7.4 `Drop` joined unconditionally, and a worker stuck in the
+/// WebSocket handshake with a silent relay held the dropping thread for up to
+/// `CONNECT_TIMEOUT` (10 s) -- on mobile, the UI thread leaving a netplay
+/// screen. Detaching is safe here: the worker owns everything it touches (its
+/// socket and its half of the two channels), both channels are already closed
+/// from this side, so it exits by itself when the network call returns, and it
+/// never calls back into anything the caller frees. Returns whether it joined.
+fn join_or_detach(worker: JoinHandle<()>, grace: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + grace;
+    while !worker.is_finished() {
+        if std::time::Instant::now() >= deadline {
+            return false; // dropping the handle detaches the thread
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let _ = worker.join();
+    true
 }
 
 /// The worker body: connect, then pump outbound queued messages + inbound WS
@@ -292,5 +319,38 @@ fn stream_of(
         tungstenite::stream::MaybeTlsStream::Plain(s) => Some(s),
         tungstenite::stream::MaybeTlsStream::Rustls(s) => Some(&s.sock),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// v2.7.4 (frontend audit MOB-04): dropping the client must not wait for
+    /// the network. A relay that accepts the TCP connection and then says
+    /// nothing keeps the worker in the WebSocket handshake for up to
+    /// `CONNECT_TIMEOUT` (10 s); before v2.7.4 `Drop` joined it, so leaving a
+    /// netplay screen froze the caller -- on mobile, the UI thread -- that long.
+    #[test]
+    fn dropping_the_client_does_not_wait_for_a_silent_relay() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            // Accept, then hold the socket open without answering.
+            if let Ok((stream, _)) = listener.accept() {
+                std::thread::sleep(std::time::Duration::from_secs(15));
+                drop(stream);
+            }
+        });
+        let client = SignalingClient::connect(&format!("ws://127.0.0.1:{port}"));
+        // Give the worker time to connect and enter the handshake.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let start = std::time::Instant::now();
+        drop(client);
+        let took = start.elapsed();
+        assert!(
+            took < std::time::Duration::from_secs(1),
+            "drop waited {took:?} for the network"
+        );
     }
 }
