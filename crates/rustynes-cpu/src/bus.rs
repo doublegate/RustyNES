@@ -23,12 +23,20 @@ pub trait Bus {
     /// Edge-triggered NMI poll. Returns `true` exactly once per high-to-low
     /// transition of the NMI line; subsequent calls return `false` until the
     /// next transition.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn poll_nmi(&mut self) -> bool {
         false
     }
 
     /// Level-sensitive IRQ. Sampled by the CPU on every instruction's
     /// second-to-last cycle; only honored when the CPU's I flag is clear.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn poll_irq(&mut self) -> bool {
         false
     }
@@ -49,8 +57,14 @@ pub trait Bus {
     /// [`crate::Bus`] impl on `LockstepBus` takes its M2-high snapshot
     /// at the same end-of-cycle point the historical `poll_irq` query
     /// fired from.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn poll_irq_at_phase(&mut self, phase: M2Phase) -> bool {
         let _ = phase;
+        // Deprecated calling deprecated: both are retired together.
+        #[allow(deprecated)]
         self.poll_irq()
     }
 
@@ -70,6 +84,10 @@ pub trait Bus {
     /// don't accidentally advance state when paired with the φ2
     /// default (which calls [`Bus::on_cpu_cycle`] to do all the
     /// work).
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn cpu_cycle_phi1(&mut self) {}
 
     /// φ2 (post-access) half of one CPU cycle.  Called AFTER the
@@ -86,6 +104,10 @@ pub trait Bus {
     /// legacy / test buses keep their current behaviour: φ1 is a
     /// no-op, φ2 does all the work, same total per-cycle work as a
     /// single `on_cpu_cycle` call.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn cpu_cycle_phi2(&mut self) {
         self.on_cpu_cycle();
     }
@@ -159,6 +181,10 @@ pub trait Bus {
     /// `linked-puzzling-sutherland` brief (see
     /// `to-dos/phase-6-v1.0.0-final/sprint-6-sh-unstable-stores.md`).
     ///
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn internal_data_bus(&self) -> u8 {
         0
     }
@@ -260,6 +286,10 @@ pub trait Bus {
     /// Phase B (interleaved DMC DMA): is a DMC DMA pending and needing cycles?
     /// The CPU loops on this in `read1`, running one `dmc_dma_step` per R1 cycle
     /// BEFORE its own read (DMA halts only on read cycles). Default `false`.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn dmc_dma_pending(&self) -> bool {
         false
     }
@@ -274,6 +304,10 @@ pub trait Bus {
     /// Phase B: perform ONE cycle's worth of interleaved DMC DMA bus access
     /// (halt re-read / sample get), advancing the halt/get state. `halted_addr`
     /// is the CPU read the DMA is preempting. Default no-op.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn dmc_dma_step(&mut self, halted_addr: u16) {
         let _ = halted_addr;
     }
@@ -281,6 +315,10 @@ pub trait Bus {
     /// `mc-r1-dmc-idle-halt`: perform one interleaved DMC-DMA cycle during a CPU
     /// INTERNAL cycle (no instruction read). The bus supplies the held address
     /// (its last-read bus address) since `idle_tick` has none. Default no-op.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn dmc_dma_step_idle(&mut self) {}
 
     /// Stage-D (`mc-r1-full-cpu`): is an OAM DMA pending or in flight? The CPU
@@ -288,6 +326,10 @@ pub trait Bus {
     /// each OAM cycle runs CPU-driven (wrapped `start_cycle`/`end_cycle`) and
     /// samples IRQ/NMI via the φ2 pipeline — the surface the bus-burst bypassed.
     /// Default `false`.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn oam_dma_pending(&self) -> bool {
         false
     }
@@ -295,6 +337,10 @@ pub trait Bus {
     /// Stage-D: perform ONE cycle of the OAM DMA (set-up on first call from a
     /// pending `$4014`, then halt/align/read/write per cycle). Does NOT advance
     /// time — the surrounding `start_cycle`/`end_cycle` do. Default no-op.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn oam_dma_step(&mut self, halted_addr: u16) {
         let _ = halted_addr;
     }
@@ -303,6 +349,10 @@ pub trait Bus {
     /// (started, cycles still owed) — distinct from `oam_dma_pending`, which is
     /// true for a not-yet-started `$4014` write too. The overlap loop uses this
     /// to decide whether a DMC halt cycle can SHARE an OAM cycle. Default `false`.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn oam_dma_in_flight(&self) -> bool {
         false
     }
@@ -317,7 +367,13 @@ pub trait Bus {
     /// event is exactly the DMC+OAM idx\[7\] regime-transition error (lockstep
     /// latches OAM in `drain_dma` BEFORE its DMC-pending check, so the same arm
     /// overlaps OAM's halt/alignment cycles there).
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn oam_dma_overlap_ready(&self) -> bool {
+        // Deprecated calling deprecated: both are retired together.
+        #[allow(deprecated)]
         self.oam_dma_in_flight()
     }
 
@@ -325,6 +381,10 @@ pub trait Bus {
     /// GET (the sample fetch) rather than a halt/dummy/align cycle? The overlap
     /// loop advances OAM on non-GET (halt) cycles only — the GET steals an OAM
     /// slot. Default `false`.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn dmc_dma_last_was_get(&self) -> bool {
         false
     }
@@ -346,6 +406,10 @@ pub trait Bus {
     /// PENDING (not-yet-latched) `$4014` OAM DMA (the counter-collapse boundary
     /// case; an already-in-flight OAM keeps its own latched halt address).
     /// Default `0` (no DMC event).
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn dmc_overlap_begin(&mut self, halted_addr: u16) -> u32 {
         let _ = halted_addr;
         0
@@ -355,18 +419,30 @@ pub trait Bus {
     /// Replays the held CPU read's side-effect, then (if OAM still owes) advances
     /// one OAM slot. Mirrors lockstep's noop-loop body (`replay_dma_noop_read` +
     /// `clock_oam_dma_cycle`) minus the time tick. Default no-op.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn dmc_overlap_noop_cycle(&mut self) {}
 
     /// Program M (M-2, exact): the DMC GET cycle — owns the memory read; OAM is
     /// STALLED (does NOT advance). Fetches + delivers the sample and clears the
     /// DMC-DMA pending state. Mirrors lockstep's get block + the R1
     /// `dmc_dma_step` GET. Default no-op.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn dmc_overlap_get_cycle(&mut self) {}
 
     /// Program M (M-2, exact): the post-GET realign stall — ONE extra OAM-stalled
     /// cycle (OAM does NOT advance) so the next OAM read resumes on a later get,
     /// mirroring lockstep's `if dma_cycles_owed > 0 { tick }`. The cycle the prior
     /// per-cycle scaffold was MISSING. Default no-op.
+    #[deprecated(
+        since = "2.7.5",
+        note = "no caller since the v2.0.0 one-clock scheduler; removal is decided at v2.9.0 (ADR 0041)"
+    )]
     fn dmc_overlap_realign_cycle(&mut self) {}
 
     /// W3-Stage-1 (`mc-r1-dma-unified`): is ANY DMA work pending for the
