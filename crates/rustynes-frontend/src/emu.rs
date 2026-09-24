@@ -652,6 +652,15 @@ pub struct EmuCore {
     /// SHA-256 of the loaded FDS disk (keys the `.fds.sav` sidecar).
     #[cfg(not(target_arch = "wasm32"))]
     pub fds_disk_sha256: Option<[u8; 32]>,
+    /// v2.7.3 (FE-01) — the loaded cartridge's battery RAM, bound to its
+    /// `.sav` file. `None` for a cart without a battery, before any ROM loads,
+    /// and when an existing `.sav` could not be used (it is then left
+    /// untouched). Set by [`Self::attach_battery`] at the two ROM-load sites,
+    /// never by [`Self::set_nes`]: that setter also re-installs the SAME
+    /// running `Nes` (the input-binding reload), and loading the file there
+    /// would roll live save RAM back to the last write.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub battery: Option<crate::battery_save::BatterySave>,
     /// v1.2.0 (T-110-E2) — Lua `emu.setInput` per-port button override, applied
     /// at the next [`Self::latch`] (the deterministic late-latch point, the same
     /// place a real keypress enters) then consumed (one-shot per command).
@@ -767,6 +776,8 @@ impl EmuCore {
             thr_release_pred_ms: 0.0,
             #[cfg(not(target_arch = "wasm32"))]
             fds_disk_sha256: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            battery: None,
             #[cfg(feature = "scripting")]
             script_input_override: [None, None],
             #[cfg(all(not(target_arch = "wasm32"), feature = "av-record"))]
@@ -1676,6 +1687,52 @@ impl EmuCore {
             }
             Err(e) => eprintln!("rustynes: FDS disk save failed {}: {e}", path.display()),
         }
+    }
+
+    /// v2.7.3 (FE-01) — bind the just-installed cartridge's battery RAM to its
+    /// `.sav`, loading the file first. Call AFTER [`Self::set_nes`] for a newly
+    /// loaded ROM, and after [`Self::detach_battery`] released the previous one.
+    /// A Vs. `DualSystem` cabinet is not persisted (it installs through
+    /// [`Self::set_dual`], and the four `DualSystem` boards carry no battery).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn attach_battery(&mut self, data_dir: Option<&std::path::Path>) {
+        self.battery = None;
+        let (Some(dir), Some(nes)) = (data_dir, self.nes.as_mut()) else {
+            return;
+        };
+        match crate::battery_save::BatterySave::attach(nes, dir) {
+            Ok(Some(save)) => {
+                eprintln!("rustynes: battery save -> {}", save.path().display());
+                self.battery = Some(save);
+            }
+            Ok(None) => {}
+            Err(e) => eprintln!("rustynes: battery save not loaded, and will not be written: {e}"),
+        }
+    }
+
+    /// v2.7.3 (FE-01) — write the battery RAM if it changed. Without `force`
+    /// this is the once-per-produced-frame call and compares only every
+    /// [`crate::battery_save::CHECK_PERIOD_FRAMES`] frames. A failed write is
+    /// logged and retried at the next comparison.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn flush_battery(&mut self, force: bool) {
+        let (Some(save), Some(nes)) = (self.battery.as_mut(), self.nes.as_ref()) else {
+            return;
+        };
+        if let Err(e) = save.flush(nes, force) {
+            eprintln!(
+                "rustynes: battery save failed {}: {e}",
+                save.path().display()
+            );
+        }
+    }
+
+    /// v2.7.3 (FE-01) — final write for the outgoing cartridge, then unbind it.
+    /// Call BEFORE a new ROM replaces the `Nes`, on close, and on exit.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn detach_battery(&mut self) {
+        self.flush_battery(true);
+        self.battery = None;
     }
 }
 

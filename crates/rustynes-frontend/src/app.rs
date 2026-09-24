@@ -1423,6 +1423,9 @@ impl App {
             // it described. Harmless today only because the status path is
             // guarded on a ROM being present — exactly the kind of coupling
             // that stops being harmless quietly.
+            // v2.7.3 (FE-01) — the final battery write goes before the ROM.
+            #[cfg(not(target_arch = "wasm32"))]
+            emu.detach_battery();
             emu.clear_rom();
             emu.perf.clear();
             emu.present_fb.clear();
@@ -1714,9 +1717,15 @@ impl App {
         {
             self.dual_mode = dual_cabinet.is_some();
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        let data_dir = self.data_dir.clone();
         {
             let mut guard = self.emu.lock();
             let emu = &mut *guard;
+            // v2.7.3 (FE-01) — the outgoing cartridge's final battery write,
+            // before its `Nes` is replaced.
+            #[cfg(not(target_arch = "wasm32"))]
+            emu.detach_battery();
             emu.frame_duration = nes.frame_duration();
             emu.next_frame_time = Some(Instant::now() + emu.frame_duration);
             emu.audio_buf.clear();
@@ -1740,6 +1749,10 @@ impl App {
             {
                 emu.set_nes(nes);
             }
+            // v2.7.3 (FE-01) — load the incoming cartridge's `.sav` under the
+            // same lock, so the emulation thread cannot run a frame first.
+            #[cfg(not(target_arch = "wasm32"))]
+            emu.attach_battery(data_dir.as_deref());
         }
         // v1.6.0 "Studio" A2 — the new ROM invalidates any TAStudio session
         // (it anchored on the previous game); end it so the editor can't
@@ -2175,6 +2188,15 @@ impl App {
             }
         }
         Some(nes)
+    }
+
+    /// The once-per-produced-frame save flush: the FDS writable disk (v2.2.0;
+    /// a `disk_is_dirty()` check when clean or non-FDS) and the cartridge's
+    /// battery RAM (v2.7.3, FE-01; compared once a second).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn flush_cartridge_saves(&self) {
+        self.flush_fds_save();
+        self.emu.lock().flush_battery(false);
     }
 
     /// Flush the FDS writable disk (see [`crate::emu::EmuCore::flush_fds_save`]).
@@ -7370,9 +7392,8 @@ impl App {
         // build. `post_produce_housekeeping` is the one point both regimes share.
         self.detached.request_redraw_tick();
 
-        // v2.2.0 — persist the FDS writable disk if it changed this frame.
-        // Cheap when clean / non-FDS (a `disk_is_dirty()` check only).
-        self.flush_fds_save();
+        // Persist the FDS writable disk and the battery RAM if they changed.
+        self.flush_cartridge_saves();
 
         // Push the measured fps + movie status into the debugger so the
         // user can read them from the top toolbar. One scoped lock builds
@@ -8680,7 +8701,13 @@ impl App {
         // regime). Locks internally, so the cluster guard above is dropped.
         #[cfg(not(target_arch = "wasm32"))]
         self.resolve_pacing();
-        self.emu.lock().set_nes(nes);
+        {
+            let mut guard = self.emu.lock();
+            guard.set_nes(nes);
+            // v2.7.3 (FE-01) — the initial ROM's `.sav`, before its first frame.
+            #[cfg(not(target_arch = "wasm32"))]
+            guard.attach_battery(self.data_dir.as_deref());
+        }
         // v1.6.0 "Studio" A2 — a fresh ROM here invalidates any prior TAStudio
         // session (it anchored on the previous `Nes`).
         if let Some(d) = self.debugger.as_mut() {
@@ -10921,6 +10948,9 @@ impl ApplicationHandler<AppEvent> for App {
             // lost on quit. No-op when clean / non-FDS. Native-only.
             #[cfg(not(target_arch = "wasm32"))]
             self.flush_fds_save();
+            // v2.7.3 (FE-01) — the final battery write on quit.
+            #[cfg(not(target_arch = "wasm32"))]
+            self.emu.lock().detach_battery();
             // v2.7.0 — save the RA progress sidecar on quit. No-op when no RA
             // session / game. Native-only + feature-gated.
             #[cfg(all(not(target_arch = "wasm32"), feature = "retroachievements"))]

@@ -2023,6 +2023,36 @@ v1.0.0 added a `[ui]` section and a few top-level keys:
 - Stored in `directories::ProjectDirs::data_dir() / "RustyNES" / "saves" / "<rom-sha256>" / "slot-N.rns"`.
 - Format: tagged sections per chip with version header. See the module-level rustdoc of [`crates/rustynes-core/src/save_state.rs`](../crates/rustynes-core/src/save_state.rs) for the on-wire layout (`HEADER` magic + format version + truncated ROM SHA-256 tag, followed by `BUS / CPU / PPU / APU / MAP` sections in any order with per-section version bytes). The CHANGELOG `[Unreleased]` entries also document per-chip section version bumps as they happen (e.g., MMC5 v2→v3 when vertical split-screen landed).
 
+## Battery saves (`.sav`, native, v2.7.3)
+
+A cartridge's battery-backed RAM — the in-game save — is kept in
+`<data_dir>/battery/<rom-sha256>.sav`, the raw bytes of `Nes::sram()`. Before
+v2.7.3 the desktop kept no such file: an in-game save survived only inside a
+save state. The module is [`battery_save`](../crates/rustynes-frontend/src/battery_save.rs).
+
+- **Only a cartridge whose header sets the battery bit** (`Nes::has_battery()`)
+  is persisted. `sram()` is not that question: NROM, MMC1 and MMC3 expose work
+  RAM through it whatever the header says.
+- **Loaded** at ROM load, under the same `EmuCore` lock that installs the `Nes`,
+  so no frame runs first. Written through `write_atomic` when the live bytes
+  differ from the last write: compared once a second while running, and always
+  at ROM switch, close and exit. There is no core dirty flag; "clean" means equal
+  to the last write.
+- **Never clobbers a save it did not read.** A `.sav` that cannot be read, or
+  whose length is not the cartridge's save size, is left untouched and the
+  session is not persisted (logged).
+- **Keyed on the full-file hash**, like save states, so a header correction
+  starts a new file; the old one is kept.
+- **Loading a save state** restores the save RAM it captured, and the next
+  comparison writes that to the `.sav`, as on a console.
+- **Known limitation: power-on movies.** `StartPoint::PowerOn` playback
+  power-cycles the console, which does not clear cartridge RAM. That was already
+  true within a session. With `.sav` loading it is also true across launches, so
+  a power-on movie recorded without a save can diverge where a `.sav` exists.
+  Not changed here; recorded for a later decision.
+- Not persisted: a Vs. `DualSystem` cabinet (none of the four boards has a
+  battery), the web build (no filesystem store), and mobile (v2.7.4).
+
 ## ROM file handling
 
 - Drag-and-drop a `.nes` file → load it.

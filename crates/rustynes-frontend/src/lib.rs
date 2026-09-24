@@ -25,6 +25,13 @@ pub mod app;
 /// where the loss is a user's game progress.
 pub mod atomic_write;
 pub mod audio;
+/// v2.7.3 "Hearth" (FE-01) — cartridge battery RAM, persisted to disk.
+///
+/// Files live at `<data_dir>/battery/<rom_sha256>.sav`. Until this release the
+/// desktop kept no in-game save at all outside a save state: nothing here read
+/// `Nes::sram()`. Native-only (filesystem); the web build has no `.sav` store.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod battery_save;
 // v1.7.0 "Forge" H3 — frontend stereo output DSP (panning / Schroeder reverb /
 // headphone crossfeed). Bypass-by-default (center pan, 0% reverb, 0 crossfeed)
 // reproduces today's mono-duplicated-to-stereo output bit-for-bit.

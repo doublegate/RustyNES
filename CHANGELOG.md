@@ -26,6 +26,17 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed — desktop
+
+- **Battery saves persist on the desktop.** A cartridge with a battery now
+  keeps its in-game save in `<data_dir>/battery/<rom-sha256>.sav`: loaded when
+  the ROM loads, and written when it changes (checked once a second, and always
+  on ROM switch, close and exit). Until now the desktop kept no such file, and
+  an in-game save survived only inside a save state. Only carts whose header
+  sets the battery bit are persisted, and a file that cannot be used is left
+  untouched rather than overwritten (frontend ledger FE-01). New:
+  `Nes::has_battery()`.
+
 ## [2.7.2] - 2026-09-23 - "Bankroll" (every bank the cartridge has, and nothing it has not)
 
 ### Fixed — mapper memory
