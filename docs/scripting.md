@@ -70,6 +70,22 @@ The runaway-loop guard is shared in spirit: piccolo's `Fuel` is fed the same
 per-frame instruction budget (`DEFAULT_INSTRUCTION_BUDGET`, 1,000,000), and
 exhaustion surfaces as a `ScriptError::Budget`.
 
+On the native (mlua) backend, v2.7.3 closed three ways around the sandbox's
+limits (frontend audit SEC-02 / SEC-03):
+
+- **The budget cannot be caught.** The instruction hook raises an ordinary Lua
+  error, and `pcall`, `xpcall` and `coroutine.resume` catch ordinary errors, so a
+  runaway loop wrapped in any of them used to catch its own abort and run
+  forever, holding the emulator lock. The sandbox replaces those three with
+  wrappers that re-raise once the budget has tripped this frame. Ordinary errors
+  are still caught as usual.
+- **Coroutines are under the budget.** The hook was bound to the main thread,
+  and mlua removed it inside every coroutine, so a loop in a coroutine ran with
+  no budget at all. It is now a global hook, which Lua copies into each new
+  coroutine.
+- **The heap is capped at 64 MiB.** An allocation past it fails with a Lua
+  memory error rather than exhausting the host.
+
 ## Loading a script
 
 Open the console: **Debug → Lua Script** (or the toolbar "Lua" checkbox in the

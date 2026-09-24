@@ -43,6 +43,13 @@ cycle-accurate core later replaced.
   size was trusted when sizing its decode buffer, so a small file could ask for
   gigabytes. Images are now refused past 16384 pixels a side or 4096 x 4096 in
   total, before anything is allocated (frontend audit SEC-01).
+- **A Lua script can no longer hang the emulator or exhaust its memory.** The
+  per-frame instruction budget could be caught by `pcall`, `xpcall` or
+  `coroutine.resume`, so a wrapped runaway loop ran forever holding the
+  emulator lock. It now escapes every catcher. And a loop inside a coroutine had
+  no budget at all, because the hook was removed inside coroutines; it is now
+  global. The script heap is capped at 64 MiB (frontend audit SEC-02, SEC-03,
+  and FE-02, found while fixing SEC-03).
 
 ## [2.7.2] - 2026-09-23 - "Bankroll" (every bank the cartridge has, and nothing it has not)
 
