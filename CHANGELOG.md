@@ -35,9 +35,12 @@ cycle-accurate core later replaced.
   the bridge ended the app with no save and no report -- including in the calls
   that were meant to catch it. They are now built to recover
   (`release-mobile`, +18% native size, no measurable speed cost), every native
-  entry point contains a failure, and if one ever happens the game keeps
-  running, any netplay session ends, and the app says so (frontend audit
-  MOB-03, MOB-07).
+  entry point contains a failure. A failure while a frame runs is caught
+  inside the bridge itself -- the generated Swift would otherwise turn it into
+  a crash, and the Android frame loop did not catch it -- so the app stays
+  open, the game freezes rather than running on from a half-updated machine,
+  any netplay session ends, and the app says so; reopening the game or loading
+  a save state continues (frontend audit MOB-03, MOB-07).
 - **Battery saves persist on Android and iOS.** An in-game save now survives a
   relaunch on both phones, with the desktop's rules: only cartridges whose
   header sets the battery bit, and a save that cannot be used is left untouched

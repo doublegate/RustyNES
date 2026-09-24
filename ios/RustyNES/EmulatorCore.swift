@@ -539,7 +539,7 @@ final class EmulatorCore {
         // v2.7.4 (audit MOB-07): the bridge contained a panic and carried on.
         case .recoveredFromInternalError:
             return String(
-                localized: "RustyNES recovered from an internal error. Any netplay session was ended. The game is still running; consider saving or reloading."
+                localized: "RustyNES stopped the game after an internal error. Any netplay session was ended. Reopen the game or load a save state to continue."
             )
         }
     }

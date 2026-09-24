@@ -39,7 +39,7 @@ Settings for A6-A7.
 | A9 | AND-04 | Open a ROM from a cloud-backed folder (Drive) | No freeze or "not responding" while it loads |
 | A10 | AND-04 | Save, load and delete slots in the save-state sheet | Works; no stutter |
 | A11 | AND-02 | Play for a minute with the Bitmap renderer (the default) | No new stutter; the menus and HUD respond |
-| A12 | MOB-07 | (only if a crash reproduces) | The game keeps running and a message says the app recovered |
+| A12 | MOB-07 | (only if a crash reproduces) | The app stays open, the game freezes, and a message says to reopen it or load a save state |
 
 ## iOS
 

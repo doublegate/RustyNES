@@ -547,11 +547,12 @@ pub enum HostWarning {
     /// guaranteed across the engine-timebase boundary (ADR 0028). The sole producer is
     /// [`NesController::movie_play`].
     PreTimebaseMovie,
-    /// v2.7.4 (frontend audit MOB-07) — a call panicked inside the bridge and
-    /// the emulator carried on. The panic was contained (the mobile libraries
-    /// unwind since v2.7.4), but it may have left the emulator mid-update, so
-    /// any netplay session was ended; the game keeps running and the player can
-    /// save or reload. Queued once per panic by the recovery in
+    /// v2.7.4 (frontend audit MOB-07) — a call panicked inside the bridge. The
+    /// panic was contained (the mobile libraries unwind since v2.7.4), but it
+    /// may have left the emulator mid-update, so any netplay session was ended
+    /// and the machine is frozen: the app stays open, the picture holds, and
+    /// no further emulated cycle runs until the player reopens the game, power
+    /// cycles, or loads a save state. Queued once per panic by the recovery in
     /// `NesController::lock`.
     RecoveredFromInternalError,
 }
@@ -572,9 +573,9 @@ impl HostWarning {
                  input replay proceeds, but exact framebuffer/audio reproduction is not \
                  guaranteed across the engine-timebase boundary (see ADR 0028)"
                 .to_string(),
-            Self::RecoveredFromInternalError => "RustyNES recovered from an internal error. \
-                 Any netplay session was ended. The game is still running; consider \
-                 saving or reloading."
+            Self::RecoveredFromInternalError => "RustyNES stopped the game after an internal \
+                 error. Any netplay session was ended. Reopen the game or load a save \
+                 state to continue."
                 .to_string(),
         }
     }
@@ -604,6 +605,11 @@ pub fn host_warning_message(kind: HostWarning) -> String {
 const MAX_ROM_BYTES: usize = 16 * 1024 * 1024;
 
 /// Mutable state behind the controller's lock.
+// Four independent flags (three netplay status bits and `frozen`), each read
+// on its own by a different caller; folding them into an enum would encode
+// combinations that are all legal, so the lint's state-machine advice does
+// not apply.
+#[allow(clippy::struct_excessive_bools)]
 struct Inner {
     nes: Nes,
     sample_rate: u32,
@@ -657,6 +663,13 @@ struct Inner {
     /// English so hosts can localize; the legacy [`NesController::drain_warnings`] maps
     /// each code back through [`HostWarning::message`] for byte-identical output.
     warnings: Vec<HostWarning>,
+    /// v2.7.4 — set when a panic poisoned the lock (see [`NesController::lock`]).
+    /// A frozen machine runs no further emulated cycle: the frame paths return
+    /// the last picture instead, because the panic may have left the core
+    /// half-way through an update and emulating on from there could, for
+    /// instance, let a confused game overwrite its own battery save. Cleared by
+    /// a fresh start -- a new ROM, a power cycle, or a loaded save state.
+    frozen: bool,
 }
 
 /// The handle the mobile shells drive the emulator through.
@@ -703,6 +716,7 @@ impl NesController {
                 g.netplay_last_stalled = true;
             }
             g.warnings.push(HostWarning::RecoveredFromInternalError);
+            g.frozen = true;
             g
         })
     }
@@ -713,6 +727,45 @@ impl NesController {
         for (p, m) in self.masks.iter().enumerate() {
             g.nes
                 .set_buttons(p, Buttons::from_bits_truncate(m.load(Ordering::Acquire)));
+        }
+    }
+
+    /// Run a frame path with its panics contained here, not in the bindings
+    /// (v2.7.4). The frame methods are not throwing methods in the generated
+    /// Kotlin and Swift, so a panic that reached `UniFFI`'s own guard came out
+    /// as `try!` in Swift, which aborts the app, and as an `InternalException`
+    /// the Android frame loop does not catch. Here the panic unwinds out of
+    /// `body`, dropping the guard and so poisoning the lock; taking the lock
+    /// again runs the MOB-07 recovery, which ends netplay, warns the host once
+    /// and freezes the machine; then `frozen` answers for the frame instead.
+    /// A frozen machine takes the same `frozen` path without running `body`.
+    ///
+    /// Only the frame paths are wrapped: they are the calls that execute
+    /// emulated cycles, and the ones a host makes sixty times a second, so the
+    /// ones where a core defect surfaces. Other methods keep `UniFFI`'s guard.
+    fn contained_frame<T>(
+        &self,
+        body: impl FnOnce(&Self, &mut Inner) -> T,
+        frozen: impl FnOnce(&mut Inner) -> T,
+    ) -> T {
+        let ran = catch_ffi_panic(|| {
+            let mut g = self.lock();
+            if g.frozen {
+                return None;
+            }
+            let value = body(self, &mut g);
+            drop(g);
+            Some(value)
+        });
+        match ran {
+            Ok(Some(value)) => value,
+            Ok(None) => frozen(&mut self.lock()),
+            Err(msg) => {
+                // The bridge has no logger (the shims own theirs); stderr
+                // reaches the Xcode console, and the host shows the warning.
+                eprintln!("rustynes-mobile: a frame panicked; the machine is frozen: {msg}");
+                frozen(&mut self.lock())
+            }
         }
     }
 
@@ -768,6 +821,7 @@ impl NesController {
                 netplay_last_stalled: false,
                 netplay_relayed: false,
                 warnings: Vec::new(),
+                frozen: false,
             }),
         }))
     }
@@ -786,6 +840,7 @@ impl NesController {
         })?;
         let mut g = self.lock();
         g.nes = nes;
+        g.frozen = false;
         self.clear_input();
         g.sample_rate = sample_rate;
         // A new cartridge invalidates any in-flight movie + HD-pack + script.
@@ -819,26 +874,36 @@ impl NesController {
     /// The native hot path borrows the framebuffer pointer directly instead of
     /// copying; this owned-`Vec` form is the typed-surface convenience.
     pub fn run_frame(&self) -> Vec<u8> {
-        let mut g = self.lock();
-        self.latch_input(&mut g);
-        pre_tick_movie(&mut g);
-        let fb = g.nes.run_frame().to_vec();
-        post_frame_script(&mut g);
-        post_frame_ra(&mut g);
-        drop(g);
-        fb
+        self.contained_frame(
+            |this, g| {
+                this.latch_input(g);
+                pre_tick_movie(g);
+                #[cfg(test)]
+                injected_frame_fault();
+                let fb = g.nes.run_frame().to_vec();
+                post_frame_script(g);
+                post_frame_ra(g);
+                fb
+            },
+            |g| g.nes.framebuffer().to_vec(),
+        )
     }
 
     /// Run one frame and discard the framebuffer copy — for callers that read
     /// the framebuffer through the native surface path and only need the tick.
     pub fn step_frame(&self) {
-        let mut g = self.lock();
-        self.latch_input(&mut g);
-        pre_tick_movie(&mut g);
-        let _ = g.nes.run_frame();
-        post_frame_script(&mut g);
-        post_frame_ra(&mut g);
-        drop(g);
+        self.contained_frame(
+            |this, g| {
+                this.latch_input(g);
+                pre_tick_movie(g);
+                #[cfg(test)]
+                injected_frame_fault();
+                let _ = g.nes.run_frame();
+                post_frame_script(g);
+                post_frame_ra(g);
+            },
+            |_| (),
+        );
     }
 
     /// Drain the audio samples produced since the last call (interleaved mono
@@ -920,7 +985,9 @@ impl NesController {
 
     /// Cold power-cycle (re-randomises power-on state from the seeded PRNG).
     pub fn power_cycle(&self) {
-        self.lock().nes.power_cycle();
+        let mut g = self.lock();
+        g.nes.power_cycle();
+        g.frozen = false;
     }
 
     /// Encode the entire emulator state into a `.rns` save-state blob. The blob
@@ -950,6 +1017,8 @@ impl NesController {
         g.nes.restore(&data).map_err(|e| MobileError::SaveState {
             reason: e.to_string(),
         })?;
+        // A whole snapshot replaced whatever a contained panic left behind.
+        g.frozen = false;
         // The restore overwrote the core's controller latch with the snapshot's
         // state. Before v2.7.4 the host masks were re-applied here; they now
         // live outside the lock and every frame latches them before it runs
@@ -1735,22 +1804,28 @@ impl NesController {
     /// - **No session**: returns a stalled tick (the caller should not call this
     ///   when `!np_is_active()`, but it is safe).
     pub fn np_advance_frame(&self, local_mask: u8) -> NpTick {
-        let mut g = self.lock();
-        let tick = match g.netplay.take() {
-            Some(NetplaySession::Negotiating(nat, is_host)) => {
-                np_tick_negotiating(&mut g, *nat, is_host)
-            }
-            Some(NetplaySession::Connecting(conn, is_host)) => {
-                np_tick_connecting(&mut g, *conn, is_host)
-            }
-            Some(NetplaySession::InGame(session, is_host)) => {
-                np_tick_in_game(&mut g, *session, is_host, local_mask)
-            }
-            None => NpTick::STALLED,
-        };
-        g.netplay_last_stalled = tick.stalled;
-        drop(g);
-        tick
+        self.contained_frame(
+            |_, g| {
+                #[cfg(test)]
+                injected_frame_fault();
+                let tick = match g.netplay.take() {
+                    Some(NetplaySession::Negotiating(nat, is_host)) => {
+                        np_tick_negotiating(g, *nat, is_host)
+                    }
+                    Some(NetplaySession::Connecting(conn, is_host)) => {
+                        np_tick_connecting(g, *conn, is_host)
+                    }
+                    Some(NetplaySession::InGame(session, is_host)) => {
+                        np_tick_in_game(g, *session, is_host, local_mask)
+                    }
+                    None => NpTick::STALLED,
+                };
+                g.netplay_last_stalled = tick.stalled;
+                tick
+            },
+            // Recovery already ended any session, so a frozen tick is a stall.
+            |_| NpTick::STALLED,
+        )
     }
 
     /// Tear any netplay session down and return to single-player. No-op if idle.
@@ -2455,7 +2530,10 @@ const fn port_index(port: u32) -> Result<usize, MobileError> {
 /// `UniFFI` does not generate and so does not wrap. A panic escaping an
 /// `extern "C"` function aborts the process (Rust 1.81+); caught here, the shim
 /// logs the message and returns a harmless value -- a null handle, a dropped
-/// frame -- and the app keeps running.
+/// frame -- and the app keeps running. The bridge's own frame paths use it
+/// too (`NesController::contained_frame`), because `UniFFI`'s wrapping of a
+/// non-throwing method hands the panic to the host as an error it does not
+/// expect.
 ///
 /// **Only effective in an unwinding build.** The workspace `release` profile
 /// aborts on panic, so the mobile libraries are built with `release-mobile`,
@@ -2478,6 +2556,26 @@ pub fn catch_ffi_panic<T>(f: impl FnOnce() -> T) -> Result<T, String> {
             .or_else(|| payload.downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "panic with a non-string payload".to_owned())
     })
+}
+
+// A test-only fault injector for the frame paths' panic containment: the
+// next frame body on this thread panics. Compiled out of every real build.
+#[cfg(test)]
+thread_local! {
+    static PANIC_IN_NEXT_FRAME: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn panic_in_next_frame() {
+    PANIC_IN_NEXT_FRAME.with(|c| c.set(true));
+}
+
+#[cfg(test)]
+fn injected_frame_fault() {
+    assert!(
+        !PANIC_IN_NEXT_FRAME.with(|c| c.replace(false)),
+        "injected mid-frame panic"
+    );
 }
 
 /// The crate version string (`CARGO_PKG_VERSION`), exposed to the shells so the
@@ -3114,6 +3212,76 @@ mod tests {
         // Recovered once, warned once: later calls are ordinary.
         ctrl.step_frame();
         assert!(ctrl.drain_warning_codes().is_empty());
+    }
+
+    /// v2.7.4 (review of MOB-03): a panic while a frame runs must not reach the
+    /// host. `run_frame` is not a throwing method in the generated bindings,
+    /// so a panic `UniFFI` catches becomes `try!` in Swift (the app aborts)
+    /// and an `InternalException` the Android frame loop does not catch. The
+    /// bridge contains it itself, freezes the machine (no further emulated
+    /// cycle runs on a state the panic may have left half-updated), warns
+    /// once, and thaws on a fresh start: a new ROM, a power cycle, or a loaded
+    /// state.
+    #[test]
+    fn a_panic_mid_frame_freezes_the_game_instead_of_reaching_the_host() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.run_frame();
+        let before = ctrl.frame();
+
+        panic_in_next_frame();
+        let fb = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctrl.run_frame()))
+            .expect("the panic must be contained inside the bridge");
+        assert_eq!(
+            fb.len(),
+            (FRAME_WIDTH * FRAME_HEIGHT * 4) as usize,
+            "a whole picture"
+        );
+        assert_eq!(
+            ctrl.drain_warning_codes(),
+            vec![HostWarning::RecoveredFromInternalError]
+        );
+
+        // Frozen: every frame path returns without emulating.
+        ctrl.run_frame();
+        ctrl.step_frame();
+        let _ = ctrl.np_advance_frame(0);
+        assert_eq!(ctrl.frame(), before, "no cycle may run after the panic");
+        assert!(ctrl.drain_warning_codes().is_empty(), "warned once");
+
+        // The same through step_frame and np_advance_frame, each thawed by one
+        // of the three fresh starts.
+        ctrl.power_cycle();
+        let cycled = ctrl.frame();
+        // Two frames: the first after a cold boot does not bump the counter.
+        ctrl.run_frame();
+        ctrl.run_frame();
+        assert!(ctrl.frame() > cycled, "a power cycle thaws the machine");
+        let state = ctrl.save_state();
+
+        panic_in_next_frame();
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctrl.step_frame()))
+            .expect("contained in step_frame");
+        let frozen = ctrl.frame();
+        ctrl.step_frame();
+        assert_eq!(ctrl.frame(), frozen);
+        ctrl.load_state(state).expect("restore");
+        let restored = ctrl.frame();
+        ctrl.step_frame();
+        assert_eq!(ctrl.frame(), restored + 1, "a loaded state thaws it");
+
+        panic_in_next_frame();
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctrl.np_advance_frame(0)))
+            .expect("contained in np_advance_frame");
+        let frozen = ctrl.frame();
+        ctrl.run_frame();
+        assert_eq!(ctrl.frame(), frozen);
+        ctrl.load_rom(tiny_nrom(), DEFAULT_SAMPLE_RATE)
+            .expect("reload");
+        let loaded = ctrl.frame();
+        ctrl.run_frame();
+        ctrl.run_frame();
+        assert!(ctrl.frame() > loaded, "a new ROM thaws it");
+        let _ = ctrl.drain_warning_codes();
     }
 
     #[test]
