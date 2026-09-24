@@ -194,6 +194,15 @@ is `request_redraw()` → `RedrawRequested` on rAF.)
   0 after. The audit's own example, a 1024-frame period, did not underrun either
   way. The Performance panel's latency readout reports the raised target. The
   ring is at least 16,384 samples, so a raised target keeps its resync band.
+- **A dead output stream is reopened (v2.7.3, frontend audit DESK-04).** When
+  cpal reports that the stream has ended (`DeviceNotAvailable`,
+  `HostUnavailable` or `StreamInvalidated`, not an xrun or an automatic
+  reroute), the output is flagged. Once per produced frame the host rebuilds the
+  stream over the **same** queue, at most every 2 s: on the device that was
+  asked for, or the default if it is gone, with the original rate, channels and
+  format. Keeping the queue means the emulation thread's producer is never
+  re-wired. Before this, audio stayed silent until restart. Not under automated
+  test (it needs a real device); the fatal-kind choice and the retry pacing are.
 - Underrun / overrun counters + occupancy are exposed in the debugger
   Performance panel (Phase 0).
 

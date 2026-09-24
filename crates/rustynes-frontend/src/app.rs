@@ -2190,13 +2190,30 @@ impl App {
         Some(nes)
     }
 
-    /// The once-per-produced-frame save flush: the FDS writable disk (v2.2.0;
-    /// a `disk_is_dirty()` check when clean or non-FDS) and the cartridge's
-    /// battery RAM (v2.7.3, FE-01; compared once a second).
+    /// The once-per-produced-frame host I/O: flush the FDS writable disk
+    /// (v2.2.0; a `disk_is_dirty()` check when clean or non-FDS) and the
+    /// cartridge's battery RAM (v2.7.3, FE-01; compared once a second), and
+    /// reopen a dead audio stream (v2.7.3, DESK-04; retried every 2 s).
     #[cfg(not(target_arch = "wasm32"))]
-    fn flush_cartridge_saves(&self) {
+    fn per_frame_host_io(&mut self) {
         self.flush_fds_save();
         self.emu.lock().flush_battery(false);
+        self.recover_audio();
+    }
+
+    /// v2.7.3 (frontend audit DESK-04) — when the audio stream has died
+    /// (device unplugged, Bluetooth dropped, audio server restarted), rebuild
+    /// it over the same queue, at most once every two seconds. Before this,
+    /// audio stayed silent until the app was restarted.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn recover_audio(&mut self) {
+        if let Some(audio) = self.audio.as_mut()
+            && audio.stream_failed()
+            && audio.try_reopen()
+        {
+            self.ui
+                .set_status(StatusMessage::info("Audio output reconnected"));
+        }
     }
 
     /// Flush the FDS writable disk (see [`crate::emu::EmuCore::flush_fds_save`]).
@@ -7392,8 +7409,8 @@ impl App {
         // build. `post_produce_housekeeping` is the one point both regimes share.
         self.detached.request_redraw_tick();
 
-        // Persist the FDS writable disk and the battery RAM if they changed.
-        self.flush_cartridge_saves();
+        // Persist cartridge saves; reopen a dead audio stream (DESK-04).
+        self.per_frame_host_io();
 
         // Push the measured fps + movie status into the debugger so the
         // user can read them from the top toolbar. One scoped lock builds

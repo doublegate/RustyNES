@@ -53,6 +53,10 @@ cycle-accurate core later replaced.
   buffer below one device callback, and the stream underran about once a
   second. The latency target now never drops below two device callbacks (frontend
   audit DESK-05; the audit's own 1024-frame example measured no underruns).
+- **Audio comes back after the output device goes away.** Unplugging headphones,
+  a Bluetooth drop or an audio-server restart used to leave the emulator silent
+  until restart. The stream is now reopened, on the same device or the default,
+  within about two seconds (frontend audit DESK-04).
 
 ### Security
 

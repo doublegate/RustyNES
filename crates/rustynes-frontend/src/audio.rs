@@ -46,6 +46,34 @@ const DEFAULT_CAPACITY: usize = 16_384;
 /// 50 ms band for its stop+refill resync).
 const RESYNC_EXCESS_MS: u32 = 50;
 
+/// v2.7.3 (frontend audit DESK-04) — the least time between two attempts to
+/// reopen a failed output stream, so an absent device is retried at a walk,
+/// not on every produced frame.
+const REOPEN_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// v2.7.3 (DESK-04) — whether a cpal stream error means the stream is dead.
+///
+/// Only three kinds do: the device went away, the host audio server went
+/// away, or the stream was invalidated. The rest leave it running: an `Xrun`
+/// is a glitch, `DeviceChanged` means cpal already followed the default device
+/// to its replacement, and `RealtimeDenied` only costs scheduling priority.
+/// Reopening on those would churn the device for nothing.
+#[must_use]
+pub const fn stream_error_is_fatal(kind: cpal::ErrorKind) -> bool {
+    matches!(
+        kind,
+        cpal::ErrorKind::DeviceNotAvailable
+            | cpal::ErrorKind::HostUnavailable
+            | cpal::ErrorKind::StreamInvalidated
+    )
+}
+
+/// v2.7.3 (DESK-04) — whether a reopen attempt may run now, given the last one.
+#[must_use]
+pub fn reopen_due(last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    last.is_none_or(|t| now.saturating_duration_since(t) >= REOPEN_BACKOFF)
+}
+
 /// Errors from audio init.
 #[derive(Debug, thiserror::Error)]
 pub enum AudioError {
@@ -644,8 +672,25 @@ pub struct AudioOutput {
     resync_samples: usize,
     /// v1.1.0 beta.2 — the optional graphic-EQ output stage.
     eq_stage: EqStage,
-    /// Live stream handle. Dropping it stops audio.
-    _stream: cpal::Stream,
+    /// Live stream handle. Dropping it stops audio. Held for its `Drop` and
+    /// replaced by [`Self::try_reopen`]; never read, hence the allow.
+    #[allow(dead_code)]
+    stream: cpal::Stream,
+    /// v2.7.3 (DESK-04) — the device name this output was asked for (`None` =
+    /// the host default), so a reopen picks the same device, or the default
+    /// if it is gone.
+    device_name: Option<String>,
+    /// The stream configuration it opened with. A reopen uses exactly this:
+    /// the core is already synthesising at `sample_rate`, and the queue holds
+    /// samples at that rate.
+    config: cpal::StreamConfig,
+    /// The sample format it opened with.
+    format: SampleFormat,
+    /// Set by the stream's error callback on a fatal error
+    /// ([`stream_error_is_fatal`]); cleared by a successful reopen.
+    failed: Arc<AtomicBool>,
+    /// When the last reopen was attempted ([`REOPEN_BACKOFF`]).
+    last_reopen: Option<std::time::Instant>,
 }
 
 impl AudioOutput {
@@ -751,7 +796,15 @@ impl AudioOutput {
         let queue = SampleQueue::with_capacity((latency_samples * 4).max(DEFAULT_CAPACITY));
         queue.set_start_threshold(latency_samples);
 
-        let stream = build_stream(&device, &config, format, queue.clone(), channels)?;
+        let failed = Arc::new(AtomicBool::new(false));
+        let stream = build_stream(
+            &device,
+            &config,
+            format,
+            queue.clone(),
+            channels,
+            failed.clone(),
+        )?;
         stream.play().map_err(|e| AudioError::Cpal(e.to_string()))?;
         Ok(Self {
             sample_rate,
@@ -762,8 +815,74 @@ impl AudioOutput {
             latency_samples,
             resync_samples,
             eq_stage: EqStage::new(sample_rate),
-            _stream: stream,
+            stream,
+            device_name: device_name.map(str::to_owned),
+            config,
+            format,
+            failed,
+            last_reopen: None,
         })
+    }
+
+    /// v2.7.3 (frontend audit DESK-04) — true once the output stream has
+    /// died (device unplugged, Bluetooth dropped, audio server restarted).
+    /// Before v2.7.3 nothing noticed: audio stayed silent until restart.
+    #[must_use]
+    pub fn stream_failed(&self) -> bool {
+        self.failed.load(Ordering::Relaxed)
+    }
+
+    /// v2.7.3 (DESK-04) — rebuild a failed stream over the SAME queue.
+    ///
+    /// Keeping the queue is the point: the emulation thread's
+    /// [`AudioProducer`] holds a clone of it and never has to be re-wired,
+    /// so audio resumes without restarting anything. The device is the one
+    /// asked for, or the host default if that one is gone, and the
+    /// configuration is the original, since the core already synthesises at
+    /// its rate. A device that cannot take it is logged and retried after
+    /// [`REOPEN_BACKOFF`]. Returns whether a new stream is playing.
+    pub fn try_reopen(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        if !reopen_due(self.last_reopen, now) {
+            return false;
+        }
+        self.last_reopen = Some(now);
+        let host = cpal::default_host();
+        let device = self
+            .device_name
+            .as_deref()
+            .and_then(|want| {
+                host.output_devices()
+                    .ok()
+                    .and_then(|mut it| it.find(|d: &cpal::Device| d.to_string() == want))
+            })
+            .or_else(|| host.default_output_device());
+        let Some(device) = device else {
+            eprintln!("rustynes: audio: no output device yet; retrying");
+            return false;
+        };
+        let stream = match build_stream(
+            &device,
+            &self.config,
+            self.format,
+            self.queue.clone(),
+            self.channels,
+            self.failed.clone(),
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("rustynes: audio: reopen failed ({e}); retrying");
+                return false;
+            }
+        };
+        if let Err(e) = stream.play() {
+            eprintln!("rustynes: audio: reopened stream will not play ({e}); retrying");
+            return false;
+        }
+        self.failed.store(false, Ordering::Relaxed);
+        self.stream = stream;
+        eprintln!("rustynes: audio: output reopened on {device}");
+        true
     }
 
     /// v2.8.0 Phase 5 — build a `Send` producer half over this output's
@@ -973,8 +1092,16 @@ fn build_stream(
     format: SampleFormat,
     queue: SampleQueue,
     channels: u16,
+    failed: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, AudioError> {
-    let err_fn = |e| eprintln!("cpal stream error: {e}");
+    // v2.7.3 (DESK-04) — a fatal error flags the output for reopening; before,
+    // it was only printed, and the stream stayed dead.
+    let err_fn = move |e: cpal::Error| {
+        if stream_error_is_fatal(e.kind()) {
+            failed.store(true, Ordering::Relaxed);
+        }
+        eprintln!("cpal stream error: {e}");
+    };
     let chans = usize::from(channels.max(1));
     // Reused mono scratch buffer — the real-time callback must not allocate
     // (v2.8.0 Phase 1; the old `vec![0.0; frames]` per callback is gone).
@@ -1281,6 +1408,31 @@ mod tests {
         }
         assert_eq!(simulate_with_drc(960, 1024), 0);
         assert_eq!(simulate_with_drc(4800, 1024), 0);
+    }
+
+    /// DESK-04 (v2.7.3): only the three kinds that end a stream trigger a
+    /// reopen. An xrun or an automatic reroute must not churn the device.
+    #[test]
+    fn only_a_dead_stream_is_reopened() {
+        use cpal::ErrorKind as K;
+        for fatal in [
+            K::DeviceNotAvailable,
+            K::HostUnavailable,
+            K::StreamInvalidated,
+        ] {
+            assert!(stream_error_is_fatal(fatal), "{fatal:?}");
+        }
+        for benign in [K::Xrun, K::DeviceChanged, K::RealtimeDenied, K::DeviceBusy] {
+            assert!(!stream_error_is_fatal(benign), "{benign:?}");
+        }
+    }
+
+    #[test]
+    fn a_reopen_is_retried_at_a_walk() {
+        let t0 = std::time::Instant::now();
+        assert!(reopen_due(None, t0), "the first attempt runs at once");
+        assert!(!reopen_due(Some(t0), t0 + REOPEN_BACKOFF / 2));
+        assert!(reopen_due(Some(t0), t0 + REOPEN_BACKOFF));
     }
 
     #[test]
