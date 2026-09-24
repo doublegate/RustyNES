@@ -32,7 +32,7 @@ The last release of the v2.7.x audit line: the core and frontend audit ledgers
 now have no open row. No emulation behaviour changes, so AccuracyCoin,
 nestest, and every golden are unaffected.
 
-### Performance — the core audit's proposals, measured
+### Performance — the core audit's proposals
 
 - **The audio buffer keeps its capacity between frames**, so each frame's audio
   is gathered into one allocation instead of regrowing from nothing: -0.89%

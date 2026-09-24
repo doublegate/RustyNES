@@ -895,7 +895,11 @@ maintainer decision) though below 3%. It affects only callers of
 libretro drain into their own buffer with `drain_audio_into`, which allocates
 nothing. The samples are untouched, so audio is byte-identical by construction.
 Why ~35 µs for about nine small reallocations is not established; the number is
-reported as measured.
+reported as measured. The kept capacity is clamped at 4,096 samples (from
+review on #553): otherwise a caller that once let audio pile up, such as the probe
+engine's ~24,000-sample undrained trials, would keep a buffer that size
+resident. A per-frame drain keeps about 1,024 slots, below the clamp, so the
+measured path is unchanged by it.
 
 Some of the audit's premises were also simply wrong, which the measurement
 makes moot but is worth recording:
