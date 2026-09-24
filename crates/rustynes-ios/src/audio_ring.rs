@@ -5,17 +5,17 @@
 //! is unit-tested on the workspace host build, the way `audio_dsp` is. The
 //! iOS-only `audio.rs` wires it to the cpal CoreAudio stream.
 //!
-//! - [`Ring`] — the lock-free single-producer / single-consumer sample queue,
+//! - [`Ring`](crate::audio_ring::Ring) — the lock-free single-producer / single-consumer sample queue,
 //!   moved here from `audio.rs` unchanged in its discipline, and given a batched
-//!   [`Ring::pop_into`] (one index load and one index store per device buffer,
+//!   [`Ring::pop_into`](crate::audio_ring::Ring::pop_into) (one index load and one index store per device buffer,
 //!   not per sample; IOS-03), a fill level, and a start threshold, so playback
 //!   starts from a filled buffer instead of underrunning its first callbacks.
-//! - [`Producer`] — dynamic rate control (IOS-02). The sink had none: the ring
+//! - [`Producer`](crate::audio_ring::Producer) — dynamic rate control (IOS-02). The sink had none: the ring
 //!   filled or drained at whatever rate the host clock and the audio clock
 //!   drifted apart, and nothing pulled it back to a target. The producer runs a
 //!   4-tap Hermite resampler whose ratio is steered by the ring's fill, the same
 //!   law the desktop uses.
-//! - [`fan_out`] — mono / stereo to the device's channel layout (IOS-09).
+//! - [`fan_out`](crate::audio_ring::fan_out) — mono / stereo to the device's channel layout (IOS-09).
 //!
 //! The resampler is the same algorithm as `rustynes-frontend/src/resampler.rs`
 //! (this project's own code, carrying no provenance header), copied because the
