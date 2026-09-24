@@ -115,7 +115,10 @@ const PRG_RAM_BANK: usize = 0x2000;
 const EXRAM_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE: usize = 0x0400;
 
-const SAVE_STATE_VERSION: u8 = 4;
+const SAVE_STATE_VERSION: u8 = 5;
+/// The PRG-RAM address space the MMC5 always presents: 64 KiB, the wiki's
+/// "compatible superset for all games" (see [`Mmc5::prg_ram_offset`]).
+const PRG_RAM_SUPERSET: usize = 0x1_0000;
 
 // ---------------------------------------------------------------------------
 // MMC5 audio mixer level (v2.1.6 "Expansion Audio")
@@ -442,6 +445,11 @@ pub struct Mmc5 {
     chr: Box<[u8]>,
     chr_is_ram: bool,
     prg_ram: Box<[u8]>,
+    /// The rest of the 64 KiB superset beyond the header's declared
+    /// `prg_ram` (v2.7.2). Declared RAM stays in `prg_ram` -- that is where
+    /// the battery save lives and where older save states put it -- and this
+    /// holds the pages a header under-declared. Saved as the v5 tail.
+    prg_ram_extra: Box<[u8]>,
     /// 2 KiB on-cart CIRAM (indexed via `nametable_address`).
     /// Sized to the maximum the bus exposes (2 KiB) — extra nametables go
     /// through ExRAM, not VRAM.
@@ -548,6 +556,15 @@ pub struct Mmc5 {
     audio_apu_phase: bool,
 }
 
+/// Where a CPU access lands in PRG-RAM terms (v2.7.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RamTarget {
+    /// The address is not a PRG-RAM access in the current mapping.
+    NotRam,
+    /// A PRG-RAM access landing at this offset of the 64 KiB space.
+    At(usize),
+}
+
 impl Mmc5 {
     /// Construct a new MMC5 mapper.
     ///
@@ -602,6 +619,8 @@ impl Mmc5 {
             chr,
             chr_is_ram,
             prg_ram: vec![0u8; prg_ram_size].into_boxed_slice(),
+            prg_ram_extra: vec![0u8; PRG_RAM_SUPERSET.saturating_sub(prg_ram_size)]
+                .into_boxed_slice(),
             vram: vec![0u8; 2 * NAMETABLE_SIZE].into_boxed_slice(),
             exram: [0u8; EXRAM_SIZE],
             prg_mode: 3,
@@ -649,6 +668,83 @@ impl Mmc5 {
         (self.prg_ram_protect_1 & 0x03) == 0b10 && (self.prg_ram_protect_2 & 0x03) == 0b01
     }
 
+    /// Offset into the PRG-RAM space for an 8 KiB bank value: bank x 8 KiB,
+    /// over a 64 KiB space.
+    ///
+    /// The wiki (`nesdev_wiki/MMC5.xhtml` §"PRG-RAM configurations") gives
+    /// four commercial layouts -- 8 KiB (EKROM), 2 x 8 KiB (ETROM), 32 KiB
+    /// (EWROM), 2 x 32 KiB -- with bit 2 as a chip select and open bus where
+    /// no chip answers. It also says iNES headers are unreliable here and that
+    /// "no ExROM game is known to write PRG-RAM with one bank value and then
+    /// attempt to read back the same data with a different bank value, [so]
+    /// emulating the PRG-RAM as 64K at all times can be used as a compatible
+    /// superset for all games". v2.7.2 first implemented the exact table and
+    /// the commercial oracle caught the cost: *L'Empereur* is ETROM (the wiki's
+    /// board table) but its NES 2.0 dump declares only the 8 KiB battery chip,
+    /// so its work-RAM chip floated and the game stopped at its logo. The
+    /// superset gives every game the RAM it expects whatever its header says.
+    /// The battery save is still the header's declared part (see `sram`).
+    fn prg_ram_offset(&self, bank: u8, off_8k: usize) -> usize {
+        let total = self.prg_ram.len() + self.prg_ram_extra.len();
+        (usize::from(bank & 0x07) * PRG_RAM_BANK + (off_8k & (PRG_RAM_BANK - 1))) % total.max(1)
+    }
+
+    /// Read a byte of the 64 KiB PRG-RAM space.
+    fn ram_get(&self, idx: usize) -> u8 {
+        if idx < self.prg_ram.len() {
+            self.prg_ram[idx]
+        } else {
+            self.prg_ram_extra[idx - self.prg_ram.len()]
+        }
+    }
+
+    /// Write a byte of the 64 KiB PRG-RAM space.
+    fn ram_set(&mut self, idx: usize, value: u8) {
+        if idx < self.prg_ram.len() {
+            self.prg_ram[idx] = value;
+        } else {
+            let base = self.prg_ram.len();
+            self.prg_ram_extra[idx - base] = value;
+        }
+    }
+
+    /// The byte a PRG-RAM access reads (0 for a non-RAM target, which the
+    /// caller never reaches for RAM).
+    fn ram_read(&self, t: RamTarget) -> u8 {
+        match t {
+            RamTarget::At(idx) => self.ram_get(idx),
+            RamTarget::NotRam => 0,
+        }
+    }
+
+    /// What a CPU access at `addr` reaches in PRG-RAM terms.
+    fn prg_ram_target(&self, addr: u16) -> RamTarget {
+        match addr {
+            // `$5113` always maps RAM, 8 KiB, at `$6000-$7FFF`.
+            0x6000..=0x7FFF => {
+                RamTarget::At(self.prg_ram_offset(self.prg_ram_bank, usize::from(addr - 0x6000)))
+            }
+            0x8000..=0xFFFF => {
+                let (slot, slot_size, region_off) = self.prg_window_lookup(addr);
+                let raw = self.prg_banks[slot];
+                if slot == 3 || raw.is_rom() {
+                    return RamTarget::NotRam;
+                }
+                // In a 16 KiB window the register's bit 0 is ignored and CPU
+                // A13 drives PRG A13 (wiki §"PRG Bankswitching").
+                #[allow(clippy::cast_possible_truncation)] // page is 7 bits
+                let page = raw.page() as u8;
+                let bank = if slot_size == PRG_BANK_16K {
+                    (page & !1) | u8::from(region_off >= PRG_BANK_8K)
+                } else {
+                    page
+                };
+                RamTarget::At(self.prg_ram_offset(bank, region_off))
+            }
+            _ => RamTarget::NotRam,
+        }
+    }
+
     /// Resolve a CPU PRG address (`$8000-$FFFF`) to either a ROM byte offset
     /// or, for PRG-RAM mapped into the window (PRG modes that allow it),
     /// a `(slot, offset)` indication. Returns `Some(byte)` if PRG-RAM was
@@ -672,13 +768,10 @@ impl Mmc5 {
             let off = (base + region_off) % self.prg_rom.len();
             self.prg_rom[off]
         } else {
-            // PRG-RAM at this slot. v0 supports a single 8 KiB PRG-RAM bank;
-            // the page bits are ignored.
-            if region_off < self.prg_ram.len() {
-                self.prg_ram[region_off & (self.prg_ram.len() - 1)]
-            } else {
-                0
-            }
+            // PRG-RAM at this slot, paged over the 64 KiB superset, where
+            // every page answers. (The exact per-board table, whose chip-less
+            // cells were open bus, was replaced during v2.7.2.)
+            self.ram_read(self.prg_ram_target(addr))
         }
     }
 
@@ -724,7 +817,7 @@ impl Mmc5 {
     /// Write into the PRG window. PRG-RAM writes honor the protect pair;
     /// ROM writes are silently dropped.
     fn write_prg_window(&mut self, addr: u16, value: u8) {
-        let (slot, _slot_size, region_off) = self.prg_window_lookup(addr);
+        let (slot, _slot_size, _region_off) = self.prg_window_lookup(addr);
         // `$5117` is always ROM; never writable.
         if slot == 3 {
             return;
@@ -736,9 +829,8 @@ impl Mmc5 {
         if !self.prg_ram_writable() {
             return;
         }
-        if region_off < self.prg_ram.len() {
-            let len = self.prg_ram.len();
-            self.prg_ram[region_off & (len - 1)] = value;
+        if let RamTarget::At(off) = self.prg_ram_target(addr) {
+            self.ram_set(off, value);
         }
     }
 
@@ -881,17 +973,34 @@ impl Mmc5 {
     /// (mode 0 or 1 — extended attributes is also a "nametable-mapped"
     /// mode for routing purposes; the per-tile-attribute interpretation
     /// is what's deferred).
+    /// How much of `prg_ram` (the header's declared RAM) is battery-backed:
+    /// all of it, except the 16 KiB two-chip ETROM layout, where "games with
+    /// 16K PRG-RAM only battery-save the first 8K". The superset's extra pages
+    /// are never part of the save, so save files keep the size they had.
+    const fn battery_len(&self) -> usize {
+        if self.prg_ram.len() == 0x4000 {
+            PRG_RAM_BANK
+        } else {
+            self.prg_ram.len()
+        }
+    }
+
     fn exram_is_nametable(&self) -> bool {
         matches!(self.exram_mode & 0x03, 0 | 1)
     }
 }
 
 impl Mapper for Mmc5 {
+    // The battery save. "Games with 16K PRG-RAM only battery-save the first
+    // 8K" (nesdev MMC5): ETROM's second chip is volatile work RAM, so it is
+    // not part of the save.
     fn sram(&self) -> &[u8] {
-        &self.prg_ram
+        let n = self.battery_len();
+        &self.prg_ram[..n]
     }
     fn sram_mut(&mut self) -> &mut [u8] {
-        &mut self.prg_ram
+        let n = self.battery_len();
+        &mut self.prg_ram[..n]
     }
     // v2.8.0 Phase 4 — MMC5: CPU-cycle hook + IRQ + frame-counter-
     // cadenced audio envelopes (+ expansion audio under `mapper-audio`).
@@ -905,14 +1014,20 @@ impl Mapper for Mmc5 {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // MMC5 maps almost the entire `$5000-$5FFF` window: audio at
-        // `$5000-$5015`, ExGfx config at `$5100-$5107`, PRG bank regs
-        // at `$5113-$5117`, CHR bank regs at `$5120-$512B`, upper-CHR
-        // bits at `$5130`, multiplier at `$5205-$5206`, scanline IRQ
-        // at `$5203-$5204`, split-screen at `$5200-$5207`, and ExRAM
-        // at `$5C00-$5FFF`. The `$4020-$4FFF` range is not mapped
-        // (per the default impl convention).
-        (0x4020..=0x4FFF).contains(&addr)
+        // v2.7.2's "no save RAM -> `$6000-$7FFF` floats" default does not apply:
+        // the header RAM is at least 8 KiB (`prg_ram_size`), so `sram()` is never
+        // empty. Nor does any PRG-RAM access float: over the 64 KiB superset
+        // every page answers (`prg_ram_target` returns `At` for all of them).
+        {
+            // MMC5 maps almost the entire `$5000-$5FFF` window: audio at
+            // `$5000-$5015`, ExGfx config at `$5100-$5107`, PRG bank regs
+            // at `$5113-$5117`, CHR bank regs at `$5120-$512B`, upper-CHR
+            // bits at `$5130`, multiplier at `$5205-$5206`, scanline IRQ
+            // at `$5203-$5204`, split-screen at `$5200-$5207`, and ExRAM
+            // at `$5C00-$5FFF`. The `$4020-$4FFF` range is not mapped
+            // (per the default impl convention).
+            (0x4020..=0x4FFF).contains(&addr)
+        }
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
@@ -981,16 +1096,8 @@ impl Mapper for Mmc5 {
             // the lockstep bus latches its own open-bus value).
             0x5000..=0x5FFF => 0,
 
-            // PRG-RAM at `$6000-$7FFF` (always 8 KiB; `$5113` selects
-            // a bank, but v0 only supports the default single bank).
-            0x6000..=0x7FFF => {
-                let off = (addr - 0x6000) as usize;
-                if off < self.prg_ram.len() {
-                    self.prg_ram[off]
-                } else {
-                    0
-                }
-            }
+            // PRG-RAM at `$6000-$7FFF`: always 8 KiB, bank from `$5113`.
+            0x6000..=0x7FFF => self.ram_read(self.prg_ram_target(addr)),
 
             // PRG-ROM / PRG-RAM windowed by `$5114-$5117`.
             0x8000..=0xFFFF => self.read_prg_window(addr),
@@ -1148,11 +1255,10 @@ impl Mapper for Mmc5 {
             }
             // PRG-RAM at `$6000-$7FFF`.
             0x6000..=0x7FFF => {
-                if self.prg_ram_writable() {
-                    let off = (addr - 0x6000) as usize;
-                    if off < self.prg_ram.len() {
-                        self.prg_ram[off] = value;
-                    }
+                if self.prg_ram_writable()
+                    && let RamTarget::At(off) = self.prg_ram_target(addr)
+                {
+                    self.ram_set(off, value);
                 }
             }
             // PRG window writes (PRG-RAM banks may be mapped here).
@@ -1624,6 +1730,8 @@ impl Mapper for Mmc5 {
         // accepted for forward-compat in `load_state` below.
         out.push(u8::from(self.audio_apu_phase));
         self.audio.write_tail(&mut out);
+        // v5 tail (v2.7.2): the superset's extra PRG-RAM pages.
+        out.extend_from_slice(&self.prg_ram_extra);
         out
     }
 
@@ -1652,6 +1760,7 @@ impl Mapper for Mmc5 {
         let expected = match version {
             3 => core_expected,
             4 => core_expected + 1 + Mmc5Audio::TAIL_LEN,
+            5 => core_expected + 1 + Mmc5Audio::TAIL_LEN + self.prg_ram_extra.len(),
             _ => core_expected, // best-effort; rejected below by version check
         };
         if data.len() != expected {
@@ -1777,12 +1886,22 @@ impl Mapper for Mmc5 {
             cur += 1;
             self.audio
                 .read_tail(&data[cur..cur + Mmc5Audio::TAIL_LEN])?;
+            cur += Mmc5Audio::TAIL_LEN;
         } else {
             // v3 blob: silence the audio extension (channels disabled,
             // PCM at zero, length counters cleared). This keeps cross-
             // version load deterministic.
             self.audio = Mmc5Audio::default();
             self.audio_apu_phase = false;
+        }
+        // v5 tail: the superset pages. An older blob predates them, and the
+        // game it recorded only ever reached the declared RAM, so they start
+        // zeroed.
+        if version >= 5 {
+            let n = self.prg_ram_extra.len();
+            self.prg_ram_extra.copy_from_slice(&data[cur..cur + n]);
+        } else {
+            self.prg_ram_extra.fill(0);
         }
         Ok(())
     }
@@ -2673,7 +2792,8 @@ mod tests {
         // Take a v4 snapshot, strip the audio tail (1 + TAIL_LEN bytes),
         // rewrite version byte to 3.
         let mut blob = m.save_state();
-        let tail_len = 1 + Mmc5Audio::TAIL_LEN;
+        // Strip the v5 superset tail, then the v4 audio tail.
+        let tail_len = m.prg_ram_extra.len() + 1 + Mmc5Audio::TAIL_LEN;
         for _ in 0..tail_len {
             blob.pop();
         }
@@ -2771,5 +2891,130 @@ mod tests {
             half: true,
         });
         assert_eq!(m.audio.pulse1.length, initial_length - 1);
+    }
+
+    // ---- v2.7.2: PRG-RAM banks (core audit §5.3) ---------------------------
+    //
+    // nesdev_wiki/MMC5.xhtml §"PRG-RAM configurations": the RAM is paged by
+    // the low three bits of the bank value, and "emulating the PRG-RAM as 64K
+    // at all times can be used as a compatible superset for all games". The
+    // battery save stays the header's declared part.
+
+    fn with_ram(bytes: usize) -> Mmc5 {
+        let mut m = Mmc5::new(synth_prg(8), synth_chr(8), Mirroring::Vertical, bytes).unwrap();
+        m.cpu_write(0x5102, 0x02); // unlock the protect pair
+        m.cpu_write(0x5103, 0x01);
+        m
+    }
+
+    /// Write a distinct tag through `$6000` with each bank value 0-7, then
+    /// report what each bank value reads back.
+    fn bank_readback(m: &mut Mmc5) -> [u8; 8] {
+        for b in 0..8u8 {
+            m.cpu_write(0x5113, b);
+            m.cpu_write(0x6000, 0xB0 | b);
+        }
+        let mut out = [0; 8];
+        for b in 0..8u8 {
+            m.cpu_write(0x5113, b);
+            assert!(!m.cpu_read_unmapped(0x6000), "bank {b}: RAM always answers");
+            out[usize::from(b)] = m.cpu_read(0x6000);
+        }
+        out
+    }
+
+    #[test]
+    fn every_declared_size_pages_all_eight_bank_values() {
+        for bytes in [0x2000, 0x4000, 0x8000, 0x1_0000] {
+            let mut m = with_ram(bytes);
+            let r = bank_readback(&mut m);
+            for b in 0..8u8 {
+                assert_eq!(r[usize::from(b)], 0xB0 | b, "{bytes:#x} bytes, bank {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_under_declared_etrom_keeps_its_work_ram_chip() {
+        // L'Empereur is ETROM (2 x 8 KiB; wiki board table), but its NES 2.0
+        // dump declares only the 8 KiB battery chip. It keeps work data in
+        // bank values 4-7; the exact-table model floated those and the game
+        // stopped at its logo.
+        let mut m = with_ram(0x2000);
+        m.cpu_write(0x5113, 4);
+        m.cpu_write(0x6123, 0x42);
+        m.cpu_write(0x5113, 0);
+        m.cpu_write(0x6123, 0x17);
+        m.cpu_write(0x5113, 4);
+        assert_eq!(m.cpu_read(0x6123), 0x42, "bank 4 is its own RAM");
+        assert_eq!(
+            m.sram().len(),
+            0x2000,
+            "the save is still the declared 8 KiB"
+        );
+        assert_eq!(m.sram()[0x123], 0x17, "and it is bank 0's page");
+    }
+
+    #[test]
+    fn the_save_is_the_battery_backed_part_of_the_declared_ram() {
+        // "Games with 16K PRG-RAM only battery-save the first 8K."
+        assert_eq!(with_ram(0x4000).sram().len(), 0x2000);
+        assert_eq!(with_ram(0x8000).sram().len(), 0x8000);
+        assert_eq!(with_ram(0x1_0000).sram().len(), 0x1_0000);
+    }
+
+    #[test]
+    fn superset_pages_survive_a_save_state_and_old_blobs_still_load() {
+        let mut m = with_ram(0x2000);
+        m.cpu_write(0x5113, 6);
+        m.cpu_write(0x6000, 0x66);
+        let blob = m.save_state();
+        assert_eq!(blob[0], SAVE_STATE_VERSION);
+        let mut n = with_ram(0x2000);
+        n.load_state(&blob).unwrap();
+        n.cpu_write(0x5113, 6);
+        assert_eq!(n.cpu_read(0x6000), 0x66, "the superset page round-trips");
+        // A v4 blob (no superset tail) loads with those pages zeroed.
+        let mut v4 = blob.clone();
+        v4.truncate(blob.len() - n.prg_ram_extra.len());
+        v4[0] = 4;
+        let mut o = with_ram(0x2000);
+        o.load_state(&v4).expect("a v4 blob loads");
+        o.cpu_write(0x5113, 6);
+        assert_eq!(o.cpu_read(0x6000), 0);
+    }
+
+    #[test]
+    fn prg_ram_banked_into_8000_uses_its_own_register() {
+        // "Uncharted Waters ... writes to PRG-RAM at one CPU address and
+        // expects to read the same data back via a different CPU address."
+        let mut m = with_ram(0x8000);
+        m.cpu_write(0x5100, 0x03); // PRG mode 3: 4 x 8 KiB
+        m.cpu_write(0x5113, 0);
+        m.cpu_write(0x6000, 0x11);
+        m.cpu_write(0x5113, 2);
+        m.cpu_write(0x6000, 0x5E);
+        m.cpu_write(0x5114, 0x02); // $8000 = RAM page 2 (bit 7 clear)
+        assert_eq!(m.cpu_read(0x8000), 0x5E, "same page seen through $8000");
+        m.cpu_write(0x5114, 0x00);
+        assert_eq!(m.cpu_read(0x8000), 0x11, "and page 0 is a different page");
+        m.cpu_write(0x5114, 0x02);
+        m.cpu_write(0x8001, 0x6F);
+        assert_eq!(m.cpu_read(0x6001), 0x6F, "and written back through it");
+    }
+
+    #[test]
+    fn prg_ram_in_a_16k_window_takes_a13_from_the_cpu() {
+        // In a 16 KiB window, register bit 0 is ignored and CPU A13 drives
+        // PRG A13: value $02 at $8000-$BFFF shows page 2 then page 3.
+        let mut m = with_ram(0x8000);
+        m.cpu_write(0x5100, 0x01); // PRG mode 1: 16 K + 16 K
+        m.cpu_write(0x5113, 2);
+        m.cpu_write(0x6000, 0x22);
+        m.cpu_write(0x5113, 3);
+        m.cpu_write(0x6000, 0x33);
+        m.cpu_write(0x5115, 0x03); // RAM, low bit ignored
+        assert_eq!(m.cpu_read(0x8000), 0x22);
+        assert_eq!(m.cpu_read(0xA000), 0x33);
     }
 }

@@ -592,10 +592,14 @@ impl Mapper for Sachen3018M147 {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // The JV001 protection register answers reads at $4100 (decoded on
-        // A0/A1 == 0). Everything else in $4020-$5FFF is open bus.
-        !((0x4100..=0x5FFF).contains(&addr) && (addr & 0x0103) == 0x0100)
-            && (0x4020..=0x5FFF).contains(&addr)
+        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
+        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
+        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+            // The JV001 protection register answers reads at $4100 (decoded on
+            // A0/A1 == 0). Everything else in $4020-$5FFF is open bus.
+            !((0x4100..=0x5FFF).contains(&addr) && (addr & 0x0103) == 0x0100)
+                && (0x4020..=0x5FFF).contains(&addr)
+        }
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
@@ -1030,8 +1034,10 @@ impl Mapper for Sachen149 {
 //       1: Horizontal
 //       2: Vertical
 //       3: Single-screen A
-// Reads at $4101 return (open_bus & 0xF8) | (reg[index] & 0x07); we approximate
-// open bus with 0 (the protected program only inspects the low 3 bits).
+// Reads at $4101 return (open_bus & 0xF8) | (reg[index] & 0x07): the ASIC
+// drives D2-D0 only. `cpu_read_driven_mask` reports that, and the bus keeps
+// its floating value on D7-D3 (v2.7.2, core audit §4.5; previously those bits
+// read as 0 and the bus latched the zeros).
 // Writes are also accepted via the $6000-$7FFF mirror (addr | 0x1000). No IRQ.
 // ===========================================================================
 
@@ -1199,15 +1205,29 @@ impl Mapper for Sachen150 {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // $4100-$5FFF has the readable protection register at $4101 (decoded
-        // on A8); $4020-$40FF and $4200+ without A8 are open bus.
-        (0x4020..=0x5FFF).contains(&addr) && (addr & 0x0101) != 0x0101
+        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
+        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
+        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+            // $4100-$5FFF has the readable protection register at $4101 (decoded
+            // on A8); $4020-$40FF and $4200+ without A8 are open bus.
+            (0x4020..=0x5FFF).contains(&addr) && (addr & 0x0101) != 0x0101
+        }
+    }
+
+    /// The data register drives D2-D0 only; D7-D3 float
+    /// (`nesdev_wiki/INES_Mapper_150.xhtml`: "Register data ... .... .RRR").
+    fn cpu_read_driven_mask(&self, addr: u16) -> u8 {
+        if (0x4100..=0x5FFF).contains(&addr) && (addr & 0x0101) == 0x0101 {
+            0x07
+        } else {
+            0xFF
+        }
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x4100..=0x5FFF if (addr & 0x0101) == 0x0101 => {
-                // Open-bus high 5 bits approximated as 0.
+                // D7-D3 are undriven; see `cpu_read_driven_mask`.
                 self.reg[(self.current_register & 0x07) as usize] & 0x07
             }
             0x8000..=0xFFFF => self.read_prg(addr),
@@ -1395,9 +1415,21 @@ impl Mapper for SachenTca01M143 {
     // window (mapped). $8000-$FFFF PRG-ROM stays mapped (the trait default) —
     // a `!(...)` here would wrongly open-bus the program ROM + reset vector, so
     // the board never boots. There is no open-bus hole to carve out, so this
-    // returns false for everything the board answers.
-    fn cpu_read_unmapped(&self, _addr: u16) -> bool {
-        false
+    // returns false for everything the board answers. v2.7.2 (core audit
+    // §5.5): except `$6000-$7FFF`, where the board drives nothing, so it floats.
+    fn cpu_read_unmapped(&self, addr: u16) -> bool {
+        matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()
+    }
+
+    /// The protection read drives D5-D0 only; D7-D6 float (v2.7.2: the bus
+    /// now keeps them from its latch, where the read used to approximate them
+    /// from the address high byte).
+    fn cpu_read_driven_mask(&self, addr: u16) -> u8 {
+        if (0x4100..=0x5FFF).contains(&addr) && addr & 0x0100 != 0 {
+            0x3F
+        } else {
+            0xFF
+        }
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {

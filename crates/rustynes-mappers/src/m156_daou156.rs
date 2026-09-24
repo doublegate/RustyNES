@@ -26,7 +26,9 @@ const CHR_BANK_1K: usize = 0x0400;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-const SAVE_STATE_VERSION: u8 = 1;
+/// v2 (v2.7.2) appends the 8 KiB RAM; a v1 blob loads with it zeroed.
+const SAVE_STATE_VERSION: u8 = 2;
+const WRAM_SIZE: usize = 0x2000;
 
 // ---------------------------------------------------------------------------
 // Shared nametable helper (mirrors the one in the other simple-mapper modules).
@@ -49,6 +51,11 @@ pub struct Daou156 {
     chr_lo: [u8; 8],
     chr_hi: [u8; 8],
     mirroring: Mirroring,
+    /// "CPU $6000-$7FFF: 8 KiB RAM" (`nesdev_wiki/INES_Mapper_156.xhtml`).
+    /// Absent before v2.7.2.
+    wram: Box<[u8]>,
+    /// Whether the header marks it battery-backed (then it is the save).
+    battery: bool,
 }
 
 impl Daou156 {
@@ -85,7 +92,16 @@ impl Daou156 {
             // DAOU/DIS23C01 powers on single-screen (nametable A) per Mesen2
             // InitMapper; the $C014 register flips it to H/V at runtime.
             mirroring: Mirroring::SingleScreenA,
+            wram: vec![0u8; WRAM_SIZE].into_boxed_slice(),
+            battery: false,
         })
+    }
+
+    /// Mark the RAM battery-backed (from the header), making it the save.
+    #[must_use]
+    pub const fn with_battery(mut self, battery: bool) -> Self {
+        self.battery = battery;
+        self
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
@@ -101,9 +117,26 @@ impl Mapper for Daou156 {
         MapperCaps::NONE
     }
 
+    fn sram(&self) -> &[u8] {
+        if self.battery { &self.wram } else { &[] }
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        if self.battery {
+            &mut self.wram
+        } else {
+            &mut []
+        }
+    }
+
+    /// The RAM is always present, so `$6000-$7FFF` stays mapped.
+    fn cpu_read_unmapped(&self, addr: u16) -> bool {
+        (0x4020..=0x5FFF).contains(&addr)
+    }
+
     fn cpu_read(&mut self, addr: u16) -> u8 {
         let count = (self.prg_rom.len() / PRG_BANK_16K).max(1);
         match addr {
+            0x6000..=0x7FFF => self.wram[usize::from(addr - 0x6000)],
             0x8000..=0xBFFF => {
                 let bank = (self.prg_bank as usize) % count;
                 self.prg_rom[bank * PRG_BANK_16K + (addr as usize & 0x3FFF)]
@@ -118,6 +151,7 @@ impl Mapper for Daou156 {
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
         match addr {
+            0x6000..=0x7FFF => self.wram[usize::from(addr - 0x6000)] = value,
             // $C000-$C00F: 16 CHR-bank-nibble registers. Mesen2 decodes the
             // 1 KiB slot as (addr & 0x03) + (addr >= 0xC008 ? 4 : 0) and selects
             // the low/high nibble array by bit 2 (0x04) — NOT a flat lo[0..8] /
@@ -180,19 +214,26 @@ impl Mapper for Daou156 {
             _ => 3, // SingleScreenA (power-on default) + any other
         });
         out.extend_from_slice(&self.vram);
+        out.extend_from_slice(&self.wram);
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 19 + self.vram.len();
+        let version = *data.first().ok_or(MapperError::Truncated {
+            expected: 1,
+            got: 0,
+        })?;
+        let wram_len = match version {
+            1 => 0,
+            SAVE_STATE_VERSION => self.wram.len(),
+            v => return Err(MapperError::UnsupportedVersion(v)),
+        };
+        let expected = 19 + self.vram.len() + wram_len;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
                 got: data.len(),
             });
-        }
-        if data[0] != SAVE_STATE_VERSION {
-            return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.prg_bank = data[1];
         self.chr_lo.copy_from_slice(&data[2..10]);
@@ -204,6 +245,12 @@ impl Mapper for Daou156 {
             _ => Mirroring::SingleScreenA,
         };
         self.vram.copy_from_slice(&data[19..19 + self.vram.len()]);
+        let cur = 19 + self.vram.len();
+        if wram_len == 0 {
+            self.wram.fill(0);
+        } else {
+            self.wram.copy_from_slice(&data[cur..cur + wram_len]);
+        }
         Ok(())
     }
 }

@@ -35,7 +35,14 @@ const PRG_RAM_DEFAULT: usize = 0x2000;
 const NAMETABLE_SIZE: usize = 0x0400;
 const NAMETABLE_SIZE_U16: u16 = 0x0400;
 
-const SAVE_STATE_VERSION: u8 = 1;
+/// v2 appends one byte: the latched PPU A12 of the last CHR fetch, which picks
+/// the CHR register that drives SUROM / SOROM / SXROM's outer lines in 4 KiB
+/// CHR mode. A v1 blob still loads, with that latch cleared.
+const SAVE_STATE_VERSION: u8 = 2;
+/// Size of one outer PRG-ROM half on SUROM / SXROM.
+const PRG_OUTER_256K: usize = 0x4_0000;
+/// One PRG-RAM bank.
+const PRG_RAM_BANK_8K: usize = 0x2000;
 
 /// MMC1 mapper.
 pub struct Mmc1 {
@@ -62,6 +69,14 @@ pub struct Mmc1 {
     // write bug). `u64::MAX` means "no prior write to inhibit on".
     last_write_cycle: u64,
     cpu_cycle: u64,
+
+    /// The PPU A12 level, as the PPU last reported it through `notify_a12`.
+    /// In 4 KiB CHR mode it selects which CHR register drives the outer PRG /
+    /// PRG-RAM lines on SUROM / SOROM / SXROM (see [`Self::outer_reg`]).
+    /// Latched from the A12 notification, not from `ppu_read`: a debugger
+    /// peek of CHR (`Bus::debug_peek_ppu`) goes through `ppu_read` and must
+    /// not change CPU-side banking (PR #550 review).
+    chr_a12_high: bool,
 }
 
 impl Mmc1 {
@@ -137,6 +152,7 @@ impl Mmc1 {
             shift_count: 0,
             last_write_cycle: u64::MAX,
             cpu_cycle: 0,
+            chr_a12_high: false,
         })
     }
 
@@ -149,6 +165,51 @@ impl Mmc1 {
         physical * NAMETABLE_SIZE + local
     }
 
+    /// Does the board repurpose the CHR register's upper bits?
+    ///
+    /// SOROM, SUROM and SXROM "address only 8 KiB of CHR-ROM/-RAM" and route
+    /// the spare CHR lines to PRG A18 and PRG-RAM A13/A14
+    /// (`nesdev_wiki/MMC1.xhtml`). A board with more CHR uses those bits as
+    /// real CHR address lines, so nothing here applies to it.
+    fn chr_lines_repurposed(&self) -> bool {
+        self.chr.len() <= CHR_BANK_8K
+    }
+
+    /// The CHR register currently driving the outer lines: CHR bank 0 in 8 KiB
+    /// CHR mode; in 4 KiB mode, whichever register the last CHR fetch selected.
+    /// The wiki warns that mismatched registers make PRG "bankswitched ... as
+    /// the PPU renders", which is exactly this behaviour.
+    const fn outer_reg(&self) -> u8 {
+        if self.control & 0x10 != 0 && self.chr_a12_high {
+            self.chr1
+        } else {
+            self.chr0
+        }
+    }
+
+    /// Base offset of the 256 KiB PRG-ROM half selected by `P` (bit 4), or 0.
+    fn prg_outer_base(&self) -> usize {
+        if self.chr_lines_repurposed() && self.prg_rom.len() > PRG_OUTER_256K {
+            usize::from((self.outer_reg() >> 4) & 1) * PRG_OUTER_256K
+        } else {
+            0
+        }
+    }
+
+    /// Byte offset of the selected 8 KiB PRG-RAM bank: SXROM (32 KiB) uses
+    /// bits 3-2, SOROM (16 KiB) bit 3 only ("only implements the upper S").
+    fn prg_ram_bank_base(&self) -> usize {
+        if !self.chr_lines_repurposed() {
+            return 0;
+        }
+        let reg = usize::from(self.outer_reg());
+        match self.prg_ram.len() {
+            0x8000 => ((reg >> 2) & 0x03) * PRG_RAM_BANK_8K,
+            0x4000 => ((reg >> 3) & 0x01) * PRG_RAM_BANK_8K,
+            _ => 0,
+        }
+    }
+
     /// Number of 16 KiB PRG banks the cartridge holds.
     const fn prg_bank_count(&self) -> usize {
         self.prg_rom.len() / PRG_BANK_16K
@@ -157,14 +218,19 @@ impl Mmc1 {
     /// Resolve a CPU read at `$8000-$FFFF` into a PRG-ROM byte.
     fn map_prg(&self, addr: u16) -> u8 {
         let prg_mode = (self.control >> 2) & 0x03;
-        let bank_count = self.prg_bank_count();
-        // PRG bank register is 4 bits in standard MMC1 (16 banks max). For
-        // SUROM / SXROM the high bit selects the 256 KiB chip; this is
-        // approximated by allowing all 5 bits to address up to 32 banks
-        // (512 KiB total). High bit of CHR bank also feeds into PRG bank
-        // select on SUROM, but we leave the more exotic behavior for a
-        // dedicated Phase 4 sweep — at the level of "instr_test_v5 boots,"
-        // the linear interpretation is sufficient.
+        // The PRG register's 4 low bits address 16 x 16 KiB = 256 KiB; its bit
+        // 4 is the PRG-RAM disable, never a bank bit. SUROM / SXROM reach
+        // 512 KiB through the CHR register's `P` bit instead, which picks the
+        // 256 KiB half for the WHOLE window, fixed bank included (core audit
+        // §5.4; this used to claim all five PRG bits and read only four).
+        let outer = self.prg_outer_base();
+        // Never zero: `outer` is non-zero only on a ROM larger than 256 KiB, and
+        // the floor keeps mode 3's `bank_count - 1` and the modulo below safe
+        // even if that invariant is ever broken.
+        let bank_count = self
+            .prg_bank_count()
+            .saturating_sub(outer / PRG_BANK_16K)
+            .clamp(1, PRG_OUTER_256K / PRG_BANK_16K);
         let prg_bank = self.prg & 0x0F;
 
         let (bank_low, bank_high): (usize, usize) = match prg_mode {
@@ -182,7 +248,6 @@ impl Mmc1 {
                 (prg_bank as usize, bank_count - 1)
             }
         };
-        let bank_count = bank_count.max(1);
         let bank_low = bank_low % bank_count;
         let bank_high = bank_high % bank_count;
 
@@ -192,7 +257,7 @@ impl Mmc1 {
         } else {
             bank_high
         };
-        self.prg_rom[bank * PRG_BANK_16K + offset_in_bank]
+        self.prg_rom[outer + bank * PRG_BANK_16K + offset_in_bank]
     }
 
     /// Resolve a PPU read at `$0000-$1FFF` into a CHR byte.
@@ -234,11 +299,23 @@ impl Mmc1 {
     /// reported `1000` — the `$E000` layer alone — while `M1_P128K_CR8K`
     /// (SNROM, CHR-RAM) reported `5000`, both layers
     /// (`MAPTEST_WRAMEN2 $40 | MAPTEST_WRAMEN $10`).
-    const fn prg_ram_disabled(&self) -> bool {
+    ///
+    /// The second layer is SNROM's alone. On SUROM / SXROM (> 256 KiB PRG) the
+    /// same CHR bit 4 is PRG A18, and on SOROM / SXROM (> 8 KiB PRG-RAM) the
+    /// board wires the S bits instead, so neither is a RAM enable there.
+    fn prg_ram_disabled(&self) -> bool {
         if self.prg & 0x10 != 0 {
             return true;
         }
-        self.chr_is_ram && (self.chr0 & 0x10) != 0
+        let snrom = self.chr_is_ram
+            && self.prg_rom.len() <= PRG_OUTER_256K
+            && self.prg_ram.len() <= PRG_RAM_BANK_8K;
+        snrom && (self.outer_reg() & 0x10) != 0
+    }
+
+    /// Index into `prg_ram` for a `$6000-$7FFF` access, after banking.
+    fn prg_ram_index(&self, addr: u16) -> usize {
+        (self.prg_ram_bank_base() + usize::from(addr - 0x6000)) % self.prg_ram.len().max(1)
     }
 
     /// Apply a completed 5-bit write to the appropriate internal register.
@@ -285,11 +362,10 @@ impl Mapper for Mmc1 {
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
-                let idx = (addr - 0x6000) as usize;
-                if idx < self.prg_ram.len() {
-                    self.prg_ram[idx]
-                } else {
+                if self.prg_ram.is_empty() {
                     0
+                } else {
+                    self.prg_ram[self.prg_ram_index(addr)]
                 }
             }
             0x8000..=0xFFFF => self.map_prg(addr),
@@ -304,8 +380,8 @@ impl Mapper for Mmc1 {
                 if self.prg_ram_disabled() {
                     return;
                 }
-                let idx = (addr - 0x6000) as usize;
-                if idx < self.prg_ram.len() {
+                if !self.prg_ram.is_empty() {
+                    let idx = self.prg_ram_index(addr);
                     self.prg_ram[idx] = value;
                 }
             }
@@ -349,6 +425,13 @@ impl Mapper for Mmc1 {
         } else {
             u32::try_from(self.map_chr(addr & 0x1FFF)).ok()
         }
+    }
+
+    // The only writer of `chr_a12_high`. The PPU reports every A12 transition
+    // here (not gated on capabilities), including the ones its `$2007`
+    // accesses make, which is the line the MMC1 actually watches.
+    fn notify_a12(&mut self, level: bool) {
+        self.chr_a12_high = level;
     }
 
     fn ppu_read(&mut self, addr: u16) -> u8 {
@@ -420,9 +503,9 @@ impl Mapper for Mmc1 {
 
     fn save_state(&self) -> Vec<u8> {
         // Tagged blob: [version, control, chr0, chr1, prg, shift, count,
-        //   prg_ram..., vram..., chr_if_ram...]
+        //   prg_ram..., vram..., chr_if_ram..., chr_a12_high (v2)]
         let mut out = Vec::with_capacity(
-            7 + self.prg_ram.len()
+            8 + self.prg_ram.len()
                 + self.vram.len()
                 + if self.chr_is_ram { self.chr.len() } else { 0 },
         );
@@ -438,20 +521,28 @@ impl Mapper for Mmc1 {
         if self.chr_is_ram {
             out.extend_from_slice(&self.chr);
         }
+        out.push(u8::from(self.chr_a12_high));
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
         let need_chr = if self.chr_is_ram { self.chr.len() } else { 0 };
-        let expected = 7 + self.prg_ram.len() + self.vram.len() + need_chr;
+        let version = *data.first().ok_or(MapperError::Truncated {
+            expected: 1,
+            got: 0,
+        })?;
+        // v1 (before v2.7.2) lacks the trailing A12 latch byte.
+        let tail = match version {
+            1 => 0,
+            SAVE_STATE_VERSION => 1,
+            v => return Err(MapperError::UnsupportedVersion(v)),
+        };
+        let expected = 7 + self.prg_ram.len() + self.vram.len() + need_chr + tail;
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
                 got: data.len(),
             });
-        }
-        if data[0] != SAVE_STATE_VERSION {
-            return Err(MapperError::UnsupportedVersion(data[0]));
         }
         self.control = data[1];
         self.chr0 = data[2];
@@ -469,7 +560,9 @@ impl Mapper for Mmc1 {
         if self.chr_is_ram {
             self.chr
                 .copy_from_slice(&data[cursor..cursor + self.chr.len()]);
+            cursor += self.chr.len();
         }
+        self.chr_a12_high = tail == 1 && data[cursor] != 0;
         Ok(())
     }
 }
@@ -726,5 +819,150 @@ mod tests {
             "CHR-ROM board: $A000 bit 4 is CHR banking, must not gate PRG-RAM"
         );
         assert_eq!(m.cpu_read(0x6000), 0x77);
+    }
+
+    // ---- v2.7.2: SUROM / SOROM / SXROM (core audit §5.4) -----------------
+    //
+    // Written from nesdev_wiki/MMC1.xhtml §"SOROM, SUROM and SXROM": on boards
+    // that address only 8 KiB of CHR, the CHR bank register reads `PSSxC`.
+    // P (bit 4) selects the 256 KiB PRG-ROM half and "applies to all the PRG
+    // area, including the normally fixed bank"; SS (bits 3-2) select the 8 KiB
+    // PRG-RAM bank (SOROM wires only the upper S, SXROM both: bit 3 = A14,
+    // bit 2 = A13).
+
+    #[test]
+    fn surom_bit_4_selects_the_upper_256k_half_including_the_fixed_bank() {
+        // 512 KiB PRG (32 x 16 KiB), CHR-RAM: SUROM.
+        let mut m = Mmc1::new(synth_prg(32), Box::new([]), Mirroring::Vertical, 0).unwrap();
+        // Power-on: PRG mode 3, outer half 0 -> the fixed bank is bank 15.
+        assert_eq!(
+            m.cpu_read(0xC000),
+            15,
+            "fixed bank = last of the LOWER half"
+        );
+        write5(&mut m, 0xA000, 0x10); // P = 1
+        assert_eq!(m.cpu_read(0xC000), 31, "fixed bank follows the outer half");
+        write5(&mut m, 0xE000, 2);
+        assert_eq!(
+            m.cpu_read(0x8000),
+            18,
+            "switchable bank 2 of the upper half"
+        );
+        write5(&mut m, 0xA000, 0x00);
+        assert_eq!(m.cpu_read(0x8000), 2);
+    }
+
+    #[test]
+    fn surom_bit_4_is_not_snrom_prg_ram_disable() {
+        // On SNROM (<= 256 KiB, CHR-RAM) CHR bit 4 disables PRG-RAM; on SUROM
+        // the same line is PRG A18, so selecting the upper half must leave the
+        // RAM enabled.
+        let mut m = Mmc1::new(synth_prg(32), Box::new([]), Mirroring::Vertical, 0).unwrap();
+        write5(&mut m, 0xA000, 0x10);
+        m.cpu_write(0x6000, 0x5A);
+        assert_eq!(m.cpu_read(0x6000), 0x5A);
+    }
+
+    #[test]
+    fn sxrom_bits_3_and_2_bank_32k_of_prg_ram() {
+        let mut m = Mmc1::new(synth_prg(32), Box::new([]), Mirroring::Vertical, 0x8000).unwrap();
+        for bank in 0..4u8 {
+            write5(&mut m, 0xA000, bank << 2);
+            m.cpu_write(0x6000, 0xA0 | bank);
+        }
+        for bank in 0..4u8 {
+            write5(&mut m, 0xA000, bank << 2);
+            assert_eq!(
+                m.cpu_read(0x6000),
+                0xA0 | bank,
+                "bank {bank} kept its own byte"
+            );
+            assert_eq!(
+                m.sram()[usize::from(bank) * 0x2000],
+                0xA0 | bank,
+                "sram() is the whole 32 KiB, in bank order"
+            );
+        }
+    }
+
+    #[test]
+    fn sorom_banks_16k_of_prg_ram_with_bit_3_only() {
+        // 256 KiB PRG, CHR-RAM, 16 KiB PRG-RAM: SOROM. Bit 2 is unconnected.
+        let mut m = Mmc1::new(synth_prg(16), Box::new([]), Mirroring::Vertical, 0x4000).unwrap();
+        write5(&mut m, 0xA000, 0x00);
+        m.cpu_write(0x6000, 0x11);
+        write5(&mut m, 0xA000, 0x08);
+        m.cpu_write(0x6000, 0x22);
+        write5(&mut m, 0xA000, 0x04); // bit 2 alone: still bank 0
+        assert_eq!(m.cpu_read(0x6000), 0x11);
+        write5(&mut m, 0xA000, 0x0C);
+        assert_eq!(m.cpu_read(0x6000), 0x22);
+    }
+
+    #[test]
+    fn in_4k_chr_mode_the_outer_bits_follow_the_register_the_ppu_last_used() {
+        // "In 4KB CHR bank mode ... P and S bits in both CHR bank registers
+        // must be set to the same values, or the PRG-ROM and/or RAM will be
+        // bankswitched as the PPU renders" -- so the live register is the one
+        // selected by the last CHR fetch's A12.
+        let mut m = Mmc1::new(synth_prg(32), Box::new([]), Mirroring::Vertical, 0).unwrap();
+        write5(&mut m, 0x8000, 0b1_1110); // CHR 4 KiB mode, PRG mode 3
+        write5(&mut m, 0xA000, 0x00);
+        write5(&mut m, 0xC000, 0x10);
+        m.notify_a12(true); // PPU A12 high -> CHR bank 1 drives
+        assert_eq!(m.cpu_read(0xC000), 31);
+        m.notify_a12(false); // A12 low -> CHR bank 0
+        assert_eq!(m.cpu_read(0xC000), 15);
+    }
+
+    #[test]
+    fn a_chr_peek_does_not_change_cpu_banking() {
+        // `Bus::debug_peek_ppu` documents a side-effect-free sample and routes
+        // CHR through `ppu_read`/`ppu_write`. Only the PPU's A12 notification
+        // may move the live register (PR #550 review).
+        let mut m = Mmc1::new(synth_prg(32), Box::new([]), Mirroring::Vertical, 0).unwrap();
+        write5(&mut m, 0x8000, 0b1_1110);
+        write5(&mut m, 0xA000, 0x00);
+        write5(&mut m, 0xC000, 0x10);
+        let _ = m.ppu_read(0x1000);
+        m.ppu_write(0x1000, 0);
+        assert_eq!(m.cpu_read(0xC000), 15, "still CHR bank 0's half");
+        assert!(!m.chr_a12_high);
+    }
+
+    #[test]
+    fn chr_rom_boards_keep_bits_4_to_2_as_chr_banking() {
+        // SKROM-style: 128 KiB CHR-ROM means the CHR register's upper bits are
+        // real CHR address lines, never PRG / PRG-RAM selects.
+        let mut m = Mmc1::new(synth_prg(16), synth_chr(32), Mirroring::Vertical, 0).unwrap();
+        write5(&mut m, 0xA000, 0x1C);
+        assert_eq!(
+            m.cpu_read(0xC000),
+            15,
+            "no outer PRG bank on a CHR-ROM board"
+        );
+        m.cpu_write(0x6000, 0x33);
+        write5(&mut m, 0xA000, 0x00);
+        assert_eq!(
+            m.cpu_read(0x6000),
+            0x33,
+            "no PRG-RAM banking on a CHR-ROM board"
+        );
+    }
+
+    #[test]
+    fn a_pre_v2_7_2_save_state_still_loads() {
+        // v1 blobs lack the trailing CHR-A12 latch byte; they must load, with
+        // the latch cleared, so old `.rns` slots keep working.
+        let mut m = Mmc1::new(synth_prg(32), Box::new([]), Mirroring::Vertical, 0).unwrap();
+        m.notify_a12(true);
+        let mut blob = m.save_state();
+        assert_eq!(blob[0], 2);
+        assert_eq!(*blob.last().unwrap(), 1, "the latch is saved");
+        blob.pop();
+        blob[0] = 1;
+        m.load_state(&blob).expect("a v1 blob loads");
+        assert!(!m.chr_a12_high);
+        assert!(m.load_state(&[9]).is_err(), "an unknown version is refused");
     }
 }

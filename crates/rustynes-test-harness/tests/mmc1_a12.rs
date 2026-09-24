@@ -1,7 +1,20 @@
 //! MMC1 + PPU A12-transition regression test.
 //!
-//! Source ROM: `tests/roms/mmc1_a12/mmc1_a12.nes`, tepples,
+//! Source ROM: `tests/roms/mmc1_a12/mmc1_a12.nes`, Bregalad (its title
+//! screen: "MMC1 WRAM DISABLE SCANLINE COUNTER TEST", 2010),
 //! public-domain via the `christopherpow/nes-test-roms` aggregator.
+//!
+//! ## What the frame shows (v2.7.2)
+//!
+//! A12 does not reach an IRQ on MMC1, but it does select which CHR
+//! register drives SNROM's PRG-RAM enable in 4 KiB CHR mode:
+//! `nesdev_wiki/MMC1.xhtml` says mismatched registers leave the RAM
+//! "enabled as the PPU renders". This ROM relies on that, and draws a
+//! grey raster bar where it sees the enable change. v2.7.2 models the
+//! A12-selected register, so the bar appears and the snapshot was
+//! re-blessed. Reverting just that selection (`outer_reg` in
+//! `m001_mmc1.rs`) reproduces the pre-v2.7.2 hash exactly. See
+//! `tests/roms/mmc1_a12/README.md`.
 //!
 //! The PPU's A12 line transitions on every BG / sprite CHR fetch.
 //! For MMC3 those transitions are filtered through a small counter

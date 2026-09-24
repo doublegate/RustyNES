@@ -2495,9 +2495,14 @@ impl Mapper for Multicart225 {
     }
 
     // The scratch RAM answers reads in $5800-$5FFF (mapped). The rest of
-    // $4020-$57FF stays open bus (the trait default); $6000-$FFFF PRG is mapped.
+    // $4020-$57FF stays open bus. PRG-ROM is mapped at $8000-$FFFF only
+    // (nesdev_wiki/INES_Mapper_225): `cpu_read` has no $6000-$7FFF arm and
+    // nothing drives it, so it floats. (Until v2.7.2 this comment said
+    // "$6000-$FFFF PRG is mapped", which the code never implemented.)
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
+        // v2.7.2 (core audit §5.5): with no save RAM, `$6000-$7FFF` floats.
         (0x4020..=0x57FF).contains(&addr)
+            || (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty())
     }
 
     fn cpu_read(&mut self, addr: u16) -> u8 {
@@ -2792,6 +2797,11 @@ pub struct Multicart227 {
     l_flag: bool,
     prg_mode: bool,
     horizontal_mirroring: bool,
+    /// The FW-01 variant "adds 8 KiB battery-backed WRAM"
+    /// (`nesdev_wiki/INES_Mapper_227.xhtml`); the 1200-in-1 multicarts have
+    /// none. Allocated only when the header says battery (v2.7.2), so a
+    /// multicart keeps an empty window, which floats.
+    wram: Box<[u8]>,
 }
 
 impl Multicart227 {
@@ -2821,7 +2831,20 @@ impl Multicart227 {
             l_flag: false,
             prg_mode: false,
             horizontal_mirroring: false,
+            wram: Box::new([]),
         })
+    }
+
+    /// Give the board its battery-backed WRAM when the header says battery
+    /// (the FW-01 variant).
+    #[must_use]
+    pub fn with_battery(mut self, battery: bool) -> Self {
+        self.wram = if battery {
+            vec![0u8; 0x2000].into_boxed_slice()
+        } else {
+            Box::new([])
+        };
+        self
     }
 
     fn read_prg(&self, bank16: usize, addr: u16) -> u8 {
@@ -2853,16 +2876,28 @@ impl Mapper for Multicart227 {
         MapperCaps::NONE
     }
 
+    fn sram(&self) -> &[u8] {
+        &self.wram
+    }
+    fn sram_mut(&mut self) -> &mut [u8] {
+        &mut self.wram
+    }
+
     fn cpu_read(&mut self, addr: u16) -> u8 {
         let (p0, p1) = self.prg_pages();
         match addr {
+            0x6000..=0x7FFF if !self.wram.is_empty() => self.wram[usize::from(addr - 0x6000)],
             0x8000..=0xBFFF => self.read_prg(p0, addr),
             0xC000..=0xFFFF => self.read_prg(p1, addr),
             _ => 0,
         }
     }
 
-    fn cpu_write(&mut self, addr: u16, _value: u8) {
+    fn cpu_write(&mut self, addr: u16, value: u8) {
+        if (0x6000..=0x7FFF).contains(&addr) && !self.wram.is_empty() {
+            self.wram[usize::from(addr - 0x6000)] = value;
+            return;
+        }
         if (0x8000..=0xFFFF).contains(&addr) {
             let low = ((addr >> 2) & 0x1F) as u8;
             let high = ((addr & 0x100) >> 3) as u8; // bit 8 -> bit 5 (0x20)
@@ -2913,11 +2948,26 @@ impl Mapper for Multicart227 {
         out.push(u8::from(self.horizontal_mirroring));
         out.extend_from_slice(&self.vram);
         out.extend_from_slice(&self.chr_ram);
+        // v2.7.2: the FW-01 WRAM, when present, as a trailing block. Its
+        // length is fixed by the header, so an older blob (no block) is told
+        // apart by length rather than by the file-wide version byte.
+        out.extend_from_slice(&self.wram);
         out
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), MapperError> {
-        let expected = 6 + self.vram.len() + self.chr_ram.len();
+        // This board's blob shares the file-wide `SAVE_STATE_VERSION`, so a
+        // pre-v2.7.2 blob (no WRAM) is told apart by length alone: exactly
+        // `without_wram` bytes is the old layout and loads with WRAM zeroed.
+        // Any other length must be the full current layout. A board built
+        // without WRAM (no battery header) has `wram.len() == 0`, and the
+        // two lengths coincide.
+        let without_wram = 6 + self.vram.len() + self.chr_ram.len();
+        let expected = if data.len() == without_wram {
+            without_wram
+        } else {
+            without_wram + self.wram.len()
+        };
         if data.len() != expected {
             return Err(MapperError::Truncated {
                 expected,
@@ -2938,6 +2988,12 @@ impl Mapper for Multicart227 {
         cursor += self.vram.len();
         self.chr_ram
             .copy_from_slice(&data[cursor..cursor + self.chr_ram.len()]);
+        cursor += self.chr_ram.len();
+        if data.len() == cursor {
+            self.wram.fill(0); // a pre-v2.7.2 blob
+        } else {
+            self.wram.copy_from_slice(&data[cursor..]);
+        }
         Ok(())
     }
 }

@@ -218,8 +218,12 @@ impl Mapper for Sachen3011 {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // $4100-$5FFF except the protection port reads open bus.
-        (0x4020..=0x5FFF).contains(&addr) && (addr & 0x103 != 0x100)
+        // v2.7.2 (core audit §5.5): with no save RAM, nothing drives
+        // `$6000-$7FFF` and it floats; see `Mapper::cpu_read_unmapped`.
+        (matches!(addr, 0x6000..=0x7FFF) && self.sram().is_empty()) || {
+            // $4100-$5FFF except the protection port reads open bus.
+            (0x4020..=0x5FFF).contains(&addr) && (addr & 0x103 != 0x100)
+        }
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {

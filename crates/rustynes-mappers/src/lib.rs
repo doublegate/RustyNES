@@ -905,7 +905,8 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         ),
         241 => Box::new(
             Bxrom241::new(prg_rom, chr_rom, h.mirroring)
-                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?
+                .with_battery(h.has_battery),
         ),
         // --- v1.2.0 Workstream A, best-effort (Tier-2) long-tail sweep
         // Reference-ported discrete / multicart boards,
@@ -1147,7 +1148,8 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         ),
         227 => Box::new(
             Multicart227::new(prg_rom, &chr_rom, h.mirroring)
-                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?
+                .with_battery(h.has_battery),
         ),
         229 => Box::new(
             Multicart229::new(prg_rom, chr_rom, h.mirroring)
@@ -1191,7 +1193,8 @@ pub fn parse(bytes: &[u8]) -> Result<(Cartridge, Box<dyn Mapper>), RomError> {
         ),
         156 => Box::new(
             Daou156::new(prg_rom, chr_rom, h.mirroring)
-                .map_err(|e| RomError::InvalidConfig(e.to_string()))?,
+                .map_err(|e| RomError::InvalidConfig(e.to_string()))?
+                .with_battery(h.has_battery),
         ),
         162 => Box::new(
             WaixingFs304M162::new(prg_rom, &chr_rom, h.mirroring)

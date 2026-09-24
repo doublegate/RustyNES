@@ -98,6 +98,21 @@ loop can only check boards whose RAM a blind write sweep reaches — 43 of 296
 images at v2.7.1 — and prints the rest; RAM gated behind a board-specific enable
 is not checked by it.
 
+**A board with nothing at `$6000-$7FFF` floats there (v2.7.2).** The CPU bus
+keeps an open-bus latch, and a mapper reports an undriven address through
+`cpu_read_unmapped`. The trait default now treats `$6000-$7FFF` as unmapped
+exactly when `sram()` is empty. Before v2.7.2 the default treated all of
+`$6000-$FFFF` as mapped, and 205 board variants read a made-up `$00` there. A
+board with ROM or readable registers in that window but no save RAM must
+override the hook for it: mappers 40, 42, 50, 212, 238, 305 and 306 do.
+`crates/rustynes-mappers/tests/prg_ram_window_open_bus.rs` checks both
+directions for every mapper number. Comparing the commercial-ROM suite before and after this
+rule found five boards whose documented RAM the model lacked (156, 177, 227's
+FW-01 variant, 241, 245); v2.7.2 gave them their 8 KiB
+(`tests/documented_wram.rs`). A read that drives only some data bits,
+like Sachen's 3-bit registers, reports the rest through `cpu_read_driven_mask`,
+and the bus keeps its floating value on them.
+
 ## Behavior
 
 ### Banking pattern
@@ -168,17 +183,17 @@ Sorted by number of commercial titles using each mapper.
 | iNES | Submapper | Name | Phase | Audio | IRQ | Status | Notes |
 |------|-----------|------|-------|-------|-----|--------|-------|
 | 0 | — | NROM | 1 | — | — | landed (Phase 1) | 247 titles. Trivial; no banking. |
-| 1 | 1-5 | MMC1 (SUROM, SXROM, etc.) | 2 | — | — | landed (Phase 2) | Serial 5-write protocol; consecutive-write bug. |
+| 1 | 1-5 | MMC1 (SUROM, SXROM, etc.) | 2 | — | — | landed (Phase 2) | Serial 5-write protocol; consecutive-write bug. On boards with at most 8 KiB of CHR (v2.7.2, from `nesdev_wiki/MMC1.xhtml`), the CHR bank register's bit 4 selects the 256 KiB PRG half for the whole window, fixed bank included (SUROM / SXROM), and bits 3-2 select the 8 KiB PRG-RAM bank (SOROM: bit 3; SXROM: bit 3 = A14, bit 2 = A13). In 4 KiB CHR mode the driving register is the one the last CHR fetch selected. SNROM's bit-4 RAM enable applies only to <= 256 KiB PRG with <= 8 KiB RAM. holy_mapperel `M1_P512K_CR8K_S8K` / `_S32K` pass `0000`. SZROM is not modelled. |
 | 2 | 0-2 | UxROM | 2 | — | — | landed (Phase 2) | UNROM, UOROM, etc. CHR-RAM only. |
 | 3 | 0-2 | CNROM | 2 | — | — | landed (Phase 2) | Bus conflict required. |
 | 4 | 0-3 | MMC3 (and MMC6, sub 1) | 4 | — | A12 | landed (Phase 4 / S1) | Sharp vs NEC IRQ revision; default Sharp. mmc3_test_2/5-MMC3 passes; sub-tests 1-4 partial. |
-| 5 | — | MMC5 | 4 | yes (landed) | scanline | v0+v1 landed (Phase 4 / S4) | Banking + scanline IRQ + ExRAM modes 10/11 + multiplier (v0). Fill mode (`$5106`/`$5107`), dual sprite/BG CHR registers used for sprite tile fetches, ExGrafix per-tile attribute + CHR override (mode 01) (v1). Vertical split-screen (`$5200-$5202`) via `bg_split_state` (Castlevania III J status bar) and the MMC5 audio extension (two pulse + 7-bit PCM, `$5000-$5015`, behind the default-on `mapper-audio` feature) landed. |
+| 5 | — | MMC5 | 4 | yes (landed) | scanline | v0+v1 landed (Phase 4 / S4) | Banking + scanline IRQ + ExRAM modes 10/11 + multiplier (v0). Fill mode (`$5106`/`$5107`), dual sprite/BG CHR registers used for sprite tile fetches, ExGrafix per-tile attribute + CHR override (mode 01) (v1). Vertical split-screen (`$5200-$5202`) via `bg_split_state` (Castlevania III J status bar) and the MMC5 audio extension (two pulse + 7-bit PCM, `$5000-$5015`, behind the default-on `mapper-audio` feature) landed. PRG-RAM banking (v2.7.2, `nesdev_wiki/MMC5.xhtml` §"PRG-RAM configurations"): `$5113` and RAM-mode `$5114-$5116` page the RAM by the bank value's low three bits over the wiki's 64 KiB "compatible superset for all games", because PRG-RAM sizes in headers are unreliable (*L'Empereur*'s NES 2.0 dump under-declares its ETROM board); a 16 KiB window takes A13 from the CPU. `sram()` is the battery-backed part of the header's declared RAM: all of it, except ETROM's 16 KiB, where only the first chip is saved. |
 | 7 | 0-2 | AxROM | 2 | — | — | landed (Phase 2) | Single-screen mirroring control. |
 | 9 | — | MMC2 | 4 | — | — | landed (Phase 4 / S2) | Punch-Out; latched CHR per fetch ($FD/$FE). |
 | 10 | — | MMC4 | 4 | — | — | landed (Phase 4 / S2) | Like MMC2 with full PRG banking. |
 | 11 | — | Color Dreams | 4 | — | — | landed (Phase 4 / S2) | Unlicensed; bus conflict. |
 | 13 | — | CPROM | 4 | — | — | landed (Phase 4 / S2) | Videomation. |
-| 19 | — | Namco 163 | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2 / Phase 2.2) | Mappy-Land, King of Kings, Final Lap, Rolling Thunder, Megami Tensei II.  1-8 wavetable channels playing 4-bit wavetables from 128 B mapper-internal sound RAM.  Address-port at `$F800-$FFFF` (bit 7 = auto-increment, bits 6-0 = 7-bit RAM address) + data-port at `$4800-$4FFF`; per-channel registers at the top of internal RAM (channel 8 at `$78-$7F`, channel 1 at `$40-$47`); 18-bit frequency + 24-bit phase + 6-bit wave-length + nibble-addressed wave start address + 4-bit volume per channel; `$E000` bit 6 = audio-disable.  Gated behind the `mapper-audio` cargo feature. |
+| 19 | — | Namco 163 | 4 | yes (landed) | CPU | banking+IRQ+audio landed (Phase 4 / S3 + Track C2 / Phase 2.2) | Mappy-Land, King of Kings, Final Lap, Rolling Thunder, Megami Tensei II.  1-8 wavetable channels playing 4-bit wavetables from 128 B mapper-internal sound RAM.  Address-port at `$F800-$FFFF` (bit 7 = auto-increment, bits 6-0 = 7-bit RAM address) + data-port at `$4800-$4FFF`; per-channel registers at the top of internal RAM (channel 8 at `$78-$7F`, channel 1 at `$40-$47`); 18-bit frequency + 24-bit phase + 6-bit wave-length + nibble-addressed wave start address + 4-bit volume per channel; `$E000` bit 6 = audio-disable.  Gated behind the `mapper-audio` cargo feature. Nametables and CIRAM-as-CHR (v2.7.2, `nesdev_wiki/INES_Mapper_019.xhtml`): `$C000/$C800/$D000/$D800` select each nametable quadrant (`< $E0` a read-only 1 KiB CHR-ROM page, `>= $E0` CIRAM A/B by the low bit), powering on as the header's layout; CHR values `>= $E0` map CIRAM as CHR-RAM unless `$E800` bit 6 (`$0000-$0FFF`) or bit 7 (`$1000-$1FFF`) disables it. Save state v3 carries the `$E800` bits; an older blob loads as both halves disabled, the pre-v2.7.2 behaviour. |
 | 21 | 1, 2 | VRC4a / VRC4c | 4 | — | CPU | landed (Phase 4 / S3) | Konami; Wai Wai World. |
 | 22 | — | VRC2a | 4 | — | — | landed (Phase 4 / S3) | Konami. |
 | 23 | 1-3 | VRC4e / VRC4f / VRC2b | 4 | — | CPU | landed (Phase 4 / S3) | Konami. |
@@ -680,7 +695,7 @@ chunked `NSFE` containers; the FDS-style `$5FF6/$5FF7` RAM banking remains defer
 
 ## Test plan
 
-- **`holy_diver_battery_test`** / **`holy_mapperel`** (tepples): detects mappers and verifies bank reachability for each PRG/CHR bank. Wired into CI as the **mapper bank-reachability + IRQ regression net** (`crates/rustynes-test-harness/tests/holy_mapperel.rs`, gated on `--features test-roms`): the 17 committed zlib-licensed ROMs (`tests/roms/holy_mapperel/`) are each driven to their settled result screen and pinned by an `insta` framebuffer-hash snapshot, so a silent mapper-detection / bank-layout / RAM-sizing / IRQ regression flips exactly that ROM's hash and fails loudly. The net promotes nothing; it pins the honest current result, including the documented MMC1/FME-7 WRAM-disable residual (see `docs/accuracy-ledger.md`).
+- **`holy_diver_battery_test`** / **`holy_mapperel`** (tepples): detects mappers and verifies bank reachability for each PRG/CHR bank. Wired into CI as the **mapper bank-reachability + IRQ regression net** (`crates/rustynes-test-harness/tests/holy_mapperel.rs`, gated on `--features test-roms`): the 19 committed zlib-licensed ROMs (`tests/roms/holy_mapperel/`) are each driven to their settled result screen and pinned by an `insta` framebuffer-hash snapshot, so a silent mapper-detection / bank-layout / RAM-sizing / IRQ regression flips exactly that ROM's hash and fails loudly. The net promotes nothing; it pins the honest current result, including the documented MMC1/FME-7 WRAM-disable residual (see `docs/accuracy-ledger.md`).
 - **`mmc3_test_2`** (5 sub-ROMs): MMC3 IRQ behavior including the Sharp/NEC distinction and edge cases.
 - **`mmc3_irq_tests`** (blargg): MMC3 IRQ timing.
 - **`vrc24test`** (AWJ): all VRC2/4 variants.

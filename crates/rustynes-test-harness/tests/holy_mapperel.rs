@@ -52,7 +52,7 @@
 //!
 //! The `expect` column is a *static, human-verified* label; the FNV-1a hash in
 //! the snapshot is the *live* sentinel. A ROM whose label says `PASS 0000` but
-//! whose hash changes is a genuine regression to investigate. All 17 committed
+//! whose hash changes is a genuine regression to investigate. All 19 committed
 //! ROMs detect the correct mapper and prove full PRG/CHR bank reachability with
 //! every RAM/ROM/IRQ sub-test `OK`; the "detailed result" 4-digit code is
 //! `WRAM · PRG ROM · IRQ · CHR` where `0` is normal (README §"Displayed
@@ -63,6 +63,8 @@
 //! | `M0_*` (×2)         | 000 NROM           | `0000` | PASS |
 //! | `M1_P128K_C32K`     | 001 SJROM (MMC1)   | `0000` | PASS (v2.2.3 A2) |
 //! | `M1_P128K_CR8K`     | 001 SNROM (MMC1)   | `0000` | PASS (v2.2.3 A2) |
+//! | `M1_P512K_CR8K_S8K` | 001 SUROM (MMC1)   | `0000` | PASS (v2.7.2; was `S*ROM`, `PRG RAM MISSING`, `0300`) |
+//! | `M1_P512K_CR8K_S32K`| 001 SXROM (MMC1)   | `0000` | PASS (v2.7.2; was `S*ROM`, `PRG RAM MISSING`, `0300`) |
 //! | `M2_P128K_CR8K_V`   | 002 UNROM          | `0000` | PASS |
 //! | `M3_P32K_C32K_H`    | 003 CNROM          | `0000` | PASS |
 //! | `M4_*` (×3)         | 004 T[N/S]ROM MMC3 | `0000` | PASS (incl. IRQ) |
@@ -143,9 +145,10 @@ const PIN_FRAME: u64 = 600;
 /// test finished and did not wedge in the Morse-code crash redraw loop).
 const SETTLE_FRAMES: u64 = 60;
 
-/// The committed subset is 17 ROMs; guard against a corpus that was silently
-/// trimmed (a shrunk net catches less).
-const MIN_COMMITTED_ROMS: usize = 17;
+/// The committed subset is 19 ROMs (17 from the v0.02 binary release, plus the
+/// two 512 KiB MMC1 images built from its tag in v2.7.2); guard against a
+/// corpus that was silently trimmed (a shrunk net catches less).
+const MIN_COMMITTED_ROMS: usize = 19;
 
 /// FNV-1a 64-bit hash of a framebuffer — a tiny, dependency-free, byte-exact,
 /// cross-platform-stable fingerprint (the same primitive `visual_regression.rs`
@@ -191,6 +194,8 @@ fn expect_label(stem: &str) -> &'static str {
         "M0_P32K_CR32K_V" | "M0_P32K_CR8K_V" => "PASS NROM(000) detail=0000",
         "M1_P128K_C32K" => "PASS SJROM/MMC1(001) detail=0000",
         "M1_P128K_CR8K" => "PASS SNROM/MMC1(001) detail=0000",
+        "M1_P512K_CR8K_S8K" => "PASS SUROM/MMC1(001) 512K PRG detail=0000",
+        "M1_P512K_CR8K_S32K" => "PASS SXROM/MMC1(001) 512K PRG 32K WRAM detail=0000",
         "M2_P128K_CR8K_V" => "PASS UNROM(002) detail=0000",
         "M3_P32K_C32K_H" => "PASS CNROM(003) detail=0000",
         "M4_P128K_CR32K" | "M4_P128K_CR8K" => "PASS TNROM/MMC3(004) detail=0000",

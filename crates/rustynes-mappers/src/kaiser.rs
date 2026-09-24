@@ -297,15 +297,32 @@ impl Mapper for KaiserMapper {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        match self.board {
-            KaiserBoard::M303 => addr != 0x4030 && (0x4020..=0x5FFF).contains(&addr),
-            _ => (0x4020..=0x5FFF).contains(&addr),
-        }
+        // v2.7.2 (core audit §5.5): M303 and M312 drive nothing at
+        // `$6000-$7FFF`, so it floats there. M305 / M306 map PRG-ROM into that
+        // window and M56 / M142 RAM or ROM, so theirs stays mapped.
+        let floats_6000 = matches!(self.board, KaiserBoard::M303 | KaiserBoard::M312)
+            && matches!(addr, 0x6000..=0x7FFF);
+        floats_6000
+            || match self.board {
+                KaiserBoard::M303 => addr != 0x4030 && (0x4020..=0x5FFF).contains(&addr),
+                _ => (0x4020..=0x5FFF).contains(&addr),
+            }
     }
 
     fn cpu_write(&mut self, addr: u16, value: u8) {
         match self.board {
             KaiserBoard::M56 | KaiserBoard::M142 => match addr & 0xF000 {
+                // KS202 (M56) carries "8 KB PRG RAM bank (not battery
+                // backed!)" at `$6000-$7FFF` (nesdev_wiki/INES_Mapper_056).
+                // The read path served it but no write path existed, so the
+                // game's work RAM silently stayed zero (v2.7.2, found by
+                // `tests/prg_ram_window_open_bus.rs`). M142 has no RAM there
+                // per the wiki; see the core ledger's F-09.
+                0x6000 | 0x7000 => {
+                    if self.board == KaiserBoard::M56 && !self.use_rom {
+                        self.wram[addr as usize & 0x1FFF] = value;
+                    }
+                }
                 0x8000 => self.irq_reload = (self.irq_reload & 0xFFF0) | (value as u16 & 0x0F),
                 0x9000 => {
                     self.irq_reload = (self.irq_reload & 0xFF0F) | ((value as u16 & 0x0F) << 4);

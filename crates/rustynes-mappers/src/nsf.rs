@@ -704,22 +704,30 @@ impl Mapper for NsfMapper {
     }
 
     fn cpu_read_unmapped(&self, addr: u16) -> bool {
-        // The driver image and the bank registers ARE mapped in $4020-$5FFF, so
-        // the bus must use our real bytes there (not open bus). Everything else
-        // in that window is unmapped (open bus).
-        if !(0x4020..=0x5FFF).contains(&addr) {
-            return false;
+        // `$6000-$7FFF` is the runtime's 8 KiB WRAM and always mapped, although
+        // `sram()` is empty (nothing here is battery-backed). So this board does
+        // NOT take v2.7.2's "no save RAM -> the window floats" default; it did in
+        // the first cut, and a tune's RAM read the bus latch (PR #550).
+        {
+            // The driver image and the bank registers ARE mapped in $4020-$5FFF, so
+            // the bus must use our real bytes there (not open bus). Everything else
+            // in that window is unmapped (open bus).
+            if !(0x4020..=0x5FFF).contains(&addr) {
+                return false;
+            }
+            // Driver image and bank registers are always mapped.
+            if (DRIVER_BASE..DRIVER_BASE + 0x50).contains(&addr)
+                || (0x5FF8..=0x5FFF).contains(&addr)
+            {
+                return false;
+            }
+            // Expansion-audio read ports (N163 `$4800-$4FFF`, MMC5 `$5015`) are
+            // mapped when those chips are present (real bytes, not open bus).
+            if self.exp_audio.is_some() && ((0x4800..=0x4FFF).contains(&addr) || addr == 0x5015) {
+                return false;
+            }
+            true
         }
-        // Driver image and bank registers are always mapped.
-        if (DRIVER_BASE..DRIVER_BASE + 0x50).contains(&addr) || (0x5FF8..=0x5FFF).contains(&addr) {
-            return false;
-        }
-        // Expansion-audio read ports (N163 `$4800-$4FFF`, MMC5 `$5015`) are
-        // mapped when those chips are present (real bytes, not open bus).
-        if self.exp_audio.is_some() && ((0x4800..=0x4FFF).contains(&addr) || addr == 0x5015) {
-            return false;
-        }
-        true
     }
 
     fn notify_cpu_cycle(&mut self) {
@@ -885,6 +893,31 @@ mod tests {
         assert_eq!(nsf.init_addr, 0x8000);
         assert_eq!(nsf.play_addr, 0x8003);
         assert!(!nsf.bankswitched);
+    }
+
+    /// The NSF runtime gives every tune 8 KiB of WRAM at `$6000-$7FFF`, and
+    /// `sram()` stays empty because nothing there is battery-backed. v2.7.2's
+    /// first cut floated the window whenever `sram()` was empty, so a tune's
+    /// RAM reads returned the bus latch (PR #550, Copilot). The iNES sweep in
+    /// `tests/prg_ram_window_open_bus.rs` never builds an NSF, which is why it
+    /// did not see this.
+    #[test]
+    fn wram_window_is_mapped_and_holds_data() {
+        let nsf = parse_nsf(&synth_nsf()).expect("valid nsf");
+        let mut m = NsfMapper::new(&nsf);
+        assert!(m.sram().is_empty(), "NSF WRAM is not save RAM");
+        // Both address bytes fold into the pattern, so a stuck page reads wrong.
+        let pattern = |a: u16| {
+            let [lo, hi] = a.to_le_bytes();
+            lo ^ hi ^ 0x5A
+        };
+        for a in 0x6000u16..=0x7FFF {
+            m.cpu_write(a, pattern(a));
+        }
+        for a in 0x6000u16..=0x7FFF {
+            assert!(!m.cpu_read_unmapped(a), "${a:04X} must stay mapped");
+            assert_eq!(m.cpu_read(a), pattern(a), "${a:04X}");
+        }
     }
 
     #[test]

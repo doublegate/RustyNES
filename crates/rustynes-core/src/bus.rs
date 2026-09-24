@@ -4006,6 +4006,15 @@ impl LockstepBus {
                 // cartridge bus, so the (possibly substituted) value is what
                 // the CPU sees AND what latches onto `open_bus` below.
                 let raw = self.mapper.cpu_read(addr);
+                // Register-window reads may drive only some data bits; the
+                // rest keep the floating latch (v2.7.2, core audit §4.5).
+                // Limited to `$4020-$5FFF`, so PRG fetches pay nothing.
+                let raw = if addr < 0x6000 {
+                    let driven = self.mapper.cpu_read_driven_mask(addr);
+                    (self.open_bus & !driven) | (raw & driven)
+                } else {
+                    raw
+                };
                 self.apply_genie(addr, raw)
             }
         };
@@ -5616,5 +5625,126 @@ mod four_score_tests {
             }
             other => panic!("expected a Family BASIC keyboard on port 1, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod partial_drive_tests {
+    use super::*;
+
+    /// Sachen SA-020A (mapper 150): the `$4101` data register drives D2-D0
+    /// only (`nesdev_wiki/INES_Mapper_150.xhtml`), so D7-D3 keep whatever
+    /// was floating on the bus. Core audit section 4.5 found them read as 0,
+    /// which the bus then latched.
+    #[test]
+    fn a_sachen_register_read_keeps_the_floating_high_bits() {
+        let mut rom = Vec::with_capacity(16 + 0x8000 + 0x2000);
+        rom.extend_from_slice(b"NES\x1A");
+        rom.push(2); // 32 KiB PRG
+        rom.push(1); // 8 KiB CHR
+        rom.push(0x60); // mapper 150: low nibble 6
+        rom.push(0x90); // high nibble 9
+        rom.extend_from_slice(&[0u8; 8]);
+        rom.resize(16 + 0x8000 + 0x2000, 0);
+        let mut bus = LockstepBus::new(&rom).expect("mapper 150 parses");
+        bus.mapper.cpu_write(0x4100, 0x05); // select register 5
+        bus.mapper.cpu_write(0x4101, 0x03); // R5 = 3
+        bus.open_bus = 0xA8; // the last value driven on the bus
+        let v = bus.raw_cpu_read(0x4101);
+        assert_eq!(v & 0x07, 0x03, "the driven bits are the register");
+        assert_eq!(v & 0xF8, 0xA8, "the undriven bits are the floating latch");
+        assert_eq!(bus.open_bus, v, "and the latch keeps them");
+    }
+}
+
+#[cfg(test)]
+mod n163_nametable_tests {
+    use super::*;
+
+    /// Namco 163 (mapper 19) with 32 KiB PRG and 8 KiB CHR-ROM whose 1 KiB
+    /// page `p` is filled with `0x40 + p`. The CPU spins on `JMP $E000` with
+    /// rendering off; two frames take the PPU past its post-power-on window,
+    /// in which `$2006` writes are ignored.
+    fn n163() -> crate::Nes {
+        let mut rom = Vec::with_capacity(16 + 0x8000 + 0x2000);
+        rom.extend_from_slice(b"NES\x1A");
+        rom.push(2); // 32 KiB PRG
+        rom.push(1); // 8 KiB CHR-ROM
+        rom.push(0x31); // mapper 19 low nibble 3, vertical
+        rom.push(0x10); // high nibble 1
+        rom.extend_from_slice(&[0u8; 8]);
+        let mut prg = alloc::vec![0u8; 0x8000];
+        // The last 8 KiB is fixed at $E000: `JMP $E000`, vectors -> $E000.
+        prg[0x6000..0x6003].copy_from_slice(&[0x4C, 0x00, 0xE0]);
+        prg[0x7FFA..0x8000].copy_from_slice(&[0x00, 0xE0, 0x00, 0xE0, 0x00, 0xE0]);
+        rom.extend_from_slice(&prg);
+        for page in 0..8u8 {
+            rom.extend(core::iter::repeat_n(0x40 + page, 0x400));
+        }
+        let mut nes = crate::Nes::from_rom(&rom).expect("mapper 19 parses");
+        nes.run_frame();
+        nes.run_frame();
+        nes
+    }
+
+    /// A `$2007` write, through the PPU's own register path.
+    fn poke(nes: &mut crate::Nes, addr: u16, value: u8) {
+        let bus = nes.bus_mut();
+        let [hi, lo] = addr.to_be_bytes();
+        bus.cpu_write(0x2006, hi);
+        bus.cpu_write(0x2006, lo);
+        bus.cpu_write(0x2007, value);
+    }
+
+    // The PPU reaches nametables only through `nametable_fetch` /
+    // `nametable_write` / `nametable_address`. v2.7.2's first cut implemented
+    // N163's nametable select in `ppu_read`/`ppu_write`, which the PPU never
+    // calls for `$2000-$3EFF`, and its unit tests called `ppu_read` directly,
+    // so none of this was reachable in the emulator (PR #550 review).
+
+    #[test]
+    fn a_chr_rom_nametable_page_is_fetched_and_read_only() {
+        let mut nes = n163();
+        nes.bus_mut().mapper.cpu_write(0xC000, 0x03); // quadrant 0 -> CHR-ROM page 3
+        assert_eq!(nes.bus_mut().debug_peek_ppu(0x2005), 0x43);
+        poke(&mut nes, 0x2005, 0x99);
+        assert_eq!(
+            nes.bus_mut().debug_peek_ppu(0x2005),
+            0x43,
+            "CHR-ROM is read-only"
+        );
+    }
+
+    #[test]
+    fn the_nametable_registers_pick_the_ciram_page() {
+        let mut nes = n163();
+        nes.bus_mut().mapper.cpu_write(0xC000, 0xE1); // quadrant 0 -> CIRAM B
+        nes.bus_mut().mapper.cpu_write(0xC800, 0xE1); // quadrant 1 -> CIRAM B
+        poke(&mut nes, 0x2010, 0x77);
+        assert_eq!(
+            nes.bus_mut().debug_peek_ppu(0x2410),
+            0x77,
+            "both quadrants are page B"
+        );
+    }
+
+    #[test]
+    fn ciram_mapped_as_chr_sees_nametable_writes() {
+        let mut nes = n163();
+        nes.bus_mut().mapper.cpu_write(0xE800, 0x00); // CIRAM-as-CHR allowed in both halves
+        nes.bus_mut().mapper.cpu_write(0x8000, 0xE0); // pattern $0000-$03FF -> CIRAM A
+        nes.bus_mut().mapper.cpu_write(0xC000, 0xE0); // quadrant 0 -> CIRAM A
+        poke(&mut nes, 0x2005, 0x5C);
+        assert_eq!(
+            nes.bus_mut().debug_peek_ppu(0x0005),
+            0x5C,
+            "one RAM, two windows"
+        );
+        poke(&mut nes, 0x0006, 0xA7);
+        assert_eq!(
+            nes.bus_mut().debug_peek_ppu(0x2006),
+            0xA7,
+            "and the other way"
+        );
     }
 }

@@ -26,6 +26,59 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.7.2] - 2026-09-23 - "Bankroll" (every bank the cartridge has, and nothing it has not)
+
+### Fixed — mapper memory
+
+- **MMC1 reaches SUROM / SXROM's upper 256 KiB and banks SOROM / SXROM
+  PRG-RAM.** On boards with at most 8 KiB of CHR, the CHR bank register's bit 4
+  selects the 256 KiB PRG half (fixed bank included), and bits 3-2 select the
+  8 KiB PRG-RAM bank. The old code read four PRG bits and no RAM bank, and
+  treated SUROM's PRG line as SNROM's RAM disable. Two new holy_mapperel ROMs
+  (512 KiB SUROM and SXROM, built from the v0.02 tag) went from `S*ROM`,
+  `PRG RAM MISSING`, `0300` to `PASS 0000` (core audit §5.4). In 4 KiB CHR
+  mode the register driving these lines is the one PPU A12 last selected, as
+  the wiki warns; Bregalad's "WRAM disable scanline counter" ROM
+  (`tests/roms/mmc1_a12`, previously catalogued as an inert smoke test) now
+  draws its raster bar, and its snapshot was re-blessed.
+- **MMC5 banks its PRG-RAM.** `$5113` and the RAM-mode `$5114-$5116` values
+  now page the RAM over the wiki's 64 KiB "compatible superset", so a game gets
+  the RAM it expects even when its header under-declares it (*L'Empereur* does);
+  the save stays the header's battery-backed part, and a 16 KiB board saves only
+  its first 8 KiB (core audit §5.3).
+- **Namco 163 selects nametables through `$C000-$DFFF` and maps CIRAM as
+  CHR-RAM.** Nametable quadrants can be CIRAM pages or read-only CHR-ROM pages,
+  and CHR values `$E0-$FF` map console RAM unless `$E800` disables it. The
+  registers power on as the header's layout, so existing games render as before
+  (core audit IMP-11). The PPU reaches all of this through the nametable hooks,
+  and *Mappy Kids*, whose title and town screens were garbled, now renders.
+- **A board with nothing at `$6000-$7FFF` now reads open bus there, not `$00`.**
+  A sweep of every mapper number found 205 board variants inventing a zero; the
+  default now floats the window exactly when the board has no save RAM, and a
+  converse check keeps the seven boards with ROM or registers there mapped
+  (core audit §5.5).
+- **Sachen registers keep the floating bits they do not drive.** A new additive
+  `Mapper::cpu_read_driven_mask` lets a partial read (Sachen 150/243's 3-bit
+  registers, TCA-01's 6-bit protection read) leave the rest of the byte to the
+  bus's open-bus latch (core audit §4.5).
+- **Kaiser KS202 (mapper 56) work RAM is writable.** Its `$6000-$7FFF` RAM had
+  a read path and no write path (found by the open-bus sweep).
+- **Five boards gain the `$6000-$7FFF` RAM their wiki pages document**: mappers
+  156, 177, 241 and 245, and mapper 227's battery-backed FW-01 variant. The
+  models had none, so writes vanished; battery-backed ones now save.
+- **Ten fixed-mirroring boards accept a per-game header correction**, each
+  checked against its wiki page: mappers 11, 13, 34, 38, 70 (unless the header
+  says four-screen), 79, 87, 94, 180 and 184 (core audit §5.6).
+
+### Changed — save states
+
+- MMC1 and Namco 163 mapper blobs gain one trailing byte each (the CHR-A12 latch;
+  the `$E800` CHR-RAM disables); MMC5 gains its superset RAM pages; mappers 156,
+  177, 227, 241 and 245 gain their RAM. Older blobs still load. MMC1 and MMC5
+  resume under the corrected banking, and new RAM starts zeroed. Namco 163
+  rebuilds its nametable layout from the header, because old blobs hold the
+  registers zeroed, and leaves CIRAM with the PPU for that session.
+
 ## [2.7.1] - 2026-09-23 - "Keepsake" (a save that appears to succeed now does)
 
 ### Fixed — save data
