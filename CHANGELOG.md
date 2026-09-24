@@ -26,6 +26,22 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Libretro buildbot (contributed by @WizzardSK, #554)
+
+- **The macOS RetroArch cores build again.** Both macOS buildbot jobs had
+  failed in every pipeline: libretro's macOS templates set `SDKROOT` in a
+  `before_script` that each job's own `before_script` replaced, so the
+  bindings were generated against Linux headers and failed. Both jobs now set
+  it themselves.
+- **New RetroArch cores: 32-bit Windows, 32-bit Linux, and webOS** (armv7a
+  and aarch64). webOS aarch64 is new ground: no reference core builds it yet,
+  and the buildbot has no `webos/aarch64` download tree so far.
+- The Linux aarch64 job now uses libretro's own aarch64 template instead of
+  installing its cross linker itself.
+- The GitHub `libretro-cross` gate also checks `i686-pc-windows-gnu`,
+  `i686-unknown-linux-gnu` and `armv7-unknown-linux-gnueabi`, so the new
+  32-bit jobs get a pull-request-time rehearsal.
+
 ## [2.7.5] - 2026-09-24 - "Tally" (every audit claim closed with a measurement or a reason)
 
 The last release of the v2.7.x audit line: the core and frontend audit ledgers

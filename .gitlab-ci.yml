@@ -19,12 +19,13 @@
 # ["crates/rustynes-libretro"]` is what scopes that bare command to just
 # this crate instead of all 18 workspace members.
 #
-# Platform scope: every target ci-templates has a Rust template for, which
-# is also what the reference core BBKEmu builds green today — Windows and
-# Linux in 64 and 32 bits, Linux aarch64, the four Apple targets, the four
-# Android ABIs and webOS in 32 and 64 bits. Nintendo Switch is the one left
-# out: no `rust-libnx*.yml` template exists in ci-templates, so it is not
-# buildable this way for a Rust core today.
+# Platform scope: every target ci-templates has a Rust template for —
+# Windows and Linux in 64 and 32 bits, Linux aarch64, the four Apple targets,
+# the four Android ABIs, and webOS armv7a and aarch64. The reference core
+# BBKEmu builds green on all of them but webOS aarch64 today (pipeline 114669,
+# 2026-09-24), which it does not build. Nintendo Switch is the one left out:
+# no `rust-libnx*.yml` template exists in ci-templates, so it is not buildable
+# this way for a Rust core today.
 #
 # ---------------------------------------------------------------------------
 # Why every job carries a `before_script` (pipeline #91899 post-mortem)
@@ -167,9 +168,10 @@ libretro-build-linux-i686:
 # Linux aarch64
 # Cross-compiled from the same image as the x64 job. This job used to install
 # the cross linker itself and borrow the x64 template, because there was no
-# aarch64 template yet (libretro/libretro-super#2030); ci-templates has one
-# now, and it provides the linker, so only the #91899 `rustup target add`
-# remains here.
+# aarch64 template yet (libretro/libretro-super#2030). ci-templates has one
+# now: it sets the linker and `STRIP`, and its own `before_script` installs
+# `gcc-aarch64-linux-gnu` (kept via `!reference`), so only the #91899
+# `rustup target add` is ours.
 libretro-build-linux-aarch64:
   extends:
     - .libretro-rust-linux-aarch64-default
@@ -346,9 +348,17 @@ libretro-build-webos-armv7a:
     - rustup target add ${RUST_TARGET}
 
 # webOS aarch64
-# The image points bindgen at the SDK sysroot for armv7 only, so the aarch64
-# one is named here; without it clang would look for aarch64 glibc headers on
+# The image points bindgen at the SDK sysroot for armv7 only
+# (`BINDGEN_EXTRA_CLANG_ARGS_armv7_unknown_linux_gnueabi` in
+# libretro-build-webos's Dockerfile), so the aarch64 one is named here, on the
+# same path pattern; without it clang would look for aarch64 glibc headers on
 # the Ubuntu host, which has none. This is a variable, not an install.
+#
+# Two things are not yet proven, so read a failure here with them in mind:
+# no reference core builds this target (BBKEmu has no webOS aarch64 job), and
+# the buildbot has no `nightly/webos/aarch64/` tree yet (only `webos/armv7a/`,
+# checked 2026-09-24), so until one exists the core it builds may not reach
+# RetroArch's updater.
 libretro-build-webos-aarch64:
   extends:
     - .libretro-rust-webos-aarch64-default
