@@ -26,6 +26,58 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.7.5] - 2026-09-24 - "Tally" (every audit claim closed with a measurement or a reason)
+
+The last release of the v2.7.x audit line: the core and frontend audit ledgers
+now have no open row. No emulation behaviour changes, so AccuracyCoin,
+nestest, and every golden are unaffected.
+
+### Performance — the core audit's proposals
+
+- **The audio buffer keeps its capacity between frames**, so each frame's audio
+  is gathered into one allocation instead of regrowing from nothing: -0.89%
+  frame time, reproduced on two runs, for the apps that take audio a frame at a
+  time (the mobile apps and the web build). The desktop was already
+  allocation-free here. Audio is byte-identical.
+- **The other eleven hot-path changes are rejected.** Ten were measured before
+  any was built (one more had been in v2.3.1), and one was closed by
+  reasoning. One probe applied most of them at their maximum, deleting the work
+  outright where needed, to bound what they could win; the bound was zero on
+  two clean runs, and the one rewrite among them (branchless status flags) was
+  also run alone, twice, and measured zero. CPU inlining and cold-path
+  outlining, and the branchless palette mirror, got their own runs and measured
+  zero too. The full record, including the audit premises that turned out wrong
+  and a benchmark that could not see the change it was credited with measuring,
+  is in `docs/performance.md`.
+- **Capping the audio buffer is rejected** as a behaviour change with no user:
+  every host drains each frame, and the one consumer that accumulates would
+  have lost audio.
+
+### Changed — interfaces marked for removal
+
+- **18 dead `rustynes_cpu::Bus` methods and the `ApuBus` trait are
+  `#[deprecated]`.** Found by the compiler, not by search: 5 of the audit's 22
+  "dead" methods are live and were left alone, and two it missed were not.
+  Removal is decided at v2.9.0 (ADR 0041).
+
+### Fixed
+
+- **An HD pack no longer loses capacity to a corrupt image.** A PNG whose pixel
+  data failed to decode kept the budget its header had reserved, so a valid
+  image later in the pack could be refused as over budget.
+- **The FDS error says what to do.** Opening a Famicom Disk System image where
+  only cartridges load (the mobile apps) said FDS was "planned for v2.2.0"; it
+  now says the image needs the disk loader and a BIOS.
+- **Architecture documentation describes the v2.0.0 scheduler.** `AGENTS.md`
+  and `docs/scheduler.md` still described the retired dot-lockstep design and a
+  bus type that does not exist.
+
+### Deferred
+
+- **The mobile per-frame framebuffer copy (MOB-06)** waits for UniFFI to
+  release mutable borrowed byte buffers; the newest release, 0.32.2, has
+  read-only ones only.
+
 ## [2.7.4] - 2026-09-24 - "Pocket" (the mobile apps survive what a phone does to them)
 
 ### Fixed — both mobile apps (the shared Rust bridge)

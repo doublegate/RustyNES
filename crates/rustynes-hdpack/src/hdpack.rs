@@ -901,10 +901,12 @@ const fn png_dimensions_allowed(width: u32, height: u32) -> bool {
 /// header declares dimensions past [`png_dimensions_allowed`], or whose RGBA
 /// size exceeds what is left of the pack's `budget` (which is then left as it
 /// was). Both checks run on the header alone, before any pixel buffer exists;
-/// an image that is accepted is charged to `budget`.
+/// an image that is accepted is charged to `budget`. The charge is taken
+/// before the pixels are decoded, so an image that then fails to decode is
+/// refunded (v2.7.5): a corrupt image must not spend budget a valid one needs.
 fn decode_png(bytes: &[u8], budget: &mut u64) -> Option<ReplacementImage> {
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    let mut reader = decoder.read_info().ok()?;
+    let reader = decoder.read_info().ok()?;
     let header = reader.info();
     if !png_dimensions_allowed(header.width, header.height) {
         return None;
@@ -914,6 +916,18 @@ fn decode_png(bytes: &[u8], budget: &mut u64) -> Option<ReplacementImage> {
         return None;
     }
     *budget -= rgba_bytes;
+    let image = decode_png_pixels(reader);
+    if image.is_none() {
+        *budget += rgba_bytes;
+    }
+    image
+}
+
+/// The pixel half of [`decode_png`], after the header checks and the budget
+/// charge: every early `None` here is a failure the caller refunds.
+fn decode_png_pixels<R: std::io::BufRead + std::io::Seek>(
+    mut reader: png::Reader<R>,
+) -> Option<ReplacementImage> {
     let mut buf = vec![0u8; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buf).ok()?;
     buf.truncate(info.buffer_size());
@@ -2717,6 +2731,35 @@ mod tests {
             2,
             "the third image is over the pack budget"
         );
+    }
+
+    /// Review on #551 (carried into v2.7.5): the budget was charged from the
+    /// header, before the pixels were decoded, and a decode that then failed
+    /// never gave it back -- so a corrupt image near the limit could starve
+    /// valid ones after it. The truncated image's header is valid (so it is
+    /// charged); its pixel data is cut short inside IDAT (so the decode fails).
+    #[test]
+    fn a_png_that_fails_after_its_header_refunds_the_budget() {
+        let one = 64 * 64 * 4;
+        let good = gray_png(64, 64);
+        let idat = good
+            .windows(4)
+            .position(|w| w == b"IDAT")
+            .expect("an IDAT chunk");
+        // Keep the chunk type and two data bytes: the header parses, the image
+        // data ends mid-stream.
+        let truncated = &good[..idat + 6];
+        let mut budget = one;
+        assert!(
+            decode_png(truncated, &mut budget).is_none(),
+            "cannot decode"
+        );
+        assert_eq!(budget, one, "a failed decode costs nothing");
+        assert!(
+            decode_png(&good, &mut budget).is_some(),
+            "a valid image at exactly the remaining budget still loads"
+        );
+        assert_eq!(budget, 0);
     }
 
     /// The folder loader threads the same budget. The zip's entries are

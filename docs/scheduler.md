@@ -64,10 +64,10 @@ fn cpu_tick(&mut self) {
 
 ### Bus design
 
-The bus owns: PPU, APU, mapper (via cart), WRAM, controllers, open-bus latch. The CPU borrows `&mut Bus` during `tick()`. PPU and APU each get their own bus trait for the things they need:
+The bus (`LockstepBus`) owns: PPU, APU, mapper (via cart), WRAM, controllers, open-bus latch. The CPU borrows it for each instruction (`Cpu::step(&mut bus)`, generic over `rustynes_cpu::Bus`). The PPU gets its own bus trait for what it needs:
 
-- `PpuBus`: `ppu_read/write` (delegates to mapper); `notify_a12` (mapper IRQ).
-- `ApuBus`: `dmc_read` (delegates to bus.read); `dmc_halt_request` (queues DMA); `raise_irq` (sets a flag the CPU consults via `bus.irq_level()`).
+- `PpuBus`: `ppu_read` / `ppu_read_sprite` / `ppu_write` and the nametable accessors (delegated to the mapper, which owns CIRAM mapping); the mapper notifications `notify_a12`, `notify_scanline_start` and `notify_vblank` (mapper IRQs).
+- The APU has no bus trait. The bus drives the DMC sample fetch itself: it polls `Apu::dmc_dma_pending` / `dmc_dma_addr`, performs the read inside the CPU's unified DMA, and returns the byte with `Apu::complete_dmc_dma`. The APU's IRQ line is read through `bus.irq_level()`. (`ApuBus` is a deprecated, unimplemented trait since v2.7.5; until then this section described it as live — core audit §4.3.)
 
 The mapper sees both buses via separate trait methods (`cpu_read/write`, `ppu_read/write`).
 

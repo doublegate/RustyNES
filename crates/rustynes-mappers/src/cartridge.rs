@@ -223,11 +223,18 @@ pub enum RomError {
     BadMagic,
 
     /// The file is a Famicom Disk System disk image (fwNES `"FDS\x1A"` header
-    /// or a raw `"*NINTENDO-HVC*"` disk side). FDS is a separate sub-platform
-    /// (disk drive + `disksys.rom` BIOS + disk IRQ/transfer timing + FDS
-    /// audio) planned for v2.2.0; it is detected here so the frontend can show
-    /// a clear message instead of a generic bad-magic error.
-    #[error("Famicom Disk System images are not yet supported (planned for v2.2.0)")]
+    /// or a raw `"*NINTENDO-HVC*"` disk side), handed to the CARTRIDGE parser.
+    /// FDS is supported since v2.2.0, but as a separate sub-platform: a disk
+    /// loads through `rustynes_core::Nes::from_disk` together with the
+    /// `disksys.rom` BIOS, which the desktop and web frontends do. It is
+    /// detected here so a host without that path (the mobile apps, which load
+    /// iNES / NES 2.0 only) shows a clear message instead of a generic
+    /// bad-magic error. Until v2.7.5 the message still said FDS was "planned
+    /// for v2.2.0" (core audit §4.7).
+    #[error(
+        "this is a Famicom Disk System disk image; it loads through the disk loader with a \
+         disksys.rom BIOS, not as a cartridge"
+    )]
     FdsUnsupported,
 
     /// Mapper id is outside the coverage matrix for this build.
