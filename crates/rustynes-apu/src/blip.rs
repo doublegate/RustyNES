@@ -337,6 +337,11 @@ impl BlipBuf {
     pub fn drain_all(&mut self) -> Vec<f32> {
         // The `core` path keeps this module portable to `#![no_std]` builds.
         // See `docs/architecture.md` §no_std boundary.
+        // Nothing queued: hand back an unallocated `Vec` and keep the buffer,
+        // rather than allocate a replacement for an empty one.
+        if self.samples.is_empty() {
+            return Vec::new();
+        }
         // Clamped so a one-off backlog is not kept as a high-water mark
         // (see `DRAIN_ALL_KEEP_CAPACITY`); a per-frame drain is far below it.
         let capacity = self.samples.capacity().min(DRAIN_ALL_KEEP_CAPACITY);
@@ -388,6 +393,23 @@ mod tests {
             first.len()
         );
         assert!(b.is_empty(), "the drained samples are gone");
+    }
+
+    /// An empty drain hands back an empty, unallocated `Vec` and keeps the
+    /// buffer as it is (agy on #553): polling with nothing queued used to
+    /// allocate a replacement and return the old, empty buffer to be freed.
+    #[test]
+    fn an_empty_drain_all_allocates_nothing() {
+        let mut b = BlipBuf::new(44_100, CPU_HZ_NTSC);
+        for _ in 0..TEN_FRAMES_NTSC / 10 {
+            b.add_sample(0.25);
+        }
+        let _ = b.drain_all();
+        let kept = b.samples.capacity();
+        let empty = b.drain_all();
+        assert!(empty.is_empty());
+        assert_eq!(empty.capacity(), 0, "no buffer handed out for nothing");
+        assert_eq!(b.samples.capacity(), kept, "the kept buffer stays");
     }
 
     /// The kept capacity is clamped (agy on #553): a caller that lets audio
