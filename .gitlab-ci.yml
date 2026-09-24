@@ -19,12 +19,12 @@
 # ["crates/rustynes-libretro"]` is what scopes that bare command to just
 # this crate instead of all 18 workspace members.
 #
-# Platform scope: mirrors the two proven, currently-building reference
-# cores (doukutsu-rs-libretro, holani-retro) minus platforms we have
-# concrete evidence won't build — no `rust-libnx*.yml` template exists in
-# ci-templates (Nintendo Switch is not buildable this way for a Rust core
-# today), and no reference core includes webOS. Both can be added later
-# once the basics are proven on the buildbot.
+# Platform scope: every target ci-templates has a Rust template for, which
+# is also what the reference core BBKEmu builds green today — Windows and
+# Linux in 64 and 32 bits, Linux aarch64, the four Apple targets, the four
+# Android ABIs and webOS in 32 and 64 bits. Nintendo Switch is the one left
+# out: no `rust-libnx*.yml` template exists in ci-templates, so it is not
+# buildable this way for a Rust core today.
 #
 # ---------------------------------------------------------------------------
 # Why every job carries a `before_script` (pipeline #91899 post-mortem)
@@ -76,9 +76,21 @@ include:
   - project: 'libretro-infrastructure/ci-templates'
     file: '/rust-windows-x64.yml'
 
+  # Windows 32-bit
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/rust-windows-i686.yml'
+
   # Linux 64-bit
   - project: 'libretro-infrastructure/ci-templates'
     file: '/rust-linux-x64.yml'
+
+  # Linux 32-bit
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/rust-linux-i686.yml'
+
+  # Linux aarch64
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/rust-linux-aarch64.yml'
 
   # macOS/iOS/tvOS
   - project: 'libretro-infrastructure/ci-templates'
@@ -88,6 +100,11 @@ include:
   # Android
   - project: 'libretro-infrastructure/ci-templates'
     file: '/rust-android-jni.yml'
+
+  #################################### TV ####################################
+  # webOS
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/rust-webos.yml'
 
 stages:
   - build-prepare
@@ -104,6 +121,23 @@ libretro-build-windows-x64:
   variables:
     RUST_TARGET: x86_64-pc-windows-gnu
 
+# Windows 32-bit
+# The image links this with llvm-mingw (its old i686 MinGW has SJLJ unwinding,
+# which Rust's DWARF std cannot link against); the template carries all of
+# that. bindgen's ABI override for this triple is already in
+# `.cargo/config.toml`, next to the 64-bit one. The template's own
+# `before_script` is kept via `!reference` for the reason given for the Apple
+# jobs above.
+libretro-build-windows-i686:
+  extends:
+    - .libretro-rust-windows-i686-default
+    - .core-defs
+  variables:
+    RUST_TARGET: i686-pc-windows-gnu
+  before_script:
+    - !reference [.libretro-rust-windows-i686, before_script]
+    - rustup target add ${RUST_TARGET}
+
 # Linux 64-bit
 # `RUST_TARGET` is the host triple here, so the `rustup target add` is a
 # no-op — declared anyway so every job states its target the same way and a
@@ -116,30 +150,48 @@ libretro-build-linux-x64:
   variables:
     RUST_TARGET: x86_64-unknown-linux-gnu
 
+# Linux 32-bit
+# Linked with the image's i686 cross GCC (the template sets the linker).
+# bindgen needs no sysroot here: clang finds that cross GCC's glibc headers
+# under /usr/i686-linux-gnu by itself, as it does for the aarch64 job below.
+libretro-build-linux-i686:
+  extends:
+    - .libretro-rust-linux-i686-default
+    - .core-defs
+  variables:
+    RUST_TARGET: i686-unknown-linux-gnu
+  before_script:
+    - !reference [.libretro-rust-linux-i686, before_script]
+    - rustup target add ${RUST_TARGET}
+
 # Linux aarch64
-# Cross-compiled from the same image as the x64 job, the way that image already
-# cross-compiles the Apple and Android arm64 targets. There is no
-# rust-linux-aarch64.yml template yet (libretro/libretro-super#2030) and the
-# rust image is amd64-only, so the target and its linker are added here.
-#
-# `before_script` is spelled out instead of extending `.rust-target-install`
-# because the cross linker has to be installed as well; the `rustup target add
-# ${RUST_TARGET}` line is the same one that helper provides, so the #91899
-# toolchain-pin trap is handled identically.
+# Cross-compiled from the same image as the x64 job. This job used to install
+# the cross linker itself and borrow the x64 template, because there was no
+# aarch64 template yet (libretro/libretro-super#2030); ci-templates has one
+# now, and it provides the linker, so only the #91899 `rustup target add`
+# remains here.
 libretro-build-linux-aarch64:
   extends:
-    - .libretro-rust-linux-x64
+    - .libretro-rust-linux-aarch64-default
     - .core-defs
   variables:
     RUST_TARGET: aarch64-unknown-linux-gnu
-    TARGET_ARCH: aarch64-unknown-linux-gnu
-    STRIP: aarch64-linux-gnu-strip
-    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
   before_script:
-    - apt-get update -qy && apt-get install -yq gcc-aarch64-linux-gnu
+    - !reference [.libretro-rust-linux-aarch64, before_script]
     - rustup target add ${RUST_TARGET}
 
 # macOS 64-bit
+#
+# Both macOS jobs set `SDKROOT` themselves. `.libretro-rust-apple-osx-base`
+# exports it, but the two `-default` templates built on it each define a
+# `before_script` of their own, and GitLab's `extends` REPLACES that key (see
+# the post-mortem above) - so the export never runs, and the `!reference` of
+# the `-default` template's `before_script` below does not bring it back, as
+# that is the replacing one. Without
+# it bindgen parses `libretro.h` against the Linux host's glibc headers and
+# dies on `bits/libc-header-start.h`, which is how both macOS jobs failed in
+# every pipeline. The iOS and tvOS templates export their SDKROOT in their own
+# `before_script`, which is why those two build in the same image.
 libretro-build-osx-x64:
   extends:
     - .libretro-rust-osx-x86_64-default
@@ -148,6 +200,7 @@ libretro-build-osx-x64:
     RUST_TARGET: x86_64-apple-darwin
   before_script:
     - !reference [.libretro-rust-osx-x86_64-default, before_script]
+    - export SDKROOT=$OSX_SDKROOT
     - rustup target add ${RUST_TARGET}
 
 # macOS ARM 64-bit
@@ -159,6 +212,7 @@ libretro-build-osx-arm64:
     RUST_TARGET: aarch64-apple-darwin
   before_script:
     - !reference [.libretro-rust-osx-arm64-default, before_script]
+    - export SDKROOT=$OSX_SDKROOT
     - rustup target add ${RUST_TARGET}
 
 ################################### CELLULAR #################################
@@ -273,3 +327,35 @@ libretro-build-tvos-arm64:
     - rustup target add ${RUST_TARGET}
   script:
     - !reference [.libretro-rust-apple-base, script]
+
+##################################### TV #####################################
+# webOS
+# Built in libretro's webOS image, which has its own rustup, libclang and the
+# LG webOS SDKs. The template's `before_script` sources the SDK environment,
+# so it is kept via `!reference`, and the #91899 `rustup target add` follows
+# it: the `channel` pin makes rustup fetch a pristine 1.96.0 here too, without
+# the targets the image installed on its own default toolchain.
+libretro-build-webos-armv7a:
+  extends:
+    - .libretro-rust-webos-armv7a-default
+    - .core-defs
+  variables:
+    RUST_TARGET: armv7-unknown-linux-gnueabi
+  before_script:
+    - !reference [.libretro-rust-webos, before_script]
+    - rustup target add ${RUST_TARGET}
+
+# webOS aarch64
+# The image points bindgen at the SDK sysroot for armv7 only, so the aarch64
+# one is named here; without it clang would look for aarch64 glibc headers on
+# the Ubuntu host, which has none. This is a variable, not an install.
+libretro-build-webos-aarch64:
+  extends:
+    - .libretro-rust-webos-aarch64-default
+    - .core-defs
+  variables:
+    RUST_TARGET: aarch64-unknown-linux-gnu
+    BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu: "--sysroot=/developer/aarch64-webos-linux-gnu_sdk-buildroot/aarch64-webos-linux-gnu/sysroot"
+  before_script:
+    - !reference [.libretro-rust-webos, before_script]
+    - rustup target add ${RUST_TARGET}
