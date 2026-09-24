@@ -1,7 +1,7 @@
 # RustyNES Development Roadmap
 
 **Document Version:** 2.0.4
-**Last Updated:** 2026-09-17
+**Last Updated:** 2026-09-24
 **Project Status:** v2.7.5 "Ledger" released — every audit claim closed with a measurement or a reason, the sixth and last release of the v2.7.x audit line. **No hardware has run any bitstream**; the SuperStation One core is v3.0.0.
 
 ---

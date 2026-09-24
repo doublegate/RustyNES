@@ -684,10 +684,10 @@ were measured and none adopted (`docs/performance.md`), and the core and
 frontend ledgers have no open row. Desktop, Android and iOS all keep battery
 saves. v2.7.4's mobile changes have a device checklist
 (`docs/mobile-v2.7.4-device-checklist.md`); this repository records no run of
-it yet. Built on **v2.7.2
-"Bankroll"**, which completed cartridge memory in the core, and **v2.6.23
-"Pulse"**, which closed the CHR-during-rendering divergence in the MiSTer
-sibling.
+it yet. Built on **v2.7.3 "Hearth"**, which made the desktop keep battery
+saves and closed the Lua sandbox's escapes, **v2.7.2 "Bankroll"**, which
+completed cartridge memory in the core, and **v2.6.23 "Pulse"**, which closed
+the CHR-during-rendering divergence in the MiSTer sibling.
 
 | Measure | Value |
 |---|---|
