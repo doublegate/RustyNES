@@ -122,6 +122,36 @@ only what needs cpal.
   renderer stubbed. Before v2.7.4 nothing on a pull request compiled either
   file; only the tag-triggered `ios.yml` did.
 
+### v2.7.4 host fixes (frontend audit IOS-*, MOB-05, MOB-09)
+
+- **Battery saves** (`BatterySave.swift`): `Application Support/RustyNES/battery/<rom-sha256>.sav`,
+  the desktop's and Android's rules (battery bit only; size checked before
+  reading; a wrong-size file never loaded or overwritten; atomic writes). Loaded
+  before the first frame, compared once a second, written on close, on a game
+  switch, and inside a background task when the app backgrounds.
+- **Background tasks** (`BackgroundTask.swift`, IOS-04): CloudKit uploads and the
+  background battery save run inside a UIKit background task that always ends,
+  including from its expiration handler (an unended task gets the app killed).
+- **CloudKit** (IOS-04, IOS-10): a local slot newer than iCloud's is re-uploaded
+  instead of being marked synced; an upload never overwrites a newer server copy
+  and saves with `.ifServerRecordUnchanged`, so a concurrent write from another
+  device fails the save rather than being lost; the per-record save result is
+  checked.
+- **Audio session** (IOS-08): a media-services reset re-configures the session
+  and rebuilds the sink, and the core also rebuilds a sink that reports its
+  stream dead. An unplugged headset pauses as its own reason, cleared by the
+  next menu close (it used to stay frozen until a background / foreground cycle).
+- **Gestures** (IOS-05): the bottom-edge system gesture is deferred and the home
+  indicator hidden while playing.
+- **Thermal state** (IOS-11): at `.serious` / `.critical` the video filter is
+  suspended until the device cools.
+- **Netplay** (MOB-09): host-name resolution (join, room codes) runs off the
+  main actor.
+
+None of this is compiled on this project's Linux machines; it is on the
+maintainer's device checklist for v2.7.4. The Rust side is type-checked on
+Linux by `scripts/ios-host-typecheck.sh`.
+
 ## The SwiftUI app (`ios/`)
 
 A checked-in **XcodeGen** spec (`ios/project.yml`) generates the `.xcodeproj`
@@ -134,12 +164,17 @@ AVFoundation / UIKit, and includes the generated `Generated/RustyNESCore.swift`
 "rustynes_ios.h"`).
 
 - **Game surface (`MetalGameView`):** a `UIViewRepresentable` hosting the
-  `MTKView`. A `CADisplayLink` (`preferredFrameRateRange` 60-120 for ProMotion;
-  Info.plist `CADisableMinimumFrameDurationOnPhone = true`) drives the loop: each
-  tick `nes.runFrame()` -> `rustynes_ios_gfx_render(...)` and `nes.drainAudio()` ->
+  `MTKView`. A `CADisplayLink` drives the loop: each tick `nes.runFrame()` ->
+  `rustynes_ios_gfx_render(...)` and `nes.drainAudio()` ->
   `rustynes_ios_audio_push(...)`. The drawable size comes from the view; a
-  bounds/scale change calls `rustynes_ios_gfx_resize`. The core emulates at the
-  console rate (60.0988 Hz); the audio sink absorbs the display beat.
+  bounds/scale change calls `rustynes_ios_gfx_resize`. **v2.7.4 (audit IOS-01):**
+  the link asks for exactly 60 Hz (it was 60-120, preferring 120), and when it
+  runs at ~60 Hz the loop runs exactly one console frame per vsync -- display
+  sync, as on the desktop -- so no frame is doubled or dropped. The core then
+  runs 0.16% below the console's 60.0988 Hz, which the sink's rate control
+  absorbs. On any other refresh a wall-clock accumulator at 60.0988 Hz remains
+  the fallback. The view is keyed to its core (`.id`), so a ROM opened from
+  another app while one runs gets a fresh view rather than a frozen one.
 - **Input:** the on-screen pad and a `GameControllerManager` (`GCController`
   discovery) both converge on the same `setButtons(port, mask)` late-latch as
   desktop / wasm -> TAS / netplay identical. **(v1.9.2)** the pad is a `UIView`-backed

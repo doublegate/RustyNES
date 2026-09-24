@@ -122,13 +122,19 @@ final class NetplayModel: ObservableObject {
         guard let core else { lastError = "Open a game first to join netplay."; return }
         let trimmed = address.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { lastError = "Enter the host's ip:port."; return }
-        do {
-            try core.npJoin(address: trimmed)
-            hostedPort = nil
-            lastError = nil
-            startPolling()
-        } catch {
-            lastError = "Could not join: \(error.localizedDescription)"
+        // v2.7.4 (frontend audit MOB-09): `npJoin` resolves the host name with a
+        // blocking DNS lookup. This model is @MainActor, so the lookup used to run
+        // on the main thread and freeze the UI while it waited. It runs detached
+        // now; the result is published back on the main actor.
+        Task {
+            do {
+                try await Task.detached { try core.npJoin(address: trimmed) }.value
+                hostedPort = nil
+                lastError = nil
+                startPolling()
+            } catch {
+                lastError = "Could not join: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -140,13 +146,20 @@ final class NetplayModel: ObservableObject {
     func hostRoom() {
         guard let core else { lastError = "Open a game first to host netplay."; return }
         guard signalingConfigured else { lastError = signalingHint; return }
-        do {
-            hostedRoomCode = try core.npHostRoom(numPlayers: 2, cfg: makeNetConfig())
-            hostedPort = nil
-            lastError = nil
-            startPolling()
-        } catch {
-            lastError = "Could not host room: \(error.localizedDescription)"
+        // v2.7.4 (MOB-09): the TURN host is resolved during this call; off the
+        // main thread, as in `join`.
+        let cfg = makeNetConfig()
+        Task {
+            do {
+                hostedRoomCode = try await Task.detached {
+                    try core.npHostRoom(numPlayers: 2, cfg: cfg)
+                }.value
+                hostedPort = nil
+                lastError = nil
+                startPolling()
+            } catch {
+                lastError = "Could not host room: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -156,14 +169,18 @@ final class NetplayModel: ObservableObject {
         guard signalingConfigured else { lastError = signalingHint; return }
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { lastError = "Enter the room code."; return }
-        do {
-            try core.npJoinRoom(roomCode: trimmed, cfg: makeNetConfig())
-            hostedPort = nil
-            hostedRoomCode = nil
-            lastError = nil
-            startPolling()
-        } catch {
-            lastError = "Could not join room: \(error.localizedDescription)"
+        // v2.7.4 (MOB-09): off the main thread, as in `join`.
+        let cfg = makeNetConfig()
+        Task {
+            do {
+                try await Task.detached { try core.npJoinRoom(roomCode: trimmed, cfg: cfg) }.value
+                hostedPort = nil
+                hostedRoomCode = nil
+                lastError = nil
+                startPolling()
+            } catch {
+                lastError = "Could not join room: \(error.localizedDescription)"
+            }
         }
     }
 

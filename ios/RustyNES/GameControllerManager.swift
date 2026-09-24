@@ -216,6 +216,12 @@ final class GameControllerManager: ObservableObject {
         managed.append(m)
         controller.playerIndex = GCControllerPlayerIndex(rawValue: port) ?? .indexUnset
 
+        // v2.7.4 (frontend audit IOS-06, hardening): pin the handler queue to
+        // main. It already defaults to main, so input was never raced, but the
+        // turbo code below assumes handlers "can be delivered off-main"; stating
+        // the queue makes the main-thread invariant this class relies on hold by
+        // construction rather than by a default.
+        controller.handlerQueue = .main
         controller.extendedGamepad?.valueChangedHandler = { [weak self, weak m] _, _ in
             if let self, let m { self.evaluate(m) }
         }

@@ -9,6 +9,7 @@
 import Combine
 import Foundation
 import SwiftUI
+import UIKit
 
 /// Small app-level errors surfaced to the user (v1.9.6).
 enum AppError: LocalizedError {
@@ -247,6 +248,24 @@ final class AppModel: ObservableObject {
                 self?.applyRunState()
             }
         }
+        // v2.7.4: headphones unplugged. Paused until the player's next menu close
+        // (or a fresh foreground) -- no "resume" event follows a route loss.
+        audioSession.onRouteLost = { [weak self] in
+            Task { @MainActor in
+                self?.routePaused = true
+                self?.applyRunState()
+            }
+        }
+        // v2.7.4 (IOS-08): media services were reset. Re-configure the session,
+        // then rebuild the output sink over the running core.
+        audioSession.onMediaServicesReset = { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.audioSession.configure()
+                self.emulator?.rebuildAudioSink()
+                self.applyRunState()
+            }
+        }
         gamepads.onMaskChanged = { [weak self] port, mask in
             guard let self else { return }
             let p = Int(port)
@@ -255,6 +274,20 @@ final class AppModel: ObservableObject {
             self.pushInput(port: p)
         }
         gamepads.start()
+
+        // v2.7.4 (frontend audit IOS-11): nothing reacted to the device heating
+        // up. At `.serious` / `.critical` thermal state the video filter is
+        // suspended (see `applyDisplaySettings`); the core itself is cheap and
+        // keeps running at full speed. The notification arrives on an arbitrary
+        // thread, so hop to the main actor.
+        NotificationCenter.default.addObserver(
+            forName: ProcessInfo.thermalStateDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.updateThermalState() }
+        }
+        updateThermalState()
 
         // Re-apply the host audio-depth DSP to the running core whenever a setting
         // changes (no-op when no game is running). v1.9.9.
@@ -280,12 +313,17 @@ final class AppModel: ObservableObject {
             let data = try await library.romData(for: entry)
             let core = try EmulatorCore(romData: data)
             core.isMuted = muted
+            // v2.7.4 (MOB-05): the outgoing game's final battery write, then the
+            // incoming game's `.sav`, loaded before its first frame.
+            flushBatteryNow()
+            let batteryNotice = attachBattery(core: core, sha: entry.sha)
             // Tear any prior session's connectivity state down before freeing its core
             // (RA persists per-game progress; netplay ends on a ROM swap).
             ra.detachFromGame()
             netplay.detach()
             emulator?.shutdown()
             emulator = core
+            if let batteryNotice { errorMessage = batteryNotice }
             currentEntry = entry
             library.markPlayed(entry.sha, info: core.info)
             // Apply this game's per-game overrides if any, else the global defaults
@@ -316,6 +354,9 @@ final class AppModel: ObservableObject {
 
     /// Close the running game and return to the library.
     func closeGame() {
+        // v2.7.4 (MOB-05): the final battery write while the core is still alive.
+        flushBatteryNow()
+        battery = nil
         // Persist RA progress + end any netplay session while the core is still alive.
         ra.detachFromGame()
         netplay.detach()
@@ -466,7 +507,14 @@ final class AppModel: ObservableObject {
     func applyDisplaySettings() {
         guard let emulator else { return }
         let e = effectiveDisplay()
-        emulator.setFilter(e.filter, p0: e.params.0, p1: e.params.1, p2: e.params.2, p3: e.params.3)
+        // v2.7.4 (IOS-11): while the device is hot, drop the shader passes -- the
+        // one expensive, optional GPU work -- until it cools. The chosen filter is
+        // untouched and comes back on its own.
+        if thermallyConstrained {
+            emulator.setFilter(.none)
+        } else {
+            emulator.setFilter(e.filter, p0: e.params.0, p1: e.params.1, p2: e.params.2, p3: e.params.3)
+        }
         // Palette: "" means the built-in NES palette; a "builtin.*" id selects a v1.9.8
         // accessibility palette; otherwise it is an imported `.pal` stem. An
         // unknown/missing id falls back to the built-in palette.
@@ -764,13 +812,93 @@ final class AppModel: ObservableObject {
     /// Sticky while an audio interruption (call/Siri) or a silencing route change is
     /// in effect; cleared by the matching "resume" event or by a fresh foreground.
     private var audioInterrupted = false
+    // MARK: - Battery saves (v2.7.4, frontend audit MOB-05)
+
+    /// The running game's battery save, or nil without a battery.
+    private var battery: BatterySaver?
+    /// Compares the save RAM once a second and writes it on a change.
+    private var batteryTimer: Timer?
+
+    /// Bind `core`'s battery RAM to its `.sav` and load it. Returns a message
+    /// when an existing save could not be used (that session is then not saved,
+    /// so the file is never overwritten).
+    private func attachBattery(core: EmulatorCore, sha: String) -> String? {
+        battery = nil
+        batteryTimer?.invalidate()
+        batteryTimer = nil
+        guard core.hasBattery else { return nil }
+        let saver = BatterySaver(url: BatterySaver.url(forSha: sha))
+        var notice: String?
+        switch saver.read(expected: core.batteryRam().count) {
+        case .found(let data):
+            do {
+                try core.loadBatteryRam(data)
+            } catch {
+                saver.disable()
+                notice = "Battery save not loaded: \(error.localizedDescription)"
+            }
+        case .unusable(let reason):
+            notice = reason
+        case .none:
+            break
+        }
+        saver.baseline(core.batteryRam())
+        battery = saver
+        batteryTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let core = self.emulator, let saver = self.battery else { return }
+                saver.flushLater(core.batteryRam())
+            }
+        }
+        return notice
+    }
+
+    /// Write the running game's battery save now, and wait for it.
+    private func flushBatteryNow() {
+        guard let saver = battery, let core = emulator else { return }
+        saver.flushNow(core.batteryRam())
+    }
+
+    /// Write the battery save as the app backgrounds, inside a background task so
+    /// iOS does not suspend the process mid-write (the IOS-04 pattern). The write
+    /// is a few KiB, so it runs synchronously within the task rather than handing
+    /// a mutable task id across threads.
+    private func flushBatteryInBackground() {
+        guard let saver = battery, let core = emulator else { return }
+        let task = BackgroundTask(name: "RustyNES battery save")
+        saver.flushNow(core.batteryRam())
+        task.end()
+    }
+
+    /// Whether the device is hot enough to shed optional GPU work (IOS-11).
+    private var thermallyConstrained = false
+
+    /// Re-read the thermal state and re-apply the display settings on a change.
+    private func updateThermalState() {
+        let state = ProcessInfo.processInfo.thermalState
+        let constrained = state == .serious || state == .critical
+        guard constrained != thermallyConstrained else { return }
+        thermallyConstrained = constrained
+        applyDisplaySettings()
+    }
+
+    /// Sticky after the audio route went away (headphones unplugged). v2.7.4: its
+    /// own flag, cleared on the next menu close as well as on a fresh foreground,
+    /// so the player can resume without leaving the app.
+    private var routePaused = false
 
     func handleScenePhase(_ active: Bool) {
         sceneActive = active
+        // v2.7.4 (MOB-05): write the battery save as the app leaves the foreground,
+        // inside a background task so iOS lets the write finish.
+        if !active { flushBatteryInBackground() }
         // A fresh foreground clears any stale audio gate: a route change (e.g.
         // headphones unplugged) pauses without ever emitting a "resume" event, so
         // without this the emulator could stay wedged after returning to the app.
-        if active { audioInterrupted = false }
+        if active {
+            audioInterrupted = false
+            routePaused = false
+        }
         applyRunState()
     }
 
@@ -778,6 +906,9 @@ final class AppModel: ObservableObject {
     /// doesn't keep running (losing progress / playing audio) behind the sheet.
     func setMenuPaused(_ paused: Bool) {
         menuPaused = paused
+        // Closing a menu is the player saying "carry on": it also clears a pause
+        // left by an unplugged headset (v2.7.4).
+        if !paused { routePaused = false }
         applyRunState()
     }
 
@@ -785,7 +916,7 @@ final class AppModel: ObservableObject {
     /// interruption is in effect; otherwise pause. (We deliberately declare NO
     /// background-audio mode, so backgrounding pauses.)
     private func applyRunState() {
-        if sceneActive, !menuPaused, !audioInterrupted {
+        if sceneActive, !menuPaused, !audioInterrupted, !routePaused {
             emulator?.resume()
         } else {
             emulator?.pause()

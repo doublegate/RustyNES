@@ -12,13 +12,17 @@
 //  MTKViewDelegate. The CADisplayLink ticks the EmulatorCore, which runs a frame
 //  and presents via the gfx FFI.
 //
-//  ProMotion: the display link requests 60-120 Hz, so its callback can fire up to
-//  120x/sec. The console runs at ~60.0988 Hz, so we must NOT advance one emulated
-//  frame per vsync (that would run at double speed on a 120 Hz ProMotion panel).
-//  Instead we pace by elapsed wall time: a frame accumulator emits a console frame
-//  only when a console-frame period has elapsed (one frame every other vsync at
-//  120 Hz, ~one per vsync at 60 Hz), and the audio sink/DRC absorbs the residual
-//  60↔120 beat. `CADisableMinimumFrameDurationOnPhone` (Info.plist) unlocks 120 Hz.
+//  Pacing (v2.7.4, frontend audit IOS-01). The display link now asks for exactly
+//  60 Hz. Before, it asked for 60-120 Hz (preferring 120) and paced the core by a
+//  wall-clock accumulator at the console's 60.0988 Hz; because 60.0988 does not
+//  divide either refresh, a console frame periodically got one vsync instead of
+//  two at 120 Hz (every ~5 s), or two frames landed in one vsync at 60 Hz (every
+//  ~10 s) -- a visible hitch either way. Now, when the link really runs at ~60 Hz,
+//  exactly ONE console frame runs per vsync (display sync, as on the desktop): no
+//  frame is ever doubled or dropped. The core then runs 0.16% slow, well inside
+//  the +/-1% the sink's rate control absorbs (v2.7.4, IOS-02), so audio neither
+//  underruns nor drifts. On any other refresh (a ProMotion override, an external
+//  display) the accumulator below remains the fallback.
 //
 //  Lifecycle: the CADisplayLink is paused on background (we must not pump frames
 //  into a backgrounded CAMetalLayer; the emulator itself is also paused via
@@ -71,8 +75,11 @@ struct MetalGameView: UIViewRepresentable {
         /// The NES frame period (1 / 60.0988 Hz). The pacing clock advances the core
         /// at this cadence regardless of the display's 60-120 Hz refresh.
         private static let consoleFramePeriod: CFTimeInterval = 1.0 / 60.0988
+        /// A display interval within this of 1/60 s counts as a 60 Hz display, where
+        /// the loop runs exactly one console frame per vsync (IOS-01).
+        private static let vsyncLockTolerance: CFTimeInterval = 0.0015
         /// Cap the catch-up burst per callback so a hitch can't spiral into a flood
-        /// of emulated frames (the audio DRC absorbs the small steady-state residual).
+        /// of emulated frames (the audio rate control absorbs the steady residual).
         private static let maxFramesPerCallback = 2
         /// Cap the retained pacing debt (in console frames) so a transient stutter is
         /// caught up over the next callbacks but a sustained slow patch can't grow an
@@ -120,7 +127,9 @@ struct MetalGameView: UIViewRepresentable {
         private func startDisplayLink() {
             guard displayLink == nil else { return }
             let link = CADisplayLink(target: self, selector: #selector(step(_:)))
-            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+            // v2.7.4 (IOS-01): exactly 60 Hz. 120 Hz bought nothing for a 60 Hz
+            // picture and made the pacing hitch (see the file header).
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
             link.add(to: .main, forMode: .common)
             displayLink = link
         }
@@ -139,9 +148,21 @@ struct MetalGameView: UIViewRepresentable {
                 }
             }
 
-            // Pace the core to the console rate by elapsed time, NOT once per vsync
-            // (which double-speeds on a 120 Hz ProMotion panel). `link.timestamp` is
-            // the time the current frame is displayed.
+            // Display sync (IOS-01): on a ~60 Hz link, one console frame per vsync.
+            // `targetTimestamp - timestamp` is the link's actual frame interval.
+            let interval = link.targetTimestamp - link.timestamp
+            if abs(interval - 1.0 / 60.0) < Self.vsyncLockTolerance {
+                emulator.tick()
+                // Keep the fallback's clock current, so switching to it (a refresh
+                // change) does not replay the time spent here as frame debt.
+                lastTimestamp = link.timestamp
+                frameAccumulator = 0
+                return
+            }
+
+            // Fallback: pace the core to the console rate by elapsed time, NOT
+            // once per vsync (which would double-speed on a 120 Hz panel).
+            // `link.timestamp` is the time the current frame is displayed.
             if lastTimestamp == 0 { lastTimestamp = link.timestamp }
             var delta = link.timestamp - lastTimestamp
             lastTimestamp = link.timestamp

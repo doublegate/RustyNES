@@ -23,6 +23,14 @@ final class AudioSession {
     var onShouldPause: (() -> Void)?
     /// Called when an interruption ends with the "should resume" option.
     var onShouldResume: (() -> Void)?
+    /// v2.7.4: called when the audio route went away (headphones unplugged). A
+    /// separate reason from an interruption, because no "resume" event ever
+    /// follows it -- the host clears it on the player's next menu close.
+    var onRouteLost: (() -> Void)?
+    /// v2.7.4 (frontend audit IOS-08): called after the system's media services
+    /// were reset. Every audio object is invalid afterwards; the host must
+    /// re-configure the session and rebuild its output sink.
+    var onMediaServicesReset: (() -> Void)?
 
     private let session = AVAudioSession.sharedInstance()
     private var observersInstalled = false
@@ -61,6 +69,20 @@ final class AudioSession {
             name: AVAudioSession.routeChangeNotification,
             object: session
         )
+        // v2.7.4 (IOS-08): before this nothing observed a media-services reset,
+        // and the output stream stayed silent until the game was closed and
+        // reopened. The Rust sink also flags the dead stream itself
+        // (`rustynes_ios_audio_is_invalid`), which the core polls each frame.
+        center.addObserver(
+            self,
+            selector: #selector(handleMediaServicesReset(_:)),
+            name: AVAudioSession.mediaServicesWereResetNotification,
+            object: session
+        )
+    }
+
+    @objc private func handleMediaServicesReset(_ note: Notification) {
+        onMediaServicesReset?()
     }
 
     @objc private func handleInterruption(_ note: Notification) {
@@ -95,9 +117,11 @@ final class AudioSession {
         else { return }
 
         // The classic "headphones unplugged" case: pause so audio does not
-        // suddenly blast from the speaker.
+        // suddenly blast from the speaker. v2.7.4: reported as its own reason --
+        // it used to share the interruption flag, which only a background /
+        // foreground cycle cleared, so the game stayed frozen in the app.
         if reason == .oldDeviceUnavailable {
-            onShouldPause?()
+            onRouteLost?()
         }
     }
 
