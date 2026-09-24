@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.7.3-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v2.7.4-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.96-orange.svg" alt="Rust: 1.96"></a><br>
   <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(144%2F144)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#compatibility-and-accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platform-support"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -674,13 +674,15 @@ and the Material-for-MkDocs documentation handbook at
 
 ## Current Release
 
-RustyNES's current release is **v2.7.3 "Hearth"** (2026-09-23) — the desktop and web frontends keep what they are given: battery saves persist on the desktop, a Lua script can no longer hang or exhaust the emulator, script HTTP cannot reach local services by default, and audio survives a device change. Built on **v2.7.2 "Bankroll"** (2026-09-23) — cartridge memory, every bank a cartridge has and nothing it has not: MMC1 reaches SUROM / SXROM, MMC5 banks its PRG-RAM, Namco 163 selects nametables, and `$6000-$7FFF` reads open bus where a board has nothing there.
+RustyNES's current release is **v2.7.4 "Pocket"** (2026-09-24) — the mobile apps survive what a phone does to them: an internal error no longer closes the Android or iOS app, battery saves persist on both, the apps pause and give up audio when they should, and saves are written so a dying phone keeps the last good one. Built on **v2.7.3 "Hearth"** (2026-09-23) — the desktop and web frontends keep what they are given: battery saves persist on the desktop, a Lua script can no longer hang or exhaust the emulator, script HTTP cannot reach local services by default, and audio survives a device change.
 
-v2.7.3 changes the frontends and adds one core accessor, and the accuracy
-numbers below were re-measured on its release tree anyway: AccuracyCoin
-144/144 and nestest pass, and the full `--features test-roms` suite passes
-2,698 tests. The desktop now keeps battery saves; the mobile apps still keep
-them only inside a save state, which is v2.7.4's. Built on **v2.7.2
+v2.7.4 changes the mobile apps and one core path (a rejected save-state load
+now leaves the machine as it was), so the accuracy numbers below were
+re-measured on its release tree: AccuracyCoin 144/144 and nestest pass, and
+the full `--features test-roms` suite passes 2,716 tests. Desktop, Android and
+iOS all keep battery saves now. Every iOS change in v2.7.4, and the Android
+lifecycle and audio changes, are checked on devices by the maintainer before
+release (`docs/mobile-v2.7.4-device-checklist.md`). Built on **v2.7.2
 "Bankroll"**, which completed cartridge memory in the core, and **v2.6.23
 "Pulse"**, which closed the CHR-during-rendering divergence in the MiSTer
 sibling.

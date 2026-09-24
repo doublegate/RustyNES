@@ -16,12 +16,18 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The save-state manager (v1.8.3): explicit numbered slots keyed by ROM SHA, each
@@ -43,6 +49,23 @@ fun StatesSheet(
 ) {
     // Bump to recompute slot timestamps after a save/delete.
     var refresh by remember { mutableIntStateOf(0) }
+    // v2.7.4 (frontend audit AND-04): every file access in this sheet -- the slot
+    // timestamps and thumbnails read while composing, and the save / load / delete
+    // behind each button -- ran on the main thread. They now run on
+    // Dispatchers.IO; results come back to the main thread for the UI.
+    val scope = rememberCoroutineScope()
+    val slots by produceState(emptyMap<String, Pair<Long, File?>>(), refresh, sha) {
+        value = if (sha == null) {
+            emptyMap()
+        } else {
+            withContext(Dispatchers.IO) {
+                SaveStateStore.USER_SLOTS.associateWith { slot ->
+                    SaveStateStore.lastModified(context, sha, slot) to
+                        SaveStateStore.thumbFile(context, sha, slot).takeIf { it.exists() }
+                }
+            }
+        }
+    }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
@@ -53,9 +76,7 @@ fun StatesSheet(
                 Text("Load a ROM to use save states.")
             } else {
                 SaveStateStore.USER_SLOTS.forEach { slot ->
-                    val ts = remember(refresh, slot, sha) {
-                        SaveStateStore.lastModified(context, sha, slot)
-                    }
+                    val ts = slots[slot]?.first ?: 0L
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -65,9 +86,7 @@ fun StatesSheet(
                         // captured. TODO(WS C): wire live-framebuffer capture at Save
                         // time (the emulation loop owns the pixel buffer) via
                         // SaveStateStore.saveThumb so this populates for new saves.
-                        val thumb = remember(refresh, slot, sha) {
-                            SaveStateStore.thumbFile(context, sha, slot).takeIf { it.exists() }
-                        }
+                        val thumb = slots[slot]?.second
                         if (thumb != null) {
                             coil3.compose.AsyncImage(
                                 model = thumb,
@@ -92,9 +111,15 @@ fun StatesSheet(
                         OutlinedButton(onClick = {
                             val ctrl = emulator.controller
                             if (ctrl != null) {
-                                runCatching { SaveStateStore.save(context, sha, slot, ctrl.saveState()) }
-                                    .onSuccess { onStatus("Saved slot $slot"); refresh++; onSlotSaved(slot) }
-                                    .onFailure { onStatus("Save failed: ${it.message}") }
+                                scope.launch {
+                                    runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            SaveStateStore.save(context, sha, slot, ctrl.saveState())
+                                        }
+                                    }
+                                        .onSuccess { onStatus("Saved slot $slot"); refresh++; onSlotSaved(slot) }
+                                        .onFailure { onStatus("Save failed: ${it.message}") }
+                                }
                             }
                         }) { Text("Save") }
                         OutlinedButton(
@@ -103,22 +128,30 @@ fun StatesSheet(
                                 val ctrl = emulator.controller
                                 // The read itself can throw (I/O error); keep it in
                                 // runCatching so a failure reports a status, not a crash.
-                                runCatching {
-                                    val blob = SaveStateStore.load(context, sha, slot)
-                                    if (ctrl != null && blob != null) ctrl.loadState(blob)
-                                    blob != null
-                                }
-                                    .onSuccess { ok ->
-                                        if (ok == true) { onStatus("Loaded slot $slot"); onDismiss() }
+                                scope.launch {
+                                    runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            val blob = SaveStateStore.load(context, sha, slot)
+                                            if (ctrl != null && blob != null) ctrl.loadState(blob)
+                                            blob != null
+                                        }
                                     }
-                                    .onFailure { onStatus("Load failed: ${it.message}") }
+                                        .onSuccess { ok ->
+                                            if (ok) { onStatus("Loaded slot $slot"); onDismiss() }
+                                        }
+                                        .onFailure { onStatus("Load failed: ${it.message}") }
+                                }
                             },
                         ) { Text("Load") }
                         TextButton(
                             enabled = ts > 0L,
                             onClick = {
-                                SaveStateStore.delete(context, sha, slot)
-                                onStatus("Deleted slot $slot"); refresh++
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        SaveStateStore.delete(context, sha, slot)
+                                    }
+                                    onStatus("Deleted slot $slot"); refresh++
+                                }
                             },
                         ) { Text("Delete") }
                     }

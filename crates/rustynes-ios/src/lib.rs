@@ -63,6 +63,14 @@ pub fn core_version() -> String {
 /// passthrough, so the determinism contract is untouched.
 pub mod audio_dsp;
 
+/// The host-testable half of the audio sink (v2.7.4).
+///
+/// The lock-free ring with a batched consumer and a start threshold, dynamic
+/// rate control, and the channel fan-out. Pure math and atomics, so it compiles
+/// and is unit-tested on the workspace host build; `audio.rs` (iOS-only) wires
+/// it to cpal.
+pub mod audio_ring;
+
 /// The iOS wgpu->Metal render path (Workstream B). iOS-only; pulls in wgpu + the
 /// `CAMetalLayer` handoff, so it never touches the host shell build.
 #[cfg(target_os = "ios")]

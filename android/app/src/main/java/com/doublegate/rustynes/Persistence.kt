@@ -1,7 +1,9 @@
 package com.doublegate.rustynes
 
 import android.content.Context
+import androidx.core.util.AtomicFile
 import java.io.File
+import java.io.OutputStream
 import java.security.MessageDigest
 
 /**
@@ -13,6 +15,35 @@ import java.security.MessageDigest
  * layout the desktop host uses, so the `.rns` blobs stay byte-identical and a
  * state is portable across devices.
  */
+
+/**
+ * Write a file so that a kill or power loss mid-write leaves either the old
+ * contents or the new, never a truncated mix (v2.7.4, frontend audit AND-05).
+ *
+ * Every store here used `File.writeBytes` / `writeText`, which truncate the file
+ * and then write it, with no temporary copy and no fsync: a low-memory kill or a
+ * power loss inside that window destroyed the previous save of that slot, the
+ * progress sidecar, or the recents list. `AtomicFile` writes a side file, fsyncs
+ * it in [AtomicFile.finishWrite], and renames it over the original; on any
+ * failure [AtomicFile.failWrite] discards the side file and the original stays.
+ * The androidx class is used rather than `android.util.AtomicFile` because it is
+ * plain Java, so the JVM unit tests exercise the real thing.
+ */
+fun writeAtomic(file: File, write: (OutputStream) -> Unit) {
+    file.parentFile?.mkdirs()
+    val atomic = AtomicFile(file)
+    val out = atomic.startWrite()
+    try {
+        write(out)
+        atomic.finishWrite(out)
+    } catch (e: Throwable) {
+        atomic.failWrite(out)
+        throw e
+    }
+}
+
+/** [writeAtomic] for a whole byte array. */
+fun writeAtomic(file: File, bytes: ByteArray) = writeAtomic(file) { it.write(bytes) }
 
 /** A recently-opened ROM: a persistable SAF content URI + its display name. */
 data class RecentRom(val uri: String, val name: String)
@@ -38,11 +69,15 @@ object RomLibrary {
     /** Record (or promote) a ROM at the front of the list, de-duplicated by URI. */
     fun remember(ctx: Context, uri: String, name: String) {
         val updated = (listOf(RecentRom(uri, name)) + recents(ctx).filterNot { it.uri == uri }).take(MAX)
-        file(ctx).writeText(updated.joinToString("\n") { "${it.uri}\t${it.name}" })
+        writeAtomic(file(ctx), updated.joinToString("\n") { "${it.uri}\t${it.name}" }.toByteArray())
     }
 
     fun forget(ctx: Context, uri: String) {
-        file(ctx).writeText(recents(ctx).filterNot { it.uri == uri }.joinToString("\n") { "${it.uri}\t${it.name}" })
+        writeAtomic(
+            file(ctx),
+            recents(ctx).filterNot { it.uri == uri }
+                .joinToString("\n") { "${it.uri}\t${it.name}" }.toByteArray(),
+        )
     }
 
     /** Clear the entire recently-played list. */
@@ -70,7 +105,7 @@ object RaProgressStore {
 
     /** Persist the progress sidecar for a ROM (a no-op for an empty blob). */
     fun save(ctx: Context, sha: String, blob: ByteArray) {
-        if (blob.isNotEmpty()) file(ctx, sha).writeBytes(blob)
+        if (blob.isNotEmpty()) writeAtomic(file(ctx, sha), blob)
     }
 }
 
@@ -92,7 +127,7 @@ object SaveStateStore {
         File(dir(ctx, sha), "$slot.rns")
 
     fun save(ctx: Context, sha: String, slot: String, blob: ByteArray) {
-        slotFile(ctx, sha, slot).writeBytes(blob)
+        writeAtomic(slotFile(ctx, sha, slot), blob)
     }
 
     fun load(ctx: Context, sha: String, slot: String): ByteArray? {

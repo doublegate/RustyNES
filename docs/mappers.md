@@ -82,11 +82,14 @@ mapper — must override the pair, or RetroArch saves an empty file. v2.7.1 foun
 six boards that did not (Bandai FCG's EEPROM, Taito X1-005's 128 bytes, TxSROM
 and TQROM not forwarding to their MMC3, Multicart 15, and BMC-FK23C).
 
-**The desktop and mobile frontends do not persist cartridge battery RAM at all**
-(v2.7.1 finding; for mobile it is also frontend audit AND-09 / MOB-05). Nothing
-in `rustynes-frontend` or `rustynes-mobile` calls `sram()`; the desktop app
-writes only the FDS disk sidecar (`.fds.sav`). A game's in-cartridge save on
-those hosts survives only inside a save state.
+**Every host persists it now.** Libretro hands `sram()` to RetroArch (`.srm`);
+the desktop keeps `<data_dir>/battery/<rom_sha256>.sav` since v2.7.3 (FE-01);
+Android and iOS keep a `.sav` per ROM hash since v2.7.4 (MOB-05 / AND-09),
+through the bridge's `battery_ram` / `load_battery_ram`. All of them persist
+only a cartridge whose header sets the battery bit (`Nes::has_battery`), since
+NROM, MMC1 and MMC3 expose work RAM whatever the header says. Before those
+releases a game's in-cartridge save on the desktop and the phones survived
+only inside a save state (the v2.7.1 finding).
 
 `crates/rustynes-mappers/tests/battery_sram_exposed.rs` builds every NES 2.0
 mapper number (0-4095) with a battery and 8 KiB of PRG-NVRAM, both with CHR-ROM

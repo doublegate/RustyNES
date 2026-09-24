@@ -110,7 +110,9 @@ multiple-of-refresh speed-up, that would be a bug — please report it.
 ## "Save state load did nothing / corrupted state"
 
 `F4` loads the active slot (default slot 0) for the current ROM. Failures
-log to stderr; the running emulator state is unchanged.
+log to stderr; the running emulator state is unchanged. (That has held
+since v2.7.4. Before it, a slot rejected at its CPU section left the game
+half-restored; reset or reload the ROM if an older build did that.)
 
 | stderr says | Meaning | Fix |
 |-------------|---------|-----|

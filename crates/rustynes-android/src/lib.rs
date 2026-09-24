@@ -8,11 +8,14 @@
 //! generated `NesController` class directly. This crate adds **only the thin,
 //! hot, hand-rolled glue `UniFFI` cannot express**:
 //!
-//! 1. handing a native surface handle (`ANativeWindow`, obtained from an
-//!    `android.view.Surface`) to `wgpu` so the existing shader/PAR/overscan
-//!    render pipeline draws the `NES` image onto a `SurfaceView` (Workstream B),
-//!    and
-//! 2. the audio sink lifecycle (Workstream C).
+//! handing a native surface handle (`ANativeWindow`, obtained from an
+//! `android.view.Surface`) to `wgpu` so the existing shader/PAR/overscan render
+//! pipeline draws the `NES` image onto a `SurfaceView` (Workstream B).
+//!
+//! **There is no native audio here.** Earlier text promised "the audio sink
+//! lifecycle (Workstream C)" and an `AAudio` sink; neither was ever built (frontend
+//! audit AND-06, confirmed for v2.7.4). Audio is Kotlin's `AudioTrack` in
+//! `MainActivity.kt`'s `AudioPlayer`, fed from `NesController.drainAudioBytes()`.
 //!
 //! Everything Android-specific is gated behind `#[cfg(target_os = "android")]`,
 //! so on a host build (`cargo build --workspace`) this crate is a near-empty
@@ -93,17 +96,26 @@ mod android {
         let _ = app;
     }
 
-    /// The JNI surface/audio seam (Workstream B/C). The Compose shell calls into
-    /// these from the `SurfaceHolder.Callback` (surface lifecycle) and the audio
-    /// focus listener; they hand the `ANativeWindow` to wgpu and own the native
-    /// emulation thread. Implemented incrementally across beta.2 (surface) and
-    /// beta.3 (audio); the module is the stable binding seam the Kotlin side
-    /// links against.
+    /// The JNI surface seam (Workstream B). The Compose shell's render thread
+    /// calls into these from `NesSurfaceView` (surface lifecycle, frames,
+    /// filters); they hand the `ANativeWindow` to wgpu. No audio and no emulation
+    /// thread live here (audit AND-06): audio is Kotlin's `AudioTrack`, and the
+    /// emulation loop is a coroutine in `MainActivity.kt`.
     mod jni_glue {
         //! The Kotlin `NativeRenderer` object's `external fun`s land here as the
         //! `SurfaceView`'s `SurfaceHolder.Callback` drives the surface lifecycle:
         //! init (Surface → `ANativeWindow` → wgpu), resize, render one frame, and
         //! destroy. The handle is a boxed [`AndroidGfx`] pointer as a `jlong`.
+        //!
+        //! **Thread invariant (checked for v2.7.4, audit finding FE-03).** Every
+        //! call on a given handle comes from the one `nes-gl` thread that created
+        //! it: `NesSurfaceView.renderLoop` holds the handle in a local, calls
+        //! init, resize, filter, index-frame and render in its loop, and
+        //! `nativeDestroy` in its `finally`. The UI-thread surface callbacks and
+        //! the frame producers only touch Kotlin atomics. So the `&mut` below
+        //! never aliases and destroy never overlaps a render -- but only by that
+        //! Kotlin convention: any change that lets another thread see the handle
+        //! must add synchronisation here first.
 
         use crate::gfx::AndroidGfx;
         // jni 0.22 split the old `JNIEnv` into `Env` (owned, safe) and
@@ -118,6 +130,20 @@ mod android {
         use jni::sys::{jfloat, jint, jlong};
         use ndk::native_window::NativeWindow;
 
+        /// v2.7.4 (frontend audit MOB-03) — run a JNI entry's body with panics
+        /// contained. A panic escaping an `extern "C"` function aborts the
+        /// process, taking the app down with no save; caught here, it is
+        /// logged and the entry returns `fallback` (a null handle, a dropped
+        /// frame). Effective because the Android `.so` is built with the
+        /// `release-mobile` profile, which unwinds; see
+        /// [`rustynes_mobile::catch_ffi_panic`].
+        fn guarded<T>(entry: &str, fallback: T, body: impl FnOnce() -> T) -> T {
+            rustynes_mobile::catch_ffi_panic(body).unwrap_or_else(|msg| {
+                log::error!("{entry}: panic contained at the JNI boundary: {msg}");
+                fallback
+            })
+        }
+
         /// `NativeRenderer.nativeInitSurface(surface, w, h): Long` — returns an
         /// opaque renderer handle, or 0 on failure.
         ///
@@ -131,23 +157,26 @@ mod android {
             width: jint,
             height: jint,
         ) -> jlong {
-            // SAFETY: `surface` is a valid Surface jobject for this call;
-            // `ANativeWindow_fromSurface` returns a new owned reference that
-            // `NativeWindow` takes ownership of (released on drop). `as_raw` is the
-            // jni 0.22 spelling of the old `get_raw` — the same `*mut sys::JNIEnv`.
-            let window =
-                unsafe { NativeWindow::from_surface(env.as_raw().cast(), surface.as_raw().cast()) };
-            let Some(window) = window else {
-                log::error!("nativeInitSurface: ANativeWindow_fromSurface returned null");
-                return 0;
-            };
-            match AndroidGfx::new(window, width.max(0) as u32, height.max(0) as u32) {
-                Ok(gfx) => Box::into_raw(Box::new(gfx)) as jlong,
-                Err(e) => {
-                    log::error!("nativeInitSurface failed: {e}");
-                    0
+            guarded("nativeInitSurface", 0, || {
+                // SAFETY: `surface` is a valid Surface jobject for this call;
+                // `ANativeWindow_fromSurface` returns a new owned reference that
+                // `NativeWindow` takes ownership of (released on drop). `as_raw` is the
+                // jni 0.22 spelling of the old `get_raw` — the same `*mut sys::JNIEnv`.
+                let window = unsafe {
+                    NativeWindow::from_surface(env.as_raw().cast(), surface.as_raw().cast())
+                };
+                let Some(window) = window else {
+                    log::error!("nativeInitSurface: ANativeWindow_fromSurface returned null");
+                    return 0;
+                };
+                match AndroidGfx::new(window, width.max(0) as u32, height.max(0) as u32) {
+                    Ok(gfx) => Box::into_raw(Box::new(gfx)) as jlong,
+                    Err(e) => {
+                        log::error!("nativeInitSurface failed: {e}");
+                        0
+                    }
                 }
-            }
+            })
         }
 
         /// `NativeRenderer.nativeResize(handle, w, h)`.
@@ -162,13 +191,15 @@ mod android {
             width: jint,
             height: jint,
         ) {
-            if handle == 0 {
-                return;
-            }
-            // SAFETY: `handle` is a live `Box<AndroidGfx>` pointer (the Kotlin side
-            // only calls this between init and destroy on the render thread).
-            let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
-            gfx.resize(width.max(0) as u32, height.max(0) as u32);
+            guarded("nativeResize", (), || {
+                if handle == 0 {
+                    return;
+                }
+                // SAFETY: `handle` is a live `Box<AndroidGfx>` pointer (the Kotlin side
+                // only calls this between init and destroy on the render thread).
+                let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
+                gfx.resize(width.max(0) as u32, height.max(0) as u32);
+            })
         }
 
         /// `NativeRenderer.nativeRender(handle, fb)` — upload + present one 256×240
@@ -183,33 +214,35 @@ mod android {
             handle: jlong,
             fb: JByteArray,
         ) {
-            if handle == 0 {
-                return;
-            }
-            // SAFETY: live handle (see `nativeResize`).
-            let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
-            // Copy the Java `byte[]` straight into the reused buffer (no per-frame
-            // `Vec` allocation). `byte[]` is `i8` on the JVM; same bytes as `u8`.
-            // The `gfx` borrow is scoped to this block so `gfx.render()` can reuse
-            // it once the JNI read is done; `false` => length mismatch / JNI error,
-            // so the frame is dropped (presentation-only, determinism untouched).
-            let copied = {
-                let buf_i8: &mut [i8] = bytemuck::cast_slice_mut(gfx.frame_buf_mut());
-                env.with_env(|env| -> jni::errors::Result<bool> {
-                    // jni 0.22: array length / region access moved onto the array
-                    // wrapper itself (`JByteArray::len` / `get_region`), taking the
-                    // owned `Env` from `with_env`.
-                    if fb.len(env)? != buf_i8.len() {
-                        return Ok(false);
-                    }
-                    fb.get_region(env, 0, buf_i8)?;
-                    Ok(true)
-                })
-                .resolve::<LogErrorAndDefault>()
-            };
-            if copied {
-                gfx.render();
-            }
+            guarded("nativeRender", (), || {
+                if handle == 0 {
+                    return;
+                }
+                // SAFETY: live handle (see `nativeResize`).
+                let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
+                // Copy the Java `byte[]` straight into the reused buffer (no per-frame
+                // `Vec` allocation). `byte[]` is `i8` on the JVM; same bytes as `u8`.
+                // The `gfx` borrow is scoped to this block so `gfx.render()` can reuse
+                // it once the JNI read is done; `false` => length mismatch / JNI error,
+                // so the frame is dropped (presentation-only, determinism untouched).
+                let copied = {
+                    let buf_i8: &mut [i8] = bytemuck::cast_slice_mut(gfx.frame_buf_mut());
+                    env.with_env(|env| -> jni::errors::Result<bool> {
+                        // jni 0.22: array length / region access moved onto the array
+                        // wrapper itself (`JByteArray::len` / `get_region`), taking the
+                        // owned `Env` from `with_env`.
+                        if fb.len(env)? != buf_i8.len() {
+                            return Ok(false);
+                        }
+                        fb.get_region(env, 0, buf_i8)?;
+                        Ok(true)
+                    })
+                    .resolve::<LogErrorAndDefault>()
+                };
+                if copied {
+                    gfx.render();
+                }
+            })
         }
 
         /// `NativeRenderer.nativeSetFilter(handle, filter, p0..p3)` — 0 none /
@@ -230,12 +263,14 @@ mod android {
             p2: jfloat,
             p3: jfloat,
         ) {
-            if handle == 0 {
-                return;
-            }
-            // SAFETY: live handle (see `nativeResize`).
-            let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
-            gfx.set_filter(filter.max(0) as u8, [p0, p1, p2, p3]);
+            guarded("nativeSetFilter", (), || {
+                if handle == 0 {
+                    return;
+                }
+                // SAFETY: live handle (see `nativeResize`).
+                let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
+                gfx.set_filter(filter.max(0) as u8, [p0, p1, p2, p3]);
+            })
         }
 
         /// `NativeRenderer.nativeSetIndexFrame(handle, idx, phase)` — upload the
@@ -253,20 +288,24 @@ mod android {
             idx: JByteArray,
             phase: jint,
         ) {
-            if handle == 0 {
-                return;
-            }
-            // On a JNI error `LogErrorAndDefault` yields an empty `Vec`; an empty
-            // index frame is never valid, so skip it (drop the frame).
-            let bytes = env
-                .with_env(|env| -> jni::errors::Result<Vec<u8>> { env.convert_byte_array(&idx) })
-                .resolve::<LogErrorAndDefault>();
-            if bytes.is_empty() {
-                return;
-            }
-            // SAFETY: live handle (see `nativeResize`).
-            let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
-            gfx.set_index_frame(&bytes, phase.max(0) as u8);
+            guarded("nativeSetIndexFrame", (), || {
+                if handle == 0 {
+                    return;
+                }
+                // On a JNI error `LogErrorAndDefault` yields an empty `Vec`; an empty
+                // index frame is never valid, so skip it (drop the frame).
+                let bytes = env
+                    .with_env(|env| -> jni::errors::Result<Vec<u8>> {
+                        env.convert_byte_array(&idx)
+                    })
+                    .resolve::<LogErrorAndDefault>();
+                if bytes.is_empty() {
+                    return;
+                }
+                // SAFETY: live handle (see `nativeResize`).
+                let gfx = unsafe { &mut *(handle as *mut AndroidGfx) };
+                gfx.set_index_frame(&bytes, phase.max(0) as u8);
+            })
         }
 
         /// `NativeRenderer.nativeDestroy(handle)` — drop the renderer (releases the
@@ -280,12 +319,16 @@ mod android {
             _this: JObject,
             handle: jlong,
         ) {
-            if handle == 0 {
-                return;
-            }
-            // SAFETY: reclaim the `Box` created in `nativeInitSurface`; the Kotlin
-            // side nulls its handle immediately after this call.
-            drop(unsafe { Box::from_raw(handle as *mut AndroidGfx) });
+            guarded("nativeDestroy", (), || {
+                if handle == 0 {
+                    return;
+                }
+                // SAFETY: reclaim the `Box` created in `nativeInitSurface`. The
+                // handle is a local in `NesSurfaceView.renderLoop`, which calls this
+                // in its `finally` after the loop exits and never again (see the
+                // thread invariant in this module's docs).
+                drop(unsafe { Box::from_raw(handle as *mut AndroidGfx) });
+            })
         }
     }
 }

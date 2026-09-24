@@ -41,12 +41,12 @@ the build links + (eventually) an instrumented smoke boot.
 │    • SAF ROM picker, touch overlay, settings, save-state manager                   │
 │    • drives the emulator through the UniFFI-generated NesController                 │
 └───────────────┬───────────────────────────────────────────────┬───────────────────┘
-                │ generated Kotlin bindings (UniFFI)              │ JNI (surface/audio)
+                │ generated Kotlin bindings (UniFFI)              │ JNI (surface)
         ┌───────▼─────────────────────┐                  ┌────────▼───────────────────┐
         │ rustynes-mobile (shared)    │                  │ rustynes-android            │
         │  typed control surface:     │                  │  hot glue UniFFI can't do:  │
         │  load_rom / run_frame /     │                  │  ANativeWindow → wgpu,      │
-        │  set_button / save_state    │                  │  the AAudio sink,           │
+        │  set_button / save_state    │                  │  (audio: Kotlin AudioTrack) │
         │  #[uniffi::export]          │                  │  android_main (spike)       │
         └───────────────┬─────────────┘                  └────────────┬────────────────┘
                         └──────────────────┬─────────────────────────┘
@@ -78,6 +78,16 @@ and rendering decisions (UniFFI bridge plus the hybrid wgpu/Compose host).
 - Input converges on the **single late-latched `Buttons` mask per port**, exactly
   as the desktop and wasm hosts do — touch and hardware gamepad are
   indistinguishable to the core, so TAS/netplay/rollback are unaffected.
+- **Input never waits for the emulator (v2.7.4, audit MOB-01).** `set_buttons` /
+  `set_button` write per-port atomics outside the controller's lock, and each
+  frame latches them into the core just before it runs — the point at which a
+  lock-waiting call used to land, so emulated input timing is unchanged. Before
+  v2.7.4 a touch event on the UI thread waited out a whole frame (or a netplay
+  rollback, a Lua callback) for the same mutex `run_frame` holds. This is shared
+  with iOS: it lives in `rustynes-mobile`.
+- **ROM buffers are capped at 16 MiB at the bridge (v2.7.4, audit MOB-02)**,
+  compressed or not. Only zip entries were bounded before; a plain file of any
+  size reached the core, which copies it whole and then again into PRG and CHR.
 - Save-states use the **platform-independent `.rns` format**, so a state saved on
   desktop loads on Android and a `.rnm` TAS replays bit-identically — desktop⇄
   Android cross-play stays valid.
@@ -105,14 +115,21 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/<version>     # e.g. 29.0.14206865
 ### Just the Rust libraries (what host/CI verifies)
 
 ```bash
-# Cross-compile both crates for the shipped ABIs into a chosen output dir:
+# Cross-compile both crates for the shipped ABIs. `release-mobile` is the
+# workspace `release` profile with `panic = "unwind"` (v2.7.4, audit MOB-03):
+# `release` aborts on panic, which made every panic guard on the mobile FFI
+# dead code. It costs about 18% native size on arm64 and no measurable frame
+# time (v2.7.4, `cargo ndk`, the same tree built both ways):
+#   librustynes_android.so 11.64 MB -> 13.74 MB, librustynes_mobile.so
+#   6.21 MB -> 7.32 MB; `nes_run_frame_nestest_fast` 3.947 / 3.936 ms (abort)
+#   vs 3.949 / 3.940 ms (unwind), interleaved on one host.
 cargo ndk -t arm64-v8a -t x86_64 --platform 26 \
-  build --release -p rustynes-mobile -p rustynes-android
+  build --profile release-mobile -p rustynes-mobile -p rustynes-android
 
 # Generate the Kotlin bindings from the built arm64 cdylib (API is
 # target-independent, so any built library is a valid source of truth):
 cargo run -p rustynes-mobile --bin uniffi-bindgen -- \
-  generate --library target/aarch64-linux-android/release/librustynes_mobile.so \
+  generate --library target/aarch64-linux-android/release-mobile/librustynes_mobile.so \
   --language kotlin --out-dir target/uniffi-kotlin
 ```
 

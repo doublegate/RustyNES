@@ -11,11 +11,18 @@
 //      "state-<sha>-<n>", record type "SaveState", default zone of the user's PRIVATE
 //      database. Fields: sha (String), slot (Int64), savedAt (Date), frame (Int64),
 //      blob (CKAsset = the .rns file), thumbnail (CKAsset, optional).
-//    * On save -> upload in the background (force-overwrite, client-wins).
+//    * On save -> upload in the background, inside a UIKit background task so it
+//      finishes when the app is backgrounded. Conflict-safe since v2.7.4 (IOS-10):
+//      the server record is fetched first and a NEWER remote save is left alone;
+//      otherwise that record is updated and saved with `.ifServerRecordUnchanged`,
+//      so a write from another device in between fails this upload rather than
+//      being overwritten, and the per-record result decides the slot's status.
+//      (Before v2.7.4 this was force-overwrite, client-wins, and an older save
+//      uploaded later replaced a newer one.)
 //    * On game open / app launch -> fetch the (up to four) known record IDs and
-//      reconcile: pull any slot whose remote `savedAt` is newer than the local copy
-//      into the sandbox (last-writer-wins by timestamp). Local-newer slots stay as-is
-//      (already uploaded at save time).
+//      reconcile by `savedAt`: pull any slot whose remote copy is newer into the
+//      sandbox; UPLOAD any slot whose local copy is newer, since that means its
+//      upload never landed (v2.7.4, IOS-04 -- it used to be marked synced).
 //    * Per-slot status (synced / uploading / local-only / unavailable) is published
 //      for the SaveStatesView indicator.
 //
@@ -142,7 +149,12 @@ final class CloudSaveStateSync: ObservableObject {
     func upload(sha: String, slot: Int) {
         guard enabled else { return }
         setState(slot, .uploading)
+        // v2.7.4 (frontend audit IOS-04): uploads start as the player saves, often
+        // just before backgrounding; without a background task iOS suspended the
+        // process mid-upload and the slot never reached iCloud.
+        let background = BackgroundTask(name: "RustyNES cloud upload")
         Task {
+            defer { background.end() }
             let uploadedAt = await performUpload(sha: sha, slot: slot)
             // Only reflect the result if the game hasn't changed underneath us.
             guard currentSha == sha else { return }
@@ -172,7 +184,21 @@ final class CloudSaveStateSync: ObservableObject {
         guard !meta.isEmpty else { return nil }
 
         let savedAt = meta.savedAt ?? Date()
-        let record = CKRecord(recordType: Self.recordType, recordID: recordID(sha: sha, slot: slot))
+        let id = recordID(sha: sha, slot: slot)
+        // v2.7.4 (frontend audit IOS-10): never overwrite a newer save blindly.
+        // The upload used `.allKeys` (client wins), so a device holding an OLDER
+        // save that uploaded later replaced a newer one, whatever the timestamps
+        // said. Fetch the server's record first: if it is newer, leave it for
+        // `reconcile` to pull; otherwise update THAT record and save it with
+        // `.ifServerRecordUnchanged`, so a write from another device in between
+        // fails this save instead of being lost. (A missing record, or a fetch
+        // that fails offline, starts a new record; saving a new record over an
+        // existing one also fails under that policy.)
+        let existing = try? await Self.database.record(for: id)
+        if let existing, let remoteSaved = existing["savedAt"] as? Date, remoteSaved > savedAt {
+            return nil
+        }
+        let record = existing ?? CKRecord(recordType: Self.recordType, recordID: id)
         // String / Int64 / Date all conform to CKRecordValueProtocol, so assign directly.
         record["sha"] = sha
         record["slot"] = Int64(slot)
@@ -188,13 +214,25 @@ final class CloudSaveStateSync: ObservableObject {
         }
 
         do {
-            // `.allKeys` = client-wins: overwrite any existing server record regardless
-            // of its change tag, matching the last-writer-wins contract.
-            _ = try await Self.database.modifyRecords(
-                saving: [record], deleting: [], savePolicy: .allKeys, atomically: true
+            let (saved, _) = try await Self.database.modifyRecords(
+                saving: [record], deleting: [], savePolicy: .ifServerRecordUnchanged, atomically: true
             )
-            return savedAt
+            // The call succeeds as a whole even when this record's save failed
+            // (e.g. `serverRecordChanged`); the per-record result is the answer.
+            // Before v2.7.4 it was discarded, so such a failure read as success.
+            switch saved[id] {
+            case .success?:
+                return savedAt
+            case .failure(let error)?:
+                // Typically `serverRecordChanged`: another device wrote first.
+                NSLog("RustyNES: iCloud slot \(slot) not uploaded: \(error)")
+                return nil
+            case nil:
+                NSLog("RustyNES: iCloud slot \(slot) upload returned no result")
+                return nil
+            }
         } catch {
+            NSLog("RustyNES: iCloud slot \(slot) upload failed: \(error)")
             return nil
         }
     }
@@ -263,10 +301,17 @@ final class CloudSaveStateSync: ObservableObject {
 
         // Pull when there is NO local slot at all (a valid remote slot must seed an empty
         // device regardless of its timestamp -- both may be `.distantPast`), and
-        // otherwise only when the remote copy is strictly newer. A current/newer local
-        // copy was already uploaded at save time; nothing to pull.
+        // otherwise only when the remote copy is strictly newer.
         guard localSlotMissing || remoteSaved > localSaved else {
-            if currentSha == sha { setState(slot, .synced) }
+            guard currentSha == sha else { return }
+            if localSaved > remoteSaved {
+                // v2.7.4 (IOS-04): a newer local copy is one whose upload never
+                // landed (a suspended or failed upload). It used to be marked
+                // `.synced` here while iCloud kept the stale copy; upload it now.
+                upload(sha: sha, slot: slot)
+            } else {
+                setState(slot, .synced)
+            }
             return
         }
 

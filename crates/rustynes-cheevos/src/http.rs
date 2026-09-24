@@ -119,12 +119,40 @@ impl HttpTransport {
 
 impl Drop for HttpTransport {
     fn drop(&mut self) {
-        // Close the job channel so the worker loop exits, then join it.
+        // Close the job channel so the worker loop exits, then join it -- but
+        // only briefly (v2.7.4, audit MOB-04).
         self.job_tx = None;
         if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+            join_or_detach(worker, DROP_GRACE);
         }
     }
+}
+
+/// How long `Drop` waits for the worker before detaching it (v2.7.4, MOB-04).
+/// An idle worker is blocked in `recv` and exits as soon as the job channel
+/// closes, so this covers the normal case; only a request in flight outlives it.
+const DROP_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Join `worker` if it finishes within `grace`; otherwise let it go.
+///
+/// Before v2.7.4 `Drop` joined unconditionally, and a request in flight to an
+/// unreachable RetroAchievements server held the dropping thread (a logout, a
+/// ROM change; on mobile, the UI thread) for up to the 30 s request timeout.
+/// Detaching is safe: the worker owns its agent and the request; when the
+/// request returns, sending the completion fails because the receiver is gone,
+/// and it exits. It never calls the rcheevos callback -- only
+/// [`HttpTransport::poll_completions`] does, on the caller's thread, and that
+/// receiver is dropped with `self`. Returns whether it joined.
+fn join_or_detach(worker: JoinHandle<()>, grace: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + grace;
+    while !worker.is_finished() {
+        if std::time::Instant::now() >= deadline {
+            return false; // dropping the handle detaches the thread
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let _ = worker.join();
+    true
 }
 
 /// The RetroAchievements client identification string (HTTP `User-Agent`).
@@ -248,6 +276,19 @@ pub(crate) extern "C" fn server_call_trampoline(
 
 #[cfg(test)]
 mod tests {
+
+    /// v2.7.4 (MOB-04): a worker still busy is detached after the grace period
+    /// instead of joined; one that finishes in time is joined.
+    #[test]
+    fn a_busy_worker_is_detached_not_joined() {
+        let busy = std::thread::spawn(|| std::thread::sleep(std::time::Duration::from_secs(5)));
+        let start = std::time::Instant::now();
+        assert!(!super::join_or_detach(busy, super::DROP_GRACE));
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+
+        let quick = std::thread::spawn(|| {});
+        assert!(super::join_or_detach(quick, super::DROP_GRACE));
+    }
     use super::RA_USER_AGENT;
 
     /// The RetroAchievements User-Agent must identify the client as `RustyNES`

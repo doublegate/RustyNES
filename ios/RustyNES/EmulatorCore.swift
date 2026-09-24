@@ -6,10 +6,14 @@
 //  CoreAudio-sink FFI handles. It is the iOS analogue of the desktop
 //  `Arc<Mutex<EmuCore>>` + the Android `EmulatorHandle`.
 //
-//  Threading: `NesController` is internally synchronised (a Rust `Mutex`), so the
-//  CADisplayLink frame loop (MetalGameView) and the SwiftUI UI thread can both call
-//  it. The gfx/audio FFI handles are touched only from `tick()` (the display-link
-//  thread) and the main-thread lifecycle calls, never concurrently.
+//  Threading: `NesController` is internally synchronised (a Rust `Mutex`), so any
+//  thread may call it. The gfx/audio FFI handles are touched only on the MAIN
+//  thread: `tick()` runs from the CADisplayLink, which is scheduled on the main
+//  run loop (it is not a separate display-link thread, as this comment used to
+//  say), and every lifecycle call comes from the @MainActor models. That is the
+//  invariant the Rust shim's `&mut *handle` accesses rely on (checked for v2.7.4,
+//  audit finding FE-03): moving the display link to a background run loop, or
+//  calling a gfx/audio method from another thread, would make them data races.
 //
 //  Determinism is untouched: every method forwards straight into the byte-identical
 //  core; pacing/resampling lives in the cpal sink, never in the synthesis.
@@ -194,6 +198,11 @@ final class EmulatorCore {
     func tick() {
         guard isRunning, let gfx else { return }
 
+        // v2.7.4 (IOS-08): rebuild a sink whose stream died (a media-services
+        // reset, a device loss) before this frame pushes into it. Both the
+        // single-player and the netplay paths push, so it runs first.
+        recoverAudioIfNeeded()
+
         // Netplay (v1.9.6): while a session is active the rollback core owns pacing,
         // so the loop advances via `npAdvanceFrame` instead of `runFrame` (calling
         // `runFrame` would advance the core a second time and desync rollback). Handled
@@ -251,8 +260,8 @@ final class EmulatorCore {
         _lastFrame = frame
         frameLock.unlock()
 
-        // Drain mono f32 audio and enqueue it (unless muted). The sink's DRC
-        // absorbs the console-rate <-> device-rate beat.
+        // Drain mono f32 audio and enqueue it (unless muted). The sink's rate
+        // control (v2.7.4, IOS-02) absorbs the console-rate <-> device-rate beat.
         if !isMuted, let audio {
             let samples = controller.drainAudio()
             if !samples.isEmpty {
@@ -349,6 +358,61 @@ final class EmulatorCore {
         if let audio { rustynes_ios_audio_resume(audio) }
     }
 
+    // MARK: - Audio sink recovery (v2.7.4, frontend audit IOS-08)
+
+    /// When the last rebuild was attempted, so a device that stays away is
+    /// retried every couple of seconds, not every frame.
+    private var lastAudioRebuild: CFTimeInterval = 0
+    /// The last audio-depth config applied, re-applied to a rebuilt sink.
+    private var lastAudioDepth: AudioDepthConfig?
+    /// Set when a rebuild destroyed the sink and could not open a new one, so
+    /// the next frames keep retrying (throttled by `lastAudioRebuild`). Without
+    /// it `audio` is nil after the failure and nothing ever retried. A sink that
+    /// never opened at init stays silent, as before.
+    private var audioLost = false
+
+    /// Rebuild the output sink if its stream has died, or retry one a failed
+    /// rebuild left missing. Cheap otherwise: one FFI call reading an atomic flag.
+    func recoverAudioIfNeeded() {
+        if let audio {
+            guard rustynes_ios_audio_is_invalid(audio) != 0 else { return }
+        } else if !audioLost {
+            return
+        }
+        rebuildAudioSink()
+    }
+
+    /// Replace the output sink with a fresh one. Called after a media-services
+    /// reset (AudioSession) and when the sink reports its stream dead. Before
+    /// v2.7.4 audio stayed silent until the game was closed and reopened.
+    ///
+    /// The core's sample rate is fixed when the controller is built, so a sink
+    /// that comes back at a different hardware rate would play at the wrong
+    /// pitch -- more than the sink's +/-1% rate control can absorb. That is
+    /// logged; reopening the game picks up the new rate.
+    func rebuildAudioSink() {
+        let now = CACurrentMediaTime()
+        guard now - lastAudioRebuild >= 2 else { return }
+        lastAudioRebuild = now
+        if let audio {
+            rustynes_ios_audio_destroy(audio)
+            self.audio = nil
+        }
+        guard let sink = rustynes_ios_audio_new() else {
+            audioLost = true
+            NSLog("RustyNES: audio sink rebuild failed; retrying")
+            return
+        }
+        audioLost = false
+        let rate = rustynes_ios_audio_sample_rate(sink)
+        if rate != sampleRate {
+            NSLog("RustyNES: audio came back at \(rate) Hz, the core runs at \(sampleRate) Hz; reopen the game to match")
+        }
+        audio = sink
+        if let depth = lastAudioDepth { setAudioDepth(depth) }
+        if !isRunning { rustynes_ios_audio_pause(sink) }
+    }
+
     func pause() {
         isRunning = false
         if let audio { rustynes_ios_audio_pause(audio) }
@@ -379,6 +443,18 @@ final class EmulatorCore {
     /// Restore from a `.rns` blob.
     /// - Throws: `MobileError` if malformed or from a different ROM.
     func loadState(_ data: Data) throws { try controller.loadState(data: data) }
+
+    // MARK: - Battery save RAM (v2.7.4, frontend audit MOB-05)
+
+    /// Whether the cartridge's header sets the battery bit.
+    var hasBattery: Bool { controller.hasBattery() }
+
+    /// A copy of the battery-backed save RAM (empty without a battery).
+    func batteryRam() -> Data { controller.batteryRam() }
+
+    /// Load a `.sav` into the save RAM; call before the first frame. Throws when
+    /// the cartridge has no battery or the size is not its save size.
+    func loadBatteryRam(_ data: Data) throws { try controller.loadBatteryRam(bytes: data) }
 
     /// The frame index since power-on.
     func frame() -> UInt64 { controller.frame() }
@@ -470,6 +546,11 @@ final class EmulatorCore {
         case .preTimebaseMovie:
             return String(
                 localized: "This movie was recorded on a pre-v2.0.0 build. Input replay proceeds, but exact framebuffer/audio reproduction is not guaranteed across the engine-timebase change (ADR 0028)."
+            )
+        // v2.7.4 (audit MOB-07): the bridge contained a panic and carried on.
+        case .recoveredFromInternalError:
+            return String(
+                localized: "RustyNES stopped the game after an internal error. Any netplay session was ended. Reopen the game or load a save state to continue."
             )
         }
     }
@@ -675,6 +756,7 @@ final class EmulatorCore {
     /// the CoreAudio sink. Off / flat = bit-exact passthrough. No-op if the sink
     /// failed to open.
     func setAudioDepth(_ config: AudioDepthConfig) {
+        lastAudioDepth = config
         guard let audio else { return }
         config.eqDb.withUnsafeBufferPointer { eqBuf in
             config.pan.withUnsafeBufferPointer { panBuf in

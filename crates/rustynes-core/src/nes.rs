@@ -2201,44 +2201,40 @@ impl Nes {
         // second under run-ahead, which is worse than the stale-telemetry defect
         // this counter exists to fix.
         //
-        // Bumped BEFORE the restore can fail, deliberately. A partially-applied
-        // restore is a discontinuity whether or not it completed, and a consumer
-        // that keeps stale telemetry because the jump errored is the bug in its
-        // most confusing form.
+        // Bumped BEFORE the restore can fail, deliberately. Before v2.7.4 a
+        // failed restore could leave the machine partially applied, which is a
+        // discontinuity whether or not it completed. A loud restore now rolls
+        // back on failure (below), so a failed one leaves the timeline intact
+        // and the bump costs a consumer one telemetry reset; keeping it
+        // unconditional keeps this counter's rule simple.
         if clear_rewind {
             self.timeline_generation = self.timeline_generation.wrapping_add(1);
         }
-        // Restore bus first — it consumes BUS / PPU / APU / MAP sections.
-        self.bus.restore(data)?;
-        // Then walk the sections again to find the CPU body.
-        let (_h, body_off) = save_state::parse_header(data)?;
-        let mut saw_cpu = false;
-        for s in save_state::SectionIter::new(&data[body_off..]) {
-            let s = s?;
-            if s.tag == save_state::tag::CPU {
-                if s.version != rustynes_cpu::CPU_SNAPSHOT_VERSION {
-                    return Err(SnapshotError::VersionMismatch {
-                        tag: save_state::tag_string(s.tag),
-                        file_version: s.version,
-                        chip_supports: rustynes_cpu::CPU_SNAPSHOT_VERSION,
-                    });
-                }
-                self.cpu
-                    .restore(s.body)
-                    .map_err(|e| SnapshotError::SectionInvalid {
-                        tag: save_state::tag_string(s.tag),
-                        reason: format!("{e}"),
-                    })?;
-                saw_cpu = true;
+        // v2.7.4 (frontend audit MOB-08) — a user-driven load is all-or-nothing.
+        // The stages below mutate as they go (the bus sections first, then the
+        // CPU), so a blob rejected at the CPU stage used to leave the bus from
+        // the blob and the CPU from the running game: a machine that was
+        // neither, which the next frame emulated. A loud restore therefore
+        // snapshots the running machine first and puts it back on failure.
+        // Quiet restores skip the backup: they are run-ahead's and netplay's
+        // per-frame rollbacks, the hot path, and only ever restore snapshots
+        // this core just wrote, which cannot fail these checks.
+        let backup = clear_rewind.then(|| self.snapshot());
+        if let Err(e) = self.apply_snapshot(data) {
+            if let Some(backup) = backup {
+                // Our own fresh snapshot always restores (the round-trip
+                // invariant every save-state test pins); if it somehow did not,
+                // the original error is still the one worth reporting. The
+                // core has no logger (`no_std`), so the invariant is asserted
+                // in debug and test builds rather than silently assumed.
+                let rolled_back = self.apply_snapshot(&backup);
+                debug_assert!(
+                    rolled_back.is_ok(),
+                    "rolling back to this core's own snapshot failed: {rolled_back:?}"
+                );
             }
+            return Err(e);
         }
-        if !saw_cpu {
-            return Err(SnapshotError::MissingSection("CPU ".into()));
-        }
-        // v2.7.0 -- the one cross-section invariant: the CPU's master clock and
-        // the bus's PPU clock must be close enough that the next catch-up
-        // terminates (see `LockstepBus::check_restored_clocks`).
-        self.bus.check_restored_clocks(self.cpu.master_clock())?;
         // Loading invalidates the rewind ring (the new state is unrelated
         // to what was buffered before).
         if clear_rewind && let Some(r) = &mut self.rewind {
@@ -2290,6 +2286,44 @@ impl Nes {
             // here and this call is a no-op on that path.
             self.bus.apu.clear_audio_provenance_history();
         }
+        Ok(())
+    }
+
+    /// The mutating stages of a restore: the bus sections, then the CPU
+    /// section, then the cross-section clock check. Not atomic by itself; see
+    /// the backup in [`Self::restore_inner`].
+    fn apply_snapshot(&mut self, data: &[u8]) -> Result<(), SnapshotError> {
+        // Restore bus first — it consumes BUS / PPU / APU / MAP sections.
+        self.bus.restore(data)?;
+        // Then walk the sections again to find the CPU body.
+        let (_h, body_off) = save_state::parse_header(data)?;
+        let mut saw_cpu = false;
+        for s in save_state::SectionIter::new(&data[body_off..]) {
+            let s = s?;
+            if s.tag == save_state::tag::CPU {
+                if s.version != rustynes_cpu::CPU_SNAPSHOT_VERSION {
+                    return Err(SnapshotError::VersionMismatch {
+                        tag: save_state::tag_string(s.tag),
+                        file_version: s.version,
+                        chip_supports: rustynes_cpu::CPU_SNAPSHOT_VERSION,
+                    });
+                }
+                self.cpu
+                    .restore(s.body)
+                    .map_err(|e| SnapshotError::SectionInvalid {
+                        tag: save_state::tag_string(s.tag),
+                        reason: format!("{e}"),
+                    })?;
+                saw_cpu = true;
+            }
+        }
+        if !saw_cpu {
+            return Err(SnapshotError::MissingSection("CPU ".into()));
+        }
+        // v2.7.0 -- the one cross-section invariant: the CPU's master clock and
+        // the bus's PPU clock must be close enough that the next catch-up
+        // terminates (see `LockstepBus::check_restored_clocks`).
+        self.bus.check_restored_clocks(self.cpu.master_clock())?;
         Ok(())
     }
 
@@ -3564,6 +3598,46 @@ mod tests {
             ),
             "expected a CPU-tagged VersionMismatch, got {err:?}"
         );
+    }
+
+    /// v2.7.4 (frontend audit MOB-08): a load that fails leaves the machine as
+    /// it was. `restore_inner` applies the bus sections first and checks the
+    /// CPU section after, so on v2.7.3 a blob rejected at the CPU stage left
+    /// the bus from the blob and the CPU from the running game -- a machine
+    /// that was neither, which the next frame then emulated. Every host hit
+    /// it: desktop, libretro and both mobile apps. The rejected blob here is
+    /// the stale-CPU-version one from the test above, taken at an earlier frame
+    /// so its bus state really differs.
+    #[test]
+    fn a_failed_restore_leaves_the_machine_untouched() {
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).expect("parse + boot");
+        nes.run_frame();
+        let earlier = nes.snapshot();
+        for _ in 0..3 {
+            nes.run_frame();
+        }
+        let before = nes.snapshot();
+        assert_ne!(
+            earlier, before,
+            "the fixture must change state between frames"
+        );
+
+        let (_h, body_off) = save_state::parse_header(&earlier).unwrap();
+        let mut rejected = earlier[..body_off].to_vec();
+        for s in save_state::SectionIter::new(&earlier[body_off..]) {
+            let s = s.unwrap();
+            let version = if s.tag == save_state::tag::CPU {
+                s.version - 1
+            } else {
+                s.version
+            };
+            save_state::write_section(&mut rejected, s.tag, version, s.body);
+        }
+        assert!(nes.restore(&rejected).is_err());
+        assert_eq!(nes.snapshot(), before, "a failed load changed the machine");
+        // And it still runs as the same machine.
+        nes.run_frame();
     }
 
     #[test]

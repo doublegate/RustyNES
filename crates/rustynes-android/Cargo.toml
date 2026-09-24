@@ -1,6 +1,6 @@
 [package]
 name = "rustynes-android"
-description = "Android platform host for RustyNES: JNI surface/audio hot glue over the rustynes-mobile bridge (wgpu on a SurfaceView, AAudio sink)"
+description = "Android platform host for RustyNES: JNI surface glue over the rustynes-mobile bridge (wgpu on a SurfaceView)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

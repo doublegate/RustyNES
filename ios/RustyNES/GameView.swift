@@ -34,6 +34,12 @@ struct GameView: View {
                 // image to the correct pixel aspect inside the drawable.
                 MetalGameView(emulator: emulator)
                     .ignoresSafeArea()
+                    // v2.7.4: a new core (a ROM opened from another app while one
+                    // was running) must get a new view. Without an identity the
+                    // view survived the swap, its coordinator kept driving the old
+                    // core -- whose renderer `openGame` had just destroyed -- and
+                    // the new core was never attached or started: a frozen screen.
+                    .id(ObjectIdentifier(emulator))
 
                 // On-screen controls: the v1.9.2 true multi-touch NES-001 pad (the
                 // replacement for the v1.9.0 single-DragGesture TouchControlsOverlay).
@@ -146,6 +152,13 @@ struct GameView: View {
         .onChange(of: showingSettings) { _ in updateMenuPaused() }
         .onChange(of: showingDebugger) { _ in updateMenuPaused() }
         .statusBarHidden(true)
+        // v2.7.4 (frontend audit IOS-05): a thumb sliding off the bottom of the
+        // pad reached the home indicator and sent the app to the background.
+        // Defer the system's bottom-edge gesture (the first swipe only reveals
+        // the indicator; a second one goes home) and hide the indicator while
+        // playing. iOS 16+ SwiftUI; the deployment target is 17.
+        .defersSystemGestures(on: .bottom)
+        .persistentSystemOverlays(.hidden)
     }
 
     /// Recompute whether a modal that must pause emulation is open (Save States,

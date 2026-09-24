@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! cargo run -p rustynes-mobile --bin uniffi-bindgen -- \
-//!     generate --library target/aarch64-linux-android/release/librustynes_mobile.so \
+//!     generate --library target/aarch64-linux-android/release-mobile/librustynes_mobile.so \
 //!     --language kotlin --out-dir android/app/build/generated/uniffi
 //! ```
 fn main() {

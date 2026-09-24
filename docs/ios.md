@@ -97,10 +97,60 @@ channels and emitting silence on underrun. **`AVAudioSession`** (category
 `.playback`, activation, interruption / route-change / silent-switch handling) is
 configured **Swift-side**; on an interruption / scene-background the app calls
 `rustynes_ios_audio_pause` and pauses the emulator, so there is no special
-teardown. (A full Hermite DRC resampler, as on the desktop `resampler.rs`, is a
-documented v1.9.x follow-up; the foundation ships the lock-free ring.) The ring is
-a frontend resampler stage — the **core samples are untouched**, so the audio
-oracle and cross-device save portability are preserved.
+teardown. The ring and rate control are a frontend resampler stage — the **core
+samples are untouched**, so the audio oracle and cross-device save portability
+are preserved.
+
+**v2.7.4 (frontend audit IOS-02 / 03 / 08 / 09).** The ring, rate control and
+channel fan-out live in the host-tested `src/audio_ring.rs`; `audio.rs` keeps
+only what needs cpal.
+
+- **Dynamic rate control.** A 4-tap Hermite resampler on the producer side,
+  steered by the ring's fill (±1%, the desktop's law), holds the queue at a
+  **50 ms** target. Before, there was none: the queue went wherever the host and
+  audio clocks drifted, up to its 250 ms cap. Playback starts only once the
+  target is queued, and waits for it again after an underrun, so a gap is one
+  gap rather than a crackle.
+- The callback drains a whole buffer per index load and store, not one sample
+  at a time, into a buffer allocated once; extra channels get the centre average
+  rather than the left image.
+- **A dead stream is reported.** A fatal cpal error (device gone, audio service
+  lost, or a media-services reset) sets a flag the app polls through
+  `rustynes_ios_audio_is_invalid`, and the app then rebuilds the sink.
+- `scripts/ios-host-typecheck.sh` (run in CI's lint job) compiles the real
+  `audio.rs` and `ffi.rs` on Linux against the real cpal, with only the Metal
+  renderer stubbed. Before v2.7.4 nothing on a pull request compiled either
+  file; only the tag-triggered `ios.yml` did.
+
+### v2.7.4 host fixes (frontend audit IOS-*, MOB-05, MOB-09)
+
+- **Battery saves** (`BatterySave.swift`): `Application Support/RustyNES/battery/<rom-sha256>.sav`,
+  the desktop's and Android's rules (battery bit only; size checked before
+  reading; a wrong-size file never loaded or overwritten; atomic writes). Loaded
+  before the first frame, compared once a second, written on close, on a game
+  switch, and inside a background task when the app backgrounds.
+- **Background tasks** (`BackgroundTask.swift`, IOS-04): CloudKit uploads and the
+  background battery save run inside a UIKit background task that always ends,
+  including from its expiration handler (an unended task gets the app killed).
+- **CloudKit** (IOS-04, IOS-10): a local slot newer than iCloud's is re-uploaded
+  instead of being marked synced; an upload never overwrites a newer server copy
+  and saves with `.ifServerRecordUnchanged`, so a concurrent write from another
+  device fails the save rather than being lost; the per-record save result is
+  checked.
+- **Audio session** (IOS-08): a media-services reset re-configures the session
+  and rebuilds the sink, and the core also rebuilds a sink that reports its
+  stream dead. An unplugged headset pauses as its own reason, cleared by the
+  next menu close (it used to stay frozen until a background / foreground cycle).
+- **Gestures** (IOS-05): the bottom-edge system gesture is deferred and the home
+  indicator hidden while playing.
+- **Thermal state** (IOS-11): at `.serious` / `.critical` the video filter is
+  suspended until the device cools.
+- **Netplay** (MOB-09): host-name resolution (join, room codes) runs off the
+  main actor.
+
+None of this is compiled on this project's Linux machines; it is on the
+maintainer's device checklist for v2.7.4. The Rust side is type-checked on
+Linux by `scripts/ios-host-typecheck.sh`.
 
 ## The SwiftUI app (`ios/`)
 
@@ -114,12 +164,17 @@ AVFoundation / UIKit, and includes the generated `Generated/RustyNESCore.swift`
 "rustynes_ios.h"`).
 
 - **Game surface (`MetalGameView`):** a `UIViewRepresentable` hosting the
-  `MTKView`. A `CADisplayLink` (`preferredFrameRateRange` 60-120 for ProMotion;
-  Info.plist `CADisableMinimumFrameDurationOnPhone = true`) drives the loop: each
-  tick `nes.runFrame()` -> `rustynes_ios_gfx_render(...)` and `nes.drainAudio()` ->
+  `MTKView`. A `CADisplayLink` drives the loop: each tick `nes.runFrame()` ->
+  `rustynes_ios_gfx_render(...)` and `nes.drainAudio()` ->
   `rustynes_ios_audio_push(...)`. The drawable size comes from the view; a
-  bounds/scale change calls `rustynes_ios_gfx_resize`. The core emulates at the
-  console rate (60.0988 Hz); the audio sink absorbs the display beat.
+  bounds/scale change calls `rustynes_ios_gfx_resize`. **v2.7.4 (audit IOS-01):**
+  the link asks for exactly 60 Hz (it was 60-120, preferring 120), and when it
+  runs at ~60 Hz the loop runs exactly one console frame per vsync -- display
+  sync, as on the desktop -- so no frame is doubled or dropped. The core then
+  runs 0.16% below the console's 60.0988 Hz, which the sink's rate control
+  absorbs. On any other refresh a wall-clock accumulator at 60.0988 Hz remains
+  the fallback. The view is keyed to its core (`.id`), so a ROM opened from
+  another app while one runs gets a fresh view rather than a frozen one.
 - **Input:** the on-screen pad and a `GameControllerManager` (`GCController`
   discovery) both converge on the same `setButtons(port, mask)` late-latch as
   desktop / wasm -> TAS / netplay identical. **(v1.9.2)** the pad is a `UIView`-backed
@@ -185,8 +240,8 @@ determinism contract is untouched; the two newest upstream PPU tests are known g
 
 ## Build pipeline (`scripts/build-ios-xcframework.sh`)
 
-`rustup target add` the iOS targets -> `cargo build --release -p rustynes-ios`
-per arch -> `lipo` the simulator arches -> generate the Swift bindings from the
+`rustup target add` the iOS targets -> `cargo build --profile release-mobile -p rustynes-ios`
+(`release` with `panic = "unwind"`, v2.7.4, so the C-ABI panic guards are live) per arch -> `lipo` the simulator arches -> generate the Swift bindings from the
 device `.a` (`cargo run -p rustynes-mobile --bin uniffi-bindgen -- generate
 --library … --language swift`; rename the modulemap to `module.modulemap`) ->
 assemble the headers dir (`rustynes_mobileFFI.h` + `rustynes_ios.h` +

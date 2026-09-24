@@ -26,6 +26,84 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.7.4] - 2026-09-24 - "Pocket" (the mobile apps survive what a phone does to them)
+
+### Fixed — both mobile apps (the shared Rust bridge)
+
+- **A crash in the emulator no longer closes the app.** The Android and iOS
+  libraries were built to abort on any internal error, so one bug anywhere in
+  the bridge ended the app with no save and no report -- including in the calls
+  that were meant to catch it. They are now built to recover
+  (`release-mobile`, +18% native size, no measurable speed cost), every native
+  entry point contains a failure. A failure while a frame runs is caught
+  inside the bridge itself -- the generated Swift would otherwise turn it into
+  a crash, and the Android frame loop did not catch it -- so the app stays
+  open, the game freezes rather than running on from a half-updated machine,
+  any netplay session ends, and the app says so; reopening the game or loading
+  a save state continues (frontend audit MOB-03, MOB-07).
+- **Battery saves persist on Android and iOS.** An in-game save now survives a
+  relaunch on both phones, with the desktop's rules: only cartridges whose
+  header sets the battery bit, and a save that cannot be used is left untouched
+  rather than overwritten (MOB-05, AND-09).
+- **Touch and gamepad input never wait for the emulator.** A button press on the
+  UI thread waited for the current frame, a netplay rollback or a Lua callback
+  to finish (MOB-01).
+- **Leaving a netplay screen or logging out of RetroAchievements no longer
+  freezes the app** for up to 10-30 seconds when the server is unreachable. This
+  also applies to the desktop (MOB-04).
+- **A failed save-state load leaves the game as it was.** A save state rejected
+  partway through loading left the machine half-restored, on every platform,
+  desktop and libretro included (MOB-08).
+- ROM files over 16 MiB are refused before they are copied (MOB-02), and
+  netplay's relay-server lookup no longer stalls a frame (MOB-09).
+
+### Fixed — Android
+
+- **The game pauses when the app leaves the screen** and resumes when it
+  returns, and the app now asks for audio focus: it goes quiet for a call, ducks
+  for a navigation prompt, and gives the audio back when paused. Picture-in-
+  picture keeps playing (AND-03).
+- **Saves are written atomically**, so a phone that dies mid-write keeps the
+  previous save instead of a truncated one -- save states, RetroAchievements
+  progress, the recent-games list, the library and per-game settings (AND-05).
+- Opening a game no longer reads and hashes it on the main thread, and the
+  save-state screen no longer does its file work there (AND-04).
+- The GPU renderer recovers after a slow surface teardown instead of staying
+  black (AND-01), and no longer wakes 500 times a second while idle (AND-08).
+- The game screen no longer rebuilds all of its interface on every frame (AND-02).
+
+### Fixed — iOS
+
+- **Audio stays in step and comes back.** The sink gained rate control, starts
+  from a filled buffer, recovers after the system's media services reset, and
+  an unplugged headset no longer leaves the game frozen until the app is
+  backgrounded (IOS-02, IOS-03, IOS-08).
+- **Smoother picture:** the display runs at 60 Hz with one emulated frame per
+  refresh, instead of a 120 Hz link that periodically showed a frame twice or
+  skipped one (IOS-01).
+- **iCloud save states are not lost.** Uploads finish when the app is
+  backgrounded, a save that failed to upload is retried instead of shown as
+  synced, and an older save can no longer overwrite a newer one from another
+  device (IOS-04, IOS-10).
+- A swipe off the bottom of the controls no longer sends the app home (IOS-05);
+  video filters pause while the device is hot (IOS-11); opening a ROM from
+  another app while one is running no longer freezes the screen; netplay
+  connection lookups no longer freeze the interface (MOB-09).
+
+### Changed
+
+- Android and iOS native libraries build with the new `release-mobile` profile
+  (`release` with `panic = "unwind"`).
+- New CI check: `scripts/ios-host-typecheck.sh` compiles the iOS-only Rust
+  (the C-ABI shim and the audio sink) on Linux. No pull-request job compiled
+  them before.
+
+### Not verified here
+
+Every Swift change, and the Android lifecycle, audio-focus and renderer changes,
+need a real device; they are on the maintainer's per-platform checklist. The
+Android battery-save path was run on the emulator.
+
 ## [2.7.3] - 2026-09-23 - "Hearth" (the desktop and web frontends keep what they are given)
 
 ### Fixed — desktop and web

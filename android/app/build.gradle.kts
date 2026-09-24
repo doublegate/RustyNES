@@ -209,6 +209,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // v2.7.4: the app's first JVM unit tests (app/src/test), for the persistence
+    // rules (atomic writes, battery saves). Android framework stubs such as
+    // `android.util.Log` return their default instead of throwing, so plain-Java
+    // androidx classes like `AtomicFile` run under the tests unchanged.
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     // 16 KB page alignment (Play requirement for Android 15+). NDK r27+ aligns
     // by default; AGP packages the aligned `.so` unchanged.
     packaging {
@@ -265,7 +273,10 @@ val cargoNdkBuild = tasks.register<Exec>("cargoNdkBuild") {
             listOf(
                 "-o", jniLibsDir.absolutePath,
                 "--platform", "26",
-                "build", "--release",
+                // v2.7.4 (audit MOB-03): `release-mobile` is `release` with
+                // `panic = "unwind"`, so a panic in the bridge is contained
+                // instead of aborting the app. See the profile in Cargo.toml.
+                "build", "--profile", "release-mobile",
                 "-p", "rustynes-mobile",
                 "-p", "rustynes-android",
             ),
@@ -279,7 +290,7 @@ val uniffiBindgen = tasks.register<Exec>("uniffiBindgen") {
     description = "Generate Kotlin bindings for the rustynes-mobile control surface via UniFFI."
     dependsOn(cargoNdkBuild)
     workingDir = workspaceRoot
-    val lib = workspaceRoot.resolve("target/aarch64-linux-android/release/librustynes_mobile.so")
+    val lib = workspaceRoot.resolve("target/aarch64-linux-android/release-mobile/librustynes_mobile.so")
     // `--no-format`: UniFFI otherwise shells out to ktlint, which neither CI nor a
     // plain Android Studio setup has, and prints a warning on every build.
     commandLine(
@@ -388,6 +399,8 @@ dependencies {
     // UniFFI's generated Kotlin loads the cdylib through JNA; the `@aar`
     // classifier pulls the Android-native JNA dispatcher.
     implementation("net.java.dev.jna:jna:5.19.1@aar")
+    // v2.7.4: JVM unit tests (app/src/test). None existed before this release.
+    testImplementation("junit:junit:4.13.2")
     // v2.0.1 (ADR 0025): the optional Google Play services below are PLAY-FLAVOR ONLY.
     // `playImplementation` keeps these proprietary Google-Play SDKs out of the `foss`
     // (F-Droid/sideload) artifact entirely — the `foss` variant links none of them (its
