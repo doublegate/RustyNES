@@ -98,3 +98,14 @@ steps so the `.so` + generated Kotlin are always in sync with the Rust source.
   lower fidelity.
 - **Rejected — hand-written JNI for the whole surface.** Maximises `unsafe`,
   duplicates the entire API by hand for iOS, and is not type-checked.
+
+## Amendment (2026-09-24, v2.7.4): no native audio sink was built
+
+This ADR planned the Android crate to carry "the audio sink" alongside the
+surface glue, and `rustynes-android`'s manifest and module docs went on to claim
+an AAudio sink. None was ever built (frontend audit AND-06): audio has always
+been a Kotlin `AudioTrack` in `MainActivity.kt`, fed from
+`NesController.drainAudioBytes()`. v2.7.4 corrects the manifest, the module docs
+and `docs/android.md`, and gives that `AudioTrack` audio focus (AND-03). Moving
+audio into Rust (Oboe / AAudio) remains possible but is not planned; nothing in
+the audit's findings requires it.

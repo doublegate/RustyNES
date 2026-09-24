@@ -34,7 +34,7 @@
 
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use rustynes_core::{Buttons, Nes, Region};
 use rustynes_netplay::{
@@ -547,6 +547,13 @@ pub enum HostWarning {
     /// guaranteed across the engine-timebase boundary (ADR 0028). The sole producer is
     /// [`NesController::movie_play`].
     PreTimebaseMovie,
+    /// v2.7.4 (frontend audit MOB-07) — a call panicked inside the bridge and
+    /// the emulator carried on. The panic was contained (the mobile libraries
+    /// unwind since v2.7.4), but it may have left the emulator mid-update, so
+    /// any netplay session was ended; the game keeps running and the player can
+    /// save or reload. Queued once per panic by the recovery in
+    /// `NesController::lock`.
+    RecoveredFromInternalError,
 }
 
 impl HostWarning {
@@ -564,6 +571,10 @@ impl HostWarning {
             Self::PreTimebaseMovie => "this movie was recorded on a pre-v2.0.0 build -- \
                  input replay proceeds, but exact framebuffer/audio reproduction is not \
                  guaranteed across the engine-timebase boundary (see ADR 0028)"
+                .to_string(),
+            Self::RecoveredFromInternalError => "RustyNES recovered from an internal error. \
+                 Any netplay session was ended. The game is still running; consider \
+                 saving or reloading."
                 .to_string(),
         }
     }
@@ -670,10 +681,30 @@ pub struct NesController {
 }
 
 impl NesController {
-    /// Lock the inner state, recovering transparently from a poisoned mutex so a
-    /// panic on one call can never wedge the whole FFI surface.
+    /// Lock the inner state, recovering from a poisoned mutex so a panic on one
+    /// call can never wedge the whole FFI surface.
+    ///
+    /// v2.7.4 (frontend audit MOB-07) — recovery is no longer silent. Poisoning
+    /// became reachable in v2.7.4: the mobile libraries now unwind (MOB-03), so
+    /// a panic inside a method holding this lock is caught by `UniFFI` and
+    /// leaves `Inner` possibly half-updated. The recovery therefore ends any
+    /// netplay session (its peers are simulating a game this one may have left
+    /// mid-frame, so the session cannot be trusted), queues
+    /// [`HostWarning::RecoveredFromInternalError`] for the host, and clears the
+    /// poison so it happens once per panic. It does NOT power-cycle: that would
+    /// silently throw away the player's unsaved progress, where a warning lets
+    /// them decide.
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
-        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+        self.inner.lock().unwrap_or_else(|poisoned| {
+            let mut g = poisoned.into_inner();
+            self.inner.clear_poison();
+            if g.netplay.take().is_some() || g.netplay_error.is_some() {
+                g.netplay_error = Some("session ended after an internal error".into());
+                g.netplay_last_stalled = true;
+            }
+            g.warnings.push(HostWarning::RecoveredFromInternalError);
+            g
+        })
     }
 
     /// Copy the host's current masks into the core (MOB-01). Called under the
@@ -1623,6 +1654,10 @@ impl NesController {
     /// STUN / punch failures surface later as the session moving to `Error` —
     /// poll [`Self::np_status`].)
     pub fn np_host_room(&self, num_players: u8, cfg: NpNetConfig) -> Result<String, MobileError> {
+        // v2.7.4 (audit MOB-09): resolve the TURN host BEFORE taking the lock.
+        // `to_nat_config` does a blocking DNS lookup, and under the lock it
+        // stalled the emulation thread's next frame for as long as DNS took.
+        let nat_cfg = cfg.to_nat_config();
         let mut g = self.lock();
         let rom_hash = *g.nes.rom_sha256();
         let players = num_players.clamp(2, 4);
@@ -1632,12 +1667,11 @@ impl NesController {
         // determinism contract (the ROM + input + seed that the core consumes
         // are untouched).
         let seed = nondeterministic_seed();
-        let (nat, room) =
-            NatConnect::host(players, rom_hash, cfg.to_nat_config(), seed).map_err(|e| {
-                MobileError::Netplay {
-                    reason: format!("host room failed: {e}"),
-                }
-            })?;
+        let (nat, room) = NatConnect::host(players, rom_hash, nat_cfg, seed).map_err(|e| {
+            MobileError::Netplay {
+                reason: format!("host room failed: {e}"),
+            }
+        })?;
         g.netplay = Some(NetplaySession::Negotiating(Box::new(nat), true));
         g.netplay_error = None;
         g.netplay_desync = false;
@@ -1658,15 +1692,17 @@ impl NesController {
     /// code, an unreachable relay, or a failed traversal surface later as the
     /// session moving to `Error`.)
     pub fn np_join_room(&self, room_code: String, cfg: NpNetConfig) -> Result<(), MobileError> {
+        // v2.7.4 (MOB-09): the TURN DNS lookup runs before the lock; see
+        // `np_host_room`.
+        let nat_cfg = cfg.to_nat_config();
         let mut g = self.lock();
         let rom_hash = *g.nes.rom_sha256();
         let seed = nondeterministic_seed();
-        let nat =
-            NatConnect::join(&room_code, rom_hash, cfg.to_nat_config(), seed).map_err(|e| {
-                MobileError::Netplay {
-                    reason: format!("join room failed: {e}"),
-                }
-            })?;
+        let nat = NatConnect::join(&room_code, rom_hash, nat_cfg, seed).map_err(|e| {
+            MobileError::Netplay {
+                reason: format!("join room failed: {e}"),
+            }
+        })?;
         g.netplay = Some(NetplaySession::Negotiating(Box::new(nat), false));
         g.netplay_error = None;
         g.netplay_desync = false;
@@ -2411,6 +2447,39 @@ const fn port_index(port: u32) -> Result<usize, MobileError> {
     }
 }
 
+/// v2.7.4 (frontend audit MOB-03) — run a hand-written FFI entry point's body,
+/// turning a panic into `Err(message)` instead of letting it cross the
+/// `extern "C"` boundary.
+///
+/// For the JNI (`rustynes-android`) and C-ABI (`rustynes-ios`) shims, which
+/// `UniFFI` does not generate and so does not wrap. A panic escaping an
+/// `extern "C"` function aborts the process (Rust 1.81+); caught here, the shim
+/// logs the message and returns a harmless value -- a null handle, a dropped
+/// frame -- and the app keeps running.
+///
+/// **Only effective in an unwinding build.** The workspace `release` profile
+/// aborts on panic, so the mobile libraries are built with `release-mobile`,
+/// which differs from it only in `panic = "unwind"`. Under `abort` this is a
+/// plain call: nothing reaches the catch.
+///
+/// `AssertUnwindSafe` is deliberate. After a caught panic the renderer or sink
+/// may be mid-update; every shim entry either replaces that state wholesale on
+/// its next call (a frame upload, a resize) or only affects presentation, and
+/// none of it is emulator state, so the determinism contract is untouched.
+///
+/// # Errors
+/// The panic's message when `f` panicked (or a placeholder for a non-string
+/// payload).
+pub fn catch_ffi_panic<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|payload| {
+        payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "panic with a non-string payload".to_owned())
+    })
+}
+
 /// The crate version string (`CARGO_PKG_VERSION`), exposed to the shells so the
 /// About screen can render the native core version.
 #[uniffi::export]
@@ -2597,6 +2666,18 @@ mod tests {
             ));
         }
         assert_eq!(ctrl.battery_ram(), before);
+    }
+
+    /// v2.7.4 (MOB-03): a panic inside a shim body becomes an error value
+    /// carrying its message; a normal return passes through untouched.
+    #[test]
+    fn a_panic_in_an_ffi_body_is_caught_with_its_message() {
+        assert_eq!(catch_ffi_panic(|| 7), Ok(7));
+        let err = catch_ffi_panic(|| -> u32 { panic!("resize with a zero-size surface") });
+        assert_eq!(err, Err("resize with a zero-size surface".to_owned()));
+        let n = 3;
+        let err = catch_ffi_panic(|| -> u32 { panic!("frame {n} out of range") });
+        assert_eq!(err, Err("frame 3 out of range".to_owned()));
     }
 
     #[test]
@@ -3001,6 +3082,38 @@ mod tests {
         ctrl.np_leave();
         assert!(!ctrl.np_is_active());
         assert_eq!(ctrl.np_status().phase, NpPhase::Idle);
+    }
+
+    /// v2.7.4 (frontend audit MOB-07): recovering a poisoned lock is not
+    /// silent. The mobile libraries now unwind (MOB-03), so a panic can leave
+    /// `Inner` half-updated with its mutex poisoned; the next call used to take
+    /// the state and carry on as if nothing happened, including a netplay
+    /// session whose peers were now simulating a different game. Recovery ends
+    /// that session, tells the host once, and clears the poison.
+    #[test]
+    fn recovering_from_a_panic_ends_netplay_and_warns_once() {
+        let ctrl = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("load");
+        ctrl.np_host(0, 2).expect("host bind");
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _g = ctrl.lock();
+            panic!("a bug mid-frame");
+        }));
+        assert!(poisoned.is_err());
+        assert!(ctrl.inner.is_poisoned());
+
+        let status = ctrl.np_status();
+        assert_eq!(status.phase, NpPhase::Error, "the session must not survive");
+        assert!(
+            !ctrl.inner.is_poisoned(),
+            "the poison is cleared once handled"
+        );
+        assert_eq!(
+            ctrl.drain_warning_codes(),
+            vec![HostWarning::RecoveredFromInternalError]
+        );
+        // Recovered once, warned once: later calls are ordinary.
+        ctrl.step_frame();
+        assert!(ctrl.drain_warning_codes().is_empty());
     }
 
     #[test]

@@ -42,6 +42,11 @@
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Esta repetición se grabó en una versión anterior a la v2.0.0. La reproducción de entradas continúa, pero no se garantiza la reproducción exacta del fotograma o del audio a través del cambio de base de tiempo del motor (ADR 0028)." } }
       }
     },
+    "RustyNES recovered from an internal error. Any netplay session was ended. The game is still running; consider saving or reloading." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "RustyNES se recuperó de un error interno. Se terminó cualquier sesión de juego en red. El juego sigue en ejecución; considera guardar o recargar." } }
+      }
+    },
     "Could not access the selected file." : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudo acceder al archivo seleccionado." } }

@@ -9,12 +9,34 @@
 //! `*_new`/`*_init` return `Box::into_raw` (or null on failure), every other call
 //! null-checks and dereferences the live `Box`, and `*_destroy` reclaims it. The
 //! Swift side nulls its stored pointer immediately after `*_destroy`.
+//!
+//! **Thread invariant (checked for v2.7.4, audit finding FE-03).** Every call on
+//! the renderer and sink handles comes from the main thread: the `CADisplayLink`
+//! is scheduled on the main run loop, and the SwiftUI models that call the rest
+//! are `@MainActor`. The CoreAudio render thread never touches the `Box` (it
+//! owns `Arc` clones of the ring and the depth parameters). So the `&mut` below
+//! never aliases and destroy never overlaps a render -- by that Swift
+//! convention, not by anything here. Moving the display link off the main run
+//! loop would make every one of these a data race.
 
 use core::ffi::c_void;
 
 use crate::audio::AudioSink;
 use crate::audio_dsp::DepthConfig;
 use crate::gfx_metal::MetalGfx;
+
+/// v2.7.4 (frontend audit MOB-03) — run a C-ABI entry's body with panics
+/// contained. A panic escaping an `extern "C"` function aborts the app with no
+/// save; caught here, it is logged and the entry returns `fallback` (a null
+/// handle, a dropped frame, 0). Effective because the iOS library is built with
+/// the `release-mobile` profile, which unwinds; see
+/// [`rustynes_mobile::catch_ffi_panic`].
+fn guarded<T>(entry: &str, fallback: T, body: impl FnOnce() -> T) -> T {
+    rustynes_mobile::catch_ffi_panic(body).unwrap_or_else(|msg| {
+        log::error!("{entry}: panic contained at the C-ABI boundary: {msg}");
+        fallback
+    })
+}
 
 // ---- Graphics (Workstream B) ----------------------------------------------
 
@@ -31,13 +53,17 @@ pub unsafe extern "C" fn rustynes_ios_gfx_init(
     width: u32,
     height: u32,
 ) -> *mut MetalGfx {
-    match MetalGfx::new(view, width, height) {
-        Ok(gfx) => Box::into_raw(Box::new(gfx)),
-        Err(e) => {
-            log::error!("rustynes_ios_gfx_init failed: {e}");
-            core::ptr::null_mut()
-        }
-    }
+    guarded(
+        "rustynes_ios_gfx_init",
+        core::ptr::null_mut(),
+        || match MetalGfx::new(view, width, height) {
+            Ok(gfx) => Box::into_raw(Box::new(gfx)),
+            Err(e) => {
+                log::error!("rustynes_ios_gfx_init failed: {e}");
+                core::ptr::null_mut()
+            }
+        },
+    )
 }
 
 /// `rustynes_ios_gfx_resize(handle, width, height)` — reconfigure for a new
@@ -47,12 +73,14 @@ pub unsafe extern "C" fn rustynes_ios_gfx_init(
 /// `handle` must be a live value returned by `rustynes_ios_gfx_init`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rustynes_ios_gfx_resize(handle: *mut MetalGfx, width: u32, height: u32) {
-    if handle.is_null() {
-        return;
-    }
-    // SAFETY: live handle between init and destroy (caller contract).
-    let gfx = unsafe { &mut *handle };
-    gfx.resize(width, height);
+    guarded("rustynes_ios_gfx_resize", (), || {
+        if handle.is_null() {
+            return;
+        }
+        // SAFETY: live handle between init and destroy (caller contract).
+        let gfx = unsafe { &mut *handle };
+        gfx.resize(width, height);
+    })
 }
 
 /// `rustynes_ios_gfx_render(handle, fb, len)` — upload + present one 256×240 RGBA
@@ -63,20 +91,22 @@ pub unsafe extern "C" fn rustynes_ios_gfx_resize(handle: *mut MetalGfx, width: u
 /// `handle` must be live; `fb` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rustynes_ios_gfx_render(handle: *mut MetalGfx, fb: *const u8, len: usize) {
-    if handle.is_null() || fb.is_null() {
-        return;
-    }
-    // SAFETY: live handle (see above).
-    let gfx = unsafe { &mut *handle };
-    let dst = gfx.frame_buf_mut();
-    if len != dst.len() {
-        return;
-    }
-    // SAFETY: `fb` points to `len` readable bytes (caller contract); `len`
-    // equals `dst.len()`, so the copy stays in bounds on both sides.
-    let src = unsafe { core::slice::from_raw_parts(fb, len) };
-    dst.copy_from_slice(src);
-    gfx.render();
+    guarded("rustynes_ios_gfx_render", (), || {
+        if handle.is_null() || fb.is_null() {
+            return;
+        }
+        // SAFETY: live handle (see above).
+        let gfx = unsafe { &mut *handle };
+        let dst = gfx.frame_buf_mut();
+        if len != dst.len() {
+            return;
+        }
+        // SAFETY: `fb` points to `len` readable bytes (caller contract); `len`
+        // equals `dst.len()`, so the copy stays in bounds on both sides.
+        let src = unsafe { core::slice::from_raw_parts(fb, len) };
+        dst.copy_from_slice(src);
+        gfx.render();
+    })
 }
 
 /// `rustynes_ios_gfx_render_hd(handle, fb, len, w, h)` — upload + present one
@@ -95,15 +125,17 @@ pub unsafe extern "C" fn rustynes_ios_gfx_render_hd(
     w: u32,
     h: u32,
 ) {
-    if handle.is_null() || fb.is_null() {
-        return;
-    }
-    // SAFETY: live handle (see above).
-    let gfx = unsafe { &mut *handle };
-    // SAFETY: `fb` points to `len` readable bytes (caller contract). `render_hd`
-    // re-checks `len == w*h*4` and drops the frame on a mismatch.
-    let bytes = unsafe { core::slice::from_raw_parts(fb, len) };
-    gfx.render_hd(bytes, w, h);
+    guarded("rustynes_ios_gfx_render_hd", (), || {
+        if handle.is_null() || fb.is_null() {
+            return;
+        }
+        // SAFETY: live handle (see above).
+        let gfx = unsafe { &mut *handle };
+        // SAFETY: `fb` points to `len` readable bytes (caller contract). `render_hd`
+        // re-checks `len == w*h*4` and drops the frame on a mismatch.
+        let bytes = unsafe { core::slice::from_raw_parts(fb, len) };
+        gfx.render_hd(bytes, w, h);
+    })
 }
 
 /// `rustynes_ios_gfx_set_filter(handle, filter, p0..p3)` — 0 none / 1 scanlines /
@@ -120,12 +152,14 @@ pub unsafe extern "C" fn rustynes_ios_gfx_set_filter(
     p2: f32,
     p3: f32,
 ) {
-    if handle.is_null() {
-        return;
-    }
-    // SAFETY: live handle (see above).
-    let gfx = unsafe { &mut *handle };
-    gfx.set_filter(filter, [p0, p1, p2, p3]);
+    guarded("rustynes_ios_gfx_set_filter", (), || {
+        if handle.is_null() {
+            return;
+        }
+        // SAFETY: live handle (see above).
+        let gfx = unsafe { &mut *handle };
+        gfx.set_filter(filter, [p0, p1, p2, p3]);
+    })
 }
 
 /// `rustynes_ios_gfx_set_index_frame(handle, idx, len, phase)` — upload the
@@ -141,14 +175,16 @@ pub unsafe extern "C" fn rustynes_ios_gfx_set_index_frame(
     len: usize,
     phase: u8,
 ) {
-    if handle.is_null() || idx.is_null() {
-        return;
-    }
-    // SAFETY: live handle (see above).
-    let gfx = unsafe { &mut *handle };
-    // SAFETY: `idx` points to `len` readable bytes (caller contract).
-    let bytes = unsafe { core::slice::from_raw_parts(idx, len) };
-    gfx.set_index_frame(bytes, phase);
+    guarded("rustynes_ios_gfx_set_index_frame", (), || {
+        if handle.is_null() || idx.is_null() {
+            return;
+        }
+        // SAFETY: live handle (see above).
+        let gfx = unsafe { &mut *handle };
+        // SAFETY: `idx` points to `len` readable bytes (caller contract).
+        let bytes = unsafe { core::slice::from_raw_parts(idx, len) };
+        gfx.set_index_frame(bytes, phase);
+    })
 }
 
 /// `rustynes_ios_gfx_destroy(handle)` — drop the renderer (releases the wgpu
@@ -158,12 +194,14 @@ pub unsafe extern "C" fn rustynes_ios_gfx_set_index_frame(
 /// `handle` must be a live value from `rustynes_ios_gfx_init`, not used after.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rustynes_ios_gfx_destroy(handle: *mut MetalGfx) {
-    if handle.is_null() {
-        return;
-    }
-    // SAFETY: reclaim the `Box` created in `rustynes_ios_gfx_init`; the Swift side
-    // nulls its handle immediately after this call.
-    drop(unsafe { Box::from_raw(handle) });
+    guarded("rustynes_ios_gfx_destroy", (), || {
+        if handle.is_null() {
+            return;
+        }
+        // SAFETY: reclaim the `Box` created in `rustynes_ios_gfx_init`; the Swift side
+        // nulls its handle immediately after this call.
+        drop(unsafe { Box::from_raw(handle) });
+    })
 }
 
 // ---- Audio (Workstream C) -------------------------------------------------
@@ -172,13 +210,17 @@ pub unsafe extern "C" fn rustynes_ios_gfx_destroy(handle: *mut MetalGfx) {
 /// Returns null on failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn rustynes_ios_audio_new() -> *mut AudioSink {
-    match AudioSink::new() {
-        Ok(sink) => Box::into_raw(Box::new(sink)),
-        Err(e) => {
-            log::error!("rustynes_ios_audio_new failed: {e}");
-            core::ptr::null_mut()
-        }
-    }
+    guarded(
+        "rustynes_ios_audio_new",
+        core::ptr::null_mut(),
+        || match AudioSink::new() {
+            Ok(sink) => Box::into_raw(Box::new(sink)),
+            Err(e) => {
+                log::error!("rustynes_ios_audio_new failed: {e}");
+                core::ptr::null_mut()
+            }
+        },
+    )
 }
 
 /// `rustynes_ios_audio_push(handle, samples, len)` — enqueue mono `f32` samples
@@ -192,14 +234,16 @@ pub unsafe extern "C" fn rustynes_ios_audio_push(
     samples: *const f32,
     len: usize,
 ) {
-    if handle.is_null() || samples.is_null() {
-        return;
-    }
-    // SAFETY: live handle (caller contract).
-    let sink = unsafe { &*handle };
-    // SAFETY: `samples` points to `len` readable `f32`s (caller contract).
-    let s = unsafe { core::slice::from_raw_parts(samples, len) };
-    sink.push(s);
+    guarded("rustynes_ios_audio_push", (), || {
+        if handle.is_null() || samples.is_null() {
+            return;
+        }
+        // SAFETY: live handle (caller contract).
+        let sink = unsafe { &*handle };
+        // SAFETY: `samples` points to `len` readable `f32`s (caller contract).
+        let s = unsafe { core::slice::from_raw_parts(samples, len) };
+        sink.push(s);
+    })
 }
 
 /// `rustynes_ios_audio_sample_rate(handle) -> u32` — the negotiated device rate
@@ -209,12 +253,14 @@ pub unsafe extern "C" fn rustynes_ios_audio_push(
 /// `handle` must be a live value returned by `rustynes_ios_audio_new`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rustynes_ios_audio_sample_rate(handle: *mut AudioSink) -> u32 {
-    if handle.is_null() {
-        return 0;
-    }
-    // SAFETY: live handle (caller contract).
-    let sink = unsafe { &*handle };
-    sink.sample_rate()
+    guarded("rustynes_ios_audio_sample_rate", 0, || {
+        if handle.is_null() {
+            return 0;
+        }
+        // SAFETY: live handle (caller contract).
+        let sink = unsafe { &*handle };
+        sink.sample_rate()
+    })
 }
 
 /// `rustynes_ios_audio_set_depth(handle, enabled, eq, eq_len, pan, pan_len,
@@ -240,33 +286,35 @@ pub unsafe extern "C" fn rustynes_ios_audio_set_depth(
     reverb_room: f32,
     crossfeed: f32,
 ) {
-    if handle.is_null() {
-        return;
-    }
-    // SAFETY: live handle (caller contract).
-    let sink = unsafe { &*handle };
-    let mut cfg = DepthConfig {
-        enabled: enabled != 0,
-        reverb_mix,
-        reverb_room,
-        crossfeed,
-        ..DepthConfig::BYPASS
-    };
-    if !eq.is_null() {
-        // SAFETY: `eq` points to `eq_len` readable `f32`s (caller contract).
-        let src = unsafe { core::slice::from_raw_parts(eq, eq_len) };
-        for (dst, &s) in cfg.eq_db.iter_mut().zip(src.iter()) {
-            *dst = s;
+    guarded("rustynes_ios_audio_set_depth", (), || {
+        if handle.is_null() {
+            return;
         }
-    }
-    if !pan.is_null() {
-        // SAFETY: `pan` points to `pan_len` readable `f32`s (caller contract).
-        let src = unsafe { core::slice::from_raw_parts(pan, pan_len) };
-        for (dst, &s) in cfg.pan.iter_mut().zip(src.iter()) {
-            *dst = s;
+        // SAFETY: live handle (caller contract).
+        let sink = unsafe { &*handle };
+        let mut cfg = DepthConfig {
+            enabled: enabled != 0,
+            reverb_mix,
+            reverb_room,
+            crossfeed,
+            ..DepthConfig::BYPASS
+        };
+        if !eq.is_null() {
+            // SAFETY: `eq` points to `eq_len` readable `f32`s (caller contract).
+            let src = unsafe { core::slice::from_raw_parts(eq, eq_len) };
+            for (dst, &s) in cfg.eq_db.iter_mut().zip(src.iter()) {
+                *dst = s;
+            }
         }
-    }
-    sink.set_depth(&cfg);
+        if !pan.is_null() {
+            // SAFETY: `pan` points to `pan_len` readable `f32`s (caller contract).
+            let src = unsafe { core::slice::from_raw_parts(pan, pan_len) };
+            for (dst, &s) in cfg.pan.iter_mut().zip(src.iter()) {
+                *dst = s;
+            }
+        }
+        sink.set_depth(&cfg);
+    })
 }
 
 /// `rustynes_ios_audio_pause(handle)` — pause output (scene background / audio
@@ -276,12 +324,14 @@ pub unsafe extern "C" fn rustynes_ios_audio_set_depth(
 /// `handle` must be a live value returned by `rustynes_ios_audio_new`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rustynes_ios_audio_pause(handle: *mut AudioSink) {
-    if handle.is_null() {
-        return;
-    }
-    // SAFETY: live handle (caller contract).
-    let sink = unsafe { &*handle };
-    sink.pause();
+    guarded("rustynes_ios_audio_pause", (), || {
+        if handle.is_null() {
+            return;
+        }
+        // SAFETY: live handle (caller contract).
+        let sink = unsafe { &*handle };
+        sink.pause();
+    })
 }
 
 /// `rustynes_ios_audio_resume(handle)` — resume output (scene foreground /
@@ -291,12 +341,14 @@ pub unsafe extern "C" fn rustynes_ios_audio_pause(handle: *mut AudioSink) {
 /// `handle` must be a live value returned by `rustynes_ios_audio_new`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rustynes_ios_audio_resume(handle: *mut AudioSink) {
-    if handle.is_null() {
-        return;
-    }
-    // SAFETY: live handle (caller contract).
-    let sink = unsafe { &*handle };
-    sink.resume();
+    guarded("rustynes_ios_audio_resume", (), || {
+        if handle.is_null() {
+            return;
+        }
+        // SAFETY: live handle (caller contract).
+        let sink = unsafe { &*handle };
+        sink.resume();
+    })
 }
 
 /// `rustynes_ios_audio_destroy(handle)` — stop + drop the sink.
@@ -305,9 +357,11 @@ pub unsafe extern "C" fn rustynes_ios_audio_resume(handle: *mut AudioSink) {
 /// `handle` must be a live value from `rustynes_ios_audio_new`, not used after.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rustynes_ios_audio_destroy(handle: *mut AudioSink) {
-    if handle.is_null() {
-        return;
-    }
-    // SAFETY: reclaim the `Box` created in `rustynes_ios_audio_new`.
-    drop(unsafe { Box::from_raw(handle) });
+    guarded("rustynes_ios_audio_destroy", (), || {
+        if handle.is_null() {
+            return;
+        }
+        // SAFETY: reclaim the `Box` created in `rustynes_ios_audio_new`.
+        drop(unsafe { Box::from_raw(handle) });
+    })
 }

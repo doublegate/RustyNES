@@ -185,8 +185,8 @@ determinism contract is untouched; the two newest upstream PPU tests are known g
 
 ## Build pipeline (`scripts/build-ios-xcframework.sh`)
 
-`rustup target add` the iOS targets -> `cargo build --release -p rustynes-ios`
-per arch -> `lipo` the simulator arches -> generate the Swift bindings from the
+`rustup target add` the iOS targets -> `cargo build --profile release-mobile -p rustynes-ios`
+(`release` with `panic = "unwind"`, v2.7.4, so the C-ABI panic guards are live) per arch -> `lipo` the simulator arches -> generate the Swift bindings from the
 device `.a` (`cargo run -p rustynes-mobile --bin uniffi-bindgen -- generate
 --library … --language swift`; rename the modulemap to `module.modulemap`) ->
 assemble the headers dir (`rustynes_mobileFFI.h` + `rustynes_ios.h` +

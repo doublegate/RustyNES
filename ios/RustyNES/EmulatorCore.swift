@@ -471,6 +471,11 @@ final class EmulatorCore {
             return String(
                 localized: "This movie was recorded on a pre-v2.0.0 build. Input replay proceeds, but exact framebuffer/audio reproduction is not guaranteed across the engine-timebase change (ADR 0028)."
             )
+        // v2.7.4 (audit MOB-07): the bridge contained a panic and carried on.
+        case .recoveredFromInternalError:
+            return String(
+                localized: "RustyNES recovered from an internal error. Any netplay session was ended. The game is still running; consider saving or reloading."
+            )
         }
     }
 

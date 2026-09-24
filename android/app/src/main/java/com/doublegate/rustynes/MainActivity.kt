@@ -716,6 +716,9 @@ private fun displayName(context: Context, uri: Uri): String {
 private fun hostWarningText(context: Context, warning: HostWarning): String = when (warning) {
     HostWarning.PRE_TIMEBASE_MOVIE ->
         context.getString(R.string.host_warning_pre_timebase_movie)
+    // v2.7.4 (audit MOB-07): the bridge contained a panic and carried on.
+    HostWarning.RECOVERED_FROM_INTERNAL_ERROR ->
+        context.getString(R.string.host_warning_recovered_from_internal_error)
 }
 
 private const val NES_WIDTH = 256

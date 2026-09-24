@@ -293,6 +293,17 @@ overflow-checks = false
 inherits = "release"
 debug = true
 
+# v2.7.4 (frontend audit MOB-03) — the Android `.so` and iOS static library.
+# Identical to `release` except that a panic UNWINDS instead of aborting. The
+# workspace `release` profile aborts on panic, which made every panic guard on
+# the mobile FFI dead code -- the `catch_unwind` UniFFI wraps each exported
+# method in, and the ones on the hand-written JNI / C-ABI entry points -- so a
+# panic anywhere in the bridge killed the app with no save and no report.
+# Desktop, libretro and wasm builds keep `release` and its abort.
+[profile.release-mobile]
+inherits = "release"
+panic = "unwind"
+
 # v1.0.0 Phase 4 — opt-in host-tuned build:
 #   RUSTFLAGS="-C target-cpu=native" cargo build --profile release-native -p rustynes-frontend
 # (cargo profiles cannot carry rustflags; the separate profile keeps the

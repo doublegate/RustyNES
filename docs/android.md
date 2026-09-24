@@ -41,12 +41,12 @@ the build links + (eventually) an instrumented smoke boot.
 │    • SAF ROM picker, touch overlay, settings, save-state manager                   │
 │    • drives the emulator through the UniFFI-generated NesController                 │
 └───────────────┬───────────────────────────────────────────────┬───────────────────┘
-                │ generated Kotlin bindings (UniFFI)              │ JNI (surface/audio)
+                │ generated Kotlin bindings (UniFFI)              │ JNI (surface)
         ┌───────▼─────────────────────┐                  ┌────────▼───────────────────┐
         │ rustynes-mobile (shared)    │                  │ rustynes-android            │
         │  typed control surface:     │                  │  hot glue UniFFI can't do:  │
         │  load_rom / run_frame /     │                  │  ANativeWindow → wgpu,      │
-        │  set_button / save_state    │                  │  the AAudio sink,           │
+        │  set_button / save_state    │                  │  (audio: Kotlin AudioTrack) │
         │  #[uniffi::export]          │                  │  android_main (spike)       │
         └───────────────┬─────────────┘                  └────────────┬────────────────┘
                         └──────────────────┬─────────────────────────┘
@@ -115,14 +115,17 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/<version>     # e.g. 29.0.14206865
 ### Just the Rust libraries (what host/CI verifies)
 
 ```bash
-# Cross-compile both crates for the shipped ABIs into a chosen output dir:
+# Cross-compile both crates for the shipped ABIs. `release-mobile` is the
+# workspace `release` profile with `panic = "unwind"` (v2.7.4, audit MOB-03):
+# `release` aborts on panic, which made every panic guard on the mobile FFI
+# dead code. It costs about 18% native size on arm64 (measured below).
 cargo ndk -t arm64-v8a -t x86_64 --platform 26 \
-  build --release -p rustynes-mobile -p rustynes-android
+  build --profile release-mobile -p rustynes-mobile -p rustynes-android
 
 # Generate the Kotlin bindings from the built arm64 cdylib (API is
 # target-independent, so any built library is a valid source of truth):
 cargo run -p rustynes-mobile --bin uniffi-bindgen -- \
-  generate --library target/aarch64-linux-android/release/librustynes_mobile.so \
+  generate --library target/aarch64-linux-android/release-mobile/librustynes_mobile.so \
   --language kotlin --out-dir target/uniffi-kotlin
 ```
 
