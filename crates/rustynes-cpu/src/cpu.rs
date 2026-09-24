@@ -17,12 +17,13 @@
 //! - the `JMP ($XXFF)` indirect page-bug.
 //!
 //! The CPU steps one *instruction* at a time (`Cpu::step`), returning the
-//! cycle count, and every cycle is a real bus access. Since the v2.0.0
-//! one-clock scheduler (ADR 0002 / ADR 0029) each cycle is split around that
-//! access: `start_cycle` catches the PPU up (`Bus::run_ppu_to`) and runs the
-//! bus's per-cycle work (`Bus::cpu_clock`), then the access happens, then
-//! `end_cycle` catches the PPU up to the cycle's end and ticks the DMC
-//! (`Bus::cpu_clock_apu_dmc`). There
+//! cycle count. Since the v2.0.0 one-clock scheduler (ADR 0002 / ADR 0029)
+//! every cycle is clocked in two halves: `start_cycle` catches the PPU up
+//! (`Bus::run_ppu_to`) and runs the bus's per-cycle work (`Bus::cpu_clock`),
+//! and `end_cycle` catches the PPU up to the cycle's end and ticks the DMC
+//! (`Bus::cpu_clock_apu_dmc`). A cycle with a bus access (`read1` /
+//! `write1`) performs it between the halves; an internal cycle (`idle_tick`)
+//! runs both halves with no access. There
 //! is no separate `tick()`, and the pre-v2.0.0 per-cycle `Bus::on_cpu_cycle`
 //! callback survives only as the default body of `Bus::cpu_clock` for
 //! simple test buses. (Until v2.7.5 this header still described that
