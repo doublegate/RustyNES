@@ -24,7 +24,10 @@
 //! | Q     | A |
 //! | E     | B |
 //! | P     | Start |
-//! | L     | Select |
+//! | R     | Select (`L` before v2.7.3, which P3's cluster also used) |
+//!
+//! The Famicom microphone is held on `N` (`M` before v2.7.3, which was also
+//! the menu-bar toggle).
 //!
 //! System defaults: `Esc` quit, `F1` save state, `F4` load state, `F5`
 //! rewind (held), `F2` reset, `F3` power-cycle, `F6` TAS movie record
@@ -728,10 +731,14 @@ pub const BANDAI_HYPER_SHOT_KEYS: [KeyCode; 8] = [
 
 /// Default hold-to-talk key for the Famicom built-in microphone (v2.2.0).
 ///
-/// The microphone is read on `$4016` bit 2. The key is chosen off the P1/P2
-/// controller keys and the system bindings; games such as *Zelda* (Pols Voice)
+/// The microphone is read on `$4016` bit 2; games such as *Zelda* (Pols Voice)
 /// and *Kid Icarus* poll it. Fixed for now (a rebindable mic key is a follow-up).
-pub const MICROPHONE_KEY: KeyCode = KeyCode::KeyM;
+///
+/// v2.7.3 (frontend audit DESK-02): `N`, not `M`. `M` is also the menu-bar
+/// toggle, so holding it to speak flipped the menu on every press.
+/// `config::tests::no_two_default_bindings_share_a_key` keeps this key off
+/// every default pad and system binding.
+pub const MICROPHONE_KEY: KeyCode = KeyCode::KeyN;
 
 /// v1.2.0 Workstream D — host-key -> Family BASIC keyboard matrix-index map.
 ///
@@ -1273,14 +1280,14 @@ mod tests {
 
     #[test]
     fn player2_default_bindings_drive_p2_buttons() {
-        // Defaults: P2 uses WASD + Q/E + P/L.
+        // Defaults: P2 uses WASD + Q/E + P/R (R since v2.7.3; it was L).
         let mut s = InputState::with_defaults();
         for (key, want) in [
             (KeyCode::KeyW, Buttons::UP),
             (KeyCode::KeyQ, Buttons::A),
             (KeyCode::KeyE, Buttons::B),
             (KeyCode::KeyP, Buttons::START),
-            (KeyCode::KeyL, Buttons::SELECT),
+            (KeyCode::KeyR, Buttons::SELECT),
         ] {
             let (k, e) = down(key);
             s.handle_key(k, e);

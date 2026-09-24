@@ -475,15 +475,18 @@ impl PadBindings {
             right: "KeyD".into(),
             a: "KeyQ".into(),
             b: "KeyE".into(),
-            select: "KeyL".into(),
+            // v2.7.3 (DESK-02): was `KeyL`, which P3's IJKL cluster also uses
+            // for Right. `R` sits beside the Q / E face buttons.
+            select: "KeyR".into(),
             start: "KeyP".into(),
         }
     }
 
     /// Player-3 defaults (v1.7.0, Four Score): the IJKL cluster +
-    /// surrounding keys — I/K/J/L = D-pad, U = A, O = B, M = Select,
+    /// surrounding keys — I/K/J/L = D-pad, U = A, O = B, `Comma` = Select,
     /// `Period` = Start. Chosen to avoid clashing with the P1 (arrows +
-    /// Z/X) and P2 (WASD + Q/E) layouts on a single keyboard.
+    /// Z/X) and P2 (WASD + Q/E + R/P) layouts on a single keyboard;
+    /// `no_two_default_bindings_share_a_key` enforces it.
     #[must_use]
     pub fn default_player3() -> Self {
         Self {
@@ -493,7 +496,9 @@ impl PadBindings {
             right: "KeyL".into(),
             a: "KeyU".into(),
             b: "KeyO".into(),
-            select: "KeyM".into(),
+            // v2.7.3 (DESK-02): was `KeyM`, also the menu-bar toggle and the
+            // microphone. `Comma` sits beside Start on `Period`.
+            select: "Comma".into(),
             start: "Period".into(),
         }
     }
@@ -3115,12 +3120,13 @@ debug_overlay = "Backquote"
         assert_eq!(cfg.input.player4, PadBindings::default_player4());
         assert_eq!(cfg.input.gamepad3, GamepadBindings::default_xbox());
         assert_eq!(cfg.input.gamepad4, GamepadBindings::default_xbox());
-        // The pre-existing P1/P2 sections are untouched.
+        // The pre-existing P1/P2 sections are untouched. The file saved P2
+        // Select as `L`, the default until v2.7.3 moved it to `R` (DESK-02);
+        // a saved binding is the user's and is kept as written.
         assert_eq!(cfg.input.player1, PadBindings::default_player1());
-        assert_eq!(cfg.input.player2, PadBindings::default_player2());
-        // The whole tree round-trips, and matches a fresh default (the
-        // legacy file is behaviourally identical to today's default).
-        assert_eq!(cfg, Config::default());
+        assert_eq!(cfg.input.player2.select, "KeyL");
+        // Apart from that saved key, the legacy file is today's default.
+        assert_eq!(cfg, legacy_default());
     }
 
     #[test]
@@ -3213,8 +3219,9 @@ debug_overlay = "Backquote"
         assert!(cfg.fds.bios_path.is_none());
         // No `disk_swap` key -> the F9 default.
         assert_eq!(cfg.input.system.disk_swap, "F9");
-        // The rest of the (pre-v2.2.0) config is behaviourally unchanged.
-        assert_eq!(cfg, Config::default());
+        // The rest of the (pre-v2.2.0) config is behaviourally unchanged, apart
+        // from the P2 Select key the file saved (see `legacy_default`).
+        assert_eq!(cfg, legacy_default());
     }
 
     #[test]
@@ -3372,5 +3379,61 @@ start = "Start"
             "the raw bytes are kept, not a lossy decoding of them"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Today's default config as a pre-v2.7.3 file saved it: identical except
+    /// P2 Select, which such a file stores as `KeyL` (DESK-02 moved the default
+    /// to `KeyR`). Loading keeps the saved key.
+    fn legacy_default() -> Config {
+        let mut cfg = Config::default();
+        cfg.input.player2.select = "KeyL".into();
+        cfg
+    }
+
+    /// v2.7.3 (frontend audit DESK-02) — no two default bindings share a key.
+    ///
+    /// The audit found the Famicom microphone and the menu-bar toggle both on
+    /// `M`; enumerating every binding found two more: P3 Select was also `M`
+    /// (so M toggled the menu, held the mic, and pressed P3 Select at once), and
+    /// P2 Select and P3 Right were both `L`. The bindings are enumerated by
+    /// serialising each struct, so a binding added later is checked without
+    /// anyone remembering to list it here. Expansion-device keys (Power Pad,
+    /// Hyper Shots) are excluded: they are read only while that device is
+    /// attached, and replace the pads rather than coexist with them.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn no_two_default_bindings_share_a_key() {
+        fn keys_of<T: Serialize>(label: &str, value: &T, out: &mut Vec<(String, String)>) {
+            let table = toml::Value::try_from(value).expect("bindings serialise");
+            for (field, key) in table.as_table().expect("a table") {
+                if let Some(key) = key.as_str() {
+                    out.push((key.to_string(), format!("{label}.{field}")));
+                }
+            }
+        }
+        let input = InputConfig::default();
+        let mut all = Vec::new();
+        keys_of("player1", &input.player1, &mut all);
+        keys_of("player2", &input.player2, &mut all);
+        keys_of("player3", &input.player3, &mut all);
+        keys_of("player4", &input.player4, &mut all);
+        keys_of("system", &SystemBindings::default(), &mut all);
+        all.push((
+            format!("{:?}", crate::input::MICROPHONE_KEY),
+            "microphone".to_string(),
+        ));
+        assert!(all.len() > 50, "enumerated {} bindings", all.len());
+        let mut seen: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+        let mut clashes = Vec::new();
+        for (key, what) in &all {
+            if let Some(prev) = seen.insert(key, what) {
+                clashes.push(format!("{key}: {prev} and {what}"));
+            }
+        }
+        assert!(
+            clashes.is_empty(),
+            "default key clashes:\n  {}",
+            clashes.join("\n  ")
+        );
     }
 }

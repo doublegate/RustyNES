@@ -42,6 +42,11 @@ cycle-accurate core later replaced.
   and image uploads, which egui sends only once. The panels then drew with
   textures the renderer never received until restart. Uploads now happen before
   the acquire, and releases after it (frontend audit DESK-01).
+- **One key no longer does three things.** `M` toggled the menu bar, held the
+  Famicom microphone, and pressed P3 Select, all at once; P2 Select and P3
+  Right were both `L`. New defaults: the microphone is held on `N`, P3 Select
+  is `,` and P2 Select is `R`. `M` still toggles the menu bar. Saved bindings
+  are kept as they are (frontend audit DESK-02).
 
 ### Security
 

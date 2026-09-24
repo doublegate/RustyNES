@@ -439,7 +439,7 @@ the D-pad), and you can drag-and-drop a `.nes` / `.fds` onto the window to load 
 | -------------- | ------------------- | ------------- |
 | D-Pad          | Arrow keys          | W / A / S / D |
 | A / B          | Z / X               | Q / E         |
-| Start / Select | Enter / Right-Shift | P / L         |
+| Start / Select | Enter / Right-Shift | P / R         |
 
 ### System and tools
 
@@ -452,7 +452,7 @@ the D-pad), and you can drag-and-drop a `.nes` / `.fds` onto the window to load 
 | TAS record / play / branch   | F6 / F7 / F8       | Swap disk side (FDS)    | F9        |
 | Toggle menu bar              | M                  | Insert coin (Vs.)       | F10       |
 | Toggle debugger              | `` ` `` (backtick) | Fullscreen              | F11       |
-| Quit / exit fullscreen       | Esc                | Save-state slot         | 0 – 9     |
+| Quit / exit fullscreen       | Esc                | Famicom microphone      | N (hold)  |
 
 ---
 

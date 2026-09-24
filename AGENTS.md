@@ -111,7 +111,8 @@ cargo full-run path/to/rom.nes                           # run the maximal nativ
 cargo full-build                                         # build it (= --release -p rustynes-frontend --features full)
 # WASM-only features (script-wasm, browser-cheevos, wasm-canvas) are excluded by design.
 # Default keys P1: arrows = D-pad, Z = A, X = B, Enter = Start, RShift = Select.
-# Default keys P2: WASD = D-pad, Q = A, E = B, P = Start, L = Select.
+# Default keys P2: WASD = D-pad, Q = A, E = B, P = Start, R = Select (L before v2.7.3).
+# Famicom microphone: hold N (M before v2.7.3). M toggles the menu bar.
 # System: Esc = quit, F1 = save state, F4 = load state, F5 (held) = rewind,
 # F2 = reset, F3 = power-cycle, F12 = open ROM, F9 = FDS disk-swap, ~ = toggle debugger.
 # F6/F7/F8 = TAS movie record/play/branch. Drag-and-drop a .nes/.fds to load.
