@@ -28,6 +28,6 @@ object GameConfig {
         val o = all.optJSONObject(sha) ?: JSONObject()
         o.put("filter", filter)
         all.put(sha, o)
-        runCatching { file(context).writeText(all.toString()) }
+        runCatching { writeAtomic(file(context), all.toString().toByteArray()) }
     }
 }

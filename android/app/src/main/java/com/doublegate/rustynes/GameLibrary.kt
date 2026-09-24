@@ -103,7 +103,7 @@ object GameLibrary {
     private fun writeAll(ctx: Context, entries: List<GameEntry>) {
         val arr = JSONArray()
         entries.forEach { arr.put(it.toJson()) }
-        runCatching { file(ctx).writeText(arr.toString()) }
+        runCatching { writeAtomic(file(ctx), arr.toString().toByteArray()) }
     }
 
     /**
@@ -224,9 +224,9 @@ object GameLibrary {
                 }
                 val arr = JSONArray()
                 migrated.forEach { arr.put(it.toJson()) }
-                runCatching { file(ctx).writeText(arr.toString()) }
+                runCatching { writeAtomic(file(ctx), arr.toString().toByteArray()) }
             }
         }
-        runCatching { migratedFile(ctx).writeText("1") }
+        runCatching { writeAtomic(migratedFile(ctx), "1".toByteArray()) }
     }
 }

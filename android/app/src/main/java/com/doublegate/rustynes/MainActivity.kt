@@ -5,7 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
 import android.net.Uri
 import android.os.Build
@@ -58,6 +60,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -280,6 +283,29 @@ class MainActivity : AppCompatActivity() {
     /** Guards the one-time in-app update check (Workstream L). */
     private var updateChecked = false
 
+    /** Whether [onStop] paused emulation, so [onStart] resumes only what it paused
+     *  (a game the player paused stays paused). v2.7.4, audit AND-03. */
+    private var pausedByStop = false
+
+    // v2.7.4 (AND-03): pause emulation -- and with it the audio -- while the
+    // Activity is not visible. Keyed on STOP, not PAUSE: entering picture-in-picture
+    // calls onPause but not onStop, and PiP must keep playing.
+    override fun onStop() {
+        super.onStop()
+        if (!emulator.paused) {
+            emulator.paused = true
+            pausedByStop = true
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (pausedByStop) {
+            pausedByStop = false
+            emulator.paused = false
+        }
+    }
+
     override fun onPause() {
         super.onPause()
         // Stop listening for controller hot-plug while backgrounded.
@@ -421,6 +447,9 @@ class MainActivity : AppCompatActivity() {
     // lock serialises this against the emulation thread, so the snapshot is
     // consistent; it is a quick in-memory encode, fine to do on the main thread.
     private fun onPauseSaveState() {
+        // v2.7.4 (AND-09): the in-game battery save, synchronously -- the process
+        // may be killed at any point once it is in the background.
+        emulator.flushBattery()
         val ctrl = emulator.controller
         val sha = emulator.romSha
         // RetroAchievements progress sidecar (v1.8.6). A no-op when no RA session /
@@ -517,6 +546,23 @@ private fun rememberColorScheme(
  */
 class EmulatorHandle {
     var controller: NesController? = null
+
+    /** The loaded cartridge's battery save, or null without a battery (v2.7.4,
+     *  audit AND-09). Written on change by the loop, and here on every exit path. */
+    var battery: BatterySaver? = null
+
+    /**
+     * Write the battery save now if it changed, synchronously. For the paths
+     * that end a session -- ROM switch, close, background -- where the write must
+     * land before the controller goes away. A failure is logged and retried by
+     * the next flush; the file keeps its previous contents.
+     */
+    fun flushBattery() {
+        val saver = battery ?: return
+        val ctrl = controller ?: return
+        runCatching { saver.flushIfChanged(ctrl.batteryRam()) }
+            .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
+    }
 
     /** Lowercase hex SHA-256 of the loaded ROM — the save-state directory key. */
     var romSha: String? = null
@@ -632,30 +678,33 @@ object NesBit {
     const val RIGHT = 0x80
 }
 
+/** Everything [prepareRom] built off the main thread, for [publishRom] to swap in. */
+private class PreparedRom(
+    val ctrl: NesController,
+    val sha: String,
+    val bytes: ByteArray,
+    val name: String?,
+    val filter: Int?,
+    val battery: BatterySaver?,
+    val batteryNotice: String?,
+)
+
 /**
- * Load a ROM into [emulator] from raw bytes: build the controller, key it by
- * SHA-256, auto-resume the on-background save-state for that ROM if present, and
- * — when the bytes came from a SAF [uri] — take a persistable read grant + record
- * it in the recent-ROMs list so it survives reboot. Returns a status line. May
- * throw if the bytes are not a valid ROM (callers wrap in `runCatching`).
+ * The I/O half of loading a ROM (v2.7.4, frontend audit AND-04): build the
+ * controller, key it by SHA-256, load its battery save and the auto-resume
+ * save-state, take a persistable read grant for a SAF [uri], and record it in the
+ * recents list and the library. All of it runs on `Dispatchers.IO` -- before
+ * v2.7.4 this and the stream read ran on the main thread, where a slow SAF
+ * provider (a cloud-backed document) could block it into an ANR. Nothing here
+ * touches the running emulator; [publishRom] does, on the main thread. May throw
+ * if the bytes are not a valid ROM (callers wrap in `runCatching`).
  */
-private fun loadRom(
-    context: Context,
-    emulator: EmulatorHandle,
-    bytes: ByteArray,
-    uri: Uri?,
-    name: String?,
-    settings: AppSettings,
-): String {
+private fun prepareRom(context: Context, bytes: ByteArray, uri: Uri?, name: String?): PreparedRom {
     val ctrl = NesController(bytes, 48_000u)
     val sha = sha256Hex(bytes)
-    emulator.controller = ctrl
-    emulator.romSha = sha
-    emulator.romBytes = bytes
-    // Apply this game's remembered video filter (per-game DB), if any.
-    GameConfig.filter(context, sha)?.let { f ->
-        settings.filter = VideoFilter.entries.getOrElse(f) { VideoFilter.None }
-    }
+    // Load the cartridge's `.sav` before its first frame, and before the auto-resume
+    // state below (a save state is newer and restores cartridge RAM too).
+    val (battery, batteryNotice) = attachBattery(context, ctrl, sha)
     // Auto-resume the on-background save-state for this ROM if one is present.
     SaveStateStore.load(context, sha, SaveStateStore.AUTO_SLOT)?.let { blob ->
         runCatching { ctrl.loadState(blob) }
@@ -686,7 +735,66 @@ private fun loadRom(
             lastPlayed = System.currentTimeMillis(),
         ),
     )
-    return "Running" + (name?.let { " · $it" } ?: "")
+    return PreparedRom(ctrl, sha, bytes, name, GameConfig.filter(context, sha), battery, batteryNotice)
+}
+
+/**
+ * The main-thread half: swap the prepared ROM into [emulator] and apply its
+ * per-game settings. Returns the status line. The outgoing cartridge's final
+ * battery write runs on `Dispatchers.IO` AFTER the swap: once the loop no longer
+ * runs that controller, its save RAM is final, so writing it late loses nothing
+ * and never blocks the UI thread.
+ */
+private fun publishRom(
+    scope: kotlinx.coroutines.CoroutineScope,
+    emulator: EmulatorHandle,
+    prepared: PreparedRom,
+    settings: AppSettings,
+): String {
+    val outgoingCtrl = emulator.controller
+    val outgoingBattery = emulator.battery
+    emulator.controller = prepared.ctrl
+    emulator.romSha = prepared.sha
+    emulator.romBytes = prepared.bytes
+    emulator.battery = prepared.battery
+    if (outgoingCtrl != null && outgoingBattery != null) {
+        scope.launch(Dispatchers.IO) {
+            runCatching { outgoingBattery.flushIfChanged(outgoingCtrl.batteryRam()) }
+                .onFailure { android.util.Log.w("RustyNES", "battery save failed", it) }
+        }
+    }
+    // Apply this game's remembered video filter (per-game DB), if any.
+    prepared.filter?.let { f ->
+        settings.filter = VideoFilter.entries.getOrElse(f) { VideoFilter.None }
+    }
+    return "Running" + (prepared.name?.let { " · $it" } ?: "") +
+        (prepared.batteryNotice?.let { " — $it" } ?: "")
+}
+
+/**
+ * Bind [ctrl]'s battery RAM to its `.sav` and load it (v2.7.4, AND-09). Returns
+ * the saver (null without a battery) and a message for the status line when an
+ * existing save could not be used; that session is then not persisted, so the
+ * file is never overwritten.
+ */
+private fun attachBattery(
+    context: Context,
+    ctrl: NesController,
+    sha: String,
+): Pair<BatterySaver?, String?> {
+    if (!ctrl.hasBattery()) return null to null
+    val saver = BatterySaver(BatteryStore.file(context, sha))
+    val notice = when (val saved = saver.read(ctrl.batteryRam().size)) {
+        is SavedBattery.Found ->
+            runCatching { ctrl.loadBatteryRam(saved.bytes) }.exceptionOrNull()?.let {
+                saver.disable()
+                "Battery save not loaded: ${it.message}"
+            }
+        is SavedBattery.Unusable -> saved.reason
+        SavedBattery.None -> null
+    }
+    saver.baseline(ctrl.batteryRam())
+    return saver to notice
 }
 
 /** Resolve a SAF document's human-readable display name for the recents list. */
@@ -738,8 +846,38 @@ private const val FRAME_NANOS = 16_639_267L
  * whenever sound is present — the audio clock, not the wall clock, drives frame
  * cadence — while a small buffer absorbs scheduling jitter.
  */
-private class AudioPlayer(sampleRate: Int) {
+private class AudioPlayer(sampleRate: Int, private val audioManager: AudioManager?) {
     private val track: AudioTrack
+
+    private val attributes: AudioAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_GAME)
+        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+        .build()
+
+    /**
+     * v2.7.4 (frontend audit AND-03) — audio focus. The player never asked for
+     * focus, so it played over a phone call, a navigation prompt or another media
+     * app. While focus is lost (transiently or not) samples are dropped instead of
+     * written -- the loop then paces on its wall-clock floor -- and a duck lowers
+     * the volume. Emulation itself is not paused for focus: that is tied to the
+     * Activity being stopped, so a notification sound does not freeze a game.
+     */
+    @Volatile
+    private var focusMuted = false
+    private var focusRequest: AudioFocusRequest? = null
+    private var playing = true
+
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                focusMuted = false
+                track.setVolume(1f)
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> track.setVolume(DUCK_VOLUME)
+            AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> focusMuted = true
+        }
+    }
+
     init {
         val minBuf = AudioTrack.getMinBufferSize(
             sampleRate,
@@ -750,12 +888,7 @@ private class AudioPlayer(sampleRate: Int) {
         // without adding noticeable latency.
         val bufBytes = maxOf(minBuf, sampleRate * 4 / 60 * 4)
         track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_GAME)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build(),
-            )
+            .setAudioAttributes(attributes)
             .setAudioFormat(
                 AudioFormat.Builder()
                     .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
@@ -767,7 +900,37 @@ private class AudioPlayer(sampleRate: Int) {
             .setTransferMode(AudioTrack.MODE_STREAM)
             .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
             .build()
+        requestFocus()
         track.play()
+    }
+
+    private fun requestFocus() {
+        val am = audioManager ?: return
+        val req = focusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(attributes)
+            .setOnAudioFocusChangeListener(focusListener)
+            .build()
+            .also { focusRequest = it }
+        focusMuted = am.requestAudioFocus(req) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        if (!focusMuted) track.setVolume(1f)
+    }
+
+    /** Stop output while emulation is paused (backgrounded or user-paused), and
+     *  give audio focus back so other apps can play. */
+    fun pause() {
+        if (!playing) return
+        playing = false
+        runCatching { track.pause() }
+        focusRequest?.let { req -> audioManager?.abandonAudioFocusRequest(req) }
+    }
+
+    /** Resume output when emulation resumes, asking for focus again (a permanent
+     *  loss is not handed back by the system on its own). */
+    fun resume() {
+        if (playing) return
+        playing = true
+        requestFocus()
+        runCatching { track.play() }
     }
 
     /**
@@ -794,6 +957,7 @@ private class AudioPlayer(sampleRate: Int) {
      * either. Blocks while the ring is full (paces the loop), exactly like [write].
      */
     fun writeBytes(bytes: ByteArray) {
+        if (focusMuted) return // another app holds audio focus (AND-03)
         if (bytes.isNotEmpty()) {
             // The samples are little-endian f32 (from `to_le_bytes`); set the buffer
             // order explicitly so the PCM_FLOAT track reads them correctly regardless
@@ -805,8 +969,27 @@ private class AudioPlayer(sampleRate: Int) {
 
     fun release() {
         runCatching { track.pause(); track.flush(); track.stop() }
+        focusRequest?.let { req -> audioManager?.abandonAudioFocusRequest(req) }
         track.release()
     }
+
+    private companion object {
+        /** Output volume while another app ducks us (a navigation prompt, say). */
+        const val DUCK_VOLUME = 0.2f
+    }
+}
+
+/**
+ * A composable boundary with its own restart scope (v2.7.4, AND-02). State read
+ * inside [content] invalidates only [content], not the caller's whole body --
+ * which matters when the caller is a large screen and the state changes every
+ * frame.
+ */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.FrameScope(
+    content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit,
+) {
+    content()
 }
 
 @Composable
@@ -820,6 +1003,11 @@ private fun EmulatorScreen(
     // v1.8.8 "Atlas" (Workstream F/H): the typed host for PiP + deep-link + capture.
     val host = context as? MainActivity
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
+    // v2.7.4 (AND-02): the one thing this screen's body needs from `frame` is
+    // whether there is one (the idle screen vs the picture). As derived state it
+    // invalidates this body only when that answer flips, not on every new frame;
+    // the picture itself reads `frame` inside its own FrameScope.
+    val hasFrame by remember { derivedStateOf { frame != null } }
     // v1.8.8 "Atlas" (Workstream H): true while we are in the PiP window — drives the
     // controls/HUD hide so only the gameplay picture shows in the floating window.
     val inPip = host?.inPipState?.value ?: false
@@ -1080,6 +1268,23 @@ private fun EmulatorScreen(
         }
     }
 
+    // v2.7.4 (frontend audit AND-04): open a ROM with every blocking step -- the
+    // stream read (a cloud-backed SAF document can stall), the hash, the battery
+    // and save-state loads, the recents / library writes -- on Dispatchers.IO, then
+    // swap it in on the main thread. Before, all of it ran on the main thread.
+    fun openRom(uri: Uri?, name: () -> String?, read: () -> ByteArray, errPrefix: String) {
+        scope.launch {
+            runCatching {
+                val prepared = withContext(Dispatchers.IO) {
+                    prepareRom(context, read(), uri, name())
+                }
+                status = publishRom(scope, emulator, prepared, settings)
+                recents = withContext(Dispatchers.IO) { RomLibrary.recents(context) }
+                libraryVersion++
+            }.onFailure { status = "$errPrefix: ${it.message}" }
+        }
+    }
+
     // SAF document picker — no broad storage permission required. The picked
     // bytes are handed straight to the core (no path), a persistable read grant
     // is taken, and the ROM is recorded in the recents list (Workstream E).
@@ -1087,13 +1292,16 @@ private fun EmulatorScreen(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
-            runCatching {
-                val name = displayName(context, uri)
-                val bytes = (context.contentResolver.openInputStream(uri)
-                    ?: throw java.io.IOException("can't open ROM stream")).use { it.readBytes() }
-                status = loadRom(context, emulator, bytes, uri, name, settings)
-                recents = RomLibrary.recents(context)
-            }.onFailure { status = "Failed to load ROM: ${it.message}" }
+            openRom(
+                uri,
+                // A content-resolver query: resolved on the I/O thread too.
+                name = { runCatching { displayName(context, uri) }.getOrNull() },
+                read = {
+                    (context.contentResolver.openInputStream(uri)
+                        ?: throw java.io.IOException("can't open ROM stream")).use { it.readBytes() }
+                },
+                errPrefix = "Failed to load ROM",
+            )
         }
     }
 
@@ -1419,14 +1627,19 @@ private fun EmulatorScreen(
 
     // Open a recent ROM via its persistable content URI.
     fun openRecent(rom: RecentRom) {
-        runCatching {
-            val uri = Uri.parse(rom.uri)
-            val bytes = (context.contentResolver.openInputStream(uri)
-                ?: throw java.io.IOException("can't open recent ROM stream")).use { it.readBytes() }
-            status = loadRom(context, emulator, bytes, uri, rom.name, settings)
-            recents = RomLibrary.recents(context)
-            libraryVersion++
-        }.onFailure { status = "Can't open ${rom.name}: ${it.message}" }
+        val uri = runCatching { Uri.parse(rom.uri) }.getOrElse {
+            status = "Can't open ${rom.name}: ${it.message}"
+            return
+        }
+        openRom(
+            uri,
+            name = { rom.name },
+            read = {
+                (context.contentResolver.openInputStream(uri)
+                    ?: throw java.io.IOException("can't open recent ROM stream")).use { it.readBytes() }
+            },
+            errPrefix = "Can't open ${rom.name}",
+        )
     }
 
     // v1.8.8 "Atlas" (Workstream C): open a library game by its entry. Loads from the
@@ -1437,14 +1650,19 @@ private fun EmulatorScreen(
             status = "No file for ${entry.name} — open it once to link it"
             return
         }
-        runCatching {
-            val uri = Uri.parse(entry.uri)
-            val bytes = (context.contentResolver.openInputStream(uri)
-                ?: throw java.io.IOException("can't open ROM stream")).use { it.readBytes() }
-            status = loadRom(context, emulator, bytes, uri, entry.name, settings)
-            recents = RomLibrary.recents(context)
-            libraryVersion++
-        }.onFailure { status = "Can't open ${entry.name}: ${it.message}" }
+        val uri = runCatching { Uri.parse(entry.uri) }.getOrElse {
+            status = "Can't open ${entry.name}: ${it.message}"
+            return
+        }
+        openRom(
+            uri,
+            name = { entry.name },
+            read = {
+                (context.contentResolver.openInputStream(uri)
+                    ?: throw java.io.IOException("can't open ROM stream")).use { it.readBytes() }
+            },
+            errPrefix = "Can't open ${entry.name}",
+        )
     }
 
     // v1.8.8 "Atlas" (Workstream F): capture a screenshot of the current gameplay
@@ -1629,9 +1847,7 @@ private fun EmulatorScreen(
         if (BuildConfig.DEBUG && emulator.controller == null) {
             val auto = java.io.File(context.getExternalFilesDir(null), "autoload.nes")
             if (auto.exists()) {
-                runCatching {
-                    status = loadRom(context, emulator, auto.readBytes(), null, "autoload", settings)
-                }.onFailure { status = "Autoload failed: ${it.message}" }
+                openRom(null, name = { "autoload" }, read = { auto.readBytes() }, errPrefix = "Autoload failed")
             }
         }
     }
@@ -1725,7 +1941,6 @@ private fun EmulatorScreen(
                 },
             contentAlignment = Alignment.Center,
         ) {
-            val current = frame
             // GPU SurfaceView render path (opt-in, v1.8.4). Mounted continuously and
             // draws each submitted frame on the GPU (black until the first frame).
             // GPU path is bypassed while an HD-pack is active (its output is upscaled,
@@ -1739,43 +1954,51 @@ private fun EmulatorScreen(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            if ((gpuSurface == null || hdActive || npActive) && current != null) {
-                // Crisp 8:7 PAR on the Bitmap path: the source bitmap is 256x240
-                // (1:1), so constrain the Image to the NES 8:7 display aspect and
-                // centre it — height-bounded + letterboxed on a wide (unfolded) inner
-                // screen, not stretched. The GPU SurfaceView path already applies this
-                // PAR letterbox internally (gfx.rs), so it is NOT wrapped here (no
-                // double-apply). HD-pack frames carry their own aspect (the upscaled
-                // bitmap), so they keep fillMaxSize + ContentScale.Fit instead.
-                val nesAspect = if (hdActive) {
-                    Modifier.fillMaxSize()
-                } else {
-                    Modifier
-                        .aspectRatio(8f / 7f, matchHeightConstraintsFirst = true)
-                        .align(Alignment.Center)
+            // v2.7.4 (frontend audit AND-02): read the per-frame bitmap inside its
+            // own restart scope. `frame` changes every emulated frame, and this Box
+            // sits in an inline Row -> Column -> Box chain, so reading it here
+            // invalidated the whole of EmulatorScreen 60 times a second. Only this
+            // lambda re-runs now.
+            FrameScope {
+                val current = frame
+                if ((gpuSurface == null || hdActive || npActive) && current != null) {
+                    // Crisp 8:7 PAR on the Bitmap path: the source bitmap is 256x240
+                    // (1:1), so constrain the Image to the NES 8:7 display aspect and
+                    // centre it — height-bounded + letterboxed on a wide (unfolded) inner
+                    // screen, not stretched. The GPU SurfaceView path already applies this
+                    // PAR letterbox internally (gfx.rs), so it is NOT wrapped here (no
+                    // double-apply). HD-pack frames carry their own aspect (the upscaled
+                    // bitmap), so they keep fillMaxSize + ContentScale.Fit instead.
+                    val nesAspect = if (hdActive) {
+                        Modifier.fillMaxSize()
+                    } else {
+                        Modifier
+                            .aspectRatio(8f / 7f, matchHeightConstraintsFirst = true)
+                            .align(Alignment.Center)
+                    }
+                    Image(
+                        bitmap = current,
+                        contentDescription = stringResource(R.string.cd_nes_screen),
+                        modifier = nesAspect
+                            .onSizeChanged { screenSize = it }
+                            .then(
+                                if (videoFiltersSupported && settings.filter != VideoFilter.None && screenSize.width > 0) {
+                                    Modifier.graphicsLayer {
+                                        renderEffect = buildRenderEffect(
+                                            settings.filter,
+                                            screenSize.width.toFloat(),
+                                            screenSize.height.toFloat(),
+                                        )
+                                    }
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                        contentScale = ContentScale.Fit,
+                        // Nearest-neighbour: preserve the crisp pixel grid.
+                        filterQuality = FilterQuality.None,
+                    )
                 }
-                Image(
-                    bitmap = current,
-                    contentDescription = stringResource(R.string.cd_nes_screen),
-                    modifier = nesAspect
-                        .onSizeChanged { screenSize = it }
-                        .then(
-                            if (videoFiltersSupported && settings.filter != VideoFilter.None && screenSize.width > 0) {
-                                Modifier.graphicsLayer {
-                                    renderEffect = buildRenderEffect(
-                                        settings.filter,
-                                        screenSize.width.toFloat(),
-                                        screenSize.height.toFloat(),
-                                    )
-                                }
-                            } else {
-                                Modifier
-                            },
-                        ),
-                    contentScale = ContentScale.Fit,
-                    // Nearest-neighbour: preserve the crisp pixel grid.
-                    filterQuality = FilterQuality.None,
-                )
             }
             // RetroAchievements toast HUD (v1.8.6) — unlock + login/server messages.
             // Text-only cards (no badge images); error toasts tint red. They clear
@@ -1850,7 +2073,7 @@ private fun EmulatorScreen(
                         .padding(horizontal = 6.dp, vertical = 4.dp),
                 )
             }
-            if (current == null) {
+            if (!hasFrame) {
                 // Idle screen. On a compact / medium-width window (phone, folded cover
                 // screen) show the full box-art library grid here (v1.8.8 WS C). On an
                 // expanded-width window the library already lives in the persistent side
@@ -1902,6 +2125,9 @@ private fun EmulatorScreen(
         // screen (Open button + recent-ROMs list). Mirrors the desktop close_rom.
         fun closeRom() {
             raSaveProgress()
+            // v2.7.4 (AND-09): the final battery write before the controller goes.
+            emulator.flushBattery()
+            emulator.battery = null
             val ctrl = emulator.controller
             if (settings.raEnabled) runCatching { ctrl?.raUnloadGame() }
             emulator.controller = null
@@ -2325,7 +2551,10 @@ private fun EmulatorScreen(
     LaunchedEffect(Unit) {
         val reuse = Bitmap.createBitmap(NES_WIDTH, NES_HEIGHT, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(NES_WIDTH * NES_HEIGHT)
-        val audio = AudioPlayer(48_000)
+        val audio = AudioPlayer(
+            48_000,
+            context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager,
+        )
         // RetroAchievements is polled at a low cadence (every ~15 frames) — toasts
         // and login status don't need per-frame granularity, and skipping the FFI
         // round-trips keeps the hot path clean when RA is off.
@@ -2333,6 +2562,9 @@ private fun EmulatorScreen(
         // Netplay status is polled at the same low cadence as RA, on its own
         // always-advancing counter (the RA counter only ticks when RA is enabled).
         var npFrame = 0
+        // v2.7.4 (AND-09): the battery save is compared once a second (60 frames)
+        // and written on a change, on Dispatchers.IO so the loop never waits on disk.
+        var batteryFrame = 0
         // v1.8.8 "Atlas" (Workstream E): accumulate frames run with fast-forward
         // (turbo) engaged and post the PGS incremental achievement in batches (every
         // ~30 turbo frames) to avoid a per-frame FFI/Task hit. No-op behind the
@@ -2350,8 +2582,26 @@ private fun EmulatorScreen(
                     emulator.reapplyAllPorts()
                 }
                 if (ctrl == null || emulator.paused) {
+                    audio.pause() // AND-03: silence + release focus while paused
                     delay(50)
                     continue
+                }
+                audio.resume()
+                val saver = emulator.battery
+                if (saver != null && ++batteryFrame >= 60) {
+                    batteryFrame = 0
+                    if (saver.tryBegin()) {
+                        launch(Dispatchers.IO) {
+                            try {
+                                runCatching { saver.flushIfChanged(ctrl.batteryRam()) }
+                                    .onFailure {
+                                        android.util.Log.w("RustyNES", "battery save failed", it)
+                                    }
+                            } finally {
+                                saver.end()
+                            }
+                        }
+                    }
                 }
                 // Advance the turbo/autofire pulse once per emulated frame, then push
                 // the per-port masks updated below. Cheap no-op when nothing is held
@@ -2529,6 +2779,8 @@ private fun EmulatorScreen(
         onDispose {
             // Persist RA progress before tearing down the controller (ROM unload).
             raSaveProgress()
+            emulator.flushBattery()
+            emulator.battery = null
             emulator.controller = null
         }
     }
