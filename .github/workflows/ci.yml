@@ -691,8 +691,8 @@ jobs:
         # Only the buildbot triples a LINUX runner can model faithfully.
         #
         # `rust-libretro-sys` runs bindgen, and bindgen needs headers for the
-        # target it parses `libretro.h` under. Four of the buildbot ABI
-        # families can supply them here; the Apple family cannot:
+        # target it parses `libretro.h` under. Every buildbot ABI family but
+        # Apple can supply them here:
         #   * MinGW-Windows — no glibc involved at all (and `.cargo/config.toml`
         #     points its bindgen at the MSVC triple), so it parses cleanly.
         #   * Linux-aarch64 (glibc) — needs the aarch64 glibc HEADERS (not a
@@ -714,14 +714,16 @@ jobs:
         #     wired up the same way via `gcc-arm-linux-gnueabihf` and its
         #     `libc6-dev-armhf-cross` headers under `/usr/arm-linux-gnueabihf`.
         #
-        #     UNLIKE the other three, this leg rehearses NO buildbot job, and
+        #     UNLIKE every other leg, this one rehearses NO buildbot job, and
         #     deliberately so. The buildbot's `linux/armhf` and
         #     `linux/armv7-neon-hf` trees are abandoned — every artifact in them
         #     is dated 2020-11-17, against 2026 for `linux/aarch64` and
-        #     `linux/x86_64` — and libretro has no active ARM32 publishing, so a
-        #     `.gitlab-ci.yml` job would build correctly and deliver to a
-        #     directory no user can reach through RetroArch's updater. It was
-        #     written, then removed for exactly that reason.
+        #     `linux/x86_64` — so a `.gitlab-ci.yml` job would build correctly
+        #     and deliver to a directory no user can reach through RetroArch's
+        #     updater. It was written, then removed for exactly that reason.
+        #     (32-bit ARM is published for webOS, as `webos/armv7a` — but that
+        #     is the soft-float `gnueabi` ABI, rehearsed by its own leg below,
+        #     not this hard-float one.)
         #
         #     The leg is kept because its value is independent of libretro:
         #     32-bit ARM is the only pointer-width-32 non-Windows target this
@@ -741,11 +743,24 @@ jobs:
         #     rehearsal. Doing it properly needs a macOS runner, which this repo
         #     reserves for full (non-PR) runs; see the `test` job's `setup`-driven
         #     OS matrix. The Apple legs share this crate's entire dependency
-        #     graph with the three legs below, so the marginal coverage is small.
+        #     graph with the legs that do run here, so the marginal coverage is
+        #     small.
+        #   * The 32-bit buildbot legs - `i686-pc-windows-gnu` (MinGW, no
+        #     headers needed, like its 64-bit sibling) and
+        #     `i686-unknown-linux-gnu` / `armv7-unknown-linux-gnueabi` (the
+        #     `libretro-build-linux-i686` and `libretro-build-webos-armv7a`
+        #     jobs), whose glibc headers come from `libc6-dev-i386-cross` and
+        #     `libc6-dev-armel-cross` the same way as for aarch64 and armhf. The
+        #     webOS aarch64 job is `aarch64-unknown-linux-gnu`, already here —
+        #     for the Rust side only: its bindgen sysroot is the webOS SDK's,
+        #     which no GitHub runner has.
         target:
           - x86_64-pc-windows-gnu
+          - i686-pc-windows-gnu
           - aarch64-unknown-linux-gnu
+          - i686-unknown-linux-gnu
           - armv7-unknown-linux-gnueabihf
+          - armv7-unknown-linux-gnueabi
           - aarch64-linux-android
     steps:
       # `cargo check` runs build scripts and proc macros from the checkout — on
@@ -811,6 +826,26 @@ jobs:
         if: matrix.target == 'armv7-unknown-linux-gnueabihf'
         run: |
           echo "BINDGEN_EXTRA_CLANG_ARGS_armv7_unknown_linux_gnueabihf=--sysroot=/usr/arm-linux-gnueabihf -isystem /usr/arm-linux-gnueabihf/include" >> "$GITHUB_ENV"
+      # The i686 and armel glibc headers, for the `libretro-build-linux-i686`
+      # and `libretro-build-webos-armv7a` rehearsals, exactly as for armhf.
+      - name: Provision the i686 glibc headers for bindgen
+        if: matrix.target == 'i686-unknown-linux-gnu'
+        env:
+          APT_PACKAGE: libc6-dev-i386-cross
+        run: .github/scripts/apt-install-retry.sh
+      - name: Export the i686 bindgen sysroot
+        if: matrix.target == 'i686-unknown-linux-gnu'
+        run: |
+          echo "BINDGEN_EXTRA_CLANG_ARGS_i686_unknown_linux_gnu=--sysroot=/usr/i686-linux-gnu -isystem /usr/i686-linux-gnu/include" >> "$GITHUB_ENV"
+      - name: Provision the armel glibc headers for bindgen
+        if: matrix.target == 'armv7-unknown-linux-gnueabi'
+        env:
+          APT_PACKAGE: libc6-dev-armel-cross
+        run: .github/scripts/apt-install-retry.sh
+      - name: Export the armel bindgen sysroot
+        if: matrix.target == 'armv7-unknown-linux-gnueabi'
+        run: |
+          echo "BINDGEN_EXTRA_CLANG_ARGS_armv7_unknown_linux_gnueabi=--sysroot=/usr/arm-linux-gnueabi -isystem /usr/arm-linux-gnueabi/include" >> "$GITHUB_ENV"
       # Deliberately NOT the composite action's `targets:` input. That routes
       # through `dtolnay/rust-toolchain`, which installs the target for the
       # channel IT pins (stable) — while `rust-toolchain.toml` then switches
