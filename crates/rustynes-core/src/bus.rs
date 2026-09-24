@@ -2758,6 +2758,7 @@ impl LockstepBus {
             last_nmi_level: self.last_nmi_level,
             nmi_edge_latch: self.nmi_edge_latch,
             open_bus: self.open_bus,
+            internal_data_bus: self.internal_data_bus,
             last_read_addr: self.last_read_addr,
             deferred_dma_replay_addr: self.deferred_dma_replay_addr,
             in_dmc_dma: self.in_dmc_dma,
@@ -2791,6 +2792,7 @@ impl LockstepBus {
         self.last_nmi_level = s.last_nmi_level;
         self.nmi_edge_latch = s.nmi_edge_latch;
         self.open_bus = s.open_bus;
+        self.internal_data_bus = s.internal_data_bus;
         self.last_read_addr = s.last_read_addr;
         self.deferred_dma_replay_addr = s.deferred_dma_replay_addr;
         self.in_dmc_dma = s.in_dmc_dma;
@@ -5295,8 +5297,9 @@ mod four_score_tests {
         // the v2.6.5 tail appends 22 more: four `pending_shift` bools, two
         // `port_read_cycle` u64s (the controller-port CLK run state), and two
         // `four_score_pending` bools (the adapter's own owed edge -- the Four
-        // Score is one shift chain with the pads, so it clocks with them).
-        // Truncating all 58 simulates a pre-v1.7.0 save, which must still load
+        // Score is one shift chain with the pads, so it clocks with them); the
+        // v2.8.0 tail appends 1 more (the internal data bus).
+        // Truncating all 59 simulates a pre-v1.7.0 save, which must still load
         // with the adapter off (and no expansion device / override / run state).
         //
         // The constant is deliberately literal rather than computed: it is the
@@ -5305,7 +5308,7 @@ mod four_score_tests {
         let mut bus = test_bus();
         bus.set_four_score(true);
         let blob = crate::bus_snapshot::encode_bus(&bus);
-        let old = &blob[..blob.len() - 58];
+        let old = &blob[..blob.len() - 59];
         let mut restored = test_bus();
         restored.set_four_score(true); // prove decode actively turns it off
         crate::bus_snapshot::decode_bus(&mut restored, old).unwrap();
@@ -5466,10 +5469,11 @@ mod four_score_tests {
         // remaining 17 bytes fell through to the legacy path and every port
         // restored `pending_shift = false`, so the next controller read
         // repeated a bit. The decoder now refuses a partial tail, which is
-        // what turned this test red and exposed the stale premise.
+        // what turned this test red and exposed the stale premise. v2.8.0's
+        // one-byte internal-bus tail makes it 24.
         let bus = test_bus();
         let blob = crate::bus_snapshot::encode_bus(&bus);
-        let old = &blob[..blob.len() - (3 + 4 + 2 * 8 + 2)];
+        let old = &blob[..blob.len() - (3 + 4 + 2 * 8 + 2 + 1)];
         let mut restored = test_bus();
         crate::bus_snapshot::decode_bus(&mut restored, old).unwrap();
         assert!(restored.expansion_device(0).is_none());
@@ -5541,6 +5545,46 @@ mod four_score_tests {
     }
 
     #[test]
+    fn internal_data_bus_round_trips_through_save_state() {
+        // v2.8.0 (libretro audit §2.4). The 2A03's internal data bus is a
+        // separate latch from the external open bus: a DMC DMA fetch drives
+        // the external bus only, so across a DMC halt the two differ, and a
+        // `$4015` read returns bit 5 from the INTERNAL one. It was not in the
+        // BUS section, so a restore left whatever the running machine held --
+        // a value from a discarded timeline under run-ahead and rollback.
+        // Found by the widened `snapshot_schema_audit`, which now covers the
+        // bus. The two latches are set to different values here so a decoder
+        // that restored one from the other would fail.
+        let mut bus = test_bus();
+        bus.open_bus = 0x00;
+        bus.internal_data_bus = 0x20;
+        let blob = crate::bus_snapshot::encode_bus(&bus);
+        let mut restored = test_bus();
+        restored.internal_data_bus = 0xFF;
+        crate::bus_snapshot::decode_bus(&mut restored, &blob).unwrap();
+        assert_eq!(restored.internal_data_bus, 0x20);
+        assert_eq!(restored.open_bus, 0x00);
+    }
+
+    #[test]
+    fn a_pre_v2_8_0_blob_restores_the_internal_bus_from_the_open_bus() {
+        // A blob written before v2.8.0 has no internal-bus byte. The two
+        // latches agree except across a DMC-DMA halt (where only the external
+        // one moves), so the external latch the blob DOES carry is the best
+        // available value, and it is deterministic: the same blob restores the
+        // same machine, which leaving the running value in place did not.
+        let mut bus = test_bus();
+        bus.open_bus = 0x5A;
+        bus.internal_data_bus = 0x20;
+        let blob = crate::bus_snapshot::encode_bus(&bus);
+        let old = &blob[..blob.len() - 1];
+        let mut restored = test_bus();
+        restored.internal_data_bus = 0xFF;
+        crate::bus_snapshot::decode_bus(&mut restored, old).unwrap();
+        assert_eq!(restored.internal_data_bus, 0x5A);
+    }
+
+    #[test]
     fn a_half_truncated_controller_tail_is_refused_not_read_as_legacy() {
         // The guard the test above exposed the need for. A blob cut anywhere
         // INSIDE the 20-byte controller-run tail is damage, not an older
@@ -5551,9 +5595,14 @@ mod four_score_tests {
         //
         // Every interior cut is checked rather than one representative, because
         // an off-by-one in the bound is exactly the mistake this guards.
+        //
+        // v2.8.0 appended the one-byte internal-bus tail after this one, so
+        // every cut is one byte further from the end: cutting only that byte
+        // is a pre-v2.8.0 blob (`a_pre_v2_8_0_blob_restores_...`), cuts 2
+        // through 22 end inside the controller tail, and 23 removes it whole.
         let bus = test_bus();
         let blob = crate::bus_snapshot::encode_bus(&bus);
-        for cut in 1..(4 + 2 * 8 + 2) {
+        for cut in 2..=(4 + 2 * 8 + 2) {
             let damaged = &blob[..blob.len() - cut];
             let mut restored = test_bus();
             assert!(
@@ -5563,7 +5612,7 @@ mod four_score_tests {
         }
         // ... and the whole tail absent still loads, which is the legacy path
         // this must not break.
-        let legacy = &blob[..blob.len() - (4 + 2 * 8 + 2)];
+        let legacy = &blob[..blob.len() - (4 + 2 * 8 + 2 + 1)];
         let mut restored = test_bus();
         crate::bus_snapshot::decode_bus(&mut restored, legacy)
             .expect("a blob with no controller tail at all is a pre-v2.6.5 save");

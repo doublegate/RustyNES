@@ -4548,6 +4548,38 @@ mod tests {
         assert_eq!(fnv_hash(nes.framebuffer()), fb_hash);
     }
 
+    #[test]
+    fn restore_accepts_a_snapshot_followed_by_zero_padding() {
+        // v2.8.0 (libretro audit §2.2, with §2.1). The libretro core reports a
+        // `retro_serialize_size` with headroom for expansion devices, so the
+        // frontend hands `retro_unserialize` this core's own state followed by
+        // zeros. Both restore paths walk the sections (`LockstepBus::restore`
+        // for BUS/PPU/APU/MAP, then `apply_snapshot` for CPU), so both must end
+        // at the padding rather than report it as a damaged section.
+        let rom = synth_nrom(16, 8);
+        let mut nes = Nes::from_rom(&rom).expect("parse + boot");
+        for _ in 0..3 {
+            nes.run_frame();
+        }
+        let cycle = nes.cycle();
+        let fb_hash = fnv_hash(nes.framebuffer());
+        let mut blob = Vec::new();
+        nes.snapshot_core_into(&mut blob);
+        for pad in [1, 8, 9, 10, 26, 160] {
+            let mut padded = blob.clone();
+            padded.resize(blob.len() + pad, 0);
+            nes.run_frame();
+            nes.restore_quiet(&padded)
+                .unwrap_or_else(|e| panic!("{pad} bytes of zero padding: {e:?}"));
+            assert_eq!(nes.cycle(), cycle, "{pad}: cycle restored");
+            assert_eq!(
+                fnv_hash(nes.framebuffer()),
+                fb_hash,
+                "{pad}: framebuffer restored"
+            );
+        }
+    }
+
     /// Build a minimal NSF (3 songs) whose `init` enables all APU channels and
     /// programs a steady pulse-1 tone, and whose `play` is a bare `RTS`. Loaded
     /// at $8000; init=$8000, play=$800C.

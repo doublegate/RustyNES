@@ -75,6 +75,12 @@ struct Chip {
     struct_name: &'static str,
     /// Source of the `snapshot` / `restore` implementation.
     snapshot_src: &'static str,
+    /// Signatures (exact line prefixes) of the functions whose bodies make up
+    /// the writer, when it is not a single `snapshot(&self)`. Empty means
+    /// [`writer_body`]. The bus needs this: `encode_bus` reads the struct
+    /// through accessors (`bus.bus_misc_state()`, `bus.ram_bytes()`, ...), so
+    /// the `self.<field>` references live in those accessors' bodies.
+    writer_fns: &'static [&'static str],
     /// Fields deliberately excluded, each with the reason it is safe to omit.
     /// Every entry must still name a real field, so the list cannot rot into
     /// blessing names that no longer exist.
@@ -92,6 +98,7 @@ const CHIPS: &[Chip] = &[
         struct_src: include_str!("../../rustynes-ppu/src/ppu.rs"),
         struct_name: "Ppu",
         snapshot_src: include_str!("../../rustynes-ppu/src/snapshot.rs"),
+        writer_fns: &[],
         derived_or_config: &[
             (
                 "oam_decay_enabled",
@@ -318,6 +325,7 @@ const CHIPS: &[Chip] = &[
         struct_src: include_str!("../../rustynes-cpu/src/cpu.rs"),
         struct_name: "Cpu",
         snapshot_src: include_str!("../../rustynes-cpu/src/snapshot.rs"),
+        writer_fns: &[],
         derived_or_config: &[(
             "burn_histogram",
             "diagnostic: `cpu-instr-cycle-trace` per-opcode counter, read by the `burn_probe` \
@@ -330,6 +338,7 @@ const CHIPS: &[Chip] = &[
         struct_src: include_str!("../../rustynes-apu/src/apu.rs"),
         struct_name: "Apu",
         snapshot_src: include_str!("../../rustynes-apu/src/snapshot.rs"),
+        writer_fns: &[],
         derived_or_config: &[
             (
                 "mixer",
@@ -397,6 +406,7 @@ const CHIPS: &[Chip] = &[
         struct_src: include_str!("../../rustynes-apu/src/opll.rs"),
         struct_name: "Opll",
         snapshot_src: include_str!("../../rustynes-apu/src/opll.rs"),
+        writer_fns: &[],
         // `chip_type` and `patch_set` are absent from this list on purpose:
         // both ARE written by the serializer, so the audit already accounts for
         // them and an exclusion entry would be rejected as a false admission.
@@ -417,7 +427,270 @@ const CHIPS: &[Chip] = &[
         ],
         known_gaps: &[],
     },
+    // v2.8.0 — the bus. It owns everything the chips do not (CPU RAM, the
+    // controller ports, the DMA engines, the NMI edge latches, the open-bus
+    // latches), and it was never registered here, so nothing mechanical ever
+    // compared its struct with its serializer. The libretro audit (§2.4) found
+    // `internal_data_bus` missing from the BUS section by reading; this entry
+    // is what would have found it at the commit that added the field.
+    Chip {
+        label: "LockstepBus",
+        struct_src: include_str!("../../rustynes-core/src/bus.rs"),
+        struct_name: "LockstepBus",
+        snapshot_src: include_str!("../../rustynes-core/src/bus.rs"),
+        writer_fns: &[
+            "    fn snapshot_into_with(",
+            "    pub const fn cycle(&self)",
+            "    pub fn ram_bytes(&self)",
+            "    pub const fn controllers_ref(&self)",
+            "    pub const fn controllers34_ref(&self)",
+            "    pub const fn expansion_device(&self",
+            "    pub const fn mirroring_override(&self)",
+            "    pub const fn port_read_cycle(&self",
+            "    pub const fn four_score_pending(&self)",
+            "    pub const fn bus_misc_state(&self)",
+        ],
+        // Classified field by field when the bus joined the audit (v2.8.0).
+        // Of the 49 it reported, one was a real gap (`internal_data_bus`,
+        // now serialized); the rest are below, grouped by reason.
+        derived_or_config: &[
+            // --- The cartridge and board identity, rebuilt by loading the ROM.
+            (
+                "cart",
+                "board identity: the parsed cartridge, rebuilt from the ROM at load",
+            ),
+            (
+                "mapper_caps",
+                "board identity: the mapper's static capability flags",
+            ),
+            (
+                "rom_bytes",
+                "board identity: the ROM image itself; a save state never carries it",
+            ),
+            (
+                "cpu_div_cached",
+                "derived: the region's CPU master-clock divider, cached at construction",
+            ),
+            (
+                "ppu_div_cached",
+                "derived: the region's PPU master-clock divider, cached at construction",
+            ),
+            // --- Opt-in hardware knobs, re-applied by the host on load.
+            (
+                "power_on_ram",
+                "config: the power-on RAM pattern, consumed only at power-on",
+            ),
+            (
+                "ppu_die_revision",
+                "config: the opt-in PPU revision knob, re-applied by the host",
+            ),
+            (
+                "power_up_palette",
+                "config: the opt-in power-up palette model, consumed only at power-on",
+            ),
+            (
+                "cpu_2a03_revision",
+                "config: the opt-in 2A03 revision knob, re-applied by the host",
+            ),
+            (
+                "zapper_temporal_light",
+                "config: the Zapper light model's enable flag (default on since v2.3.6)",
+            ),
+            (
+                "vs_dip",
+                "config: the Vs. System DIP switches, set by the host from the game database",
+            ),
+            (
+                "genie_codes",
+                "config: Game Genie cheats, excluded from save state by design so a cheat \
+                 never enters netplay, TAS or rollback state (`Nes::add_genie_code`)",
+            ),
+            // --- Host input: the frontend owns the level and re-asserts it.
+            (
+                "vs_coin",
+                "host input: the frontend owns the coin-hold countdown (`vs_coin_frames`) \
+                 and drives this through `insert_coin` / `clear_coin`",
+            ),
+            (
+                "vs_service",
+                "host input: the Vs. service button, driven by the frontend",
+            ),
+            (
+                "famicom_mic",
+                "host input: the Famicom microphone bit, set by the frontend every frame",
+            ),
+            (
+                "inject_nmi",
+                "host input: the co-simulation /NMI pin (`cosim-interrupt-inject` only), \
+                 whose level the test bench owns",
+            ),
+            (
+                "inject_irq",
+                "host input: the co-simulation /IRQ pin (`cosim-interrupt-inject` only), \
+                 whose level the test bench owns",
+            ),
+            // --- Vs. DualSystem cross-wiring, re-driven by the wrapper.
+            (
+                "vs_is_sub",
+                "derived: set by `VsDualSystem::restore` (`set_vs_sub`), which owns it",
+            ),
+            (
+                "vs_external_irq",
+                "derived: re-driven by `VsDualSystem::restore` from the partner's bit-1 \
+                 latch, which the dual container serializes",
+            ),
+            (
+                "vs_4016_bit1",
+                "derived: the wrapper's `main_bit1` / `sub_bit1` are the serialized copies, \
+                 and the bus level is drained into them after every stepped instruction",
+            ),
+            (
+                "vs_4016_bit1_dirty",
+                "derived: drained by `pump_comms` after every stepped instruction, so it is \
+                 clear at any point a snapshot can be taken",
+            ),
+            // --- Intra-cycle state, identical at every snapshot point.
+            (
+                "m2_phase",
+                "derived: set to Low at the end of every CPU cycle, so it is Low at every \
+                 instruction boundary a snapshot is taken at",
+            ),
+            (
+                "irq_snapshot_mapper_at_low",
+                "derived: rewritten every CPU cycle before any read; read live only by the \
+                 `irq-timing-trace` record",
+            ),
+            (
+                "irq_snapshot_apu_at_low",
+                "derived: rewritten every CPU cycle before any read; read live only by the \
+                 `irq-timing-trace` record",
+            ),
+            (
+                "irq_snapshot_mapper_at_high",
+                "derived: rewritten every CPU cycle before any read; its other reader is the \
+                 deprecated `poll_irq`",
+            ),
+            (
+                "irq_snapshot_apu_at_high",
+                "derived: rewritten every CPU cycle before any read; its other reader is the \
+                 deprecated `poll_irq`",
+            ),
+            // --- The pre-v2.0.0 per-cycle DMA path, dead since the one-clock scheduler.
+            (
+                "dma_total",
+                "dead: set and read only by `oam_dma_step` and the `dmc_overlap_*` methods, \
+                 `#[deprecated]` in v2.7.5 with no caller since v2.0.0; zero on the live path",
+            ),
+            (
+                "dmc_step_was_get",
+                "dead: read only by the deprecated `dmc_dma_last_was_get`, which has no \
+                 caller since v2.0.0",
+            ),
+            // --- Output-only telemetry, never read back into emulation.
+            (
+                "controller_polled",
+                "output-only: the TAStudio lag-frame flag, cleared every frame",
+            ),
+            (
+                "events",
+                "output-only: the event viewer log, cleared every frame",
+            ),
+            ("event_logging", "config: the event viewer's enable flag"),
+            (
+                "accesses",
+                "output-only: the Lua access log, cleared every frame",
+            ),
+            ("access_logging", "config: the Lua access log's enable flag"),
+            (
+                "interrupts",
+                "output-only: the Lua interrupt log, cleared every frame",
+            ),
+            (
+                "interrupt_logging",
+                "config: the Lua interrupt log's enable flag",
+            ),
+            ("event_bp_mask", "config: the debugger's event breakpoints"),
+            (
+                "event_break_hit",
+                "output-only: the first event breakpoint hit this frame, cleared every frame",
+            ),
+            (
+                "irq_trace",
+                "output-only: the `irq-timing-trace` capture buffer",
+            ),
+            (
+                "trace_a12_latest",
+                "output-only: cycle-trace scratch for the debug-hooks trace record",
+            ),
+            (
+                "trace_last_a12",
+                "output-only: cycle-trace scratch for the debug-hooks trace record",
+            ),
+            (
+                "trace_a12_scratch",
+                "output-only: cycle-trace scratch for the debug-hooks trace record",
+            ),
+            (
+                "trace_bus_access",
+                "output-only: cycle-trace scratch, consumed within the cycle that set it",
+            ),
+            (
+                "trace_bus_addr",
+                "output-only: cycle-trace scratch, consumed within the cycle that set it",
+            ),
+            (
+                "trace_bus_data",
+                "output-only: cycle-trace scratch, consumed within the cycle that set it",
+            ),
+            (
+                "trace_last_pc",
+                "output-only: cycle-trace scratch for the debug-hooks trace record",
+            ),
+            (
+                "trace_r1_scanline_start",
+                "output-only: cycle-trace scratch for the debug-hooks trace record",
+            ),
+            (
+                "trace_r1_dot_start",
+                "output-only: cycle-trace scratch for the debug-hooks trace record",
+            ),
+            (
+                "trace_r1_frame_start",
+                "output-only: cycle-trace scratch for the debug-hooks trace record",
+            ),
+        ],
+        known_gaps: &[],
+    },
 ];
+
+/// The writer text for `chip`: the single `snapshot` body, or the
+/// concatenated bodies of its `writer_fns`.
+fn writer_text(chip: &Chip) -> String {
+    if chip.writer_fns.is_empty() {
+        return writer_body(chip.snapshot_src).to_owned();
+    }
+    let src = chip.snapshot_src.replace('\r', "");
+    let mut out = String::new();
+    for sig in chip.writer_fns {
+        let start = src.find(sig).unwrap_or_else(|| {
+            panic!(
+                "{}: writer function `{}` not found — renamed? The audit would silently \
+                 lose every field it reads",
+                chip.label,
+                sig.trim()
+            )
+        });
+        let body = &src[start..];
+        // Same indentation scoping as `writer_body`: the first line that is
+        // exactly `    }` closes a four-space-indented method.
+        let end = body
+            .find("\n    }")
+            .unwrap_or_else(|| panic!("{}: unterminated `{}`", chip.label, sig.trim()));
+        out.push_str(&body[..end]);
+        out.push('\n');
+    }
+    out
+}
 
 /// Extract the field names of `struct <name>` from Rust source.
 ///
@@ -543,7 +816,8 @@ fn touches_field(src: &str, field: &str) -> bool {
 fn every_chip_field_is_serialized_or_explicitly_excluded() {
     for chip in CHIPS {
         let fields = struct_fields(chip.struct_src, chip.struct_name);
-        let writer = writer_body(chip.snapshot_src);
+        let writer = writer_text(chip);
+        let writer = writer.as_str();
         let excluded: Vec<&str> = chip
             .derived_or_config
             .iter()
@@ -597,7 +871,8 @@ fn exclusion_lists_do_not_bless_serialized_fields() {
     // is either stale or the reason attached to it is wrong. Either way the list
     // stops describing reality, which is how an audit rots.
     for chip in CHIPS {
-        let writer = writer_body(chip.snapshot_src);
+        let writer = writer_text(chip);
+        let writer = writer.as_str();
         for (name, _) in chip.derived_or_config.iter().chain(chip.known_gaps.iter()) {
             assert!(
                 !touches_field(writer, name),

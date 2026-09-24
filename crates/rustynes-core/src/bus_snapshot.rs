@@ -124,6 +124,19 @@ pub fn encode_bus(bus: &LockstepBus) -> Vec<u8> {
     for f in bus.four_score_pending() {
         w.bool(f);
     }
+    // v2.8.0 (libretro audit §2.4) -- the 2A03's INTERNAL data bus, appended
+    // after the controller-run tail. It is a separate latch from `open_bus`:
+    // a DMC DMA fetch drives only the external bus, so across a DMC halt the
+    // two differ, and a `$4015` read takes bit 5 from this one. Until now a
+    // restore left the running machine's value in place, which under
+    // run-ahead and rollback is a value from a discarded timeline.
+    //
+    // Pre-v2.8.0 blobs end before this byte and decode it as `open_bus` (see
+    // `decode_bus`). One trailing byte cannot be told from its own absence,
+    // so a v2.8.0 section truncated by exactly one byte reads as legacy; the
+    // container's section length header makes that reachable only from a
+    // crafted file, and it decodes deterministically either way.
+    w.u8(s.internal_data_bus);
     w.into_vec()
 }
 
@@ -507,6 +520,15 @@ pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotErro
         }
         bus.set_four_score_pending(fs);
     }
+    // v2.8.0 -- the internal data bus (trailing-default). A pre-v2.8.0 blob
+    // has no byte left here; the external latch it does carry is the value the
+    // internal one holds everywhere outside a DMC-DMA halt, and it makes the
+    // restore deterministic, which keeping the running value did not.
+    let internal_data_bus = if r.remaining() >= 1 {
+        r.u8()?
+    } else {
+        open_bus
+    };
     bus.set_bus_misc_state(BusMiscState {
         dma_pending,
         dma_cycles_owed,
@@ -518,6 +540,7 @@ pub fn decode_bus(bus: &mut LockstepBus, data: &[u8]) -> Result<(), SnapshotErro
         last_nmi_level,
         nmi_edge_latch,
         open_bus,
+        internal_data_bus,
         last_read_addr,
         in_dmc_dma,
         controller_write_pending,
@@ -574,8 +597,11 @@ pub struct BusMiscState {
     pub last_nmi_level: bool,
     /// Latched NMI edge.
     pub nmi_edge_latch: bool,
-    /// Open-bus latch.
+    /// Open-bus latch (the EXTERNAL data bus).
     pub open_bus: u8,
+    /// The 2A03's INTERNAL data bus, which a DMC DMA fetch does not drive;
+    /// `$4015` bit 5 reads it (v2.8.0).
+    pub internal_data_bus: u8,
     /// Most recent CPU read address (for the DMC-DMA readout-bug emulation).
     pub last_read_addr: u16,
     /// `true` while servicing a DMC DMA fetch.
