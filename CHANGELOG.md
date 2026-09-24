@@ -50,6 +50,13 @@ cycle-accurate core later replaced.
   no budget at all, because the hook was removed inside coroutines; it is now
   global. The script heap is capped at 64 MiB (frontend audit SEC-02, SEC-03,
   and FE-02, found while fixing SEC-03).
+- **Script HTTP requests cannot reach the machine's own services by default.**
+  With the opt-in `script-ipc` feature, `comm.httpGet` / `httpPost` fetched any
+  URL, including loopback services and cloud metadata. Addresses that resolve
+  to loopback, private or link-local ranges now need the host listed in
+  `RUSTYNES_COMM_HTTP_ALLOW` (e.g. `localhost:8080`). Redirects are returned to
+  the script instead of followed, and bodies are capped at 10 MiB (frontend
+  audit SEC-04; ADR 0016 amended).
 
 ## [2.7.2] - 2026-09-23 - "Bankroll" (every bank the cartridge has, and nothing it has not)
 
