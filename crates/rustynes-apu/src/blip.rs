@@ -313,12 +313,24 @@ impl BlipBuf {
     }
 
     /// Drain all finalized samples into a new `Vec`.
+    ///
+    /// The filled buffer goes to the caller, and a fresh one with the same
+    /// capacity takes its place (v2.7.5, core audit IMP-07). A buffer returned
+    /// by value must be replaced every call whatever happens; the choice is
+    /// only whether its replacement starts empty. With `mem::take` it started
+    /// at capacity zero and regrew by doubling through the next frame's pushes
+    /// (about nine reallocations for a frame's ~800 samples); now it is one
+    /// allocation of the size the last frame needed. Measured -0.89% frame
+    /// time on a steady-state frame-then-drain workload, reproduced on two
+    /// runs (`docs/performance.md` §v2.7.5). Callers that drain into their own
+    /// buffer with [`Self::drain`] allocate nothing and are unaffected. The
+    /// samples themselves are untouched, so the output is byte-identical.
     #[must_use]
     pub fn drain_all(&mut self) -> Vec<f32> {
-        // `core::mem::take` is `std::mem::take` (the std path re-exports).
-        // Using the `core` path keeps this module portable to `#![no_std]`
-        // builds. See `docs/architecture.md` §no_std boundary.
-        core::mem::take(&mut self.samples)
+        // The `core` path keeps this module portable to `#![no_std]` builds.
+        // See `docs/architecture.md` §no_std boundary.
+        let capacity = self.samples.capacity();
+        core::mem::replace(&mut self.samples, Vec::with_capacity(capacity))
     }
 
     /// Number of samples currently buffered, awaiting drain.
@@ -344,6 +356,29 @@ mod tests {
 
     /// 10 frames at 60 Hz (used by spectral tests + decay tests).
     const TEN_FRAMES_NTSC: usize = ONE_SECOND_NTSC / 6;
+
+    /// v2.7.5 (core audit IMP-07): `drain_all` hands the filled buffer to the
+    /// caller and keeps a same-capacity one for the next frame. With
+    /// `mem::take` the buffer restarted at capacity zero and regrew by doubling
+    /// through every frame's pushes (about nine reallocations for a frame's
+    /// ~800 samples). Measured on a steady-state frame-then-drain workload:
+    /// -0.89% frame time on two runs (docs/performance.md §v2.7.5).
+    #[test]
+    fn drain_all_keeps_room_for_the_next_frame() {
+        let mut b = BlipBuf::new(44_100, CPU_HZ_NTSC);
+        for _ in 0..TEN_FRAMES_NTSC / 10 {
+            b.add_sample(0.25);
+        }
+        let first = b.drain_all();
+        assert!(!first.is_empty(), "a frame produces samples");
+        assert!(
+            b.samples.capacity() >= first.len(),
+            "the next frame must not start from capacity zero: {} < {}",
+            b.samples.capacity(),
+            first.len()
+        );
+        assert!(b.is_empty(), "the drained samples are gone");
+    }
 
     #[test]
     fn empty_buffer_reads_zero_samples() {
