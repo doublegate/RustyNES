@@ -95,7 +95,7 @@ memory; the `client` mutators reuse the existing gated host paths).
 See `docs/scripting.md` (the `comm.*` / `client.*` / `userdata.*` reference) and
 `crates/rustynes-frontend/src/script_host.rs` (the host bridge).
 
-## Amendment (2026-09-24, v2.7.3): HTTP destinations are gated
+## Amendment (2026-09-23, v2.7.3): HTTP destinations are gated
 
 The decision above prevented a script from getting a raw socket. It did not
 limit **where** the host would connect on a script's behalf: `comm.httpGet` and
@@ -105,7 +105,7 @@ container API on `127.0.0.1` or a cloud metadata endpoint (frontend audit
 SEC-04). The TCP transport never had this problem, because the user names its
 endpoint (`RUSTYNES_COMM_TCP`).
 
-The maintainer chose (2026-09-24): **public destinations by default; loopback,
+The maintainer chose (2026-09-23): **public destinations by default; loopback,
 private, link-local and similar addresses only when the user allowlists the
 host** in `RUSTYNES_COMM_HTTP_ALLOW`. Blocking inward addresses outright was
 rejected, because this ADR's own use case (local bot and RL endpoints) usually

@@ -94,7 +94,7 @@ A: RustyNES is a cycle-accurate NES emulator written in pure Rust, clearing the 
 
 **Q: Can I use RustyNES now?**
 
-A: Yes. RustyNES is well past its first stable release — the current release is **v2.7.2 "Bankroll"** — cartridge memory, every bank a cartridge has and nothing it has not: MMC1 reaches SUROM / SXROM, MMC5 banks its PRG-RAM, Namco 163 selects nametables, and `$6000-$7FFF` reads open bus where a board has nothing there. Built on **v2.7.1 "Keepsake"** — six cartridge boards now hand RetroArch their battery save instead of an empty one, every user file the frontend writes is written atomically, and three mapper files are now recorded as derived from Mesen2 and puNES. **No hardware has run any bitstream.**
+A: Yes. RustyNES is well past its first stable release — the current release is **v2.7.3 "Hearth"** — the desktop and web frontends keep what they are given: battery saves persist on the desktop, a Lua script can no longer hang or exhaust the emulator, script HTTP cannot reach local services by default, and audio survives a device change. Built on **v2.7.2 "Bankroll"** — cartridge memory, every bank a cartridge has and nothing it has not: MMC1 reaches SUROM / SXROM, MMC5 banks its PRG-RAM, Namco 163 selects nametables, and `$6000-$7FFF` reads open bus where a board has nothing there. **No hardware has run any bitstream.**
 
 **Q: How accurate is RustyNES?**
 

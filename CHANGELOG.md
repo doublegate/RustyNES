@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [2.7.3] - 2026-09-23 - "Hearth" (the desktop and web frontends keep what they are given)
+
 ### Fixed — desktop and web
 
 - **Battery saves persist on the desktop.** A cartridge with a battery now
