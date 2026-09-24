@@ -446,6 +446,13 @@ jobs:
         run: cargo clippy -p rustynes-frontend --all-targets --features scripting,hd-pack -- -D warnings
       - name: clippy (retroachievements — rcheevos FFI)
         run: cargo clippy -p rustynes-frontend --all-targets --features retroachievements -- -D warnings
+      # v2.7.4: rustynes-ios's iOS-only modules (the C-ABI shim and the CoreAudio
+      # sink) are `cfg(target_os = "ios")`, so no PR job compiled them -- only the
+      # tag-triggered ios.yml did. This type-checks the real files on Linux (cpal
+      # has the same API on every backend) with only the Metal renderer stubbed,
+      # and runs their tests. See the script's header for what it cannot check.
+      - name: iOS shim + audio sink host type-check
+        run: scripts/ios-host-typecheck.sh
       # The `full` umbrella (retroachievements + scripting + script-ipc + hd-pack +
       # debug-hooks + av-record) is the catch-all that lints the native features the
       # three subset combos above DON'T reach on their own — notably `script-ipc` and

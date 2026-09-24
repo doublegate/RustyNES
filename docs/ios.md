@@ -97,10 +97,30 @@ channels and emitting silence on underrun. **`AVAudioSession`** (category
 `.playback`, activation, interruption / route-change / silent-switch handling) is
 configured **Swift-side**; on an interruption / scene-background the app calls
 `rustynes_ios_audio_pause` and pauses the emulator, so there is no special
-teardown. (A full Hermite DRC resampler, as on the desktop `resampler.rs`, is a
-documented v1.9.x follow-up; the foundation ships the lock-free ring.) The ring is
-a frontend resampler stage — the **core samples are untouched**, so the audio
-oracle and cross-device save portability are preserved.
+teardown. The ring and rate control are a frontend resampler stage — the **core
+samples are untouched**, so the audio oracle and cross-device save portability
+are preserved.
+
+**v2.7.4 (frontend audit IOS-02 / 03 / 08 / 09).** The ring, rate control and
+channel fan-out live in the host-tested `src/audio_ring.rs`; `audio.rs` keeps
+only what needs cpal.
+
+- **Dynamic rate control.** A 4-tap Hermite resampler on the producer side,
+  steered by the ring's fill (±1%, the desktop's law), holds the queue at a
+  **50 ms** target. Before, there was none: the queue went wherever the host and
+  audio clocks drifted, up to its 250 ms cap. Playback starts only once the
+  target is queued, and waits for it again after an underrun, so a gap is one
+  gap rather than a crackle.
+- The callback drains a whole buffer per index load and store, not one sample
+  at a time, into a buffer allocated once; extra channels get the centre average
+  rather than the left image.
+- **A dead stream is reported.** A fatal cpal error (device gone, audio service
+  lost, or a media-services reset) sets a flag the app polls through
+  `rustynes_ios_audio_is_invalid`, and the app then rebuilds the sink.
+- `scripts/ios-host-typecheck.sh` (run in CI's lint job) compiles the real
+  `audio.rs` and `ffi.rs` on Linux against the real cpal, with only the Metal
+  renderer stubbed. Before v2.7.4 nothing on a pull request compiled either
+  file; only the tag-triggered `ios.yml` did.
 
 ## The SwiftUI app (`ios/`)
 

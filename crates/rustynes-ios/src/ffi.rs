@@ -263,6 +263,25 @@ pub unsafe extern "C" fn rustynes_ios_audio_sample_rate(handle: *mut AudioSink) 
     })
 }
 
+/// `rustynes_ios_audio_is_invalid(handle) -> u8` — 1 once the output stream has
+/// died (device gone, audio service lost, or a media-services reset), else 0
+/// (v2.7.4, audit IOS-08). cpal reports the reset as an error on the stream and
+/// the stream stays silent afterwards; the host polls this and rebuilds the sink.
+///
+/// # Safety
+/// `handle` must be a live value returned by `rustynes_ios_audio_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rustynes_ios_audio_is_invalid(handle: *mut AudioSink) -> u8 {
+    guarded("rustynes_ios_audio_is_invalid", 0, || {
+        if handle.is_null() {
+            return 0;
+        }
+        // SAFETY: live handle (caller contract).
+        let sink = unsafe { &*handle };
+        u8::from(sink.is_invalidated())
+    })
+}
+
 /// `rustynes_ios_audio_set_depth(handle, enabled, eq, eq_len, pan, pan_len,
 /// reverb_mix, reverb_room, crossfeed)` — publish the live audio-depth (EQ / pan
 /// / reverb / crossfeed) config (v1.9.9). `eq` is up to 5 band gains (dB); `pan`
