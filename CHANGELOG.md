@@ -37,6 +37,13 @@ cycle-accurate core later replaced.
   untouched rather than overwritten (frontend ledger FE-01). New:
   `Nes::has_battery()`.
 
+### Security
+
+- **An HD pack can no longer exhaust memory with one image.** A PNG's declared
+  size was trusted when sizing its decode buffer, so a small file could ask for
+  gigabytes. Images are now refused past 16384 pixels a side or 4096 x 4096 in
+  total, before anything is allocated (frontend audit SEC-01).
+
 ## [2.7.2] - 2026-09-23 - "Bankroll" (every bank the cartridge has, and nothing it has not)
 
 ### Fixed — mapper memory

@@ -862,32 +862,63 @@ fn read_zip_entry<R: std::io::Read + std::io::Seek>(
     Some(buf)
 }
 
+/// The largest side an HD-pack image may declare. 16384 is the common GPU
+/// texture limit; a replacement larger than any texture can hold is unusable.
+const MAX_HD_IMAGE_SIDE: u32 = 16_384;
+
+/// The largest area an HD-pack image may declare: 16.7 M pixels, 64 MiB as
+/// RGBA8. Room for an 8192 x 2048 sheet or a 4096 x 4096 one.
+const MAX_HD_IMAGE_PIXELS: u64 = 4096 * 4096;
+
+/// Whether declared PNG dimensions are within the HD-pack budget (v2.7.3,
+/// frontend audit SEC-01). Checked BEFORE the decode buffer is sized, because
+/// the size comes straight from the file's IHDR: a 20 KiB image can declare
+/// 65535 x 65535 and ask for 17 GiB.
+const fn png_dimensions_allowed(width: u32, height: u32) -> bool {
+    width != 0
+        && height != 0
+        && width <= MAX_HD_IMAGE_SIDE
+        && height <= MAX_HD_IMAGE_SIDE
+        && (width as u64) * (height as u64) <= MAX_HD_IMAGE_PIXELS
+}
+
 /// Decode a PNG to RGBA8.
+///
+/// Returns `None` for an image this loader cannot use, including one whose
+/// header declares dimensions past [`png_dimensions_allowed`]. That check runs
+/// on the header alone, before any pixel buffer exists.
 fn decode_png(bytes: &[u8]) -> Option<ReplacementImage> {
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     let mut reader = decoder.read_info().ok()?;
+    let header = reader.info();
+    if !png_dimensions_allowed(header.width, header.height) {
+        return None;
+    }
     let mut buf = vec![0u8; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buf).ok()?;
     buf.truncate(info.buffer_size());
     let (w, h) = (info.width, info.height);
+    // In `usize`: `w * h * 4` in `u32` overflows past 32768 x 32768, which the
+    // budget above excludes, but the arithmetic should not depend on that.
+    let rgba_len = (w as usize) * (h as usize) * 4;
     let rgba = match info.color_type {
         png::ColorType::Rgba => buf,
         png::ColorType::Rgb => {
-            let mut out = Vec::with_capacity((w * h * 4) as usize);
+            let mut out = Vec::with_capacity(rgba_len);
             for px in buf.chunks_exact(3) {
                 out.extend_from_slice(&[px[0], px[1], px[2], 0xFF]);
             }
             out
         }
         png::ColorType::Grayscale => {
-            let mut out = Vec::with_capacity((w * h * 4) as usize);
+            let mut out = Vec::with_capacity(rgba_len);
             for &g in &buf {
                 out.extend_from_slice(&[g, g, g, 0xFF]);
             }
             out
         }
         png::ColorType::GrayscaleAlpha => {
-            let mut out = Vec::with_capacity((w * h * 4) as usize);
+            let mut out = Vec::with_capacity(rgba_len);
             for px in buf.chunks_exact(2) {
                 out.extend_from_slice(&[px[0], px[0], px[0], px[1]]);
             }
@@ -2579,6 +2610,49 @@ const fn chr_rom_key(tile_index: u32, palette_colors: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A valid all-black grayscale PNG. Zero rows compress to almost nothing, so
+    /// a large image is a small file, which is the shape of the attack.
+    fn gray_png(width: u32, height: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut out, width, height);
+            enc.set_color(png::ColorType::Grayscale);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut w = enc.write_header().unwrap();
+            w.write_image_data(&vec![0u8; (width as usize) * (height as usize)])
+                .unwrap();
+        }
+        out
+    }
+
+    /// SEC-01: the decode buffer was sized from the header with no bound, so a
+    /// small file could declare 65535 x 65535 and ask for 17 GiB. These images
+    /// are valid and decode on v2.7.2; past the budget they must now be refused.
+    #[test]
+    fn a_png_past_the_hd_budget_is_refused_before_decoding() {
+        let small = decode_png(&gray_png(2, 2)).expect("a small image decodes");
+        assert_eq!((small.width, small.height, small.rgba.len()), (2, 2, 16));
+
+        let too_big = gray_png(4097, 4096);
+        assert!(too_big.len() < 256 * 1024, "the attack file is small");
+        assert!(decode_png(&too_big).is_none(), "one row past the area cap");
+        assert!(
+            decode_png(&gray_png(MAX_HD_IMAGE_SIDE + 1, 1)).is_none(),
+            "one column past the side cap"
+        );
+    }
+
+    #[test]
+    fn the_png_budget_bounds_are_exact() {
+        assert!(png_dimensions_allowed(4096, 4096));
+        assert!(png_dimensions_allowed(8192, 2048));
+        assert!(png_dimensions_allowed(MAX_HD_IMAGE_SIDE, 1));
+        assert!(!png_dimensions_allowed(4097, 4096));
+        assert!(!png_dimensions_allowed(MAX_HD_IMAGE_SIDE + 1, 1));
+        assert!(!png_dimensions_allowed(0, 16));
+        assert!(!png_dimensions_allowed(65_535, 65_535));
+    }
 
     /// An empty spatial context for the non-spatial condition tests (no cell, no
     /// neighbour slice). The spatial conditions get their own tests below.
