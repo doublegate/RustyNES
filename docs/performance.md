@@ -812,6 +812,126 @@ and item 2 (skipping the GPU upload when no new frame arrived) remains defensibl
 as not doing obviously-pointless work — but neither is a performance claim, and
 neither should be described as one.
 
+### v2.7.5 — the core audit's performance proposals, measured by ceiling (decision: all REJECTED)
+
+The core audit ([`docs/audits/core-audit-report.md`](audits/core-audit-report.md)
+§3, and IMP-12 in §4.6) proposed twelve hot-path changes, plus a buffer cap
+(IMP-07's second half) that is a behaviour change and is judged separately below. This project's record
+was already heavily against micro-optimising this core — the v2.3.1 campaign
+above measured ten items and adopted none — so v2.7.5 measured before building,
+and measured all of them at once first.
+
+**Method: one combined ceiling probe.** Every proposal was applied at its
+MAXIMUM in a single tree, knowingly breaking correctness where the real change
+would have been subtle, so that the result bounds what the whole set could win:
+
+| item | what the probe did | per-frame volume the audit cited |
+| --- | --- | --- |
+| §3.1 A | CPU divider hard-coded to 12 (NTSC) in `start_cycle` / `end_cycle` | two trait calls + `div / 2` per CPU cycle |
+| §3.1 B | `take_dma_mc_consumed` removed from `end_cycle` | one store per CPU cycle |
+| §3.1 C | `sample_nmi_edge` removed from all three PPU catch-up loops | one call per PPU dot |
+| IMP-04 | `Status::set_nz` rewritten branchless | two branches per ALU instruction |
+| IMP-06 | the four redundant rendering-state stores deleted from `tick_visible_render_fast` | 245,760 stores |
+| IMP-07 | `BlipBuf::drain_all` keeps its capacity instead of restarting from zero | ~10 reallocations per drain |
+| §3.5b | the pulse channels' `muted()` check deleted from `output()` | two sweep-target computations per CPU cycle |
+| §3.6 | the `cpu_read_unmapped` virtual call skipped for every cartridge read | one dynamic call per `$4020+` read |
+
+`scripts/perf/ab_check.sh`, `AB_MEASUREMENT_TIME=25`, i9-10850K, fat LTO,
+shipped workloads, each with its A/B/A order-bias control:
+
+| run | `nestest` | `flowing_palette` | `nestest_fast` | `flowing_palette_fast` |
+| --- | ---: | ---: | ---: | ---: |
+| 1, candidate | +0.63% (p = 0.00) | +1.29% (p = 0.00) | +1.14% (p = 0.00) | −0.54% (p = 0.14) |
+| 1, control | +0.25% | +0.39% | +0.93% | +2.48% |
+| 2, candidate | +0.05% (p = 0.55) | −3.59% (p = 0.08) | −5.13% (p = 0.07) | +3.26% (p = 0.00) |
+| 2, control | +0.59% | **−5.51%** | −4.67% | **+12.07%** |
+| 3, candidate | +0.14% (p = 0.00) | −0.07% (p = 0.19) | +0.13% (p = 0.01) | +0.08% (p = 0.25) |
+| 3, control | +0.16% | +0.06% | −0.16% | −0.00% |
+
+Run 2 is void: its control swung from −5.5% to +12.1% while background
+indexers and Syncthing were busy, and it is reported only so the record is
+complete. Runs 1 and 3 agree: **the ceiling is zero** — within the control's own
+movement, with no consistent sign. Deleting the work outright buys nothing, so
+no correct implementation of any of the eight can. The mechanisms are the ones
+the v2.3.1 campaign already named: fat LTO with one codegen unit has inlined and
+merged the calls, perfectly predicted branches and store-buffer-absorbed stores
+cost nothing on the critical path.
+
+Some of the audit's premises were also simply wrong, which the measurement
+makes moot but is worth recording:
+
+- §3.1 A's "integer division" is `div / 2` on a `u64`, a shift.
+- §3.1 B's accumulator is structurally zero in production for a different reason
+  than the audit gives: the production bus overrides `cpu_clock`, so the only
+  path that feeds it (`on_cpu_cycle` -> `tick_one_cpu_cycle`) is reached from
+  unit tests alone.
+- IMP-12 (hoist `PpuBusAdapter`) is v2.3.1's **G10**, already measured and
+  rejected: no adapter symbol survives codegen, and the hoist conflicts with the
+  borrow of `self.mapper` in the same loop.
+- IMP-07's "eliminates per-frame allocations" cannot hold for an API that
+  returns a `Vec` by value; the change only turns about ten reallocations into
+  one, which the probe shows is invisible. The **second half of IMP-07 — capping
+  the buffered samples at 16,384 — is rejected as a behaviour change with no
+  user.** Every host drains every frame (desktop, web, libretro, both mobile
+  apps, and the test suites checked), so no real consumer grows without bound.
+  The one consumer that does accumulate is the probe engine's undrained
+  framebuffer trials — about 24,000 samples over 30 frames, per
+  `rustynes-probe/tests/restore_audio_pin.rs` — and a cap would silently
+  truncate that audio instead. The drain contract stays "kept until drained".
+
+**IMP-05 (`#[inline]` and cold-path outlining in `Cpu`) was measured
+separately**, because it is a candidate rather than a ceiling and could move
+either way. Unlike v2.3.1's G7, which hinted `bus.rs` functions that fat LTO
+had already inlined, the premise here is TRUE: `read1`, `write1`,
+`end_cycle`, `idle_tick` and `adc` all survive codegen as out-of-line symbols.
+The candidate moved `read1`'s DMC-abort and unified-DMA drains into a
+`#[cold] #[inline(never)] read1_slow_path` behind a guard of the same two
+(pure, `&self`) predicates, and hinted `read1` `#[inline]`. The outlining took
+(`read1_slow_path` appears as its own symbol); `read1` itself stayed out of
+line.
+
+| run | `nestest` | `flowing_palette` | `nestest_fast` | `flowing_palette_fast` |
+| --- | ---: | ---: | ---: | ---: |
+| 1, candidate | −0.54% (p = 0.04) | +5.50% (p = 0.04) | +1.09% (p = 0.06) | −0.84% (p = 0.62) |
+| 1, control | **+4.50%** | −0.51% | +0.42% | −1.23% |
+| 2, candidate | −0.15% (p = 0.00) | −0.25% (p = 0.00) | −0.11% (p = 0.03) | +0.10% (p = 0.04) |
+| 2, control | −0.18% | −0.06% | −0.17% | +0.07% |
+
+Run 1 is void (a concurrent test suite from another session; control +4.5%).
+Run 2 is clean and reads the candidate as its own control: **zero**. The
+common read path was already short enough that where the rare branches live
+does not matter to the core that runs it.
+
+**IMP-06's other two proposals.** The branchless palette mirror got its own
+ceiling, because `palette_index` really is on the hot path (`emit_pixel` ->
+`read_palette`, 61,440 times a frame): the probe deleted the mirroring outright.
+
+| | `nestest` | `flowing_palette` | `nestest_fast` | `flowing_palette_fast` |
+| --- | ---: | ---: | ---: | ---: |
+| candidate | +0.01% (p = 0.87) | +0.04% (p = 0.41) | +0.34% (p = 0.00) | +0.32% (p = 0.00) |
+| control | −0.18% | +0.06% | +0.22% | +0.11% |
+
+Ceiling zero — if anything the deletion reads slower on the fast path, within
+the control's reach. The third proposal, folding the phase dispatch of
+`tick_visible_render_fast` into one `match`, has no ceiling (it restructures
+control flow rather than removing work) and was not pursued: the store elision
+in the same function measured zero, and restructuring without an upper bound is
+the shape the v2.3.1 campaign already spent ten items on.
+
+**Result: nothing adopted.** Of the twelve, ten were measured here, IMP-12 was
+measured in v2.3.1, and the phase `match` was closed by reasoning. The core's
+cost is still the work the accuracy model requires.
+
+**MOB-06 (the mobile framebuffer copy) was not measured and is not changed.**
+Its cost is Android / iOS allocation and garbage-collection pressure (245,760
+bytes per frame, about 14.7 MB/s), which no desktop benchmark reproduces. The
+natural fix — the host passes one reused buffer and the bridge fills it — needs
+UniFFI's mutable borrowed bytes (`&mut [u8]`), which exist only on UniFFI's
+unreleased `main`: the newest published release, 0.32.2, supports read-only
+borrowed bytes only. Working around it with a raw framebuffer pointer across the
+FFI would be new `unsafe` that nothing here can verify. It waits for that
+UniFFI release.
+
 ### v2.3.1 G7/G8/G9/G10 — inline hints, typed indices, capability gate, adapter hoist (decision: all REJECTED)
 
 The last four campaign items. With G1–G6 the score is **ten measured, ten
