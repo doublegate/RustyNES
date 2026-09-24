@@ -26,7 +26,7 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-### Fixed — desktop
+### Fixed — desktop and web
 
 - **Battery saves persist on the desktop.** A cartridge with a battery now
   keeps its in-game save in `<data_dir>/battery/<rom-sha256>.sav`: loaded when
@@ -67,6 +67,15 @@ cycle-accurate core later replaced.
 - **Achievement badges from earlier games are released** when another ROM loads,
   instead of staying resident for the whole session (frontend audit DESK-08).
 
+### Changed
+
+- **The `[retroachievements] host` setting is gone.** Nothing ever read it, so
+  editing it changed nothing. Config files that still contain it load
+  unchanged, and the next save drops it (frontend audit CON-05).
+- **Building the web frontend with both `wasm-canvas` and `wasm-winit`** now
+  stops at compile time with the right invocation, instead of failing late at
+  `wasm-bindgen` (frontend audit CON-01).
+
 ### Security
 
 - **An HD pack can no longer exhaust memory with one image.** A PNG's declared
@@ -87,6 +96,9 @@ cycle-accurate core later replaced.
   `RUSTYNES_COMM_HTTP_ALLOW` (e.g. `localhost:8080`). Redirects are returned to
   the script instead of followed, and bodies are capped at 10 MiB (frontend
   audit SEC-04; ADR 0016 amended).
+- **An HD pack's music cannot claim an absurd sample rate.** The declared rate
+  sized the resampled track, so a 1 Hz header expanded it 48,000-fold; rates
+  outside 8-384 kHz now make the track inert (frontend audit CON-03).
 
 ## [2.7.2] - 2026-09-23 - "Bankroll" (every bank the cartridge has, and nothing it has not)
 

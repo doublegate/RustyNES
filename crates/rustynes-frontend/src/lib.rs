@@ -265,6 +265,23 @@ pub mod virtual_pad;
 // top of this model.
 pub mod tastudio;
 
+// v2.7.3 (frontend audit CON-01) — the two web frontends each declare a
+// `#[wasm_bindgen(start)]`, and a cdylib may have only one. `wasm-winit` is a
+// default feature, so `--features wasm-canvas` WITHOUT `--no-default-features`
+// enabled both, and the build failed late, at wasm-bindgen's duplicate-start
+// check, with an error that did not name the cause. Fail at compile time
+// instead, saying what to do.
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "wasm-canvas",
+    feature = "wasm-winit"
+))]
+compile_error!(
+    "`wasm-canvas` and `wasm-winit` are mutually exclusive, and `wasm-winit` is a \
+     default feature: build the canvas embed with \
+     `--no-default-features --features wasm-canvas`"
+);
+
 // v1.3.0 Sprint 1.4 — two wasm32 frontends, selected by cargo
 // feature (each provides a unique `#[wasm_bindgen(start)]`):
 //   - `wasm-winit` (default): the unified winit + wgpu + egui App,

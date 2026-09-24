@@ -1884,18 +1884,19 @@ pub struct RetroAchievementsConfig {
     /// Defaults to `true`, matching the `RetroAchievements` convention.
     #[serde(default = "default_ra_hardcore")]
     pub hardcore: bool,
-    /// The `RetroAchievements` host base URL. Default
-    /// `https://retroachievements.org`.
-    #[serde(default = "default_ra_host")]
-    pub host: String,
+    // v2.7.3 (frontend audit CON-05) — a `host` field used to sit here,
+    // defaulting to `https://retroachievements.org`. Nothing ever read it:
+    // `rustynes_ra::RaConfig` deliberately carries no host, and the session
+    // always uses rcheevos' own. A setting that does nothing is worse than
+    // none, because a user editing it believes they changed the server.
+    // Removed rather than wired: pointing the login token at a configurable
+    // server is a feature with its own security questions, not a fix. Config
+    // files that still contain `host = ...` load unchanged (serde ignores the
+    // unknown key), and the next save drops it.
 }
 
 const fn default_ra_hardcore() -> bool {
     true
-}
-
-fn default_ra_host() -> String {
-    "https://retroachievements.org".to_string()
 }
 
 impl Default for RetroAchievementsConfig {
@@ -1905,7 +1906,6 @@ impl Default for RetroAchievementsConfig {
             username: String::new(),
             token: String::new(),
             hardcore: default_ra_hardcore(),
-            host: default_ra_host(),
         }
     }
 }
@@ -3435,5 +3435,19 @@ start = "Start"
             "default key clashes:\n  {}",
             clashes.join("\n  ")
         );
+    }
+
+    /// CON-05 (v2.7.3): the dead `[retroachievements] host` setting is gone
+    /// from saved configs, and a file that still has it loads unchanged.
+    #[test]
+    fn the_dead_ra_host_setting_is_dropped_but_still_loads() {
+        let saved = toml::to_string(&Config::default()).expect("serialise");
+        assert!(!saved.contains("host ="), "no dead `host` key is written");
+        let old: Config = toml::from_str(
+            "[retroachievements]\nenabled = true\nusername = \"u\"\nhost = \"https://example.org\"\n",
+        )
+        .expect("an old file with `host` still loads");
+        assert!(old.retroachievements.enabled);
+        assert_eq!(old.retroachievements.username, "u");
     }
 }
