@@ -5,7 +5,7 @@
 //! # What was missing
 //!
 //! A cartridge with a battery keeps its save RAM when the console is off. The
-//! core exposes that RAM through [`Nes::sram`]; v2.7.1 made every board that has
+//! core exposes that RAM through [`rustynes_core::Nes::sram`]; v2.7.1 made every board that has
 //! it expose it there. But until v2.7.3 **nothing in the desktop frontend read
 //! it**: the libretro core handed it to RetroArch as the `.srm`, the test harness
 //! checked it, and the desktop app wrote only the FDS writable-disk sidecar. An
@@ -18,15 +18,15 @@
 //!    RAM through `sram()` whatever the header says: NROM returns 8 KiB for every
 //!    image, and MMC1 / MMC3 allocate RAM by default. Keyed on a non-empty slice,
 //!    a volatile cartridge would acquire a save it never had and restore stale RAM
-//!    across power cycles. [`Nes::has_battery`] is the header's flags-6 bit 1.
-//! 2. **Key the file by [`Nes::rom_sha256`]**, the hash save states already use:
+//!    across power cycles. [`rustynes_core::Nes::has_battery`] is the header's flags-6 bit 1.
+//! 2. **Key the file by [`rustynes_core::Nes::rom_sha256`]**, the hash save states already use:
 //!    `<data_dir>/battery/<hex>.sav`. The hash includes the header, so correcting
 //!    a header produces a new key; the old file is left in place, not deleted.
 //! 3. **"Dirty" is equality with the last write.** The core has no save-RAM dirty
 //!    latch, and adding one would be an API change for every mapper. The frontend
-//!    does not need it: [`BatterySave::flush`] compares the live bytes with a copy
+//!    does not need it: [`crate::battery_save::BatterySave::flush`] compares the live bytes with a copy
 //!    of what it last wrote, and writes only on a difference. The comparison runs
-//!    at most once per [`CHECK_PERIOD_FRAMES`] produced frames, so a game that
+//!    at most once per [`crate::battery_save::CHECK_PERIOD_FRAMES`] produced frames, so a game that
 //!    treats its battery RAM as scratch memory costs one write a second, not
 //!    sixty. Unload, ROM switch and exit flush unconditionally (`force`), which
 //!    still skips the write when nothing changed.
@@ -36,7 +36,7 @@
 //! # Never clobber a save that was not read
 //!
 //! The one outcome worse than no persistence is overwriting a good save with
-//! power-on zeros. So [`BatterySave::attach`] refuses to arm itself when an
+//! power-on zeros. So [`crate::battery_save::BatterySave::attach`] refuses to arm itself when an
 //! existing file cannot be used: an I/O error other than "not found", or a file
 //! whose length is not the cartridge's save size (a different board revision, a
 //! truncated copy, or another emulator's format). The file is left untouched and

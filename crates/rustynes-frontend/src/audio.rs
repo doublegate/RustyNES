@@ -689,7 +689,7 @@ pub struct AudioOutput {
     /// Set by the stream's error callback on a fatal error
     /// ([`stream_error_is_fatal`]); cleared by a successful reopen.
     failed: Arc<AtomicBool>,
-    /// When the last reopen was attempted ([`REOPEN_BACKOFF`]).
+    /// When the last reopen was attempted (`REOPEN_BACKOFF` (2 s)).
     last_reopen: Option<std::time::Instant>,
 }
 
@@ -840,7 +840,7 @@ impl AudioOutput {
     /// asked for, or the host default if that one is gone, and the
     /// configuration is the original, since the core already synthesises at
     /// its rate. A device that cannot take it is logged and retried after
-    /// [`REOPEN_BACKOFF`]. Returns whether a new stream is playing.
+    /// `REOPEN_BACKOFF` (2 s). Returns whether a new stream is playing.
     pub fn try_reopen(&mut self) -> bool {
         let now = std::time::Instant::now();
         if !reopen_due(self.last_reopen, now) {
